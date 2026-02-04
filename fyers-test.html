@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fyers API Test - WMS</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { 
+            max-width: 900px; 
+            margin: 0 auto; 
+        }
+        .card { 
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+        h1 { 
+            font-size: 28px; 
+            color: #333; 
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .test-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+        .test-section h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        .form-group { 
+            margin-bottom: 16px; 
+        }
+        .form-group label { 
+            display: block; 
+            font-size: 14px; 
+            font-weight: 600; 
+            color: #555; 
+            margin-bottom: 8px; 
+        }
+        .form-group input { 
+            width: 100%; 
+            padding: 12px; 
+            border: 2px solid #e0e0e0; 
+            border-radius: 6px; 
+            font-size: 14px;
+        }
+        .form-group input:focus { 
+            outline: none; 
+            border-color: #667eea; 
+        }
+        .btn { 
+            padding: 12px 24px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 15px; 
+            font-weight: 600;
+            transition: all 0.3s;
+            margin-right: 10px;
+        }
+        .btn-primary { 
+            background: #667eea; 
+            color: white; 
+        }
+        .btn-primary:hover { 
+            background: #5568d3;
+            transform: translateY(-2px);
+        }
+        .btn-success { 
+            background: #28a745; 
+            color: white; 
+        }
+        .result {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            overflow-x: auto;
+            margin-top: 15px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .status {
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 15px;
+            display: none;
+        }
+        .status.show { display: block; }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.info { background: #d1ecf1; color: #0c5460; }
+        .stock-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border-left: 4px solid #28a745;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .stock-symbol {
+            font-size: 18px;
+            font-weight: 700;
+            color: #333;
+        }
+        .stock-price {
+            font-size: 24px;
+            font-weight: 700;
+            color: #28a745;
+        }
+        .stock-change {
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>🧪 Fyers API Test</h1>
+            <p class="subtitle">Test your Fyers API connection via Supabase Edge Function</p>
+
+            <!-- Test 1: Get Stock Quote -->
+            <div class="test-section">
+                <h2>📊 Test 1: Get Live Stock Quote</h2>
+                <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+                    Enter a stock symbol to fetch live price data
+                </p>
+                
+                <div class="form-group">
+                    <label>Stock Symbol (NSE format)</label>
+                    <input type="text" id="symbol" placeholder="NSE:RELIANCE-EQ" value="NSE:RELIANCE-EQ">
+                    <small style="color: #888; font-size: 12px; display: block; margin-top: 5px;">
+                        Format: NSE:SYMBOL-EQ (e.g., NSE:RELIANCE-EQ, NSE:TCS-EQ, NSE:INFY-EQ)
+                    </small>
+                </div>
+                
+                <button class="btn btn-primary" onclick="testGetQuote()">
+                    🚀 Fetch Quote
+                </button>
+                
+                <div id="quote-status" class="status"></div>
+                <div id="quote-result" style="display: none;"></div>
+                <div id="quote-json" class="result" style="display: none;"></div>
+            </div>
+
+            <!-- Test 2: Get Multiple Quotes -->
+            <div class="test-section">
+                <h2>📈 Test 2: Get Multiple Quotes</h2>
+                <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+                    Fetch quotes for multiple stocks at once
+                </p>
+                
+                <button class="btn btn-success" onclick="testMultipleQuotes()">
+                    📊 Fetch Nifty 50 Stocks
+                </button>
+                
+                <div id="multi-status" class="status"></div>
+                <div id="multi-result" style="display: none;"></div>
+                <div id="multi-json" class="result" style="display: none;"></div>
+            </div>
+
+            <!-- Connection Info -->
+            <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-top: 20px;">
+                <strong style="color: #1565c0;">ℹ️ Connection Details:</strong><br>
+                <span style="color: #1565c0; font-size: 13px;">
+                    Edge Function URL: https://lynvrwteylgpwlwbslse.supabase.co/functions/v1/fyers-market-data
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
+
+        async function testGetQuote() {
+            const symbol = document.getElementById('symbol').value.trim();
+            
+            if (!symbol) {
+                showStatus('quote-status', '❌ Please enter a symbol', 'error');
+                return;
+            }
+            
+            showStatus('quote-status', '🔄 Fetching quote from Fyers...', 'info');
+            document.getElementById('quote-result').style.display = 'none';
+            document.getElementById('quote-json').style.display = 'none';
+            
+            try {
+                const response = await fetch(`${SUPABASE_URL}/functions/v1/fyers-market-data`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify({
+                        action: 'quotes',
+                        symbols: symbol
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                // Display formatted result
+                if (data.d && data.d.length > 0) {
+                    const quote = data.d[0].v;
+                    displayStockCard(quote);
+                    showStatus('quote-status', '✅ Quote fetched successfully!', 'success');
+                } else {
+                    throw new Error('No data returned');
+                }
+                
+                // Show raw JSON
+                document.getElementById('quote-json').textContent = JSON.stringify(data, null, 2);
+                document.getElementById('quote-json').style.display = 'block';
+                
+            } catch (error) {
+                showStatus('quote-status', `❌ Error: ${error.message}`, 'error');
+                console.error('API Error:', error);
+            }
+        }
+
+        async function testMultipleQuotes() {
+            const symbols = [
+                'NSE:RELIANCE-EQ',
+                'NSE:TCS-EQ',
+                'NSE:INFY-EQ',
+                'NSE:HDFCBANK-EQ',
+                'NSE:ICICIBANK-EQ'
+            ];
+            
+            showStatus('multi-status', '🔄 Fetching quotes for 5 stocks...', 'info');
+            document.getElementById('multi-result').style.display = 'none';
+            document.getElementById('multi-json').style.display = 'none';
+            
+            try {
+                const response = await fetch(`${SUPABASE_URL}/functions/v1/fyers-market-data`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify({
+                        action: 'quotes',
+                        symbols: symbols
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                // Display all quotes
+                if (data.d && data.d.length > 0) {
+                    const resultDiv = document.getElementById('multi-result');
+                    resultDiv.innerHTML = '<h3 style="margin-bottom: 15px; color: #333;">📊 Live Quotes:</h3>';
+                    
+                    data.d.forEach(item => {
+                        const quote = item.v;
+                        resultDiv.innerHTML += createStockCardHTML(quote);
+                    });
+                    
+                    resultDiv.style.display = 'block';
+                    showStatus('multi-status', `✅ Fetched ${data.d.length} quotes successfully!`, 'success');
+                } else {
+                    throw new Error('No data returned');
+                }
+                
+                // Show raw JSON
+                document.getElementById('multi-json').textContent = JSON.stringify(data, null, 2);
+                document.getElementById('multi-json').style.display = 'block';
+                
+            } catch (error) {
+                showStatus('multi-status', `❌ Error: ${error.message}`, 'error');
+                console.error('API Error:', error);
+            }
+        }
+
+        function displayStockCard(quote) {
+            const resultDiv = document.getElementById('quote-result');
+            resultDiv.innerHTML = createStockCardHTML(quote);
+            resultDiv.style.display = 'block';
+        }
+
+        function createStockCardHTML(quote) {
+            const changePercent = ((quote.lp - quote.prev_close_price) / quote.prev_close_price * 100).toFixed(2);
+            const changeColor = changePercent >= 0 ? '#28a745' : '#dc3545';
+            const changeSymbol = changePercent >= 0 ? '▲' : '▼';
+            
+            return `
+                <div class="stock-card" style="border-left-color: ${changeColor};">
+                    <div>
+                        <div class="stock-symbol">${quote.symbol || quote.short_name}</div>
+                        <div class="stock-change" style="color: ${changeColor};">
+                            ${changeSymbol} ${Math.abs(changePercent)}% (₹${(quote.lp - quote.prev_close_price).toFixed(2)})
+                        </div>
+                        <div style="font-size: 11px; color: #999; margin-top: 5px;">
+                            Open: ₹${quote.open_price} | High: ₹${quote.high_price} | Low: ₹${quote.low_price}
+                        </div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div class="stock-price" style="color: ${changeColor};">₹${quote.lp.toFixed(2)}</div>
+                        <div style="font-size: 12px; color: #999;">Vol: ${(quote.volume / 1000).toFixed(0)}K</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function showStatus(elementId, message, type) {
+            const el = document.getElementById(elementId);
+            el.textContent = message;
+            el.className = `status show ${type}`;
+        }
+    </script>
+</body>
+</html>
