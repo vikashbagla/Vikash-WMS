@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fyers OAuth - Wealth Management System</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container { 
+            max-width: 600px; 
+            width: 100%;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+        }
+        h1 { 
+            font-size: 28px; 
+            color: #333; 
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .card { 
+            background: #f8f9fa; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+        .card h2 { 
+            font-size: 18px; 
+            margin-bottom: 12px; 
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .step-number {
+            background: #667eea;
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .info { 
+            background: #e3f2fd; 
+            padding: 12px; 
+            border-radius: 6px; 
+            margin: 12px 0;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #1565c0;
+        }
+        .success { 
+            background: #d4edda; 
+            color: #155724;
+            border-left-color: #28a745;
+        }
+        .btn { 
+            width: 100%;
+            padding: 14px 24px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            font-weight: 600;
+            transition: all 0.3s;
+            margin-top: 10px;
+        }
+        .btn-primary { 
+            background: #667eea; 
+            color: white; 
+        }
+        .btn-primary:hover { 
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        .btn-success { 
+            background: #28a745; 
+            color: white; 
+        }
+        .btn-success:hover { 
+            background: #218838;
+        }
+        .form-group { 
+            margin-bottom: 16px; 
+        }
+        .form-group label { 
+            display: block; 
+            font-size: 14px; 
+            font-weight: 600; 
+            color: #555; 
+            margin-bottom: 8px; 
+        }
+        .form-group input { 
+            width: 100%; 
+            padding: 12px; 
+            border: 2px solid #e0e0e0; 
+            border-radius: 6px; 
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+        }
+        .form-group input:focus { 
+            outline: none; 
+            border-color: #667eea; 
+        }
+        #status { 
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 8px;
+            display: none;
+        }
+        #status.show { 
+            display: block; 
+        }
+        .code-block {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 16px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            overflow-x: auto;
+            margin: 12px 0;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Fyers OAuth Setup</h1>
+        <p class="subtitle">Connect Fyers to Wealth Management System</p>
+
+        <div class="card" id="step1">
+            <h2><span class="step-number">1</span> Login to Fyers</h2>
+            <p style="margin-bottom: 12px; color: #666;">Authorize access to your Fyers account</p>
+            <div class="info">
+                <strong>What happens:</strong><br>
+                • Redirect to Fyers login<br>
+                • You authorize the app<br>
+                • Get auth code back
+            </div>
+            <button class="btn btn-primary" onclick="startOAuth()">
+                🚀 Connect to Fyers
+            </button>
+        </div>
+
+        <div class="card" id="step2" style="display: none;">
+            <h2><span class="step-number">2</span> Get Access Token</h2>
+            
+            <div class="form-group">
+                <label>Auth Code</label>
+                <input type="text" id="auth-code" placeholder="From URL">
+            </div>
+            
+            <div class="form-group">
+                <label>Fyers Secret Key</label>
+                <input type="password" id="secret-key" placeholder="Your secret">
+            </div>
+            
+            <button class="btn btn-success" onclick="exchangeToken()">
+                🔑 Get Access Token
+            </button>
+        </div>
+
+        <div class="card success" id="step3" style="display: none;">
+            <h2><span class="step-number">✓</span> Success!</h2>
+            <p style="margin-bottom: 12px;">Copy this token:</p>
+            
+            <div class="code-block" id="token-display"></div>
+            
+            <div class="info" style="background: #d1ecf1; color: #0c5460;">
+                <strong>Next:</strong><br>
+                1. Copy token above<br>
+                2. Supabase → Edge Functions → Secrets<br>
+                3. Add: FYERS_ACCESS_TOKEN<br>
+                4. Done! 🎉
+            </div>
+            
+            <button class="btn btn-primary" onclick="copyToken()">
+                📋 Copy Token
+            </button>
+        </div>
+
+        <div id="status"></div>
+    </div>
+
+    <script>
+        const APP_ID = '88XL3K3R7R-100';
+        const REDIRECT = 'https://vikashbagla.github.io/Vikash-WMS/fyers-oauth.html';
+        let token = '';
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const code = params.get('auth_code');
+            
+            if (code) {
+                document.getElementById('step1').style.display = 'none';
+                document.getElementById('step2').style.display = 'block';
+                document.getElementById('auth-code').value = code;
+                showStatus('✅ Code received! Enter secret key.', 'success');
+            }
+        });
+
+        function startOAuth() {
+            const state = Math.random().toString(36).substring(7);
+            // Fyers v3 OAuth URL
+            const url = `https://api-t1.fyers.in/api/v3/generate-authcode?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT)}&response_type=code&state=${state}`;
+            showStatus('🔄 Redirecting...', 'info');
+            setTimeout(() => window.location.href = url, 1000);
+        }
+
+        async function exchangeToken() {
+            const code = document.getElementById('auth-code').value.trim();
+            const secret = document.getElementById('secret-key').value.trim();
+            
+            if (!code || !secret) {
+                showStatus('❌ Fill all fields', 'error');
+                return;
+            }
+            
+            showStatus('🔄 Getting token...', 'info');
+            
+            try {
+                const hash = await genHash(APP_ID, secret);
+                
+                // Fyers v3 token validation endpoint
+                const res = await fetch('https://api-t1.fyers.in/api/v3/validate-authcode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        grant_type: 'authorization_code',
+                        appIdHash: hash,
+                        code: code
+                    })
+                });
+                
+                const data = await res.json();
+                
+                // v3 returns access_token directly
+                if (data.access_token) {
+                    token = data.access_token;
+                    document.getElementById('step2').style.display = 'none';
+                    document.getElementById('step3').style.display = 'block';
+                    document.getElementById('token-display').textContent = token;
+                    showStatus('🎉 Success!', 'success');
+                } else {
+                    throw new Error(data.message || JSON.stringify(data));
+                }
+            } catch (error) {
+                showStatus(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function genHash(appId, secret) {
+            const msg = `${appId}:${secret}`;
+            const buf = new TextEncoder().encode(msg);
+            const hash = await crypto.subtle.digest('SHA-256', buf);
+            const arr = Array.from(new Uint8Array(hash));
+            return arr.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        function copyToken() {
+            navigator.clipboard.writeText(token).then(() => {
+                showStatus('✅ Copied!', 'success');
+            }).catch(() => {
+                showStatus('❌ Copy failed', 'error');
+            });
+        }
+
+        function showStatus(msg, type) {
+            const el = document.getElementById('status');
+            el.textContent = msg;
+            el.className = 'show';
+            
+            if (type === 'info') {
+                el.style.background = '#d1ecf1';
+                el.style.color = '#0c5460';
+            } else if (type === 'success') {
+                el.style.background = '#d4edda';
+                el.style.color = '#155724';
+            } else if (type === 'error') {
+                el.style.background = '#f8d7da';
+                el.style.color = '#721c24';
+            }
+        }
+    </script>
+</body>
+</html>
