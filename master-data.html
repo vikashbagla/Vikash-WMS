@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Master Data & Preferences - WMS</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
+        .mode-indicator { position: fixed; top: 10px; right: 10px; padding: 6px 12px; border-radius: 16px; font-size: 11px; font-weight: 600; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+        .mode-local { background: #bee3f8; color: #2c5282; }
+        .mode-supabase { background: #c6f6d5; color: #22543d; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px 30px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .header-content { max-width: 1400px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 24px; font-weight: 600; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 30px; }
+        .page-title { margin-bottom: 30px; }
+        .page-title h2 { font-size: 28px; color: #2d3748; margin-bottom: 8px; }
+        .page-title p { color: #718096; font-size: 14px; }
+        .tabs { display: flex; gap: 8px; border-bottom: 2px solid #e2e8f0; margin-bottom: 30px; }
+        .tab-btn { padding: 12px 24px; background: none; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-size: 15px; font-weight: 500; color: #718096; transition: all 0.2s; margin-bottom: -2px; }
+        .tab-btn:hover { color: #667eea; }
+        .tab-btn.active { color: #667eea; border-bottom-color: #667eea; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .actions-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; gap: 16px; }
+        .search-box { flex: 1; max-width: 400px; }
+        .search-box input { width: 100%; padding: 10px 16px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px; }
+        .search-box input:focus { outline: none; border-color: #667eea; }
+        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform 0.2s; }
+        .btn-primary:hover { transform: translateY(-2px); }
+        .btn-secondary { background: #f7fafc; color: #4a5568; padding: 10px 20px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+        .btn-secondary:hover { background: #e2e8f0; }
+        .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 24px; }
+        .card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); transition: all 0.3s; }
+        .card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
+        .card-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 16px; }
+        .card-avatar { width: 50px; height: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 20px; font-weight: 600; flex-shrink: 0; }
+        .card-info { flex: 1; margin-left: 16px; }
+        .card-info h3 { font-size: 18px; color: #2d3748; margin-bottom: 4px; }
+        .card-info p { font-size: 13px; color: #718096; }
+        .card-actions { display: flex; gap: 8px; }
+        .btn-icon { width: 32px; height: 32px; border: none; background: #f7fafc; border-radius: 6px; cursor: pointer; font-size: 16px; transition: background 0.2s; }
+        .btn-icon:hover { background: #e2e8f0; }
+        .card-details { padding-top: 16px; border-top: 1px solid #e2e8f0; }
+        .detail-row { display: flex; justify-content: space-between; padding: 8px 0; font-size: 14px; align-items: flex-start; }
+        .detail-label { color: #718096; min-width: 100px; }
+        .detail-value { color: #2d3748; font-weight: 500; text-align: right; }
+        .broker-tags { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+        .broker-tag { display: inline-block; padding: 4px 10px; background: #dbeafe; color: #1e40af; border-radius: 12px; font-size: 12px; font-weight: 600; }
+        .status-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+        .status-active { background: #c6f6d5; color: #22543d; }
+        .status-inactive { background: #fed7d7; color: #742a2a; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: flex-start; justify-content: center; z-index: 1000; padding: 20px; overflow-y: auto; }
+        .modal.show { display: flex; }
+        .modal-content { background: white; border-radius: 16px; width: 100%; max-width: 800px; margin: 40px auto; }
+        .modal-header { padding: 20px 24px; border-bottom: 1px solid #e2e8f0; }
+        .modal-header h3 { font-size: 20px; color: #2d3748; }
+        .modal-body { padding: 24px; max-height: 70vh; overflow-y: auto; }
+        .form-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 13px; font-weight: 600; color: #4a5568; margin-bottom: 6px; }
+        .form-group input, .form-group select { width: 100%; padding: 8px 12px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 14px; }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: #667eea; }
+        .form-section { margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0; }
+        .form-section:last-child { border-bottom: none; margin-bottom: 0; }
+        .form-section-title { font-size: 15px; font-weight: 600; color: #2d3748; margin-bottom: 16px; }
+        .modal-footer { padding: 16px 24px; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 12px; }
+        .broker-account-item { background: #f7fafc; border: 2px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+        .broker-account-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .btn-remove { background: #fee2e2; color: #991b1b; border: none; padding: 6px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 600; }
+        .btn-remove:hover { background: #fecaca; }
+        .btn-add-broker { background: #eff6ff; color: #1e40af; border: 2px dashed #93c5fd; padding: 12px; border-radius: 8px; width: 100%; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 8px; }
+        .btn-add-broker:hover { background: #dbeafe; }
+        .empty-state { text-align: center; padding: 60px 20px; background: white; border-radius: 12px; }
+        .empty-state-icon { font-size: 64px; margin-bottom: 20px; }
+        .empty-state h3 { font-size: 20px; color: #2d3748; margin-bottom: 12px; }
+        .preferences-section { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+        .preferences-section h3 { font-size: 18px; color: #2d3748; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e2e8f0; }
+        .brokerage-grid { background: #fafafa; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-top: 12px; }
+        .brokerage-section { margin-bottom: 16px; }
+        .brokerage-section:last-child { margin-bottom: 0; }
+        .brokerage-label { font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 8px; display: block; }
+        @media (max-width: 768px) {
+            .card-grid { grid-template-columns: 1fr; }
+            .form-row { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="mode-indicator" id="modeIndicator">🔄</div>
+    
+    <div class="header">
+        <div class="header-content">
+            <h1>Master Data & Preferences</h1>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="page-title">
+            <h2>System Configuration</h2>
+            <p>Manage investors, brokers, and preferences</p>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab(event, 'investors')">Investors</button>
+            <button class="tab-btn" onclick="switchTab(event, 'brokers')">Brokers</button>
+            <button class="tab-btn" onclick="switchTab(event, 'preferences')">Preferences</button>
+        </div>
+        
+        <div id="investors-tab" class="tab-content active">
+            <div class="actions-bar">
+                <div class="search-box">
+                    <input type="text" id="investorSearch" placeholder="Search..." onkeyup="filterInvestors()">
+                </div>
+                <button class="btn-primary" onclick="openAddInvestorModal()">+ Add Investor</button>
+            </div>
+            <div id="investorsGrid" class="card-grid"></div>
+        </div>
+        
+        <div id="brokers-tab" class="tab-content">
+            <div class="actions-bar">
+                <div class="search-box">
+                    <input type="text" id="brokerSearch" placeholder="Search..." onkeyup="filterBrokers()">
+                </div>
+                <button class="btn-primary" onclick="openAddBrokerModal()">+ Add Broker</button>
+            </div>
+            <div id="brokersGrid" class="card-grid"></div>
+        </div>
+        
+        <div id="preferences-tab" class="tab-content">
+            <div class="preferences-section">
+                <h3>Display Preferences</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Number Format</label>
+                        <select id="numberFormat">
+                            <option value="indian">Indian</option>
+                            <option value="international">International</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Currency Symbol</label>
+                        <input type="text" id="currencySymbol" value="₹" maxlength="3">
+                    </div>
+                    <div class="form-group">
+                        <label>Date Format</label>
+                        <select id="dateFormat">
+                            <option value="dd-mmm-yy">DD-MMM-YY</option>
+                            <option value="dd/mm/yyyy">DD/MM/YYYY</option>
+                            <option value="mm/dd/yyyy">MM/DD/YYYY</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Decimal Places</label>
+                        <select id="decimalPlaces">
+                            <option value="0">0</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Amount Display Unit</label>
+                        <select id="amountDisplay">
+                            <option value="thousands">Thousands</option>
+                            <option value="lakhs">Lakhs</option>
+                            <option value="millions">Millions</option>
+                            <option value="crores">Crores</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="preferences-section">
+                <h3>Application Settings</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Theme</label>
+                        <select id="theme">
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Default View</label>
+                        <select id="defaultView">
+                            <option value="portfolio">Portfolio</option>
+                            <option value="transactions">Transactions</option>
+                            <option value="master-data">Master Data</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Financial Year Start</label>
+                        <select id="financialYearStart">
+                            <option value="1">January</option>
+                            <option value="2">February</option>
+                            <option value="3">March</option>
+                            <option value="4">April</option>
+                            <option value="5">May</option>
+                            <option value="6">June</option>
+                            <option value="7">July</option>
+                            <option value="8">August</option>
+                            <option value="9">September</option>
+                            <option value="10">October</option>
+                            <option value="11">November</option>
+                            <option value="12">December</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="display:flex;justify-content:flex-end;margin-top:24px;">
+                <button class="btn-primary" onclick="savePreferences()">Save Preferences</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Investor Modal -->
+    <div id="investorModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="investorModalTitle">Add Investor</h3>
+            </div>
+            <div class="modal-body">
+                <form id="investorForm" onsubmit="return false;">
+                    <input type="hidden" id="investorId">
+                    
+                    <div class="form-section">
+                        <div class="form-section-title">Basic Information</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Full Name *</label>
+                                <input type="text" id="investorName" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Account Type *</label>
+                                <select id="investorAccountType" required>
+                                    <option value="">Select...</option>
+                                    <option value="Individual">Individual</option>
+                                    <option value="Joint">Joint</option>
+                                    <option value="HUF">HUF</option>
+                                    <option value="Trust">Trust</option>
+                                    <option value="Corporate">Corporate</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Email</label>
+                                <input type="email" id="investorEmail">
+                            </div>
+                            <div class="form-group">
+                                <label>PAN</label>
+                                <input type="text" id="investorPan" maxlength="10" style="text-transform:uppercase;">
+                            </div>
+                            <div class="form-group">
+                                <label>Phone</label>
+                                <input type="tel" id="investorPhone">
+                            </div>
+                            <div class="form-group">
+                                <label>Status *</label>
+                                <select id="investorStatus" required>
+                                    <option value="true">Active</option>
+                                    <option value="false">Inactive</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <div class="form-section-title">Broker Accounts</div>
+                        <div id="brokerAccountsList"></div>
+                        <button type="button" class="btn-add-broker" onclick="addBrokerAccount()">+ Add Broker Account</button>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeInvestorModal()">Cancel</button>
+                <button class="btn-primary" onclick="saveInvestor()">Save</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Broker Modal -->
+    <div id="brokerModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="brokerModalTitle">Add Broker</h3>
+            </div>
+            <div class="modal-body">
+                <form id="brokerForm" onsubmit="return false;">
+                    <input type="hidden" id="brokerId">
+                    
+                    <div class="form-section">
+                        <div class="form-section-title">Basic Information</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Broker Name *</label>
+                                <input type="text" id="brokerName" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Broker Code</label>
+                                <input type="text" id="brokerCode" style="text-transform:uppercase;">
+                            </div>
+                            <div class="form-group">
+                                <label>Website</label>
+                                <input type="url" id="brokerWebsite" placeholder="https://...">
+                            </div>
+                            <div class="form-group">
+                                <label>Status *</label>
+                                <select id="brokerStatus" required>
+                                    <option value="true">Active</option>
+                                    <option value="false">Inactive</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <div class="form-section-title">Default Brokerage Rates</div>
+                        <div class="brokerage-grid">
+                            <div class="brokerage-section">
+                                <span class="brokerage-label">Equity - Delivery</span>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Percentage (%)</label>
+                                        <input type="number" step="0.01" id="eqDelPct" value="0">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Max (₹)</label>
+                                        <input type="number" step="0.01" id="eqDelMax" value="20">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="brokerage-section">
+                                <span class="brokerage-label">Equity - Intraday</span>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Percentage (%)</label>
+                                        <input type="number" step="0.01" id="eqIntraPct" value="0.03">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Max (₹)</label>
+                                        <input type="number" step="0.01" id="eqIntraMax" value="20">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="brokerage-section">
+                                <span class="brokerage-label">Derivatives - Futures</span>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Percentage (%)</label>
+                                        <input type="number" step="0.01" id="futPct" value="0.03">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Max (₹)</label>
+                                        <input type="number" step="0.01" id="futMax" value="20">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="brokerage-section">
+                                <span class="brokerage-label">Derivatives - Options</span>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Flat (₹)</label>
+                                        <input type="number" step="0.01" id="optFlat" value="20">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Max (₹)</label>
+                                        <input type="number" step="0.01" id="optMax" value="0">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-row" style="margin-top:16px;">
+                            <div class="form-group">
+                                <label>Charges Inclusive?</label>
+                                <select id="chargesInclusive">
+                                    <option value="false">No</option>
+                                    <option value="true">Yes</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeBrokerModal()">Cancel</button>
+                <button class="btn-primary" onclick="saveBroker()">Save</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="master-data.js"></script>
+</body>
+</html>
