@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Investors - WMS</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 30px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .btn-back {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 8px 16px;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .btn-back:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px;
+        }
+
+        .page-title {
+            margin-bottom: 30px;
+        }
+
+        .page-title h2 {
+            font-size: 28px;
+            color: #2d3748;
+            margin-bottom: 8px;
+        }
+
+        .page-title p {
+            color: #718096;
+            font-size: 14px;
+        }
+
+        .actions-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .search-box {
+            flex: 1;
+            max-width: 400px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 10px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+        }
+
+        .investors-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 24px;
+        }
+
+        .investor-card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: all 0.3s;
+        }
+
+        .investor-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+        }
+
+        .investor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 16px;
+        }
+
+        .investor-avatar {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .investor-name {
+            flex: 1;
+            margin-left: 16px;
+        }
+
+        .investor-name h3 {
+            font-size: 18px;
+            color: #2d3748;
+            margin-bottom: 4px;
+        }
+
+        .investor-name p {
+            font-size: 13px;
+            color: #718096;
+        }
+
+        .investor-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-icon {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: #f7fafc;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.2s;
+        }
+
+        .btn-icon:hover {
+            background: #e2e8f0;
+        }
+
+        .investor-details {
+            padding-top: 16px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 14px;
+        }
+
+        .detail-label {
+            color: #718096;
+        }
+
+        .detail-value {
+            color: #2d3748;
+            font-weight: 500;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-active {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .status-inactive {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 24px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .modal-header h3 {
+            font-size: 20px;
+            color: #2d3748;
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: #4a5568;
+            margin-bottom: 8px;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .modal-footer {
+            padding: 24px;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        .btn-secondary {
+            background: #f7fafc;
+            color: #4a5568;
+            padding: 10px 20px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .btn-secondary:hover {
+            background: #e2e8f0;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            background: white;
+            border-radius: 12px;
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+
+        .empty-state h3 {
+            font-size: 20px;
+            color: #2d3748;
+            margin-bottom: 12px;
+        }
+
+        .empty-state p {
+            color: #718096;
+            margin-bottom: 24px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #718096;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .investors-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .actions-bar {
+                flex-direction: column;
+                gap: 16px;
+            }
+
+            .search-box {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="header-content">
+            <h1>Investors Module</h1>
+            <div class="header-actions">
+                <a href="index.html" class="btn-back">← Back to Dashboard</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="container">
+        <div class="page-title">
+            <h2>Manage Investors</h2>
+            <p>View and manage all investor profiles</p>
+        </div>
+
+        <div class="actions-bar">
+            <div class="search-box">
+                <input 
+                    type="text" 
+                    id="searchInput" 
+                    placeholder="Search investors by name or email..."
+                    onkeyup="filterInvestors()"
+                >
+            </div>
+            <button class="btn-primary" onclick="openAddModal()">+ Add Investor</button>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loadingState" class="loading">
+            <div class="spinner"></div>
+            <p>Loading investors...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <div class="empty-state-icon">👥</div>
+            <h3>No investors yet</h3>
+            <p>Get started by adding your first investor</p>
+            <button class="btn-primary" onclick="openAddModal()">+ Add First Investor</button>
+        </div>
+
+        <!-- Investors Grid -->
+        <div id="investorsGrid" class="investors-grid" style="display: none;"></div>
+    </div>
+
+    <!-- Add/Edit Investor Modal -->
+    <div id="investorModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Add Investor</h3>
+            </div>
+            <div class="modal-body">
+                <form id="investorForm">
+                    <input type="hidden" id="investorId">
+                    
+                    <div class="form-group">
+                        <label for="investorName">Full Name *</label>
+                        <input type="text" id="investorName" required>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="investorEmail">Email</label>
+                            <input type="email" id="investorEmail">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="investorPhone">Phone</label>
+                            <input type="tel" id="investorPhone">
+                        </div>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="investorPan">PAN</label>
+                            <input type="text" id="investorPan" maxlength="10" style="text-transform: uppercase;">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="investorStatus">Status *</label>
+                            <select id="investorStatus" required>
+                                <option value="active">Active</option>
+                                <option value="inactive">Inactive</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="investorNotes">Notes</label>
+                        <textarea id="investorNotes" placeholder="Additional notes about this investor..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn-primary" onclick="saveInvestor()">Save Investor</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
+
+        // State
+        let investors = [];
+        let editingInvestorId = null;
+
+        // Initialize
+        window.addEventListener('DOMContentLoaded', () => {
+            loadInvestors();
+        });
+
+        // Load investors from Supabase
+        async function loadInvestors() {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/investors?select=*&order=name.asc`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                investors = await response.json();
+                renderInvestors();
+            } catch (error) {
+                console.error('Error loading investors:', error);
+                alert('Failed to load investors. Please refresh the page.');
+            }
+        }
+
+        // Render investors
+        function renderInvestors() {
+            const loadingState = document.getElementById('loadingState');
+            const emptyState = document.getElementById('emptyState');
+            const grid = document.getElementById('investorsGrid');
+
+            loadingState.style.display = 'none';
+
+            if (investors.length === 0) {
+                emptyState.style.display = 'block';
+                grid.style.display = 'none';
+                return;
+            }
+
+            emptyState.style.display = 'none';
+            grid.style.display = 'grid';
+
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const filteredInvestors = investors.filter(inv => 
+                inv.name.toLowerCase().includes(searchTerm) ||
+                (inv.email && inv.email.toLowerCase().includes(searchTerm))
+            );
+
+            grid.innerHTML = filteredInvestors.map(investor => {
+                const initials = investor.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+                const statusClass = investor.is_active ? 'status-active' : 'status-inactive';
+                const statusText = investor.is_active ? 'Active' : 'Inactive';
+
+                return `
+                    <div class="investor-card">
+                        <div class="investor-header">
+                            <div class="investor-avatar">${initials}</div>
+                            <div class="investor-name">
+                                <h3>${investor.name}</h3>
+                                <p>${investor.email || 'No email'}</p>
+                            </div>
+                            <div class="investor-actions">
+                                <button class="btn-icon" onclick="editInvestor('${investor.id}')" title="Edit">✏️</button>
+                                <button class="btn-icon" onclick="deleteInvestor('${investor.id}')" title="Delete">🗑️</button>
+                            </div>
+                        </div>
+                        <div class="investor-details">
+                            <div class="detail-row">
+                                <span class="detail-label">Phone</span>
+                                <span class="detail-value">${investor.phone || 'Not set'}</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">PAN</span>
+                                <span class="detail-value">${investor.pan || 'Not set'}</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Status</span>
+                                <span class="status-badge ${statusClass}">${statusText}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Filter investors
+        function filterInvestors() {
+            renderInvestors();
+        }
+
+        // Open add modal
+        function openAddModal() {
+            editingInvestorId = null;
+            document.getElementById('modalTitle').textContent = 'Add Investor';
+            document.getElementById('investorForm').reset();
+            document.getElementById('investorId').value = '';
+            document.getElementById('investorStatus').value = 'active';
+            document.getElementById('investorModal').classList.add('show');
+        }
+
+        // Edit investor
+        function editInvestor(id) {
+            const investor = investors.find(inv => inv.id === id);
+            if (!investor) return;
+
+            editingInvestorId = id;
+            document.getElementById('modalTitle').textContent = 'Edit Investor';
+            document.getElementById('investorId').value = investor.id;
+            document.getElementById('investorName').value = investor.name;
+            document.getElementById('investorEmail').value = investor.email || '';
+            document.getElementById('investorPhone').value = investor.phone || '';
+            document.getElementById('investorPan').value = investor.pan || '';
+            document.getElementById('investorStatus').value = investor.is_active ? 'active' : 'inactive';
+            document.getElementById('investorNotes').value = investor.notes || '';
+            document.getElementById('investorModal').classList.add('show');
+        }
+
+        // Save investor
+        async function saveInvestor() {
+            const name = document.getElementById('investorName').value.trim();
+            const email = document.getElementById('investorEmail').value.trim();
+            const phone = document.getElementById('investorPhone').value.trim();
+            const pan = document.getElementById('investorPan').value.trim().toUpperCase();
+            const status = document.getElementById('investorStatus').value;
+            const notes = document.getElementById('investorNotes').value.trim();
+
+            if (!name) {
+                alert('Please enter investor name');
+                return;
+            }
+
+            const investorData = {
+                name,
+                email: email || null,
+                phone: phone || null,
+                pan: pan || null,
+                is_active: status === 'active',
+                notes: notes || null
+            };
+
+            try {
+                if (editingInvestorId) {
+                    // Update existing investor
+                    const response = await fetch(`${SUPABASE_URL}/rest/v1/investors?id=eq.${editingInvestorId}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=representation'
+                        },
+                        body: JSON.stringify(investorData)
+                    });
+
+                    if (!response.ok) throw new Error('Update failed');
+                } else {
+                    // Add new investor
+                    const response = await fetch(`${SUPABASE_URL}/rest/v1/investors`, {
+                        method: 'POST',
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=representation'
+                        },
+                        body: JSON.stringify(investorData)
+                    });
+
+                    if (!response.ok) throw new Error('Insert failed');
+                }
+
+                closeModal();
+                loadInvestors();
+            } catch (error) {
+                console.error('Error saving investor:', error);
+                alert('Failed to save investor. Please try again.');
+            }
+        }
+
+        // Delete investor
+        async function deleteInvestor(id) {
+            const investor = investors.find(inv => inv.id === id);
+            if (!investor) return;
+
+            if (!confirm(`Are you sure you want to delete ${investor.name}?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/investors?id=eq.${id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                if (!response.ok) throw new Error('Delete failed');
+
+                loadInvestors();
+            } catch (error) {
+                console.error('Error deleting investor:', error);
+                alert('Failed to delete investor. They may have associated data.');
+            }
+        }
+
+        // Close modal
+        function closeModal() {
+            document.getElementById('investorModal').classList.remove('show');
+            document.getElementById('investorForm').reset();
+            editingInvestorId = null;
+        }
+
+        // Close modal on background click
+        document.getElementById('investorModal').addEventListener('click', (e) => {
+            if (e.target.id === 'investorModal') {
+                closeModal();
+            }
+        });
+    </script>
+</body>
+</html>
