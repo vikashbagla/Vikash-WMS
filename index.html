@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMS - Wealth Management System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        /* Landing Page Styles */
+        .landing-container {
+            max-width: 1200px;
+            width: 100%;
+        }
+
+        .landing-header {
+            text-align: center;
+            color: white;
+            margin-bottom: 50px;
+        }
+
+        .landing-header h1 {
+            font-size: 48px;
+            font-weight: 700;
+            margin-bottom: 15px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .landing-header p {
+            font-size: 20px;
+            opacity: 0.95;
+            font-weight: 300;
+        }
+
+        .landing-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .landing-left {
+            padding: 60px 50px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .landing-left h2 {
+            font-size: 28px;
+            color: #2d3748;
+            margin-bottom: 20px;
+        }
+
+        .feature-list {
+            list-style: none;
+            margin-top: 30px;
+        }
+
+        .feature-list li {
+            padding: 12px 0;
+            color: #4a5568;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+        }
+
+        .feature-list li:before {
+            content: "✓";
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            background: #667eea;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 24px;
+            margin-right: 12px;
+            font-weight: bold;
+        }
+
+        .landing-right {
+            padding: 60px 50px;
+            background: white;
+        }
+
+        /* Login Form Styles */
+        .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .login-form h3 {
+            font-size: 24px;
+            color: #2d3748;
+            margin-bottom: 10px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .form-group label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #4a5568;
+        }
+
+        .form-group input {
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn-login {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 10px;
+        }
+
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-login:active {
+            transform: translateY(0);
+        }
+
+        .btn-login:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .error-message {
+            background: #fed7d7;
+            color: #c53030;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        .demo-credentials {
+            background: #edf2f7;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #4a5568;
+        }
+
+        .demo-credentials strong {
+            color: #2d3748;
+        }
+
+        /* App Container (Hidden initially) */
+        .app-container {
+            display: none;
+            max-width: 1400px;
+            width: 100%;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .app-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .app-header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .user-info span {
+            font-size: 14px;
+        }
+
+        .btn-logout {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 8px 16px;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-logout:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .app-content {
+            padding: 30px;
+        }
+
+        .modules-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+        }
+
+        .module-card {
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 30px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .module-card:hover {
+            border-color: #667eea;
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(102, 126, 234, 0.15);
+        }
+
+        .module-card h3 {
+            font-size: 20px;
+            color: #2d3748;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .module-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 20px;
+        }
+
+        .module-card p {
+            color: #718096;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #c6f6d5;
+            color: #22543d;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 12px;
+        }
+
+        .status-badge.coming-soon {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .landing-card {
+                grid-template-columns: 1fr;
+            }
+
+            .landing-left {
+                padding: 40px 30px;
+            }
+
+            .landing-right {
+                padding: 40px 30px;
+            }
+
+            .landing-header h1 {
+                font-size: 36px;
+            }
+
+            .modules-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Landing Page -->
+    <div class="landing-container" id="landingPage">
+        <div class="landing-header">
+            <h1>Wealth Management System</h1>
+            <p>Professional Portfolio Tracking for Indian Equities & Derivatives</p>
+        </div>
+
+        <div class="landing-card">
+            <div class="landing-left">
+                <h2>Manage Your Investments Professionally</h2>
+                <ul class="feature-list">
+                    <li>Multi-investor portfolio tracking</li>
+                    <li>Real-time market data integration</li>
+                    <li>Comprehensive P&L analysis</li>
+                    <li>F&O derivatives support</li>
+                    <li>Advanced reporting & analytics</li>
+                    <li>Brokers API integration</li>
+                </ul>
+            </div>
+
+            <div class="landing-right">
+                <form class="login-form" id="loginForm">
+                    <h3>Welcome Back</h3>
+                    
+                    <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; margin-bottom: 16px; border-radius: 4px;">
+                        <p style="font-size: 12px; color: #92400e; margin: 0;">
+                            <strong>Note:</strong> Login will work after deploying to GitHub Pages. 
+                            Demo user: vikash@example.com
+                        </p>
+                    </div>
+                    
+                    <div class="error-message" id="errorMessage"></div>
+
+                    <div class="form-group">
+                        <label for="email">Email Address</label>
+                        <input 
+                            type="email" 
+                            id="email" 
+                            placeholder="Enter your email"
+                            required
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input 
+                            type="password" 
+                            id="password" 
+                            placeholder="Enter your password"
+                            required
+                        >
+                    </div>
+
+                    <button type="submit" class="btn-login" id="loginBtn">
+                        Sign In
+                    </button>
+
+                    <div style="text-align: center; margin-top: 16px;">
+                        <p style="color: #718096; font-size: 14px;">
+                            Don't have an account? 
+                            <a href="javascript:void(0)" onclick="showSignup()" style="color: #667eea; text-decoration: none; font-weight: 600;">Sign Up</a>
+                        </p>
+                    </div>
+                </form>
+
+                <!-- Sign Up Form (Hidden initially) -->
+                <form class="login-form" id="signupForm" style="display: none;">
+                    <h3>Create Account</h3>
+                    
+                    <div class="error-message" id="signupErrorMessage"></div>
+
+                    <div class="form-group">
+                        <label for="signupName">Full Name *</label>
+                        <input 
+                            type="text" 
+                            id="signupName" 
+                            placeholder="Enter your full name"
+                            required
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="signupEmail">Email Address *</label>
+                        <input 
+                            type="email" 
+                            id="signupEmail" 
+                            placeholder="Enter your email"
+                            required
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="signupPassword">Password *</label>
+                        <input 
+                            type="password" 
+                            id="signupPassword" 
+                            placeholder="Create a password (min 6 characters)"
+                            required
+                            minlength="6"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="signupPasswordConfirm">Confirm Password *</label>
+                        <input 
+                            type="password" 
+                            id="signupPasswordConfirm" 
+                            placeholder="Confirm your password"
+                            required
+                            minlength="6"
+                        >
+                    </div>
+
+                    <button type="submit" class="btn-login" id="signupBtn">
+                        Create Account
+                    </button>
+
+                    <div style="text-align: center; margin-top: 16px;">
+                        <p style="color: #718096; font-size: 14px;">
+                            Already have an account? 
+                            <a href="javascript:void(0)" onclick="showLogin()" style="color: #667eea; text-decoration: none; font-weight: 600;">Sign In</a>
+                        </p>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App (Hidden initially) -->
+    <div class="app-container" id="appContainer">
+        <div class="app-header">
+            <h1>WMS Dashboard</h1>
+            <div class="user-info">
+                <span id="userName">Welcome, User</span>
+                <button class="btn-logout" onclick="logout()">Logout</button>
+            </div>
+        </div>
+
+        <div class="app-content">
+            <h2 style="margin-bottom: 30px; color: #2d3748;">Choose a Module</h2>
+            
+            <div class="modules-grid">
+                <div class="module-card" onclick="openModule('master-data')">
+                    <h3>
+                        <div class="module-icon">⚙️</div>
+                        Master Data & Preferences
+                    </h3>
+                    <p>Manage investors, brokers, accounts, and system preferences. Configure brokerage rates and user settings.</p>
+                    <span class="status-badge">Ready</span>
+                </div>
+
+                <div class="module-card" onclick="openModule('transactions')">
+                    <h3>
+                        <div class="module-icon">💰</div>
+                        Transactions
+                    </h3>
+                    <p>Record trades, corporate actions, and income events with automated cost calculations and reconciliation.</p>
+                    <span class="status-badge coming-soon">Coming Soon</span>
+                </div>
+
+                <div class="module-card" onclick="openModule('portfolio')">
+                    <h3>
+                        <div class="module-icon">📊</div>
+                        Portfolio & Reports
+                    </h3>
+                    <p>View current holdings, P&L analysis, allocation charts, performance metrics, and generate comprehensive reports.</p>
+                    <span class="status-badge coming-soon">Coming Soon</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
+
+        // Current user state
+        let currentUser = null;
+
+        // Check if user is already logged in
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedUser = localStorage.getItem('wms_user');
+            if (savedUser) {
+                currentUser = JSON.parse(savedUser);
+                showApp();
+            }
+        });
+
+        // Login form handler
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            const loginBtn = document.getElementById('loginBtn');
+            const errorMessage = document.getElementById('errorMessage');
+
+            // Show loading state
+            loginBtn.disabled = true;
+            loginBtn.innerHTML = 'Signing in<span class="spinner"></span>';
+            errorMessage.classList.remove('show');
+
+            try {
+                // Query users table
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=*`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                const users = await response.json();
+
+                if (users && users.length > 0) {
+                    const user = users[0];
+                    
+                    // Check password (stored in database)
+                    if (user.password && user.password === password) {
+                        currentUser = user;
+                        
+                        // Save to localStorage
+                        localStorage.setItem('wms_user', JSON.stringify(user));
+                        
+                        // Show app
+                        showApp();
+                    } else {
+                        throw new Error('Invalid password');
+                    }
+                } else {
+                    throw new Error('User not found');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                errorMessage.textContent = 'Invalid email or password. Please try again.';
+                errorMessage.classList.add('show');
+                
+                loginBtn.disabled = false;
+                loginBtn.innerHTML = 'Sign In';
+            }
+        });
+
+        // Signup form handler
+        document.getElementById('signupForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const name = document.getElementById('signupName').value.trim();
+            const email = document.getElementById('signupEmail').value.trim();
+            const password = document.getElementById('signupPassword').value;
+            const passwordConfirm = document.getElementById('signupPasswordConfirm').value;
+            const signupBtn = document.getElementById('signupBtn');
+            const errorMessage = document.getElementById('signupErrorMessage');
+
+            // Validate passwords match
+            if (password !== passwordConfirm) {
+                errorMessage.textContent = 'Passwords do not match';
+                errorMessage.classList.add('show');
+                return;
+            }
+
+            // Show loading state
+            signupBtn.disabled = true;
+            signupBtn.innerHTML = 'Creating account<span class="spinner"></span>';
+            errorMessage.classList.remove('show');
+
+            try {
+                // Check if user already exists
+                const checkResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                const existingUsers = await checkResponse.json();
+                
+                if (existingUsers && existingUsers.length > 0) {
+                    throw new Error('An account with this email already exists');
+                }
+
+                // Create new user
+                const createResponse = await fetch(`${SUPABASE_URL}/rest/v1/users`, {
+                    method: 'POST',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=representation'
+                    },
+                    body: JSON.stringify({
+                        name: name,
+                        email: email,
+                        password: password,
+                        is_active: true
+                    })
+                });
+
+                if (!createResponse.ok) {
+                    const errorData = await createResponse.json();
+                    throw new Error(errorData.message || 'Failed to create account');
+                }
+
+                const newUsers = await createResponse.json();
+                
+                if (newUsers && newUsers.length > 0) {
+                    currentUser = newUsers[0];
+                    
+                    // Save to localStorage
+                    localStorage.setItem('wms_user', JSON.stringify(currentUser));
+                    
+                    // Show app
+                    showApp();
+                } else {
+                    throw new Error('Account created but could not log in');
+                }
+            } catch (error) {
+                console.error('Signup error:', error);
+                errorMessage.textContent = error.message || 'Failed to create account. Please try again.';
+                errorMessage.classList.add('show');
+                
+                signupBtn.disabled = false;
+                signupBtn.innerHTML = 'Create Account';
+            }
+        });
+
+        // Show signup form
+        function showSignup() {
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('signupForm').style.display = 'flex';
+            document.getElementById('signupErrorMessage').classList.remove('show');
+        }
+
+        // Show login form
+        function showLogin() {
+            document.getElementById('signupForm').style.display = 'none';
+            document.getElementById('loginForm').style.display = 'flex';
+            document.getElementById('errorMessage').classList.remove('show');
+        }
+
+        // Show app function
+        function showApp() {
+            document.getElementById('landingPage').style.display = 'none';
+            document.getElementById('appContainer').style.display = 'block';
+            document.getElementById('userName').textContent = `Welcome, ${currentUser.display_name || currentUser.username}`;
+        }
+
+        // Logout function
+        function logout() {
+            if (confirm('Are you sure you want to logout?')) {
+                currentUser = null;
+                localStorage.removeItem('wms_user');
+                
+                document.getElementById('appContainer').style.display = 'none';
+                document.getElementById('landingPage').style.display = 'flex';
+                
+                // Reset form
+                document.getElementById('loginForm').reset();
+                document.getElementById('errorMessage').classList.remove('show');
+            }
+        }
+
+        // Open module function
+        function openModule(moduleName) {
+            if (moduleName === 'master-data') {
+                // Redirect to master data module
+                window.location.href = 'master-data.html';
+            } else {
+                alert(`The ${moduleName} module is coming soon!`);
+            }
+        }
+    </script>
+</body>
+</html>

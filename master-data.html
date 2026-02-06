@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Master Data & Preferences - WMS</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 30px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .btn-back {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 8px 16px;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .btn-back:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px;
+        }
+
+        .page-title {
+            margin-bottom: 30px;
+        }
+
+        .page-title h2 {
+            font-size: 28px;
+            color: #2d3748;
+            margin-bottom: 8px;
+        }
+
+        .page-title p {
+            color: #718096;
+            font-size: 14px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 8px;
+            border-bottom: 2px solid #e2e8f0;
+            margin-bottom: 30px;
+        }
+
+        .tab-btn {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 500;
+            color: #718096;
+            transition: all 0.2s;
+            margin-bottom: -2px;
+        }
+
+        .tab-btn:hover {
+            color: #667eea;
+        }
+
+        .tab-btn.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Common Styles */
+        .actions-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .search-box {
+            flex: 1;
+            max-width: 400px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 10px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: #f7fafc;
+            color: #4a5568;
+            padding: 10px 20px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .btn-secondary:hover {
+            background: #e2e8f0;
+        }
+
+        /* Card Grid */
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 24px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: all 0.3s;
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 16px;
+        }
+
+        .card-avatar {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .card-info {
+            flex: 1;
+            margin-left: 16px;
+        }
+
+        .card-info h3 {
+            font-size: 18px;
+            color: #2d3748;
+            margin-bottom: 4px;
+        }
+
+        .card-info p {
+            font-size: 13px;
+            color: #718096;
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-icon {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: #f7fafc;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.2s;
+        }
+
+        .btn-icon:hover {
+            background: #e2e8f0;
+        }
+
+        .card-details {
+            padding-top: 16px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 14px;
+        }
+
+        .detail-label {
+            color: #718096;
+        }
+
+        .detail-value {
+            color: #2d3748;
+            font-weight: 500;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-active {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .status-inactive {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 24px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .modal-header h3 {
+            font-size: 20px;
+            color: #2d3748;
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: #4a5568;
+            margin-bottom: 8px;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .modal-footer {
+            padding: 24px;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            background: white;
+            border-radius: 12px;
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+
+        .empty-state h3 {
+            font-size: 20px;
+            color: #2d3748;
+            margin-bottom: 12px;
+        }
+
+        .empty-state p {
+            color: #718096;
+            margin-bottom: 24px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #718096;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Preferences Specific Styles */
+        .preferences-section {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .preferences-section h3 {
+            font-size: 18px;
+            color: #2d3748;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        @media (max-width: 768px) {
+            .card-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .actions-bar {
+                flex-direction: column;
+                gap: 16px;
+            }
+
+            .search-box {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="header-content">
+            <h1>Master Data & Preferences</h1>
+            <div class="header-actions">
+                <a href="index.html" class="btn-back">← Back to Dashboard</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="container">
+        <div class="page-title">
+            <h2>System Configuration</h2>
+            <p>Manage investors, brokers, accounts, and system preferences</p>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('investors')">Investors</button>
+            <button class="tab-btn" onclick="switchTab('brokers')">Brokers</button>
+            <button class="tab-btn" onclick="switchTab('preferences')">Preferences</button>
+        </div>
+
+        <!-- Investors Tab -->
+        <div id="investors-tab" class="tab-content active">
+            <div class="actions-bar">
+                <div class="search-box">
+                    <input 
+                        type="text" 
+                        id="investorSearch" 
+                        placeholder="Search investors by name or email..."
+                        onkeyup="filterInvestors()"
+                    >
+                </div>
+                <button class="btn-primary" onclick="openAddInvestorModal()">+ Add Investor</button>
+            </div>
+
+            <div id="investorsLoading" class="loading">
+                <div class="spinner"></div>
+                <p>Loading investors...</p>
+            </div>
+
+            <div id="investorsEmpty" class="empty-state" style="display: none;">
+                <div class="empty-state-icon">👥</div>
+                <h3>No investors yet</h3>
+                <p>Get started by adding your first investor</p>
+                <button class="btn-primary" onclick="openAddInvestorModal()">+ Add First Investor</button>
+            </div>
+
+            <div id="investorsGrid" class="card-grid" style="display: none;"></div>
+        </div>
+
+        <!-- Brokers Tab -->
+        <div id="brokers-tab" class="tab-content">
+            <div class="actions-bar">
+                <div class="search-box">
+                    <input 
+                        type="text" 
+                        id="brokerSearch" 
+                        placeholder="Search brokers..."
+                        onkeyup="filterBrokers()"
+                    >
+                </div>
+                <button class="btn-primary" onclick="openAddBrokerModal()">+ Add Broker</button>
+            </div>
+
+            <div id="brokersLoading" class="loading">
+                <div class="spinner"></div>
+                <p>Loading brokers...</p>
+            </div>
+
+            <div id="brokersEmpty" class="empty-state" style="display: none;">
+                <div class="empty-state-icon">🏦</div>
+                <h3>No brokers yet</h3>
+                <p>Add brokers to track brokerage costs</p>
+                <button class="btn-primary" onclick="openAddBrokerModal()">+ Add First Broker</button>
+            </div>
+
+            <div id="brokersGrid" class="card-grid" style="display: none;"></div>
+        </div>
+
+        <!-- Preferences Tab -->
+        <div id="preferences-tab" class="tab-content">
+            <div class="preferences-section">
+                <h3>Display Preferences</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="numberFormat">Number Format</label>
+                        <select id="numberFormat">
+                            <option value="indian">Indian (1,00,000)</option>
+                            <option value="international">International (100,000)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="currencySymbol">Currency Symbol</label>
+                        <input type="text" id="currencySymbol" value="₹" maxlength="3">
+                    </div>
+                    <div class="form-group">
+                        <label for="dateFormat">Date Format</label>
+                        <select id="dateFormat">
+                            <option value="dd-mmm-yy">DD-MMM-YY (06-Feb-25)</option>
+                            <option value="dd/mm/yyyy">DD/MM/YYYY (06/02/2025)</option>
+                            <option value="mm/dd/yyyy">MM/DD/YYYY (02/06/2025)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="decimalPlaces">Decimal Places</label>
+                        <select id="decimalPlaces">
+                            <option value="0">0</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="preferences-section">
+                <h3>Application Settings</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="theme">Theme</label>
+                        <select id="theme">
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="defaultView">Default View</label>
+                        <select id="defaultView">
+                            <option value="portfolio">Portfolio</option>
+                            <option value="transactions">Transactions</option>
+                            <option value="master-data">Master Data</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="financialYearStart">Financial Year Start Month</label>
+                        <select id="financialYearStart">
+                            <option value="1">January</option>
+                            <option value="2">February</option>
+                            <option value="3">March</option>
+                            <option value="4">April</option>
+                            <option value="5">May</option>
+                            <option value="6">June</option>
+                            <option value="7">July</option>
+                            <option value="8">August</option>
+                            <option value="9">September</option>
+                            <option value="10">October</option>
+                            <option value="11">November</option>
+                            <option value="12">December</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; margin-top: 24px;">
+                <button class="btn-primary" onclick="savePreferences()">Save Preferences</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Investor Modal -->
+    <div id="investorModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="investorModalTitle">Add Investor</h3>
+            </div>
+            <div class="modal-body">
+                <form id="investorForm">
+                    <input type="hidden" id="investorId">
+                    
+                    <div class="form-group">
+                        <label for="investorName">Full Name *</label>
+                        <input type="text" id="investorName" required>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="investorEmail">Email</label>
+                            <input type="email" id="investorEmail">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="investorPhone">Phone</label>
+                            <input type="tel" id="investorPhone">
+                        </div>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="investorPan">PAN</label>
+                            <input type="text" id="investorPan" maxlength="10" style="text-transform: uppercase;">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="investorAccountType">Account Type</label>
+                            <input type="text" id="investorAccountType" placeholder="e.g., Individual, HUF, Joint">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="investorStatus">Status *</label>
+                        <select id="investorStatus" required>
+                            <option value="true">Active</option>
+                            <option value="false">Inactive</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="investorNotes">Notes</label>
+                        <textarea id="investorNotes" placeholder="Additional notes about this investor..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeInvestorModal()">Cancel</button>
+                <button class="btn-primary" onclick="saveInvestor()">Save Investor</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Broker Modal -->
+    <div id="brokerModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="brokerModalTitle">Add Broker</h3>
+            </div>
+            <div class="modal-body">
+                <form id="brokerForm">
+                    <input type="hidden" id="brokerId">
+                    
+                    <div class="form-group">
+                        <label for="brokerName">Broker Name *</label>
+                        <input type="text" id="brokerName" required>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="brokerCode">Broker Code</label>
+                            <input type="text" id="brokerCode" placeholder="e.g., FYERS, ZERODHA">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="brokerWebsite">Website</label>
+                            <input type="url" id="brokerWebsite" placeholder="https://...">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="brokerStatus">Status *</label>
+                        <select id="brokerStatus" required>
+                            <option value="true">Active</option>
+                            <option value="false">Inactive</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="brokerNotes">Notes</label>
+                        <textarea id="brokerNotes" placeholder="Additional notes..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeBrokerModal()">Cancel</button>
+                <button class="btn-primary" onclick="saveBroker()">Save Broker</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="master-data.js"></script>
+</body>
+</html>
