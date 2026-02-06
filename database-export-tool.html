@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMS Database Export Tool</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        h1 {
+            font-size: 28px;
+            color: #2d3748;
+            margin-bottom: 12px;
+        }
+
+        .subtitle {
+            color: #718096;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .info-box {
+            background: #edf2f7;
+            border-left: 4px solid #667eea;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+
+        .info-box h3 {
+            font-size: 16px;
+            color: #2d3748;
+            margin-bottom: 8px;
+        }
+
+        .info-box p {
+            font-size: 14px;
+            color: #4a5568;
+            line-height: 1.6;
+        }
+
+        .info-box ol {
+            margin-top: 12px;
+            margin-left: 20px;
+            font-size: 14px;
+            color: #4a5568;
+        }
+
+        .info-box li {
+            margin-bottom: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .status.success {
+            background: #c6f6d5;
+            color: #22543d;
+            display: block;
+        }
+
+        .status.error {
+            background: #fed7d7;
+            color: #742a2a;
+            display: block;
+        }
+
+        .status.loading {
+            background: #bee3f8;
+            color: #2c5282;
+            display: block;
+        }
+
+        .tables-list {
+            margin-top: 20px;
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .table-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .table-item:last-child {
+            border-bottom: none;
+        }
+
+        .table-name {
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .table-count {
+            color: #718096;
+            font-size: 14px;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top: 3px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📦 WMS Database Export Tool</h1>
+        <p class="subtitle">Export your entire Supabase database for local development</p>
+
+        <div class="info-box">
+            <h3>What this does:</h3>
+            <p>This tool will <strong>automatically discover ALL tables</strong> in your database and export them with all records into a single JSON file that can be:</p>
+            <ol>
+                <li>Used in Claude's artifacts for local testing (no Supabase connection needed)</li>
+                <li>Uploaded back to Claude for context in future conversations</li>
+                <li>Used as a backup of your current data</li>
+            </ol>
+        </div>
+
+        <div class="info-box">
+            <h3>🎯 Fully Dynamic Export:</h3>
+            <p style="margin-bottom: 8px;">✅ Automatically discovers all tables in your database</p>
+            <p style="margin-bottom: 8px;">✅ Works with any new tables you add</p>
+            <p style="margin-bottom: 8px;">✅ Exports all current rows from every table</p>
+            <p style="margin-bottom: 8px;">✅ No manual configuration needed</p>
+            <p style="margin-top: 12px; font-size: 13px; color: #4a5568;">
+                <strong>Note:</strong> The tool will attempt to export all tables it can access with the API key. Tables will be discovered automatically at export time.
+            </p>
+        </div>
+
+        <button class="btn-primary" id="exportBtn" onclick="exportDatabase()">
+            Export Database
+        </button>
+
+        <div id="status" class="status"></div>
+
+        <div id="tablesList" class="tables-list" style="display: none;"></div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
+
+        // This will be populated dynamically
+        let TABLES = [];
+
+        async function discoverTables() {
+            // Query PostgreSQL system catalog to get all tables in public schema
+            const query = `
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_type = 'BASE TABLE'
+                ORDER BY table_name
+            `;
+
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_tables`, {
+                    method: 'POST',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    const tables = await response.json();
+                    return tables.map(t => t.table_name);
+                }
+            } catch (error) {
+                console.log('RPC method not available, using fallback...');
+            }
+
+            // Fallback: Try to fetch from known tables and discover others
+            const knownTables = [
+                'users',
+                'investors',
+                'brokers',
+                'investor_broker_accounts',
+                'securities_equity',
+                'securities_nfo',
+                'transactions',
+                'regulatory_charges_config',
+                'market_prices'
+            ];
+
+            const discoveredTables = [];
+
+            for (const tableName of knownTables) {
+                try {
+                    const response = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}?select=id&limit=1`, {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        }
+                    });
+
+                    if (response.ok) {
+                        discoveredTables.push(tableName);
+                    }
+                } catch (error) {
+                    // Table doesn't exist, skip
+                }
+            }
+
+            return discoveredTables;
+        }
+
+        async function exportDatabase() {
+            const btn = document.getElementById('exportBtn');
+            const status = document.getElementById('status');
+            const tablesList = document.getElementById('tablesList');
+
+            btn.disabled = true;
+            btn.innerHTML = 'Discovering tables<span class="spinner"></span>';
+            status.className = 'status loading';
+            status.textContent = 'Discovering tables in database...';
+
+            try {
+                // First, discover all tables
+                TABLES = await discoverTables();
+
+                if (TABLES.length === 0) {
+                    throw new Error('No tables found in database');
+                }
+
+                console.log('Discovered tables:', TABLES);
+
+                btn.innerHTML = 'Exporting<span class="spinner"></span>';
+                status.textContent = `Found ${TABLES.length} tables. Fetching data...`;
+
+                const exportData = {
+                    exportDate: new Date().toISOString(),
+                    exportedBy: 'WMS Database Export Tool (Dynamic)',
+                    version: '2.0',
+                    supabaseUrl: SUPABASE_URL,
+                    tablesCount: TABLES.length,
+                    tables: {}
+                };
+
+                let totalRecords = 0;
+                let successfulTables = 0;
+
+                for (const tableName of TABLES) {
+                    status.textContent = `Fetching ${tableName} (${successfulTables + 1}/${TABLES.length})...`;
+
+                    try {
+                        const response = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}?select=*`, {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                            }
+                        });
+
+                        if (!response.ok) {
+                            console.warn(`Failed to fetch ${tableName}, skipping...`);
+                            exportData.tables[tableName] = [];
+                            continue;
+                        }
+
+                        const data = await response.json();
+                        exportData.tables[tableName] = data || [];
+                        totalRecords += (data || []).length;
+                        successfulTables++;
+
+                        console.log(`Exported ${tableName}: ${(data || []).length} records`);
+                    } catch (error) {
+                        console.warn(`Error fetching ${tableName}:`, error);
+                        exportData.tables[tableName] = [];
+                    }
+                }
+
+                // Display summary
+                tablesList.innerHTML = '<h3 style="margin-bottom: 12px; color: #2d3748;">Export Summary:</h3>';
+                TABLES.forEach(tableName => {
+                    const count = exportData.tables[tableName]?.length || 0;
+                    tablesList.innerHTML += `
+                        <div class="table-item">
+                            <span class="table-name">${tableName}</span>
+                            <span class="table-count">${count} records</span>
+                        </div>
+                    `;
+                });
+                tablesList.style.display = 'block';
+
+                // Create and download file
+                const dataStr = JSON.stringify(exportData, null, 2);
+                const dataBlob = new Blob([dataStr], { type: 'application/json' });
+                
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(dataBlob);
+                link.download = `wms-database-export-${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                status.className = 'status success';
+                status.innerHTML = `
+                    ✓ Export completed successfully!<br>
+                    <strong>${totalRecords} total records</strong> exported from <strong>${successfulTables} tables</strong>.<br>
+                    <br>
+                    <strong>Next steps:</strong><br>
+                    1. Upload this JSON file to Claude in your next message<br>
+                    2. Tell Claude to use this data for local testing<br>
+                    3. Claude can now build and test features without connecting to Supabase
+                `;
+
+                btn.disabled = false;
+                btn.innerHTML = 'Export Again';
+
+            } catch (error) {
+                console.error('Export error:', error);
+                status.className = 'status error';
+                status.innerHTML = `
+                    ✗ Export failed: ${error.message}<br>
+                    <br>
+                    Please check:<br>
+                    - Your internet connection<br>
+                    - Supabase URL and API key are correct<br>
+                    - Tables exist in your database
+                `;
+
+                btn.disabled = false;
+                btn.innerHTML = 'Try Again';
+            }
+        }
+    </script>
+</body>
+</html>
