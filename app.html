@@ -32,7 +32,7 @@
             </div>
             <div class="user-section">
                 <span class="user-email" id="user-email">Loading...</span>
-                <button class="btn-logout" onclick="logout()">Logout</button>
+                <button class="btn-logout">Logout</button>
             </div>
         </div>
     </header>
@@ -40,13 +40,13 @@
     <!-- Top Navigation -->
     <nav class="top-nav">
         <div class="nav-content">
-            <button class="nav-btn active" data-module="portfolio" onclick="loadModule('portfolio')">
+            <button class="nav-btn active" data-module="portfolio">
                 📊 Portfolio
             </button>
-            <button class="nav-btn" data-module="master-data" onclick="loadModule('master-data')">
+            <button class="nav-btn" data-module="master-data">
                 🗂️ Master Database
             </button>
-            <button class="nav-btn" data-module="import-transactions" onclick="loadModule('import-transactions')">
+            <button class="nav-btn" data-module="import-transactions">
                 📥 Import Transactions
             </button>
             <button class="nav-btn disabled" data-module="add-transaction" title="Coming soon">
@@ -104,6 +104,9 @@
             // Check localStorage for logged-in user
             const savedUser = localStorage.getItem('wms_user');
             
+            console.log('Checking authentication...');
+            console.log('Saved user data:', savedUser);
+            
             if (!savedUser) {
                 // Not logged in, redirect to login page
                 console.log('No user found, redirecting to login');
@@ -113,12 +116,25 @@
             
             try {
                 currentUser = JSON.parse(savedUser);
+                console.log('Parsed user object:', currentUser);
                 
-                // Display user name (prefer name over email)
-                const displayName = currentUser.name || currentUser.email || 'User';
-                document.getElementById('user-email').textContent = displayName;
+                // Display user name (try multiple fields)
+                const displayName = currentUser.name || 
+                                   currentUser.display_name || 
+                                   currentUser.username || 
+                                   currentUser.email || 
+                                   'User';
                 
-                console.log('User authenticated:', displayName);
+                console.log('Display name:', displayName);
+                
+                const emailElement = document.getElementById('user-email');
+                if (emailElement) {
+                    emailElement.textContent = displayName;
+                    console.log('Updated user-email element to:', displayName);
+                } else {
+                    console.error('user-email element not found!');
+                }
+                
                 return true;
             } catch (error) {
                 console.error('Error parsing user data:', error);
@@ -264,11 +280,38 @@
         // ============================================================================
 
         function initApp() {
+            console.log('=== APP INITIALIZING ===');
+            
             // Check authentication (synchronous)
             const isAuthenticated = checkAuth();
-            if (!isAuthenticated) return;
+            if (!isAuthenticated) {
+                console.log('Authentication failed, stopping init');
+                return;
+            }
+            
+            console.log('Authentication successful, setting up UI');
+            
+            // Setup logout button
+            const logoutBtn = document.querySelector('.btn-logout');
+            if (logoutBtn) {
+                logoutBtn.addEventListener('click', logout);
+                console.log('Logout button event listener attached');
+            } else {
+                console.error('Logout button not found!');
+            }
+            
+            // Setup navigation buttons
+            document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const module = btn.getAttribute('data-module');
+                    console.log('Navigation clicked:', module);
+                    loadModule(module);
+                });
+            });
+            console.log('Navigation buttons set up');
             
             // Load default module (portfolio)
+            console.log('Loading portfolio module...');
             loadModule('portfolio');
         }
 
