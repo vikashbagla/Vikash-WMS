@@ -1,0 +1,131 @@
+<!-- Portfolio Module HTML -->
+<div class="portfolio-container">
+    <div class="portfolio-header">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h2 style="margin: 0; font-size: 18px; color: #2d3748;">Portfolio Holdings</h2>
+            <button class="btn-refresh" onclick="refreshPortfolio()" title="Refresh data">
+                🔄 Refresh
+            </button>
+        </div>
+        <p style="color: #718096; font-size: 12px; margin-bottom: 16px;">
+            <strong>Note:</strong> Current prices shown are based on your last transaction price for each stock.
+        </p>
+    </div>
+
+    <!-- Filters Section -->
+    <div class="filters-grid">
+        <!-- Investor Filter -->
+        <div class="filter-group">
+            <div class="filter-header">
+                <label>Filter by Investor</label>
+                <span class="clear-link" onclick="clearInvestorFilters()" id="clear-investors">Clear all</span>
+            </div>
+            <div class="filter-search-container">
+                <input type="text" 
+                       class="filter-search-input" 
+                       id="investor-search-input" 
+                       placeholder="Type to search investors..."
+                       oninput="filterInvestorSearch()"
+                       onclick="showInvestorDropdown()">
+                <div class="filter-dropdown" id="investor-dropdown"></div>
+            </div>
+            <div class="filter-selected-tags" id="selected-investors"></div>
+        </div>
+
+        <!-- Broker Filter (NEW) -->
+        <div class="filter-group">
+            <div class="filter-header">
+                <label>Filter by Broker</label>
+                <span class="clear-link" onclick="clearBrokerFilters()" id="clear-brokers">Clear all</span>
+            </div>
+            <div class="filter-search-container">
+                <input type="text" 
+                       class="filter-search-input" 
+                       id="broker-search-input" 
+                       placeholder="Type to search brokers..."
+                       oninput="filterBrokerSearch()"
+                       onclick="showBrokerDropdown()">
+                <div class="filter-dropdown" id="broker-dropdown"></div>
+            </div>
+            <div class="filter-selected-tags" id="selected-brokers"></div>
+        </div>
+
+        <!-- Tag Filter -->
+        <div class="filter-group">
+            <div class="filter-header">
+                <label>Filter by Tag</label>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <div class="tag-match-options">
+                        <span style="font-size: 11px; color: #718096;">Match:</span>
+                        <label class="radio-label">
+                            <input type="radio" name="tag-logic" value="OR" checked onchange="updateTagLogic()">
+                            <span>Any</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="tag-logic" value="AND" onchange="updateTagLogic()">
+                            <span>All</span>
+                        </label>
+                    </div>
+                    <span class="clear-link" onclick="clearTagFilters()" id="clear-tags">Clear all</span>
+                </div>
+            </div>
+            <div class="filter-search-container">
+                <input type="text" 
+                       class="filter-search-input" 
+                       id="tag-search-input" 
+                       placeholder="Type to search tags..."
+                       oninput="filterTagSearch()"
+                       onclick="showTagDropdown()">
+                <div class="filter-dropdown" id="tag-dropdown"></div>
+            </div>
+            <div class="filter-selected-tags" id="selected-tags"></div>
+        </div>
+    </div>
+
+    <!-- Portfolio Table -->
+    <div class="table-container">
+        <table id="portfolio-table">
+            <thead>
+                <tr>
+                    <th onclick="sortPortfolio('symbol')" class="sortable">
+                        Symbol 
+                        <span class="sort-indicator" id="sort-symbol"></span>
+                    </th>
+                    <th class="text-right">
+                        Qty<br>
+                        <span class="subheader">Avg Cost (₹)</span>
+                    </th>
+                    <th class="text-right sortable" onclick="sortPortfolio('invested')">
+                        Invested Value (₹)<br>
+                        <span class="subheader">% of Total</span>
+                        <span class="sort-indicator" id="sort-invested"></span>
+                    </th>
+                    <th class="text-right">
+                        Current Price (₹)
+                    </th>
+                    <th class="text-right sortable" onclick="sortPortfolio('pl')">
+                        P&L (₹)<br>
+                        <span class="subheader">P&L %</span>
+                        <span class="sort-indicator" id="sort-pl"></span>
+                    </th>
+                    <th class="text-right sortable" onclick="sortPortfolio('value')">
+                        Value (₹)<br>
+                        <span class="subheader">% of Total</span>
+                        <span class="sort-indicator" id="sort-value"></span>
+                    </th>
+                    <th>Tags</th>
+                </tr>
+            </thead>
+            <tbody id="portfolio-list">
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 40px; color: #9ca3af;">
+                        Loading portfolio data...
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="summary-cards" id="portfolio-summary"></div>
+</div>
