@@ -539,6 +539,15 @@ tr:hover:not(.total-row) {
     font-size: 12px; /* Was 14px */
 }
 
+.symbol-clickable {
+    cursor: pointer;
+    color: #667eea;
+}
+
+.symbol-clickable:hover {
+    text-decoration: underline;
+}
+
 .symbol-sub {
     font-size: 10px; /* Was 11px */
     color: #718096;
@@ -548,6 +557,7 @@ tr:hover:not(.total-row) {
 .number-main {
     font-weight: 500;
     font-size: 12px; /* Was 14px */
+    color: #2d3748; /* Default black, not green */
 }
 
 .number-sub {
@@ -556,13 +566,51 @@ tr:hover:not(.total-row) {
     margin-top: 2px;
 }
 
-/* Number formatting */
+/* Number formatting - ONLY for P&L */
 .positive {
-    color: #059669;
+    color: #059669 !important;
 }
 
 .negative {
-    color: #dc2626;
+    color: #dc2626 !important;
+}
+
+/* Expanded row styles */
+.expanded-row {
+    background: #fef3c7;
+}
+
+.expanded-row:hover {
+    background: #fef3c7;
+}
+
+.detail-row {
+    background: #fffbeb;
+}
+
+.detail-row td {
+    padding: 0;
+}
+
+.detail-row table {
+    margin: 0;
+}
+
+.detail-row .inner-table {
+    width: 100%;
+    font-size: 11px; /* Was 13px */
+    table-layout: fixed;
+}
+
+.detail-row .inner-table th {
+    background: #fef3c7;
+    font-size: 9px; /* Was 11px */
+    padding: 8px;
+}
+
+.detail-row .inner-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #fde68a;
 }
 
 /* Tags in table */

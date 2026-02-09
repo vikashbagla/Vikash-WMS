@@ -12,6 +12,7 @@ let selectedTagNames = [];
 let tagFilterLogic = 'OR'; // 'OR' or 'AND'
 let portfolioSortColumn = 'symbol';
 let portfolioSortDirection = 'asc';
+let expandedSymbol = null; // Track which symbol is expanded
 
 // ============================================================================
 // INITIALIZATION
@@ -460,6 +461,20 @@ function sortPortfolio(column) {
 }
 
 // ============================================================================
+// EXPAND/COLLAPSE
+// ============================================================================
+
+function toggleSymbolDetail(symbol, exchange) {
+    const key = `${symbol}-${exchange}`;
+    if (expandedSymbol === key) {
+        expandedSymbol = null;
+    } else {
+        expandedSymbol = key;
+    }
+    renderPortfolio();
+}
+
+// ============================================================================
 // RENDERING
 // ============================================================================
 
@@ -533,10 +548,14 @@ function renderPortfolio() {
         const investedPercent = totalInvested > 0 ? (invested / totalInvested) * 100 : 0;
         const valuePercent = totalValue > 0 ? (currentValue / totalValue) * 100 : 0;
         
-        return `
-            <tr>
+        const symbolKey = `${h.symbol}-${h.exchange}`;
+        const isExpanded = expandedSymbol === symbolKey;
+        
+        // Main row
+        let mainRow = `
+            <tr class="${isExpanded ? 'expanded-row' : ''}">
                 <td class="symbol-cell">
-                    <div class="symbol-main">${h.symbol}</div>
+                    <div class="symbol-main symbol-clickable" onclick="toggleSymbolDetail('${h.symbol}', '${h.exchange}')">${h.symbol}</div>
                     <div class="symbol-sub">${h.companyName}</div>
                 </td>
                 <td class="text-right">
@@ -544,7 +563,7 @@ function renderPortfolio() {
                     <div class="number-sub">${formatPrice(h.avgCost)}</div>
                 </td>
                 <td class="text-right">
-                    <div class="number-main ${getAmountClass(invested)}">${formatAmount(invested)}</div>
+                    <div class="number-main">${formatAmount(invested)}</div>
                     <div class="number-sub">${investedPercent.toFixed(2)}%</div>
                 </td>
                 <td class="text-right number-main">${formatPrice(h.latestPrice)}</td>
@@ -553,7 +572,7 @@ function renderPortfolio() {
                     <div class="number-sub ${getAmountClass(plPercent)}">${formatPercent(plPercent)}</div>
                 </td>
                 <td class="text-right">
-                    <div class="number-main ${getAmountClass(currentValue)}">${formatAmount(currentValue)}</div>
+                    <div class="number-main">${formatAmount(currentValue)}</div>
                     <div class="number-sub">${valuePercent.toFixed(2)}%</div>
                 </td>
                 <td>
@@ -561,6 +580,82 @@ function renderPortfolio() {
                 </td>
             </tr>
         `;
+        
+        // Detail row if expanded
+        let detailRow = '';
+        if (isExpanded) {
+            // Get all transactions for this symbol
+            const symbolTxns = transactions.filter(txn => 
+                txn.symbol === h.symbol && txn.exchange === h.exchange
+            );
+            
+            // Group by investor
+            const investorGroups = {};
+            symbolTxns.forEach(txn => {
+                if (!investorGroups[txn.investorId]) {
+                    const investor = investors.find(inv => inv.id === txn.investorId);
+                    investorGroups[txn.investorId] = {
+                        name: investor ? investor.name : 'Unknown',
+                        quantity: 0,
+                        totalCost: 0,
+                        tags: new Set()
+                    };
+                }
+                investorGroups[txn.investorId].quantity += txn.quantity;
+                investorGroups[txn.investorId].totalCost += txn.netAmount;
+                if (txn.tags) {
+                    txn.tags.forEach(tag => investorGroups[txn.investorId].tags.add(tag));
+                }
+            });
+            
+            // Build investor rows
+            const investorRows = Object.values(investorGroups)
+                .filter(inv => inv.quantity > 0)
+                .map(inv => {
+                    const invAvgCost = inv.totalCost / inv.quantity;
+                    const invValue = inv.quantity * h.latestPrice;
+                    const invInvested = inv.quantity * invAvgCost;
+                    const invPL = invValue - invInvested;
+                    const invPLPercent = invInvested > 0 ? (invPL / invInvested) * 100 : 0;
+                    
+                    return `
+                        <tr>
+                            <td>${inv.name}</td>
+                            <td class="text-right">${formatQuantity(inv.quantity)}</td>
+                            <td class="text-right">${formatAmount(invInvested)}</td>
+                            <td class="text-right">${formatPrice(h.latestPrice)}</td>
+                            <td class="text-right ${getAmountClass(invPL)}">${formatAmount(invPL)}</td>
+                            <td class="text-right">${formatAmount(invValue)}</td>
+                            <td>${Array.from(inv.tags).map(tag => `<span class="tag-badge">${tag}</span>`).join('')}</td>
+                        </tr>
+                    `;
+                }).join('');
+            
+            detailRow = `
+                <tr class="detail-row">
+                    <td colspan="7">
+                        <table class="inner-table">
+                            <thead>
+                                <tr>
+                                    <th>Investor</th>
+                                    <th class="text-right">Qty</th>
+                                    <th class="text-right">Invested</th>
+                                    <th class="text-right">Price</th>
+                                    <th class="text-right">P&L</th>
+                                    <th class="text-right">Value</th>
+                                    <th>Tags</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${investorRows}
+                            </tbody>
+                        </table>
+                    </td>
+                </tr>
+            `;
+        }
+        
+        return mainRow + detailRow;
     }).join('');
     
     // Add total row
@@ -644,6 +739,7 @@ if (typeof window !== 'undefined') {
     window.initPortfolio = initPortfolio;
     window.refreshPortfolio = refreshPortfolio;
     window.sortPortfolio = sortPortfolio;
+    window.toggleSymbolDetail = toggleSymbolDetail;
     window.toggleInvestorFilter = toggleInvestorFilter;
     window.toggleBrokerFilter = toggleBrokerFilter;
     window.toggleTagFilter = toggleTagFilter;
