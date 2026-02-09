@@ -31,7 +31,7 @@
                 <span class="tagline">Wealth Management System</span>
             </div>
             <div class="user-section">
-                <span class="user-email" id="user-email">user@example.com</span>
+                <span class="user-email" id="user-email">Loading...</span>
                 <button class="btn-logout" onclick="logout()">Logout</button>
             </div>
         </div>
@@ -94,31 +94,47 @@
 
         // Current module
         let currentModule = null;
+        let currentUser = null;
 
         // ============================================================================
         // AUTH CHECK
         // ============================================================================
 
-        async function checkAuth() {
-            const { data: { session }, error } = await supabaseClient.auth.getSession();
+        function checkAuth() {
+            // Check localStorage for logged-in user
+            const savedUser = localStorage.getItem('wms_user');
             
-            if (error || !session) {
+            if (!savedUser) {
                 // Not logged in, redirect to login page
+                console.log('No user found, redirecting to login');
                 window.location.href = 'index.html';
                 return false;
             }
             
-            // Display user email
-            document.getElementById('user-email').textContent = session.user.email;
-            return true;
+            try {
+                currentUser = JSON.parse(savedUser);
+                
+                // Display user name (prefer name over email)
+                const displayName = currentUser.name || currentUser.email || 'User';
+                document.getElementById('user-email').textContent = displayName;
+                
+                console.log('User authenticated:', displayName);
+                return true;
+            } catch (error) {
+                console.error('Error parsing user data:', error);
+                // Invalid user data, redirect to login
+                localStorage.removeItem('wms_user');
+                window.location.href = 'index.html';
+                return false;
+            }
         }
 
-        async function logout() {
-            const { error } = await supabaseClient.auth.signOut();
-            if (error) {
-                console.error('Logout error:', error);
-                showAlert('Logout failed: ' + error.message, 'error');
-            } else {
+        function logout() {
+            if (confirm('Are you sure you want to logout?')) {
+                // Clear localStorage
+                localStorage.removeItem('wms_user');
+                currentUser = null;
+                // Redirect to login
                 window.location.href = 'index.html';
             }
         }
@@ -207,20 +223,53 @@
             
             container.innerHTML = bodyContent;
             
-            // Initialize import module (it auto-initializes on load)
+            // Re-initialize event listeners for import module
+            // The transaction-import.js should auto-initialize when DOM is ready
+            if (typeof handleFileSelect === 'function') {
+                const uploadArea = document.getElementById('uploadArea');
+                const fileInput = document.getElementById('fileInput');
+                
+                if (uploadArea && fileInput) {
+                    uploadArea.addEventListener('click', () => fileInput.click());
+                    fileInput.addEventListener('change', handleFileSelect);
+                    
+                    uploadArea.addEventListener('dragover', (e) => {
+                        e.preventDefault();
+                        uploadArea.classList.add('dragover');
+                    });
+                    
+                    uploadArea.addEventListener('dragleave', () => {
+                        uploadArea.classList.remove('dragover');
+                    });
+                    
+                    uploadArea.addEventListener('drop', (e) => {
+                        e.preventDefault();
+                        uploadArea.classList.remove('dragover');
+                        const files = e.dataTransfer.files;
+                        if (files.length > 0) {
+                            handleFile(files[0]);
+                        }
+                    });
+                }
+            }
+            
+            // Reload reference data
+            if (typeof loadReferenceData === 'function') {
+                await loadReferenceData();
+            }
         }
 
         // ============================================================================
         // APP INITIALIZATION
         // ============================================================================
 
-        async function initApp() {
-            // Check authentication
-            const isAuthenticated = await checkAuth();
+        function initApp() {
+            // Check authentication (synchronous)
+            const isAuthenticated = checkAuth();
             if (!isAuthenticated) return;
             
             // Load default module (portfolio)
-            await loadModule('portfolio');
+            loadModule('portfolio');
         }
 
         // Initialize app on page load
