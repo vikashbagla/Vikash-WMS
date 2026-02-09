@@ -129,7 +129,7 @@ function handleFile(file) {
             // Convert to JSON - start from row 0 to get headers with asterisks
             const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
                 range: 0, // Start from beginning to get headers
-                raw: false,
+                raw: true, // READ RAW VALUES (important for numbers!)
                 defval: null
             });
 
@@ -191,8 +191,14 @@ function processTransactions(rawData) {
             const company_name = row['company_name*'] ? String(row['company_name*']).trim() : null;
             const transaction_type_raw = row['transaction_type*'] ? String(row['transaction_type*']).trim() : '';
             const transaction_date = row['transaction_date*'];
-            const quantity_raw = parseInt(row['quantity*']) || 0;
+            const quantity_raw = row['quantity*'] ? parseInt(row['quantity*']) : 0;
             const lots_raw = row['lots'] ? parseFloat(row['lots']) : null;
+
+            // Skip rows with zero or blank quantity (likely empty rows)
+            if (quantity_raw === 0 || !row['quantity*']) {
+                console.log(`Skipping row ${rowNum}: quantity is zero or blank`);
+                return; // Skip this row silently
+            }
             const price = parseFloat(row['price*']) || 0;
             const gross_amount = parseFloat(row['gross_amount*']) || 0;
             const brokerage = parseFloat(row['brokerage']) || 0;
@@ -224,10 +230,6 @@ function processTransactions(rawData) {
                 errors.push(`Row ${rowNum}: symbol is required`);
                 return;
             }
-            if (quantity_raw === 0) {
-                errors.push(`Row ${rowNum}: quantity cannot be zero`);
-                return;
-            }
 
             // AUTO-DETECT transaction type from quantity
             let transaction_type;
@@ -256,28 +258,38 @@ function processTransactions(rawData) {
                 lots = 0;
             }
 
-            // Parse date
+            // Parse date (raw values give us Excel serial dates or actual dates)
             let parsedDate;
+            if (!transaction_date) {
+                errors.push(`Row ${rowNum}: transaction_date is required`);
+                return;
+            }
+            
             if (transaction_date instanceof Date) {
                 parsedDate = transaction_date.toISOString().split('T')[0];
-            } else if (typeof transaction_date === 'string') {
-                // Try to parse string date
-                if (transaction_date.includes('-')) {
-                    parsedDate = transaction_date.split('T')[0];
-                } else {
-                    // Might be Excel serial date as string
-                    const excelEpoch = new Date(1899, 11, 30);
-                    const days = parseInt(transaction_date);
-                    const date = new Date(excelEpoch.getTime() + days * 24 * 60 * 60 * 1000);
-                    parsedDate = date.toISOString().split('T')[0];
-                }
             } else if (typeof transaction_date === 'number') {
-                // Excel serial date
+                // Excel serial date (days since 1899-12-30)
                 const excelEpoch = new Date(1899, 11, 30);
                 const date = new Date(excelEpoch.getTime() + transaction_date * 24 * 60 * 60 * 1000);
                 parsedDate = date.toISOString().split('T')[0];
+            } else if (typeof transaction_date === 'string') {
+                // Already formatted or needs parsing
+                if (transaction_date.includes('-')) {
+                    parsedDate = transaction_date.split('T')[0];
+                } else {
+                    // Try parsing as Excel serial string
+                    const excelEpoch = new Date(1899, 11, 30);
+                    const days = parseFloat(transaction_date);
+                    if (!isNaN(days)) {
+                        const date = new Date(excelEpoch.getTime() + days * 24 * 60 * 60 * 1000);
+                        parsedDate = date.toISOString().split('T')[0];
+                    } else {
+                        errors.push(`Row ${rowNum}: Invalid date format`);
+                        return;
+                    }
+                }
             } else {
-                errors.push(`Row ${rowNum}: Invalid date format`);
+                errors.push(`Row ${rowNum}: Invalid date type`);
                 return;
             }
 
@@ -343,7 +355,8 @@ function processTransactions(rawData) {
 
     // Show results
     if (errors.length > 0) {
-        const errorMsg = `Parsed ${parsedTransactions.length} transactions with ${errors.length} errors:\n${errors.slice(0, 10).join('\n')}`;
+        const errorSummary = errors.slice(0, 10).map((err, i) => `${i + 1}. ${err}`).join('\n');
+        const errorMsg = `⚠️ Parsed ${parsedTransactions.length} transactions successfully.\n\n${errors.length} rows skipped due to errors:\n\n${errorSummary}${errors.length > 10 ? `\n\n...and ${errors.length - 10} more errors` : ''}`;
         showAlert('warning', errorMsg);
         console.error('All errors:', errors);
     } else {
@@ -479,13 +492,14 @@ function showAlert(type, message) {
     container.innerHTML = '';
     container.appendChild(alert);
 
-    // Auto-hide success/warning after 5 seconds
-    if (type !== 'error') {
+    // Only auto-hide success messages (keep warnings and errors)
+    if (type === 'success') {
         setTimeout(() => {
             alert.style.opacity = '0';
             setTimeout(() => alert.remove(), 300);
         }, 5000);
     }
+    // Warnings and errors stay visible until user dismisses or uploads new file
 }
 
 function showLoading(show) {
