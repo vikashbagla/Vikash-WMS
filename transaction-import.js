@@ -1,5 +1,5 @@
 // ============================================================================
-// WMS Transaction Import - JavaScript
+// WMS Transaction Import - JavaScript (FIXED)
 // ============================================================================
 
 // Supabase Configuration
@@ -126,20 +126,33 @@ function handleFile(file) {
                 throw new Error(`Sheet "${sheetName}" not found in Excel file`);
             }
 
-            // Convert to JSON (skip first 2 rows: header and instruction)
+            // Convert to JSON - start from row 0 to get headers with asterisks
             const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
-                range: 2, // Start from row 3 (0-indexed, so 2)
+                range: 0, // Start from beginning to get headers
                 raw: false,
                 defval: null
             });
 
-            console.log('📊 Parsed Excel data:', jsonData.length, 'rows');
+            // Filter out instruction row (row 2 has long instruction text)
+            const filteredData = jsonData.filter(row => {
+                const inv = row['investor_name*'];
+                if (!inv) return false; // Skip empty rows
+                const invStr = String(inv);
+                // Skip if it contains instruction keywords or is too long
+                if (invStr.includes('Required') || invStr.includes('=') || invStr.includes('transaction_type') || invStr.length > 50) {
+                    return false;
+                }
+                return true; // Keep data rows
+            });
+
+            console.log('📊 Parsed Excel data:', filteredData.length, 'rows');
+            console.log('Sample row:', filteredData[0]);
             
-            if (jsonData.length === 0) {
-                throw new Error('No data found in Excel file');
+            if (filteredData.length === 0) {
+                throw new Error('No data found in Excel file. Make sure data starts from row 3.');
             }
 
-            processTransactions(jsonData);
+            processTransactions(filteredData);
             showLoading(false);
 
         } catch (error) {
@@ -167,19 +180,19 @@ function processTransactions(rawData) {
 
     rawData.forEach((row, index) => {
         try {
-            const rowNum = index + 3; // Actual Excel row number
+            const rowNum = index + 3; // Actual Excel row number (1=header, 2=instructions, 3+=data)
 
-            // Extract data from row
-            const investor_name = row['investor_name*']?.trim();
-            const broker_name = row['broker_name']?.trim() || null;
-            const security_type = row['security_type*']?.trim();
-            const symbol = row['symbol*']?.trim();
-            const short_symbol = row['short_symbol*']?.trim();
-            const company_name = row['company_name*']?.trim();
-            const transaction_type_raw = row['transaction_type*']?.trim() || null;
+            // Extract data from row (Excel headers have asterisks for required fields)
+            const investor_name = row['investor_name*'] ? String(row['investor_name*']).trim() : null;
+            const broker_name = row['broker_name'] ? String(row['broker_name']).trim() : null;
+            const security_type = row['security_type*'] ? String(row['security_type*']).trim() : null;
+            const symbol = row['symbol*'] ? String(row['symbol*']).trim() : null;
+            const short_symbol = row['short_symbol*'] ? String(row['short_symbol*']).trim() : null;
+            const company_name = row['company_name*'] ? String(row['company_name*']).trim() : null;
+            const transaction_type_raw = row['transaction_type*'] ? String(row['transaction_type*']).trim() : '';
             const transaction_date = row['transaction_date*'];
             const quantity_raw = parseInt(row['quantity*']) || 0;
-            const lots_raw = parseFloat(row['lots']) || null;
+            const lots_raw = row['lots'] ? parseFloat(row['lots']) : null;
             const price = parseFloat(row['price*']) || 0;
             const gross_amount = parseFloat(row['gross_amount*']) || 0;
             const brokerage = parseFloat(row['brokerage']) || 0;
@@ -190,13 +203,13 @@ function processTransactions(rawData) {
             const total_charges = parseFloat(row['total_charges']) || 0;
             const net_amount = parseFloat(row['net_amount*']) || 0;
             const margin_blocked = parseFloat(row['margin_blocked']) || 0;
-            const product = row['product']?.trim() || null;
-            const broker_contract_note_no = row['broker_contract_note_no']?.trim() || null;
-            const broker_trade_id = row['broker_trade_id']?.trim() || null;
-            const tags = row['tags']?.trim() || null;
-            const notes = row['notes']?.trim() || null;
-            const ignore_for_avg_cost = (row['ignore_for_avg_cost']?.toString().toUpperCase() === 'TRUE');
-            const dont_display = (row['dont_display']?.toString().toUpperCase() === 'TRUE');
+            const product = row['product'] ? String(row['product']).trim() : null;
+            const broker_contract_note_no = row['broker_contract_note_no'] ? String(row['broker_contract_note_no']).trim() : null;
+            const broker_trade_id = row['broker_trade_id'] ? String(row['broker_trade_id']).trim() : null;
+            const tags = row['tags'] ? String(row['tags']).trim() : null;
+            const notes = row['notes'] ? String(row['notes']).trim() : null;
+            const ignore_for_avg_cost = row['ignore_for_avg_cost'] ? (String(row['ignore_for_avg_cost']).toUpperCase() === 'TRUE') : false;
+            const dont_display = row['dont_display'] ? (String(row['dont_display']).toUpperCase() === 'TRUE') : false;
 
             // Validation
             if (!investor_name) {
@@ -218,7 +231,7 @@ function processTransactions(rawData) {
 
             // AUTO-DETECT transaction type from quantity
             let transaction_type;
-            if (transaction_type_raw) {
+            if (transaction_type_raw && transaction_type_raw !== '') {
                 // User provided type (DIVIDEND, BONUS, etc.)
                 transaction_type = transaction_type_raw.toUpperCase();
             } else {
@@ -231,7 +244,7 @@ function processTransactions(rawData) {
             if (security_type === 'EQUITY') {
                 lots = 0;
             } else if (security_type === 'NFO') {
-                if (lots_raw === null) {
+                if (lots_raw === null || lots_raw === 0) {
                     lots = 0;
                 } else if (transaction_type === 'SELL') {
                     // Make lots negative for SELL
@@ -248,13 +261,24 @@ function processTransactions(rawData) {
             if (transaction_date instanceof Date) {
                 parsedDate = transaction_date.toISOString().split('T')[0];
             } else if (typeof transaction_date === 'string') {
-                parsedDate = transaction_date.split('T')[0];
-            } else {
+                // Try to parse string date
+                if (transaction_date.includes('-')) {
+                    parsedDate = transaction_date.split('T')[0];
+                } else {
+                    // Might be Excel serial date as string
+                    const excelEpoch = new Date(1899, 11, 30);
+                    const days = parseInt(transaction_date);
+                    const date = new Date(excelEpoch.getTime() + days * 24 * 60 * 60 * 1000);
+                    parsedDate = date.toISOString().split('T')[0];
+                }
+            } else if (typeof transaction_date === 'number') {
                 // Excel serial date
                 const excelEpoch = new Date(1899, 11, 30);
-                const days = parseInt(transaction_date);
-                const date = new Date(excelEpoch.getTime() + days * 24 * 60 * 60 * 1000);
+                const date = new Date(excelEpoch.getTime() + transaction_date * 24 * 60 * 60 * 1000);
                 parsedDate = date.toISOString().split('T')[0];
+            } else {
+                errors.push(`Row ${rowNum}: Invalid date format`);
+                return;
             }
 
             // Lookup investor_id
@@ -319,12 +343,16 @@ function processTransactions(rawData) {
 
     // Show results
     if (errors.length > 0) {
-        showAlert('warning', `Parsed ${parsedTransactions.length} transactions with ${errors.length} errors:\n` + errors.slice(0, 5).join('\n'));
+        const errorMsg = `Parsed ${parsedTransactions.length} transactions with ${errors.length} errors:\n${errors.slice(0, 10).join('\n')}`;
+        showAlert('warning', errorMsg);
+        console.error('All errors:', errors);
     } else {
         showAlert('success', `✅ Successfully parsed ${parsedTransactions.length} transactions!`);
     }
 
-    displayPreview();
+    if (parsedTransactions.length > 0) {
+        displayPreview();
+    }
 }
 
 // ============================================================================
@@ -451,11 +479,13 @@ function showAlert(type, message) {
     container.innerHTML = '';
     container.appendChild(alert);
 
-    // Auto-hide after 5 seconds
-    setTimeout(() => {
-        alert.style.opacity = '0';
-        setTimeout(() => alert.remove(), 300);
-    }, 5000);
+    // Auto-hide success/warning after 5 seconds
+    if (type !== 'error') {
+        setTimeout(() => {
+            alert.style.opacity = '0';
+            setTimeout(() => alert.remove(), 300);
+        }, 5000);
+    }
 }
 
 function showLoading(show) {
