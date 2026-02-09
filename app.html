@@ -4,26 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WMS - Wealth Management System</title>
-    
-    <!-- Supabase Client -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    
-    <!-- SheetJS (for Excel import) -->
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-    
     <link rel="stylesheet" href="app-styles.css">
 </head>
 <body>
-    <!-- Loading Indicator -->
     <div id="loading-indicator" class="loading-overlay" style="display: none;">
         <div class="spinner"></div>
         <p>Loading...</p>
     </div>
 
-    <!-- Alert Container -->
     <div id="alert-container" class="alert-container"></div>
 
-    <!-- App Header -->
     <header class="app-header">
         <div class="header-content">
             <div class="logo-section">
@@ -32,295 +24,115 @@
             </div>
             <div class="user-section">
                 <span class="user-email" id="user-email">Loading...</span>
-                <button class="btn-logout">Logout</button>
+                <button class="btn-logout" id="logoutBtn">Logout</button>
             </div>
         </div>
     </header>
 
-    <!-- Top Navigation -->
     <nav class="top-nav">
         <div class="nav-content">
-            <button class="nav-btn active" data-module="portfolio">
-                📊 Portfolio
-            </button>
-            <button class="nav-btn" data-module="master-data">
-                🗂️ Master Database
-            </button>
-            <button class="nav-btn" data-module="import-transactions">
-                📥 Import Transactions
-            </button>
-            <button class="nav-btn disabled" data-module="add-transaction" title="Coming soon">
-                ➕ Add Transaction
-            </button>
-            <button class="nav-btn disabled" data-module="other-transactions" title="Coming soon">
-                📋 Other Transactions
-            </button>
-            <button class="nav-btn disabled" data-module="analytics" title="Coming soon">
-                📈 Analytics
-            </button>
+            <button class="nav-btn active" data-module="portfolio">📊 Portfolio</button>
+            <button class="nav-btn" data-module="master-data">🗂️ Master Database</button>
+            <button class="nav-btn" data-module="import-transactions">📥 Import Transactions</button>
+            <button class="nav-btn disabled" data-module="add-transaction">➕ Add Transaction</button>
+            <button class="nav-btn disabled" data-module="other-transactions">📋 Other Transactions</button>
+            <button class="nav-btn disabled" data-module="analytics">📈 Analytics</button>
         </div>
     </nav>
 
-    <!-- Main Content Area -->
     <main class="main-content">
-        <div id="content-container" class="content-container">
-            <!-- Modules will be loaded here -->
-        </div>
+        <div id="content-container" class="content-container"></div>
     </main>
 
-    <!-- Footer -->
     <footer class="app-footer">
-        <p>WMS v6.0 • Database Schema v6.0 • <span id="db-status">📊 Connected</span></p>
+        <p>WMS v6.0 • <span id="db-status">📊 Connected</span></p>
     </footer>
 
-    <!-- Scripts -->
+    <script>
+    // Global configuration - ONLY DECLARED ONCE
+    window.SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
+    window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
+    
+    // Initialize Supabase
+    const { createClient } = supabase;
+    window.supabaseClient = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+    
+    let currentModule = null;
+    let currentUser = null;
+
+    // Check auth
+    function checkAuth() {
+        const savedUser = localStorage.getItem('wms_user');
+        if (!savedUser) {
+            window.location.href = 'index.html';
+            return false;
+        }
+        
+        try {
+            currentUser = JSON.parse(savedUser);
+            const name = currentUser.display_name || currentUser.name || currentUser.username || currentUser.email || 'User';
+            document.getElementById('user-email').textContent = name;
+            return true;
+        } catch (e) {
+            localStorage.removeItem('wms_user');
+            window.location.href = 'index.html';
+            return false;
+        }
+    }
+
+    // Logout
+    function logout() {
+        if (confirm('Logout?')) {
+            localStorage.removeItem('wms_user');
+            window.location.href = 'index.html';
+        }
+    }
+
+    // Load module
+    async function loadModule(moduleName) {
+        if (currentModule === moduleName) return;
+        currentModule = moduleName;
+        
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector(`[data-module="${moduleName}"]`).classList.add('active');
+        
+        const container = document.getElementById('content-container');
+        
+        try {
+            if (moduleName === 'portfolio') {
+                const resp = await fetch('portfolio.html');
+                container.innerHTML = await resp.text();
+                if (typeof initPortfolio === 'function') await initPortfolio();
+            } else if (moduleName === 'master-data') {
+                const resp = await fetch('master-data.html');
+                const html = await resp.text();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                container.innerHTML = doc.body.innerHTML;
+            } else if (moduleName === 'import-transactions') {
+                const resp = await fetch('transaction-import.html');
+                const html = await resp.text();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                container.innerHTML = doc.body.innerHTML;
+            } else {
+                container.innerHTML = '<div class="coming-soon">🚧 Coming soon!</div>';
+            }
+        } catch (e) {
+            container.innerHTML = '<div class="error-message">Error: ' + e.message + '</div>';
+        }
+    }
+
+    // Init
+    document.addEventListener('DOMContentLoaded', () => {
+        if (!checkAuth()) return;
+        document.getElementById('logoutBtn').addEventListener('click', logout);
+        document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
+            btn.addEventListener('click', () => loadModule(btn.dataset.module));
+        });
+        loadModule('portfolio');
+    });
+    </script>
+    
     <script src="utils.js"></script>
     <script src="portfolio.js"></script>
-    <script src="master-data.js"></script>
-    <script src="transaction-import.js"></script>
-    
-    <script>
-        // ============================================================================
-        // APP INITIALIZATION
-        // ============================================================================
-
-        // Supabase Configuration
-        const SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
-
-        // Initialize Supabase client and make it globally available
-        const { createClient } = supabase;
-        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        
-        // Make it globally available for other modules
-        window.supabaseClient = supabaseClient;
-        console.log('✅ Supabase client initialized and attached to window');
-
-        // Current module
-        let currentModule = null;
-        let currentUser = null;
-
-        // ============================================================================
-        // AUTH CHECK
-        // ============================================================================
-
-        function checkAuth() {
-            // Check localStorage for logged-in user
-            const savedUser = localStorage.getItem('wms_user');
-            
-            console.log('Checking authentication...');
-            console.log('Saved user data:', savedUser);
-            
-            if (!savedUser) {
-                // Not logged in, redirect to login page
-                console.log('No user found, redirecting to login');
-                window.location.href = 'index.html';
-                return false;
-            }
-            
-            try {
-                currentUser = JSON.parse(savedUser);
-                console.log('Parsed user object:', currentUser);
-                
-                // Display user name (try multiple fields)
-                const displayName = currentUser.name || 
-                                   currentUser.display_name || 
-                                   currentUser.username || 
-                                   currentUser.email || 
-                                   'User';
-                
-                console.log('Display name:', displayName);
-                
-                const emailElement = document.getElementById('user-email');
-                if (emailElement) {
-                    emailElement.textContent = displayName;
-                    console.log('Updated user-email element to:', displayName);
-                } else {
-                    console.error('user-email element not found!');
-                }
-                
-                return true;
-            } catch (error) {
-                console.error('Error parsing user data:', error);
-                // Invalid user data, redirect to login
-                localStorage.removeItem('wms_user');
-                window.location.href = 'index.html';
-                return false;
-            }
-        }
-
-        function logout() {
-            if (confirm('Are you sure you want to logout?')) {
-                // Clear localStorage
-                localStorage.removeItem('wms_user');
-                currentUser = null;
-                // Redirect to login
-                window.location.href = 'index.html';
-            }
-        }
-
-        // ============================================================================
-        // MODULE LOADING
-        // ============================================================================
-
-        async function loadModule(moduleName) {
-            if (currentModule === moduleName) return;
-            
-            // Update navigation
-            document.querySelectorAll('.nav-btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            document.querySelector(`[data-module="${moduleName}"]`).classList.add('active');
-            
-            const container = document.getElementById('content-container');
-            container.innerHTML = '<div class="loading-module">Loading module...</div>';
-            
-            currentModule = moduleName;
-            
-            try {
-                switch(moduleName) {
-                    case 'portfolio':
-                        await loadPortfolioModule();
-                        break;
-                    case 'master-data':
-                        await loadMasterDataModule();
-                        break;
-                    case 'import-transactions':
-                        await loadImportModule();
-                        break;
-                    default:
-                        container.innerHTML = '<div class="coming-soon">🚧 This module is coming soon!</div>';
-                }
-            } catch (error) {
-                console.error('Error loading module:', error);
-                container.innerHTML = `<div class="error-message">❌ Failed to load module: ${error.message}</div>`;
-            }
-        }
-
-        async function loadPortfolioModule() {
-            const container = document.getElementById('content-container');
-            
-            // Load HTML
-            const response = await fetch('portfolio.html');
-            const html = await response.text();
-            container.innerHTML = html;
-            
-            // Initialize portfolio
-            await initPortfolio();
-        }
-
-        async function loadMasterDataModule() {
-            const container = document.getElementById('content-container');
-            
-            // Load HTML
-            const response = await fetch('master-data.html');
-            const html = await response.text();
-            
-            // Extract just the body content (not full HTML doc)
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            const bodyContent = doc.body.innerHTML;
-            
-            container.innerHTML = bodyContent;
-            
-            // Initialize master data module (if it has init function)
-            if (typeof initMasterData === 'function') {
-                await initMasterData();
-            }
-        }
-
-        async function loadImportModule() {
-            const container = document.getElementById('content-container');
-            
-            // Load HTML
-            const response = await fetch('transaction-import.html');
-            const html = await response.text();
-            
-            // Extract body content
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            const bodyContent = doc.body.innerHTML;
-            
-            container.innerHTML = bodyContent;
-            
-            // Re-initialize event listeners for import module
-            // The transaction-import.js should auto-initialize when DOM is ready
-            if (typeof handleFileSelect === 'function') {
-                const uploadArea = document.getElementById('uploadArea');
-                const fileInput = document.getElementById('fileInput');
-                
-                if (uploadArea && fileInput) {
-                    uploadArea.addEventListener('click', () => fileInput.click());
-                    fileInput.addEventListener('change', handleFileSelect);
-                    
-                    uploadArea.addEventListener('dragover', (e) => {
-                        e.preventDefault();
-                        uploadArea.classList.add('dragover');
-                    });
-                    
-                    uploadArea.addEventListener('dragleave', () => {
-                        uploadArea.classList.remove('dragover');
-                    });
-                    
-                    uploadArea.addEventListener('drop', (e) => {
-                        e.preventDefault();
-                        uploadArea.classList.remove('dragover');
-                        const files = e.dataTransfer.files;
-                        if (files.length > 0) {
-                            handleFile(files[0]);
-                        }
-                    });
-                }
-            }
-            
-            // Reload reference data
-            if (typeof loadReferenceData === 'function') {
-                await loadReferenceData();
-            }
-        }
-
-        // ============================================================================
-        // APP INITIALIZATION
-        // ============================================================================
-
-        function initApp() {
-            console.log('=== APP INITIALIZING ===');
-            
-            // Check authentication (synchronous)
-            const isAuthenticated = checkAuth();
-            if (!isAuthenticated) {
-                console.log('Authentication failed, stopping init');
-                return;
-            }
-            
-            console.log('Authentication successful, setting up UI');
-            
-            // Setup logout button
-            const logoutBtn = document.querySelector('.btn-logout');
-            if (logoutBtn) {
-                logoutBtn.addEventListener('click', logout);
-                console.log('Logout button event listener attached');
-            } else {
-                console.error('Logout button not found!');
-            }
-            
-            // Setup navigation buttons
-            document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const module = btn.getAttribute('data-module');
-                    console.log('Navigation clicked:', module);
-                    loadModule(module);
-                });
-            });
-            console.log('Navigation buttons set up');
-            
-            // Load default module (portfolio)
-            console.log('Loading portfolio module...');
-            loadModule('portfolio');
-        }
-
-        // Initialize app on page load
-        document.addEventListener('DOMContentLoaded', initApp);
-    </script>
 </body>
 </html>
