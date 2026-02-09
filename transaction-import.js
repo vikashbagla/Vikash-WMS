@@ -1,0 +1,464 @@
+// ============================================================================
+// WMS Transaction Import - JavaScript
+// ============================================================================
+
+// Supabase Configuration
+const SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
+
+// Initialize Supabase client
+const { createClient } = supabase;
+const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Global variables
+let parsedTransactions = [];
+let investorCache = {};
+let brokerCache = {};
+
+// ============================================================================
+// Initialization
+// ============================================================================
+
+document.addEventListener('DOMContentLoaded', function() {
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+
+    // Click to upload
+    uploadArea.addEventListener('click', () => fileInput.click());
+
+    // File selected
+    fileInput.addEventListener('change', handleFileSelect);
+
+    // Drag and drop
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+    });
+
+    uploadArea.addEventListener('dragleave', () => {
+        uploadArea.classList.remove('dragover');
+    });
+
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleFile(files[0]);
+        }
+    });
+
+    // Load investor and broker data
+    loadReferenceData();
+});
+
+// ============================================================================
+// Reference Data Loading
+// ============================================================================
+
+async function loadReferenceData() {
+    try {
+        // Load investors
+        const { data: investors, error: invError } = await supabaseClient
+            .from('investors')
+            .select('id, name');
+        
+        if (invError) throw invError;
+        
+        investors.forEach(inv => {
+            investorCache[inv.name] = inv.id;
+        });
+
+        // Load brokers
+        const { data: brokers, error: brkError } = await supabaseClient
+            .from('brokers')
+            .select('id, name');
+        
+        if (brkError) throw brkError;
+        
+        brokers.forEach(brk => {
+            brokerCache[brk.name] = brk.id;
+        });
+
+        console.log('✅ Reference data loaded:', {
+            investors: Object.keys(investorCache).length,
+            brokers: Object.keys(brokerCache).length
+        });
+
+    } catch (error) {
+        console.error('Error loading reference data:', error);
+        showAlert('error', 'Failed to load reference data: ' + error.message);
+    }
+}
+
+// ============================================================================
+// File Handling
+// ============================================================================
+
+function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (file) {
+        handleFile(file);
+    }
+}
+
+function handleFile(file) {
+    // Validate file type
+    const validTypes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'];
+    if (!validTypes.includes(file.type) && !file.name.match(/\.(xlsx|xls)$/i)) {
+        showAlert('error', 'Please upload an Excel file (.xlsx or .xls)');
+        return;
+    }
+
+    showLoading(true);
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+            
+            // Read the "1. Transactions" sheet
+            const sheetName = '1. Transactions';
+            const worksheet = workbook.Sheets[sheetName];
+            
+            if (!worksheet) {
+                throw new Error(`Sheet "${sheetName}" not found in Excel file`);
+            }
+
+            // Convert to JSON (skip first 2 rows: header and instruction)
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+                range: 2, // Start from row 3 (0-indexed, so 2)
+                raw: false,
+                defval: null
+            });
+
+            console.log('📊 Parsed Excel data:', jsonData.length, 'rows');
+            
+            if (jsonData.length === 0) {
+                throw new Error('No data found in Excel file');
+            }
+
+            processTransactions(jsonData);
+            showLoading(false);
+
+        } catch (error) {
+            console.error('Error reading Excel:', error);
+            showAlert('error', 'Error reading Excel file: ' + error.message);
+            showLoading(false);
+        }
+    };
+
+    reader.onerror = function() {
+        showAlert('error', 'Error reading file');
+        showLoading(false);
+    };
+
+    reader.readAsArrayBuffer(file);
+}
+
+// ============================================================================
+// Transaction Processing
+// ============================================================================
+
+function processTransactions(rawData) {
+    parsedTransactions = [];
+    let errors = [];
+
+    rawData.forEach((row, index) => {
+        try {
+            const rowNum = index + 3; // Actual Excel row number
+
+            // Extract data from row
+            const investor_name = row['investor_name*']?.trim();
+            const broker_name = row['broker_name']?.trim() || null;
+            const security_type = row['security_type*']?.trim();
+            const symbol = row['symbol*']?.trim();
+            const short_symbol = row['short_symbol*']?.trim();
+            const company_name = row['company_name*']?.trim();
+            const transaction_type_raw = row['transaction_type*']?.trim() || null;
+            const transaction_date = row['transaction_date*'];
+            const quantity_raw = parseInt(row['quantity*']) || 0;
+            const lots_raw = parseFloat(row['lots']) || null;
+            const price = parseFloat(row['price*']) || 0;
+            const gross_amount = parseFloat(row['gross_amount*']) || 0;
+            const brokerage = parseFloat(row['brokerage']) || 0;
+            const stt = parseFloat(row['stt']) || 0;
+            const other_charges = parseFloat(row['other_charges']) || 0;
+            const gst = parseFloat(row['gst']) || 0;
+            const tds = parseFloat(row['tds']) || 0;
+            const total_charges = parseFloat(row['total_charges']) || 0;
+            const net_amount = parseFloat(row['net_amount*']) || 0;
+            const margin_blocked = parseFloat(row['margin_blocked']) || 0;
+            const product = row['product']?.trim() || null;
+            const broker_contract_note_no = row['broker_contract_note_no']?.trim() || null;
+            const broker_trade_id = row['broker_trade_id']?.trim() || null;
+            const tags = row['tags']?.trim() || null;
+            const notes = row['notes']?.trim() || null;
+            const ignore_for_avg_cost = (row['ignore_for_avg_cost']?.toString().toUpperCase() === 'TRUE');
+            const dont_display = (row['dont_display']?.toString().toUpperCase() === 'TRUE');
+
+            // Validation
+            if (!investor_name) {
+                errors.push(`Row ${rowNum}: investor_name is required`);
+                return;
+            }
+            if (!security_type) {
+                errors.push(`Row ${rowNum}: security_type is required`);
+                return;
+            }
+            if (!symbol) {
+                errors.push(`Row ${rowNum}: symbol is required`);
+                return;
+            }
+            if (quantity_raw === 0) {
+                errors.push(`Row ${rowNum}: quantity cannot be zero`);
+                return;
+            }
+
+            // AUTO-DETECT transaction type from quantity
+            let transaction_type;
+            if (transaction_type_raw) {
+                // User provided type (DIVIDEND, BONUS, etc.)
+                transaction_type = transaction_type_raw.toUpperCase();
+            } else {
+                // Auto-detect BUY/SELL
+                transaction_type = quantity_raw > 0 ? 'BUY' : 'SELL';
+            }
+
+            // Calculate lots (handle EQUITY and NFO differently)
+            let lots;
+            if (security_type === 'EQUITY') {
+                lots = 0;
+            } else if (security_type === 'NFO') {
+                if (lots_raw === null) {
+                    lots = 0;
+                } else if (transaction_type === 'SELL') {
+                    // Make lots negative for SELL
+                    lots = -1 * Math.abs(lots_raw);
+                } else {
+                    lots = Math.abs(lots_raw);
+                }
+            } else {
+                lots = 0;
+            }
+
+            // Parse date
+            let parsedDate;
+            if (transaction_date instanceof Date) {
+                parsedDate = transaction_date.toISOString().split('T')[0];
+            } else if (typeof transaction_date === 'string') {
+                parsedDate = transaction_date.split('T')[0];
+            } else {
+                // Excel serial date
+                const excelEpoch = new Date(1899, 11, 30);
+                const days = parseInt(transaction_date);
+                const date = new Date(excelEpoch.getTime() + days * 24 * 60 * 60 * 1000);
+                parsedDate = date.toISOString().split('T')[0];
+            }
+
+            // Lookup investor_id
+            const investor_id = investorCache[investor_name];
+            if (!investor_id) {
+                errors.push(`Row ${rowNum}: Investor "${investor_name}" not found in database`);
+                return;
+            }
+
+            // Lookup broker_id (can be null)
+            let broker_id = null;
+            if (broker_name) {
+                broker_id = brokerCache[broker_name];
+                if (!broker_id) {
+                    errors.push(`Row ${rowNum}: Broker "${broker_name}" not found in database`);
+                    return;
+                }
+            }
+
+            // Create transaction object
+            const transaction = {
+                rowNum,
+                investor_id,
+                investor_name,
+                broker_id,
+                broker_name,
+                security_id: '00000000-0000-0000-0000-000000000000', // Placeholder
+                security_type,
+                symbol,
+                short_symbol,
+                company_name,
+                exchange: security_type === 'EQUITY' ? 'NSE' : 'NFO',
+                product,
+                transaction_type,
+                transaction_date: parsedDate,
+                quantity: quantity_raw,
+                lots,
+                price,
+                gross_amount,
+                brokerage,
+                stt,
+                other_charges,
+                gst,
+                tds,
+                total_charges,
+                net_amount,
+                margin_blocked,
+                broker_contract_note_no,
+                broker_trade_id,
+                tags: tags ? [tags] : null,
+                notes,
+                ignore_for_avg_cost,
+                dont_display
+            };
+
+            parsedTransactions.push(transaction);
+
+        } catch (error) {
+            errors.push(`Row ${index + 3}: ${error.message}`);
+        }
+    });
+
+    // Show results
+    if (errors.length > 0) {
+        showAlert('warning', `Parsed ${parsedTransactions.length} transactions with ${errors.length} errors:\n` + errors.slice(0, 5).join('\n'));
+    } else {
+        showAlert('success', `✅ Successfully parsed ${parsedTransactions.length} transactions!`);
+    }
+
+    displayPreview();
+}
+
+// ============================================================================
+// Display Preview
+// ============================================================================
+
+function displayPreview() {
+    // Calculate stats
+    const buyCount = parsedTransactions.filter(t => t.transaction_type === 'BUY').length;
+    const sellCount = parsedTransactions.filter(t => t.transaction_type === 'SELL').length;
+    const otherCount = parsedTransactions.length - buyCount - sellCount;
+
+    document.getElementById('statTotal').textContent = parsedTransactions.length;
+    document.getElementById('statBuy').textContent = buyCount;
+    document.getElementById('statSell').textContent = sellCount;
+    document.getElementById('statOther').textContent = otherCount;
+
+    // Build table
+    const tbody = document.getElementById('previewTableBody');
+    tbody.innerHTML = '';
+
+    parsedTransactions.forEach((t, index) => {
+        const row = document.createElement('tr');
+        
+        const typeClass = t.transaction_type === 'BUY' ? 'type-buy' : 
+                         t.transaction_type === 'SELL' ? 'type-sell' : 'type-other';
+        
+        row.innerHTML = `
+            <td>${index + 1}</td>
+            <td>${t.investor_name}</td>
+            <td class="${typeClass}">${t.transaction_type}</td>
+            <td>${t.symbol}</td>
+            <td>${t.transaction_date}</td>
+            <td>${t.quantity.toLocaleString()}</td>
+            <td>${t.lots}</td>
+            <td>₹${t.price.toLocaleString()}</td>
+            <td>₹${t.net_amount.toLocaleString()}</td>
+        `;
+        
+        tbody.appendChild(row);
+    });
+
+    // Show preview section
+    document.getElementById('uploadSection').style.display = 'none';
+    document.getElementById('previewSection').classList.add('active');
+}
+
+// ============================================================================
+// Import to Database
+// ============================================================================
+
+async function importToDatabase() {
+    if (parsedTransactions.length === 0) {
+        showAlert('error', 'No transactions to import');
+        return;
+    }
+
+    if (!confirm(`Import ${parsedTransactions.length} transactions to database?`)) {
+        return;
+    }
+
+    showLoading(true);
+    document.getElementById('importBtn').disabled = true;
+
+    try {
+        // Prepare data for Supabase (remove display-only fields)
+        const dataToInsert = parsedTransactions.map(t => {
+            const { rowNum, investor_name, broker_name, ...rest } = t;
+            return rest;
+        });
+
+        // Insert in batches of 100
+        const batchSize = 100;
+        let inserted = 0;
+
+        for (let i = 0; i < dataToInsert.length; i += batchSize) {
+            const batch = dataToInsert.slice(i, i + batchSize);
+            
+            const { data, error } = await supabaseClient
+                .from('transactions')
+                .insert(batch);
+
+            if (error) throw error;
+            
+            inserted += batch.length;
+            console.log(`✅ Inserted ${inserted}/${dataToInsert.length} transactions`);
+        }
+
+        showAlert('success', `🎉 Successfully imported ${inserted} transactions!`);
+        showLoading(false);
+
+        // Refresh after 2 seconds
+        setTimeout(() => {
+            window.location.reload();
+        }, 2000);
+
+    } catch (error) {
+        console.error('Error importing:', error);
+        showAlert('error', 'Import failed: ' + error.message);
+        showLoading(false);
+        document.getElementById('importBtn').disabled = false;
+    }
+}
+
+// ============================================================================
+// UI Helpers
+// ============================================================================
+
+function cancelImport() {
+    if (confirm('Cancel import and start over?')) {
+        window.location.reload();
+    }
+}
+
+function showAlert(type, message) {
+    const container = document.getElementById('alertContainer');
+    const alertClass = type === 'success' ? 'alert-success' : 
+                      type === 'error' ? 'alert-error' : 'alert-warning';
+    
+    const alert = document.createElement('div');
+    alert.className = `alert ${alertClass}`;
+    alert.textContent = message;
+    
+    container.innerHTML = '';
+    container.appendChild(alert);
+
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+        alert.style.opacity = '0';
+        setTimeout(() => alert.remove(), 300);
+    }, 5000);
+}
+
+function showLoading(show) {
+    const loader = document.getElementById('loadingIndicator');
+    loader.classList.toggle('hidden', !show);
+}
