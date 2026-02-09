@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMS - Diagnostics</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .box {
+            background: white;
+            padding: 20px;
+            margin: 10px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h2 { color: #667eea; }
+        pre {
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .success { color: green; }
+        .error { color: red; }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 WMS Diagnostics</h1>
+    
+    <div class="box">
+        <h2>1. LocalStorage Check</h2>
+        <div id="localStorage-check"></div>
+    </div>
+
+    <div class="box">
+        <h2>2. User Data</h2>
+        <pre id="user-data"></pre>
+    </div>
+
+    <div class="box">
+        <h2>3. Supabase Connection</h2>
+        <div id="supabase-check"></div>
+        <button onclick="testSupabase()">Test Connection</button>
+    </div>
+
+    <div class="box">
+        <h2>4. Transactions Check</h2>
+        <div id="transactions-check"></div>
+        <button onclick="testTransactions()">Load Transactions</button>
+    </div>
+
+    <div class="box">
+        <h2>Actions</h2>
+        <button onclick="clearLocalStorage()">Clear localStorage</button>
+        <button onclick="window.location.href='index.html'">Go to Login</button>
+        <button onclick="window.location.href='app.html'">Go to App</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
+    <script>
+        // Supabase config
+        const SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
+
+        const { createClient } = supabase;
+        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // Check localStorage
+        function checkLocalStorage() {
+            const savedUser = localStorage.getItem('wms_user');
+            const checkDiv = document.getElementById('localStorage-check');
+            const userDataPre = document.getElementById('user-data');
+            
+            if (savedUser) {
+                checkDiv.innerHTML = '<p class="success">✅ User data found in localStorage</p>';
+                try {
+                    const user = JSON.parse(savedUser);
+                    userDataPre.textContent = JSON.stringify(user, null, 2);
+                } catch (e) {
+                    checkDiv.innerHTML += '<p class="error">❌ Error parsing user data: ' + e.message + '</p>';
+                    userDataPre.textContent = savedUser;
+                }
+            } else {
+                checkDiv.innerHTML = '<p class="error">❌ No user data in localStorage</p>';
+                userDataPre.textContent = 'No user data found';
+            }
+        }
+
+        // Test Supabase
+        async function testSupabase() {
+            const checkDiv = document.getElementById('supabase-check');
+            checkDiv.innerHTML = '<p>Testing connection...</p>';
+            
+            try {
+                const { data, error } = await supabaseClient
+                    .from('investors')
+                    .select('count')
+                    .limit(1);
+                
+                if (error) throw error;
+                
+                checkDiv.innerHTML = '<p class="success">✅ Supabase connection successful!</p>';
+            } catch (error) {
+                checkDiv.innerHTML = '<p class="error">❌ Supabase error: ' + error.message + '</p>';
+            }
+        }
+
+        // Test transactions
+        async function testTransactions() {
+            const checkDiv = document.getElementById('transactions-check');
+            checkDiv.innerHTML = '<p>Loading transactions...</p>';
+            
+            try {
+                const { data, error } = await supabaseClient
+                    .from('transactions')
+                    .select('*')
+                    .eq('dont_display', false)
+                    .in('transaction_type', ['BUY', 'SELL'])
+                    .limit(10);
+                
+                if (error) throw error;
+                
+                checkDiv.innerHTML = `
+                    <p class="success">✅ Found ${data.length} transactions</p>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+            } catch (error) {
+                checkDiv.innerHTML = '<p class="error">❌ Transaction error: ' + error.message + '</p>';
+            }
+        }
+
+        // Clear localStorage
+        function clearLocalStorage() {
+            if (confirm('Clear all localStorage data?')) {
+                localStorage.clear();
+                location.reload();
+            }
+        }
+
+        // Run checks on load
+        checkLocalStorage();
+        testSupabase();
+    </script>
+</body>
+</html>

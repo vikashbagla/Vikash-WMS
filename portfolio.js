@@ -18,13 +18,33 @@ let portfolioSortDirection = 'asc';
 // ============================================================================
 
 async function initPortfolio() {
+    console.log('=== PORTFOLIO INIT START ===');
+    
+    // Check if supabaseClient exists
+    if (typeof supabaseClient === 'undefined') {
+        console.error('❌ supabaseClient is not defined!');
+        if (typeof window.supabaseClient !== 'undefined') {
+            console.log('✅ Found supabaseClient on window, using that');
+            window.supabaseClient = window.supabaseClient;
+        } else {
+            console.error('❌ supabaseClient not found anywhere!');
+            showAlert('Error: Database client not initialized', 'error');
+            return;
+        }
+    } else {
+        console.log('✅ supabaseClient is available');
+    }
+    
     showLoading(true);
     try {
+        console.log('Loading portfolio data...');
         await loadPortfolioData();
+        console.log('Rendering portfolio...');
         renderPortfolio();
         showLoading(false);
+        console.log('=== PORTFOLIO INIT COMPLETE ===');
     } catch (error) {
-        console.error('Error initializing portfolio:', error);
+        console.error('❌ Error initializing portfolio:', error);
         showAlert('Failed to load portfolio data: ' + error.message, 'error');
         showLoading(false);
     }
@@ -35,6 +55,8 @@ async function initPortfolio() {
 // ============================================================================
 
 async function loadPortfolioData() {
+    console.log('Loading transactions...');
+    
     // Load transactions
     const { data: txnData, error: txnError } = await supabaseClient
         .from('transactions')
@@ -59,23 +81,42 @@ async function loadPortfolioData() {
         .in('transaction_type', ['BUY', 'SELL'])
         .order('transaction_date', { ascending: true });
 
-    if (txnError) throw txnError;
+    if (txnError) {
+        console.error('❌ Error loading transactions:', txnError);
+        throw txnError;
+    }
+    
+    console.log(`✅ Loaded ${txnData?.length || 0} transactions`);
 
+    console.log('Loading investors...');
+    
     // Load investors
     const { data: invData, error: invError } = await supabaseClient
         .from('investors')
         .select('id, name')
         .order('name');
 
-    if (invError) throw invError;
+    if (invError) {
+        console.error('❌ Error loading investors:', invError);
+        throw invError;
+    }
+    
+    console.log(`✅ Loaded ${invData?.length || 0} investors`);
 
+    console.log('Loading brokers...');
+    
     // Load brokers
     const { data: brkData, error: brkError } = await supabaseClient
         .from('brokers')
         .select('id, name')
         .order('name');
 
-    if (brkError) throw brkError;
+    if (brkError) {
+        console.error('❌ Error loading brokers:', brkError);
+        throw brkError;
+    }
+    
+    console.log(`✅ Loaded ${brkData?.length || 0} brokers`);
 
     // Transform transactions
     transactions = txnData.map(txn => ({
