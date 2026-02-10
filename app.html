@@ -126,8 +126,7 @@
                 const parsed = new DOMParser().parseFromString(html, 'text/html');
                 container.innerHTML = parsed.body.innerHTML;
                 await loadScript('master-data.js');
-                // master-data.js uses DB.init() 
-                if (typeof DB !== 'undefined') DB.init();
+                if (typeof initMasterData === 'function') initMasterData();
 
             } else if (moduleName === 'import-transactions') {
                 const resp = await fetch('transaction-import.html');
@@ -135,7 +134,7 @@
                 const parsed = new DOMParser().parseFromString(html, 'text/html');
                 container.innerHTML = parsed.body.innerHTML;
                 await loadScript('transaction-import.js');
-                if (typeof DB !== 'undefined') DB.init();
+                if (typeof initTransactionImport === 'function') initTransactionImport();
 
             } else {
                 container.innerHTML = '<div class="coming-soon">🚧 Coming soon!</div>';
