@@ -44,29 +44,34 @@ function formatWithCommas(num, commaStyle) {
     return formatted + '.' + decimal;
 }
 
-// Format price with display unit
-const formatPrice = (value) => {
-    if (value === null || value === undefined || isNaN(value)) return '₹0.00';
+// Format price with display unit (NO ₹ SYMBOL - only for actual prices, not converted)
+const formatPrice = (value, applyUnit = false) => {
+    if (value === null || value === undefined || isNaN(value)) return '0.00';
     
-    const unit = getDisplayUnit();
-    const config = getUnitConfig(unit);
-    const convertedValue = value / config.divisor;
-    
-    return '₹' + formatWithCommas(convertedValue, config.comma);
+    if (applyUnit) {
+        // For values (apply display unit)
+        const unit = getDisplayUnit();
+        const config = getUnitConfig(unit);
+        const convertedValue = value / config.divisor;
+        return formatWithCommas(convertedValue, config.comma);
+    } else {
+        // For actual prices (always in rupees, no conversion)
+        return value.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
 };
 
-// Format amount with display unit and negative handling
+// Format amount with display unit and negative handling (NO ₹ SYMBOL)
 const formatAmount = (value) => {
-    if (value === null || value === undefined || isNaN(value)) return '₹0.00';
+    if (value === null || value === undefined || isNaN(value)) return '0.00';
     
     const unit = getDisplayUnit();
     const config = getUnitConfig(unit);
     const convertedValue = Math.abs(value) / config.divisor;
     
     if (value < 0) {
-        return '(₹' + formatWithCommas(convertedValue, config.comma) + ')';
+        return '(' + formatWithCommas(convertedValue, config.comma) + ')';
     }
-    return '₹' + formatWithCommas(convertedValue, config.comma);
+    return formatWithCommas(convertedValue, config.comma);
 };
 
 // Get unit label for column headers

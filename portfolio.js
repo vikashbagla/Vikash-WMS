@@ -61,9 +61,17 @@ function updateUnitLabels() {
     const label = getUnitLabel();
     console.log('Setting unit labels to:', label);
     
-    // Update all unit label spans in table headers
-    document.querySelectorAll('[id^="unit-label-"]').forEach(el => {
-        el.textContent = `₹${label}`;
+    // Update only value-related unit labels (not prices)
+    // unit-label-2: Invested Value
+    // unit-label-4: P&L
+    // unit-label-5: Total Value
+    const labelIds = ['unit-label-2', 'unit-label-4', 'unit-label-5'];
+    
+    labelIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.textContent = `₹${label}`;
+        }
     });
 }
 
@@ -576,13 +584,13 @@ function renderPortfolio() {
                 </td>
                 <td class="text-right">
                     <div class="number-main">${formatQuantity(h.quantity)}</div>
-                    <div class="number-sub">${formatPrice(h.avgCost)}</div>
+                    <div class="number-sub">${formatPrice(h.avgCost, false)}</div>
                 </td>
                 <td class="text-right">
                     <div class="number-main">${formatAmount(invested)}</div>
                     <div class="number-sub">${investedPercent.toFixed(2)}%</div>
                 </td>
-                <td class="text-right number-main">${formatPrice(h.latestPrice)}</td>
+                <td class="text-right number-main">${formatPrice(h.latestPrice, false)}</td>
                 <td class="text-right">
                     <div class="number-main ${getAmountClass(pl)}">${formatAmount(pl)}</div>
                     <div class="number-sub ${getAmountClass(plPercent)}">${formatPercent(plPercent)}</div>
@@ -639,7 +647,7 @@ function renderPortfolio() {
                             <td>${inv.name}</td>
                             <td class="text-right">${formatQuantity(inv.quantity)}</td>
                             <td class="text-right">${formatAmount(invInvested)}</td>
-                            <td class="text-right">${formatPrice(h.latestPrice)}</td>
+                            <td class="text-right">${formatPrice(h.latestPrice, false)}</td>
                             <td class="text-right ${getAmountClass(invPL)}">${formatAmount(invPL)}</td>
                             <td class="text-right">${formatAmount(invValue)}</td>
                             <td>${Array.from(inv.tags).map(tag => `<span class="tag-badge">${tag}</span>`).join('')}</td>
