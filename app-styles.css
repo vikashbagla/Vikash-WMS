@@ -453,7 +453,30 @@ table {
     width: 100%;
     border-collapse: collapse;
     min-width: 1000px;
+    table-layout: fixed;
 }
+
+/* Column widths for portfolio table */
+table th:nth-child(1),
+table td:nth-child(1) { width: 180px; min-width: 180px; } /* Symbol */
+
+table th:nth-child(2),
+table td:nth-child(2) { width: 120px; } /* Qty + Avg Cost */
+
+table th:nth-child(3),
+table td:nth-child(3) { width: 150px; } /* Invested + % */
+
+table th:nth-child(4),
+table td:nth-child(4) { width: 120px; } /* Price */
+
+table th:nth-child(5),
+table td:nth-child(5) { width: 140px; } /* P&L + % */
+
+table th:nth-child(6),
+table td:nth-child(6) { width: 150px; } /* Value + % */
+
+table th:nth-child(7),
+table td:nth-child(7) { min-width: 100px; } /* Tags - flexible */
 
 th {
     background: #f7fafc;
@@ -589,17 +612,17 @@ tr:hover:not(.total-row) {
 }
 
 .detail-row td {
-    padding: 0;
+    padding: 0 !important;
 }
 
 .detail-row table {
     margin: 0;
     border-collapse: collapse;
+    width: 100%;
 }
 
 .detail-row .inner-table {
     width: 100%;
-    font-size: 11px;
     table-layout: fixed;
 }
 
@@ -607,11 +630,17 @@ tr:hover:not(.total-row) {
     padding: 10px 12px;
     border-bottom: 1px solid #fde68a;
     font-size: 12px;
+    vertical-align: top;
 }
 
-.detail-row .inner-table td:first-child {
-    width: 180px; /* Match symbol column width */
-}
+/* Match exact column widths from main table */
+.detail-row .inner-table td:nth-child(1) { width: 180px; min-width: 180px; } /* Symbol/Investor name */
+.detail-row .inner-table td:nth-child(2) { width: 120px; } /* Qty + Avg Cost */
+.detail-row .inner-table td:nth-child(3) { width: 150px; } /* Invested + % */
+.detail-row .inner-table td:nth-child(4) { width: 120px; } /* Price */
+.detail-row .inner-table td:nth-child(5) { width: 140px; } /* P&L + % */
+.detail-row .inner-table td:nth-child(6) { width: 150px; } /* Value + % */
+.detail-row .inner-table td:nth-child(7) { flex: 1; } /* Tags */
 
 .detail-row .inner-table .symbol-cell {
     min-width: 180px;
