@@ -218,7 +218,7 @@
     
     <script>
     // Cache busting - auto version by date so deployments always load fresh files
-    const _v = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const _v = Date.now();
     document.getElementById('app-styles-link').href = `app-styles.css?v=${_v}`;
     document.write(`<script src="utils.js?v=${_v}"><\/script>`);
     document.write(`<script src="portfolio.js?v=${_v}"><\/script>`);
