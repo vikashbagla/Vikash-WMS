@@ -88,6 +88,18 @@ const getUnitLabel = () => {
     return config.suffix;
 };
 
+// Get full description for the portfolio title e.g. "₹ '000" or "₹ Lakhs"
+const getUnitDescription = () => {
+    const unit = getDisplayUnit();
+    const descriptions = {
+        'thousands': "₹ '000",
+        'lakhs':     '₹ Lakhs',
+        'millions':  '₹ Millions',
+        'crores':    '₹ Crores'
+    };
+    return descriptions[unit] || '₹ Lakhs';
+};
+
 // Format quantity (0 decimals)
 const formatQuantity = (value) => {
     if (value === null || value === undefined || isNaN(value)) return '0';
@@ -177,6 +189,7 @@ if (typeof module !== 'undefined' && module.exports) {
         formatPercent,
         getAmountClass,
         getUnitLabel,
+        getUnitDescription,
         formatDate,
         debounce,
         showLoading,

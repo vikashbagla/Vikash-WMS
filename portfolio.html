@@ -1,8 +1,11 @@
 <!-- Portfolio Module HTML -->
 <div class="portfolio-container">
     <div class="portfolio-header">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-            <h2 style="margin: 0; font-size: 19px; color: #2d3748;">Portfolio Holdings</h2>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <div>
+                <h2 style="margin: 0; font-size: 15px; color: #2d3748; display: inline;">Portfolio Holdings</h2>
+                <span id="portfolio-unit-desc" style="font-size: 11px; color: #718096; margin-left: 8px;"></span>
+            </div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <span id="price-status" style="font-size: 12px; color: #718096;">⏳ Loading prices...</span>
                 <button class="btn-toggle-zero" id="toggleZeroBtn" onclick="toggleZeroHoldings()" title="Show/hide zero quantity holdings">
@@ -92,30 +95,23 @@
             <thead>
                 <tr>
                     <th onclick="sortPortfolio('symbol')" class="sortable">
-                        Symbol 
-                        <span class="sort-indicator" id="sort-symbol"></span>
+                        Symbol <span class="sort-indicator" id="sort-symbol"></span>
                     </th>
                     <th class="text-right">
-                        Qty<br>
-                        <span class="subheader">Avg Cost (₹)</span>
+                        Qty<br><span class="subheader">Avg Cost (₹)</span>
                     </th>
                     <th class="text-right sortable" onclick="sortPortfolio('invested')">
-                        Invested Value (<span id="unit-label-2">₹L</span>)<br>
-                        <span class="subheader">% of Total</span>
-                        <span class="sort-indicator" id="sort-invested"></span>
+                        Investment <span class="sort-indicator" id="sort-invested"></span>
+                        <br><span class="subheader">% of Total</span>
                     </th>
-                    <th class="text-right">
-                        Current Price (₹)
-                    </th>
+                    <th class="text-right">CMP (₹)</th>
                     <th class="text-right sortable" onclick="sortPortfolio('pl')">
-                        P&L (<span id="unit-label-4">₹L</span>)<br>
-                        <span class="subheader">P&L %</span>
-                        <span class="sort-indicator" id="sort-pl"></span>
+                        P&L <span class="sort-indicator" id="sort-pl"></span>
+                        <br><span class="subheader">P&L %</span>
                     </th>
                     <th class="text-right sortable" onclick="sortPortfolio('value')">
-                        Total Value (<span id="unit-label-5">₹L</span>)<br>
-                        <span class="subheader">% of Total</span>
-                        <span class="sort-indicator" id="sort-value"></span>
+                        Current Value <span class="sort-indicator" id="sort-value"></span>
+                        <br><span class="subheader">% of Total</span>
                     </th>
                     <th>Tags</th>
                 </tr>

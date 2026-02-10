@@ -71,21 +71,9 @@ async function initPortfolio() {
 // ============================================================================
 
 function updateUnitLabels() {
-    const label = getUnitLabel();
-    console.log('Setting unit labels to:', label);
-    
-    // Update only value-related unit labels (not prices)
-    // unit-label-2: Invested Value
-    // unit-label-4: P&L
-    // unit-label-5: Total Value
-    const labelIds = ['unit-label-2', 'unit-label-4', 'unit-label-5'];
-    
-    labelIds.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            el.textContent = `₹${label}`;
-        }
-    });
+    const desc = getUnitDescription();
+    const el = document.getElementById('portfolio-unit-desc');
+    if (el) el.textContent = `all amounts in ${desc}`;
 }
 
 // ============================================================================
