@@ -80,15 +80,25 @@
     }
 
     // Call Fyers via Supabase Edge Function
-    // Token is stored in Supabase secrets - only anon key needed from frontend
+    // Pass the locally stored token in the request body
     window.fyersCall = async function(payload) {
+        const stored = localStorage.getItem('fyers_token');
+        let fyersToken = null;
+        if (stored) {
+            try {
+                const { token, date } = JSON.parse(stored);
+                const today = new Date().toISOString().split('T')[0];
+                if (date === today) fyersToken = token;
+            } catch(e) {}
+        }
+
         const response = await fetch(`${window.SUPABASE_URL}/functions/v1/fyers-market-data`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${window.SUPABASE_ANON_KEY}`
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({ ...payload, accessToken: fyersToken })
         });
         return await response.json();
     };
