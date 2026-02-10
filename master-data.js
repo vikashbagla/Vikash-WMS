@@ -26,6 +26,7 @@ const DB = {
     
     updateModeIndicator() {
         const indicator = document.getElementById('modeIndicator');
+        if (!indicator) return; // element may not exist in embedded mode
         if (this.mode === 'local') {
             indicator.className = 'mode-indicator mode-local';
             indicator.textContent = '🔵 LOCAL';
@@ -186,13 +187,16 @@ const DB = {
     }
 };
 
-// Initialize
-window.addEventListener('DOMContentLoaded', () => {
+// Initialize - callable from app.html when module is loaded
+function initMasterData() {
     DB.init();
     loadInvestors();
     loadBrokers();
     loadPreferences();
-});
+}
+
+// Also support direct page load
+window.addEventListener('DOMContentLoaded', initMasterData);
 
 // Tab switching
 function switchTab(event, tabName) {

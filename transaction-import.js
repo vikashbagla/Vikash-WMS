@@ -19,7 +19,7 @@ let brokerCache = {};
 // Initialization
 // ============================================================================
 
-document.addEventListener('DOMContentLoaded', function() {
+function initTransactionImport() {
     const uploadArea = document.getElementById('uploadArea');
     const fileInput = document.getElementById('fileInput');
 
@@ -50,7 +50,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Load investor and broker data
     loadReferenceData();
-});
+}
+
+// Also support direct page load
+document.addEventListener('DOMContentLoaded', initTransactionImport);
 
 // ============================================================================
 // Reference Data Loading
