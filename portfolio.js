@@ -12,7 +12,18 @@ let selectedTagNames = [];
 let tagFilterLogic = 'OR'; // 'OR' or 'AND'
 let portfolioSortColumn = 'symbol';
 let portfolioSortDirection = 'asc';
-let expandedSymbol = null; // Track which symbol is expanded
+let expandedSymbol = null;
+let showZeroHoldings = false; // hidden by default
+
+function toggleZeroHoldings() {
+    showZeroHoldings = !showZeroHoldings;
+    const btn = document.getElementById('toggleZeroBtn');
+    if (btn) {
+        btn.textContent = showZeroHoldings ? '👁 Hide Zero Holdings' : '👁 Show Zero Holdings';
+        btn.classList.toggle('active', showZeroHoldings);
+    }
+    renderPortfolio();
+}
 
 // ============================================================================
 // INITIALIZATION
@@ -559,12 +570,12 @@ function calculateHoldings() {
         }
     });
     
-    // Filter out zero/negative holdings and calculate avg cost
+    // Filter out zero/negative holdings unless showZeroHoldings is on
     return Object.values(holdings)
-        .filter(h => h.quantity > 0)
+        .filter(h => showZeroHoldings ? true : h.quantity > 0)
         .map(h => ({
             ...h,
-            avgCost: h.totalCost / h.quantity,
+            avgCost: h.quantity > 0 ? h.totalCost / h.quantity : 0,
             tags: Array.from(h.tags)
         }));
 }
@@ -867,6 +878,7 @@ document.addEventListener('click', (e) => {
 
 // Initialize on load
 if (typeof window !== 'undefined') {
+    window.toggleZeroHoldings = toggleZeroHoldings;
     window.initPortfolio = initPortfolio;
     window.refreshPortfolio = refreshPortfolio;
     window.sortPortfolio = sortPortfolio;
