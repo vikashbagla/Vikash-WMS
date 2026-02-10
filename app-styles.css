@@ -558,7 +558,7 @@ tr:hover:not(.total-row) {
 
 /* Cell content */
 .symbol-cell {
-    min-width: 180px;
+    /* no min-width - controlled by table column widths */
 }
 
 .symbol-main {
@@ -616,8 +616,8 @@ tr:hover:not(.total-row) {
     background: #fffbeb;
 }
 
-.detail-row td {
-    padding: 0 !important;
+.detail-row > td {
+    padding: 0;
 }
 
 .detail-row table {
@@ -626,7 +626,7 @@ tr:hover:not(.total-row) {
 
 .detail-row .inner-table {
     width: 100%;
-    font-size: 13px;
+    font-size: 12px;
     table-layout: fixed;
 }
 
