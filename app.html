@@ -59,7 +59,7 @@
     window.supabaseClient = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
     
     let currentModule = null;
-    let currentUser = null;
+    window.currentUser = null;
 
     // ============================================================
     // FYERS TOKEN MANAGEMENT
@@ -80,18 +80,13 @@
     }
 
     // Call Fyers via Supabase Edge Function
-    // Usage: await fyersCall({ action: 'quotes', symbols: 'NSE:RELIANCE-EQ' })
+    // Token is stored in Supabase secrets - only anon key needed from frontend
     window.fyersCall = async function(payload) {
-        const token = getFyersToken();
-        if (!token) {
-            throw new Error('FYERS_NOT_AUTHENTICATED');
-        }
         const response = await fetch(`${window.SUPABASE_URL}/functions/v1/fyers-market-data`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${window.SUPABASE_ANON_KEY}`,
-                'x-fyers-token': token
+                'Authorization': `Bearer ${window.SUPABASE_ANON_KEY}`
             },
             body: JSON.stringify(payload)
         });
@@ -125,8 +120,8 @@
         }
         
         try {
-            currentUser = JSON.parse(savedUser);
-            const name = currentUser.display_name || currentUser.name || currentUser.username || currentUser.email || 'User';
+            window.currentUser = JSON.parse(savedUser);
+            const name = window.currentUser.display_name || window.currentUser.name || window.currentUser.username || window.currentUser.email || 'User';
             document.getElementById('user-email').textContent = name;
             return true;
         } catch (e) {

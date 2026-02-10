@@ -685,6 +685,8 @@ function renderPortfolio() {
                     <div class="number-sub">${investedPercent.toFixed(2)}%</div>
                 </td>
                 <td class="text-right number-main">${formatPrice(price, false)}</td>
+                <td class="text-right">
+                    <div class="number-main ${getAmountClass(pl)}">${formatAmount(pl)}</div>
                     <div class="number-sub ${getAmountClass(plPercent)}">${formatPercent(plPercent)}</div>
                 </td>
                 <td class="text-right">
