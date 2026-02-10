@@ -2,40 +2,78 @@
 // WMS UTILITIES - Number Formatting & Helpers
 // ============================================================================
 
-// Indian number formatting (lakhs/crores system)
-const formatIndianNumber = (num) => {
-    if (num === null || num === undefined || isNaN(num)) return '0';
-    
-    const numStr = Math.abs(num).toFixed(2);
+// Get user's display unit preference
+function getDisplayUnit() {
+    if (typeof currentUser !== 'undefined' && currentUser && currentUser.preferences) {
+        return currentUser.preferences.display_unit || 'lakhs';
+    }
+    return 'lakhs'; // Default
+}
+
+// Get divisor and suffix based on unit
+function getUnitConfig(unit) {
+    const configs = {
+        'thousands': { divisor: 1000, suffix: "'000", comma: 'international' },
+        'lakhs': { divisor: 100000, suffix: 'L', comma: 'indian' },
+        'millions': { divisor: 1000000, suffix: 'M', comma: 'international' },
+        'crores': { divisor: 10000000, suffix: 'Cr', comma: 'indian' }
+    };
+    return configs[unit] || configs['lakhs'];
+}
+
+// Format number based on comma style
+function formatWithCommas(num, commaStyle) {
+    const numStr = num.toFixed(2);
     const [integer, decimal] = numStr.split('.');
     
-    // Indian numbering: ##,##,###
-    let lastThree = integer.substring(integer.length - 3);
-    const otherNumbers = integer.substring(0, integer.length - 3);
-    
-    if (otherNumbers !== '') {
-        lastThree = ',' + lastThree;
+    let formatted;
+    if (commaStyle === 'indian') {
+        // Indian style: ##,##,###.##
+        let lastThree = integer.substring(integer.length - 3);
+        const otherNumbers = integer.substring(0, integer.length - 3);
+        
+        if (otherNumbers !== '') {
+            lastThree = ',' + lastThree;
+        }
+        formatted = otherNumbers.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + lastThree;
+    } else {
+        // International style: #,###,###.##
+        formatted = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     }
     
-    const result = otherNumbers.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + lastThree;
-    
-    return decimal ? result + '.' + decimal : result;
-};
+    return formatted + '.' + decimal;
+}
 
-// Format price (2 decimals)
+// Format price with display unit
 const formatPrice = (value) => {
     if (value === null || value === undefined || isNaN(value)) return '₹0.00';
-    return '₹' + formatIndianNumber(value);
+    
+    const unit = getDisplayUnit();
+    const config = getUnitConfig(unit);
+    const convertedValue = value / config.divisor;
+    
+    return '₹' + formatWithCommas(convertedValue, config.comma);
 };
 
-// Format amount with negative handling
+// Format amount with display unit and negative handling
 const formatAmount = (value) => {
     if (value === null || value === undefined || isNaN(value)) return '₹0.00';
     
+    const unit = getDisplayUnit();
+    const config = getUnitConfig(unit);
+    const convertedValue = Math.abs(value) / config.divisor;
+    
     if (value < 0) {
-        return '(₹' + formatIndianNumber(Math.abs(value)) + ')';
+        return '(₹' + formatWithCommas(convertedValue, config.comma) + ')';
     }
-    return '₹' + formatIndianNumber(value);
+    return '₹' + formatWithCommas(convertedValue, config.comma);
+};
+
+// Get unit label for column headers
+const getUnitLabel = () => {
+    const unit = getDisplayUnit();
+    const config = getUnitConfig(unit);
+    return config.suffix;
 };
 
 // Format quantity (0 decimals)
@@ -126,6 +164,7 @@ if (typeof module !== 'undefined' && module.exports) {
         formatLots,
         formatPercent,
         getAmountClass,
+        getUnitLabel,
         formatDate,
         debounce,
         showLoading,

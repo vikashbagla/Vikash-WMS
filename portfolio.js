@@ -40,6 +40,8 @@ async function initPortfolio() {
     try {
         console.log('Loading portfolio data...');
         await loadPortfolioData();
+        console.log('Updating unit labels...');
+        updateUnitLabels();
         console.log('Rendering portfolio...');
         renderPortfolio();
         showLoading(false);
@@ -49,6 +51,20 @@ async function initPortfolio() {
         showAlert('Failed to load portfolio data: ' + error.message, 'error');
         showLoading(false);
     }
+}
+
+// ============================================================================
+// UPDATE UNIT LABELS
+// ============================================================================
+
+function updateUnitLabels() {
+    const label = getUnitLabel();
+    console.log('Setting unit labels to:', label);
+    
+    // Update all unit label spans in table headers
+    document.querySelectorAll('[id^="unit-label-"]').forEach(el => {
+        el.textContent = `₹${label}`;
+    });
 }
 
 // ============================================================================
