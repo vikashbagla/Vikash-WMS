@@ -216,7 +216,7 @@ async function loadInvestors() {
 
 function renderInvestors(investors, brokers, accounts) {
     const searchTerm = document.getElementById('investorSearch').value.toLowerCase();
-    const filtered = investors.filter(i => 
+    const filtered = investors.filter(i =>
         i.name.toLowerCase().includes(searchTerm) ||
         (i.email && i.email.toLowerCase().includes(searchTerm))
     );
@@ -227,49 +227,45 @@ function renderInvestors(investors, brokers, accounts) {
         return;
     }
 
-    grid.innerHTML = filtered.map(inv => {
-        const initials = inv.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
-        const statusClass = inv.is_active ? 'status-active' : 'status-inactive';
-        const statusText = inv.is_active ? 'Active' : 'Inactive';
-        
-        const invAccounts = accounts.filter(acc => acc.investor_id === inv.id);
-        const mappedBrokers = invAccounts.map(acc => {
-            const broker = brokers.find(b => b.id === acc.broker_id);
-            return broker ? broker.name : 'Unknown';
-        });
-
-        return `
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-avatar">${initials}</div>
-                    <div class="card-info">
-                        <h3>${inv.name}</h3>
-                        <p>${inv.email || 'No email'}</p>
-                    </div>
-                    <div class="card-actions">
-                        <button class="btn-icon" onclick="handleEditInvestor('${inv.id}')" title="Edit">✏️</button>
-                        <button class="btn-icon" onclick="handleDeleteInvestor('${inv.id}')" title="Delete">🗑️</button>
-                    </div>
-                </div>
-                <div class="card-details">
-                    <div class="detail-row">
-                        <span class="detail-label">Type</span>
-                        <span class="detail-value">${inv.account_type || 'Not set'}</span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Brokers</span>
-                        <div class="broker-tags">
-                            ${mappedBrokers.length > 0 ? mappedBrokers.map(b => `<span class="broker-tag">${b}</span>`).join('') : '<span style="color:#718096;font-size:13px;">None</span>'}
-                        </div>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Status</span>
-                        <span class="status-badge ${statusClass}">${statusText}</span>
-                    </div>
-                </div>
-            </div>
-        `;
-    }).join('');
+    grid.innerHTML = `
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th style="width:32px;"></th>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Type</th>
+                    <th>Brokers</th>
+                    <th>Status</th>
+                    <th style="width:70px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${filtered.map(inv => {
+                    const initials = inv.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+                    const statusClass = inv.is_active ? 'status-active' : 'status-inactive';
+                    const statusText  = inv.is_active ? 'Active' : 'Inactive';
+                    const invAccounts = accounts.filter(acc => acc.investor_id === inv.id);
+                    const mappedBrokers = invAccounts.map(acc => {
+                        const broker = brokers.find(b => b.id === acc.broker_id);
+                        return broker ? broker.name : 'Unknown';
+                    });
+                    return `
+                        <tr>
+                            <td><div class="avatar">${initials}</div></td>
+                            <td><strong>${inv.name}</strong></td>
+                            <td style="color:#718096;">${inv.email || '—'}</td>
+                            <td>${inv.account_type || '—'}</td>
+                            <td>${mappedBrokers.length > 0 ? mappedBrokers.map(b => `<span class="broker-tag">${b}</span>`).join('') : '<span style="color:#718096;">—</span>'}</td>
+                            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                            <td>
+                                <button class="btn-icon" onclick="handleEditInvestor('${inv.id}')" title="Edit">✏️</button>
+                                <button class="btn-icon" onclick="handleDeleteInvestor('${inv.id}')" title="Delete">🗑️</button>
+                            </td>
+                        </tr>`;
+                }).join('')}
+            </tbody>
+        </table>`;
 }
 
 function filterInvestors() {
@@ -532,7 +528,7 @@ async function loadBrokers() {
 
 function renderBrokers(brokers) {
     const searchTerm = document.getElementById('brokerSearch').value.toLowerCase();
-    const filtered = brokers.filter(b => 
+    const filtered = brokers.filter(b =>
         b.name.toLowerCase().includes(searchTerm) ||
         (b.broker_code && b.broker_code.toLowerCase().includes(searchTerm))
     );
@@ -543,37 +539,38 @@ function renderBrokers(brokers) {
         return;
     }
 
-    grid.innerHTML = filtered.map(broker => {
-        const initials = broker.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
-        const statusClass = broker.is_active ? 'status-active' : 'status-inactive';
-        const statusText = broker.is_active ? 'Active' : 'Inactive';
-
-        return `
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-avatar">${initials}</div>
-                    <div class="card-info">
-                        <h3>${broker.name}</h3>
-                        <p>${broker.broker_code || 'No code'}</p>
-                    </div>
-                    <div class="card-actions">
-                        <button class="btn-icon" onclick="handleEditBroker('${broker.id}')" title="Edit">✏️</button>
-                        <button class="btn-icon" onclick="handleDeleteBroker('${broker.id}')" title="Delete">🗑️</button>
-                    </div>
-                </div>
-                <div class="card-details">
-                    <div class="detail-row">
-                        <span class="detail-label">Website</span>
-                        <span class="detail-value">${broker.website ? `<a href="${broker.website}" target="_blank" style="color:#667eea;">Visit</a>` : 'Not set'}</span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Status</span>
-                        <span class="status-badge ${statusClass}">${statusText}</span>
-                    </div>
-                </div>
-            </div>
-        `;
-    }).join('');
+    grid.innerHTML = `
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th style="width:32px;"></th>
+                    <th>Broker Name</th>
+                    <th>Code</th>
+                    <th>Website</th>
+                    <th>Status</th>
+                    <th style="width:70px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${filtered.map(broker => {
+                    const initials = broker.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+                    const statusClass = broker.is_active ? 'status-active' : 'status-inactive';
+                    const statusText  = broker.is_active ? 'Active' : 'Inactive';
+                    return `
+                        <tr>
+                            <td><div class="avatar">${initials}</div></td>
+                            <td><strong>${broker.name}</strong></td>
+                            <td style="color:#718096;">${broker.broker_code || '—'}</td>
+                            <td>${broker.website ? `<a href="${broker.website}" target="_blank" style="color:#667eea;font-size:11px;">Visit ↗</a>` : '—'}</td>
+                            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                            <td>
+                                <button class="btn-icon" onclick="handleEditBroker('${broker.id}')" title="Edit">✏️</button>
+                                <button class="btn-icon" onclick="handleDeleteBroker('${broker.id}')" title="Delete">🗑️</button>
+                            </td>
+                        </tr>`;
+                }).join('')}
+            </tbody>
+        </table>`;
 }
 
 function filterBrokers() {

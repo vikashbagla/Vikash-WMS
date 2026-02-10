@@ -5,290 +5,111 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Import Transactions - WMS</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-        
-        .header {
-            background: white;
-            padding: 30px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-        
-        h1 {
-            color: #2d3748;
-            margin-bottom: 10px;
-        }
-        
-        .subtitle {
-            color: #718096;
-            font-size: 14px;
-        }
-        
-        .upload-section {
-            background: white;
-            padding: 40px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px; background: #f5f7fa; color: #2d3748; }
+
+        /* HEADER */
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
+        .header-content { max-width: 1600px; margin: 0 auto; padding: 6px 20px; display: flex; align-items: center; justify-content: space-between; }
+        .header h1 { font-size: 16px; font-weight: 600; }
+
+        /* CONTAINER */
+        .container { max-width: 1600px; margin: 0 auto; padding: 12px 16px; }
+
+        /* PAGE TITLE */
+        .page-title { margin-bottom: 12px; display: flex; align-items: baseline; gap: 10px; }
+        .page-title h2 { font-size: 15px; color: #2d3748; font-weight: 600; }
+        .page-title p  { color: #718096; font-size: 11px; }
+
+        /* CARDS / SECTIONS */
+        .section { background: white; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+        .section-title { font-size: 13px; font-weight: 600; color: #2d3748; margin-bottom: 10px; }
+
+        /* UPLOAD AREA */
         .upload-area {
-            border: 3px dashed #cbd5e0;
-            border-radius: 8px;
-            padding: 60px 20px;
-            cursor: pointer;
-            transition: all 0.3s;
-            background: #f7fafc;
+            border: 2px dashed #cbd5e0; border-radius: 8px;
+            padding: 28px 20px; cursor: pointer; transition: all 0.2s;
+            background: #f7fafc; text-align: center;
         }
-        
-        .upload-area:hover {
-            border-color: #667eea;
-            background: #edf2f7;
-        }
-        
-        .upload-area.dragover {
-            border-color: #667eea;
-            background: #e6fffa;
-        }
-        
-        .upload-icon {
-            font-size: 48px;
-            margin-bottom: 20px;
-        }
-        
-        .upload-text {
-            font-size: 18px;
-            color: #2d3748;
-            margin-bottom: 10px;
-        }
-        
-        .upload-hint {
-            color: #718096;
-            font-size: 14px;
-        }
-        
-        input[type="file"] {
-            display: none;
-        }
-        
-        .btn {
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: 500;
-            transition: all 0.3s;
-            margin: 10px 5px;
-        }
-        
-        .btn:hover {
-            background: #5a67d8;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }
-        
-        .btn:disabled {
-            background: #cbd5e0;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .btn-danger {
-            background: #f56565;
-        }
-        
-        .btn-danger:hover {
-            background: #e53e3e;
-        }
-        
-        .btn-success {
-            background: #48bb78;
-        }
-        
-        .btn-success:hover {
-            background: #38a169;
-        }
-        
-        .preview-section {
-            background: white;
-            padding: 30px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            display: none;
-        }
-        
-        .preview-section.active {
-            display: block;
-        }
-        
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        
-        .stat-card {
-            background: #f7fafc;
-            padding: 20px;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-        }
-        
-        .stat-label {
-            color: #718096;
-            font-size: 12px;
-            text-transform: uppercase;
-            margin-bottom: 5px;
-        }
-        
-        .stat-value {
-            color: #2d3748;
-            font-size: 24px;
-            font-weight: bold;
-        }
-        
-        .table-wrapper {
-            overflow-x: auto;
-            margin-top: 20px;
-        }
-        
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-        }
-        
-        th {
-            background: #f7fafc;
-            padding: 12px;
-            text-align: left;
-            font-weight: 600;
-            color: #2d3748;
-            border-bottom: 2px solid #e2e8f0;
-            position: sticky;
-            top: 0;
-        }
-        
-        td {
-            padding: 10px 12px;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        
-        tr:hover {
-            background: #f7fafc;
-        }
-        
-        .type-buy {
-            color: #38a169;
-            font-weight: 600;
-        }
-        
-        .type-sell {
-            color: #e53e3e;
-            font-weight: 600;
-        }
-        
-        .type-other {
-            color: #667eea;
-            font-weight: 600;
-        }
-        
-        .alert {
-            padding: 15px 20px;
-            border-radius: 6px;
-            margin-bottom: 20px;
-            max-height: 300px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-        
-        .alert-success {
-            background: #c6f6d5;
-            color: #22543d;
-            border-left: 4px solid #38a169;
-        }
-        
-        .alert-error {
-            background: #fed7d7;
-            color: #742a2a;
-            border-left: 4px solid #e53e3e;
-        }
-        
-        .alert-warning {
-            background: #feebc8;
-            color: #744210;
-            border-left: 4px solid #ed8936;
-        }
-        
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 20px auto;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .hidden {
-            display: none;
-        }
-        
-        .action-buttons {
-            margin-top: 20px;
-            text-align: center;
+        .upload-area:hover, .upload-area.dragover { border-color: #667eea; background: #eef2ff; }
+        .upload-icon { font-size: 32px; margin-bottom: 8px; }
+        .upload-text { font-size: 13px; color: #2d3748; margin-bottom: 4px; font-weight: 500; }
+        .upload-hint { color: #718096; font-size: 11px; }
+        input[type="file"] { display: none; }
+
+        /* BUTTONS */
+        .btn { background: #667eea; color: white; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s; margin: 6px 4px 0; }
+        .btn:hover { background: #5568d3; }
+        .btn:disabled { background: #cbd5e0; cursor: not-allowed; }
+        .btn-danger  { background: #f56565; }
+        .btn-danger:hover  { background: #e53e3e; }
+        .btn-success { background: #48bb78; }
+        .btn-success:hover { background: #38a169; }
+
+        /* ALERTS */
+        .alert { padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-size: 12px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-wrap: break-word; }
+        .alert-success { background: #c6f6d5; color: #22543d; border-left: 4px solid #38a169; }
+        .alert-error   { background: #fed7d7; color: #742a2a; border-left: 4px solid #e53e3e; }
+        .alert-warning { background: #feebc8; color: #744210; border-left: 4px solid #ed8936; }
+
+        /* STAT CARDS */
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+        .stat-card { background: #f7fafc; padding: 8px 12px; border-radius: 6px; border-left: 3px solid #667eea; }
+        .stat-label { color: #718096; font-size: 9px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.3px; margin-bottom: 2px; }
+        .stat-value { color: #2d3748; font-size: 18px; font-weight: 700; line-height: 1.2; }
+
+        /* PREVIEW TABLE */
+        .preview-section { display: none; }
+        .preview-section.active { display: block; }
+        .table-wrapper { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 6px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #f7fafc; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; color: #4a5568; text-transform: uppercase; border-bottom: 2px solid #e2e8f0; position: sticky; top: 0; }
+        td { padding: 5px 8px; border-bottom: 1px solid #f0f4f8; font-size: 12px; vertical-align: middle; }
+        tr:hover { background: #f9fafb; }
+
+        .type-buy   { color: #38a169; font-weight: 600; }
+        .type-sell  { color: #e53e3e; font-weight: 600; }
+        .type-other { color: #667eea; font-weight: 600; }
+
+        /* ACTION BUTTONS */
+        .action-buttons { margin-top: 10px; display: flex; gap: 8px; justify-content: flex-end; }
+
+        /* LOADING */
+        .spinner { border: 3px solid #f0f4f8; border-top: 3px solid #667eea; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 12px auto; }
+        @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+        .hidden { display: none; }
+
+        @media (max-width: 768px) {
+            .stats { grid-template-columns: repeat(2, 1fr); }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <div class="header">
+    <div class="header">
+        <div class="header-content">
             <h1>📊 Import Transactions</h1>
-            <p class="subtitle">Upload your Excel file to import transactions into the database</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="page-title">
+            <h2>Import Transactions</h2>
+            <p>Upload your Excel file to import transactions into the database</p>
         </div>
 
         <!-- Alerts -->
         <div id="alertContainer"></div>
 
         <!-- Upload Section -->
-        <div class="upload-section" id="uploadSection">
+        <div class="section" id="uploadSection">
+            <div class="section-title">Upload File</div>
             <div class="upload-area" id="uploadArea">
                 <div class="upload-icon">📁</div>
                 <div class="upload-text">Drag and drop your Excel file here</div>
-                <div class="upload-hint">or click to browse</div>
+                <div class="upload-hint">or click to browse (.xlsx, .xls)</div>
                 <input type="file" id="fileInput" accept=".xlsx,.xls">
             </div>
-            <div class="action-buttons">
+            <div style="text-align:center; margin-top:8px;">
                 <button class="btn" onclick="document.getElementById('fileInput').click()">
                     📂 Choose File
                 </button>
@@ -296,24 +117,24 @@
         </div>
 
         <!-- Preview Section -->
-        <div class="preview-section" id="previewSection">
-            <h2>📋 Preview</h2>
-            
+        <div class="section preview-section" id="previewSection">
+            <div class="section-title">Preview</div>
+
             <!-- Stats -->
             <div class="stats">
                 <div class="stat-card">
                     <div class="stat-label">Total Transactions</div>
                     <div class="stat-value" id="statTotal">0</div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card" style="border-left-color:#38a169;">
                     <div class="stat-label">BUY Trades</div>
                     <div class="stat-value type-buy" id="statBuy">0</div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card" style="border-left-color:#e53e3e;">
                     <div class="stat-label">SELL Trades</div>
                     <div class="stat-value type-sell" id="statSell">0</div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card" style="border-left-color:#667eea;">
                     <div class="stat-label">Other Types</div>
                     <div class="stat-value type-other" id="statOther">0</div>
                 </div>
@@ -335,35 +156,23 @@
                             <th>Net Amount</th>
                         </tr>
                     </thead>
-                    <tbody id="previewTableBody">
-                    </tbody>
+                    <tbody id="previewTableBody"></tbody>
                 </table>
             </div>
 
             <!-- Action Buttons -->
             <div class="action-buttons">
-                <button class="btn btn-danger" onclick="cancelImport()">
-                    ❌ Cancel
-                </button>
-                <button class="btn btn-success" id="importBtn" onclick="importToDatabase()">
-                    ✅ Import to Database
-                </button>
+                <button class="btn btn-danger" onclick="cancelImport()">❌ Cancel</button>
+                <button class="btn btn-success" id="importBtn" onclick="importToDatabase()">✅ Import to Database</button>
             </div>
         </div>
 
         <!-- Loading -->
         <div class="hidden" id="loadingIndicator">
             <div class="spinner"></div>
-            <p style="text-align:center; color:white; margin-top:10px;">Processing...</p>
+            <p style="text-align:center; color:#718096; margin-top:6px; font-size:12px;">Processing...</p>
         </div>
     </div>
 
-    <!-- SheetJS Library -->
-    
-    
-    <!-- Supabase Client -->
-    
-
-    
 </body>
 </html>
