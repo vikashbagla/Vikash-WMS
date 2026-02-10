@@ -30,40 +30,22 @@ function toggleZeroHoldings() {
 // ============================================================================
 
 async function initPortfolio() {
-    console.log('=== PORTFOLIO INIT START ===');
-    
-    // Check if supabaseClient exists
-    if (typeof supabaseClient === 'undefined') {
-        console.error('❌ supabaseClient is not defined!');
-        if (typeof window.supabaseClient !== 'undefined') {
-            console.log('✅ Found supabaseClient on window, using that');
-            window.supabaseClient = window.supabaseClient;
-        } else {
-            console.error('❌ supabaseClient not found anywhere!');
-            showAlert('Error: Database client not initialized', 'error');
-            return;
-        }
-    } else {
-        console.log('✅ supabaseClient is available');
-    }
-    
     showLoading(true);
     try {
-        console.log('Loading portfolio data...');
         await loadPortfolioData();
-        console.log('Fetching live prices...');
-        await fetchLivePrices();
-        console.log('Updating unit labels...');
-        updateUnitLabels();
-        console.log('Rendering portfolio...');
-        renderPortfolio();
-        showLoading(false);
-        console.log('=== PORTFOLIO INIT COMPLETE ===');
     } catch (error) {
-        console.error('❌ Error initializing portfolio:', error);
+        console.error('❌ Error loading portfolio data:', error);
         showAlert('Failed to load portfolio data: ' + error.message, 'error');
         showLoading(false);
+        return; // DB failed — nothing to render
     }
+
+    // Fyers prices — best effort, never blocks render
+    await fetchLivePrices();
+
+    updateUnitLabels();
+    renderPortfolio();
+    showLoading(false);
 }
 
 // ============================================================================
@@ -171,11 +153,17 @@ async function loadPortfolioData() {
 
 async function refreshPortfolio() {
     showLoading(true);
-    await loadPortfolioData();
-    await fetchLivePrices();
+    try {
+        await loadPortfolioData();
+    } catch (error) {
+        showAlert('Failed to refresh data: ' + error.message, 'error');
+        showLoading(false);
+        return;
+    }
+    await fetchLivePrices(); // best effort
     renderPortfolio();
     showLoading(false);
-    showAlert('Portfolio refreshed with live prices', 'success', 2000);
+    showAlert('Portfolio refreshed', 'success', 2000);
 }
 
 // ============================================================================
@@ -195,69 +183,51 @@ function getLiveData(holding) {
 }
 
 async function fetchLivePrices() {
-    // Skip if Fyers not connected
-    if (!window.fyersToken) {
-        console.log('⚠️ Fyers not connected - using last transaction prices');
-        updatePriceStatus('last-txn');
-        return;
-    }
-
-    // Build list of unique Fyers symbols from all holdings
-    const holdings = calculateHoldings();
-    if (holdings.length === 0) return;
-
-    // Build Fyers symbols for all holdings
-    // Equity: NSE:RELIANCE-EQ  |  F&O: NSE:NATIONALUM26FEBFUT (no -EQ, always NSE prefix)
-    const fyersSymbols = holdings.map(h => {
-        const exch = (h.exchange || 'NSE').toUpperCase();
-        if (exch === 'NFO') {
-            // F&O - always use full symbol (e.g. NATIONALUM26FEBFUT), prefix NSE:
-            return `NSE:${h.symbol}`;
-        } else {
-            // Equity - use shortSymbol if available, with -EQ suffix
-            const sym = h.shortSymbol || h.symbol;
-            return `${exch}:${sym}-EQ`;
-        }
-    });
-
-    console.log('📡 Sending to Fyers:', fyersSymbols);
-    updatePriceStatus('loading');
-
+    // Always resolves — never throws — so initPortfolio always continues to render
     try {
-        const data = await window.fyersCall({
-            action: 'quotes',
-            symbols: fyersSymbols
+        if (!window.fyersToken) {
+            updatePriceStatus('last-txn');
+            return;
+        }
+
+        const holdings = calculateHoldings();
+        if (holdings.length === 0) return;
+
+        const fyersSymbols = holdings.map(h => {
+            const exch = (h.exchange || 'NSE').toUpperCase();
+            return exch === 'NFO'
+                ? `NSE:${h.symbol}`
+                : `${exch}:${h.shortSymbol || h.symbol}-EQ`;
         });
+
+        updatePriceStatus('loading');
+
+        const data = await window.fyersCall({ action: 'quotes', symbols: fyersSymbols });
 
         if (data && data.d && data.d.length > 0) {
             data.d.forEach(item => {
-                if (item.v && item.v.lp && item.v.symbol) {
+                if (item.v && item.v.symbol) {
                     const key = item.v.symbol;
-                    livePrices[key] = item.v.lp;
+                    livePrices[key] = item.v.lp || 0;
                     liveData[key] = {
-                        lp:   item.v.lp,                          // last price
-                        ch:   item.v.ch   || 0,                   // change ₹
-                        chp:  item.v.chp  || 0,                   // change %
-                        high: item.v.high_price || null,          // day high
-                        low:  item.v.low_price  || null,          // day low
-                        w52h: item.v['52_week_high'] || null,     // 52w high
-                        w52l: item.v['52_week_low']  || null,     // 52w low
+                        lp:   item.v.lp            || 0,
+                        ch:   item.v.ch            || 0,
+                        chp:  item.v.chp           || 0,
+                        high: item.v.high_price    || null,
+                        low:  item.v.low_price     || null,
+                        w52h: item.v['52_week_high'] || null,
+                        w52l: item.v['52_week_low']  || null,
                     };
                 }
             });
-            console.log('✅ Live prices fetched:', livePrices);
             updatePriceStatus('live');
         } else {
-            console.warn('⚠️ No price data returned from Fyers:', data);
             updatePriceStatus('last-txn');
         }
     } catch (err) {
-        if (err.message === 'FYERS_NOT_AUTHENTICATED') {
-            updatePriceStatus('last-txn');
-        } else {
-            console.error('❌ Fyers price fetch error:', err);
-            updatePriceStatus('error');
-        }
+        // Any failure — silently fall back to last transaction prices, never block render
+        console.warn('⚠️ Fyers price fetch failed, using last transaction prices:', err.message || err);
+        updatePriceStatus('last-txn');
     }
 }
 
@@ -641,143 +611,118 @@ function buildSlider(current, low, high, tooltip) {
 
 function renderPortfolio() {
     const list = document.getElementById('portfolio-list');
-    
+
     let holdings = calculateHoldings();
-    
+
     if (holdings.length === 0) {
-        list.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px; color: #9ca3af;">No holdings to display</td></tr>';
+        list.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#9ca3af;">No holdings to display</td></tr>';
         document.getElementById('portfolio-summary').innerHTML = '';
         updateSortIndicators();
         return;
     }
 
-    // Calculate totals
+    // Totals
     let totalInvested = 0;
     let totalValue = 0;
-    
     holdings.forEach(h => {
-        const invested = h.quantity * h.avgCost;
-        const value = h.quantity * getPrice(h);
-        totalInvested += invested;
-        totalValue += value;
+        totalInvested += h.quantity * h.avgCost;
+        totalValue    += h.quantity * getPrice(h);
     });
-    
-    const totalPL = totalValue - totalInvested;
-    const totalPLPercent = totalInvested > 0 ? (totalPL / totalInvested) * 100 : 0;
-    
-    // Sort holdings
+    const totalPL        = totalValue - totalInvested;
+    const totalPLPercent = totalInvested !== 0 ? (totalPL / Math.abs(totalInvested)) * 100 : 0;
+
+    // Sort
     holdings.sort((a, b) => {
         let valA, valB;
-        
-        switch(portfolioSortColumn) {
-            case 'symbol':
-                valA = a.symbol;
-                valB = b.symbol;
-                break;
-            case 'invested':
-                valA = a.quantity * a.avgCost;
-                valB = b.quantity * b.avgCost;
-                break;
-            case 'pl':
-                valA = (a.quantity * getPrice(a)) - (a.quantity * a.avgCost);
-                valB = (b.quantity * getPrice(b)) - (b.quantity * b.avgCost);
-                break;
-            case 'value':
-                valA = a.quantity * getPrice(a);
-                valB = b.quantity * getPrice(b);
-                break;
-            default:
-                valA = a.symbol;
-                valB = b.symbol;
+        switch (portfolioSortColumn) {
+            case 'symbol':   valA = a.symbol; valB = b.symbol; break;
+            case 'invested': valA = a.quantity * a.avgCost; valB = b.quantity * b.avgCost; break;
+            case 'pl':       valA = (a.quantity * getPrice(a)) - (a.quantity * a.avgCost);
+                             valB = (b.quantity * getPrice(b)) - (b.quantity * b.avgCost); break;
+            case 'value':    valA = a.quantity * getPrice(a); valB = b.quantity * getPrice(b); break;
+            default:         valA = a.symbol; valB = b.symbol;
         }
-        
         if (typeof valA === 'string') {
-            return portfolioSortDirection === 'asc' 
-                ? valA.localeCompare(valB)
-                : valB.localeCompare(valA);
+            return portfolioSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
         }
-        
         return portfolioSortDirection === 'asc' ? valA - valB : valB - valA;
     });
-    
+
     // Render rows
-    const rows = holdings.map(h => {
-        const price    = getPrice(h);
-        const md       = getLiveData(h);
-        const invested = h.quantity * h.avgCost;
+    const rows = holdings.map(function(h) {
+        const price        = getPrice(h);
+        const md           = getLiveData(h);
+        const invested     = h.quantity * h.avgCost;
         const currentValue = h.quantity * price;
         const pl           = currentValue - invested;
         const plPercent    = invested !== 0 ? (pl / Math.abs(invested)) * 100 : 0;
-        const investedPercent = totalInvested !== 0 ? (invested / totalInvested) * 100 : 0;
-        const valuePercent    = totalValue    !== 0 ? (currentValue / totalValue) * 100 : 0;
+        const invPct       = totalInvested !== 0 ? (invested / totalInvested) * 100 : 0;
+        const valPct       = totalValue    !== 0 ? (currentValue / totalValue) * 100 : 0;
+        const dayPL        = md ? h.quantity * md.ch : null;
 
-        // Day P&L: quantity x change in price
-        const dayPL = md ? h.quantity * md.ch : null;
+        const qtyHtml = h.quantity < 0
+            ? '<div class="number-main negative">(' + formatQuantity(Math.abs(h.quantity)) + ')</div>'
+            : '<div class="number-main">' + formatQuantity(h.quantity) + '</div>';
 
-        // Qty: red + parentheses for negative
-        const qtyDisplay = h.quantity < 0
-            ? `<div class="number-main negative">(${formatQuantity(Math.abs(h.quantity))})</div>`
-            : `<div class="number-main">${formatQuantity(h.quantity)}</div>`;
-
-        // CMP slider — 52w range
         const cmpSlider = (md && md.w52h && md.w52l)
             ? buildSlider(md.lp, md.w52l, md.w52h,
-                `52W L:${formatPrice(md.w52l,false)} | CMP:${formatPrice(md.lp,false)} | 52W H:${formatPrice(md.w52h,false)}`)
+                '52W L:' + formatPrice(md.w52l, false) + ' | CMP:' + formatPrice(md.lp, false) + ' | 52W H:' + formatPrice(md.w52h, false))
             : '';
 
-        // Day slider — day high/low
         const daySlider = (md && md.high && md.low)
             ? buildSlider(md.lp, md.low, md.high,
-                `Day L:${formatPrice(md.low,false)} | CMP:${formatPrice(md.lp,false)} | Day H:${formatPrice(md.high,false)}`)
+                'Day L:' + formatPrice(md.low, false) + ' | CMP:' + formatPrice(md.lp, false) + ' | Day H:' + formatPrice(md.high, false))
             : '';
 
-        const symbolKey = `${h.symbol}-${h.exchange}`;
+        const symbolKey  = h.symbol + '-' + h.exchange;
         const isExpanded = expandedSymbol === symbolKey;
+        const expClass   = isExpanded ? 'expanded-row' : '';
 
-        const mainRow = `
-            <tr class="${isExpanded ? 'expanded-row' : ''}">
-                <td class="symbol-cell">
-                    <div class="symbol-main symbol-clickable" onclick="toggleSymbolDetail('${h.symbol}','${h.exchange}')">${h.symbol}</div>
-                    <div class="symbol-sub">${h.companyName || ''}</div>
-                </td>
-                <td class="text-right">
-                    ${qtyDisplay}
-                    <div class="number-sub">${formatPrice(h.avgCost, false)}</div>
-                </td>
-                <td class="text-right">
-                    <div class="number-main">${formatAmount(invested)}</div>
-                    <div class="number-sub">${investedPercent.toFixed(2)}%</div>
-                </td>
-                <td class="text-right">
-                    <div class="number-main">${formatPrice(price, false)}</div>
-                    ${cmpSlider}
-                </td>
-                <td class="text-right">
-                    <div class="number-main ${dayPL !== null ? getAmountClass(dayPL) : ''}">${dayPL !== null ? formatAmount(dayPL) : '-'}</div>
-                    ${daySlider}
-                </td>
-                <td class="text-right">
-                    <div class="number-main ${getAmountClass(pl)}">${formatAmount(pl)}</div>
-                    <div class="number-sub ${getAmountClass(plPercent)}">${formatPercent(plPercent)}</div>
-                </td>
-                <td class="text-right">
-                    <div class="number-main">${formatAmount(currentValue)}</div>
-                    <div class="number-sub">${valuePercent.toFixed(2)}%</div>
-                </td>
-                <td>${h.tags.map(tag => `<span class="tag-badge">${tag}</span>`).join('')}</td>
-            </tr>
-        `;
+        const dayPLHtml = dayPL !== null
+            ? '<div class="number-main ' + getAmountClass(dayPL) + '">' + formatAmount(dayPL) + '</div>'
+            : '<div class="number-main">-</div>';
 
-        // Detail row — 8 cols, no sliders
-        let detailRow = '';
+        const mainRow =
+            '<tr class="' + expClass + '">' +
+                '<td class="symbol-cell">' +
+                    '<div class="symbol-main symbol-clickable" onclick="toggleSymbolDetail(\'' + h.symbol + '\',\'' + h.exchange + '\')">' + h.symbol + '</div>' +
+                    '<div class="symbol-sub">' + (h.companyName || '') + '</div>' +
+                '</td>' +
+                '<td class="text-right">' +
+                    qtyHtml +
+                    '<div class="number-sub">' + formatPrice(h.avgCost, false) + '</div>' +
+                '</td>' +
+                '<td class="text-right">' +
+                    '<div class="number-main">' + formatAmount(invested) + '</div>' +
+                    '<div class="number-sub">' + invPct.toFixed(2) + '%</div>' +
+                '</td>' +
+                '<td class="text-right">' +
+                    '<div class="number-main">' + formatPrice(price, false) + '</div>' +
+                    cmpSlider +
+                '</td>' +
+                '<td class="text-right">' + dayPLHtml + daySlider + '</td>' +
+                '<td class="text-right">' +
+                    '<div class="number-main ' + getAmountClass(pl) + '">' + formatAmount(pl) + '</div>' +
+                    '<div class="number-sub ' + getAmountClass(plPercent) + '">' + formatPercent(plPercent) + '</div>' +
+                '</td>' +
+                '<td class="text-right">' +
+                    '<div class="number-main">' + formatAmount(currentValue) + '</div>' +
+                    '<div class="number-sub">' + valPct.toFixed(2) + '%</div>' +
+                '</td>' +
+                '<td>' + h.tags.map(function(t) { return '<span class="tag-badge">' + t + '</span>'; }).join('') + '</td>' +
+            '</tr>';
+
+        // Detail row (expanded) — 8 cols, no sliders
+        var detailRow = '';
         if (isExpanded) {
-            const symbolTxns = transactions.filter(txn =>
-                txn.symbol === h.symbol && txn.exchange === h.exchange
-            );
-            const investorGroups = {};
-            symbolTxns.forEach(txn => {
+            var symbolTxns = transactions.filter(function(txn) {
+                return txn.symbol === h.symbol && txn.exchange === h.exchange;
+            });
+
+            var investorGroups = {};
+            symbolTxns.forEach(function(txn) {
                 if (!investorGroups[txn.investorId]) {
-                    const investor = investors.find(inv => inv.id === txn.investorId);
+                    var investor = investors.find(function(inv) { return inv.id === txn.investorId; });
                     investorGroups[txn.investorId] = {
                         name: investor ? investor.name : 'Unknown',
                         quantity: 0, totalCost: 0, tags: new Set()
@@ -785,92 +730,81 @@ function renderPortfolio() {
                 }
                 investorGroups[txn.investorId].quantity  += txn.quantity;
                 investorGroups[txn.investorId].totalCost += txn.netAmount;
-                if (txn.tags) txn.tags.forEach(tag => investorGroups[txn.investorId].tags.add(tag));
+                if (txn.tags) txn.tags.forEach(function(tag) { investorGroups[txn.investorId].tags.add(tag); });
             });
 
-            const investorRows = Object.values(investorGroups)
-                .filter(inv => inv.quantity !== 0)
-                    const invAvgCost = inv.quantity !== 0 ? inv.totalCost / inv.quantity : 0;
-                    const invDayPL   = md ? inv.quantity * md.ch : null;
-                    const invValue   = inv.quantity * price;
-                    const invInvested = inv.quantity * invAvgCost;
-                    const invPL      = invValue - invInvested;
-                    const invPLPct   = invInvested !== 0 ? (invPL / Math.abs(invInvested)) * 100 : 0;
-                    const invInvPct  = invested !== 0 ? (invInvested / invested) * 100 : 0;
-                    const invValPct  = currentValue !== 0 ? (invValue / currentValue) * 100 : 0;
-                    const invQty = inv.quantity < 0
-                        ? `<div class="number-main negative">(${formatQuantity(Math.abs(inv.quantity))})</div>`
-                        : `<div class="number-main">${formatQuantity(inv.quantity)}</div>`;
-                    return `
-                        <tr>
-                            <td class="symbol-cell"><div class="symbol-main">${inv.name}</div></td>
-                            <td class="text-right">
-                                ${invQty}
-                                <div class="number-sub">${formatPrice(invAvgCost, false)}</div>
-                            </td>
-                            <td class="text-right">
-                                <div class="number-main">${formatAmount(invInvested)}</div>
-                                <div class="number-sub">${invInvPct.toFixed(2)}%</div>
-                            </td>
-                            <td class="text-right"><div class="number-main">${formatPrice(price, false)}</div></td>
-                            <td class="text-right">
-                                <div class="number-main ${invDayPL !== null ? getAmountClass(invDayPL) : ''}">${invDayPL !== null ? formatAmount(invDayPL) : '-'}</div>
-                            </td>
-                            <td class="text-right">
-                                <div class="number-main ${getAmountClass(invPL)}">${formatAmount(invPL)}</div>
-                                <div class="number-sub ${getAmountClass(invPLPct)}">${formatPercent(invPLPct)}</div>
-                            </td>
-                            <td class="text-right">
-                                <div class="number-main">${formatAmount(invValue)}</div>
-                                <div class="number-sub">${invValPct.toFixed(2)}%</div>
-                            </td>
-                            <td>${Array.from(inv.tags).map(tag => `<span class="tag-badge">${tag}</span>`).join('')}</td>
-                        </tr>
-                    `;
+            var investorRows = Object.values(investorGroups)
+                .filter(function(inv) { return inv.quantity !== 0; })
+                .map(function(inv) {
+                    var invAvgCost  = inv.quantity !== 0 ? (inv.totalCost !== 0 ? inv.totalCost / inv.quantity : h.latestPrice) : 0;
+                    var invDayPL    = md ? inv.quantity * md.ch : null;
+                    var invValue    = inv.quantity * price;
+                    var invInvested = inv.quantity * invAvgCost;
+                    var invPL       = invValue - invInvested;
+                    var invPLPct    = invInvested !== 0 ? (invPL / Math.abs(invInvested)) * 100 : 0;
+                    var invInvPct   = invested !== 0 ? (invInvested / invested) * 100 : 0;
+                    var invValPct   = currentValue !== 0 ? (invValue / currentValue) * 100 : 0;
+
+                    var invQtyHtml = inv.quantity < 0
+                        ? '<div class="number-main negative">(' + formatQuantity(Math.abs(inv.quantity)) + ')</div>'
+                        : '<div class="number-main">' + formatQuantity(inv.quantity) + '</div>';
+
+                    var invDayPLHtml = invDayPL !== null
+                        ? '<div class="number-main ' + getAmountClass(invDayPL) + '">' + formatAmount(invDayPL) + '</div>'
+                        : '<div class="number-main">-</div>';
+
+                    return '<tr>' +
+                        '<td class="symbol-cell"><div class="symbol-main">' + inv.name + '</div></td>' +
+                        '<td class="text-right">' + invQtyHtml + '<div class="number-sub">' + formatPrice(invAvgCost, false) + '</div></td>' +
+                        '<td class="text-right"><div class="number-main">' + formatAmount(invInvested) + '</div><div class="number-sub">' + invInvPct.toFixed(2) + '%</div></td>' +
+                        '<td class="text-right"><div class="number-main">' + formatPrice(price, false) + '</div></td>' +
+                        '<td class="text-right">' + invDayPLHtml + '</td>' +
+                        '<td class="text-right"><div class="number-main ' + getAmountClass(invPL) + '">' + formatAmount(invPL) + '</div><div class="number-sub ' + getAmountClass(invPLPct) + '">' + formatPercent(invPLPct) + '</div></td>' +
+                        '<td class="text-right"><div class="number-main">' + formatAmount(invValue) + '</div><div class="number-sub">' + invValPct.toFixed(2) + '%</div></td>' +
+                        '<td>' + Array.from(inv.tags).map(function(t) { return '<span class="tag-badge">' + t + '</span>'; }).join('') + '</td>' +
+                    '</tr>';
                 }).join('');
 
-            detailRow = `
-                <tr class="detail-row">
-                    <td colspan="8">
-                        <table class="inner-table">
-                            <tbody>${investorRows}</tbody>
-                        </table>
-                    </td>
-                </tr>
-            `;
+            detailRow =
+                '<tr class="detail-row">' +
+                    '<td colspan="8">' +
+                        '<table class="inner-table"><tbody>' + investorRows + '</tbody></table>' +
+                    '</td>' +
+                '</tr>';
         }
+
         return mainRow + detailRow;
     }).join('');
 
-    // Total row — 8 cols, Day P&L sum
-    const totalDayPL = Object.keys(liveData).length > 0
-        ? holdings.reduce((sum, h) => { const m = getLiveData(h); return sum + (m ? h.quantity * m.ch : 0); }, 0)
+    // Total row
+    var totalDayPL = Object.keys(liveData).length > 0
+        ? holdings.reduce(function(sum, h) { var m = getLiveData(h); return sum + (m ? h.quantity * m.ch : 0); }, 0)
         : null;
 
-    const totalRow = `
-        <tr class="total-row">
-            <td>TOTAL</td>
-            <td class="text-right">${holdings.length} stocks</td>
-            <td class="text-right">${formatAmount(totalInvested)}</td>
-            <td class="text-right">-</td>
-            <td class="text-right ${totalDayPL !== null ? getAmountClass(totalDayPL) : ''}">${totalDayPL !== null ? formatAmount(totalDayPL) : '-'}</td>
-            <td class="text-right">
-                <div class="${getAmountClass(totalPL)}">${formatAmount(totalPL)}</div>
-                <div class="number-sub ${getAmountClass(totalPLPercent)}">${formatPercent(totalPLPercent)}</div>
-            </td>
-            <td class="text-right">${formatAmount(totalValue)}</td>
-            <td>-</td>
-        </tr>
-    `;
-    
+    var totalDayPLHtml = totalDayPL !== null
+        ? '<span class="' + getAmountClass(totalDayPL) + '">' + formatAmount(totalDayPL) + '</span>'
+        : '-';
+
+    const totalRow =
+        '<tr class="total-row">' +
+            '<td>TOTAL</td>' +
+            '<td class="text-right">' + holdings.length + ' stocks</td>' +
+            '<td class="text-right">' + formatAmount(totalInvested) + '</td>' +
+            '<td class="text-right">-</td>' +
+            '<td class="text-right">' + totalDayPLHtml + '</td>' +
+            '<td class="text-right">' +
+                '<div class="' + getAmountClass(totalPL) + '">' + formatAmount(totalPL) + '</div>' +
+                '<div class="number-sub ' + getAmountClass(totalPLPercent) + '">' + formatPercent(totalPLPercent) + '</div>' +
+            '</td>' +
+            '<td class="text-right">' + formatAmount(totalValue) + '</td>' +
+            '<td>-</td>' +
+        '</tr>';
+
     list.innerHTML = totalRow + rows;
-    
-    // Update sort indicators
     updateSortIndicators();
-    
-    // Render summary cards
     renderSummaryCards(totalInvested, totalValue, totalPL, totalPLPercent, holdings.length);
 }
+
 
 function updateSortIndicators() {
     // Clear all indicators
