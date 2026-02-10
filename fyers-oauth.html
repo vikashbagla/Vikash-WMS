@@ -185,21 +185,22 @@
         </div>
 
         <div class="card success" id="step3" style="display: none;">
-            <h2><span class="step-number">✓</span> Success!</h2>
-            <p style="margin-bottom: 12px;">Copy this token:</p>
+            <h2><span class="step-number">✓</span> Connected!</h2>
+            <p style="margin-bottom: 12px; color: #155724; font-weight: 600;">
+                ✅ Fyers token saved. Valid for today.
+            </p>
             
             <div class="code-block" id="token-display"></div>
             
             <div class="info" style="background: #d1ecf1; color: #0c5460;">
-                <strong>Next:</strong><br>
-                1. Copy token above<br>
-                2. Supabase → Edge Functions → Secrets<br>
-                3. Add: FYERS_ACCESS_TOKEN<br>
-                4. Done! 🎉
+                <strong>✅ Done automatically:</strong><br>
+                • Token saved to browser storage<br>
+                • Valid until midnight tonight<br>
+                • Redirecting back to app in 3 seconds...
             </div>
             
-            <button class="btn btn-primary" onclick="copyToken()">
-                📋 Copy Token
+            <button class="btn btn-primary" onclick="window.location.href='app.html'">
+                ▶ Go to App Now
             </button>
         </div>
 
@@ -261,10 +262,23 @@
                 // v3 returns access_token directly
                 if (data.access_token) {
                     token = data.access_token;
+                    
+                    // Save token with today's date to localStorage
+                    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+                    localStorage.setItem('fyers_token', JSON.stringify({
+                        token: token,
+                        date: today
+                    }));
+                    
                     document.getElementById('step2').style.display = 'none';
                     document.getElementById('step3').style.display = 'block';
                     document.getElementById('token-display').textContent = token;
-                    showStatus('🎉 Success!', 'success');
+                    showStatus('🎉 Token saved! Redirecting to app in 3 seconds...', 'success');
+                    
+                    // Auto-redirect back to app after 3 seconds
+                    setTimeout(() => {
+                        window.location.href = 'app.html';
+                    }, 3000);
                 } else {
                     throw new Error(data.message || JSON.stringify(data));
                 }

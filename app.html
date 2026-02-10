@@ -23,6 +23,7 @@
                 <span class="tagline">Wealth Management System</span>
             </div>
             <div class="user-section">
+                <span id="fyers-status" style="font-size:12px; margin-right:16px;">⏳ Fyers...</span>
                 <span class="user-email" id="user-email">Loading...</span>
                 <button class="btn-logout" id="logoutBtn">Logout</button>
             </div>
@@ -60,7 +61,62 @@
     let currentModule = null;
     let currentUser = null;
 
-    // Check auth
+    // ============================================================
+    // FYERS TOKEN MANAGEMENT
+    // ============================================================
+
+    // Get today's token from localStorage if still valid
+    function getFyersToken() {
+        try {
+            const stored = localStorage.getItem('fyers_token');
+            if (!stored) return null;
+            const { token, date } = JSON.parse(stored);
+            const today = new Date().toISOString().split('T')[0];
+            if (date === today && token) return token;
+            return null; // expired (different date)
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Call Fyers via Supabase Edge Function
+    // Usage: await fyersCall({ action: 'quotes', symbols: 'NSE:RELIANCE-EQ' })
+    window.fyersCall = async function(payload) {
+        const token = getFyersToken();
+        if (!token) {
+            throw new Error('FYERS_NOT_AUTHENTICATED');
+        }
+        const response = await fetch(`${window.SUPABASE_URL}/functions/v1/fyers-market-data`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${window.SUPABASE_ANON_KEY}`,
+                'x-fyers-token': token
+            },
+            body: JSON.stringify(payload)
+        });
+        return await response.json();
+    };
+
+    // Check Fyers token on app load - redirect to OAuth if needed
+    function checkFyersAuth() {
+        const token = getFyersToken();
+        if (token) {
+            window.fyersToken = token;
+            console.log('✅ Fyers token valid for today');
+            document.getElementById('fyers-status').innerHTML = '🟢 Fyers Connected';
+            document.getElementById('fyers-status').style.color = '#059669';
+        } else {
+            window.fyersToken = null;
+            document.getElementById('fyers-status').innerHTML = 
+                '🔴 <a href="fyers-oauth.html" style="color:#dc2626;font-weight:600;">Connect Fyers</a>';
+            console.log('⚠️ Fyers token missing or expired');
+        }
+    }
+
+    // ============================================================
+    // AUTH
+    // ============================================================
     function checkAuth() {
         const savedUser = localStorage.getItem('wms_user');
         if (!savedUser) {
@@ -156,6 +212,7 @@
     // Init
     document.addEventListener('DOMContentLoaded', () => {
         if (!checkAuth()) return;
+        checkFyersAuth();
         document.getElementById('logoutBtn').addEventListener('click', logout);
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
             btn.addEventListener('click', () => loadModule(btn.dataset.module));
