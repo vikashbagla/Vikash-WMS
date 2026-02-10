@@ -215,8 +215,8 @@ async function fetchLivePrices() {
                         chp:  item.v.chp           || 0,
                         high: item.v.high_price    || null,
                         low:  item.v.low_price     || null,
-                        w52h: item.v['52_week_high'] || null,
-                        w52l: item.v['52_week_low']  || null,
+                        w52h: item.v['52_week_high'] || item.v.fyHigh || null,
+                        w52l: item.v['52_week_low']  || item.v.fyLow  || null,
                     };
                 }
             });
@@ -591,18 +591,19 @@ function toggleSymbolDetail(symbol, exchange) {
 // SLIDER HELPER
 // ============================================================================
 
-function buildSlider(current, low, high, tooltip) {
-    if (high <= low) return '';
-    const pct = Math.min(100, Math.max(0, ((current - low) / (high - low)) * 100));
-    // Dot colour: green if in upper half, red if in lower half
+function buildSlider(current, low, high, lo, hi) {
+    if (!low || !high || high <= low) return '';
+    const pct      = Math.min(100, Math.max(0, ((current - low) / (high - low)) * 100));
     const dotColor = pct >= 50 ? '#059669' : '#dc2626';
-    return `
-        <div class="price-slider" data-tip="${tooltip}">
-            <div class="price-slider-track">
-                <div class="price-slider-dot" style="left:${pct.toFixed(1)}%;background:${dotColor};"></div>
-            </div>
-        </div>
-    `;
+    return '<div class="price-slider">' +
+               '<div class="price-slider-track">' +
+                   '<div class="price-slider-dot" style="left:' + pct.toFixed(1) + '%;background:' + dotColor + ';"></div>' +
+               '</div>' +
+               '<div class="slider-tooltip">' +
+                   '<span>' + lo + '</span>' +
+                   '<span>' + hi + '</span>' +
+               '</div>' +
+           '</div>';
 }
 
 // ============================================================================
@@ -666,12 +667,14 @@ function renderPortfolio() {
 
         const cmpSlider = (md && md.w52h && md.w52l)
             ? buildSlider(md.lp, md.w52l, md.w52h,
-                '52W L:' + formatPrice(md.w52l, false) + ' | CMP:' + formatPrice(md.lp, false) + ' | 52W H:' + formatPrice(md.w52h, false))
+                'L: ' + formatPrice(md.w52l, false),
+                'H: ' + formatPrice(md.w52h, false))
             : '';
 
         const daySlider = (md && md.high && md.low)
             ? buildSlider(md.lp, md.low, md.high,
-                'Day L:' + formatPrice(md.low, false) + ' | CMP:' + formatPrice(md.lp, false) + ' | Day H:' + formatPrice(md.high, false))
+                'L: ' + formatPrice(md.low, false),
+                'H: ' + formatPrice(md.high, false))
             : '';
 
         const symbolKey  = h.symbol + '-' + h.exchange;
@@ -780,9 +783,13 @@ function renderPortfolio() {
     var totalDayPL = Object.keys(liveData).length > 0
         ? holdings.reduce(function(sum, h) { var m = getLiveData(h); return sum + (m ? h.quantity * m.ch : 0); }, 0)
         : null;
+    var totalDayPLPct = (totalDayPL !== null && totalInvested !== 0)
+        ? (totalDayPL / Math.abs(totalInvested)) * 100
+        : null;
 
     var totalDayPLHtml = totalDayPL !== null
-        ? '<span class="' + getAmountClass(totalDayPL) + '">' + formatAmount(totalDayPL) + '</span>'
+        ? '<div class="' + getAmountClass(totalDayPL) + '">' + formatAmount(totalDayPL) + '</div>' +
+          '<div class="number-sub ' + getAmountClass(totalDayPLPct) + '">' + formatPercent(totalDayPLPct) + '</div>'
         : '-';
 
     const totalRow =

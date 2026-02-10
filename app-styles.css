@@ -159,7 +159,7 @@ table { width:100%; border-collapse:collapse; min-width:940px; }
 .price-slider {
     position: relative;
     margin-top: 4px;
-    cursor: default;
+    padding: 0 6px;        /* 6px inset each side — gap from column edges */
 }
 .price-slider-track {
     position: relative;
@@ -174,47 +174,44 @@ table { width:100%; border-collapse:collapse; min-width:940px; }
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    box-shadow: 0 0 0 2px white, 0 0 0 3px currentColor;
+    box-shadow: 0 0 0 2px white;
     transition: transform 0.15s;
 }
 .price-slider:hover .price-slider-dot {
     transform: translate(-50%, -50%) scale(1.4);
 }
 
-/* Tooltip — appears on hover */
-.price-slider::after {
-    content: attr(data-tip);
+/* Tooltip — real div, hidden until hover */
+.slider-tooltip {
+    display: none;
     position: absolute;
-    bottom: calc(100% + 6px);
-    left: 50%;
-    transform: translateX(-50%);
+    bottom: calc(100% + 5px);
+    left: 0;
+    right: 0;
     background: #1e293b;
     color: white;
     font-size: 10px;
-    white-space: nowrap;
-    padding: 3px 7px;
+    padding: 3px 6px;
     border-radius: 4px;
     pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.15s;
+    white-space: nowrap;
     z-index: 500;
+    justify-content: space-between;
     letter-spacing: 0.2px;
 }
-.price-slider::before {
+/* Arrow */
+.slider-tooltip::after {
     content: '';
     position: absolute;
-    bottom: calc(100% + 2px);
+    top: 100%;
     left: 50%;
     transform: translateX(-50%);
     border: 4px solid transparent;
     border-top-color: #1e293b;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.15s;
-    z-index: 500;
 }
-.price-slider:hover::after,
-.price-slider:hover::before { opacity: 1; }
+.price-slider:hover .slider-tooltip {
+    display: flex;
+}
 
 /* Inner table — 8 columns, same widths */
 .detail-row .inner-table td:nth-child(1){width:15%}
