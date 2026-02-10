@@ -170,7 +170,7 @@ async function refreshPortfolio() {
 // LIVE PRICES FROM FYERS
 // ============================================================================
 
-// Cache: { 'NSE:RELIANCE-EQ': { lp, ch, chp, high, low, w52h, w52l } }
+// Cache: { 'NSE:RELIANCE-EQ': { lp, ch, chp, high, low } }
 let livePrices = {};
 let liveData = {}; // full market data per fyers symbol key
 
@@ -215,8 +215,6 @@ async function fetchLivePrices() {
                         chp:  item.v.chp           || 0,
                         high: item.v.high_price    || null,
                         low:  item.v.low_price     || null,
-                        w52h: item.v['52_week_high'] || item.v.fyHigh || null,
-                        w52l: item.v['52_week_low']  || item.v.fyLow  || null,
                     };
                 }
             });
@@ -660,29 +658,19 @@ function renderPortfolio() {
         const invPct       = totalInvested !== 0 ? (invested / totalInvested) * 100 : 0;
         const valPct       = totalValue    !== 0 ? (currentValue / totalValue) * 100 : 0;
         const dayPL        = md ? h.quantity * md.ch : null;
+        const dayChp       = md ? md.chp : null;  // % change for the day
 
         const qtyHtml = h.quantity < 0
             ? '<div class="number-main negative">(' + formatQuantity(Math.abs(h.quantity)) + ')</div>'
             : '<div class="number-main">' + formatQuantity(h.quantity) + '</div>';
-
-        const cmpSlider = (md && md.w52h && md.w52l)
-            ? buildSlider(md.lp, md.w52l, md.w52h,
-                'L: ' + formatPrice(md.w52l, false),
-                'H: ' + formatPrice(md.w52h, false))
-            : '';
-
-        const daySlider = (md && md.high && md.low)
-            ? buildSlider(md.lp, md.low, md.high,
-                'L: ' + formatPrice(md.low, false),
-                'H: ' + formatPrice(md.high, false))
-            : '';
 
         const symbolKey  = h.symbol + '-' + h.exchange;
         const isExpanded = expandedSymbol === symbolKey;
         const expClass   = isExpanded ? 'expanded-row' : '';
 
         const dayPLHtml = dayPL !== null
-            ? '<div class="number-main ' + getAmountClass(dayPL) + '">' + formatAmount(dayPL) + '</div>'
+            ? '<div class="number-main ' + getAmountClass(dayPL) + '">' + formatAmount(dayPL) + '</div>' +
+              '<div class="number-sub ' + getAmountClass(dayChp) + '">' + formatPercent(dayChp) + '</div>'
             : '<div class="number-main">-</div>';
 
         const mainRow =
@@ -701,9 +689,8 @@ function renderPortfolio() {
                 '</td>' +
                 '<td class="text-right">' +
                     '<div class="number-main">' + formatPrice(price, false) + '</div>' +
-                    cmpSlider +
                 '</td>' +
-                '<td class="text-right">' + dayPLHtml + daySlider + '</td>' +
+                '<td class="text-right">' + dayPLHtml + '</td>' +
                 '<td class="text-right">' +
                     '<div class="number-main ' + getAmountClass(pl) + '">' + formatAmount(pl) + '</div>' +
                     '<div class="number-sub ' + getAmountClass(plPercent) + '">' + formatPercent(plPercent) + '</div>' +
@@ -741,6 +728,7 @@ function renderPortfolio() {
                 .map(function(inv) {
                     var invAvgCost  = inv.quantity !== 0 ? (inv.totalCost !== 0 ? inv.totalCost / inv.quantity : h.latestPrice) : 0;
                     var invDayPL    = md ? inv.quantity * md.ch : null;
+                    var invDayChp   = md ? md.chp : null;
                     var invValue    = inv.quantity * price;
                     var invInvested = inv.quantity * invAvgCost;
                     var invPL       = invValue - invInvested;
@@ -753,7 +741,8 @@ function renderPortfolio() {
                         : '<div class="number-main">' + formatQuantity(inv.quantity) + '</div>';
 
                     var invDayPLHtml = invDayPL !== null
-                        ? '<div class="number-main ' + getAmountClass(invDayPL) + '">' + formatAmount(invDayPL) + '</div>'
+                        ? '<div class="number-main ' + getAmountClass(invDayPL) + '">' + formatAmount(invDayPL) + '</div>' +
+                          '<div class="number-sub ' + getAmountClass(invDayChp) + '">' + formatPercent(invDayChp) + '</div>'
                         : '<div class="number-main">-</div>';
 
                     return '<tr>' +
