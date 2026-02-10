@@ -88,6 +88,18 @@
         }
     }
 
+    // Helper to inject a module's HTML + styles into the container
+    function injectModule(html, container) {
+        const parsed = new DOMParser().parseFromString(html, 'text/html');
+        // Inject any <style> tags from <head>
+        parsed.querySelectorAll('head style').forEach(style => {
+            const existing = document.getElementById(style.id);
+            if (existing) existing.remove();
+            document.head.appendChild(style.cloneNode(true));
+        });
+        container.innerHTML = parsed.body.innerHTML;
+    }
+
     // Helper to load a script dynamically
     function loadScript(src) {
         return new Promise((resolve, reject) => {
@@ -121,18 +133,14 @@
                 if (typeof initPortfolio === 'function') await initPortfolio();
 
             } else if (moduleName === 'master-data') {
-                const resp = await fetch('master-data.html');
-                const html = await resp.text();
-                const parsed = new DOMParser().parseFromString(html, 'text/html');
-                container.innerHTML = parsed.body.innerHTML;
+                const html = await (await fetch('master-data.html')).text();
+                injectModule(html, container);
                 await loadScript('master-data.js');
                 if (typeof initMasterData === 'function') initMasterData();
 
             } else if (moduleName === 'import-transactions') {
-                const resp = await fetch('transaction-import.html');
-                const html = await resp.text();
-                const parsed = new DOMParser().parseFromString(html, 'text/html');
-                container.innerHTML = parsed.body.innerHTML;
+                const html = await (await fetch('transaction-import.html')).text();
+                injectModule(html, container);
                 await loadScript('transaction-import.js');
                 if (typeof initTransactionImport === 'function') initTransactionImport();
 
