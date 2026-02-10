@@ -198,15 +198,21 @@ async function fetchLivePrices() {
     const holdings = calculateHoldings();
     if (holdings.length === 0) return;
 
-    // Convert to Fyers symbol format: exchange:symbol-EQ
-    // e.g. symbol='RELIANCE', exchange='NSE' → 'NSE:RELIANCE-EQ'
+    // Log what's in the DB to verify format
+    console.log('📋 Holdings symbols from DB:', holdings.map(h => ({ 
+        symbol: h.symbol, 
+        shortSymbol: h.shortSymbol, 
+        exchange: h.exchange 
+    })));
+
+    // Convert to Fyers symbol format: exchange:shortSymbol-EQ
     const fyersSymbols = holdings.map(h => {
         const sym = h.shortSymbol || h.symbol;
-        const exch = h.exchange || 'NSE';
+        const exch = (h.exchange || 'NSE').toUpperCase();
         return `${exch}:${sym}-EQ`;
     });
 
-    console.log('📡 Fetching live prices for:', fyersSymbols);
+    console.log('📡 Sending to Fyers:', fyersSymbols);
     updatePriceStatus('loading');
 
     try {
@@ -217,11 +223,10 @@ async function fetchLivePrices() {
 
         if (data && data.d && data.d.length > 0) {
             // Map returned prices back to our holdings
+            // Fyers returns: data.d[0].v.symbol = 'NSE:RELIANCE-EQ', data.d[0].v.lp = last price
             data.d.forEach(item => {
-                if (item.v && item.v.lp) {
-                    // item.n = 'NSE:RELIANCE-EQ', lp = last price
-                    const symbol = item.n || item.v.symbol || '';
-                    livePrices[symbol] = item.v.lp;
+                if (item.v && item.v.lp && item.v.symbol) {
+                    livePrices[item.v.symbol] = item.v.lp;
                 }
             });
             console.log('✅ Live prices fetched:', livePrices);
@@ -262,9 +267,13 @@ function updatePriceStatus(status) {
 // Resolve price for a holding: live price if available, else last transaction price
 function getPrice(holding) {
     const sym = holding.shortSymbol || holding.symbol;
-    const exch = holding.exchange || 'NSE';
+    const exch = (holding.exchange || 'NSE').toUpperCase();
     const fyersKey = `${exch}:${sym}-EQ`;
-    return livePrices[fyersKey] || holding.latestPrice;
+    const livePrice = livePrices[fyersKey];
+    if (livePrice) {
+        return livePrice;
+    }
+    return holding.latestPrice;
 }
 
 // ============================================================================

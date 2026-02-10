@@ -4,8 +4,9 @@
 
 // Get user's display unit preference
 function getDisplayUnit() {
-    if (typeof currentUser !== 'undefined' && currentUser && currentUser.preferences) {
-        return currentUser.preferences.display_unit || 'lakhs';
+    const user = window.currentUser;
+    if (user && user.preferences && user.preferences.display_unit) {
+        return user.preferences.display_unit;
     }
     return 'lakhs'; // Default
 }
