@@ -844,14 +844,14 @@ function renderSummaryCards(invested, value, pl, plPercent, stockCount) {
             <div class="summary-label">Total Invested</div>
             <div class="summary-value">${formatAmount(invested)}</div>
         </div>
-        <div class="summary-card">
-            <div class="summary-label">Current Value</div>
-            <div class="summary-value">${formatAmount(value)}</div>
-        </div>
         <div class="summary-card ${getAmountClass(pl)}">
             <div class="summary-label">Total P&L</div>
             <div class="summary-value">${formatAmount(pl)}</div>
             <div class="summary-percent">${formatPercent(plPercent)}</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Total Value</div>
+            <div class="summary-value">${formatAmount(value)}</div>
         </div>
         <div class="summary-card">
             <div class="summary-label">Holdings</div>

@@ -15,10 +15,12 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    font-size: 12px; /* Was 14px */
+    font-size: 12px;
     background: #f5f7fa;
     color: #2d3748;
     line-height: 1.5;
+    height: 100vh;
+    overflow: hidden; /* page never scrolls - only table does */
 }
 
 /* ============================================================================
@@ -117,7 +119,7 @@ body {
 .header-content {
     max-width: 1400px;
     margin: 0 auto;
-    padding: 8px 24px; /* reduced from 16px */
+    padding: 8px 24px;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -175,7 +177,7 @@ body {
     border-bottom: 2px solid #e2e8f0;
     box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     position: sticky;
-    top: 46px; /* height of header */
+    top: 52px; /* actual header height: 8px padding*2 + 36px line-height */
     z-index: 999;
 }
 
@@ -223,15 +225,53 @@ body {
 .main-content {
     max-width: 1400px;
     margin: 0 auto;
-    padding: 16px 24px; /* reduced from 24px */
-    min-height: calc(100vh - 120px);
+    padding: 16px 24px;
+    height: calc(100vh - 110px); /* fill remaining viewport below header+nav */
+    display: flex;
+    flex-direction: column;
 }
 
 .content-container {
     background: white;
-    border-radius: 8px; /* reduced from 12px */
-    padding: 16px; /* reduced from 24px */
+    border-radius: 8px;
+    padding: 16px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* children handle their own scroll */
+}
+
+/* Portfolio container fills the content area */
+.portfolio-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+/* Table grows to fill available space */
+.table-container {
+    overflow-x: auto;
+    overflow-y: auto;
+    flex: 1; /* takes all space between filters and cards */
+    margin-bottom: 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    position: relative;
+    min-height: 0; /* important for flex children to scroll */
+}
+
+/* Summary cards pinned at bottom - no margin top */
+.summary-cards {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    padding-top: 10px;
+    flex-shrink: 0; /* never shrink */
+    background: white;
+    border-top: 1px solid #e2e8f0;
+    padding-bottom: 4px;
 }
 
 .loading-module,
@@ -270,16 +310,8 @@ body {
 }
 
 /* ============================================================================
-   PORTFOLIO MODULE STYLES
+   PORTFOLIO HEADER & CONTROLS
    ============================================================================ */
-
-.portfolio-container {
-    padding: 0;
-}
-
-.portfolio-header {
-    margin-bottom: 12px; /* reduced from 20px */
-}
 
 .portfolio-header h2 {
     font-size: 19px; /* +1pt from 18px */
@@ -475,16 +507,6 @@ body {
    TABLE
    ============================================================================ */
 
-.table-container {
-    overflow-x: auto;
-    overflow-y: auto;
-    max-height: calc(100vh - 280px); /* dynamic height based on viewport */
-    margin-bottom: 16px;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    position: relative;
-}
-
 .table-container > table {
     table-layout: fixed;
     width: 100%;
@@ -514,9 +536,9 @@ table {
 
 th {
     background: #f7fafc;
-    padding: 8px 10px; /* reduced from 10px 12px */
+    padding: 8px 10px;
     text-align: left;
-    font-size: 11px; /* +1pt from 10px */
+    font-size: 12px; /* same as td */
     font-weight: 600;
     color: #4a5568;
     text-transform: uppercase;
@@ -565,21 +587,21 @@ tr:hover:not(.total-row) {
     background: #f9fafb;
 }
 
-/* Total row - same height as data rows, no bold */
+/* Total row - same height as data rows, NO bold */
 .total-row {
     background: #f3f4f6;
     border-top: 2px solid #9ca3af;
     border-bottom: 2px solid #9ca3af;
     position: sticky;
-    top: 38px; /* below header row */
+    top: 38px;
     z-index: 9;
 }
 
 .total-row td {
-    font-size: 12px; /* same as data rows */
-    font-weight: normal; /* removed bold */
+    font-size: 12px;
+    font-weight: normal; /* NOT bold */
     color: #374151;
-    padding: 7px 10px; /* same as data rows */
+    padding: 7px 10px;
     text-transform: uppercase;
 }
 
@@ -688,13 +710,7 @@ tr:hover:not(.total-row) {
     margin-bottom: 2px;
 }
 
-/* Summary Cards */
-.summary-cards {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px; /* reduced */
-    margin-top: 16px;
-}
+/* Summary Card contents */
 
 .summary-card {
     background: linear-gradient(135deg, #f7fafc 0%, #e2e8f0 100%);
