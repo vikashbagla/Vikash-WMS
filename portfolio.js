@@ -201,13 +201,13 @@ async function fetchLivePrices() {
     // Build Fyers symbols for all holdings
     // Equity: NSE:RELIANCE-EQ  |  F&O: NSE:NATIONALUM26FEBFUT (no -EQ, always NSE prefix)
     const fyersSymbols = holdings.map(h => {
-        const sym = h.shortSymbol || h.symbol;
         const exch = (h.exchange || 'NSE').toUpperCase();
         if (exch === 'NFO') {
-            // F&O futures - use NSE prefix, no -EQ suffix
-            return `NSE:${sym}`;
+            // F&O - always use full symbol (e.g. NATIONALUM26FEBFUT), prefix NSE:
+            return `NSE:${h.symbol}`;
         } else {
-            // Equity - use exchange prefix with -EQ suffix
+            // Equity - use shortSymbol if available, with -EQ suffix
+            const sym = h.shortSymbol || h.symbol;
             return `${exch}:${sym}-EQ`;
         }
     });
@@ -266,9 +266,10 @@ function updatePriceStatus(status) {
 
 // Resolve price for a holding: live price if available, else last transaction price
 function getPrice(holding) {
-    const sym = holding.shortSymbol || holding.symbol;
     const exch = (holding.exchange || 'NSE').toUpperCase();
-    const fyersKey = exch === 'NFO' ? `NSE:${sym}` : `${exch}:${sym}-EQ`;
+    const fyersKey = exch === 'NFO'
+        ? `NSE:${holding.symbol}`                           // F&O: NSE:NATIONALUM26FEBFUT
+        : `${exch}:${holding.shortSymbol || holding.symbol}-EQ`; // Equity: NSE:RELIANCE-EQ
     return livePrices[fyersKey] || holding.latestPrice;
 }
 
