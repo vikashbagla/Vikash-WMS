@@ -40,6 +40,8 @@ async function initPortfolio() {
     try {
         console.log('Loading portfolio data...');
         await loadPortfolioData();
+        console.log('Fetching live prices...');
+        await fetchLivePrices();
         console.log('Updating unit labels...');
         updateUnitLabels();
         console.log('Rendering portfolio...');
@@ -169,9 +171,100 @@ async function loadPortfolioData() {
 }
 
 async function refreshPortfolio() {
+    showLoading(true);
     await loadPortfolioData();
+    await fetchLivePrices();
     renderPortfolio();
-    showAlert('Portfolio refreshed', 'success', 2000);
+    showLoading(false);
+    showAlert('Portfolio refreshed with live prices', 'success', 2000);
+}
+
+// ============================================================================
+// LIVE PRICES FROM FYERS
+// ============================================================================
+
+// Cache: { 'NSE:RELIANCE-EQ': 2450.50, ... }
+let livePrices = {};
+
+async function fetchLivePrices() {
+    // Skip if Fyers not connected
+    if (!window.fyersToken) {
+        console.log('⚠️ Fyers not connected - using last transaction prices');
+        updatePriceStatus('last-txn');
+        return;
+    }
+
+    // Build list of unique Fyers symbols from all holdings
+    const holdings = calculateHoldings();
+    if (holdings.length === 0) return;
+
+    // Convert to Fyers symbol format: exchange:symbol-EQ
+    // e.g. symbol='RELIANCE', exchange='NSE' → 'NSE:RELIANCE-EQ'
+    const fyersSymbols = holdings.map(h => {
+        const sym = h.shortSymbol || h.symbol;
+        const exch = h.exchange || 'NSE';
+        return `${exch}:${sym}-EQ`;
+    });
+
+    console.log('📡 Fetching live prices for:', fyersSymbols);
+    updatePriceStatus('loading');
+
+    try {
+        const data = await window.fyersCall({
+            action: 'quotes',
+            symbols: fyersSymbols
+        });
+
+        if (data && data.d && data.d.length > 0) {
+            // Map returned prices back to our holdings
+            data.d.forEach(item => {
+                if (item.v && item.v.lp) {
+                    // item.n = 'NSE:RELIANCE-EQ', lp = last price
+                    const symbol = item.n || item.v.symbol || '';
+                    livePrices[symbol] = item.v.lp;
+                }
+            });
+            console.log('✅ Live prices fetched:', livePrices);
+            updatePriceStatus('live');
+        } else {
+            console.warn('⚠️ No price data returned from Fyers:', data);
+            updatePriceStatus('last-txn');
+        }
+    } catch (err) {
+        if (err.message === 'FYERS_NOT_AUTHENTICATED') {
+            updatePriceStatus('last-txn');
+        } else {
+            console.error('❌ Fyers price fetch error:', err);
+            updatePriceStatus('error');
+        }
+    }
+}
+
+function updatePriceStatus(status) {
+    const el = document.getElementById('price-status');
+    if (!el) return;
+    const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    if (status === 'live') {
+        el.innerHTML = `🟢 Live prices as of ${now}`;
+        el.style.color = '#059669';
+    } else if (status === 'loading') {
+        el.innerHTML = `⏳ Fetching live prices...`;
+        el.style.color = '#667eea';
+    } else if (status === 'last-txn') {
+        el.innerHTML = `🟡 Showing last transaction prices`;
+        el.style.color = '#d97706';
+    } else if (status === 'error') {
+        el.innerHTML = `🔴 Price fetch failed - showing last transaction prices`;
+        el.style.color = '#dc2626';
+    }
+}
+
+// Resolve price for a holding: live price if available, else last transaction price
+function getPrice(holding) {
+    const sym = holding.shortSymbol || holding.symbol;
+    const exch = holding.exchange || 'NSE';
+    const fyersKey = `${exch}:${sym}-EQ`;
+    return livePrices[fyersKey] || holding.latestPrice;
 }
 
 // ============================================================================
@@ -520,7 +613,7 @@ function renderPortfolio() {
     
     holdings.forEach(h => {
         const invested = h.quantity * h.avgCost;
-        const value = h.quantity * h.latestPrice;
+        const value = h.quantity * getPrice(h);
         totalInvested += invested;
         totalValue += value;
     });
@@ -542,12 +635,12 @@ function renderPortfolio() {
                 valB = b.quantity * b.avgCost;
                 break;
             case 'pl':
-                valA = (a.quantity * a.latestPrice) - (a.quantity * a.avgCost);
-                valB = (b.quantity * b.latestPrice) - (b.quantity * b.avgCost);
+                valA = (a.quantity * getPrice(a)) - (a.quantity * a.avgCost);
+                valB = (b.quantity * getPrice(b)) - (b.quantity * b.avgCost);
                 break;
             case 'value':
-                valA = a.quantity * a.latestPrice;
-                valB = b.quantity * b.latestPrice;
+                valA = a.quantity * getPrice(a);
+                valB = b.quantity * getPrice(b);
                 break;
             default:
                 valA = a.symbol;
@@ -565,8 +658,9 @@ function renderPortfolio() {
     
     // Render rows
     const rows = holdings.map(h => {
+        const price = getPrice(h);
         const invested = h.quantity * h.avgCost;
-        const currentValue = h.quantity * h.latestPrice;
+        const currentValue = h.quantity * price;
         const pl = currentValue - invested;
         const plPercent = invested > 0 ? (pl / invested) * 100 : 0;
         const investedPercent = totalInvested > 0 ? (invested / totalInvested) * 100 : 0;
@@ -590,9 +684,7 @@ function renderPortfolio() {
                     <div class="number-main">${formatAmount(invested)}</div>
                     <div class="number-sub">${investedPercent.toFixed(2)}%</div>
                 </td>
-                <td class="text-right number-main">${formatPrice(h.latestPrice, false)}</td>
-                <td class="text-right">
-                    <div class="number-main ${getAmountClass(pl)}">${formatAmount(pl)}</div>
+                <td class="text-right number-main">${formatPrice(price, false)}</td>
                     <div class="number-sub ${getAmountClass(plPercent)}">${formatPercent(plPercent)}</div>
                 </td>
                 <td class="text-right">
@@ -637,7 +729,7 @@ function renderPortfolio() {
                 .filter(inv => inv.quantity > 0)
                 .map(inv => {
                     const invAvgCost = inv.totalCost / inv.quantity;
-                    const invValue = inv.quantity * h.latestPrice;
+                    const invValue = inv.quantity * price;  // use live price
                     const invInvested = inv.quantity * invAvgCost;
                     const invPL = invValue - invInvested;
                     const invPLPercent = invInvested > 0 ? (invPL / invInvested) * 100 : 0;
@@ -659,7 +751,7 @@ function renderPortfolio() {
                                 <div class="number-main">${formatAmount(invInvested)}</div>
                                 <div class="number-sub">${invInvestedPercent.toFixed(2)}%</div>
                             </td>
-                            <td class="text-right number-main">${formatPrice(h.latestPrice, false)}</td>
+                            <td class="text-right number-main">${formatPrice(price, false)}</td>
                             <td class="text-right">
                                 <div class="number-main ${getAmountClass(invPL)}">${formatAmount(invPL)}</div>
                                 <div class="number-sub ${getAmountClass(invPLPercent)}">${formatPercent(invPLPercent)}</div>
