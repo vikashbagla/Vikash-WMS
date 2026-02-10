@@ -3,8 +3,8 @@
 // ============================================================================
 
 // Supabase Configuration
-const SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
+// SUPABASE_URL defined in app.html
+// SUPABASE_ANON_KEY defined in app.html
 
 // Initialize Supabase client
 const { createClient } = supabase;

@@ -88,6 +88,21 @@
         }
     }
 
+    // Helper to load a script dynamically
+    function loadScript(src) {
+        return new Promise((resolve, reject) => {
+            // Remove old instance if exists
+            const old = document.querySelector(`script[src="${src}"]`);
+            if (old) old.remove();
+
+            const script = document.createElement('script');
+            script.src = src + '?t=' + Date.now(); // cache bust
+            script.onload = resolve;
+            script.onerror = reject;
+            document.body.appendChild(script);
+        });
+    }
+
     // Load module
     async function loadModule(moduleName) {
         if (currentModule === moduleName) return;
@@ -97,27 +112,37 @@
         document.querySelector(`[data-module="${moduleName}"]`).classList.add('active');
         
         const container = document.getElementById('content-container');
+        container.innerHTML = '<div class="loading-module">Loading...</div>';
         
         try {
             if (moduleName === 'portfolio') {
                 const resp = await fetch('portfolio.html');
                 container.innerHTML = await resp.text();
                 if (typeof initPortfolio === 'function') await initPortfolio();
+
             } else if (moduleName === 'master-data') {
                 const resp = await fetch('master-data.html');
                 const html = await resp.text();
-                const doc = new DOMParser().parseFromString(html, 'text/html');
-                container.innerHTML = doc.body.innerHTML;
+                const parsed = new DOMParser().parseFromString(html, 'text/html');
+                container.innerHTML = parsed.body.innerHTML;
+                await loadScript('master-data.js');
+                // master-data.js uses DB.init() 
+                if (typeof DB !== 'undefined') DB.init();
+
             } else if (moduleName === 'import-transactions') {
                 const resp = await fetch('transaction-import.html');
                 const html = await resp.text();
-                const doc = new DOMParser().parseFromString(html, 'text/html');
-                container.innerHTML = doc.body.innerHTML;
+                const parsed = new DOMParser().parseFromString(html, 'text/html');
+                container.innerHTML = parsed.body.innerHTML;
+                await loadScript('transaction-import.js');
+                if (typeof DB !== 'undefined') DB.init();
+
             } else {
                 container.innerHTML = '<div class="coming-soon">🚧 Coming soon!</div>';
             }
         } catch (e) {
-            container.innerHTML = '<div class="error-message">Error: ' + e.message + '</div>';
+            container.innerHTML = '<div class="error-message">Error loading module: ' + e.message + '</div>';
+            console.error('Module load error:', e);
         }
     }
 
