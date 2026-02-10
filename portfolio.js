@@ -198,18 +198,18 @@ async function fetchLivePrices() {
     const holdings = calculateHoldings();
     if (holdings.length === 0) return;
 
-    // Log what's in the DB to verify format
-    console.log('📋 Holdings symbols from DB:', holdings.map(h => ({ 
-        symbol: h.symbol, 
-        shortSymbol: h.shortSymbol, 
-        exchange: h.exchange 
-    })));
-
-    // Convert to Fyers symbol format: exchange:shortSymbol-EQ
+    // Build Fyers symbols for all holdings
+    // Equity: NSE:RELIANCE-EQ  |  F&O: NSE:NATIONALUM26FEBFUT (no -EQ, always NSE prefix)
     const fyersSymbols = holdings.map(h => {
         const sym = h.shortSymbol || h.symbol;
         const exch = (h.exchange || 'NSE').toUpperCase();
-        return `${exch}:${sym}-EQ`;
+        if (exch === 'NFO') {
+            // F&O futures - use NSE prefix, no -EQ suffix
+            return `NSE:${sym}`;
+        } else {
+            // Equity - use exchange prefix with -EQ suffix
+            return `${exch}:${sym}-EQ`;
+        }
     });
 
     console.log('📡 Sending to Fyers:', fyersSymbols);
@@ -268,12 +268,8 @@ function updatePriceStatus(status) {
 function getPrice(holding) {
     const sym = holding.shortSymbol || holding.symbol;
     const exch = (holding.exchange || 'NSE').toUpperCase();
-    const fyersKey = `${exch}:${sym}-EQ`;
-    const livePrice = livePrices[fyersKey];
-    if (livePrice) {
-        return livePrice;
-    }
-    return holding.latestPrice;
+    const fyersKey = exch === 'NFO' ? `NSE:${sym}` : `${exch}:${sym}-EQ`;
+    return livePrices[fyersKey] || holding.latestPrice;
 }
 
 // ============================================================================

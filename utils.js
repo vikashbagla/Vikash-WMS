@@ -5,10 +5,16 @@
 // Get user's display unit preference
 function getDisplayUnit() {
     const user = window.currentUser;
-    if (user && user.preferences && user.preferences.display_unit) {
-        return user.preferences.display_unit;
+    if (user && user.preferences) {
+        // DB stores as 'amount_display', fall back to 'display_unit' for compatibility
+        const unit = user.preferences.amount_display || user.preferences.display_unit;
+        if (unit) {
+            console.log('✅ Display unit:', unit);
+            return unit;
+        }
     }
-    return 'lakhs'; // Default
+    console.warn('⚠️ No display unit in preferences, defaulting to lakhs. Preferences:', user ? user.preferences : 'no user');
+    return 'lakhs';
 }
 
 // Get divisor and suffix based on unit

@@ -738,6 +738,16 @@ async function savePreferences() {
 
     try {
         await DB.updateUserPreferences(preferences);
+
+        // Update in-memory user and localStorage so display updates immediately
+        if (window.currentUser) {
+            window.currentUser.preferences = { 
+                ...window.currentUser.preferences, 
+                ...preferences 
+            };
+            localStorage.setItem('wms_user', JSON.stringify(window.currentUser));
+        }
+
         alert('✓ Preferences saved successfully!');
     } catch (error) {
         console.error('Error saving preferences:', error);
