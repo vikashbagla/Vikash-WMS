@@ -182,8 +182,17 @@ async function refreshPortfolio() {
 // LIVE PRICES FROM FYERS
 // ============================================================================
 
-// Cache: { 'NSE:RELIANCE-EQ': 2450.50, ... }
+// Cache: { 'NSE:RELIANCE-EQ': { lp, ch, chp, high, low, w52h, w52l } }
 let livePrices = {};
+let liveData = {}; // full market data per fyers symbol key
+
+function getLiveData(holding) {
+    const exch = (holding.exchange || 'NSE').toUpperCase();
+    const fyersKey = exch === 'NFO'
+        ? `NSE:${holding.symbol}`
+        : `${exch}:${holding.shortSymbol || holding.symbol}-EQ`;
+    return liveData[fyersKey] || null;
+}
 
 async function fetchLivePrices() {
     // Skip if Fyers not connected
@@ -221,11 +230,19 @@ async function fetchLivePrices() {
         });
 
         if (data && data.d && data.d.length > 0) {
-            // Map returned prices back to our holdings
-            // Fyers returns: data.d[0].v.symbol = 'NSE:RELIANCE-EQ', data.d[0].v.lp = last price
             data.d.forEach(item => {
                 if (item.v && item.v.lp && item.v.symbol) {
-                    livePrices[item.v.symbol] = item.v.lp;
+                    const key = item.v.symbol;
+                    livePrices[key] = item.v.lp;
+                    liveData[key] = {
+                        lp:   item.v.lp,                          // last price
+                        ch:   item.v.ch   || 0,                   // change ₹
+                        chp:  item.v.chp  || 0,                   // change %
+                        high: item.v.high_price || null,          // day high
+                        low:  item.v.low_price  || null,          // day low
+                        w52h: item.v['52_week_high'] || null,     // 52w high
+                        w52l: item.v['52_week_low']  || null,     // 52w low
+                    };
                 }
             });
             console.log('✅ Live prices fetched:', livePrices);
@@ -558,12 +575,16 @@ function calculateHoldings() {
         }
     });
     
-    // Filter out zero/negative holdings unless showZeroHoldings is on
+    // Filter: always show non-zero qty (including negatives = shorts). Hide qty===0 unless toggle on.
     return Object.values(holdings)
-        .filter(h => showZeroHoldings ? true : h.quantity > 0)
+        .filter(h => showZeroHoldings ? true : h.quantity !== 0)
         .map(h => ({
             ...h,
-            avgCost: h.quantity > 0 ? h.totalCost / h.quantity : 0,
+            // For short/expired positions where totalCost=0 (SELL net_amount was NULL in DB),
+            // fall back to latestPrice so avgCost isn't shown as 0
+            avgCost: h.quantity !== 0
+                ? (h.totalCost !== 0 ? h.totalCost / h.quantity : h.latestPrice)
+                : 0,
             tags: Array.from(h.tags)
         }));
 }
@@ -597,6 +618,24 @@ function toggleSymbolDetail(symbol, exchange) {
 }
 
 // ============================================================================
+// SLIDER HELPER
+// ============================================================================
+
+function buildSlider(current, low, high, tooltip) {
+    if (high <= low) return '';
+    const pct = Math.min(100, Math.max(0, ((current - low) / (high - low)) * 100));
+    // Dot colour: green if in upper half, red if in lower half
+    const dotColor = pct >= 50 ? '#059669' : '#dc2626';
+    return `
+        <div class="price-slider" data-tip="${tooltip}">
+            <div class="price-slider-track">
+                <div class="price-slider-dot" style="left:${pct.toFixed(1)}%;background:${dotColor};"></div>
+            </div>
+        </div>
+    `;
+}
+
+// ============================================================================
 // RENDERING
 // ============================================================================
 
@@ -606,7 +645,7 @@ function renderPortfolio() {
     let holdings = calculateHoldings();
     
     if (holdings.length === 0) {
-        list.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #9ca3af;">No holdings to display</td></tr>';
+        list.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px; color: #9ca3af;">No holdings to display</td></tr>';
         document.getElementById('portfolio-summary').innerHTML = '';
         updateSortIndicators();
         return;
@@ -663,33 +702,60 @@ function renderPortfolio() {
     
     // Render rows
     const rows = holdings.map(h => {
-        const price = getPrice(h);
+        const price    = getPrice(h);
+        const md       = getLiveData(h);
         const invested = h.quantity * h.avgCost;
         const currentValue = h.quantity * price;
-        const pl = currentValue - invested;
-        const plPercent = invested > 0 ? (pl / invested) * 100 : 0;
-        const investedPercent = totalInvested > 0 ? (invested / totalInvested) * 100 : 0;
-        const valuePercent = totalValue > 0 ? (currentValue / totalValue) * 100 : 0;
-        
+        const pl           = currentValue - invested;
+        const plPercent    = invested !== 0 ? (pl / Math.abs(invested)) * 100 : 0;
+        const investedPercent = totalInvested !== 0 ? (invested / totalInvested) * 100 : 0;
+        const valuePercent    = totalValue    !== 0 ? (currentValue / totalValue) * 100 : 0;
+
+        // Day P&L: quantity x change in price
+        const dayPL = md ? h.quantity * md.ch : null;
+
+        // Qty: red + parentheses for negative
+        const qtyDisplay = h.quantity < 0
+            ? `<div class="number-main negative">(${formatQuantity(Math.abs(h.quantity))})</div>`
+            : `<div class="number-main">${formatQuantity(h.quantity)}</div>`;
+
+        // CMP slider — 52w range
+        const cmpSlider = (md && md.w52h && md.w52l)
+            ? buildSlider(md.lp, md.w52l, md.w52h,
+                `52W L:${formatPrice(md.w52l,false)} | CMP:${formatPrice(md.lp,false)} | 52W H:${formatPrice(md.w52h,false)}`)
+            : '';
+
+        // Day slider — day high/low
+        const daySlider = (md && md.high && md.low)
+            ? buildSlider(md.lp, md.low, md.high,
+                `Day L:${formatPrice(md.low,false)} | CMP:${formatPrice(md.lp,false)} | Day H:${formatPrice(md.high,false)}`)
+            : '';
+
         const symbolKey = `${h.symbol}-${h.exchange}`;
         const isExpanded = expandedSymbol === symbolKey;
-        
-        // Main row
-        let mainRow = `
+
+        const mainRow = `
             <tr class="${isExpanded ? 'expanded-row' : ''}">
                 <td class="symbol-cell">
-                    <div class="symbol-main symbol-clickable" onclick="toggleSymbolDetail('${h.symbol}', '${h.exchange}')">${h.symbol}</div>
-                    <div class="symbol-sub">${h.companyName}</div>
+                    <div class="symbol-main symbol-clickable" onclick="toggleSymbolDetail('${h.symbol}','${h.exchange}')">${h.symbol}</div>
+                    <div class="symbol-sub">${h.companyName || ''}</div>
                 </td>
                 <td class="text-right">
-                    <div class="number-main">${formatQuantity(h.quantity)}</div>
+                    ${qtyDisplay}
                     <div class="number-sub">${formatPrice(h.avgCost, false)}</div>
                 </td>
                 <td class="text-right">
                     <div class="number-main">${formatAmount(invested)}</div>
                     <div class="number-sub">${investedPercent.toFixed(2)}%</div>
                 </td>
-                <td class="text-right number-main">${formatPrice(price, false)}</td>
+                <td class="text-right">
+                    <div class="number-main">${formatPrice(price, false)}</div>
+                    ${cmpSlider}
+                </td>
+                <td class="text-right">
+                    <div class="number-main ${dayPL !== null ? getAmountClass(dayPL) : ''}">${dayPL !== null ? formatAmount(dayPL) : '-'}</div>
+                    ${daySlider}
+                </td>
                 <td class="text-right">
                     <div class="number-main ${getAmountClass(pl)}">${formatAmount(pl)}</div>
                     <div class="number-sub ${getAmountClass(plPercent)}">${formatPercent(plPercent)}</div>
@@ -698,108 +764,101 @@ function renderPortfolio() {
                     <div class="number-main">${formatAmount(currentValue)}</div>
                     <div class="number-sub">${valuePercent.toFixed(2)}%</div>
                 </td>
-                <td>
-                    ${h.tags.map(tag => `<span class="tag-badge">${tag}</span>`).join('')}
-                </td>
+                <td>${h.tags.map(tag => `<span class="tag-badge">${tag}</span>`).join('')}</td>
             </tr>
         `;
-        
-        // Detail row if expanded
+
+        // Detail row — 8 cols, no sliders
         let detailRow = '';
         if (isExpanded) {
-            // Get all transactions for this symbol
-            const symbolTxns = transactions.filter(txn => 
+            const symbolTxns = transactions.filter(txn =>
                 txn.symbol === h.symbol && txn.exchange === h.exchange
             );
-            
-            // Group by investor
             const investorGroups = {};
             symbolTxns.forEach(txn => {
                 if (!investorGroups[txn.investorId]) {
                     const investor = investors.find(inv => inv.id === txn.investorId);
                     investorGroups[txn.investorId] = {
                         name: investor ? investor.name : 'Unknown',
-                        quantity: 0,
-                        totalCost: 0,
-                        tags: new Set()
+                        quantity: 0, totalCost: 0, tags: new Set()
                     };
                 }
-                investorGroups[txn.investorId].quantity += txn.quantity;
+                investorGroups[txn.investorId].quantity  += txn.quantity;
                 investorGroups[txn.investorId].totalCost += txn.netAmount;
-                if (txn.tags) {
-                    txn.tags.forEach(tag => investorGroups[txn.investorId].tags.add(tag));
-                }
+                if (txn.tags) txn.tags.forEach(tag => investorGroups[txn.investorId].tags.add(tag));
             });
-            
-            // Build investor rows
+
             const investorRows = Object.values(investorGroups)
-                .filter(inv => inv.quantity > 0)
-                .map(inv => {
-                    const invAvgCost = inv.totalCost / inv.quantity;
-                    const invValue = inv.quantity * price;  // use live price
+                .filter(inv => inv.quantity !== 0)
+                    const invAvgCost = inv.quantity !== 0 ? inv.totalCost / inv.quantity : 0;
+                    const invDayPL   = md ? inv.quantity * md.ch : null;
+                    const invValue   = inv.quantity * price;
                     const invInvested = inv.quantity * invAvgCost;
-                    const invPL = invValue - invInvested;
-                    const invPLPercent = invInvested > 0 ? (invPL / invInvested) * 100 : 0;
-                    
-                    // Calculate % of this symbol's total
-                    const invInvestedPercent = invested > 0 ? (invInvested / invested) * 100 : 0;
-                    const invValuePercent = currentValue > 0 ? (invValue / currentValue) * 100 : 0;
-                    
+                    const invPL      = invValue - invInvested;
+                    const invPLPct   = invInvested !== 0 ? (invPL / Math.abs(invInvested)) * 100 : 0;
+                    const invInvPct  = invested !== 0 ? (invInvested / invested) * 100 : 0;
+                    const invValPct  = currentValue !== 0 ? (invValue / currentValue) * 100 : 0;
+                    const invQty = inv.quantity < 0
+                        ? `<div class="number-main negative">(${formatQuantity(Math.abs(inv.quantity))})</div>`
+                        : `<div class="number-main">${formatQuantity(inv.quantity)}</div>`;
                     return `
                         <tr>
-                            <td class="symbol-cell">
-                                <div class="symbol-main">${inv.name}</div>
-                            </td>
+                            <td class="symbol-cell"><div class="symbol-main">${inv.name}</div></td>
                             <td class="text-right">
-                                <div class="number-main">${formatQuantity(inv.quantity)}</div>
+                                ${invQty}
                                 <div class="number-sub">${formatPrice(invAvgCost, false)}</div>
                             </td>
                             <td class="text-right">
                                 <div class="number-main">${formatAmount(invInvested)}</div>
-                                <div class="number-sub">${invInvestedPercent.toFixed(2)}%</div>
+                                <div class="number-sub">${invInvPct.toFixed(2)}%</div>
                             </td>
-                            <td class="text-right number-main">${formatPrice(price, false)}</td>
+                            <td class="text-right"><div class="number-main">${formatPrice(price, false)}</div></td>
+                            <td class="text-right">
+                                <div class="number-main ${invDayPL !== null ? getAmountClass(invDayPL) : ''}">${invDayPL !== null ? formatAmount(invDayPL) : '-'}</div>
+                            </td>
                             <td class="text-right">
                                 <div class="number-main ${getAmountClass(invPL)}">${formatAmount(invPL)}</div>
-                                <div class="number-sub ${getAmountClass(invPLPercent)}">${formatPercent(invPLPercent)}</div>
+                                <div class="number-sub ${getAmountClass(invPLPct)}">${formatPercent(invPLPct)}</div>
                             </td>
                             <td class="text-right">
                                 <div class="number-main">${formatAmount(invValue)}</div>
-                                <div class="number-sub">${invValuePercent.toFixed(2)}%</div>
+                                <div class="number-sub">${invValPct.toFixed(2)}%</div>
                             </td>
                             <td>${Array.from(inv.tags).map(tag => `<span class="tag-badge">${tag}</span>`).join('')}</td>
                         </tr>
                     `;
                 }).join('');
-            
+
             detailRow = `
                 <tr class="detail-row">
-                    <td colspan="7">
+                    <td colspan="8">
                         <table class="inner-table">
-                            <tbody>
-                                ${investorRows}
-                            </tbody>
+                            <tbody>${investorRows}</tbody>
                         </table>
                     </td>
                 </tr>
             `;
         }
-        
         return mainRow + detailRow;
     }).join('');
-    
-    // Add total row
+
+    // Total row — 8 cols, Day P&L sum
+    const totalDayPL = Object.keys(liveData).length > 0
+        ? holdings.reduce((sum, h) => { const m = getLiveData(h); return sum + (m ? h.quantity * m.ch : 0); }, 0)
+        : null;
+
     const totalRow = `
         <tr class="total-row">
-            <td><strong>TOTAL</strong></td>
-            <td class="text-right"><strong>${holdings.length} stocks</strong></td>
-            <td class="text-right"><strong>${formatAmount(totalInvested)}</strong></td>
+            <td>TOTAL</td>
+            <td class="text-right">${holdings.length} stocks</td>
+            <td class="text-right">${formatAmount(totalInvested)}</td>
             <td class="text-right">-</td>
+            <td class="text-right ${totalDayPL !== null ? getAmountClass(totalDayPL) : ''}">${totalDayPL !== null ? formatAmount(totalDayPL) : '-'}</td>
             <td class="text-right">
-                <div class="number-main ${getAmountClass(totalPL)}"><strong>${formatAmount(totalPL)}</strong></div>
-                <div class="number-sub ${getAmountClass(totalPLPercent)}"><strong>${formatPercent(totalPLPercent)}</strong></div>
+                <div class="${getAmountClass(totalPL)}">${formatAmount(totalPL)}</div>
+                <div class="number-sub ${getAmountClass(totalPLPercent)}">${formatPercent(totalPLPercent)}</div>
             </td>
-            <td class="text-right"><strong>${formatAmount(totalValue)}</strong></td>
+            <td class="text-right">${formatAmount(totalValue)}</td>
             <td>-</td>
         </tr>
     `;

@@ -142,17 +142,89 @@ body {
     border:1px solid #e2e8f0; border-radius:6px; position:relative;
 }
 
-/* Column widths */
-.table-container > table { table-layout:fixed; width:100%; min-width:860px; }
-.table-container > table th:nth-child(1),.table-container > table td:nth-child(1) { width:16%; }
-.table-container > table th:nth-child(2),.table-container > table td:nth-child(2) { width:12%; }
-.table-container > table th:nth-child(3),.table-container > table td:nth-child(3) { width:16%; }
-.table-container > table th:nth-child(4),.table-container > table td:nth-child(4) { width:14%; }
-.table-container > table th:nth-child(5),.table-container > table td:nth-child(5) { width:14%; }
-.table-container > table th:nth-child(6),.table-container > table td:nth-child(6) { width:14%; }
-.table-container > table th:nth-child(7),.table-container > table td:nth-child(7) { width:14%; }
+/* Column widths — 8 columns */
+.table-container > table { table-layout:fixed; width:100%; min-width:940px; }
+.table-container > table th:nth-child(1),.table-container > table td:nth-child(1) { width:15%; } /* Symbol */
+.table-container > table th:nth-child(2),.table-container > table td:nth-child(2) { width:10%; } /* Qty */
+.table-container > table th:nth-child(3),.table-container > table td:nth-child(3) { width:12%; } /* Investment */
+.table-container > table th:nth-child(4),.table-container > table td:nth-child(4) { width:13%; } /* CMP */
+.table-container > table th:nth-child(5),.table-container > table td:nth-child(5) { width:11%; } /* Day P&L */
+.table-container > table th:nth-child(6),.table-container > table td:nth-child(6) { width:13%; } /* Total P&L */
+.table-container > table th:nth-child(7),.table-container > table td:nth-child(7) { width:13%; } /* Current Value */
+.table-container > table th:nth-child(8),.table-container > table td:nth-child(8) { width:13%; } /* Tags */
 
-table { width:100%; border-collapse:collapse; min-width:860px; }
+table { width:100%; border-collapse:collapse; min-width:940px; }
+
+/* Price slider */
+.price-slider {
+    position: relative;
+    margin-top: 4px;
+    cursor: default;
+}
+.price-slider-track {
+    position: relative;
+    height: 3px;
+    background: #e2e8f0;
+    border-radius: 2px;
+}
+.price-slider-dot {
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px white, 0 0 0 3px currentColor;
+    transition: transform 0.15s;
+}
+.price-slider:hover .price-slider-dot {
+    transform: translate(-50%, -50%) scale(1.4);
+}
+
+/* Tooltip — appears on hover */
+.price-slider::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1e293b;
+    color: white;
+    font-size: 10px;
+    white-space: nowrap;
+    padding: 3px 7px;
+    border-radius: 4px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 500;
+    letter-spacing: 0.2px;
+}
+.price-slider::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 2px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: #1e293b;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 500;
+}
+.price-slider:hover::after,
+.price-slider:hover::before { opacity: 1; }
+
+/* Inner table — 8 columns, same widths */
+.detail-row .inner-table td:nth-child(1){width:15%}
+.detail-row .inner-table td:nth-child(2){width:10%}
+.detail-row .inner-table td:nth-child(3){width:12%}
+.detail-row .inner-table td:nth-child(4){width:13%}
+.detail-row .inner-table td:nth-child(5){width:11%}
+.detail-row .inner-table td:nth-child(6){width:13%}
+.detail-row .inner-table td:nth-child(7){width:13%}
+.detail-row .inner-table td:nth-child(8){width:13%}
 
 /* TH — 12px, same as TD */
 th {
@@ -214,14 +286,6 @@ tr:hover:not(.total-row) { background:#f9fafb; }
 .detail-row .inner-table .number-sub  { font-size:9px; margin-top:1px; }
 .detail-row .inner-table .symbol-main { font-size:11px; }
 .detail-row .inner-table .symbol-sub  { font-size:9px; }
-.detail-row .inner-table td:nth-child(1){width:16%}
-.detail-row .inner-table td:nth-child(2){width:12%}
-.detail-row .inner-table td:nth-child(3){width:16%}
-.detail-row .inner-table td:nth-child(4){width:14%}
-.detail-row .inner-table td:nth-child(5){width:14%}
-.detail-row .inner-table td:nth-child(6){width:14%}
-.detail-row .inner-table td:nth-child(7){width:14%}
-
 /* TAG BADGES */
 .tag-badge { display:inline-block; padding:1px 5px; background:#dbeafe; color:#1e40af; border-radius:10px; font-size:10px; font-weight:600; margin-right:3px; }
 
