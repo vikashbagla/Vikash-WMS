@@ -642,14 +642,32 @@ function renderPortfolio() {
                     const invPL = invValue - invInvested;
                     const invPLPercent = invInvested > 0 ? (invPL / invInvested) * 100 : 0;
                     
+                    // Calculate % of this symbol's total
+                    const invInvestedPercent = invested > 0 ? (invInvested / invested) * 100 : 0;
+                    const invValuePercent = currentValue > 0 ? (invValue / currentValue) * 100 : 0;
+                    
                     return `
                         <tr>
-                            <td>${inv.name}</td>
-                            <td class="text-right">${formatQuantity(inv.quantity)}</td>
-                            <td class="text-right">${formatAmount(invInvested)}</td>
-                            <td class="text-right">${formatPrice(h.latestPrice, false)}</td>
-                            <td class="text-right ${getAmountClass(invPL)}">${formatAmount(invPL)}</td>
-                            <td class="text-right">${formatAmount(invValue)}</td>
+                            <td class="symbol-cell">
+                                <div class="symbol-main">${inv.name}</div>
+                            </td>
+                            <td class="text-right">
+                                <div class="number-main">${formatQuantity(inv.quantity)}</div>
+                                <div class="number-sub">${formatPrice(invAvgCost, false)}</div>
+                            </td>
+                            <td class="text-right">
+                                <div class="number-main">${formatAmount(invInvested)}</div>
+                                <div class="number-sub">${invInvestedPercent.toFixed(2)}%</div>
+                            </td>
+                            <td class="text-right number-main">${formatPrice(h.latestPrice, false)}</td>
+                            <td class="text-right">
+                                <div class="number-main ${getAmountClass(invPL)}">${formatAmount(invPL)}</div>
+                                <div class="number-sub ${getAmountClass(invPLPercent)}">${formatPercent(invPLPercent)}</div>
+                            </td>
+                            <td class="text-right">
+                                <div class="number-main">${formatAmount(invValue)}</div>
+                                <div class="number-sub">${invValuePercent.toFixed(2)}%</div>
+                            </td>
                             <td>${Array.from(inv.tags).map(tag => `<span class="tag-badge">${tag}</span>`).join('')}</td>
                         </tr>
                     `;
@@ -659,17 +677,6 @@ function renderPortfolio() {
                 <tr class="detail-row">
                     <td colspan="7">
                         <table class="inner-table">
-                            <thead>
-                                <tr>
-                                    <th>Investor</th>
-                                    <th class="text-right">Qty</th>
-                                    <th class="text-right">Invested</th>
-                                    <th class="text-right">Price</th>
-                                    <th class="text-right">P&L</th>
-                                    <th class="text-right">Value</th>
-                                    <th>Tags</th>
-                                </tr>
-                            </thead>
                             <tbody>
                                 ${investorRows}
                             </tbody>
