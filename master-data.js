@@ -980,10 +980,13 @@ function diffRecord(existing, incoming) {
             diffs.push({ field: f, from: a, to: b });
         }
     }
-    // broker_tokens diff (simple JSON compare)
-    const tokA = JSON.stringify(existing.broker_tokens || {});
-    const tokB = JSON.stringify(incoming.broker_tokens || {});
-    if (tokA !== tokB) diffs.push({ field: 'broker_tokens', from: '(json)', to: '(updated)' });
+    // broker_tokens diff — compare values, not key order
+    const normTok = obj => {
+        const f = (obj?.fyers) || {};
+        return [f.nse_token||'', f.nse_symbol||'', f.bse_token||'', f.bse_symbol||''].join('|');
+    };
+    if (normTok(existing.broker_tokens) !== normTok(incoming.broker_tokens))
+        diffs.push({ field: 'broker_tokens', from: '(json)', to: '(updated)' });
     return diffs;
 }
 
