@@ -990,6 +990,25 @@ function diffRecord(existing, incoming) {
     return diffs;
 }
 
+// Fetch ALL rows from a table, bypassing the 1000-row default limit
+// by paginating with .range() until we get a partial page
+async function fetchAllRows(table, select) {
+    const BATCH = 1000;
+    let all = [], from = 0;
+    while (true) {
+        const { data, error } = await window.supabaseClient
+            .from(table)
+            .select(select)
+            .order('isin', { ascending: true })
+            .range(from, from + BATCH - 1);
+        if (error) throw error;
+        all = all.concat(data || []);
+        if (!data || data.length < BATCH) break;
+        from += BATCH;
+    }
+    return all;
+}
+
 // Main sync flow ───────────────────────────────────────────────
 
 async function startSync() {
@@ -1016,10 +1035,8 @@ async function startSync() {
         progBar.style.width = '55%';
         progLbl.textContent = `Parsed ${nseRows.length + bseRows.length} rows. Loading DB...`;
 
-        // Load existing DB records
-        const { data: existing, error } = await window.supabaseClient
-            .from('securities_db').select('*');
-        if (error) throw error;
+        // Load ALL existing DB records (paginated — default limit is 1000)
+        const existing = await fetchAllRows('securities_db', '*');
 
         progBar.style.width = '70%';
         progLbl.textContent = 'Computing diff...';
@@ -1177,21 +1194,9 @@ async function loadSecuritiesTable() {
     const tbody = document.getElementById('secTbody');
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">Loading securities...</td></tr>';
     try {
-        // Fetch all rows in batches of 1000 (PostgREST default max per request)
-        // Loop until we get a partial batch (signals end of data)
-        let all = [], from = 0;
-        const BATCH = 1000;
-        while (true) {
-            const { data, error } = await window.supabaseClient
-                .from('securities_db')
-                .select('id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,is_active')
-                .order('symbol', { ascending: true })
-                .range(from, from + BATCH - 1);
-            if (error) throw error;
-            all = all.concat(data || []);
-            if (!data || data.length < BATCH) break;  // partial batch = we're done
-            from += BATCH;
-        }
+        // Fetch all rows using paginated helper (bypasses 1000-row default limit)
+        const all = await fetchAllRows('securities_db',
+            'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,is_active');
         _securitiesAll = all;
         renderSecurities();
     } catch(e) {
