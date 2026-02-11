@@ -844,7 +844,8 @@ async function fetchAndParseCSV(url) {
 // Build merged record map (keyed by ISIN) ──────────────────────
 
 function buildRecordMap(nseRows, bseRows) {
-    const map = new Map(); // isin → record
+    const map        = new Map(); // isin → record
+    const symbolSeen = new Map(); // symbol → isin (to detect cross-ISIN symbol collisions)
 
     function processRow(cols, exchange) {
         const isin        = cols[COL.ISIN].trim();
@@ -860,6 +861,7 @@ function buildRecordMap(nseRows, bseRows) {
         // Skip pure derivatives / options leftovers
         if (cols[COL.OPT] && cols[COL.OPT].trim() !== 'XX') return;
         if (cols[COL.EXPIRY] && cols[COL.EXPIRY].trim() !== '') return;
+        if (!isin) return;
 
         if (!map.has(isin)) {
             map.set(isin, {
@@ -876,33 +878,53 @@ function buildRecordMap(nseRows, bseRows) {
         const rec = map.get(isin);
 
         if (exchange === 'NSE') {
-            rec.symbol         = shortSym;
-            rec.nse_symbol     = shortSym;
+            rec.nse_symbol      = shortSym;
             rec.nse_script_code = scriptCode;
-            rec.nse_series     = series;
+            rec.nse_series      = series;
             rec.broker_tokens.fyers.nse_token  = fytoken;
             rec.broker_tokens.fyers.nse_symbol = fyersSymbol;
+            // Set canonical symbol from NSE (preferred)
+            rec.symbol = shortSym;
         } else {
-            if (!rec.symbol) rec.symbol = shortSym; // fallback if no NSE
-            rec.bse_symbol     = shortSym;
+            rec.bse_symbol      = shortSym;
             rec.bse_script_code = scriptCode;
-            rec.bse_series     = series;
+            rec.bse_series      = series;
             rec.broker_tokens.fyers.bse_token  = fytoken;
             rec.broker_tokens.fyers.bse_symbol = fyersSymbol;
+            // Only use BSE short_sym as canonical if no NSE row exists yet
+            if (!rec.symbol) rec.symbol = shortSym;
         }
+
         // Re-derive classification now that we might have both series
         const cls = deriveSecurity(instrType, rec.nse_series, rec.bse_series);
         rec.security_type  = cls.security_type;
-        if (rec.security_type === 'ETF') {
-            rec.asset_class = deriveETFClass(rec.company_name);
-        } else {
-            rec.asset_class = cls.asset_class;
-        }
+        rec.asset_class    = (rec.security_type === 'ETF')
+            ? deriveETFClass(rec.company_name)
+            : cls.asset_class;
         rec.fyers_instr_type = instrType;
     }
 
     for (const cols of nseRows) processRow(cols, 'NSE');
     for (const cols of bseRows) processRow(cols, 'BSE');
+
+    // Resolve symbol collisions: two different ISINs claiming the same symbol
+    // (happens with rights entitlements, warrants sharing a base symbol name)
+    // Keep the first seen (NSE preferred); suffix the duplicate with its series
+    for (const [isin, rec] of map) {
+        const sym = rec.symbol;
+        if (!sym) continue;
+        if (!symbolSeen.has(sym)) {
+            symbolSeen.set(sym, isin);
+        } else {
+            // Collision — suffix with series to make unique
+            const series = rec.nse_series || rec.bse_series || 'X';
+            let candidate = `${sym}-${series}`;
+            if (symbolSeen.has(candidate)) candidate = `${sym}-${isin.slice(-4)}`;
+            rec.symbol = candidate;
+            symbolSeen.set(rec.symbol, isin);
+        }
+    }
+
     return map;
 }
 
