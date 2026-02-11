@@ -12,6 +12,7 @@ let selectedTagNames = [];
 let tagFilterLogic = 'OR'; // 'OR' or 'AND'
 let portfolioSortColumn = 'symbol';
 let portfolioSortDirection = 'asc';
+let portfolioSortByPct = false;  // for pl/daypl cols: false=sort by amount, true=sort by %
 let expandedSymbol = null;
 let showZeroHoldings = false; // hidden by default
 
@@ -562,11 +563,23 @@ function calculateHoldings() {
 // ============================================================================
 
 function sortPortfolio(column) {
+    var isPLCol = (column === 'pl' || column === 'daypl');
     if (portfolioSortColumn === column) {
-        portfolioSortDirection = portfolioSortDirection === 'asc' ? 'desc' : 'asc';
+        if (isPLCol && !portfolioSortByPct) {
+            // amount asc → pct asc (same direction, switch to %)
+            portfolioSortByPct = true;
+        } else if (isPLCol && portfolioSortByPct) {
+            // pct asc → amount desc (flip direction, back to amount)
+            portfolioSortByPct = false;
+            portfolioSortDirection = portfolioSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            // non-P&L column — just flip direction
+            portfolioSortDirection = portfolioSortDirection === 'asc' ? 'desc' : 'asc';
+        }
     } else {
         portfolioSortColumn = column;
         portfolioSortDirection = 'asc';
+        portfolioSortByPct = false;
     }
     renderPortfolio();
 }
@@ -633,13 +646,36 @@ function renderPortfolio() {
     // Sort
     holdings.sort((a, b) => {
         let valA, valB;
+        const priceA = getPrice(a), priceB = getPrice(b);
+        const mdA = getLiveData(a), mdB = getLiveData(b);
         switch (portfolioSortColumn) {
-            case 'symbol':   valA = a.symbol; valB = b.symbol; break;
-            case 'invested': valA = a.quantity * a.avgCost; valB = b.quantity * b.avgCost; break;
-            case 'pl':       valA = (a.quantity * getPrice(a)) - (a.quantity * a.avgCost);
-                             valB = (b.quantity * getPrice(b)) - (b.quantity * b.avgCost); break;
-            case 'value':    valA = a.quantity * getPrice(a); valB = b.quantity * getPrice(b); break;
-            default:         valA = a.symbol; valB = b.symbol;
+            case 'symbol':
+                valA = a.symbol; valB = b.symbol; break;
+            case 'invested':
+                valA = a.quantity * a.avgCost; valB = b.quantity * b.avgCost; break;
+            case 'pl':
+                if (portfolioSortByPct) {
+                    var invA = a.quantity * a.avgCost, invB = b.quantity * b.avgCost;
+                    valA = invA !== 0 ? ((a.quantity * priceA - invA) / Math.abs(invA)) * 100 : 0;
+                    valB = invB !== 0 ? ((b.quantity * priceB - invB) / Math.abs(invB)) * 100 : 0;
+                } else {
+                    valA = (a.quantity * priceA) - (a.quantity * a.avgCost);
+                    valB = (b.quantity * priceB) - (b.quantity * b.avgCost);
+                }
+                break;
+            case 'daypl':
+                if (portfolioSortByPct) {
+                    valA = mdA ? mdA.chp : 0;
+                    valB = mdB ? mdB.chp : 0;
+                } else {
+                    valA = mdA ? a.quantity * mdA.ch : 0;
+                    valB = mdB ? b.quantity * mdB.ch : 0;
+                }
+                break;
+            case 'value':
+                valA = a.quantity * priceA; valB = b.quantity * priceB; break;
+            default:
+                valA = a.symbol; valB = b.symbol;
         }
         if (typeof valA === 'string') {
             return portfolioSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
@@ -659,6 +695,13 @@ function renderPortfolio() {
         const valPct       = totalValue    !== 0 ? (currentValue / totalValue) * 100 : 0;
         const dayPL        = md ? h.quantity * md.ch : null;
         const dayChp       = md ? md.chp : null;  // % change for the day
+
+        // CMP slider — day range (52w not available from Fyers Quotes API)
+        const cmpSlider = (md && md.high && md.low)
+            ? buildSlider(md.lp, md.low, md.high,
+                formatPrice(md.low, false),
+                formatPrice(md.high, false))
+            : '';
 
         const qtyHtml = h.quantity < 0
             ? '<div class="number-main negative">(' + formatQuantity(Math.abs(h.quantity)) + ')</div>'
@@ -689,6 +732,7 @@ function renderPortfolio() {
                 '</td>' +
                 '<td class="text-right">' +
                     '<div class="number-main">' + formatPrice(price, false) + '</div>' +
+                    cmpSlider +
                 '</td>' +
                 '<td class="text-right">' + dayPLHtml + '</td>' +
                 '<td class="text-right">' +
@@ -803,13 +847,12 @@ function renderPortfolio() {
 
 
 function updateSortIndicators() {
-    // Clear all indicators
-    document.querySelectorAll('.sort-indicator').forEach(el => el.textContent = '');
-    
-    // Set current indicator
-    const indicator = document.getElementById(`sort-${portfolioSortColumn}`);
+    document.querySelectorAll('.sort-indicator').forEach(function(el) { el.textContent = ''; });
+    var indicator = document.getElementById('sort-' + portfolioSortColumn);
     if (indicator) {
-        indicator.textContent = portfolioSortDirection === 'asc' ? '▲' : '▼';
+        var arrow = portfolioSortDirection === 'asc' ? '▲' : '▼';
+        var label = (portfolioSortByPct && (portfolioSortColumn === 'pl' || portfolioSortColumn === 'daypl')) ? '%' : '';
+        indicator.textContent = label + arrow;
     }
 }
 
