@@ -1174,18 +1174,20 @@ async function loadSecuritiesTable() {
     const tbody = document.getElementById('secTbody');
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">Loading securities...</td></tr>';
     try {
-        // Fetch all rows in batches of 5000 (Supabase default max per request)
-        let all = [], from = 0, batchSize = 5000;
+        // Fetch all rows in batches of 1000 (PostgREST default max per request)
+        // Loop until we get a partial batch (signals end of data)
+        let all = [], from = 0;
+        const BATCH = 1000;
         while (true) {
             const { data, error } = await window.supabaseClient
                 .from('securities_db')
                 .select('id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,is_active')
                 .order('symbol', { ascending: true })
-                .range(from, from + batchSize - 1);
+                .range(from, from + BATCH - 1);
             if (error) throw error;
             all = all.concat(data || []);
-            if (!data || data.length < batchSize) break;
-            from += batchSize;
+            if (!data || data.length < BATCH) break;  // partial batch = we're done
+            from += BATCH;
         }
         _securitiesAll = all;
         renderSecurities();
