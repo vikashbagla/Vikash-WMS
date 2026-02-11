@@ -100,31 +100,30 @@
             border-radius: 5px; font-size: 12px; }
         .sec-filter-row input { width: 200px; }
 
-        /* Custom multi-select dropdown */
+        /* Pill-toggle multi-select */
         .ms-wrap { position: relative; display: inline-block; }
-        .ms-trigger { padding: 4px 26px 4px 8px; border: 1px solid #e2e8f0; border-radius: 5px;
-            font-size: 12px; background: white; cursor: pointer; white-space: nowrap;
-            min-width: 130px; max-width: 200px; overflow: hidden; text-overflow: ellipsis;
-            user-select: none; display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+        .ms-trigger { display: flex; align-items: center; gap: 5px; padding: 4px 10px 4px 10px;
+            border: 1px solid #e2e8f0; border-radius: 5px; font-size: 12px; background: white;
+            cursor: pointer; white-space: nowrap; user-select: none; color: #a0aec0; }
         .ms-trigger:hover { border-color: #667eea; }
-        .ms-trigger.open { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
-        .ms-trigger-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; color: #4a5568; }
-        .ms-trigger-text.placeholder { color: #a0aec0; }
-        .ms-arrow { flex-shrink: 0; color: #a0aec0; font-size: 9px; transition: transform 0.15s; }
+        .ms-trigger.active { border-color: #667eea; color: #2d3748; background: #f0f3ff; }
+        .ms-trigger.open { box-shadow: 0 0 0 2px rgba(102,126,234,0.2); border-color: #667eea; }
+        .ms-arrow { font-size: 8px; color: #a0aec0; transition: transform 0.15s; margin-left: 2px; }
         .ms-trigger.open .ms-arrow { transform: rotate(180deg); }
-        .ms-dropdown { display: none; position: absolute; top: calc(100% + 3px); left: 0;
-            background: white; border: 1px solid #e2e8f0; border-radius: 6px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.12); z-index: 999; min-width: 170px;
-            max-height: 260px; overflow-y: auto; padding: 4px 0; }
+        .ms-dropdown { display: none; position: absolute; top: calc(100% + 4px); left: 0;
+            background: white; border: 1px solid #e2e8f0; border-radius: 8px;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.1); z-index: 999;
+            padding: 8px; min-width: 200px; }
         .ms-dropdown.open { display: block; }
-        .ms-item { display: flex; align-items: center; gap: 8px; padding: 5px 10px;
-            font-size: 12px; cursor: pointer; color: #2d3748; }
-        .ms-item:hover { background: #f7fafc; }
-        .ms-item input[type=checkbox] { margin: 0; cursor: pointer; accent-color: #667eea; }
-        .ms-item.checked { color: #667eea; font-weight: 600; }
-        .ms-clear { display: block; padding: 5px 10px; font-size: 11px; color: #667eea;
-            cursor: pointer; border-top: 1px solid #f0f4f8; text-align: center; font-weight: 600; }
-        .ms-clear:hover { background: #f7fafc; }
+        .ms-pills { display: flex; flex-wrap: wrap; gap: 5px; }
+        .ms-pill { padding: 3px 10px; border-radius: 20px; border: 1.5px solid #e2e8f0;
+            font-size: 11px; font-weight: 600; cursor: pointer; color: #718096;
+            background: white; transition: all 0.1s; white-space: nowrap; }
+        .ms-pill:hover { border-color: #667eea; color: #667eea; }
+        .ms-pill.on { background: #667eea; border-color: #667eea; color: white; }
+        .ms-reset { margin-top: 7px; padding-top: 6px; border-top: 1px solid #f0f4f8;
+            text-align: center; font-size: 11px; color: #a0aec0; cursor: pointer; }
+        .ms-reset:hover { color: #667eea; }
 
         /* Sync preview panel */
         .sync-preview { background: white; border: 1px solid #e2e8f0; border-radius: 8px;
@@ -285,43 +284,47 @@
                 <!-- Multi-select: Type -->
                 <div class="ms-wrap" id="msTypeWrap">
                     <div class="ms-trigger" id="msTypeTrigger" onclick="toggleMs('msType')">
-                        <span class="ms-trigger-text placeholder" id="msTypeLabel">All Types</span>
+                        <span id="msTypeLabel">All Types</span>
                         <span class="ms-arrow">▼</span>
                     </div>
                     <div class="ms-dropdown" id="msTypeDropdown">
-                        <label class="ms-item"><input type="checkbox" value="EQUITY"      onchange="onMsChange('msType')"> EQUITY</label>
-                        <label class="ms-item"><input type="checkbox" value="EQUITY_SME"  onchange="onMsChange('msType')"> EQUITY_SME</label>
-                        <label class="ms-item"><input type="checkbox" value="ETF"         onchange="onMsChange('msType')"> ETF</label>
-                        <label class="ms-item"><input type="checkbox" value="MF"          onchange="onMsChange('msType')"> MF</label>
-                        <label class="ms-item"><input type="checkbox" value="SGB"         onchange="onMsChange('msType')"> SGB</label>
-                        <label class="ms-item"><input type="checkbox" value="REIT"        onchange="onMsChange('msType')"> REIT</label>
-                        <label class="ms-item"><input type="checkbox" value="INVIT"       onchange="onMsChange('msType')"> INVIT</label>
-                        <label class="ms-item"><input type="checkbox" value="GOVT_BOND"   onchange="onMsChange('msType')"> GOVT_BOND</label>
-                        <label class="ms-item"><input type="checkbox" value="NCD"         onchange="onMsChange('msType')"> NCD</label>
-                        <label class="ms-item"><input type="checkbox" value="PREF_SHARE"  onchange="onMsChange('msType')"> PREF_SHARE</label>
-                        <label class="ms-item"><input type="checkbox" value="RIGHTS"      onchange="onMsChange('msType')"> RIGHTS</label>
-                        <label class="ms-item"><input type="checkbox" value="WARRANT"     onchange="onMsChange('msType')"> WARRANT</label>
-                        <span class="ms-clear" onclick="clearMs('msType')">Clear all</span>
+                        <div class="ms-pills">
+                            <span class="ms-pill" data-ms="msType" data-val="EQUITY"     onclick="togglePill(this)">EQUITY</span>
+                            <span class="ms-pill" data-ms="msType" data-val="EQUITY_SME" onclick="togglePill(this)">EQUITY_SME</span>
+                            <span class="ms-pill" data-ms="msType" data-val="ETF"        onclick="togglePill(this)">ETF</span>
+                            <span class="ms-pill" data-ms="msType" data-val="MF"         onclick="togglePill(this)">MF</span>
+                            <span class="ms-pill" data-ms="msType" data-val="SGB"        onclick="togglePill(this)">SGB</span>
+                            <span class="ms-pill" data-ms="msType" data-val="REIT"       onclick="togglePill(this)">REIT</span>
+                            <span class="ms-pill" data-ms="msType" data-val="INVIT"      onclick="togglePill(this)">INVIT</span>
+                            <span class="ms-pill" data-ms="msType" data-val="GOVT_BOND"  onclick="togglePill(this)">GOVT_BOND</span>
+                            <span class="ms-pill" data-ms="msType" data-val="NCD"        onclick="togglePill(this)">NCD</span>
+                            <span class="ms-pill" data-ms="msType" data-val="PREF_SHARE" onclick="togglePill(this)">PREF_SHARE</span>
+                            <span class="ms-pill" data-ms="msType" data-val="RIGHTS"     onclick="togglePill(this)">RIGHTS</span>
+                            <span class="ms-pill" data-ms="msType" data-val="WARRANT"    onclick="togglePill(this)">WARRANT</span>
+                        </div>
+                        <div class="ms-reset" onclick="clearMs('msType')">Clear</div>
                     </div>
                 </div>
 
                 <!-- Multi-select: Asset Class -->
                 <div class="ms-wrap" id="msClassWrap">
                     <div class="ms-trigger" id="msClassTrigger" onclick="toggleMs('msClass')">
-                        <span class="ms-trigger-text placeholder" id="msClassLabel">All Asset Classes</span>
+                        <span id="msClassLabel">All Asset Classes</span>
                         <span class="ms-arrow">▼</span>
                     </div>
                     <div class="ms-dropdown" id="msClassDropdown">
-                        <label class="ms-item"><input type="checkbox" value="Indian Equity"        onchange="onMsChange('msClass')"> Indian Equity</label>
-                        <label class="ms-item"><input type="checkbox" value="International Equity"  onchange="onMsChange('msClass')"> International Equity</label>
-                        <label class="ms-item"><input type="checkbox" value="Gold"                  onchange="onMsChange('msClass')"> Gold</label>
-                        <label class="ms-item"><input type="checkbox" value="Silver"                onchange="onMsChange('msClass')"> Silver</label>
-                        <label class="ms-item"><input type="checkbox" value="Commodities"           onchange="onMsChange('msClass')"> Commodities</label>
-                        <label class="ms-item"><input type="checkbox" value="Real Estate"           onchange="onMsChange('msClass')"> Real Estate</label>
-                        <label class="ms-item"><input type="checkbox" value="Infrastructure"        onchange="onMsChange('msClass')"> Infrastructure</label>
-                        <label class="ms-item"><input type="checkbox" value="Debt"                  onchange="onMsChange('msClass')"> Debt</label>
-                        <label class="ms-item"><input type="checkbox" value="Cash Equivalent"       onchange="onMsChange('msClass')"> Cash Equivalent</label>
-                        <span class="ms-clear" onclick="clearMs('msClass')">Clear all</span>
+                        <div class="ms-pills">
+                            <span class="ms-pill" data-ms="msClass" data-val="Indian Equity"       onclick="togglePill(this)">Indian Equity</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="International Equity" onclick="togglePill(this)">Intl Equity</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Gold"                 onclick="togglePill(this)">Gold</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Silver"               onclick="togglePill(this)">Silver</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Commodities"          onclick="togglePill(this)">Commodities</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Real Estate"          onclick="togglePill(this)">Real Estate</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Infrastructure"       onclick="togglePill(this)">Infrastructure</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Debt"                 onclick="togglePill(this)">Debt</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Cash Equivalent"      onclick="togglePill(this)">Cash Equiv</span>
+                        </div>
+                        <div class="ms-reset" onclick="clearMs('msClass')">Clear</div>
                     </div>
                 </div>
 

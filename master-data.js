@@ -784,42 +784,50 @@ function deriveSecurity(instrType, nseSeries, bseSeries, companyName) {
     const i = parseInt(instrType);
     const n = (companyName || '').toUpperCase();
 
-    // INVIT — NSE:-IV  BSE:-IN  (MUST come before REIT — both use instr_type:50)
-    if (s === 'IV' || s === 'IN' || /INVIT|INFRAVIT|INFRATRUST|INFRASTRUCTURE INV/.test(n))
-                                        return { security_type: 'INVIT',      asset_class: 'Infrastructure' };
+    // ── Series checks ALWAYS first — instr_type never overrides a known series ──
 
-    // REIT — NSE:-RR  BSE:-IF  instr_type:50  (confirmed from live DB)
-    if (s === 'RR' || s === 'IF' || i === 50 || /\bREIT\b/.test(n))
-                                        return { security_type: 'REIT',       asset_class: 'Real Estate' };
+    // InvIT — NSE:-IV  BSE:-IN
+    if (s === 'IV' || s === 'IN')       return { security_type: 'INVIT',      asset_class: 'Infrastructure' };
 
-    // SGB — NSE:-GB  instr_type:2
-    if (s === 'GB')                     return { security_type: 'SGB',        asset_class: 'Gold' };
+    // REIT — NSE:-RR is definitive
+    //        BSE:-IF is ambiguous (also used for institutional bonds) — check name too
+    if (s === 'RR')                      return { security_type: 'REIT',       asset_class: 'Real Estate' };
+    if (s === 'IF') {
+        if (/\bREIT\b/.test(n))          return { security_type: 'REIT',       asset_class: 'Real Estate' };
+        else                              return { security_type: 'NCD',        asset_class: 'Debt' };
+    }
 
-    // Govt Bonds — NSE:-SG (SDL), -GS (GOI), -EG  BSE:-Q
+    // SGB — NSE:-GB
+    if (s === 'GB')                      return { security_type: 'SGB',        asset_class: 'Gold' };
+
+    // Govt Bonds — NSE:-SG (SDL),-GS (GOI),-EG  BSE:-Q
     if (s === 'SG' || s === 'GS' || s === 'EG' || s === 'Q')
-                                        return { security_type: 'GOVT_BOND',  asset_class: 'Debt' };
+                                         return { security_type: 'GOVT_BOND',  asset_class: 'Debt' };
 
-    // NCD / Debentures — NSE:-YL  BSE:-F, -X
+    // NCD / Debentures — NSE:-YL  BSE:-F,-X
     if (s === 'YL' || s === 'F' || s === 'X')
-                                        return { security_type: 'NCD',        asset_class: 'Debt' };
+                                         return { security_type: 'NCD',        asset_class: 'Debt' };
 
     // Preference Shares — BSE:-P
-    if (s === 'P')                      return { security_type: 'PREF_SHARE', asset_class: 'Indian Equity' };
+    if (s === 'P')                       return { security_type: 'PREF_SHARE', asset_class: 'Indian Equity' };
 
-    // Rights / Warrants — NSE:-RE,-W1,-W2  BSE:-W
+    // Rights/Warrants — NSE:-RE,-W1,-W2  BSE:-W
     if (s === 'RE' || s === 'W' || s === 'W1' || s === 'W2')
-                                        return { security_type: 'RIGHTS',     asset_class: 'Indian Equity' };
+                                         return { security_type: 'RIGHTS',     asset_class: 'Indian Equity' };
 
     // SME — NSE:-SM  BSE:-S
-    if (s === 'SM' || s === 'S')        return { security_type: 'EQUITY_SME', asset_class: 'Indian Equity' };
+    if (s === 'SM' || s === 'S')         return { security_type: 'EQUITY_SME', asset_class: 'Indian Equity' };
 
-    // ETF — instr_type:9
-    if (i === 9)                        return { security_type: 'ETF',        asset_class: null };
+    // ── instr_type for ETF vs closed-end MF (both use -MF/-M series) ──
+    if (i === 9)                         return { security_type: 'ETF',        asset_class: null };
+    if (i === 8)                         return { security_type: 'MF',         asset_class: null };
 
-    // Closed-end MF — instr_type:8
-    if (i === 8)                        return { security_type: 'MF',         asset_class: null };
+    // ── Name-based fallbacks — only when series gave no info ──
+    if (/INVIT|INFRAVIT|INFRATRUST|INFRASTRUCTURE INV/.test(n))
+                                         return { security_type: 'INVIT',      asset_class: 'Infrastructure' };
+    if (/\bREIT\b/.test(n))              return { security_type: 'REIT',       asset_class: 'Real Estate' };
 
-    // Default: EQUITY (EQ, BE, BZ, ST / A, T, B, Z)
+    // Default: EQUITY (EQ,BE,BZ,ST / A,T,B,Z)
     return { security_type: 'EQUITY', asset_class: 'Indian Equity' };
 }
 
@@ -1163,68 +1171,79 @@ async function loadSecuritiesStats() {
 }
 
 async function loadSecuritiesTable() {
+    const tbody = document.getElementById('secTbody');
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">Loading securities...</td></tr>';
     try {
-        const { data, error } = await window.supabaseClient
-            .from('securities_db')
-            .select('id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,is_active')
-            .order('symbol', { ascending: true })
-            .limit(5000);
-        if (error) throw error;
-        _securitiesAll = data || [];
+        // Fetch all rows in batches of 5000 (Supabase default max per request)
+        let all = [], from = 0, batchSize = 5000;
+        while (true) {
+            const { data, error } = await window.supabaseClient
+                .from('securities_db')
+                .select('id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,is_active')
+                .order('symbol', { ascending: true })
+                .range(from, from + batchSize - 1);
+            if (error) throw error;
+            all = all.concat(data || []);
+            if (!data || data.length < batchSize) break;
+            from += batchSize;
+        }
+        _securitiesAll = all;
         renderSecurities();
     } catch(e) {
         console.warn('Securities table load error', e);
-        document.getElementById('secTbody').innerHTML =
-            '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">Connect to Supabase to browse securities</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">Connect to Supabase to browse securities</td></tr>';
     }
 }
 
 function renderSecurities() {
-    const q       = (document.getElementById('secSearch')?.value || '').toLowerCase();
-    const fTypes  = getMsValues('msType');   // Set of selected types (empty = all)
-    const fClasses= getMsValues('msClass');  // Set of selected classes (empty = all)
+    if (!_securitiesAll.length) return; // not loaded yet
+    const q       = (document.getElementById('secSearch')?.value || '').trim().toLowerCase();
+    const fTypes  = getMsValues('msType');
+    const fClasses= getMsValues('msClass');
     const fExch   = document.getElementById('secFilterExch')?.value || '';
 
     let rows = _securitiesAll;
-    if (q)              rows = rows.filter(r => (r.symbol||'').toLowerCase().includes(q) || (r.company_name||'').toLowerCase().includes(q));
+    if (q)              rows = rows.filter(r =>
+                            (r.symbol||'').toLowerCase().includes(q) ||
+                            (r.company_name||'').toLowerCase().includes(q) ||
+                            (r.isin||'').toLowerCase().startsWith(q));
     if (fTypes.size)    rows = rows.filter(r => fTypes.has(r.security_type));
     if (fClasses.size)  rows = rows.filter(r => fClasses.has(r.asset_class));
     if (fExch === 'nse') rows = rows.filter(r => r.nse_symbol);
     if (fExch === 'bse') rows = rows.filter(r => r.bse_symbol);
 
-    const tbody = document.getElementById('secTbody');
-    if (!rows.length) {
+    renderRows(rows, document.getElementById('secTbody'));
+}
+
+// Shared row renderer
+const _typeColors = {
+    EQUITY:'#c6f6d5:#22543d', EQUITY_SME:'#bee3f8:#2c5282',
+    ETF:'#e9d8fd:#553c9a',    MF:'#e9d8fd:#553c9a',
+    SGB:'#fefcbf:#744210',    REIT:'#fed7d7:#822727',
+    INVIT:'#ffe4c4:#7b341e',  GOVT_BOND:'#e2e8f0:#4a5568',
+    NCD:'#e2e8f0:#4a5568',    PREF_SHARE:'#c6f6d5:#22543d',
+    RIGHTS:'#fce8e8:#822727', WARRANT:'#fce8e8:#822727'
+};
+function _typeBadge(t) {
+    const [bg, fg] = (_typeColors[t]||'#e2e8f0:#4a5568').split(':');
+    return `<span style="background:${bg};color:${fg};padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;">${t}</span>`;
+}
+function renderRows(rows, tbody) {
+    if (!rows || !rows.length) {
         tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">No securities found</td></tr>';
         return;
     }
-
-    // Type badge colours
-    const typeColors = {
-        EQUITY:'#c6f6d5:#22543d', EQUITY_SME:'#bee3f8:#2c5282',
-        ETF:'#e9d8fd:#553c9a', MF:'#e9d8fd:#553c9a',
-        SGB:'#fefcbf:#744210', REIT:'#fed7d7:#822727',
-        INVIT:'#ffe4c4:#7b341e', GOVT_BOND:'#e2e8f0:#4a5568',
-        NCD:'#e2e8f0:#4a5568', PREF_SHARE:'#c6f6d5:#22543d',
-        RIGHTS:'#fce8e8:#822727', WARRANT:'#fce8e8:#822727'
-    };
-    function typeBadge(t) {
-        const [bg, fg] = (typeColors[t]||'#e2e8f0:#4a5568').split(':');
-        return `<span style="background:${bg};color:${fg};padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;">${t}</span>`;
-    }
-
     const LIMIT = 500;
-    const shown = rows.slice(0, LIMIT);
-    tbody.innerHTML = shown.map(r => `
+    tbody.innerHTML = rows.slice(0, LIMIT).map(r => `
         <tr>
             <td><strong style="font-size:12px;">${r.symbol||''}</strong></td>
             <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.company_name||''}</td>
-            <td>${typeBadge(r.security_type||'')}</td>
+            <td>${_typeBadge(r.security_type||'')}</td>
             <td style="font-size:11px;color:#4a5568;">${r.asset_class||'<span style="color:#cbd5e0">—</span>'}</td>
             <td style="font-size:11px;">${r.nse_symbol ? '✓' : '—'}</td>
             <td style="font-size:11px;">${r.bse_symbol ? '✓' : '—'}</td>
             <td><span class="status-badge ${r.is_active?'status-active':'status-inactive'}">${r.is_active?'Active':'Inactive'}</span></td>
         </tr>`).join('');
-
     if (rows.length > LIMIT) {
         const tr = document.createElement('tr');
         tr.innerHTML = `<td colspan="7" style="text-align:center;font-size:11px;color:#718096;padding:8px;">
@@ -1237,61 +1256,61 @@ function renderSecurities() {
 let _secTableLoaded = false;
 
 // ═══════════════════════════════════════════════════════════════
-// MULTI-SELECT DROPDOWN HELPERS
+// PILL-TOGGLE MULTI-SELECT HELPERS
 // ═══════════════════════════════════════════════════════════════
 
+// Returns a Set of currently selected values for a given ms id
 function getMsValues(id) {
-    const dropdown = document.getElementById(id + 'Dropdown');
-    if (!dropdown) return new Set();
-    const checked = dropdown.querySelectorAll('input[type=checkbox]:checked');
-    return new Set([...checked].map(cb => cb.value));
+    const dd = document.getElementById(id + 'Dropdown');
+    if (!dd) return new Set();
+    return new Set([...dd.querySelectorAll('.ms-pill.on')].map(p => p.dataset.val));
 }
 
+// Toggle a pill on/off, update label, re-filter
+function togglePill(pill) {
+    pill.classList.toggle('on');
+    const id = pill.dataset.ms;
+    updateMsLabel(id);
+    renderSecurities();
+}
+
+// Update the trigger button label to reflect selection state
 function updateMsLabel(id) {
-    const values = getMsValues(id);
-    const label  = document.getElementById(id + 'Label');
-    const trigger= document.getElementById(id + 'Trigger');
+    const values  = getMsValues(id);
+    const label   = document.getElementById(id + 'Label');
+    const trigger = document.getElementById(id + 'Trigger');
     if (!label) return;
+    const placeholder = id === 'msType' ? 'All Types' : 'All Asset Classes';
     if (values.size === 0) {
-        label.textContent = id === 'msType' ? 'All Types' : 'All Asset Classes';
-        label.classList.add('placeholder');
-        trigger.classList.remove('active-filter');
+        label.textContent = placeholder;
+        trigger.classList.remove('active');
     } else if (values.size === 1) {
-        label.textContent = [...values][0];
-        label.classList.remove('placeholder');
-        trigger.style.borderColor = '#667eea';
+        // Show the pill label text (may be abbreviated e.g. "Intl Equity")
+        const pill = document.querySelector(`#${id}Dropdown .ms-pill.on`);
+        label.textContent = pill ? pill.textContent : [...values][0];
+        trigger.classList.add('active');
     } else {
-        label.textContent = `${values.size} selected`;
-        label.classList.remove('placeholder');
-        trigger.style.borderColor = '#667eea';
+        label.textContent = `${values.size} types`;
+        if (id === 'msClass') label.textContent = `${values.size} classes`;
+        trigger.classList.add('active');
     }
-    if (values.size === 0) trigger.style.borderColor = '';
-    // Update checked style on items
-    const dropdown = document.getElementById(id + 'Dropdown');
-    dropdown.querySelectorAll('.ms-item').forEach(item => {
-        const cb = item.querySelector('input');
-        if (cb) item.classList.toggle('checked', cb.checked);
-    });
 }
 
-function onMsChange(id) {
-    updateMsLabel(id);
-    renderSecurities();
-}
-
+// Clear all pills for a given ms id
 function clearMs(id) {
-    const dropdown = document.getElementById(id + 'Dropdown');
-    if (!dropdown) return;
-    dropdown.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+    const dd = document.getElementById(id + 'Dropdown');
+    if (!dd) return;
+    dd.querySelectorAll('.ms-pill.on').forEach(p => p.classList.remove('on'));
     updateMsLabel(id);
     renderSecurities();
 }
 
+// Open/close the pill dropdown panel
 function toggleMs(id) {
     const trigger  = document.getElementById(id + 'Trigger');
     const dropdown = document.getElementById(id + 'Dropdown');
     const isOpen   = dropdown.classList.contains('open');
-    // Close all open dropdowns first
+    // Close all first
     document.querySelectorAll('.ms-dropdown.open').forEach(d => d.classList.remove('open'));
     document.querySelectorAll('.ms-trigger.open').forEach(t => t.classList.remove('open'));
     if (!isOpen) {
@@ -1300,7 +1319,7 @@ function toggleMs(id) {
     }
 }
 
-// Close dropdowns when clicking outside
+// Close when clicking outside
 document.addEventListener('click', e => {
     if (!e.target.closest('.ms-wrap')) {
         document.querySelectorAll('.ms-dropdown.open').forEach(d => d.classList.remove('open'));
