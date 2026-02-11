@@ -779,22 +779,47 @@ const COL = { FYTOKEN:0, NAME:1, INSTR_TYPE:2, LOT_SIZE:3, TICK:4, ISIN:5,
 
 // Classification rules ─────────────────────────────────────────
 
-function deriveSecurity(instrType, nseSeries, bseSeries) {
+function deriveSecurity(instrType, nseSeries, bseSeries, companyName) {
     const s = nseSeries || bseSeries || '';
     const i = parseInt(instrType);
+    const n = (companyName || '').toUpperCase();
+
+    // INVIT — NSE:-IV  BSE:-IN  (MUST come before REIT — both use instr_type:50)
+    if (s === 'IV' || s === 'IN' || /INVIT|INFRAVIT|INFRATRUST|INFRASTRUCTURE INV/.test(n))
+                                        return { security_type: 'INVIT',      asset_class: 'Infrastructure' };
+
+    // REIT — NSE:-RR  BSE:-IF  instr_type:50  (confirmed from live DB)
+    if (s === 'RR' || s === 'IF' || i === 50 || /\bREIT\b/.test(n))
+                                        return { security_type: 'REIT',       asset_class: 'Real Estate' };
+
+    // SGB — NSE:-GB  instr_type:2
     if (s === 'GB')                     return { security_type: 'SGB',        asset_class: 'Gold' };
-    if (s === 'IL' || s === 'R')        return { security_type: 'REIT',       asset_class: 'Real Estate' };
-    if (s === 'IV' || s === 'IN')       return { security_type: 'INVIT',      asset_class: 'Infrastructure' };
-    if (s === 'SG' || s === 'Q')        return { security_type: 'GOVT_BOND',  asset_class: 'Debt' };
-    if (s === 'GS')                     return { security_type: 'GOVT_BOND',  asset_class: 'Debt' };
-    if (s === 'YL' || s === 'F' || s === 'X') return { security_type: 'NCD', asset_class: 'Debt' };
+
+    // Govt Bonds — NSE:-SG (SDL), -GS (GOI), -EG  BSE:-Q
+    if (s === 'SG' || s === 'GS' || s === 'EG' || s === 'Q')
+                                        return { security_type: 'GOVT_BOND',  asset_class: 'Debt' };
+
+    // NCD / Debentures — NSE:-YL  BSE:-F, -X
+    if (s === 'YL' || s === 'F' || s === 'X')
+                                        return { security_type: 'NCD',        asset_class: 'Debt' };
+
+    // Preference Shares — BSE:-P
     if (s === 'P')                      return { security_type: 'PREF_SHARE', asset_class: 'Indian Equity' };
+
+    // Rights / Warrants — NSE:-RE,-W1,-W2  BSE:-W
     if (s === 'RE' || s === 'W' || s === 'W1' || s === 'W2')
-                                        return { security_type: 'WARRANT',    asset_class: 'Indian Equity' };
+                                        return { security_type: 'RIGHTS',     asset_class: 'Indian Equity' };
+
+    // SME — NSE:-SM  BSE:-S
     if (s === 'SM' || s === 'S')        return { security_type: 'EQUITY_SME', asset_class: 'Indian Equity' };
-    if (i === 9)                        return { security_type: 'ETF',        asset_class: deriveETFClass(null) };
+
+    // ETF — instr_type:9
+    if (i === 9)                        return { security_type: 'ETF',        asset_class: null };
+
+    // Closed-end MF — instr_type:8
     if (i === 8)                        return { security_type: 'MF',         asset_class: null };
-    // Default: equity (EQ, BE, BZ, ST, A, T, B, Z)
+
+    // Default: EQUITY (EQ, BE, BZ, ST / A, T, B, Z)
     return { security_type: 'EQUITY', asset_class: 'Indian Equity' };
 }
 
@@ -896,7 +921,7 @@ function buildRecordMap(nseRows, bseRows) {
         }
 
         // Re-derive classification now that we might have both series
-        const cls = deriveSecurity(instrType, rec.nse_series, rec.bse_series);
+        const cls = deriveSecurity(instrType, rec.nse_series, rec.bse_series, rec.company_name);
         rec.security_type  = cls.security_type;
         rec.asset_class    = (rec.security_type === 'ETF')
             ? deriveETFClass(rec.company_name)
@@ -1155,15 +1180,15 @@ async function loadSecuritiesTable() {
 }
 
 function renderSecurities() {
-    const q      = (document.getElementById('secSearch')?.value || '').toLowerCase();
-    const fType  = document.getElementById('secFilterType')?.value  || '';
-    const fClass = document.getElementById('secFilterClass')?.value || '';
-    const fExch  = document.getElementById('secFilterExch')?.value  || '';
+    const q       = (document.getElementById('secSearch')?.value || '').toLowerCase();
+    const fTypes  = getMsValues('msType');   // Set of selected types (empty = all)
+    const fClasses= getMsValues('msClass');  // Set of selected classes (empty = all)
+    const fExch   = document.getElementById('secFilterExch')?.value || '';
 
     let rows = _securitiesAll;
-    if (q)      rows = rows.filter(r => (r.symbol||'').toLowerCase().includes(q) || (r.company_name||'').toLowerCase().includes(q));
-    if (fType)  rows = rows.filter(r => r.security_type === fType);
-    if (fClass) rows = rows.filter(r => r.asset_class === fClass);
+    if (q)              rows = rows.filter(r => (r.symbol||'').toLowerCase().includes(q) || (r.company_name||'').toLowerCase().includes(q));
+    if (fTypes.size)    rows = rows.filter(r => fTypes.has(r.security_type));
+    if (fClasses.size)  rows = rows.filter(r => fClasses.has(r.asset_class));
     if (fExch === 'nse') rows = rows.filter(r => r.nse_symbol);
     if (fExch === 'bse') rows = rows.filter(r => r.bse_symbol);
 
@@ -1210,3 +1235,75 @@ function renderSecurities() {
 
 // Load table when securities tab is first opened
 let _secTableLoaded = false;
+
+// ═══════════════════════════════════════════════════════════════
+// MULTI-SELECT DROPDOWN HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+function getMsValues(id) {
+    const dropdown = document.getElementById(id + 'Dropdown');
+    if (!dropdown) return new Set();
+    const checked = dropdown.querySelectorAll('input[type=checkbox]:checked');
+    return new Set([...checked].map(cb => cb.value));
+}
+
+function updateMsLabel(id) {
+    const values = getMsValues(id);
+    const label  = document.getElementById(id + 'Label');
+    const trigger= document.getElementById(id + 'Trigger');
+    if (!label) return;
+    if (values.size === 0) {
+        label.textContent = id === 'msType' ? 'All Types' : 'All Asset Classes';
+        label.classList.add('placeholder');
+        trigger.classList.remove('active-filter');
+    } else if (values.size === 1) {
+        label.textContent = [...values][0];
+        label.classList.remove('placeholder');
+        trigger.style.borderColor = '#667eea';
+    } else {
+        label.textContent = `${values.size} selected`;
+        label.classList.remove('placeholder');
+        trigger.style.borderColor = '#667eea';
+    }
+    if (values.size === 0) trigger.style.borderColor = '';
+    // Update checked style on items
+    const dropdown = document.getElementById(id + 'Dropdown');
+    dropdown.querySelectorAll('.ms-item').forEach(item => {
+        const cb = item.querySelector('input');
+        if (cb) item.classList.toggle('checked', cb.checked);
+    });
+}
+
+function onMsChange(id) {
+    updateMsLabel(id);
+    renderSecurities();
+}
+
+function clearMs(id) {
+    const dropdown = document.getElementById(id + 'Dropdown');
+    if (!dropdown) return;
+    dropdown.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+    updateMsLabel(id);
+    renderSecurities();
+}
+
+function toggleMs(id) {
+    const trigger  = document.getElementById(id + 'Trigger');
+    const dropdown = document.getElementById(id + 'Dropdown');
+    const isOpen   = dropdown.classList.contains('open');
+    // Close all open dropdowns first
+    document.querySelectorAll('.ms-dropdown.open').forEach(d => d.classList.remove('open'));
+    document.querySelectorAll('.ms-trigger.open').forEach(t => t.classList.remove('open'));
+    if (!isOpen) {
+        dropdown.classList.add('open');
+        trigger.classList.add('open');
+    }
+}
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', e => {
+    if (!e.target.closest('.ms-wrap')) {
+        document.querySelectorAll('.ms-dropdown.open').forEach(d => d.classList.remove('open'));
+        document.querySelectorAll('.ms-trigger.open').forEach(t => t.classList.remove('open'));
+    }
+});
