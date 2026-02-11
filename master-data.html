@@ -89,6 +89,51 @@
         .broker-account-item { background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; margin-bottom: 8px; }
         .broker-account-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 
+        /* Securities DB tab */
+        .sec-toolbar { display: flex; align-items: center; gap: 10px; flex-shrink: 0; margin-bottom: 10px; flex-wrap: wrap; }
+        .sec-stats { display: flex; gap: 8px; flex-wrap: wrap; }
+        .sec-stat-pill { background: #f0f4f8; border: 1px solid #e2e8f0; border-radius: 20px;
+            padding: 3px 12px; font-size: 11px; font-weight: 600; color: #4a5568; white-space: nowrap; }
+        .sec-stat-pill span { color: #667eea; }
+        .sec-filter-row { display: flex; gap: 8px; align-items: center; flex-shrink: 0; margin-bottom: 8px; flex-wrap: wrap; }
+        .sec-filter-row select, .sec-filter-row input { padding: 4px 8px; border: 1px solid #e2e8f0;
+            border-radius: 5px; font-size: 12px; }
+        .sec-filter-row input { width: 200px; }
+
+        /* Sync preview panel */
+        .sync-preview { background: white; border: 1px solid #e2e8f0; border-radius: 8px;
+            padding: 14px; margin-bottom: 12px; flex-shrink: 0; }
+        .sync-preview h4 { font-size: 12px; font-weight: 700; color: #2d3748; margin-bottom: 10px; }
+        .sync-stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 12px; }
+        .sync-stat-box { background: #f7fafc; border-radius: 6px; padding: 8px 10px; text-align: center; border: 1px solid #e2e8f0; }
+        .sync-stat-box .num { font-size: 20px; font-weight: 700; }
+        .sync-stat-box .lbl { font-size: 10px; color: #718096; margin-top: 2px; }
+        .sync-stat-new  .num { color: #22543d; }
+        .sync-stat-edit .num { color: #744210; }
+        .sync-stat-miss .num { color: #742a2a; }
+        .sync-stat-same .num { color: #2b6cb0; }
+        .sync-actions { display: flex; justify-content: flex-end; gap: 8px; }
+        .btn-commit { background: #38a169; color: white; padding: 5px 16px; border: none;
+            border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .btn-commit:hover { background: #2f855a; }
+        .btn-commit:disabled { background: #a0aec0; cursor: not-allowed; }
+        .btn-danger { background: #e53e3e; color: white; padding: 5px 16px; border: none;
+            border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
+
+        /* Changes table */
+        .changes-section { margin-top: 10px; }
+        .changes-section h5 { font-size: 11px; font-weight: 600; color: #4a5568; margin-bottom: 6px;
+            padding-bottom: 4px; border-bottom: 1px solid #e2e8f0; }
+        .change-tag { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 10px; font-weight: 600; margin-right: 3px; }
+        .tag-new    { background: #c6f6d5; color: #22543d; }
+        .tag-edit   { background: #fefcbf; color: #744210; }
+        .tag-miss   { background: #fed7d7; color: #742a2a; }
+
+        /* Progress bar */
+        .progress-wrap { background: #e2e8f0; border-radius: 4px; height: 6px; margin: 8px 0; overflow: hidden; }
+        .progress-bar  { background: linear-gradient(90deg,#667eea,#764ba2); height: 100%;
+            border-radius: 4px; transition: width 0.3s ease; }
+
         /* Modal */
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.45); align-items: flex-start; justify-content: center;
@@ -124,6 +169,7 @@
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab(event, 'investors')">👥 Investors</button>
             <button class="tab-btn" onclick="switchTab(event, 'brokers')">🏦 Brokers</button>
+            <button class="tab-btn" onclick="switchTab(event, 'securities')">📊 Securities DB</button>
             <button class="tab-btn" onclick="switchTab(event, 'preferences')">⚙️ Preferences</button>
         </div>
 
@@ -147,6 +193,99 @@
                 <button class="btn-primary" onclick="openAddBrokerModal()">+ Add Broker</button>
             </div>
             <div id="brokersGrid" class="card-grid"></div>
+        </div>
+
+        <!-- SECURITIES DB -->
+        <div id="securities-tab" class="tab-content" style="flex-direction:column;">
+
+            <!-- Toolbar row -->
+            <div class="sec-toolbar">
+                <button class="btn-primary" onclick="startSync()" id="btnSync">⟳ Sync from Fyers</button>
+                <div class="sec-stats" id="secStats">
+                    <div class="sec-stat-pill">Total: <span id="statTotal">—</span></div>
+                    <div class="sec-stat-pill">Active: <span id="statActive">—</span></div>
+                    <div class="sec-stat-pill">Last sync: <span id="statLastSync">—</span></div>
+                </div>
+            </div>
+
+            <!-- Sync preview (hidden until sync is run) -->
+            <div class="sync-preview" id="syncPreview" style="display:none;">
+                <h4>📋 Sync Preview — Review before committing</h4>
+                <div class="progress-wrap" id="syncProgressWrap" style="display:none;">
+                    <div class="progress-bar" id="syncProgressBar" style="width:0%"></div>
+                </div>
+                <div id="syncProgressLabel" style="font-size:11px;color:#718096;margin-bottom:8px;display:none;"></div>
+                <div class="sync-stats-grid">
+                    <div class="sync-stat-box sync-stat-new"><div class="num" id="pvNew">0</div><div class="lbl">New to Add</div></div>
+                    <div class="sync-stat-box sync-stat-edit"><div class="num" id="pvEdit">0</div><div class="lbl">Will Update</div></div>
+                    <div class="sync-stat-box sync-stat-miss"><div class="num" id="pvMiss">0</div><div class="lbl">In DB, Not in CSV</div></div>
+                    <div class="sync-stat-box sync-stat-same"><div class="num" id="pvSame">0</div><div class="lbl">Unchanged</div></div>
+                </div>
+
+                <!-- Changes breakdown -->
+                <div class="changes-section" id="changesSection" style="display:none;">
+                    <h5>Field-level changes (<span id="editCountLabel">0</span> securities will be updated)</h5>
+                    <div style="max-height:220px;overflow-y:auto;">
+                        <table class="data-table" id="changesTable">
+                            <thead><tr>
+                                <th>Symbol</th><th>ISIN</th><th>Field</th><th>Current Value</th><th>New Value</th>
+                            </tr></thead>
+                            <tbody id="changesTbody"></tbody>
+                        </table>
+                    </div>
+                    <div class="changes-section" id="missingSection" style="margin-top:10px;">
+                        <h5>In DB but not in CSV (will NOT be deleted — marked informational only)</h5>
+                        <div style="max-height:100px;overflow-y:auto;">
+                            <table class="data-table" id="missingTable">
+                                <thead><tr><th>Symbol</th><th>ISIN</th><th>Company</th><th>Note</th></tr></thead>
+                                <tbody id="missingTbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sync-actions">
+                    <button class="btn-secondary" onclick="cancelSync()">Cancel</button>
+                    <button class="btn-commit" id="btnCommit" onclick="commitSync()" disabled>
+                        ✓ Commit to Database
+                    </button>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="sec-filter-row">
+                <input type="text" id="secSearch" placeholder="Search symbol or company..." oninput="renderSecurities()">
+                <select id="secFilterType" onchange="renderSecurities()">
+                    <option value="">All Types</option>
+                    <option>EQUITY</option><option>EQUITY_SME</option><option>ETF</option>
+                    <option>MF</option><option>SGB</option><option>REIT</option>
+                    <option>INVIT</option><option>GOVT_BOND</option><option>NCD</option>
+                    <option>PREF_SHARE</option><option>RIGHTS</option><option>WARRANT</option>
+                </select>
+                <select id="secFilterClass" onchange="renderSecurities()">
+                    <option value="">All Asset Classes</option>
+                    <option>Indian Equity</option><option>International Equity</option>
+                    <option>Gold</option><option>Silver</option><option>Commodities</option>
+                    <option>Real Estate</option><option>Infrastructure</option>
+                    <option>Debt</option><option>Cash Equivalent</option>
+                </select>
+                <select id="secFilterExch" onchange="renderSecurities()">
+                    <option value="">NSE + BSE</option>
+                    <option value="nse">NSE only</option>
+                    <option value="bse">BSE only</option>
+                </select>
+            </div>
+
+            <!-- Securities table -->
+            <div class="card-grid">
+                <table class="data-table" id="secTable">
+                    <thead><tr>
+                        <th>Symbol</th><th>Company</th><th>Type</th>
+                        <th>Asset Class</th><th>NSE</th><th>BSE</th><th>Status</th>
+                    </tr></thead>
+                    <tbody id="secTbody"></tbody>
+                </table>
+            </div>
         </div>
 
         <!-- PREFERENCES -->

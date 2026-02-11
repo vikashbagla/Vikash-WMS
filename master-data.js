@@ -193,6 +193,7 @@ function initMasterData() {
     loadInvestors();
     loadBrokers();
     loadPreferences();
+    loadSecuritiesStats();
 }
 
 // Also support direct page load
@@ -204,6 +205,10 @@ function switchTab(event, tabName) {
     event.target.classList.add('active');
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
     document.getElementById(`${tabName}-tab`).classList.add('active');
+    if (tabName === 'securities') {
+        loadSecuritiesStats();
+        if (!_secTableLoaded) { _secTableLoaded = true; loadSecuritiesTable(); }
+    }
 }
 
 // INVESTORS
@@ -760,3 +765,426 @@ document.getElementById('investorModal').addEventListener('click', e => {
 document.getElementById('brokerModal').addEventListener('click', e => {
     if (e.target.id === 'brokerModal') closeBrokerModal();
 });
+
+// ═══════════════════════════════════════════════════════════════
+// SECURITIES DB — Sync, Preview & Browse
+// ═══════════════════════════════════════════════════════════════
+
+// CSV column indices (NSE_CM.csv and BSE_CM.csv — 21 columns, no header)
+const COL = { FYTOKEN:0, NAME:1, INSTR_TYPE:2, LOT_SIZE:3, TICK:4, ISIN:5,
+              SESSION:6, LAST_UPDATE:7, EXPIRY:8, SYMBOL:9, EXCH_CODE:10,
+              SEGMENT:11, SCRIPT_CODE:12, SHORT_SYM:13, UNDERLYING_CODE:14,
+              STRIKE:15, OPT:16, UNDERLYING_TOKEN:17, RESERVED:18,
+              EQUITY_FLAG:19, LOT_MULT:20 };
+
+// Classification rules ─────────────────────────────────────────
+
+function deriveSecurity(instrType, nseSeries, bseSeries) {
+    const s = nseSeries || bseSeries || '';
+    const i = parseInt(instrType);
+    if (s === 'GB')                     return { security_type: 'SGB',        asset_class: 'Gold' };
+    if (s === 'IL' || s === 'R')        return { security_type: 'REIT',       asset_class: 'Real Estate' };
+    if (s === 'IV' || s === 'IN')       return { security_type: 'INVIT',      asset_class: 'Infrastructure' };
+    if (s === 'SG' || s === 'Q')        return { security_type: 'GOVT_BOND',  asset_class: 'Debt' };
+    if (s === 'GS')                     return { security_type: 'GOVT_BOND',  asset_class: 'Debt' };
+    if (s === 'YL' || s === 'F' || s === 'X') return { security_type: 'NCD', asset_class: 'Debt' };
+    if (s === 'P')                      return { security_type: 'PREF_SHARE', asset_class: 'Indian Equity' };
+    if (s === 'RE' || s === 'W' || s === 'W1' || s === 'W2')
+                                        return { security_type: 'WARRANT',    asset_class: 'Indian Equity' };
+    if (s === 'SM' || s === 'S')        return { security_type: 'EQUITY_SME', asset_class: 'Indian Equity' };
+    if (i === 9)                        return { security_type: 'ETF',        asset_class: deriveETFClass(null) };
+    if (i === 8)                        return { security_type: 'MF',         asset_class: null };
+    // Default: equity (EQ, BE, BZ, ST, A, T, B, Z)
+    return { security_type: 'EQUITY', asset_class: 'Indian Equity' };
+}
+
+function deriveETFClass(name) {
+    if (!name) return null;
+    const n = name.toUpperCase();
+    if (/GOLD/.test(n))                         return 'Gold';
+    if (/SILVER/.test(n))                       return 'Silver';
+    if (/NASDAQ|S&P|US |HANGSENG|GLOBAL/.test(n)) return 'International Equity';
+    if (/LIQUID|OVERNIGHT|MONEY MARKET/.test(n)) return 'Cash Equivalent';
+    if (/NIFTY|SENSEX|MIDCAP|SMALLCAP|BANKBEES|INFRABEES/.test(n)) return 'Indian Equity';
+    if (/GILT|BOND|GSEC|DEBT/.test(n))          return 'Debt';
+    return null; // will be flagged for manual review
+}
+
+// CSV parsing ──────────────────────────────────────────────────
+
+function parseCSVLine(line) {
+    // Simple split on comma — these CSVs have no quoted fields
+    return line.split(',');
+}
+
+function extractSeries(fyersSymbol) {
+    // "NSE:TATAMOTORS-EQ" → "EQ"   "BSE:360ONE-A" → "A"
+    if (!fyersSymbol) return '';
+    const parts = fyersSymbol.split('-');
+    return parts[parts.length - 1] || '';
+}
+
+async function fetchAndParseCSV(url) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.status}`);
+    const text = await resp.text();
+    const rows = [];
+    for (const line of text.split('\n')) {
+        const t = line.trim();
+        if (!t) continue;
+        const cols = parseCSVLine(t);
+        if (cols.length < 14) continue;
+        const isin = cols[COL.ISIN].trim();
+        if (!isin || isin === '' || isin === 'None') continue;
+        rows.push(cols);
+    }
+    return rows;
+}
+
+// Build merged record map (keyed by ISIN) ──────────────────────
+
+function buildRecordMap(nseRows, bseRows) {
+    const map = new Map(); // isin → record
+
+    function processRow(cols, exchange) {
+        const isin        = cols[COL.ISIN].trim();
+        const fyersSymbol = cols[COL.SYMBOL].trim();
+        const series      = extractSeries(fyersSymbol);
+        const shortSym    = cols[COL.SHORT_SYM].trim();
+        const instrType   = parseInt(cols[COL.INSTR_TYPE]) || 0;
+        const lotSize     = parseInt(cols[COL.LOT_SIZE]) || 1;
+        const name        = cols[COL.NAME].trim();
+        const scriptCode  = cols[COL.SCRIPT_CODE].trim();
+        const fytoken     = cols[COL.FYTOKEN].trim();
+
+        // Skip pure derivatives / options leftovers
+        if (cols[COL.OPT] && cols[COL.OPT].trim() !== 'XX') return;
+        if (cols[COL.EXPIRY] && cols[COL.EXPIRY].trim() !== '') return;
+
+        if (!map.has(isin)) {
+            map.set(isin, {
+                isin, company_name: name, lot_size: lotSize,
+                symbol: null, nse_symbol: null, nse_script_code: null,
+                bse_symbol: null, bse_script_code: null,
+                broker_tokens: { fyers: {} },
+                nse_series: null, bse_series: null,
+                fyers_instr_type: instrType,
+                security_type: 'EQUITY', asset_class: 'Indian Equity',
+                is_active: true
+            });
+        }
+        const rec = map.get(isin);
+
+        if (exchange === 'NSE') {
+            rec.symbol         = shortSym;
+            rec.nse_symbol     = shortSym;
+            rec.nse_script_code = scriptCode;
+            rec.nse_series     = series;
+            rec.broker_tokens.fyers.nse_token  = fytoken;
+            rec.broker_tokens.fyers.nse_symbol = fyersSymbol;
+        } else {
+            if (!rec.symbol) rec.symbol = shortSym; // fallback if no NSE
+            rec.bse_symbol     = shortSym;
+            rec.bse_script_code = scriptCode;
+            rec.bse_series     = series;
+            rec.broker_tokens.fyers.bse_token  = fytoken;
+            rec.broker_tokens.fyers.bse_symbol = fyersSymbol;
+        }
+        // Re-derive classification now that we might have both series
+        const cls = deriveSecurity(instrType, rec.nse_series, rec.bse_series);
+        rec.security_type  = cls.security_type;
+        if (rec.security_type === 'ETF') {
+            rec.asset_class = deriveETFClass(rec.company_name);
+        } else {
+            rec.asset_class = cls.asset_class;
+        }
+        rec.fyers_instr_type = instrType;
+    }
+
+    for (const cols of nseRows) processRow(cols, 'NSE');
+    for (const cols of bseRows) processRow(cols, 'BSE');
+    return map;
+}
+
+// State for sync session ───────────────────────────────────────
+
+let _syncPending = null; // { toAdd:[], toUpdate:[], missing:[], unchanged:[] }
+
+// Compare two records for meaningful changes ───────────────────
+
+const TRACKED_FIELDS = ['company_name','symbol','nse_symbol','nse_script_code',
+    'bse_symbol','bse_script_code','lot_size','security_type','asset_class',
+    'nse_series','bse_series','fyers_instr_type'];
+
+function diffRecord(existing, incoming) {
+    const diffs = [];
+    for (const f of TRACKED_FIELDS) {
+        const a = existing[f] === undefined ? null : existing[f];
+        const b = incoming[f]  === undefined ? null : incoming[f];
+        if (String(a ?? '') !== String(b ?? '')) {
+            diffs.push({ field: f, from: a, to: b });
+        }
+    }
+    // broker_tokens diff (simple JSON compare)
+    const tokA = JSON.stringify(existing.broker_tokens || {});
+    const tokB = JSON.stringify(incoming.broker_tokens || {});
+    if (tokA !== tokB) diffs.push({ field: 'broker_tokens', from: '(json)', to: '(updated)' });
+    return diffs;
+}
+
+// Main sync flow ───────────────────────────────────────────────
+
+async function startSync() {
+    const btn = document.getElementById('btnSync');
+    const preview = document.getElementById('syncPreview');
+    const progWrap = document.getElementById('syncProgressWrap');
+    const progBar  = document.getElementById('syncProgressBar');
+    const progLbl  = document.getElementById('syncProgressLabel');
+
+    btn.disabled = true;
+    btn.textContent = '⏳ Fetching CSVs...';
+    preview.style.display = 'block';
+    progWrap.style.display = 'block';
+    progLbl.style.display  = 'block';
+    progBar.style.width = '10%';
+    progLbl.textContent = 'Downloading NSE_CM.csv...';
+
+    try {
+        const nseRows = await fetchAndParseCSV('https://public.fyers.in/sym_details/NSE_CM.csv');
+        progBar.style.width = '35%';
+        progLbl.textContent = 'Downloading BSE_CM.csv...';
+
+        const bseRows = await fetchAndParseCSV('https://public.fyers.in/sym_details/BSE_CM.csv');
+        progBar.style.width = '55%';
+        progLbl.textContent = `Parsed ${nseRows.length + bseRows.length} rows. Loading DB...`;
+
+        // Load existing DB records
+        const { data: existing, error } = await window.supabaseClient
+            .from('securities_db').select('*');
+        if (error) throw error;
+
+        progBar.style.width = '70%';
+        progLbl.textContent = 'Computing diff...';
+
+        const csvMap = buildRecordMap(nseRows, bseRows);
+        const dbMap  = new Map((existing || []).map(r => [r.isin, r]));
+
+        const toAdd    = [];
+        const toUpdate = [];
+        const unchanged= [];
+
+        for (const [isin, incoming] of csvMap) {
+            if (!dbMap.has(isin)) {
+                toAdd.push(incoming);
+            } else {
+                const diffs = diffRecord(dbMap.get(isin), incoming);
+                if (diffs.length > 0) {
+                    toUpdate.push({ record: incoming, diffs, existing: dbMap.get(isin) });
+                } else {
+                    unchanged.push(isin);
+                }
+            }
+        }
+
+        const missing = [...dbMap.keys()].filter(isin => !csvMap.has(isin))
+            .map(isin => dbMap.get(isin));
+
+        _syncPending = { toAdd, toUpdate, missing, unchanged };
+
+        progBar.style.width = '100%';
+        progLbl.textContent = 'Analysis complete.';
+        setTimeout(() => { progWrap.style.display='none'; progLbl.style.display='none'; }, 800);
+
+        renderSyncPreview(_syncPending);
+        document.getElementById('btnCommit').disabled = (toAdd.length + toUpdate.length === 0);
+
+    } catch (err) {
+        progLbl.textContent = '❌ Error: ' + err.message;
+        progBar.style.background = '#e53e3e';
+        console.error(err);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '⟳ Sync from Fyers';
+    }
+}
+
+function renderSyncPreview({ toAdd, toUpdate, missing, unchanged }) {
+    document.getElementById('pvNew').textContent  = toAdd.length.toLocaleString('en-IN');
+    document.getElementById('pvEdit').textContent = toUpdate.length.toLocaleString('en-IN');
+    document.getElementById('pvMiss').textContent = missing.length.toLocaleString('en-IN');
+    document.getElementById('pvSame').textContent = unchanged.length.toLocaleString('en-IN');
+
+    const changesSection = document.getElementById('changesSection');
+    changesSection.style.display = (toUpdate.length + missing.length > 0) ? 'block' : 'none';
+
+    // Changes table
+    document.getElementById('editCountLabel').textContent = toUpdate.length;
+    const tbody = document.getElementById('changesTbody');
+    tbody.innerHTML = '';
+    for (const { record, diffs } of toUpdate) {
+        for (const d of diffs) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${record.symbol || ''}</strong></td>
+                <td style="font-size:10px;color:#718096;">${record.isin}</td>
+                <td><span class="change-tag tag-edit">${d.field}</span></td>
+                <td style="color:#718096;font-size:11px;">${d.from ?? '—'}</td>
+                <td style="color:#2d3748;font-size:11px;">${d.to ?? '—'}</td>`;
+            tbody.appendChild(tr);
+        }
+    }
+
+    // Missing table
+    const missingTbody = document.getElementById('missingTbody');
+    missingTbody.innerHTML = '';
+    for (const r of missing) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${r.symbol||''}</td><td style="font-size:10px;">${r.isin}</td>
+            <td>${r.company_name||''}</td><td style="color:#718096;font-size:10px;">No longer in CSV — kept as-is</td>`;
+        missingTbody.appendChild(tr);
+    }
+}
+
+async function commitSync() {
+    if (!_syncPending) return;
+    const { toAdd, toUpdate } = _syncPending;
+    const btn = document.getElementById('btnCommit');
+    btn.disabled = true;
+    btn.textContent = '⏳ Committing...';
+
+    try {
+        const BATCH = 200;
+        let done = 0;
+        const total = toAdd.length + toUpdate.length;
+
+        // Upsert new records in batches
+        const all = [
+            ...toAdd,
+            ...toUpdate.map(u => u.record)
+        ];
+        for (let i = 0; i < all.length; i += BATCH) {
+            const batch = all.slice(i, i + BATCH);
+            const { error } = await window.supabaseClient
+                .from('securities_db')
+                .upsert(batch, { onConflict: 'isin' });
+            if (error) throw error;
+            done += batch.length;
+            btn.textContent = `⏳ ${done}/${total}...`;
+        }
+
+        // Save last sync timestamp
+        localStorage.setItem('wms_last_securities_sync', new Date().toISOString());
+
+        alert(`✓ Done! Added: ${toAdd.length} | Updated: ${toUpdate.length}`);
+        _syncPending = null;
+        document.getElementById('syncPreview').style.display = 'none';
+        await loadSecuritiesStats();
+        await loadSecuritiesTable();
+
+    } catch (err) {
+        alert('❌ Commit failed: ' + err.message);
+        console.error(err);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '✓ Commit to Database';
+    }
+}
+
+function cancelSync() {
+    _syncPending = null;
+    document.getElementById('syncPreview').style.display = 'none';
+}
+
+// Browse / filter table ────────────────────────────────────────
+
+let _securitiesAll = [];
+
+async function loadSecuritiesStats() {
+    try {
+        const { count: total } = await window.supabaseClient
+            .from('securities_db').select('*', { count: 'exact', head: true });
+        const { count: active } = await window.supabaseClient
+            .from('securities_db').select('*', { count: 'exact', head: true })
+            .eq('is_active', true);
+        document.getElementById('statTotal').textContent  = (total  || 0).toLocaleString('en-IN');
+        document.getElementById('statActive').textContent = (active || 0).toLocaleString('en-IN');
+        const ls = localStorage.getItem('wms_last_securities_sync');
+        document.getElementById('statLastSync').textContent = ls
+            ? new Date(ls).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' })
+            : 'Never';
+    } catch(e) { console.warn('Stats load error', e); }
+}
+
+async function loadSecuritiesTable() {
+    try {
+        const { data, error } = await window.supabaseClient
+            .from('securities_db')
+            .select('id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,is_active')
+            .order('symbol', { ascending: true })
+            .limit(5000);
+        if (error) throw error;
+        _securitiesAll = data || [];
+        renderSecurities();
+    } catch(e) {
+        console.warn('Securities table load error', e);
+        document.getElementById('secTbody').innerHTML =
+            '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">Connect to Supabase to browse securities</td></tr>';
+    }
+}
+
+function renderSecurities() {
+    const q      = (document.getElementById('secSearch')?.value || '').toLowerCase();
+    const fType  = document.getElementById('secFilterType')?.value  || '';
+    const fClass = document.getElementById('secFilterClass')?.value || '';
+    const fExch  = document.getElementById('secFilterExch')?.value  || '';
+
+    let rows = _securitiesAll;
+    if (q)      rows = rows.filter(r => (r.symbol||'').toLowerCase().includes(q) || (r.company_name||'').toLowerCase().includes(q));
+    if (fType)  rows = rows.filter(r => r.security_type === fType);
+    if (fClass) rows = rows.filter(r => r.asset_class === fClass);
+    if (fExch === 'nse') rows = rows.filter(r => r.nse_symbol);
+    if (fExch === 'bse') rows = rows.filter(r => r.bse_symbol);
+
+    const tbody = document.getElementById('secTbody');
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">No securities found</td></tr>';
+        return;
+    }
+
+    // Type badge colours
+    const typeColors = {
+        EQUITY:'#c6f6d5:#22543d', EQUITY_SME:'#bee3f8:#2c5282',
+        ETF:'#e9d8fd:#553c9a', MF:'#e9d8fd:#553c9a',
+        SGB:'#fefcbf:#744210', REIT:'#fed7d7:#822727',
+        INVIT:'#ffe4c4:#7b341e', GOVT_BOND:'#e2e8f0:#4a5568',
+        NCD:'#e2e8f0:#4a5568', PREF_SHARE:'#c6f6d5:#22543d',
+        RIGHTS:'#fce8e8:#822727', WARRANT:'#fce8e8:#822727'
+    };
+    function typeBadge(t) {
+        const [bg, fg] = (typeColors[t]||'#e2e8f0:#4a5568').split(':');
+        return `<span style="background:${bg};color:${fg};padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;">${t}</span>`;
+    }
+
+    const LIMIT = 500;
+    const shown = rows.slice(0, LIMIT);
+    tbody.innerHTML = shown.map(r => `
+        <tr>
+            <td><strong style="font-size:12px;">${r.symbol||''}</strong></td>
+            <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.company_name||''}</td>
+            <td>${typeBadge(r.security_type||'')}</td>
+            <td style="font-size:11px;color:#4a5568;">${r.asset_class||'<span style="color:#cbd5e0">—</span>'}</td>
+            <td style="font-size:11px;">${r.nse_symbol ? '✓' : '—'}</td>
+            <td style="font-size:11px;">${r.bse_symbol ? '✓' : '—'}</td>
+            <td><span class="status-badge ${r.is_active?'status-active':'status-inactive'}">${r.is_active?'Active':'Inactive'}</span></td>
+        </tr>`).join('');
+
+    if (rows.length > LIMIT) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="7" style="text-align:center;font-size:11px;color:#718096;padding:8px;">
+            Showing first ${LIMIT} of ${rows.length.toLocaleString('en-IN')} results — use filters to narrow down</td>`;
+        tbody.appendChild(tr);
+    }
+}
+
+// Load table when securities tab is first opened
+let _secTableLoaded = false;
