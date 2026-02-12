@@ -194,6 +194,7 @@ function initMasterData() {
     loadBrokers();
     loadPreferences();
     loadSecuritiesStats();
+    loadFOStats();
 }
 
 // Also support direct page load
@@ -207,6 +208,7 @@ function switchTab(event, tabName) {
     document.getElementById(`${tabName}-tab`).classList.add('active');
     if (tabName === 'securities') {
         loadSecuritiesStats();
+        loadFOStats();
         if (!_secTableLoaded) { _secTableLoaded = true; loadSecuritiesTable(); }
     }
 }
@@ -1229,24 +1231,140 @@ async function loadSecuritiesTable() {
     }
 }
 
-function renderSecurities() {
-    if (!_securitiesAll.length) return; // not loaded yet
-    const q       = (document.getElementById('secSearch')?.value || '').trim().toLowerCase();
-    const fTypes  = getMsValues('msType');
-    const fClasses= getMsValues('msClass');
-    const fExch   = document.getElementById('secFilterExch')?.value || '';
+// renderSecurities kept as alias for pill filter changes triggered before unified is wired
+function renderSecurities() { renderUnified(); }
 
-    let rows = _securitiesAll;
-    if (q)              rows = rows.filter(r =>
-                            (r.symbol||'').toLowerCase().includes(q) ||
-                            (r.company_name||'').toLowerCase().includes(q) ||
-                            (r.isin||'').toLowerCase().startsWith(q));
-    if (fTypes.size)    rows = rows.filter(r => fTypes.has(r.security_type));
-    if (fClasses.size)  rows = rows.filter(r => fClasses.has(r.asset_class));
-    if (fExch === 'nse') rows = rows.filter(r => r.nse_symbol);
-    if (fExch === 'bse') rows = rows.filter(r => r.bse_symbol);
+// Pagination state for unified table
+let _uniRows = [];   // full filtered result set
+let _uniPage = 0;    // current page (0-indexed)
+const UNI_PAGE_SIZE = 100;
 
-    renderRows(rows, document.getElementById('secTbody'));
+function renderUnified(resetPage) {
+    if (resetPage !== false) _uniPage = 0;  // any new filter/search resets to page 1
+    const tbody  = document.getElementById('secTbody');
+    if (!tbody) return;
+    const q      = (document.getElementById('secSearch')?.value || '').trim().toLowerCase();
+    const fTypes = getMsValues('msType');
+    const fExch  = getMsValues('msExch');
+
+    // Require at least a search term OR at least one filter to render
+    const hasFilter = q.length >= 1 || fTypes.size > 0 || fExch.size > 0;
+    if (!hasFilter) {
+        _uniRows = [];
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:32px;font-size:12px;">' +
+            'Search above, or select a Type or Exchange filter to browse</td></tr>';
+        renderUniPager(0, 0);
+        return;
+    }
+
+    // Build unified row list from both datasets
+    const cmRows = (_securitiesAll || []).map(r => ({
+        symbol:      r.symbol || '',
+        name:        r.company_name || '',
+        type:        r.security_type || '',
+        asset_class: r.asset_class || '',
+        underlying:  '',
+        expiry_dt:   null,
+        lot_size:    r.lot_size || '',
+        exchanges:   (r.nse_symbol ? 'NSE' : '') + (r.nse_symbol && r.bse_symbol ? ' ' : '') + (r.bse_symbol ? 'BSE' : ''),
+        is_active:   r.is_active,
+        isin:        r.isin || '',
+        _src:        'cm'
+    }));
+
+    const foRows = (_foAll || []).map(r => ({
+        symbol:      r.symbol || '',
+        name:        r.instrument_name || '',
+        type:        r.instrument_type || '',
+        asset_class: r.exchange === 'MCX' ? 'Commodity' : 'Indian Equity',
+        underlying:  r.underlying_symbol || '',
+        expiry_dt:   r.expiry_date ? new Date(r.expiry_date) : null,
+        lot_size:    r.lot_size || '',
+        exchanges:   r.exchange || '',
+        is_active:   r.is_active,
+        isin:        '',
+        _src:        'fo'
+    }));
+
+    let rows = [...cmRows, ...foRows];
+
+    if (q) rows = rows.filter(r =>
+        r.symbol.toLowerCase().includes(q) ||
+        r.name.toLowerCase().includes(q) ||
+        r.underlying.toLowerCase().includes(q) ||
+        r.isin.toLowerCase().startsWith(q));
+
+    if (fTypes.size) rows = rows.filter(r => fTypes.has(r.type));
+
+    if (fExch.size) rows = rows.filter(r => {
+        if (r._src === 'cm') {
+            return (fExch.has('NSE') && r.exchanges.includes('NSE')) ||
+                   (fExch.has('BSE') && r.exchanges.includes('BSE'));
+        }
+        return fExch.has(r.exchanges);
+    });
+
+    _uniRows = rows;
+
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#718096;padding:24px;font-size:12px;">No results found</td></tr>';
+        renderUniPager(0, 0);
+        return;
+    }
+
+    // Render current page
+    const start = _uniPage * UNI_PAGE_SIZE;
+    const page  = rows.slice(start, start + UNI_PAGE_SIZE);
+    const today = new Date();
+
+    tbody.innerHTML = page.map(r => {
+        const expired    = r.expiry_dt && r.expiry_dt < today;
+        const expiryStr  = r.expiry_dt
+            ? r.expiry_dt.toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'2-digit' })
+            : '<span style="color:#cbd5e0;">—</span>';
+        const expiryCol  = r.expiry_dt ? (expired ? 'color:#dc2626;' : 'color:#059669;') : '';
+        return '<tr>' +
+            '<td><strong style="font-size:12px;">' + r.symbol + '</strong></td>' +
+            '<td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + r.name + '</td>' +
+            '<td>' + _typeBadge(r.type) + '</td>' +
+            '<td style="font-size:11px;color:#4a5568;">' + (r.asset_class || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
+            '<td style="font-size:11px;font-weight:600;">' + (r.underlying || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
+            '<td style="font-size:11px;' + expiryCol + '">' + expiryStr + '</td>' +
+            '<td style="font-size:11px;text-align:right;">' + (r.lot_size || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
+            '<td style="font-size:11px;">' + r.exchanges + '</td>' +
+            '<td><span class="status-badge ' + (r.is_active ? 'status-active' : 'status-inactive') + '">' +
+                (r.is_active ? 'Active' : 'Inactive') + '</span></td>' +
+            '</tr>';
+    }).join('');
+
+    renderUniPager(rows.length, page.length);
+}
+
+function renderUniPager(total, shown) {
+    const bar = document.getElementById('uniPager');
+    if (!bar) return;
+    if (total === 0) { bar.innerHTML = ''; return; }
+    const totalPages = Math.ceil(total / UNI_PAGE_SIZE);
+    const cur = _uniPage + 1;
+    const from = (_uniPage * UNI_PAGE_SIZE + 1).toLocaleString('en-IN');
+    const to   = Math.min((_uniPage + 1) * UNI_PAGE_SIZE, total).toLocaleString('en-IN');
+    bar.innerHTML =
+        '<span style="font-size:11px;color:#718096;">Showing ' + from + '–' + to +
+        ' of <strong>' + total.toLocaleString('en-IN') + '</strong> results</span>' +
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+            '<button class="page-btn" onclick="uniPageStep(-1)" ' + (cur <= 1 ? 'disabled' : '') + '>← Prev</button>' +
+            '<span style="font-size:11px;color:#4a5568;">Page ' + cur + ' of ' + totalPages + '</span>' +
+            '<button class="page-btn" onclick="uniPageStep(1)" ' + (cur >= totalPages ? 'disabled' : '') + '>Next →</button>' +
+        '</div>';
+}
+
+function uniPageStep(delta) {
+    const totalPages = Math.ceil(_uniRows.length / UNI_PAGE_SIZE);
+    _uniPage = Math.max(0, Math.min(_uniPage + delta, totalPages - 1));
+    renderUnified(false);  // false = don't reset page
+    // Scroll table back to top
+    const wrap = document.getElementById('unifiedTableWrap');
+    if (wrap) wrap.scrollTop = 0;
 }
 
 // Shared row renderer
@@ -1369,9 +1487,8 @@ function getMsValues(id) {
 // Toggle a pill on/off, update label, re-filter
 function togglePill(pill) {
     pill.classList.toggle('on');
-    const id = pill.dataset.ms;
-    updateMsLabel(id);
-    renderSecurities();
+    updateMsLabel(pill.dataset.ms);
+    renderUnified();
 }
 
 // Update the trigger button label to reflect selection state
@@ -1402,7 +1519,7 @@ function clearMs(id) {
     if (!dd) return;
     dd.querySelectorAll('.ms-pill.on').forEach(p => p.classList.remove('on'));
     updateMsLabel(id);
-    renderSecurities();
+    renderUnified();
 }
 
 // Open/close the pill dropdown panel
@@ -1426,3 +1543,70 @@ document.addEventListener('click', e => {
         document.querySelectorAll('.ms-trigger.open').forEach(t => t.classList.remove('open'));
     }
 });
+
+// switchSecSubTab removed — unified table used instead
+
+// ═══════════════════════════════════════════════════════════════
+// F&O STATS + TABLE
+// ═══════════════════════════════════════════════════════════════
+
+let _foAll = [];
+let _foTableLoaded = false;
+
+async function loadFOStats() {
+    try {
+        const { count: total } = await window.supabaseClient
+            .from('securities_nfo').select('*', { count: 'exact', head: true });
+        const { count: active } = await window.supabaseClient
+            .from('securities_nfo').select('*', { count: 'exact', head: true })
+            .eq('is_active', true);
+        document.getElementById('foStatTotal').textContent  = (total  || 0).toLocaleString('en-IN');
+        document.getElementById('foStatActive').textContent = (active || 0).toLocaleString('en-IN');
+
+        let syncTs = localStorage.getItem('wms_last_fo_sync');
+        if (!syncTs && total > 0) {
+            const { data: latest } = await window.supabaseClient
+                .from('securities_nfo').select('updated_at')
+                .order('updated_at', { ascending: false }).limit(1);
+            if (latest && latest[0]) syncTs = latest[0].updated_at;
+        }
+        document.getElementById('foStatLastSync').textContent = syncTs
+            ? new Date(syncTs).toLocaleString('en-IN', {
+                day: 'numeric', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: false })
+            : 'Never';
+    } catch(e) { console.warn('FO stats error', e); }
+}
+
+async function loadFOTable() {
+    setSecLoading(true, 'Loading F&O contracts...');
+    try {
+        _foAll = await fetchAllRows('securities_nfo',
+            'id,symbol,instrument_name,exchange,instrument_type,underlying_symbol,' +
+            'expiry_date,strike_price,option_type,lot_size,is_active');
+        renderUnified();
+    } catch(e) {
+        console.warn('FO table load error', e);
+        document.getElementById('foTbody').innerHTML =
+            '<tr><td colspan="8" style="text-align:center;color:#718096;padding:20px;">Could not load F&O contracts</td></tr>';
+    } finally {
+        setSecLoading(false);
+    }
+}
+
+// renderFO removed — renderUnified handles both CM and FO
+
+// ═══════════════════════════════════════════════════════════════
+// F&O SYNC STUBS (full implementation next session)
+// ═══════════════════════════════════════════════════════════════
+
+function startFOSync() {
+    alert('F&O sync coming next session!');
+}
+function cancelFOSync() {
+    document.getElementById('foSyncPreview').style.display = 'none';
+}
+function commitFOSync() {}
+function exportFOExcel() {
+    alert('F&O export available after first sync.');
+}
