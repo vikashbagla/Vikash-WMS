@@ -1597,16 +1597,287 @@ async function loadFOTable() {
 // renderFO removed — renderUnified handles both CM and FO
 
 // ═══════════════════════════════════════════════════════════════
-// F&O SYNC STUBS (full implementation next session)
+// F&O SYNC  — NSE_FO.csv + MCX_COM.csv  (FUTURES only)
 // ═══════════════════════════════════════════════════════════════
 
-function startFOSync() {
-    alert('F&O sync coming next session!');
+let _foCsvMap   = null;   // Map<symbol, record> built from CSV
+let _foDbMap    = null;   // Map<symbol, record> from DB
+let _foToAdd    = [];
+let _foToUpdate = [];
+let _foToDeactivate = [];
+
+function setFOLoading(on, msg) {
+    const overlay  = document.getElementById('secLoadingOverlay');
+    const msgEl    = document.getElementById('secLoadingMsg');
+    const btnFO    = document.getElementById('btnFOSync');
+    const btnFOEx  = document.getElementById('btnFOExport');
+    if (overlay) overlay.classList.toggle('visible', on);
+    if (msgEl && msg) msgEl.textContent = msg;
+    if (btnFO)   btnFO.disabled   = on;
+    if (btnFOEx) btnFOEx.disabled = on;
 }
+
+async function startFOSync() {
+    setFOLoading(true, 'Downloading F&O data...');
+    const preview  = document.getElementById('foSyncPreview');
+    const progWrap = document.getElementById('foProgressWrap');
+    const progBar  = document.getElementById('foProgressBar');
+    const progLbl  = document.getElementById('foProgressLabel');
+    preview.style.display  = 'block';
+    progWrap.style.display = 'block';
+    progLbl.style.display  = 'block';
+    progBar.style.width    = '5%';
+    progLbl.textContent    = 'Downloading NSE_FO.csv...';
+
+    try {
+        // ── 1. Download & parse both CSVs ──────────────────────────
+        const nseRows = await fetchAndParseCSV('https://public.fyers.in/sym_details/NSE_FO.csv');
+        progBar.style.width = '30%';
+        progLbl.textContent = 'Downloading MCX_COM.csv...';
+
+        const mcxRows = await fetchAndParseCSV('https://public.fyers.in/sym_details/MCX_COM.csv');
+        progBar.style.width = '55%';
+        progLbl.textContent = 'Parsing contracts...';
+
+        const today = new Date(); today.setHours(0,0,0,0);
+
+        // ── 2. Filter FUTURES only (instr_type == 11) ───────────────
+        function parseRow(cols, exchCode) {
+            if (!cols || cols.length < 17) return null;
+            const instrType = parseInt(cols[2]);
+            if (instrType !== 11) return null;   // futures only — skip options
+
+            const symbol    = (cols[9]  || '').trim();
+            const exEpoch   = parseInt(cols[8]);
+            const exDate    = isNaN(exEpoch) ? null
+                            : new Date(exEpoch * 1000).toISOString().slice(0, 10);
+            const isActive  = exDate ? (new Date(exDate) >= today) : false;
+            const optType   = cols[16] === 'XX' ? null : (cols[16] || null);
+            const strike    = parseFloat(cols[15]);
+
+            return {
+                symbol,
+                instrument_name:   (cols[1]  || '').trim(),
+                exchange:          exchCode,
+                instrument_type:   'FUTURES',
+                underlying_symbol: (cols[13] || '').trim(),
+                expiry_date:       exDate,
+                strike_price:      (optType && !isNaN(strike)) ? strike : null,
+                option_type:       optType,
+                lot_size:          parseInt(cols[3]) || 1,
+                trading_session:   (cols[6]  || '').trim(),
+                is_active:         isActive,
+                broker_tokens:     { fyers: { token: (cols[0] || '').trim(), symbol } }
+            };
+        }
+
+        const csvRecords = [];
+        for (const row of nseRows) {
+            const r = parseRow(row, 'NSE');
+            if (r && r.symbol) csvRecords.push(r);
+        }
+        for (const row of mcxRows) {
+            const r = parseRow(row, 'MCX');
+            if (r && r.symbol) csvRecords.push(r);
+        }
+
+        _foCsvMap = new Map(csvRecords.map(r => [r.symbol, r]));
+
+        progBar.style.width = '70%';
+        progLbl.textContent = 'Loading DB...';
+
+        // ── 3. Load existing DB ─────────────────────────────────────
+        const existing = await fetchAllRows('securities_nfo', '*');
+        _foDbMap = new Map(existing.map(r => [r.symbol, r]));
+
+        progBar.style.width = '88%';
+        progLbl.textContent = 'Computing diff...';
+
+        // ── 4. Diff ─────────────────────────────────────────────────
+        _foToAdd       = [];
+        _foToUpdate    = [];
+        _foToDeactivate = [];
+
+        // New or changed contracts
+        for (const [sym, csv] of _foCsvMap) {
+            const db = _foDbMap.get(sym);
+            if (!db) {
+                _foToAdd.push(csv);
+            } else {
+                const diffs = diffFORecord(db, csv);
+                if (diffs.length) _foToUpdate.push({ symbol: sym, diffs, record: csv });
+            }
+        }
+
+        // Contracts in DB but not in CSV → deactivate if still marked active
+        for (const [sym, db] of _foDbMap) {
+            if (!_foCsvMap.has(sym) && db.is_active) {
+                _foToDeactivate.push(db);
+            }
+        }
+
+        progBar.style.width = '100%';
+        progLbl.textContent = 'Done.';
+
+        // ── 5. Show preview ─────────────────────────────────────────
+        document.getElementById('foPvNew').textContent  = _foToAdd.length.toLocaleString('en-IN');
+        document.getElementById('foPvEdit').textContent = _foToUpdate.length.toLocaleString('en-IN');
+        document.getElementById('foPvMiss').textContent = _foToDeactivate.length.toLocaleString('en-IN');
+        document.getElementById('foPvSame').textContent =
+            (_foCsvMap.size - _foToAdd.length - _foToUpdate.length).toLocaleString('en-IN');
+
+        document.getElementById('btnFOCommit').disabled =
+            (_foToAdd.length + _foToUpdate.length + _foToDeactivate.length === 0);
+
+        progWrap.style.display = 'none';
+        progLbl.style.display  = 'none';
+
+    } catch(e) {
+        console.error('FO sync error', e);
+        progLbl.textContent = 'Error: ' + e.message;
+        progLbl.style.color = '#dc2626';
+    } finally {
+        setFOLoading(false);
+    }
+}
+
+function diffFORecord(db, csv) {
+    const diffs = [];
+    const check = (field, a, b) => {
+        const av = a == null ? '' : String(a);
+        const bv = b == null ? '' : String(b);
+        if (av !== bv) diffs.push({ field, from: av, to: bv });
+    };
+    check('instrument_name',   db.instrument_name,   csv.instrument_name);
+    check('underlying_symbol', db.underlying_symbol, csv.underlying_symbol);
+    check('lot_size',          db.lot_size,           csv.lot_size);
+    check('expiry_date',       db.expiry_date,        csv.expiry_date);
+    check('is_active',         db.is_active,          csv.is_active);
+    // broker token: compare fytoken value
+    const dbTok  = db.broker_tokens?.fyers?.token  || '';
+    const csvTok = csv.broker_tokens?.fyers?.token || '';
+    if (dbTok !== csvTok) diffs.push({ field: 'broker_tokens', from: '(token)', to: '(updated)' });
+    return diffs;
+}
+
+async function commitFOSync() {
+    const btn = document.getElementById('btnFOCommit');
+    btn.disabled = true;
+    btn.textContent = '⏳ Committing...';
+    setFOLoading(true, 'Committing F&O contracts...');
+
+    const progWrap = document.getElementById('foProgressWrap');
+    const progBar  = document.getElementById('foProgressBar');
+    const progLbl  = document.getElementById('foProgressLabel');
+    progWrap.style.display = 'block';
+    progLbl.style.display  = 'block';
+    progBar.style.width    = '5%';
+
+    try {
+        const BATCH = 200;
+        let done = 0;
+        const total = _foToAdd.length + _foToUpdate.length + _foToDeactivate.length;
+
+        // ── Upsert new + updated ───────────────────────────────────
+        const toUpsert = [
+            ..._foToAdd,
+            ..._foToUpdate.map(u => u.record)
+        ];
+        for (let i = 0; i < toUpsert.length; i += BATCH) {
+            const chunk = toUpsert.slice(i, i + BATCH);
+            const { error } = await window.supabaseClient
+                .from('securities_nfo')
+                .upsert(chunk, { onConflict: 'symbol' });
+            if (error) throw error;
+            done += chunk.length;
+            progBar.style.width = Math.round(10 + (done / total) * 80) + '%';
+            progLbl.textContent = 'Committed ' + done.toLocaleString('en-IN') + ' of ' + total.toLocaleString('en-IN') + '...';
+        }
+
+        // ── Mark expired contracts inactive ────────────────────────
+        for (let i = 0; i < _foToDeactivate.length; i += BATCH) {
+            const chunk = _foToDeactivate.slice(i, i + BATCH);
+            const symbols = chunk.map(r => r.symbol);
+            const { error } = await window.supabaseClient
+                .from('securities_nfo')
+                .update({ is_active: false })
+                .in('symbol', symbols);
+            if (error) throw error;
+            done += chunk.length;
+            progBar.style.width = Math.round(10 + (done / total) * 80) + '%';
+            progLbl.textContent = 'Deactivating expired: ' + done.toLocaleString('en-IN') + ' of ' + total.toLocaleString('en-IN') + '...';
+        }
+
+        progBar.style.width = '100%';
+        progLbl.textContent = 'Done.';
+        localStorage.setItem('wms_last_fo_sync', new Date().toISOString());
+
+        await loadFOStats();
+
+        // Reload FO data into memory and re-render
+        _foAll = await fetchAllRows('securities_nfo',
+            'id,symbol,instrument_name,exchange,instrument_type,underlying_symbol,' +
+            'expiry_date,strike_price,option_type,lot_size,is_active');
+        renderUnified();
+
+        // Reset preview
+        document.getElementById('foSyncPreview').style.display = 'none';
+        _foCsvMap = null; _foDbMap = null;
+
+    } catch(e) {
+        console.error('FO commit error', e);
+        progLbl.textContent = 'Error: ' + e.message;
+        progLbl.style.color = '#dc2626';
+        btn.disabled = false;
+        btn.textContent = '✓ Commit to Database';
+    } finally {
+        setFOLoading(false);
+        progWrap.style.display = 'none';
+        progLbl.style.display  = 'none';
+    }
+}
+
 function cancelFOSync() {
     document.getElementById('foSyncPreview').style.display = 'none';
+    _foCsvMap = null; _foDbMap = null;
+    document.getElementById('btnFOCommit').disabled = true;
+    document.getElementById('btnFOSync').disabled   = false;
 }
-function commitFOSync() {}
-function exportFOExcel() {
-    alert('F&O export available after first sync.');
+
+// ── Export FO to CSV ───────────────────────────────────────────
+async function exportFOExcel() {
+    setFOLoading(true, 'Preparing F&O export...');
+    try {
+        const rows = await fetchAllRows('securities_nfo',
+            'symbol,instrument_name,exchange,instrument_type,underlying_symbol,' +
+            'expiry_date,strike_price,option_type,lot_size,is_active,broker_tokens,updated_at');
+
+        const headers = ['symbol','instrument_name','exchange','instrument_type',
+            'underlying_symbol','expiry_date','strike_price','option_type',
+            'lot_size','is_active','fyers_token','updated_at'];
+
+        const csvRows = [headers.join(',')];
+        for (const r of rows) {
+            const tok = r.broker_tokens?.fyers?.token || '';
+            csvRows.push([
+                csv(r.symbol),          csv(r.instrument_name), csv(r.exchange),
+                csv(r.instrument_type), csv(r.underlying_symbol), csv(r.expiry_date),
+                r.strike_price ?? '',   csv(r.option_type),     r.lot_size ?? '',
+                r.is_active ? 'TRUE' : 'FALSE', csv(tok),       csv(r.updated_at)
+            ].join(','));
+        }
+
+        const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = 'securities_nfo_' + new Date().toISOString().slice(0, 10) + '.csv';
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch(e) {
+        console.error('FO export failed', e);
+        alert('Export failed: ' + e.message);
+    } finally {
+        setFOLoading(false);
+    }
 }
