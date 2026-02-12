@@ -1183,16 +1183,38 @@ async function loadSecuritiesStats() {
             .eq('is_active', true);
         document.getElementById('statTotal').textContent  = (total  || 0).toLocaleString('en-IN');
         document.getElementById('statActive').textContent = (active || 0).toLocaleString('en-IN');
-        const ls = localStorage.getItem('wms_last_securities_sync');
-        document.getElementById('statLastSync').textContent = ls
-            ? new Date(ls).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' })
+
+        // Show date + time — prefer localStorage (set at commit time), fall back to DB max updated_at
+        let syncTs = localStorage.getItem('wms_last_securities_sync');
+        if (!syncTs && total > 0) {
+            // DB has data but localStorage was cleared — read latest updated_at from DB
+            const { data: latest } = await window.supabaseClient
+                .from('securities_db').select('updated_at').order('updated_at', { ascending: false }).limit(1);
+            if (latest && latest[0]) syncTs = latest[0].updated_at;
+        }
+        document.getElementById('statLastSync').textContent = syncTs
+            ? new Date(syncTs).toLocaleString('en-IN', {
+                day: 'numeric', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: false })
             : 'Never';
     } catch(e) { console.warn('Stats load error', e); }
 }
 
+function setSecLoading(on, msg) {
+    const overlay = document.getElementById('secLoadingOverlay');
+    const msgEl   = document.getElementById('secLoadingMsg');
+    const btnSync = document.getElementById('btnSync');
+    const btnExport = document.getElementById('btnExport');
+    if (!overlay) return;
+    overlay.classList.toggle('visible', on);
+    if (msgEl && msg) msgEl.textContent = msg;
+    if (btnSync)  btnSync.disabled  = on;
+    if (btnExport) btnExport.disabled = on;
+}
+
 async function loadSecuritiesTable() {
     const tbody = document.getElementById('secTbody');
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">Loading securities...</td></tr>';
+    setSecLoading(true, 'Loading securities...');
     try {
         // Fetch all rows using paginated helper (bypasses 1000-row default limit)
         const all = await fetchAllRows('securities_db',
@@ -1202,6 +1224,8 @@ async function loadSecuritiesTable() {
     } catch(e) {
         console.warn('Securities table load error', e);
         tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">Connect to Supabase to browse securities</td></tr>';
+    } finally {
+        setSecLoading(false);
     }
 }
 
@@ -1260,6 +1284,72 @@ function renderRows(rows, tbody) {
             Showing first ${LIMIT} of ${rows.length.toLocaleString('en-IN')} results — use filters to narrow down</td>`;
         tbody.appendChild(tr);
     }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXCEL EXPORT
+// ═══════════════════════════════════════════════════════════════
+
+async function exportSecuritiesExcel() {
+    setSecLoading(true, 'Preparing export...');
+    try {
+        // Fetch full data including all columns not in browse view
+        const rows = await fetchAllRows('securities_db',
+            'symbol,company_name,isin,nse_symbol,nse_script_code,bse_symbol,bse_script_code,' +
+            'lot_size,security_type,asset_class,nse_series,bse_series,fyers_instr_type,' +
+            'size,sector,is_active,broker_tokens,updated_at');
+
+        // Build CSV content
+        const headers = [
+            'symbol','company_name','isin',
+            'nse_symbol','nse_script_code','bse_symbol','bse_script_code',
+            'lot_size','security_type','asset_class',
+            'nse_series','bse_series','fyers_instr_type',
+            'size','sector','is_active',
+            'fyers_nse_token','fyers_nse_symbol','fyers_bse_token','fyers_bse_symbol',
+            'updated_at'
+        ];
+
+        const csvRows = [headers.join(',')];
+        for (const r of rows) {
+            const bt = r.broker_tokens?.fyers || {};
+            const cols = [
+                csv(r.symbol),        csv(r.company_name),  csv(r.isin),
+                csv(r.nse_symbol),    csv(r.nse_script_code), csv(r.bse_symbol), csv(r.bse_script_code),
+                r.lot_size ?? '',     csv(r.security_type), csv(r.asset_class),
+                csv(r.nse_series),    csv(r.bse_series),    r.fyers_instr_type ?? '',
+                csv(r.size),          csv(r.sector),        r.is_active ? 'TRUE' : 'FALSE',
+                csv(bt.nse_token),    csv(bt.nse_symbol),   csv(bt.bse_token), csv(bt.bse_symbol),
+                csv(r.updated_at)
+            ];
+            csvRows.push(cols.join(','));
+        }
+
+        // Trigger download
+        const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href = url;
+        a.download = 'securities_db_' + new Date().toISOString().slice(0,10) + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch(e) {
+        console.error('Export failed', e);
+        alert('Export failed: ' + e.message);
+    } finally {
+        setSecLoading(false);
+    }
+}
+
+// CSV cell escaper — wraps in quotes if value contains comma, quote or newline
+function csv(val) {
+    if (val === null || val === undefined) return '';
+    const s = String(val);
+    if (s.includes(',') || s.includes('"') || s.includes('\n'))
+        return '"' + s.replace(/"/g, '""') + '"';
+    return s;
 }
 
 // Load table when securities tab is first opened
