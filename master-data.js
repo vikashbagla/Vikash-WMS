@@ -1011,14 +1011,15 @@ function diffRecord(existing, incoming) {
 
 // Fetch ALL rows from a table, bypassing the 1000-row default limit
 // by paginating with .range() until we get a partial page
-async function fetchAllRows(table, select) {
+async function fetchAllRows(table, select, orderCol) {
+    orderCol = orderCol || 'symbol';
     const BATCH = 1000;
     let all = [], from = 0;
     while (true) {
         const { data, error } = await window.supabaseClient
             .from(table)
             .select(select)
-            .order('isin', { ascending: true })
+            .order(orderCol, { ascending: true })
             .range(from, from + BATCH - 1);
         if (error) throw error;
         all = all.concat(data || []);
@@ -1055,7 +1056,7 @@ async function startSync() {
         progLbl.textContent = `Parsed ${nseRows.length + bseRows.length} rows. Loading DB...`;
 
         // Load ALL existing DB records (paginated — default limit is 1000)
-        const existing = await fetchAllRows('securities_db', '*');
+        const existing = await fetchAllRows('securities_db', '*', 'isin');
 
         progBar.style.width = '70%';
         progLbl.textContent = 'Computing diff...';
@@ -1237,7 +1238,7 @@ async function loadSecuritiesTable() {
     try {
         // Fetch all rows using paginated helper (bypasses 1000-row default limit)
         const all = await fetchAllRows('securities_db',
-            'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,is_active');
+            'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,is_active', 'isin');
         _securitiesAll = all;
         renderSecurities();
     } catch(e) {
@@ -1432,7 +1433,7 @@ async function exportSecuritiesExcel() {
         const rows = await fetchAllRows('securities_db',
             'symbol,company_name,isin,nse_symbol,nse_script_code,bse_symbol,bse_script_code,' +
             'lot_size,security_type,asset_class,nse_series,bse_series,fyers_instr_type,' +
-            'size,sector,is_active,broker_tokens,updated_at');
+            'size,sector,is_active,broker_tokens,updated_at', 'isin');
 
         // Build CSV content
         const headers = [
