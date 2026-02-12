@@ -860,6 +860,7 @@ function extractSeries(fyersSymbol) {
 }
 
 async function fetchAndParseCSV(url) {
+    // CM version — filters out rows with no ISIN (equities always have one)
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.status}`);
     const text = await resp.text();
@@ -871,6 +872,22 @@ async function fetchAndParseCSV(url) {
         if (cols.length < 14) continue;
         const isin = cols[COL.ISIN].trim();
         if (!isin || isin === '' || isin === 'None') continue;
+        rows.push(cols);
+    }
+    return rows;
+}
+
+async function fetchAndParseCSVRaw(url) {
+    // F&O version — no ISIN filter (F&O contracts never have ISINs)
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.status}`);
+    const text = await resp.text();
+    const rows = [];
+    for (const line of text.split('\n')) {
+        const t = line.trim();
+        if (!t) continue;
+        const cols = parseCSVLine(t);
+        if (cols.length < 17) continue;   // F&O rows have 21 cols, need at least 17
         rows.push(cols);
     }
     return rows;
@@ -1631,11 +1648,11 @@ async function startFOSync() {
 
     try {
         // ── 1. Download & parse both CSVs ──────────────────────────
-        const nseRows = await fetchAndParseCSV('https://public.fyers.in/sym_details/NSE_FO.csv');
+        const nseRows = await fetchAndParseCSVRaw('https://public.fyers.in/sym_details/NSE_FO.csv');
         progBar.style.width = '30%';
         progLbl.textContent = 'Downloading MCX_COM.csv...';
 
-        const mcxRows = await fetchAndParseCSV('https://public.fyers.in/sym_details/MCX_COM.csv');
+        const mcxRows = await fetchAndParseCSVRaw('https://public.fyers.in/sym_details/MCX_COM.csv');
         progBar.style.width = '55%';
         progLbl.textContent = 'Parsing contracts...';
 
