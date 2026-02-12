@@ -1565,13 +1565,16 @@ function toggleMs(id) {
     }
 }
 
-// Close when clicking outside
-document.addEventListener('click', e => {
-    if (!e.target.closest('.ms-wrap')) {
-        document.querySelectorAll('.ms-dropdown.open').forEach(d => d.classList.remove('open'));
-        document.querySelectorAll('.ms-trigger.open').forEach(t => t.classList.remove('open'));
-    }
-});
+// Close when clicking outside — ensure single listener
+if (!window._msClickHandlerAttached) {
+    window._msClickHandlerAttached = true;
+    document.addEventListener('click', e => {
+        if (!e.target.closest('.ms-wrap')) {
+            document.querySelectorAll('.ms-dropdown.open').forEach(d => d.classList.remove('open'));
+            document.querySelectorAll('.ms-trigger.open').forEach(t => t.classList.remove('open'));
+        }
+    });
+}
 
 // switchSecSubTab removed — unified table used instead
 
