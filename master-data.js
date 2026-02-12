@@ -210,6 +210,7 @@ function switchTab(event, tabName) {
         loadSecuritiesStats();
         loadFOStats();
         if (!_secTableLoaded) { _secTableLoaded = true; loadSecuritiesTable(); }
+        if (!_foTableLoaded) { _foTableLoaded = true; loadFOTable(); }
     }
 }
 
