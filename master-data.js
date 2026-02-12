@@ -1258,6 +1258,20 @@ var _uniRows = [];   // full filtered result set
 var _uniPage = 0;    // current page (0-indexed)
 // PAGE_SIZE inlined as 100 in functions below
 
+var _typeColors = {
+    EQUITY:'#c6f6d5:#22543d', EQUITY_SME:'#bee3f8:#2c5282',
+    ETF:'#e9d8fd:#553c9a',    MF:'#e9d8fd:#553c9a',
+    SGB:'#fefcbf:#744210',    REIT:'#fed7d7:#822727',
+    INVIT:'#ffe4c4:#7b341e',  GOVT_BOND:'#e2e8f0:#4a5568',
+    NCD:'#e2e8f0:#4a5568',    PREF_SHARE:'#c6f6d5:#22543d',
+    RIGHTS:'#fce8e8:#822727', WARRANT:'#fce8e8:#822727',
+    FUTURES:'#fef3c7:#78350f', OPTIONS:'#dbeafe:#1e40af'
+};
+function _typeBadge(t) {
+    const [bg, fg] = (_typeColors[t]||'#e2e8f0:#4a5568').split(':');
+    return `<span style="background:${bg};color:${fg};padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;">${t}</span>`;
+}
+
 function renderUnified(resetPage) {
     if (resetPage !== false) _uniPage = 0;  // any new filter/search resets to page 1
     const tbody  = document.getElementById('secTbody');
@@ -1393,19 +1407,8 @@ function uniPageStep(delta) {
 }
 
 // Shared row renderer
-var _typeColors = {
-    EQUITY:'#c6f6d5:#22543d', EQUITY_SME:'#bee3f8:#2c5282',
-    ETF:'#e9d8fd:#553c9a',    MF:'#e9d8fd:#553c9a',
-    SGB:'#fefcbf:#744210',    REIT:'#fed7d7:#822727',
-    INVIT:'#ffe4c4:#7b341e',  GOVT_BOND:'#e2e8f0:#4a5568',
-    NCD:'#e2e8f0:#4a5568',    PREF_SHARE:'#c6f6d5:#22543d',
-    RIGHTS:'#fce8e8:#822727', WARRANT:'#fce8e8:#822727',
-    FUTURES:'#fef3c7:#78350f', OPTIONS:'#dbeafe:#1e40af'
-};
-function _typeBadge(t) {
-    const [bg, fg] = (_typeColors[t]||'#e2e8f0:#4a5568').split(':');
-    return `<span style="background:${bg};color:${fg};padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;">${t}</span>`;
-}
+
+
 function renderRows(rows, tbody) {
     if (!rows || !rows.length) {
         tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">No securities found</td></tr>';
