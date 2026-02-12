@@ -1263,6 +1263,9 @@ function renderUnified(resetPage) {
     const tbody  = document.getElementById('secTbody');
     if (!tbody) return;
     const q       = (document.getElementById('secSearch')?.value || '').trim().toLowerCase();
+    
+    // Debug logging
+    if (q) console.log('[renderUnified] Search:', q, '| CM rows:', (_securitiesAll||[]).length, '| FO rows:', (_foAll||[]).length);
     const fTypes  = getMsValues('msType');
     const fExch   = getMsValues('msExch');
     const fClass  = getMsValues('msClass');
@@ -1396,7 +1399,8 @@ var _typeColors = {
     SGB:'#fefcbf:#744210',    REIT:'#fed7d7:#822727',
     INVIT:'#ffe4c4:#7b341e',  GOVT_BOND:'#e2e8f0:#4a5568',
     NCD:'#e2e8f0:#4a5568',    PREF_SHARE:'#c6f6d5:#22543d',
-    RIGHTS:'#fce8e8:#822727', WARRANT:'#fce8e8:#822727'
+    RIGHTS:'#fce8e8:#822727', WARRANT:'#fce8e8:#822727',
+    FUTURES:'#fef3c7:#78350f', OPTIONS:'#dbeafe:#1e40af'
 };
 function _typeBadge(t) {
     const [bg, fg] = (_typeColors[t]||'#e2e8f0:#4a5568').split(':');
