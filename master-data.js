@@ -1255,22 +1255,23 @@ function renderSecurities() { renderUnified(); }
 // Pagination state for unified table
 var _uniRows = [];   // full filtered result set
 var _uniPage = 0;    // current page (0-indexed)
-var UNI_PAGE_SIZE = 100;
+// PAGE_SIZE inlined as 100 in functions below
 
 function renderUnified(resetPage) {
     if (resetPage !== false) _uniPage = 0;  // any new filter/search resets to page 1
     const tbody  = document.getElementById('secTbody');
     if (!tbody) return;
-    const q      = (document.getElementById('secSearch')?.value || '').trim().toLowerCase();
-    const fTypes = getMsValues('msType');
-    const fExch  = getMsValues('msExch');
+    const q       = (document.getElementById('secSearch')?.value || '').trim().toLowerCase();
+    const fTypes  = getMsValues('msType');
+    const fExch   = getMsValues('msExch');
+    const fClass  = getMsValues('msClass');
 
     // Require at least a search term OR at least one filter to render
-    const hasFilter = q.length >= 1 || fTypes.size > 0 || fExch.size > 0;
+    const hasFilter = q.length >= 1 || fTypes.size > 0 || fExch.size > 0 || fClass.size > 0;
     if (!hasFilter) {
         _uniRows = [];
         tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:32px;font-size:12px;">' +
-            'Search above, or select a Type or Exchange filter to browse</td></tr>';
+            'Search above, or select a Type, Asset Class or Exchange filter to browse</td></tr>';
         renderUniPager(0, 0);
         return;
     }
@@ -1322,6 +1323,8 @@ function renderUnified(resetPage) {
         return fExch.has(r.exchanges);
     });
 
+    if (fClass.size) rows = rows.filter(r => fClass.has(r.asset_class));
+
     _uniRows = rows;
 
     if (!rows.length) {
@@ -1331,8 +1334,8 @@ function renderUnified(resetPage) {
     }
 
     // Render current page
-    const start = _uniPage * UNI_PAGE_SIZE;
-    const page  = rows.slice(start, start + UNI_PAGE_SIZE);
+    const start = _uniPage * 100;
+    const page  = rows.slice(start, start + 100);
     const today = new Date();
 
     tbody.innerHTML = page.map(r => {
@@ -1362,10 +1365,10 @@ function renderUniPager(total, shown) {
     const bar = document.getElementById('uniPager');
     if (!bar) return;
     if (total === 0) { bar.innerHTML = ''; return; }
-    const totalPages = Math.ceil(total / UNI_PAGE_SIZE);
+    const totalPages = Math.ceil(total / 100);
     const cur = _uniPage + 1;
-    const from = (_uniPage * UNI_PAGE_SIZE + 1).toLocaleString('en-IN');
-    const to   = Math.min((_uniPage + 1) * UNI_PAGE_SIZE, total).toLocaleString('en-IN');
+    const from = (_uniPage * 100 + 1).toLocaleString('en-IN');
+    const to   = Math.min((_uniPage + 1) * 100, total).toLocaleString('en-IN');
     bar.innerHTML =
         '<span style="font-size:11px;color:#718096;">Showing ' + from + '–' + to +
         ' of <strong>' + total.toLocaleString('en-IN') + '</strong> results</span>' +
@@ -1377,7 +1380,7 @@ function renderUniPager(total, shown) {
 }
 
 function uniPageStep(delta) {
-    const totalPages = Math.ceil(_uniRows.length / UNI_PAGE_SIZE);
+    const totalPages = Math.ceil(_uniRows.length / 100);
     _uniPage = Math.max(0, Math.min(_uniPage + delta, totalPages - 1));
     renderUnified(false);  // false = don't reset page
     // Scroll table back to top
@@ -1515,18 +1518,18 @@ function updateMsLabel(id) {
     const label   = document.getElementById(id + 'Label');
     const trigger = document.getElementById(id + 'Trigger');
     if (!label) return;
-    const placeholder = id === 'msType' ? 'All Types' : 'All Asset Classes';
+    const placeholders = { msType: 'All Types', msClass: 'All Asset Classes', msExch: 'All Exchanges' };
+    const multiLabels  = { msType: 'types', msClass: 'classes', msExch: 'exchanges' };
+    const placeholder  = placeholders[id] || 'All';
     if (values.size === 0) {
         label.textContent = placeholder;
         trigger.classList.remove('active');
     } else if (values.size === 1) {
-        // Show the pill label text (may be abbreviated e.g. "Intl Equity")
-        const pill = document.querySelector(`#${id}Dropdown .ms-pill.on`);
+        const pill = document.querySelector('#' + id + 'Dropdown .ms-pill.on');
         label.textContent = pill ? pill.textContent : [...values][0];
         trigger.classList.add('active');
     } else {
-        label.textContent = `${values.size} types`;
-        if (id === 'msClass') label.textContent = `${values.size} classes`;
+        label.textContent = values.size + ' ' + (multiLabels[id] || 'selected');
         trigger.classList.add('active');
     }
 }

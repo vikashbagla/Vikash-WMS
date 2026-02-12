@@ -364,6 +364,26 @@
                         <div class="ms-reset" onclick="clearMs('msType')">Clear</div>
                     </div>
                 </div>
+                <div class="ms-wrap" id="msClassWrap">
+                    <div class="ms-trigger" id="msClassTrigger" onclick="toggleMs('msClass')">
+                        <span id="msClassLabel">All Asset Classes</span>
+                        <span class="ms-arrow">▼</span>
+                    </div>
+                    <div class="ms-dropdown" id="msClassDropdown">
+                        <div class="ms-pills">
+                            <span class="ms-pill" data-ms="msClass" data-val="Indian Equity"        onclick="togglePill(this)">Indian Equity</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="International Equity" onclick="togglePill(this)">Intl Equity</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Gold"                 onclick="togglePill(this)">Gold</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Silver"               onclick="togglePill(this)">Silver</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Commodity"            onclick="togglePill(this)">Commodity</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Real Estate"          onclick="togglePill(this)">Real Estate</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Infrastructure"       onclick="togglePill(this)">Infrastructure</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Debt"                 onclick="togglePill(this)">Debt</span>
+                            <span class="ms-pill" data-ms="msClass" data-val="Cash Equivalent"      onclick="togglePill(this)">Cash Equiv</span>
+                        </div>
+                        <div class="ms-reset" onclick="clearMs('msClass')">Clear</div>
+                    </div>
+                </div>
                 <div class="ms-wrap" id="msExchWrap">
                     <div class="ms-trigger" id="msExchTrigger" onclick="toggleMs('msExch')">
                         <span id="msExchLabel">All Exchanges</span>
