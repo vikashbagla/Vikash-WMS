@@ -3,12 +3,12 @@
 // SUPABASE_ANON_KEY defined in app.html
 
 // State
-let brokerAccountCounter = 0;
-let editingInvestorId = null;
-let editingBrokerId = null;
+var brokerAccountCounter = 0;
+var editingInvestorId = null;
+var editingBrokerId = null;
 
 // Universal Data Layer
-const DB = {
+var DB = {
     mode: null,
     supabaseUrl: SUPABASE_URL,
     supabaseKey: SUPABASE_ANON_KEY,
@@ -773,7 +773,7 @@ document.getElementById('brokerModal').addEventListener('click', e => {
 // ═══════════════════════════════════════════════════════════════
 
 // CSV column indices (NSE_CM.csv and BSE_CM.csv — 21 columns, no header)
-const COL = { FYTOKEN:0, NAME:1, INSTR_TYPE:2, LOT_SIZE:3, TICK:4, ISIN:5,
+var COL = { FYTOKEN:0, NAME:1, INSTR_TYPE:2, LOT_SIZE:3, TICK:4, ISIN:5,
               SESSION:6, LAST_UPDATE:7, EXPIRY:8, SYMBOL:9, EXCH_CODE:10,
               SEGMENT:11, SCRIPT_CODE:12, SHORT_SYM:13, UNDERLYING_CODE:14,
               STRIKE:15, OPT:16, UNDERLYING_TOKEN:17, RESERVED:18,
@@ -982,11 +982,11 @@ function buildRecordMap(nseRows, bseRows) {
 
 // State for sync session ───────────────────────────────────────
 
-let _syncPending = null; // { toAdd:[], toUpdate:[], missing:[], unchanged:[] }
+var _syncPending = null; // { toAdd:[], toUpdate:[], missing:[], unchanged:[] }
 
 // Compare two records for meaningful changes ───────────────────
 
-const TRACKED_FIELDS = ['company_name','symbol','nse_symbol','nse_script_code',
+var TRACKED_FIELDS = ['company_name','symbol','nse_symbol','nse_script_code',
     'bse_symbol','bse_script_code','lot_size','security_type','asset_class',
     'nse_series','bse_series','fyers_instr_type'];
 
@@ -1191,7 +1191,7 @@ function cancelSync() {
 
 // Browse / filter table ────────────────────────────────────────
 
-let _securitiesAll = [];
+var _securitiesAll = [];
 
 async function loadSecuritiesStats() {
     try {
@@ -1252,9 +1252,9 @@ async function loadSecuritiesTable() {
 function renderSecurities() { renderUnified(); }
 
 // Pagination state for unified table
-let _uniRows = [];   // full filtered result set
-let _uniPage = 0;    // current page (0-indexed)
-const UNI_PAGE_SIZE = 100;
+var _uniRows = [];   // full filtered result set
+var _uniPage = 0;    // current page (0-indexed)
+var UNI_PAGE_SIZE = 100;
 
 function renderUnified(resetPage) {
     if (resetPage !== false) _uniPage = 0;  // any new filter/search resets to page 1
@@ -1385,7 +1385,7 @@ function uniPageStep(delta) {
 }
 
 // Shared row renderer
-const _typeColors = {
+var _typeColors = {
     EQUITY:'#c6f6d5:#22543d', EQUITY_SME:'#bee3f8:#2c5282',
     ETF:'#e9d8fd:#553c9a',    MF:'#e9d8fd:#553c9a',
     SGB:'#fefcbf:#744210',    REIT:'#fed7d7:#822727',
@@ -1488,7 +1488,7 @@ function csv(val) {
 }
 
 // Load table when securities tab is first opened
-let _secTableLoaded = false;
+var _secTableLoaded = false;
 
 // ═══════════════════════════════════════════════════════════════
 // PILL-TOGGLE MULTI-SELECT HELPERS
@@ -1567,8 +1567,8 @@ document.addEventListener('click', e => {
 // F&O STATS + TABLE
 // ═══════════════════════════════════════════════════════════════
 
-let _foAll = [];
-let _foTableLoaded = false;
+var _foAll = [];
+var _foTableLoaded = false;
 
 async function loadFOStats() {
     try {
@@ -1617,11 +1617,11 @@ async function loadFOTable() {
 // F&O SYNC  — NSE_FO.csv + MCX_COM.csv  (FUTURES only)
 // ═══════════════════════════════════════════════════════════════
 
-let _foCsvMap   = null;   // Map<symbol, record> built from CSV
-let _foDbMap    = null;   // Map<symbol, record> from DB
-let _foToAdd    = [];
-let _foToUpdate = [];
-let _foToDeactivate = [];
+var _foCsvMap   = null;   // Map<symbol, record> built from CSV
+var _foDbMap    = null;   // Map<symbol, record> from DB
+var _foToAdd    = [];
+var _foToUpdate = [];
+var _foToDeactivate = [];
 
 function setFOLoading(on, msg) {
     const overlay  = document.getElementById('secLoadingOverlay');
