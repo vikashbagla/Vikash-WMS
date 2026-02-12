@@ -1662,16 +1662,16 @@ async function startFOSync() {
         // ── 2. Filter FUTURES only (instr_type == 11) ───────────────
         function parseRow(cols, exchCode) {
             if (!cols || cols.length < 17) return null;
-            const instrType = parseInt(cols[2]);
-            if (instrType !== 11) return null;   // futures only — skip options
+            const optType = (cols[16] || '').trim();
+            if (optType !== 'XX') return null;   // futures only (XX = future, CE/PE = options)
+            // instrType: 11=index futures, 13=stock futures, 14=options (already excluded above)
 
             const symbol    = (cols[9]  || '').trim();
             const exEpoch   = parseInt(cols[8]);
             const exDate    = isNaN(exEpoch) ? null
                             : new Date(exEpoch * 1000).toISOString().slice(0, 10);
             const isActive  = exDate ? (new Date(exDate) >= today) : false;
-            const optType   = cols[16] === 'XX' ? null : (cols[16] || null);
-            const strike    = parseFloat(cols[15]);
+            const strike    = null;   // futures never have a strike
 
             return {
                 symbol,
@@ -1680,8 +1680,8 @@ async function startFOSync() {
                 instrument_type:   'FUTURES',
                 underlying_symbol: (cols[13] || '').trim(),
                 expiry_date:       exDate,
-                strike_price:      (optType && !isNaN(strike)) ? strike : null,
-                option_type:       optType,
+                strike_price:      null,
+                option_type:       null,
                 lot_size:          parseInt(cols[3]) || 1,
                 trading_session:   (cols[6]  || '').trim(),
                 is_active:         isActive,
