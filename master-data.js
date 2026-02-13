@@ -195,6 +195,27 @@ function initMasterData() {
     loadPreferences();
     loadSecuritiesStats();
     loadFOStats();
+    
+    // Restore last active tab if page was refreshed
+    const savedTab = localStorage.getItem('wms_master_data_tab');
+    if (savedTab && document.getElementById(`${savedTab}-tab`)) {
+        // Deactivate default (investors) tab
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+        // Activate saved tab
+        const tabBtn = document.querySelector(`.tab-btn[onclick*="${savedTab}"]`);
+        if (tabBtn) tabBtn.classList.add('active');
+        document.getElementById(`${savedTab}-tab`).classList.add('active');
+        
+        // Trigger tab-specific logic
+        if (savedTab === 'securities') {
+            if (!_secTableLoaded) { _secTableLoaded = true; loadSecuritiesTable(); }
+            if (!_foTableLoaded) { _foTableLoaded = true; loadFOTable(); }
+        }
+        if (savedTab === 'preferences') {
+            loadPreferences();
+        }
+    }
 }
 
 // Also support direct page load
@@ -206,6 +227,10 @@ function switchTab(event, tabName) {
     event.target.classList.add('active');
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
     document.getElementById(`${tabName}-tab`).classList.add('active');
+    
+    // Save current tab for refresh persistence
+    localStorage.setItem('wms_master_data_tab', tabName);
+    
     if (tabName === 'securities') {
         loadSecuritiesStats();
         loadFOStats();
@@ -1928,8 +1953,10 @@ function loadPreferences() {
     if (!user || !user.preferences) return;
 
     const prefs = user.preferences;
-    if (document.getElementById('numberFormat'))      document.getElementById('numberFormat').value = prefs.number_format || 'indian';
-    if (document.getElementById('dateFormat'))        document.getElementById('dateFormat').value = prefs.date_format || 'DD/MM/YYYY';
+    if (document.getElementById('numberFormat'))    document.getElementById('numberFormat').value = prefs.number_format || 'indian';
+    if (document.getElementById('amountDisplay'))   document.getElementById('amountDisplay').value = prefs.amount_display || 'thousands';
+    if (document.getElementById('dateFormat'))      document.getElementById('dateFormat').value = prefs.date_format || 'dd-mmm-yy';
+    if (document.getElementById('decimalPlaces'))   document.getElementById('decimalPlaces').value = prefs.decimal_places || 2;
 }
 
 async function savePreferences() {
@@ -1941,11 +1968,12 @@ async function savePreferences() {
 
     const prefs = {
         number_format: document.getElementById('numberFormat').value,
+        amount_display: document.getElementById('amountDisplay').value,
         date_format: document.getElementById('dateFormat').value,
+        decimal_places: parseInt(document.getElementById('decimalPlaces').value) || 2,
         currency_symbol: user.preferences?.currency_symbol || '₹',
         theme: user.preferences?.theme || 'light',
         default_view: user.preferences?.default_view || 'portfolio',
-        decimal_places: user.preferences?.decimal_places || 2,
         financial_year_start: user.preferences?.financial_year_start || 4
     };
 
