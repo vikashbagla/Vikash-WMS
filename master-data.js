@@ -212,6 +212,9 @@ function switchTab(event, tabName) {
         if (!_secTableLoaded) { _secTableLoaded = true; loadSecuritiesTable(); }
         if (!_foTableLoaded) { _foTableLoaded = true; loadFOTable(); }
     }
+    if (tabName === 'preferences') {
+        loadPreferences();
+    }
 }
 
 // INVESTORS
@@ -245,7 +248,7 @@ function renderInvestors(investors, brokers, accounts) {
                     <th>Type</th>
                     <th>Brokers</th>
                     <th>Status</th>
-                    <th style="width:70px;">Actions</th>
+                    <th style="width:60px;text-align:center;">⚙️</th>
                 </tr>
             </thead>
             <tbody>
@@ -261,14 +264,13 @@ function renderInvestors(investors, brokers, accounts) {
                     return `
                         <tr>
                             <td><div class="avatar">${initials}</div></td>
-                            <td><strong>${inv.name}</strong></td>
+                            <td><strong>${inv.name}</strong>${inv.short_name ? '<br><span style="font-size:10px;color:#718096;">(' + inv.short_name + ')</span>' : ''}</td>
                             <td style="color:#718096;">${inv.email || '—'}</td>
                             <td>${inv.account_type || '—'}</td>
                             <td>${mappedBrokers.length > 0 ? mappedBrokers.map(b => `<span class="broker-tag">${b}</span>`).join('') : '<span style="color:#718096;">—</span>'}</td>
                             <td><span class="status-badge ${statusClass}">${statusText}</span></td>
-                            <td>
-                                <button class="btn-icon" onclick="handleEditInvestor('${inv.id}')" title="Edit">✏️</button>
-                                <button class="btn-icon" onclick="handleDeleteInvestor('${inv.id}')" title="Delete">🗑️</button>
+                            <td style="text-align:center;">
+                                <button class="btn-icon" onclick="handleEditInvestor('${inv.id}')" title="Edit" style="margin-right:2px;">✏️</button><button class="btn-icon" onclick="handleDeleteInvestor('${inv.id}')" title="Delete">🗑️</button>
                             </td>
                         </tr>`;
                 }).join('')}
@@ -556,7 +558,7 @@ function renderBrokers(brokers) {
                     <th>Code</th>
                     <th>Website</th>
                     <th>Status</th>
-                    <th style="width:70px;">Actions</th>
+                    <th style="width:60px;text-align:center;">⚙️</th>
                 </tr>
             </thead>
             <tbody>
@@ -571,9 +573,8 @@ function renderBrokers(brokers) {
                             <td style="color:#718096;">${broker.broker_code || '—'}</td>
                             <td>${broker.website ? `<a href="${broker.website}" target="_blank" style="color:#667eea;font-size:11px;">Visit ↗</a>` : '—'}</td>
                             <td><span class="status-badge ${statusClass}">${statusText}</span></td>
-                            <td>
-                                <button class="btn-icon" onclick="handleEditBroker('${broker.id}')" title="Edit">✏️</button>
-                                <button class="btn-icon" onclick="handleDeleteBroker('${broker.id}')" title="Delete">🗑️</button>
+                            <td style="text-align:center;">
+                                <button class="btn-icon" onclick="handleEditBroker('${broker.id}')" title="Edit" style="margin-right:2px;">✏️</button><button class="btn-icon" onclick="handleDeleteBroker('${broker.id}')" title="Delete">🗑️</button>
                             </td>
                         </tr>`;
                 }).join('')}
@@ -1911,5 +1912,62 @@ async function exportFOExcel() {
         alert('Export failed: ' + e.message);
     } finally {
         setFOLoading(false);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PREFERENCES
+// ═══════════════════════════════════════════════════════════════
+
+function loadPreferences() {
+    const user = window.currentUser;
+    if (!user || !user.preferences) return;
+
+    const prefs = user.preferences;
+    if (document.getElementById('numberFormat'))      document.getElementById('numberFormat').value = prefs.number_format || 'indian';
+    if (document.getElementById('amountDisplay'))     document.getElementById('amountDisplay').value = prefs.amount_display || 'thousands';
+    if (document.getElementById('dateFormat'))        document.getElementById('dateFormat').value = prefs.date_format || 'DD/MM/YYYY';
+    if (document.getElementById('defaultGrouping'))   document.getElementById('defaultGrouping').value = prefs.default_grouping || 'investor';
+    if (document.getElementById('showZeroHoldings'))  document.getElementById('showZeroHoldings').value = prefs.show_zero_holdings || 'hide';
+    if (document.getElementById('autoRefresh'))       document.getElementById('autoRefresh').value = prefs.auto_refresh || 0;
+    if (document.getElementById('positivePLColor'))   document.getElementById('positivePLColor').value = prefs.positive_pl_color || '#059669';
+    if (document.getElementById('negativePLColor'))   document.getElementById('negativePLColor').value = prefs.negative_pl_color || '#dc2626';
+}
+
+async function savePreferences() {
+    const user = window.currentUser;
+    if (!user) {
+        alert('User not loaded');
+        return;
+    }
+
+    const prefs = {
+        number_format: document.getElementById('numberFormat').value,
+        amount_display: document.getElementById('amountDisplay').value,
+        date_format: document.getElementById('dateFormat').value,
+        default_grouping: document.getElementById('defaultGrouping').value,
+        show_zero_holdings: document.getElementById('showZeroHoldings').value,
+        auto_refresh: parseInt(document.getElementById('autoRefresh').value) || 0,
+        positive_pl_color: document.getElementById('positivePLColor').value,
+        negative_pl_color: document.getElementById('negativePLColor').value
+    };
+
+    try {
+        const { error } = await window.supabaseClient
+            .from('users')
+            .update({ preferences: prefs })
+            .eq('id', user.id);
+
+        if (error) throw error;
+
+        // Update in-memory user object and localStorage
+        user.preferences = prefs;
+        window.currentUser = user;
+        localStorage.setItem('wms_user', JSON.stringify(user));
+
+        alert('✅ Preferences saved successfully');
+    } catch (e) {
+        console.error('Save preferences error:', e);
+        alert('Failed to save preferences: ' + e.message);
     }
 }

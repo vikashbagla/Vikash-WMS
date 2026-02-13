@@ -418,3 +418,79 @@
                 padding:6px 4px;flex-shrink:0;min-height:28px;"></div>
 
         </div>
+
+        <!-- PREFERENCES -->
+        <div id="preferences-tab" class="tab-content" style="overflow-y:auto;">
+            <div class="preferences-section">
+                <h3>Display Preferences</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Number Format</label>
+                        <select id="numberFormat">
+                            <option value="indian">Indian</option>
+                            <option value="international">International</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Amount Display Unit</label>
+                        <select id="amountDisplay">
+                            <option value="thousands">Thousands (₹ '000)</option>
+                            <option value="lakhs">Lakhs</option>
+                            <option value="millions">Millions</option>
+                            <option value="crores">Crores</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Date Format</label>
+                        <select id="dateFormat">
+                            <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                            <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                            <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="preferences-section">
+                <h3>Portfolio Display</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Default Grouping</label>
+                        <select id="defaultGrouping">
+                            <option value="investor">By Investor</option>
+                            <option value="broker">By Broker</option>
+                            <option value="security">By Security</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Show Zero Holdings</label>
+                        <select id="showZeroHoldings">
+                            <option value="hide">Hide</option>
+                            <option value="show">Show</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Auto Refresh (seconds)</label>
+                        <input type="number" id="autoRefresh" min="0" placeholder="0 = disabled">
+                    </div>
+                </div>
+            </div>
+
+            <div class="preferences-section">
+                <h3>Color Theme</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Positive P&L Color</label>
+                        <input type="color" id="positivePLColor" value="#059669">
+                    </div>
+                    <div class="form-group">
+                        <label>Negative P&L Color</label>
+                        <input type="color" id="negativePLColor" value="#dc2626">
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top:14px;text-align:right;">
+                <button class="btn-primary" onclick="savePreferences()">💾 Save Preferences</button>
+            </div>
+        </div>
