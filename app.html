@@ -176,6 +176,7 @@
     async function loadModule(moduleName) {
         if (currentModule === moduleName) return;
         currentModule = moduleName;
+        localStorage.setItem('wms_last_module', moduleName);  // Remember current module
         
         document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
         document.querySelector(`[data-module="${moduleName}"]`).classList.add('active');
@@ -218,7 +219,9 @@
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
             btn.addEventListener('click', () => loadModule(btn.dataset.module));
         });
-        loadModule('portfolio');
+        // Load last active module or default to portfolio
+        const lastModule = localStorage.getItem('wms_last_module') || 'portfolio';
+        loadModule(lastModule);
     });
     </script>
     

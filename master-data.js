@@ -248,7 +248,7 @@ function renderInvestors(investors, brokers, accounts) {
                     <th>Type</th>
                     <th>Brokers</th>
                     <th>Status</th>
-                    <th style="width:60px;text-align:center;">⚙️</th>
+                    <th style="width:80px;text-align:center;">⚙️</th>
                 </tr>
             </thead>
             <tbody>
@@ -269,8 +269,9 @@ function renderInvestors(investors, brokers, accounts) {
                             <td>${inv.account_type || '—'}</td>
                             <td>${mappedBrokers.length > 0 ? mappedBrokers.map(b => `<span class="broker-tag">${b}</span>`).join('') : '<span style="color:#718096;">—</span>'}</td>
                             <td><span class="status-badge ${statusClass}">${statusText}</span></td>
-                            <td style="text-align:center;">
-                                <button class="btn-icon" onclick="handleEditInvestor('${inv.id}')" title="Edit" style="margin-right:2px;">✏️</button><button class="btn-icon" onclick="handleDeleteInvestor('${inv.id}')" title="Delete">🗑️</button>
+                            <td style="text-align:center;white-space:nowrap;">
+                                <button class="btn-icon" onclick="handleEditInvestor('${inv.id}')" title="Edit" style="display:inline-block;">✏️</button>
+                                <button class="btn-icon" onclick="handleDeleteInvestor('${inv.id}')" title="Delete" style="display:inline-block;">🗑️</button>
                             </td>
                         </tr>`;
                 }).join('')}
@@ -311,6 +312,7 @@ async function editInvestor(id) {
     document.getElementById('investorModalTitle').textContent = 'Edit Investor';
     document.getElementById('investorId').value = investor.id;
     document.getElementById('investorName').value = investor.name;
+    document.getElementById('investorShortName').value = investor.short_name || '';
     document.getElementById('investorAccountType').value = investor.account_type || '';
     document.getElementById('investorEmail').value = investor.email || '';
     document.getElementById('investorPan').value = investor.pan || '';
@@ -428,6 +430,7 @@ function removeBrokerAccount(index) {
 async function saveInvestor() {
     const data = {
         name: document.getElementById('investorName').value.trim(),
+        short_name: document.getElementById('investorShortName').value.trim() || null,
         account_type: document.getElementById('investorAccountType').value,
         email: document.getElementById('investorEmail').value.trim() || null,
         pan: document.getElementById('investorPan').value.trim().toUpperCase() || null,
@@ -558,7 +561,7 @@ function renderBrokers(brokers) {
                     <th>Code</th>
                     <th>Website</th>
                     <th>Status</th>
-                    <th style="width:60px;text-align:center;">⚙️</th>
+                    <th style="width:80px;text-align:center;">⚙️</th>
                 </tr>
             </thead>
             <tbody>
@@ -573,8 +576,9 @@ function renderBrokers(brokers) {
                             <td style="color:#718096;">${broker.broker_code || '—'}</td>
                             <td>${broker.website ? `<a href="${broker.website}" target="_blank" style="color:#667eea;font-size:11px;">Visit ↗</a>` : '—'}</td>
                             <td><span class="status-badge ${statusClass}">${statusText}</span></td>
-                            <td style="text-align:center;">
-                                <button class="btn-icon" onclick="handleEditBroker('${broker.id}')" title="Edit" style="margin-right:2px;">✏️</button><button class="btn-icon" onclick="handleDeleteBroker('${broker.id}')" title="Delete">🗑️</button>
+                            <td style="text-align:center;white-space:nowrap;">
+                                <button class="btn-icon" onclick="handleEditBroker('${broker.id}')" title="Edit" style="display:inline-block;">✏️</button>
+                                <button class="btn-icon" onclick="handleDeleteBroker('${broker.id}')" title="Delete" style="display:inline-block;">🗑️</button>
                             </td>
                         </tr>`;
                 }).join('')}
@@ -1925,13 +1929,7 @@ function loadPreferences() {
 
     const prefs = user.preferences;
     if (document.getElementById('numberFormat'))      document.getElementById('numberFormat').value = prefs.number_format || 'indian';
-    if (document.getElementById('amountDisplay'))     document.getElementById('amountDisplay').value = prefs.amount_display || 'thousands';
     if (document.getElementById('dateFormat'))        document.getElementById('dateFormat').value = prefs.date_format || 'DD/MM/YYYY';
-    if (document.getElementById('defaultGrouping'))   document.getElementById('defaultGrouping').value = prefs.default_grouping || 'investor';
-    if (document.getElementById('showZeroHoldings'))  document.getElementById('showZeroHoldings').value = prefs.show_zero_holdings || 'hide';
-    if (document.getElementById('autoRefresh'))       document.getElementById('autoRefresh').value = prefs.auto_refresh || 0;
-    if (document.getElementById('positivePLColor'))   document.getElementById('positivePLColor').value = prefs.positive_pl_color || '#059669';
-    if (document.getElementById('negativePLColor'))   document.getElementById('negativePLColor').value = prefs.negative_pl_color || '#dc2626';
 }
 
 async function savePreferences() {
@@ -1943,13 +1941,12 @@ async function savePreferences() {
 
     const prefs = {
         number_format: document.getElementById('numberFormat').value,
-        amount_display: document.getElementById('amountDisplay').value,
         date_format: document.getElementById('dateFormat').value,
-        default_grouping: document.getElementById('defaultGrouping').value,
-        show_zero_holdings: document.getElementById('showZeroHoldings').value,
-        auto_refresh: parseInt(document.getElementById('autoRefresh').value) || 0,
-        positive_pl_color: document.getElementById('positivePLColor').value,
-        negative_pl_color: document.getElementById('negativePLColor').value
+        currency_symbol: user.preferences?.currency_symbol || '₹',
+        theme: user.preferences?.theme || 'light',
+        default_view: user.preferences?.default_view || 'portfolio',
+        decimal_places: user.preferences?.decimal_places || 2,
+        financial_year_start: user.preferences?.financial_year_start || 4
     };
 
     try {
@@ -1971,3 +1968,14 @@ async function savePreferences() {
         alert('Failed to save preferences: ' + e.message);
     }
 }
+
+// Expose modal functions globally for onclick handlers
+window.openAddInvestorModal = openAddInvestorModal;
+window.openAddBrokerModal = openAddBrokerModal;
+window.closeInvestorModal = () => document.getElementById('investorModal').classList.remove('show');
+window.closeBrokerModal = () => document.getElementById('brokerModal').classList.remove('show');
+window.saveInvestor = saveInvestor;
+window.saveBroker = saveBroker;
+window.removeBrokerAccount = removeBrokerAccount;
+window.loadBrokerDefaults = loadBrokerDefaults;
+window.addBrokerAccount = addBrokerAccount;

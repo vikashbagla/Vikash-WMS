@@ -427,17 +427,8 @@
                     <div class="form-group">
                         <label>Number Format</label>
                         <select id="numberFormat">
-                            <option value="indian">Indian</option>
-                            <option value="international">International</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Amount Display Unit</label>
-                        <select id="amountDisplay">
-                            <option value="thousands">Thousands (₹ '000)</option>
-                            <option value="lakhs">Lakhs</option>
-                            <option value="millions">Millions</option>
-                            <option value="crores">Crores</option>
+                            <option value="indian">Indian (1,00,000)</option>
+                            <option value="international">International (100,000)</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -449,48 +440,198 @@
                         </select>
                     </div>
                 </div>
-            </div>
-
-            <div class="preferences-section">
-                <h3>Portfolio Display</h3>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Default Grouping</label>
-                        <select id="defaultGrouping">
-                            <option value="investor">By Investor</option>
-                            <option value="broker">By Broker</option>
-                            <option value="security">By Security</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Show Zero Holdings</label>
-                        <select id="showZeroHoldings">
-                            <option value="hide">Hide</option>
-                            <option value="show">Show</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Auto Refresh (seconds)</label>
-                        <input type="number" id="autoRefresh" min="0" placeholder="0 = disabled">
-                    </div>
-                </div>
-            </div>
-
-            <div class="preferences-section">
-                <h3>Color Theme</h3>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Positive P&L Color</label>
-                        <input type="color" id="positivePLColor" value="#059669">
-                    </div>
-                    <div class="form-group">
-                        <label>Negative P&L Color</label>
-                        <input type="color" id="negativePLColor" value="#dc2626">
-                    </div>
-                </div>
+                <p style="font-size:11px;color:#718096;margin-top:8px;">
+                    Note: Amount display unit and portfolio preferences are controlled from the Portfolio page controls.
+                </p>
             </div>
 
             <div style="margin-top:14px;text-align:right;">
                 <button class="btn-primary" onclick="savePreferences()">💾 Save Preferences</button>
             </div>
         </div>
+
+    <!-- Investor Modal -->
+    <div id="investorModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="investorModalTitle">Add Investor</h3>
+            </div>
+            <div class="modal-body">
+                <form id="investorForm" onsubmit="return false;">
+                    <input type="hidden" id="investorId">
+                    
+                    <div class="form-section">
+                        <div class="form-section-title">Basic Information</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Full Name *</label>
+                                <input type="text" id="investorName" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Short Name</label>
+                                <input type="text" id="investorShortName" placeholder="e.g., VB">
+                            </div>
+                            <div class="form-group">
+                                <label>Account Type *</label>
+                                <select id="investorAccountType" required>
+                                    <option value="">Select...</option>
+                                    <option value="Individual">Individual</option>
+                                    <option value="Joint">Joint</option>
+                                    <option value="HUF">HUF</option>
+                                    <option value="Trust">Trust</option>
+                                    <option value="Corporate">Corporate</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Email</label>
+                                <input type="email" id="investorEmail">
+                            </div>
+                            <div class="form-group">
+                                <label>PAN</label>
+                                <input type="text" id="investorPan" maxlength="10" style="text-transform:uppercase;">
+                            </div>
+                            <div class="form-group">
+                                <label>Phone</label>
+                                <input type="tel" id="investorPhone">
+                            </div>
+                            <div class="form-group">
+                                <label>Status *</label>
+                                <select id="investorStatus" required>
+                                    <option value="true">Active</option>
+                                    <option value="false">Inactive</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <div class="form-section-title">Broker Accounts</div>
+                        <div id="brokerAccountsList"></div>
+                        <button type="button" class="btn-add-broker" onclick="addBrokerAccount()">+ Add Broker Account</button>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeInvestorModal()">Cancel</button>
+                <button class="btn-primary" onclick="saveInvestor()">Save</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Broker Modal -->
+    <div id="brokerModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="brokerModalTitle">Add Broker</h3>
+            </div>
+            <div class="modal-body">
+                <form id="brokerForm" onsubmit="return false;">
+                    <input type="hidden" id="brokerId">
+                    
+                    <div class="form-section">
+                        <div class="form-section-title">Basic Information</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Broker Name *</label>
+                                <input type="text" id="brokerName" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Broker Code</label>
+                                <input type="text" id="brokerCode" style="text-transform:uppercase;">
+                            </div>
+                            <div class="form-group">
+                                <label>Website</label>
+                                <input type="url" id="brokerWebsite" placeholder="https://...">
+                            </div>
+                            <div class="form-group">
+                                <label>Status *</label>
+                                <select id="brokerStatus" required>
+                                    <option value="true">Active</option>
+                                    <option value="false">Inactive</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <div class="form-section-title">Default Brokerage Rates</div>
+                        <div class="brokerage-grid">
+                            <div class="brokerage-section">
+                                <span class="brokerage-label">Equity - Delivery</span>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Percentage (%)</label>
+                                        <input type="number" step="0.01" id="eqDelPct" value="0" placeholder="0">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Max (₹)</label>
+                                        <input type="number" step="0.01" id="eqDelMax" value="0" placeholder="20">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="brokerage-section">
+                                <span class="brokerage-label">Equity - Intraday</span>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Percentage (%)</label>
+                                        <input type="number" step="0.01" id="eqIntraPct" value="0" placeholder="0.03">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Max (₹)</label>
+                                        <input type="number" step="0.01" id="eqIntraMax" value="0" placeholder="20">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="brokerage-section">
+                                <span class="brokerage-label">Derivatives - Futures</span>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Percentage (%)</label>
+                                        <input type="number" step="0.01" id="futPct" value="0" placeholder="0.03">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Max (₹)</label>
+                                        <input type="number" step="0.01" id="futMax" value="0" placeholder="20">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="brokerage-section">
+                                <span class="brokerage-label">Derivatives - Options</span>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Flat (₹)</label>
+                                        <input type="number" step="0.01" id="optFlat" value="0" placeholder="20">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Max (₹)</label>
+                                        <input type="number" step="0.01" id="optMax" value="0" placeholder="0">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-row" style="margin-top:16px;">
+                            <div class="form-group">
+                                <label>Charges Inclusive?</label>
+                                <select id="chargesInclusive">
+                                    <option value="false">No</option>
+                                    <option value="true">Yes</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeBrokerModal()">Cancel</button>
+                <button class="btn-primary" onclick="saveBroker()">Save</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="master-data.js"></script>
+</body>
+</html>
