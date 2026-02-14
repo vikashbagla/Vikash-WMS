@@ -46,17 +46,14 @@ function initTransactionImport() {
 
 document.addEventListener('DOMContentLoaded', initTransactionImport);
 
-// Mode switching
-window.switchImportMode = function(mode) {
-    document.querySelectorAll('.import-tab').forEach(function(t) { t.classList.remove('active'); });
-    document.querySelectorAll('.import-mode').forEach(function(m) { m.classList.remove('active'); });
-    if (mode === 'cn') {
-        document.querySelectorAll('.import-tab')[1].classList.add('active');
-        document.getElementById('cnMode').classList.add('active');
-    } else {
-        document.querySelectorAll('.import-tab')[0].classList.add('active');
-        document.getElementById('excelMode').classList.add('active');
-    }
+// Mode selection (two boxes on page — clicking one shows its flow below)
+window.selectImportMode = function(mode) {
+    // Highlight selected box
+    document.getElementById('boxExcel').classList.toggle('selected', mode === 'excel');
+    document.getElementById('boxCn').classList.toggle('selected', mode === 'cn');
+    // Show the matching flow
+    document.getElementById('excelFlow').classList.toggle('active', mode === 'excel');
+    document.getElementById('cnFlow').classList.toggle('active', mode === 'cn');
     document.getElementById('alertContainer').innerHTML = '';
 };
 
@@ -1004,7 +1001,7 @@ function showLoading(show, text) {
 }
 
 // Expose globals for onclick handlers
-window.switchImportMode = window.switchImportMode || function(){};
+window.selectImportMode = window.selectImportMode || function(){};
 window.onCnAccountSelect = window.onCnAccountSelect || function(){};
 window.importCnToDatabase = window.importCnToDatabase || function(){};
 window.cancelCnImport = window.cancelCnImport || function(){};
