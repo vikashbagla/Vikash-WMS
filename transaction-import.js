@@ -215,18 +215,18 @@ function handleCnFileSelect(event) {
     var file = event.target.files[0];
     if (!file) return;
     if (!file.name.match(/\.pdf$/i)) {
-        showAlert('error', 'Please upload a PDF file.');
+        tiAlert('error', 'Please upload a PDF file.');
         return;
     }
     if (!cnSelectedAccount) {
-        showAlert('error', 'Please select an account first.');
+        tiAlert('error', 'Please select an account first.');
         return;
     }
 
     // Get password
     var password = cnSelectedAccount.cn_password || document.getElementById('cnPassword').value.trim();
     if (!password) {
-        showAlert('error', 'Please enter the contract note password.');
+        tiAlert('error', 'Please enter the contract note password.');
         return;
     }
 
@@ -237,7 +237,7 @@ async function parseCnPdf(file, password) {
     var statusEl = document.getElementById('cnParseStatus');
     statusEl.textContent = 'Reading PDF...';
     statusEl.className = 'cn-status';
-    showLoading(true, 'Parsing contract note...');
+    tiLoading(true, 'Parsing contract note...');
 
     try {
         var arrayBuffer = await file.arrayBuffer();
@@ -249,7 +249,7 @@ async function parseCnPdf(file, password) {
             pdf = await loadingTask.promise;
         } catch (pdfErr) {
             if (pdfErr.name === 'PasswordException') {
-                showLoading(false);
+                tiLoading(false);
                 statusEl.textContent = 'Incorrect password. Please check and try again.';
                 statusEl.className = 'cn-status error';
                 // Clear saved password if it was wrong
@@ -315,16 +315,16 @@ async function parseCnPdf(file, password) {
 
         // Show preview
         displayCnPreview(parseResult);
-        showLoading(false);
+        tiLoading(false);
         statusEl.textContent = 'Parsed ' + (cnNewRows.length + cnUpdateRows.length) + ' trade(s), ' + cnErrorRows.length + ' error(s).';
         statusEl.className = cnErrorRows.length > 0 ? 'cn-status' : 'cn-status success';
 
     } catch (e) {
         console.error('CN Parse error:', e);
-        showLoading(false);
+        tiLoading(false);
         statusEl.textContent = 'Error: ' + e.message;
         statusEl.className = 'cn-status error';
-        showAlert('error', 'Failed to parse contract note: ' + e.message);
+        tiAlert('error', 'Failed to parse contract note: ' + e.message);
     }
 }
 
@@ -701,7 +701,7 @@ function formatINR(val) {
 window.importCnToDatabase = async function() {
     var totalRows = cnNewRows.length + cnUpdateRows.length;
     if (totalRows === 0) {
-        showAlert('error', 'No transactions to import.');
+        tiAlert('error', 'No transactions to import.');
         return;
     }
 
@@ -723,7 +723,7 @@ window.importCnToDatabase = async function() {
         }
     });
 
-    showLoading(true, 'Importing transactions...');
+    tiLoading(true, 'Importing transactions...');
     document.getElementById('cnImportBtn').disabled = true;
 
     var insertErrors = [];
@@ -775,22 +775,22 @@ window.importCnToDatabase = async function() {
             }
         }
 
-        showLoading(false);
+        tiLoading(false);
 
         // Show results
         var allErrors = insertErrors.concat(updateErrors);
         if (allErrors.length > 0) {
-            showAlert('warning', 'Imported ' + insertCount + ' new, updated ' + updateCount + '.\n\nErrors (' + allErrors.length + '):\n' + allErrors.join('\n'));
+            tiAlert('warning', 'Imported ' + insertCount + ' new, updated ' + updateCount + '.\n\nErrors (' + allErrors.length + '):\n' + allErrors.join('\n'));
         } else {
-            showAlert('success', 'Successfully imported ' + insertCount + ' new and updated ' + updateCount + ' transactions!');
+            tiAlert('success', 'Successfully imported ' + insertCount + ' new and updated ' + updateCount + ' transactions!');
         }
 
         document.getElementById('cnImportBtn').disabled = false;
 
     } catch (e) {
         console.error('Import error:', e);
-        showLoading(false);
-        showAlert('error', 'Import failed: ' + e.message);
+        tiLoading(false);
+        tiAlert('error', 'Import failed: ' + e.message);
         document.getElementById('cnImportBtn').disabled = false;
     }
 };
@@ -852,10 +852,10 @@ function handleFileSelect(event) {
 function handleFile(file) {
     var validTypes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'];
     if (!validTypes.includes(file.type) && !file.name.match(/\.(xlsx|xls)$/i)) {
-        showAlert('error', 'Please upload an Excel file (.xlsx or .xls)');
+        tiAlert('error', 'Please upload an Excel file (.xlsx or .xls)');
         return;
     }
-    showLoading(true);
+    tiLoading(true);
     var reader = new FileReader();
     reader.onload = function(e) {
         try {
@@ -874,13 +874,13 @@ function handleFile(file) {
             });
             if (filteredData.length === 0) throw new Error('No data found in Excel file.');
             processTransactions(filteredData);
-            showLoading(false);
+            tiLoading(false);
         } catch (error) {
-            showAlert('error', 'Error reading Excel file: ' + error.message);
-            showLoading(false);
+            tiAlert('error', 'Error reading Excel file: ' + error.message);
+            tiLoading(false);
         }
     };
-    reader.onerror = function() { showAlert('error', 'Error reading file'); showLoading(false); };
+    reader.onerror = function() { tiAlert('error', 'Error reading file'); tiLoading(false); };
     reader.readAsArrayBuffer(file);
 }
 
@@ -963,9 +963,9 @@ function processTransactions(rawData) {
 
     if (errors.length > 0) {
         var errorSummary = errors.slice(0, 10).map(function(err, i) { return (i+1) + '. ' + err; }).join('\n');
-        showAlert('warning', 'Parsed ' + parsedTransactions.length + ' transactions.\n\n' + errors.length + ' rows skipped:\n\n' + errorSummary);
+        tiAlert('warning', 'Parsed ' + parsedTransactions.length + ' transactions.\n\n' + errors.length + ' rows skipped:\n\n' + errorSummary);
     } else {
-        showAlert('success', 'Successfully parsed ' + parsedTransactions.length + ' transactions!');
+        tiAlert('success', 'Successfully parsed ' + parsedTransactions.length + ' transactions!');
     }
     if (parsedTransactions.length > 0) displayPreview();
 }
@@ -991,9 +991,9 @@ function displayPreview() {
 }
 
 async function importToDatabase() {
-    if (parsedTransactions.length === 0) { showAlert('error', 'No transactions to import'); return; }
+    if (parsedTransactions.length === 0) { tiAlert('error', 'No transactions to import'); return; }
     if (!confirm('Import ' + parsedTransactions.length + ' transactions to database?')) return;
-    showLoading(true);
+    tiLoading(true);
     document.getElementById('importBtn').disabled = true;
     try {
         var dataToInsert = parsedTransactions.map(function(t) { var copy = Object.assign({}, t); delete copy.rowNum; delete copy.investor_name; delete copy.broker_name; return copy; });
@@ -1009,12 +1009,12 @@ async function importToDatabase() {
             if (!resp.ok) { var err = await resp.json(); throw new Error(err.message || err.details || 'HTTP ' + resp.status); }
             inserted += batch.length;
         }
-        showAlert('success', 'Successfully imported ' + inserted + ' transactions!');
-        showLoading(false);
+        tiAlert('success', 'Successfully imported ' + inserted + ' transactions!');
+        tiLoading(false);
         setTimeout(function() { window.location.reload(); }, 2000);
     } catch (error) {
-        showAlert('error', 'Import failed: ' + error.message);
-        showLoading(false);
+        tiAlert('error', 'Import failed: ' + error.message);
+        tiLoading(false);
         document.getElementById('importBtn').disabled = false;
     }
 }
@@ -1027,7 +1027,8 @@ window.cancelImport = function() {
 // UI Helpers
 // ============================================================================
 
-function showAlert(type, message) {
+// Named tiAlert/tiLoading to avoid conflict with const showAlert/showLoading in utils.js
+function tiAlert(type, message) {
     var container = document.getElementById('alertContainer');
     var alertClass = type === 'success' ? 'alert-success' : type === 'error' ? 'alert-error' : type === 'info' ? 'alert-info' : 'alert-warning';
     var el = document.createElement('div');
@@ -1038,7 +1039,7 @@ function showAlert(type, message) {
     if (type === 'success') { setTimeout(function() { el.style.opacity = '0'; setTimeout(function() { el.remove(); }, 300); }, 5000); }
 }
 
-function showLoading(show, text) {
+function tiLoading(show, text) {
     var loader = document.getElementById('loadingIndicator');
     loader.classList.toggle('hidden', !show);
     if (text) document.getElementById('loadingText').textContent = text;
