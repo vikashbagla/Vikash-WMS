@@ -46,16 +46,7 @@ function initTransactionImport() {
 
 document.addEventListener('DOMContentLoaded', initTransactionImport);
 
-// Mode selection (two boxes on page — clicking one shows its flow below)
-window.selectImportMode = function(mode) {
-    // Highlight selected box
-    document.getElementById('boxExcel').classList.toggle('selected', mode === 'excel');
-    document.getElementById('boxCn').classList.toggle('selected', mode === 'cn');
-    // Show the matching flow
-    document.getElementById('excelFlow').classList.toggle('active', mode === 'excel');
-    document.getElementById('cnFlow').classList.toggle('active', mode === 'cn');
-    document.getElementById('alertContainer').innerHTML = '';
-};
+// No mode switching needed — both boxes are always visible on the page
 
 // ============================================================================
 // Reference Data
@@ -150,13 +141,11 @@ window.onCnAccountSelect = function() {
     var statusEl = document.getElementById('cnAccountStatus');
     var pwField = document.getElementById('cnPasswordField');
     var cnUploadArea = document.getElementById('cnUploadArea');
-    var cnChooseBtn = document.getElementById('cnChooseFileBtn');
 
     if (!accountId) {
         cnSelectedAccount = null;
         pwField.style.display = 'none';
         cnUploadArea.classList.add('disabled');
-        cnChooseBtn.disabled = true;
         statusEl.textContent = '';
         return;
     }
@@ -170,14 +159,12 @@ window.onCnAccountSelect = function() {
         statusEl.textContent = 'Password saved. Ready to upload.';
         statusEl.className = 'cn-status success';
         cnUploadArea.classList.remove('disabled');
-        cnChooseBtn.disabled = false;
     } else {
         pwField.style.display = '';
         document.getElementById('cnPassword').value = '';
         statusEl.textContent = 'Enter the contract note password. It will be saved for future use.';
         statusEl.className = 'cn-status';
         cnUploadArea.classList.remove('disabled');
-        cnChooseBtn.disabled = false;
     }
 
     // Reset preview
@@ -942,7 +929,6 @@ function displayPreview() {
         tbody.appendChild(row);
     });
 
-    document.getElementById('uploadSection').style.display = 'none';
     document.getElementById('previewSection').classList.add('active');
 }
 
@@ -1000,8 +986,7 @@ function showLoading(show, text) {
     if (text) document.getElementById('loadingText').textContent = text;
 }
 
-// Expose globals for onclick handlers
-window.selectImportMode = window.selectImportMode || function(){};
+// Expose globals for onclick handlers in HTML
 window.onCnAccountSelect = window.onCnAccountSelect || function(){};
 window.importCnToDatabase = window.importCnToDatabase || function(){};
 window.cancelCnImport = window.cancelCnImport || function(){};

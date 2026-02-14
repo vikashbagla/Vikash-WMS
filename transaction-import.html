@@ -4,44 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Import Transactions - WMS</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px; background: #f5f7fa; color: #2d3748; }
+    <style id="transaction-import-styles">
+        .import-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
 
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
-        .header-content { max-width: 1600px; margin: 0 auto; padding: 6px 20px; display: flex; align-items: center; justify-content: space-between; }
-        .header h1 { font-size: 16px; font-weight: 600; }
-        .container { max-width: 1600px; margin: 0 auto; padding: 12px 16px; }
-
-        /* TWO IMPORT BOXES */
-        .import-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
-        .import-box {
-            background: white; border-radius: 8px; padding: 20px; text-align: center;
-            border: 2px solid #e2e8f0; cursor: pointer; transition: all 0.2s;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.07);
-        }
-        .import-box:hover { border-color: #667eea; background: #f7fafc; }
-        .import-box.selected { border-color: #667eea; background: #eef2ff; box-shadow: 0 0 0 3px rgba(102,126,234,0.15); }
-        .import-box .box-icon { font-size: 28px; margin-bottom: 6px; }
-        .import-box .box-title { font-size: 14px; font-weight: 600; color: #2d3748; margin-bottom: 3px; }
-        .import-box .box-desc { font-size: 11px; color: #718096; }
-
-        /* COMMON */
         .section { background: white; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
-        .section-title { font-size: 13px; font-weight: 600; color: #2d3748; margin-bottom: 10px; }
-        .import-flow { display: none; }
-        .import-flow.active { display: block; }
+        .section-title { font-size: 13px; font-weight: 600; color: #2d3748; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+        .section-title .icon { font-size: 16px; }
 
         /* UPLOAD AREA */
         .upload-area {
             border: 2px dashed #cbd5e0; border-radius: 8px;
-            padding: 28px 20px; cursor: pointer; transition: all 0.2s;
+            padding: 20px 16px; cursor: pointer; transition: all 0.2s;
             background: #f7fafc; text-align: center;
         }
         .upload-area:hover, .upload-area.dragover { border-color: #667eea; background: #eef2ff; }
         .upload-area.disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
-        .upload-icon { font-size: 32px; margin-bottom: 8px; }
-        .upload-text { font-size: 13px; color: #2d3748; margin-bottom: 4px; font-weight: 500; }
+        .upload-icon { font-size: 28px; margin-bottom: 4px; }
+        .upload-text { font-size: 12px; color: #2d3748; margin-bottom: 2px; font-weight: 500; }
         .upload-hint { color: #718096; font-size: 11px; }
         input[type="file"] { display: none; }
 
@@ -81,12 +60,12 @@
         .action-buttons { margin-top: 10px; display: flex; gap: 8px; justify-content: flex-end; }
 
         /* CN-SPECIFIC */
-        .cn-selector { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
+        .cn-selector { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
         .cn-selector .field { display: flex; flex-direction: column; gap: 3px; }
         .cn-selector label { font-size: 11px; font-weight: 600; color: #4a5568; text-transform: uppercase; }
-        .cn-selector select, .cn-selector input { padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 5px; font-size: 12px; min-width: 180px; }
+        .cn-selector select, .cn-selector input { padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 5px; font-size: 12px; width: 100%; }
         .cn-selector select:focus, .cn-selector input:focus { outline: none; border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
-        .cn-status { font-size: 11px; color: #718096; padding: 6px 0; }
+        .cn-status { font-size: 11px; color: #718096; padding: 4px 0; }
         .cn-status.error { color: #e53e3e; }
         .cn-status.success { color: #38a169; }
 
@@ -103,153 +82,118 @@
         .spinner { border: 3px solid #f0f4f8; border-top: 3px solid #667eea; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 12px auto; }
         @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
         .hidden { display: none; }
-        @media (max-width: 768px) { .import-choices { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } .cn-selector { flex-direction: column; } }
+        @media (max-width: 768px) { .import-grid { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } }
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="header-content">
-            <h1>Import Transactions</h1>
+
+    <div id="alertContainer"></div>
+
+    <!-- Two boxes side by side, each with upload ready -->
+    <div class="import-grid">
+
+        <!-- ===== EXCEL IMPORT BOX ===== -->
+        <div class="section" id="excelBox">
+            <div class="section-title"><span class="icon">📊</span> Excel Import</div>
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📊</div>
+                <div class="upload-text">Drag & drop Excel file here</div>
+                <div class="upload-hint">or click to browse (.xlsx, .xls)</div>
+                <input type="file" id="fileInput" accept=".xlsx,.xls">
+            </div>
+        </div>
+
+        <!-- ===== CONTRACT NOTE IMPORT BOX ===== -->
+        <div class="section" id="cnBox">
+            <div class="section-title"><span class="icon">📄</span> Contract Note Import</div>
+            <div class="cn-selector">
+                <div class="field">
+                    <label>Investor @ Broker</label>
+                    <select id="cnAccountSelect" onchange="onCnAccountSelect()">
+                        <option value="">-- Select Account --</option>
+                    </select>
+                </div>
+                <div class="field" id="cnPasswordField" style="display:none;">
+                    <label>Contract Note Password</label>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <input type="password" id="cnPassword" placeholder="Enter CN password" style="flex:1;">
+                        <label style="font-size:10px;font-weight:400;text-transform:none;color:#718096;white-space:nowrap;"><input type="checkbox" onchange="document.getElementById('cnPassword').type=this.checked?'text':'password'"> Show</label>
+                    </div>
+                </div>
+            </div>
+            <div id="cnAccountStatus" class="cn-status"></div>
+            <div class="upload-area disabled" id="cnUploadArea">
+                <div class="upload-icon">📄</div>
+                <div class="upload-text">Drag & drop contract note PDF here</div>
+                <div class="upload-hint">or click to browse (.pdf)</div>
+                <input type="file" id="cnFileInput" accept=".pdf">
+            </div>
+            <div id="cnParseStatus" class="cn-status" style="margin-top:6px;"></div>
         </div>
     </div>
 
-    <div class="container">
-        <!-- Alerts -->
-        <div id="alertContainer"></div>
+    <!-- ===== EXCEL PREVIEW (full width, below both boxes) ===== -->
+    <div class="section preview-section" id="previewSection">
+        <div class="section-title">Excel Import Preview</div>
+        <div class="stats">
+            <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" id="statTotal">0</div></div>
+            <div class="stat-card" style="border-left-color:#38a169;"><div class="stat-label">Buy</div><div class="stat-value type-buy" id="statBuy">0</div></div>
+            <div class="stat-card" style="border-left-color:#e53e3e;"><div class="stat-label">Sell</div><div class="stat-value type-sell" id="statSell">0</div></div>
+            <div class="stat-card" style="border-left-color:#667eea;"><div class="stat-label">Other</div><div class="stat-value type-other" id="statOther">0</div></div>
+        </div>
+        <div class="table-wrapper"><table><thead><tr>
+            <th>#</th><th>Investor</th><th>Type</th><th>Symbol</th><th>Date</th><th>Quantity</th><th>Lots</th><th>Price</th><th>Net Amount</th>
+        </tr></thead><tbody id="previewTableBody"></tbody></table></div>
+        <div class="action-buttons">
+            <button class="btn btn-danger" onclick="cancelImport()">Cancel</button>
+            <button class="btn btn-success" id="importBtn" onclick="importToDatabase()">Import to Database</button>
+        </div>
+    </div>
 
-        <!-- Two import option boxes -->
-        <div class="import-choices" id="importChoices">
-            <div class="import-box" id="boxExcel" onclick="selectImportMode('excel')">
-                <div class="box-icon">📊</div>
-                <div class="box-title">Excel Import</div>
-                <div class="box-desc">Upload an Excel file with transactions</div>
-            </div>
-            <div class="import-box" id="boxCn" onclick="selectImportMode('cn')">
-                <div class="box-icon">📄</div>
-                <div class="box-title">Contract Note Import</div>
-                <div class="box-desc">Upload a broker contract note PDF</div>
-            </div>
+    <!-- ===== CN PREVIEW (full width, below both boxes) ===== -->
+    <div class="section preview-section" id="cnPreviewSection">
+        <div class="section-title">Contract Note Preview</div>
+
+        <div class="stats">
+            <div class="stat-card"><div class="stat-label">Total Rows</div><div class="stat-value" id="cnStatTotal">0</div></div>
+            <div class="stat-card" style="border-left-color:#38a169;"><div class="stat-label">New</div><div class="stat-value" id="cnStatNew" style="color:#38a169;">0</div></div>
+            <div class="stat-card" style="border-left-color:#ed8936;"><div class="stat-label">Updates</div><div class="stat-value" id="cnStatUpdate" style="color:#ed8936;">0</div></div>
+            <div class="stat-card" style="border-left-color:#e53e3e;"><div class="stat-label">Errors</div><div class="stat-value" id="cnStatError" style="color:#e53e3e;">0</div></div>
         </div>
 
-        <!-- =============== EXCEL IMPORT FLOW =============== -->
-        <div id="excelFlow" class="import-flow">
-            <div class="section" id="uploadSection">
-                <div class="section-title">Upload Excel File</div>
-                <div class="upload-area" id="uploadArea">
-                    <div class="upload-icon">📊</div>
-                    <div class="upload-text">Drag and drop your Excel file here</div>
-                    <div class="upload-hint">or click to browse (.xlsx, .xls)</div>
-                    <input type="file" id="fileInput" accept=".xlsx,.xls">
-                </div>
-                <div style="text-align:center; margin-top:8px;">
-                    <button class="btn" onclick="document.getElementById('fileInput').click()">Choose File</button>
-                </div>
-            </div>
-
-            <div class="section preview-section" id="previewSection">
-                <div class="section-title">Preview</div>
-                <div class="stats">
-                    <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" id="statTotal">0</div></div>
-                    <div class="stat-card" style="border-left-color:#38a169;"><div class="stat-label">Buy</div><div class="stat-value type-buy" id="statBuy">0</div></div>
-                    <div class="stat-card" style="border-left-color:#e53e3e;"><div class="stat-label">Sell</div><div class="stat-value type-sell" id="statSell">0</div></div>
-                    <div class="stat-card" style="border-left-color:#667eea;"><div class="stat-label">Other</div><div class="stat-value type-other" id="statOther">0</div></div>
-                </div>
-                <div class="table-wrapper"><table id="previewTable"><thead><tr>
-                    <th>#</th><th>Investor</th><th>Type</th><th>Symbol</th><th>Date</th><th>Quantity</th><th>Lots</th><th>Price</th><th>Net Amount</th>
-                </tr></thead><tbody id="previewTableBody"></tbody></table></div>
-                <div class="action-buttons">
-                    <button class="btn btn-danger" onclick="cancelImport()">Cancel</button>
-                    <button class="btn btn-success" id="importBtn" onclick="importToDatabase()">Import to Database</button>
-                </div>
-            </div>
+        <div id="cnNewSection" style="display:none;">
+            <div class="cn-table-label new-rows">New Transactions (will be inserted)</div>
+            <div class="table-wrapper"><table><thead><tr>
+                <th>#</th><th>Type</th><th>Segment</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Gross Amt</th><th>Brokerage</th><th>STT</th><th>Other</th><th>GST</th><th>Net Amt</th>
+            </tr></thead><tbody id="cnNewTableBody"></tbody></table></div>
         </div>
 
-        <!-- =============== CONTRACT NOTE IMPORT FLOW =============== -->
-        <div id="cnFlow" class="import-flow">
-            <!-- Select Account -->
-            <div class="section" id="cnStep1">
-                <div class="section-title">Select Account</div>
-                <div class="cn-selector">
-                    <div class="field">
-                        <label>Investor @ Broker</label>
-                        <select id="cnAccountSelect" onchange="onCnAccountSelect()">
-                            <option value="">-- Select Account --</option>
-                        </select>
-                    </div>
-                    <div class="field" id="cnPasswordField" style="display:none;">
-                        <label>Contract Note Password</label>
-                        <input type="password" id="cnPassword" placeholder="Enter CN password">
-                        <div style="margin-top:2px;"><label style="font-size:10px;font-weight:400;text-transform:none;color:#718096;"><input type="checkbox" onchange="document.getElementById('cnPassword').type=this.checked?'text':'password'"> Show password</label></div>
-                    </div>
-                </div>
-                <div id="cnAccountStatus" class="cn-status"></div>
-            </div>
-
-            <!-- Upload PDF -->
-            <div class="section" id="cnStep2">
-                <div class="section-title">Upload Contract Note PDF</div>
-                <div class="upload-area disabled" id="cnUploadArea">
-                    <div class="upload-icon">📄</div>
-                    <div class="upload-text">Drag and drop your contract note PDF here</div>
-                    <div class="upload-hint">or click to browse (.pdf)</div>
-                    <input type="file" id="cnFileInput" accept=".pdf">
-                </div>
-                <div style="text-align:center; margin-top:8px;">
-                    <button class="btn" id="cnChooseFileBtn" disabled onclick="document.getElementById('cnFileInput').click()">Choose PDF</button>
-                </div>
-                <div id="cnParseStatus" class="cn-status" style="margin-top:6px;"></div>
-            </div>
-
-            <!-- Preview & Import -->
-            <div class="section preview-section" id="cnPreviewSection">
-                <div class="section-title">Review & Import</div>
-
-                <div class="stats" id="cnStats">
-                    <div class="stat-card"><div class="stat-label">Total Rows</div><div class="stat-value" id="cnStatTotal">0</div></div>
-                    <div class="stat-card" style="border-left-color:#38a169;"><div class="stat-label">New</div><div class="stat-value" id="cnStatNew" style="color:#38a169;">0</div></div>
-                    <div class="stat-card" style="border-left-color:#ed8936;"><div class="stat-label">Updates</div><div class="stat-value" id="cnStatUpdate" style="color:#ed8936;">0</div></div>
-                    <div class="stat-card" style="border-left-color:#e53e3e;"><div class="stat-label">Errors</div><div class="stat-value" id="cnStatError" style="color:#e53e3e;">0</div></div>
-                </div>
-
-                <!-- New rows table -->
-                <div id="cnNewSection" style="display:none;">
-                    <div class="cn-table-label new-rows">New Transactions (will be inserted)</div>
-                    <div class="table-wrapper"><table><thead><tr>
-                        <th>#</th><th>Type</th><th>Segment</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Gross Amt</th><th>Brokerage</th><th>STT</th><th>Other</th><th>GST</th><th>Net Amt</th>
-                    </tr></thead><tbody id="cnNewTableBody"></tbody></table></div>
-                </div>
-
-                <!-- Update rows table -->
-                <div id="cnUpdateSection" style="display:none;">
-                    <div class="cn-table-label update-rows">Existing Transactions (will be updated)</div>
-                    <div class="table-wrapper"><table><thead><tr>
-                        <th>#</th><th>Type</th><th>Segment</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Gross Amt</th><th>Brokerage</th><th>STT</th><th>Other</th><th>GST</th><th>Net Amt</th>
-                    </tr></thead><tbody id="cnUpdateTableBody"></tbody></table></div>
-                </div>
-
-                <!-- Error rows -->
-                <div id="cnErrorSection" style="display:none;">
-                    <div class="cn-table-label error-rows">Errors (will be skipped)</div>
-                    <div class="table-wrapper"><table><thead><tr>
-                        <th>#</th><th>Symbol/Description</th><th>Error</th>
-                    </tr></thead><tbody id="cnErrorTableBody"></tbody></table></div>
-                </div>
-
-                <!-- Totals -->
-                <div class="cn-totals" id="cnTotals"></div>
-
-                <div class="action-buttons">
-                    <button class="btn btn-danger" onclick="cancelCnImport()">Cancel</button>
-                    <button class="btn btn-success" id="cnImportBtn" onclick="importCnToDatabase()">Import to Database</button>
-                </div>
-            </div>
+        <div id="cnUpdateSection" style="display:none;">
+            <div class="cn-table-label update-rows">Existing Transactions (will be updated)</div>
+            <div class="table-wrapper"><table><thead><tr>
+                <th>#</th><th>Type</th><th>Segment</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Gross Amt</th><th>Brokerage</th><th>STT</th><th>Other</th><th>GST</th><th>Net Amt</th>
+            </tr></thead><tbody id="cnUpdateTableBody"></tbody></table></div>
         </div>
 
-        <!-- Loading -->
-        <div class="hidden" id="loadingIndicator">
-            <div class="spinner"></div>
-            <p style="text-align:center; color:#718096; margin-top:6px; font-size:12px;" id="loadingText">Processing...</p>
+        <div id="cnErrorSection" style="display:none;">
+            <div class="cn-table-label error-rows">Errors (will be skipped)</div>
+            <div class="table-wrapper"><table><thead><tr>
+                <th>#</th><th>Symbol/Description</th><th>Error</th>
+            </tr></thead><tbody id="cnErrorTableBody"></tbody></table></div>
         </div>
+
+        <div class="cn-totals" id="cnTotals"></div>
+
+        <div class="action-buttons">
+            <button class="btn btn-danger" onclick="cancelCnImport()">Cancel</button>
+            <button class="btn btn-success" id="cnImportBtn" onclick="importCnToDatabase()">Import to Database</button>
+        </div>
+    </div>
+
+    <!-- Loading -->
+    <div class="hidden" id="loadingIndicator">
+        <div class="spinner"></div>
+        <p style="text-align:center; color:#718096; margin-top:6px; font-size:12px;" id="loadingText">Processing...</p>
     </div>
 
 </body>
