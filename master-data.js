@@ -209,7 +209,12 @@ var DB = {
             headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
             body: JSON.stringify(rows)
         });
-        return await response.json();
+        var data = await response.json();
+        if (!response.ok) {
+            console.error('Insert charges failed:', response.status, data);
+            throw new Error(data.message || data.details || ('HTTP ' + response.status));
+        }
+        return data;
     }
 };
 
