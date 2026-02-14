@@ -644,7 +644,7 @@ function createCnPreviewRow(r, idx) {
         '<td style="text-align:right;">' + formatCnAmount(r.stt) + '</td>' +
         '<td style="text-align:right;">' + formatCnAmount(r.other_charges) + '</td>' +
         '<td style="text-align:right;">' + formatCnAmount(r.gst) + '</td>' +
-        '<td style="text-align:right;font-weight:600;">' + formatCnAmount(r.net_amount) + '</td>' +
+        '<td style="text-align:right;font-weight:600;">' + formatCnAmount(r.transaction_type === 'SELL' ? -Math.abs(r.net_amount) : Math.abs(r.net_amount), true) + '</td>' +
         '<td><input type="text" id="' + tagInputId + '" value="' + tagsValue + '" placeholder="e.g. intraday, hedge" style="width:100%;min-width:80px;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;"></td>';
     return tr;
 }
@@ -658,12 +658,18 @@ function createCnTotalsRow(rows) {
         totStt += r.stt;
         totOther += r.other_charges;
         totGst += r.gst;
-        totNet += Math.abs(r.net_amount);
+        // Sells are negative (receivable), buys are positive (payable)
+        if (r.transaction_type === 'SELL') {
+            totNet -= Math.abs(r.net_amount);
+        } else {
+            totNet += Math.abs(r.net_amount);
+        }
     });
     var tr = document.createElement('tr');
     tr.style.fontWeight = '700';
     tr.style.borderTop = '2px solid #4a5568';
     tr.style.background = '#f7fafc';
+    var netLabel = totNet >= 0 ? 'Net Payable' : 'Net Receivable';
     tr.innerHTML = '<td></td>' +
         '<td></td>' +
         '<td style="text-align:right;">Total</td>' +
@@ -674,15 +680,18 @@ function createCnTotalsRow(rows) {
         '<td style="text-align:right;">' + formatCnAmount(totStt) + '</td>' +
         '<td style="text-align:right;">' + formatCnAmount(totOther) + '</td>' +
         '<td style="text-align:right;">' + formatCnAmount(totGst) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(totNet) + '</td>' +
+        '<td style="text-align:right;" title="' + netLabel + '">' + formatCnAmount(totNet, true) + '</td>' +
         '<td></td>';
     return tr;
 }
 
-function formatCnAmount(val) {
+function formatCnAmount(val, signed) {
     if (val === null || val === undefined) return '-';
     var unit = getDisplayUnit();
     var config = getUnitConfig(unit);
+    if (signed && val < 0) {
+        return '-' + formatWithCommas(Math.abs(val), config.comma);
+    }
     return formatWithCommas(Math.abs(val), config.comma);
 }
 
@@ -784,11 +793,26 @@ window.importCnToDatabase = async function() {
         var allErrors = insertErrors.concat(updateErrors);
         if (allErrors.length > 0) {
             tiAlert('warning', 'Imported ' + insertCount + ' new, updated ' + updateCount + '.\n\nErrors (' + allErrors.length + '):\n' + allErrors.join('\n'));
+            document.getElementById('cnImportBtn').disabled = false;
         } else {
             tiAlert('success', 'Successfully imported ' + insertCount + ' new and updated ' + updateCount + ' transactions!');
+            // Hide preview and reset for next import
+            document.getElementById('cnPreviewSection').classList.remove('active');
+            cnParsedRows = [];
+            cnNewRows = [];
+            cnUpdateRows = [];
+            cnErrorRows = [];
+            // Reset upload area for next CN
+            var cnUploadArea = document.getElementById('cnUploadArea');
+            if (cnUploadArea) {
+                var label = cnUploadArea.querySelector('.upload-label');
+                if (label) label.textContent = 'Drag & drop Contract Note PDF here';
+                var fileInfo = cnUploadArea.querySelector('.file-info');
+                if (fileInfo) fileInfo.textContent = '';
+            }
+            var cnFileInput = document.getElementById('cnFileInput');
+            if (cnFileInput) cnFileInput.value = '';
         }
-
-        document.getElementById('cnImportBtn').disabled = false;
 
     } catch (e) {
         console.error('Import error:', e);
