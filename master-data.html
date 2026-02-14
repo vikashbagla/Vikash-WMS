@@ -468,43 +468,10 @@
         <div id="charges-tab" class="tab-content">
             <div class="actions-bar">
                 <span id="chargesEffective" style="color:#888;font-size:13px;"></span>
-                <div style="display:flex;gap:8px;">
-                    <button class="btn-primary" id="seedChargesBtn" style="display:none;" onclick="seedDefaultCharges()">📋 Add Default Charges</button>
-                    <button class="btn-primary" onclick="openChargesEditModal()">✏️ Edit Charges</button>
-                </div>
+                <button class="btn-primary" id="seedChargesBtn" style="display:none;" onclick="seedDefaultCharges()">📋 Add Default Charges</button>
             </div>
             <div id="chargesGrid" style="overflow-x:auto;"></div>
         </div>
-
-    <!-- Charges Edit Modal -->
-    <div id="chargesEditModal" class="modal">
-        <div class="modal-content" style="max-width:900px;">
-            <div class="modal-header">
-                <h2>Edit Regulatory Charges</h2>
-                <button class="modal-close" onclick="closeChargesEditModal()">&times;</button>
-            </div>
-            <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
-                <p style="color:#888;font-size:12px;margin-bottom:12px;">Edit rates below. Changes will be saved with today's effective date; previous rates are preserved as history.</p>
-                <table class="data-table" id="chargesEditTable" style="font-size:13px;">
-                    <thead>
-                        <tr>
-                            <th>Category</th>
-                            <th>Charge Type</th>
-                            <th>Side</th>
-                            <th>Rate %</th>
-                            <th>GST?</th>
-                            <th>GST Rate %</th>
-                        </tr>
-                    </thead>
-                    <tbody id="chargesEditBody"></tbody>
-                </table>
-            </div>
-            <div class="modal-footer">
-                <button class="btn-secondary" onclick="closeChargesEditModal()">Cancel</button>
-                <button class="btn-primary" onclick="saveChargesConfig()">💾 Save Changes</button>
-            </div>
-        </div>
-    </div>
 
     <!-- Investor Modal -->
     <div id="investorModal" class="modal">
