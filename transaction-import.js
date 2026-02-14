@@ -637,14 +637,14 @@ function createCnPreviewRow(r, idx) {
     tr.innerHTML = '<td>' + idx + '</td>' +
         '<td class="' + typeClass + '">' + r.transaction_type + '</td>' +
         '<td title="' + r.symbol + '">' + r.short_symbol + '</td>' +
-        '<td style="text-align:right;">' + Math.abs(r.quantity).toLocaleString() + '</td>' +
-        '<td style="text-align:right;">' + formatINR(r.price) + '</td>' +
-        '<td style="text-align:right;">' + formatINR(r.gross_amount) + '</td>' +
-        '<td style="text-align:right;">' + formatINR(r.brokerage) + '</td>' +
-        '<td style="text-align:right;">' + formatINR(r.stt) + '</td>' +
-        '<td style="text-align:right;">' + formatINR(r.other_charges) + '</td>' +
-        '<td style="text-align:right;">' + formatINR(r.gst) + '</td>' +
-        '<td style="text-align:right;font-weight:600;">' + formatINR(r.net_amount) + '</td>' +
+        '<td style="text-align:right;">' + formatCnQty(r.quantity) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.price) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.gross_amount) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.brokerage) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.stt) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.other_charges) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.gst) + '</td>' +
+        '<td style="text-align:right;font-weight:600;">' + formatCnAmount(r.net_amount) + '</td>' +
         '<td><input type="text" id="' + tagInputId + '" value="' + tagsValue + '" placeholder="e.g. intraday, hedge" style="width:100%;min-width:80px;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;"></td>';
     return tr;
 }
@@ -667,21 +667,34 @@ function createCnTotalsRow(rows) {
     tr.innerHTML = '<td></td>' +
         '<td></td>' +
         '<td style="text-align:right;">Total</td>' +
-        '<td style="text-align:right;">' + totQty.toLocaleString() + '</td>' +
+        '<td style="text-align:right;">' + formatCnQty(totQty) + '</td>' +
         '<td></td>' +
-        '<td style="text-align:right;">' + formatINR(totGross) + '</td>' +
-        '<td style="text-align:right;">' + formatINR(totBrokerage) + '</td>' +
-        '<td style="text-align:right;">' + formatINR(totStt) + '</td>' +
-        '<td style="text-align:right;">' + formatINR(totOther) + '</td>' +
-        '<td style="text-align:right;">' + formatINR(totGst) + '</td>' +
-        '<td style="text-align:right;">' + formatINR(totNet) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(totGross) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(totBrokerage) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(totStt) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(totOther) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(totGst) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(totNet) + '</td>' +
         '<td></td>';
     return tr;
 }
 
-function formatINR(val) {
+function formatCnAmount(val) {
     if (val === null || val === undefined) return '-';
-    return '₹' + Math.abs(val).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    var unit = getDisplayUnit();
+    var config = getUnitConfig(unit);
+    return formatWithCommas(Math.abs(val), config.comma);
+}
+
+function formatCnQty(val) {
+    if (val === null || val === undefined || isNaN(val)) return '0';
+    var unit = getDisplayUnit();
+    var config = getUnitConfig(unit);
+    var absVal = Math.round(Math.abs(val));
+    if (config.comma === 'indian') {
+        return absVal.toLocaleString('en-IN');
+    }
+    return absVal.toLocaleString('en-US');
 }
 
 // ============================================================================
@@ -973,7 +986,7 @@ function displayPreview() {
     parsedTransactions.forEach(function(t, index) {
         var row = document.createElement('tr');
         var typeClass = t.transaction_type === 'BUY' ? 'type-buy' : t.transaction_type === 'SELL' ? 'type-sell' : 'type-other';
-        row.innerHTML = '<td>' + (index+1) + '</td><td>' + t.investor_name + '</td><td class="' + typeClass + '">' + t.transaction_type + '</td><td>' + t.symbol + '</td><td>' + t.transaction_date + '</td><td>' + t.quantity.toLocaleString() + '</td><td>' + t.lots + '</td><td>₹' + t.price.toLocaleString() + '</td><td>₹' + t.net_amount.toLocaleString() + '</td>';
+        row.innerHTML = '<td>' + (index+1) + '</td><td>' + t.investor_name + '</td><td class="' + typeClass + '">' + t.transaction_type + '</td><td>' + t.symbol + '</td><td>' + t.transaction_date + '</td><td>' + formatCnQty(t.quantity) + '</td><td>' + t.lots + '</td><td>' + formatCnAmount(t.price) + '</td><td>' + formatCnAmount(t.net_amount) + '</td>';
         tbody.appendChild(row);
     });
 
