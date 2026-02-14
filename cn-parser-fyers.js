@@ -27,6 +27,10 @@
 // Shared utility available: CN_UTILS.buildLines(items) — groups items into lines by Y coordinate
 // ============================================================================
 
+// Safety: ensure globals exist even if this script loads before transaction-import.js
+if (typeof window.CN_PARSERS === 'undefined') window.CN_PARSERS = {};
+if (typeof window.CN_UTILS === 'undefined') window.CN_UTILS = {};
+
 CN_PARSERS.fyers = function(pages, numPages) {
     // Fyers CN structure:
     // Pages 1-2: Summary (we ignore BF/CF, only use B/S from summary for cross-check)
@@ -50,6 +54,11 @@ CN_PARSERS.fyers = function(pages, numPages) {
 
     var firstPageText = allText[0].map(function(i) { return i.text; }).join(' ');
 
+    // Validate this is a Fyers contract note
+    if (!/fyers/i.test(firstPageText)) {
+        throw new Error('This does not appear to be a Fyers contract note. Please check you selected the correct broker account.');
+    }
+
     var dateMatch = firstPageText.match(/Trade\s*Date\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i);
     if (dateMatch) {
         var parts = dateMatch[1].split('/');
@@ -59,8 +68,8 @@ CN_PARSERS.fyers = function(pages, numPages) {
     var cnMatch = firstPageText.match(/CONTRACT\s*NOTE\s*NO\s*:?\s*(\d+)/i);
     if (cnMatch) cnNumber = cnMatch[1];
 
-    if (!tradeDate) throw new Error('Could not extract Trade Date from contract note.');
-    if (!cnNumber) throw new Error('Could not extract Contract Note Number.');
+    if (!tradeDate) throw new Error('Could not extract Trade Date. Is this a valid Fyers contract note?');
+    if (!cnNumber) throw new Error('Could not extract Contract Note Number. Is this a valid Fyers contract note?');
 
     // Parse Trade Annexure pages (pages with "Trade Annexure" or individual trade rows)
     var trades = [];

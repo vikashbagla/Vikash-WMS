@@ -2,6 +2,10 @@
 // WMS Transaction Import - Excel + Contract Note Import
 // ============================================================================
 
+// MUST be first: set up globals for CN parser plugins BEFORE anything else
+window.CN_PARSERS = window.CN_PARSERS || {};
+window.CN_UTILS = window.CN_UTILS || {};
+
 // Use var for module-level state (project convention — avoids redeclaration errors on reload)
 var parsedTransactions = [];
 var investorCache = {};
@@ -287,7 +291,7 @@ async function parseCnPdf(file, password) {
         // Dynamically load the broker-specific parser if not already loaded
         var template = cnSelectedAccount.cn_parser_template;
         await loadCnParser(template);
-        var parser = CN_PARSERS[template];
+        var parser = window.CN_PARSERS[template];
         if (!parser) {
             throw new Error('No parser found for template: ' + template);
         }
@@ -349,12 +353,11 @@ async function saveCnPassword(accountId, password) {
 //   3. No changes needed to this file!
 // ============================================================================
 
-// Explicitly attach to window so parser scripts (cn-parser-*.js) can access them
-window.CN_PARSERS = window.CN_PARSERS || {};
-var CN_PARSERS = window.CN_PARSERS;
+// CN_PARSERS and CN_UTILS are initialized at the top of this file (lines 5-6)
+// and attached to window so parser plugin scripts can access them.
 var cnLoadedParsers = {};  // Track which parser scripts have been loaded
 
-// Shared utility functions available to all broker parsers via CN_UTILS
+// Populate the shared utility functions for broker parsers
 window.CN_UTILS = {
     // Group PDF text items into logical lines by Y coordinate (3px tolerance)
     buildLines: function(items) {
@@ -391,7 +394,7 @@ function loadCnParser(template) {
         var script = document.createElement('script');
         script.src = 'cn-parser-' + template + '.js?t=' + Date.now();
         script.onload = function() {
-            if (CN_PARSERS[template]) {
+            if (window.CN_PARSERS[template]) {
                 console.log('CN parser loaded: ' + template);
                 resolve();
             } else {
