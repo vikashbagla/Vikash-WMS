@@ -81,20 +81,27 @@ async function loadCnAccounts() {
             // Only show accounts where broker has a parser template
             if (!acc.brokers || !acc.brokers.cn_parser_template) return;
 
+            // Skip accounts with missing investor or broker data
+            var investorName = acc.investors ? acc.investors.short_name : null;
+            var brokerCode = acc.brokers ? acc.brokers.broker_code : null;
+            var brokerName = acc.brokers ? acc.brokers.name : null;
+            if (!investorName || (!brokerCode && !brokerName)) return;
+
             var obj = {
-                id: acc.id,
+                id: String(acc.id),  // Ensure string for comparison with select.value
                 investor_id: acc.investor_id,
                 broker_id: acc.broker_id,
-                investor_short_name: acc.investors ? acc.investors.short_name : '?',
-                broker_code: acc.brokers ? acc.brokers.broker_code : '?',
-                broker_name: acc.brokers ? acc.brokers.name : '?',
+                investor_short_name: investorName,
+                broker_code: brokerCode || '?',
+                broker_name: brokerName || '?',
                 cn_password: acc.cn_password || null,
                 cn_parser_template: acc.brokers.cn_parser_template
             };
             cnAccounts.push(obj);
 
             // Display: "Veins @ Fyers" (title-case the broker_code)
-            var brokerDisplay = (obj.broker_code || obj.broker_name).charAt(0).toUpperCase() + (obj.broker_code || obj.broker_name).slice(1).toLowerCase();
+            var displayCode = obj.broker_code !== '?' ? obj.broker_code : obj.broker_name;
+            var brokerDisplay = displayCode.charAt(0).toUpperCase() + displayCode.slice(1).toLowerCase();
             var opt = document.createElement('option');
             opt.value = obj.id;
             opt.textContent = obj.investor_short_name + ' @ ' + brokerDisplay;
@@ -142,10 +149,13 @@ window.onCnAccountSelect = function() {
     var pwField = document.getElementById('cnPasswordField');
     var cnUploadArea = document.getElementById('cnUploadArea');
 
+    var cnChooseBtn = document.getElementById('cnChooseFileBtn');
+
     if (!accountId) {
         cnSelectedAccount = null;
         pwField.style.display = 'none';
         cnUploadArea.classList.add('disabled');
+        if (cnChooseBtn) cnChooseBtn.disabled = true;
         statusEl.textContent = '';
         return;
     }
@@ -159,12 +169,14 @@ window.onCnAccountSelect = function() {
         statusEl.textContent = 'Password saved. Ready to upload.';
         statusEl.className = 'cn-status success';
         cnUploadArea.classList.remove('disabled');
+        if (cnChooseBtn) cnChooseBtn.disabled = false;
     } else {
         pwField.style.display = '';
         document.getElementById('cnPassword').value = '';
         statusEl.textContent = 'Enter the contract note password. It will be saved for future use.';
         statusEl.className = 'cn-status';
         cnUploadArea.classList.remove('disabled');
+        if (cnChooseBtn) cnChooseBtn.disabled = false;
     }
 
     // Reset preview
