@@ -266,14 +266,17 @@ async function parseCnPdf(file, password) {
             pages.push(items);
         }
 
-        statusEl.textContent = 'Parsing trades...';
+        statusEl.textContent = 'Loading parser...';
 
-        // Route to broker-specific parser
-        var parser = CN_PARSERS[cnSelectedAccount.cn_parser_template];
+        // Dynamically load the broker-specific parser if not already loaded
+        var template = cnSelectedAccount.cn_parser_template;
+        await loadCnParser(template);
+        var parser = CN_PARSERS[template];
         if (!parser) {
-            throw new Error('No parser found for template: ' + cnSelectedAccount.cn_parser_template);
+            throw new Error('No parser found for template: ' + template);
         }
 
+        statusEl.textContent = 'Parsing trades...';
         var parseResult = parser(pages, pdf.numPages);
         // parseResult = { tradeDate, cnNumber, trades: [{segment, description, buySell, qty, price, amount}], charges: {equity:{brokerage,stt,gst,...}, nfo:{...}} }
 
@@ -318,264 +321,71 @@ async function saveCnPassword(accountId, password) {
 }
 
 // ============================================================================
-// FYERS CONTRACT NOTE PARSER
+// CN PARSER PLUGIN ARCHITECTURE
+// ============================================================================
+// Each broker parser lives in its own file: cn-parser-<template>.js
+// Parser files register themselves into CN_PARSERS on load.
+// Shared utilities are in CN_UTILS (available to all parsers).
+//
+// To add a new broker:
+//   1. Create cn-parser-<template>.js following the contract in cn-parser-fyers.js
+//   2. Set cn_parser_template = '<template>' on the broker row in the brokers table
+//   3. No changes needed to this file!
 // ============================================================================
 
 var CN_PARSERS = {};
+var cnLoadedParsers = {};  // Track which parser scripts have been loaded
 
-CN_PARSERS.fyers = function(pages, numPages) {
-    // Fyers CN structure:
-    // Pages 1-2: Summary (we ignore BF/CF, only use B/S from summary for cross-check)
-    // Page 2: Obligation Details (charges breakdown)
-    // Pages 4+: Trade Annexure (individual trades)
-
-    var allText = [];
-    pages.forEach(function(pageItems) {
-        // Sort by Y desc (top to bottom), then X asc (left to right)
-        var sorted = pageItems.slice().sort(function(a, b) {
-            var yDiff = b.y - a.y;
-            if (Math.abs(yDiff) > 3) return yDiff;
-            return a.x - b.x;
+// Shared utility functions available to all broker parsers via CN_UTILS
+var CN_UTILS = {
+    // Group PDF text items into logical lines by Y coordinate (3px tolerance)
+    buildLines: function(items) {
+        var lineMap = {};
+        items.forEach(function(item) {
+            var yKey = Math.round(item.y / 3) * 3;
+            if (!lineMap[yKey]) lineMap[yKey] = [];
+            lineMap[yKey].push(item);
         });
-        allText.push(sorted);
-    });
 
-    // Extract trade date and CN number from first page
-    var tradeDate = null;
-    var cnNumber = null;
+        var lines = [];
+        Object.keys(lineMap).sort(function(a, b) { return b - a; }).forEach(function(yKey) {
+            var lineItems = lineMap[yKey].sort(function(a, b) { return a.x - b.x; });
+            var text = lineItems.map(function(i) { return i.text; }).join(' ').trim();
+            if (text.length > 0) {
+                lines.push({ text: text, items: lineItems, y: parseFloat(yKey) });
+            }
+        });
+        return lines;
+    },
 
-    var firstPageText = allText[0].map(function(i) { return i.text; }).join(' ');
-
-    var dateMatch = firstPageText.match(/Trade\s*Date\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i);
-    if (dateMatch) {
-        var parts = dateMatch[1].split('/');
-        tradeDate = parts[2] + '-' + parts[1] + '-' + parts[0]; // YYYY-MM-DD
+    // Extract numeric values (with commas) from text, ignoring DR/CR suffixes
+    extractNumbers: function(text) {
+        var matches = text.match(/[\d,]+\.\d{2}/g);
+        if (!matches) return [];
+        return matches.map(function(m) { return parseFloat(m.replace(/,/g, '')); });
     }
-
-    var cnMatch = firstPageText.match(/CONTRACT\s*NOTE\s*NO\s*:?\s*(\d+)/i);
-    if (cnMatch) cnNumber = cnMatch[1];
-
-    if (!tradeDate) throw new Error('Could not extract Trade Date from contract note.');
-    if (!cnNumber) throw new Error('Could not extract Contract Note Number.');
-
-    // Parse Trade Annexure pages (pages with "Trade Annexure" or individual trade rows)
-    var trades = [];
-    var currentSegment = null; // 'EQUITY' or 'NFO'
-
-    for (var p = 0; p < allText.length; p++) {
-        var pageText = allText[p];
-        // Build lines from items grouped by Y coordinate
-        var lines = buildLines(pageText);
-
-        for (var li = 0; li < lines.length; li++) {
-            var lineText = lines[li].text;
-
-            // Detect segment headers
-            if (lineText.match(/NCL-NSE-Equity/i) || lineText.match(/NCL-BSE-Equity/i)) {
-                currentSegment = 'EQUITY';
-                continue;
-            }
-            if (lineText.match(/^NSEFO$/i) || lineText.match(/^BSEFO$/i) || lineText.match(/^MCXFO$/i) || lineText.match(/^NSEFO$/)) {
-                currentSegment = 'NFO';
-                continue;
-            }
-
-            // Skip non-trade lines
-            if (!currentSegment) continue;
-            if (lineText.match(/^Order Number/i) || lineText.match(/^Trade Annexure/i) || lineText.match(/^Notes:/i) || lineText.match(/^Page \d/i)) continue;
-            if (lineText.match(/^\*\s*Remark/)) continue;
-            if (lineText.match(/REVISED|CONTRACT NOTE|FYERS SECURITIES|Registered Office|SEBI Reg|Compliance|UCC|Name of|Address|State|Mobile|PAN|Client GSTIN|Invoice|Equity ICCL|Settlement/i)) continue;
-
-            // Parse trade row: OrderNo, OrderTime, TradeNo, TradeTime, Security, B/S, Qty, Price, [ForeignPrice], NetRate, NetAmount, [Remark]
-            var tradeMatch = parseFyersTradeRow(lines[li].items, currentSegment);
-            if (tradeMatch) {
-                trades.push(tradeMatch);
-            }
-        }
-    }
-
-    if (trades.length === 0) throw new Error('No trades found in the Trade Annexure. Is this a valid Fyers contract note?');
-
-    // Parse Obligation Details for charges
-    var charges = parseFyersObligationDetails(allText);
-
-    return { tradeDate: tradeDate, cnNumber: cnNumber, trades: trades, charges: charges };
 };
 
-function buildLines(items) {
-    // Group items by Y coordinate (within 3px tolerance)
-    var lineMap = {};
-    items.forEach(function(item) {
-        var yKey = Math.round(item.y / 3) * 3;
-        if (!lineMap[yKey]) lineMap[yKey] = [];
-        lineMap[yKey].push(item);
-    });
-
-    var lines = [];
-    Object.keys(lineMap).sort(function(a, b) { return b - a; }).forEach(function(yKey) {
-        var lineItems = lineMap[yKey].sort(function(a, b) { return a.x - b.x; });
-        var text = lineItems.map(function(i) { return i.text; }).join(' ').trim();
-        if (text.length > 0) {
-            lines.push({ text: text, items: lineItems, y: parseFloat(yKey) });
-        }
-    });
-    return lines;
-}
-
-function parseFyersTradeRow(items, segment) {
-    // Trade row items sorted by X position.
-    // Expected columns: OrderNo(long number), OrderTime(HH:MM:SS), TradeNo, TradeTime, SecurityDesc, B/S, Qty, Price, [ForeignPrice], NetRate, NetAmount, [Remark]
-    var texts = items.map(function(i) { return i.text.trim(); }).filter(function(t) { return t.length > 0; });
-    var joined = texts.join(' ');
-
-    // Must start with a long order number (at least 10 digits)
-    if (!texts[0] || !texts[0].match(/^\d{10,}$/)) return null;
-
-    // Find B or S marker
-    var bsIdx = -1;
-    for (var i = 0; i < texts.length; i++) {
-        if (texts[i] === 'B' || texts[i] === 'S') { bsIdx = i; break; }
-    }
-    if (bsIdx < 0) return null;
-
-    // Security description is everything between TradeTime and B/S
-    // TradeTime is at index 3 (OrderNo, OrderTime, TradeNo, TradeTime, ...desc..., B/S, Qty, ...)
-    var descParts = texts.slice(4, bsIdx);
-    var description = descParts.join(' ');
-
-    var buySell = texts[bsIdx] === 'B' ? 'BUY' : 'SELL';
-    var qty = parseInt(texts[bsIdx + 1]) || 0;
-    var price = parseFloat(texts[bsIdx + 2]) || 0;
-
-    // Net Amount is typically the last numeric value
-    var netAmount = 0;
-    for (var j = texts.length - 1; j > bsIdx; j--) {
-        var val = parseFloat(texts[j]);
-        if (!isNaN(val) && Math.abs(val) > 1) { netAmount = Math.abs(val); break; }
-    }
-
-    if (qty === 0 || price === 0) return null;
-
-    // Extract underlying symbol from description
-    var symbolInfo = parseFyersSecurityDescription(description, segment);
-
-    return {
-        segment: segment,
-        description: description,
-        buySell: buySell,
-        qty: Math.abs(qty),
-        price: price,
-        amount: netAmount || (Math.abs(qty) * price),
-        orderNo: texts[0],
-        tradeNo: texts[2],
-        tradeTime: texts[3],
-        underlying: symbolInfo.underlying,
-        instrumentType: symbolInfo.instrumentType,
-        expiry: symbolInfo.expiry,
-        strikePrice: symbolInfo.strikePrice,
-        optionType: symbolInfo.optionType
-    };
-}
-
-function parseFyersSecurityDescription(desc, segment) {
-    // Equity: "PVP-PVP VENTURES LIMITED" → underlying=PVP
-    // FUTSTK: "FUTSTK 360ONE 24Feb2026" → underlying=360ONE, type=FUTURES
-    // OPTIDX: "OPTIDX NIFTY 03Feb2026 25300 PE" → underlying=NIFTY, type=OPTIONS, strike=25300, option=PE
-
-    var result = { underlying: '', instrumentType: '', expiry: null, strikePrice: null, optionType: null };
-
-    if (segment === 'EQUITY') {
-        // "PVP-PVP VENTURES LIMITED" → symbol is before the dash
-        var dashIdx = desc.indexOf('-');
-        result.underlying = dashIdx > 0 ? desc.substring(0, dashIdx).trim() : desc.trim();
-        result.instrumentType = 'EQUITY';
-        return result;
-    }
-
-    // F&O formats
-    var parts = desc.split(/\s+/);
-    if (parts.length < 3) { result.underlying = desc; return result; }
-
-    var instrPrefix = parts[0]; // FUTSTK, FUTIDX, OPTSTK, OPTIDX, OPTCUR, FUTCUR, etc.
-    result.underlying = parts[1];
-
-    // Parse instrument type
-    if (instrPrefix.startsWith('FUT')) {
-        result.instrumentType = 'FUTURES';
-        // Expiry: "24Feb2026"
-        if (parts[2]) result.expiry = parseFyersExpiry(parts[2]);
-    } else if (instrPrefix.startsWith('OPT')) {
-        result.instrumentType = 'OPTIONS';
-        if (parts[2]) result.expiry = parseFyersExpiry(parts[2]);
-        if (parts[3]) result.strikePrice = parseFloat(parts[3]) || null;
-        if (parts[4]) result.optionType = parts[4]; // CE or PE
-    }
-
-    return result;
-}
-
-function parseFyersExpiry(str) {
-    // "24Feb2026" → "2026-02-24"
-    var m = str.match(/(\d{1,2})(\w{3})(\d{4})/);
-    if (!m) return null;
-    var months = { Jan:'01', Feb:'02', Mar:'03', Apr:'04', May:'05', Jun:'06', Jul:'07', Aug:'08', Sep:'09', Oct:'10', Nov:'11', Dec:'12' };
-    var mon = months[m[2]];
-    if (!mon) return null;
-    return m[3] + '-' + mon + '-' + ('0' + m[1]).slice(-2);
-}
-
-function parseFyersObligationDetails(allText) {
-    // Look for "Obligation Details" section on page 2 (or wherever it appears)
-    // Extract: Brokerage, IGST, Stamp Duty, STT, exchange charges, SEBI charges
-    // per segment (NCLCM = equity, NCLFO = F&O)
-
-    var charges = {
-        equity: { brokerage: 0, stt: 0, gst: 0, exchangeCharges: 0, sebiCharges: 0, stampDuty: 0, ipft: 0 },
-        nfo: { brokerage: 0, stt: 0, gst: 0, exchangeCharges: 0, sebiCharges: 0, stampDuty: 0, ipft: 0 }
-    };
-
-    for (var p = 0; p < allText.length; p++) {
-        var lines = buildLines(allText[p]);
-        var inObligationSection = false;
-
-        for (var li = 0; li < lines.length; li++) {
-            var lineText = lines[li].text;
-
-            if (lineText.match(/Obligation\s*Details/i)) { inObligationSection = true; continue; }
-            if (!inObligationSection) continue;
-            if (lineText.match(/Net Amount Receivable/i)) { inObligationSection = false; continue; }
-
-            // Parse charge rows: "Description NCLCM_value NCLFO_value ... Total"
-            var nums = extractNumbers(lineText);
-
-            if (lineText.match(/Brokerage/i) && !lineText.match(/GST on brokerage/i)) {
-                if (nums.length >= 2) { charges.equity.brokerage = nums[0]; charges.nfo.brokerage = nums[1]; }
-            } else if (lineText.match(/Stamp\s*Duty/i)) {
-                if (nums.length >= 2) { charges.equity.stampDuty = nums[0]; charges.nfo.stampDuty = nums[1]; }
-            } else if (lineText.match(/Securities\s*Trans/i) || lineText.match(/^STT/i)) {
-                if (nums.length >= 2) { charges.equity.stt = nums[0]; charges.nfo.stt = nums[1]; }
-            } else if (lineText.match(/IGST|CGST|SGST/i)) {
-                if (nums.length >= 2) { charges.equity.gst = nums[0]; charges.nfo.gst = nums[1]; }
-            } else if (lineText.match(/Toc.*Exchange/i) || lineText.match(/Transaction.*Exchange/i)) {
-                if (nums.length >= 2) { charges.equity.exchangeCharges = nums[0]; charges.nfo.exchangeCharges = nums[1]; }
-            } else if (lineText.match(/Sebitoc|SEBI/i)) {
-                if (nums.length >= 2) { charges.equity.sebiCharges = nums[0]; charges.nfo.sebiCharges = nums[1]; }
-            } else if (lineText.match(/Ipft/i)) {
-                if (nums.length >= 2) { charges.equity.ipft = nums[0]; charges.nfo.ipft = nums[1]; }
-            } else if (lineText.match(/Cmcharges/i)) {
-                if (nums.length >= 2) { charges.equity.exchangeCharges += nums[0]; charges.nfo.exchangeCharges += nums[1]; }
+// Dynamically load a broker parser script (once per template)
+function loadCnParser(template) {
+    if (cnLoadedParsers[template]) return cnLoadedParsers[template];
+    cnLoadedParsers[template] = new Promise(function(resolve, reject) {
+        var script = document.createElement('script');
+        script.src = 'cn-parser-' + template + '.js?t=' + Date.now();
+        script.onload = function() {
+            if (CN_PARSERS[template]) {
+                console.log('CN parser loaded: ' + template);
+                resolve();
+            } else {
+                reject(new Error('Parser file loaded but CN_PARSERS.' + template + ' not registered.'));
             }
-        }
-    }
-
-    return charges;
-}
-
-function extractNumbers(text) {
-    // Extract numeric values (including with commas), ignoring DR/CR suffixes
-    var matches = text.match(/[\d,]+\.\d{2}/g);
-    if (!matches) return [];
-    return matches.map(function(m) { return parseFloat(m.replace(/,/g, '')); });
+        };
+        script.onerror = function() {
+            reject(new Error('Failed to load parser file: cn-parser-' + template + '.js'));
+        };
+        document.head.appendChild(script);
+    });
+    return cnLoadedParsers[template];
 }
 
 // ============================================================================
