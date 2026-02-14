@@ -349,11 +349,13 @@ async function saveCnPassword(accountId, password) {
 //   3. No changes needed to this file!
 // ============================================================================
 
-var CN_PARSERS = {};
+// Explicitly attach to window so parser scripts (cn-parser-*.js) can access them
+window.CN_PARSERS = window.CN_PARSERS || {};
+var CN_PARSERS = window.CN_PARSERS;
 var cnLoadedParsers = {};  // Track which parser scripts have been loaded
 
 // Shared utility functions available to all broker parsers via CN_UTILS
-var CN_UTILS = {
+window.CN_UTILS = {
     // Group PDF text items into logical lines by Y coordinate (3px tolerance)
     buildLines: function(items) {
         var lineMap = {};
@@ -574,7 +576,7 @@ async function checkDuplicates(rows, tradeDate) {
     var investorId = cnSelectedAccount.investor_id;
     var brokerId = cnSelectedAccount.broker_id;
 
-    var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + investorId + '&broker_id=eq.' + brokerId + '&transaction_date=eq.' + tradeDate + '&select=id,symbol,transaction_type,quantity,price,gross_amount', {
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + investorId + '&broker_id=eq.' + brokerId + '&transaction_date=eq.' + tradeDate + '&select=id,symbol,transaction_type,quantity,price,gross_amount,tags', {
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
     });
     var existing = await resp.json();
@@ -591,8 +593,10 @@ async function checkDuplicates(rows, tradeDate) {
         if (match) {
             r._existingId = match.id;
             r._action = 'UPDATE';
+            r.tags = match.tags || [];  // Load existing tags for editing
             cnUpdateRows.push(r);
         } else {
+            r.tags = [];  // Empty tags for new rows
             r._action = 'NEW';
             cnNewRows.push(r);
         }
@@ -664,6 +668,8 @@ function displayCnPreview(parseResult) {
 function createCnPreviewRow(r, idx) {
     var tr = document.createElement('tr');
     var typeClass = r.transaction_type === 'BUY' ? 'type-buy' : 'type-sell';
+    var tagsValue = Array.isArray(r.tags) ? r.tags.join(', ') : (r.tags || '');
+    var tagInputId = 'cnTag_' + r._action + '_' + (idx - 1);
     tr.innerHTML = '<td>' + idx + '</td>' +
         '<td class="' + typeClass + '">' + r.transaction_type + '</td>' +
         '<td>' + r.security_type + '</td>' +
@@ -675,7 +681,8 @@ function createCnPreviewRow(r, idx) {
         '<td style="text-align:right;">' + formatINR(r.stt) + '</td>' +
         '<td style="text-align:right;">' + formatINR(r.other_charges) + '</td>' +
         '<td style="text-align:right;">' + formatINR(r.gst) + '</td>' +
-        '<td style="text-align:right;font-weight:600;">' + formatINR(r.net_amount) + '</td>';
+        '<td style="text-align:right;font-weight:600;">' + formatINR(r.net_amount) + '</td>' +
+        '<td><input type="text" id="' + tagInputId + '" value="' + tagsValue + '" placeholder="e.g. intraday, hedge" style="width:100%;min-width:80px;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;"></td>';
     return tr;
 }
 
@@ -696,6 +703,22 @@ window.importCnToDatabase = async function() {
     }
 
     if (!confirm('Import ' + cnNewRows.length + ' new + ' + cnUpdateRows.length + ' updates = ' + totalRows + ' transactions?')) return;
+
+    // Read tags from input fields before importing
+    cnNewRows.forEach(function(r, i) {
+        var input = document.getElementById('cnTag_NEW_' + i);
+        if (input) {
+            var val = input.value.trim();
+            r.tags = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : null;
+        }
+    });
+    cnUpdateRows.forEach(function(r, i) {
+        var input = document.getElementById('cnTag_UPDATE_' + i);
+        if (input) {
+            var val = input.value.trim();
+            r.tags = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : null;
+        }
+    });
 
     showLoading(true, 'Importing transactions...');
     document.getElementById('cnImportBtn').disabled = true;
@@ -796,7 +819,7 @@ function buildTransactionRecord(row) {
         margin_blocked: 0,
         broker_contract_note_no: cnCnNumber,
         broker_trade_id: null,
-        tags: null,
+        tags: row.tags || null,
         notes: 'Imported from CN #' + cnCnNumber,
         ignore_for_avg_cost: false,
         dont_display: false
