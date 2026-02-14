@@ -615,13 +615,23 @@ function displayCnPreview(parseResult) {
     document.getElementById('cnStatUpdate').textContent = cnUpdateRows.length;
     document.getElementById('cnStatError').textContent = cnErrorRows.length;
 
+    // Sort: BUY first, then SELL
+    function sortBuyFirst(arr) {
+        return arr.slice().sort(function(a, b) {
+            if (a.transaction_type === b.transaction_type) return 0;
+            return a.transaction_type === 'BUY' ? -1 : 1;
+        });
+    }
+    var sortedNew = sortBuyFirst(cnNewRows);
+    var sortedUpdate = sortBuyFirst(cnUpdateRows);
+
     // New rows table
     var newTbody = document.getElementById('cnNewTableBody');
     newTbody.innerHTML = '';
-    if (cnNewRows.length > 0) {
+    if (sortedNew.length > 0) {
         document.getElementById('cnNewSection').style.display = '';
-        cnNewRows.forEach(function(r, i) { newTbody.appendChild(createCnPreviewRow(r, i + 1)); });
-        newTbody.appendChild(createCnTotalsRow(cnNewRows));
+        sortedNew.forEach(function(r, i) { newTbody.appendChild(createCnPreviewRow(r, i + 1)); });
+        newTbody.appendChild(createCnTotalsRow(sortedNew));
     } else {
         document.getElementById('cnNewSection').style.display = 'none';
     }
@@ -629,10 +639,10 @@ function displayCnPreview(parseResult) {
     // Update rows table
     var updateTbody = document.getElementById('cnUpdateTableBody');
     updateTbody.innerHTML = '';
-    if (cnUpdateRows.length > 0) {
+    if (sortedUpdate.length > 0) {
         document.getElementById('cnUpdateSection').style.display = '';
-        cnUpdateRows.forEach(function(r, i) { updateTbody.appendChild(createCnPreviewRow(r, i + 1)); });
-        updateTbody.appendChild(createCnTotalsRow(cnUpdateRows));
+        sortedUpdate.forEach(function(r, i) { updateTbody.appendChild(createCnPreviewRow(r, i + 1)); });
+        updateTbody.appendChild(createCnTotalsRow(sortedUpdate));
     } else {
         document.getElementById('cnUpdateSection').style.display = 'none';
     }
@@ -659,7 +669,7 @@ function displayCnPreview(parseResult) {
 function createCnPreviewRow(r, idx) {
     var tr = document.createElement('tr');
     var typeClass = r.transaction_type === 'BUY' ? 'type-buy' : 'type-sell';
-    var tagsValue = Array.isArray(r.tags) ? r.tags.join(', ') : (r.tags || '');
+    var tagsValue = Array.isArray(r.tags) ? r.tags.filter(function(t) { return t !== 'blank'; }).join(', ') : (r.tags || '');
     var tagInputId = 'cnTag_' + r._action + '_' + (idx - 1);
     tr.innerHTML = '<td>' + idx + '</td>' +
         '<td class="' + typeClass + '">' + r.transaction_type + '</td>' +
@@ -672,41 +682,109 @@ function createCnPreviewRow(r, idx) {
         '<td style="text-align:right;">' + formatCnAmount(r.other_charges) + '</td>' +
         '<td style="text-align:right;">' + formatCnAmount(r.gst) + '</td>' +
         '<td style="text-align:right;font-weight:600;" class="' + (r.transaction_type === 'SELL' ? 'negative' : '') + '">' + formatCnAmount(r.transaction_type === 'SELL' ? -Math.abs(r.net_amount) : Math.abs(r.net_amount)) + '</td>' +
-        '<td style="min-width:120px;">' +
-            '<input type="text" id="' + tagInputId + '" value="' + tagsValue + '" placeholder="e.g. intraday, hedge" style="width:100%;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;">' +
-            '<div class="cn-tag-pills" data-input="' + tagInputId + '" style="margin-top:3px;display:flex;flex-wrap:wrap;gap:2px;"></div>' +
+        '<td style="min-width:140px;position:relative;">' +
+            '<div class="cn-tag-selected" id="' + tagInputId + '_pills" style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:3px;"></div>' +
+            '<input type="text" id="' + tagInputId + '" value="" autocomplete="off" placeholder="type to search tags..." style="width:100%;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;">' +
+            '<div class="cn-tag-dropdown" id="' + tagInputId + '_dd" style="display:none;position:absolute;z-index:100;left:0;right:0;max-height:120px;overflow-y:auto;background:#fff;border:1px solid #cbd5e0;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.12);margin-top:2px;"></div>' +
         '</td>';
 
-    // After innerHTML is set, populate pill containers via setTimeout (needs DOM render)
-    setTimeout(function() {
-        var pillContainer = tr.querySelector('.cn-tag-pills');
-        if (pillContainer && existingTags.length > 0) {
-            existingTags.forEach(function(tag) {
-                var pill = document.createElement('span');
-                pill.textContent = tag;
-                pill.style.cssText = 'display:inline-block;padding:1px 6px;font-size:10px;background:#e2e8f0;color:#4a5568;border-radius:10px;cursor:pointer;white-space:nowrap;';
-                pill.addEventListener('click', function() {
-                    var input = document.getElementById(tagInputId);
-                    if (!input) return;
-                    var current = input.value.split(',').map(function(t) { return t.trim().toLowerCase(); }).filter(function(t) { return t.length > 0; });
-                    if (current.indexOf(tag) === -1) {
-                        input.value = current.length > 0 ? input.value.trim() + ', ' + tag : tag;
-                        pill.style.background = '#bee3f8';
-                        pill.style.color = '#2b6cb0';
-                    }
-                });
-                // Highlight pills already in the input
-                var currentTags = tagsValue.split(',').map(function(t) { return t.trim().toLowerCase(); });
-                if (currentTags.indexOf(tag) !== -1) {
-                    pill.style.background = '#bee3f8';
-                    pill.style.color = '#2b6cb0';
-                }
-                pillContainer.appendChild(pill);
-            });
-        }
-    }, 0);
+    // Wire up tag autocomplete after DOM render
+    setTimeout(function() { initTagAutocomplete(tagInputId, tagsValue); }, 0);
 
     return tr;
+}
+
+function initTagAutocomplete(inputId, initialValue) {
+    var input = document.getElementById(inputId);
+    var pillsDiv = document.getElementById(inputId + '_pills');
+    var dropdown = document.getElementById(inputId + '_dd');
+    if (!input || !pillsDiv || !dropdown) return;
+
+    // Track selected tags
+    var selected = initialValue ? initialValue.split(',').map(function(t) { return t.trim().toLowerCase(); }).filter(function(t) { return t.length > 0 && t !== 'blank'; }) : [];
+
+    // Render selected pills
+    function renderPills() {
+        pillsDiv.innerHTML = '';
+        selected.forEach(function(tag) {
+            var pill = document.createElement('span');
+            pill.style.cssText = 'display:inline-flex;align-items:center;gap:3px;padding:1px 8px;font-size:10px;background:#bee3f8;color:#2b6cb0;border-radius:10px;cursor:pointer;white-space:nowrap;';
+            pill.textContent = tag;
+            var x = document.createElement('span');
+            x.textContent = '\u00d7';
+            x.style.cssText = 'font-size:12px;font-weight:700;margin-left:2px;';
+            pill.appendChild(x);
+            pill.addEventListener('click', function() {
+                selected = selected.filter(function(s) { return s !== tag; });
+                syncInput();
+                renderPills();
+            });
+            pillsDiv.appendChild(pill);
+        });
+    }
+
+    // Sync hidden value for import reading
+    function syncInput() {
+        input.dataset.tags = selected.join(', ');
+    }
+
+    // Show dropdown with matching tags
+    function showDropdown(filter) {
+        dropdown.innerHTML = '';
+        var matches = existingTags.filter(function(tag) {
+            // Not already selected, and matches typed filter
+            return selected.indexOf(tag) === -1 && tag.indexOf(filter.toLowerCase()) !== -1;
+        });
+        if (matches.length === 0 && filter.length > 0) {
+            // Offer to create a new tag
+            var item = document.createElement('div');
+            item.style.cssText = 'padding:4px 8px;font-size:11px;cursor:pointer;color:#718096;font-style:italic;';
+            item.textContent = 'Add "' + filter.trim() + '" as new tag';
+            item.addEventListener('mousedown', function(e) {
+                e.preventDefault();
+                var newTag = filter.trim().toLowerCase();
+                if (newTag && selected.indexOf(newTag) === -1) {
+                    selected.push(newTag);
+                    if (existingTags.indexOf(newTag) === -1) existingTags.push(newTag);
+                    existingTags.sort();
+                    syncInput();
+                    renderPills();
+                    input.value = '';
+                    dropdown.style.display = 'none';
+                }
+            });
+            dropdown.appendChild(item);
+            dropdown.style.display = 'block';
+            return;
+        }
+        if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+        matches.forEach(function(tag) {
+            var item = document.createElement('div');
+            item.style.cssText = 'padding:4px 8px;font-size:11px;cursor:pointer;';
+            item.textContent = tag;
+            item.addEventListener('mouseenter', function() { item.style.background = '#edf2f7'; });
+            item.addEventListener('mouseleave', function() { item.style.background = '#fff'; });
+            item.addEventListener('mousedown', function(e) {
+                e.preventDefault();
+                selected.push(tag);
+                syncInput();
+                renderPills();
+                input.value = '';
+                dropdown.style.display = 'none';
+            });
+            dropdown.appendChild(item);
+        });
+        dropdown.style.display = 'block';
+    }
+
+    // Events
+    input.addEventListener('input', function() { showDropdown(input.value); });
+    input.addEventListener('focus', function() { if (input.value.length > 0) showDropdown(input.value); });
+    input.addEventListener('blur', function() { setTimeout(function() { dropdown.style.display = 'none'; }, 150); });
+
+    // Init
+    renderPills();
+    syncInput();
 }
 
 function createCnTotalsRow(rows) {
@@ -779,11 +857,11 @@ window.importCnToDatabase = async function() {
 
     if (!confirm('Import ' + cnNewRows.length + ' new + ' + cnUpdateRows.length + ' updates = ' + totalRows + ' transactions?')) return;
 
-    // Read tags from input fields before importing (blank → ['blank'], never null)
+    // Read tags from autocomplete pill selections (data-tags attr), blank → ['blank']
     cnNewRows.forEach(function(r, i) {
         var input = document.getElementById('cnTag_NEW_' + i);
         if (input) {
-            var val = input.value.trim();
+            var val = (input.dataset.tags || '').trim();
             var parsed = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [];
             r.tags = parsed.length > 0 ? parsed : ['blank'];
         }
@@ -791,7 +869,7 @@ window.importCnToDatabase = async function() {
     cnUpdateRows.forEach(function(r, i) {
         var input = document.getElementById('cnTag_UPDATE_' + i);
         if (input) {
-            var val = input.value.trim();
+            var val = (input.dataset.tags || '').trim();
             var parsed = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [];
             r.tags = parsed.length > 0 ? parsed : ['blank'];
         }
