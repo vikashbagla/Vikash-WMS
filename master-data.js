@@ -6,6 +6,8 @@
 var brokerAccountCounter = 0;
 var editingInvestorId = null;
 var editingBrokerId = null;
+var _chargesData = [];
+var _chargesLoaded = false;
 
 // Universal Data Layer
 var DB = {
@@ -176,14 +178,38 @@ var DB = {
         if (user) {
             await fetch(`${this.supabaseUrl}/rest/v1/users?id=eq.${user.id}`, {
                 method: 'PATCH',
-                headers: { 
-                    'apikey': this.supabaseKey, 
-                    'Authorization': `Bearer ${this.supabaseKey}`, 
-                    'Content-Type': 'application/json' 
+                headers: {
+                    'apikey': this.supabaseKey,
+                    'Authorization': `Bearer ${this.supabaseKey}`,
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ preferences })
             });
         }
+    },
+
+    async getChargesConfig() {
+        const response = await fetch(`${this.supabaseUrl}/rest/v1/regulatory_charges_config?effective_to=is.null&order=charge_type.asc,transaction_category.asc,transaction_type.asc`, {
+            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+        });
+        return await response.json();
+    },
+
+    async expireChargeRow(id, effectiveTo) {
+        await fetch(`${this.supabaseUrl}/rest/v1/regulatory_charges_config?id=eq.${id}`, {
+            method: 'PATCH',
+            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ effective_to: effectiveTo })
+        });
+    },
+
+    async insertChargeRows(rows) {
+        const response = await fetch(`${this.supabaseUrl}/rest/v1/regulatory_charges_config`, {
+            method: 'POST',
+            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+            body: JSON.stringify(rows)
+        });
+        return await response.json();
     }
 };
 
@@ -215,6 +241,9 @@ function initMasterData() {
         if (savedTab === 'preferences') {
             loadPreferences();
         }
+        if (savedTab === 'charges') {
+            if (!_chargesLoaded) { _chargesLoaded = true; loadChargesConfig(); }
+        }
     }
 }
 
@@ -239,6 +268,9 @@ function switchTab(event, tabName) {
     }
     if (tabName === 'preferences') {
         loadPreferences();
+    }
+    if (tabName === 'charges') {
+        if (!_chargesLoaded) { _chargesLoaded = true; loadChargesConfig(); }
     }
 }
 
@@ -2007,3 +2039,291 @@ window.saveBroker = saveBroker;
 window.removeBrokerAccount = removeBrokerAccount;
 window.loadBrokerDefaults = loadBrokerDefaults;
 window.addBrokerAccount = addBrokerAccount;
+window.openChargesEditModal = openChargesEditModal;
+window.closeChargesEditModal = closeChargesEditModal;
+window.saveChargesConfig = saveChargesConfig;
+window.seedDefaultCharges = seedDefaultCharges;
+
+// ===================== REGULATORY CHARGES =====================
+
+var CHARGE_CATEGORIES = ['EQUITY_DELIVERY', 'EQUITY_INTRADAY', 'FUTURES', 'OPTIONS'];
+var CHARGE_TYPES = ['STT', 'STAMP_DUTY', 'EXCHANGE_CHARGES', 'SEBI_CHARGES'];
+var CATEGORY_LABELS = {
+    'EQUITY_DELIVERY': 'Equity Delivery',
+    'EQUITY_INTRADAY': 'Equity Intraday',
+    'FUTURES': 'Futures',
+    'OPTIONS': 'Options'
+};
+var CHARGE_LABELS = {
+    'STT': 'STT',
+    'STAMP_DUTY': 'Stamp Duty',
+    'EXCHANGE_CHARGES': 'Exchange Txn Charges',
+    'SEBI_CHARGES': 'SEBI Charges'
+};
+
+async function loadChargesConfig() {
+    try {
+        _chargesData = await DB.getChargesConfig();
+        renderChargesGrid();
+    } catch (e) {
+        console.error('Failed to load charges:', e);
+        document.getElementById('chargesGrid').innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><h3>Failed to load charges</h3></div>';
+    }
+}
+
+function getChargeRow(category, chargeType, side) {
+    return _chargesData.find(r =>
+        r.transaction_category === category &&
+        r.charge_type === chargeType &&
+        r.transaction_type === side
+    );
+}
+
+function formatRate(val) {
+    if (val === null || val === undefined) return '-';
+    var n = parseFloat(val);
+    // Show up to 6 decimal places, trim trailing zeros
+    return n.toFixed(6).replace(/\.?0+$/, '') + '%';
+}
+
+function renderChargesGrid() {
+    var grid = document.getElementById('chargesGrid');
+    var seedBtn = document.getElementById('seedChargesBtn');
+    var effLabel = document.getElementById('chargesEffective');
+
+    if (!_chargesData || _chargesData.length === 0) {
+        grid.innerHTML = '<div class="empty-state"><div class="empty-state-icon">💰</div><h3>No regulatory charges configured</h3><p>Click "Add Default Charges" to populate with current Indian market rates.</p></div>';
+        seedBtn.style.display = 'inline-block';
+        effLabel.textContent = '';
+        return;
+    }
+    seedBtn.style.display = 'none';
+
+    // Find most recent effective_from
+    var dates = _chargesData.map(r => r.effective_from).filter(Boolean).sort();
+    var latestDate = dates.length ? dates[dates.length - 1] : null;
+    effLabel.textContent = latestDate ? 'Effective from: ' + formatDateShort(latestDate) : '';
+
+    // Build Zerodha-style grid: rows = charge types, cols = categories
+    var html = '<table class="data-table" style="font-size:13px;"><thead><tr>';
+    html += '<th style="text-align:left;min-width:160px;">Charge Type</th>';
+    CHARGE_CATEGORIES.forEach(function(cat) {
+        html += '<th style="text-align:center;">' + CATEGORY_LABELS[cat] + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+
+    CHARGE_TYPES.forEach(function(ct) {
+        html += '<tr>';
+        html += '<td style="font-weight:600;">' + CHARGE_LABELS[ct] + '</td>';
+        CHARGE_CATEGORIES.forEach(function(cat) {
+            var buyRow = getChargeRow(cat, ct, 'BUY');
+            var sellRow = getChargeRow(cat, ct, 'SELL');
+            var buyRate = buyRow ? parseFloat(buyRow.rate_percentage) : null;
+            var sellRate = sellRow ? parseFloat(sellRow.rate_percentage) : null;
+
+            var cellText = '';
+            if (buyRate !== null && sellRate !== null) {
+                if (buyRate === sellRate && buyRate > 0) {
+                    cellText = formatRate(buyRate) + ' <span style="color:#888;font-size:11px;">(B+S)</span>';
+                } else if (buyRate > 0 && sellRate > 0) {
+                    cellText = 'B: ' + formatRate(buyRate) + '<br>S: ' + formatRate(sellRate);
+                } else if (buyRate > 0) {
+                    cellText = formatRate(buyRate) + ' <span style="color:#888;font-size:11px;">(B)</span>';
+                } else if (sellRate > 0) {
+                    cellText = formatRate(sellRate) + ' <span style="color:#888;font-size:11px;">(S)</span>';
+                } else {
+                    cellText = '<span style="color:#aaa;">0%</span>';
+                }
+            } else if (buyRate !== null) {
+                cellText = buyRate > 0 ? formatRate(buyRate) + ' <span style="color:#888;font-size:11px;">(B)</span>' : '<span style="color:#aaa;">0%</span>';
+            } else if (sellRate !== null) {
+                cellText = sellRate > 0 ? formatRate(sellRate) + ' <span style="color:#888;font-size:11px;">(S)</span>' : '<span style="color:#aaa;">0%</span>';
+            } else {
+                cellText = '<span style="color:#aaa;">-</span>';
+            }
+            html += '<td style="text-align:center;">' + cellText + '</td>';
+        });
+        html += '</tr>';
+    });
+
+    // GST row
+    html += '<tr><td style="font-weight:600;">GST</td>';
+    CHARGE_CATEGORIES.forEach(function(cat) {
+        // Find any row with gst_applicable for this category
+        var gstRow = _chargesData.find(r => r.transaction_category === cat && r.gst_applicable);
+        var gstRate = gstRow ? parseFloat(gstRow.gst_rate) : null;
+        html += '<td style="text-align:center;">' + (gstRate ? gstRate + '% <span style="color:#888;font-size:11px;">on Brk+Txn+SEBI</span>' : '<span style="color:#aaa;">-</span>') + '</td>';
+    });
+    html += '</tr>';
+
+    html += '</tbody></table>';
+    grid.innerHTML = html;
+}
+
+function formatDateShort(dateStr) {
+    var d = new Date(dateStr + 'T00:00:00');
+    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return ('0' + d.getDate()).slice(-2) + '-' + months[d.getMonth()] + '-' + String(d.getFullYear()).slice(-2);
+}
+
+function openChargesEditModal() {
+    var body = document.getElementById('chargesEditBody');
+    var html = '';
+    var idx = 0;
+
+    CHARGE_CATEGORIES.forEach(function(cat) {
+        CHARGE_TYPES.forEach(function(ct) {
+            ['BUY', 'SELL'].forEach(function(side) {
+                var row = getChargeRow(cat, ct, side);
+                var rate = row ? row.rate_percentage : 0;
+                var gstApp = row ? row.gst_applicable : false;
+                var gstRate = row ? (row.gst_rate || '') : '';
+                var rowId = row ? row.id : '';
+
+                html += '<tr data-idx="' + idx + '" data-id="' + rowId + '" data-cat="' + cat + '" data-ct="' + ct + '" data-side="' + side + '">';
+                html += '<td>' + CATEGORY_LABELS[cat] + '</td>';
+                html += '<td>' + CHARGE_LABELS[ct] + '</td>';
+                html += '<td>' + side + '</td>';
+                html += '<td><input type="number" step="0.000001" min="0" value="' + rate + '" class="charge-rate-input" data-orig="' + rate + '" style="width:110px;"></td>';
+                html += '<td><input type="checkbox" class="charge-gst-check" ' + (gstApp ? 'checked' : '') + ' data-orig="' + gstApp + '"></td>';
+                html += '<td><input type="number" step="0.01" min="0" value="' + gstRate + '" class="charge-gst-rate" data-orig="' + gstRate + '" style="width:80px;"></td>';
+                html += '</tr>';
+                idx++;
+            });
+        });
+    });
+
+    body.innerHTML = html;
+    document.getElementById('chargesEditModal').classList.add('show');
+}
+
+function closeChargesEditModal() {
+    document.getElementById('chargesEditModal').classList.remove('show');
+}
+
+async function saveChargesConfig() {
+    var rows = document.querySelectorAll('#chargesEditBody tr');
+    var today = new Date().toISOString().split('T')[0];
+    var toExpire = [];
+    var toInsert = [];
+
+    rows.forEach(function(tr) {
+        var id = tr.dataset.id;
+        var cat = tr.dataset.cat;
+        var ct = tr.dataset.ct;
+        var side = tr.dataset.side;
+
+        var rateInput = tr.querySelector('.charge-rate-input');
+        var gstCheck = tr.querySelector('.charge-gst-check');
+        var gstRateInput = tr.querySelector('.charge-gst-rate');
+
+        var newRate = parseFloat(rateInput.value) || 0;
+        var newGst = gstCheck.checked;
+        var newGstRate = parseFloat(gstRateInput.value) || null;
+
+        var origRate = parseFloat(rateInput.dataset.orig) || 0;
+        var origGst = rateInput.closest('tr').querySelector('.charge-gst-check').dataset.orig === 'true';
+        var origGstRate = parseFloat(gstRateInput.dataset.orig) || null;
+
+        var changed = (newRate !== origRate) || (newGst !== origGst) || (newGstRate !== origGstRate);
+
+        if (changed) {
+            if (id) {
+                toExpire.push(id);
+            }
+            toInsert.push({
+                charge_type: ct,
+                transaction_category: cat,
+                transaction_type: side,
+                rate_percentage: newRate,
+                gst_applicable: newGst,
+                gst_rate: newGstRate,
+                effective_from: today,
+                effective_to: null
+            });
+        }
+    });
+
+    if (toExpire.length === 0 && toInsert.length === 0) {
+        closeChargesEditModal();
+        return;
+    }
+
+    try {
+        // Expire old rows
+        for (var i = 0; i < toExpire.length; i++) {
+            await DB.expireChargeRow(toExpire[i], today);
+        }
+        // Insert new rows
+        if (toInsert.length > 0) {
+            await DB.insertChargeRows(toInsert);
+        }
+        _chargesLoaded = false;
+        _chargesData = await DB.getChargesConfig();
+        renderChargesGrid();
+        closeChargesEditModal();
+        alert('Charges updated successfully!');
+    } catch (e) {
+        console.error('Failed to save charges:', e);
+        alert('Error saving charges: ' + e.message);
+    }
+}
+
+async function seedDefaultCharges() {
+    var today = new Date().toISOString().split('T')[0];
+    var effDate = '2024-10-01'; // Oct 2024 revision date
+
+    var defaults = [
+        // STT
+        { charge_type:'STT', transaction_category:'EQUITY_DELIVERY', transaction_type:'BUY',  rate_percentage:0.1,     gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STT', transaction_category:'EQUITY_DELIVERY', transaction_type:'SELL', rate_percentage:0.1,     gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STT', transaction_category:'EQUITY_INTRADAY', transaction_type:'BUY',  rate_percentage:0,       gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STT', transaction_category:'EQUITY_INTRADAY', transaction_type:'SELL', rate_percentage:0.025,   gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STT', transaction_category:'FUTURES',         transaction_type:'BUY',  rate_percentage:0,       gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STT', transaction_category:'FUTURES',         transaction_type:'SELL', rate_percentage:0.02,    gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STT', transaction_category:'OPTIONS',         transaction_type:'BUY',  rate_percentage:0,       gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STT', transaction_category:'OPTIONS',         transaction_type:'SELL', rate_percentage:0.1,     gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+
+        // STAMP DUTY (buy side only)
+        { charge_type:'STAMP_DUTY', transaction_category:'EQUITY_DELIVERY', transaction_type:'BUY',  rate_percentage:0.015,  gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STAMP_DUTY', transaction_category:'EQUITY_DELIVERY', transaction_type:'SELL', rate_percentage:0,      gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STAMP_DUTY', transaction_category:'EQUITY_INTRADAY', transaction_type:'BUY',  rate_percentage:0.003,  gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STAMP_DUTY', transaction_category:'EQUITY_INTRADAY', transaction_type:'SELL', rate_percentage:0,      gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STAMP_DUTY', transaction_category:'FUTURES',         transaction_type:'BUY',  rate_percentage:0.002,  gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STAMP_DUTY', transaction_category:'FUTURES',         transaction_type:'SELL', rate_percentage:0,      gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STAMP_DUTY', transaction_category:'OPTIONS',         transaction_type:'BUY',  rate_percentage:0.003,  gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+        { charge_type:'STAMP_DUTY', transaction_category:'OPTIONS',         transaction_type:'SELL', rate_percentage:0,      gst_applicable:false, gst_rate:null, effective_from:effDate, effective_to:null },
+
+        // EXCHANGE CHARGES (both sides)
+        { charge_type:'EXCHANGE_CHARGES', transaction_category:'EQUITY_DELIVERY', transaction_type:'BUY',  rate_percentage:0.00345, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'EXCHANGE_CHARGES', transaction_category:'EQUITY_DELIVERY', transaction_type:'SELL', rate_percentage:0.00345, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'EXCHANGE_CHARGES', transaction_category:'EQUITY_INTRADAY', transaction_type:'BUY',  rate_percentage:0.00345, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'EXCHANGE_CHARGES', transaction_category:'EQUITY_INTRADAY', transaction_type:'SELL', rate_percentage:0.00345, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'EXCHANGE_CHARGES', transaction_category:'FUTURES',         transaction_type:'BUY',  rate_percentage:0.00173, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'EXCHANGE_CHARGES', transaction_category:'FUTURES',         transaction_type:'SELL', rate_percentage:0.00173, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'EXCHANGE_CHARGES', transaction_category:'OPTIONS',         transaction_type:'BUY',  rate_percentage:0.035,   gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'EXCHANGE_CHARGES', transaction_category:'OPTIONS',         transaction_type:'SELL', rate_percentage:0.035,   gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+
+        // SEBI CHARGES (both sides, 0.0001% = ₹10 per crore)
+        { charge_type:'SEBI_CHARGES', transaction_category:'EQUITY_DELIVERY', transaction_type:'BUY',  rate_percentage:0.0001, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'SEBI_CHARGES', transaction_category:'EQUITY_DELIVERY', transaction_type:'SELL', rate_percentage:0.0001, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'SEBI_CHARGES', transaction_category:'EQUITY_INTRADAY', transaction_type:'BUY',  rate_percentage:0.0001, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'SEBI_CHARGES', transaction_category:'EQUITY_INTRADAY', transaction_type:'SELL', rate_percentage:0.0001, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'SEBI_CHARGES', transaction_category:'FUTURES',         transaction_type:'BUY',  rate_percentage:0.0001, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'SEBI_CHARGES', transaction_category:'FUTURES',         transaction_type:'SELL', rate_percentage:0.0001, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'SEBI_CHARGES', transaction_category:'OPTIONS',         transaction_type:'BUY',  rate_percentage:0.0001, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null },
+        { charge_type:'SEBI_CHARGES', transaction_category:'OPTIONS',         transaction_type:'SELL', rate_percentage:0.0001, gst_applicable:true, gst_rate:18, effective_from:effDate, effective_to:null }
+    ];
+
+    if (!confirm('This will insert ' + defaults.length + ' default charge rows (Oct 2024 rates). Continue?')) return;
+
+    try {
+        await DB.insertChargeRows(defaults);
+        _chargesData = await DB.getChargesConfig();
+        renderChargesGrid();
+        alert('Default charges added successfully!');
+    } catch (e) {
+        console.error('Failed to seed charges:', e);
+        alert('Error: ' + e.message);
+    }
+}
