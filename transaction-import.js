@@ -16,8 +16,7 @@ var cnNewRows = [];            // Will be inserted
 var cnUpdateRows = [];         // Will update existing
 var cnErrorRows = [];          // Could not match security
 var cnSelectedAccount = null;  // Currently selected account object
-var securitiesDbCache = [];    // securities_db rows
-var securitiesNfoCache = [];   // securities_nfo rows
+var securitiesDbCache = [];    // securities_db rows (equity only)
 var cnTradeDate = null;        // Trade date from parsed CN (YYYY-MM-DD)
 var cnCnNumber = null;         // Contract note number from parsed CN
 
@@ -133,20 +132,22 @@ async function loadCnAccounts() {
     }
 }
 
-// Load securities caches (called once on first CN parse)
+// Load securities cache (equity only — called once on first CN parse)
 async function loadSecuritiesCaches() {
-    if (securitiesDbCache.length > 0 && securitiesNfoCache.length > 0) return;
+    if (securitiesDbCache.length > 0) return;
     try {
         var resp1 = await fetch(SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,isin,nse_symbol,bse_symbol,company_name,security_type,lot_size&is_active=eq.true&order=symbol.asc', {
             headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
         });
+        if (!resp1.ok) {
+            var errBody = await resp1.text();
+            throw new Error('API error ' + resp1.status + ': ' + errBody);
+        }
         securitiesDbCache = await resp1.json();
-
-        var resp2 = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?select=id,symbol,instrument_name,exchange,instrument_type,underlying_symbol,expiry_date,strike_price,option_type,lot_size&is_active=eq.true&order=symbol.asc', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
-        });
-        securitiesNfoCache = await resp2.json();
-        console.log('Securities loaded: CM=' + securitiesDbCache.length + ', NFO=' + securitiesNfoCache.length);
+        console.log('Securities DB loaded: ' + securitiesDbCache.length + ' rows');
+        if (securitiesDbCache.length === 0) {
+            throw new Error('Securities database is empty. Please sync Securities in Master Data first.');
+        }
     } catch (e) {
         console.error('Error loading securities:', e);
         throw new Error('Failed to load securities database: ' + e.message);
@@ -417,29 +418,25 @@ function processAndGroupTrades(parseResult) {
     var trades = parseResult.trades;
     var charges = parseResult.charges;
 
-    // Group by: underlying + instrumentType + buySell + (for options: expiry+strike+optionType)
-    var groups = {};
-    trades.forEach(function(t) {
-        var key;
-        if (t.segment === 'EQUITY') {
-            key = 'EQ|' + t.underlying + '|' + t.buySell;
-        } else if (t.instrumentType === 'FUTURES') {
-            key = 'FUT|' + t.underlying + '|' + t.expiry + '|' + t.buySell;
-        } else {
-            key = 'OPT|' + t.underlying + '|' + t.expiry + '|' + t.strikePrice + '|' + t.optionType + '|' + t.buySell;
-        }
+    // EQUITY ONLY — skip NFO trades (NFO import will be done separately)
+    var equityTrades = trades.filter(function(t) { return t.segment === 'EQUITY'; });
+    var nfoSkipped = trades.length - equityTrades.length;
+    if (nfoSkipped > 0) console.log('Skipped ' + nfoSkipped + ' NFO trade(s) — only equity is imported.');
 
+    // Group equity trades by underlying + buySell
+    var groups = {};
+    equityTrades.forEach(function(t) {
+        var key = t.underlying + '|' + t.buySell;
         if (!groups[key]) {
-            groups[key] = { trades: [], totalQty: 0, totalAmount: 0, segment: t.segment, underlying: t.underlying,
-                instrumentType: t.instrumentType, buySell: t.buySell, expiry: t.expiry,
-                strikePrice: t.strikePrice, optionType: t.optionType, description: t.description };
+            groups[key] = { trades: [], totalQty: 0, totalAmount: 0, underlying: t.underlying,
+                buySell: t.buySell, description: t.description };
         }
         groups[key].trades.push(t);
         groups[key].totalQty += t.qty;
         groups[key].totalAmount += t.amount;
     });
 
-    // Now for each group, match to security and allocate charges
+    // Match each group to securities_db and build rows
     cnParsedRows = [];
     cnErrorRows = [];
 
@@ -447,26 +444,23 @@ function processAndGroupTrades(parseResult) {
         var g = groups[key];
         var avgPrice = g.totalAmount / g.totalQty;
 
-        // Match to security
-        var secMatch = matchSecurity(g);
+        // Match to security by symbol
+        var secMatch = matchEquitySecurity(g.underlying);
         if (!secMatch) {
             cnErrorRows.push({
                 description: g.description,
-                error: 'Security not found in database: ' + g.underlying + (g.instrumentType !== 'EQUITY' ? ' (' + g.instrumentType + ' ' + (g.expiry || '') + ')' : '')
+                error: 'Security not found in database: ' + g.underlying
             });
             return;
         }
 
-        // Determine charge segment
-        var chargeSegment = g.segment === 'EQUITY' ? charges.equity : charges.nfo;
-
         var row = {
             security_id: secMatch.id,
-            security_type: g.segment === 'EQUITY' ? 'EQUITY' : 'NFO',
+            security_type: 'EQUITY',
             symbol: secMatch.symbol,
             short_symbol: g.underlying,
-            company_name: secMatch.company_name || secMatch.instrument_name || g.underlying,
-            exchange: secMatch.exchange || (g.segment === 'EQUITY' ? 'NSE' : 'NFO'),
+            company_name: secMatch.company_name || g.underlying,
+            exchange: 'NSE',
             transaction_type: g.buySell,
             quantity: g.buySell === 'SELL' ? -g.totalQty : g.totalQty,
             lots: 0,
@@ -477,86 +471,51 @@ function processAndGroupTrades(parseResult) {
             other_charges: 0,
             gst: 0,
             total_charges: 0,
-            net_amount: 0,
-            segment: g.segment,
-            instrumentType: g.instrumentType,
-            _chargeSegment: g.segment // for allocation
+            net_amount: 0
         };
-
-        // Calculate lots for NFO
-        if (g.segment !== 'EQUITY' && secMatch.lot_size) {
-            var lotCount = g.totalQty / secMatch.lot_size;
-            row.lots = g.buySell === 'SELL' ? -lotCount : lotCount;
-        }
 
         cnParsedRows.push(row);
     });
 
-    // Allocate charges proportionally by gross_amount within each segment
-    allocateCharges(cnParsedRows, charges);
+    // Allocate equity charges proportionally by gross_amount
+    allocateCharges(cnParsedRows, charges.equity);
 
     return cnParsedRows;
 }
 
-function matchSecurity(group) {
-    if (group.segment === 'EQUITY') {
-        // Match by NSE symbol in securities_db
-        var sym = group.underlying.toUpperCase();
-        var match = securitiesDbCache.find(function(s) {
-            return (s.nse_symbol && s.nse_symbol.toUpperCase() === sym) ||
-                   (s.symbol && s.symbol.toUpperCase() === sym) ||
-                   (s.bse_symbol && s.bse_symbol.toUpperCase() === sym);
-        });
-        if (match) return { id: match.id, symbol: match.nse_symbol || match.symbol, company_name: match.company_name, exchange: 'NSE', lot_size: 1 };
-        return null;
+function matchEquitySecurity(underlying) {
+    var sym = underlying.toUpperCase().trim();
+    console.log('Matching equity symbol: "' + sym + '" against ' + securitiesDbCache.length + ' securities');
+
+    var match = securitiesDbCache.find(function(s) {
+        return (s.symbol && s.symbol.toUpperCase().trim() === sym) ||
+               (s.nse_symbol && s.nse_symbol.toUpperCase().trim() === sym) ||
+               (s.bse_symbol && s.bse_symbol.toUpperCase().trim() === sym);
+    });
+
+    if (match) {
+        console.log('  Matched: ' + sym + ' → ' + (match.nse_symbol || match.symbol) + ' (' + match.company_name + ')');
+        return { id: match.id, symbol: match.nse_symbol || match.symbol, company_name: match.company_name };
     }
 
-    // NFO: match by underlying + instrument_type + expiry + (strike + option_type for options)
-    var underlying = group.underlying.toUpperCase();
-    var expiry = group.expiry; // YYYY-MM-DD
-
-    if (group.instrumentType === 'FUTURES') {
-        var futMatch = securitiesNfoCache.find(function(s) {
-            return s.underlying_symbol && s.underlying_symbol.toUpperCase() === underlying &&
-                   s.instrument_type === 'FUTURES' &&
-                   s.expiry_date === expiry;
-        });
-        if (futMatch) return { id: futMatch.id, symbol: futMatch.symbol, instrument_name: futMatch.instrument_name, exchange: futMatch.exchange || 'NFO', lot_size: futMatch.lot_size || 1 };
-        return null;
-    }
-
-    if (group.instrumentType === 'OPTIONS') {
-        var optMatch = securitiesNfoCache.find(function(s) {
-            return s.underlying_symbol && s.underlying_symbol.toUpperCase() === underlying &&
-                   s.instrument_type === 'OPTIONS' &&
-                   s.expiry_date === expiry &&
-                   parseFloat(s.strike_price) === group.strikePrice &&
-                   s.option_type === group.optionType;
-        });
-        if (optMatch) return { id: optMatch.id, symbol: optMatch.symbol, instrument_name: optMatch.instrument_name, exchange: optMatch.exchange || 'NFO', lot_size: optMatch.lot_size || 1 };
-        return null;
-    }
-
+    console.warn('  NOT FOUND: ' + sym);
     return null;
 }
 
-function allocateCharges(rows, charges) {
-    // Proportionally allocate charges by gross_amount within each segment (equity vs nfo)
-    var segmentTotals = { EQUITY: 0, NFO: 0 };
-    rows.forEach(function(r) { segmentTotals[r.security_type] += Math.abs(r.gross_amount); });
+function allocateCharges(rows, segCharges) {
+    // Proportionally allocate charges by gross_amount
+    var total = 0;
+    rows.forEach(function(r) { total += Math.abs(r.gross_amount); });
+    if (total === 0) return;
 
     rows.forEach(function(r) {
-        var segTotal = segmentTotals[r.security_type];
-        if (segTotal === 0) return;
+        var proportion = Math.abs(r.gross_amount) / total;
 
-        var proportion = Math.abs(r.gross_amount) / segTotal;
-        var seg = r.security_type === 'EQUITY' ? charges.equity : charges.nfo;
-
-        r.brokerage = Math.round(seg.brokerage * proportion * 100) / 100;
-        r.stt = Math.round(seg.stt * proportion * 100) / 100;
-        r.gst = Math.round(seg.gst * proportion * 100) / 100;
+        r.brokerage = Math.round(segCharges.brokerage * proportion * 100) / 100;
+        r.stt = Math.round(segCharges.stt * proportion * 100) / 100;
+        r.gst = Math.round(segCharges.gst * proportion * 100) / 100;
         // other_charges = exchange + SEBI + stamp + IPFT
-        r.other_charges = Math.round((seg.exchangeCharges + seg.sebiCharges + seg.stampDuty + seg.ipft) * proportion * 100) / 100;
+        r.other_charges = Math.round((segCharges.exchangeCharges + segCharges.sebiCharges + segCharges.stampDuty + segCharges.ipft) * proportion * 100) / 100;
         r.total_charges = Math.round((r.brokerage + r.stt + r.gst + r.other_charges) * 100) / 100;
 
         // net_amount = gross_amount + total_charges (charges always add for buys, subtract from sells)
@@ -623,6 +582,7 @@ function displayCnPreview(parseResult) {
     if (cnNewRows.length > 0) {
         document.getElementById('cnNewSection').style.display = '';
         cnNewRows.forEach(function(r, i) { newTbody.appendChild(createCnPreviewRow(r, i + 1)); });
+        newTbody.appendChild(createCnTotalsRow(cnNewRows));
     } else {
         document.getElementById('cnNewSection').style.display = 'none';
     }
@@ -633,6 +593,7 @@ function displayCnPreview(parseResult) {
     if (cnUpdateRows.length > 0) {
         document.getElementById('cnUpdateSection').style.display = '';
         cnUpdateRows.forEach(function(r, i) { updateTbody.appendChild(createCnPreviewRow(r, i + 1)); });
+        updateTbody.appendChild(createCnTotalsRow(cnUpdateRows));
     } else {
         document.getElementById('cnUpdateSection').style.display = 'none';
     }
@@ -651,19 +612,6 @@ function displayCnPreview(parseResult) {
         document.getElementById('cnErrorSection').style.display = 'none';
     }
 
-    // Totals by segment
-    var totals = {};
-    cnNewRows.concat(cnUpdateRows).forEach(function(r) {
-        var seg = r.security_type;
-        if (!totals[seg]) totals[seg] = 0;
-        totals[seg] += Math.abs(r.net_amount);
-    });
-    var totalsHtml = '';
-    Object.keys(totals).forEach(function(seg) {
-        totalsHtml += '<div class="tot-item"><span class="tot-label">' + seg + ':</span><span class="tot-value">' + formatINR(totals[seg]) + '</span></div>';
-    });
-    document.getElementById('cnTotals').innerHTML = totalsHtml;
-
     // Show preview section
     document.getElementById('cnPreviewSection').classList.add('active');
 }
@@ -675,7 +623,6 @@ function createCnPreviewRow(r, idx) {
     var tagInputId = 'cnTag_' + r._action + '_' + (idx - 1);
     tr.innerHTML = '<td>' + idx + '</td>' +
         '<td class="' + typeClass + '">' + r.transaction_type + '</td>' +
-        '<td>' + r.security_type + '</td>' +
         '<td title="' + r.symbol + '">' + r.short_symbol + '</td>' +
         '<td style="text-align:right;">' + Math.abs(r.quantity).toLocaleString() + '</td>' +
         '<td style="text-align:right;">' + formatINR(r.price) + '</td>' +
@@ -686,6 +633,36 @@ function createCnPreviewRow(r, idx) {
         '<td style="text-align:right;">' + formatINR(r.gst) + '</td>' +
         '<td style="text-align:right;font-weight:600;">' + formatINR(r.net_amount) + '</td>' +
         '<td><input type="text" id="' + tagInputId + '" value="' + tagsValue + '" placeholder="e.g. intraday, hedge" style="width:100%;min-width:80px;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;"></td>';
+    return tr;
+}
+
+function createCnTotalsRow(rows) {
+    var totQty = 0, totGross = 0, totBrokerage = 0, totStt = 0, totOther = 0, totGst = 0, totNet = 0;
+    rows.forEach(function(r) {
+        totQty += Math.abs(r.quantity);
+        totGross += Math.abs(r.gross_amount);
+        totBrokerage += r.brokerage;
+        totStt += r.stt;
+        totOther += r.other_charges;
+        totGst += r.gst;
+        totNet += Math.abs(r.net_amount);
+    });
+    var tr = document.createElement('tr');
+    tr.style.fontWeight = '700';
+    tr.style.borderTop = '2px solid #4a5568';
+    tr.style.background = '#f7fafc';
+    tr.innerHTML = '<td></td>' +
+        '<td></td>' +
+        '<td style="text-align:right;">Total</td>' +
+        '<td style="text-align:right;">' + totQty.toLocaleString() + '</td>' +
+        '<td></td>' +
+        '<td style="text-align:right;">' + formatINR(totGross) + '</td>' +
+        '<td style="text-align:right;">' + formatINR(totBrokerage) + '</td>' +
+        '<td style="text-align:right;">' + formatINR(totStt) + '</td>' +
+        '<td style="text-align:right;">' + formatINR(totOther) + '</td>' +
+        '<td style="text-align:right;">' + formatINR(totGst) + '</td>' +
+        '<td style="text-align:right;">' + formatINR(totNet) + '</td>' +
+        '<td></td>';
     return tr;
 }
 

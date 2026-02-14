@@ -166,14 +166,14 @@
         <div id="cnNewSection" style="display:none;">
             <div class="cn-table-label new-rows">New Transactions (will be inserted)</div>
             <div class="table-wrapper"><table><thead><tr>
-                <th>#</th><th>Type</th><th>Segment</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Gross Amt</th><th>Brokerage</th><th>STT</th><th>Other</th><th>GST</th><th>Net Amt</th><th style="min-width:100px;">Tags</th>
+                <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
             </tr></thead><tbody id="cnNewTableBody"></tbody></table></div>
         </div>
 
         <div id="cnUpdateSection" style="display:none;">
             <div class="cn-table-label update-rows">Existing Transactions (will be updated)</div>
             <div class="table-wrapper"><table><thead><tr>
-                <th>#</th><th>Type</th><th>Segment</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Gross Amt</th><th>Brokerage</th><th>STT</th><th>Other</th><th>GST</th><th>Net Amt</th><th style="min-width:100px;">Tags</th>
+                <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
             </tr></thead><tbody id="cnUpdateTableBody"></tbody></table></div>
         </div>
 
@@ -183,8 +183,6 @@
                 <th>#</th><th>Symbol/Description</th><th>Error</th>
             </tr></thead><tbody id="cnErrorTableBody"></tbody></table></div>
         </div>
-
-        <div class="cn-totals" id="cnTotals"></div>
 
         <div class="action-buttons">
             <button class="btn btn-danger" onclick="cancelCnImport()">Cancel</button>
