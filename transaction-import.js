@@ -18,6 +18,7 @@ var cnErrorRows = [];          // Could not match security
 var cnSelectedAccount = null;  // Currently selected account object
 var cnTradeDate = null;        // Trade date from parsed CN (YYYY-MM-DD)
 var cnCnNumber = null;         // Contract note number from parsed CN
+var existingTags = [];         // Distinct tags from transactions table for pill suggestions
 
 // ============================================================================
 // Initialization
@@ -54,6 +55,7 @@ function initTransactionImport() {
 
     loadReferenceData();
     loadCnAccounts();
+    loadExistingTags();
 }
 
 document.addEventListener('DOMContentLoaded', initTransactionImport);
@@ -131,6 +133,30 @@ async function loadCnAccounts() {
     }
 }
 
+
+// Load distinct tags from the transactions table for pill suggestions
+async function loadExistingTags() {
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?select=tags&tags=not.is.null&limit=5000', {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        });
+        if (!resp.ok) return;
+        var rows = await resp.json();
+        var tagSet = {};
+        rows.forEach(function(r) {
+            if (Array.isArray(r.tags)) {
+                r.tags.forEach(function(t) {
+                    var trimmed = t.trim().toLowerCase();
+                    if (trimmed && trimmed !== 'blank') tagSet[trimmed] = true;
+                });
+            }
+        });
+        existingTags = Object.keys(tagSet).sort();
+        console.log('Loaded ' + existingTags.length + ' existing tag(s): ' + existingTags.join(', '));
+    } catch (e) {
+        console.error('Error loading existing tags:', e);
+    }
+}
 
 // ============================================================================
 // CN Account Selection
@@ -625,7 +651,8 @@ function displayCnPreview(parseResult) {
         document.getElementById('cnErrorSection').style.display = 'none';
     }
 
-    // Show preview section
+    // Show preview section and ensure import button is enabled
+    document.getElementById('cnImportBtn').disabled = false;
     document.getElementById('cnPreviewSection').classList.add('active');
 }
 
@@ -644,8 +671,41 @@ function createCnPreviewRow(r, idx) {
         '<td style="text-align:right;">' + formatCnAmount(r.stt) + '</td>' +
         '<td style="text-align:right;">' + formatCnAmount(r.other_charges) + '</td>' +
         '<td style="text-align:right;">' + formatCnAmount(r.gst) + '</td>' +
-        '<td style="text-align:right;font-weight:600;">' + formatCnAmount(r.transaction_type === 'SELL' ? -Math.abs(r.net_amount) : Math.abs(r.net_amount), true) + '</td>' +
-        '<td><input type="text" id="' + tagInputId + '" value="' + tagsValue + '" placeholder="e.g. intraday, hedge" style="width:100%;min-width:80px;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;"></td>';
+        '<td style="text-align:right;font-weight:600;" class="' + (r.transaction_type === 'SELL' ? 'negative' : '') + '">' + formatCnAmount(r.transaction_type === 'SELL' ? -Math.abs(r.net_amount) : Math.abs(r.net_amount)) + '</td>' +
+        '<td style="min-width:120px;">' +
+            '<input type="text" id="' + tagInputId + '" value="' + tagsValue + '" placeholder="e.g. intraday, hedge" style="width:100%;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;">' +
+            '<div class="cn-tag-pills" data-input="' + tagInputId + '" style="margin-top:3px;display:flex;flex-wrap:wrap;gap:2px;"></div>' +
+        '</td>';
+
+    // After innerHTML is set, populate pill containers via setTimeout (needs DOM render)
+    setTimeout(function() {
+        var pillContainer = tr.querySelector('.cn-tag-pills');
+        if (pillContainer && existingTags.length > 0) {
+            existingTags.forEach(function(tag) {
+                var pill = document.createElement('span');
+                pill.textContent = tag;
+                pill.style.cssText = 'display:inline-block;padding:1px 6px;font-size:10px;background:#e2e8f0;color:#4a5568;border-radius:10px;cursor:pointer;white-space:nowrap;';
+                pill.addEventListener('click', function() {
+                    var input = document.getElementById(tagInputId);
+                    if (!input) return;
+                    var current = input.value.split(',').map(function(t) { return t.trim().toLowerCase(); }).filter(function(t) { return t.length > 0; });
+                    if (current.indexOf(tag) === -1) {
+                        input.value = current.length > 0 ? input.value.trim() + ', ' + tag : tag;
+                        pill.style.background = '#bee3f8';
+                        pill.style.color = '#2b6cb0';
+                    }
+                });
+                // Highlight pills already in the input
+                var currentTags = tagsValue.split(',').map(function(t) { return t.trim().toLowerCase(); });
+                if (currentTags.indexOf(tag) !== -1) {
+                    pill.style.background = '#bee3f8';
+                    pill.style.color = '#2b6cb0';
+                }
+                pillContainer.appendChild(pill);
+            });
+        }
+    }, 0);
+
     return tr;
 }
 
@@ -680,17 +740,17 @@ function createCnTotalsRow(rows) {
         '<td style="text-align:right;">' + formatCnAmount(totStt) + '</td>' +
         '<td style="text-align:right;">' + formatCnAmount(totOther) + '</td>' +
         '<td style="text-align:right;">' + formatCnAmount(totGst) + '</td>' +
-        '<td style="text-align:right;" title="' + netLabel + '">' + formatCnAmount(totNet, true) + '</td>' +
+        '<td style="text-align:right;font-weight:700;" class="' + getAmountClass(totNet) + '" title="' + netLabel + '">' + formatCnAmount(totNet) + '</td>' +
         '<td></td>';
     return tr;
 }
 
-function formatCnAmount(val, signed) {
+function formatCnAmount(val) {
     if (val === null || val === undefined) return '-';
     var unit = getDisplayUnit();
     var config = getUnitConfig(unit);
-    if (signed && val < 0) {
-        return '-' + formatWithCommas(Math.abs(val), config.comma);
+    if (val < 0) {
+        return '(' + formatWithCommas(Math.abs(val), config.comma) + ')';
     }
     return formatWithCommas(Math.abs(val), config.comma);
 }
@@ -719,19 +779,21 @@ window.importCnToDatabase = async function() {
 
     if (!confirm('Import ' + cnNewRows.length + ' new + ' + cnUpdateRows.length + ' updates = ' + totalRows + ' transactions?')) return;
 
-    // Read tags from input fields before importing
+    // Read tags from input fields before importing (blank → ['blank'], never null)
     cnNewRows.forEach(function(r, i) {
         var input = document.getElementById('cnTag_NEW_' + i);
         if (input) {
             var val = input.value.trim();
-            r.tags = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : null;
+            var parsed = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [];
+            r.tags = parsed.length > 0 ? parsed : ['blank'];
         }
     });
     cnUpdateRows.forEach(function(r, i) {
         var input = document.getElementById('cnTag_UPDATE_' + i);
         if (input) {
             var val = input.value.trim();
-            r.tags = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : null;
+            var parsed = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [];
+            r.tags = parsed.length > 0 ? parsed : ['blank'];
         }
     });
 
@@ -797,6 +859,7 @@ window.importCnToDatabase = async function() {
         } else {
             tiAlert('success', 'Successfully imported ' + insertCount + ' new and updated ' + updateCount + ' transactions!');
             // Hide preview and reset for next import
+            document.getElementById('cnImportBtn').disabled = false;
             document.getElementById('cnPreviewSection').classList.remove('active');
             cnParsedRows = [];
             cnNewRows = [];
@@ -849,7 +912,7 @@ function buildTransactionRecord(row) {
         margin_blocked: 0,
         broker_contract_note_no: cnCnNumber,
         broker_trade_id: null,
-        tags: row.tags || null,
+        tags: (row.tags && row.tags.length > 0) ? row.tags : ['blank'],
         notes: 'Imported from CN #' + cnCnNumber,
         ignore_for_avg_cost: false,
         dont_display: false
@@ -983,7 +1046,7 @@ function processTransactions(rawData) {
                 transaction_date: parsedDate, quantity: quantity_raw, lots: lots, price: price, gross_amount: gross_amount, brokerage: brokerage,
                 stt: stt, other_charges: other_charges, gst: gst, tds: tds, total_charges: total_charges, net_amount: net_amount,
                 margin_blocked: margin_blocked, broker_contract_note_no: broker_contract_note_no, broker_trade_id: broker_trade_id,
-                tags: tags ? [tags] : null, notes: notes, ignore_for_avg_cost: ignore_for_avg_cost, dont_display: dont_display
+                tags: tags ? [tags] : ['blank'], notes: notes, ignore_for_avg_cost: ignore_for_avg_cost, dont_display: dont_display
             });
         } catch (error) { errors.push('Row ' + (index + 3) + ': ' + error.message); }
     });
