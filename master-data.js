@@ -667,6 +667,7 @@ function openAddBrokerModal() {
     document.getElementById('brokerForm').reset();
     document.getElementById('brokerStatus').value = 'true';
     document.getElementById('chargesInclusive').value = 'false';
+    document.getElementById('brokerCnParser').value = '';
     document.getElementById('brokerModal').classList.add('show');
 }
 
@@ -693,7 +694,8 @@ async function editBroker(id) {
     document.getElementById('optFlat').value = rates.derivatives?.options?.flat ?? '';
     document.getElementById('optMax').value = rates.derivatives?.options?.max ?? '';
     document.getElementById('chargesInclusive').value = broker.default_charges_inclusive ? 'true' : 'false';
-    
+    document.getElementById('brokerCnParser').value = broker.cn_parser_template || '';
+
     document.getElementById('brokerModal').classList.add('show');
 }
 
@@ -725,7 +727,8 @@ async function saveBroker() {
                 }
             }
         },
-        default_charges_inclusive: document.getElementById('chargesInclusive').value === 'true'
+        default_charges_inclusive: document.getElementById('chargesInclusive').value === 'true',
+        cn_parser_template: document.getElementById('brokerCnParser').value || null
     };
 
     if (!data.name) {
