@@ -27,9 +27,15 @@ function initTransactionImport() {
     var fileInput = document.getElementById('fileInput');
     uploadArea.addEventListener('click', function() { fileInput.click(); });
     fileInput.addEventListener('change', handleFileSelect);
+    var excelChooseBtn = document.getElementById('excelChooseFileBtn');
+    if (excelChooseBtn) excelChooseBtn.addEventListener('click', function() { fileInput.click(); });
     uploadArea.addEventListener('dragover', function(e) { e.preventDefault(); uploadArea.classList.add('dragover'); });
     uploadArea.addEventListener('dragleave', function() { uploadArea.classList.remove('dragover'); });
     uploadArea.addEventListener('drop', function(e) { e.preventDefault(); uploadArea.classList.remove('dragover'); if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]); });
+
+    // CN account selector
+    var cnAccountSelect = document.getElementById('cnAccountSelect');
+    cnAccountSelect.addEventListener('change', onCnAccountSelect);
 
     // CN upload handlers
     var cnUploadArea = document.getElementById('cnUploadArea');
@@ -39,6 +45,10 @@ function initTransactionImport() {
     cnUploadArea.addEventListener('dragover', function(e) { e.preventDefault(); if (!cnUploadArea.classList.contains('disabled')) cnUploadArea.classList.add('dragover'); });
     cnUploadArea.addEventListener('dragleave', function() { cnUploadArea.classList.remove('dragover'); });
     cnUploadArea.addEventListener('drop', function(e) { e.preventDefault(); cnUploadArea.classList.remove('dragover'); if (!cnUploadArea.classList.contains('disabled') && e.dataTransfer.files.length > 0) { cnFileInput.files = e.dataTransfer.files; handleCnFileSelect({ target: cnFileInput }); } });
+
+    // CN Choose File button
+    var cnChooseFileBtn = document.getElementById('cnChooseFileBtn');
+    if (cnChooseFileBtn) cnChooseFileBtn.addEventListener('click', function() { cnFileInput.click(); });
 
     loadReferenceData();
     loadCnAccounts();
@@ -143,13 +153,15 @@ async function loadSecuritiesCaches() {
 // CN Account Selection
 // ============================================================================
 
-window.onCnAccountSelect = function() {
-    var accountId = document.getElementById('cnAccountSelect').value;
+function onCnAccountSelect() {
+    var select = document.getElementById('cnAccountSelect');
+    var accountId = select.value;
     var statusEl = document.getElementById('cnAccountStatus');
     var pwField = document.getElementById('cnPasswordField');
     var cnUploadArea = document.getElementById('cnUploadArea');
-
     var cnChooseBtn = document.getElementById('cnChooseFileBtn');
+
+    console.log('onCnAccountSelect called, accountId:', accountId, 'cnAccounts:', cnAccounts.length);
 
     if (!accountId) {
         cnSelectedAccount = null;
@@ -160,28 +172,36 @@ window.onCnAccountSelect = function() {
         return;
     }
 
-    cnSelectedAccount = cnAccounts.find(function(a) { return a.id === accountId; });
-    if (!cnSelectedAccount) return;
+    // Use loose equality (==) to handle number vs string mismatch
+    cnSelectedAccount = cnAccounts.find(function(a) { return String(a.id) == String(accountId); });
+    if (!cnSelectedAccount) {
+        console.error('Account not found! accountId:', accountId, 'available ids:', cnAccounts.map(function(a) { return a.id; }));
+        statusEl.textContent = 'Error: Account not found. Please reload the page.';
+        statusEl.className = 'cn-status error';
+        return;
+    }
+
+    console.log('Selected account:', cnSelectedAccount.investor_short_name, '@', cnSelectedAccount.broker_code);
 
     // Check if password exists
     if (cnSelectedAccount.cn_password) {
         pwField.style.display = 'none';
         statusEl.textContent = 'Password saved. Ready to upload.';
         statusEl.className = 'cn-status success';
-        cnUploadArea.classList.remove('disabled');
-        if (cnChooseBtn) cnChooseBtn.disabled = false;
     } else {
         pwField.style.display = '';
         document.getElementById('cnPassword').value = '';
         statusEl.textContent = 'Enter the contract note password. It will be saved for future use.';
         statusEl.className = 'cn-status';
-        cnUploadArea.classList.remove('disabled');
-        if (cnChooseBtn) cnChooseBtn.disabled = false;
     }
+
+    // Enable upload area and button
+    cnUploadArea.classList.remove('disabled');
+    if (cnChooseBtn) cnChooseBtn.disabled = false;
 
     // Reset preview
     document.getElementById('cnPreviewSection').classList.remove('active');
-};
+}
 
 // ============================================================================
 // CN File Handling
@@ -999,7 +1019,6 @@ function showLoading(show, text) {
 }
 
 // Expose globals for onclick handlers in HTML
-window.onCnAccountSelect = window.onCnAccountSelect || function(){};
 window.importCnToDatabase = window.importCnToDatabase || function(){};
 window.cancelCnImport = window.cancelCnImport || function(){};
 window.importToDatabase = importToDatabase;

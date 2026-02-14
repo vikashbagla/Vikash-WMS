@@ -101,7 +101,7 @@
                 <div class="upload-hint">or click to browse (.xlsx, .xls)</div>
                 <input type="file" id="fileInput" accept=".xlsx,.xls">
             </div>
-            <button class="btn" onclick="document.getElementById('fileInput').click()" style="margin-top:8px;">Choose File</button>
+            <button class="btn" id="excelChooseFileBtn" style="margin-top:8px;">Choose File</button>
         </div>
 
         <!-- ===== CONTRACT NOTE IMPORT BOX ===== -->
@@ -110,7 +110,7 @@
             <div class="cn-selector">
                 <div class="field">
                     <label>Investor @ Broker</label>
-                    <select id="cnAccountSelect" onchange="onCnAccountSelect()">
+                    <select id="cnAccountSelect">
                         <option value="">-- Select Account --</option>
                     </select>
                 </div>
@@ -129,7 +129,7 @@
                 <div class="upload-hint">or click to browse (.pdf)</div>
                 <input type="file" id="cnFileInput" accept=".pdf">
             </div>
-            <button class="btn" id="cnChooseFileBtn" onclick="document.getElementById('cnFileInput').click()" disabled style="margin-top:8px;">Choose File</button>
+            <button class="btn" id="cnChooseFileBtn" disabled style="margin-top:8px;">Choose File</button>
             <div id="cnParseStatus" class="cn-status" style="margin-top:6px;"></div>
         </div>
     </div>
