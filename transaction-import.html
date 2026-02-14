@@ -8,20 +8,20 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px; background: #f5f7fa; color: #2d3748; }
 
-        /* HEADER */
         .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
         .header-content { max-width: 1600px; margin: 0 auto; padding: 6px 20px; display: flex; align-items: center; justify-content: space-between; }
         .header h1 { font-size: 16px; font-weight: 600; }
-
-        /* CONTAINER */
         .container { max-width: 1600px; margin: 0 auto; padding: 12px 16px; }
 
-        /* PAGE TITLE */
-        .page-title { margin-bottom: 12px; display: flex; align-items: baseline; gap: 10px; }
-        .page-title h2 { font-size: 15px; color: #2d3748; font-weight: 600; }
-        .page-title p  { color: #718096; font-size: 11px; }
+        /* MODE TABS */
+        .import-tabs { display: flex; gap: 0; margin-bottom: 14px; border-bottom: 2px solid #e2e8f0; }
+        .import-tab { padding: 8px 24px; background: none; border: none; border-bottom: 3px solid transparent;
+            cursor: pointer; font-size: 13px; font-weight: 500; color: #718096; transition: all 0.2s; margin-bottom: -2px; }
+        .import-tab:hover { color: #4A90D9; background: #f7fafc; }
+        .import-tab.active { color: #4A90D9; border-bottom-color: #4A90D9; font-weight: 600; }
+        .import-mode { display: none; }
+        .import-mode.active { display: block; }
 
-        /* CARDS / SECTIONS */
         .section { background: white; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
         .section-title { font-size: 13px; font-weight: 600; color: #2d3748; margin-bottom: 10px; }
 
@@ -32,6 +32,7 @@
             background: #f7fafc; text-align: center;
         }
         .upload-area:hover, .upload-area.dragover { border-color: #667eea; background: #eef2ff; }
+        .upload-area.disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
         .upload-icon { font-size: 32px; margin-bottom: 8px; }
         .upload-text { font-size: 13px; color: #2d3748; margin-bottom: 4px; font-weight: 500; }
         .upload-hint { color: #718096; font-size: 11px; }
@@ -45,12 +46,14 @@
         .btn-danger:hover  { background: #e53e3e; }
         .btn-success { background: #48bb78; }
         .btn-success:hover { background: #38a169; }
+        .btn-sm { padding: 4px 10px; font-size: 11px; margin: 0; }
 
         /* ALERTS */
         .alert { padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-size: 12px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-wrap: break-word; }
         .alert-success { background: #c6f6d5; color: #22543d; border-left: 4px solid #38a169; }
         .alert-error   { background: #fed7d7; color: #742a2a; border-left: 4px solid #e53e3e; }
         .alert-warning { background: #feebc8; color: #744210; border-left: 4px solid #ed8936; }
+        .alert-info    { background: #bee3f8; color: #2a4365; border-left: 4px solid #4299e1; }
 
         /* STAT CARDS */
         .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
@@ -58,7 +61,7 @@
         .stat-label { color: #718096; font-size: 9px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.3px; margin-bottom: 2px; }
         .stat-value { color: #2d3748; font-size: 18px; font-weight: 700; line-height: 1.2; }
 
-        /* PREVIEW TABLE */
+        /* TABLES */
         .preview-section { display: none; }
         .preview-section.active { display: block; }
         .table-wrapper { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 6px; }
@@ -66,22 +69,39 @@
         th { background: #f7fafc; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; color: #4a5568; text-transform: uppercase; border-bottom: 2px solid #e2e8f0; position: sticky; top: 0; }
         td { padding: 5px 8px; border-bottom: 1px solid #f0f4f8; font-size: 12px; vertical-align: middle; }
         tr:hover { background: #f9fafb; }
-
         .type-buy   { color: #38a169; font-weight: 600; }
         .type-sell  { color: #e53e3e; font-weight: 600; }
         .type-other { color: #667eea; font-weight: 600; }
-
-        /* ACTION BUTTONS */
         .action-buttons { margin-top: 10px; display: flex; gap: 8px; justify-content: flex-end; }
 
-        /* LOADING */
+        /* CN-SPECIFIC */
+        .cn-selector { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
+        .cn-selector .field { display: flex; flex-direction: column; gap: 3px; }
+        .cn-selector label { font-size: 11px; font-weight: 600; color: #4a5568; text-transform: uppercase; }
+        .cn-selector select, .cn-selector input { padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 5px; font-size: 12px; min-width: 180px; }
+        .cn-selector select:focus, .cn-selector input:focus { outline: none; border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+        .cn-status { font-size: 11px; color: #718096; padding: 6px 0; }
+        .cn-status.error { color: #e53e3e; }
+        .cn-status.success { color: #38a169; }
+
+        .cn-table-label { font-size: 12px; font-weight: 600; color: #2d3748; margin: 14px 0 6px; padding: 6px 10px; border-radius: 4px; }
+        .cn-table-label.new-rows { background: #c6f6d5; color: #22543d; }
+        .cn-table-label.update-rows { background: #feebc8; color: #744210; }
+        .cn-table-label.error-rows { background: #fed7d7; color: #742a2a; }
+
+        .cn-totals { display: flex; gap: 16px; margin-top: 10px; padding: 8px 12px; background: #f7fafc; border-radius: 6px; font-size: 12px; }
+        .cn-totals .tot-item { display: flex; gap: 4px; }
+        .cn-totals .tot-label { color: #718096; font-weight: 500; }
+        .cn-totals .tot-value { color: #2d3748; font-weight: 700; }
+
+        .badge-new { background: #c6f6d5; color: #22543d; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+        .badge-update { background: #feebc8; color: #744210; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+        .badge-error { background: #fed7d7; color: #742a2a; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+
         .spinner { border: 3px solid #f0f4f8; border-top: 3px solid #667eea; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 12px auto; }
         @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
         .hidden { display: none; }
-
-        @media (max-width: 768px) {
-            .stats { grid-template-columns: repeat(2, 1fr); }
-        }
+        @media (max-width: 768px) { .stats { grid-template-columns: repeat(2, 1fr); } .cn-selector { flex-direction: column; } }
     </style>
 </head>
 <body>
@@ -92,85 +112,134 @@
     </div>
 
     <div class="container">
-        <div class="page-title">
-            <h2>Import Transactions</h2>
-            <p>Upload your Excel file to import transactions into the database</p>
+        <!-- Mode Tabs -->
+        <div class="import-tabs">
+            <button class="import-tab active" onclick="switchImportMode('excel')">📁 Excel Import</button>
+            <button class="import-tab" onclick="switchImportMode('cn')">📄 Contract Note Import</button>
         </div>
 
         <!-- Alerts -->
         <div id="alertContainer"></div>
 
-        <!-- Upload Section -->
-        <div class="section" id="uploadSection">
-            <div class="section-title">Upload File</div>
-            <div class="upload-area" id="uploadArea">
-                <div class="upload-icon">📁</div>
-                <div class="upload-text">Drag and drop your Excel file here</div>
-                <div class="upload-hint">or click to browse (.xlsx, .xls)</div>
-                <input type="file" id="fileInput" accept=".xlsx,.xls">
+        <!-- =============== EXCEL IMPORT MODE =============== -->
+        <div id="excelMode" class="import-mode active">
+            <div class="section" id="uploadSection">
+                <div class="section-title">Upload Excel File</div>
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📁</div>
+                    <div class="upload-text">Drag and drop your Excel file here</div>
+                    <div class="upload-hint">or click to browse (.xlsx, .xls)</div>
+                    <input type="file" id="fileInput" accept=".xlsx,.xls">
+                </div>
+                <div style="text-align:center; margin-top:8px;">
+                    <button class="btn" onclick="document.getElementById('fileInput').click()">📂 Choose File</button>
+                </div>
             </div>
-            <div style="text-align:center; margin-top:8px;">
-                <button class="btn" onclick="document.getElementById('fileInput').click()">
-                    📂 Choose File
-                </button>
+
+            <div class="section preview-section" id="previewSection">
+                <div class="section-title">Preview</div>
+                <div class="stats">
+                    <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" id="statTotal">0</div></div>
+                    <div class="stat-card" style="border-left-color:#38a169;"><div class="stat-label">Buy</div><div class="stat-value type-buy" id="statBuy">0</div></div>
+                    <div class="stat-card" style="border-left-color:#e53e3e;"><div class="stat-label">Sell</div><div class="stat-value type-sell" id="statSell">0</div></div>
+                    <div class="stat-card" style="border-left-color:#667eea;"><div class="stat-label">Other</div><div class="stat-value type-other" id="statOther">0</div></div>
+                </div>
+                <div class="table-wrapper"><table id="previewTable"><thead><tr>
+                    <th>#</th><th>Investor</th><th>Type</th><th>Symbol</th><th>Date</th><th>Quantity</th><th>Lots</th><th>Price</th><th>Net Amount</th>
+                </tr></thead><tbody id="previewTableBody"></tbody></table></div>
+                <div class="action-buttons">
+                    <button class="btn btn-danger" onclick="cancelImport()">❌ Cancel</button>
+                    <button class="btn btn-success" id="importBtn" onclick="importToDatabase()">✅ Import to Database</button>
+                </div>
             </div>
         </div>
 
-        <!-- Preview Section -->
-        <div class="section preview-section" id="previewSection">
-            <div class="section-title">Preview</div>
-
-            <!-- Stats -->
-            <div class="stats">
-                <div class="stat-card">
-                    <div class="stat-label">Total Transactions</div>
-                    <div class="stat-value" id="statTotal">0</div>
+        <!-- =============== CONTRACT NOTE IMPORT MODE =============== -->
+        <div id="cnMode" class="import-mode">
+            <!-- Step 1: Select Account -->
+            <div class="section" id="cnStep1">
+                <div class="section-title">Step 1: Select Account</div>
+                <div class="cn-selector">
+                    <div class="field">
+                        <label>Investor @ Broker</label>
+                        <select id="cnAccountSelect" onchange="onCnAccountSelect()">
+                            <option value="">-- Select Account --</option>
+                        </select>
+                    </div>
+                    <div class="field" id="cnPasswordField" style="display:none;">
+                        <label>Contract Note Password</label>
+                        <input type="password" id="cnPassword" placeholder="Enter CN password">
+                        <div style="margin-top:2px;"><label style="font-size:10px;font-weight:400;text-transform:none;color:#718096;"><input type="checkbox" onchange="document.getElementById('cnPassword').type=this.checked?'text':'password'"> Show password</label></div>
+                    </div>
                 </div>
-                <div class="stat-card" style="border-left-color:#38a169;">
-                    <div class="stat-label">BUY Trades</div>
-                    <div class="stat-value type-buy" id="statBuy">0</div>
-                </div>
-                <div class="stat-card" style="border-left-color:#e53e3e;">
-                    <div class="stat-label">SELL Trades</div>
-                    <div class="stat-value type-sell" id="statSell">0</div>
-                </div>
-                <div class="stat-card" style="border-left-color:#667eea;">
-                    <div class="stat-label">Other Types</div>
-                    <div class="stat-value type-other" id="statOther">0</div>
-                </div>
+                <div id="cnAccountStatus" class="cn-status"></div>
             </div>
 
-            <!-- Table -->
-            <div class="table-wrapper">
-                <table id="previewTable">
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Investor</th>
-                            <th>Type</th>
-                            <th>Symbol</th>
-                            <th>Date</th>
-                            <th>Quantity</th>
-                            <th>Lots</th>
-                            <th>Price</th>
-                            <th>Net Amount</th>
-                        </tr>
-                    </thead>
-                    <tbody id="previewTableBody"></tbody>
-                </table>
+            <!-- Step 2: Upload PDF -->
+            <div class="section" id="cnStep2">
+                <div class="section-title">Step 2: Upload Contract Note PDF</div>
+                <div class="upload-area disabled" id="cnUploadArea">
+                    <div class="upload-icon">📄</div>
+                    <div class="upload-text">Drag and drop your contract note PDF here</div>
+                    <div class="upload-hint">or click to browse (.pdf)</div>
+                    <input type="file" id="cnFileInput" accept=".pdf">
+                </div>
+                <div style="text-align:center; margin-top:8px;">
+                    <button class="btn" id="cnChooseFileBtn" disabled onclick="document.getElementById('cnFileInput').click()">📂 Choose PDF</button>
+                </div>
+                <div id="cnParseStatus" class="cn-status" style="margin-top:6px;"></div>
             </div>
 
-            <!-- Action Buttons -->
-            <div class="action-buttons">
-                <button class="btn btn-danger" onclick="cancelImport()">❌ Cancel</button>
-                <button class="btn btn-success" id="importBtn" onclick="importToDatabase()">✅ Import to Database</button>
+            <!-- Step 3: Preview & Import -->
+            <div class="section preview-section" id="cnPreviewSection">
+                <div class="section-title">Step 3: Review & Import</div>
+                <div id="cnAlertContainer"></div>
+
+                <div class="stats" id="cnStats">
+                    <div class="stat-card"><div class="stat-label">Total Rows</div><div class="stat-value" id="cnStatTotal">0</div></div>
+                    <div class="stat-card" style="border-left-color:#38a169;"><div class="stat-label">New</div><div class="stat-value" id="cnStatNew" style="color:#38a169;">0</div></div>
+                    <div class="stat-card" style="border-left-color:#ed8936;"><div class="stat-label">Updates</div><div class="stat-value" id="cnStatUpdate" style="color:#ed8936;">0</div></div>
+                    <div class="stat-card" style="border-left-color:#e53e3e;"><div class="stat-label">Errors</div><div class="stat-value" id="cnStatError" style="color:#e53e3e;">0</div></div>
+                </div>
+
+                <!-- New rows table -->
+                <div id="cnNewSection" style="display:none;">
+                    <div class="cn-table-label new-rows">New Transactions (will be inserted)</div>
+                    <div class="table-wrapper"><table><thead><tr>
+                        <th>#</th><th>Type</th><th>Segment</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Gross Amt</th><th>Brokerage</th><th>STT</th><th>Other</th><th>GST</th><th>Net Amt</th>
+                    </tr></thead><tbody id="cnNewTableBody"></tbody></table></div>
+                </div>
+
+                <!-- Update rows table -->
+                <div id="cnUpdateSection" style="display:none;">
+                    <div class="cn-table-label update-rows">Existing Transactions (will be updated)</div>
+                    <div class="table-wrapper"><table><thead><tr>
+                        <th>#</th><th>Type</th><th>Segment</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Gross Amt</th><th>Brokerage</th><th>STT</th><th>Other</th><th>GST</th><th>Net Amt</th>
+                    </tr></thead><tbody id="cnUpdateTableBody"></tbody></table></div>
+                </div>
+
+                <!-- Error rows -->
+                <div id="cnErrorSection" style="display:none;">
+                    <div class="cn-table-label error-rows">Errors (will be skipped)</div>
+                    <div class="table-wrapper"><table><thead><tr>
+                        <th>#</th><th>Symbol/Description</th><th>Error</th>
+                    </tr></thead><tbody id="cnErrorTableBody"></tbody></table></div>
+                </div>
+
+                <!-- Totals -->
+                <div class="cn-totals" id="cnTotals"></div>
+
+                <div class="action-buttons">
+                    <button class="btn btn-danger" onclick="cancelCnImport()">❌ Cancel</button>
+                    <button class="btn btn-success" id="cnImportBtn" onclick="importCnToDatabase()">✅ Import to Database</button>
+                </div>
             </div>
         </div>
 
         <!-- Loading -->
         <div class="hidden" id="loadingIndicator">
             <div class="spinner"></div>
-            <p style="text-align:center; color:#718096; margin-top:6px; font-size:12px;">Processing...</p>
+            <p style="text-align:center; color:#718096; margin-top:6px; font-size:12px;" id="loadingText">Processing...</p>
         </div>
     </div>
 
