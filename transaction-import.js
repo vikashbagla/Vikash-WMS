@@ -728,18 +728,17 @@ function initTagAutocomplete(inputId, initialValue) {
         input.dataset.tags = selected.join(', ');
     }
 
-    // Show dropdown with matching tags
+    // Show dropdown with matching tags as pills
     function showDropdown(filter) {
         dropdown.innerHTML = '';
         var matches = existingTags.filter(function(tag) {
-            // Not already selected, and matches typed filter
             return selected.indexOf(tag) === -1 && tag.indexOf(filter.toLowerCase()) !== -1;
         });
         if (matches.length === 0 && filter.length > 0) {
             // Offer to create a new tag
-            var item = document.createElement('div');
-            item.style.cssText = 'padding:4px 8px;font-size:11px;cursor:pointer;color:#718096;font-style:italic;';
-            item.textContent = 'Add "' + filter.trim() + '" as new tag';
+            var item = document.createElement('span');
+            item.style.cssText = 'display:inline-block;padding:2px 8px;font-size:10px;cursor:pointer;color:#718096;font-style:italic;border:1px dashed #cbd5e0;border-radius:10px;margin:2px;';
+            item.textContent = '+ ' + filter.trim();
             item.addEventListener('mousedown', function(e) {
                 e.preventDefault();
                 var newTag = filter.trim().toLowerCase();
@@ -758,13 +757,14 @@ function initTagAutocomplete(inputId, initialValue) {
             return;
         }
         if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+        dropdown.style.cssText += 'display:flex;flex-wrap:wrap;gap:3px;padding:4px 6px;';
         matches.forEach(function(tag) {
-            var item = document.createElement('div');
-            item.style.cssText = 'padding:4px 8px;font-size:11px;cursor:pointer;';
-            item.textContent = tag;
-            item.addEventListener('mouseenter', function() { item.style.background = '#edf2f7'; });
-            item.addEventListener('mouseleave', function() { item.style.background = '#fff'; });
-            item.addEventListener('mousedown', function(e) {
+            var pill = document.createElement('span');
+            pill.style.cssText = 'display:inline-block;padding:2px 8px;font-size:10px;background:#e2e8f0;color:#4a5568;border-radius:10px;cursor:pointer;white-space:nowrap;';
+            pill.textContent = tag;
+            pill.addEventListener('mouseenter', function() { pill.style.background = '#cbd5e0'; });
+            pill.addEventListener('mouseleave', function() { pill.style.background = '#e2e8f0'; });
+            pill.addEventListener('mousedown', function(e) {
                 e.preventDefault();
                 selected.push(tag);
                 syncInput();
@@ -772,9 +772,9 @@ function initTagAutocomplete(inputId, initialValue) {
                 input.value = '';
                 dropdown.style.display = 'none';
             });
-            dropdown.appendChild(item);
+            dropdown.appendChild(pill);
         });
-        dropdown.style.display = 'block';
+        dropdown.style.display = 'flex';
     }
 
     // Events
