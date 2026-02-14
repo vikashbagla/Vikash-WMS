@@ -17,6 +17,14 @@
         .tab-content    { display: none; flex: 1; overflow: hidden; min-height: 0; flex-direction: column; }
         .tab-content.active { display: flex; }
 
+        /* Charges sub-tabs */
+        .charges-subtab { padding: 6px 20px; background: none; border: none; border-bottom: 3px solid transparent;
+            cursor: pointer; font-size: 12px; font-weight: 500; color: #718096; transition: all 0.2s; margin-bottom: -2px; }
+        .charges-subtab:hover { color: #4A90D9; background: #f7fafc; }
+        .charges-subtab.active { color: #4A90D9; border-bottom-color: #4A90D9; font-weight: 600; }
+        .charge-cell { cursor: pointer; transition: background 0.15s; }
+        .charge-cell:hover { background: #EBF5FB; }
+
         /* Actions bar */
         .actions-bar { display: flex; justify-content: space-between; align-items: center;
             margin-bottom: 8px; gap: 10px; flex-shrink: 0; }
@@ -470,7 +478,13 @@
                 <span id="chargesEffective" style="color:#888;font-size:13px;"></span>
                 <button class="btn-primary" id="seedChargesBtn" style="display:none;" onclick="seedDefaultCharges()">📋 Add Default Charges</button>
             </div>
+            <div class="charges-subtabs" style="display:flex;gap:0;margin-bottom:12px;border-bottom:2px solid #e0e0e0;">
+                <button class="charges-subtab active" onclick="switchChargesSubtab(event,'equity')">Equity</button>
+                <button class="charges-subtab" onclick="switchChargesSubtab(event,'currency')">Currency</button>
+                <button class="charges-subtab" onclick="switchChargesSubtab(event,'commodity')">Commodity</button>
+            </div>
             <div id="chargesGrid" style="overflow-x:auto;"></div>
+            <p style="color:#999;font-size:11px;margin-top:8px;">Double-click any rate to edit. Press Enter to save, Escape to cancel.</p>
         </div>
 
     <!-- Investor Modal -->
