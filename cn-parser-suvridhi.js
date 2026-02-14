@@ -185,30 +185,24 @@ function parseSuvridhiTradeData(lineText, isin) {
     var buySell, qty, price, amount;
 
     if (hasNegativeQty) {
-        // SELL trade — net qty is negative
         buySell = 'SELL';
         qty = Math.abs(netQty);
-
-        // For sell-only: numbers are SellQty, WAP, BrokPerShare, WAPAfterBrok, TotalSellValue, NetQty(-), NetObligation
-        // The WAP is the first decimal number
-        // The TotalSellValue / NetObligation is the largest number
-        var decimals = allNums.filter(function(v) { return !Number.isInteger(v) && v > 0; });
-        price = decimals.length > 0 ? decimals[0] : 0;  // WAP (across exchanges)
-
-        // Net obligation is the last large number
-        var largeNums = allNums.filter(function(v) { return Math.abs(v) >= 1000; });
-        amount = largeNums.length > 0 ? Math.abs(largeNums[largeNums.length - 1]) : qty * price;
     } else {
-        // BUY trade — net qty is positive
         buySell = 'BUY';
         qty = Math.abs(netQty);
-
-        var decimals2 = allNums.filter(function(v) { return !Number.isInteger(v) && v > 0; });
-        price = decimals2.length > 0 ? decimals2[0] : 0;
-
-        var largeNums2 = allNums.filter(function(v) { return Math.abs(v) >= 1000; });
-        amount = largeNums2.length > 0 ? Math.abs(largeNums2[largeNums2.length - 1]) : qty * price;
     }
+
+    // Price = WAP before brokerage (first decimal number in the line)
+    // The Suvridhi CN line has: Qty, WAP, BrokPerShare, WAPAfterBrok, TotalAfterBrok, NetQty, NetObligation
+    // We need WAP (before brokerage) because charges are applied separately by allocateCharges().
+    var decimals = allNums.filter(function(v) { return !Number.isInteger(v) && v > 0; });
+    price = decimals.length > 0 ? decimals[0] : 0;  // WAP (across exchanges) — before brokerage
+
+    // IMPORTANT: amount = qty × WAP (pre-brokerage gross amount)
+    // The CN's "Net Obligation" / "Total Value" is AFTER brokerage deduction per share,
+    // but allocateCharges() will apply brokerage from the charges section separately.
+    // Using the CN's post-brokerage amount would double-count brokerage.
+    amount = qty * price;
 
     if (qty === 0 || price === 0) {
         console.warn('Suvridhi parser: skipping trade row with qty=' + qty + ' price=' + price + ' line: ' + lineText);
