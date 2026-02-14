@@ -16,7 +16,6 @@ var cnNewRows = [];            // Will be inserted
 var cnUpdateRows = [];         // Will update existing
 var cnErrorRows = [];          // Could not match security
 var cnSelectedAccount = null;  // Currently selected account object
-var securitiesDbCache = [];    // securities_db rows (equity only)
 var cnTradeDate = null;        // Trade date from parsed CN (YYYY-MM-DD)
 var cnCnNumber = null;         // Contract note number from parsed CN
 
@@ -132,27 +131,6 @@ async function loadCnAccounts() {
     }
 }
 
-// Load securities cache (equity only — called once on first CN parse)
-async function loadSecuritiesCaches() {
-    if (securitiesDbCache.length > 0) return;
-    try {
-        var resp1 = await fetch(SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,isin,nse_symbol,bse_symbol,company_name,security_type,lot_size&is_active=eq.true&order=symbol.asc', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
-        });
-        if (!resp1.ok) {
-            var errBody = await resp1.text();
-            throw new Error('API error ' + resp1.status + ': ' + errBody);
-        }
-        securitiesDbCache = await resp1.json();
-        console.log('Securities DB loaded: ' + securitiesDbCache.length + ' rows');
-        if (securitiesDbCache.length === 0) {
-            throw new Error('Securities database is empty. Please sync Securities in Master Data first.');
-        }
-    } catch (e) {
-        console.error('Error loading securities:', e);
-        throw new Error('Failed to load securities database: ' + e.message);
-    }
-}
 
 // ============================================================================
 // CN Account Selection
@@ -306,10 +284,9 @@ async function parseCnPdf(file, password) {
         cnCnNumber = parseResult.cnNumber;
 
         statusEl.textContent = 'Matching securities...';
-        await loadSecuritiesCaches();
 
-        // Group trades by symbol+type, match to securities, allocate charges
-        var processed = processAndGroupTrades(parseResult);
+        // Group trades by symbol+type, match to securities (server-side), allocate charges
+        var processed = await processAndGroupTrades(parseResult);
 
         statusEl.textContent = 'Checking for duplicates...';
         await checkDuplicates(processed, parseResult.tradeDate);
@@ -414,7 +391,7 @@ function loadCnParser(template) {
 // Process & Group Trades
 // ============================================================================
 
-function processAndGroupTrades(parseResult) {
+async function processAndGroupTrades(parseResult) {
     var trades = parseResult.trades;
     var charges = parseResult.charges;
 
@@ -436,22 +413,34 @@ function processAndGroupTrades(parseResult) {
         groups[key].totalAmount += t.amount;
     });
 
-    // Match each group to securities_db and build rows
+    // Match all securities in ONE batch query
     cnParsedRows = [];
     cnErrorRows = [];
 
-    Object.keys(groups).forEach(function(key) {
-        var g = groups[key];
-        var avgPrice = g.totalAmount / g.totalQty;
+    var keys = Object.keys(groups);
 
-        // Match to security by symbol
-        var secMatch = matchEquitySecurity(g.underlying);
+    // Collect all unique symbols from the CN
+    var uniqueSymbols = [];
+    keys.forEach(function(k) {
+        var sym = groups[k].underlying.toUpperCase().trim();
+        if (uniqueSymbols.indexOf(sym) === -1) uniqueSymbols.push(sym);
+    });
+
+    // Single batch query to Supabase for all symbols at once
+    var secMap = await batchMatchSecurities(uniqueSymbols);
+
+    for (var k = 0; k < keys.length; k++) {
+        var g = groups[keys[k]];
+        var avgPrice = g.totalAmount / g.totalQty;
+        var sym = g.underlying.toUpperCase().trim();
+
+        var secMatch = secMap[sym] || null;
         if (!secMatch) {
             cnErrorRows.push({
                 description: g.description,
                 error: 'Security not found in database: ' + g.underlying
             });
-            return;
+            continue;
         }
 
         var row = {
@@ -475,7 +464,7 @@ function processAndGroupTrades(parseResult) {
         };
 
         cnParsedRows.push(row);
-    });
+    }
 
     // Allocate equity charges proportionally by gross_amount
     allocateCharges(cnParsedRows, charges.equity);
@@ -483,23 +472,47 @@ function processAndGroupTrades(parseResult) {
     return cnParsedRows;
 }
 
-function matchEquitySecurity(underlying) {
-    var sym = underlying.toUpperCase().trim();
-    console.log('Matching equity symbol: "' + sym + '" against ' + securitiesDbCache.length + ' securities');
+// Batch query Supabase for all symbols in one call
+// Returns a map: { SYMBOL: { id, symbol, company_name }, ... }
+async function batchMatchSecurities(symbols) {
+    var secMap = {};
+    if (!symbols || symbols.length === 0) return secMap;
 
-    var match = securitiesDbCache.find(function(s) {
-        return (s.symbol && s.symbol.toUpperCase().trim() === sym) ||
-               (s.nse_symbol && s.nse_symbol.toUpperCase().trim() === sym) ||
-               (s.bse_symbol && s.bse_symbol.toUpperCase().trim() === sym);
+    // Build OR filter: symbol.in.(SYM1,SYM2),nse_symbol.in.(SYM1,SYM2),bse_symbol.in.(SYM1,SYM2)
+    var symList = symbols.map(function(s) { return encodeURIComponent(s); }).join(',');
+    var orFilter = 'or=(symbol.in.(' + symList + '),nse_symbol.in.(' + symList + '),bse_symbol.in.(' + symList + '))';
+    var url = SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,nse_symbol,bse_symbol,company_name&' + orFilter;
+
+    console.log('Batch security lookup for ' + symbols.length + ' symbol(s): ' + symbols.join(', '));
+    var resp = await fetch(url, {
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+    });
+    if (!resp.ok) {
+        console.error('Batch security lookup failed: HTTP ' + resp.status);
+        return secMap;
+    }
+    var rows = await resp.json();
+    console.log('Batch query returned ' + rows.length + ' match(es)');
+
+    // Build lookup map — match each queried symbol to its result
+    rows.forEach(function(m) {
+        var matchInfo = { id: m.id, symbol: m.nse_symbol || m.symbol, company_name: m.company_name };
+        // Map by all possible symbol fields so lookup works regardless of which column matched
+        if (m.symbol) secMap[m.symbol.toUpperCase()] = matchInfo;
+        if (m.nse_symbol) secMap[m.nse_symbol.toUpperCase()] = matchInfo;
+        if (m.bse_symbol) secMap[m.bse_symbol.toUpperCase()] = matchInfo;
     });
 
-    if (match) {
-        console.log('  Matched: ' + sym + ' → ' + (match.nse_symbol || match.symbol) + ' (' + match.company_name + ')');
-        return { id: match.id, symbol: match.nse_symbol || match.symbol, company_name: match.company_name };
-    }
+    // Log matches and misses
+    symbols.forEach(function(sym) {
+        if (secMap[sym]) {
+            console.log('Matched: ' + sym + ' → ' + secMap[sym].symbol + ' (' + secMap[sym].company_name + ')');
+        } else {
+            console.warn('NOT FOUND in securities_db: ' + sym);
+        }
+    });
 
-    console.warn('  NOT FOUND: ' + sym);
-    return null;
+    return secMap;
 }
 
 function allocateCharges(rows, segCharges) {
