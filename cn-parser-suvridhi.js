@@ -63,8 +63,11 @@ CN_PARSERS.suvridhi = function(pages, numPages) {
     // ========================================================================
     // Parse Trades
     // ========================================================================
-    // Suvridhi trade rows: ISIN on one line, trade data on the next line.
-    // We scan for ISIN lines, then grab the next line for trade data.
+    // Suvridhi trade rows contain ISIN + trade data.
+    // Due to pdf.js Y-coordinate grouping (3px tolerance), ISIN and trade data
+    // may appear on the SAME line or on separate lines.
+    // Pattern A (same line): "INE335A01020 SURYAROSNI Delivery 2,500 262.4139 ..."
+    // Pattern B (two lines): Line1="INE335A01020", Line2="SURYAROSNI Delivery ..."
     var trades = [];
 
     for (var p = 0; p < allText.length; p++) {
@@ -73,24 +76,33 @@ CN_PARSERS.suvridhi = function(pages, numPages) {
         for (var li = 0; li < lines.length; li++) {
             var lineText = lines[li].text;
 
-            // Look for ISIN line (starts with INE)
-            var isinMatch = lineText.match(/^(INE[A-Z0-9]{9})/);
+            // Look for ISIN anywhere in the line
+            var isinMatch = lineText.match(/(INE[A-Z0-9]{9})/);
             if (!isinMatch) continue;
 
             var isin = isinMatch[1];
 
-            // Next line should have the trade data: Symbol, Delivery, numbers...
-            if (li + 1 >= lines.length) continue;
-            var dataLine = lines[li + 1];
-            var dataText = dataLine.text;
+            // Check if trade data is on the SAME line (Pattern A)
+            // If line has ISIN + symbol + numbers, it's all on one line
+            var afterIsin = lineText.substring(lineText.indexOf(isin) + isin.length).trim();
 
-            // Skip if next line is another ISIN or a header
-            if (dataText.match(/^INE/) || dataText.match(/Gross Obligation/i)) continue;
+            if (afterIsin.length > 10 && afterIsin.match(/[A-Z]/) && afterIsin.match(/\d/)) {
+                // Pattern A: ISIN + trade data on same line — use text-based parsing
+                var trade = parseSuvridhiTradeData(afterIsin, isin);
+                if (trade) trades.push(trade);
+            } else {
+                // Pattern B: ISIN on this line, trade data on next line
+                if (li + 1 >= lines.length) continue;
+                var dataLine = lines[li + 1];
+                var dataText = dataLine.text;
 
-            var trade = parseSuvridhiTradeData(dataLine.items, dataText, isin);
-            if (trade) {
-                trades.push(trade);
-                li++; // Skip the data line since we consumed it
+                if (dataText.match(/^INE/) || dataText.match(/Gross Obligation/i)) continue;
+
+                var trade2 = parseSuvridhiTradeData(dataText, isin);
+                if (trade2) {
+                    trades.push(trade2);
+                    li++; // Skip the data line since we consumed it
+                }
             }
         }
     }
@@ -110,15 +122,22 @@ CN_PARSERS.suvridhi = function(pages, numPages) {
 // Suvridhi-specific helper functions
 // ============================================================================
 
-function parseSuvridhiTradeData(items, lineText, isin) {
-    // Data line example: "SURYAROSNI Delivery 2,500 262.4139 0.3900 262.0239 6,55,059.75 -2,500 6,55,059.75"
-    // Items sorted by X position.
+function parseSuvridhiTradeData(lineText, isin) {
+    // Text after ISIN, e.g.: "SURYAROSNI Delivery 2,500 262.4139 0.3900 262.0239 6,55,059.75 -2,500 6,55,059.75"
+    // Purely text-based parsing (no item positions needed).
 
-    var texts = items.map(function(i) { return i.text.trim(); }).filter(function(t) { return t.length > 0; });
-    if (texts.length < 3) return null;
+    if (!lineText || lineText.trim().length < 5) return null;
 
-    // First text item is the symbol name
-    var symbol = texts[0];
+    // Extract symbol: first word that is alphabetic (not a number, not "Delivery")
+    var words = lineText.trim().split(/\s+/);
+    var symbol = '';
+    for (var w = 0; w < words.length; w++) {
+        if (words[w].match(/^[A-Z]/i) && !words[w].match(/^Delivery$/i)) {
+            symbol = words[w];
+            break;
+        }
+    }
+    if (!symbol) return null;
 
     // Extract all numbers from the line
     var allNums = [];
