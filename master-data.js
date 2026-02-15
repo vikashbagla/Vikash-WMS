@@ -1593,12 +1593,13 @@ async function loadSecuritiesTable() {
     try {
         // Fetch all rows using paginated helper (bypasses 1000-row default limit)
         const all = await fetchAllRows('securities_db',
-            'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,is_active', 'isin');
+            'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,sector,size,is_active', 'isin');
         _securitiesAll = all;
+        populateSectorPills();
         renderSecurities();
     } catch(e) {
         console.warn('Securities table load error', e);
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">Connect to Supabase to browse securities</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#718096;padding:20px;">Connect to Supabase to browse securities</td></tr>';
     } finally {
         setSecLoading(false);
     }
@@ -1606,6 +1607,68 @@ async function loadSecuritiesTable() {
 
 // renderSecurities kept as alias for pill filter changes triggered before unified is wired
 function renderSecurities() { renderUnified(); }
+
+// Populate sector filter pills dynamically from loaded data
+var _allSectors = [];
+
+function populateSectorPills() {
+    var container = document.getElementById('msSectorPills');
+    if (!container) return;
+    var sectors = new Set();
+    for (var i = 0; i < (_securitiesAll || []).length; i++) {
+        var s = _securitiesAll[i].sector;
+        if (s) sectors.add(s);
+    }
+    _allSectors = Array.from(sectors).sort();
+    filterSectorPills();
+}
+
+function filterSectorPills() {
+    var container = document.getElementById('msSectorPills');
+    if (!container) return;
+    var searchEl = document.getElementById('msSectorSearch');
+    var q = (searchEl ? searchEl.value : '').toLowerCase().trim();
+    var selected = getMsValues('msSector');
+
+    var filtered = q ? _allSectors.filter(function(s) { return s.toLowerCase().indexOf(q) >= 0; }) : _allSectors;
+    container.innerHTML = filtered.map(function(s) {
+        var isOn = selected.has(s) ? ' on' : '';
+        return '<span class="ms-pill' + isOn + '" data-ms="msSector" data-val="' + s + '" onclick="toggleSectorPill(this)">' + s + '</span>';
+    }).join('');
+
+    renderSectorSelectedTags();
+}
+
+function toggleSectorPill(pill) {
+    pill.classList.toggle('on');
+    updateMsLabel('msSector');
+    renderSectorSelectedTags();
+    renderUnified();
+}
+
+function renderSectorSelectedTags() {
+    var container = document.getElementById('msSectorSelected');
+    if (!container) return;
+    var selected = getMsValues('msSector');
+    if (selected.size === 0) { container.innerHTML = ''; container.style.display = 'none'; return; }
+    container.style.display = 'flex';
+    container.innerHTML = Array.from(selected).map(function(s) {
+        return '<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;background:#667eea;color:white;border-radius:12px;font-size:10px;font-weight:600;">' +
+            s + ' <span onclick="removeSectorTag(\'' + s.replace(/'/g, "\\'") + '\')" style="cursor:pointer;margin-left:2px;">✕</span></span>';
+    }).join('');
+}
+
+function removeSectorTag(val) {
+    var pills = document.querySelectorAll('#msSectorPills .ms-pill');
+    for (var i = 0; i < pills.length; i++) {
+        if (pills[i].dataset.val === val && pills[i].classList.contains('on')) {
+            pills[i].classList.remove('on');
+        }
+    }
+    updateMsLabel('msSector');
+    renderSectorSelectedTags();
+    renderUnified();
+}
 
 // Pagination state for unified table
 var _uniRows = [];   // full filtered result set
@@ -1637,12 +1700,14 @@ function renderUnified(resetPage) {
     const fTypes  = getMsValues('msType');
     const fExch   = getMsValues('msExch');
     const fClass  = getMsValues('msClass');
+    const fSector = getMsValues('msSector');
+    const fSize   = getMsValues('msSize');
 
     // Require at least a search term OR at least one filter to render
-    const hasFilter = q.length >= 1 || fTypes.size > 0 || fExch.size > 0 || fClass.size > 0;
+    const hasFilter = q.length >= 1 || fTypes.size > 0 || fExch.size > 0 || fClass.size > 0 || fSector.size > 0 || fSize.size > 0;
     if (!hasFilter) {
         _uniRows = [];
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:32px;font-size:12px;">' +
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#a0aec0;padding:32px;font-size:12px;">' +
             'Search above, or select a Type, Asset Class or Exchange filter to browse</td></tr>';
         renderUniPager(0, 0);
         return;
@@ -1654,6 +1719,8 @@ function renderUnified(resetPage) {
         name:        r.company_name || '',
         type:        r.security_type || '',
         asset_class: r.asset_class || '',
+        sector:      r.sector || '',
+        size:        r.size || '',
         underlying:  '',
         expiry_dt:   null,
         lot_size:    r.lot_size || '',
@@ -1668,6 +1735,8 @@ function renderUnified(resetPage) {
         name:        r.instrument_name || '',
         type:        r.instrument_type || '',
         asset_class: r.exchange === 'MCX' ? 'Commodity' : 'Indian Equity',
+        sector:      '',
+        size:        '',
         underlying:  r.underlying_symbol || '',
         expiry_dt:   r.expiry_date ? new Date(r.expiry_date) : null,
         lot_size:    r.lot_size || '',
@@ -1696,11 +1765,13 @@ function renderUnified(resetPage) {
     });
 
     if (fClass.size) rows = rows.filter(r => fClass.has(r.asset_class));
+    if (fSector.size) rows = rows.filter(r => r.sector && fSector.has(r.sector));
+    if (fSize.size) rows = rows.filter(r => r.size && fSize.has(r.size));
 
     _uniRows = rows;
 
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#718096;padding:24px;font-size:12px;">No results found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#718096;padding:24px;font-size:12px;">No results found</td></tr>';
         renderUniPager(0, 0);
         return;
     }
@@ -1721,6 +1792,8 @@ function renderUnified(resetPage) {
             '<td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + r.name + '</td>' +
             '<td>' + _typeBadge(r.type) + '</td>' +
             '<td style="font-size:11px;color:#4a5568;">' + (r.asset_class || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
+            '<td style="font-size:11px;color:#4a5568;">' + (r.sector || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
+            '<td style="font-size:11px;color:#4a5568;">' + (r.size || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
             '<td style="font-size:11px;font-weight:600;">' + (r.underlying || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
             '<td style="font-size:11px;' + expiryCol + '">' + expiryStr + '</td>' +
             '<td style="font-size:11px;text-align:right;">' + (r.lot_size || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
@@ -1765,7 +1838,7 @@ function uniPageStep(delta) {
 
 function renderRows(rows, tbody) {
     if (!rows || !rows.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#718096;padding:20px;">No securities found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#718096;padding:20px;">No securities found</td></tr>';
         return;
     }
     const LIMIT = 500;
@@ -1781,7 +1854,7 @@ function renderRows(rows, tbody) {
         </tr>`).join('');
     if (rows.length > LIMIT) {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td colspan="7" style="text-align:center;font-size:11px;color:#718096;padding:8px;">
+        tr.innerHTML = `<td colspan="11" style="text-align:center;font-size:11px;color:#718096;padding:8px;">
             Showing first ${LIMIT} of ${rows.length.toLocaleString('en-IN')} results — use filters to narrow down</td>`;
         tbody.appendChild(tr);
     }
@@ -1880,8 +1953,8 @@ function updateMsLabel(id) {
     const label   = document.getElementById(id + 'Label');
     const trigger = document.getElementById(id + 'Trigger');
     if (!label) return;
-    const placeholders = { msType: 'All Types', msClass: 'All Asset Classes', msExch: 'All Exchanges' };
-    const multiLabels  = { msType: 'types', msClass: 'classes', msExch: 'exchanges' };
+    const placeholders = { msType: 'All Types', msClass: 'All Asset Classes', msExch: 'All Exchanges', msSector: 'All Sectors', msSize: 'All Sizes' };
+    const multiLabels  = { msType: 'types', msClass: 'classes', msExch: 'exchanges', msSector: 'sectors', msSize: 'sizes' };
     const placeholder  = placeholders[id] || 'All';
     if (values.size === 0) {
         label.textContent = placeholder;

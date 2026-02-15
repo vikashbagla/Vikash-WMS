@@ -409,16 +409,45 @@
                         <div class="ms-reset" onclick="clearMs('msExch')">Clear</div>
                     </div>
                 </div>
+                <div class="ms-wrap" id="msSectorWrap">
+                    <div class="ms-trigger" id="msSectorTrigger" onclick="toggleMs('msSector')">
+                        <span id="msSectorLabel">All Sectors</span>
+                        <span class="ms-arrow">▼</span>
+                    </div>
+                    <div class="ms-dropdown" id="msSectorDropdown" style="min-width:300px;">
+                        <input type="text" id="msSectorSearch" placeholder="Search sectors..."
+                            style="width:100%;padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;font-size:11px;margin-bottom:6px;box-sizing:border-box;"
+                            oninput="filterSectorPills()" onclick="event.stopPropagation()">
+                        <div id="msSectorSelected" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;"></div>
+                        <div class="ms-pills" id="msSectorPills" style="max-height:180px;overflow-y:auto;"><!-- populated dynamically --></div>
+                        <div class="ms-reset" onclick="clearMs('msSector');document.getElementById('msSectorSearch').value='';filterSectorPills();">Clear</div>
+                    </div>
+                </div>
+                <div class="ms-wrap" id="msSizeWrap">
+                    <div class="ms-trigger" id="msSizeTrigger" onclick="toggleMs('msSize')">
+                        <span id="msSizeLabel">All Sizes</span>
+                        <span class="ms-arrow">▼</span>
+                    </div>
+                    <div class="ms-dropdown" id="msSizeDropdown">
+                        <div class="ms-pills">
+                            <span class="ms-pill" data-ms="msSize" data-val="Large Cap"  onclick="togglePill(this)">Large Cap</span>
+                            <span class="ms-pill" data-ms="msSize" data-val="Mid Cap"    onclick="togglePill(this)">Mid Cap</span>
+                            <span class="ms-pill" data-ms="msSize" data-val="Small Cap"  onclick="togglePill(this)">Small Cap</span>
+                            <span class="ms-pill" data-ms="msSize" data-val="Micro Cap"  onclick="togglePill(this)">Micro Cap</span>
+                        </div>
+                        <div class="ms-reset" onclick="clearMs('msSize')">Clear</div>
+                    </div>
+                </div>
             </div>
             <div class="card-grid" id="unifiedTableWrap">
                 <table class="data-table" id="secTable">
                     <thead><tr>
                         <th>Symbol</th><th>Name / Company</th><th>Type</th>
-                        <th>Asset Class</th><th>Underlying</th><th>Expiry</th>
+                        <th>Asset Class</th><th>Sector</th><th>Size</th><th>Underlying</th><th>Expiry</th>
                         <th>Lot</th><th>Exch</th><th>Status</th>
                     </tr></thead>
                     <tbody id="secTbody">
-                        <tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:32px;font-size:12px;">
+                        <tr><td colspan="11" style="text-align:center;color:#a0aec0;padding:32px;font-size:12px;">
                             Search above to explore 17,000+ securities and F&amp;O contracts
                         </td></tr>
                     </tbody>
