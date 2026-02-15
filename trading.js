@@ -27,7 +27,7 @@ var trEditingTxnId = null;
 
 // Txn modal state
 var trTxnSortColumn = 'date';
-var trTxnSortDirection = 'desc';
+var trTxnSortDirection = 'asc';
 var trTxnHiddenIds = {};        // temp hidden trade IDs (UI only)
 var trShowHiddenTrades = false;  // toggle for showing hidden trades
 
@@ -979,7 +979,7 @@ function trOpenTxnModal(companyKey, investorId) {
 
     // Reset sort
     trTxnSortColumn = 'date';
-    trTxnSortDirection = 'desc';
+    trTxnSortDirection = 'asc';
 
     // Update toggle button
     var toggleBtn = document.getElementById('trToggleHiddenBtn');
@@ -1007,14 +1007,17 @@ function trGetTxnModalTxns() {
 function trRenderTxnTable(txns) {
     if (!txns) txns = trGetTxnModalTxns();
 
-    // Calculate running qty (always chronological)
+    // Calculate running qty (always chronological, excluding income & temp-hidden)
     var chronoTxns = txns.slice().sort(function(a, b) {
         return new Date(a.transaction_date) - new Date(b.transaction_date);
     });
     var runningQtyMap = {};
     var runSum = 0;
     chronoTxns.forEach(function(t) {
-        runSum += (t.quantity || 0);
+        var isIncome = INCOME_TYPES.indexOf(t.transaction_type) >= 0;
+        if (!isIncome && !trTxnHiddenIds[t.id]) {
+            runSum += (t.quantity || 0);
+        }
         runningQtyMap[t.id] = runSum;
     });
 
@@ -1085,6 +1088,11 @@ function trRenderTxnTable(txns) {
     document.getElementById('trTxnSortDate').textContent = trTxnSortColumn === 'date' ? (trTxnSortDirection === 'asc' ? '▲' : '▼') : '';
     document.getElementById('trTxnSortSymbol').textContent = trTxnSortColumn === 'symbol' ? (trTxnSortDirection === 'asc' ? '▲' : '▼') : '';
 
+    // Show/hide the Show All button based on whether any trades are temp-hidden
+    var hiddenCount = Object.keys(trTxnHiddenIds).length;
+    var toggleBtn = document.getElementById('trToggleHiddenBtn');
+    toggleBtn.style.display = hiddenCount > 0 ? '' : 'none';
+
     // Attach listeners
     trAttachTxnModalListeners();
 }
@@ -1094,7 +1102,7 @@ function trTxnSort(column) {
         trTxnSortDirection = trTxnSortDirection === 'asc' ? 'desc' : 'asc';
     } else {
         trTxnSortColumn = column;
-        trTxnSortDirection = column === 'date' ? 'desc' : 'asc';
+        trTxnSortDirection = 'asc';
     }
     trRenderTxnTable();
 }
@@ -1165,10 +1173,10 @@ function trRenderTxnSummary(txns) {
     var container = document.getElementById('trTxnSummary');
     if (!container) return;
 
-    // Calculate summary (exclude temp-hidden unless showing all, exclude ignore_for_avg_cost)
+    // Calculate summary (always exclude temp-hidden, exclude ignore_for_avg_cost)
     var netQty = 0, totalCost = 0;
     txns.forEach(function(t) {
-        if (!trShowHiddenTrades && trTxnHiddenIds[t.id]) return;
+        if (trTxnHiddenIds[t.id]) return;
         if (t.ignore_for_avg_cost) return;
 
         var isIncome = INCOME_TYPES.indexOf(t.transaction_type) >= 0;

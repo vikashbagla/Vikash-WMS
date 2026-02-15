@@ -83,6 +83,17 @@
 .trading-container .total-row td { font-weight: 600; }
 .trading-container .total-row .number-main { font-weight: 600; }
 
+/* Override inner-table column widths for 9-col trading layout */
+.trading-container .detail-row .inner-table td:nth-child(1) { width: 16%; }
+.trading-container .detail-row .inner-table td:nth-child(2) { width: 10%; }
+.trading-container .detail-row .inner-table td:nth-child(3) { width: 11%; }
+.trading-container .detail-row .inner-table td:nth-child(4) { width: 11%; }
+.trading-container .detail-row .inner-table td:nth-child(5) { width: 10%; }
+.trading-container .detail-row .inner-table td:nth-child(6) { width: 11%; }
+.trading-container .detail-row .inner-table td:nth-child(7) { width: 11%; }
+.trading-container .detail-row .inner-table td:nth-child(8) { width: 10%; }
+.trading-container .detail-row .inner-table td:nth-child(9) { width: 40px; }
+
 /* Tag pills in portfolio table */
 .tag-pills { display: flex; flex-wrap: wrap; gap: 2px; }
 .tag-pill {
@@ -467,7 +478,7 @@
                 <h3 id="trTxnModalTitle">Transactions</h3>
             </div>
             <div class="txn-modal-header-actions">
-                <button class="btn-toggle-hidden" id="trToggleHiddenBtn" title="Show/hide temporarily hidden trades">👁 Show All</button>
+                <button class="btn-toggle-hidden" id="trToggleHiddenBtn" title="Show/hide temporarily hidden trades" style="display:none;">👁 Show All</button>
                 <button class="btn-icon" id="trTxnModalClose" title="Close" style="font-size:16px;">✕</button>
             </div>
         </div>
@@ -475,7 +486,7 @@
             <table>
                 <thead>
                     <tr>
-                        <th class="sortable" id="trTxnThDate">Date <span class="sort-indicator" id="trTxnSortDate">▼</span></th>
+                        <th class="sortable" id="trTxnThDate">Date <span class="sort-indicator" id="trTxnSortDate">▲</span></th>
                         <th>Investor &gt; Broker</th>
                         <th class="sortable" id="trTxnThSymbol">Symbol <span class="sort-indicator" id="trTxnSortSymbol"></span></th>
                         <th class="text-right">Qty</th>
