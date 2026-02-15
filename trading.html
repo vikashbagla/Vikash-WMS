@@ -1,0 +1,560 @@
+<!-- Trading Module HTML -->
+<head>
+<style id="trading-styles">
+/* ================================================================
+   TRADING MODULE STYLES
+   ================================================================ */
+
+/* Sticky header */
+.trading-header-bar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: #fff;
+    padding: 8px 0;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.trading-header-bar .btn-add-txn {
+    background: #667eea;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.trading-header-bar .btn-add-txn:hover { background: #5a67d8; }
+
+/* Tabs */
+.trading-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid #e2e8f0;
+    margin-bottom: 8px;
+}
+.trading-tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    padding: 6px 18px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #718096;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.trading-tab-btn:hover { color: #4a5568; }
+.trading-tab-btn.active {
+    color: #667eea;
+    border-bottom-color: #667eea;
+}
+.trading-tab-content { display: none; }
+.trading-tab-content.active { display: block; }
+
+/* Portfolio table — Company cell */
+.company-cell .company-main {
+    font-size: 12px;
+    font-weight: 600;
+    color: #2d3748;
+    cursor: pointer;
+}
+.company-cell .company-main:hover { color: #667eea; }
+.company-cell .company-sub {
+    font-size: 10px;
+    color: #a0aec0;
+    margin-top: 1px;
+}
+
+/* Action dropdown */
+.action-cell { position: relative; text-align: center; }
+.btn-action {
+    width: 28px;
+    height: 28px;
+    background: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 28px;
+    padding: 0;
+}
+.btn-action:hover { background: #edf2f7; }
+.action-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: 32px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    z-index: 100;
+    min-width: 180px;
+    padding: 4px 0;
+}
+.action-menu.show { display: block; }
+.action-menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 7px 14px;
+    border: none;
+    background: none;
+    font-size: 12px;
+    color: #4a5568;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.action-menu-item:hover { background: #f7fafc; color: #2d3748; }
+.action-menu-item.danger { color: #dc2626; }
+.action-menu-item.danger:hover { background: #fef2f2; }
+
+/* Transactions Modal */
+.txn-modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 500;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 30px 20px;
+    overflow-y: auto;
+}
+.txn-modal-overlay.show { display: flex; }
+.txn-modal {
+    background: #fff;
+    border-radius: 10px;
+    width: 100%;
+    max-width: 960px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+}
+.txn-modal-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.txn-modal-header h3 { margin: 0; font-size: 14px; color: #2d3748; }
+.txn-modal-header .company-sub { font-size: 11px; color: #718096; margin-left: 8px; }
+.txn-modal-body {
+    padding: 12px 16px;
+    overflow-y: auto;
+    flex: 1;
+}
+.txn-modal-body table { width: 100%; border-collapse: collapse; }
+.txn-modal-body th {
+    background: #f7fafc;
+    padding: 5px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #718096;
+    border-bottom: 1px solid #e2e8f0;
+    position: sticky;
+    top: 0;
+}
+.txn-modal-body td {
+    padding: 5px 8px;
+    font-size: 12px;
+    border-bottom: 1px solid #f0f4f8;
+}
+.txn-modal-body tr:hover td { background: #f9fafb; }
+.txn-modal-body tr.ignored-row td { opacity: 0.5; text-decoration: line-through; }
+.txn-modal-body tr.hidden-row td { opacity: 0.5; font-style: italic; }
+.txn-modal-body tr.clickable-row { cursor: pointer; }
+
+/* Transactions summary cards */
+.txn-summary-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #e2e8f0;
+}
+.txn-summary-card {
+    background: #f7fafc;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border-left: 3px solid #667eea;
+}
+.txn-summary-card.positive { border-left-color: #059669; }
+.txn-summary-card.negative { border-left-color: #dc2626; }
+.txn-summary-card .summary-label { font-size: 9px; text-transform: uppercase; color: #718096; font-weight: 600; }
+.txn-summary-card .summary-value { font-size: 15px; font-weight: 700; color: #2d3748; line-height: 1.2; }
+.txn-summary-card .summary-sub { font-size: 10px; color: #a0aec0; margin-top: 2px; }
+
+/* Edit Modal */
+.edit-modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.35);
+    z-index: 600;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 40px 20px;
+    overflow-y: auto;
+}
+.edit-modal-overlay.show { display: flex; }
+.edit-modal {
+    background: #fff;
+    border-radius: 10px;
+    width: 100%;
+    max-width: 680px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+.edit-modal-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.edit-modal-header h3 { margin: 0; font-size: 14px; color: #2d3748; }
+.edit-modal-body {
+    padding: 14px 16px;
+    overflow-y: auto;
+    flex: 1;
+}
+.edit-modal-footer {
+    padding: 10px 16px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.edit-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 16px;
+}
+.edit-form-grid .form-group { display: flex; flex-direction: column; }
+.edit-form-grid .form-group.full-width { grid-column: 1 / -1; }
+.edit-form-grid label { font-size: 11px; font-weight: 600; color: #4a5568; margin-bottom: 3px; }
+.edit-form-grid input, .edit-form-grid select, .edit-form-grid textarea {
+    padding: 5px 8px;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    font-size: 12px;
+}
+.edit-form-grid input:disabled, .edit-form-grid select:disabled {
+    background: #f7fafc;
+    color: #a0aec0;
+}
+.edit-form-grid .form-row-flags {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 20px;
+    padding: 8px 0;
+}
+.edit-form-grid .flag-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: #4a5568;
+}
+.locked-warning {
+    background: #fefce8;
+    border: 1px solid #fde68a;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: #92400e;
+    margin-bottom: 10px;
+}
+.form-separator {
+    grid-column: 1 / -1;
+    border: none;
+    border-top: 1px solid #e2e8f0;
+    margin: 4px 0;
+}
+</style>
+</head>
+<body>
+<div class="trading-container">
+    <!-- Sticky Header -->
+    <div class="trading-header-bar">
+        <div>
+            <h2 style="margin: 0; font-size: 15px; color: #2d3748; display: inline;">Trading</h2>
+            <span id="tr-unit-desc" style="font-size: 11px; color: #718096; margin-left: 8px;"></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <span id="tr-price-status" style="font-size: 12px; color: #718096;">⏳ Loading prices...</span>
+            <button class="btn-toggle-zero" id="trToggleZeroBtn" title="Show/hide zero quantity holdings">
+                👁 Show Zero Holdings
+            </button>
+            <button class="btn-refresh" id="trRefreshBtn" title="Refresh data">🔄 Refresh</button>
+            <button class="btn-add-txn" id="trAddTxnBtn">➕ Add Transaction</button>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="trading-tabs">
+        <button class="trading-tab-btn active" data-tab="tr-portfolio">Portfolio</button>
+        <button class="trading-tab-btn" data-tab="tr-watchlist">Watchlist</button>
+        <button class="trading-tab-btn" data-tab="tr-transactions">Transactions</button>
+    </div>
+
+    <!-- Tab: Portfolio -->
+    <div id="tr-portfolio" class="trading-tab-content active">
+        <!-- Filters -->
+        <div class="filters-grid">
+            <div class="filter-group">
+                <div class="filter-header">
+                    <label>Filter by Investor</label>
+                    <span class="clear-link" id="tr-clear-investors">Clear all</span>
+                </div>
+                <div class="filter-search-container">
+                    <input type="text" class="filter-search-input" id="tr-investor-search" placeholder="Type to search investors...">
+                    <div class="filter-dropdown" id="tr-investor-dropdown"></div>
+                </div>
+                <div class="filter-selected-tags" id="tr-selected-investors"></div>
+            </div>
+            <div class="filter-group">
+                <div class="filter-header">
+                    <label>Filter by Broker</label>
+                    <span class="clear-link" id="tr-clear-brokers">Clear all</span>
+                </div>
+                <div class="filter-search-container">
+                    <input type="text" class="filter-search-input" id="tr-broker-search" placeholder="Type to search brokers...">
+                    <div class="filter-dropdown" id="tr-broker-dropdown"></div>
+                </div>
+                <div class="filter-selected-tags" id="tr-selected-brokers"></div>
+            </div>
+            <div class="filter-group">
+                <div class="filter-header">
+                    <label>Filter by Tag</label>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div class="tag-match-options">
+                            <span style="font-size: 11px; color: #718096;">Match:</span>
+                            <label class="radio-label"><input type="radio" name="tr-tag-logic" value="OR" checked> <span>Any</span></label>
+                            <label class="radio-label"><input type="radio" name="tr-tag-logic" value="AND"> <span>All</span></label>
+                        </div>
+                        <span class="clear-link" id="tr-clear-tags">Clear all</span>
+                    </div>
+                </div>
+                <div class="filter-search-container">
+                    <input type="text" class="filter-search-input" id="tr-tag-search" placeholder="Type to search tags...">
+                    <div class="filter-dropdown" id="tr-tag-dropdown"></div>
+                </div>
+                <div class="filter-selected-tags" id="tr-selected-tags"></div>
+            </div>
+        </div>
+
+        <!-- Portfolio Table -->
+        <div class="table-container">
+            <table id="tr-portfolio-table">
+                <thead>
+                    <tr>
+                        <th class="sortable" id="tr-th-company">
+                            Company <span class="sort-indicator" id="tr-sort-company"></span>
+                        </th>
+                        <th class="text-right">Qty<br><span class="subheader">Avg Cost (₹)</span></th>
+                        <th class="text-right sortable" id="tr-th-invested">
+                            Investment <span class="sort-indicator" id="tr-sort-invested"></span>
+                            <br><span class="subheader">% of Total</span>
+                        </th>
+                        <th class="text-right">CMP (₹)</th>
+                        <th class="text-right sortable" id="tr-th-daypl">
+                            Day's P&L <span class="sort-indicator" id="tr-sort-daypl"></span>
+                            <br><span class="subheader">Day %</span>
+                        </th>
+                        <th class="text-right sortable" id="tr-th-pl">
+                            Total P&L <span class="sort-indicator" id="tr-sort-pl"></span>
+                            <br><span class="subheader">P&L %</span>
+                        </th>
+                        <th class="text-right sortable" id="tr-th-value">
+                            Current Value <span class="sort-indicator" id="tr-sort-value"></span>
+                            <br><span class="subheader">% of Total</span>
+                        </th>
+                        <th style="width: 50px; text-align: center;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="tr-portfolio-list">
+                    <tr><td colspan="8" style="text-align:center;padding:40px;color:#9ca3af;">Loading portfolio data...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="summary-cards" id="tr-portfolio-summary"></div>
+    </div>
+
+    <!-- Tab: Watchlist -->
+    <div id="tr-watchlist" class="trading-tab-content">
+        <div style="text-align:center;padding:60px;color:#9ca3af;">🚧 Watchlist — Coming soon</div>
+    </div>
+
+    <!-- Tab: Transactions -->
+    <div id="tr-transactions" class="trading-tab-content">
+        <div style="text-align:center;padding:60px;color:#9ca3af;">🚧 Transactions — Coming soon</div>
+    </div>
+</div>
+
+<!-- Transactions Modal -->
+<div class="txn-modal-overlay" id="trTxnModal">
+    <div class="txn-modal">
+        <div class="txn-modal-header">
+            <div>
+                <h3 id="trTxnModalTitle">Transactions</h3>
+            </div>
+            <button class="btn-icon" id="trTxnModalClose" title="Close" style="font-size:16px;">✕</button>
+        </div>
+        <div class="txn-modal-body">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Investor + Broker</th>
+                        <th>Symbol</th>
+                        <th class="text-right">Qty</th>
+                        <th class="text-right">Price</th>
+                        <th class="text-right">Value</th>
+                        <th style="width:40px;text-align:center;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="trTxnModalBody"></tbody>
+            </table>
+            <div class="txn-summary-cards" id="trTxnSummary"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Transaction Edit Modal -->
+<div class="edit-modal-overlay" id="trEditModal">
+    <div class="edit-modal">
+        <div class="edit-modal-header">
+            <h3 id="trEditModalTitle">Edit Transaction</h3>
+            <button class="btn-icon" id="trEditModalClose" title="Close" style="font-size:16px;">✕</button>
+        </div>
+        <div class="edit-modal-body">
+            <div class="locked-warning" id="trEditLockWarning" style="display:none;">
+                🔒 This transaction is locked. Unlock it to make changes.
+            </div>
+            <div class="edit-form-grid" id="trEditForm">
+                <!-- Row 1: Read-only context -->
+                <div class="form-group">
+                    <label>Investor</label>
+                    <input type="text" id="trEditInvestor" disabled>
+                </div>
+                <div class="form-group">
+                    <label>Broker</label>
+                    <input type="text" id="trEditBroker" disabled>
+                </div>
+
+                <hr class="form-separator">
+
+                <!-- Row 2: Core fields -->
+                <div class="form-group">
+                    <label>Transaction Date</label>
+                    <input type="date" id="trEditDate">
+                </div>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="trEditType">
+                        <option value="BUY">BUY</option>
+                        <option value="SELL">SELL</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Symbol</label>
+                    <input type="text" id="trEditSymbol">
+                </div>
+                <div class="form-group">
+                    <label>Exchange</label>
+                    <input type="text" id="trEditExchange">
+                </div>
+
+                <div class="form-group">
+                    <label>Quantity</label>
+                    <input type="number" id="trEditQty" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Price</label>
+                    <input type="number" id="trEditPrice" step="0.01">
+                </div>
+
+                <div class="form-group">
+                    <label>Gross Amount</label>
+                    <input type="number" id="trEditGross" step="0.01" disabled style="background:#f0fdf4;">
+                </div>
+
+                <hr class="form-separator">
+
+                <!-- Row 3: Charges -->
+                <div class="form-group">
+                    <label>Brokerage</label>
+                    <input type="number" id="trEditBrokerage" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>STT</label>
+                    <input type="number" id="trEditStt" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>Other Charges</label>
+                    <input type="number" id="trEditOther" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>GST</label>
+                    <input type="number" id="trEditGst" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>TDS</label>
+                    <input type="number" id="trEditTds" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>Total Charges</label>
+                    <input type="number" id="trEditTotalCharges" step="0.01" disabled style="background:#f0fdf4;">
+                </div>
+
+                <div class="form-group">
+                    <label>Net Amount</label>
+                    <input type="number" id="trEditNetAmount" step="0.01" disabled style="background:#f0fdf4;">
+                </div>
+                <div class="form-group">
+                    <label>Margin Blocked</label>
+                    <input type="number" id="trEditMargin" step="0.01">
+                </div>
+
+                <hr class="form-separator">
+
+                <!-- Row 4: Tags & Notes -->
+                <div class="form-group full-width">
+                    <label>Tags (comma-separated)</label>
+                    <input type="text" id="trEditTags" placeholder="e.g. swing, fno">
+                </div>
+                <div class="form-group full-width">
+                    <label>Notes</label>
+                    <textarea id="trEditNotes" rows="2" style="resize:vertical;"></textarea>
+                </div>
+
+                <!-- Flags -->
+                <div class="form-row-flags">
+                    <label class="flag-label"><input type="checkbox" id="trEditLocked"> Locked</label>
+                    <label class="flag-label"><input type="checkbox" id="trEditIgnoreAvg"> Ignore for Avg Cost</label>
+                    <label class="flag-label"><input type="checkbox" id="trEditDontDisplay"> Don't Display</label>
+                </div>
+            </div>
+        </div>
+        <div class="edit-modal-footer">
+            <button class="btn-secondary" id="trEditCancelBtn">Cancel</button>
+            <button class="btn-primary" id="trEditSaveBtn">Save Changes</button>
+        </div>
+    </div>
+</div>
+</body>

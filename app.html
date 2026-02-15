@@ -37,9 +37,10 @@
             <button class="nav-btn active" data-module="portfolio">📊 Portfolio</button>
             <button class="nav-btn" data-module="master-data">🗂️ Master Database</button>
             <button class="nav-btn" data-module="import-transactions">📥 Import Transactions</button>
+            <button class="nav-btn" data-module="trading">📈 Trading</button>
             <button class="nav-btn disabled" data-module="add-transaction">➕ Add Transaction</button>
             <button class="nav-btn disabled" data-module="other-transactions">📋 Other Transactions</button>
-            <button class="nav-btn disabled" data-module="analytics">📈 Analytics</button>
+            <button class="nav-btn disabled" data-module="analytics">📊 Analytics</button>
         </div>
     </nav>
 
@@ -203,6 +204,12 @@
                 injectModule(html, container);
                 await loadScript('transaction-import.js');
                 if (typeof initTransactionImport === 'function') initTransactionImport();
+
+            } else if (moduleName === 'trading') {
+                const html = await (await fetch('trading.html')).text();
+                injectModule(html, container);
+                await loadScript('trading.js');
+                if (typeof initTrading === 'function') initTrading();
 
             } else {
                 container.innerHTML = '<div class="coming-soon">🚧 Coming soon!</div>';
