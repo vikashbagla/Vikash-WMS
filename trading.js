@@ -1007,7 +1007,7 @@ function trGetTxnModalTxns() {
 function trRenderTxnTable(txns) {
     if (!txns) txns = trGetTxnModalTxns();
 
-    // Calculate running qty (always chronological, excluding income & temp-hidden)
+    // Calculate running qty (always chronological, excluding income — hide is visual only)
     var chronoTxns = txns.slice().sort(function(a, b) {
         return new Date(a.transaction_date) - new Date(b.transaction_date);
     });
@@ -1015,7 +1015,7 @@ function trRenderTxnTable(txns) {
     var runSum = 0;
     chronoTxns.forEach(function(t) {
         var isIncome = INCOME_TYPES.indexOf(t.transaction_type) >= 0;
-        if (!isIncome && !trTxnHiddenIds[t.id]) {
+        if (!isIncome) {
             runSum += (t.quantity || 0);
         }
         runningQtyMap[t.id] = runSum;
@@ -1121,6 +1121,12 @@ function trToggleTempHide(txnId) {
     } else {
         trTxnHiddenIds[txnId] = true;
     }
+    // Update Show All button immediately
+    var hiddenCount = Object.keys(trTxnHiddenIds).length;
+    var toggleBtn = document.getElementById('trToggleHiddenBtn');
+    if (toggleBtn) {
+        toggleBtn.style.display = hiddenCount > 0 ? '' : 'none';
+    }
     trRenderTxnTable();
 }
 
@@ -1173,10 +1179,9 @@ function trRenderTxnSummary(txns) {
     var container = document.getElementById('trTxnSummary');
     if (!container) return;
 
-    // Calculate summary (always exclude temp-hidden, exclude ignore_for_avg_cost)
+    // Calculate summary (hide is visual only — always include all rows, exclude ignore_for_avg_cost)
     var netQty = 0, totalCost = 0;
     txns.forEach(function(t) {
-        if (trTxnHiddenIds[t.id]) return;
         if (t.ignore_for_avg_cost) return;
 
         var isIncome = INCOME_TYPES.indexOf(t.transaction_type) >= 0;
