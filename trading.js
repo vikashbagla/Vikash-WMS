@@ -327,40 +327,41 @@ function trToggleZeroHoldings() {
 // ============================================================================
 
 function trInitFilterPills() {
-    // Investor pills
-    var invContainer = document.getElementById('tr-investor-pills');
-    if (invContainer) {
-        invContainer.innerHTML = trInvestors.map(function(inv) {
+    // Investor dropdown — pills
+    var invDd = document.getElementById('tr-investor-dropdown');
+    if (invDd) {
+        invDd.innerHTML = trInvestors.map(function(inv) {
             var label = inv.short_name || inv.name;
             return '<span class="tr-pill" data-type="investor" data-id="' + inv.id + '">' + label + '</span>';
         }).join('');
     }
-    // Broker pills
-    var brkContainer = document.getElementById('tr-broker-pills');
-    if (brkContainer) {
-        brkContainer.innerHTML = trBrokers.map(function(b) {
+    // Broker dropdown — pills
+    var brkDd = document.getElementById('tr-broker-dropdown');
+    if (brkDd) {
+        brkDd.innerHTML = trBrokers.map(function(b) {
             var label = b.broker_code || b.name;
             return '<span class="tr-pill" data-type="broker" data-id="' + b.id + '">' + label + '</span>';
         }).join('');
     }
-    // Tag pills
+    // Tag dropdown — pills
     var allTags = {};
     trTransactions.forEach(function(t) {
         if (t.tags) t.tags.forEach(function(tag) { if (tag !== 'blank') allTags[tag] = true; });
     });
-    var tagContainer = document.getElementById('tr-tag-pills');
-    if (tagContainer) {
-        tagContainer.innerHTML = Object.keys(allTags).sort().map(function(tag) {
+    var tagDd = document.getElementById('tr-tag-dropdown');
+    if (tagDd) {
+        tagDd.innerHTML = Object.keys(allTags).sort().map(function(tag) {
             return '<span class="tr-pill" data-type="tag" data-id="' + tag + '">' + tag + '</span>';
         }).join('');
     }
-    // Attach click handlers to all pills
+    // Attach pill click handlers
     trAttachPillListeners();
 }
 
 function trAttachPillListeners() {
-    document.querySelectorAll('.tr-pill').forEach(function(pill) {
-        pill.addEventListener('click', function() {
+    document.querySelectorAll('.tr-pill-dropdown .tr-pill').forEach(function(pill) {
+        pill.addEventListener('click', function(e) {
+            e.stopPropagation();
             var type = pill.dataset.type;
             var id = pill.dataset.id;
             var arr;
@@ -373,23 +374,99 @@ function trAttachPillListeners() {
             else arr.push(id);
 
             pill.classList.toggle('on', arr.indexOf(id) >= 0);
+            trRenderSelectedTags(type);
             trRenderPortfolio();
         });
     });
 }
 
 function trSetupFilters() {
-    // Tag logic radio
-    // (pill click handlers are attached in trInitFilterPills → trAttachPillListeners)
+    // Search inputs — show dropdown on click/type, filter pills by text
+    ['investor', 'broker', 'tag'].forEach(function(type) {
+        var input = document.getElementById('tr-' + type + '-search');
+        var dd = document.getElementById('tr-' + type + '-dropdown');
+        if (!input || !dd) return;
+        input.addEventListener('click', function() { dd.classList.add('show'); });
+        input.addEventListener('input', function() {
+            dd.classList.add('show');
+            var query = input.value.toLowerCase();
+            dd.querySelectorAll('.tr-pill').forEach(function(pill) {
+                pill.style.display = pill.textContent.toLowerCase().indexOf(query) >= 0 ? '' : 'none';
+            });
+        });
+    });
+    // Clear buttons
+    document.getElementById('tr-clear-investors').addEventListener('click', function() {
+        trSelectedInvestorIds = [];
+        trSyncPillStates('investor');
+        trRenderSelectedTags('investor');
+        trRenderPortfolio();
+    });
+    document.getElementById('tr-clear-brokers').addEventListener('click', function() {
+        trSelectedBrokerIds = [];
+        trSyncPillStates('broker');
+        trRenderSelectedTags('broker');
+        trRenderPortfolio();
+    });
+    document.getElementById('tr-clear-tags').addEventListener('click', function() {
+        trSelectedTagNames = [];
+        trSyncPillStates('tag');
+        trRenderSelectedTags('tag');
+        trRenderPortfolio();
+    });
+    // Close dropdowns on outside click
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.filter-search-container')) {
+            document.querySelectorAll('.tr-pill-dropdown').forEach(function(dd) { dd.classList.remove('show'); });
+        }
+    });
 }
 
-function trSyncPillStates() {
-    document.querySelectorAll('.tr-pill').forEach(function(pill) {
-        var type = pill.dataset.type;
+function trRenderSelectedTags(type) {
+    var arr, container, labelFn;
+    if (type === 'investor') {
+        arr = trSelectedInvestorIds;
+        container = document.getElementById('tr-selected-investors');
+        labelFn = function(id) { var inv = trInvestors.find(function(i) { return i.id === id; }); return inv ? (inv.short_name || inv.name) : id; };
+    } else if (type === 'broker') {
+        arr = trSelectedBrokerIds;
+        container = document.getElementById('tr-selected-brokers');
+        labelFn = function(id) { var b = trBrokers.find(function(i) { return i.id === id; }); return b ? (b.broker_code || b.name) : id; };
+    } else {
+        arr = trSelectedTagNames;
+        container = document.getElementById('tr-selected-tags');
+        labelFn = function(id) { return id; };
+    }
+    if (!container) return;
+    container.innerHTML = arr.map(function(id) {
+        return '<span class="filter-tag-item">' + labelFn(id) +
+            ' <span class="filter-tag-remove" data-type="' + type + '" data-id="' + id + '">×</span></span>';
+    }).join('');
+    container.querySelectorAll('.filter-tag-remove').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var t = btn.dataset.type;
+            var rid = btn.dataset.id;
+            var a;
+            if (t === 'investor') a = trSelectedInvestorIds;
+            else if (t === 'broker') a = trSelectedBrokerIds;
+            else a = trSelectedTagNames;
+            var ix = a.indexOf(rid);
+            if (ix >= 0) a.splice(ix, 1);
+            trSyncPillStates(t);
+            trRenderSelectedTags(t);
+            trRenderPortfolio();
+        });
+    });
+}
+
+function trSyncPillStates(type) {
+    var selector = type ? '#tr-' + type + '-dropdown .tr-pill' : '.tr-pill-dropdown .tr-pill';
+    document.querySelectorAll(selector).forEach(function(pill) {
+        var t = pill.dataset.type;
         var id = pill.dataset.id;
         var arr;
-        if (type === 'investor') arr = trSelectedInvestorIds;
-        else if (type === 'broker') arr = trSelectedBrokerIds;
+        if (t === 'investor') arr = trSelectedInvestorIds;
+        else if (t === 'broker') arr = trSelectedBrokerIds;
         else arr = trSelectedTagNames;
         pill.classList.toggle('on', arr.indexOf(id) >= 0);
     });
@@ -1031,11 +1108,6 @@ function trRenderTxnTable(txns) {
     document.getElementById('trTxnSortDate').textContent = trTxnSortColumn === 'date' ? (trTxnSortDirection === 'asc' ? '▲' : '▼') : '';
     document.getElementById('trTxnSortSymbol').textContent = trTxnSortColumn === 'symbol' ? (trTxnSortDirection === 'asc' ? '▲' : '▼') : '';
 
-    // Show/hide the Show All button based on whether any trades are temp-hidden
-    var hiddenCount = Object.keys(trTxnHiddenIds).length;
-    var toggleBtn = document.getElementById('trToggleHiddenBtn');
-    toggleBtn.style.display = hiddenCount > 0 ? '' : 'none';
-
     // Attach listeners
     trAttachTxnModalListeners();
 }
@@ -1063,12 +1135,6 @@ function trToggleTempHide(txnId) {
         delete trTxnHiddenIds[txnId];
     } else {
         trTxnHiddenIds[txnId] = true;
-    }
-    // Update Show All button immediately
-    var hiddenCount = Object.keys(trTxnHiddenIds).length;
-    var toggleBtn = document.getElementById('trToggleHiddenBtn');
-    if (toggleBtn) {
-        toggleBtn.style.display = hiddenCount > 0 ? '' : 'none';
     }
     trRenderTxnTable();
 }
