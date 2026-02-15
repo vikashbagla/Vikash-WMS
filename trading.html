@@ -5,11 +5,17 @@
    TRADING MODULE STYLES
    ================================================================ */
 
+/* Main container — flex column, NO page scroll */
+.trading-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
 /* Sticky header */
 .trading-header-bar {
-    position: sticky;
-    top: 0;
-    z-index: 50;
+    flex-shrink: 0;
     background: #fff;
     padding: 8px 0;
     border-bottom: 1px solid #e2e8f0;
@@ -32,6 +38,7 @@
 
 /* Tabs */
 .trading-tabs {
+    flex-shrink: 0;
     display: flex;
     gap: 0;
     border-bottom: 2px solid #e2e8f0;
@@ -55,7 +62,7 @@
     border-bottom-color: #667eea;
 }
 .trading-tab-content { display: none; }
-.trading-tab-content.active { display: block; }
+.trading-tab-content.active { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 
 /* Portfolio table — Company cell */
 .company-cell .company-main {
@@ -71,17 +78,34 @@
     margin-top: 1px;
 }
 
+/* Remove bold from number cells (only company name, total row, summary boxes stay bold) */
+.trading-container .number-main { font-weight: 400; }
+.trading-container .total-row td { font-weight: 600; }
+.trading-container .total-row .number-main { font-weight: 600; }
+
+/* Tag pills in portfolio table */
+.tag-pills { display: flex; flex-wrap: wrap; gap: 2px; }
+.tag-pill {
+    display: inline-block;
+    padding: 1px 5px;
+    background: #edf2f7;
+    color: #718096;
+    border-radius: 3px;
+    font-size: 9px;
+    white-space: nowrap;
+}
+
 /* Action dropdown */
 .action-cell { position: relative; text-align: center; }
 .btn-action {
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     background: #f7fafc;
     border: 1px solid #e2e8f0;
     border-radius: 5px;
     cursor: pointer;
-    font-size: 13px;
-    line-height: 28px;
+    font-size: 12px;
+    line-height: 26px;
     padding: 0;
 }
 .btn-action:hover { background: #edf2f7; }
@@ -89,7 +113,7 @@
     display: none;
     position: absolute;
     right: 0;
-    top: 32px;
+    top: 30px;
     background: #fff;
     border: 1px solid #e2e8f0;
     border-radius: 6px;
@@ -115,6 +139,10 @@
 .action-menu-item.danger { color: #dc2626; }
 .action-menu-item.danger:hover { background: #fef2f2; }
 
+/* Investor breakdown — clickable name */
+.investor-name-link { cursor: pointer; color: #2d3748; }
+.investor-name-link:hover { color: #667eea; }
+
 /* Transactions Modal */
 .txn-modal-overlay {
     display: none;
@@ -132,7 +160,7 @@
     background: #fff;
     border-radius: 10px;
     width: 100%;
-    max-width: 960px;
+    max-width: 1000px;
     max-height: 85vh;
     display: flex;
     flex-direction: column;
@@ -146,6 +174,22 @@
 }
 .txn-modal-header h3 { margin: 0; font-size: 14px; color: #2d3748; }
 .txn-modal-header .company-sub { font-size: 11px; color: #718096; margin-left: 8px; }
+.txn-modal-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.btn-toggle-hidden {
+    background: none;
+    border: 1px solid #e2e8f0;
+    border-radius: 5px;
+    padding: 3px 10px;
+    font-size: 11px;
+    color: #718096;
+    cursor: pointer;
+}
+.btn-toggle-hidden:hover { background: #f7fafc; }
+.btn-toggle-hidden.active { background: #edf2f7; color: #4a5568; border-color: #cbd5e0; }
 .txn-modal-body {
     padding: 12px 16px;
     overflow-y: auto;
@@ -163,6 +207,8 @@
     position: sticky;
     top: 0;
 }
+.txn-modal-body th.sortable { cursor: pointer; user-select: none; }
+.txn-modal-body th.sortable:hover { color: #4a5568; }
 .txn-modal-body td {
     padding: 5px 8px;
     font-size: 12px;
@@ -171,6 +217,7 @@
 .txn-modal-body tr:hover td { background: #f9fafb; }
 .txn-modal-body tr.ignored-row td { opacity: 0.5; text-decoration: line-through; }
 .txn-modal-body tr.hidden-row td { opacity: 0.5; font-style: italic; }
+.txn-modal-body tr.temp-hidden-row td { opacity: 0.35; }
 .txn-modal-body tr.clickable-row { cursor: pointer; }
 
 /* Transactions summary cards */
@@ -193,6 +240,12 @@
 .txn-summary-card .summary-label { font-size: 9px; text-transform: uppercase; color: #718096; font-weight: 600; }
 .txn-summary-card .summary-value { font-size: 15px; font-weight: 700; color: #2d3748; line-height: 1.2; }
 .txn-summary-card .summary-sub { font-size: 10px; color: #a0aec0; margin-top: 2px; }
+
+/* Txn row hide button */
+.btn-hide-txn {
+    background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; opacity: 0.5;
+}
+.btn-hide-txn:hover { opacity: 1; }
 
 /* Edit Modal */
 .edit-modal-overlay {
@@ -312,7 +365,7 @@
     <!-- Tab: Portfolio -->
     <div id="tr-portfolio" class="trading-tab-content active">
         <!-- Filters -->
-        <div class="filters-grid">
+        <div class="filters-grid" style="flex-shrink:0;">
             <div class="filter-group">
                 <div class="filter-header">
                     <label>Filter by Investor</label>
@@ -355,43 +408,44 @@
             </div>
         </div>
 
-        <!-- Portfolio Table -->
-        <div class="table-container">
+        <!-- Portfolio Table (scrollable) -->
+        <div class="table-container" style="flex:1; min-height:0; overflow:auto;">
             <table id="tr-portfolio-table">
                 <thead>
                     <tr>
-                        <th class="sortable" id="tr-th-company">
+                        <th class="sortable" id="tr-th-company" style="width:16%;">
                             Company <span class="sort-indicator" id="tr-sort-company"></span>
                         </th>
-                        <th class="text-right">Qty<br><span class="subheader">Avg Cost (₹)</span></th>
-                        <th class="text-right sortable" id="tr-th-invested">
+                        <th class="text-right" style="width:10%;">Qty<br><span class="subheader">Avg Cost</span></th>
+                        <th class="text-right sortable" id="tr-th-invested" style="width:11%;">
                             Investment <span class="sort-indicator" id="tr-sort-invested"></span>
                             <br><span class="subheader">% of Total</span>
                         </th>
-                        <th class="text-right">CMP (₹)</th>
-                        <th class="text-right sortable" id="tr-th-daypl">
+                        <th class="text-right" style="width:11%;">CMP</th>
+                        <th class="text-right sortable" id="tr-th-daypl" style="width:10%;">
                             Day's P&L <span class="sort-indicator" id="tr-sort-daypl"></span>
                             <br><span class="subheader">Day %</span>
                         </th>
-                        <th class="text-right sortable" id="tr-th-pl">
+                        <th class="text-right sortable" id="tr-th-pl" style="width:11%;">
                             Total P&L <span class="sort-indicator" id="tr-sort-pl"></span>
                             <br><span class="subheader">P&L %</span>
                         </th>
-                        <th class="text-right sortable" id="tr-th-value">
+                        <th class="text-right sortable" id="tr-th-value" style="width:11%;">
                             Current Value <span class="sort-indicator" id="tr-sort-value"></span>
                             <br><span class="subheader">% of Total</span>
                         </th>
-                        <th style="width: 50px; text-align: center;">Actions</th>
+                        <th style="width:10%;">Tags</th>
+                        <th style="width:40px; text-align:center;">⚙️</th>
                     </tr>
                 </thead>
                 <tbody id="tr-portfolio-list">
-                    <tr><td colspan="8" style="text-align:center;padding:40px;color:#9ca3af;">Loading portfolio data...</td></tr>
+                    <tr><td colspan="9" style="text-align:center;padding:40px;color:#9ca3af;">Loading portfolio data...</td></tr>
                 </tbody>
             </table>
         </div>
 
-        <!-- Summary Cards -->
-        <div class="summary-cards" id="tr-portfolio-summary"></div>
+        <!-- Summary Cards (pinned to bottom) -->
+        <div class="summary-cards" id="tr-portfolio-summary" style="flex-shrink:0;"></div>
     </div>
 
     <!-- Tab: Watchlist -->
@@ -412,19 +466,23 @@
             <div>
                 <h3 id="trTxnModalTitle">Transactions</h3>
             </div>
-            <button class="btn-icon" id="trTxnModalClose" title="Close" style="font-size:16px;">✕</button>
+            <div class="txn-modal-header-actions">
+                <button class="btn-toggle-hidden" id="trToggleHiddenBtn" title="Show/hide temporarily hidden trades">👁 Show All</button>
+                <button class="btn-icon" id="trTxnModalClose" title="Close" style="font-size:16px;">✕</button>
+            </div>
         </div>
         <div class="txn-modal-body">
             <table>
                 <thead>
                     <tr>
-                        <th>Date</th>
-                        <th>Investor + Broker</th>
-                        <th>Symbol</th>
+                        <th class="sortable" id="trTxnThDate">Date <span class="sort-indicator" id="trTxnSortDate">▼</span></th>
+                        <th>Investor &gt; Broker</th>
+                        <th class="sortable" id="trTxnThSymbol">Symbol <span class="sort-indicator" id="trTxnSortSymbol"></span></th>
                         <th class="text-right">Qty</th>
                         <th class="text-right">Price</th>
                         <th class="text-right">Value</th>
-                        <th style="width:40px;text-align:center;">Actions</th>
+                        <th class="text-right">Run. Qty</th>
+                        <th style="width:60px;text-align:center;">Actions</th>
                     </tr>
                 </thead>
                 <tbody id="trTxnModalBody"></tbody>

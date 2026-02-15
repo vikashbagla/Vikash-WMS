@@ -4,6 +4,8 @@
 // Uses 'tr' prefix to avoid naming conflicts with portfolio.js and utils.js.
 // All module-level state uses var (project convention — avoids TDZ on reload).
 
+var INCOME_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION'];
+
 var trTransactions = [];
 var trInvestors = [];
 var trBrokers = [];
@@ -18,9 +20,16 @@ var trExpandedKey = null;
 var trShowZeroHoldings = false;
 var trLivePrices = {};
 var trLiveData = {};
-var trOpenActionMenu = null; // track which action menu is open
-var trCurrentTxnModalKey = null; // company key for open transactions modal
-var trEditingTxnId = null; // transaction being edited
+var trOpenActionMenu = null;
+var trCurrentTxnModalKey = null;
+var trCurrentTxnInvestorId = null; // optional investor filter for txn modal
+var trEditingTxnId = null;
+
+// Txn modal state
+var trTxnSortColumn = 'date';
+var trTxnSortDirection = 'desc';
+var trTxnHiddenIds = {};        // temp hidden trade IDs (UI only)
+var trShowHiddenTrades = false;  // toggle for showing hidden trades
 
 // ============================================================================
 // INITIALIZATION
@@ -89,6 +98,13 @@ function trSetupEventHandlers() {
         if (e.target === this) trCloseTxnModal();
     });
 
+    // Txn modal sort headers
+    document.getElementById('trTxnThDate').addEventListener('click', function() { trTxnSort('date'); });
+    document.getElementById('trTxnThSymbol').addEventListener('click', function() { trTxnSort('symbol'); });
+
+    // Toggle hidden trades button
+    document.getElementById('trToggleHiddenBtn').addEventListener('click', trToggleShowHidden);
+
     // Edit modal close/save
     document.getElementById('trEditModalClose').addEventListener('click', trCloseEditModal);
     document.getElementById('trEditCancelBtn').addEventListener('click', trCloseEditModal);
@@ -109,6 +125,17 @@ function trSetupEventHandlers() {
     document.addEventListener('click', function(e) {
         if (trOpenActionMenu && !e.target.closest('.action-cell')) {
             trCloseAllActionMenus();
+        }
+    });
+
+    // ESC key closes modals
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            if (document.getElementById('trEditModal').classList.contains('show')) {
+                trCloseEditModal();
+            } else if (document.getElementById('trTxnModal').classList.contains('show')) {
+                trCloseTxnModal();
+            }
         }
     });
 }
@@ -139,13 +166,13 @@ function trRestoreTab() {
 // ============================================================================
 
 async function trLoadData() {
-    // Load ALL transactions (including dont_display for the transactions modal)
-    var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display&transaction_type=in.(BUY,SELL)&order=transaction_date.asc', {
+    // Load ALL transactions (no transaction_type filter — includes DIVIDEND, etc.)
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display&order=transaction_date.asc', {
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
     });
     if (!resp.ok) throw new Error('Failed to load transactions: HTTP ' + resp.status);
     var txnData = await resp.json();
-    console.log('Trading: Loaded ' + txnData.length + ' transactions');
+    console.log('Trading: Loaded ' + txnData.length + ' transactions (all types)');
 
     trTransactions = txnData;
 
@@ -180,14 +207,32 @@ async function trRefresh() {
 }
 
 // ============================================================================
+// HELPER: investor / broker display names
+// ============================================================================
+
+function trInvName(investorId) {
+    var inv = trInvestors.find(function(i) { return i.id === investorId; });
+    return inv ? (inv.short_name || inv.name) : 'Unknown';
+}
+
+function trBrkCode(brokerId) {
+    var brk = trBrokers.find(function(b) { return b.id === brokerId; });
+    return brk ? (brk.broker_code || brk.name) : '';
+}
+
+function trInvBrk(txn) {
+    var inv = trInvName(txn.investor_id);
+    var brk = trBrkCode(txn.broker_id);
+    return brk ? inv + ' > ' + brk : inv;
+}
+
+// ============================================================================
 // LIVE PRICES FROM FYERS
 // ============================================================================
 
 function trGetFyersKey(h) {
-    var exch = (h.exchange || 'NSE').toUpperCase();
-    return exch === 'NFO'
-        ? 'NSE:' + h.symbol
-        : exch + ':' + (h.shortSymbol || h.symbol) + '-EQ';
+    // Always use equity key: NSE:SYMBOL-EQ
+    return 'NSE:' + (h.shortSymbol || h.symbol) + '-EQ';
 }
 
 function trGetPrice(h) {
@@ -278,14 +323,15 @@ function trToggleZeroHoldings() {
 }
 
 // ============================================================================
-// FILTERS (same pattern as portfolio.js)
+// FILTERS (same pattern as portfolio.js, with short_name / broker_code labels)
 // ============================================================================
 
 function trInitFilterDropdowns() {
     var invDd = document.getElementById('tr-investor-dropdown');
     if (invDd) {
         invDd.innerHTML = trInvestors.map(function(inv) {
-            return '<div class="filter-dropdown-item" data-id="' + inv.id + '">' + inv.name + '</div>';
+            var label = inv.short_name || inv.name;
+            return '<div class="filter-dropdown-item" data-id="' + inv.id + '">' + label + '</div>';
         }).join('');
         invDd.querySelectorAll('.filter-dropdown-item').forEach(function(item) {
             item.addEventListener('click', function() {
@@ -296,7 +342,8 @@ function trInitFilterDropdowns() {
     var brkDd = document.getElementById('tr-broker-dropdown');
     if (brkDd) {
         brkDd.innerHTML = trBrokers.map(function(b) {
-            return '<div class="filter-dropdown-item" data-id="' + b.id + '">' + b.name + '</div>';
+            var label = b.broker_code || b.name;
+            return '<div class="filter-dropdown-item" data-id="' + b.id + '">' + label + '</div>';
         }).join('');
         brkDd.querySelectorAll('.filter-dropdown-item').forEach(function(item) {
             item.addEventListener('click', function() {
@@ -307,7 +354,7 @@ function trInitFilterDropdowns() {
     // Tags
     var allTags = {};
     trTransactions.forEach(function(t) {
-        if (t.tags) t.tags.forEach(function(tag) { allTags[tag] = true; });
+        if (t.tags) t.tags.forEach(function(tag) { if (tag !== 'blank') allTags[tag] = true; });
     });
     var tagDd = document.getElementById('tr-tag-dropdown');
     if (tagDd) {
@@ -323,7 +370,6 @@ function trInitFilterDropdowns() {
 }
 
 function trSetupFilters() {
-    // Search inputs to show/filter dropdowns
     ['investor', 'broker', 'tag'].forEach(function(type) {
         var input = document.getElementById('tr-' + type + '-search');
         var dd = document.getElementById('tr-' + type + '-dropdown');
@@ -337,7 +383,6 @@ function trSetupFilters() {
             });
         });
     });
-    // Clear buttons
     document.getElementById('tr-clear-investors').addEventListener('click', function() {
         trSelectedInvestorIds = [];
         trRenderSelectedFilters('investor');
@@ -353,7 +398,6 @@ function trSetupFilters() {
         trRenderSelectedFilters('tag');
         trRenderPortfolio();
     });
-    // Close dropdowns on outside click
     document.addEventListener('click', function(e) {
         if (!e.target.closest('.filter-search-container')) {
             document.querySelectorAll('.filter-dropdown').forEach(function(dd) { dd.classList.remove('show'); });
@@ -362,16 +406,16 @@ function trSetupFilters() {
 }
 
 function trToggleFilter(type, id, name) {
-    var arr, renderKey;
-    if (type === 'investor') { arr = trSelectedInvestorIds; renderKey = 'investor'; }
-    else if (type === 'broker') { arr = trSelectedBrokerIds; renderKey = 'broker'; }
-    else { arr = trSelectedTagNames; renderKey = 'tag'; }
+    var arr;
+    if (type === 'investor') arr = trSelectedInvestorIds;
+    else if (type === 'broker') arr = trSelectedBrokerIds;
+    else arr = trSelectedTagNames;
 
     var idx = arr.indexOf(id);
     if (idx >= 0) arr.splice(idx, 1);
     else arr.push(id);
 
-    trRenderSelectedFilters(renderKey);
+    trRenderSelectedFilters(type);
     trRenderPortfolio();
 }
 
@@ -380,11 +424,11 @@ function trRenderSelectedFilters(type) {
     if (type === 'investor') {
         arr = trSelectedInvestorIds;
         container = document.getElementById('tr-selected-investors');
-        labelFn = function(id) { var inv = trInvestors.find(function(i) { return i.id === id; }); return inv ? inv.name : id; };
+        labelFn = function(id) { var inv = trInvestors.find(function(i) { return i.id === id; }); return inv ? (inv.short_name || inv.name) : id; };
     } else if (type === 'broker') {
         arr = trSelectedBrokerIds;
         container = document.getElementById('tr-selected-brokers');
-        labelFn = function(id) { var b = trBrokers.find(function(i) { return i.id === id; }); return b ? b.name : id; };
+        labelFn = function(id) { var b = trBrokers.find(function(i) { return i.id === id; }); return b ? (b.broker_code || b.name) : id; };
     } else {
         arr = trSelectedTagNames;
         container = document.getElementById('tr-selected-tags');
@@ -400,7 +444,6 @@ function trRenderSelectedFilters(type) {
             trToggleFilter(btn.dataset.type, btn.dataset.id, '');
         });
     });
-    // Update dropdown item selection state
     var dd = document.getElementById('tr-' + type + '-dropdown');
     if (dd) {
         dd.querySelectorAll('.filter-dropdown-item').forEach(function(item) {
@@ -435,10 +478,12 @@ function trCalcHoldings() {
         }
     }
 
-    // Group by short_symbol (underlying) to combine equity + F&O for same company
+    // Group by short_symbol (underlying) — combines equity + F&O
     var holdings = {};
     filtered.forEach(function(txn) {
-        var key = (txn.short_symbol || txn.symbol) + '-' + (txn.exchange || 'NSE');
+        var key = txn.short_symbol || txn.symbol;
+        if (!key) return;
+
         if (!holdings[key]) {
             holdings[key] = {
                 symbol: txn.symbol,
@@ -452,33 +497,58 @@ function trCalcHoldings() {
                 latestDate: null
             };
         }
-        holdings[key].quantity += txn.quantity;
-        holdings[key].totalCost += txn.net_amount || 0;
-        if (txn.tags) txn.tags.forEach(function(tag) { holdings[key].tags[tag] = true; });
+
+        // Prefer NSE exchange for Fyers lookup
+        if ((txn.exchange || 'NSE') === 'NSE') {
+            holdings[key].exchange = 'NSE';
+        }
+        // Use company_name from first equity txn if available
+        if (txn.company_name && (!holdings[key].companyName || holdings[key].companyName === holdings[key].shortSymbol)) {
+            holdings[key].companyName = txn.company_name;
+        }
+
+        var isIncome = INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
+
+        if (isIncome) {
+            // Income transactions reduce cost basis, don't affect quantity
+            if (!txn.ignore_for_avg_cost) {
+                holdings[key].totalCost -= Math.abs(txn.net_amount || 0);
+            }
+        } else {
+            // BUY/SELL: add quantity
+            holdings[key].quantity += txn.quantity;
+            // Add to cost only if not ignored
+            if (!txn.ignore_for_avg_cost) {
+                holdings[key].totalCost += txn.net_amount || 0;
+            }
+        }
+
+        if (txn.tags) txn.tags.forEach(function(tag) { if (tag !== 'blank') holdings[key].tags[tag] = true; });
         var txnDate = new Date(txn.transaction_date);
-        if (!holdings[key].latestDate || txnDate > holdings[key].latestDate) {
+        if (!isIncome && (!holdings[key].latestDate || txnDate > holdings[key].latestDate)) {
             holdings[key].latestDate = txnDate;
             holdings[key].latestPrice = txn.price;
         }
     });
 
-    return Object.values(holdings)
-        .filter(function(h) { return trShowZeroHoldings ? true : h.quantity !== 0; })
-        .map(function(h) {
-            return {
-                symbol: h.symbol,
-                shortSymbol: h.shortSymbol,
-                companyName: h.companyName,
-                exchange: h.exchange,
-                quantity: h.quantity,
-                totalCost: h.totalCost,
-                avgCost: h.quantity !== 0
-                    ? (h.totalCost !== 0 ? h.totalCost / h.quantity : h.latestPrice)
-                    : 0,
-                tags: Object.keys(h.tags),
-                latestPrice: h.latestPrice
-            };
-        });
+    return Object.keys(holdings).map(function(key) {
+        var h = holdings[key];
+        if (!trShowZeroHoldings && h.quantity === 0) return null;
+        return {
+            key: key,
+            symbol: h.symbol,
+            shortSymbol: h.shortSymbol,
+            companyName: h.companyName,
+            exchange: h.exchange,
+            quantity: h.quantity,
+            totalCost: h.totalCost,
+            avgCost: h.quantity !== 0
+                ? (h.totalCost !== 0 ? h.totalCost / Math.abs(h.quantity) : h.latestPrice)
+                : 0,
+            tags: Object.keys(h.tags),
+            latestPrice: h.latestPrice
+        };
+    }).filter(function(h) { return h !== null; });
 }
 
 // ============================================================================
@@ -536,7 +606,7 @@ function trRenderPortfolio() {
     var holdings = trCalcHoldings();
 
     if (holdings.length === 0) {
-        list.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#9ca3af;">No holdings to display</td></tr>';
+        list.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#9ca3af;">No holdings to display</td></tr>';
         document.getElementById('tr-portfolio-summary').innerHTML = '';
         trUpdateSortIndicators();
         return;
@@ -545,8 +615,9 @@ function trRenderPortfolio() {
     // Totals
     var totalInvested = 0, totalValue = 0;
     holdings.forEach(function(h) {
-        totalInvested += h.quantity * h.avgCost;
-        totalValue += h.quantity * trGetPrice(h);
+        var price = trGetPrice(h);
+        totalInvested += h.totalCost;
+        totalValue += h.quantity * price;
     });
     var totalPL = totalValue - totalInvested;
     var totalPLPct = totalInvested !== 0 ? (totalPL / Math.abs(totalInvested)) * 100 : 0;
@@ -562,15 +633,14 @@ function trRenderPortfolio() {
                 valB = (b.companyName || b.shortSymbol || '').toLowerCase();
                 return trSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
             case 'invested':
-                valA = a.quantity * a.avgCost; valB = b.quantity * b.avgCost; break;
+                valA = a.totalCost; valB = b.totalCost; break;
             case 'pl':
                 if (trSortByPct) {
-                    var iA = a.quantity * a.avgCost, iB = b.quantity * b.avgCost;
-                    valA = iA !== 0 ? ((a.quantity * prA - iA) / Math.abs(iA)) * 100 : 0;
-                    valB = iB !== 0 ? ((b.quantity * prB - iB) / Math.abs(iB)) * 100 : 0;
+                    valA = a.totalCost !== 0 ? ((a.quantity * prA - a.totalCost) / Math.abs(a.totalCost)) * 100 : 0;
+                    valB = b.totalCost !== 0 ? ((b.quantity * prB - b.totalCost) / Math.abs(b.totalCost)) * 100 : 0;
                 } else {
-                    valA = (a.quantity * prA) - (a.quantity * a.avgCost);
-                    valB = (b.quantity * prB) - (b.quantity * b.avgCost);
+                    valA = (a.quantity * prA) - a.totalCost;
+                    valB = (b.quantity * prB) - b.totalCost;
                 }
                 break;
             case 'daypl':
@@ -593,12 +663,12 @@ function trRenderPortfolio() {
     var rows = holdings.map(function(h) {
         var price = trGetPrice(h);
         var md = trGetLiveData(h);
-        var invested = h.quantity * h.avgCost;
+        var invested = h.totalCost;
         var currentValue = h.quantity * price;
         var pl = currentValue - invested;
         var plPct = invested !== 0 ? (pl / Math.abs(invested)) * 100 : 0;
-        var invPct = totalInvested !== 0 ? (invested / totalInvested) * 100 : 0;
-        var valPct = totalValue !== 0 ? (currentValue / totalValue) * 100 : 0;
+        var invPct = totalInvested !== 0 ? (invested / Math.abs(totalInvested)) * 100 : 0;
+        var valPct = totalValue !== 0 ? (currentValue / Math.abs(totalValue)) * 100 : 0;
         var dayPL = md ? h.quantity * md.ch : null;
         var dayChp = md ? md.chp : null;
 
@@ -610,7 +680,7 @@ function trRenderPortfolio() {
             ? '<div class="number-main negative">(' + formatQuantity(Math.abs(h.quantity)) + ')</div>'
             : '<div class="number-main">' + formatQuantity(h.quantity) + '</div>';
 
-        var symbolKey = h.shortSymbol + '-' + h.exchange;
+        var symbolKey = h.key;
         var isExpanded = trExpandedKey === symbolKey;
         var expClass = isExpanded ? 'expanded-row' : '';
 
@@ -618,6 +688,13 @@ function trRenderPortfolio() {
             ? '<div class="number-main ' + getAmountClass(dayPL) + '">' + formatAmount(dayPL) + '</div>' +
               '<div class="number-sub ' + getAmountClass(dayChp) + '">' + formatPercent(dayChp) + '</div>'
             : '<div class="number-main">-</div>';
+
+        // Tags pills
+        var tagsPills = h.tags.length > 0
+            ? '<div class="tag-pills">' + h.tags.map(function(t) { return '<span class="tag-pill">' + t + '</span>'; }).join('') + '</div>'
+            : '';
+
+        var menuSafeKey = symbolKey.replace(/[^a-zA-Z0-9]/g, '_');
 
         var mainRow =
             '<tr class="' + expClass + '">' +
@@ -629,7 +706,7 @@ function trRenderPortfolio() {
                     '<div class="number-sub">' + formatPrice(h.avgCost, false) + '</div></td>' +
                 '<td class="text-right">' +
                     '<div class="number-main">' + formatAmount(invested) + '</div>' +
-                    '<div class="number-sub">' + invPct.toFixed(2) + '%</div></td>' +
+                    '<div class="number-sub">' + invPct.toFixed(1) + '%</div></td>' +
                 '<td class="text-right">' +
                     '<div class="number-main">' + formatPrice(price, false) + '</div>' + cmpSlider + '</td>' +
                 '<td class="text-right">' + dayPLHtml + '</td>' +
@@ -638,19 +715,19 @@ function trRenderPortfolio() {
                     '<div class="number-sub ' + getAmountClass(plPct) + '">' + formatPercent(plPct) + '</div></td>' +
                 '<td class="text-right">' +
                     '<div class="number-main">' + formatAmount(currentValue) + '</div>' +
-                    '<div class="number-sub">' + valPct.toFixed(2) + '%</div></td>' +
+                    '<div class="number-sub">' + valPct.toFixed(1) + '%</div></td>' +
+                '<td>' + tagsPills + '</td>' +
                 '<td class="action-cell">' +
                     '<button class="btn-action" data-key="' + symbolKey + '" title="Actions">⚙️</button>' +
-                    '<div class="action-menu" id="am-' + symbolKey.replace(/[^a-zA-Z0-9]/g, '_') + '">' +
+                    '<div class="action-menu" id="am-' + menuSafeKey + '">' +
                         '<button class="action-menu-item" data-action="transactions" data-key="' + symbolKey + '">📋 Show Transactions</button>' +
                     '</div>' +
                 '</td>' +
             '</tr>';
 
-        // Detail row (investor breakdown)
         var detailRow = '';
         if (isExpanded) {
-            detailRow = trBuildInvestorDetail(h, price, md, invested, currentValue);
+            detailRow = trBuildInvestorDetail(h, price, md);
         }
 
         return mainRow + detailRow;
@@ -664,7 +741,7 @@ function trRenderPortfolio() {
         ? (totalDayPL / Math.abs(totalInvested)) * 100 : null;
 
     var totalDayPLHtml = totalDayPL !== null
-        ? '<div class="' + getAmountClass(totalDayPL) + '">' + formatAmount(totalDayPL) + '</div>' +
+        ? '<div class="number-main ' + getAmountClass(totalDayPL) + '">' + formatAmount(totalDayPL) + '</div>' +
           '<div class="number-sub ' + getAmountClass(totalDayPLPct) + '">' + formatPercent(totalDayPLPct) + '</div>'
         : '-';
 
@@ -675,17 +752,16 @@ function trRenderPortfolio() {
             '<td class="text-right">' + formatAmount(totalInvested) + '</td>' +
             '<td class="text-right">-</td>' +
             '<td class="text-right">' + totalDayPLHtml + '</td>' +
-            '<td class="text-right"><div class="' + getAmountClass(totalPL) + '">' + formatAmount(totalPL) + '</div>' +
+            '<td class="text-right"><div class="number-main ' + getAmountClass(totalPL) + '">' + formatAmount(totalPL) + '</div>' +
                 '<div class="number-sub ' + getAmountClass(totalPLPct) + '">' + formatPercent(totalPLPct) + '</div></td>' +
             '<td class="text-right">' + formatAmount(totalValue) + '</td>' +
+            '<td>-</td>' +
             '<td>-</td>' +
         '</tr>';
 
     list.innerHTML = totalRow + rows;
     trUpdateSortIndicators();
     trRenderSummaryCards(totalInvested, totalValue, totalPL, totalPLPct, holdings.length);
-
-    // Attach event listeners for dynamic elements
     trAttachRowListeners();
 }
 
@@ -703,7 +779,7 @@ function trAttachRowListeners() {
         });
     });
 
-    // Action buttons
+    // Action buttons (company level)
     document.querySelectorAll('.btn-action[data-key]').forEach(function(btn) {
         btn.addEventListener('click', function(e) {
             e.stopPropagation();
@@ -711,13 +787,37 @@ function trAttachRowListeners() {
         });
     });
 
-    // Action menu items
+    // Action menu items (company level)
     document.querySelectorAll('.action-menu-item[data-action]').forEach(function(item) {
         item.addEventListener('click', function(e) {
             e.stopPropagation();
             trCloseAllActionMenus();
             if (item.dataset.action === 'transactions') {
-                trOpenTxnModal(item.dataset.key);
+                trOpenTxnModal(item.dataset.key, item.dataset.investorId || null);
+            }
+        });
+    });
+
+    // Investor breakdown — name click opens txn modal
+    document.querySelectorAll('.investor-name-link').forEach(function(el) {
+        el.addEventListener('click', function(e) {
+            e.stopPropagation();
+            trOpenTxnModal(el.dataset.key, el.dataset.investorId);
+        });
+    });
+
+    // Investor breakdown — action buttons
+    document.querySelectorAll('.inv-action-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var menuId = btn.dataset.menuId;
+            var menu = document.getElementById(menuId);
+            if (!menu) return;
+            var wasOpen = menu.classList.contains('show');
+            trCloseAllActionMenus();
+            if (!wasOpen) {
+                menu.classList.add('show');
+                trOpenActionMenu = menuId;
             }
         });
     });
@@ -746,37 +846,49 @@ function trCloseAllActionMenus() {
 }
 
 // ============================================================================
-// INVESTOR DETAIL (expandable row)
+// INVESTOR DETAIL (expandable row) — with actions
 // ============================================================================
 
-function trBuildInvestorDetail(h, price, md, parentInvested, parentValue) {
+function trBuildInvestorDetail(h, price, md) {
     var symbolTxns = trTransactions.filter(function(txn) {
-        return !txn.dont_display && (txn.short_symbol || txn.symbol) === h.shortSymbol && (txn.exchange || 'NSE') === h.exchange;
+        return !txn.dont_display && (txn.short_symbol || txn.symbol) === h.shortSymbol;
     });
 
     var groups = {};
     symbolTxns.forEach(function(txn) {
         if (!groups[txn.investor_id]) {
-            var inv = trInvestors.find(function(i) { return i.id === txn.investor_id; });
-            groups[txn.investor_id] = { name: inv ? (inv.short_name || inv.name) : 'Unknown', quantity: 0, totalCost: 0, tags: {} };
+            groups[txn.investor_id] = {
+                investorId: txn.investor_id,
+                name: trInvName(txn.investor_id),
+                quantity: 0,
+                totalCost: 0,
+                tags: {}
+            };
         }
-        groups[txn.investor_id].quantity += txn.quantity;
-        groups[txn.investor_id].totalCost += txn.net_amount || 0;
-        if (txn.tags) txn.tags.forEach(function(tag) { groups[txn.investor_id].tags[tag] = true; });
+        var isIncome = INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
+        if (isIncome) {
+            if (!txn.ignore_for_avg_cost) {
+                groups[txn.investor_id].totalCost -= Math.abs(txn.net_amount || 0);
+            }
+        } else {
+            groups[txn.investor_id].quantity += txn.quantity;
+            if (!txn.ignore_for_avg_cost) {
+                groups[txn.investor_id].totalCost += txn.net_amount || 0;
+            }
+        }
+        if (txn.tags) txn.tags.forEach(function(tag) { if (tag !== 'blank') groups[txn.investor_id].tags[tag] = true; });
     });
 
     var investorRows = Object.values(groups)
-        .filter(function(g) { return g.quantity !== 0; })
+        .filter(function(g) { return trShowZeroHoldings || g.quantity !== 0; })
         .map(function(g) {
-            var avg = g.quantity !== 0 ? (g.totalCost !== 0 ? g.totalCost / g.quantity : h.latestPrice) : 0;
-            var inv = g.quantity * avg;
+            var avg = g.quantity !== 0 ? (g.totalCost !== 0 ? g.totalCost / Math.abs(g.quantity) : h.latestPrice) : 0;
+            var inv = g.totalCost;
             var val = g.quantity * price;
             var pl = val - inv;
             var plPct = inv !== 0 ? (pl / Math.abs(inv)) * 100 : 0;
             var dayPL = md ? g.quantity * md.ch : null;
             var dayChp = md ? md.chp : null;
-            var invPct = parentInvested !== 0 ? (inv / parentInvested) * 100 : 0;
-            var valPct = parentValue !== 0 ? (val / parentValue) * 100 : 0;
 
             var qtyHtml = g.quantity < 0
                 ? '<div class="number-main negative">(' + formatQuantity(Math.abs(g.quantity)) + ')</div>'
@@ -787,19 +899,32 @@ function trBuildInvestorDetail(h, price, md, parentInvested, parentValue) {
                   '<div class="number-sub ' + getAmountClass(dayChp) + '">' + formatPercent(dayChp) + '</div>'
                 : '<div class="number-main">-</div>';
 
+            var invTags = Object.keys(g.tags);
+            var tagsPills = invTags.length > 0
+                ? '<div class="tag-pills">' + invTags.map(function(t) { return '<span class="tag-pill">' + t + '</span>'; }).join('') + '</div>'
+                : '';
+
+            var invMenuId = 'inv-am-' + g.investorId.substring(0, 8) + '-' + h.key.replace(/[^a-zA-Z0-9]/g, '_');
+
             return '<tr>' +
-                '<td class="symbol-cell"><div class="symbol-main">' + g.name + '</div></td>' +
+                '<td><span class="investor-name-link" data-key="' + h.key + '" data-investor-id="' + g.investorId + '">' + g.name + '</span></td>' +
                 '<td class="text-right">' + qtyHtml + '<div class="number-sub">' + formatPrice(avg, false) + '</div></td>' +
-                '<td class="text-right"><div class="number-main">' + formatAmount(inv) + '</div><div class="number-sub">' + invPct.toFixed(2) + '%</div></td>' +
+                '<td class="text-right"><div class="number-main">' + formatAmount(inv) + '</div></td>' +
                 '<td class="text-right"><div class="number-main">' + formatPrice(price, false) + '</div></td>' +
                 '<td class="text-right">' + dayPLHtml + '</td>' +
                 '<td class="text-right"><div class="number-main ' + getAmountClass(pl) + '">' + formatAmount(pl) + '</div><div class="number-sub ' + getAmountClass(plPct) + '">' + formatPercent(plPct) + '</div></td>' +
-                '<td class="text-right"><div class="number-main">' + formatAmount(val) + '</div><div class="number-sub">' + valPct.toFixed(2) + '%</div></td>' +
-                '<td>-</td>' +
+                '<td class="text-right"><div class="number-main">' + formatAmount(val) + '</div></td>' +
+                '<td>' + tagsPills + '</td>' +
+                '<td class="action-cell">' +
+                    '<button class="btn-action inv-action-btn" data-menu-id="' + invMenuId + '" title="Actions">⚙️</button>' +
+                    '<div class="action-menu" id="' + invMenuId + '">' +
+                        '<button class="action-menu-item" data-action="transactions" data-key="' + h.key + '" data-investor-id="' + g.investorId + '">📋 Show Transactions</button>' +
+                    '</div>' +
+                '</td>' +
             '</tr>';
         }).join('');
 
-    return '<tr class="detail-row"><td colspan="8"><table class="inner-table"><tbody>' + investorRows + '</tbody></table></td></tr>';
+    return '<tr class="detail-row"><td colspan="9"><table class="inner-table"><tbody>' + investorRows + '</tbody></table></td></tr>';
 }
 
 // ============================================================================
@@ -820,54 +945,125 @@ function trRenderSummaryCards(invested, value, pl, plPct, stockCount) {
 // TRANSACTIONS MODAL
 // ============================================================================
 
-function trOpenTxnModal(companyKey) {
+function trOpenTxnModal(companyKey, investorId) {
     trCurrentTxnModalKey = companyKey;
-    var parts = companyKey.split('-');
-    var shortSymbol = parts.slice(0, -1).join('-');
-    var exchange = parts[parts.length - 1];
+    trCurrentTxnInvestorId = investorId || null;
+    trTxnHiddenIds = {};
+    trShowHiddenTrades = false;
 
-    // Get all transactions for this company (including hidden + ignored)
+    var shortSymbol = companyKey;
+
+    // Get all transactions for this company (including hidden + ignored + income)
     var txns = trTransactions.filter(function(t) {
         return (t.short_symbol || t.symbol) === shortSymbol;
-    }).sort(function(a, b) {
-        return new Date(b.transaction_date) - new Date(a.transaction_date);
     });
 
-    var companyName = txns.length > 0 ? txns[0].company_name : shortSymbol;
+    // Optional investor filter
+    if (investorId) {
+        txns = txns.filter(function(t) { return t.investor_id === investorId; });
+    }
+
+    var companyName = '';
+    for (var i = 0; i < txns.length; i++) {
+        if (txns[i].company_name) { companyName = txns[i].company_name; break; }
+    }
+    companyName = companyName || shortSymbol;
 
     // Title
+    var titleExtra = '';
+    if (investorId) {
+        titleExtra = ' <span style="font-size:11px;color:#667eea;">(' + trInvName(investorId) + ')</span>';
+    }
     document.getElementById('trTxnModalTitle').innerHTML = companyName +
-        '<span class="company-sub">' + shortSymbol + '</span>';
+        '<span class="company-sub">' + shortSymbol + '</span>' + titleExtra;
 
-    // Build table rows
+    // Reset sort
+    trTxnSortColumn = 'date';
+    trTxnSortDirection = 'desc';
+
+    // Update toggle button
+    var toggleBtn = document.getElementById('trToggleHiddenBtn');
+    toggleBtn.classList.remove('active');
+    toggleBtn.textContent = '👁 Show All';
+
+    // Render
+    trRenderTxnTable(txns);
+
+    // Show modal
+    document.getElementById('trTxnModal').classList.add('show');
+}
+
+function trGetTxnModalTxns() {
+    var shortSymbol = trCurrentTxnModalKey;
+    var txns = trTransactions.filter(function(t) {
+        return (t.short_symbol || t.symbol) === shortSymbol;
+    });
+    if (trCurrentTxnInvestorId) {
+        txns = txns.filter(function(t) { return t.investor_id === trCurrentTxnInvestorId; });
+    }
+    return txns;
+}
+
+function trRenderTxnTable(txns) {
+    if (!txns) txns = trGetTxnModalTxns();
+
+    // Calculate running qty (always chronological)
+    var chronoTxns = txns.slice().sort(function(a, b) {
+        return new Date(a.transaction_date) - new Date(b.transaction_date);
+    });
+    var runningQtyMap = {};
+    var runSum = 0;
+    chronoTxns.forEach(function(t) {
+        runSum += (t.quantity || 0);
+        runningQtyMap[t.id] = runSum;
+    });
+
+    // Sort for display
+    var displayTxns = txns.slice();
+    displayTxns.sort(function(a, b) {
+        if (trTxnSortColumn === 'symbol') {
+            var sA = (a.symbol || '').toLowerCase(), sB = (b.symbol || '').toLowerCase();
+            return trTxnSortDirection === 'asc' ? sA.localeCompare(sB) : sB.localeCompare(sA);
+        }
+        // Default: date
+        var dA = new Date(a.transaction_date), dB = new Date(b.transaction_date);
+        return trTxnSortDirection === 'asc' ? dA - dB : dB - dA;
+    });
+
     var tbody = document.getElementById('trTxnModalBody');
-    if (txns.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#9ca3af;">No transactions found</td></tr>';
+    if (displayTxns.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:#9ca3af;">No transactions found</td></tr>';
     } else {
-        tbody.innerHTML = txns.map(function(txn) {
-            var inv = trInvestors.find(function(i) { return i.id === txn.investor_id; });
-            var brk = trBrokers.find(function(b) { return b.id === txn.broker_id; });
-            var invName = inv ? (inv.short_name || inv.name) : 'Unknown';
-            var brkName = brk ? (brk.broker_code || brk.name) : '-';
-
-            var typeClass = txn.transaction_type === 'BUY' ? 'positive' : 'negative';
-            var qty = txn.quantity;
+        tbody.innerHTML = displayTxns.map(function(txn) {
+            var invBrk = trInvBrk(txn);
+            var isIncome = INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
+            var typeClass = txn.transaction_type === 'BUY' ? 'positive' : (txn.transaction_type === 'SELL' ? 'negative' : '');
+            var qty = txn.quantity || 0;
             var val = txn.net_amount || txn.gross_amount || 0;
+            var displayPrice = (qty !== 0) ? Math.abs(val / qty) : 0;
+            var runQty = runningQtyMap[txn.id] || 0;
 
-            var rowClass = '';
-            if (txn.ignore_for_avg_cost) rowClass = 'ignored-row';
-            else if (txn.dont_display) rowClass = 'hidden-row';
+            var rowClass = 'clickable-row';
+            if (txn.ignore_for_avg_cost) rowClass += ' ignored-row';
+            else if (txn.dont_display) rowClass += ' hidden-row';
 
+            var isTempHidden = trTxnHiddenIds[txn.id];
+            if (isTempHidden && !trShowHiddenTrades) return ''; // skip hidden
+            if (isTempHidden) rowClass += ' temp-hidden-row';
+
+            var hideIcon = isTempHidden ? '🙈' : '👁';
             var menuId = 'txm-' + txn.id.substring(0, 8);
 
-            return '<tr class="clickable-row ' + rowClass + '" data-txn-id="' + txn.id + '">' +
+            return '<tr class="' + rowClass + '" data-txn-id="' + txn.id + '">' +
                 '<td>' + formatDate(txn.transaction_date) + '</td>' +
-                '<td>' + invName + '<br><span style="font-size:10px;color:#a0aec0;">' + brkName + '</span></td>' +
+                '<td>' + invBrk + '</td>' +
                 '<td><span class="' + typeClass + '" style="font-weight:600;">' + txn.transaction_type + '</span> ' + txn.symbol + '</td>' +
-                '<td class="text-right">' + formatQuantity(Math.abs(qty)) + '</td>' +
-                '<td class="text-right">' + formatPrice(txn.price, false) + '</td>' +
+                '<td class="text-right">' + (qty !== 0 ? formatQuantity(Math.abs(qty)) : '-') + '</td>' +
+                '<td class="text-right">' + (qty !== 0 ? formatPrice(displayPrice, false) : '-') + '</td>' +
                 '<td class="text-right ' + getAmountClass(val) + '">' + formatAmount(val) + '</td>' +
+                '<td class="text-right">' + formatQuantity(runQty) + '</td>' +
                 '<td class="action-cell" style="position:relative;">' +
+                    '<button class="btn-hide-txn" data-txn-id="' + txn.id + '" title="Toggle visibility">' + hideIcon + '</button>' +
                     '<button class="btn-action txn-action-btn" data-txn-id="' + txn.id + '" title="Actions">⚙️</button>' +
                     '<div class="action-menu" id="' + menuId + '">' +
                         '<button class="action-menu-item" data-txn-action="edit" data-txn-id="' + txn.id + '">✏️ Edit</button>' +
@@ -882,22 +1078,58 @@ function trOpenTxnModal(companyKey) {
         }).join('');
     }
 
-    // Summary cards
-    trRenderTxnSummary(txns, shortSymbol, exchange);
+    // Summary cards (respect temp-hidden)
+    trRenderTxnSummary(txns);
 
-    // Show modal
-    document.getElementById('trTxnModal').classList.add('show');
+    // Update sort indicators
+    document.getElementById('trTxnSortDate').textContent = trTxnSortColumn === 'date' ? (trTxnSortDirection === 'asc' ? '▲' : '▼') : '';
+    document.getElementById('trTxnSortSymbol').textContent = trTxnSortColumn === 'symbol' ? (trTxnSortDirection === 'asc' ? '▲' : '▼') : '';
 
-    // Attach listeners for txn rows
+    // Attach listeners
     trAttachTxnModalListeners();
+}
+
+function trTxnSort(column) {
+    if (trTxnSortColumn === column) {
+        trTxnSortDirection = trTxnSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+        trTxnSortColumn = column;
+        trTxnSortDirection = column === 'date' ? 'desc' : 'asc';
+    }
+    trRenderTxnTable();
+}
+
+function trToggleShowHidden() {
+    trShowHiddenTrades = !trShowHiddenTrades;
+    var btn = document.getElementById('trToggleHiddenBtn');
+    btn.classList.toggle('active', trShowHiddenTrades);
+    btn.textContent = trShowHiddenTrades ? '🙈 Hide Filtered' : '👁 Show All';
+    trRenderTxnTable();
+}
+
+function trToggleTempHide(txnId) {
+    if (trTxnHiddenIds[txnId]) {
+        delete trTxnHiddenIds[txnId];
+    } else {
+        trTxnHiddenIds[txnId] = true;
+    }
+    trRenderTxnTable();
 }
 
 function trAttachTxnModalListeners() {
     // Clickable rows → edit
     document.querySelectorAll('#trTxnModalBody .clickable-row').forEach(function(row) {
         row.addEventListener('click', function(e) {
-            if (e.target.closest('.action-cell')) return; // don't trigger on action button
+            if (e.target.closest('.action-cell')) return;
             trOpenEditModal(row.dataset.txnId);
+        });
+    });
+
+    // Temp hide buttons
+    document.querySelectorAll('#trTxnModalBody .btn-hide-txn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            trToggleTempHide(btn.dataset.txnId);
         });
     });
 
@@ -929,29 +1161,34 @@ function trAttachTxnModalListeners() {
     });
 }
 
-function trRenderTxnSummary(txns, shortSymbol, exchange) {
+function trRenderTxnSummary(txns) {
     var container = document.getElementById('trTxnSummary');
     if (!container) return;
 
-    // Calculate summary (only non-ignored transactions)
-    var netQty = 0, totalBuyCost = 0, totalSellCost = 0;
+    // Calculate summary (exclude temp-hidden unless showing all, exclude ignore_for_avg_cost)
+    var netQty = 0, totalCost = 0;
     txns.forEach(function(t) {
+        if (!trShowHiddenTrades && trTxnHiddenIds[t.id]) return;
         if (t.ignore_for_avg_cost) return;
-        netQty += t.quantity;
-        var cost = t.net_amount || t.gross_amount || 0;
-        if (t.transaction_type === 'BUY') totalBuyCost += Math.abs(cost);
-        else totalSellCost += Math.abs(cost);
+
+        var isIncome = INCOME_TYPES.indexOf(t.transaction_type) >= 0;
+        if (isIncome) {
+            totalCost -= Math.abs(t.net_amount || 0);
+        } else {
+            netQty += t.quantity || 0;
+            totalCost += t.net_amount || t.gross_amount || 0;
+        }
     });
 
-    var invested = totalBuyCost - totalSellCost;
-    var avgCost = netQty !== 0 ? invested / netQty : 0;
+    var avgCost = netQty !== 0 ? totalCost / Math.abs(netQty) : 0;
 
-    // Current price from Fyers
-    var mockHolding = { symbol: shortSymbol, shortSymbol: shortSymbol, exchange: exchange, latestPrice: 0 };
+    // Current price
+    var shortSymbol = trCurrentTxnModalKey;
+    var mockHolding = { symbol: shortSymbol, shortSymbol: shortSymbol, exchange: 'NSE', latestPrice: 0 };
     var currentPrice = trGetPrice(mockHolding);
     var currentValue = netQty * currentPrice;
-    var pl = currentValue - invested;
-    var plPct = invested !== 0 ? (pl / Math.abs(invested)) * 100 : 0;
+    var pl = currentValue - totalCost;
+    var plPct = totalCost !== 0 ? (pl / Math.abs(totalCost)) * 100 : 0;
 
     container.innerHTML =
         '<div class="txn-summary-card">' +
@@ -960,7 +1197,7 @@ function trRenderTxnSummary(txns, shortSymbol, exchange) {
         '</div>' +
         '<div class="txn-summary-card">' +
             '<div class="summary-label">Invested Amount</div>' +
-            '<div class="summary-value">' + formatAmount(invested) + '</div>' +
+            '<div class="summary-value">' + formatAmount(totalCost) + '</div>' +
             '<div class="summary-sub">Avg Cost: ' + formatPrice(avgCost, false) + '</div>' +
         '</div>' +
         '<div class="txn-summary-card ' + getAmountClass(pl) + '">' +
@@ -973,6 +1210,9 @@ function trRenderTxnSummary(txns, shortSymbol, exchange) {
 function trCloseTxnModal() {
     document.getElementById('trTxnModal').classList.remove('show');
     trCurrentTxnModalKey = null;
+    trCurrentTxnInvestorId = null;
+    trTxnHiddenIds = {};
+    trShowHiddenTrades = false;
 }
 
 // ============================================================================
@@ -1005,8 +1245,7 @@ async function trToggleTxnFlag(txnId, flagName) {
     if (resp.ok) {
         txn[flagName] = newValue;
         showAlert(flagName.replace(/_/g, ' ') + ' ' + (newValue ? 'enabled' : 'disabled'), 'success', 2000);
-        // Refresh the transactions modal
-        if (trCurrentTxnModalKey) trOpenTxnModal(trCurrentTxnModalKey);
+        if (trCurrentTxnModalKey) trRenderTxnTable();
         trRenderPortfolio();
     } else {
         showAlert('Failed to update: HTTP ' + resp.status, 'error');
@@ -1037,10 +1276,9 @@ async function trDeleteTransaction(txnId) {
     });
 
     if (resp.ok) {
-        // Remove from local array
         trTransactions = trTransactions.filter(function(t) { return t.id !== txnId; });
         showAlert('Transaction deleted', 'success', 2000);
-        if (trCurrentTxnModalKey) trOpenTxnModal(trCurrentTxnModalKey);
+        if (trCurrentTxnModalKey) trRenderTxnTable();
         trRenderPortfolio();
     } else {
         showAlert('Failed to delete: HTTP ' + resp.status, 'error');
@@ -1056,11 +1294,8 @@ function trOpenEditModal(txnId) {
     if (!txn) return;
     trEditingTxnId = txnId;
 
-    var inv = trInvestors.find(function(i) { return i.id === txn.investor_id; });
-    var brk = trBrokers.find(function(b) { return b.id === txn.broker_id; });
-
-    document.getElementById('trEditInvestor').value = inv ? inv.name : 'Unknown';
-    document.getElementById('trEditBroker').value = brk ? brk.name : '-';
+    document.getElementById('trEditInvestor').value = trInvName(txn.investor_id);
+    document.getElementById('trEditBroker').value = trBrkCode(txn.broker_id) || '-';
     document.getElementById('trEditDate').value = txn.transaction_date || '';
     document.getElementById('trEditType').value = txn.transaction_type || 'BUY';
     document.getElementById('trEditSymbol').value = txn.symbol || '';
@@ -1126,7 +1361,6 @@ async function trSaveEdit() {
     var txn = trTransactions.find(function(t) { return t.id === trEditingTxnId; });
     if (!txn) return;
 
-    // Check lock toggle
     var isLocked = document.getElementById('trEditLocked').checked;
     if (txn.is_locked && isLocked) {
         showAlert('Transaction is locked. Uncheck the lock to save changes.', 'error');
@@ -1135,7 +1369,6 @@ async function trSaveEdit() {
 
     var qty = parseInt(document.getElementById('trEditQty').value) || 0;
     var type = document.getElementById('trEditType').value;
-    // Quantity sign: positive for BUY, negative for SELL
     var signedQty = type === 'SELL' ? -Math.abs(qty) : Math.abs(qty);
 
     var tagsRaw = document.getElementById('trEditTags').value.trim();
@@ -1176,11 +1409,10 @@ async function trSaveEdit() {
     });
 
     if (resp.ok) {
-        // Update local data
         Object.keys(body).forEach(function(k) { txn[k] = body[k]; });
         showAlert('Transaction saved', 'success', 2000);
         trCloseEditModal();
-        if (trCurrentTxnModalKey) trOpenTxnModal(trCurrentTxnModalKey);
+        if (trCurrentTxnModalKey) trRenderTxnTable();
         trRenderPortfolio();
     } else {
         var errText = await resp.text();
