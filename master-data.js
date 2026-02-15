@@ -1241,7 +1241,19 @@ async function commitSync() {
         // Save last sync timestamp
         localStorage.setItem('wms_last_securities_sync', new Date().toISOString());
 
-        alert(`✓ Done! Added: ${toAdd.length} | Updated: ${toUpdate.length}`);
+        // Post-commit: fetch sector for newly added equities
+        var sectorMsg = '';
+        if (toAdd.length > 0) {
+            btn.textContent = '⏳ Fetching sector for new records...';
+            try {
+                var sectorCount = await postCommitSectorFetch(toAdd);
+                if (sectorCount > 0) sectorMsg = ' | Sector populated: ' + sectorCount;
+            } catch (sectorErr) {
+                console.warn('Post-commit sector fetch error:', sectorErr);
+            }
+        }
+
+        alert('✓ Done! Added: ' + toAdd.length + ' | Updated: ' + toUpdate.length + sectorMsg);
         _syncPending = null;
         document.getElementById('syncPreview').style.display = 'none';
         await loadSecuritiesStats();
@@ -1259,6 +1271,278 @@ async function commitSync() {
 function cancelSync() {
     _syncPending = null;
     document.getElementById('syncPreview').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// YAHOO FINANCE HELPERS — Sector Sync, Size Sync, CM Sync hook
+// ═══════════════════════════════════════════════════════════════
+
+// Derive Yahoo Finance symbol from securities_db record
+function deriveYahooSymbol(rec) {
+    if (rec.nse_symbol) return rec.nse_symbol + '.NS';
+    if (rec.bse_symbol) return rec.bse_symbol + '.BO';
+    return null;
+}
+
+// Call Yahoo Finance edge function for a batch of Yahoo symbols (max 50)
+async function callYahooFinance(yahooSymbols) {
+    var resp = await fetch(SUPABASE_URL + '/functions/v1/yahoo-finance', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+        },
+        body: JSON.stringify({ symbols: yahooSymbols })
+    });
+    if (!resp.ok) throw new Error('Yahoo Finance edge function returned ' + resp.status);
+    return await resp.json();
+}
+
+// Market cap thresholds for Indian market (in INR)
+// 1 Cr = 10,000,000
+function deriveSizeFromMarketCap(marketCap) {
+    if (!marketCap || marketCap <= 0) return null;
+    if (marketCap > 750000000000)  return 'Large Cap';    // > 75,000 Cr
+    if (marketCap > 250000000000)  return 'Mid Cap';      // 25,001 - 75,000 Cr
+    if (marketCap > 10000000000)   return 'Small Cap';    // 1,001 - 25,000 Cr
+    return 'Micro Cap';                                    // <= 1,000 Cr
+}
+
+// ── Sector Sync ──────────────────────────────────────────────
+// Updates sector for all active equities where sector is NULL
+
+async function startSectorSync() {
+    var btn = document.getElementById('btnSectorSync');
+    btn.disabled = true;
+    btn.textContent = '⏳ Loading...';
+    setSecLoading(true, 'Fetching equities with missing sector...');
+
+    try {
+        // Fetch all active equities with null sector
+        var all = [];
+        var from = 0;
+        var BATCH = 1000;
+        while (true) {
+            var result = await window.supabaseClient
+                .from('securities_db')
+                .select('id,isin,symbol,nse_symbol,bse_symbol,sector,security_type')
+                .eq('is_active', true)
+                .in('security_type', ['EQUITY', 'EQUITY_SME'])
+                .is('sector', null)
+                .order('isin', { ascending: true })
+                .range(from, from + BATCH - 1);
+            if (result.error) throw result.error;
+            all = all.concat(result.data || []);
+            if (!result.data || result.data.length < BATCH) break;
+            from += BATCH;
+        }
+
+        if (all.length === 0) {
+            alert('All equities already have sector populated!');
+            return;
+        }
+
+        setSecLoading(true, 'Found ' + all.length + ' equities without sector. Fetching from Yahoo Finance...');
+
+        // Build yahoo symbol → record map
+        var yahooMap = {};   // yahooSymbol → [records]
+        var symbols = [];
+        for (var i = 0; i < all.length; i++) {
+            var ySym = deriveYahooSymbol(all[i]);
+            if (!ySym) continue;
+            if (!yahooMap[ySym]) { yahooMap[ySym] = []; symbols.push(ySym); }
+            yahooMap[ySym].push(all[i]);
+        }
+
+        // Call Yahoo Finance in batches of 30
+        var YBATCH = 30;
+        var updated = 0;
+        var failed = 0;
+        for (var b = 0; b < symbols.length; b += YBATCH) {
+            var batch = symbols.slice(b, b + YBATCH);
+            setSecLoading(true, 'Fetching sector... ' + Math.min(b + YBATCH, symbols.length) + '/' + symbols.length);
+
+            try {
+                var result = await callYahooFinance(batch);
+                var results = result.results || {};
+
+                // Update DB for each symbol that returned a sector
+                for (var s = 0; s < batch.length; s++) {
+                    var sym = batch[s];
+                    var data = results[sym];
+                    if (data && data.sector) {
+                        var recs = yahooMap[sym] || [];
+                        for (var r = 0; r < recs.length; r++) {
+                            var upd = await window.supabaseClient
+                                .from('securities_db')
+                                .update({ sector: data.sector })
+                                .eq('id', recs[r].id);
+                            if (upd.error) { failed++; console.warn('Sector update failed for', recs[r].symbol, upd.error); }
+                            else { updated++; }
+                        }
+                    }
+                }
+            } catch (batchErr) {
+                console.warn('Yahoo batch failed:', batchErr);
+                failed += batch.length;
+            }
+        }
+
+        alert('Sector Sync complete!\nUpdated: ' + updated + (failed > 0 ? ' | Failed: ' + failed : ''));
+        await loadSecuritiesStats();
+        await loadSecuritiesTable();
+
+    } catch (err) {
+        alert('Sector Sync error: ' + err.message);
+        console.error(err);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '⟳ Sector Sync';
+        setSecLoading(false);
+    }
+}
+
+// ── Update Size ──────────────────────────────────────────────
+// Fetches marketCap for all active equities, derives size
+
+async function startSizeSync() {
+    var btn = document.getElementById('btnSizeSync');
+    btn.disabled = true;
+    btn.textContent = '⏳ Loading...';
+    setSecLoading(true, 'Fetching active equities...');
+
+    try {
+        // Fetch all active equities (regardless of current size)
+        var all = [];
+        var from = 0;
+        var BATCH = 1000;
+        while (true) {
+            var result = await window.supabaseClient
+                .from('securities_db')
+                .select('id,isin,symbol,nse_symbol,bse_symbol,size,security_type')
+                .eq('is_active', true)
+                .in('security_type', ['EQUITY', 'EQUITY_SME'])
+                .order('isin', { ascending: true })
+                .range(from, from + BATCH - 1);
+            if (result.error) throw result.error;
+            all = all.concat(result.data || []);
+            if (!result.data || result.data.length < BATCH) break;
+            from += BATCH;
+        }
+
+        if (all.length === 0) {
+            alert('No active equities found.');
+            return;
+        }
+
+        setSecLoading(true, 'Found ' + all.length + ' equities. Fetching market cap from Yahoo Finance...');
+
+        // Build yahoo symbol → record map
+        var yahooMap = {};
+        var symbols = [];
+        for (var i = 0; i < all.length; i++) {
+            var ySym = deriveYahooSymbol(all[i]);
+            if (!ySym) continue;
+            if (!yahooMap[ySym]) { yahooMap[ySym] = []; symbols.push(ySym); }
+            yahooMap[ySym].push(all[i]);
+        }
+
+        // Call Yahoo Finance in batches of 30
+        var YBATCH = 30;
+        var updated = 0;
+        var skipped = 0;
+        var failed = 0;
+        for (var b = 0; b < symbols.length; b += YBATCH) {
+            var batch = symbols.slice(b, b + YBATCH);
+            setSecLoading(true, 'Fetching market cap... ' + Math.min(b + YBATCH, symbols.length) + '/' + symbols.length);
+
+            try {
+                var result = await callYahooFinance(batch);
+                var results = result.results || {};
+
+                for (var s = 0; s < batch.length; s++) {
+                    var sym = batch[s];
+                    var data = results[sym];
+                    if (data && data.marketCap) {
+                        var newSize = deriveSizeFromMarketCap(data.marketCap);
+                        if (!newSize) { skipped++; continue; }
+                        var recs = yahooMap[sym] || [];
+                        for (var r = 0; r < recs.length; r++) {
+                            var upd = await window.supabaseClient
+                                .from('securities_db')
+                                .update({ size: newSize })
+                                .eq('id', recs[r].id);
+                            if (upd.error) { failed++; console.warn('Size update failed for', recs[r].symbol, upd.error); }
+                            else { updated++; }
+                        }
+                    } else {
+                        skipped++;
+                    }
+                }
+            } catch (batchErr) {
+                console.warn('Yahoo batch failed:', batchErr);
+                failed += batch.length;
+            }
+        }
+
+        alert('Size Update complete!\nUpdated: ' + updated + ' | Skipped (no market cap): ' + skipped + (failed > 0 ? ' | Failed: ' + failed : ''));
+        await loadSecuritiesStats();
+        await loadSecuritiesTable();
+
+    } catch (err) {
+        alert('Size Update error: ' + err.message);
+        console.error(err);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '⟳ Update Size';
+        setSecLoading(false);
+    }
+}
+
+// ── Post-CM-Sync sector fetch for newly added records ────────
+// Called after commitSync() completes successfully
+
+async function postCommitSectorFetch(newRecords) {
+    // Filter to equities with NSE or BSE symbols
+    var eligible = [];
+    for (var i = 0; i < newRecords.length; i++) {
+        var rec = newRecords[i];
+        if (rec.security_type !== 'EQUITY' && rec.security_type !== 'EQUITY_SME') continue;
+        var ySym = deriveYahooSymbol(rec);
+        if (!ySym) continue;
+        eligible.push({ rec: rec, yahooSymbol: ySym });
+    }
+
+    if (eligible.length === 0) return 0;
+
+    var updated = 0;
+    var YBATCH = 30;
+
+    for (var b = 0; b < eligible.length; b += YBATCH) {
+        var batch = eligible.slice(b, b + YBATCH);
+        var symbols = batch.map(function(e) { return e.yahooSymbol; });
+
+        try {
+            var result = await callYahooFinance(symbols);
+            var results = result.results || {};
+
+            for (var s = 0; s < batch.length; s++) {
+                var item = batch[s];
+                var data = results[item.yahooSymbol];
+                if (data && data.sector) {
+                    await window.supabaseClient
+                        .from('securities_db')
+                        .update({ sector: data.sector })
+                        .eq('isin', item.rec.isin);
+                    updated++;
+                }
+            }
+        } catch (err) {
+            console.warn('Post-commit sector fetch batch failed:', err);
+        }
+    }
+
+    return updated;
 }
 
 // Browse / filter table ────────────────────────────────────────
