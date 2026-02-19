@@ -14,6 +14,8 @@ var trWlAddTargetId = null;    // Which watchlist we're adding to
 var trWlSearchCache = [];      // Cached search results from DB
 var trWlOpenMenuId = null;     // Currently open card menu
 var trWlRenamingId = null;     // Currently renaming watchlist
+var trWlSortState = {};        // watchlist_id → { field: 'name'|'chp', dir: 'asc'|'desc' }
+var trWlDragItemState = null;  // { wlId, itemId, fromIdx } for drag-reorder within card
 
 // ============================================================================
 // INITIALIZATION
@@ -86,6 +88,17 @@ function trWlSetupEventHandlers() {
         }, 300);
     });
 
+    // Reorder button
+    document.getElementById('trWlReorderBtn').addEventListener('click', trWlOpenReorderModal);
+
+    // Reorder modal — close/save
+    document.getElementById('trWlReorderClose').addEventListener('click', trWlCloseReorderModal);
+    document.getElementById('trWlReorderCancelBtn').addEventListener('click', trWlCloseReorderModal);
+    document.getElementById('trWlReorderSaveBtn').addEventListener('click', trWlSaveReorder);
+    document.getElementById('trWlReorderOverlay').addEventListener('click', function(e) {
+        if (e.target === this) trWlCloseReorderModal();
+    });
+
     // Close card menus on outside click
     document.addEventListener('click', function(e) {
         if (trWlOpenMenuId && !e.target.closest('.wl-card-actions')) {
@@ -107,11 +120,16 @@ function trWlSetupEventHandlers() {
         }
     });
 
-    // ESC closes add dialog
+    // ESC closes modals (reorder or add)
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
-            var overlay = document.getElementById('trWlAddOverlay');
-            if (overlay && overlay.classList.contains('show')) {
+            var reorderOverlay = document.getElementById('trWlReorderOverlay');
+            if (reorderOverlay && reorderOverlay.classList.contains('show')) {
+                trWlCloseReorderModal();
+                return;
+            }
+            var addOverlay = document.getElementById('trWlAddOverlay');
+            if (addOverlay && addOverlay.classList.contains('show')) {
                 trWlCloseAddDialog();
             }
         }
@@ -197,11 +215,15 @@ async function trWlLoadBrokerTokens() {
         nfoRows.forEach(function(r) { nfoTokenMap[r.id] = r; });
     }
 
-    // Attach Fyers symbol to each item
+    // Attach Fyers symbol and display symbol to each item
     trWlWatchlists.forEach(function(wl) {
         wl.items.forEach(function(item) {
             if (item.security_source === 'securities_nfo') {
                 var nfoRec = nfoTokenMap[item.security_id];
+                // For NFO, use full symbol (e.g. NATIONALUM26APRFUT) for display
+                if (nfoRec && nfoRec.symbol) {
+                    item._displaySymbol = nfoRec.symbol;
+                }
                 if (nfoRec && nfoRec.broker_tokens && nfoRec.broker_tokens.fyers) {
                     item._fyersSymbol = nfoRec.broker_tokens.fyers.symbol;
                 } else if (nfoRec) {
@@ -370,11 +392,20 @@ function trWlRender() {
             if (wl.items.length === 0) {
                 itemsHtml = '<div class="wl-empty-card">No securities added yet. Click + to add.</div>';
             } else {
-                itemsHtml = wl.items.map(function(item) {
+                // Apply sort if set
+                var sortedItems = trWlGetSortedItems(wl);
+                itemsHtml = sortedItems.map(function(item) {
                     return trWlRenderSecurityRow(item);
                 }).join('');
             }
         }
+
+        // Sort indicator
+        var ss = trWlSortState[wl.id];
+        var sortNameClass = ss && ss.field === 'name' ? ' active' : '';
+        var sortChpClass = ss && ss.field === 'chp' ? ' active' : '';
+        var sortNameArrow = ss && ss.field === 'name' ? (ss.dir === 'asc' ? ' ▲' : ' ▼') : '';
+        var sortChpArrow = ss && ss.field === 'chp' ? (ss.dir === 'asc' ? ' ▲' : ' ▼') : '';
 
         return '<div class="' + cardClass + '" data-wl-id="' + wl.id + '">' +
             '<div class="wl-card-header" data-wl-id="' + wl.id + '">' +
@@ -384,6 +415,10 @@ function trWlRender() {
                     '<span class="wl-item-count">(' + wl.items.length + ')</span>' +
                 '</div>' +
                 '<div class="wl-card-actions" style="position:relative;">' +
+                    '<div class="wl-sort-btns">' +
+                        '<button class="btn-wl-sort' + sortNameClass + '" data-wl-id="' + wl.id + '" data-sort="name" title="Sort by name">A-Z' + sortNameArrow + '</button>' +
+                        '<button class="btn-wl-sort' + sortChpClass + '" data-wl-id="' + wl.id + '" data-sort="chp" title="Sort by % change">%' + sortChpArrow + '</button>' +
+                    '</div>' +
                     '<button class="btn-wl-add" data-wl-id="' + wl.id + '" title="Add security">+</button>' +
                     '<button class="btn-wl-menu" data-wl-id="' + wl.id + '" data-menu-id="' + menuId + '" title="Options">⋮</button>' +
                     '<div class="wl-card-menu" id="' + menuId + '">' +
@@ -407,6 +442,9 @@ function trWlRenderSecurityRow(item) {
     var high = price ? price.high : null;
     var low = price ? price.low : null;
 
+    // Display symbol — for NFO, prefer _displaySymbol (full like NATIONALUM26APRFUT)
+    var displaySym = item._displaySymbol || item.short_symbol;
+
     // Price display
     var priceHtml = cmp !== null
         ? formatPrice(cmp, false)
@@ -423,28 +461,36 @@ function trWlRenderSecurityRow(item) {
         changeHtml = '<div class="wl-change-main" style="color:#a0aec0;">—</div>';
     }
 
-    // Slider
+    // Slider — portfolio style: just track + dot, low/high as tooltip on hover
     var sliderHtml = '';
     if (cmp !== null && high && low && high > low) {
         var pct = Math.min(100, Math.max(0, ((cmp - low) / (high - low)) * 100));
         var dotColor = pct >= 50 ? '#059669' : '#dc2626';
-        sliderHtml = '<div class="wl-slider-track">' +
-            '<div class="wl-slider-dot" style="left:' + pct.toFixed(1) + '%;background:' + dotColor + ';"></div>' +
+        sliderHtml = '<div class="price-slider">' +
+            '<div class="price-slider-track">' +
+                '<div class="price-slider-dot" style="left:' + pct.toFixed(1) + '%;background:' + dotColor + ';"></div>' +
             '</div>' +
-            '<div class="wl-slider-labels"><span>' + formatPrice(low, false) + '</span><span>' + formatPrice(high, false) + '</span></div>';
+            '<div class="slider-tooltip">' +
+                '<span>' + formatPrice(low, false) + '</span>' +
+                '<span>' + formatPrice(high, false) + '</span>' +
+            '</div>' +
+        '</div>';
     }
 
-    return '<div class="wl-security-row" data-item-id="' + item.id + '">' +
-        '<div class="wl-sec-symbol">' +
-            '<div class="wl-sym-main">' + trWlEsc(item.short_symbol) + '</div>' +
-            '<div class="wl-sym-sub">' + trWlEsc(item.company_name || '') + '</div>' +
+    return '<div class="wl-security-row" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true">' +
+        '<div class="wl-row-top">' +
+            '<div class="wl-sec-drag" title="Drag to reorder">☰</div>' +
+            '<div class="wl-sec-symbol">' +
+                '<div class="wl-sym-main">' + trWlEsc(displaySym) + '</div>' +
+                '<div class="wl-sym-sub">' + trWlEsc(item.company_name || '') + '</div>' +
+            '</div>' +
+            '<div class="wl-sec-price"><div class="wl-price-main">' + priceHtml + '</div></div>' +
+            '<div class="wl-sec-change">' + changeHtml + '</div>' +
+            '<div class="wl-sec-delete">' +
+                '<button class="btn-wl-delete" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" title="Remove">✕</button>' +
+            '</div>' +
         '</div>' +
-        '<div class="wl-sec-price"><div class="wl-price-main">' + priceHtml + '</div></div>' +
-        '<div class="wl-sec-change">' + changeHtml + '</div>' +
-        '<div class="wl-sec-slider">' + sliderHtml + '</div>' +
-        '<div class="wl-sec-delete">' +
-            '<button class="btn-wl-delete" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" title="Remove">✕</button>' +
-        '</div>' +
+        (sliderHtml ? '<div class="wl-row-slider">' + sliderHtml + '</div>' : '') +
     '</div>';
 }
 
@@ -505,6 +551,17 @@ function trWlAttachCardListeners() {
             trWlDeleteItem(btn.dataset.itemId, btn.dataset.wlId);
         });
     });
+
+    // Sort buttons
+    document.querySelectorAll('.btn-wl-sort').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            trWlToggleSort(btn.dataset.wlId, btn.dataset.sort);
+        });
+    });
+
+    // Item drag-reorder within cards
+    trWlSetupItemDrag();
 }
 
 function trWlCloseAllMenus() {
@@ -716,42 +773,52 @@ async function trWlSearchSecurities(query) {
             });
         }
 
-        var html = '';
+        // Build search cache — store full objects in JS array, reference by index
+        // This avoids putting complex data (JSON broker_tokens) in HTML data-attributes
+        trWlSearchCache = [];
 
         // CM results
         dbResults.forEach(function(r) {
-            var isAdded = existingKeys['securities_db:' + r.id];
             var displaySymbol = r.nse_symbol || r.bse_symbol || r.symbol;
-            var exchange = r.nse_symbol ? 'NSE' : (r.bse_symbol ? 'BSE' : '');
-            html += '<div class="wl-add-result-item' + (isAdded ? ' added' : '') + '" ' +
-                'data-source="securities_db" data-id="' + r.id + '" ' +
-                'data-symbol="' + trWlEsc(displaySymbol) + '" ' +
-                'data-company="' + trWlEsc(r.company_name || '') + '" ' +
-                'data-broker-tokens=\'' + JSON.stringify(r.broker_tokens || {}) + '\' ' +
-                'data-nse="' + trWlEsc(r.nse_symbol || '') + '" ' +
-                'data-bse="' + trWlEsc(r.bse_symbol || '') + '">' +
-                '<span class="wl-res-symbol">' + trWlEsc(displaySymbol) + '</span>' +
-                '<span class="wl-res-name">' + trWlEsc(r.company_name || '') + '</span>' +
-                '<span class="wl-res-type">' + trWlEsc(r.security_type || 'EQ') + '</span>' +
-                (exchange ? '<span class="wl-res-exchange">' + exchange + '</span>' : '') +
-                (isAdded ? '<span style="margin-left:8px;font-size:10px;color:#059669;">✓ Added</span>' : '') +
-                '</div>';
+            trWlSearchCache.push({
+                security_id: r.id,
+                security_source: 'securities_db',
+                short_symbol: displaySymbol,
+                company_name: r.company_name || '',
+                security_type: r.security_type || 'EQ',
+                exchange: r.nse_symbol ? 'NSE' : (r.bse_symbol ? 'BSE' : ''),
+                broker_tokens: r.broker_tokens || {},
+                nse_symbol: r.nse_symbol || '',
+                bse_symbol: r.bse_symbol || '',
+                isAdded: !!existingKeys['securities_db:' + r.id]
+            });
         });
 
-        // NFO results
+        // NFO results — use full symbol (e.g. NATIONALUM26APRFUT) as short_symbol
         nfoResults.forEach(function(r) {
-            var isAdded = existingKeys['securities_nfo:' + r.id];
-            html += '<div class="wl-add-result-item' + (isAdded ? ' added' : '') + '" ' +
-                'data-source="securities_nfo" data-id="' + r.id + '" ' +
-                'data-symbol="' + trWlEsc(r.underlying_symbol || r.symbol) + '" ' +
-                'data-company="' + trWlEsc(r.instrument_name || r.symbol) + '" ' +
-                'data-broker-tokens=\'' + JSON.stringify(r.broker_tokens || {}) + '\' ' +
-                'data-nse="" data-bse="">' +
-                '<span class="wl-res-symbol">' + trWlEsc(r.underlying_symbol || r.symbol) + '</span>' +
-                '<span class="wl-res-name">' + trWlEsc(r.instrument_name || '') + '</span>' +
-                '<span class="wl-res-type">' + trWlEsc(r.instrument_type || 'F&O') + '</span>' +
-                '<span class="wl-res-exchange">' + trWlEsc(r.exchange || '') + '</span>' +
-                (isAdded ? '<span style="margin-left:8px;font-size:10px;color:#059669;">✓ Added</span>' : '') +
+            trWlSearchCache.push({
+                security_id: r.id,
+                security_source: 'securities_nfo',
+                short_symbol: r.symbol || r.underlying_symbol,
+                company_name: r.instrument_name || r.symbol,
+                security_type: r.instrument_type || 'F&O',
+                exchange: r.exchange || '',
+                broker_tokens: r.broker_tokens || {},
+                nse_symbol: '',
+                bse_symbol: '',
+                isAdded: !!existingKeys['securities_nfo:' + r.id]
+            });
+        });
+
+        // Render results — only data-idx attribute needed (index into trWlSearchCache)
+        var html = '';
+        trWlSearchCache.forEach(function(item, idx) {
+            html += '<div class="wl-add-result-item' + (item.isAdded ? ' added' : '') + '" data-idx="' + idx + '">' +
+                '<span class="wl-res-symbol">' + trWlEsc(item.short_symbol) + '</span>' +
+                '<span class="wl-res-name">' + trWlEsc(item.company_name) + '</span>' +
+                '<span class="wl-res-type">' + trWlEsc(item.security_type) + '</span>' +
+                (item.exchange ? '<span class="wl-res-exchange">' + trWlEsc(item.exchange) + '</span>' : '') +
+                (item.isAdded ? '<span style="margin-left:8px;font-size:10px;color:#059669;">✓ Added</span>' : '') +
                 '</div>';
         });
 
@@ -765,18 +832,13 @@ async function trWlSearchSecurities(query) {
 
         resultsEl.innerHTML = html;
 
-        // Attach click handlers to results
+        // Attach click handlers — read from JS cache by index, not from data-attributes
         resultsEl.querySelectorAll('.wl-add-result-item:not(.added)').forEach(function(el) {
             el.addEventListener('click', function() {
-                trWlAddItem({
-                    security_id: parseInt(el.dataset.id),
-                    security_source: el.dataset.source,
-                    short_symbol: el.dataset.symbol,
-                    company_name: el.dataset.company,
-                    broker_tokens: JSON.parse(el.dataset.brokerTokens || '{}'),
-                    nse_symbol: el.dataset.nse,
-                    bse_symbol: el.dataset.bse
-                });
+                var idx = parseInt(el.dataset.idx);
+                var cached = trWlSearchCache[idx];
+                if (!cached) return;
+                trWlAddItem(cached);
             });
         });
 
@@ -787,6 +849,13 @@ async function trWlSearchSecurities(query) {
 
 async function trWlAddItem(security) {
     if (!trWlAddTargetId) return;
+
+    // Validate security_id — must be a valid number
+    if (!security.security_id || isNaN(security.security_id)) {
+        console.error('Watchlist: Invalid security_id', security);
+        showAlert('Failed to add — invalid security ID', 'error');
+        return;
+    }
 
     var wl = trWlWatchlists.find(function(w) { return w.id === trWlAddTargetId; });
     if (!wl) return;
@@ -892,6 +961,331 @@ async function trWlDeleteItem(itemId, wlId) {
     } else {
         showAlert('Failed to remove security', 'error');
     }
+}
+
+// ============================================================================
+// SORT ITEMS WITHIN WATCHLIST
+// ============================================================================
+
+function trWlGetSortedItems(wl) {
+    var ss = trWlSortState[wl.id];
+    if (!ss) return wl.items; // natural DB order
+
+    var sorted = wl.items.slice(); // copy
+    if (ss.field === 'name') {
+        sorted.sort(function(a, b) {
+            var aName = (a._displaySymbol || a.short_symbol || '').toLowerCase();
+            var bName = (b._displaySymbol || b.short_symbol || '').toLowerCase();
+            return aName < bName ? -1 : (aName > bName ? 1 : 0);
+        });
+    } else if (ss.field === 'chp') {
+        sorted.sort(function(a, b) {
+            var aPrice = trWlPrices[a._fyersSymbol];
+            var bPrice = trWlPrices[b._fyersSymbol];
+            var aChp = aPrice ? aPrice.chp : -9999;
+            var bChp = bPrice ? bPrice.chp : -9999;
+            return aChp - bChp;
+        });
+    }
+    if (ss.dir === 'desc') sorted.reverse();
+    return sorted;
+}
+
+function trWlToggleSort(wlId, field) {
+    var ss = trWlSortState[wlId];
+    if (ss && ss.field === field) {
+        if (ss.dir === 'asc') {
+            trWlSortState[wlId] = { field: field, dir: 'desc' };
+        } else {
+            // Third click: clear sort
+            delete trWlSortState[wlId];
+        }
+    } else {
+        trWlSortState[wlId] = { field: field, dir: 'asc' };
+    }
+    trWlRender();
+}
+
+// ============================================================================
+// DRAG REORDER ITEMS WITHIN WATCHLIST CARD
+// ============================================================================
+
+function trWlSetupItemDrag() {
+    document.querySelectorAll('.wl-security-row').forEach(function(row) {
+        row.addEventListener('dragstart', function(e) {
+            // Only allow drag from the drag handle
+            if (!e.target.closest('.wl-sec-drag') && e.target !== row) {
+                e.preventDefault();
+                return;
+            }
+            var wlId = row.dataset.wlId;
+            var itemId = row.dataset.itemId;
+            var wl = trWlWatchlists.find(function(w) { return w.id === wlId; });
+            if (!wl) return;
+            var fromIdx = wl.items.findIndex(function(it) { return it.id === itemId; });
+            trWlDragItemState = { wlId: wlId, itemId: itemId, fromIdx: fromIdx };
+            row.classList.add('wl-dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', itemId);
+        });
+
+        row.addEventListener('dragend', function() {
+            row.classList.remove('wl-dragging');
+            trWlDragItemState = null;
+            document.querySelectorAll('.wl-security-row').forEach(function(r) {
+                r.classList.remove('wl-drag-over-top', 'wl-drag-over-bottom');
+            });
+        });
+
+        row.addEventListener('dragover', function(e) {
+            if (!trWlDragItemState) return;
+            if (row.dataset.wlId !== trWlDragItemState.wlId) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            // Show drop indicator
+            var rect = row.getBoundingClientRect();
+            var midY = rect.top + rect.height / 2;
+            document.querySelectorAll('.wl-security-row').forEach(function(r) {
+                r.classList.remove('wl-drag-over-top', 'wl-drag-over-bottom');
+            });
+            if (e.clientY < midY) {
+                row.classList.add('wl-drag-over-top');
+            } else {
+                row.classList.add('wl-drag-over-bottom');
+            }
+        });
+
+        row.addEventListener('dragleave', function() {
+            row.classList.remove('wl-drag-over-top', 'wl-drag-over-bottom');
+        });
+
+        row.addEventListener('drop', function(e) {
+            e.preventDefault();
+            if (!trWlDragItemState) return;
+            var wlId = trWlDragItemState.wlId;
+            if (row.dataset.wlId !== wlId) return;
+
+            var wl = trWlWatchlists.find(function(w) { return w.id === wlId; });
+            if (!wl) return;
+
+            var fromIdx = trWlDragItemState.fromIdx;
+            var toItemId = row.dataset.itemId;
+            var toIdx = wl.items.findIndex(function(it) { return it.id === toItemId; });
+            if (fromIdx === toIdx) return;
+
+            // Determine drop position (above or below)
+            var rect = row.getBoundingClientRect();
+            var midY = rect.top + rect.height / 2;
+            if (e.clientY >= midY && toIdx > fromIdx) {
+                // dropping below, and target is already after source — keep toIdx
+            } else if (e.clientY < midY && toIdx < fromIdx) {
+                // dropping above, and target is already before source — keep toIdx
+            } else if (e.clientY >= midY) {
+                toIdx = toIdx; // after target
+            } else {
+                toIdx = toIdx; // before target
+            }
+
+            // Move in array
+            var moved = wl.items.splice(fromIdx, 1)[0];
+            wl.items.splice(toIdx, 0, moved);
+
+            // Clear any sort — user manual ordering takes precedence
+            delete trWlSortState[wlId];
+
+            // Update sort_order in DB
+            trWlSaveItemOrder(wl);
+            trWlRender();
+        });
+    });
+}
+
+async function trWlSaveItemOrder(wl) {
+    // Batch update sort_order for all items in the watchlist
+    var promises = wl.items.map(function(item, idx) {
+        item.sort_order = idx;
+        return fetch(SUPABASE_URL + '/rest/v1/watchlist_items?id=eq.' + item.id, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ sort_order: idx })
+        });
+    });
+    try {
+        await Promise.all(promises);
+    } catch (err) {
+        console.warn('Watchlist: Failed to save item order:', err.message);
+    }
+}
+
+// ============================================================================
+// REORDER MODAL
+// ============================================================================
+
+var trWlReorderList = [];  // Temp copy of watchlists for reordering
+
+function trWlOpenReorderModal() {
+    if (trWlWatchlists.length < 2) {
+        showAlert('Need at least 2 watchlists to reorder', 'info', 2000);
+        return;
+    }
+    // Copy current order
+    trWlReorderList = trWlWatchlists.map(function(wl) {
+        return { id: wl.id, name: wl.name, itemCount: wl.items.length };
+    });
+    trWlRenderReorderList();
+    document.getElementById('trWlReorderOverlay').classList.add('show');
+}
+
+function trWlCloseReorderModal() {
+    document.getElementById('trWlReorderOverlay').classList.remove('show');
+    trWlReorderList = [];
+}
+
+function trWlRenderReorderList() {
+    var body = document.getElementById('trWlReorderBody');
+    if (!body) return;
+    body.innerHTML = trWlReorderList.map(function(wl, idx) {
+        return '<div class="wl-reorder-item" data-idx="' + idx + '">' +
+            '<span class="wl-reorder-handle">☰</span>' +
+            '<span class="wl-reorder-name">' + trWlEsc(wl.name) +
+                '<span class="wl-reorder-count">(' + wl.itemCount + ')</span>' +
+            '</span>' +
+            '<div class="wl-reorder-arrows">' +
+                '<button class="btn-reorder-arrow" data-dir="up" data-idx="' + idx + '"' +
+                    (idx === 0 ? ' disabled' : '') + ' title="Move up">▲</button>' +
+                '<button class="btn-reorder-arrow" data-dir="down" data-idx="' + idx + '"' +
+                    (idx === trWlReorderList.length - 1 ? ' disabled' : '') + ' title="Move down">▼</button>' +
+            '</div>' +
+        '</div>';
+    }).join('');
+
+    // Attach arrow click handlers
+    body.querySelectorAll('.btn-reorder-arrow').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var idx = parseInt(btn.dataset.idx);
+            var dir = btn.dataset.dir;
+            trWlReorderMove(idx, dir);
+        });
+    });
+
+    // Attach drag handlers for mouse-based reorder
+    trWlSetupDragReorder(body);
+}
+
+function trWlReorderMove(idx, direction) {
+    var targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= trWlReorderList.length) return;
+
+    // Swap
+    var temp = trWlReorderList[idx];
+    trWlReorderList[idx] = trWlReorderList[targetIdx];
+    trWlReorderList[targetIdx] = temp;
+
+    trWlRenderReorderList();
+
+    // Briefly highlight the moved item
+    var items = document.querySelectorAll('.wl-reorder-item');
+    if (items[targetIdx]) {
+        items[targetIdx].style.background = '#ebf4ff';
+        setTimeout(function() { items[targetIdx].style.background = ''; }, 300);
+    }
+}
+
+async function trWlSaveReorder() {
+    // Update sort_order for each watchlist
+    var promises = trWlReorderList.map(function(wl, idx) {
+        return fetch(SUPABASE_URL + '/rest/v1/watchlists?id=eq.' + wl.id, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ sort_order: idx })
+        });
+    });
+
+    try {
+        await Promise.all(promises);
+
+        // Reorder the in-memory array to match
+        var idOrder = trWlReorderList.map(function(wl) { return wl.id; });
+        trWlWatchlists.sort(function(a, b) {
+            return idOrder.indexOf(a.id) - idOrder.indexOf(b.id);
+        });
+        // Update sort_order in memory too
+        trWlWatchlists.forEach(function(wl, idx) { wl.sort_order = idx; });
+
+        trWlCloseReorderModal();
+        trWlRender();
+        showAlert('Watchlist order saved', 'success', 2000);
+    } catch (err) {
+        showAlert('Failed to save order: ' + err.message, 'error');
+    }
+}
+
+// Drag-to-reorder within the modal
+function trWlSetupDragReorder(container) {
+    var dragIdx = null;
+
+    container.querySelectorAll('.wl-reorder-handle').forEach(function(handle) {
+        var item = handle.closest('.wl-reorder-item');
+        item.setAttribute('draggable', 'true');
+
+        item.addEventListener('dragstart', function(e) {
+            dragIdx = parseInt(item.dataset.idx);
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', dragIdx);
+        });
+
+        item.addEventListener('dragend', function() {
+            item.classList.remove('dragging');
+            dragIdx = null;
+            // Remove all drag-over highlights
+            container.querySelectorAll('.wl-reorder-item').forEach(function(el) {
+                el.style.borderTop = '';
+                el.style.borderBottom = '';
+            });
+        });
+    });
+
+    container.querySelectorAll('.wl-reorder-item').forEach(function(dropTarget) {
+        dropTarget.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            var targetIdx = parseInt(dropTarget.dataset.idx);
+            // Visual indicator
+            container.querySelectorAll('.wl-reorder-item').forEach(function(el) {
+                el.style.borderTop = '';
+                el.style.borderBottom = '';
+            });
+            if (targetIdx < dragIdx) {
+                dropTarget.style.borderTop = '2px solid #667eea';
+            } else if (targetIdx > dragIdx) {
+                dropTarget.style.borderBottom = '2px solid #667eea';
+            }
+        });
+
+        dropTarget.addEventListener('drop', function(e) {
+            e.preventDefault();
+            var fromIdx = dragIdx;
+            var toIdx = parseInt(dropTarget.dataset.idx);
+            if (fromIdx === null || fromIdx === toIdx) return;
+
+            // Move item in array
+            var moved = trWlReorderList.splice(fromIdx, 1)[0];
+            trWlReorderList.splice(toIdx, 0, moved);
+
+            trWlRenderReorderList();
+        });
+    });
 }
 
 // ============================================================================

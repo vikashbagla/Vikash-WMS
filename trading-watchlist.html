@@ -136,19 +136,37 @@
     color: #a0aec0;
 }
 
-/* Security row inside watchlist */
+/* Security row inside watchlist — two-row layout */
 .wl-security-row {
-    display: flex;
-    align-items: center;
-    padding: 6px 12px;
+    padding: 5px 10px 4px;
     border-bottom: 1px solid #f0f4f8;
-    gap: 8px;
+    cursor: default;
 }
 .wl-security-row:last-child { border-bottom: none; }
 .wl-security-row:hover { background: #fafbfc; }
 
+/* Top row: drag handle, symbol, price, change, delete */
+.wl-row-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Drag handle */
+.wl-sec-drag {
+    flex: 0 0 16px;
+    font-size: 11px;
+    color: #cbd5e0;
+    cursor: grab;
+    user-select: none;
+    text-align: center;
+    line-height: 1;
+}
+.wl-sec-drag:active { cursor: grabbing; }
+.wl-security-row:hover .wl-sec-drag { color: #a0aec0; }
+
 .wl-sec-symbol {
-    flex: 0 0 100px;
+    flex: 1;
     min-width: 0;
 }
 .wl-sec-symbol .wl-sym-main {
@@ -189,34 +207,6 @@
     font-size: 9px;
 }
 
-.wl-sec-slider {
-    flex: 1;
-    min-width: 60px;
-}
-
-/* Day high/low slider (reuse portfolio pattern) */
-.wl-slider-track {
-    position: relative;
-    height: 4px;
-    background: #e2e8f0;
-    border-radius: 2px;
-    margin: 4px 0 2px;
-}
-.wl-slider-dot {
-    position: absolute;
-    top: -3px;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    transform: translateX(-50%);
-}
-.wl-slider-labels {
-    display: flex;
-    justify-content: space-between;
-    font-size: 8px;
-    color: #a0aec0;
-}
-
 .wl-sec-delete {
     flex: 0 0 24px;
     text-align: center;
@@ -232,6 +222,36 @@
     line-height: 1;
 }
 .btn-wl-delete:hover { color: #dc2626; background: #fef2f2; }
+
+/* Bottom row: slider below price+change columns — uses portfolio's price-slider styles */
+.wl-row-slider {
+    margin: 2px 0 0 22px;  /* 22px = drag handle width + gap, aligns under symbol area */
+    padding-right: 26px;    /* space for delete button column */
+}
+
+/* Sort buttons in card header */
+.wl-sort-btns {
+    display: flex;
+    gap: 2px;
+    margin-right: 6px;
+}
+.btn-wl-sort {
+    background: none;
+    border: 1px solid #e2e8f0;
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-size: 9px;
+    color: #a0aec0;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.btn-wl-sort:hover { border-color: #667eea; color: #667eea; }
+.btn-wl-sort.active { background: #eef2ff; border-color: #667eea; color: #667eea; font-weight: 600; }
+
+/* Drag reorder visual cues for items */
+.wl-security-row.wl-dragging { opacity: 0.4; }
+.wl-security-row.wl-drag-over-top { box-shadow: inset 0 2px 0 #667eea; }
+.wl-security-row.wl-drag-over-bottom { box-shadow: inset 0 -2px 0 #667eea; }
 
 /* Card menu (rename, delete watchlist) */
 .wl-card-menu {
@@ -438,6 +458,108 @@
 }
 .wl-page-empty .wl-empty-icon { font-size: 40px; margin-bottom: 12px; }
 .wl-page-empty .wl-empty-text { font-size: 14px; margin-bottom: 16px; }
+
+/* ============================================================
+   REORDER MODAL
+   ============================================================ */
+.wl-reorder-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 1100;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 60px 20px;
+}
+.wl-reorder-overlay.show { display: flex; }
+.wl-reorder-dialog {
+    background: #fff;
+    border-radius: 10px;
+    width: 100%;
+    max-width: 380px;
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+}
+.wl-reorder-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.wl-reorder-header h3 { margin: 0; font-size: 14px; color: #2d3748; }
+.wl-reorder-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+}
+.wl-reorder-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    gap: 10px;
+    border-bottom: 1px solid #f0f4f8;
+    transition: background 0.1s;
+}
+.wl-reorder-item:last-child { border-bottom: none; }
+.wl-reorder-item.dragging { background: #ebf4ff; }
+.wl-reorder-handle {
+    cursor: grab;
+    font-size: 14px;
+    color: #a0aec0;
+    user-select: none;
+    padding: 2px;
+}
+.wl-reorder-handle:active { cursor: grabbing; }
+.wl-reorder-name {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+    color: #2d3748;
+}
+.wl-reorder-count {
+    font-size: 10px;
+    color: #a0aec0;
+    margin-left: 4px;
+}
+.wl-reorder-arrows {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.btn-reorder-arrow {
+    background: none;
+    border: 1px solid #e2e8f0;
+    border-radius: 3px;
+    width: 24px;
+    height: 18px;
+    cursor: pointer;
+    font-size: 9px;
+    color: #718096;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+}
+.btn-reorder-arrow:hover { background: #f0f4ff; border-color: #667eea; color: #667eea; }
+.btn-reorder-arrow:disabled { opacity: 0.3; cursor: default; }
+.btn-reorder-arrow:disabled:hover { background: none; border-color: #e2e8f0; color: #718096; }
+.wl-reorder-footer {
+    padding: 10px 16px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.wl-reorder-hint {
+    font-size: 10px;
+    color: #a0aec0;
+    padding: 0 16px 6px;
+}
 </style>
 
 <div class="wl-container" id="trWlContainer">
@@ -454,6 +576,7 @@
                 <button class="btn-wl-cancel-new" id="trWlNewCancel">Cancel</button>
             </div>
             <button class="btn-new-watchlist" id="trWlNewBtn">+ New Watchlist</button>
+            <button class="btn-wl-refresh" id="trWlReorderBtn" title="Reorder watchlists">↕ Reorder</button>
             <button class="btn-wl-refresh" id="trWlRefreshBtn" title="Refresh prices">🔄</button>
         </div>
     </div>
@@ -479,6 +602,24 @@
         </div>
         <div class="wl-add-footer">
             <button class="btn-secondary" id="trWlAddCancelBtn">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Reorder Watchlists Modal -->
+<div class="wl-reorder-overlay" id="trWlReorderOverlay">
+    <div class="wl-reorder-dialog">
+        <div class="wl-reorder-header">
+            <h3>Reorder Watchlists</h3>
+            <button class="btn-icon" id="trWlReorderClose" style="font-size:16px;">✕</button>
+        </div>
+        <div class="wl-reorder-hint">Display order: left-to-right across columns, then down.</div>
+        <div class="wl-reorder-body" id="trWlReorderBody">
+            <!-- Rendered by JS -->
+        </div>
+        <div class="wl-reorder-footer">
+            <button class="btn-secondary" id="trWlReorderCancelBtn">Cancel</button>
+            <button class="btn-primary" id="trWlReorderSaveBtn">Save Order</button>
         </div>
     </div>
 </div>
