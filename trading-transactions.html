@@ -1,0 +1,112 @@
+<!-- Trading Transactions Sub-Module HTML -->
+<style id="trading-transactions-styles">
+/* ================================================================
+   TRANSACTIONS TAB STYLES
+   ================================================================ */
+
+/* Row styling for flagged transactions */
+.trTx-hidden-row { opacity: 0.5; }
+.trTx-hidden-row td { text-decoration: line-through; }
+.trTx-hidden-row td.action-cell,
+.trTx-hidden-row td.action-cell * { text-decoration: none; }
+.trTx-ignored-row { font-style: italic; color: #9ca3af; }
+
+/* Type badge */
+.trTx-type-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+/* Clickable rows */
+#trTx-list tr[data-txn-id] { cursor: pointer; }
+#trTx-list tr[data-txn-id]:hover { background: #f7fafc; }
+</style>
+
+<!-- Filters — 4-column: Symbol search, Investor, Broker, Tags -->
+<div class="filters-grid" style="flex-shrink:0; grid-template-columns: repeat(4, 1fr);">
+    <div class="filter-group">
+        <div class="filter-header">
+            <label>Search Symbol</label>
+            <span class="clear-link" id="trTx-clear-symbol" style="visibility:hidden;">Clear</span>
+        </div>
+        <div class="filter-search-container">
+            <input type="text" class="filter-search-input" id="trTx-symbol-search" placeholder="Symbol or company name...">
+        </div>
+    </div>
+    <div class="filter-group">
+        <div class="filter-header">
+            <label>Filter by Investor</label>
+            <span class="clear-link" id="trTx-clear-investors">Clear all</span>
+        </div>
+        <div class="filter-search-container">
+            <input type="text" class="filter-search-input" id="trTx-investor-search" placeholder="Type to search investors...">
+            <div class="filter-dropdown tr-pill-dropdown" id="trTx-investor-dropdown"></div>
+        </div>
+        <div class="filter-selected-tags" id="trTx-selected-investors"></div>
+    </div>
+    <div class="filter-group">
+        <div class="filter-header">
+            <label>Filter by Broker</label>
+            <span class="clear-link" id="trTx-clear-brokers">Clear all</span>
+        </div>
+        <div class="filter-search-container">
+            <input type="text" class="filter-search-input" id="trTx-broker-search" placeholder="Type to search brokers...">
+            <div class="filter-dropdown tr-pill-dropdown" id="trTx-broker-dropdown"></div>
+        </div>
+        <div class="filter-selected-tags" id="trTx-selected-brokers"></div>
+    </div>
+    <div class="filter-group">
+        <div class="filter-header">
+            <label>Filter by Tag</label>
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <div class="tag-match-options">
+                    <span style="font-size: 11px; color: #718096;">Match:</span>
+                    <label class="radio-label"><input type="radio" name="trTx-tag-logic" value="OR" checked> <span>Any</span></label>
+                    <label class="radio-label"><input type="radio" name="trTx-tag-logic" value="AND"> <span>All</span></label>
+                </div>
+                <span class="clear-link" id="trTx-clear-tags">Clear all</span>
+            </div>
+        </div>
+        <div class="filter-search-container">
+            <input type="text" class="filter-search-input" id="trTx-tag-search" placeholder="Type to search tags...">
+            <div class="filter-dropdown tr-pill-dropdown" id="trTx-tag-dropdown"></div>
+        </div>
+        <div class="filter-selected-tags" id="trTx-selected-tags"></div>
+    </div>
+</div>
+
+<!-- Transaction count -->
+<div style="flex-shrink:0; padding: 2px 0 4px; display:flex; justify-content:space-between; align-items:center;">
+    <span id="trTx-count" style="font-size:11px; color:#718096;">Showing 0 transactions</span>
+</div>
+
+<!-- Transaction table -->
+<div class="table-container" style="flex:1; min-height:0; overflow:auto;">
+    <table id="trTx-table">
+        <thead>
+            <tr>
+                <th class="sortable" id="trTx-th-date" style="width:10%;">
+                    Date <span class="sort-indicator" id="trTx-sort-date">▼</span>
+                </th>
+                <th class="sortable" id="trTx-th-investor" style="width:14%;">
+                    Investor @ Broker <span class="sort-indicator" id="trTx-sort-investor"></span>
+                </th>
+                <th class="sortable" id="trTx-th-symbol" style="width:12%;">
+                    Symbol <span class="sort-indicator" id="trTx-sort-symbol"></span>
+                </th>
+                <th style="width:6%; text-align:center;">Type</th>
+                <th class="text-right" style="width:8%;">Qty</th>
+                <th class="text-right" style="width:9%;">Acq. Cost</th>
+                <th class="text-right" style="width:11%;">Net Amount</th>
+                <th style="width:10%;">Tags</th>
+                <th style="width:40px; text-align:center;">⚙️</th>
+            </tr>
+        </thead>
+        <tbody id="trTx-list">
+            <tr><td colspan="9" style="text-align:center;padding:40px;color:#9ca3af;">Loading transactions...</td></tr>
+        </tbody>
+    </table>
+</div>

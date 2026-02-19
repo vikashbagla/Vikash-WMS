@@ -167,6 +167,11 @@ function trSwitchTab(tabId) {
     if (tabId === 'tr-watchlist') {
         trLoadWatchlistModule();
     }
+
+    // Load transactions sub-module on demand
+    if (tabId === 'tr-transactions') {
+        trLoadTransactionsModule();
+    }
 }
 
 async function trLoadWatchlistModule() {
@@ -1495,6 +1500,55 @@ async function trSaveEdit() {
     } else {
         var errText = await resp.text();
         showAlert('Failed to save: ' + errText, 'error');
+    }
+}
+
+// ============================================================================
+// TRANSACTIONS SUB-MODULE (on-demand loading, same pattern as watchlist)
+// ============================================================================
+
+var trTxLoaded = false;
+
+async function trLoadTransactionsModule() {
+    var container = document.getElementById('tr-transactions-container');
+    if (!container) return;
+
+    if (!trTxLoaded) {
+        try {
+            // Load HTML
+            var htmlResp = await fetch('trading-transactions.html?t=' + Date.now());
+            if (!htmlResp.ok) throw new Error('Failed to load trading-transactions.html');
+            var htmlText = await htmlResp.text();
+
+            // Extract <style> and inject to <head>
+            var parser = new DOMParser();
+            var doc = parser.parseFromString(htmlText, 'text/html');
+            var styles = doc.querySelectorAll('style');
+            styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+
+            // Inject body content
+            container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
+
+            // Load JS
+            await new Promise(function(resolve, reject) {
+                var script = document.createElement('script');
+                script.src = 'trading-transactions.js?t=' + Date.now();
+                script.onload = resolve;
+                script.onerror = function() { reject(new Error('Failed to load trading-transactions.js')); };
+                document.body.appendChild(script);
+            });
+
+            trTxLoaded = true;
+        } catch (err) {
+            console.error('Trading: Failed to load transactions module:', err);
+            container.innerHTML = '<div style="text-align:center;padding:60px;color:#dc2626;">Failed to load transactions: ' + err.message + '</div>';
+            return;
+        }
+    }
+
+    // Initialize or re-activate
+    if (window.trTxInit) {
+        window.trTxInit();
     }
 }
 

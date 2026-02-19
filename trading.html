@@ -484,9 +484,11 @@
         </div>
     </div>
 
-    <!-- Tab: Transactions -->
+    <!-- Tab: Transactions (loaded on-demand from trading-transactions.html + trading-transactions.js) -->
     <div id="tr-transactions" class="trading-tab-content">
-        <div style="text-align:center;padding:60px;color:#9ca3af;">🚧 Transactions — Coming soon</div>
+        <div id="tr-transactions-container" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+            <div style="text-align:center;padding:60px;color:#9ca3af;">Loading transactions...</div>
+        </div>
     </div>
 </div>
 
