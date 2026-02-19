@@ -9,7 +9,6 @@
 .trTx-hidden-row td { text-decoration: line-through; }
 .trTx-hidden-row td.action-cell,
 .trTx-hidden-row td.action-cell * { text-decoration: none; }
-.trTx-ignored-row { font-style: italic; color: #9ca3af; }
 
 /* Type badge */
 .trTx-type-badge {
@@ -23,7 +22,131 @@
 /* Clickable rows */
 #trTx-list tr[data-txn-id] { cursor: pointer; }
 #trTx-list tr[data-txn-id]:hover { background: #f7fafc; }
+
+/* Options bar */
+.trTx-options-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 6px 10px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+.trTx-options-bar label {
+    font-size: 11px;
+    color: #4a5568;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+.trTx-options-bar label input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+.trTx-option-separator {
+    width: 1px;
+    height: 18px;
+    background: #cbd5e0;
+    flex-shrink: 0;
+}
+.trTx-toggle-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: #e2e8f0;
+    border-radius: 4px;
+    padding: 1px;
+}
+.trTx-toggle-group .trTx-toggle-btn {
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    border: none;
+    background: transparent;
+    color: #718096;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+}
+.trTx-toggle-group .trTx-toggle-btn.active {
+    background: #fff;
+    color: #2d3748;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+.trTx-fifo-lifo-group {
+    display: none;
+}
+.trTx-fifo-lifo-group.visible {
+    display: flex;
+}
+
+/* Icon-only action menu */
+#trTx-list .action-menu {
+    min-width: auto;
+    width: auto;
+    padding: 2px 0;
+}
+#trTx-list .action-menu-item {
+    padding: 4px 8px;
+    font-size: 14px;
+    text-align: center;
+    display: inline-block;
+    width: auto;
+}
+#trTx-list .action-menu-item.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+#trTx-list .action-menu-item.disabled:hover {
+    background: none;
+}
+
+/* Matching trades table */
+#trTx-matching-container { display: none; }
+#trTx-matching-container.visible { display: flex; flex-direction: column; }
+#trTx-list-container.hidden { display: none; }
+
+.trTx-match-group-header td {
+    background: #f0f4f8;
+    font-weight: 600;
+    font-size: 11px;
+    color: #4a5568;
+    padding: 6px 8px !important;
+    border-bottom: 2px solid #cbd5e0;
+}
+.trTx-match-open td {
+    color: #718096;
+    font-style: italic;
+}
+.trTx-pnl-positive { color: #059669; font-weight: 600; }
+.trTx-pnl-negative { color: #dc2626; font-weight: 600; }
 </style>
+
+<!-- Options bar -->
+<div class="trTx-options-bar" style="flex-shrink:0; margin-bottom:6px;">
+    <label title="Show hidden (dont_display) transactions">
+        <input type="checkbox" id="trTx-show-all"> Show All
+    </label>
+    <label title="Show only F&O transactions">
+        <input type="checkbox" id="trTx-fno-only"> F&O Only
+    </label>
+    <div class="trTx-option-separator"></div>
+    <span style="font-size:11px; color:#718096;">View:</span>
+    <div class="trTx-toggle-group" id="trTx-view-toggle">
+        <button class="trTx-toggle-btn active" data-view="list">List</button>
+        <button class="trTx-toggle-btn" data-view="matching">Matching Trades</button>
+    </div>
+    <div class="trTx-fifo-lifo-group trTx-toggle-group" id="trTx-match-method-toggle">
+        <button class="trTx-toggle-btn active" data-method="fifo">FIFO</button>
+        <button class="trTx-toggle-btn" data-method="lifo">LIFO</button>
+    </div>
+</div>
 
 <!-- Filters — 4-column: Symbol search, Investor, Broker, Tags -->
 <div class="filters-grid" style="flex-shrink:0; grid-template-columns: repeat(4, 1fr);">
@@ -83,18 +206,18 @@
     <span id="trTx-count" style="font-size:11px; color:#718096;">Showing 0 transactions</span>
 </div>
 
-<!-- Transaction table -->
-<div class="table-container" style="flex:1; min-height:0; overflow:auto;">
+<!-- List view table -->
+<div id="trTx-list-container" class="table-container" style="flex:1; min-height:0; overflow:auto;">
     <table id="trTx-table">
         <thead>
             <tr>
-                <th class="sortable" id="trTx-th-date" style="width:10%;">
+                <th class="sortable" id="trTx-th-date" style="width:9%;">
                     Date <span class="sort-indicator" id="trTx-sort-date">▼</span>
                 </th>
-                <th class="sortable" id="trTx-th-investor" style="width:14%;">
+                <th class="sortable" id="trTx-th-investor" style="width:13%;">
                     Investor @ Broker <span class="sort-indicator" id="trTx-sort-investor"></span>
                 </th>
-                <th class="sortable" id="trTx-th-symbol" style="width:12%;">
+                <th class="sortable" id="trTx-th-symbol" style="width:16%;">
                     Symbol <span class="sort-indicator" id="trTx-sort-symbol"></span>
                 </th>
                 <th style="width:6%; text-align:center;">Type</th>
@@ -102,11 +225,32 @@
                 <th class="text-right" style="width:9%;">Acq. Cost</th>
                 <th class="text-right" style="width:11%;">Net Amount</th>
                 <th style="width:10%;">Tags</th>
-                <th style="width:40px; text-align:center;">⚙️</th>
+                <th style="width:30px; text-align:center;">⚙️</th>
             </tr>
         </thead>
         <tbody id="trTx-list">
             <tr><td colspan="9" style="text-align:center;padding:40px;color:#9ca3af;">Loading transactions...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Matching trades view table -->
+<div id="trTx-matching-container" class="table-container" style="flex:1; min-height:0; overflow:auto;">
+    <table id="trTx-matching-table">
+        <thead>
+            <tr>
+                <th style="width:10%;">Sell Date</th>
+                <th style="width:13%;">Investor @ Broker</th>
+                <th style="width:14%;">Symbol</th>
+                <th class="text-right" style="width:8%;">Qty</th>
+                <th class="text-right" style="width:10%;">Buy Avg</th>
+                <th class="text-right" style="width:12%;">Buy Amount</th>
+                <th class="text-right" style="width:10%;">Sell Avg</th>
+                <th class="text-right" style="width:12%;">Sell Amount</th>
+                <th class="text-right" style="width:11%;">Net P&L</th>
+            </tr>
+        </thead>
+        <tbody id="trTx-matching-list">
         </tbody>
     </table>
 </div>

@@ -1385,14 +1385,20 @@ function trOpenEditModal(txnId) {
     document.getElementById('trEditExchange').value = txn.exchange || '';
     document.getElementById('trEditQty').value = Math.abs(txn.quantity) || '';
     document.getElementById('trEditPrice').value = txn.price || '';
-    document.getElementById('trEditGross').value = txn.gross_amount || '';
+    var grossEl = document.getElementById('trEditGross');
+    grossEl.value = formatPrice(txn.gross_amount || 0, false);
+    grossEl.dataset.rawValue = (txn.gross_amount || 0).toFixed(2);
     document.getElementById('trEditBrokerage').value = txn.brokerage || 0;
     document.getElementById('trEditStt').value = txn.stt || 0;
     document.getElementById('trEditOther').value = txn.other_charges || 0;
     document.getElementById('trEditGst').value = txn.gst || 0;
     document.getElementById('trEditTds').value = txn.tds || 0;
-    document.getElementById('trEditTotalCharges').value = txn.total_charges || 0;
-    document.getElementById('trEditNetAmount').value = txn.net_amount || '';
+    var totalEl = document.getElementById('trEditTotalCharges');
+    totalEl.value = formatPrice(txn.total_charges || 0, false);
+    totalEl.dataset.rawValue = (txn.total_charges || 0).toFixed(2);
+    var netEl = document.getElementById('trEditNetAmount');
+    netEl.value = formatPrice(txn.net_amount || 0, false);
+    netEl.dataset.rawValue = (txn.net_amount || 0).toFixed(2);
     document.getElementById('trEditMargin').value = txn.margin_blocked || 0;
     document.getElementById('trEditTags').value = (txn.tags || []).filter(function(t) { return t !== 'blank'; }).join(', ');
     document.getElementById('trEditNotes').value = txn.notes || '';
@@ -1419,7 +1425,9 @@ function trCloseEditModal() {
 function trRecalcGross() {
     var qty = parseFloat(document.getElementById('trEditQty').value) || 0;
     var price = parseFloat(document.getElementById('trEditPrice').value) || 0;
-    document.getElementById('trEditGross').value = (qty * price).toFixed(2);
+    var gross = qty * price;
+    document.getElementById('trEditGross').value = formatPrice(gross, false);
+    document.getElementById('trEditGross').dataset.rawValue = gross.toFixed(2);
     trRecalcCharges();
 }
 
@@ -1430,12 +1438,15 @@ function trRecalcCharges() {
     var gst = parseFloat(document.getElementById('trEditGst').value) || 0;
     var tds = parseFloat(document.getElementById('trEditTds').value) || 0;
     var totalCharges = brokerage + stt + other + gst + tds;
-    document.getElementById('trEditTotalCharges').value = totalCharges.toFixed(2);
+    document.getElementById('trEditTotalCharges').value = formatPrice(totalCharges, false);
+    document.getElementById('trEditTotalCharges').dataset.rawValue = totalCharges.toFixed(2);
 
-    var gross = parseFloat(document.getElementById('trEditGross').value) || 0;
+    var grossEl = document.getElementById('trEditGross');
+    var gross = parseFloat(grossEl.dataset.rawValue || grossEl.value.replace(/,/g, '')) || 0;
     var type = document.getElementById('trEditType').value;
     var net = type === 'BUY' ? gross + totalCharges : gross - totalCharges;
-    document.getElementById('trEditNetAmount').value = net.toFixed(2);
+    document.getElementById('trEditNetAmount').value = formatPrice(net, false);
+    document.getElementById('trEditNetAmount').dataset.rawValue = net.toFixed(2);
 }
 
 async function trSaveEdit() {
@@ -1464,14 +1475,14 @@ async function trSaveEdit() {
         exchange: document.getElementById('trEditExchange').value,
         quantity: signedQty,
         price: parseFloat(document.getElementById('trEditPrice').value) || 0,
-        gross_amount: parseFloat(document.getElementById('trEditGross').value) || 0,
+        gross_amount: parseFloat(document.getElementById('trEditGross').dataset.rawValue || document.getElementById('trEditGross').value.replace(/,/g, '')) || 0,
         brokerage: parseFloat(document.getElementById('trEditBrokerage').value) || 0,
         stt: parseFloat(document.getElementById('trEditStt').value) || 0,
         other_charges: parseFloat(document.getElementById('trEditOther').value) || 0,
         gst: parseFloat(document.getElementById('trEditGst').value) || 0,
         tds: parseFloat(document.getElementById('trEditTds').value) || 0,
-        total_charges: parseFloat(document.getElementById('trEditTotalCharges').value) || 0,
-        net_amount: parseFloat(document.getElementById('trEditNetAmount').value) || 0,
+        total_charges: parseFloat(document.getElementById('trEditTotalCharges').dataset.rawValue || document.getElementById('trEditTotalCharges').value.replace(/,/g, '')) || 0,
+        net_amount: parseFloat(document.getElementById('trEditNetAmount').dataset.rawValue || document.getElementById('trEditNetAmount').value.replace(/,/g, '')) || 0,
         margin_blocked: parseFloat(document.getElementById('trEditMargin').value) || 0,
         tags: tags,
         notes: document.getElementById('trEditNotes').value || null,
