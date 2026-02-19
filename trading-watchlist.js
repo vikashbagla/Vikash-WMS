@@ -191,7 +191,7 @@ async function trWlLoadBrokerTokens() {
     // Fetch broker_tokens from securities_db
     var dbTokenMap = {};
     if (dbIds.length > 0) {
-        var dbResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=in.(' + dbIds.join(',') + ')&select=id,broker_tokens,nse_symbol,bse_symbol', {
+        var dbResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=in.(' + dbIds.join(',') + ')&select=id,broker_tokens,nse_symbol,bse_symbol,symbol,security_type', {
             headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
         });
         var dbRows = dbResp.ok ? await dbResp.json() : [];
@@ -225,30 +225,54 @@ async function trWlLoadBrokerTokens() {
             } else {
                 var dbRec = dbTokenMap[item.security_id];
                 item._dbRec = dbRec; // Keep ref for lazy resolution
+
+                // Priority 1: Use broker_tokens.fyers NSE symbol (most reliable)
                 if (dbRec && dbRec.broker_tokens && dbRec.broker_tokens.fyers) {
-                    // Try all known key patterns — prefer NSE
-                    item._fyersSymbol = dbRec.broker_tokens.fyers.nse_symbol ||
-                                        dbRec.broker_tokens.fyers.bse_symbol ||
-                                        dbRec.broker_tokens.fyers.symbol || null;
+                    var bt = dbRec.broker_tokens.fyers;
+                    if (bt.nse_symbol) {
+                        item._fyersSymbol = bt.nse_symbol;
+                    } else if (bt.bse_symbol) {
+                        // Fyers API supports BSE quotes — use BSE symbol directly
+                        item._fyersSymbol = bt.bse_symbol;
+                    } else if (bt.symbol) {
+                        item._fyersSymbol = bt.symbol;
+                    }
                 }
-                // Fallback: derive from nse_symbol/bse_symbol columns
+
+                // Priority 2: Derive from DB columns
                 if (!item._fyersSymbol && dbRec) {
                     if (dbRec.nse_symbol) {
                         item._fyersSymbol = 'NSE:' + dbRec.nse_symbol + '-EQ';
                     } else if (dbRec.bse_symbol) {
+                        // Try BSE directly (Fyers supports BSE quotes)
                         item._fyersSymbol = 'BSE:' + dbRec.bse_symbol;
                     }
                 }
-                // Last resort: use short_symbol from the watchlist item itself
+
+                // Priority 3: Use short_symbol from watchlist item
                 if (!item._fyersSymbol && item.short_symbol) {
                     item._fyersSymbol = 'NSE:' + item.short_symbol + '-EQ';
                 }
             }
             if (!item._fyersSymbol) {
                 item._fyersSymbol = null;
+                console.warn('Watchlist: No Fyers symbol for', item.short_symbol, '(security_id:', item.security_id + ')');
             }
         });
     });
+
+    // Log symbol mapping summary
+    var symbolMap = [];
+    trWlWatchlists.forEach(function(wl) {
+        wl.items.forEach(function(item) {
+            if (item._fyersSymbol) {
+                symbolMap.push(item.short_symbol + ' → ' + item._fyersSymbol);
+            }
+        });
+    });
+    if (symbolMap.length > 0) {
+        console.log('Watchlist: Symbol mapping:\n  ' + symbolMap.join('\n  '));
+    }
 }
 
 // ============================================================================
@@ -325,6 +349,19 @@ async function trWlFetchPrices() {
             }
         }
 
+        // Log unpriced symbols for debugging
+        var unpricedSymbols = [];
+        trWlWatchlists.forEach(function(wl) {
+            wl.items.forEach(function(item) {
+                if (item._fyersSymbol && (!trWlPrices[item._fyersSymbol] || trWlPrices[item._fyersSymbol].lp <= 0)) {
+                    unpricedSymbols.push(item.short_symbol + ' (' + item._fyersSymbol + ')');
+                }
+            });
+        });
+        if (unpricedSymbols.length > 0) {
+            console.log('Watchlist: Unpriced after main batch:', unpricedSymbols.join(', '));
+        }
+
         // Lazy resolution: find items that didn't get prices and try alternate symbols
         await trWlResolveUnpricedItems(respondedSymbols);
 
@@ -361,32 +398,46 @@ async function trWlResolveUnpricedItems(respondedSymbols) {
         var item = unresolvedItems[i];
         trWlResolvedSymbols[item.security_id] = true; // Mark attempted
 
-        // Build candidate symbols to try
+        // Build candidate symbols to try — both NSE and BSE variants
         var candidates = [];
         var dbRec = item._dbRec;
         var sym = item.short_symbol;
 
+        // Collect all possible base symbols for this security
+        var baseSymbols = [];
         if (dbRec) {
-            // NSE equity
-            if (dbRec.nse_symbol) candidates.push('NSE:' + dbRec.nse_symbol + '-EQ');
-            // NSE SME
-            if (dbRec.nse_symbol) candidates.push('NSE:' + dbRec.nse_symbol + '-SM');
-            // BSE — try without suffix, with -A, -B, -T, -X
-            if (dbRec.bse_symbol) {
-                candidates.push('BSE:' + dbRec.bse_symbol);
-                candidates.push('BSE:' + dbRec.bse_symbol + '-A');
-                candidates.push('BSE:' + dbRec.bse_symbol + '-B');
-                candidates.push('BSE:' + dbRec.bse_symbol + '-T');
-                candidates.push('BSE:' + dbRec.bse_symbol + '-X');
-            }
+            if (dbRec.nse_symbol && baseSymbols.indexOf(dbRec.nse_symbol) < 0) baseSymbols.push(dbRec.nse_symbol);
+            if (dbRec.bse_symbol && baseSymbols.indexOf(dbRec.bse_symbol) < 0) baseSymbols.push(dbRec.bse_symbol);
+            if (dbRec.symbol && baseSymbols.indexOf(dbRec.symbol) < 0) baseSymbols.push(dbRec.symbol);
         }
-        // Also try short_symbol as NSE EQ and SM
-        if (sym) {
-            var nseEq = 'NSE:' + sym + '-EQ';
-            var nseSm = 'NSE:' + sym + '-SM';
+        if (sym && baseSymbols.indexOf(sym) < 0) baseSymbols.push(sym);
+
+        // Add broker_tokens BSE symbol if available (exact format from Fyers)
+        if (dbRec && dbRec.broker_tokens && dbRec.broker_tokens.fyers) {
+            var btFyers = dbRec.broker_tokens.fyers;
+            if (btFyers.bse_symbol && candidates.indexOf(btFyers.bse_symbol) < 0) candidates.push(btFyers.bse_symbol);
+            if (btFyers.nse_symbol && candidates.indexOf(btFyers.nse_symbol) < 0) candidates.push(btFyers.nse_symbol);
+        }
+
+        // For each base symbol, try NSE and BSE variants
+        baseSymbols.forEach(function(bs) {
+            var nseEq = 'NSE:' + bs + '-EQ';
+            var nseSm = 'NSE:' + bs + '-SM';
+            var bseA  = 'BSE:' + bs + '-A';
+            var bseB  = 'BSE:' + bs + '-B';
+            var bseX  = 'BSE:' + bs + '-X';
+            var bseT  = 'BSE:' + bs + '-T';
+            var bseNo = 'BSE:' + bs;
+            // NSE first
             if (candidates.indexOf(nseEq) < 0) candidates.push(nseEq);
             if (candidates.indexOf(nseSm) < 0) candidates.push(nseSm);
-        }
+            // Then BSE variants
+            if (candidates.indexOf(bseNo) < 0) candidates.push(bseNo);
+            if (candidates.indexOf(bseA) < 0)  candidates.push(bseA);
+            if (candidates.indexOf(bseB) < 0)  candidates.push(bseB);
+            if (candidates.indexOf(bseX) < 0)  candidates.push(bseX);
+            if (candidates.indexOf(bseT) < 0)  candidates.push(bseT);
+        });
 
         // Remove the symbol we already tried (it didn't work)
         candidates = candidates.filter(function(c) { return c !== item._fyersSymbol; });
@@ -435,6 +486,115 @@ async function trWlResolveUnpricedItems(respondedSymbols) {
         if (i < unresolvedItems.length - 1) {
             await new Promise(function(resolve) { setTimeout(resolve, 150); });
         }
+    }
+
+    // Yahoo Finance fallback: for any items STILL without prices after Fyers resolution
+    await trWlYahooFallback();
+}
+
+// Yahoo Finance fallback — fetch prices for symbols Fyers couldn't resolve
+async function trWlYahooFallback() {
+    var yahooItems = [];
+    trWlWatchlists.forEach(function(wl) {
+        wl.items.forEach(function(item) {
+            if (!item._fyersSymbol) return;
+            if (trWlPrices[item._fyersSymbol] && trWlPrices[item._fyersSymbol].lp > 0) return;
+            if (item.security_source !== 'securities_db') return;
+            // Avoid duplicates
+            var already = yahooItems.some(function(y) { return y.security_id === item.security_id; });
+            if (already) return;
+            yahooItems.push(item);
+        });
+    });
+
+    if (yahooItems.length === 0) return;
+
+    console.log('Watchlist: Yahoo Finance fallback for', yahooItems.length, 'items');
+
+    // Build Yahoo symbol list: SYMBOL.NS for NSE, SYMBOL.BO for BSE
+    var yahooSymbolMap = {}; // yahooSymbol → [items]
+    yahooItems.forEach(function(item) {
+        var dbRec = item._dbRec;
+        var baseSymbols = [];
+        if (dbRec) {
+            if (dbRec.nse_symbol) baseSymbols.push({ sym: dbRec.nse_symbol + '.NS', exchange: 'NSE' });
+            if (dbRec.bse_symbol) baseSymbols.push({ sym: dbRec.bse_symbol + '.BO', exchange: 'BSE' });
+            if (!dbRec.nse_symbol && !dbRec.bse_symbol && dbRec.symbol) {
+                baseSymbols.push({ sym: dbRec.symbol + '.NS', exchange: 'NSE' });
+                baseSymbols.push({ sym: dbRec.symbol + '.BO', exchange: 'BSE' });
+            }
+        }
+        if (baseSymbols.length === 0 && item.short_symbol) {
+            baseSymbols.push({ sym: item.short_symbol + '.NS', exchange: 'NSE' });
+            baseSymbols.push({ sym: item.short_symbol + '.BO', exchange: 'BSE' });
+        }
+        baseSymbols.forEach(function(bs) {
+            if (!yahooSymbolMap[bs.sym]) yahooSymbolMap[bs.sym] = [];
+            yahooSymbolMap[bs.sym].push({ item: item, exchange: bs.exchange });
+        });
+    });
+
+    var yahooSymbols = Object.keys(yahooSymbolMap);
+    if (yahooSymbols.length === 0) return;
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/functions/v1/yahoo-finance', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+            },
+            body: JSON.stringify({ symbols: yahooSymbols })
+        });
+        if (!resp.ok) {
+            console.warn('Watchlist: Yahoo Finance API error:', resp.status);
+            return;
+        }
+        var result = await resp.json();
+        if (!result || !result.results) return;
+
+        // Map Yahoo prices back to watchlist items
+        var resolvedCount = 0;
+        yahooSymbols.forEach(function(ySym) {
+            var yData = result.results[ySym];
+            if (!yData || !yData.regularMarketPrice || yData.regularMarketPrice <= 0) return;
+
+            var mappedItems = yahooSymbolMap[ySym];
+            mappedItems.forEach(function(mapped) {
+                var item = mapped.item;
+                // Skip if already resolved by a previous Yahoo symbol (e.g. NSE already worked)
+                if (trWlPrices[item._fyersSymbol] && trWlPrices[item._fyersSymbol].lp > 0) return;
+
+                // Store price under a Yahoo-prefixed key
+                var yahooKey = 'YAHOO:' + ySym;
+                trWlPrices[yahooKey] = {
+                    lp: yData.regularMarketPrice,
+                    ch: yData.regularMarketChange || 0,
+                    chp: yData.regularMarketChangePercent || 0,
+                    high: yData.regularMarketDayHigh || null,
+                    low: yData.regularMarketDayLow || null
+                };
+
+                // Update the item's symbol to point to Yahoo price
+                trWlWatchlists.forEach(function(wl) {
+                    wl.items.forEach(function(it) {
+                        if (it.security_id === item.security_id && it.security_source === item.security_source) {
+                            it._fyersSymbol = yahooKey;
+                        }
+                    });
+                });
+
+                resolvedCount++;
+                console.log('Watchlist: Yahoo resolved', item.short_symbol, '→', ySym,
+                    '(₹' + yData.regularMarketPrice + ')');
+            });
+        });
+
+        if (resolvedCount > 0) {
+            console.log('Watchlist: Yahoo Finance resolved', resolvedCount, 'items');
+        }
+    } catch (err) {
+        console.warn('Watchlist: Yahoo Finance fallback error:', err.message);
     }
 }
 
