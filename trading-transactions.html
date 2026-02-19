@@ -153,6 +153,36 @@
     font-weight: 600;
     font-size: 11px;
 }
+
+/* Visual gap between buy and sell blocks */
+#trTx-matching-table .trTx-sell-start {
+    border-left: 2px solid #cbd5e0;
+    padding-left: 12px !important;
+}
+#trTx-matching-table thead th.trTx-sell-start {
+    border-left: 2px solid #cbd5e0;
+    padding-left: 12px !important;
+}
+
+/* Eye icon for hiding rows in matching view */
+.trTx-match-eye-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0 2px;
+    opacity: 0.4;
+    transition: opacity 0.15s;
+}
+.trTx-match-eye-btn:hover { opacity: 1; }
+.trTx-match-detail-row.trTx-view-hidden { display: none; }
+
+/* Contract detail column */
+.trTx-contract-detail {
+    font-size: 10px;
+    color: #667eea;
+    font-weight: 500;
+}
 </style>
 
 <!-- Options bar -->
@@ -266,14 +296,17 @@
     <table id="trTx-matching-table">
         <thead>
             <tr>
-                <th class="text-right" style="width:7%;">Qty</th>
-                <th style="width:9%;">Buy Date</th>
-                <th class="text-right" style="width:10%;">Buy Avg</th>
-                <th class="text-right" style="width:12%;">Buy Amount</th>
-                <th style="width:9%;">Sell Date</th>
-                <th class="text-right" style="width:10%;">Sell Avg</th>
-                <th class="text-right" style="width:12%;">Sell Amount</th>
-                <th class="text-right" style="width:11%;">Net P&L</th>
+                <th style="width:11%;">Inv @ Broker</th>
+                <th style="width:7%;">Contract</th>
+                <th class="text-right" style="width:5%;">Qty</th>
+                <th style="width:7%;">Buy Date</th>
+                <th class="text-right" style="width:7%;">Buy Avg</th>
+                <th class="text-right" style="width:10%;">Buy Amount</th>
+                <th class="trTx-sell-start" style="width:7%;">Sell Date</th>
+                <th class="text-right" style="width:7%;">Sell Avg</th>
+                <th class="text-right" style="width:10%;">Sell Amount</th>
+                <th class="text-right" style="width:9%;">Net P&L</th>
+                <th style="width:25px;"></th>
             </tr>
         </thead>
         <tbody id="trTx-matching-list">

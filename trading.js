@@ -52,6 +52,12 @@ async function initTrading() {
     await trFetchLivePrices();
     trUpdateUnitLabels();
     trRenderPortfolio();
+
+    // Re-init transactions module if already loaded (pills need data that may not have been ready)
+    if (window.trTxInit && trTxLoaded) {
+        window.trTxInit();
+    }
+
     showLoading(false);
 }
 
