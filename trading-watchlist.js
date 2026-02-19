@@ -16,6 +16,7 @@ var trWlOpenMenuId = null;     // Currently open card menu
 var trWlRenamingId = null;     // Currently renaming watchlist
 var trWlSortState = {};        // watchlist_id → { field: 'name'|'chp', dir: 'asc'|'desc' }
 var trWlDragItemState = null;  // { wlId, itemId, fromIdx } for drag-reorder within card
+var trWlResolvedSymbols = {};  // security_id → true (tracks which items have been resolved)
 
 // ============================================================================
 // INITIALIZATION
@@ -223,6 +224,7 @@ async function trWlLoadBrokerTokens() {
                 }
             } else {
                 var dbRec = dbTokenMap[item.security_id];
+                item._dbRec = dbRec; // Keep ref for lazy resolution
                 if (dbRec && dbRec.broker_tokens && dbRec.broker_tokens.fyers) {
                     // Try all known key patterns — prefer NSE
                     item._fyersSymbol = dbRec.broker_tokens.fyers.nse_symbol ||
@@ -234,7 +236,7 @@ async function trWlLoadBrokerTokens() {
                     if (dbRec.nse_symbol) {
                         item._fyersSymbol = 'NSE:' + dbRec.nse_symbol + '-EQ';
                     } else if (dbRec.bse_symbol) {
-                        item._fyersSymbol = 'BSE:' + dbRec.bse_symbol + '-A';
+                        item._fyersSymbol = 'BSE:' + dbRec.bse_symbol;
                     }
                 }
                 // Last resort: use short_symbol from the watchlist item itself
@@ -277,6 +279,9 @@ async function trWlFetchPrices() {
 
         trWlUpdatePriceStatus('loading');
 
+        // Track which requested symbols got a valid response
+        var respondedSymbols = {};
+
         // Batch into chunks of 50
         var batchSize = 50;
         for (var i = 0; i < allSymbols.length; i += batchSize) {
@@ -286,13 +291,28 @@ async function trWlFetchPrices() {
                 if (data && data.d && data.d.length > 0) {
                     data.d.forEach(function(item) {
                         if (item.v && item.v.symbol) {
-                            trWlPrices[item.v.symbol] = {
+                            var priceData = {
                                 lp: item.v.lp || 0,
                                 ch: item.v.ch || 0,
                                 chp: item.v.chp || 0,
                                 high: item.v.high_price || null,
                                 low: item.v.low_price || null
                             };
+                            // Store under the Fyers-returned symbol
+                            trWlPrices[item.v.symbol] = priceData;
+                            respondedSymbols[item.v.symbol] = true;
+
+                            // Also store under any requested symbol that might
+                            // differ from the returned canonical form
+                            chunk.forEach(function(reqSym) {
+                                // If the base symbol matches (ignoring exchange prefix differences)
+                                var retBase = item.v.symbol.replace(/^[A-Z]+:/, '');
+                                var reqBase = reqSym.replace(/^[A-Z]+:/, '');
+                                if (retBase === reqBase || reqSym === item.v.symbol) {
+                                    trWlPrices[reqSym] = priceData;
+                                    respondedSymbols[reqSym] = true;
+                                }
+                            });
                         }
                     });
                 }
@@ -305,10 +325,116 @@ async function trWlFetchPrices() {
             }
         }
 
+        // Lazy resolution: find items that didn't get prices and try alternate symbols
+        await trWlResolveUnpricedItems(respondedSymbols);
+
         trWlUpdatePriceStatus('live');
     } catch (err) {
         console.warn('Watchlist: Price fetch failed:', err.message || err);
         trWlUpdatePriceStatus('error');
+    }
+}
+
+// Try alternate Fyers symbol formats for items that didn't get prices
+async function trWlResolveUnpricedItems(respondedSymbols) {
+    if (!window.fyersToken) return;
+
+    var unresolvedItems = [];
+    trWlWatchlists.forEach(function(wl) {
+        wl.items.forEach(function(item) {
+            if (!item._fyersSymbol) return;
+            // Skip if we already got a price for this symbol
+            if (trWlPrices[item._fyersSymbol] && trWlPrices[item._fyersSymbol].lp > 0) return;
+            // Skip if we already attempted resolution for this security
+            if (trWlResolvedSymbols[item.security_id]) return;
+            // Only resolve securities_db items (NFO symbols are usually correct)
+            if (item.security_source !== 'securities_db') return;
+            unresolvedItems.push(item);
+        });
+    });
+
+    if (unresolvedItems.length === 0) return;
+
+    console.log('Watchlist: Attempting lazy resolution for', unresolvedItems.length, 'unpriced items');
+
+    for (var i = 0; i < unresolvedItems.length; i++) {
+        var item = unresolvedItems[i];
+        trWlResolvedSymbols[item.security_id] = true; // Mark attempted
+
+        // Build candidate symbols to try
+        var candidates = [];
+        var dbRec = item._dbRec;
+        var sym = item.short_symbol;
+
+        if (dbRec) {
+            // NSE equity
+            if (dbRec.nse_symbol) candidates.push('NSE:' + dbRec.nse_symbol + '-EQ');
+            // NSE SME
+            if (dbRec.nse_symbol) candidates.push('NSE:' + dbRec.nse_symbol + '-SM');
+            // BSE — try without suffix, with -A, -B, -T, -X
+            if (dbRec.bse_symbol) {
+                candidates.push('BSE:' + dbRec.bse_symbol);
+                candidates.push('BSE:' + dbRec.bse_symbol + '-A');
+                candidates.push('BSE:' + dbRec.bse_symbol + '-B');
+                candidates.push('BSE:' + dbRec.bse_symbol + '-T');
+                candidates.push('BSE:' + dbRec.bse_symbol + '-X');
+            }
+        }
+        // Also try short_symbol as NSE EQ and SM
+        if (sym) {
+            var nseEq = 'NSE:' + sym + '-EQ';
+            var nseSm = 'NSE:' + sym + '-SM';
+            if (candidates.indexOf(nseEq) < 0) candidates.push(nseEq);
+            if (candidates.indexOf(nseSm) < 0) candidates.push(nseSm);
+        }
+
+        // Remove the symbol we already tried (it didn't work)
+        candidates = candidates.filter(function(c) { return c !== item._fyersSymbol; });
+        if (candidates.length === 0) continue;
+
+        console.log('Watchlist: Resolving', sym, '— trying:', candidates.join(', '));
+
+        try {
+            var data = await window.fyersCall({ action: 'quotes', symbols: candidates });
+            if (data && data.d && data.d.length > 0) {
+                for (var j = 0; j < data.d.length; j++) {
+                    var q = data.d[j];
+                    if (q.v && q.v.lp > 0) {
+                        var resolvedSym = q.v.symbol;
+                        console.log('Watchlist: Resolved', sym, '→', resolvedSym);
+
+                        // Store the price
+                        trWlPrices[resolvedSym] = {
+                            lp: q.v.lp || 0,
+                            ch: q.v.ch || 0,
+                            chp: q.v.chp || 0,
+                            high: q.v.high_price || null,
+                            low: q.v.low_price || null
+                        };
+
+                        // Update _fyersSymbol on ALL items that reference this security
+                        trWlWatchlists.forEach(function(wl) {
+                            wl.items.forEach(function(it) {
+                                if (it.security_id === item.security_id && it.security_source === item.security_source) {
+                                    it._fyersSymbol = resolvedSym;
+                                }
+                            });
+                        });
+
+                        // Persist to DB in background
+                        trWlUpdateSecurityBrokerTokens(item.security_id, resolvedSym);
+                        break; // Found a working symbol
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('Watchlist: Resolution failed for', sym, ':', err.message);
+        }
+
+        // Small delay between resolution attempts
+        if (i < unresolvedItems.length - 1) {
+            await new Promise(function(resolve) { setTimeout(resolve, 150); });
+        }
     }
 }
 
@@ -998,13 +1124,24 @@ function trWlDeriveFyersSymbol(security) {
 async function trWlResolveFyersSymbol(security) {
     if (!window.fyersToken) return null;
 
-    // Build candidate symbols to try
+    // Build candidate symbols to try — include SME and multiple BSE series
     var candidates = [];
-    if (security.nse_symbol) candidates.push('NSE:' + security.nse_symbol + '-EQ');
-    if (security.bse_symbol) candidates.push('BSE:' + security.bse_symbol + '-A');
+    if (security.nse_symbol) {
+        candidates.push('NSE:' + security.nse_symbol + '-EQ');
+        candidates.push('NSE:' + security.nse_symbol + '-SM');
+    }
+    if (security.bse_symbol) {
+        candidates.push('BSE:' + security.bse_symbol);
+        candidates.push('BSE:' + security.bse_symbol + '-A');
+        candidates.push('BSE:' + security.bse_symbol + '-B');
+        candidates.push('BSE:' + security.bse_symbol + '-T');
+        candidates.push('BSE:' + security.bse_symbol + '-X');
+    }
     if (security.short_symbol) {
         var nseCandidate = 'NSE:' + security.short_symbol + '-EQ';
+        var smeCandidate = 'NSE:' + security.short_symbol + '-SM';
         if (candidates.indexOf(nseCandidate) < 0) candidates.push(nseCandidate);
+        if (candidates.indexOf(smeCandidate) < 0) candidates.push(smeCandidate);
     }
 
     if (candidates.length === 0) return null;

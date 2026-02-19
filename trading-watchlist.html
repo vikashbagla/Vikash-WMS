@@ -48,18 +48,33 @@
     color: #718096;
 }
 .btn-wl-refresh:hover { background: #f7fafc; }
+.btn-wl-debug {
+    background: none;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+    cursor: pointer;
+    color: #718096;
+    text-decoration: none;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+}
+.btn-wl-debug:hover { background: #f7fafc; border-color: #667eea; }
 
-/* Responsive grid for watchlist cards */
+/* Responsive grid for watchlist cards — each row = half the available height */
 .wl-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    grid-auto-rows: calc(50% - 6px);
     gap: 12px;
     overflow-y: auto;
     flex: 1;
     min-height: 0;
     padding: 2px;
     align-content: start;
-    align-items: start;
+    align-items: stretch;
 }
 
 /* Collapsed watchlist chips bar — sits above grid, compact horizontal layout */
@@ -88,7 +103,7 @@
 .wl-collapsed-chip .wl-chip-count { font-size: 10px; color: #a0aec0; }
 .wl-collapsed-chip .wl-chip-arrow { font-size: 10px; color: #a0aec0; }
 
-/* Individual watchlist card */
+/* Individual watchlist card — fills grid cell, scrolls internally */
 .wl-card {
     background: #fff;
     border: 1px solid #e2e8f0;
@@ -97,6 +112,8 @@
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
     display: flex;
     flex-direction: column;
+    height: 100%;
+    min-height: 0;
 }
 .wl-card-header {
     display: flex;
@@ -147,11 +164,12 @@
 .btn-wl-add { font-size: 14px !important; color: #667eea !important; }
 .btn-wl-add:hover { color: #5a67d8 !important; }
 
-/* Card body — security list */
+/* Card body — security list; fills remaining card height, scrolls when needed */
 .wl-card-body {
     padding: 0;
-    max-height: 400px;
+    flex: 1;
     overflow-y: auto;
+    min-height: 0;
 }
 .wl-card.collapsed .wl-card-body { display: none; }
 
@@ -619,6 +637,7 @@
             </div>
             <button class="btn-new-watchlist" id="trWlNewBtn">+ New Watchlist</button>
             <button class="btn-wl-refresh" id="trWlReorderBtn" title="Reorder watchlists">↕ Reorder</button>
+            <a href="watchlist-debug.html" target="_blank" class="btn-wl-debug" title="Open Watchlist Diagnostics">🔍</a>
         </div>
     </div>
 
