@@ -362,6 +362,7 @@ function trWlStopAutoRefresh() {
 
 function trWlRender() {
     var grid = document.getElementById('trWlGrid');
+    var collapsedBar = document.getElementById('trWlCollapsedBar');
     if (!grid) return;
 
     // Update count
@@ -373,6 +374,7 @@ function trWlRender() {
     }
 
     if (trWlWatchlists.length === 0) {
+        if (collapsedBar) { collapsedBar.style.display = 'none'; collapsedBar.innerHTML = ''; }
         grid.innerHTML = '<div class="wl-page-empty">' +
             '<div class="wl-empty-icon">📋</div>' +
             '<div class="wl-empty-text">No watchlists yet</div>' +
@@ -381,54 +383,86 @@ function trWlRender() {
         return;
     }
 
-    grid.innerHTML = trWlWatchlists.map(function(wl) {
-        var isCollapsed = wl.is_collapsed;
-        var cardClass = 'wl-card' + (isCollapsed ? ' collapsed' : '');
-        var menuId = 'wlm-' + wl.id.substring(0, 8);
+    // Separate collapsed and expanded watchlists
+    var collapsed = [];
+    var expanded = [];
+    trWlWatchlists.forEach(function(wl) {
+        if (wl.is_collapsed) collapsed.push(wl);
+        else expanded.push(wl);
+    });
 
-        var itemsHtml = '';
-        if (!isCollapsed) {
+    // Render collapsed watchlists as compact chips above the grid
+    if (collapsedBar) {
+        if (collapsed.length > 0) {
+            collapsedBar.style.display = 'flex';
+            collapsedBar.innerHTML = collapsed.map(function(wl) {
+                return '<div class="wl-collapsed-chip" data-wl-id="' + wl.id + '" title="Click to expand">' +
+                    '<span class="wl-chip-arrow">►</span>' +
+                    '<span class="wl-chip-name">' + trWlEsc(wl.name) + '</span>' +
+                    '<span class="wl-chip-count">(' + wl.items.length + ')</span>' +
+                '</div>';
+            }).join('');
+
+            // Attach click handlers to chips — expand on click
+            collapsedBar.querySelectorAll('.wl-collapsed-chip').forEach(function(chip) {
+                chip.addEventListener('click', function() {
+                    trWlToggleCollapse(chip.dataset.wlId);
+                });
+            });
+        } else {
+            collapsedBar.style.display = 'none';
+            collapsedBar.innerHTML = '';
+        }
+    }
+
+    // Render expanded watchlists in the grid
+    if (expanded.length === 0) {
+        grid.innerHTML = '';
+    } else {
+        grid.innerHTML = expanded.map(function(wl) {
+            var menuId = 'wlm-' + wl.id.substring(0, 8);
+
+            var itemsHtml = '';
             if (wl.items.length === 0) {
                 itemsHtml = '<div class="wl-empty-card">No securities added yet. Click + to add.</div>';
             } else {
-                // Apply sort if set
                 var sortedItems = trWlGetSortedItems(wl);
                 itemsHtml = sortedItems.map(function(item) {
                     return trWlRenderSecurityRow(item);
                 }).join('');
             }
-        }
 
-        // Sort indicator
-        var ss = trWlSortState[wl.id];
-        var sortNameClass = ss && ss.field === 'name' ? ' active' : '';
-        var sortChpClass = ss && ss.field === 'chp' ? ' active' : '';
-        var sortNameArrow = ss && ss.field === 'name' ? (ss.dir === 'asc' ? ' ▲' : ' ▼') : '';
-        var sortChpArrow = ss && ss.field === 'chp' ? (ss.dir === 'asc' ? ' ▲' : ' ▼') : '';
+            // Sort indicator
+            var ss = trWlSortState[wl.id];
+            var sortNameClass = ss && ss.field === 'name' ? ' active' : '';
+            var sortChpClass = ss && ss.field === 'chp' ? ' active' : '';
+            var sortNameArrow = ss && ss.field === 'name' ? (ss.dir === 'asc' ? ' ▲' : ' ▼') : '';
+            var sortChpArrow = ss && ss.field === 'chp' ? (ss.dir === 'asc' ? ' ▲' : ' ▼') : '';
 
-        return '<div class="' + cardClass + '" data-wl-id="' + wl.id + '">' +
-            '<div class="wl-card-header" data-wl-id="' + wl.id + '">' +
-                '<div class="wl-card-title">' +
-                    '<span class="wl-arrow">▼</span>' +
-                    '<span class="wl-name" data-wl-id="' + wl.id + '">' + trWlEsc(wl.name) + '</span>' +
-                    '<span class="wl-item-count">(' + wl.items.length + ')</span>' +
-                '</div>' +
-                '<div class="wl-card-actions" style="position:relative;">' +
-                    '<div class="wl-sort-btns">' +
-                        '<button class="btn-wl-sort' + sortNameClass + '" data-wl-id="' + wl.id + '" data-sort="name" title="Sort by name">A-Z' + sortNameArrow + '</button>' +
-                        '<button class="btn-wl-sort' + sortChpClass + '" data-wl-id="' + wl.id + '" data-sort="chp" title="Sort by % change">%' + sortChpArrow + '</button>' +
+            return '<div class="wl-card" data-wl-id="' + wl.id + '">' +
+                '<div class="wl-card-header" data-wl-id="' + wl.id + '">' +
+                    '<div class="wl-card-title">' +
+                        '<span class="wl-arrow">▼</span>' +
+                        '<span class="wl-name" data-wl-id="' + wl.id + '">' + trWlEsc(wl.name) + '</span>' +
+                        '<span class="wl-item-count">(' + wl.items.length + ')</span>' +
                     '</div>' +
-                    '<button class="btn-wl-add" data-wl-id="' + wl.id + '" title="Add security">+</button>' +
-                    '<button class="btn-wl-menu" data-wl-id="' + wl.id + '" data-menu-id="' + menuId + '" title="Options">⋮</button>' +
-                    '<div class="wl-card-menu" id="' + menuId + '">' +
-                        '<button class="wl-card-menu-item" data-action="rename" data-wl-id="' + wl.id + '">✏️ Rename</button>' +
-                        '<button class="wl-card-menu-item danger" data-action="delete" data-wl-id="' + wl.id + '">🗑️ Delete Watchlist</button>' +
+                    '<div class="wl-card-actions" style="position:relative;">' +
+                        '<div class="wl-sort-btns">' +
+                            '<button class="btn-wl-sort' + sortNameClass + '" data-wl-id="' + wl.id + '" data-sort="name" title="Sort by name">A-Z' + sortNameArrow + '</button>' +
+                            '<button class="btn-wl-sort' + sortChpClass + '" data-wl-id="' + wl.id + '" data-sort="chp" title="Sort by % change">%' + sortChpArrow + '</button>' +
+                        '</div>' +
+                        '<button class="btn-wl-add" data-wl-id="' + wl.id + '" title="Add security">+</button>' +
+                        '<button class="btn-wl-menu" data-wl-id="' + wl.id + '" data-menu-id="' + menuId + '" title="Options">⋮</button>' +
+                        '<div class="wl-card-menu" id="' + menuId + '">' +
+                            '<button class="wl-card-menu-item" data-action="rename" data-wl-id="' + wl.id + '">✏️ Rename</button>' +
+                            '<button class="wl-card-menu-item danger" data-action="delete" data-wl-id="' + wl.id + '">🗑️ Delete Watchlist</button>' +
+                        '</div>' +
                     '</div>' +
                 '</div>' +
-            '</div>' +
-            '<div class="wl-card-body">' + itemsHtml + '</div>' +
-        '</div>';
-    }).join('');
+                '<div class="wl-card-body">' + itemsHtml + '</div>' +
+            '</div>';
+        }).join('');
+    }
 
     trWlAttachCardListeners();
 }

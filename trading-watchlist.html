@@ -62,6 +62,32 @@
     align-items: start;
 }
 
+/* Collapsed watchlist chips bar — sits above grid, compact horizontal layout */
+.wl-collapsed-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 2px 8px 2px;
+}
+.wl-collapsed-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 12px;
+    color: #4a5568;
+    transition: background 0.15s;
+}
+.wl-collapsed-chip:hover { background: #edf2f7; border-color: #cbd5e0; }
+.wl-collapsed-chip .wl-chip-name { font-weight: 600; color: #2d3748; }
+.wl-collapsed-chip .wl-chip-count { font-size: 10px; color: #a0aec0; }
+.wl-collapsed-chip .wl-chip-arrow { font-size: 10px; color: #a0aec0; }
+
 /* Individual watchlist card */
 .wl-card {
     background: #fff;
@@ -596,7 +622,12 @@
         </div>
     </div>
 
-    <!-- Responsive watchlist grid -->
+    <!-- Collapsed watchlists shown as compact chips -->
+    <div class="wl-collapsed-bar" id="trWlCollapsedBar" style="display:none;">
+        <!-- Rendered by JS -->
+    </div>
+
+    <!-- Responsive watchlist grid (expanded watchlists only) -->
     <div class="wl-grid" id="trWlGrid">
         <!-- Cards rendered by JS -->
     </div>
