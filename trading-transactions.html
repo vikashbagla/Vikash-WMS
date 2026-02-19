@@ -112,6 +112,14 @@
 #trTx-matching-container.visible { display: flex; flex-direction: column; }
 #trTx-list-container.hidden { display: none; }
 
+/* Collapsible group header row */
+.trTx-match-group-header {
+    cursor: pointer;
+    user-select: none;
+}
+.trTx-match-group-header:hover td {
+    background: #e8edf2 !important;
+}
 .trTx-match-group-header td {
     background: #f0f4f8;
     font-weight: 600;
@@ -120,12 +128,31 @@
     padding: 6px 8px !important;
     border-bottom: 2px solid #cbd5e0;
 }
+.trTx-match-group-header .trTx-collapse-icon {
+    display: inline-block;
+    width: 14px;
+    font-size: 10px;
+    color: #718096;
+    transition: transform 0.15s;
+}
+.trTx-match-group-header.collapsed .trTx-collapse-icon {
+    transform: rotate(-90deg);
+}
+.trTx-match-detail-row.collapsed-row {
+    display: none;
+}
 .trTx-match-open td {
     color: #718096;
     font-style: italic;
 }
 .trTx-pnl-positive { color: #059669; font-weight: 600; }
 .trTx-pnl-negative { color: #dc2626; font-weight: 600; }
+
+/* Totals in group header */
+.trTx-group-total {
+    font-weight: 600;
+    font-size: 11px;
+}
 </style>
 
 <!-- Options bar -->
@@ -239,12 +266,11 @@
     <table id="trTx-matching-table">
         <thead>
             <tr>
-                <th style="width:10%;">Sell Date</th>
-                <th style="width:13%;">Investor @ Broker</th>
-                <th style="width:14%;">Symbol</th>
-                <th class="text-right" style="width:8%;">Qty</th>
+                <th class="text-right" style="width:7%;">Qty</th>
+                <th style="width:9%;">Buy Date</th>
                 <th class="text-right" style="width:10%;">Buy Avg</th>
                 <th class="text-right" style="width:12%;">Buy Amount</th>
+                <th style="width:9%;">Sell Date</th>
                 <th class="text-right" style="width:10%;">Sell Avg</th>
                 <th class="text-right" style="width:12%;">Sell Amount</th>
                 <th class="text-right" style="width:11%;">Net P&L</th>
