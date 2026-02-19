@@ -59,6 +59,7 @@
     min-height: 0;
     padding: 2px;
     align-content: start;
+    align-items: start;
 }
 
 /* Individual watchlist card */
@@ -519,6 +520,20 @@
     font-size: 13px;
     font-weight: 500;
     color: #2d3748;
+    cursor: pointer;
+}
+.wl-reorder-name:hover { color: #667eea; }
+.wl-reorder-name-input {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+    color: #2d3748;
+    padding: 2px 6px;
+    border: 1.5px solid #667eea;
+    border-radius: 4px;
+    outline: none;
+    width: 100%;
+    max-width: 200px;
 }
 .wl-reorder-count {
     font-size: 10px;
@@ -577,7 +592,6 @@
             </div>
             <button class="btn-new-watchlist" id="trWlNewBtn">+ New Watchlist</button>
             <button class="btn-wl-refresh" id="trWlReorderBtn" title="Reorder watchlists">↕ Reorder</button>
-            <button class="btn-wl-refresh" id="trWlRefreshBtn" title="Refresh prices">🔄</button>
         </div>
     </div>
 

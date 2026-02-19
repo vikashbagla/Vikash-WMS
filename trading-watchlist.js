@@ -63,14 +63,6 @@ function trWlSetupEventHandlers() {
         if (e.key === 'Escape') trWlCancelNewWatchlist();
     });
 
-    // Refresh button
-    document.getElementById('trWlRefreshBtn').addEventListener('click', async function() {
-        trWlUpdatePriceStatus('loading');
-        await trWlFetchPrices();
-        trWlRender();
-        showAlert('Prices refreshed', 'success', 1500);
-    });
-
     // Add dialog — close
     document.getElementById('trWlAddClose').addEventListener('click', trWlCloseAddDialog);
     document.getElementById('trWlAddCancelBtn').addEventListener('click', trWlCloseAddDialog);
@@ -225,22 +217,29 @@ async function trWlLoadBrokerTokens() {
                     item._displaySymbol = nfoRec.symbol;
                 }
                 if (nfoRec && nfoRec.broker_tokens && nfoRec.broker_tokens.fyers) {
-                    item._fyersSymbol = nfoRec.broker_tokens.fyers.symbol;
+                    item._fyersSymbol = nfoRec.broker_tokens.fyers.symbol || nfoRec.broker_tokens.fyers.nse_symbol;
                 } else if (nfoRec) {
                     item._fyersSymbol = nfoRec.symbol;
                 }
             } else {
                 var dbRec = dbTokenMap[item.security_id];
                 if (dbRec && dbRec.broker_tokens && dbRec.broker_tokens.fyers) {
-                    // Prefer NSE symbol
-                    item._fyersSymbol = dbRec.broker_tokens.fyers.nse_symbol || dbRec.broker_tokens.fyers.bse_symbol;
-                } else if (dbRec) {
-                    // Fallback: derive from nse_symbol/bse_symbol columns
+                    // Try all known key patterns — prefer NSE
+                    item._fyersSymbol = dbRec.broker_tokens.fyers.nse_symbol ||
+                                        dbRec.broker_tokens.fyers.bse_symbol ||
+                                        dbRec.broker_tokens.fyers.symbol || null;
+                }
+                // Fallback: derive from nse_symbol/bse_symbol columns
+                if (!item._fyersSymbol && dbRec) {
                     if (dbRec.nse_symbol) {
                         item._fyersSymbol = 'NSE:' + dbRec.nse_symbol + '-EQ';
                     } else if (dbRec.bse_symbol) {
                         item._fyersSymbol = 'BSE:' + dbRec.bse_symbol + '-A';
                     }
+                }
+                // Last resort: use short_symbol from the watchlist item itself
+                if (!item._fyersSymbol && item.short_symbol) {
+                    item._fyersSymbol = 'NSE:' + item.short_symbol + '-EQ';
                 }
             }
             if (!item._fyersSymbol) {
@@ -869,6 +868,14 @@ async function trWlAddItem(security) {
         return;
     }
 
+    // Derive Fyers symbol BEFORE insert — also try Fyers validation + DB update if missing
+    var fyersSymbol = trWlDeriveFyersSymbol(security);
+
+    // If no broker_tokens.fyers and we have a symbol to try, validate via Fyers and update DB
+    if (!fyersSymbol && security.security_source === 'securities_db') {
+        fyersSymbol = await trWlResolveFyersSymbol(security);
+    }
+
     var sortOrder = wl.items.length;
     var body = {
         watchlist_id: trWlAddTargetId,
@@ -892,20 +899,9 @@ async function trWlAddItem(security) {
 
     if (resp.ok) {
         var newItem = (await resp.json())[0];
-
-        // Derive Fyers symbol
+        newItem._fyersSymbol = fyersSymbol;
         if (security.security_source === 'securities_nfo') {
-            if (security.broker_tokens && security.broker_tokens.fyers) {
-                newItem._fyersSymbol = security.broker_tokens.fyers.symbol;
-            }
-        } else {
-            if (security.broker_tokens && security.broker_tokens.fyers) {
-                newItem._fyersSymbol = security.broker_tokens.fyers.nse_symbol || security.broker_tokens.fyers.bse_symbol;
-            } else if (security.nse_symbol) {
-                newItem._fyersSymbol = 'NSE:' + security.nse_symbol + '-EQ';
-            } else if (security.bse_symbol) {
-                newItem._fyersSymbol = 'BSE:' + security.bse_symbol + '-A';
-            }
+            newItem._displaySymbol = security.short_symbol;
         }
 
         wl.items.push(newItem);
@@ -939,6 +935,126 @@ async function trWlAddItem(security) {
         } else {
             showAlert('Failed to add: ' + errText, 'error');
         }
+    }
+}
+
+// Derive Fyers symbol from security data (sync — no API calls)
+function trWlDeriveFyersSymbol(security) {
+    if (security.security_source === 'securities_nfo') {
+        if (security.broker_tokens && security.broker_tokens.fyers) {
+            return security.broker_tokens.fyers.symbol || security.broker_tokens.fyers.nse_symbol || null;
+        }
+        return null;
+    }
+    // securities_db
+    var bt = security.broker_tokens;
+    if (bt && bt.fyers) {
+        // Try all known key patterns
+        return bt.fyers.nse_symbol || bt.fyers.bse_symbol || bt.fyers.symbol || null;
+    }
+    // Fallback: derive from nse_symbol / bse_symbol columns
+    if (security.nse_symbol) return 'NSE:' + security.nse_symbol + '-EQ';
+    if (security.bse_symbol) return 'BSE:' + security.bse_symbol + '-A';
+    // Last resort: try short_symbol
+    if (security.short_symbol) return 'NSE:' + security.short_symbol + '-EQ';
+    return null;
+}
+
+// Resolve Fyers symbol by calling Fyers quotes API and updating securities_db broker_tokens
+async function trWlResolveFyersSymbol(security) {
+    if (!window.fyersToken) return null;
+
+    // Build candidate symbols to try
+    var candidates = [];
+    if (security.nse_symbol) candidates.push('NSE:' + security.nse_symbol + '-EQ');
+    if (security.bse_symbol) candidates.push('BSE:' + security.bse_symbol + '-A');
+    if (security.short_symbol) {
+        var nseCandidate = 'NSE:' + security.short_symbol + '-EQ';
+        if (candidates.indexOf(nseCandidate) < 0) candidates.push(nseCandidate);
+    }
+
+    if (candidates.length === 0) return null;
+
+    console.log('Watchlist: Resolving Fyers symbol for', security.short_symbol, '— trying:', candidates);
+
+    try {
+        var data = await window.fyersCall({ action: 'quotes', symbols: candidates });
+        if (data && data.d && data.d.length > 0) {
+            // Find the first successful quote
+            var validQuote = null;
+            for (var i = 0; i < data.d.length; i++) {
+                if (data.d[i].v && data.d[i].v.lp > 0) {
+                    validQuote = data.d[i].v;
+                    break;
+                }
+            }
+
+            if (validQuote) {
+                var resolvedSymbol = validQuote.symbol;
+                console.log('Watchlist: Resolved Fyers symbol:', resolvedSymbol);
+
+                // Store the price we just got
+                trWlPrices[resolvedSymbol] = {
+                    lp: validQuote.lp || 0,
+                    ch: validQuote.ch || 0,
+                    chp: validQuote.chp || 0,
+                    high: validQuote.high_price || null,
+                    low: validQuote.low_price || null
+                };
+
+                // Update securities_db broker_tokens in background
+                trWlUpdateSecurityBrokerTokens(security.security_id, resolvedSymbol);
+
+                return resolvedSymbol;
+            }
+        }
+    } catch (err) {
+        console.warn('Watchlist: Fyers symbol resolution failed:', err.message);
+    }
+    return null;
+}
+
+// Update securities_db broker_tokens with the resolved Fyers symbol
+async function trWlUpdateSecurityBrokerTokens(securityId, fyersSymbol) {
+    try {
+        // First fetch current record to preserve existing broker_tokens
+        var getResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + securityId + '&select=broker_tokens,nse_symbol,bse_symbol', {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        });
+        if (!getResp.ok) return;
+        var rows = await getResp.json();
+        if (rows.length === 0) return;
+
+        var existing = rows[0];
+        var bt = existing.broker_tokens || {};
+        if (!bt.fyers) bt.fyers = {};
+
+        // Parse the Fyers symbol to determine exchange (NSE:SYMBOL-EQ or BSE:SYMBOL-A)
+        if (fyersSymbol.indexOf('NSE:') === 0) {
+            bt.fyers.nse_symbol = fyersSymbol;
+        } else if (fyersSymbol.indexOf('BSE:') === 0) {
+            bt.fyers.bse_symbol = fyersSymbol;
+        }
+
+        // Update DB
+        var patchResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + securityId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ broker_tokens: bt })
+        });
+
+        if (patchResp.ok) {
+            console.log('Watchlist: Updated broker_tokens for security', securityId, 'with', fyersSymbol);
+        } else {
+            console.warn('Watchlist: Failed to update broker_tokens:', await patchResp.text());
+        }
+    } catch (err) {
+        console.warn('Watchlist: broker_tokens update error:', err.message);
     }
 }
 
@@ -1152,7 +1268,7 @@ function trWlRenderReorderList() {
     body.innerHTML = trWlReorderList.map(function(wl, idx) {
         return '<div class="wl-reorder-item" data-idx="' + idx + '">' +
             '<span class="wl-reorder-handle">☰</span>' +
-            '<span class="wl-reorder-name">' + trWlEsc(wl.name) +
+            '<span class="wl-reorder-name" data-wl-id="' + wl.id + '" title="Click to rename">' + trWlEsc(wl.name) +
                 '<span class="wl-reorder-count">(' + wl.itemCount + ')</span>' +
             '</span>' +
             '<div class="wl-reorder-arrows">' +
@@ -1173,8 +1289,51 @@ function trWlRenderReorderList() {
         });
     });
 
+    // Attach name click handlers for inline rename
+    body.querySelectorAll('.wl-reorder-name').forEach(function(nameEl) {
+        nameEl.addEventListener('click', function(e) {
+            e.stopPropagation();
+            trWlStartReorderRename(nameEl);
+        });
+    });
+
     // Attach drag handlers for mouse-based reorder
     trWlSetupDragReorder(body);
+}
+
+function trWlStartReorderRename(nameEl) {
+    var wlId = nameEl.dataset.wlId;
+    var wlReorder = trWlReorderList.find(function(w) { return w.id === wlId; });
+    if (!wlReorder) return;
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'wl-reorder-name-input';
+    input.value = wlReorder.name;
+    input.maxLength = 40;
+    nameEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    function finishRename() {
+        var newName = input.value.trim();
+        if (newName && newName !== wlReorder.name) {
+            // Update in reorder list
+            wlReorder.name = newName;
+            // Update in main watchlists array
+            var mainWl = trWlWatchlists.find(function(w) { return w.id === wlId; });
+            if (mainWl) mainWl.name = newName;
+            // Persist to DB
+            trWlRenameWatchlist(wlId, newName);
+        }
+        trWlRenderReorderList();
+    }
+
+    input.addEventListener('blur', finishRename);
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { input.blur(); }
+        if (e.key === 'Escape') { trWlRenderReorderList(); }
+    });
 }
 
 function trWlReorderMove(idx, direction) {
