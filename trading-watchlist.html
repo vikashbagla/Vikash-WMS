@@ -224,10 +224,11 @@
 }
 .btn-wl-delete:hover { color: #dc2626; background: #fef2f2; }
 
-/* Bottom row: slider below price+change columns — uses portfolio's price-slider styles */
+/* Bottom row: slider ONLY under price+change columns — uses portfolio's price-slider styles */
 .wl-row-slider {
-    margin: 2px 0 0 22px;  /* 22px = drag handle width + gap, aligns under symbol area */
-    padding-right: 26px;    /* space for delete button column */
+    margin: 2px 0 0 auto;  /* push to right, aligning under price+change */
+    width: 176px;           /* 80px (price) + 6px (gap) + 90px (change) */
+    margin-right: 30px;     /* 24px (delete) + 6px (gap) — aligns right edge with change column */
 }
 
 /* Sort buttons in card header */

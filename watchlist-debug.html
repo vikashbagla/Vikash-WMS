@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WMS — Watchlist Diagnostics</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #2d3748; padding: 20px; font-size: 13px; }
+h1 { font-size: 18px; color: #667eea; margin-bottom: 12px; }
+h2 { font-size: 14px; color: #4a5568; margin: 16px 0 8px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
+.section { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.input-row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+input[type="text"] { padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px; width: 260px; }
+button { padding: 6px 14px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600; }
+.btn-primary { background: #667eea; color: #fff; }
+.btn-primary:hover { background: #5a67d8; }
+.btn-secondary { background: #e2e8f0; color: #4a5568; }
+.btn-danger { background: #dc2626; color: #fff; }
+.btn-success { background: #059669; color: #fff; }
+
+/* Log output */
+.log-container { background: #1a1a2e; color: #e0e0e0; border-radius: 6px; padding: 12px; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11.5px; max-height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.7; }
+.log-container .step { color: #667eea; font-weight: 700; }
+.log-container .ok { color: #34d399; }
+.log-container .warn { color: #fbbf24; }
+.log-container .err { color: #f87171; font-weight: 600; }
+.log-container .dim { color: #6b7280; }
+.log-container .val { color: #a78bfa; }
+.log-container .key { color: #60a5fa; }
+
+/* Summary table */
+table.diag { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.diag th { text-align: left; background: #f1f5f9; padding: 5px 8px; border: 1px solid #e2e8f0; font-weight: 600; color: #475569; }
+table.diag td { padding: 5px 8px; border: 1px solid #e2e8f0; vertical-align: top; }
+table.diag td.mono { font-family: monospace; font-size: 11px; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+.badge-ok { background: #d1fae5; color: #065f46; }
+.badge-warn { background: #fef3c7; color: #92400e; }
+.badge-err { background: #fee2e2; color: #991b1b; }
+.badge-info { background: #dbeafe; color: #1e40af; }
+
+.status-bar { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.status-item { padding: 4px 10px; border-radius: 4px; font-size: 11px; background: #f1f5f9; }
+</style>
+</head>
+<body>
+
+<h1>🔍 WMS Watchlist Diagnostics</h1>
+
+<div class="status-bar">
+    <div class="status-item" id="fyers-status">Fyers: checking...</div>
+    <div class="status-item" id="db-status">DB: checking...</div>
+</div>
+
+<!-- Section 1: Security Lookup -->
+<div class="section">
+    <h2>1. Security Lookup & Data Validation</h2>
+    <p style="color:#718096;margin-bottom:8px;">Search for a security and inspect its raw data from the database — check for missing fields, bad IDs, broker_tokens structure.</p>
+    <div class="input-row">
+        <input type="text" id="secSearchInput" placeholder="Enter symbol (e.g. SANDUMA, NATIONALUM)">
+        <button class="btn-primary" id="secSearchBtn">🔎 Search & Diagnose</button>
+    </div>
+    <div class="log-container" id="secLog" style="min-height:80px;">Ready. Enter a symbol and click Search.</div>
+</div>
+
+<!-- Section 2: Add-to-Watchlist Simulation -->
+<div class="section">
+    <h2>2. Add-to-Watchlist Simulation (Dry Run)</h2>
+    <p style="color:#718096;margin-bottom:8px;">Simulates the exact add flow without actually inserting — shows each step's result.</p>
+    <div class="input-row">
+        <input type="text" id="addSecId" placeholder="security_id (from Step 1)" style="width:140px;">
+        <select id="addSecSource" style="padding:6px;border-radius:6px;border:1px solid #cbd5e0;font-size:12px;">
+            <option value="securities_db">securities_db</option>
+            <option value="securities_nfo">securities_nfo</option>
+        </select>
+        <button class="btn-primary" id="addSimBtn">▶ Simulate Add</button>
+    </div>
+    <div class="log-container" id="addLog" style="min-height:80px;">Waiting for Step 1 results or manual input.</div>
+</div>
+
+<!-- Section 3: Fyers Symbol Test -->
+<div class="section">
+    <h2>3. Fyers Symbol Resolution</h2>
+    <p style="color:#718096;margin-bottom:8px;">Test Fyers quote API with specific symbols to check which ones resolve.</p>
+    <div class="input-row">
+        <input type="text" id="fyersSymInput" placeholder="e.g. NSE:NATIONALUM-EQ" style="width:260px;">
+        <button class="btn-primary" id="fyersTestBtn">📡 Test Quote</button>
+        <button class="btn-secondary" id="fyersTryCandidates">🎯 Try All Candidates</button>
+    </div>
+    <div class="log-container" id="fyersLog" style="min-height:80px;">Ready. Enter a Fyers symbol or use Try All Candidates after Step 1.</div>
+</div>
+
+<!-- Section 4: Watchlist Items Audit -->
+<div class="section">
+    <h2>4. Current Watchlist Items Audit</h2>
+    <p style="color:#718096;margin-bottom:8px;">Loads all watchlist items and checks each one for data integrity (security exists, broker_tokens present, Fyers symbol derivable).</p>
+    <button class="btn-primary" id="auditBtn">🩺 Run Audit</button>
+    <div class="log-container" id="auditLog" style="min-height:80px;">Click Run Audit to check all watchlist items.</div>
+</div>
+
+<script>
+// ============================================================================
+// CONFIG
+// ============================================================================
+var SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
+var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
+
+var _lastSearchResults = [];  // store for Step 2
+
+function headers() {
+    return { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+}
+
+// ============================================================================
+// LOGGING HELPERS
+// ============================================================================
+function log(containerId, html) {
+    document.getElementById(containerId).innerHTML += html + '\n';
+}
+function logClear(containerId) {
+    document.getElementById(containerId).innerHTML = '';
+}
+function step(containerId, num, text) {
+    log(containerId, '<span class="step">━━ Step ' + num + ': ' + text + ' ━━</span>');
+}
+function ok(containerId, text) { log(containerId, '<span class="ok">  ✅ ' + text + '</span>'); }
+function warn(containerId, text) { log(containerId, '<span class="warn">  ⚠️  ' + text + '</span>'); }
+function err(containerId, text) { log(containerId, '<span class="err">  ❌ ' + text + '</span>'); }
+function info(containerId, text) { log(containerId, '<span class="dim">  ℹ️  ' + text + '</span>'); }
+function val(containerId, key, value) {
+    var vStr = (typeof value === 'object') ? JSON.stringify(value, null, 2) : String(value);
+    log(containerId, '  <span class="key">' + key + ':</span> <span class="val">' + escHtml(vStr) + '</span>');
+}
+function escHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+// ============================================================================
+// INIT — Check Fyers + DB connectivity
+// ============================================================================
+(function init() {
+    // Check Fyers token
+    var fyersEl = document.getElementById('fyers-status');
+    try {
+        var stored = localStorage.getItem('fyers_token');
+        if (stored) {
+            var parsed = JSON.parse(stored);
+            var today = new Date().toISOString().split('T')[0];
+            if (parsed.date === today && parsed.token) {
+                window.fyersToken = parsed.token;
+                fyersEl.textContent = '🟢 Fyers: Connected';
+                fyersEl.style.background = '#d1fae5';
+            } else {
+                fyersEl.textContent = '🔴 Fyers: Token expired';
+                fyersEl.style.background = '#fee2e2';
+            }
+        } else {
+            fyersEl.textContent = '🔴 Fyers: No token';
+            fyersEl.style.background = '#fee2e2';
+        }
+    } catch(e) {
+        fyersEl.textContent = '🔴 Fyers: Error';
+        fyersEl.style.background = '#fee2e2';
+    }
+
+    // Check DB connectivity
+    var dbEl = document.getElementById('db-status');
+    fetch(SUPABASE_URL + '/rest/v1/securities_db?limit=1&select=id', { headers: headers() })
+        .then(function(r) {
+            if (r.ok) {
+                return r.json().then(function(data) {
+                    dbEl.textContent = '🟢 DB: Connected (securities_db id type: ' + typeof (data[0] && data[0].id) + ')';
+                    dbEl.style.background = '#d1fae5';
+                    window._sampleDbIdType = typeof (data[0] && data[0].id);
+                });
+            } else {
+                dbEl.textContent = '🔴 DB: Error ' + r.status;
+                dbEl.style.background = '#fee2e2';
+            }
+        })
+        .catch(function(e) {
+            dbEl.textContent = '🔴 DB: ' + e.message;
+            dbEl.style.background = '#fee2e2';
+        });
+})();
+
+// Fyers call wrapper
+async function fyersCall(payload) {
+    var stored = localStorage.getItem('fyers_token');
+    var fyersToken = null;
+    if (stored) {
+        try {
+            var parsed = JSON.parse(stored);
+            var today = new Date().toISOString().split('T')[0];
+            if (parsed.date === today) fyersToken = parsed.token;
+        } catch(e) {}
+    }
+
+    var response = await fetch(SUPABASE_URL + '/functions/v1/fyers-market-data', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+        },
+        body: JSON.stringify(Object.assign({}, payload, { accessToken: fyersToken }))
+    });
+    return await response.json();
+}
+
+// ============================================================================
+// SECTION 1: Security Lookup
+// ============================================================================
+document.getElementById('secSearchBtn').addEventListener('click', async function() {
+    var query = document.getElementById('secSearchInput').value.trim();
+    if (!query) { alert('Enter a symbol'); return; }
+
+    var L = 'secLog';
+    logClear(L);
+    _lastSearchResults = [];
+    log(L, '<span class="step">═══ Security Diagnostic: "' + escHtml(query) + '" ═══</span>');
+
+    // Step 1: Search securities_db
+    step(L, 1, 'Query securities_db');
+    var encQ = encodeURIComponent(query);
+    var dbUrl = SUPABASE_URL + '/rest/v1/securities_db?or=(symbol.ilike.*' + encQ + '*,nse_symbol.ilike.*' + encQ + '*,bse_symbol.ilike.*' + encQ + '*,company_name.ilike.*' + encQ + '*)&is_active=eq.true&limit=10&select=id,symbol,nse_symbol,bse_symbol,company_name,security_type,asset_class,broker_tokens,isin&order=symbol';
+    info(L, 'URL: ' + dbUrl.replace(SUPABASE_URL, '...'));
+
+    try {
+        var dbResp = await fetch(dbUrl, { headers: headers() });
+        if (!dbResp.ok) { err(L, 'HTTP ' + dbResp.status + ': ' + await dbResp.text()); return; }
+        var dbData = await dbResp.json();
+        ok(L, 'Found ' + dbData.length + ' results in securities_db');
+
+        dbData.forEach(function(r, i) {
+            log(L, '');
+            log(L, '  <span class="step">── Record #' + (i+1) + ' ──</span>');
+            val(L, 'id', r.id);
+            val(L, 'typeof id', typeof r.id);
+            val(L, 'symbol', r.symbol);
+            val(L, 'nse_symbol', r.nse_symbol);
+            val(L, 'bse_symbol', r.bse_symbol);
+            val(L, 'company_name', r.company_name);
+            val(L, 'security_type', r.security_type);
+            val(L, 'isin', r.isin);
+            val(L, 'broker_tokens', r.broker_tokens);
+
+            // Validation checks
+            if (!r.id && r.id !== 0) err(L, 'ID IS NULL/UNDEFINED — this will cause "invalid security ID" error');
+            else ok(L, 'ID is valid: ' + r.id + ' (type: ' + typeof r.id + ')');
+
+            if (typeof r.id === 'number' && isNaN(r.id)) err(L, 'ID is NaN!');
+            if (typeof r.id === 'string' && isNaN(parseInt(r.id))) warn(L, 'ID is non-numeric string (UUID?): ' + r.id);
+
+            // Check isNaN validation (the old check)
+            var wouldFailOldValidation = !r.id || isNaN(r.id);
+            if (wouldFailOldValidation) {
+                err(L, '⚡ OLD VALIDATION would REJECT this: !id=' + (!r.id) + ', isNaN(id)=' + isNaN(r.id));
+            } else {
+                ok(L, 'Old validation (isNaN) would accept this ID');
+            }
+
+            // Check broker_tokens
+            if (!r.broker_tokens) {
+                warn(L, 'broker_tokens is NULL — Fyers symbol will use fallback derivation');
+            } else if (!r.broker_tokens.fyers) {
+                warn(L, 'broker_tokens.fyers is missing — will use nse_symbol/bse_symbol fallback');
+            } else {
+                var bt = r.broker_tokens.fyers;
+                if (bt.nse_symbol) ok(L, 'Fyers NSE symbol: ' + bt.nse_symbol);
+                else if (bt.bse_symbol) ok(L, 'Fyers BSE symbol: ' + bt.bse_symbol);
+                else if (bt.symbol) ok(L, 'Fyers symbol: ' + bt.symbol);
+                else warn(L, 'broker_tokens.fyers exists but no symbol keys: ' + JSON.stringify(bt));
+            }
+
+            // Derive Fyers symbol (same logic as trWlDeriveFyersSymbol)
+            var fyersSym = null;
+            if (r.broker_tokens && r.broker_tokens.fyers) {
+                fyersSym = r.broker_tokens.fyers.nse_symbol || r.broker_tokens.fyers.bse_symbol || r.broker_tokens.fyers.symbol;
+            }
+            if (!fyersSym && r.nse_symbol) fyersSym = 'NSE:' + r.nse_symbol + '-EQ';
+            if (!fyersSym && r.bse_symbol) fyersSym = 'BSE:' + r.bse_symbol + '-A';
+            if (!fyersSym && r.symbol) fyersSym = 'NSE:' + r.symbol + '-EQ';
+
+            if (fyersSym) ok(L, 'Derived Fyers symbol: ' + fyersSym);
+            else err(L, 'Cannot derive any Fyers symbol — prices will not load');
+
+            _lastSearchResults.push({
+                security_id: r.id,
+                security_source: 'securities_db',
+                short_symbol: r.nse_symbol || r.bse_symbol || r.symbol,
+                company_name: r.company_name,
+                nse_symbol: r.nse_symbol,
+                bse_symbol: r.bse_symbol,
+                broker_tokens: r.broker_tokens || {},
+                _fyersSym: fyersSym
+            });
+        });
+    } catch(e) {
+        err(L, 'Fetch error: ' + e.message);
+    }
+
+    // Step 2: Search securities_nfo
+    step(L, 2, 'Query securities_nfo');
+    var nfoUrl = SUPABASE_URL + '/rest/v1/securities_nfo?or=(symbol.ilike.*' + encQ + '*,underlying_symbol.ilike.*' + encQ + '*,instrument_name.ilike.*' + encQ + '*)&is_active=eq.true&limit=10&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,broker_tokens&order=symbol';
+
+    try {
+        var nfoResp = await fetch(nfoUrl, { headers: headers() });
+        if (!nfoResp.ok) { err(L, 'HTTP ' + nfoResp.status); return; }
+        var nfoData = await nfoResp.json();
+        ok(L, 'Found ' + nfoData.length + ' results in securities_nfo');
+
+        nfoData.forEach(function(r, i) {
+            log(L, '');
+            log(L, '  <span class="step">── NFO Record #' + (i+1) + ' ──</span>');
+            val(L, 'id', r.id);
+            val(L, 'typeof id', typeof r.id);
+            val(L, 'symbol', r.symbol);
+            val(L, 'underlying_symbol', r.underlying_symbol);
+            val(L, 'broker_tokens', r.broker_tokens);
+
+            if (!r.id && r.id !== 0) err(L, 'ID IS NULL/UNDEFINED');
+            else ok(L, 'ID is valid: ' + r.id + ' (type: ' + typeof r.id + ')');
+
+            var wouldFailOldValidation = !r.id || isNaN(r.id);
+            if (wouldFailOldValidation) {
+                err(L, '⚡ OLD VALIDATION would REJECT this: isNaN(id)=' + isNaN(r.id));
+            }
+
+            var fyersSym = null;
+            if (r.broker_tokens && r.broker_tokens.fyers) {
+                fyersSym = r.broker_tokens.fyers.symbol || r.broker_tokens.fyers.nse_symbol;
+            }
+            if (!fyersSym) fyersSym = r.symbol;
+            if (fyersSym) ok(L, 'Derived Fyers symbol: ' + fyersSym);
+            else err(L, 'Cannot derive Fyers symbol');
+
+            _lastSearchResults.push({
+                security_id: r.id,
+                security_source: 'securities_nfo',
+                short_symbol: r.symbol || r.underlying_symbol,
+                company_name: r.instrument_name,
+                broker_tokens: r.broker_tokens || {},
+                _fyersSym: fyersSym
+            });
+        });
+    } catch(e) {
+        err(L, 'Fetch error: ' + e.message);
+    }
+
+    // Step 3: Summary
+    step(L, 3, 'Summary');
+    log(L, '');
+    if (_lastSearchResults.length === 0) {
+        err(L, 'No results found in either table — security may not exist in DB');
+        info(L, 'Solution: Run CM Sync in Master Data to add this security');
+    } else {
+        ok(L, 'Total results: ' + _lastSearchResults.length);
+        _lastSearchResults.forEach(function(r, i) {
+            var status = (!r.security_id && r.security_id !== 0) ? '❌ BAD ID' : '✅';
+            var fyStatus = r._fyersSym ? '✅' : '⚠️ no symbol';
+            log(L, '  [' + (i+1) + '] ' + status + ' id=' + r.security_id + ' | ' + r.security_source + ' | ' + r.short_symbol + ' | Fyers: ' + fyStatus + ' ' + (r._fyersSym || ''));
+        });
+        info(L, 'Use the ID above in Step 2 to simulate adding');
+        // Auto-fill first result
+        if (_lastSearchResults[0]) {
+            document.getElementById('addSecId').value = _lastSearchResults[0].security_id;
+            document.getElementById('addSecSource').value = _lastSearchResults[0].security_source;
+            document.getElementById('fyersSymInput').value = _lastSearchResults[0]._fyersSym || '';
+        }
+    }
+});
+
+// ============================================================================
+// SECTION 2: Add Simulation
+// ============================================================================
+document.getElementById('addSimBtn').addEventListener('click', async function() {
+    var secId = document.getElementById('addSecId').value.trim();
+    var source = document.getElementById('addSecSource').value;
+    var L = 'addLog';
+    logClear(L);
+    log(L, '<span class="step">═══ Add Simulation (Dry Run) ═══</span>');
+
+    if (!secId) { err(L, 'Enter a security_id from Step 1'); return; }
+
+    // Step 1: Validate ID
+    step(L, 1, 'Validate security_id');
+    val(L, 'security_id', secId);
+    val(L, 'typeof', typeof secId);
+    val(L, '!security_id', !secId);
+    val(L, 'isNaN(security_id)', isNaN(secId));
+
+    var oldCheckFails = !secId || isNaN(secId);
+    var newCheckFails = !secId && secId !== 0;
+    if (oldCheckFails) {
+        err(L, 'OLD validation (!id || isNaN(id)) = TRUE — this was the bug!');
+        info(L, 'isNaN("' + secId + '") = ' + isNaN(secId));
+    } else {
+        ok(L, 'Old validation passes');
+    }
+    if (newCheckFails) {
+        err(L, 'NEW validation also fails — id is truly missing');
+    } else {
+        ok(L, 'New validation passes — id is truthy');
+    }
+
+    // Step 2: Look up the security from the correct table
+    step(L, 2, 'Fetch full record from ' + source);
+    var table = source;
+    var selectCols = source === 'securities_nfo'
+        ? 'id,symbol,underlying_symbol,instrument_name,broker_tokens'
+        : 'id,symbol,nse_symbol,bse_symbol,company_name,broker_tokens,isin';
+
+    try {
+        var url = SUPABASE_URL + '/rest/v1/' + table + '?id=eq.' + secId + '&select=' + selectCols;
+        info(L, 'Query: ' + url.replace(SUPABASE_URL, '...'));
+        var resp = await fetch(url, { headers: headers() });
+        if (!resp.ok) { err(L, 'HTTP ' + resp.status + ' — ' + await resp.text()); return; }
+        var rows = await resp.json();
+        if (rows.length === 0) {
+            err(L, 'Record NOT FOUND in ' + table + ' with id=' + secId);
+            info(L, 'The security might have been deleted or the ID is wrong');
+            return;
+        }
+        var rec = rows[0];
+        ok(L, 'Record found');
+        val(L, 'Full record', rec);
+    } catch(e) {
+        err(L, 'Fetch error: ' + e.message);
+        return;
+    }
+
+    // Step 3: Derive Fyers symbol
+    step(L, 3, 'Derive Fyers symbol');
+    var fyersSym = null;
+    if (source === 'securities_nfo') {
+        if (rec.broker_tokens && rec.broker_tokens.fyers) {
+            fyersSym = rec.broker_tokens.fyers.symbol || rec.broker_tokens.fyers.nse_symbol;
+            ok(L, 'From broker_tokens.fyers: ' + fyersSym);
+        } else if (rec.symbol) {
+            fyersSym = rec.symbol;
+            warn(L, 'Fallback to record symbol: ' + fyersSym);
+        }
+    } else {
+        if (rec.broker_tokens && rec.broker_tokens.fyers) {
+            fyersSym = rec.broker_tokens.fyers.nse_symbol || rec.broker_tokens.fyers.bse_symbol || rec.broker_tokens.fyers.symbol;
+            ok(L, 'From broker_tokens.fyers: ' + fyersSym);
+        }
+        if (!fyersSym && rec.nse_symbol) {
+            fyersSym = 'NSE:' + rec.nse_symbol + '-EQ';
+            warn(L, 'Fallback from nse_symbol column: ' + fyersSym);
+        }
+        if (!fyersSym && rec.bse_symbol) {
+            fyersSym = 'BSE:' + rec.bse_symbol + '-A';
+            warn(L, 'Fallback from bse_symbol column: ' + fyersSym);
+        }
+        if (!fyersSym && rec.symbol) {
+            fyersSym = 'NSE:' + rec.symbol + '-EQ';
+            warn(L, 'Last resort from symbol column: ' + fyersSym);
+        }
+    }
+
+    if (!fyersSym) {
+        err(L, 'Cannot derive ANY Fyers symbol — no prices will load');
+    } else {
+        ok(L, 'Final Fyers symbol: ' + fyersSym);
+    }
+
+    // Step 4: Test Fyers quote
+    step(L, 4, 'Test Fyers quote');
+    if (!window.fyersToken) {
+        warn(L, 'No Fyers token — skipping quote test');
+    } else if (!fyersSym) {
+        warn(L, 'No Fyers symbol — skipping');
+    } else {
+        try {
+            var data = await fyersCall({ action: 'quotes', symbols: [fyersSym] });
+            if (data && data.d && data.d.length > 0 && data.d[0].v && data.d[0].v.lp > 0) {
+                var q = data.d[0].v;
+                ok(L, 'Quote received: LTP=' + q.lp + ', Change=' + q.ch + ' (' + q.chp + '%), High=' + q.high_price + ', Low=' + q.low_price);
+            } else {
+                warn(L, 'Fyers returned no valid quote for ' + fyersSym);
+                val(L, 'Raw response', data);
+            }
+        } catch(e) {
+            err(L, 'Fyers call failed: ' + e.message);
+        }
+    }
+
+    // Step 5: Test INSERT (dry run — just check if it would work)
+    step(L, 5, 'INSERT validation (dry run)');
+    var insertBody = {
+        watchlist_id: '(would use selected watchlist)',
+        security_id: secId,
+        security_source: source,
+        short_symbol: rec.nse_symbol || rec.bse_symbol || rec.symbol || '?',
+        company_name: rec.company_name || rec.instrument_name || '?',
+        sort_order: 0
+    };
+    val(L, 'Would insert', insertBody);
+    ok(L, 'Dry run complete — no actual insert performed');
+
+    log(L, '');
+    log(L, '<span class="step">═══ Diagnosis Complete ═══</span>');
+});
+
+// ============================================================================
+// SECTION 3: Fyers Symbol Test
+// ============================================================================
+document.getElementById('fyersTestBtn').addEventListener('click', async function() {
+    var sym = document.getElementById('fyersSymInput').value.trim();
+    if (!sym) { alert('Enter a Fyers symbol'); return; }
+    var L = 'fyersLog';
+    logClear(L);
+    log(L, '<span class="step">═══ Fyers Quote Test: ' + escHtml(sym) + ' ═══</span>');
+
+    if (!window.fyersToken) { err(L, 'No Fyers token — connect Fyers first'); return; }
+
+    try {
+        info(L, 'Calling fyersCall({ action: "quotes", symbols: ["' + sym + '"] })');
+        var data = await fyersCall({ action: 'quotes', symbols: [sym] });
+        val(L, 'Raw response', data);
+
+        if (data && data.d && data.d.length > 0) {
+            data.d.forEach(function(item, i) {
+                log(L, '');
+                if (item.v) {
+                    ok(L, 'Quote #' + (i+1) + ': symbol=' + item.v.symbol + ', LTP=' + item.v.lp + ', Change=' + item.v.ch + ' (' + item.v.chp + '%)');
+                    val(L, 'High/Low', item.v.high_price + ' / ' + item.v.low_price);
+                } else {
+                    warn(L, 'Quote #' + (i+1) + ': no .v data — symbol may be invalid');
+                    val(L, 'Item', item);
+                }
+            });
+        } else if (data && data.s === 'error') {
+            err(L, 'Fyers error: ' + (data.message || JSON.stringify(data)));
+        } else {
+            warn(L, 'No quote data returned');
+        }
+    } catch(e) {
+        err(L, 'Call failed: ' + e.message);
+    }
+});
+
+document.getElementById('fyersTryCandidates').addEventListener('click', async function() {
+    var L = 'fyersLog';
+    logClear(L);
+
+    if (_lastSearchResults.length === 0) {
+        err(L, 'Run Step 1 first to get candidate symbols');
+        return;
+    }
+    if (!window.fyersToken) { err(L, 'No Fyers token'); return; }
+
+    var first = _lastSearchResults[0];
+    var shortSym = first.short_symbol;
+    log(L, '<span class="step">═══ Trying All Candidates for: ' + escHtml(shortSym) + ' ═══</span>');
+
+    // Build candidates
+    var candidates = [];
+    if (first.nse_symbol) candidates.push('NSE:' + first.nse_symbol + '-EQ');
+    if (first.bse_symbol) candidates.push('BSE:' + first.bse_symbol + '-A');
+    if (first.short_symbol && candidates.indexOf('NSE:' + first.short_symbol + '-EQ') < 0) {
+        candidates.push('NSE:' + first.short_symbol + '-EQ');
+    }
+    // Also try from broker_tokens
+    if (first.broker_tokens && first.broker_tokens.fyers) {
+        var bt = first.broker_tokens.fyers;
+        if (bt.nse_symbol && candidates.indexOf(bt.nse_symbol) < 0) candidates.push(bt.nse_symbol);
+        if (bt.bse_symbol && candidates.indexOf(bt.bse_symbol) < 0) candidates.push(bt.bse_symbol);
+        if (bt.symbol && candidates.indexOf(bt.symbol) < 0) candidates.push(bt.symbol);
+    }
+
+    info(L, 'Candidates: ' + candidates.join(', '));
+
+    if (candidates.length === 0) {
+        err(L, 'No candidate symbols could be derived');
+        return;
+    }
+
+    try {
+        var data = await fyersCall({ action: 'quotes', symbols: candidates });
+        if (data && data.d) {
+            data.d.forEach(function(item) {
+                if (item.v && item.v.lp > 0) {
+                    ok(L, '✅ VALID: ' + item.v.symbol + ' → LTP=' + item.v.lp);
+                } else {
+                    err(L, '❌ INVALID: ' + (item.v ? item.v.symbol : JSON.stringify(item)) + ' → no price');
+                }
+            });
+        } else {
+            warn(L, 'No data returned');
+            val(L, 'Raw', data);
+        }
+    } catch(e) {
+        err(L, 'Call failed: ' + e.message);
+    }
+});
+
+// ============================================================================
+// SECTION 4: Watchlist Items Audit
+// ============================================================================
+document.getElementById('auditBtn').addEventListener('click', async function() {
+    var L = 'auditLog';
+    logClear(L);
+    log(L, '<span class="step">═══ Watchlist Items Audit ═══</span>');
+
+    // Load user
+    var user = null;
+    try {
+        var stored = localStorage.getItem('wms_user');
+        if (stored) user = JSON.parse(stored);
+    } catch(e) {}
+    if (!user || !user.id) { err(L, 'No logged-in user found in localStorage. Open the main app first.'); return; }
+    ok(L, 'User: ' + user.name + ' (id: ' + user.id + ')');
+
+    // Load watchlists
+    step(L, 1, 'Load watchlists');
+    var wlResp = await fetch(SUPABASE_URL + '/rest/v1/watchlists?user_id=eq.' + user.id + '&select=id,name,sort_order&order=sort_order', { headers: headers() });
+    if (!wlResp.ok) { err(L, 'Failed: ' + wlResp.status); return; }
+    var watchlists = await wlResp.json();
+    ok(L, 'Found ' + watchlists.length + ' watchlists');
+
+    if (watchlists.length === 0) { info(L, 'No watchlists to audit'); return; }
+
+    // Load all items
+    step(L, 2, 'Load watchlist items');
+    var wlIds = watchlists.map(function(w) { return w.id; });
+    var itemsResp = await fetch(SUPABASE_URL + '/rest/v1/watchlist_items?watchlist_id=in.(' + wlIds.join(',') + ')&select=id,watchlist_id,security_id,security_source,short_symbol,company_name,sort_order&order=sort_order', { headers: headers() });
+    if (!itemsResp.ok) { err(L, 'Failed: ' + itemsResp.status); return; }
+    var items = await itemsResp.json();
+    ok(L, 'Found ' + items.length + ' total items across all watchlists');
+
+    // Group by source
+    var dbIds = [], nfoIds = [];
+    items.forEach(function(item) {
+        if (item.security_source === 'securities_nfo') nfoIds.push(item.security_id);
+        else dbIds.push(item.security_id);
+    });
+
+    // Load broker_tokens for DB securities
+    step(L, 3, 'Load broker_tokens from securities_db');
+    var dbMap = {};
+    if (dbIds.length > 0) {
+        var dbResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=in.(' + dbIds.join(',') + ')&select=id,broker_tokens,nse_symbol,bse_symbol,symbol', { headers: headers() });
+        if (dbResp.ok) {
+            var dbRows = await dbResp.json();
+            dbRows.forEach(function(r) { dbMap[r.id] = r; });
+            ok(L, 'Loaded ' + dbRows.length + '/' + dbIds.length + ' DB records');
+            if (dbRows.length < dbIds.length) {
+                warn(L, (dbIds.length - dbRows.length) + ' DB records NOT FOUND — these items reference deleted securities');
+            }
+        }
+    }
+
+    // Load broker_tokens for NFO securities
+    var nfoMap = {};
+    if (nfoIds.length > 0) {
+        step(L, '3b', 'Load broker_tokens from securities_nfo');
+        var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?id=in.(' + nfoIds.join(',') + ')&select=id,broker_tokens,symbol', { headers: headers() });
+        if (nfoResp.ok) {
+            var nfoRows = await nfoResp.json();
+            nfoRows.forEach(function(r) { nfoMap[r.id] = r; });
+            ok(L, 'Loaded ' + nfoRows.length + '/' + nfoIds.length + ' NFO records');
+        }
+    }
+
+    // Audit each item
+    step(L, 4, 'Audit each item');
+    var issues = 0;
+    items.forEach(function(item) {
+        var problems = [];
+
+        // Check security exists
+        var rec = item.security_source === 'securities_nfo' ? nfoMap[item.security_id] : dbMap[item.security_id];
+        if (!rec) problems.push('Security NOT FOUND in ' + item.security_source + ' (id=' + item.security_id + ')');
+
+        // Derive Fyers symbol
+        var fyersSym = null;
+        if (rec) {
+            if (item.security_source === 'securities_nfo') {
+                if (rec.broker_tokens && rec.broker_tokens.fyers) fyersSym = rec.broker_tokens.fyers.symbol || rec.broker_tokens.fyers.nse_symbol;
+                if (!fyersSym) fyersSym = rec.symbol;
+            } else {
+                if (rec.broker_tokens && rec.broker_tokens.fyers) fyersSym = rec.broker_tokens.fyers.nse_symbol || rec.broker_tokens.fyers.bse_symbol || rec.broker_tokens.fyers.symbol;
+                if (!fyersSym && rec.nse_symbol) fyersSym = 'NSE:' + rec.nse_symbol + '-EQ';
+                if (!fyersSym && rec.bse_symbol) fyersSym = 'BSE:' + rec.bse_symbol + '-A';
+                if (!fyersSym && item.short_symbol) fyersSym = 'NSE:' + item.short_symbol + '-EQ';
+            }
+        }
+
+        if (!fyersSym && rec) problems.push('No Fyers symbol derivable');
+        if (rec && (!rec.broker_tokens || !rec.broker_tokens.fyers)) problems.push('Missing broker_tokens.fyers');
+
+        // Report
+        if (problems.length > 0) {
+            issues++;
+            var wlName = watchlists.find(function(w) { return w.id === item.watchlist_id; });
+            err(L, item.short_symbol + ' (' + (wlName ? wlName.name : '?') + '): ' + problems.join('; '));
+        }
+    });
+
+    log(L, '');
+    if (issues === 0) {
+        ok(L, '🎉 All ' + items.length + ' items passed audit — no issues found');
+    } else {
+        warn(L, issues + ' out of ' + items.length + ' items have issues');
+    }
+});
+
+// Enter key triggers search
+document.getElementById('secSearchInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') document.getElementById('secSearchBtn').click();
+});
+document.getElementById('fyersSymInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') document.getElementById('fyersTestBtn').click();
+});
+</script>
+</body>
+</html>

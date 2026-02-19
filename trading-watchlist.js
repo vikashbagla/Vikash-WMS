@@ -849,10 +849,10 @@ async function trWlSearchSecurities(query) {
 async function trWlAddItem(security) {
     if (!trWlAddTargetId) return;
 
-    // Validate security_id — must be a valid number
-    if (!security.security_id || isNaN(security.security_id)) {
-        console.error('Watchlist: Invalid security_id', security);
-        showAlert('Failed to add — invalid security ID', 'error');
+    // Validate security_id — accept any truthy value (integer or UUID string)
+    if (!security.security_id && security.security_id !== 0) {
+        console.error('Watchlist: Missing security_id — full object:', JSON.stringify(security));
+        showAlert('Failed to add — missing security ID. Check console for details.', 'error');
         return;
     }
 
