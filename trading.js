@@ -144,7 +144,15 @@ function trSetupEventHandlers() {
 // TABS
 // ============================================================================
 
+var trWlLoaded = false;  // Whether watchlist HTML+JS have been loaded
+
 function trSwitchTab(tabId) {
+    // Notify previous tab it's being deactivated
+    var prevTab = document.querySelector('.trading-tab-content.active');
+    if (prevTab && prevTab.id === 'tr-watchlist' && window.trWlDestroy) {
+        window.trWlDestroy();
+    }
+
     document.querySelectorAll('.trading-tab-btn').forEach(function(b) { b.classList.remove('active'); });
     document.querySelectorAll('.trading-tab-content').forEach(function(c) { c.classList.remove('active'); });
 
@@ -154,6 +162,54 @@ function trSwitchTab(tabId) {
     if (content) content.classList.add('active');
 
     localStorage.setItem('wms_trading_tab', tabId);
+
+    // Load watchlist sub-module on demand
+    if (tabId === 'tr-watchlist') {
+        trLoadWatchlistModule();
+    }
+}
+
+async function trLoadWatchlistModule() {
+    var container = document.getElementById('tr-watchlist-container');
+    if (!container) return;
+
+    if (!trWlLoaded) {
+        try {
+            // Load HTML
+            var htmlResp = await fetch('trading-watchlist.html?t=' + Date.now());
+            if (!htmlResp.ok) throw new Error('Failed to load trading-watchlist.html');
+            var htmlText = await htmlResp.text();
+
+            // Extract <style> and inject to <head>
+            var parser = new DOMParser();
+            var doc = parser.parseFromString(htmlText, 'text/html');
+            var styles = doc.querySelectorAll('style');
+            styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+
+            // Inject body content
+            container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
+
+            // Load JS
+            await new Promise(function(resolve, reject) {
+                var script = document.createElement('script');
+                script.src = 'trading-watchlist.js?t=' + Date.now();
+                script.onload = resolve;
+                script.onerror = function() { reject(new Error('Failed to load trading-watchlist.js')); };
+                document.body.appendChild(script);
+            });
+
+            trWlLoaded = true;
+        } catch (err) {
+            console.error('Trading: Failed to load watchlist module:', err);
+            container.innerHTML = '<div style="text-align:center;padding:60px;color:#dc2626;">Failed to load watchlist: ' + err.message + '</div>';
+            return;
+        }
+    }
+
+    // Initialize or re-activate watchlist
+    if (window.trWlInit) {
+        window.trWlInit();
+    }
 }
 
 function trRestoreTab() {

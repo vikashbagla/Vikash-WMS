@@ -477,9 +477,11 @@
         <div class="summary-cards" id="tr-portfolio-summary" style="flex-shrink:0;"></div>
     </div>
 
-    <!-- Tab: Watchlist -->
+    <!-- Tab: Watchlist (loaded on-demand from trading-watchlist.html + trading-watchlist.js) -->
     <div id="tr-watchlist" class="trading-tab-content">
-        <div style="text-align:center;padding:60px;color:#9ca3af;">🚧 Watchlist — Coming soon</div>
+        <div id="tr-watchlist-container" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;">
+            <div style="text-align:center;padding:60px;color:#9ca3af;">Loading watchlist...</div>
+        </div>
     </div>
 
     <!-- Tab: Transactions -->
