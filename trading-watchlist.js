@@ -27,7 +27,11 @@ async function trWlInit() {
         // Already initialized — just refresh prices and re-render
         await trWlFetchPrices();
         trWlRender();
-        trWlStartAutoRefresh();
+        if (trWlIsMarketHours()) {
+            trWlStartAutoRefresh();
+        } else {
+            trWlUpdatePriceStatus('market-closed');
+        }
         return;
     }
     trWlInitialized = true;
@@ -35,7 +39,11 @@ async function trWlInit() {
     await trWlLoad();
     await trWlFetchPrices();
     trWlRender();
-    trWlStartAutoRefresh();
+    if (trWlIsMarketHours()) {
+        trWlStartAutoRefresh();
+    } else {
+        trWlUpdatePriceStatus('market-closed');
+    }
 }
 
 function trWlDestroy() {
@@ -81,6 +89,16 @@ function trWlSetupEventHandlers() {
         }, 300);
     });
 
+    // Manual refresh button
+    document.getElementById('trWlRefreshBtn').addEventListener('click', async function() {
+        await trWlFetchPrices();
+        trWlUpdatePricesInPlace();
+        // Restart auto-refresh if market is open
+        if (trWlIsMarketHours()) {
+            trWlStartAutoRefresh();
+        }
+    });
+
     // Reorder button
     document.getElementById('trWlReorderBtn').addEventListener('click', trWlOpenReorderModal);
 
@@ -107,8 +125,12 @@ function trWlSetupEventHandlers() {
             // Resume only if watchlist tab is active
             var wlTab = document.getElementById('tr-watchlist');
             if (wlTab && wlTab.classList.contains('active')) {
-                trWlFetchPrices().then(function() { trWlRender(); });
-                trWlStartAutoRefresh();
+                trWlFetchPrices().then(function() { trWlUpdatePricesInPlace(); });
+                if (trWlIsMarketHours()) {
+                    trWlStartAutoRefresh();
+                } else {
+                    trWlUpdatePriceStatus('market-closed');
+                }
             }
         }
     });
@@ -419,24 +441,21 @@ async function trWlResolveUnpricedItems(respondedSymbols) {
             if (btFyers.nse_symbol && candidates.indexOf(btFyers.nse_symbol) < 0) candidates.push(btFyers.nse_symbol);
         }
 
+        // All known BSE series suffixes (comprehensive list)
+        var bseSuffixes = ['', '-A', '-B', '-D', '-E', '-G', '-M', '-P', '-R', '-T', '-W', '-X', '-Z'];
+
         // For each base symbol, try NSE and BSE variants
         baseSymbols.forEach(function(bs) {
+            // NSE first
             var nseEq = 'NSE:' + bs + '-EQ';
             var nseSm = 'NSE:' + bs + '-SM';
-            var bseA  = 'BSE:' + bs + '-A';
-            var bseB  = 'BSE:' + bs + '-B';
-            var bseX  = 'BSE:' + bs + '-X';
-            var bseT  = 'BSE:' + bs + '-T';
-            var bseNo = 'BSE:' + bs;
-            // NSE first
             if (candidates.indexOf(nseEq) < 0) candidates.push(nseEq);
             if (candidates.indexOf(nseSm) < 0) candidates.push(nseSm);
-            // Then BSE variants
-            if (candidates.indexOf(bseNo) < 0) candidates.push(bseNo);
-            if (candidates.indexOf(bseA) < 0)  candidates.push(bseA);
-            if (candidates.indexOf(bseB) < 0)  candidates.push(bseB);
-            if (candidates.indexOf(bseX) < 0)  candidates.push(bseX);
-            if (candidates.indexOf(bseT) < 0)  candidates.push(bseT);
+            // Then all BSE series
+            bseSuffixes.forEach(function(sfx) {
+                var bseSym = 'BSE:' + bs + sfx;
+                if (candidates.indexOf(bseSym) < 0) candidates.push(bseSym);
+            });
         });
 
         // Remove the symbol we already tried (it didn't work)
@@ -611,6 +630,9 @@ function trWlUpdatePriceStatus(status) {
     } else if (status === 'no-token') {
         el.innerHTML = '🔴 Fyers not connected';
         el.style.color = '#dc2626';
+    } else if (status === 'market-closed') {
+        el.innerHTML = '🔵 Market closed · Last ' + now;
+        el.style.color = '#6366f1';
     } else if (status === 'empty') {
         el.innerHTML = '';
     } else {
@@ -630,8 +652,17 @@ function trWlStartAutoRefresh() {
         if (document.hidden) return;
         var wlTab = document.getElementById('tr-watchlist');
         if (!wlTab || !wlTab.classList.contains('active')) return;
+
+        // Check market hours — stop auto-refresh if market is closed
+        if (!trWlIsMarketHours()) {
+            trWlStopAutoRefresh();
+            trWlUpdatePriceStatus('market-closed');
+            return;
+        }
+
         await trWlFetchPrices();
-        trWlRender();
+        // Update prices in-place instead of full re-render (preserves scroll position)
+        trWlUpdatePricesInPlace();
     }, trWlRefreshInterval);
 }
 
@@ -640,6 +671,104 @@ function trWlStopAutoRefresh() {
         clearInterval(trWlRefreshTimer);
         trWlRefreshTimer = null;
     }
+}
+
+// ============================================================================
+// IN-PLACE PRICE UPDATE (no DOM rebuild — preserves scroll position)
+// ============================================================================
+
+function trWlUpdatePricesInPlace() {
+    var rows = document.querySelectorAll('.wl-security-row');
+    rows.forEach(function(row) {
+        var itemId = row.dataset.itemId;
+        var wlId = row.dataset.wlId;
+
+        // Find the item
+        var item = null;
+        for (var w = 0; w < trWlWatchlists.length; w++) {
+            var wl = trWlWatchlists[w];
+            if (wl.id !== wlId) continue;
+            for (var i = 0; i < wl.items.length; i++) {
+                if (wl.items[i].id === itemId) { item = wl.items[i]; break; }
+            }
+            if (item) break;
+        }
+        if (!item) return;
+
+        var price = trWlPrices[item._fyersSymbol];
+        var cmp = price ? price.lp : null;
+        var ch = price ? price.ch : null;
+        var chp = price ? price.chp : null;
+        var high = price ? price.high : null;
+        var low = price ? price.low : null;
+
+        // Update price
+        var priceEl = row.querySelector('.wl-price-main');
+        if (priceEl) {
+            priceEl.innerHTML = cmp !== null ? formatPrice(cmp, false) : '<span style="color:#a0aec0;">—</span>';
+        }
+
+        // Update change
+        var changeEl = row.querySelector('.wl-sec-change');
+        if (changeEl) {
+            if (ch !== null) {
+                var changeClass = ch >= 0 ? 'positive' : 'negative';
+                var sign = ch >= 0 ? '+' : '';
+                changeEl.innerHTML = '<div class="wl-change-main ' + changeClass + '">' + sign + formatPrice(ch, false) + '</div>' +
+                    '<div class="wl-change-sub ' + changeClass + '">(' + (chp >= 0 ? '+' : '') + chp.toFixed(2) + '%)</div>';
+            } else {
+                changeEl.innerHTML = '<div class="wl-change-main" style="color:#a0aec0;">—</div>';
+            }
+        }
+
+        // Update slider
+        var sliderWrap = row.querySelector('.wl-row-slider');
+        if (cmp !== null && high && low && high > low) {
+            var pct = Math.min(100, Math.max(0, ((cmp - low) / (high - low)) * 100));
+            var dotColor = pct >= 50 ? '#059669' : '#dc2626';
+            var sliderHtml = '<div class="price-slider">' +
+                '<div class="price-slider-track">' +
+                    '<div class="price-slider-dot" style="left:' + pct.toFixed(1) + '%;background:' + dotColor + ';"></div>' +
+                '</div>' +
+                '<div class="slider-tooltip">' +
+                    '<span>' + formatPrice(low, false) + '</span>' +
+                    '<span>' + formatPrice(high, false) + '</span>' +
+                '</div>' +
+            '</div>';
+            if (sliderWrap) {
+                sliderWrap.innerHTML = sliderHtml;
+            } else {
+                row.insertAdjacentHTML('beforeend', '<div class="wl-row-slider">' + sliderHtml + '</div>');
+            }
+        } else if (sliderWrap) {
+            sliderWrap.remove();
+        }
+    });
+
+    // Update price status timestamp
+    trWlUpdatePriceStatus('live');
+}
+
+// ============================================================================
+// MARKET HOURS CHECK
+// ============================================================================
+
+function trWlIsMarketHours() {
+    // Indian market hours: Mon-Fri 9:15 AM - 3:30 PM IST
+    var now = new Date();
+    // Convert to IST (UTC+5:30)
+    var utcMs = now.getTime() + (now.getTimezoneOffset() * 60000);
+    var ist = new Date(utcMs + (5.5 * 3600000));
+
+    var day = ist.getDay(); // 0=Sun, 6=Sat
+    if (day === 0 || day === 6) return false;
+
+    var hours = ist.getHours();
+    var minutes = ist.getMinutes();
+    var timeInMinutes = hours * 60 + minutes;
+
+    // Market: 9:15 (555 min) to 15:30 (930 min) — add 5 min buffer on each side
+    return timeInMinutes >= 550 && timeInMinutes <= 935;
 }
 
 // ============================================================================
@@ -796,7 +925,10 @@ function trWlRenderSecurityRow(item) {
         '</div>';
     }
 
-    return '<div class="wl-security-row" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true">' +
+    // Build tooltip: symbol + company name
+    var tooltipText = displaySym + (item.company_name ? ' — ' + item.company_name : '');
+
+    return '<div class="wl-security-row" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + trWlEsc(tooltipText) + '">' +
         '<div class="wl-row-top">' +
             '<div class="wl-sec-drag" title="Drag to reorder">☰</div>' +
             '<div class="wl-sec-symbol">' +
@@ -1048,6 +1180,8 @@ function trWlOpenAddDialog(wlId) {
 function trWlCloseAddDialog() {
     document.getElementById('trWlAddOverlay').classList.remove('show');
     trWlAddTargetId = null;
+    // Re-render to show any newly added items
+    trWlRender();
 }
 
 async function trWlSearchSecurities(query) {
@@ -1132,12 +1266,15 @@ async function trWlSearchSecurities(query) {
         // Render results — only data-idx attribute needed (index into trWlSearchCache)
         var html = '';
         trWlSearchCache.forEach(function(item, idx) {
-            html += '<div class="wl-add-result-item' + (item.isAdded ? ' added' : '') + '" data-idx="' + idx + '">' +
-                '<span class="wl-res-symbol">' + trWlEsc(item.short_symbol) + '</span>' +
-                '<span class="wl-res-name">' + trWlEsc(item.company_name) + '</span>' +
+            var tagsHtml = '<span class="wl-res-tags">' +
                 '<span class="wl-res-type">' + trWlEsc(item.security_type) + '</span>' +
                 (item.exchange ? '<span class="wl-res-exchange">' + trWlEsc(item.exchange) + '</span>' : '') +
-                (item.isAdded ? '<span style="margin-left:8px;font-size:10px;color:#059669;">✓ Added</span>' : '') +
+                (item.isAdded ? '<span style="font-size:10px;color:#059669;">✓</span>' : '') +
+                '</span>';
+            html += '<div class="wl-add-result-item' + (item.isAdded ? ' added' : '') + '" data-idx="' + idx + '" title="' + trWlEsc(item.company_name) + '">' +
+                '<span class="wl-res-symbol">' + trWlEsc(item.short_symbol) + '</span>' +
+                '<span class="wl-res-name">' + trWlEsc(item.company_name) + '</span>' +
+                tagsHtml +
                 '</div>';
         });
 
@@ -1246,7 +1383,30 @@ async function trWlAddItem(security) {
         }
 
         showAlert(security.short_symbol + ' added to watchlist', 'success', 1500);
-        trWlCloseAddDialog();
+
+        // Mark the search result as added (don't close modal — let user add more)
+        var addedRow = document.querySelector('.wl-add-result-item[data-idx="' + trWlSearchCache.indexOf(security) + '"]');
+        if (!addedRow) {
+            // Find by security_id match
+            trWlSearchCache.forEach(function(c, i) {
+                if (c.security_id === security.security_id && c.security_source === security.security_source) {
+                    addedRow = document.querySelector('.wl-add-result-item[data-idx="' + i + '"]');
+                }
+            });
+        }
+        if (addedRow) {
+            addedRow.classList.add('added');
+            // Add checkmark and remove click handler
+            var tagsEl = addedRow.querySelector('.wl-res-tags');
+            if (tagsEl && !tagsEl.querySelector('.wl-added-check')) {
+                tagsEl.insertAdjacentHTML('beforeend', '<span class="wl-added-check" style="font-size:10px;color:#059669;">✓</span>');
+            }
+            // Clone to remove event listeners
+            var newRow = addedRow.cloneNode(true);
+            addedRow.parentNode.replaceChild(newRow, addedRow);
+        }
+
+        // Update the card in background (re-render the specific watchlist card)
         trWlRender();
     } else {
         var errText = await resp.text();
@@ -1274,7 +1434,7 @@ function trWlDeriveFyersSymbol(security) {
     }
     // Fallback: derive from nse_symbol / bse_symbol columns
     if (security.nse_symbol) return 'NSE:' + security.nse_symbol + '-EQ';
-    if (security.bse_symbol) return 'BSE:' + security.bse_symbol + '-A';
+    if (security.bse_symbol) return 'BSE:' + security.bse_symbol;  // No suffix — resolution will find correct series
     // Last resort: try short_symbol
     if (security.short_symbol) return 'NSE:' + security.short_symbol + '-EQ';
     return null;
@@ -1284,18 +1444,17 @@ function trWlDeriveFyersSymbol(security) {
 async function trWlResolveFyersSymbol(security) {
     if (!window.fyersToken) return null;
 
-    // Build candidate symbols to try — include SME and multiple BSE series
+    // Build candidate symbols to try — all BSE series comprehensively
+    var bseSuffixes = ['', '-A', '-B', '-D', '-E', '-G', '-M', '-P', '-R', '-T', '-W', '-X', '-Z'];
     var candidates = [];
     if (security.nse_symbol) {
         candidates.push('NSE:' + security.nse_symbol + '-EQ');
         candidates.push('NSE:' + security.nse_symbol + '-SM');
     }
     if (security.bse_symbol) {
-        candidates.push('BSE:' + security.bse_symbol);
-        candidates.push('BSE:' + security.bse_symbol + '-A');
-        candidates.push('BSE:' + security.bse_symbol + '-B');
-        candidates.push('BSE:' + security.bse_symbol + '-T');
-        candidates.push('BSE:' + security.bse_symbol + '-X');
+        bseSuffixes.forEach(function(sfx) {
+            candidates.push('BSE:' + security.bse_symbol + sfx);
+        });
     }
     if (security.short_symbol) {
         var nseCandidate = 'NSE:' + security.short_symbol + '-EQ';
