@@ -158,7 +158,7 @@
                 'MCX:GOLDM25FEBFUT'   // Gold Mini near-month — update expiry as needed
             ];
 
-            var result = await window.fyersCall({ endpoint: 'quotes', symbols: symbols });
+            var result = await window.fyersCall({ action: 'quotes', symbols: symbols });
             if (!result || !result.d) return;
 
             var quotes = result.d;
@@ -224,7 +224,7 @@
             var candidates = await resolveGoldSymbol();
             for (var i = 0; i < candidates.length; i++) {
                 try {
-                    var res = await window.fyersCall({ endpoint: 'quotes', symbols: [candidates[i]] });
+                    var res = await window.fyersCall({ action: 'quotes', symbols: [candidates[i]] });
                     if (res && res.d && res.d[0] && res.d[0].v && res.d[0].v.lp) {
                         var q = res.d[0].v;
                         goldPrice.textContent = Number(q.lp).toLocaleString('en-IN', { maximumFractionDigits: 0 });
