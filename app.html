@@ -24,6 +24,28 @@
                 <h1>💼 WMS</h1>
                 <span class="tagline">Wealth Management System</span>
             </div>
+            <div class="index-ticker" id="indexTicker">
+                <div class="index-item" id="idx-nifty">
+                    <span class="index-name">NIFTY</span>
+                    <span class="index-price" id="idx-nifty-price">—</span>
+                    <span class="index-change neutral" id="idx-nifty-change"></span>
+                </div>
+                <div class="index-item" id="idx-banknifty">
+                    <span class="index-name">BANKNIFTY</span>
+                    <span class="index-price" id="idx-banknifty-price">—</span>
+                    <span class="index-change neutral" id="idx-banknifty-change"></span>
+                </div>
+                <div class="index-item" id="idx-sensex">
+                    <span class="index-name">SENSEX</span>
+                    <span class="index-price" id="idx-sensex-price">—</span>
+                    <span class="index-change neutral" id="idx-sensex-change"></span>
+                </div>
+                <div class="index-item" id="idx-gold">
+                    <span class="index-name">GOLD</span>
+                    <span class="index-price" id="idx-gold-price">—</span>
+                    <span class="index-change neutral" id="idx-gold-change"></span>
+                </div>
+            </div>
             <div class="user-section">
                 <span id="fyers-status" style="font-size:12px; margin-right:16px;">⏳ Fyers...</span>
                 <span class="user-email" id="user-email">Loading...</span>
@@ -116,6 +138,119 @@
                 '🔴 <a href="fyers-oauth.html" style="color:#dc2626;font-weight:600;">Connect Fyers</a>';
             console.log('⚠️ Fyers token missing or expired');
         }
+    }
+
+    // ============================================================
+    // INDEX TICKER
+    // ============================================================
+
+    // Fetch and display NIFTY, BANKNIFTY, SENSEX, GOLD prices
+    async function fetchIndexPrices() {
+        try {
+            const token = getFyersToken();
+            if (!token) return; // No Fyers token, skip
+
+            // Fyers index symbols + MCX Gold near-month
+            var symbols = [
+                'NSE:NIFTY50-INDEX',
+                'NSE:NIFTYBANK-INDEX',
+                'BSE:SENSEX-INDEX',
+                'MCX:GOLDM25FEBFUT'   // Gold Mini near-month — update expiry as needed
+            ];
+
+            var result = await window.fyersCall({ endpoint: 'quotes', symbols: symbols });
+            if (!result || !result.d) return;
+
+            var quotes = result.d;
+            var mapping = {
+                'NSE:NIFTY50-INDEX':    'nifty',
+                'NSE:NIFTYBANK-INDEX':  'banknifty',
+                'BSE:SENSEX-INDEX':     'sensex',
+                'MCX:GOLDM25FEBFUT':    'gold'
+            };
+
+            quotes.forEach(function(q) {
+                var key = mapping[q.n];
+                if (!key || !q.v) return;
+
+                var lp = q.v.lp;           // last price
+                var ch = q.v.ch;           // change
+                var chp = q.v.chp;         // change percent
+
+                var priceEl = document.getElementById('idx-' + key + '-price');
+                var changeEl = document.getElementById('idx-' + key + '-change');
+                if (!priceEl || !changeEl) return;
+
+                // Format price with commas (Indian format)
+                priceEl.textContent = lp ? Number(lp).toLocaleString('en-IN', { maximumFractionDigits: key === 'gold' ? 0 : 1 }) : '—';
+
+                // Format change
+                if (ch !== undefined && chp !== undefined) {
+                    var sign = ch >= 0 ? '+' : '';
+                    var colorClass = ch > 0 ? 'positive' : ch < 0 ? 'negative' : 'neutral';
+                    changeEl.textContent = sign + Number(ch).toFixed(key === 'gold' ? 0 : 1) + ' (' + sign + Number(chp).toFixed(2) + '%)';
+                    changeEl.className = 'index-change ' + colorClass;
+                }
+            });
+        } catch (e) {
+            console.log('Index ticker fetch error:', e);
+        }
+    }
+
+    // Gold symbol may need updating when contract expires
+    // This tries the current symbol; if it fails, tries next month
+    var _goldSymbolCandidates = null;
+    async function resolveGoldSymbol() {
+        // Build candidates: current month and next 3 months
+        var months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+        var now = new Date();
+        var candidates = [];
+        for (var i = 0; i < 4; i++) {
+            var d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+            var yy = String(d.getFullYear()).slice(2);
+            var mm = months[d.getMonth()];
+            candidates.push('MCX:GOLDM' + yy + mm + 'FUT');
+        }
+        return candidates;
+    }
+
+    async function fetchIndexPricesWithGoldRetry() {
+        // First try fetching with default gold symbol
+        await fetchIndexPrices();
+
+        // If gold price is still "—", try alternate gold symbols
+        var goldPrice = document.getElementById('idx-gold-price');
+        if (goldPrice && goldPrice.textContent === '—') {
+            var candidates = await resolveGoldSymbol();
+            for (var i = 0; i < candidates.length; i++) {
+                try {
+                    var res = await window.fyersCall({ endpoint: 'quotes', symbols: [candidates[i]] });
+                    if (res && res.d && res.d[0] && res.d[0].v && res.d[0].v.lp) {
+                        var q = res.d[0].v;
+                        goldPrice.textContent = Number(q.lp).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+                        var changeEl = document.getElementById('idx-gold-change');
+                        if (changeEl && q.ch !== undefined) {
+                            var sign = q.ch >= 0 ? '+' : '';
+                            var colorClass = q.ch > 0 ? 'positive' : q.ch < 0 ? 'negative' : 'neutral';
+                            changeEl.textContent = sign + Number(q.ch).toFixed(0) + ' (' + sign + Number(q.chp).toFixed(2) + '%)';
+                            changeEl.className = 'index-change ' + colorClass;
+                        }
+                        // Update the mapping for future refreshes
+                        window._resolvedGoldSymbol = candidates[i];
+                        break;
+                    }
+                } catch(e) {}
+            }
+        }
+    }
+
+    // Refresh index prices every 30 seconds
+    var _indexRefreshTimer = null;
+    function startIndexRefresh() {
+        fetchIndexPricesWithGoldRetry();
+        _indexRefreshTimer = setInterval(function() {
+            fetchIndexPrices();
+        }, 30000);
     }
 
     // ============================================================
@@ -224,6 +359,7 @@
     document.addEventListener('DOMContentLoaded', () => {
         if (!checkAuth()) return;
         checkFyersAuth();
+        startIndexRefresh(); // Start index ticker
         document.getElementById('logoutBtn').addEventListener('click', logout);
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
             btn.addEventListener('click', () => loadModule(btn.dataset.module));

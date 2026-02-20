@@ -171,11 +171,11 @@
 .btn-wl-add { font-size: 14px !important; color: #667eea !important; }
 .btn-wl-add:hover { color: #5a67d8 !important; }
 
-/* Card body — sizes to content; scrolls only if a single list is very long */
+/* Card body — sizes to content; scrolls only when out of screen space */
 .wl-card-body {
     padding: 0;
     overflow-y: auto;
-    max-height: 60vh;
+    max-height: calc(100vh - 200px);
 }
 .wl-card.collapsed .wl-card-body { display: none; }
 
