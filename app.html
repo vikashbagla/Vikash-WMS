@@ -217,7 +217,7 @@
                 if (ch !== undefined && chp !== undefined && lp > 0) {
                     var sign = ch >= 0 ? '+' : '';
                     var colorClass = ch > 0 ? 'positive' : ch < 0 ? 'negative' : 'neutral';
-                    changeEl.textContent = sign + Number(ch).toFixed(0) + ' (' + sign + Number(chp).toFixed(1) + '%)';
+                    changeEl.textContent = sign + Number(ch).toFixed(0) + ' (' + sign + Number(chp).toFixed(2) + '%)';
                     changeEl.className = 'index-change ' + colorClass;
                 } else {
                     changeEl.textContent = '';
