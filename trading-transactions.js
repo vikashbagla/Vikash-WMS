@@ -19,7 +19,7 @@ var trTxOpenMenuId = null;
 
 // New state for options bar
 var trTxViewMode = 'list';        // 'list' or 'matching'
-var trTxMatchMethod = 'fifo';     // 'fifo' or 'lifo'
+var trTxMatchMethod = 'lifo';     // 'fifo' or 'lifo'
 var trTxShowAll = false;
 var trTxFnoOnly = false;
 
@@ -178,6 +178,23 @@ function trTxSetupFilters() {
         r.addEventListener('change', function() {
             trTxTagLogic = r.value;
             trTxRender();
+        });
+    });
+
+    // ESC key clears filter/search fields
+    document.querySelectorAll('#tr-transactions-container .filter-search-input').forEach(function(input) {
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                input.value = '';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.blur();
+                // Close any open dropdowns
+                document.querySelectorAll('#tr-transactions-container .tr-pill-dropdown').forEach(function(dd) {
+                    dd.classList.remove('show');
+                });
+            }
         });
     });
 
@@ -501,7 +518,7 @@ function trTxRenderList(filtered) {
         var isLocked = !!txn.is_locked;
         var editClass = isLocked ? 'action-menu-item disabled' : 'action-menu-item';
         var deleteClass = isLocked ? 'action-menu-item danger disabled' : 'action-menu-item danger';
-        var hideIcon = txn.dont_display ? '👁' : '🙈';
+        var hideIcon = txn.dont_display ? '👁' : '👁';
         var hideTitle = txn.dont_display ? 'Show in Display' : 'Hide from Display';
 
         return '<tr' + rowClass + ' data-txn-id="' + txn.id + '">' +
@@ -520,7 +537,7 @@ function trTxRenderList(filtered) {
             '<td class="text-right">' + netAmtHtml + '</td>' +
             '<td>' + tagHtml + '</td>' +
             '<td class="action-cell">' +
-                '<button class="btn-action trTx-action-btn" data-txn-id="' + txn.id + '" title="Actions">⚙️</button>' +
+                '<button class="btn-action trTx-action-btn" data-txn-id="' + txn.id + '" title="Actions">⋮</button>' +
                 '<div class="action-menu" id="' + menuId + '">' +
                     '<button class="' + editClass + '" data-txaction="edit" data-txn-id="' + txn.id + '" title="Edit">✏️</button>' +
                     '<button class="action-menu-item" data-txaction="toggle-display" data-txn-id="' + txn.id + '" title="' + hideTitle + '">' + hideIcon + '</button>' +
@@ -874,14 +891,16 @@ function trTxRenderMatchingTrades(filtered) {
 
         // Group header (starts collapsed)
         html += '<tr class="trTx-match-group-header collapsed" data-group-id="' + groupId + '">' +
-            '<td colspan="5">' +
+            '<td colspan="3">' +
                 '<span class="trTx-collapse-icon">▼</span> ' +
                 grp.symbol + shortLabel +
                 (grp.companyName ? ' — ' + grp.companyName : '') +
             '</td>' +
+            '<td class="trTx-buy-start"></td>' +
+            '<td></td>' +
             '<td class="text-right"><span class="trTx-group-total">' + (grp.totalBuyAmt > 0 ? formatAmount(grp.totalBuyAmt) : '') + '</span></td>' +
             '<td class="trTx-sell-start"></td>' +
-            '<td colspan="1"></td>' +
+            '<td></td>' +
             '<td class="text-right"><span class="trTx-group-total">' + (grp.totalSellAmt > 0 ? formatAmount(grp.totalSellAmt) : '') + '</span></td>' +
             '<td class="text-right"><span class="trTx-group-total">' + totalPnlHtml + '</span></td>' +
             '<td></td>' +
@@ -928,14 +947,14 @@ function trTxRenderMatchingTrades(filtered) {
                 '<td>' + invBrk + '</td>' +
                 '<td>' + contractHtml + '</td>' +
                 '<td class="text-right">' + formatQuantity(row.qty) + '</td>' +
-                '<td>' + buyDateHtml + '</td>' +
+                '<td class="trTx-buy-start">' + buyDateHtml + '</td>' +
                 '<td class="text-right">' + (hasBuy ? formatPrice(row.buyAvg, false) : '-') + '</td>' +
                 '<td class="text-right">' + (hasBuy ? formatAmount(row.buyAmount) : '-') + '</td>' +
                 '<td class="trTx-sell-start">' + sellDateHtml + '</td>' +
                 '<td class="text-right">' + (hasSell ? formatPrice(row.sellAvg, false) : '-') + '</td>' +
                 '<td class="text-right">' + (hasSell ? formatAmount(row.sellAmount) : '-') + '</td>' +
                 '<td class="text-right">' + pnlHtml + '</td>' +
-                '<td><button class="trTx-match-eye-btn" data-row-id="' + rowId + '" title="Hide row">🙈</button></td>' +
+                '<td><button class="trTx-match-eye-btn" data-row-id="' + rowId + '" title="Hide row">👁</button></td>' +
             '</tr>';
         });
     });

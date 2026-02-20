@@ -805,7 +805,7 @@ function trRenderPortfolio() {
                     '<div class="number-sub">' + valPct.toFixed(1) + '%</div></td>' +
                 '<td>' + tagsPills + '</td>' +
                 '<td class="action-cell">' +
-                    '<button class="btn-action" data-key="' + symbolKey + '" title="Actions">⚙️</button>' +
+                    '<button class="btn-action" data-key="' + symbolKey + '" title="Actions">⋮</button>' +
                     '<div class="action-menu" id="am-' + menuSafeKey + '">' +
                         '<button class="action-menu-item" data-action="transactions" data-key="' + symbolKey + '">📋 Show Transactions</button>' +
                     '</div>' +
@@ -1003,7 +1003,7 @@ function trBuildInvestorDetail(h, price, md) {
                 '<td class="text-right"><div class="number-main">' + formatAmount(val) + '</div></td>' +
                 '<td>' + tagsPills + '</td>' +
                 '<td class="action-cell">' +
-                    '<button class="btn-action inv-action-btn" data-menu-id="' + invMenuId + '" title="Actions">⚙️</button>' +
+                    '<button class="btn-action inv-action-btn" data-menu-id="' + invMenuId + '" title="Actions">⋮</button>' +
                     '<div class="action-menu" id="' + invMenuId + '">' +
                         '<button class="action-menu-item" data-action="transactions" data-key="' + h.key + '" data-investor-id="' + g.investorId + '">📋 Show Transactions</button>' +
                     '</div>' +
@@ -1141,7 +1141,7 @@ function trRenderTxnTable(txns) {
             if (isTempHidden && !trShowHiddenTrades) return ''; // skip hidden
             if (isTempHidden) rowClass += ' temp-hidden-row';
 
-            var hideIcon = isTempHidden ? '🙈' : '👁';
+            var hideIcon = '👁';
             var menuId = 'txm-' + txn.id.substring(0, 8);
 
             return '<tr class="' + rowClass + '" data-txn-id="' + txn.id + '">' +
@@ -1154,11 +1154,11 @@ function trRenderTxnTable(txns) {
                 '<td class="text-right">' + formatQuantity(runQty) + '</td>' +
                 '<td class="action-cell" style="position:relative;">' +
                     '<button class="btn-hide-txn" data-txn-id="' + txn.id + '" title="Toggle visibility">' + hideIcon + '</button>' +
-                    '<button class="btn-action txn-action-btn" data-txn-id="' + txn.id + '" title="Actions">⚙️</button>' +
+                    '<button class="btn-action txn-action-btn" data-txn-id="' + txn.id + '" title="Actions">⋮</button>' +
                     '<div class="action-menu" id="' + menuId + '">' +
                         '<button class="action-menu-item" data-txn-action="edit" data-txn-id="' + txn.id + '">✏️ Edit</button>' +
                         '<button class="action-menu-item" data-txn-action="toggle-display" data-txn-id="' + txn.id + '">' +
-                            (txn.dont_display ? '👁 Show in Display' : '🙈 Hide from Display') + '</button>' +
+                            (txn.dont_display ? '👁 Show in Display' : '👁 Hide from Display') + '</button>' +
                         '<button class="action-menu-item" data-txn-action="toggle-ignore" data-txn-id="' + txn.id + '">' +
                             (txn.ignore_for_avg_cost ? '✅ Include in Avg Cost' : '🚫 Ignore for Avg Cost') + '</button>' +
                         '<button class="action-menu-item danger" data-txn-action="delete" data-txn-id="' + txn.id + '">🗑️ Delete</button>' +
@@ -1193,7 +1193,7 @@ function trToggleShowHidden() {
     trShowHiddenTrades = !trShowHiddenTrades;
     var btn = document.getElementById('trToggleHiddenBtn');
     btn.classList.toggle('active', trShowHiddenTrades);
-    btn.textContent = trShowHiddenTrades ? '🙈 Hide Filtered' : '👁 Show All';
+    btn.textContent = trShowHiddenTrades ? '👁 Hide Filtered' : '👁 Show All';
     trRenderTxnTable();
 }
 

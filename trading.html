@@ -364,6 +364,46 @@
     border-top: 1px solid #e2e8f0;
     margin: 4px 0;
 }
+
+/* Consistent button styles */
+.btn-primary {
+    background: #667eea;
+    color: white;
+    padding: 6px 16px;
+    border: none;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.btn-primary:hover { background: #5a67d8; }
+.btn-secondary {
+    background: #f7fafc;
+    color: #4a5568;
+    padding: 6px 16px;
+    border: 1px solid #e2e8f0;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+}
+.btn-secondary:hover { background: #edf2f7; }
+.btn-close-modal {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #718096;
+    padding: 0;
+    line-height: 1;
+}
+.btn-close-modal:hover { background: #edf2f7; color: #4a5568; }
 </style>
 </head>
 <body>
@@ -464,7 +504,7 @@
                             <br><span class="subheader">% of Total</span>
                         </th>
                         <th style="width:10%;">Tags</th>
-                        <th style="width:40px; text-align:center;">⚙️</th>
+                        <th style="width:40px; text-align:center;">⋮</th>
                     </tr>
                 </thead>
                 <tbody id="tr-portfolio-list">
@@ -501,7 +541,7 @@
             </div>
             <div class="txn-modal-header-actions">
                 <button class="btn-toggle-hidden" id="trToggleHiddenBtn" title="Show/hide temporarily hidden trades">👁 Show All</button>
-                <button class="btn-icon" id="trTxnModalClose" title="Close" style="font-size:16px;">✕</button>
+                <button class="btn-icon btn-close-modal" id="trTxnModalClose" title="Close">✕</button>
             </div>
         </div>
         <div class="txn-modal-body">
@@ -530,7 +570,7 @@
     <div class="edit-modal">
         <div class="edit-modal-header">
             <h3 id="trEditModalTitle">Edit Transaction</h3>
-            <button class="btn-icon" id="trEditModalClose" title="Close" style="font-size:16px;">✕</button>
+            <button class="btn-icon btn-close-modal" id="trEditModalClose" title="Close">✕</button>
         </div>
         <div class="edit-modal-body">
             <div class="locked-warning" id="trEditLockWarning" style="display:none;">

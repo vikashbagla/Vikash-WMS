@@ -118,25 +118,34 @@
     user-select: none;
 }
 .trTx-match-group-header:hover td {
-    background: #e8edf2 !important;
+    background: #edf2f7 !important;
 }
 .trTx-match-group-header td {
-    background: #f0f4f8;
+    background: #f7fafc;
     font-weight: 600;
     font-size: 11px;
-    color: #4a5568;
+    color: #2d3748;
     padding: 6px 8px !important;
-    border-bottom: 2px solid #cbd5e0;
+    border-bottom: 1px solid #e2e8f0;
+    border-top: 1px solid #e2e8f0;
 }
 .trTx-match-group-header .trTx-collapse-icon {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 14px;
+    height: 14px;
     font-size: 10px;
     color: #718096;
     transition: transform 0.15s;
+    vertical-align: middle;
 }
 .trTx-match-group-header.collapsed .trTx-collapse-icon {
     transform: rotate(-90deg);
+}
+/* Detail rows — very light background for table-like look */
+.trTx-match-detail-row td {
+    background: #fcfcfd;
 }
 .trTx-match-detail-row.collapsed-row {
     display: none;
@@ -155,6 +164,14 @@
 }
 
 /* Visual gap between buy and sell blocks */
+#trTx-matching-table .trTx-buy-start {
+    border-left: 2px solid #cbd5e0;
+    padding-left: 12px !important;
+}
+#trTx-matching-table thead th.trTx-buy-start {
+    border-left: 2px solid #cbd5e0;
+    padding-left: 12px !important;
+}
 #trTx-matching-table .trTx-sell-start {
     border-left: 2px solid #cbd5e0;
     padding-left: 12px !important;
@@ -200,8 +217,8 @@
         <button class="trTx-toggle-btn" data-view="matching">Matching Trades</button>
     </div>
     <div class="trTx-fifo-lifo-group trTx-toggle-group" id="trTx-match-method-toggle">
-        <button class="trTx-toggle-btn active" data-method="fifo">FIFO</button>
-        <button class="trTx-toggle-btn" data-method="lifo">LIFO</button>
+        <button class="trTx-toggle-btn" data-method="fifo">FIFO</button>
+        <button class="trTx-toggle-btn active" data-method="lifo">LIFO</button>
     </div>
 </div>
 
@@ -282,7 +299,7 @@
                 <th class="text-right" style="width:9%;">Acq. Cost</th>
                 <th class="text-right" style="width:11%;">Net Amount</th>
                 <th style="width:10%;">Tags</th>
-                <th style="width:30px; text-align:center;">⚙️</th>
+                <th style="width:30px; text-align:center;">⋮</th>
             </tr>
         </thead>
         <tbody id="trTx-list">
@@ -299,12 +316,12 @@
                 <th style="width:11%;">Inv @ Broker</th>
                 <th style="width:7%;">Contract</th>
                 <th class="text-right" style="width:5%;">Qty</th>
-                <th style="width:7%;">Buy Date</th>
+                <th class="trTx-buy-start" style="width:8%;">Buy Date</th>
                 <th class="text-right" style="width:7%;">Buy Avg</th>
                 <th class="text-right" style="width:10%;">Buy Amount</th>
-                <th class="trTx-sell-start" style="width:7%;">Sell Date</th>
+                <th class="trTx-sell-start" style="width:8%;">Sell Date</th>
                 <th class="text-right" style="width:7%;">Sell Avg</th>
-                <th class="text-right" style="width:10%;">Sell Amount</th>
+                <th class="text-right" style="width:9%;">Sell Amount</th>
                 <th class="text-right" style="width:9%;">Net P&L</th>
                 <th style="width:25px;"></th>
             </tr>

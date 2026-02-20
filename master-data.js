@@ -310,7 +310,7 @@ function renderInvestors(investors, brokers, accounts) {
                     <th>Type</th>
                     <th>Brokers</th>
                     <th>Status</th>
-                    <th style="width:80px;text-align:center;">⚙️</th>
+                    <th style="width:80px;text-align:center;">⋮</th>
                 </tr>
             </thead>
             <tbody>
@@ -623,7 +623,7 @@ function renderBrokers(brokers) {
                     <th>Code</th>
                     <th>Website</th>
                     <th>Status</th>
-                    <th style="width:80px;text-align:center;">⚙️</th>
+                    <th style="width:80px;text-align:center;">⋮</th>
                 </tr>
             </thead>
             <tbody>
