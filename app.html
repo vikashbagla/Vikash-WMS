@@ -26,30 +26,26 @@
             </div>
             <div class="index-ticker" id="indexTicker">
                 <div class="index-item" id="idx-nifty">
-                    <span class="index-name">NIFTY</span>
-                    <span class="index-price" id="idx-nifty-price">—</span>
-                    <span class="index-change neutral" id="idx-nifty-change"></span>
+                    <div class="index-top"><span class="index-name">NIFTY</span><span class="index-price" id="idx-nifty-price">—</span></div>
+                    <div class="index-bottom"><span class="index-change neutral" id="idx-nifty-change"></span></div>
                 </div>
                 <div class="index-item" id="idx-banknifty">
-                    <span class="index-name">BANKNIFTY</span>
-                    <span class="index-price" id="idx-banknifty-price">—</span>
-                    <span class="index-change neutral" id="idx-banknifty-change"></span>
+                    <div class="index-top"><span class="index-name">BANKNIFTY</span><span class="index-price" id="idx-banknifty-price">—</span></div>
+                    <div class="index-bottom"><span class="index-change neutral" id="idx-banknifty-change"></span></div>
                 </div>
                 <div class="index-item" id="idx-sensex">
-                    <span class="index-name">SENSEX</span>
-                    <span class="index-price" id="idx-sensex-price">—</span>
-                    <span class="index-change neutral" id="idx-sensex-change"></span>
+                    <div class="index-top"><span class="index-name">SENSEX</span><span class="index-price" id="idx-sensex-price">—</span></div>
+                    <div class="index-bottom"><span class="index-change neutral" id="idx-sensex-change"></span></div>
                 </div>
                 <div class="index-item" id="idx-gold">
-                    <span class="index-name">GOLD</span>
-                    <span class="index-price" id="idx-gold-price">—</span>
-                    <span class="index-change neutral" id="idx-gold-change"></span>
+                    <div class="index-top"><span class="index-name">GOLD</span><span class="index-price" id="idx-gold-price">—</span></div>
+                    <div class="index-bottom"><span class="index-change neutral" id="idx-gold-change"></span></div>
                 </div>
             </div>
             <div class="user-section">
                 <span id="fyers-status" style="font-size:12px; margin-right:16px;">⏳ Fyers...</span>
                 <span class="user-email" id="user-email">Loading...</span>
-                <button class="btn-logout" id="logoutBtn">Logout</button>
+                <button class="btn-logout" id="logoutBtn" title="Logout">⏻</button>
             </div>
         </div>
     </header>
@@ -144,52 +140,89 @@
     // INDEX TICKER
     // ============================================================
 
-    // Fetch and display NIFTY, BANKNIFTY, SENSEX, GOLD prices
+    // ---- Gold symbol resolver (auto-detects active near-month contract) ----
+    var _resolvedGoldSymbol = null;
+
+    function buildGoldCandidates() {
+        var months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+        var now = new Date();
+        var candidates = [];
+        for (var i = 0; i < 4; i++) {
+            var d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+            var yy = String(d.getFullYear()).slice(2);
+            candidates.push('MCX:GOLDM' + yy + months[d.getMonth()] + 'FUT');
+        }
+        return candidates;
+    }
+
+    async function resolveGoldSymbol() {
+        if (_resolvedGoldSymbol) return _resolvedGoldSymbol;
+        var candidates = buildGoldCandidates();
+        for (var i = 0; i < candidates.length; i++) {
+            try {
+                var res = await window.fyersCall({ action: 'quotes', symbols: [candidates[i]] });
+                if (res && res.d && res.d[0] && res.d[0].v && res.d[0].v.lp > 0) {
+                    _resolvedGoldSymbol = candidates[i];
+                    console.log('✅ Gold symbol resolved:', _resolvedGoldSymbol);
+                    return _resolvedGoldSymbol;
+                }
+            } catch(e) {}
+        }
+        return candidates[0]; // fallback to first candidate
+    }
+
+    // ---- Fetch and display NIFTY, BANKNIFTY, SENSEX, GOLD prices ----
     async function fetchIndexPrices() {
         try {
-            const token = getFyersToken();
-            if (!token) return; // No Fyers token, skip
+            var token = getFyersToken();
+            if (!token) return;
 
-            // Fyers index symbols + MCX Gold near-month
+            // Resolve gold symbol (cached after first success)
+            var goldSym = await resolveGoldSymbol();
+
             var symbols = [
                 'NSE:NIFTY50-INDEX',
                 'NSE:NIFTYBANK-INDEX',
                 'BSE:SENSEX-INDEX',
-                'MCX:GOLDM25FEBFUT'   // Gold Mini near-month — update expiry as needed
+                goldSym
             ];
 
             var result = await window.fyersCall({ action: 'quotes', symbols: symbols });
             if (!result || !result.d) return;
 
-            var quotes = result.d;
+            // Dynamic mapping — gold symbol may vary
             var mapping = {
                 'NSE:NIFTY50-INDEX':    'nifty',
                 'NSE:NIFTYBANK-INDEX':  'banknifty',
-                'BSE:SENSEX-INDEX':     'sensex',
-                'MCX:GOLDM25FEBFUT':    'gold'
+                'BSE:SENSEX-INDEX':     'sensex'
             };
+            mapping[goldSym] = 'gold';
 
-            quotes.forEach(function(q) {
+            result.d.forEach(function(q) {
                 var key = mapping[q.n];
                 if (!key || !q.v) return;
 
-                var lp = q.v.lp;           // last price
-                var ch = q.v.ch;           // change
-                var chp = q.v.chp;         // change percent
+                var lp = q.v.lp;
+                var ch = q.v.ch;
+                var chp = q.v.chp;
 
                 var priceEl = document.getElementById('idx-' + key + '-price');
                 var changeEl = document.getElementById('idx-' + key + '-change');
                 if (!priceEl || !changeEl) return;
 
-                // Format price with commas (Indian format)
-                priceEl.textContent = lp ? Number(lp).toLocaleString('en-IN', { maximumFractionDigits: key === 'gold' ? 0 : 1 }) : '—';
+                // Price — must be > 0 to display
+                var decimals = key === 'gold' ? 0 : 1;
+                priceEl.textContent = (lp && lp > 0) ? Number(lp).toLocaleString('en-IN', { maximumFractionDigits: decimals }) : '—';
 
-                // Format change
-                if (ch !== undefined && chp !== undefined) {
+                // Change (sub-row)
+                if (ch !== undefined && chp !== undefined && lp > 0) {
                     var sign = ch >= 0 ? '+' : '';
                     var colorClass = ch > 0 ? 'positive' : ch < 0 ? 'negative' : 'neutral';
-                    changeEl.textContent = sign + Number(ch).toFixed(key === 'gold' ? 0 : 1) + ' (' + sign + Number(chp).toFixed(2) + '%)';
+                    changeEl.textContent = sign + Number(ch).toFixed(decimals) + ' (' + sign + Number(chp).toFixed(2) + '%)';
                     changeEl.className = 'index-change ' + colorClass;
+                } else {
+                    changeEl.textContent = '';
+                    changeEl.className = 'index-change neutral';
                 }
             });
         } catch (e) {
@@ -197,60 +230,11 @@
         }
     }
 
-    // Gold symbol may need updating when contract expires
-    // This tries the current symbol; if it fails, tries next month
-    var _goldSymbolCandidates = null;
-    async function resolveGoldSymbol() {
-        // Build candidates: current month and next 3 months
-        var months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-        var now = new Date();
-        var candidates = [];
-        for (var i = 0; i < 4; i++) {
-            var d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-            var yy = String(d.getFullYear()).slice(2);
-            var mm = months[d.getMonth()];
-            candidates.push('MCX:GOLDM' + yy + mm + 'FUT');
-        }
-        return candidates;
-    }
-
-    async function fetchIndexPricesWithGoldRetry() {
-        // First try fetching with default gold symbol
-        await fetchIndexPrices();
-
-        // If gold price is still "—", try alternate gold symbols
-        var goldPrice = document.getElementById('idx-gold-price');
-        if (goldPrice && goldPrice.textContent === '—') {
-            var candidates = await resolveGoldSymbol();
-            for (var i = 0; i < candidates.length; i++) {
-                try {
-                    var res = await window.fyersCall({ action: 'quotes', symbols: [candidates[i]] });
-                    if (res && res.d && res.d[0] && res.d[0].v && res.d[0].v.lp) {
-                        var q = res.d[0].v;
-                        goldPrice.textContent = Number(q.lp).toLocaleString('en-IN', { maximumFractionDigits: 0 });
-                        var changeEl = document.getElementById('idx-gold-change');
-                        if (changeEl && q.ch !== undefined) {
-                            var sign = q.ch >= 0 ? '+' : '';
-                            var colorClass = q.ch > 0 ? 'positive' : q.ch < 0 ? 'negative' : 'neutral';
-                            changeEl.textContent = sign + Number(q.ch).toFixed(0) + ' (' + sign + Number(q.chp).toFixed(2) + '%)';
-                            changeEl.className = 'index-change ' + colorClass;
-                        }
-                        // Update the mapping for future refreshes
-                        window._resolvedGoldSymbol = candidates[i];
-                        break;
-                    }
-                } catch(e) {}
-            }
-        }
-    }
-
     // Refresh index prices every 30 seconds
     var _indexRefreshTimer = null;
     function startIndexRefresh() {
-        fetchIndexPricesWithGoldRetry();
-        _indexRefreshTimer = setInterval(function() {
-            fetchIndexPrices();
-        }, 30000);
+        fetchIndexPrices();
+        _indexRefreshTimer = setInterval(fetchIndexPrices, 30000);
     }
 
     // ============================================================
