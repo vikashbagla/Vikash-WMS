@@ -932,19 +932,17 @@ function trWlRenderSecurityRow(item) {
         '</div>';
     }
 
-    // Alert dots — inline with price (left dot = below alert, right dot = above alert)
-    var dotBelow = '';
-    var dotAbove = '';
+    // Alert dot — single dot on left of price
+    var alertDotHtml = '';
     var hasAbove = item.alert_above != null;
     var hasBelow = item.alert_below != null;
     if (hasAbove || hasBelow) {
         var alertState = trWlGetAlertState(item, cmp);
-        if (hasBelow) {
-            dotBelow = '<span class="wl-alert-dot ' + alertState.belowDotClass + '" data-alert-dir="below" title="▼ ₹' + Number(item.alert_below).toLocaleString('en-IN') + '"></span>';
-        }
-        if (hasAbove) {
-            dotAbove = '<span class="wl-alert-dot ' + alertState.aboveDotClass + '" data-alert-dir="above" title="▲ ₹' + Number(item.alert_above).toLocaleString('en-IN') + '"></span>';
-        }
+        var dotTitle = '';
+        if (hasBelow) dotTitle += '▼ ₹' + Number(item.alert_below).toLocaleString('en-IN');
+        if (hasAbove && hasBelow) dotTitle += '  ';
+        if (hasAbove) dotTitle += '▲ ₹' + Number(item.alert_above).toLocaleString('en-IN');
+        alertDotHtml = '<span class="wl-alert-dot ' + alertState.dotClass + '" title="' + dotTitle + '"></span>';
     }
 
     // Build tooltip: symbol + company name
@@ -957,10 +955,9 @@ function trWlRenderSecurityRow(item) {
                 '<div class="wl-sym-main">' + trWlEsc(displaySym) + '</div>' +
                 '<div class="wl-sym-sub">' + trWlEsc(item.company_name || '') + '</div>' +
             '</div>' +
-            '<div class="wl-sec-price" style="display:flex;align-items:center;justify-content:flex-end;gap:3px;">' +
-                dotBelow +
+            '<div class="wl-sec-price">' +
+                alertDotHtml +
                 '<div class="wl-price-main">' + priceHtml + '</div>' +
-                dotAbove +
             '</div>' +
             '<div class="wl-sec-change">' + changeHtml + '</div>' +
             '<div class="wl-sec-delete">' +
@@ -1046,12 +1043,12 @@ function trWlAttachCardListeners() {
         });
     });
 
-    // Click on alert dot → open alert popover (for editing that direction)
+    // Click on alert dot → open alert popover
     document.querySelectorAll('.wl-alert-dot').forEach(function(dot) {
         dot.addEventListener('click', function(e) {
             e.stopPropagation();
             var row = dot.closest('.wl-security-row');
-            if (row) trWlOpenAlertPopover(row, dot.dataset.alertDir);
+            if (row) trWlOpenAlertPopover(row);
         });
     });
 
@@ -1989,12 +1986,14 @@ function trWlSetupDragReorder(container) {
 var trWlAlertToasted = {};  // "itemId:above" or "itemId:below" → true
 
 // Compute alert visual state for a given item + CMP
-// Returns: { aboveDotClass, belowDotClass }
-// Dot classes: 'dot-hidden' (alert set but far), 'dot-near' (amber), 'dot-triggered-above/below' (green/red)
+// Returns: { dotClass, aboveState, belowState }
+// Single dot: 'dot-set' (yellow, alert exists), 'dot-near' (amber, within 2%),
+//             'dot-triggered-above' (green), 'dot-triggered-below' (red)
 function trWlGetAlertState(item, cmp) {
     var result = {
-        aboveDotClass: 'dot-hidden',
-        belowDotClass: 'dot-hidden'
+        dotClass: 'dot-set',       // default: yellow (alert exists)
+        aboveState: 'far',         // 'far', 'near', 'triggered'
+        belowState: 'far'
     };
 
     var hasAbove = item.alert_above != null;
@@ -2005,20 +2004,30 @@ function trWlGetAlertState(item, cmp) {
     if (hasAbove) {
         var abovePrice = Number(item.alert_above);
         if (cmp >= abovePrice) {
-            result.aboveDotClass = 'dot-triggered-above';
+            result.aboveState = 'triggered';
         } else if (Math.abs(cmp - abovePrice) / abovePrice <= 0.02) {
-            result.aboveDotClass = 'dot-near';
+            result.aboveState = 'near';
         }
     }
 
     if (hasBelow) {
         var belowPrice = Number(item.alert_below);
         if (cmp <= belowPrice) {
-            result.belowDotClass = 'dot-triggered-below';
+            result.belowState = 'triggered';
         } else if (Math.abs(cmp - belowPrice) / belowPrice <= 0.02) {
-            result.belowDotClass = 'dot-near';
+            result.belowState = 'near';
         }
     }
+
+    // Pick most urgent state for the single dot
+    if (result.aboveState === 'triggered') {
+        result.dotClass = 'dot-triggered-above';
+    } else if (result.belowState === 'triggered') {
+        result.dotClass = 'dot-triggered-below';
+    } else if (result.aboveState === 'near' || result.belowState === 'near') {
+        result.dotClass = 'dot-near';
+    }
+    // else stays 'dot-set' (yellow)
 
     return result;
 }
@@ -2049,42 +2058,35 @@ function trWlUpdateAlertsInPlace() {
         var cmp = price ? price.lp : null;
         var state = trWlGetAlertState(item, cmp);
 
-        // Update dots inside .wl-sec-price
+        // Update single dot inside .wl-sec-price
         var priceCell = row.querySelector('.wl-sec-price');
         if (!priceCell) return;
 
-        // Remove existing dots
-        priceCell.querySelectorAll('.wl-alert-dot').forEach(function(d) { d.remove(); });
+        // Remove existing dot
+        var existingDot = priceCell.querySelector('.wl-alert-dot');
+        if (existingDot) existingDot.remove();
 
-        var priceMain = priceCell.querySelector('.wl-price-main');
-        if (hasBelow && priceMain) {
-            var dotBelow = document.createElement('span');
-            dotBelow.className = 'wl-alert-dot ' + state.belowDotClass;
-            dotBelow.dataset.alertDir = 'below';
-            dotBelow.title = '▼ ₹' + Number(item.alert_below).toLocaleString('en-IN');
-            priceCell.insertBefore(dotBelow, priceMain);
-        }
-        if (hasAbove && priceMain) {
-            var dotAbove = document.createElement('span');
-            dotAbove.className = 'wl-alert-dot ' + state.aboveDotClass;
-            dotAbove.dataset.alertDir = 'above';
-            dotAbove.title = '▲ ₹' + Number(item.alert_above).toLocaleString('en-IN');
-            priceMain.insertAdjacentElement('afterend', dotAbove);
-        }
+        if (hasAbove || hasBelow) {
+            var dotTitle = '';
+            if (hasBelow) dotTitle += '▼ ₹' + Number(item.alert_below).toLocaleString('en-IN');
+            if (hasAbove && hasBelow) dotTitle += '  ';
+            if (hasAbove) dotTitle += '▲ ₹' + Number(item.alert_above).toLocaleString('en-IN');
 
-        // Ensure price cell has flex layout for dots
-        priceCell.style.display = 'flex';
-        priceCell.style.alignItems = 'center';
-        priceCell.style.justifyContent = 'flex-end';
-        priceCell.style.gap = '3px';
+            var dot = document.createElement('span');
+            dot.className = 'wl-alert-dot ' + state.dotClass;
+            dot.title = dotTitle;
+
+            var priceMain = priceCell.querySelector('.wl-price-main');
+            if (priceMain) priceCell.insertBefore(dot, priceMain);
+        }
 
         // Toast notifications on first trigger (per direction)
         var sym = item._displaySymbol || item.short_symbol;
-        if (state.aboveDotClass === 'dot-triggered-above' && !trWlAlertToasted[item.id + ':above']) {
+        if (state.aboveState === 'triggered' && !trWlAlertToasted[item.id + ':above']) {
             trWlAlertToasted[item.id + ':above'] = true;
             showAlert(sym + ' crossed ▲ ₹' + Number(item.alert_above).toLocaleString('en-IN'), 'info', 4000);
         }
-        if (state.belowDotClass === 'dot-triggered-below' && !trWlAlertToasted[item.id + ':below']) {
+        if (state.belowState === 'triggered' && !trWlAlertToasted[item.id + ':below']) {
             trWlAlertToasted[item.id + ':below'] = true;
             showAlert(sym + ' dropped ▼ ₹' + Number(item.alert_below).toLocaleString('en-IN'), 'info', 4000);
         }

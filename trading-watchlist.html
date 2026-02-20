@@ -511,7 +511,7 @@
    ALERT VISUAL INDICATORS — dots beside price
    ============================================================ */
 
-/* Alert dots — inline with price, no extra row height */
+/* Alert dot — single dot on left of price, inside .wl-sec-price */
 .wl-alert-dot {
     display: inline-block;
     width: 6px;
@@ -520,10 +520,11 @@
     vertical-align: middle;
     cursor: pointer;
     flex-shrink: 0;
+    margin-right: 3px;
 }
-/* Hidden when alert exists but not near/triggered */
-.wl-alert-dot.dot-hidden {
-    visibility: hidden;
+/* Yellow: alert is set but far from target */
+.wl-alert-dot.dot-set {
+    background: #eab308;
 }
 /* Amber: within 2% of alert */
 .wl-alert-dot.dot-near {
