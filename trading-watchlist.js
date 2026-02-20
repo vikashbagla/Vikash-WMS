@@ -116,7 +116,7 @@ function trWlSetupEventHandlers() {
             trWlCloseAllMenus();
         }
         // Close alert popover if click is outside it
-        if (trWlAlertPopoverRow && !e.target.closest('.wl-alert-popover') && !e.target.closest('.wl-sec-price') && !e.target.closest('.wl-alert-label')) {
+        if (trWlAlertPopoverRow && !e.target.closest('.wl-alert-popover') && !e.target.closest('.wl-sec-price') && !e.target.closest('.wl-alert-dot')) {
             trWlCloseAlertPopover();
         }
     });
@@ -932,44 +932,42 @@ function trWlRenderSecurityRow(item) {
         '</div>';
     }
 
-    // Alert indicators — left border class + small labels for above/below
-    var alertClass = '';
-    var alertHtml = '';
+    // Alert dots — inline with price (left dot = below alert, right dot = above alert)
+    var dotBelow = '';
+    var dotAbove = '';
     var hasAbove = item.alert_above != null;
     var hasBelow = item.alert_below != null;
     if (hasAbove || hasBelow) {
         var alertState = trWlGetAlertState(item, cmp);
-        alertClass = ' ' + alertState.rowClass;
-        var labels = '';
-        if (hasAbove) {
-            labels += '<span class="wl-alert-label ' + alertState.aboveLabelClass + '" data-alert-dir="above" title="Alert: ▲ ₹' + Number(item.alert_above).toLocaleString('en-IN') + '">' +
-                '▲ ' + Number(item.alert_above).toLocaleString('en-IN') + '</span>';
-        }
         if (hasBelow) {
-            labels += '<span class="wl-alert-label ' + alertState.belowLabelClass + '" data-alert-dir="below" title="Alert: ▼ ₹' + Number(item.alert_below).toLocaleString('en-IN') + '">' +
-                '▼ ' + Number(item.alert_below).toLocaleString('en-IN') + '</span>';
+            dotBelow = '<span class="wl-alert-dot ' + alertState.belowDotClass + '" data-alert-dir="below" title="▼ ₹' + Number(item.alert_below).toLocaleString('en-IN') + '"></span>';
         }
-        alertHtml = '<div class="wl-row-alert">' + labels + '</div>';
+        if (hasAbove) {
+            dotAbove = '<span class="wl-alert-dot ' + alertState.aboveDotClass + '" data-alert-dir="above" title="▲ ₹' + Number(item.alert_above).toLocaleString('en-IN') + '"></span>';
+        }
     }
 
     // Build tooltip: symbol + company name
     var tooltipText = displaySym + (item.company_name ? ' — ' + item.company_name : '');
 
-    return '<div class="wl-security-row' + alertClass + '" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + trWlEsc(tooltipText) + '" style="position:relative;">' +
+    return '<div class="wl-security-row" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + trWlEsc(tooltipText) + '" style="position:relative;">' +
         '<div class="wl-row-top">' +
             '<div class="wl-sec-drag" title="Drag to reorder">☰</div>' +
             '<div class="wl-sec-symbol">' +
                 '<div class="wl-sym-main">' + trWlEsc(displaySym) + '</div>' +
                 '<div class="wl-sym-sub">' + trWlEsc(item.company_name || '') + '</div>' +
             '</div>' +
-            '<div class="wl-sec-price"><div class="wl-price-main">' + priceHtml + '</div></div>' +
+            '<div class="wl-sec-price" style="display:flex;align-items:center;justify-content:flex-end;gap:3px;">' +
+                dotBelow +
+                '<div class="wl-price-main">' + priceHtml + '</div>' +
+                dotAbove +
+            '</div>' +
             '<div class="wl-sec-change">' + changeHtml + '</div>' +
             '<div class="wl-sec-delete">' +
                 '<button class="btn-wl-delete" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" title="Remove">✕</button>' +
             '</div>' +
         '</div>' +
         (sliderHtml ? '<div class="wl-row-slider">' + sliderHtml + '</div>' : '') +
-        alertHtml +
     '</div>';
 }
 
@@ -1048,12 +1046,12 @@ function trWlAttachCardListeners() {
         });
     });
 
-    // Click on alert label → open alert popover (for editing that direction)
-    document.querySelectorAll('.wl-alert-label').forEach(function(label) {
-        label.addEventListener('click', function(e) {
+    // Click on alert dot → open alert popover (for editing that direction)
+    document.querySelectorAll('.wl-alert-dot').forEach(function(dot) {
+        dot.addEventListener('click', function(e) {
             e.stopPropagation();
-            var row = label.closest('.wl-security-row');
-            if (row) trWlOpenAlertPopover(row, label.dataset.alertDir);
+            var row = dot.closest('.wl-security-row');
+            if (row) trWlOpenAlertPopover(row, dot.dataset.alertDir);
         });
     });
 
@@ -1991,12 +1989,12 @@ function trWlSetupDragReorder(container) {
 var trWlAlertToasted = {};  // "itemId:above" or "itemId:below" → true
 
 // Compute alert visual state for a given item + CMP
-// Returns: { rowClass, aboveLabelClass, belowLabelClass }
+// Returns: { aboveDotClass, belowDotClass }
+// Dot classes: 'dot-hidden' (alert set but far), 'dot-near' (amber), 'dot-triggered-above/below' (green/red)
 function trWlGetAlertState(item, cmp) {
     var result = {
-        rowClass: 'wl-alert-set',
-        aboveLabelClass: 'alert-far',
-        belowLabelClass: 'alert-far'
+        aboveDotClass: 'dot-hidden',
+        belowDotClass: 'dot-hidden'
     };
 
     var hasAbove = item.alert_above != null;
@@ -2004,42 +2002,23 @@ function trWlGetAlertState(item, cmp) {
     if (!hasAbove && !hasBelow) return result;
     if (cmp == null || cmp <= 0) return result;
 
-    var aboveTriggered = false;
-    var belowTriggered = false;
-    var aboveNear = false;
-    var belowNear = false;
-
     if (hasAbove) {
         var abovePrice = Number(item.alert_above);
         if (cmp >= abovePrice) {
-            aboveTriggered = true;
-            result.aboveLabelClass = 'alert-triggered-above';
+            result.aboveDotClass = 'dot-triggered-above';
         } else if (Math.abs(cmp - abovePrice) / abovePrice <= 0.02) {
-            aboveNear = true;
-            result.aboveLabelClass = 'alert-near';
+            result.aboveDotClass = 'dot-near';
         }
     }
 
     if (hasBelow) {
         var belowPrice = Number(item.alert_below);
         if (cmp <= belowPrice) {
-            belowTriggered = true;
-            result.belowLabelClass = 'alert-triggered-below';
+            result.belowDotClass = 'dot-triggered-below';
         } else if (Math.abs(cmp - belowPrice) / belowPrice <= 0.02) {
-            belowNear = true;
-            result.belowLabelClass = 'alert-near';
+            result.belowDotClass = 'dot-near';
         }
     }
-
-    // Row class: pick the most urgent state
-    if (aboveTriggered) {
-        result.rowClass = 'wl-alert-triggered-above';
-    } else if (belowTriggered) {
-        result.rowClass = 'wl-alert-triggered-below';
-    } else if (aboveNear || belowNear) {
-        result.rowClass = 'wl-alert-near';
-    }
-    // else stays 'wl-alert-set' (muted)
 
     return result;
 }
@@ -2066,54 +2045,46 @@ function trWlUpdateAlertsInPlace() {
         var hasAbove = item.alert_above != null;
         var hasBelow = item.alert_below != null;
 
-        // Remove all alert classes
-        row.classList.remove('wl-alert-set', 'wl-alert-near', 'wl-alert-triggered-above', 'wl-alert-triggered-below');
-
-        if (!hasAbove && !hasBelow) {
-            var alertRow = row.querySelector('.wl-row-alert');
-            if (alertRow) alertRow.remove();
-            return;
-        }
-
         var price = trWlPrices[item._fyersSymbol];
         var cmp = price ? price.lp : null;
         var state = trWlGetAlertState(item, cmp);
 
-        // Apply row border class
-        row.classList.add(state.rowClass);
+        // Update dots inside .wl-sec-price
+        var priceCell = row.querySelector('.wl-sec-price');
+        if (!priceCell) return;
 
-        // Build label HTML
-        var labelsHtml = '';
-        if (hasAbove) {
-            labelsHtml += '<span class="wl-alert-label ' + state.aboveLabelClass + '" data-alert-dir="above" title="Alert: ▲ ₹' + Number(item.alert_above).toLocaleString('en-IN') + '">' +
-                '▲ ' + Number(item.alert_above).toLocaleString('en-IN') + '</span>';
+        // Remove existing dots
+        priceCell.querySelectorAll('.wl-alert-dot').forEach(function(d) { d.remove(); });
+
+        var priceMain = priceCell.querySelector('.wl-price-main');
+        if (hasBelow && priceMain) {
+            var dotBelow = document.createElement('span');
+            dotBelow.className = 'wl-alert-dot ' + state.belowDotClass;
+            dotBelow.dataset.alertDir = 'below';
+            dotBelow.title = '▼ ₹' + Number(item.alert_below).toLocaleString('en-IN');
+            priceCell.insertBefore(dotBelow, priceMain);
         }
-        if (hasBelow) {
-            labelsHtml += '<span class="wl-alert-label ' + state.belowLabelClass + '" data-alert-dir="below" title="Alert: ▼ ₹' + Number(item.alert_below).toLocaleString('en-IN') + '">' +
-                '▼ ' + Number(item.alert_below).toLocaleString('en-IN') + '</span>';
+        if (hasAbove && priceMain) {
+            var dotAbove = document.createElement('span');
+            dotAbove.className = 'wl-alert-dot ' + state.aboveDotClass;
+            dotAbove.dataset.alertDir = 'above';
+            dotAbove.title = '▲ ₹' + Number(item.alert_above).toLocaleString('en-IN');
+            priceMain.insertAdjacentElement('afterend', dotAbove);
         }
 
-        var alertRow = row.querySelector('.wl-row-alert');
-        if (alertRow) {
-            alertRow.innerHTML = labelsHtml;
-        } else {
-            row.insertAdjacentHTML('beforeend', '<div class="wl-row-alert">' + labelsHtml + '</div>');
-            // Re-attach click handlers for new labels
-            row.querySelectorAll('.wl-alert-label').forEach(function(label) {
-                label.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    trWlOpenAlertPopover(row, label.dataset.alertDir);
-                });
-            });
-        }
+        // Ensure price cell has flex layout for dots
+        priceCell.style.display = 'flex';
+        priceCell.style.alignItems = 'center';
+        priceCell.style.justifyContent = 'flex-end';
+        priceCell.style.gap = '3px';
 
         // Toast notifications on first trigger (per direction)
         var sym = item._displaySymbol || item.short_symbol;
-        if (state.aboveLabelClass === 'alert-triggered-above' && !trWlAlertToasted[item.id + ':above']) {
+        if (state.aboveDotClass === 'dot-triggered-above' && !trWlAlertToasted[item.id + ':above']) {
             trWlAlertToasted[item.id + ':above'] = true;
             showAlert(sym + ' crossed ▲ ₹' + Number(item.alert_above).toLocaleString('en-IN'), 'info', 4000);
         }
-        if (state.belowLabelClass === 'alert-triggered-below' && !trWlAlertToasted[item.id + ':below']) {
+        if (state.belowDotClass === 'dot-triggered-below' && !trWlAlertToasted[item.id + ':below']) {
             trWlAlertToasted[item.id + ':below'] = true;
             showAlert(sym + ' dropped ▼ ₹' + Number(item.alert_below).toLocaleString('en-IN'), 'info', 4000);
         }
@@ -2149,20 +2120,15 @@ function trWlOpenAlertPopover(row, editDir) {
     var aboveVal = item.alert_above != null ? Number(item.alert_above) : '';
     var belowVal = item.alert_below != null ? Number(item.alert_below) : '';
 
-    var popoverHtml = '<div class="wl-alert-popover" style="flex-direction:column;align-items:stretch;gap:5px;min-width:160px;">' +
-        '<div style="display:flex;align-items:center;gap:4px;">' +
-            '<span class="wl-alert-dir" style="color:#059669;">▲</span>' +
-            '<input type="number" class="alert-input-above" value="' + aboveVal + '" placeholder="Above ₹" step="any">' +
-            (aboveVal ? '<button class="btn-alert-clear" data-dir="above" title="Clear">✕</button>' : '') +
-        '</div>' +
-        '<div style="display:flex;align-items:center;gap:4px;">' +
-            '<span class="wl-alert-dir" style="color:#dc2626;">▼</span>' +
-            '<input type="number" class="alert-input-below" value="' + belowVal + '" placeholder="Below ₹" step="any">' +
-            (belowVal ? '<button class="btn-alert-clear" data-dir="below" title="Clear">✕</button>' : '') +
-        '</div>' +
-        '<div style="display:flex;justify-content:flex-end;gap:4px;">' +
-            '<button class="btn-alert-save">Save</button>' +
-        '</div>' +
+    var popoverHtml = '<div class="wl-alert-popover">' +
+        '<span class="wl-alert-dir" style="color:#dc2626;">▼</span>' +
+        '<input type="number" class="alert-input-below" value="' + belowVal + '" placeholder="Below" step="any">' +
+        (belowVal ? '<button class="btn-alert-clear" data-dir="below" title="Clear">✕</button>' : '') +
+        '<span style="color:#e2e8f0;font-size:10px;">│</span>' +
+        '<span class="wl-alert-dir" style="color:#059669;">▲</span>' +
+        '<input type="number" class="alert-input-above" value="' + aboveVal + '" placeholder="Above" step="any">' +
+        (aboveVal ? '<button class="btn-alert-clear" data-dir="above" title="Clear">✕</button>' : '') +
+        '<button class="btn-alert-save">Set</button>' +
     '</div>';
 
     row.insertAdjacentHTML('beforeend', popoverHtml);

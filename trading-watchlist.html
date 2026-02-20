@@ -508,61 +508,34 @@
 }
 
 /* ============================================================
-   ALERT VISUAL INDICATORS
+   ALERT VISUAL INDICATORS — dots beside price
    ============================================================ */
 
-/* Left border accent when alert is set (3 states) */
-.wl-security-row.wl-alert-set {
-    border-left: 3px solid #cbd5e0;  /* muted gray — alert exists, far from target */
-}
-.wl-security-row.wl-alert-near {
-    border-left: 3px solid #d97706;  /* amber — within 2% of target */
-}
-.wl-security-row.wl-alert-triggered-above {
-    border-left: 3px solid #059669;  /* green — price crossed above target */
-}
-.wl-security-row.wl-alert-triggered-below {
-    border-left: 3px solid #dc2626;  /* red — price dropped below target */
-}
-
-/* Alert price label — sits below slider or below top row */
-.wl-row-alert {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    margin-right: 30px;    /* align with change column right edge */
-    padding: 0 0 1px 0;
-    gap: 4px;
-}
-.wl-alert-label {
-    font-size: 8px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
-    padding: 0 4px;
-    border-radius: 2px;
-    line-height: 1.5;
+/* Alert dots — inline with price, no extra row height */
+.wl-alert-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    vertical-align: middle;
     cursor: pointer;
-    user-select: none;
+    flex-shrink: 0;
 }
-/* Default: muted */
-.wl-alert-label.alert-far {
-    color: #a0aec0;
-    background: #f7fafc;
+/* Hidden when alert exists but not near/triggered */
+.wl-alert-dot.dot-hidden {
+    visibility: hidden;
 }
-/* Near: amber */
-.wl-alert-label.alert-near {
-    color: #92400e;
-    background: #fef3c7;
+/* Amber: within 2% of alert */
+.wl-alert-dot.dot-near {
+    background: #d97706;
 }
-/* Triggered above: green */
-.wl-alert-label.alert-triggered-above {
-    color: #065f46;
-    background: #d1fae5;
+/* Green: triggered above */
+.wl-alert-dot.dot-triggered-above {
+    background: #059669;
 }
-/* Triggered below: red */
-.wl-alert-label.alert-triggered-below {
-    color: #991b1b;
-    background: #fee2e2;
+/* Red: triggered below */
+.wl-alert-dot.dot-triggered-below {
+    background: #dc2626;
 }
 
 /* Alert popover — tiny inline editor */
