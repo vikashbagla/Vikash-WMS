@@ -507,6 +507,120 @@
     color: #718096;
 }
 
+/* ============================================================
+   ALERT VISUAL INDICATORS
+   ============================================================ */
+
+/* Left border accent when alert is set (3 states) */
+.wl-security-row.wl-alert-set {
+    border-left: 3px solid #cbd5e0;  /* muted gray — alert exists, far from target */
+}
+.wl-security-row.wl-alert-near {
+    border-left: 3px solid #d97706;  /* amber — within 2% of target */
+}
+.wl-security-row.wl-alert-triggered-above {
+    border-left: 3px solid #059669;  /* green — price crossed above target */
+}
+.wl-security-row.wl-alert-triggered-below {
+    border-left: 3px solid #dc2626;  /* red — price dropped below target */
+}
+
+/* Alert price label — sits below slider or below top row */
+.wl-row-alert {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    margin-right: 30px;    /* align with change column right edge */
+    padding: 0 0 1px 0;
+    gap: 4px;
+}
+.wl-alert-label {
+    font-size: 8px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    padding: 0 4px;
+    border-radius: 2px;
+    line-height: 1.5;
+    cursor: pointer;
+    user-select: none;
+}
+/* Default: muted */
+.wl-alert-label.alert-far {
+    color: #a0aec0;
+    background: #f7fafc;
+}
+/* Near: amber */
+.wl-alert-label.alert-near {
+    color: #92400e;
+    background: #fef3c7;
+}
+/* Triggered above: green */
+.wl-alert-label.alert-triggered-above {
+    color: #065f46;
+    background: #d1fae5;
+}
+/* Triggered below: red */
+.wl-alert-label.alert-triggered-below {
+    color: #991b1b;
+    background: #fee2e2;
+}
+
+/* Alert popover — tiny inline editor */
+.wl-alert-popover {
+    position: absolute;
+    right: 30px;
+    top: 100%;
+    z-index: 200;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    padding: 6px 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+.wl-alert-popover input {
+    width: 72px;
+    padding: 3px 6px;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    font-size: 11px;
+    outline: none;
+    text-align: right;
+}
+.wl-alert-popover input:focus {
+    border-color: #667eea;
+}
+.wl-alert-popover .wl-alert-dir {
+    font-size: 9px;
+    color: #718096;
+    min-width: 14px;
+    text-align: center;
+}
+.wl-alert-popover .btn-alert-save {
+    background: #667eea;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.wl-alert-popover .btn-alert-save:hover { background: #5a67d8; }
+.wl-alert-popover .btn-alert-clear {
+    background: none;
+    border: 1px solid #fca5a5;
+    color: #dc2626;
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 10px;
+    cursor: pointer;
+}
+.wl-alert-popover .btn-alert-clear:hover { background: #fef2f2; }
+
 /* New Watchlist inline prompt */
 .wl-new-input-wrap {
     display: none;

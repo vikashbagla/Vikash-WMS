@@ -210,15 +210,14 @@
                 var changeEl = document.getElementById('idx-' + key + '-change');
                 if (!priceEl || !changeEl) return;
 
-                // Price — must be > 0 to display
-                var decimals = key === 'gold' ? 0 : 1;
-                priceEl.textContent = (lp && lp > 0) ? Number(lp).toLocaleString('en-IN', { maximumFractionDigits: decimals }) : '—';
+                // Price — must be > 0 to display (no decimals for header)
+                priceEl.textContent = (lp && lp > 0) ? Number(lp).toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '—';
 
                 // Change (sub-row)
                 if (ch !== undefined && chp !== undefined && lp > 0) {
                     var sign = ch >= 0 ? '+' : '';
                     var colorClass = ch > 0 ? 'positive' : ch < 0 ? 'negative' : 'neutral';
-                    changeEl.textContent = sign + Number(ch).toFixed(decimals) + ' (' + sign + Number(chp).toFixed(2) + '%)';
+                    changeEl.textContent = sign + Number(ch).toFixed(0) + ' (' + sign + Number(chp).toFixed(1) + '%)';
                     changeEl.className = 'index-change ' + colorClass;
                 } else {
                     changeEl.textContent = '';

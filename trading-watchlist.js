@@ -110,10 +110,14 @@ function trWlSetupEventHandlers() {
         if (e.target === this) trWlCloseReorderModal();
     });
 
-    // Close card menus on outside click
+    // Close card menus and alert popover on outside click
     document.addEventListener('click', function(e) {
         if (trWlOpenMenuId && !e.target.closest('.wl-card-actions')) {
             trWlCloseAllMenus();
+        }
+        // Close alert popover if click is outside it
+        if (trWlAlertPopoverRow && !e.target.closest('.wl-alert-popover') && !e.target.closest('.wl-sec-price') && !e.target.closest('.wl-alert-label')) {
+            trWlCloseAlertPopover();
         }
     });
 
@@ -745,6 +749,9 @@ function trWlUpdatePricesInPlace() {
         }
     });
 
+    // Update alert visuals based on new prices
+    trWlUpdateAlertsInPlace();
+
     // Update price status timestamp
     trWlUpdatePriceStatus('live');
 }
@@ -925,10 +932,30 @@ function trWlRenderSecurityRow(item) {
         '</div>';
     }
 
+    // Alert indicators — left border class + small labels for above/below
+    var alertClass = '';
+    var alertHtml = '';
+    var hasAbove = item.alert_above != null;
+    var hasBelow = item.alert_below != null;
+    if (hasAbove || hasBelow) {
+        var alertState = trWlGetAlertState(item, cmp);
+        alertClass = ' ' + alertState.rowClass;
+        var labels = '';
+        if (hasAbove) {
+            labels += '<span class="wl-alert-label ' + alertState.aboveLabelClass + '" data-alert-dir="above" title="Alert: ▲ ₹' + Number(item.alert_above).toLocaleString('en-IN') + '">' +
+                '▲ ' + Number(item.alert_above).toLocaleString('en-IN') + '</span>';
+        }
+        if (hasBelow) {
+            labels += '<span class="wl-alert-label ' + alertState.belowLabelClass + '" data-alert-dir="below" title="Alert: ▼ ₹' + Number(item.alert_below).toLocaleString('en-IN') + '">' +
+                '▼ ' + Number(item.alert_below).toLocaleString('en-IN') + '</span>';
+        }
+        alertHtml = '<div class="wl-row-alert">' + labels + '</div>';
+    }
+
     // Build tooltip: symbol + company name
     var tooltipText = displaySym + (item.company_name ? ' — ' + item.company_name : '');
 
-    return '<div class="wl-security-row" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + trWlEsc(tooltipText) + '">' +
+    return '<div class="wl-security-row' + alertClass + '" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + trWlEsc(tooltipText) + '" style="position:relative;">' +
         '<div class="wl-row-top">' +
             '<div class="wl-sec-drag" title="Drag to reorder">☰</div>' +
             '<div class="wl-sec-symbol">' +
@@ -942,6 +969,7 @@ function trWlRenderSecurityRow(item) {
             '</div>' +
         '</div>' +
         (sliderHtml ? '<div class="wl-row-slider">' + sliderHtml + '</div>' : '') +
+        alertHtml +
     '</div>';
 }
 
@@ -1008,6 +1036,24 @@ function trWlAttachCardListeners() {
         btn.addEventListener('click', function(e) {
             e.stopPropagation();
             trWlToggleSort(btn.dataset.wlId, btn.dataset.sort);
+        });
+    });
+
+    // Double-click on price → open alert popover
+    document.querySelectorAll('.wl-sec-price').forEach(function(priceEl) {
+        priceEl.addEventListener('dblclick', function(e) {
+            e.stopPropagation();
+            var row = priceEl.closest('.wl-security-row');
+            if (row) trWlOpenAlertPopover(row);
+        });
+    });
+
+    // Click on alert label → open alert popover (for editing that direction)
+    document.querySelectorAll('.wl-alert-label').forEach(function(label) {
+        label.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var row = label.closest('.wl-security-row');
+            if (row) trWlOpenAlertPopover(row, label.dataset.alertDir);
         });
     });
 
@@ -1935,6 +1981,286 @@ function trWlSetupDragReorder(container) {
             trWlRenderReorderList();
         });
     });
+}
+
+// ============================================================================
+// PRICE ALERTS  (dual: alert_above + alert_below per item)
+// ============================================================================
+
+// Track which alerts have already shown a toast (avoid repeat toasts)
+var trWlAlertToasted = {};  // "itemId:above" or "itemId:below" → true
+
+// Compute alert visual state for a given item + CMP
+// Returns: { rowClass, aboveLabelClass, belowLabelClass }
+function trWlGetAlertState(item, cmp) {
+    var result = {
+        rowClass: 'wl-alert-set',
+        aboveLabelClass: 'alert-far',
+        belowLabelClass: 'alert-far'
+    };
+
+    var hasAbove = item.alert_above != null;
+    var hasBelow = item.alert_below != null;
+    if (!hasAbove && !hasBelow) return result;
+    if (cmp == null || cmp <= 0) return result;
+
+    var aboveTriggered = false;
+    var belowTriggered = false;
+    var aboveNear = false;
+    var belowNear = false;
+
+    if (hasAbove) {
+        var abovePrice = Number(item.alert_above);
+        if (cmp >= abovePrice) {
+            aboveTriggered = true;
+            result.aboveLabelClass = 'alert-triggered-above';
+        } else if (Math.abs(cmp - abovePrice) / abovePrice <= 0.02) {
+            aboveNear = true;
+            result.aboveLabelClass = 'alert-near';
+        }
+    }
+
+    if (hasBelow) {
+        var belowPrice = Number(item.alert_below);
+        if (cmp <= belowPrice) {
+            belowTriggered = true;
+            result.belowLabelClass = 'alert-triggered-below';
+        } else if (Math.abs(cmp - belowPrice) / belowPrice <= 0.02) {
+            belowNear = true;
+            result.belowLabelClass = 'alert-near';
+        }
+    }
+
+    // Row class: pick the most urgent state
+    if (aboveTriggered) {
+        result.rowClass = 'wl-alert-triggered-above';
+    } else if (belowTriggered) {
+        result.rowClass = 'wl-alert-triggered-below';
+    } else if (aboveNear || belowNear) {
+        result.rowClass = 'wl-alert-near';
+    }
+    // else stays 'wl-alert-set' (muted)
+
+    return result;
+}
+
+// Update alert visuals in-place during price refresh
+function trWlUpdateAlertsInPlace() {
+    var rows = document.querySelectorAll('.wl-security-row');
+    rows.forEach(function(row) {
+        var itemId = row.dataset.itemId;
+        var wlId = row.dataset.wlId;
+
+        // Find the item
+        var item = null;
+        for (var w = 0; w < trWlWatchlists.length; w++) {
+            var wl = trWlWatchlists[w];
+            if (wl.id !== wlId) continue;
+            for (var i = 0; i < wl.items.length; i++) {
+                if (wl.items[i].id === itemId) { item = wl.items[i]; break; }
+            }
+            if (item) break;
+        }
+        if (!item) return;
+
+        var hasAbove = item.alert_above != null;
+        var hasBelow = item.alert_below != null;
+
+        // Remove all alert classes
+        row.classList.remove('wl-alert-set', 'wl-alert-near', 'wl-alert-triggered-above', 'wl-alert-triggered-below');
+
+        if (!hasAbove && !hasBelow) {
+            var alertRow = row.querySelector('.wl-row-alert');
+            if (alertRow) alertRow.remove();
+            return;
+        }
+
+        var price = trWlPrices[item._fyersSymbol];
+        var cmp = price ? price.lp : null;
+        var state = trWlGetAlertState(item, cmp);
+
+        // Apply row border class
+        row.classList.add(state.rowClass);
+
+        // Build label HTML
+        var labelsHtml = '';
+        if (hasAbove) {
+            labelsHtml += '<span class="wl-alert-label ' + state.aboveLabelClass + '" data-alert-dir="above" title="Alert: ▲ ₹' + Number(item.alert_above).toLocaleString('en-IN') + '">' +
+                '▲ ' + Number(item.alert_above).toLocaleString('en-IN') + '</span>';
+        }
+        if (hasBelow) {
+            labelsHtml += '<span class="wl-alert-label ' + state.belowLabelClass + '" data-alert-dir="below" title="Alert: ▼ ₹' + Number(item.alert_below).toLocaleString('en-IN') + '">' +
+                '▼ ' + Number(item.alert_below).toLocaleString('en-IN') + '</span>';
+        }
+
+        var alertRow = row.querySelector('.wl-row-alert');
+        if (alertRow) {
+            alertRow.innerHTML = labelsHtml;
+        } else {
+            row.insertAdjacentHTML('beforeend', '<div class="wl-row-alert">' + labelsHtml + '</div>');
+            // Re-attach click handlers for new labels
+            row.querySelectorAll('.wl-alert-label').forEach(function(label) {
+                label.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    trWlOpenAlertPopover(row, label.dataset.alertDir);
+                });
+            });
+        }
+
+        // Toast notifications on first trigger (per direction)
+        var sym = item._displaySymbol || item.short_symbol;
+        if (state.aboveLabelClass === 'alert-triggered-above' && !trWlAlertToasted[item.id + ':above']) {
+            trWlAlertToasted[item.id + ':above'] = true;
+            showAlert(sym + ' crossed ▲ ₹' + Number(item.alert_above).toLocaleString('en-IN'), 'info', 4000);
+        }
+        if (state.belowLabelClass === 'alert-triggered-below' && !trWlAlertToasted[item.id + ':below']) {
+            trWlAlertToasted[item.id + ':below'] = true;
+            showAlert(sym + ' dropped ▼ ₹' + Number(item.alert_below).toLocaleString('en-IN'), 'info', 4000);
+        }
+    });
+}
+
+// Open alert popover on a security row
+// editDir: optional 'above' or 'below' to pre-focus that field
+var trWlAlertPopoverRow = null;
+
+function trWlOpenAlertPopover(row, editDir) {
+    trWlCloseAlertPopover();
+
+    var itemId = row.dataset.itemId;
+    var wlId = row.dataset.wlId;
+
+    // Find item
+    var item = null;
+    for (var w = 0; w < trWlWatchlists.length; w++) {
+        var wl = trWlWatchlists[w];
+        if (wl.id !== wlId) continue;
+        for (var i = 0; i < wl.items.length; i++) {
+            if (wl.items[i].id === itemId) { item = wl.items[i]; break; }
+        }
+        if (item) break;
+    }
+    if (!item) return;
+
+    var price = trWlPrices[item._fyersSymbol];
+    var cmp = price ? price.lp : null;
+
+    // Prefill values
+    var aboveVal = item.alert_above != null ? Number(item.alert_above) : '';
+    var belowVal = item.alert_below != null ? Number(item.alert_below) : '';
+
+    var popoverHtml = '<div class="wl-alert-popover" style="flex-direction:column;align-items:stretch;gap:5px;min-width:160px;">' +
+        '<div style="display:flex;align-items:center;gap:4px;">' +
+            '<span class="wl-alert-dir" style="color:#059669;">▲</span>' +
+            '<input type="number" class="alert-input-above" value="' + aboveVal + '" placeholder="Above ₹" step="any">' +
+            (aboveVal ? '<button class="btn-alert-clear" data-dir="above" title="Clear">✕</button>' : '') +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:4px;">' +
+            '<span class="wl-alert-dir" style="color:#dc2626;">▼</span>' +
+            '<input type="number" class="alert-input-below" value="' + belowVal + '" placeholder="Below ₹" step="any">' +
+            (belowVal ? '<button class="btn-alert-clear" data-dir="below" title="Clear">✕</button>' : '') +
+        '</div>' +
+        '<div style="display:flex;justify-content:flex-end;gap:4px;">' +
+            '<button class="btn-alert-save">Save</button>' +
+        '</div>' +
+    '</div>';
+
+    row.insertAdjacentHTML('beforeend', popoverHtml);
+    trWlAlertPopoverRow = row;
+
+    var popover = row.querySelector('.wl-alert-popover');
+    var inputAbove = popover.querySelector('.alert-input-above');
+    var inputBelow = popover.querySelector('.alert-input-below');
+
+    // Save button — saves both fields at once
+    popover.querySelector('.btn-alert-save').addEventListener('click', function() {
+        var aboveV = parseFloat(inputAbove.value) || null;
+        var belowV = parseFloat(inputBelow.value) || null;
+
+        // Validate: above should be >= CMP, below should be <= CMP (warn but allow)
+        if (aboveV && aboveV <= 0) aboveV = null;
+        if (belowV && belowV <= 0) belowV = null;
+
+        trWlSaveAlert(item, aboveV, belowV);
+        trWlCloseAlertPopover();
+    });
+
+    // Clear buttons — clear individual direction
+    popover.querySelectorAll('.btn-alert-clear').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var dir = btn.dataset.dir;
+            if (dir === 'above') {
+                inputAbove.value = '';
+            } else {
+                inputBelow.value = '';
+            }
+            // Also save immediately
+            var aboveV = parseFloat(inputAbove.value) || null;
+            var belowV = parseFloat(inputBelow.value) || null;
+            trWlSaveAlert(item, aboveV, belowV);
+            trWlCloseAlertPopover();
+        });
+    });
+
+    // Keyboard: Enter to save, Escape to close
+    [inputAbove, inputBelow].forEach(function(input) {
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                popover.querySelector('.btn-alert-save').click();
+            }
+            if (e.key === 'Escape') {
+                trWlCloseAlertPopover();
+            }
+            e.stopPropagation();
+        });
+    });
+
+    // Focus the relevant input
+    var focusTarget = editDir === 'below' ? inputBelow : inputAbove;
+    setTimeout(function() { focusTarget.focus(); focusTarget.select(); }, 50);
+}
+
+function trWlCloseAlertPopover() {
+    if (trWlAlertPopoverRow) {
+        var popover = trWlAlertPopoverRow.querySelector('.wl-alert-popover');
+        if (popover) popover.remove();
+        trWlAlertPopoverRow = null;
+    }
+}
+
+// Save both alert fields to Supabase and update in-memory
+async function trWlSaveAlert(item, alertAbove, alertBelow) {
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/watchlist_items?id=eq.' + item.id, {
+        method: 'PATCH',
+        headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({ alert_above: alertAbove, alert_below: alertBelow })
+    });
+
+    if (resp.ok) {
+        item.alert_above = alertAbove;
+        item.alert_below = alertBelow;
+        // Reset toast tracking (new values = new trigger cycle)
+        delete trWlAlertToasted[item.id + ':above'];
+        delete trWlAlertToasted[item.id + ':below'];
+        trWlRender();
+        var sym = item._displaySymbol || item.short_symbol;
+        var parts = [];
+        if (alertAbove) parts.push('▲ ₹' + Number(alertAbove).toLocaleString('en-IN'));
+        if (alertBelow) parts.push('▼ ₹' + Number(alertBelow).toLocaleString('en-IN'));
+        if (parts.length > 0) {
+            showAlert('Alert set: ' + sym + ' ' + parts.join(', '), 'success', 2000);
+        } else {
+            showAlert('Alerts cleared for ' + sym, 'success', 1500);
+        }
+    } else {
+        showAlert('Failed to save alert', 'error');
+    }
 }
 
 // ============================================================================
