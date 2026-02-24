@@ -2158,22 +2158,28 @@ async function trWlUpdateSecurityBrokerTokens(securityId, fyersSymbol) {
             bt.fyers.bse_symbol = fyersSymbol;
         }
 
-        // Update DB
+        // Update DB — use return=representation to verify the update actually took effect
+        // (Supabase returns 200 with empty array if RLS blocks the update)
         var patchResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + securityId, {
             method: 'PATCH',
             headers: {
                 'apikey': SUPABASE_ANON_KEY,
                 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
                 'Content-Type': 'application/json',
-                'Prefer': 'return=minimal'
+                'Prefer': 'return=representation'
             },
             body: JSON.stringify({ broker_tokens: bt })
         });
 
         if (patchResp.ok) {
-            console.log('Watchlist: Updated broker_tokens for security', securityId, 'with', fyersSymbol);
+            var updatedRows = await patchResp.json();
+            if (updatedRows && updatedRows.length > 0) {
+                console.log('Watchlist: Updated broker_tokens for security', securityId, 'with', fyersSymbol);
+            } else {
+                console.error('Watchlist: broker_tokens PATCH returned OK but 0 rows updated — likely RLS blocking. Security:', securityId, 'Symbol:', fyersSymbol);
+            }
         } else {
-            console.warn('Watchlist: Failed to update broker_tokens:', await patchResp.text());
+            console.warn('Watchlist: Failed to update broker_tokens:', patchResp.status, await patchResp.text());
         }
     } catch (err) {
         console.warn('Watchlist: broker_tokens update error:', err.message);
