@@ -79,14 +79,40 @@ function trWlSetupEventHandlers() {
         if (e.target === this) trWlCloseAddDialog();
     });
 
-    // Add dialog — search input
+    // Add dialog — search input with keyboard navigation
     var searchInput = document.getElementById('trWlAddSearch');
     var searchTimer = null;
+    var trWlSearchHighlightIdx = -1; // Currently highlighted result index
+
     searchInput.addEventListener('input', function() {
         clearTimeout(searchTimer);
+        trWlSearchHighlightIdx = -1; // Reset highlight on new input
         searchTimer = setTimeout(function() {
             trWlSearchSecurities(searchInput.value.trim());
         }, 300);
+    });
+
+    searchInput.addEventListener('keydown', function(e) {
+        var resultsEl = document.getElementById('trWlAddResults');
+        var items = resultsEl.querySelectorAll('.wl-add-result-item:not(.added)');
+        if (items.length === 0) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            trWlSearchHighlightIdx = Math.min(trWlSearchHighlightIdx + 1, items.length - 1);
+            trWlHighlightSearchResult(items, trWlSearchHighlightIdx);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            trWlSearchHighlightIdx = Math.max(trWlSearchHighlightIdx - 1, 0);
+            trWlHighlightSearchResult(items, trWlSearchHighlightIdx);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (trWlSearchHighlightIdx >= 0 && trWlSearchHighlightIdx < items.length) {
+                items[trWlSearchHighlightIdx].click();
+                // After adding, move highlight to next item or stay
+                trWlSearchHighlightIdx = Math.min(trWlSearchHighlightIdx, items.length - 1);
+            }
+        }
     });
 
     // Manual refresh button
@@ -713,7 +739,12 @@ function trWlUpdatePricesInPlace() {
         // Update price
         var priceEl = row.querySelector('.wl-price-main');
         if (priceEl) {
-            priceEl.innerHTML = cmp !== null ? formatPrice(cmp, false) : '<span style="color:#a0aec0;">—</span>';
+            var isExpOpt = item.security_source === 'options_dynamic' && (cmp === null || cmp === 0);
+            if (isExpOpt) {
+                priceEl.innerHTML = '<span style="color:#a0aec0;font-size:11px;">Expired</span>';
+            } else {
+                priceEl.innerHTML = cmp !== null ? formatPrice(cmp, false) : '<span style="color:#a0aec0;">—</span>';
+            }
         }
 
         // Update change
@@ -902,7 +933,28 @@ function trWlRenderSecurityRow(item) {
     var low = price ? price.low : null;
 
     // Display symbol — for NFO/Options, prefer _displaySymbol
-    var displaySym = item._displaySymbol || item.short_symbol;
+    var rawDisplaySym = item._displaySymbol || item.short_symbol;
+
+    // Strip exchange prefix (NSE:, MCX:, BSE:) from display — show in tooltip instead
+    var displayExchange = '';
+    var displaySym = rawDisplaySym;
+    var prefixMatch = rawDisplaySym.match(/^(NSE|MCX|BSE):/);
+    if (prefixMatch) {
+        displayExchange = prefixMatch[1];
+        displaySym = rawDisplaySym.substring(prefixMatch[0].length);
+    }
+
+    // For NFO/options, build a better sub-row with expiry date info
+    var subRowText = item.company_name || '';
+    if (item.security_source === 'securities_nfo' || item.security_source === 'options_dynamic') {
+        var expiryInfo = trWlParseExpiryFromSymbol(displaySym, item.security_source);
+        if (expiryInfo) {
+            subRowText = (displayExchange ? displayExchange + ' · ' : '') + expiryInfo.fullDate +
+                (item.company_name && item.company_name !== (expiryInfo.underlying + ' Option') ? ' · ' + item.company_name : '');
+        } else if (displayExchange) {
+            subRowText = displayExchange + (item.company_name ? ' · ' + item.company_name : '');
+        }
+    }
 
     // Check if this is an expired option (options_dynamic with lp=0 or no price)
     var isExpiredOption = item.security_source === 'options_dynamic' && (cmp === null || cmp === 0);
@@ -957,8 +1009,8 @@ function trWlRenderSecurityRow(item) {
         alertDotHtml = '<span class="wl-alert-dot ' + alertState.dotClass + '" title="' + dotTitle + '"></span>';
     }
 
-    // Build tooltip: symbol + company name
-    var tooltipText = displaySym + (item.company_name ? ' — ' + item.company_name : '');
+    // Build tooltip: exchange + symbol + company name
+    var tooltipText = (displayExchange ? displayExchange + ':' : '') + displaySym + (item.company_name ? ' — ' + item.company_name : '');
 
     var expiredClass = isExpiredOption ? ' wl-expired-option' : '';
     return '<div class="wl-security-row' + expiredClass + '" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + trWlEsc(tooltipText) + '" style="position:relative;">' +
@@ -966,7 +1018,7 @@ function trWlRenderSecurityRow(item) {
             '<div class="wl-sec-drag" title="Drag to reorder">☰</div>' +
             '<div class="wl-sec-symbol">' +
                 '<div class="wl-sym-main">' + trWlEsc(displaySym) + '</div>' +
-                '<div class="wl-sym-sub">' + trWlEsc(item.company_name || '') + '</div>' +
+                '<div class="wl-sym-sub">' + trWlEsc(subRowText) + '</div>' +
             '</div>' +
             '<div class="wl-sec-price">' +
                 alertDotHtml +
@@ -1231,6 +1283,86 @@ function trWlOpenAddDialog(wlId) {
     setTimeout(function() { document.getElementById('trWlAddSearch').focus(); }, 100);
 }
 
+/**
+ * Parse expiry date info from an NFO/options display symbol.
+ * Handles:
+ *   NFO futures:  "NATIONALUM26APRFUT"     → Apr 2026
+ *                 "CRUDEOIL26MAR30FUT"      → 30 Mar 2026 (MCX with date)
+ *                 "IDFCFIRSTB26MAR30FUT"    → 30 Mar 2026
+ *   Options:      "MANAPPURAM 205 PE 26MAR" → Mar 2026
+ *                 "NIFTY 25000 CE 27FEB26"  → 27 Feb 2026
+ *
+ * Returns { fullDate: "Expiry: 30 Mar 2026", underlying: "..." } or null
+ */
+function trWlParseExpiryFromSymbol(sym, source) {
+    if (!sym) return null;
+
+    // Options dynamic — expiry is the last token (e.g., "26MAR", "27FEB26")
+    if (source === 'options_dynamic') {
+        var parts = sym.split(' ');
+        var expiryToken = parts[parts.length - 1]; // e.g., "26MAR" or "27FEB26"
+        var underlying = parts[0] || '';
+
+        // Monthly: "26MAR" (YYMMM) → March 2026
+        var monthlyMatch = expiryToken.match(/^(\d{2})([A-Z]{3})$/);
+        if (monthlyMatch) {
+            var mIdx = MONTHS_SHORT.indexOf(monthlyMatch[2]);
+            if (mIdx >= 0) {
+                var yr = 2000 + parseInt(monthlyMatch[1]);
+                var lastThu = trWlGetMonthlyExpiry(yr, mIdx);
+                var monthName = monthlyMatch[2].charAt(0) + monthlyMatch[2].slice(1).toLowerCase();
+                return { fullDate: 'Expiry: ' + lastThu.getDate() + ' ' + monthName + ' ' + yr, underlying: underlying };
+            }
+        }
+        // Weekly: "27FEB26" (DDMMMYY) → 27 Feb 2026
+        var weeklyMatch = expiryToken.match(/^(\d{2})([A-Z]{3})(\d{2})$/);
+        if (weeklyMatch) {
+            var mIdx2 = MONTHS_SHORT.indexOf(weeklyMatch[2]);
+            if (mIdx2 >= 0) {
+                var yr2 = 2000 + parseInt(weeklyMatch[3]);
+                var monthName2 = weeklyMatch[2].charAt(0) + weeklyMatch[2].slice(1).toLowerCase();
+                return { fullDate: 'Expiry: ' + parseInt(weeklyMatch[1]) + ' ' + monthName2 + ' ' + yr2, underlying: underlying };
+            }
+        }
+        return null;
+    }
+
+    // NFO futures — symbol like "NATIONALUM26APRFUT" or "CRUDEOIL26MAR30FUT"
+    // Pattern: {underlying}{YY}{MMM}FUT or {underlying}{YY}{MMM}{DD}FUT
+    var futMatch = sym.match(/^(.+?)(\d{2})([A-Z]{3})(\d{0,2})FUT$/);
+    if (futMatch) {
+        var underlyingF = futMatch[1];
+        var yyF = parseInt(futMatch[2]);
+        var mmmF = futMatch[3];
+        var ddF = futMatch[4]; // may be empty for monthly, or "30" for date-specific
+        var mIdxF = MONTHS_SHORT.indexOf(mmmF);
+        if (mIdxF >= 0) {
+            var yrF = 2000 + yyF;
+            var monthNameF = mmmF.charAt(0) + mmmF.slice(1).toLowerCase();
+            if (ddF) {
+                return { fullDate: 'Expiry: ' + parseInt(ddF) + ' ' + monthNameF + ' ' + yrF, underlying: underlyingF };
+            } else {
+                // Monthly — calculate last Thursday
+                var lastThuF = trWlGetMonthlyExpiry(yrF, mIdxF);
+                return { fullDate: 'Expiry: ' + lastThuF.getDate() + ' ' + monthNameF + ' ' + yrF, underlying: underlyingF };
+            }
+        }
+    }
+
+    return null;
+}
+
+function trWlHighlightSearchResult(items, idx) {
+    // Remove highlight from all
+    items.forEach(function(el) { el.classList.remove('wl-search-highlight'); });
+    // Highlight the selected one
+    if (idx >= 0 && idx < items.length) {
+        items[idx].classList.add('wl-search-highlight');
+        // Scroll into view if needed
+        items[idx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+}
+
 function trWlCloseAddDialog() {
     document.getElementById('trWlAddOverlay').classList.remove('show');
     trWlAddTargetId = null;
@@ -1436,21 +1568,43 @@ function trWlGetMonthlyExpiry(year, month) {
 
 /**
  * Format an options Fyers symbol into a human-readable display label.
- * e.g., "NSE:NIFTY25FEB25000CE" → "NIFTY 25000 CE 27FEB25"
- *        "NSE:NIFTY250227 25000CE" → "NIFTY 25000 CE 27FEB25"
+ * e.g., "NSE:NIFTY25FEB25000CE" → "NIFTY 25000 CE FEB25"
+ *        "NSE:NIFTY25022725000CE" → "NIFTY 25000 CE 27FEB25"
+ *
+ * Extracts strike and expiry from the Fyers symbol itself (not from parsed input)
+ * to ensure the display matches what Fyers actually returned.
  */
 function trWlFormatOptionsDisplay(fyersSymbol, underlying, strike, optionType) {
-    // Extract expiry info from the symbol
+    // Extract everything after exchange prefix and underlying name
     var afterExchange = fyersSymbol.split(':')[1] || fyersSymbol;
-    // Remove the underlying prefix
     var rest = afterExchange.substring(underlying.length);
     // rest is like "25FEB25000CE" (monthly) or "25022725000CE" (weekly)
-    var expiryPart = rest.replace(String(Math.round(strike)) + optionType, '').replace(String(strike) + optionType, '');
+
+    // Remove the strike+optionType suffix to isolate the expiry part
+    // Try both integer and original strike representations
+    var strikeInt = String(Math.round(strike));
+    var expiryPart = rest;
+    // Remove from the END — find last occurrence of strikeStr+optionType
+    var suffixInt = strikeInt + optionType;
+    var suffixOrig = String(strike) + optionType;
+    if (expiryPart.endsWith(suffixInt)) {
+        expiryPart = expiryPart.substring(0, expiryPart.length - suffixInt.length);
+    } else if (expiryPart.endsWith(suffixOrig)) {
+        expiryPart = expiryPart.substring(0, expiryPart.length - suffixOrig.length);
+    }
+
+    // Also extract the actual strike from the symbol (in case it differs from parsed input)
+    var actualStrike = strike; // default to parsed
+    var afterExpiry = rest.substring(expiryPart.length);
+    var strikeFromSymbol = afterExpiry.replace(optionType, '');
+    if (strikeFromSymbol && !isNaN(Number(strikeFromSymbol))) {
+        actualStrike = Number(strikeFromSymbol);
+    }
 
     var expiryLabel = expiryPart; // fallback
     if (expiryPart.length === 5) {
-        // Monthly: YYMMM → e.g., "25FEB"
-        expiryLabel = expiryPart; // already readable
+        // Monthly: YYMMM → e.g., "26MAR" — keep as-is (standard format)
+        expiryLabel = expiryPart;
     } else if (expiryPart.length === 6) {
         // Weekly: YYMMDD → convert to "DDMMMYY"
         var yyW = expiryPart.substring(0, 2);
@@ -1461,7 +1615,8 @@ function trWlFormatOptionsDisplay(fyersSymbol, underlying, strike, optionType) {
         }
     }
 
-    return underlying + ' ' + strike + ' ' + optionType + ' ' + expiryLabel;
+    console.log('Watchlist: Display format — fyersSymbol:', fyersSymbol, '→ expiry:', expiryPart, '→ label:', expiryLabel, '→ strike:', actualStrike);
+    return underlying + ' ' + actualStrike + ' ' + optionType + ' ' + expiryLabel;
 }
 
 /**
@@ -1490,8 +1645,11 @@ async function trWlSearchOptions(parsed, resultsEl) {
         var data = await window.fyersCall({ action: 'quotes', symbols: candidates });
         var validResults = [];
 
+        console.log('Watchlist: Options search — raw Fyers response:', JSON.stringify(data));
+
         if (data && data.d && data.d.length > 0) {
             data.d.forEach(function(item) {
+                console.log('Watchlist: Options candidate result:', item.v ? item.v.symbol : 'no-v', 'lp:', item.v ? item.v.lp : 'N/A', 'sent:', candidates);
                 if (item.v && item.v.lp > 0) {
                     validResults.push({
                         symbol: item.v.symbol,
@@ -1730,6 +1888,17 @@ async function trWlAddItem(security) {
     var fyersSymbol;
     if (security.security_source === 'options_dynamic') {
         fyersSymbol = security.security_id; // Fyers symbol IS the security_id
+        console.log('Watchlist: Adding options_dynamic — fyersSymbol:', fyersSymbol, 'search price:', security._lp);
+        // Pre-populate price from search results so it shows immediately
+        if (security._lp) {
+            trWlPrices[fyersSymbol] = {
+                lp: security._lp,
+                ch: security._ch || 0,
+                chp: security._chp || 0,
+                high: null,
+                low: null
+            };
+        }
     } else {
         fyersSymbol = trWlDeriveFyersSymbol(security);
 
@@ -1775,16 +1944,24 @@ async function trWlAddItem(security) {
         // Fetch price for new item if we have Fyers symbol
         if (newItem._fyersSymbol && window.fyersToken) {
             try {
+                console.log('Watchlist: Post-add price fetch for:', newItem._fyersSymbol);
                 var data = await window.fyersCall({ action: 'quotes', symbols: [newItem._fyersSymbol] });
                 if (data && data.d && data.d.length > 0 && data.d[0].v) {
                     var v = data.d[0].v;
-                    trWlPrices[v.symbol] = {
+                    console.log('Watchlist: Post-add Fyers returned symbol:', v.symbol, 'lp:', v.lp, '(requested:', newItem._fyersSymbol + ')');
+                    var priceData = {
                         lp: v.lp || 0,
                         ch: v.ch || 0,
                         chp: v.chp || 0,
                         high: v.high_price || null,
                         low: v.low_price || null
                     };
+                    trWlPrices[v.symbol] = priceData;
+                    // Also store under the requested symbol in case Fyers returns a different canonical form
+                    if (v.symbol !== newItem._fyersSymbol) {
+                        console.warn('Watchlist: Fyers returned different symbol! Stored:', v.symbol, 'Requested:', newItem._fyersSymbol);
+                        trWlPrices[newItem._fyersSymbol] = priceData;
+                    }
                 }
             } catch (err) {
                 console.warn('Watchlist: Price fetch for new item failed:', err.message);
