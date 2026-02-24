@@ -246,13 +246,29 @@ async function trWlLoadBrokerTokens() {
     nfoIds = nfoIds.filter(function(v, i, a) { return a.indexOf(v) === i; });
 
     // Fetch broker_tokens from securities_db
+    // Note: securities_db.id is UUID type. Some legacy watchlist items may have integer
+    // security_ids (from a different table/era). Mixing them in one IN() query causes
+    // Supabase to error "invalid input syntax for type uuid". Split by format.
     var dbTokenMap = {};
     if (dbIds.length > 0) {
-        var dbResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=in.(' + dbIds.join(',') + ')&select=id,broker_tokens,nse_symbol,bse_symbol,symbol,security_type', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
-        });
-        var dbRows = dbResp.ok ? await dbResp.json() : [];
-        dbRows.forEach(function(r) { dbTokenMap[r.id] = r; });
+        var uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        var uuidIds = dbIds.filter(function(id) { return uuidPattern.test(id); });
+        var nonUuidIds = dbIds.filter(function(id) { return !uuidPattern.test(id); });
+
+        if (nonUuidIds.length > 0) {
+            console.warn('Watchlist: Skipping', nonUuidIds.length, 'non-UUID security_ids:', nonUuidIds.join(', '));
+        }
+
+        if (uuidIds.length > 0) {
+            var dbResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=in.(' + uuidIds.join(',') + ')&select=id,broker_tokens,nse_symbol,bse_symbol,symbol,security_type', {
+                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            });
+            var dbRows = dbResp.ok ? await dbResp.json() : [];
+            if (!dbResp.ok) {
+                console.error('Watchlist: securities_db fetch failed:', dbResp.status);
+            }
+            dbRows.forEach(function(r) { dbTokenMap[r.id] = r; });
+        }
     }
 
     // Fetch broker_tokens from securities_nfo
