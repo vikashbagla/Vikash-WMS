@@ -257,7 +257,7 @@ async function trWlLoadBrokerTokens() {
     // Fetch broker_tokens from securities_nfo
     var nfoTokenMap = {};
     if (nfoIds.length > 0) {
-        var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?id=in.(' + nfoIds.join(',') + ')&select=id,broker_tokens,symbol', {
+        var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?id=in.(' + nfoIds.join(',') + ')&select=id,broker_tokens,symbol,expiry_date,exchange,instrument_name', {
             headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
         });
         var nfoRows = nfoResp.ok ? await nfoResp.json() : [];
@@ -272,6 +272,12 @@ async function trWlLoadBrokerTokens() {
                 // For NFO, use full symbol (e.g. NATIONALUM26APRFUT) for display
                 if (nfoRec && nfoRec.symbol) {
                     item._displaySymbol = nfoRec.symbol;
+                }
+                // Store expiry date and exchange from DB
+                if (nfoRec) {
+                    item._expiryDate = nfoRec.expiry_date || null; // YYYY-MM-DD string from DB
+                    item._nfoExchange = nfoRec.exchange || '';
+                    item._instrumentName = nfoRec.instrument_name || '';
                 }
                 if (nfoRec && nfoRec.broker_tokens && nfoRec.broker_tokens.fyers) {
                     item._fyersSymbol = nfoRec.broker_tokens.fyers.symbol || nfoRec.broker_tokens.fyers.nse_symbol;
@@ -935,7 +941,7 @@ function trWlRenderSecurityRow(item) {
     // Display symbol — for NFO/Options, prefer _displaySymbol
     var rawDisplaySym = item._displaySymbol || item.short_symbol;
 
-    // Strip exchange prefix (NSE:, MCX:, BSE:) from display — show in tooltip instead
+    // Strip exchange prefix (NSE:, MCX:, BSE:) from display — show in tooltip/sub-row instead
     var displayExchange = '';
     var displaySym = rawDisplaySym;
     var prefixMatch = rawDisplaySym.match(/^(NSE|MCX|BSE):/);
@@ -943,14 +949,17 @@ function trWlRenderSecurityRow(item) {
         displayExchange = prefixMatch[1];
         displaySym = rawDisplaySym.substring(prefixMatch[0].length);
     }
+    // Fallback: use exchange from DB for NFO items
+    if (!displayExchange && item._nfoExchange) {
+        displayExchange = item._nfoExchange;
+    }
 
-    // For NFO/options, build a better sub-row with expiry date info
+    // For NFO/options, build a better sub-row with expiry date and exchange
     var subRowText = item.company_name || '';
     if (item.security_source === 'securities_nfo' || item.security_source === 'options_dynamic') {
-        var expiryInfo = trWlParseExpiryFromSymbol(displaySym, item.security_source);
-        if (expiryInfo) {
-            subRowText = (displayExchange ? displayExchange + ' · ' : '') + expiryInfo.fullDate +
-                (item.company_name && item.company_name !== (expiryInfo.underlying + ' Option') ? ' · ' + item.company_name : '');
+        var expirySubRow = trWlBuildExpirySubRow(item, displaySym, displayExchange);
+        if (expirySubRow) {
+            subRowText = expirySubRow;
         } else if (displayExchange) {
             subRowText = displayExchange + (item.company_name ? ' · ' + item.company_name : '');
         }
@@ -1284,69 +1293,68 @@ function trWlOpenAddDialog(wlId) {
 }
 
 /**
- * Parse expiry date info from an NFO/options display symbol.
- * Handles:
- *   NFO futures:  "NATIONALUM26APRFUT"     → Apr 2026
- *                 "CRUDEOIL26MAR30FUT"      → 30 Mar 2026 (MCX with date)
- *                 "IDFCFIRSTB26MAR30FUT"    → 30 Mar 2026
- *   Options:      "MANAPPURAM 205 PE 26MAR" → Mar 2026
- *                 "NIFTY 25000 CE 27FEB26"  → 27 Feb 2026
- *
- * Returns { fullDate: "Expiry: 30 Mar 2026", underlying: "..." } or null
+ * Build the sub-row expiry text for NFO/options items.
+ * For NFO (securities_nfo): use the actual expiry_date from the database.
+ * For options_dynamic: extract month/year from the symbol (no exact date available).
  */
-function trWlParseExpiryFromSymbol(sym, source) {
-    if (!sym) return null;
+function trWlBuildExpirySubRow(item, displaySym, displayExchange) {
+    // 1) NFO items — use real expiry_date from DB
+    if (item.security_source === 'securities_nfo' && item._expiryDate) {
+        var d = new Date(item._expiryDate + 'T00:00:00'); // parse YYYY-MM-DD
+        if (!isNaN(d.getTime())) {
+            var day = d.getDate();
+            var monthName = MONTHS_SHORT[d.getMonth()].charAt(0) + MONTHS_SHORT[d.getMonth()].slice(1).toLowerCase();
+            var yr = d.getFullYear();
+            var parts = [];
+            if (displayExchange) parts.push(displayExchange);
+            parts.push('Expiry: ' + day + ' ' + monthName + ' ' + yr);
+            if (item._instrumentName) parts.push(item._instrumentName);
+            return parts.join(' · ');
+        }
+    }
 
-    // Options dynamic — expiry is the last token (e.g., "26MAR", "27FEB26")
-    if (source === 'options_dynamic') {
-        var parts = sym.split(' ');
-        var expiryToken = parts[parts.length - 1]; // e.g., "26MAR" or "27FEB26"
-        var underlying = parts[0] || '';
+    // 2) Options dynamic — extract from the display symbol's expiry token
+    if (item.security_source === 'options_dynamic') {
+        var symParts = displaySym.split(' ');
+        var expiryToken = symParts[symParts.length - 1]; // e.g., "26MAR" or "27FEB26"
+        var expiryText = null;
 
-        // Monthly: "26MAR" (YYMMM) → March 2026
+        // Monthly: "26MAR" (YYMMM) → "Mar 2026"
         var monthlyMatch = expiryToken.match(/^(\d{2})([A-Z]{3})$/);
         if (monthlyMatch) {
             var mIdx = MONTHS_SHORT.indexOf(monthlyMatch[2]);
             if (mIdx >= 0) {
-                var yr = 2000 + parseInt(monthlyMatch[1]);
-                var lastThu = trWlGetMonthlyExpiry(yr, mIdx);
-                var monthName = monthlyMatch[2].charAt(0) + monthlyMatch[2].slice(1).toLowerCase();
-                return { fullDate: 'Expiry: ' + lastThu.getDate() + ' ' + monthName + ' ' + yr, underlying: underlying };
+                var yrM = 2000 + parseInt(monthlyMatch[1]);
+                expiryText = 'Expiry: ' + monthlyMatch[2].charAt(0) + monthlyMatch[2].slice(1).toLowerCase() + ' ' + yrM;
             }
         }
-        // Weekly: "27FEB26" (DDMMMYY) → 27 Feb 2026
-        var weeklyMatch = expiryToken.match(/^(\d{2})([A-Z]{3})(\d{2})$/);
-        if (weeklyMatch) {
-            var mIdx2 = MONTHS_SHORT.indexOf(weeklyMatch[2]);
-            if (mIdx2 >= 0) {
-                var yr2 = 2000 + parseInt(weeklyMatch[3]);
-                var monthName2 = weeklyMatch[2].charAt(0) + weeklyMatch[2].slice(1).toLowerCase();
-                return { fullDate: 'Expiry: ' + parseInt(weeklyMatch[1]) + ' ' + monthName2 + ' ' + yr2, underlying: underlying };
+        // Weekly: "27FEB26" (DDMMMYY) → "27 Feb 2026"
+        if (!expiryText) {
+            var weeklyMatch = expiryToken.match(/^(\d{2})([A-Z]{3})(\d{2})$/);
+            if (weeklyMatch) {
+                var mIdx2 = MONTHS_SHORT.indexOf(weeklyMatch[2]);
+                if (mIdx2 >= 0) {
+                    var yrW = 2000 + parseInt(weeklyMatch[3]);
+                    expiryText = 'Expiry: ' + parseInt(weeklyMatch[1]) + ' ' + weeklyMatch[2].charAt(0) + weeklyMatch[2].slice(1).toLowerCase() + ' ' + yrW;
+                }
             }
         }
-        return null;
+
+        if (expiryText) {
+            var optParts = [];
+            if (displayExchange) optParts.push(displayExchange);
+            optParts.push(expiryText);
+            return optParts.join(' · ');
+        }
     }
 
-    // NFO futures — symbol like "NATIONALUM26APRFUT" or "CRUDEOIL26MAR30FUT"
-    // Pattern: {underlying}{YY}{MMM}FUT or {underlying}{YY}{MMM}{DD}FUT
-    var futMatch = sym.match(/^(.+?)(\d{2})([A-Z]{3})(\d{0,2})FUT$/);
-    if (futMatch) {
-        var underlyingF = futMatch[1];
-        var yyF = parseInt(futMatch[2]);
-        var mmmF = futMatch[3];
-        var ddF = futMatch[4]; // may be empty for monthly, or "30" for date-specific
-        var mIdxF = MONTHS_SHORT.indexOf(mmmF);
-        if (mIdxF >= 0) {
-            var yrF = 2000 + yyF;
-            var monthNameF = mmmF.charAt(0) + mmmF.slice(1).toLowerCase();
-            if (ddF) {
-                return { fullDate: 'Expiry: ' + parseInt(ddF) + ' ' + monthNameF + ' ' + yrF, underlying: underlyingF };
-            } else {
-                // Monthly — calculate last Thursday
-                var lastThuF = trWlGetMonthlyExpiry(yrF, mIdxF);
-                return { fullDate: 'Expiry: ' + lastThuF.getDate() + ' ' + monthNameF + ' ' + yrF, underlying: underlyingF };
-            }
-        }
+    // 3) NFO without expiry_date — fallback to exchange + company name
+    if (item.security_source === 'securities_nfo') {
+        var fallback = [];
+        if (displayExchange) fallback.push(displayExchange);
+        if (item._instrumentName) fallback.push(item._instrumentName);
+        else if (item.company_name) fallback.push(item.company_name);
+        return fallback.join(' · ');
     }
 
     return null;
@@ -1762,7 +1770,7 @@ async function trWlSearchSecurities(query) {
     var nfoUrl = SUPABASE_URL + '/rest/v1/securities_nfo?or=(symbol.ilike.' + searchQ +
         ',underlying_symbol.ilike.' + searchQ +
         ',instrument_name.ilike.' + searchQ +
-        ')&is_active=eq.true&limit=15&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,broker_tokens&order=symbol';
+        ')&is_active=eq.true&limit=15&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,broker_tokens,expiry_date&order=symbol';
 
     resultsEl.innerHTML = '<div class="wl-add-no-results">Searching...</div>';
 
@@ -1818,7 +1826,9 @@ async function trWlSearchSecurities(query) {
                 broker_tokens: r.broker_tokens || {},
                 nse_symbol: '',
                 bse_symbol: '',
-                isAdded: !!existingKeys['securities_nfo:' + r.id]
+                isAdded: !!existingKeys['securities_nfo:' + r.id],
+                _expiryDate: r.expiry_date || null,
+                _instrumentName: r.instrument_name || ''
             });
         });
 
@@ -1934,6 +1944,9 @@ async function trWlAddItem(security) {
         newItem._fyersSymbol = fyersSymbol;
         if (security.security_source === 'securities_nfo') {
             newItem._displaySymbol = security.short_symbol;
+            newItem._expiryDate = security._expiryDate || null;
+            newItem._nfoExchange = security.exchange || '';
+            newItem._instrumentName = security._instrumentName || '';
         }
         if (security.security_source === 'options_dynamic') {
             newItem._displaySymbol = security.short_symbol;
