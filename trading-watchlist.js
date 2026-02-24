@@ -1293,27 +1293,27 @@ function trWlOpenAddDialog(wlId) {
 }
 
 /**
- * Build the sub-row expiry text for NFO/options items.
- * For NFO (securities_nfo): use the actual expiry_date from the database.
- * For options_dynamic: extract month/year from the symbol (no exact date available).
+ * Build the sub-row text for NFO/options items.
+ * Shows exchange + month/year only (no exact expiry date — rules vary by exchange/instrument).
  */
 function trWlBuildExpirySubRow(item, displaySym, displayExchange) {
-    // 1) NFO items — use real expiry_date from DB
-    if (item.security_source === 'securities_nfo' && item._expiryDate) {
-        var d = new Date(item._expiryDate + 'T00:00:00'); // parse YYYY-MM-DD
-        if (!isNaN(d.getTime())) {
-            var day = d.getDate();
-            var monthName = MONTHS_SHORT[d.getMonth()].charAt(0) + MONTHS_SHORT[d.getMonth()].slice(1).toLowerCase();
-            var yr = d.getFullYear();
-            var parts = [];
-            if (displayExchange) parts.push(displayExchange);
-            parts.push('Expiry: ' + day + ' ' + monthName + ' ' + yr);
-            if (item._instrumentName) parts.push(item._instrumentName);
-            return parts.join(' · ');
+    // 1) NFO items — show exchange + month & year from expiry_date
+    if (item.security_source === 'securities_nfo') {
+        var nfoParts = [];
+        if (displayExchange) nfoParts.push(displayExchange);
+        if (item._expiryDate) {
+            var d = new Date(item._expiryDate + 'T00:00:00');
+            if (!isNaN(d.getTime())) {
+                var monthName = MONTHS_SHORT[d.getMonth()].charAt(0) + MONTHS_SHORT[d.getMonth()].slice(1).toLowerCase();
+                nfoParts.push(monthName + ' ' + d.getFullYear());
+            }
         }
+        if (item._instrumentName) nfoParts.push(item._instrumentName);
+        else if (item.company_name) nfoParts.push(item.company_name);
+        return nfoParts.length > 0 ? nfoParts.join(' · ') : null;
     }
 
-    // 2) Options dynamic — extract from the display symbol's expiry token
+    // 2) Options dynamic — show exchange + month & year from symbol
     if (item.security_source === 'options_dynamic') {
         var symParts = displaySym.split(' ');
         var expiryToken = symParts[symParts.length - 1]; // e.g., "26MAR" or "27FEB26"
@@ -1324,18 +1324,16 @@ function trWlBuildExpirySubRow(item, displaySym, displayExchange) {
         if (monthlyMatch) {
             var mIdx = MONTHS_SHORT.indexOf(monthlyMatch[2]);
             if (mIdx >= 0) {
-                var yrM = 2000 + parseInt(monthlyMatch[1]);
-                expiryText = 'Expiry: ' + monthlyMatch[2].charAt(0) + monthlyMatch[2].slice(1).toLowerCase() + ' ' + yrM;
+                expiryText = monthlyMatch[2].charAt(0) + monthlyMatch[2].slice(1).toLowerCase() + ' ' + (2000 + parseInt(monthlyMatch[1]));
             }
         }
-        // Weekly: "27FEB26" (DDMMMYY) → "27 Feb 2026"
+        // Weekly: "27FEB26" (DDMMMYY) → "Feb 2026"
         if (!expiryText) {
             var weeklyMatch = expiryToken.match(/^(\d{2})([A-Z]{3})(\d{2})$/);
             if (weeklyMatch) {
                 var mIdx2 = MONTHS_SHORT.indexOf(weeklyMatch[2]);
                 if (mIdx2 >= 0) {
-                    var yrW = 2000 + parseInt(weeklyMatch[3]);
-                    expiryText = 'Expiry: ' + parseInt(weeklyMatch[1]) + ' ' + weeklyMatch[2].charAt(0) + weeklyMatch[2].slice(1).toLowerCase() + ' ' + yrW;
+                    expiryText = weeklyMatch[2].charAt(0) + weeklyMatch[2].slice(1).toLowerCase() + ' ' + (2000 + parseInt(weeklyMatch[3]));
                 }
             }
         }
@@ -1346,15 +1344,6 @@ function trWlBuildExpirySubRow(item, displaySym, displayExchange) {
             optParts.push(expiryText);
             return optParts.join(' · ');
         }
-    }
-
-    // 3) NFO without expiry_date — fallback to exchange + company name
-    if (item.security_source === 'securities_nfo') {
-        var fallback = [];
-        if (displayExchange) fallback.push(displayExchange);
-        if (item._instrumentName) fallback.push(item._instrumentName);
-        else if (item.company_name) fallback.push(item.company_name);
-        return fallback.join(' · ');
     }
 
     return null;
