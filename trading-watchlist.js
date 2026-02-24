@@ -427,10 +427,17 @@ async function trWlFetchPrices() {
             console.log('Watchlist: No Fyers response for:', noResponseItems.join(', '));
         }
 
-        // Lazy resolution: ONLY for items Fyers did not respond to (symbol not found).
-        // Skip if this is an auto-refresh cycle (not the first load).
+        // Lazy resolution + Yahoo fallback: ONLY on first load, not auto-refresh.
         if (!trWlFirstFetchDone) {
+            // Stage 2: Try alternate Fyers symbols for items Fyers did NOT respond to
             await trWlResolveUnpricedItems(respondedSymbols);
+
+            // Stage 3: Yahoo fallback for items still without a usable price
+            // This covers: (a) items Fyers didn't respond to AND Stage 2 failed,
+            //              (b) items Fyers responded to with lp=0 (valid symbol, no trades)
+            await trWlYahooFallback();
+            console.log('Watchlist: Stage 3 (Yahoo) done (' + Math.round(performance.now() - t0) + 'ms)');
+
             trWlFirstFetchDone = true;
         }
 
@@ -469,7 +476,13 @@ async function trWlResolveUnpricedItems(respondedSymbols) {
         return;
     }
 
-    console.log('Watchlist: Stage 2 — resolving', unresolvedItems.length, 'unrecognized symbols');
+    console.log('Watchlist: Stage 2 — resolving', unresolvedItems.length, 'unrecognized symbols:');
+    unresolvedItems.forEach(function(item) {
+        var hasBT = item._dbRec && item._dbRec.broker_tokens && item._dbRec.broker_tokens.fyers;
+        console.log('  →', item.short_symbol, '| fyersSym:', item._fyersSymbol,
+            '| broker_tokens.fyers:', hasBT ? JSON.stringify(item._dbRec.broker_tokens.fyers) : 'NONE',
+            '| security_id:', item.security_id);
+    });
 
     for (var i = 0; i < unresolvedItems.length; i++) {
         var item = unresolvedItems[i];
@@ -563,22 +576,21 @@ async function trWlResolveUnpricedItems(respondedSymbols) {
     }
 
     console.log('Watchlist: Stage 2 done (' + Math.round(performance.now() - t0) + 'ms)');
-
-    // Yahoo Finance fallback: for any items STILL without ANY response after Fyers resolution
-    await trWlYahooFallback();
-    console.log('Watchlist: Stage 3 (Yahoo) done (' + Math.round(performance.now() - t0) + 'ms)');
 }
 
-// Yahoo Finance fallback — fetch prices for symbols Fyers couldn't resolve
+// Yahoo Finance fallback — fetch prices for items without a usable price.
+// Covers two cases:
+//   (a) Fyers didn't respond at all (symbol not recognized, even after Stage 2 resolution)
+//   (b) Fyers responded with lp=0 (valid symbol but no trades — illiquid/market closed)
 async function trWlYahooFallback() {
     var yahooItems = [];
     trWlWatchlists.forEach(function(wl) {
         wl.items.forEach(function(item) {
             if (!item._fyersSymbol) return;
-            // Only target items that have NO price at all (Fyers didn't recognize the symbol).
-            // Items with lp=0 are valid Fyers responses — don't send to Yahoo.
-            if (trWlPrices[item._fyersSymbol]) return;
             if (item.security_source !== 'securities_db') return;
+            // Skip if we already have a positive price from Fyers (or a previous Yahoo fetch)
+            var existing = trWlPrices[item._fyersSymbol];
+            if (existing && existing.lp > 0) return;
             // Avoid duplicates
             var already = yahooItems.some(function(y) { return y.security_id === item.security_id; });
             if (already) return;
@@ -586,9 +598,17 @@ async function trWlYahooFallback() {
         });
     });
 
-    if (yahooItems.length === 0) return;
+    if (yahooItems.length === 0) {
+        console.log('Watchlist: Stage 3 (Yahoo) — nothing to fetch');
+        return;
+    }
 
-    console.log('Watchlist: Yahoo Finance fallback for', yahooItems.length, 'items');
+    console.log('Watchlist: Stage 3 (Yahoo) — fetching for', yahooItems.length, 'items:');
+    yahooItems.forEach(function(item) {
+        var existing = trWlPrices[item._fyersSymbol];
+        var reason = existing ? 'Fyers lp=0' : 'no Fyers response';
+        console.log('  →', item.short_symbol, '| reason:', reason, '| fyersSym:', item._fyersSymbol);
+    });
 
     // Build Yahoo symbol list: SYMBOL.NS for NSE, SYMBOL.BO for BSE
     var yahooSymbolMap = {}; // yahooSymbol → [items]
