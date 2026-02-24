@@ -530,14 +530,21 @@
 /* Purple: within 2% of alert */
 .wl-alert-dot.dot-near {
     background: #9333ea;
+    animation: dotBlink 1.2s ease-in-out infinite;
 }
 /* Green: triggered above */
 .wl-alert-dot.dot-triggered-above {
     background: #059669;
+    animation: dotBlink 1.2s ease-in-out infinite;
 }
 /* Red: triggered below */
 .wl-alert-dot.dot-triggered-below {
     background: #dc2626;
+    animation: dotBlink 1.2s ease-in-out infinite;
+}
+@keyframes dotBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
 }
 
 /* Alert popover — tiny inline editor */
