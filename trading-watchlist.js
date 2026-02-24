@@ -202,7 +202,11 @@ async function trWlLoadBrokerTokens() {
     var nfoIds = [];
     trWlWatchlists.forEach(function(wl) {
         wl.items.forEach(function(item) {
-            if (item.security_source === 'securities_nfo') {
+            if (item.security_source === 'options_dynamic') {
+                // Options: Fyers symbol IS the security_id — no DB lookup needed
+                item._fyersSymbol = item.security_id;
+                item._displaySymbol = item.short_symbol;
+            } else if (item.security_source === 'securities_nfo') {
                 nfoIds.push(item.security_id);
             } else {
                 dbIds.push(item.security_id);
@@ -897,13 +901,21 @@ function trWlRenderSecurityRow(item) {
     var high = price ? price.high : null;
     var low = price ? price.low : null;
 
-    // Display symbol — for NFO, prefer _displaySymbol (full like NATIONALUM26APRFUT)
+    // Display symbol — for NFO/Options, prefer _displaySymbol
     var displaySym = item._displaySymbol || item.short_symbol;
 
+    // Check if this is an expired option (options_dynamic with lp=0 or no price)
+    var isExpiredOption = item.security_source === 'options_dynamic' && (cmp === null || cmp === 0);
+
     // Price display
-    var priceHtml = cmp !== null
-        ? formatPrice(cmp, false)
-        : '<span style="color:#a0aec0;">—</span>';
+    var priceHtml;
+    if (isExpiredOption) {
+        priceHtml = '<span style="color:#a0aec0;font-size:11px;">Expired</span>';
+    } else if (cmp !== null) {
+        priceHtml = formatPrice(cmp, false);
+    } else {
+        priceHtml = '<span style="color:#a0aec0;">—</span>';
+    }
 
     // Change display
     var changeHtml = '';
@@ -948,7 +960,8 @@ function trWlRenderSecurityRow(item) {
     // Build tooltip: symbol + company name
     var tooltipText = displaySym + (item.company_name ? ' — ' + item.company_name : '');
 
-    return '<div class="wl-security-row" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + trWlEsc(tooltipText) + '" style="position:relative;">' +
+    var expiredClass = isExpiredOption ? ' wl-expired-option' : '';
+    return '<div class="wl-security-row' + expiredClass + '" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + trWlEsc(tooltipText) + '" style="position:relative;">' +
         '<div class="wl-row-top">' +
             '<div class="wl-sec-drag" title="Drag to reorder">☰</div>' +
             '<div class="wl-sec-symbol">' +
@@ -1225,10 +1238,357 @@ function trWlCloseAddDialog() {
     trWlRender();
 }
 
+// ============================================================================
+// OPTIONS ON-DEMAND SEARCH
+// ============================================================================
+
+// Indices that have weekly expiries (all others are monthly)
+var WEEKLY_EXPIRY_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
+var MONTHS_SHORT = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+/**
+ * Parse user input to detect options intent.
+ * Accepts formats like: "NIFTY 25000 CE", "RELIANCE 2800 PE MAR", "BANKNIFTY 52000CE FEB"
+ * Returns null if not an options query.
+ * Returns { underlying, strike, optionType, expiryHint } if detected.
+ */
+function trWlParseOptionsQuery(query) {
+    if (!query) return null;
+    var upper = query.toUpperCase().trim();
+
+    // Must contain CE or PE
+    if (upper.indexOf('CE') < 0 && upper.indexOf('PE') < 0) return null;
+
+    // Normalize — remove extra spaces, split by space
+    var parts = upper.replace(/\s+/g, ' ').split(' ');
+
+    var underlying = null;
+    var strike = null;
+    var optionType = null;
+    var expiryHint = null;
+
+    for (var i = 0; i < parts.length; i++) {
+        var p = parts[i];
+
+        // Check for option type (CE/PE) — could be standalone or suffix on a number
+        if (p === 'CE' || p === 'PE') {
+            optionType = p;
+            continue;
+        }
+        // Number with CE/PE suffix — e.g., "25000CE"
+        var suffixMatch = p.match(/^(\d+(?:\.\d+)?)(CE|PE)$/);
+        if (suffixMatch) {
+            strike = parseFloat(suffixMatch[1]);
+            optionType = suffixMatch[2];
+            continue;
+        }
+
+        // Pure number — strike price
+        if (/^\d+(?:\.\d+)?$/.test(p)) {
+            strike = parseFloat(p);
+            continue;
+        }
+
+        // Month hint — 3 letter month name
+        if (MONTHS_SHORT.indexOf(p) >= 0) {
+            expiryHint = p;
+            continue;
+        }
+
+        // Otherwise treat as underlying symbol
+        if (!underlying && /^[A-Z&]+$/.test(p)) {
+            underlying = p;
+        }
+    }
+
+    if (!underlying || strike === null || !optionType) return null;
+
+    return {
+        underlying: underlying,
+        strike: strike,
+        optionType: optionType,
+        expiryHint: expiryHint  // null or 'FEB', 'MAR', etc.
+    };
+}
+
+/**
+ * Build Fyers option symbol candidates for given underlying + strike + type.
+ * Generates candidates across multiple expiry dates.
+ * For weekly expiry underlyings: current + next 3 weekly expiries (Thu format: YYMMDD)
+ * For monthly: current month + next 2 months (YY + MMM format)
+ *
+ * Fyers options format:
+ *   Monthly: NSE:NIFTY25FEB25000CE  (exchange:underlying + YY + MMM + strike + CE/PE)
+ *   Weekly:  NSE:NIFTY2502725000CE  (exchange:underlying + YY + MM + DD + strike + CE/PE)
+ *            — BUT monthly expiry week still uses MMM format
+ */
+function trWlBuildOptionsCandidates(underlying, strike, optionType, expiryHint) {
+    var now = new Date();
+    var candidates = [];
+    var exchange = 'NSE';
+
+    // MCX underlyings
+    var mcxUnderlyings = ['CRUDEOIL', 'NATURALGAS', 'GOLD', 'GOLDM', 'SILVER', 'SILVERM', 'COPPER'];
+    if (mcxUnderlyings.indexOf(underlying) >= 0) {
+        exchange = 'MCX';
+    }
+
+    // Format strike — Fyers uses integer for whole numbers, decimal otherwise
+    var strikeStr = strike % 1 === 0 ? String(Math.round(strike)) : String(strike);
+
+    var isWeekly = WEEKLY_EXPIRY_UNDERLYINGS.indexOf(underlying) >= 0;
+
+    if (expiryHint) {
+        // User specified a month — generate only that month's candidates
+        var monthIdx = MONTHS_SHORT.indexOf(expiryHint);
+        var year = now.getFullYear();
+        // If the hint month is before current month, assume next year
+        if (monthIdx < now.getMonth()) year++;
+        var yy = String(year).slice(2);
+
+        // Monthly format: NSE:NIFTY25FEB25000CE
+        candidates.push(exchange + ':' + underlying + yy + expiryHint + strikeStr + optionType);
+
+        // For weekly underlyings, also generate weekly expiries within that month
+        if (isWeekly) {
+            var weeklyDates = trWlGetWeeklyExpiries(year, monthIdx);
+            var monthlyLast = trWlGetMonthlyExpiry(year, monthIdx);
+            weeklyDates.forEach(function(d) {
+                // Skip the monthly expiry date (already covered by MMM format)
+                if (d.getDate() === monthlyLast.getDate() && d.getMonth() === monthlyLast.getMonth()) return;
+                var mm = String(d.getMonth() + 1).padStart(2, '0');
+                var dd = String(d.getDate()).padStart(2, '0');
+                candidates.push(exchange + ':' + underlying + yy + mm + dd + strikeStr + optionType);
+            });
+        }
+    } else {
+        // No expiry hint — generate upcoming expiries
+        if (isWeekly) {
+            // Generate next 6 weekly expiries + monthly expiries for next 2 months
+            var seenDates = {};
+            for (var w = 0; w < 6; w++) {
+                var targetDate = new Date(now);
+                targetDate.setDate(targetDate.getDate() + (w * 7));
+                var thu = trWlNextThursday(targetDate);
+                var dateKey = thu.toISOString().slice(0, 10);
+                if (seenDates[dateKey]) continue;
+                seenDates[dateKey] = true;
+
+                var yr = thu.getFullYear();
+                var yy2 = String(yr).slice(2);
+
+                // Check if this is a monthly expiry (last Thursday of the month)
+                var monthlyExp = trWlGetMonthlyExpiry(yr, thu.getMonth());
+                if (thu.getDate() === monthlyExp.getDate() && thu.getMonth() === monthlyExp.getMonth()) {
+                    // Monthly format
+                    candidates.push(exchange + ':' + underlying + yy2 + MONTHS_SHORT[thu.getMonth()] + strikeStr + optionType);
+                } else {
+                    // Weekly format: YYMMDD
+                    var mm2 = String(thu.getMonth() + 1).padStart(2, '0');
+                    var dd2 = String(thu.getDate()).padStart(2, '0');
+                    candidates.push(exchange + ':' + underlying + yy2 + mm2 + dd2 + strikeStr + optionType);
+                }
+            }
+        } else {
+            // Monthly options — generate current month + next 2 months
+            for (var m = 0; m < 3; m++) {
+                var d2 = new Date(now.getFullYear(), now.getMonth() + m, 1);
+                var yy3 = String(d2.getFullYear()).slice(2);
+                candidates.push(exchange + ':' + underlying + yy3 + MONTHS_SHORT[d2.getMonth()] + strikeStr + optionType);
+            }
+        }
+    }
+
+    return candidates;
+}
+
+// Get the next Thursday on or after the given date
+function trWlNextThursday(from) {
+    var d = new Date(from);
+    var day = d.getDay(); // 0=Sun, 4=Thu
+    var diff = (4 - day + 7) % 7;
+    if (diff === 0 && d.getHours() >= 15) diff = 7; // If already past market close on Thu, next Thu
+    d.setDate(d.getDate() + diff);
+    return d;
+}
+
+// Get all Thursdays in a given month (for weekly expiry dates)
+function trWlGetWeeklyExpiries(year, month) {
+    var thursdays = [];
+    var d = new Date(year, month, 1);
+    while (d.getMonth() === month) {
+        if (d.getDay() === 4) { // Thursday
+            thursdays.push(new Date(d));
+        }
+        d.setDate(d.getDate() + 1);
+    }
+    return thursdays;
+}
+
+// Get the last Thursday of a month (monthly expiry date)
+function trWlGetMonthlyExpiry(year, month) {
+    var d = new Date(year, month + 1, 0); // Last day of month
+    while (d.getDay() !== 4) {
+        d.setDate(d.getDate() - 1);
+    }
+    return d;
+}
+
+/**
+ * Format an options Fyers symbol into a human-readable display label.
+ * e.g., "NSE:NIFTY25FEB25000CE" → "NIFTY 25000 CE 27FEB25"
+ *        "NSE:NIFTY250227 25000CE" → "NIFTY 25000 CE 27FEB25"
+ */
+function trWlFormatOptionsDisplay(fyersSymbol, underlying, strike, optionType) {
+    // Extract expiry info from the symbol
+    var afterExchange = fyersSymbol.split(':')[1] || fyersSymbol;
+    // Remove the underlying prefix
+    var rest = afterExchange.substring(underlying.length);
+    // rest is like "25FEB25000CE" (monthly) or "25022725000CE" (weekly)
+    var expiryPart = rest.replace(String(Math.round(strike)) + optionType, '').replace(String(strike) + optionType, '');
+
+    var expiryLabel = expiryPart; // fallback
+    if (expiryPart.length === 5) {
+        // Monthly: YYMMM → e.g., "25FEB"
+        expiryLabel = expiryPart; // already readable
+    } else if (expiryPart.length === 6) {
+        // Weekly: YYMMDD → convert to "DDMMMYY"
+        var yyW = expiryPart.substring(0, 2);
+        var mmW = parseInt(expiryPart.substring(2, 4)) - 1;
+        var ddW = expiryPart.substring(4, 6);
+        if (mmW >= 0 && mmW < 12) {
+            expiryLabel = ddW + MONTHS_SHORT[mmW] + yyW;
+        }
+    }
+
+    return underlying + ' ' + strike + ' ' + optionType + ' ' + expiryLabel;
+}
+
+/**
+ * Search options via Fyers API — builds candidates, batch validates, returns valid ones.
+ */
+async function trWlSearchOptions(parsed, resultsEl) {
+    if (!window.fyersToken) {
+        resultsEl.innerHTML = '<div class="wl-add-no-results">Fyers not connected — cannot search options.<br>' +
+            '<span style="font-size:11px;color:#718096;">Options search requires an active Fyers connection.</span></div>';
+        return;
+    }
+
+    resultsEl.innerHTML = '<div class="wl-add-no-results">Searching options...</div>';
+
+    var candidates = trWlBuildOptionsCandidates(parsed.underlying, parsed.strike, parsed.optionType, parsed.expiryHint);
+
+    if (candidates.length === 0) {
+        resultsEl.innerHTML = '<div class="wl-add-no-results">Could not build option symbols for "' +
+            trWlEsc(parsed.underlying) + '"</div>';
+        return;
+    }
+
+    console.log('Watchlist: Options search — candidates:', candidates);
+
+    try {
+        var data = await window.fyersCall({ action: 'quotes', symbols: candidates });
+        var validResults = [];
+
+        if (data && data.d && data.d.length > 0) {
+            data.d.forEach(function(item) {
+                if (item.v && item.v.lp > 0) {
+                    validResults.push({
+                        symbol: item.v.symbol,
+                        lp: item.v.lp,
+                        ch: item.v.ch || 0,
+                        chp: item.v.chp || 0
+                    });
+                }
+            });
+        }
+
+        if (validResults.length === 0) {
+            resultsEl.innerHTML = '<div class="wl-add-no-results">No active options found for "' +
+                trWlEsc(parsed.underlying + ' ' + parsed.strike + ' ' + parsed.optionType) + '"<br>' +
+                '<span style="font-size:11px;color:#718096;">Try a different strike price or expiry month.</span></div>';
+            return;
+        }
+
+        // Check which are already in the watchlist
+        var wl = trWlWatchlists.find(function(w) { return w.id === trWlAddTargetId; });
+        var existingKeys = {};
+        if (wl) {
+            wl.items.forEach(function(item) {
+                existingKeys[item.security_source + ':' + item.security_id] = true;
+            });
+        }
+
+        // Build search cache with options results
+        trWlSearchCache = [];
+        validResults.forEach(function(r) {
+            var displayLabel = trWlFormatOptionsDisplay(r.symbol, parsed.underlying, parsed.strike, parsed.optionType);
+            trWlSearchCache.push({
+                security_id: r.symbol,  // Fyers symbol IS the ID for options_dynamic
+                security_source: 'options_dynamic',
+                short_symbol: displayLabel,
+                company_name: parsed.underlying + ' Option',
+                security_type: 'OPT',
+                exchange: r.symbol.split(':')[0] || 'NSE',
+                broker_tokens: {},
+                nse_symbol: '',
+                bse_symbol: '',
+                isAdded: !!existingKeys['options_dynamic:' + r.symbol],
+                _lp: r.lp,
+                _ch: r.ch,
+                _chp: r.chp
+            });
+        });
+
+        // Render options results
+        var html = '';
+        trWlSearchCache.forEach(function(item, idx) {
+            var priceHtml = '<span style="font-size:11px;color:#4a5568;">₹' + formatPrice(item._lp, false) + '</span>';
+            var chpClass = item._chp >= 0 ? 'positive' : 'negative';
+            var chpSign = item._chp >= 0 ? '+' : '';
+            var changeHtml = '<span style="font-size:10px;" class="' + chpClass + '">' + chpSign + item._chp.toFixed(2) + '%</span>';
+
+            var tagsHtml = '<span class="wl-res-tags">' +
+                '<span class="wl-res-type">OPT</span>' +
+                '<span class="wl-res-exchange">' + trWlEsc(item.exchange) + '</span>' +
+                priceHtml + ' ' + changeHtml +
+                (item.isAdded ? '<span style="font-size:10px;color:#059669;">✓</span>' : '') +
+                '</span>';
+            html += '<div class="wl-add-result-item' + (item.isAdded ? ' added' : '') + '" data-idx="' + idx + '" title="' + trWlEsc(item.security_id) + '">' +
+                '<span class="wl-res-symbol">' + trWlEsc(item.short_symbol) + '</span>' +
+                '<span class="wl-res-name">' + trWlEsc(item.company_name) + '</span>' +
+                tagsHtml +
+                '</div>';
+        });
+
+        resultsEl.innerHTML = html;
+
+        // Attach click handlers
+        resultsEl.querySelectorAll('.wl-add-result-item:not(.added)').forEach(function(el) {
+            el.addEventListener('click', function() {
+                var idx = parseInt(el.dataset.idx);
+                var cached = trWlSearchCache[idx];
+                if (!cached) return;
+                trWlAddItem(cached);
+            });
+        });
+
+    } catch (err) {
+        resultsEl.innerHTML = '<div class="wl-add-no-results">Options search failed: ' + err.message + '</div>';
+    }
+}
+
 async function trWlSearchSecurities(query) {
     var resultsEl = document.getElementById('trWlAddResults');
     if (!query || query.length < 2) {
         resultsEl.innerHTML = '<div class="wl-add-no-results">Type at least 2 characters to search...</div>';
+        return;
+    }
+
+    // Check if this is an options query (contains CE/PE + strike)
+    var optionsParsed = trWlParseOptionsQuery(query);
+    if (optionsParsed) {
+        await trWlSearchOptions(optionsParsed, resultsEl);
         return;
     }
 
@@ -1366,12 +1726,17 @@ async function trWlAddItem(security) {
         return;
     }
 
-    // Derive Fyers symbol BEFORE insert — also try Fyers validation + DB update if missing
-    var fyersSymbol = trWlDeriveFyersSymbol(security);
+    // Derive Fyers symbol BEFORE insert — options_dynamic uses security_id directly
+    var fyersSymbol;
+    if (security.security_source === 'options_dynamic') {
+        fyersSymbol = security.security_id; // Fyers symbol IS the security_id
+    } else {
+        fyersSymbol = trWlDeriveFyersSymbol(security);
 
-    // If no broker_tokens.fyers and we have a symbol to try, validate via Fyers and update DB
-    if (!fyersSymbol && security.security_source === 'securities_db') {
-        fyersSymbol = await trWlResolveFyersSymbol(security);
+        // If no broker_tokens.fyers and we have a symbol to try, validate via Fyers and update DB
+        if (!fyersSymbol && security.security_source === 'securities_db') {
+            fyersSymbol = await trWlResolveFyersSymbol(security);
+        }
     }
 
     var sortOrder = wl.items.length;
@@ -1399,6 +1764,9 @@ async function trWlAddItem(security) {
         var newItem = (await resp.json())[0];
         newItem._fyersSymbol = fyersSymbol;
         if (security.security_source === 'securities_nfo') {
+            newItem._displaySymbol = security.short_symbol;
+        }
+        if (security.security_source === 'options_dynamic') {
             newItem._displaySymbol = security.short_symbol;
         }
 
@@ -1461,6 +1829,10 @@ async function trWlAddItem(security) {
 
 // Derive Fyers symbol from security data (sync — no API calls)
 function trWlDeriveFyersSymbol(security) {
+    // Options dynamic: the Fyers symbol IS the security_id
+    if (security.security_source === 'options_dynamic') {
+        return security.security_id;
+    }
     if (security.security_source === 'securities_nfo') {
         if (security.broker_tokens && security.broker_tokens.fyers) {
             return security.broker_tokens.fyers.symbol || security.broker_tokens.fyers.nse_symbol || null;
