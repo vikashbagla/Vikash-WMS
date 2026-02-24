@@ -17,6 +17,7 @@ var trWlRenamingId = null;     // Currently renaming watchlist
 var trWlSortState = {};        // watchlist_id → { field: 'name'|'chp', dir: 'asc'|'desc' }
 var trWlDragItemState = null;  // { wlId, itemId, fromIdx } for drag-reorder within card
 var trWlResolvedSymbols = {};  // security_id → true (tracks which items have been resolved)
+var trWlFirstFetchDone = false; // Skip resolution/Yahoo on auto-refresh cycles
 
 // ============================================================================
 // INITIALIZATION
@@ -364,8 +365,9 @@ async function trWlFetchPrices() {
         }
 
         trWlUpdatePriceStatus('loading');
+        var t0 = performance.now();
 
-        // Track which requested symbols got a valid response
+        // Track which requested symbols got a valid response (Fyers returned data for them)
         var respondedSymbols = {};
 
         // Batch into chunks of 50
@@ -384,14 +386,11 @@ async function trWlFetchPrices() {
                                 high: item.v.high_price || null,
                                 low: item.v.low_price || null
                             };
-                            // Store under the Fyers-returned symbol
                             trWlPrices[item.v.symbol] = priceData;
                             respondedSymbols[item.v.symbol] = true;
 
-                            // Also store under any requested symbol that might
-                            // differ from the returned canonical form
+                            // Also store under the requested symbol if base matches
                             chunk.forEach(function(reqSym) {
-                                // If the base symbol matches (ignoring exchange prefix differences)
                                 var retBase = item.v.symbol.replace(/^[A-Z]+:/, '');
                                 var reqBase = reqSym.replace(/^[A-Z]+:/, '');
                                 if (retBase === reqBase || reqSym === item.v.symbol) {
@@ -405,27 +404,38 @@ async function trWlFetchPrices() {
             } catch (err) {
                 console.warn('Watchlist: Fyers batch error:', err.message);
             }
-            // Small delay between batches
             if (i + batchSize < allSymbols.length) {
                 await new Promise(function(resolve) { setTimeout(resolve, 200); });
             }
         }
 
-        // Log unpriced symbols for debugging
-        var unpricedSymbols = [];
+        var t1 = performance.now();
+        console.log('Watchlist: Stage 1 (Fyers batch) took ' + Math.round(t1 - t0) + 'ms for ' + allSymbols.length + ' symbols');
+
+        // Identify items that Fyers did NOT respond for at all (symbol not recognized).
+        // Items with lp=0 but a valid response are NOT unresolved — Fyers knows the symbol,
+        // the stock just has no trades (illiquid, market closed, etc.)
+        var noResponseItems = [];
         trWlWatchlists.forEach(function(wl) {
             wl.items.forEach(function(item) {
-                if (item._fyersSymbol && (!trWlPrices[item._fyersSymbol] || trWlPrices[item._fyersSymbol].lp <= 0)) {
-                    unpricedSymbols.push(item.short_symbol + ' (' + item._fyersSymbol + ')');
+                if (item._fyersSymbol && !respondedSymbols[item._fyersSymbol]) {
+                    noResponseItems.push(item.short_symbol + ' (' + item._fyersSymbol + ')');
                 }
             });
         });
-        if (unpricedSymbols.length > 0) {
-            console.log('Watchlist: Unpriced after main batch:', unpricedSymbols.join(', '));
+        if (noResponseItems.length > 0) {
+            console.log('Watchlist: No Fyers response for:', noResponseItems.join(', '));
         }
 
-        // Lazy resolution: find items that didn't get prices and try alternate symbols
-        await trWlResolveUnpricedItems(respondedSymbols);
+        // Lazy resolution: ONLY for items Fyers did not respond to (symbol not found).
+        // Skip if this is an auto-refresh cycle (not the first load).
+        if (!trWlFirstFetchDone) {
+            await trWlResolveUnpricedItems(respondedSymbols);
+            trWlFirstFetchDone = true;
+        }
+
+        var t2 = performance.now();
+        console.log('Watchlist: Total price fetch took ' + Math.round(t2 - t0) + 'ms');
 
         trWlUpdatePriceStatus('live');
     } catch (err) {
@@ -437,24 +447,29 @@ async function trWlFetchPrices() {
 // Try alternate Fyers symbol formats for items that didn't get prices
 async function trWlResolveUnpricedItems(respondedSymbols) {
     if (!window.fyersToken) return;
+    var t0 = performance.now();
 
     var unresolvedItems = [];
     trWlWatchlists.forEach(function(wl) {
         wl.items.forEach(function(item) {
             if (!item._fyersSymbol) return;
-            // Skip if we already got a price for this symbol
-            if (trWlPrices[item._fyersSymbol] && trWlPrices[item._fyersSymbol].lp > 0) return;
+            // Only resolve items Fyers did NOT respond to at all (symbol not recognized).
+            // Items with lp=0 are valid — Fyers knows the symbol, just no trades.
+            if (respondedSymbols[item._fyersSymbol]) return;
             // Skip if we already attempted resolution for this security
             if (trWlResolvedSymbols[item.security_id]) return;
-            // Only resolve securities_db items (NFO symbols are usually correct)
+            // Only resolve securities_db items (NFO/options symbols are constructed correctly)
             if (item.security_source !== 'securities_db') return;
             unresolvedItems.push(item);
         });
     });
 
-    if (unresolvedItems.length === 0) return;
+    if (unresolvedItems.length === 0) {
+        console.log('Watchlist: Stage 2 — nothing to resolve (' + Math.round(performance.now() - t0) + 'ms)');
+        return;
+    }
 
-    console.log('Watchlist: Attempting lazy resolution for', unresolvedItems.length, 'unpriced items');
+    console.log('Watchlist: Stage 2 — resolving', unresolvedItems.length, 'unrecognized symbols');
 
     for (var i = 0; i < unresolvedItems.length; i++) {
         var item = unresolvedItems[i];
@@ -547,8 +562,11 @@ async function trWlResolveUnpricedItems(respondedSymbols) {
         }
     }
 
-    // Yahoo Finance fallback: for any items STILL without prices after Fyers resolution
+    console.log('Watchlist: Stage 2 done (' + Math.round(performance.now() - t0) + 'ms)');
+
+    // Yahoo Finance fallback: for any items STILL without ANY response after Fyers resolution
     await trWlYahooFallback();
+    console.log('Watchlist: Stage 3 (Yahoo) done (' + Math.round(performance.now() - t0) + 'ms)');
 }
 
 // Yahoo Finance fallback — fetch prices for symbols Fyers couldn't resolve
@@ -557,7 +575,9 @@ async function trWlYahooFallback() {
     trWlWatchlists.forEach(function(wl) {
         wl.items.forEach(function(item) {
             if (!item._fyersSymbol) return;
-            if (trWlPrices[item._fyersSymbol] && trWlPrices[item._fyersSymbol].lp > 0) return;
+            // Only target items that have NO price at all (Fyers didn't recognize the symbol).
+            // Items with lp=0 are valid Fyers responses — don't send to Yahoo.
+            if (trWlPrices[item._fyersSymbol]) return;
             if (item.security_source !== 'securities_db') return;
             // Avoid duplicates
             var already = yahooItems.some(function(y) { return y.security_id === item.security_id; });
