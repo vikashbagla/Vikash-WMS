@@ -101,6 +101,52 @@
 .tr-pill-dropdown .tr-pill:hover { border-color: #667eea; color: #667eea; }
 .tr-pill-dropdown .tr-pill.on { background: #667eea; border-color: #667eea; color: white; }
 
+/* Views dropdown */
+.tr-views-dropdown-btn {
+    padding: 4px 10px; border: 1px solid #e2e8f0; border-radius: 6px;
+    background: white; font-size: 12px; cursor: pointer; color: #4a5568;
+}
+.tr-views-dropdown-btn:hover { border-color: #667eea; color: #667eea; }
+.tr-views-dropdown {
+    position: absolute; top: 100%; left: 0; z-index: 100;
+    background: white; border: 1px solid #e2e8f0; border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); min-width: 220px; margin-top: 4px;
+}
+.tr-views-dropdown .tr-view-item {
+    padding: 8px 12px; cursor: pointer; font-size: 12px; display: flex;
+    align-items: center; justify-content: space-between; gap: 8px;
+}
+.tr-views-dropdown .tr-view-item:hover { background: #f0f4ff; }
+.tr-views-dropdown .tr-view-item.active { background: #eef2ff; font-weight: 600; color: #667eea; }
+.tr-views-dropdown .tr-view-item .tr-view-delete {
+    opacity: 0; color: #e53e3e; cursor: pointer; font-size: 14px;
+}
+.tr-views-dropdown .tr-view-item:hover .tr-view-delete { opacity: 1; }
+.tr-views-divider { border-top: 1px solid #e2e8f0; margin: 4px 0; }
+.tr-views-action {
+    padding: 8px 12px; cursor: pointer; font-size: 12px; color: #718096;
+}
+.tr-views-action:hover { background: #f0f4ff; color: #4a5568; }
+
+/* Save view button */
+.tr-save-view-btn {
+    padding: 4px 10px; border: 1px solid #e2e8f0; border-radius: 6px;
+    background: white; font-size: 12px; cursor: pointer; color: #4a5568;
+}
+.tr-save-view-btn:hover { border-color: #48bb78; color: #38a169; }
+
+/* View mode toggle */
+.tr-view-mode-group {
+    display: flex; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;
+}
+.tr-view-mode-btn {
+    padding: 4px 14px; border: none; background: white; font-size: 12px;
+    cursor: pointer; color: #718096; border-right: 1px solid #e2e8f0;
+}
+.tr-view-mode-btn:last-child { border-right: none; }
+.tr-view-mode-btn:hover { background: #f7fafc; color: #4a5568; }
+.tr-view-mode-btn.active { background: #667eea; color: white; }
+
 /* Override inner-table column widths for 9-col trading layout */
 .trading-container .detail-row .inner-table td:nth-child(1) { width: 16%; }
 .trading-container .detail-row .inner-table td:nth-child(2) { width: 10%; }
@@ -426,15 +472,40 @@
 
     <!-- Tabs -->
     <div class="trading-tabs">
-        <button class="trading-tab-btn active" data-tab="tr-portfolio">Portfolio</button>
-        <button class="trading-tab-btn" data-tab="tr-watchlist">Watchlist</button>
+        <button class="trading-tab-btn" data-tab="tr-portfolio">Portfolio</button>
+        <button class="trading-tab-btn active" data-tab="tr-watchlist">Watchlist</button>
         <button class="trading-tab-btn" data-tab="tr-transactions">Transactions</button>
     </div>
 
     <!-- Tab: Portfolio -->
-    <div id="tr-portfolio" class="trading-tab-content active">
-        <!-- Filters — same search/dropdown as portfolio, pills inside dropdown -->
-        <div class="filters-grid" style="flex-shrink:0;">
+    <div id="tr-portfolio" class="trading-tab-content">
+        <!-- Options bar: Saved Views + View Mode -->
+        <div class="tr-options-bar" style="flex-shrink:0; display:flex; align-items:center; gap:16px; padding:6px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; font-size:13px;">
+            <!-- Saved Views Dropdown -->
+            <div style="position:relative;">
+                <button id="tr-views-btn" class="tr-views-dropdown-btn" title="Saved Views">
+                    📋 <span id="tr-views-label">Views</span> ▾
+                </button>
+                <div id="tr-views-dropdown" class="tr-views-dropdown" style="display:none;">
+                    <div id="tr-views-list"></div>
+                    <div class="tr-views-divider"></div>
+                    <div class="tr-views-action" id="tr-views-manage">Manage Views...</div>
+                </div>
+            </div>
+            <button id="tr-save-view-btn" class="tr-save-view-btn" title="Save current filters as a view">💾 Save View</button>
+
+            <div style="flex:1;"></div>
+
+            <!-- View Mode Toggle -->
+            <div class="tr-view-mode-group">
+                <button class="tr-view-mode-btn active" data-mode="default">All</button>
+                <button class="tr-view-mode-btn" data-mode="holdings">Holdings</button>
+                <button class="tr-view-mode-btn" data-mode="fno">F&O</button>
+            </div>
+        </div>
+
+        <!-- Filters — 4 columns: Investor, Trader, Broker, Tag -->
+        <div class="filters-grid" style="flex-shrink:0; grid-template-columns: repeat(4, 1fr);">
             <div class="filter-group">
                 <div class="filter-header">
                     <label>Filter by Investor</label>
@@ -445,6 +516,17 @@
                     <div class="filter-dropdown tr-pill-dropdown" id="tr-investor-dropdown"></div>
                 </div>
                 <div class="filter-selected-tags" id="tr-selected-investors"></div>
+            </div>
+            <div class="filter-group">
+                <div class="filter-header">
+                    <label>Filter by Trader</label>
+                    <span class="clear-link" id="tr-clear-traders">Clear all</span>
+                </div>
+                <div class="filter-search-container">
+                    <input type="text" class="filter-search-input" id="tr-trader-search" placeholder="Type to search traders...">
+                    <div class="filter-dropdown tr-pill-dropdown" id="tr-trader-dropdown"></div>
+                </div>
+                <div class="filter-selected-tags" id="tr-selected-traders"></div>
             </div>
             <div class="filter-group">
                 <div class="filter-header">
@@ -475,6 +557,13 @@
                 </div>
                 <div class="filter-selected-tags" id="tr-selected-tags"></div>
             </div>
+        </div>
+
+        <!-- Save View Inline Prompt (hidden by default) -->
+        <div id="tr-save-view-prompt" style="display:none; padding:8px 12px; background:#eef2ff; border-bottom:1px solid #c7d2fe; font-size:13px; align-items:center; gap:8px;">
+            <input type="text" id="tr-save-view-name" placeholder="View name..." style="padding:4px 8px; border:1px solid #c7d2fe; border-radius:4px; font-size:13px; width:200px;">
+            <button id="tr-save-view-confirm" style="padding:4px 12px; background:#667eea; color:#fff; border:none; border-radius:4px; font-size:12px; cursor:pointer;">Save</button>
+            <button id="tr-save-view-cancel" style="padding:4px 12px; background:#e2e8f0; color:#4a5568; border:none; border-radius:4px; font-size:12px; cursor:pointer;">Cancel</button>
         </div>
 
         <!-- Portfolio Table (scrollable) -->
@@ -518,7 +607,7 @@
     </div>
 
     <!-- Tab: Watchlist (loaded on-demand from trading-watchlist.html + trading-watchlist.js) -->
-    <div id="tr-watchlist" class="trading-tab-content">
+    <div id="tr-watchlist" class="trading-tab-content active">
         <div id="tr-watchlist-container" style="display:flex;flex-direction:column;flex:1;min-height:0;">
             <div style="text-align:center;padding:60px;color:#9ca3af;">Loading watchlist...</div>
         </div>
