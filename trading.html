@@ -550,11 +550,13 @@
 
         <!-- Filters — View Mode + 4 filter columns -->
         <div style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
-            <!-- View Mode Toggle (moved here) -->
-            <div class="tr-view-mode-group" style="margin-top:18px;">
-                <button class="tr-view-mode-btn active" data-mode="default">All</button>
-                <button class="tr-view-mode-btn" data-mode="holdings">Holdings</button>
-                <button class="tr-view-mode-btn" data-mode="fno">F&O</button>
+            <!-- View Mode Toggle (stacked 2-row layout) -->
+            <div class="tr-view-mode-group" style="margin-top:12px; flex-direction:column; border:none; border-radius:0; overflow:visible; gap:3px;">
+                <button class="tr-view-mode-btn" data-mode="holdings" style="border:1px solid #e2e8f0; border-radius:4px; width:100%;">Holdings</button>
+                <div style="display:flex; gap:3px;">
+                    <button class="tr-view-mode-btn active" data-mode="default" style="border:1px solid #e2e8f0; border-radius:4px; flex:1;">All</button>
+                    <button class="tr-view-mode-btn" data-mode="fno" style="border:1px solid #e2e8f0; border-radius:4px; flex:1;">F&O</button>
+                </div>
             </div>
         <div class="filters-grid" style="flex:1; grid-template-columns: repeat(4, 1fr);">
             <div class="filter-group">

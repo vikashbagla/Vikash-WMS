@@ -1757,6 +1757,51 @@ function trRenderViewTabs() {
             }
             trApplyView(tab.dataset.viewId);
         });
+        // Double-click to rename
+        tab.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var viewId = tab.dataset.viewId;
+            var view = trPortfolioViews.find(function(v) { return v.id === viewId; });
+            if (!view) return;
+
+            // Replace tab content with inline input
+            var oldHtml = tab.innerHTML;
+            var input = document.createElement('input');
+            input.type = 'text';
+            input.value = view.name;
+            input.style.cssText = 'width:80px; font-size:11px; padding:1px 4px; border:1px solid #667eea; border-radius:3px; outline:none; background:white;';
+            tab.innerHTML = '';
+            tab.appendChild(input);
+            input.focus();
+            input.select();
+
+            function finishRename() {
+                var newName = input.value.trim();
+                if (newName && newName !== view.name) {
+                    view.name = newName;
+                    // Persist to DB
+                    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+                        method: 'PATCH',
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        body: JSON.stringify({ name: newName })
+                    }).catch(function(err) { console.warn('Failed to rename view:', err.message); });
+                }
+                trRenderViewTabs();
+                trRenderMoreDropdown();
+            }
+
+            input.addEventListener('blur', finishRename);
+            input.addEventListener('keydown', function(ke) {
+                if (ke.key === 'Enter') { ke.preventDefault(); input.blur(); }
+                if (ke.key === 'Escape') { ke.preventDefault(); input.value = view.name; input.blur(); }
+            });
+        });
     });
 }
 
@@ -1841,6 +1886,22 @@ function trRenderMoreDropdown() {
 function trApplyView(viewId) {
     var view = trPortfolioViews.find(function(v) { return v.id === viewId; });
     if (!view) return;
+
+    // Auto-add to tabs if not already showing
+    if (view.show_in_tabs === false || view.show_in_tabs === null) {
+        view.show_in_tabs = true;
+        // Persist to DB
+        fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ show_in_tabs: true })
+        }).catch(function(err) { console.warn('Failed to show tab:', err.message); });
+    }
 
     var f = view.filters || {};
     trSelectedInvestorIds = (f.investorIds || []).slice();
