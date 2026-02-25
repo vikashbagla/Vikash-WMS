@@ -116,39 +116,65 @@ function trSetupEventHandlers() {
         });
     });
 
-    // Saved Views dropdown
-    var viewsBtn = document.getElementById('tr-views-btn');
-    if (viewsBtn) {
-        viewsBtn.addEventListener('click', function(e) {
+    // More dropdown toggle
+    var moreBtn = document.getElementById('tr-more-btn');
+    if (moreBtn) {
+        moreBtn.addEventListener('click', function(e) {
             e.stopPropagation();
-            var dd = document.getElementById('tr-views-dropdown');
+            var dd = document.getElementById('tr-more-dropdown');
             dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
         });
     }
 
-    // Save View button
-    var saveViewBtn = document.getElementById('tr-save-view-btn');
-    if (saveViewBtn) {
-        saveViewBtn.addEventListener('click', function() {
-            var prompt = document.getElementById('tr-save-view-prompt');
-            prompt.style.display = prompt.style.display === 'none' ? 'flex' : 'none';
-            if (prompt.style.display === 'flex') {
-                document.getElementById('tr-save-view-name').focus();
+    // Update View button
+    var updateBtn = document.getElementById('tr-update-view-btn');
+    if (updateBtn) {
+        updateBtn.addEventListener('click', function() {
+            if (trActiveViewId) trUpdateCurrentView();
+        });
+    }
+
+    // Save New button → show inline prompt
+    var saveNewBtn = document.getElementById('tr-save-new-btn');
+    if (saveNewBtn) {
+        saveNewBtn.addEventListener('click', function() {
+            var prompt = document.getElementById('tr-save-prompt');
+            if (prompt.classList.contains('show')) {
+                prompt.classList.remove('show');
+            } else {
+                prompt.classList.add('show');
+                saveNewBtn.style.display = 'none';
+                document.getElementById('tr-save-prompt-name').focus();
             }
         });
     }
-    var saveConfirm = document.getElementById('tr-save-view-confirm');
-    if (saveConfirm) {
-        saveConfirm.addEventListener('click', function() {
-            var name = document.getElementById('tr-save-view-name').value.trim();
+    var savePromptOk = document.getElementById('tr-save-prompt-ok');
+    if (savePromptOk) {
+        savePromptOk.addEventListener('click', function() {
+            var name = document.getElementById('tr-save-prompt-name').value.trim();
             if (name) trSaveCurrentView(name);
         });
     }
-    var saveCancel = document.getElementById('tr-save-view-cancel');
-    if (saveCancel) {
-        saveCancel.addEventListener('click', function() {
-            document.getElementById('tr-save-view-prompt').style.display = 'none';
-            document.getElementById('tr-save-view-name').value = '';
+    var savePromptCancel = document.getElementById('tr-save-prompt-cancel');
+    if (savePromptCancel) {
+        savePromptCancel.addEventListener('click', function() {
+            document.getElementById('tr-save-prompt').classList.remove('show');
+            document.getElementById('tr-save-prompt-name').value = '';
+            document.getElementById('tr-save-new-btn').style.display = '';
+        });
+    }
+    // Enter key in save prompt
+    var savePromptName = document.getElementById('tr-save-prompt-name');
+    if (savePromptName) {
+        savePromptName.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                var name = savePromptName.value.trim();
+                if (name) trSaveCurrentView(name);
+            } else if (e.key === 'Escape') {
+                document.getElementById('tr-save-prompt').classList.remove('show');
+                savePromptName.value = '';
+                document.getElementById('tr-save-new-btn').style.display = '';
+            }
         });
     }
 
@@ -563,10 +589,10 @@ function trSetupFilters() {
         if (!e.target.closest('.filter-search-container')) {
             document.querySelectorAll('.tr-pill-dropdown').forEach(function(dd) { dd.classList.remove('show'); });
         }
-        // Close views dropdown too
-        if (!e.target.closest('#tr-views-btn') && !e.target.closest('#tr-views-dropdown')) {
-            var vdd = document.getElementById('tr-views-dropdown');
-            if (vdd) vdd.style.display = 'none';
+        // Close More dropdown too
+        if (!e.target.closest('#tr-more-btn') && !e.target.closest('#tr-more-dropdown')) {
+            var mdd = document.getElementById('tr-more-dropdown');
+            if (mdd) mdd.style.display = 'none';
         }
     });
 }
@@ -949,7 +975,6 @@ function trRenderPortfolio() {
 
     list.innerHTML = totalRow + rows;
     trUpdateSortIndicators();
-    trRenderSummaryCards(totalInvested, totalValue, totalPL, totalPLPct, holdings.length);
     trAttachRowListeners();
 }
 
@@ -1119,15 +1144,7 @@ function trBuildInvestorDetail(h, price, md) {
 // SUMMARY CARDS
 // ============================================================================
 
-function trRenderSummaryCards(invested, value, pl, plPct, stockCount) {
-    var container = document.getElementById('tr-portfolio-summary');
-    if (!container) return;
-    container.innerHTML =
-        '<div class="summary-card"><div class="summary-label">Total Invested</div><div class="summary-value">' + formatAmount(invested) + '</div></div>' +
-        '<div class="summary-card ' + getAmountClass(pl) + '"><div class="summary-label">Total P&L</div><div class="summary-value">' + formatAmount(pl) + '</div><div class="number-sub">' + formatPercent(plPct) + '</div></div>' +
-        '<div class="summary-card"><div class="summary-label">Current Value</div><div class="summary-value">' + formatAmount(value) + '</div></div>' +
-        '<div class="summary-card"><div class="summary-label">Holdings</div><div class="summary-value">' + stockCount + ' stocks</div></div>';
-}
+// Summary cards removed — TOTAL row in the table already shows all summary info
 
 // ============================================================================
 // TRANSACTIONS MODAL
@@ -1676,7 +1693,7 @@ async function trLoadTransactionsModule() {
 
 async function trLoadViews() {
     try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?select=id,name,filters,sort_order&order=sort_order.asc,created_at.asc', {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?select=id,name,filters,sort_order,is_default,show_in_tabs&order=sort_order.asc,created_at.asc', {
             headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
         });
         trPortfolioViews = resp.ok ? await resp.json() : [];
@@ -1684,11 +1701,94 @@ async function trLoadViews() {
         console.warn('Trading: Failed to load views:', err.message);
         trPortfolioViews = [];
     }
-    trRenderViewsDropdown();
+    trRenderViewTabs();
+    trRenderMoreDropdown();
+    trUpdateViewButtons();
+
+    // Auto-apply default view on first load (if no view active yet)
+    if (!trActiveViewId) {
+        var defaultView = trPortfolioViews.find(function(v) { return v.is_default; });
+        if (defaultView) {
+            trApplyView(defaultView.id);
+        }
+    }
 }
 
-function trRenderViewsDropdown() {
-    var list = document.getElementById('tr-views-list');
+// ---- VIEW TABS ----
+
+function trRenderViewTabs() {
+    var container = document.getElementById('tr-view-tabs');
+    if (!container) return;
+
+    // Default view first (locked left), then other tabs
+    var defaultView = trPortfolioViews.find(function(v) { return v.is_default; });
+    var tabViews = trPortfolioViews.filter(function(v) {
+        return v.show_in_tabs !== false && !v.is_default;
+    });
+
+    var html = '';
+
+    // Default view tab (if exists)
+    if (defaultView) {
+        var isActive = defaultView.id === trActiveViewId;
+        html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' + defaultView.id + '">' +
+            '<span class="tr-tab-star">★</span> ' + defaultView.name +
+            '</button>';
+    }
+
+    // Other pinned tabs
+    tabViews.forEach(function(v) {
+        var isActive = v.id === trActiveViewId;
+        html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' + v.id + '">' +
+            v.name +
+            ' <span class="tr-tab-close" data-close-id="' + v.id + '" title="Remove from tabs">✕</span>' +
+            '</button>';
+    });
+
+    container.innerHTML = html;
+
+    // Attach click handlers
+    container.querySelectorAll('.tr-view-tab').forEach(function(tab) {
+        tab.addEventListener('click', function(e) {
+            if (e.target.classList.contains('tr-tab-close')) {
+                e.stopPropagation();
+                trCloseViewTab(e.target.dataset.closeId);
+                return;
+            }
+            trApplyView(tab.dataset.viewId);
+        });
+    });
+}
+
+async function trCloseViewTab(viewId) {
+    // Set show_in_tabs = false in DB
+    try {
+        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ show_in_tabs: false })
+        });
+    } catch (err) {
+        console.warn('Failed to update tab state:', err.message);
+    }
+
+    // Update local state
+    var v = trPortfolioViews.find(function(v) { return v.id === viewId; });
+    if (v) v.show_in_tabs = false;
+
+    trRenderViewTabs();
+    trRenderMoreDropdown();
+}
+
+// ---- MORE DROPDOWN ----
+
+function trRenderMoreDropdown() {
+    var list = document.getElementById('tr-more-list');
     if (!list) return;
 
     if (trPortfolioViews.length === 0) {
@@ -1698,29 +1798,45 @@ function trRenderViewsDropdown() {
 
     list.innerHTML = trPortfolioViews.map(function(v) {
         var isActive = v.id === trActiveViewId;
-        return '<div class="tr-view-item' + (isActive ? ' active' : '') + '" data-view-id="' + v.id + '">' +
-            '<span>' + v.name + '</span>' +
-            '<span class="tr-view-delete" data-view-id="' + v.id + '" title="Delete view">×</span>' +
+        var isDefault = v.is_default;
+        var inTabs = v.show_in_tabs !== false;
+        return '<div class="tr-more-item' + (isActive ? ' active' : '') + '" data-view-id="' + v.id + '">' +
+            (isActive ? '<span style="color:#667eea;font-size:11px;">✓</span> ' : '<span style="width:16px;display:inline-block;"></span> ') +
+            '<span class="tr-more-name">' + v.name + '</span>' +
+            (isDefault ? '<span class="tr-more-badge">★ Default</span>' : '') +
+            '<span class="tr-more-actions">' +
+                (!isDefault ? '<button class="tr-more-action-btn" data-action="default" data-id="' + v.id + '" title="Set as default">★</button>' : '') +
+                (inTabs && !isDefault ? '<button class="tr-more-action-btn" data-action="hide-tab" data-id="' + v.id + '" title="Remove from tabs">⊟</button>' : '') +
+                (!inTabs ? '<button class="tr-more-action-btn" data-action="show-tab" data-id="' + v.id + '" title="Show in tabs">⊞</button>' : '') +
+                '<button class="tr-more-action-btn danger" data-action="delete" data-id="' + v.id + '" title="Delete view">✕</button>' +
+            '</span>' +
         '</div>';
     }).join('');
 
-    // Click to apply view
-    list.querySelectorAll('.tr-view-item').forEach(function(item) {
+    // Click to apply
+    list.querySelectorAll('.tr-more-item').forEach(function(item) {
         item.addEventListener('click', function(e) {
-            if (e.target.classList.contains('tr-view-delete')) return;
+            if (e.target.closest('.tr-more-action-btn')) return;
             trApplyView(item.dataset.viewId);
-            document.getElementById('tr-views-dropdown').style.display = 'none';
+            document.getElementById('tr-more-dropdown').style.display = 'none';
         });
     });
 
-    // Delete buttons
-    list.querySelectorAll('.tr-view-delete').forEach(function(btn) {
+    // Action buttons
+    list.querySelectorAll('.tr-more-action-btn').forEach(function(btn) {
         btn.addEventListener('click', function(e) {
             e.stopPropagation();
-            trDeleteView(btn.dataset.viewId);
+            var action = btn.dataset.action;
+            var id = btn.dataset.id;
+            if (action === 'default') trSetDefaultView(id);
+            else if (action === 'hide-tab') trCloseViewTab(id);
+            else if (action === 'show-tab') trShowViewTab(id);
+            else if (action === 'delete') trDeleteView(id);
         });
     });
 }
+
+// ---- APPLY VIEW ----
 
 function trApplyView(viewId) {
     var view = trPortfolioViews.find(function(v) { return v.id === viewId; });
@@ -1735,7 +1851,7 @@ function trApplyView(viewId) {
     trViewMode = f.viewMode || 'default';
     trActiveViewId = viewId;
 
-    // Update UI
+    // Update filter UI
     ['investor', 'trader', 'broker', 'tag'].forEach(function(type) {
         trSyncPillStates(type);
         trRenderSelectedTags(type);
@@ -1751,13 +1867,20 @@ function trApplyView(viewId) {
         btn.classList.toggle('active', btn.dataset.mode === trViewMode);
     });
 
-    // Update views label
-    var label = document.getElementById('tr-views-label');
-    if (label) label.textContent = view.name;
-
-    trRenderViewsDropdown();
+    trRenderViewTabs();
+    trRenderMoreDropdown();
+    trUpdateViewButtons();
     trRenderPortfolio();
 }
+
+function trUpdateViewButtons() {
+    var updateBtn = document.getElementById('tr-update-view-btn');
+    if (updateBtn) {
+        updateBtn.disabled = !trActiveViewId;
+    }
+}
+
+// ---- GET / SAVE / UPDATE / DELETE ----
 
 function trGetCurrentFilters() {
     return {
@@ -1773,6 +1896,7 @@ function trGetCurrentFilters() {
 async function trSaveCurrentView(name) {
     var filters = trGetCurrentFilters();
     var sortOrder = trPortfolioViews.length;
+    var isFirst = trPortfolioViews.length === 0; // First view becomes default
 
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
@@ -1783,16 +1907,16 @@ async function trSaveCurrentView(name) {
                 'Content-Type': 'application/json',
                 'Prefer': 'return=representation'
             },
-            body: JSON.stringify({ name: name, filters: filters, sort_order: sortOrder })
+            body: JSON.stringify({ name: name, filters: filters, sort_order: sortOrder, is_default: isFirst, show_in_tabs: true })
         });
         if (resp.ok) {
             var rows = await resp.json();
             if (rows.length > 0) {
                 trPortfolioViews.push(rows[0]);
                 trActiveViewId = rows[0].id;
-                var label = document.getElementById('tr-views-label');
-                if (label) label.textContent = name;
-                trRenderViewsDropdown();
+                trRenderViewTabs();
+                trRenderMoreDropdown();
+                trUpdateViewButtons();
                 showAlert('View "' + name + '" saved', 'success', 2000);
             }
         } else {
@@ -1803,8 +1927,37 @@ async function trSaveCurrentView(name) {
     }
 
     // Hide prompt
-    document.getElementById('tr-save-view-prompt').style.display = 'none';
-    document.getElementById('tr-save-view-name').value = '';
+    document.getElementById('tr-save-prompt').classList.remove('show');
+    document.getElementById('tr-save-prompt-name').value = '';
+    document.getElementById('tr-save-new-btn').style.display = '';
+}
+
+async function trUpdateCurrentView() {
+    if (!trActiveViewId) return;
+    var filters = trGetCurrentFilters();
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + trActiveViewId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ filters: filters })
+        });
+        if (resp.ok) {
+            // Update local state
+            var v = trPortfolioViews.find(function(v) { return v.id === trActiveViewId; });
+            if (v) v.filters = filters;
+            showAlert('View updated', 'success', 2000);
+        } else {
+            showAlert('Failed to update view', 'error');
+        }
+    } catch (err) {
+        showAlert('Failed to update view: ' + err.message, 'error');
+    }
 }
 
 async function trDeleteView(viewId) {
@@ -1823,15 +1976,86 @@ async function trDeleteView(viewId) {
             trPortfolioViews = trPortfolioViews.filter(function(v) { return v.id !== viewId; });
             if (trActiveViewId === viewId) {
                 trActiveViewId = null;
-                var label = document.getElementById('tr-views-label');
-                if (label) label.textContent = 'Views';
             }
-            trRenderViewsDropdown();
+            trRenderViewTabs();
+            trRenderMoreDropdown();
+            trUpdateViewButtons();
             showAlert('View deleted', 'success', 2000);
         }
     } catch (err) {
         showAlert('Failed to delete view: ' + err.message, 'error');
     }
+}
+
+// ---- DEFAULT VIEW ----
+
+async function trSetDefaultView(viewId) {
+    // Unset old default
+    var oldDefault = trPortfolioViews.find(function(v) { return v.is_default; });
+    if (oldDefault && oldDefault.id !== viewId) {
+        try {
+            await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + oldDefault.id, {
+                method: 'PATCH',
+                headers: {
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                body: JSON.stringify({ is_default: false })
+            });
+            oldDefault.is_default = false;
+        } catch (err) {
+            console.warn('Failed to unset old default:', err.message);
+        }
+    }
+
+    // Set new default
+    try {
+        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ is_default: true, show_in_tabs: true })
+        });
+        var v = trPortfolioViews.find(function(v) { return v.id === viewId; });
+        if (v) { v.is_default = true; v.show_in_tabs = true; }
+    } catch (err) {
+        console.warn('Failed to set default:', err.message);
+    }
+
+    trRenderViewTabs();
+    trRenderMoreDropdown();
+    showAlert('Default view updated', 'success', 2000);
+}
+
+// ---- SHOW VIEW TAB ----
+
+async function trShowViewTab(viewId) {
+    try {
+        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ show_in_tabs: true })
+        });
+    } catch (err) {
+        console.warn('Failed to show tab:', err.message);
+    }
+
+    var v = trPortfolioViews.find(function(v) { return v.id === viewId; });
+    if (v) v.show_in_tabs = true;
+
+    trRenderViewTabs();
+    trRenderMoreDropdown();
 }
 
 // ============================================================================

@@ -101,46 +101,95 @@
 .tr-pill-dropdown .tr-pill:hover { border-color: #667eea; color: #667eea; }
 .tr-pill-dropdown .tr-pill.on { background: #667eea; border-color: #667eea; color: white; }
 
-/* Views dropdown */
-.tr-views-dropdown-btn {
-    padding: 4px 10px; border: 1px solid #e2e8f0; border-radius: 6px;
-    background: white; font-size: 12px; cursor: pointer; color: #4a5568;
+/* View Tabs Bar */
+.tr-view-tabs-bar {
+    display: flex; align-items: center; gap: 0; padding: 0 8px;
+    background: #f8fafc; border-bottom: 1px solid #e2e8f0; flex-shrink: 0;
+    min-height: 34px; font-size: 12px;
 }
-.tr-views-dropdown-btn:hover { border-color: #667eea; color: #667eea; }
-.tr-views-dropdown {
-    position: absolute; top: 100%; left: 0; z-index: 100;
-    background: white; border: 1px solid #e2e8f0; border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1); min-width: 220px; margin-top: 4px;
+.tr-view-tabs-container {
+    display: flex; align-items: center; gap: 0; flex: 1; overflow-x: auto;
+    scrollbar-width: none; -ms-overflow-style: none;
 }
-.tr-views-dropdown .tr-view-item {
-    padding: 8px 12px; cursor: pointer; font-size: 12px; display: flex;
-    align-items: center; justify-content: space-between; gap: 8px;
+.tr-view-tabs-container::-webkit-scrollbar { display: none; }
+.tr-view-tab {
+    display: inline-flex; align-items: center; gap: 4px; padding: 7px 12px;
+    border: none; background: none; font-size: 12px; color: #718096;
+    cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent;
+    transition: all 0.1s; position: relative;
 }
-.tr-views-dropdown .tr-view-item:hover { background: #f0f4ff; }
-.tr-views-dropdown .tr-view-item.active { background: #eef2ff; font-weight: 600; color: #667eea; }
-.tr-views-dropdown .tr-view-item .tr-view-delete {
-    opacity: 0; color: #e53e3e; cursor: pointer; font-size: 14px;
+.tr-view-tab:hover { color: #4a5568; background: #edf2f7; }
+.tr-view-tab.active { color: #667eea; border-bottom-color: #667eea; font-weight: 600; }
+.tr-view-tab .tr-tab-star { color: #eab308; font-size: 11px; }
+.tr-view-tab .tr-tab-close {
+    font-size: 13px; color: #a0aec0; margin-left: 2px; opacity: 0;
+    transition: opacity 0.1s; line-height: 1;
 }
-.tr-views-dropdown .tr-view-item:hover .tr-view-delete { opacity: 1; }
-.tr-views-divider { border-top: 1px solid #e2e8f0; margin: 4px 0; }
-.tr-views-action {
-    padding: 8px 12px; cursor: pointer; font-size: 12px; color: #718096;
-}
-.tr-views-action:hover { background: #f0f4ff; color: #4a5568; }
+.tr-view-tab:hover .tr-tab-close { opacity: 1; }
+.tr-view-tab .tr-tab-close:hover { color: #e53e3e; }
 
-/* Save view button */
-.tr-save-view-btn {
-    padding: 4px 10px; border: 1px solid #e2e8f0; border-radius: 6px;
-    background: white; font-size: 12px; cursor: pointer; color: #4a5568;
+/* View tabs right actions */
+.tr-view-tabs-actions {
+    display: flex; align-items: center; gap: 4px; padding-left: 8px;
+    border-left: 1px solid #e2e8f0; margin-left: 4px; flex-shrink: 0;
 }
-.tr-save-view-btn:hover { border-color: #48bb78; color: #38a169; }
+.tr-vta-btn {
+    padding: 3px 8px; border: 1px solid #e2e8f0; border-radius: 4px;
+    background: white; font-size: 11px; cursor: pointer; color: #718096;
+    white-space: nowrap;
+}
+.tr-vta-btn:hover { border-color: #667eea; color: #667eea; }
+.tr-vta-btn:disabled { opacity: 0.4; cursor: not-allowed; border-color: #e2e8f0; color: #a0aec0; }
+.tr-vta-btn:disabled:hover { border-color: #e2e8f0; color: #a0aec0; }
+
+/* More dropdown */
+.tr-more-dropdown {
+    position: absolute; top: 100%; right: 0; z-index: 100;
+    background: white; border: 1px solid #e2e8f0; border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); min-width: 260px; margin-top: 4px;
+    max-height: 320px; overflow-y: auto;
+}
+.tr-more-item {
+    padding: 7px 12px; cursor: pointer; font-size: 12px; display: flex;
+    align-items: center; gap: 8px;
+}
+.tr-more-item:hover { background: #f0f4ff; }
+.tr-more-item.active { background: #eef2ff; font-weight: 600; color: #667eea; }
+.tr-more-item .tr-more-name { flex: 1; }
+.tr-more-item .tr-more-badge {
+    font-size: 10px; padding: 1px 5px; border-radius: 3px;
+    background: #fef9c3; color: #92400e;
+}
+.tr-more-item .tr-more-actions {
+    display: flex; align-items: center; gap: 6px; opacity: 0;
+}
+.tr-more-item:hover .tr-more-actions { opacity: 1; }
+.tr-more-action-btn {
+    background: none; border: none; cursor: pointer; font-size: 11px;
+    color: #718096; padding: 1px 3px; border-radius: 3px;
+}
+.tr-more-action-btn:hover { background: #edf2f7; color: #4a5568; }
+.tr-more-action-btn.danger:hover { background: #fef2f2; color: #dc2626; }
+.tr-more-divider { border-top: 1px solid #e2e8f0; margin: 4px 0; }
+
+/* Save view inline prompt */
+.tr-save-prompt {
+    display: none; align-items: center; gap: 6px; padding: 3px 0;
+}
+.tr-save-prompt.show { display: inline-flex; }
+.tr-save-prompt input {
+    padding: 2px 6px; border: 1px solid #c7d2fe; border-radius: 3px;
+    font-size: 11px; width: 140px; outline: none;
+}
+.tr-save-prompt input:focus { border-color: #667eea; }
 
 /* View mode toggle */
 .tr-view-mode-group {
     display: flex; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;
+    flex-shrink: 0;
 }
 .tr-view-mode-btn {
-    padding: 4px 14px; border: none; background: white; font-size: 12px;
+    padding: 3px 10px; border: none; background: white; font-size: 11px;
     cursor: pointer; color: #718096; border-right: 1px solid #e2e8f0;
 }
 .tr-view-mode-btn:last-child { border-right: none; }
@@ -479,33 +528,35 @@
 
     <!-- Tab: Portfolio -->
     <div id="tr-portfolio" class="trading-tab-content">
-        <!-- Options bar: Saved Views + View Mode -->
-        <div class="tr-options-bar" style="flex-shrink:0; display:flex; align-items:center; gap:16px; padding:6px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; font-size:13px;">
-            <!-- Saved Views Dropdown -->
-            <div style="position:relative;">
-                <button id="tr-views-btn" class="tr-views-dropdown-btn" title="Saved Views">
-                    📋 <span id="tr-views-label">Views</span> ▾
-                </button>
-                <div id="tr-views-dropdown" class="tr-views-dropdown" style="display:none;">
-                    <div id="tr-views-list"></div>
-                    <div class="tr-views-divider"></div>
-                    <div class="tr-views-action" id="tr-views-manage">Manage Views...</div>
+        <!-- View Tabs Bar -->
+        <div class="tr-view-tabs-bar">
+            <div class="tr-view-tabs-container" id="tr-view-tabs"></div>
+            <div class="tr-view-tabs-actions">
+                <div style="position:relative;">
+                    <button class="tr-vta-btn" id="tr-more-btn" title="All views">▾ More</button>
+                    <div class="tr-more-dropdown" id="tr-more-dropdown" style="display:none;">
+                        <div id="tr-more-list"></div>
+                    </div>
+                </div>
+                <button class="tr-vta-btn" id="tr-update-view-btn" title="Update current view with active filters" disabled>↻ Update</button>
+                <button class="tr-vta-btn" id="tr-save-new-btn" title="Save as new view">+ Save New</button>
+                <div class="tr-save-prompt" id="tr-save-prompt">
+                    <input type="text" id="tr-save-prompt-name" placeholder="View name...">
+                    <button class="tr-vta-btn" id="tr-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">✓</button>
+                    <button class="tr-vta-btn" id="tr-save-prompt-cancel">✕</button>
                 </div>
             </div>
-            <button id="tr-save-view-btn" class="tr-save-view-btn" title="Save current filters as a view">💾 Save View</button>
+        </div>
 
-            <div style="flex:1;"></div>
-
-            <!-- View Mode Toggle -->
-            <div class="tr-view-mode-group">
+        <!-- Filters — View Mode + 4 filter columns -->
+        <div style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
+            <!-- View Mode Toggle (moved here) -->
+            <div class="tr-view-mode-group" style="margin-top:18px;">
                 <button class="tr-view-mode-btn active" data-mode="default">All</button>
                 <button class="tr-view-mode-btn" data-mode="holdings">Holdings</button>
                 <button class="tr-view-mode-btn" data-mode="fno">F&O</button>
             </div>
-        </div>
-
-        <!-- Filters — 4 columns: Investor, Trader, Broker, Tag -->
-        <div class="filters-grid" style="flex-shrink:0; grid-template-columns: repeat(4, 1fr);">
+        <div class="filters-grid" style="flex:1; grid-template-columns: repeat(4, 1fr);">
             <div class="filter-group">
                 <div class="filter-header">
                     <label>Filter by Investor</label>
@@ -558,13 +609,7 @@
                 <div class="filter-selected-tags" id="tr-selected-tags"></div>
             </div>
         </div>
-
-        <!-- Save View Inline Prompt (hidden by default) -->
-        <div id="tr-save-view-prompt" style="display:none; padding:8px 12px; background:#eef2ff; border-bottom:1px solid #c7d2fe; font-size:13px; align-items:center; gap:8px;">
-            <input type="text" id="tr-save-view-name" placeholder="View name..." style="padding:4px 8px; border:1px solid #c7d2fe; border-radius:4px; font-size:13px; width:200px;">
-            <button id="tr-save-view-confirm" style="padding:4px 12px; background:#667eea; color:#fff; border:none; border-radius:4px; font-size:12px; cursor:pointer;">Save</button>
-            <button id="tr-save-view-cancel" style="padding:4px 12px; background:#e2e8f0; color:#4a5568; border:none; border-radius:4px; font-size:12px; cursor:pointer;">Cancel</button>
-        </div>
+        </div><!-- close filters flex wrapper -->
 
         <!-- Portfolio Table (scrollable) -->
         <div class="table-container" style="flex:1; min-height:0; overflow:auto;">
@@ -602,8 +647,6 @@
             </table>
         </div>
 
-        <!-- Summary Cards (pinned to bottom) -->
-        <div class="summary-cards" id="tr-portfolio-summary" style="flex-shrink:0;"></div>
     </div>
 
     <!-- Tab: Watchlist (loaded on-demand from trading-watchlist.html + trading-watchlist.js) -->
