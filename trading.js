@@ -384,8 +384,12 @@ function trBrkCode(brokerId) {
 
 function trInvBrk(txn) {
     var inv = trInvName(txn.investor_id);
+    var trd = txn.trader_id ? trInvName(txn.trader_id) : '';
     var brk = trBrkCode(txn.broker_id);
-    return brk ? inv + ' > ' + brk : inv;
+    var parts = [inv];
+    if (trd && trd !== inv) parts.push(trd);
+    if (brk) parts.push(brk);
+    return parts.join(' > ');
 }
 
 // ============================================================================
@@ -1747,36 +1751,50 @@ function trRenderViewTabs() {
 
     container.innerHTML = html;
 
-    // Attach click handlers
+    // Attach click/dblclick handlers with delay to distinguish them
     container.querySelectorAll('.tr-view-tab').forEach(function(tab) {
+        var clickTimer = null;
         tab.addEventListener('click', function(e) {
             if (e.target.classList.contains('tr-tab-close')) {
                 e.stopPropagation();
                 trCloseViewTab(e.target.dataset.closeId);
                 return;
             }
-            trApplyView(tab.dataset.viewId);
+            // Delay single click to allow dblclick to cancel it
+            if (clickTimer) clearTimeout(clickTimer);
+            clickTimer = setTimeout(function() {
+                clickTimer = null;
+                trApplyView(tab.dataset.viewId);
+            }, 250);
         });
         // Double-click to rename
         tab.addEventListener('dblclick', function(e) {
             e.preventDefault();
             e.stopPropagation();
+            // Cancel the pending single click
+            if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+
             var viewId = tab.dataset.viewId;
             var view = trPortfolioViews.find(function(v) { return v.id === viewId; });
             if (!view) return;
 
+            // Make sure this view is active
+            trActiveViewId = viewId;
+
             // Replace tab content with inline input
-            var oldHtml = tab.innerHTML;
             var input = document.createElement('input');
             input.type = 'text';
             input.value = view.name;
-            input.style.cssText = 'width:80px; font-size:11px; padding:1px 4px; border:1px solid #667eea; border-radius:3px; outline:none; background:white;';
+            input.style.cssText = 'width:100px; font-size:11px; padding:1px 4px; border:1px solid #667eea; border-radius:3px; outline:none; background:white;';
             tab.innerHTML = '';
             tab.appendChild(input);
             input.focus();
             input.select();
 
+            var finished = false;
             function finishRename() {
+                if (finished) return;
+                finished = true;
                 var newName = input.value.trim();
                 if (newName && newName !== view.name) {
                     view.name = newName;
@@ -1825,6 +1843,17 @@ async function trCloseViewTab(viewId) {
     // Update local state
     var v = trPortfolioViews.find(function(v) { return v.id === viewId; });
     if (v) v.show_in_tabs = false;
+
+    // If closing the active tab, switch to default view
+    if (trActiveViewId === viewId) {
+        var defaultView = trPortfolioViews.find(function(v) { return v.is_default; });
+        if (defaultView) {
+            trApplyView(defaultView.id);
+            return; // trApplyView already re-renders tabs/more/buttons
+        } else {
+            trActiveViewId = null;
+        }
+    }
 
     trRenderViewTabs();
     trRenderMoreDropdown();
