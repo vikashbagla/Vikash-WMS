@@ -474,10 +474,12 @@ function trTxRenderList(filtered) {
         if (txn.dont_display && trTxShowAll) rowClasses.push('trTx-hidden-row');
         var rowClass = rowClasses.length > 0 ? ' class="' + rowClasses.join(' ') + '"' : '';
 
-        // Investor @ Broker
+        // Investor > Trader > Broker
         var invBrk = trInvName(txn.investor_id);
+        var trdName = txn.trader_id ? trInvName(txn.trader_id) : '';
         var brkCode = trBrkCode(txn.broker_id);
-        if (brkCode) invBrk += ' @ ' + brkCode;
+        if (trdName && trdName !== invBrk) invBrk += ' > ' + trdName;
+        if (brkCode) invBrk += ' > ' + brkCode;
 
         // Type badge color
         var typeColor = '#667eea'; // default purple
