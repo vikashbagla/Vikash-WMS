@@ -1506,6 +1506,16 @@ function trOpenEditModal(txnId) {
     trEditingTxnId = txnId;
 
     document.getElementById('trEditInvestor').value = trInvName(txn.investor_id);
+
+    // Populate trader dropdown
+    var traderSelect = document.getElementById('trEditTrader');
+    traderSelect.innerHTML = '<option value="">(None)</option>' +
+        trInvestors.map(function(inv) {
+            var label = inv.short_name || inv.name;
+            var selected = inv.id === txn.trader_id ? ' selected' : '';
+            return '<option value="' + inv.id + '"' + selected + '>' + label + '</option>';
+        }).join('');
+
     document.getElementById('trEditBroker').value = trBrkCode(txn.broker_id) || '-';
     document.getElementById('trEditDate').value = txn.transaction_date || '';
     document.getElementById('trEditType').value = txn.transaction_type || 'BUY';
@@ -1596,7 +1606,10 @@ async function trSaveEdit() {
     var tagsRaw = document.getElementById('trEditTags').value.trim();
     var tags = tagsRaw ? tagsRaw.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : ['blank'];
 
+    var traderVal = document.getElementById('trEditTrader').value;
+
     var body = {
+        trader_id: traderVal || null,
         transaction_date: document.getElementById('trEditDate').value,
         transaction_type: type,
         symbol: document.getElementById('trEditSymbol').value,
