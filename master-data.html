@@ -154,20 +154,35 @@
         .ms-reset:hover { color: #667eea; }
         /* sub-tab styles removed — unified table used instead */
 
-        /* Sync preview panel */
-        .sync-preview { background: white; border: 1px solid #e2e8f0; border-radius: 8px;
-            padding: 14px; margin-bottom: 12px; flex-shrink: 0; }
-        .sync-preview h4 { font-size: 12px; font-weight: 700; color: #2d3748; margin-bottom: 10px; }
-        .sync-stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 12px; }
-        .sync-stat-box { background: #f7fafc; border-radius: 6px; padding: 8px 10px; text-align: center; border: 1px solid #e2e8f0; }
-        .sync-stat-box .num { font-size: 20px; font-weight: 700; }
-        .sync-stat-box .lbl { font-size: 10px; color: #718096; margin-top: 2px; }
+        /* Close button */
+        .btn-close-modal { width: 28px; height: 28px; display: inline-flex; align-items: center;
+            justify-content: center; background: #f7fafc; border: 1px solid #e2e8f0;
+            border-radius: 6px; cursor: pointer; font-size: 14px; color: #718096;
+            padding: 0; line-height: 1; }
+        .btn-close-modal:hover { background: #edf2f7; color: #4a5568; }
+
+        /* Sync preview modal */
+        .sync-modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.45); align-items: flex-start; justify-content: center;
+            z-index: 1100; padding: 16px; overflow-y: auto; }
+        .sync-modal-overlay.show { display: flex; }
+        .sync-modal { background: white; border-radius: 10px; width: 100%; max-width: 860px; margin: 30px auto;
+            display: flex; flex-direction: column; max-height: 85vh; }
+        .sync-modal-header { padding: 14px 20px; border-bottom: 1px solid #e2e8f0;
+            display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+        .sync-modal-header h3 { font-size: 14px; color: #2d3748; font-weight: 700; margin: 0; }
+        .sync-modal-body { padding: 20px; overflow-y: auto; flex: 1; min-height: 0; }
+        .sync-modal-footer { padding: 12px 20px; border-top: 1px solid #e2e8f0;
+            display: flex; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
+        .sync-stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-bottom: 16px; }
+        .sync-stat-box { background: #f7fafc; border-radius: 8px; padding: 12px 14px; text-align: center; border: 1px solid #e2e8f0; }
+        .sync-stat-box .num { font-size: 24px; font-weight: 700; }
+        .sync-stat-box .lbl { font-size: 10px; color: #718096; margin-top: 4px; }
         .sync-stat-new  .num { color: #22543d; }
         .sync-stat-edit .num { color: #744210; }
         .sync-stat-miss .num { color: #742a2a; }
         .sync-stat-same .num { color: #2b6cb0; }
-        .sync-actions { display: flex; justify-content: flex-end; gap: 8px; }
-        .btn-commit { background: #38a169; color: white; padding: 5px 16px; border: none;
+        .btn-commit { background: #38a169; color: white; padding: 6px 20px; border: none;
             border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
         .btn-commit:hover { background: #2f855a; }
         .btn-commit:disabled { background: #a0aec0; cursor: not-allowed; }
@@ -175,7 +190,7 @@
             border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
 
         /* Changes table */
-        .changes-section { margin-top: 10px; }
+        .changes-section { margin-top: 14px; }
         .changes-section h5 { font-size: 11px; font-weight: 600; color: #4a5568; margin-bottom: 6px;
             padding-bottom: 4px; border-bottom: 1px solid #e2e8f0; }
         .change-tag { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 10px; font-weight: 600; margin-right: 3px; }
@@ -276,42 +291,6 @@
                         <div class="sec-stat-pill">Active: <span id="statActive">—</span></div>
                         <div class="sec-stat-pill">Last sync: <span id="statLastSync">—</span></div>
                     </div>
-                    <!-- CM sync preview (shown during sync) -->
-                    <div class="sync-preview" id="syncPreview" style="display:none;margin-top:10px;">
-                        <h4>📋 Sync Preview — Review before committing</h4>
-                        <div class="progress-wrap" id="syncProgressWrap" style="display:none;">
-                            <div class="progress-bar" id="syncProgressBar" style="width:0%"></div>
-                        </div>
-                        <div id="syncProgressLabel" style="font-size:11px;color:#718096;margin-bottom:8px;display:none;"></div>
-                        <div class="sync-stats-grid">
-                            <div class="sync-stat-box sync-stat-new"><div class="num" id="pvNew">0</div><div class="lbl">New to Add</div></div>
-                            <div class="sync-stat-box sync-stat-edit"><div class="num" id="pvEdit">0</div><div class="lbl">Will Update</div></div>
-                            <div class="sync-stat-box sync-stat-miss"><div class="num" id="pvMiss">0</div><div class="lbl">In DB, Not in CSV</div></div>
-                            <div class="sync-stat-box sync-stat-same"><div class="num" id="pvSame">0</div><div class="lbl">Unchanged</div></div>
-                        </div>
-                        <div class="changes-section" id="changesSection" style="display:none;">
-                            <h5>Field-level changes (<span id="editCountLabel">0</span> securities will be updated)</h5>
-                            <div style="max-height:180px;overflow-y:auto;">
-                                <table class="data-table" id="changesTable">
-                                    <thead><tr><th>Symbol</th><th>ISIN</th><th>Field</th><th>Current Value</th><th>New Value</th></tr></thead>
-                                    <tbody id="changesTbody"></tbody>
-                                </table>
-                            </div>
-                            <div class="changes-section" id="missingSection" style="margin-top:10px;">
-                                <h5>In DB but not in CSV (will NOT be deleted)</h5>
-                                <div style="max-height:80px;overflow-y:auto;">
-                                    <table class="data-table" id="missingTable">
-                                        <thead><tr><th>Symbol</th><th>ISIN</th><th>Company</th><th>Note</th></tr></thead>
-                                        <tbody id="missingTbody"></tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="sync-actions">
-                            <button class="btn-secondary" onclick="cancelSync()">Cancel</button>
-                            <button class="btn-commit" id="btnCommit" onclick="commitSync()" disabled>✓ Commit to Database</button>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- RIGHT: F&O panel -->
@@ -325,24 +304,6 @@
                         <div class="sec-stat-pill">Total: <span id="foStatTotal">—</span></div>
                         <div class="sec-stat-pill">Active: <span id="foStatActive">—</span></div>
                         <div class="sec-stat-pill">Last sync: <span id="foStatLastSync">—</span></div>
-                    </div>
-                    <!-- F&O sync preview (shown during sync) -->
-                    <div class="sync-preview" id="foSyncPreview" style="display:none;margin-top:10px;">
-                        <h4>📋 F&amp;O Sync Preview</h4>
-                        <div class="progress-wrap" id="foProgressWrap" style="display:none;">
-                            <div class="progress-bar" id="foProgressBar" style="width:0%"></div>
-                        </div>
-                        <div id="foProgressLabel" style="font-size:11px;color:#718096;margin-bottom:8px;display:none;"></div>
-                        <div class="sync-stats-grid">
-                            <div class="sync-stat-box sync-stat-new"><div class="num" id="foPvNew">0</div><div class="lbl">New to Add</div></div>
-                            <div class="sync-stat-box sync-stat-edit"><div class="num" id="foPvEdit">0</div><div class="lbl">Will Update</div></div>
-                            <div class="sync-stat-box sync-stat-miss"><div class="num" id="foPvMiss">0</div><div class="lbl">Expired (deactivated)</div></div>
-                            <div class="sync-stat-box sync-stat-same"><div class="num" id="foPvSame">0</div><div class="lbl">Unchanged</div></div>
-                        </div>
-                        <div class="sync-actions">
-                            <button class="btn-secondary" onclick="cancelFOSync()">Cancel</button>
-                            <button class="btn-commit" id="btnFOCommit" onclick="commitFOSync()" disabled>✓ Commit to Database</button>
-                        </div>
                     </div>
                 </div>
 
@@ -517,6 +478,50 @@
             <div id="chargesGrid" style="overflow-x:auto;"></div>
             <p style="color:#999;font-size:11px;margin-top:8px;">Double-click any rate to edit. Press Enter to save, Escape to cancel.</p>
         </div>
+
+    <!-- Sync Preview Modal (shared by CM Sync and F&O Sync) -->
+    <div id="syncModal" class="sync-modal-overlay" onclick="if(event.target===this)closeSyncModal()">
+        <div class="sync-modal">
+            <div class="sync-modal-header">
+                <h3 id="syncModalTitle">📋 Sync Preview — Review before committing</h3>
+                <button class="btn-close-modal" onclick="closeSyncModal()" title="Close">✕</button>
+            </div>
+            <div class="sync-modal-body">
+                <div class="progress-wrap" id="syncProgressWrap" style="display:none;">
+                    <div class="progress-bar" id="syncProgressBar" style="width:0%"></div>
+                </div>
+                <div id="syncProgressLabel" style="font-size:11px;color:#718096;margin-bottom:10px;display:none;"></div>
+                <div class="sync-stats-grid">
+                    <div class="sync-stat-box sync-stat-new"><div class="num" id="pvNew">0</div><div class="lbl" id="pvNewLbl">New to Add</div></div>
+                    <div class="sync-stat-box sync-stat-edit"><div class="num" id="pvEdit">0</div><div class="lbl" id="pvEditLbl">Will Update</div></div>
+                    <div class="sync-stat-box sync-stat-miss"><div class="num" id="pvMiss">0</div><div class="lbl" id="pvMissLbl">In DB, Not in CSV</div></div>
+                    <div class="sync-stat-box sync-stat-same"><div class="num" id="pvSame">0</div><div class="lbl" id="pvSameLbl">Unchanged</div></div>
+                </div>
+                <div class="changes-section" id="changesSection" style="display:none;">
+                    <h5>Field-level changes (<span id="editCountLabel">0</span> securities will be updated)</h5>
+                    <div style="max-height:300px;overflow-y:auto;">
+                        <table class="data-table" id="changesTable">
+                            <thead><tr><th>Symbol</th><th>ISIN</th><th>Field</th><th>Current Value</th><th>New Value</th></tr></thead>
+                            <tbody id="changesTbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="changes-section" id="missingSection" style="display:none;">
+                    <h5>In DB but not in CSV (will NOT be deleted)</h5>
+                    <div style="max-height:200px;overflow-y:auto;">
+                        <table class="data-table" id="missingTable">
+                            <thead><tr><th>Symbol</th><th>ISIN</th><th>Company</th><th>Note</th></tr></thead>
+                            <tbody id="missingTbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="sync-modal-footer">
+                <button class="btn-secondary" id="btnSyncCancel" onclick="closeSyncModal()">Cancel</button>
+                <button class="btn-commit" id="btnCommit" onclick="syncModalCommit()" disabled>✓ Commit to Database</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Investor Modal -->
     <div id="investorModal" class="modal">

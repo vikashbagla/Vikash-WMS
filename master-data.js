@@ -1054,6 +1054,7 @@ function buildRecordMap(nseRows, bseRows) {
 // State for sync session ───────────────────────────────────────
 
 var _syncPending = null; // { toAdd:[], toUpdate:[], missing:[], unchanged:[] }
+var _syncModalMode = null; // 'cm' or 'fo' — tracks which sync is active in the modal
 
 // Compare two records for meaningful changes ───────────────────
 
@@ -1100,18 +1101,73 @@ async function fetchAllRows(table, select, orderCol) {
     return all;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Sync Modal helpers
+// ═══════════════════════════════════════════════════════════════
+
+function openSyncModal(title, missLabel) {
+    var modal = document.getElementById('syncModal');
+    document.getElementById('syncModalTitle').textContent = title;
+    // Reset stats
+    document.getElementById('pvNew').textContent = '0';
+    document.getElementById('pvEdit').textContent = '0';
+    document.getElementById('pvMiss').textContent = '0';
+    document.getElementById('pvSame').textContent = '0';
+    if (missLabel) document.getElementById('pvMissLbl').textContent = missLabel;
+    else document.getElementById('pvMissLbl').textContent = 'In DB, Not in CSV';
+    // Reset sections
+    document.getElementById('changesSection').style.display = 'none';
+    document.getElementById('missingSection').style.display = 'none';
+    document.getElementById('changesTbody').innerHTML = '';
+    document.getElementById('missingTbody').innerHTML = '';
+    // Reset progress
+    document.getElementById('syncProgressWrap').style.display = 'none';
+    document.getElementById('syncProgressBar').style.width = '0%';
+    document.getElementById('syncProgressBar').style.background = '';
+    document.getElementById('syncProgressLabel').style.display = 'none';
+    document.getElementById('syncProgressLabel').style.color = '';
+    // Reset commit button
+    var commitBtn = document.getElementById('btnCommit');
+    commitBtn.disabled = true;
+    commitBtn.textContent = '✓ Commit to Database';
+    // Show modal
+    modal.classList.add('show');
+    // ESC to close
+    document.addEventListener('keydown', _syncModalEscHandler);
+}
+
+function closeSyncModal() {
+    var modal = document.getElementById('syncModal');
+    modal.classList.remove('show');
+    document.removeEventListener('keydown', _syncModalEscHandler);
+    // Delegate cancel to the right sync type
+    if (_syncModalMode === 'cm') { _syncPending = null; }
+    if (_syncModalMode === 'fo') { _foCsvMap = null; _foDbMap = null; }
+    _syncModalMode = null;
+}
+
+function _syncModalEscHandler(e) {
+    if (e.key === 'Escape') closeSyncModal();
+}
+
+// Wire commit button to the right function based on mode
+function syncModalCommit() {
+    if (_syncModalMode === 'cm') commitSync();
+    else if (_syncModalMode === 'fo') commitFOSync();
+}
+
 // Main sync flow ───────────────────────────────────────────────
 
 async function startSync() {
     const btn = document.getElementById('btnSync');
-    const preview = document.getElementById('syncPreview');
     const progWrap = document.getElementById('syncProgressWrap');
     const progBar  = document.getElementById('syncProgressBar');
     const progLbl  = document.getElementById('syncProgressLabel');
 
     btn.disabled = true;
     btn.textContent = '⏳ Fetching CSVs...';
-    preview.style.display = 'block';
+    _syncModalMode = 'cm';
+    openSyncModal('📋 CM Sync Preview — Review before committing');
     progWrap.style.display = 'block';
     progLbl.style.display  = 'block';
     progBar.style.width = '10%';
@@ -1170,7 +1226,7 @@ async function startSync() {
         console.error(err);
     } finally {
         btn.disabled = false;
-        btn.textContent = '⟳ Sync from Fyers';
+        btn.textContent = '⟳ CM Sync';
     }
 }
 
@@ -1255,7 +1311,7 @@ async function commitSync() {
 
         alert('✓ Done! Added: ' + toAdd.length + ' | Updated: ' + toUpdate.length + sectorMsg);
         _syncPending = null;
-        document.getElementById('syncPreview').style.display = 'none';
+        closeSyncModal();
         await loadSecuritiesStats();
         await loadSecuritiesTable();
 
@@ -1270,7 +1326,7 @@ async function commitSync() {
 
 function cancelSync() {
     _syncPending = null;
-    document.getElementById('syncPreview').style.display = 'none';
+    closeSyncModal();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2078,11 +2134,11 @@ function setFOLoading(on, msg) {
 
 async function startFOSync() {
     setFOLoading(true, 'Downloading F&O data...');
-    const preview  = document.getElementById('foSyncPreview');
-    const progWrap = document.getElementById('foProgressWrap');
-    const progBar  = document.getElementById('foProgressBar');
-    const progLbl  = document.getElementById('foProgressLabel');
-    preview.style.display  = 'block';
+    _syncModalMode = 'fo';
+    openSyncModal('📋 F&O Sync Preview — Review before committing', 'Expired (deactivated)');
+    const progWrap = document.getElementById('syncProgressWrap');
+    const progBar  = document.getElementById('syncProgressBar');
+    const progLbl  = document.getElementById('syncProgressLabel');
     progWrap.style.display = 'block';
     progLbl.style.display  = 'block';
     progBar.style.width    = '5%';
@@ -2179,13 +2235,13 @@ async function startFOSync() {
         progLbl.textContent = 'Done.';
 
         // ── 5. Show preview ─────────────────────────────────────────
-        document.getElementById('foPvNew').textContent  = _foToAdd.length.toLocaleString('en-IN');
-        document.getElementById('foPvEdit').textContent = _foToUpdate.length.toLocaleString('en-IN');
-        document.getElementById('foPvMiss').textContent = _foToDeactivate.length.toLocaleString('en-IN');
-        document.getElementById('foPvSame').textContent =
+        document.getElementById('pvNew').textContent  = _foToAdd.length.toLocaleString('en-IN');
+        document.getElementById('pvEdit').textContent = _foToUpdate.length.toLocaleString('en-IN');
+        document.getElementById('pvMiss').textContent = _foToDeactivate.length.toLocaleString('en-IN');
+        document.getElementById('pvSame').textContent =
             (_foCsvMap.size - _foToAdd.length - _foToUpdate.length).toLocaleString('en-IN');
 
-        document.getElementById('btnFOCommit').disabled =
+        document.getElementById('btnCommit').disabled =
             (_foToAdd.length + _foToUpdate.length + _foToDeactivate.length === 0);
 
         progWrap.style.display = 'none';
@@ -2220,14 +2276,14 @@ function diffFORecord(db, csv) {
 }
 
 async function commitFOSync() {
-    const btn = document.getElementById('btnFOCommit');
+    const btn = document.getElementById('btnCommit');
     btn.disabled = true;
     btn.textContent = '⏳ Committing...';
     setFOLoading(true, 'Committing F&O contracts...');
 
-    const progWrap = document.getElementById('foProgressWrap');
-    const progBar  = document.getElementById('foProgressBar');
-    const progLbl  = document.getElementById('foProgressLabel');
+    const progWrap = document.getElementById('syncProgressWrap');
+    const progBar  = document.getElementById('syncProgressBar');
+    const progLbl  = document.getElementById('syncProgressLabel');
     progWrap.style.display = 'block';
     progLbl.style.display  = 'block';
     progBar.style.width    = '5%';
@@ -2279,9 +2335,8 @@ async function commitFOSync() {
             'expiry_date,strike_price,option_type,lot_size,is_active');
         renderUnified();
 
-        // Reset preview
-        document.getElementById('foSyncPreview').style.display = 'none';
-        _foCsvMap = null; _foDbMap = null;
+        // Close modal
+        closeSyncModal();
 
     } catch(e) {
         console.error('FO commit error', e);
@@ -2291,16 +2346,12 @@ async function commitFOSync() {
         btn.textContent = '✓ Commit to Database';
     } finally {
         setFOLoading(false);
-        progWrap.style.display = 'none';
-        progLbl.style.display  = 'none';
     }
 }
 
 function cancelFOSync() {
-    document.getElementById('foSyncPreview').style.display = 'none';
-    _foCsvMap = null; _foDbMap = null;
-    document.getElementById('btnFOCommit').disabled = true;
-    document.getElementById('btnFOSync').disabled   = false;
+    closeSyncModal();
+    document.getElementById('btnFOSync').disabled = false;
 }
 
 // ── Export FO to CSV ───────────────────────────────────────────
