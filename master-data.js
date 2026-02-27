@@ -2031,20 +2031,29 @@ async function importClassification(input) {
             `\n\nProceed with update?`;
         if (!confirm(msg)) return;
 
-        // Batch upsert (only updating classification fields, not other columns)
-        const BATCH = 200;
+        // Update each record by ISIN (cannot use upsert — partial columns hit NOT NULL constraints)
+        const BATCH = 50; // parallel batch size
         let done = 0;
+        let failed = 0;
         for (let i = 0; i < updates.length; i += BATCH) {
             const batch = updates.slice(i, i + BATCH);
-            const { error } = await window.supabaseClient
-                .from('securities_db')
-                .upsert(batch, { onConflict: 'isin', ignoreDuplicates: false });
-            if (error) throw error;
+            const results = await Promise.all(batch.map(upd => {
+                const isin = upd.isin;
+                const fields = { ...upd };
+                delete fields.isin;
+                return window.supabaseClient
+                    .from('securities_db')
+                    .update(fields)
+                    .eq('isin', isin);
+            }));
+            for (const r of results) {
+                if (r.error) { failed++; console.warn('Update failed:', r.error); }
+            }
             done += batch.length;
-            setSecLoading(true, `Updating... ${done}/${updates.length}`);
+            setSecLoading(true, `Updating... ${done}/${updates.length}` + (failed ? ` (${failed} failed)` : ''));
         }
 
-        alert(`✓ Classification updated for ${updates.length} records.`);
+        alert(`✓ Classification updated for ${updates.length - failed} records.` + (failed ? ` (${failed} failed)` : ''));
         await loadSecuritiesTable();
 
     } catch (e) {
