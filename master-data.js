@@ -2032,22 +2032,23 @@ async function importClassification(input) {
         if (!confirm(msg)) return;
 
         // Update each record by ISIN (cannot use upsert — partial columns hit NOT NULL constraints)
-        const BATCH = 50; // parallel batch size
+        const BATCH = 20; // parallel batch size (keep low to avoid rate limits)
         let done = 0;
         let failed = 0;
         for (let i = 0; i < updates.length; i += BATCH) {
             const batch = updates.slice(i, i + BATCH);
-            const results = await Promise.all(batch.map(upd => {
+            const results = await Promise.all(batch.map(async upd => {
                 const isin = upd.isin;
                 const fields = { ...upd };
                 delete fields.isin;
-                return window.supabaseClient
+                const res = await window.supabaseClient
                     .from('securities_db')
                     .update(fields)
                     .eq('isin', isin);
+                return { isin, ...res };
             }));
             for (const r of results) {
-                if (r.error) { failed++; console.warn('Update failed:', r.error); }
+                if (r.error) { failed++; console.warn('Update failed for ISIN ' + r.isin + ':', JSON.stringify(r.error)); }
             }
             done += batch.length;
             setSecLoading(true, `Updating... ${done}/${updates.length}` + (failed ? ` (${failed} failed)` : ''));
