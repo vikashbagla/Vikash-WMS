@@ -1477,7 +1477,7 @@ async function processTransactions(rawData) {
         // Tags normalization (rule A.2.1)
         var tags = ['blank'];
         if (tags_raw) {
-            var tagList = tags_raw.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; });
+            var tagList = tags_raw.split(/[,;]/).map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; });
             if (tagList.length > 0) tags = tagList;
         }
 
