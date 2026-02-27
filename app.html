@@ -321,6 +321,7 @@
                 const html = await (await fetch('transaction-import.html')).text();
                 injectModule(html, container);
                 await loadScript('transaction-import.js');
+                await loadScript('transaction-template.js');
                 if (typeof initTransactionImport === 'function') initTransactionImport();
 
             } else if (moduleName === 'trading') {

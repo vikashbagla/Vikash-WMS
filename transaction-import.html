@@ -101,7 +101,10 @@
                 <div class="upload-hint">or click to browse (.xlsx, .xls)</div>
                 <input type="file" id="fileInput" accept=".xlsx,.xls">
             </div>
-            <button class="btn" id="excelChooseFileBtn" style="margin-top:8px;">Choose File</button>
+            <div style="display:flex; align-items:center; gap:12px; margin-top:8px;">
+                <button class="btn" id="excelChooseFileBtn">Choose File</button>
+                <a href="#" onclick="downloadTransactionTemplate(); return false;" style="font-size:11px; color:#667eea; text-decoration:none; font-weight:500;">⬇ Download Template</a>
+            </div>
         </div>
 
         <!-- ===== CONTRACT NOTE IMPORT BOX ===== -->
