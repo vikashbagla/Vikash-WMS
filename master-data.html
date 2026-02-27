@@ -285,6 +285,8 @@
                         <button class="btn-primary" onclick="startSectorSync()" id="btnSectorSync" style="background:#38a169;">⟳ Sector Sync</button>
                         <button class="btn-primary" onclick="startSizeSync()" id="btnSizeSync" style="background:#d69e2e;">⟳ Update Size</button>
                         <button class="btn-secondary" onclick="exportSecuritiesExcel()" id="btnExport">⬇ Export</button>
+                        <button class="btn-secondary" onclick="document.getElementById('classImportFile').click()" id="btnClassImport" style="background:#805ad5;color:#fff;">⬆ Import Classification</button>
+                        <input type="file" id="classImportFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="importClassification(this)">
                     </div>
                     <div class="sec-panel-stats">
                         <div class="sec-stat-pill">Total: <span id="statTotal">—</span></div>

@@ -1059,8 +1059,10 @@ var _syncModalMode = null; // 'cm' or 'fo' — tracks which sync is active in th
 // Compare two records for meaningful changes ───────────────────
 
 var TRACKED_FIELDS = ['company_name','symbol','nse_symbol','nse_script_code',
-    'bse_symbol','bse_script_code','lot_size','security_type','asset_class',
+    'bse_symbol','bse_script_code','lot_size',
     'nse_series','bse_series','fyers_instr_type'];
+// NOTE: security_type and asset_class are excluded from TRACKED_FIELDS
+// because they are manually curated and should not be overwritten by sync.
 
 function diffRecord(existing, incoming) {
     const diffs = [];
@@ -1199,9 +1201,13 @@ async function startSync() {
             if (!dbMap.has(isin)) {
                 toAdd.push(incoming);
             } else {
-                const diffs = diffRecord(dbMap.get(isin), incoming);
+                const ex = dbMap.get(isin);
+                // Preserve manually curated classification fields from DB
+                incoming.security_type = ex.security_type;
+                incoming.asset_class   = ex.asset_class;
+                const diffs = diffRecord(ex, incoming);
                 if (diffs.length > 0) {
-                    toUpdate.push({ record: incoming, diffs, existing: dbMap.get(isin) });
+                    toUpdate.push({ record: incoming, diffs, existing: ex });
                 } else {
                     unchanged.push(isin);
                 }
@@ -1968,6 +1974,82 @@ async function exportSecuritiesExcel() {
     } catch(e) {
         console.error('Export failed', e);
         alert('Export failed: ' + e.message);
+    } finally {
+        setSecLoading(false);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CLASSIFICATION IMPORT — Bulk update security_type & asset_class from Excel
+// ═══════════════════════════════════════════════════════════════
+
+async function importClassification(input) {
+    if (!input.files || !input.files[0]) return;
+    const file = input.files[0];
+    input.value = ''; // reset so same file can be re-selected
+
+    setSecLoading(true, 'Reading Excel file...');
+    try {
+        const data = await file.arrayBuffer();
+        const wb = XLSX.read(data, { type: 'array' });
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+
+        if (!rows.length) { alert('No data found in file.'); return; }
+
+        // Validate required columns
+        const sample = rows[0];
+        if (!('isin' in sample)) {
+            alert('Missing required column: isin\nThe Excel must have columns: isin, security_type, asset_class');
+            return;
+        }
+        const hasType  = 'security_type' in sample;
+        const hasClass = 'asset_class' in sample;
+        if (!hasType && !hasClass) {
+            alert('Excel must have at least one of: security_type, asset_class');
+            return;
+        }
+
+        // Build update map keyed by ISIN
+        const updates = [];
+        let skipped = 0;
+        for (const r of rows) {
+            const isin = (r.isin || '').trim();
+            if (!isin) { skipped++; continue; }
+            const upd = {};
+            if (hasType  && r.security_type != null) upd.security_type = String(r.security_type).trim();
+            if (hasClass && r.asset_class   != null) upd.asset_class   = String(r.asset_class).trim();
+            if (Object.keys(upd).length === 0) { skipped++; continue; }
+            upd.isin = isin;
+            updates.push(upd);
+        }
+
+        if (!updates.length) { alert('No valid rows to update.'); return; }
+
+        const msg = `Found ${updates.length} records to update` +
+            (skipped ? ` (${skipped} skipped)` : '') +
+            `.\n\nFields: ${[hasType ? 'security_type' : '', hasClass ? 'asset_class' : ''].filter(Boolean).join(', ')}` +
+            `\n\nProceed with update?`;
+        if (!confirm(msg)) return;
+
+        // Batch upsert (only updating classification fields, not other columns)
+        const BATCH = 200;
+        let done = 0;
+        for (let i = 0; i < updates.length; i += BATCH) {
+            const batch = updates.slice(i, i + BATCH);
+            const { error } = await window.supabaseClient
+                .from('securities_db')
+                .upsert(batch, { onConflict: 'isin', ignoreDuplicates: false });
+            if (error) throw error;
+            done += batch.length;
+            setSecLoading(true, `Updating... ${done}/${updates.length}`);
+        }
+
+        alert(`✓ Classification updated for ${updates.length} records.`);
+        await loadSecuritiesTable();
+
+    } catch (e) {
+        console.error('Classification import failed', e);
+        alert('Import failed: ' + e.message);
     } finally {
         setSecLoading(false);
     }
