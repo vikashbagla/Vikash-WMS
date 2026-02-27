@@ -328,9 +328,11 @@ function trRestoreTab() {
 // ============================================================================
 
 async function trLoadData() {
+    var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+
     // Load ALL transactions (no transaction_type filter — includes DIVIDEND, etc.)
-    var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display&order=transaction_date.asc', {
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+    var resp = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display&order=transaction_date.asc', {
+        headers: headers
     });
     if (!resp.ok) throw new Error('Failed to load transactions: HTTP ' + resp.status);
     var txnData = await resp.json();
@@ -339,14 +341,14 @@ async function trLoadData() {
     trTransactions = txnData;
 
     // Load investors
-    var invResp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name&order=name', {
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+    var invResp = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name&order=name', {
+        headers: headers
     });
     trInvestors = invResp.ok ? await invResp.json() : [];
 
     // Load brokers
-    var brkResp = await fetch(SUPABASE_URL + '/rest/v1/brokers?select=id,name,broker_code&order=name', {
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+    var brkResp = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/brokers?select=id,name,broker_code&order=name', {
+        headers: headers
     });
     trBrokers = brkResp.ok ? await brkResp.json() : [];
 
@@ -824,8 +826,9 @@ function trRenderPortfolio() {
     }
 
     if (holdings.length === 0) {
-        list.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#9ca3af;">No holdings to display</td></tr>';
-        document.getElementById('tr-portfolio-summary').innerHTML = '';
+        if (list) list.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#9ca3af;">No holdings to display</td></tr>';
+        var summaryEl = document.getElementById('tr-portfolio-summary');
+        if (summaryEl) summaryEl.innerHTML = '';
         trUpdateSortIndicators();
         return;
     }

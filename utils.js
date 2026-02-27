@@ -152,6 +152,17 @@ const debounce = (func, wait) => {
     };
 };
 
+// Fetch with timeout (default 15s) — prevents app from hanging on network issues
+function fetchWithTimeout(url, options, timeoutMs) {
+    if (!timeoutMs) timeoutMs = 15000;
+    return Promise.race([
+        fetch(url, options),
+        new Promise(function(_, reject) {
+            setTimeout(function() { reject(new Error('Request timed out after ' + (timeoutMs / 1000) + 's')); }, timeoutMs);
+        })
+    ]);
+}
+
 // Show loading indicator
 const showLoading = (show, containerId = 'loading-indicator') => {
     const loader = document.getElementById(containerId);
