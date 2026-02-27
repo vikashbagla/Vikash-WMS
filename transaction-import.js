@@ -35,7 +35,18 @@ var existingTags = [];         // Distinct tags from transactions table for pill
 // Initialization
 // ============================================================================
 
+var _tiInitDone = false;  // Guard against multiple init calls (tab re-navigation)
+var _refDataReady = false; // True once loadReferenceData() has completed at least once
+
 function initTransactionImport() {
+    if (_tiInitDone) {
+        // Already initialized — just reload reference data (don't re-register listeners)
+        loadReferenceData();
+        loadCnAccounts();
+        return;
+    }
+    _tiInitDone = true;
+
     // Excel upload handlers
     var uploadArea = document.getElementById('uploadArea');
     var fileInput = document.getElementById('fileInput');
@@ -115,6 +126,7 @@ async function loadReferenceData() {
         resp = await fetch(SUPABASE_URL + '/rest/v1/regulatory_charges_config?effective_to=is.null&select=*', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
         regulatoryCharges = await resp.json();
 
+        _refDataReady = true;
         console.log('Reference data loaded: ' + investors.length + ' investors, ' + brokers.length + ' brokers, ' + ibAccounts.length + ' IBA rates, ' + regulatoryCharges.length + ' regulatory configs');
     } catch (e) {
         console.error('Error loading reference data:', e);
@@ -1345,6 +1357,12 @@ function handleFile(file) {
     var reader = new FileReader();
     reader.onload = async function(e) {
         try {
+            // Ensure reference data is loaded before processing (prevents race condition)
+            if (!_refDataReady) {
+                tiLoading(true, 'Loading reference data...');
+                await loadReferenceData();
+            }
+
             var data = new Uint8Array(e.target.result);
             var workbook = XLSX.read(data, { type: 'array', cellDates: true });
             var sheetName = '1. Transactions';
