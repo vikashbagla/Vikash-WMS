@@ -216,13 +216,28 @@ async function loadExistingTags() {
 // ============================================================================
 
 // Case-insensitive investor lookup by name or short_name (rule F.1.2)
+// Falls back to "starts with" match if exact match fails (e.g. "Arti" → "Arti Jain")
 function matchInvestor(input) {
     if (!input) return null;
     var key = String(input).trim().toLowerCase();
     if (!key) return null;
     var id = investorCache[key];
-    if (!id) return null;
-    return { id: id, name: investorObjMap[id] ? investorObjMap[id].name : input };
+    if (id) return { id: id, name: investorObjMap[id] ? investorObjMap[id].name : input };
+
+    // Fallback: find cache keys that start with the input (single match only)
+    var partialMatches = [];
+    var cacheKeys = Object.keys(investorCache);
+    for (var i = 0; i < cacheKeys.length; i++) {
+        if (cacheKeys[i].indexOf(key) === 0) {
+            var mid = investorCache[cacheKeys[i]];
+            if (partialMatches.indexOf(mid) < 0) partialMatches.push(mid);
+        }
+    }
+    if (partialMatches.length === 1) {
+        id = partialMatches[0];
+        return { id: id, name: investorObjMap[id] ? investorObjMap[id].name : input };
+    }
+    return null;
 }
 
 // Case-insensitive broker lookup by name or broker_code (rule F.1.4)
@@ -286,6 +301,45 @@ function excelDateToISO(dateValue) {
     return { error: 'Invalid date type: ' + typeof dateValue };
 }
 
+// Parse NFO symbol format: UNDERLYING{YY}{MON}{STRIKE}{CE|PE} or UNDERLYING{YY}{MON}FUT
+// e.g. MANAPPURAM26MAR305PE → { underlying: 'MANAPPURAM', expiryStr: '26MAR', strikePrice: 305, optionType: 'PE' }
+// e.g. NIFTY26FEBFUT → { underlying: 'NIFTY', expiryStr: '26FEB', strikePrice: null, optionType: null }
+var NFO_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+function parseNfoSymbol(sym) {
+    if (!sym) return null;
+    sym = sym.toUpperCase();
+
+    // Try options pattern: {UNDERLYING}{YY}{MON}{STRIKE}{CE|PE}
+    var optMatch = sym.match(/^(.+?)(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d+(?:\.\d+)?)(CE|PE)$/);
+    if (optMatch) {
+        var monIdx = NFO_MONTHS.indexOf(optMatch[3]);
+        var yr = 2000 + parseInt(optMatch[2]);
+        return {
+            underlying: optMatch[1],
+            expiryStr: optMatch[2] + optMatch[3],
+            expiryDate: yr + '-' + String(monIdx + 1).padStart(2, '0') + '-28',  // approximate last Thursday
+            strikePrice: parseFloat(optMatch[4]),
+            optionType: optMatch[5]
+        };
+    }
+
+    // Try futures pattern: {UNDERLYING}{YY}{MON}FUT
+    var futMatch = sym.match(/^(.+?)(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)FUT$/);
+    if (futMatch) {
+        var monIdx2 = NFO_MONTHS.indexOf(futMatch[3]);
+        var yr2 = 2000 + parseInt(futMatch[2]);
+        return {
+            underlying: futMatch[1],
+            expiryStr: futMatch[2] + futMatch[3],
+            expiryDate: yr2 + '-' + String(monIdx2 + 1).padStart(2, '0') + '-28',
+            strikePrice: null,
+            optionType: null
+        };
+    }
+
+    return null;  // Not an NFO symbol
+}
+
 // Income type check (rule F.4.1)
 var INCOME_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION'];
 function isIncomeType(txnType) {
@@ -293,15 +347,20 @@ function isIncomeType(txnType) {
 }
 
 // Get brokerage rate for investor-broker combo (delivery assumed per rule F.2.6)
-function getBrokerageForRow(investorId, brokerId, grossAmount, securityType) {
+function getBrokerageForRow(investorId, brokerId, grossAmount, securityType, assetClass) {
     if (!brokerId) return 0;
     var rates = ibaRatesMap[investorId + '|' + brokerId];
     if (!rates) return 0;
 
-    // Navigate the rates JSONB: equity.delivery for EQUITY/ETF, derivatives.futures for NFO
+    // Navigate the rates JSONB: equity.delivery for EQUITY/ETF, derivatives.futures/options for NFO
     var segment = null;
     if (securityType === 'NFO') {
-        segment = rates.derivatives ? rates.derivatives.futures : null;
+        // Use derivatives.options for options, derivatives.futures otherwise
+        if (assetClass === 'OPTIONS' && rates.derivatives && rates.derivatives.options) {
+            segment = rates.derivatives.options;
+        } else {
+            segment = rates.derivatives ? rates.derivatives.futures : null;
+        }
     } else {
         segment = rates.equity ? rates.equity.delivery : null;
     }
@@ -333,8 +392,17 @@ function getRegChargeRate(chargeType, txnCategory, txnType, exchange) {
 // Auto-calculate charges for a row (rules F.2.1–F.2.7, F.3.2, F.4.2)
 function autoCalcCharges(row) {
     var gross = row.gross_amount || 0;
-    var txnCat = row.security_type === 'NFO' ? 'FUTURES' : 'EQUITY_DELIVERY';
-    var exchange = row.exchange || 'NSE';
+    var txnCat = 'EQUITY_DELIVERY';
+    if (row.security_type === 'NFO') {
+        // Determine futures vs options from symbol pattern (CE/PE suffix = options)
+        var symUp = (row.symbol || '').toUpperCase();
+        if (symUp.match(/(CE|PE)$/) || (row.asset_class && row.asset_class === 'OPTIONS')) {
+            txnCat = 'EQUITY_OPTIONS';
+        } else {
+            txnCat = 'EQUITY_FUTURES';
+        }
+    }
+    var exchange = (row.exchange === 'NFO' || !row.exchange) ? 'NSE' : row.exchange;
 
     // Income types: total_charges → tds, everything else = 0 (rule F.4.2)
     if (isIncomeType(row.transaction_type)) {
@@ -354,7 +422,7 @@ function autoCalcCharges(row) {
 
     // 1. Brokerage (rule F.2.6)
     if (row.brokerage === null || row.brokerage === undefined || row.brokerage === 0) {
-        row.brokerage = getBrokerageForRow(row.investor_id, row.broker_id, gross, row.security_type);
+        row.brokerage = getBrokerageForRow(row.investor_id, row.broker_id, gross, row.security_type, row.asset_class);
     }
 
     // 2. STT — rounded UP to nearest whole number (rule F.2.3)
@@ -386,13 +454,12 @@ function autoCalcCharges(row) {
         row.total_charges = Math.round((row.brokerage + row.stt + row.other_charges + row.gst) * 100) / 100;
     }
 
-    // 6. net_amount: BUY → gross + total_charges, SELL → gross - total_charges (rule F.2.2)
-    if (row.net_amount === null || row.net_amount === undefined || row.net_amount === 0) {
-        if (row.transaction_type === 'BUY') {
-            row.net_amount = Math.round((gross + row.total_charges) * 100) / 100;
-        } else {
-            row.net_amount = Math.round((gross - row.total_charges) * 100) / 100;
-        }
+    // 6. net_amount: ALWAYS recalculate based on auto-calculated charges (rule F.2.2)
+    // (Excel template formula gives gross+0 when charges blank, so we must override)
+    if (row.transaction_type === 'BUY') {
+        row.net_amount = Math.round((gross + row.total_charges) * 100) / 100;
+    } else {
+        row.net_amount = Math.round((gross - row.total_charges) * 100) / 100;
     }
 
     // 7. trader_charges (rule F.2.5)
@@ -401,7 +468,7 @@ function autoCalcCharges(row) {
             row.trader_charges = row.total_charges;
         } else {
             // Different trader — calculate from trader's broker rates
-            row.trader_charges = getBrokerageForRow(row.trader_id, row.broker_id, gross, row.security_type);
+            row.trader_charges = getBrokerageForRow(row.trader_id, row.broker_id, gross, row.security_type, row.asset_class);
         }
     }
 }
@@ -815,12 +882,37 @@ async function matchSymbolMultiStage(symbol, securityType, batchMap) {
                 return { status: 'confirmed', match: {
                     id: nfo.id, symbol: nfo.symbol, short_symbol: nfo.underlying_symbol || nfo.symbol,
                     company_name: nfo.instrument_name || nfo.symbol, security_type: 'NFO',
-                    asset_class: null, exchange: nfo.exchange || 'NFO', lot_size: nfo.lot_size || 1
+                    asset_class: nfo.instrument_type || null, exchange: nfo.exchange || 'NSE', lot_size: nfo.lot_size || 1
                 }, matches: nfoRows };
             } else if (nfoRows.length > 1) {
                 return { status: 'flagged', match: null, matches: nfoRows.map(function(n) {
                     return { id: n.id, symbol: n.symbol, short_symbol: n.underlying_symbol, company_name: n.instrument_name, security_type: 'NFO', exchange: n.exchange };
                 }) };
+            }
+            // If no match found, try parsing the NFO symbol format
+            if (nfoRows.length === 0) {
+                var parsed = parseNfoSymbol(symUpper);
+                if (parsed) {
+                    // Look up underlying futures contract for lot_size
+                    var lotSize = 1;
+                    try {
+                        var futResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?underlying_symbol=eq.' + encodeURIComponent(parsed.underlying) + '&instrument_type=eq.FUTURES&select=lot_size&limit=1', {
+                            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+                        });
+                        var futRows = await futResp.json();
+                        if (futRows.length > 0 && futRows[0].lot_size) lotSize = futRows[0].lot_size;
+                    } catch (e2) { console.warn('Lot size lookup failed for ' + parsed.underlying, e2); }
+
+                    var instrType = parsed.optionType ? 'OPTIONS' : 'FUTURES';
+                    var instrName = parsed.underlying + ' ' + parsed.expiryStr + (parsed.strikePrice ? ' ' + parsed.strikePrice + ' ' + parsed.optionType : ' FUT');
+                    return { status: 'confirmed', match: {
+                        id: null, symbol: symUpper, short_symbol: parsed.underlying,
+                        company_name: instrName, security_type: 'NFO',
+                        asset_class: instrType, exchange: 'NSE', lot_size: lotSize,
+                        strike_price: parsed.strikePrice, option_type: parsed.optionType,
+                        expiry_date: parsed.expiryDate
+                    }, matches: [] };
+                }
             }
             // Fall through to securities_db if no NFO match
         } catch (e) {
@@ -1345,6 +1437,8 @@ window.cancelCnImport = function() {
 function handleFileSelect(event) {
     var file = event.target.files[0];
     if (file) handleFile(file);
+    // Reset so re-selecting the same file triggers change event
+    event.target.value = '';
 }
 
 function handleFile(file) {
@@ -1415,7 +1509,7 @@ async function processTransactions(rawData) {
         var transaction_date_raw = row['transaction_date'];
         var symbol_raw = row['symbol'] ? String(row['symbol']).trim() : null;
         var security_type_raw = row['security_type'] ? String(row['security_type']).trim().toUpperCase() : null;
-        var transaction_type_raw = row['transaction_type'] ? String(row['transaction_type']).trim().toUpperCase() : null;
+        var transaction_type_raw = row['transaction_type'] ? String(row['transaction_type']).trim().toUpperCase().replace(/\s+/g, '_') : null;
         var quantity_raw = row['quantity'] !== null && row['quantity'] !== undefined ? parseInt(row['quantity']) : null;
         var price_raw = row['price'] !== null && row['price'] !== undefined ? parseFloat(row['price']) : null;
         var gross_amount_raw = row['gross_amount'] !== null && row['gross_amount'] !== undefined ? parseFloat(row['gross_amount']) : null;
