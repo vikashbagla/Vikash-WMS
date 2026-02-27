@@ -2032,9 +2032,10 @@ async function importClassification(input) {
         if (!confirm(msg)) return;
 
         // Update each record by ISIN (cannot use upsert — partial columns hit NOT NULL constraints)
-        const BATCH = 20; // parallel batch size (keep low to avoid rate limits)
+        // Use sequential processing to avoid Supabase rate limits (see A.2.2)
+        const BATCH = 10;
         let done = 0;
-        let failed = 0;
+        let failedIsins = [];
         for (let i = 0; i < updates.length; i += BATCH) {
             const batch = updates.slice(i, i + BATCH);
             const results = await Promise.all(batch.map(async upd => {
@@ -2045,16 +2046,35 @@ async function importClassification(input) {
                     .from('securities_db')
                     .update(fields)
                     .eq('isin', isin);
-                return { isin, ...res };
+                return { isin, fields, ...res };
             }));
             for (const r of results) {
-                if (r.error) { failed++; console.warn('Update failed for ISIN ' + r.isin + ':', JSON.stringify(r.error)); }
+                if (r.error) failedIsins.push(r);
             }
             done += batch.length;
-            setSecLoading(true, `Updating... ${done}/${updates.length}` + (failed ? ` (${failed} failed)` : ''));
+            setSecLoading(true, `Updating... ${done}/${updates.length}`);
         }
 
-        alert(`✓ Classification updated for ${updates.length - failed} records.` + (failed ? ` (${failed} failed)` : ''));
+        // Retry failed records one at a time with delay
+        if (failedIsins.length > 0) {
+            setSecLoading(true, `Retrying ${failedIsins.length} failed records...`);
+            const stillFailed = [];
+            for (const item of failedIsins) {
+                await new Promise(r => setTimeout(r, 200)); // 200ms delay between retries
+                const { error } = await window.supabaseClient
+                    .from('securities_db')
+                    .update(item.fields)
+                    .eq('isin', item.isin);
+                if (error) {
+                    stillFailed.push(item.isin);
+                    console.warn('Retry failed for ISIN ' + item.isin + ':', JSON.stringify(error));
+                }
+            }
+            failedIsins = stillFailed;
+        }
+
+        const failed = failedIsins.length;
+        alert(`✓ Classification updated for ${updates.length - failed} records.` + (failed ? ` (${failed} still failed: ${failedIsins.join(', ')})` : ''));
         await loadSecuritiesTable();
 
     } catch (e) {
