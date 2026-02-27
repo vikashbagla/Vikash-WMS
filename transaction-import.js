@@ -8,8 +8,19 @@ window.CN_UTILS = window.CN_UTILS || {};
 
 // Use var for module-level state (project convention — avoids redeclaration errors on reload)
 var parsedTransactions = [];
-var investorCache = {};
-var brokerCache = {};
+var investorCache = {};        // { lowerName/lowerShortName → uuid }
+var brokerCache = {};          // { lowerName/lowerBrokerCode → uuid }
+var investorObjMap = {};       // { uuid → { id, name, short_name, stt_accounting_method, financial_year_start } }
+var brokerObjMap = {};         // { uuid → { id, name, broker_code } }
+var ibaRatesMap = {};          // { "investorId|brokerId" → brokerage_rates JSONB }
+var regulatoryCharges = [];    // Array of regulatory_charges_config rows (active rates)
+
+// Excel import state
+var excelConfirmedRows = [];   // Ready to import (symbol resolved, charges calculated)
+var excelFlaggedRows = [];     // Need user review (symbol ambiguous, multiple matches)
+var excelErrorRows = [];       // Skipped (validation failures)
+
+// CN import state
 var cnAccounts = [];           // {id, investor_id, broker_id, investor_short_name, broker_code, broker_name, cn_password, cn_parser_template}
 var cnParsedRows = [];         // After parsing + grouping
 var cnNewRows = [];            // Will be inserted
@@ -68,13 +79,43 @@ document.addEventListener('DOMContentLoaded', initTransactionImport);
 
 async function loadReferenceData() {
     try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
+        // Load investors — cache by name AND short_name (case-insensitive) per rule F.1.2
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start&is_active=eq.true', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
         var investors = await resp.json();
-        investors.forEach(function(inv) { investorCache[inv.name] = inv.id; });
+        investorCache = {};
+        investorObjMap = {};
+        investors.forEach(function(inv) {
+            investorObjMap[inv.id] = inv;
+            if (inv.name) investorCache[inv.name.toLowerCase()] = inv.id;
+            if (inv.short_name) investorCache[inv.short_name.toLowerCase()] = inv.id;
+        });
 
-        resp = await fetch(SUPABASE_URL + '/rest/v1/brokers?select=id,name,broker_code', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
+        // Load brokers — cache by name AND broker_code (case-insensitive) per rule F.1.4
+        resp = await fetch(SUPABASE_URL + '/rest/v1/brokers?select=id,name,broker_code&is_active=eq.true', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
         var brokers = await resp.json();
-        brokers.forEach(function(brk) { brokerCache[brk.name] = brk.id; });
+        brokerCache = {};
+        brokerObjMap = {};
+        brokers.forEach(function(brk) {
+            brokerObjMap[brk.id] = brk;
+            if (brk.name) brokerCache[brk.name.toLowerCase()] = brk.id;
+            if (brk.broker_code) brokerCache[brk.broker_code.toLowerCase()] = brk.id;
+        });
+
+        // Load investor_broker_accounts with brokerage_rates for charge auto-calc (rule F.2.6)
+        resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=investor_id,broker_id,brokerage_rates&is_active=eq.true', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
+        var ibAccounts = await resp.json();
+        ibaRatesMap = {};
+        ibAccounts.forEach(function(iba) {
+            if (iba.brokerage_rates) {
+                ibaRatesMap[iba.investor_id + '|' + iba.broker_id] = iba.brokerage_rates;
+            }
+        });
+
+        // Load regulatory_charges_config — active rates (effective_to IS NULL) for STT/other charge calc
+        resp = await fetch(SUPABASE_URL + '/rest/v1/regulatory_charges_config?effective_to=is.null&select=*', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
+        regulatoryCharges = await resp.json();
+
+        console.log('Reference data loaded: ' + investors.length + ' investors, ' + brokers.length + ' brokers, ' + ibAccounts.length + ' IBA rates, ' + regulatoryCharges.length + ' regulatory configs');
     } catch (e) {
         console.error('Error loading reference data:', e);
     }
@@ -155,6 +196,201 @@ async function loadExistingTags() {
         console.log('Loaded ' + existingTags.length + ' existing tag(s): ' + existingTags.join(', '));
     } catch (e) {
         console.error('Error loading existing tags:', e);
+    }
+}
+
+// ============================================================================
+// Excel Import Helpers (Phase 1)
+// ============================================================================
+
+// Case-insensitive investor lookup by name or short_name (rule F.1.2)
+function matchInvestor(input) {
+    if (!input) return null;
+    var key = String(input).trim().toLowerCase();
+    if (!key) return null;
+    var id = investorCache[key];
+    if (!id) return null;
+    return { id: id, name: investorObjMap[id] ? investorObjMap[id].name : input };
+}
+
+// Case-insensitive broker lookup by name or broker_code (rule F.1.4)
+function matchBroker(input) {
+    if (!input) return null;
+    var key = String(input).trim().toLowerCase();
+    if (!key) return null;
+    var id = brokerCache[key];
+    if (!id) return null;
+    return { id: id, name: brokerObjMap[id] ? brokerObjMap[id].name : input };
+}
+
+// Parse date from various formats → YYYY-MM-DD (rule F.1.5)
+function excelDateToISO(dateValue) {
+    if (!dateValue && dateValue !== 0) return { error: 'Date is required' };
+
+    // Already a Date object (SheetJS with cellDates:true)
+    if (dateValue instanceof Date) {
+        if (isNaN(dateValue.getTime())) return { error: 'Invalid date object' };
+        return { date: dateValue.toISOString().split('T')[0] };
+    }
+
+    // Excel serial number (numeric)
+    if (typeof dateValue === 'number') {
+        var excelEpoch = new Date(1899, 11, 30);
+        var d = new Date(excelEpoch.getTime() + dateValue * 86400000);
+        if (isNaN(d.getTime())) return { error: 'Invalid Excel serial date: ' + dateValue };
+        return { date: d.toISOString().split('T')[0] };
+    }
+
+    // String formats
+    if (typeof dateValue === 'string') {
+        var trimmed = dateValue.trim();
+
+        // DD-MM-YYYY or DD/MM/YYYY
+        var ddmmyyyy = trimmed.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+        if (ddmmyyyy) {
+            var day = parseInt(ddmmyyyy[1]);
+            var month = parseInt(ddmmyyyy[2]);
+            var year = parseInt(ddmmyyyy[3]);
+            var constructed = new Date(year, month - 1, day);
+            if (isNaN(constructed.getTime())) return { error: 'Invalid date: ' + trimmed };
+            return { date: constructed.toISOString().split('T')[0] };
+        }
+
+        // YYYY-MM-DD (ISO)
+        if (trimmed.match(/^\d{4}-\d{1,2}-\d{1,2}/)) {
+            return { date: trimmed.split('T')[0] };
+        }
+
+        // Try as numeric string (Excel serial)
+        var days = parseFloat(trimmed);
+        if (!isNaN(days) && days > 1000) {
+            var d2 = new Date(new Date(1899, 11, 30).getTime() + days * 86400000);
+            if (!isNaN(d2.getTime())) return { date: d2.toISOString().split('T')[0] };
+        }
+
+        return { error: 'Unrecognized date format: ' + trimmed };
+    }
+
+    return { error: 'Invalid date type: ' + typeof dateValue };
+}
+
+// Income type check (rule F.4.1)
+var INCOME_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION'];
+function isIncomeType(txnType) {
+    return INCOME_TYPES.indexOf(txnType) >= 0;
+}
+
+// Get brokerage rate for investor-broker combo (delivery assumed per rule F.2.6)
+function getBrokerageForRow(investorId, brokerId, grossAmount, securityType) {
+    if (!brokerId) return 0;
+    var rates = ibaRatesMap[investorId + '|' + brokerId];
+    if (!rates) return 0;
+
+    // Navigate the rates JSONB: equity.delivery for EQUITY/ETF, derivatives.futures for NFO
+    var segment = null;
+    if (securityType === 'NFO') {
+        segment = rates.derivatives ? rates.derivatives.futures : null;
+    } else {
+        segment = rates.equity ? rates.equity.delivery : null;
+    }
+    if (!segment) return 0;
+
+    // flat rate (options) vs pct+max (delivery/futures)
+    if (segment.flat !== undefined) return segment.flat;
+    var pct = segment.pct || 0;
+    var max = segment.max || 0;
+    var calc = Math.round(grossAmount * (pct / 100) * 100) / 100;
+    if (max > 0 && calc > max) calc = max;
+    return calc;
+}
+
+// Get regulatory charge rate from config (rule F.2.3, F.3.2)
+function getRegChargeRate(chargeType, txnCategory, txnType, exchange) {
+    for (var i = 0; i < regulatoryCharges.length; i++) {
+        var rc = regulatoryCharges[i];
+        if (rc.charge_type === chargeType &&
+            rc.transaction_category === txnCategory &&
+            rc.transaction_type === txnType &&
+            rc.exchange === (exchange || 'NSE')) {
+            return rc.rate_percentage || 0;
+        }
+    }
+    return 0;
+}
+
+// Auto-calculate charges for a row (rules F.2.1–F.2.7, F.3.2, F.4.2)
+function autoCalcCharges(row) {
+    var gross = row.gross_amount || 0;
+    var txnCat = row.security_type === 'NFO' ? 'FUTURES' : 'EQUITY_DELIVERY';
+    var exchange = row.exchange || 'NSE';
+
+    // Income types: total_charges → tds, everything else = 0 (rule F.4.2)
+    if (isIncomeType(row.transaction_type)) {
+        row.tds = row.total_charges || 0;
+        row.brokerage = 0;
+        row.stt = 0;
+        row.gst = 0;
+        row.other_charges = 0;
+        row.total_charges = row.tds;
+        row.net_amount = Math.round((gross - row.tds) * 100) / 100;
+        // trader_charges for income = total_charges
+        if (row.trader_charges === null || row.trader_charges === undefined) {
+            row.trader_charges = row.total_charges;
+        }
+        return;
+    }
+
+    // 1. Brokerage (rule F.2.6)
+    if (row.brokerage === null || row.brokerage === undefined || row.brokerage === 0) {
+        row.brokerage = getBrokerageForRow(row.investor_id, row.broker_id, gross, row.security_type);
+    }
+
+    // 2. STT — rounded UP to nearest whole number (rule F.2.3)
+    if (row.stt === null || row.stt === undefined || row.stt === 0) {
+        var sttRate = getRegChargeRate('STT', txnCat, row.transaction_type, exchange);
+        if (sttRate > 0) {
+            row.stt = Math.ceil(gross * (sttRate / 100));
+        } else {
+            row.stt = 0;
+        }
+    }
+
+    // 3. Other charges = exchange + SEBI + stamp duty + IPFT (rule F.3.2)
+    if (row.other_charges === null || row.other_charges === undefined || row.other_charges === 0) {
+        var exchRate = getRegChargeRate('EXCHANGE_CHARGES', txnCat, row.transaction_type, exchange);
+        var sebiRate = getRegChargeRate('SEBI_CHARGES', txnCat, row.transaction_type, exchange);
+        var stampRate = getRegChargeRate('STAMP_DUTY', txnCat, row.transaction_type, exchange);
+        row.other_charges = Math.round(gross * ((exchRate + sebiRate + stampRate) / 100) * 100) / 100;
+    }
+
+    // 4. GST — 18% on (brokerage + exchange charges) (rule F.3.2)
+    if (row.gst === null || row.gst === undefined || row.gst === 0) {
+        var exchCharges = Math.round(gross * (getRegChargeRate('EXCHANGE_CHARGES', txnCat, row.transaction_type, exchange) / 100) * 100) / 100;
+        row.gst = Math.round((row.brokerage + exchCharges) * 0.18 * 100) / 100;
+    }
+
+    // 5. total_charges = brokerage + stt + other_charges + gst (rule F.2.4)
+    if (row.total_charges === null || row.total_charges === undefined || row.total_charges === 0) {
+        row.total_charges = Math.round((row.brokerage + row.stt + row.other_charges + row.gst) * 100) / 100;
+    }
+
+    // 6. net_amount: BUY → gross + total_charges, SELL → gross - total_charges (rule F.2.2)
+    if (row.net_amount === null || row.net_amount === undefined || row.net_amount === 0) {
+        if (row.transaction_type === 'BUY') {
+            row.net_amount = Math.round((gross + row.total_charges) * 100) / 100;
+        } else {
+            row.net_amount = Math.round((gross - row.total_charges) * 100) / 100;
+        }
+    }
+
+    // 7. trader_charges (rule F.2.5)
+    if (row.trader_charges === null || row.trader_charges === undefined) {
+        if (!row.trader_id || row.trader_id === row.investor_id) {
+            row.trader_charges = row.total_charges;
+        } else {
+            // Different trader — calculate from trader's broker rates
+            row.trader_charges = getBrokerageForRow(row.trader_id, row.broker_id, gross, row.security_type);
+        }
     }
 }
 
@@ -499,7 +735,7 @@ async function processAndGroupTrades(parseResult) {
 }
 
 // Batch query Supabase for all symbols in one call
-// Returns a map: { SYMBOL: { id, symbol, company_name }, ... }
+// Returns a map: { SYMBOL_UPPER: { id, symbol, short_symbol, company_name, security_type, asset_class, exchange }, ... }
 async function batchMatchSecurities(symbols) {
     var secMap = {};
     if (!symbols || symbols.length === 0) return secMap;
@@ -507,7 +743,7 @@ async function batchMatchSecurities(symbols) {
     // Build OR filter: symbol.in.(SYM1,SYM2),nse_symbol.in.(SYM1,SYM2),bse_symbol.in.(SYM1,SYM2)
     var symList = symbols.map(function(s) { return encodeURIComponent(s); }).join(',');
     var orFilter = 'or=(symbol.in.(' + symList + '),nse_symbol.in.(' + symList + '),bse_symbol.in.(' + symList + '))';
-    var url = SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,nse_symbol,bse_symbol,company_name&' + orFilter;
+    var url = SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,nse_symbol,bse_symbol,company_name,security_type,asset_class,lot_size&' + orFilter;
 
     console.log('Batch security lookup for ' + symbols.length + ' symbol(s): ' + symbols.join(', '));
     var resp = await fetch(url, {
@@ -520,9 +756,18 @@ async function batchMatchSecurities(symbols) {
     var rows = await resp.json();
     console.log('Batch query returned ' + rows.length + ' match(es)');
 
-    // Build lookup map — match each queried symbol to its result
+    // Build lookup map — match each queried symbol to its result (full security object)
     rows.forEach(function(m) {
-        var matchInfo = { id: m.id, symbol: m.nse_symbol || m.symbol, company_name: m.company_name };
+        var matchInfo = {
+            id: m.id,
+            symbol: m.nse_symbol || m.bse_symbol || m.symbol,
+            short_symbol: m.nse_symbol || m.bse_symbol || m.symbol,
+            company_name: m.company_name,
+            security_type: m.security_type || 'EQUITY',
+            asset_class: m.asset_class,
+            exchange: m.nse_symbol ? 'NSE' : (m.bse_symbol ? 'BSE' : 'NSE'),
+            lot_size: m.lot_size || 1
+        };
         // Map by all possible symbol fields so lookup works regardless of which column matched
         if (m.symbol) secMap[m.symbol.toUpperCase()] = matchInfo;
         if (m.nse_symbol) secMap[m.nse_symbol.toUpperCase()] = matchInfo;
@@ -539,6 +784,79 @@ async function batchMatchSecurities(symbols) {
     });
 
     return secMap;
+}
+
+// Multi-stage symbol matching for a single row (rule F.1.6)
+// Returns: { status: 'confirmed'|'flagged'|'error', match: {security object}, matches: [], error: '' }
+async function matchSymbolMultiStage(symbol, securityType, batchMap) {
+    var symUpper = symbol.toUpperCase();
+
+    // Stage 1: If security_type is NFO, search securities_nfo
+    if (securityType === 'NFO') {
+        try {
+            var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?symbol=ilike.*' + encodeURIComponent(symUpper) + '*&select=id,symbol,instrument_name,underlying_symbol,exchange,instrument_type,lot_size,expiry_date,strike_price,option_type&limit=5', {
+                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            });
+            var nfoRows = await nfoResp.json();
+            if (nfoRows.length === 1) {
+                var nfo = nfoRows[0];
+                return { status: 'confirmed', match: {
+                    id: nfo.id, symbol: nfo.symbol, short_symbol: nfo.underlying_symbol || nfo.symbol,
+                    company_name: nfo.instrument_name || nfo.symbol, security_type: 'NFO',
+                    asset_class: null, exchange: nfo.exchange || 'NFO', lot_size: nfo.lot_size || 1
+                }, matches: nfoRows };
+            } else if (nfoRows.length > 1) {
+                return { status: 'flagged', match: null, matches: nfoRows.map(function(n) {
+                    return { id: n.id, symbol: n.symbol, short_symbol: n.underlying_symbol, company_name: n.instrument_name, security_type: 'NFO', exchange: n.exchange };
+                }) };
+            }
+            // Fall through to securities_db if no NFO match
+        } catch (e) {
+            console.error('NFO lookup error:', e);
+        }
+    }
+
+    // Stage 2: Exact match from batch map (already queried in bulk)
+    if (batchMap[symUpper]) {
+        var match = batchMap[symUpper];
+        // If security_type filter provided, check it matches
+        if (securityType && securityType !== 'NFO' && match.security_type !== securityType) {
+            // Type mismatch — flag for review
+            return { status: 'flagged', match: match, matches: [match], error: 'Symbol found but security_type mismatch: expected ' + securityType + ', got ' + match.security_type };
+        }
+        return { status: 'confirmed', match: match, matches: [match] };
+    }
+
+    // Stage 3: Contains match on company_name (rule F.1.6 step 2)
+    try {
+        var companyFilter = 'company_name=ilike.*' + encodeURIComponent(symUpper) + '*';
+        if (securityType && securityType !== 'NFO') {
+            companyFilter += '&security_type=eq.' + encodeURIComponent(securityType);
+        }
+        var compResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,nse_symbol,bse_symbol,company_name,security_type,asset_class,lot_size&' + companyFilter + '&limit=10', {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        });
+        var compRows = await compResp.json();
+
+        if (compRows.length === 1) {
+            var cm = compRows[0];
+            return { status: 'confirmed', match: {
+                id: cm.id, symbol: cm.nse_symbol || cm.bse_symbol || cm.symbol,
+                short_symbol: cm.nse_symbol || cm.bse_symbol || cm.symbol,
+                company_name: cm.company_name, security_type: cm.security_type || 'EQUITY',
+                asset_class: cm.asset_class, exchange: cm.nse_symbol ? 'NSE' : 'BSE',
+                lot_size: cm.lot_size || 1
+            }, matches: compRows };
+        } else if (compRows.length > 1) {
+            return { status: 'flagged', match: null, matches: compRows.map(function(r) {
+                return { id: r.id, symbol: r.nse_symbol || r.bse_symbol || r.symbol, short_symbol: r.nse_symbol || r.bse_symbol || r.symbol, company_name: r.company_name, security_type: r.security_type, exchange: r.nse_symbol ? 'NSE' : 'BSE' };
+            }) };
+        }
+    } catch (e) {
+        console.error('Company name lookup error:', e);
+    }
+
+    return { status: 'error', match: null, matches: [], error: 'Symbol "' + symbol + '" not found in securities_db' + (securityType ? ' (type: ' + securityType + ')' : '') };
 }
 
 function allocateCharges(rows, segCharges) {
@@ -1023,25 +1341,26 @@ function handleFile(file) {
         tiAlert('error', 'Please upload an Excel file (.xlsx or .xls)');
         return;
     }
-    tiLoading(true);
+    tiLoading(true, 'Reading Excel file...');
     var reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = async function(e) {
         try {
             var data = new Uint8Array(e.target.result);
             var workbook = XLSX.read(data, { type: 'array', cellDates: true });
             var sheetName = '1. Transactions';
             var worksheet = workbook.Sheets[sheetName];
-            if (!worksheet) throw new Error('Sheet "' + sheetName + '" not found in Excel file');
+            if (!worksheet) throw new Error('Sheet "1. Transactions" not found. Make sure you\'re using the WMS template.');
             var jsonData = XLSX.utils.sheet_to_json(worksheet, { range: 0, raw: true, defval: null });
+            // Filter out header/instruction rows and blank rows
             var filteredData = jsonData.filter(function(row) {
-                var inv = row['investor_name*'];
+                var inv = row['investor_name'];
                 if (!inv) return false;
                 var invStr = String(inv);
-                if (invStr.includes('Required') || invStr.includes('=') || invStr.includes('transaction_type') || invStr.length > 50) return false;
+                if (invStr.includes('Required') || invStr.includes('=') || invStr.includes('investor_name') || invStr.length > 100) return false;
                 return true;
             });
-            if (filteredData.length === 0) throw new Error('No data found in Excel file.');
-            processTransactions(filteredData);
+            if (filteredData.length === 0) throw new Error('No data rows found in the "1. Transactions" sheet.');
+            await processTransactions(filteredData);
             tiLoading(false);
         } catch (error) {
             tiAlert('error', 'Error reading Excel file: ' + error.message);
@@ -1052,143 +1371,537 @@ function handleFile(file) {
     reader.readAsArrayBuffer(file);
 }
 
-function processTransactions(rawData) {
+// ============================================================================
+// Excel Import: 3-Stage Processing Pipeline (rules F.1–F.5)
+// Stage A: Parse & Validate → Stage B: Symbol Match + Charge Calc → Stage C: Duplicate Detection
+// ============================================================================
+
+async function processTransactions(rawData) {
     parsedTransactions = [];
-    var errors = [];
+    excelConfirmedRows = [];
+    excelFlaggedRows = [];
+    excelErrorRows = [];
+
+    // ── Stage A: Parse & Validate ──────────────────────────────────────
+    tiLoading(true, 'Validating rows...');
+    var validRows = [];
+
     rawData.forEach(function(row, index) {
-        try {
-            var rowNum = index + 3;
-            var investor_name = row['investor_name*'] ? String(row['investor_name*']).trim() : null;
-            var broker_name = row['broker_name'] ? String(row['broker_name']).trim() : null;
-            var security_type = row['security_type*'] ? String(row['security_type*']).trim() : null;
-            var symbol = row['symbol*'] ? String(row['symbol*']).trim() : null;
-            var short_symbol = row['short_symbol*'] ? String(row['short_symbol*']).trim() : null;
-            var company_name = row['company_name*'] ? String(row['company_name*']).trim() : null;
-            var transaction_type_raw = row['transaction_type*'] ? String(row['transaction_type*']).trim() : '';
-            var transaction_date = row['transaction_date*'];
-            var quantity_raw = row['quantity*'] ? parseInt(row['quantity*']) : 0;
-            var lots_raw = row['lots'] ? parseFloat(row['lots']) : null;
-            if (quantity_raw === 0 || !row['quantity*']) return;
-            var price = parseFloat(row['price*']) || 0;
-            var gross_amount = parseFloat(row['gross_amount*']) || 0;
-            var brokerage = parseFloat(row['brokerage']) || 0;
-            var stt = parseFloat(row['stt']) || 0;
-            var other_charges = parseFloat(row['other_charges']) || 0;
-            var gst = parseFloat(row['gst']) || 0;
-            var tds = parseFloat(row['tds']) || 0;
-            var total_charges = parseFloat(row['total_charges']) || 0;
-            var net_amount = parseFloat(row['net_amount*']) || 0;
-            var margin_blocked = parseFloat(row['margin_blocked']) || 0;
-            var product = row['product'] ? String(row['product']).trim() : null;
-            var broker_contract_note_no = row['broker_contract_note_no'] ? String(row['broker_contract_note_no']).trim() : null;
-            var broker_trade_id = row['broker_trade_id'] ? String(row['broker_trade_id']).trim() : null;
-            var tags = row['tags'] ? String(row['tags']).trim() : null;
-            var notes = row['notes'] ? String(row['notes']).trim() : null;
-            var ignore_for_avg_cost = row['ignore_for_avg_cost'] ? (String(row['ignore_for_avg_cost']).toUpperCase() === 'TRUE') : false;
-            var dont_display = row['dont_display'] ? (String(row['dont_display']).toUpperCase() === 'TRUE') : false;
+        var rowNum = index + 2; // Row 1 = headers, data starts at row 2
+        var errors = [];
 
-            if (!investor_name) { errors.push('Row ' + rowNum + ': investor_name is required'); return; }
-            if (!security_type) { errors.push('Row ' + rowNum + ': security_type is required'); return; }
-            if (!symbol) { errors.push('Row ' + rowNum + ': symbol is required'); return; }
+        // Read all 17 template columns (rule F.1.1)
+        var investor_name = row['investor_name'] ? String(row['investor_name']).trim() : null;
+        var trader_name = row['trader'] ? String(row['trader']).trim() : null;
+        var broker_name = row['broker'] ? String(row['broker']).trim() : null;
+        var transaction_date_raw = row['transaction_date'];
+        var symbol_raw = row['symbol'] ? String(row['symbol']).trim() : null;
+        var security_type_raw = row['security_type'] ? String(row['security_type']).trim().toUpperCase() : null;
+        var transaction_type_raw = row['transaction_type'] ? String(row['transaction_type']).trim().toUpperCase() : null;
+        var quantity_raw = row['quantity'] !== null && row['quantity'] !== undefined ? parseInt(row['quantity']) : null;
+        var price_raw = row['price'] !== null && row['price'] !== undefined ? parseFloat(row['price']) : null;
+        var gross_amount_raw = row['gross_amount'] !== null && row['gross_amount'] !== undefined ? parseFloat(row['gross_amount']) : null;
+        var brokerage_raw = row['brokerage'] !== null && row['brokerage'] !== undefined ? parseFloat(row['brokerage']) : null;
+        var stt_raw = row['stt'] !== null && row['stt'] !== undefined ? parseFloat(row['stt']) : null;
+        var total_charges_raw = row['total_charges'] !== null && row['total_charges'] !== undefined ? parseFloat(row['total_charges']) : null;
+        var trader_charges_raw = row['trader_charges'] !== null && row['trader_charges'] !== undefined ? parseFloat(row['trader_charges']) : null;
+        var net_amount_raw = row['net_amount'] !== null && row['net_amount'] !== undefined ? parseFloat(row['net_amount']) : null;
+        var tags_raw = row['tags'] ? String(row['tags']).trim() : null;
+        var notes_raw = row['notes'] ? String(row['notes']).trim() : null;
 
-            var transaction_type;
-            if (transaction_type_raw && transaction_type_raw !== '') { transaction_type = transaction_type_raw.toUpperCase(); }
-            else { transaction_type = quantity_raw > 0 ? 'BUY' : 'SELL'; }
+        // Required field validation
+        if (!investor_name) errors.push('investor_name is required');
+        if (!symbol_raw) errors.push('symbol is required');
 
-            var lots;
-            if (security_type === 'EQUITY') { lots = 0; }
-            else if (security_type === 'NFO') {
-                if (lots_raw === null || lots_raw === 0) { lots = 0; }
-                else if (transaction_type === 'SELL') { lots = -1 * Math.abs(lots_raw); }
-                else { lots = Math.abs(lots_raw); }
-            } else { lots = 0; }
+        // Investor matching (rule F.1.2)
+        var investorMatch = matchInvestor(investor_name);
+        if (investor_name && !investorMatch) errors.push('Investor "' + investor_name + '" not found');
 
-            var parsedDate;
-            if (!transaction_date) { errors.push('Row ' + rowNum + ': transaction_date is required'); return; }
-            if (transaction_date instanceof Date) { parsedDate = transaction_date.toISOString().split('T')[0]; }
-            else if (typeof transaction_date === 'number') { var excelEpoch = new Date(1899, 11, 30); var date = new Date(excelEpoch.getTime() + transaction_date * 86400000); parsedDate = date.toISOString().split('T')[0]; }
-            else if (typeof transaction_date === 'string') {
-                if (transaction_date.includes('-')) { parsedDate = transaction_date.split('T')[0]; }
-                else { var days = parseFloat(transaction_date); if (!isNaN(days)) { var d2 = new Date(new Date(1899, 11, 30).getTime() + days * 86400000); parsedDate = d2.toISOString().split('T')[0]; } else { errors.push('Row ' + rowNum + ': Invalid date format'); return; } }
-            } else { errors.push('Row ' + rowNum + ': Invalid date type'); return; }
+        // Trader matching (rule F.1.3) — defaults to investor if blank
+        var traderMatch = null;
+        if (trader_name) {
+            traderMatch = matchInvestor(trader_name);
+            if (!traderMatch) errors.push('Trader "' + trader_name + '" not found');
+        }
 
-            var investor_id = investorCache[investor_name];
-            if (!investor_id) { errors.push('Row ' + rowNum + ': Investor "' + investor_name + '" not found'); return; }
-            var broker_id = null;
-            if (broker_name) { broker_id = brokerCache[broker_name]; if (!broker_id) { errors.push('Row ' + rowNum + ': Broker "' + broker_name + '" not found'); return; } }
+        // Broker matching (rule F.1.4)
+        var brokerMatch = null;
+        if (broker_name) {
+            brokerMatch = matchBroker(broker_name);
+            if (!brokerMatch) errors.push('Broker "' + broker_name + '" not found');
+        }
 
-            parsedTransactions.push({
-                rowNum: rowNum, investor_id: investor_id, investor_name: investor_name, broker_id: broker_id, broker_name: broker_name,
-                security_id: '00000000-0000-0000-0000-000000000000', security_type: security_type, symbol: symbol, short_symbol: short_symbol,
-                company_name: company_name, exchange: security_type === 'EQUITY' ? 'NSE' : 'NFO', product: product, transaction_type: transaction_type,
-                transaction_date: parsedDate, quantity: quantity_raw, lots: lots, price: price, gross_amount: gross_amount, brokerage: brokerage,
-                stt: stt, other_charges: other_charges, gst: gst, tds: tds, total_charges: total_charges, net_amount: net_amount,
-                margin_blocked: margin_blocked, broker_contract_note_no: broker_contract_note_no, broker_trade_id: broker_trade_id,
-                tags: tags ? [tags] : ['blank'], notes: notes, ignore_for_avg_cost: ignore_for_avg_cost, dont_display: dont_display
-            });
-        } catch (error) { errors.push('Row ' + (index + 3) + ': ' + error.message); }
+        // Date parsing (rule F.1.5)
+        var dateResult = excelDateToISO(transaction_date_raw);
+        if (dateResult.error) errors.push(dateResult.error);
+
+        // Transaction type derivation (rule F.1.8)
+        var transaction_type = transaction_type_raw;
+        if (!transaction_type) {
+            if (quantity_raw !== null && quantity_raw !== 0) {
+                transaction_type = quantity_raw > 0 ? 'BUY' : 'SELL';
+            } else {
+                errors.push('transaction_type is required when quantity is blank');
+            }
+        }
+
+        // Quantity validation — income types can have blank quantity (rule F.4.3)
+        var isIncome = transaction_type ? isIncomeType(transaction_type) : false;
+        if (!isIncome && (quantity_raw === null || quantity_raw === 0)) {
+            errors.push('quantity is required for ' + (transaction_type || 'BUY/SELL') + ' transactions');
+        }
+
+        // Price validation
+        if (!isIncome && (price_raw === null || price_raw === 0) && (gross_amount_raw === null || gross_amount_raw === 0)) {
+            errors.push('price is required');
+        }
+
+        // If errors, add to error list and skip
+        if (errors.length > 0) {
+            excelErrorRows.push({ rowNum: rowNum, errors: errors, raw: row });
+            return;
+        }
+
+        // Quantity sign enforcement (rule F.2.7)
+        var quantity = quantity_raw || 0;
+        if (transaction_type === 'BUY') quantity = Math.abs(quantity);
+        else if (transaction_type === 'SELL') quantity = -Math.abs(quantity);
+        else if (isIncome) quantity = Math.abs(quantity);
+
+        // Gross amount (rule F.2.1)
+        var gross_amount = gross_amount_raw;
+        if ((gross_amount === null || isNaN(gross_amount)) && quantity !== 0 && price_raw) {
+            gross_amount = Math.round(Math.abs(quantity) * price_raw * 100) / 100;
+        }
+
+        // Tags normalization (rule A.2.1)
+        var tags = ['blank'];
+        if (tags_raw) {
+            var tagList = tags_raw.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; });
+            if (tagList.length > 0) tags = tagList;
+        }
+
+        // Build validated row
+        validRows.push({
+            rowNum: rowNum,
+            investor_id: investorMatch.id,
+            investor_name: investorMatch.name,
+            trader_id: traderMatch ? traderMatch.id : investorMatch.id,
+            trader_name: traderMatch ? traderMatch.name : investorMatch.name,
+            broker_id: brokerMatch ? brokerMatch.id : null,
+            broker_name: brokerMatch ? brokerMatch.name : null,
+            symbol: symbol_raw,
+            security_type: security_type_raw,   // May be null — will be derived from match
+            transaction_type: transaction_type,
+            transaction_date: dateResult.date,
+            quantity: quantity,
+            price: price_raw || 0,
+            gross_amount: gross_amount || 0,
+            brokerage: brokerage_raw,           // null = auto-calc later
+            stt: stt_raw,                       // null = auto-calc later
+            total_charges: total_charges_raw,   // null = auto-calc later
+            trader_charges: trader_charges_raw,  // null = auto-calc later
+            net_amount: net_amount_raw,         // null = auto-calc later
+            tags: tags,
+            notes: notes_raw,
+            // Placeholders — populated in Stage B
+            security_id: null,
+            short_symbol: null,
+            company_name: null,
+            exchange: null,
+            asset_class: null,
+            lots: null,
+            other_charges: null,
+            gst: null,
+            tds: null,
+            matchStatus: null,
+            matchOptions: null
+        });
     });
 
-    if (errors.length > 0) {
-        var errorSummary = errors.slice(0, 10).map(function(err, i) { return (i+1) + '. ' + err; }).join('\n');
-        tiAlert('warning', 'Parsed ' + parsedTransactions.length + ' transactions.\n\n' + errors.length + ' rows skipped:\n\n' + errorSummary);
-    } else {
-        tiAlert('success', 'Successfully parsed ' + parsedTransactions.length + ' transactions!');
+    console.log('Stage A complete: ' + validRows.length + ' valid, ' + excelErrorRows.length + ' errors');
+
+    if (validRows.length === 0) {
+        var errSummary = excelErrorRows.slice(0, 10).map(function(e) { return 'Row ' + e.rowNum + ': ' + e.errors.join('; '); }).join('\n');
+        tiAlert('error', 'No valid rows found.\n\n' + errSummary);
+        return;
     }
-    if (parsedTransactions.length > 0) displayPreview();
+
+    // ── Stage B: Symbol Matching + Charge Calculation ────────────────
+    tiLoading(true, 'Matching symbols (' + validRows.length + ' rows)...');
+
+    // Collect unique symbols for batch query (non-NFO rows)
+    var uniqueSymbols = [];
+    validRows.forEach(function(r) {
+        var sym = r.symbol.toUpperCase();
+        if (r.security_type !== 'NFO' && uniqueSymbols.indexOf(sym) < 0) {
+            uniqueSymbols.push(sym);
+        }
+    });
+
+    // Batch query securities_db for all non-NFO symbols
+    var batchMap = await batchMatchSecurities(uniqueSymbols);
+
+    // Match each row individually (handles NFO, company_name fallback, multi-match)
+    for (var i = 0; i < validRows.length; i++) {
+        var vr = validRows[i];
+        var matchResult = await matchSymbolMultiStage(vr.symbol, vr.security_type, batchMap);
+
+        vr.matchStatus = matchResult.status;
+        vr.matchOptions = matchResult.matches || [];
+
+        if (matchResult.status === 'confirmed' && matchResult.match) {
+            vr.security_id = matchResult.match.id;
+            vr.short_symbol = matchResult.match.short_symbol;
+            vr.company_name = matchResult.match.company_name;
+            vr.exchange = matchResult.match.exchange;
+            vr.asset_class = matchResult.match.asset_class;
+            if (!vr.security_type) vr.security_type = matchResult.match.security_type;
+
+            // Lots for NFO
+            if (vr.security_type === 'NFO' && matchResult.match.lot_size) {
+                vr.lots = Math.round(Math.abs(vr.quantity) / matchResult.match.lot_size * 100) / 100;
+                if (vr.transaction_type === 'SELL') vr.lots = -Math.abs(vr.lots);
+            } else {
+                vr.lots = 0;
+            }
+        } else if (matchResult.status === 'flagged') {
+            // Use first match as tentative
+            if (matchResult.matches.length > 0) {
+                var first = matchResult.matches[0];
+                vr.security_id = first.id;
+                vr.short_symbol = first.short_symbol || first.symbol;
+                vr.company_name = first.company_name;
+                vr.exchange = first.exchange;
+                if (!vr.security_type) vr.security_type = first.security_type;
+                vr.lots = 0;
+            }
+        }
+
+        // Auto-calculate charges (rule F.2)
+        if (vr.matchStatus !== 'error') {
+            autoCalcCharges(vr);
+        }
+    }
+
+    // Classify rows
+    excelConfirmedRows = [];
+    excelFlaggedRows = [];
+    validRows.forEach(function(r) {
+        if (r.matchStatus === 'confirmed') {
+            excelConfirmedRows.push(r);
+        } else if (r.matchStatus === 'flagged') {
+            excelFlaggedRows.push(r);
+        } else {
+            excelErrorRows.push({ rowNum: r.rowNum, errors: ['Symbol not found: ' + r.symbol], raw: r });
+        }
+    });
+
+    console.log('Stage B complete: ' + excelConfirmedRows.length + ' confirmed, ' + excelFlaggedRows.length + ' flagged, ' + excelErrorRows.length + ' errors');
+
+    // ── Stage C: Duplicate Detection ─────────────────────────────────
+    tiLoading(true, 'Checking for duplicates...');
+
+    var allGoodRows = excelConfirmedRows.concat(excelFlaggedRows);
+
+    // Group rows by investor_id + broker_id + transaction_date
+    var groupMap = {};
+    allGoodRows.forEach(function(r) {
+        var key = (r.investor_id || '') + '|' + (r.broker_id || '') + '|' + r.transaction_date;
+        if (!groupMap[key]) groupMap[key] = [];
+        groupMap[key].push(r);
+    });
+
+    // For each group, query existing transactions
+    var groupKeys = Object.keys(groupMap);
+    for (var g = 0; g < groupKeys.length; g++) {
+        var gk = groupKeys[g];
+        var parts = gk.split('|');
+        var gInvestorId = parts[0];
+        var gBrokerId = parts[1];
+        var gDate = parts[2];
+
+        var dupFilter = 'investor_id=eq.' + gInvestorId + '&transaction_date=eq.' + gDate;
+        if (gBrokerId) dupFilter += '&broker_id=eq.' + gBrokerId;
+        else dupFilter += '&broker_id=is.null';
+
+        try {
+            var dupResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?select=id,symbol,transaction_type,quantity,price&' + dupFilter, {
+                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            });
+            var existingTxns = await dupResp.json();
+
+            groupMap[gk].forEach(function(r) {
+                r.isUpdate = false;
+                r._existingId = null;
+                for (var e = 0; e < existingTxns.length; e++) {
+                    var ex = existingTxns[e];
+                    if (ex.symbol === r.symbol && ex.transaction_type === r.transaction_type) {
+                        r.isUpdate = true;
+                        r._existingId = ex.id;
+                        break;
+                    }
+                }
+            });
+        } catch (e) {
+            console.error('Duplicate check error for group ' + gk + ':', e);
+        }
+    }
+
+    console.log('Stage C complete. Ready for preview.');
+
+    // Store all parsed transactions for reference
+    parsedTransactions = allGoodRows;
+
+    // Show preview
+    displayExcelPreview();
 }
 
-function displayPreview() {
-    var buyCount = parsedTransactions.filter(function(t) { return t.transaction_type === 'BUY'; }).length;
-    var sellCount = parsedTransactions.filter(function(t) { return t.transaction_type === 'SELL'; }).length;
-    document.getElementById('statTotal').textContent = parsedTransactions.length;
+// ============================================================================
+// Excel Preview Modal
+// ============================================================================
+
+function displayExcelPreview() {
+    var allRows = excelConfirmedRows.concat(excelFlaggedRows);
+    var buyCount = allRows.filter(function(t) { return t.transaction_type === 'BUY'; }).length;
+    var sellCount = allRows.filter(function(t) { return t.transaction_type === 'SELL'; }).length;
+    var otherCount = allRows.length - buyCount - sellCount;
+    var newCount = allRows.filter(function(t) { return !t.isUpdate; }).length;
+    var updateCount = allRows.filter(function(t) { return t.isUpdate; }).length;
+
+    // Update stats
+    document.getElementById('statTotal').textContent = allRows.length;
     document.getElementById('statBuy').textContent = buyCount;
     document.getElementById('statSell').textContent = sellCount;
-    document.getElementById('statOther').textContent = parsedTransactions.length - buyCount - sellCount;
+    document.getElementById('statOther').textContent = otherCount;
+    document.getElementById('statNew').textContent = newCount;
+    document.getElementById('statUpdate').textContent = updateCount;
 
+    // Render preview table
     var tbody = document.getElementById('previewTableBody');
     tbody.innerHTML = '';
-    parsedTransactions.forEach(function(t, index) {
+
+    // Build "Inv > Trd > Brk" display (per pattern C.3.1)
+    function buildInvLabel(r) {
+        var parts = [r.investor_name];
+        if (r.trader_name && r.trader_name !== r.investor_name) parts.push(r.trader_name);
+        if (r.broker_name) parts.push(r.broker_name);
+        return parts.join(' > ');
+    }
+
+    allRows.forEach(function(t, index) {
         var row = document.createElement('tr');
         var typeClass = t.transaction_type === 'BUY' ? 'type-buy' : t.transaction_type === 'SELL' ? 'type-sell' : 'type-other';
-        row.innerHTML = '<td>' + (index+1) + '</td><td>' + t.investor_name + '</td><td class="' + typeClass + '">' + t.transaction_type + '</td><td>' + t.symbol + '</td><td>' + t.transaction_date + '</td><td>' + formatCnQty(t.quantity) + '</td><td>' + t.lots + '</td><td>' + formatCnAmount(t.price) + '</td><td>' + formatCnAmount(t.net_amount) + '</td>';
+
+        // Status badge
+        var statusBadge = '';
+        if (t.matchStatus === 'flagged') {
+            statusBadge = '<span style="background:#feebc8;color:#744210;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;">REVIEW</span> ';
+        }
+        var dupBadge = t.isUpdate ? '<span style="background:#feebc8;color:#744210;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;margin-left:4px;">UPDATE</span>' : '<span style="background:#c6f6d5;color:#22543d;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;margin-left:4px;">NEW</span>';
+
+        // Editable charges cells
+        var chargesHtml = '<input type="number" step="0.01" value="' + (t.total_charges || 0) + '" data-row="' + index + '" data-field="total_charges" onchange="recalcExcelRow(' + index + ')" style="width:70px;padding:2px 4px;font-size:11px;border:1px solid #e2e8f0;border-radius:3px;text-align:right;">';
+        var traderChargesHtml = '<input type="number" step="0.01" value="' + (t.trader_charges || 0) + '" data-row="' + index + '" data-field="trader_charges" style="width:70px;padding:2px 4px;font-size:11px;border:1px solid #e2e8f0;border-radius:3px;text-align:right;">';
+
+        row.innerHTML = '<td>' + (index + 1) + '</td>' +
+            '<td style="font-size:11px;">' + buildInvLabel(t) + '</td>' +
+            '<td class="' + typeClass + '">' + t.transaction_type + '</td>' +
+            '<td>' + statusBadge + t.symbol + (t.company_name ? '<br><span style="font-size:10px;color:#718096;">' + t.company_name + '</span>' : '') + dupBadge + '</td>' +
+            '<td>' + t.transaction_date + '</td>' +
+            '<td style="text-align:right;">' + formatCnQty(t.quantity) + '</td>' +
+            '<td style="text-align:right;">' + formatCnAmount(t.price) + '</td>' +
+            '<td style="text-align:right;">' + formatCnAmount(t.gross_amount) + '</td>' +
+            '<td style="text-align:right;">' + chargesHtml + '</td>' +
+            '<td style="text-align:right;">' + traderChargesHtml + '</td>' +
+            '<td style="text-align:right;" id="excelNet_' + index + '">' + formatCnAmount(t.net_amount) + '</td>';
+
+        if (t.matchStatus === 'flagged') {
+            row.style.backgroundColor = '#fffff0';
+        }
+
         tbody.appendChild(row);
     });
+
+    // Show error summary if any
+    if (excelErrorRows.length > 0) {
+        var errHtml = excelErrorRows.slice(0, 10).map(function(e) { return 'Row ' + e.rowNum + ': ' + e.errors.join('; '); }).join('\n');
+        tiAlert('warning', allRows.length + ' transactions ready. ' + excelErrorRows.length + ' rows skipped:\n\n' + errHtml);
+    } else {
+        tiAlert('info', allRows.length + ' transactions ready (' + newCount + ' new, ' + updateCount + ' updates). Review and click Import.');
+    }
 
     document.getElementById('previewSection').classList.add('active');
 }
 
-async function importToDatabase() {
-    if (parsedTransactions.length === 0) { tiAlert('error', 'No transactions to import'); return; }
-    if (!confirm('Import ' + parsedTransactions.length + ' transactions to database?')) return;
-    tiLoading(true);
-    document.getElementById('importBtn').disabled = true;
-    try {
-        var dataToInsert = parsedTransactions.map(function(t) { var copy = Object.assign({}, t); delete copy.rowNum; delete copy.investor_name; delete copy.broker_name; return copy; });
-        var batchSize = 100;
-        var inserted = 0;
-        for (var i = 0; i < dataToInsert.length; i += batchSize) {
-            var batch = dataToInsert.slice(i, i + batchSize);
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions', {
-                method: 'POST',
-                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-                body: JSON.stringify(batch)
-            });
-            if (!resp.ok) { var err = await resp.json(); throw new Error(err.message || err.details || 'HTTP ' + resp.status); }
-            inserted += batch.length;
-        }
-        tiAlert('success', 'Successfully imported ' + inserted + ' transactions!');
-        tiLoading(false);
-        setTimeout(function() { window.location.reload(); }, 2000);
-    } catch (error) {
-        tiAlert('error', 'Import failed: ' + error.message);
-        tiLoading(false);
-        document.getElementById('importBtn').disabled = false;
+// Recalculate net_amount when user edits charges inline
+function recalcExcelRow(index) {
+    var allRows = excelConfirmedRows.concat(excelFlaggedRows);
+    var row = allRows[index];
+    if (!row) return;
+
+    // Read edited total_charges from DOM
+    var chargesInput = document.querySelector('input[data-row="' + index + '"][data-field="total_charges"]');
+    if (chargesInput) {
+        row.total_charges = parseFloat(chargesInput.value) || 0;
     }
+
+    // Recalculate net_amount (rule F.2.2)
+    if (row.transaction_type === 'BUY') {
+        row.net_amount = Math.round((row.gross_amount + row.total_charges) * 100) / 100;
+    } else if (row.transaction_type === 'SELL') {
+        row.net_amount = Math.round((row.gross_amount - row.total_charges) * 100) / 100;
+    } else if (isIncomeType(row.transaction_type)) {
+        row.net_amount = Math.round((row.gross_amount - row.total_charges) * 100) / 100;
+    }
+
+    // Update net display
+    var netCell = document.getElementById('excelNet_' + index);
+    if (netCell) netCell.textContent = formatCnAmount(row.net_amount);
 }
 
+// Build Supabase-ready transaction record from Excel row (rules F.3.1–F.3.5)
+function buildExcelTransactionRecord(row) {
+    var rec = {
+        investor_id: row.investor_id,
+        trader_id: row.trader_id || row.investor_id,
+        broker_id: row.broker_id || null,
+        security_id: row.security_id,
+        security_type: row.security_type || 'EQUITY',
+        symbol: row.symbol,
+        short_symbol: row.short_symbol || row.symbol,
+        company_name: row.company_name || row.symbol,
+        exchange: row.exchange || 'NSE',
+        product: null,
+        transaction_type: row.transaction_type,
+        transaction_date: row.transaction_date,
+        quantity: row.quantity,
+        lots: row.lots || 0,
+        price: row.price,
+        gross_amount: row.gross_amount,
+        brokerage: row.brokerage || 0,
+        stt: row.stt || 0,
+        other_charges: row.other_charges || 0,
+        gst: row.gst || 0,
+        tds: row.tds || null,
+        total_charges: row.total_charges || 0,
+        trader_charges: row.trader_charges || 0,
+        net_amount: row.net_amount || 0,
+        margin_blocked: 0,
+        broker_contract_note_no: null,
+        broker_trade_id: null,
+        tags: row.tags && row.tags.length > 0 ? row.tags : ['blank'],
+        notes: row.notes || null,
+        is_locked: false,
+        ignore_for_avg_cost: false,
+        dont_display: false
+    };
+    return rec;
+}
+
+// Import confirmed + flagged rows to database (rule C.2.2: batch ≤10, retry)
+async function importExcelToDatabase() {
+    var allRows = excelConfirmedRows.concat(excelFlaggedRows);
+    if (allRows.length === 0) { tiAlert('error', 'No transactions to import'); return; }
+
+    // Collect latest edited values from DOM
+    allRows.forEach(function(r, idx) {
+        var chargesInput = document.querySelector('input[data-row="' + idx + '"][data-field="total_charges"]');
+        if (chargesInput) r.total_charges = parseFloat(chargesInput.value) || 0;
+        var trChargesInput = document.querySelector('input[data-row="' + idx + '"][data-field="trader_charges"]');
+        if (trChargesInput) r.trader_charges = parseFloat(trChargesInput.value) || 0;
+        // Recalc net
+        if (r.transaction_type === 'BUY') r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
+        else if (r.transaction_type === 'SELL') r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
+        else if (isIncomeType(r.transaction_type)) r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
+    });
+
+    var newRows = allRows.filter(function(r) { return !r.isUpdate; });
+    var updateRows = allRows.filter(function(r) { return r.isUpdate; });
+
+    if (!confirm('Import ' + newRows.length + ' new + ' + updateRows.length + ' updates to database?')) return;
+
+    tiLoading(true, 'Importing transactions...');
+    document.getElementById('importBtn').disabled = true;
+
+    var insertCount = 0, updateCount = 0;
+    var importErrors = [];
+
+    try {
+        // INSERT new rows in batches of 10 (rule C.2.2)
+        var insertRecords = newRows.map(buildExcelTransactionRecord);
+        for (var i = 0; i < insertRecords.length; i += 10) {
+            var batch = insertRecords.slice(i, i + 10);
+            try {
+                var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions', {
+                    method: 'POST',
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+                    body: JSON.stringify(batch)
+                });
+                if (!resp.ok) {
+                    var errBody = await resp.json();
+                    importErrors.push('Insert batch ' + Math.floor(i / 10) + ': ' + (errBody.message || errBody.details || 'HTTP ' + resp.status));
+                } else {
+                    insertCount += batch.length;
+                }
+            } catch (e) {
+                importErrors.push('Insert batch ' + Math.floor(i / 10) + ': ' + e.message);
+            }
+        }
+
+        // UPDATE existing rows via PATCH (rule A.2.2: use .update().eq(), not upsert)
+        for (var j = 0; j < updateRows.length; j++) {
+            var ur = updateRows[j];
+            var rec = buildExcelTransactionRecord(ur);
+            try {
+                var uresp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
+                    method: 'PATCH',
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+                    body: JSON.stringify(rec)
+                });
+                if (!uresp.ok) {
+                    var uErrBody = await uresp.json();
+                    importErrors.push('Update ' + ur.symbol + ': ' + (uErrBody.message || 'HTTP ' + uresp.status));
+                } else {
+                    updateCount++;
+                }
+            } catch (e) {
+                importErrors.push('Update ' + ur.symbol + ': ' + e.message);
+            }
+            // Rate limit pause every 10 updates
+            if (j > 0 && j % 10 === 0) await new Promise(function(r) { setTimeout(r, 200); });
+        }
+
+        tiLoading(false);
+        if (importErrors.length > 0) {
+            tiAlert('warning', 'Inserted ' + insertCount + ' new, updated ' + updateCount + '.\n\nErrors:\n' + importErrors.slice(0, 10).join('\n'));
+        } else {
+            tiAlert('success', 'Successfully imported ' + insertCount + ' new + ' + updateCount + ' updated transactions!');
+            // Reset state
+            document.getElementById('previewSection').classList.remove('active');
+            parsedTransactions = [];
+            excelConfirmedRows = [];
+            excelFlaggedRows = [];
+            excelErrorRows = [];
+            document.getElementById('fileInput').value = '';
+        }
+    } catch (error) {
+        tiLoading(false);
+        tiAlert('error', 'Import failed: ' + error.message);
+    }
+    document.getElementById('importBtn').disabled = false;
+}
+
+window.importToDatabase = function() { importExcelToDatabase(); };
+window.recalcExcelRow = recalcExcelRow;
 window.cancelImport = function() {
-    if (confirm('Cancel import and start over?')) window.location.reload();
+    parsedTransactions = [];
+    excelConfirmedRows = [];
+    excelFlaggedRows = [];
+    excelErrorRows = [];
+    document.getElementById('previewSection').classList.remove('active');
+    document.getElementById('fileInput').value = '';
+    tiAlert('info', 'Import cancelled.');
 };
 
 // ============================================================================
@@ -1214,7 +1927,5 @@ function tiLoading(show, text) {
 }
 
 // Expose globals for onclick handlers in HTML
-window.importCnToDatabase = window.importCnToDatabase || function(){};
-window.cancelCnImport = window.cancelCnImport || function(){};
-window.importToDatabase = importToDatabase;
-window.cancelImport = window.cancelImport || function(){};
+// (importToDatabase, recalcExcelRow, cancelImport already set above)
+// (importCnToDatabase, cancelCnImport already set via window.xxx = async function() above)

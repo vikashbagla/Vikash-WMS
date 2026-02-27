@@ -82,7 +82,7 @@
         .spinner { border: 3px solid #f0f4f8; border-top: 3px solid #667eea; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 12px auto; }
         @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
         .hidden { display: none; }
-        @media (max-width: 768px) { .import-grid { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 768px) { .import-grid { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(3, 1fr) !important; } }
     </style>
 </head>
 <body>
@@ -140,14 +140,16 @@
     <!-- ===== EXCEL PREVIEW (full width, below both boxes) ===== -->
     <div class="section preview-section" id="previewSection">
         <div class="section-title">Excel Import Preview</div>
-        <div class="stats">
+        <div class="stats" style="grid-template-columns: repeat(6, 1fr);">
             <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" id="statTotal">0</div></div>
             <div class="stat-card" style="border-left-color:#38a169;"><div class="stat-label">Buy</div><div class="stat-value type-buy" id="statBuy">0</div></div>
             <div class="stat-card" style="border-left-color:#e53e3e;"><div class="stat-label">Sell</div><div class="stat-value type-sell" id="statSell">0</div></div>
             <div class="stat-card" style="border-left-color:#667eea;"><div class="stat-label">Other</div><div class="stat-value type-other" id="statOther">0</div></div>
+            <div class="stat-card" style="border-left-color:#48bb78;"><div class="stat-label">New</div><div class="stat-value" id="statNew" style="color:#48bb78;">0</div></div>
+            <div class="stat-card" style="border-left-color:#ed8936;"><div class="stat-label">Updates</div><div class="stat-value" id="statUpdate" style="color:#ed8936;">0</div></div>
         </div>
-        <div class="table-wrapper"><table><thead><tr>
-            <th>#</th><th>Investor</th><th>Type</th><th>Symbol</th><th>Date</th><th>Quantity</th><th>Lots</th><th>Price</th><th>Net Amount</th>
+        <div class="table-wrapper" style="max-height:50vh; overflow-y:auto;"><table><thead><tr>
+            <th>#</th><th>Investor</th><th>Type</th><th>Symbol</th><th>Date</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross</th><th style="text-align:right;">Charges</th><th style="text-align:right;">Trd Charges</th><th style="text-align:right;">Net Amount</th>
         </tr></thead><tbody id="previewTableBody"></tbody></table></div>
         <div class="action-buttons">
             <button class="btn btn-danger" onclick="cancelImport()">Cancel</button>
