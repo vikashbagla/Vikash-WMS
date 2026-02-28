@@ -93,11 +93,11 @@ CN_PARSERS.fyers = function(pages, numPages) {
                 continue;
             }
 
-            // Skip non-trade lines
+            // Skip non-trade lines (but NOT lines starting with a long order number — those are trade rows)
             if (!currentSegment) continue;
             if (lineText.match(/^Order Number/i) || lineText.match(/^Trade Annexure/i) || lineText.match(/^Notes:/i) || lineText.match(/^Page \d/i)) continue;
             if (lineText.match(/^\*\s*Remark/)) continue;
-            if (lineText.match(/REVISED|CONTRACT NOTE|FYERS SECURITIES|Registered Office|SEBI Reg|Compliance|UCC|Name of|Address|State|Mobile|PAN|Client GSTIN|Invoice|Equity ICCL|Settlement/i)) continue;
+            if (!lineText.match(/^\d{10,}/) && lineText.match(/REVISED|CONTRACT NOTE|FYERS SECURITIES|Registered Office|SEBI Reg|Compliance|UCC|Name of|Address|\bState\b|Mobile|\bPAN\b|Client GSTIN|Invoice|Equity ICCL|Settlement/i)) continue;
 
             // Parse trade row: OrderNo, OrderTime, TradeNo, TradeTime, Security, B/S, Qty, Price, [ForeignPrice], NetRate, NetAmount, [Remark]
             var tradeMatch = parseFyersTradeRow(lines[li].items, currentSegment);
