@@ -752,7 +752,10 @@ async function parseCnPdf(file, password) {
         }
 
         statusEl.textContent = 'Parsing trades...';
+        window._debugCnPages = pages;  // DEBUG: capture raw PDF pages for troubleshooting
         var parseResult = parser(pages, pdf.numPages);
+        window._debugParseResult = parseResult;  // DEBUG: capture parser output
+        console.log('CN Parser: ' + parseResult.trades.length + ' trades found: ' + parseResult.trades.map(function(t) { return t.underlying + '(' + t.buySell + ')'; }).join(', '));
         // parseResult = { tradeDate, cnNumber, trades: [{segment, description, buySell, qty, price, amount}], charges: {equity:{brokerage,stt,gst,...}, nfo:{...}} }
 
         // Store trade date and CN number for buildTransactionRecord
