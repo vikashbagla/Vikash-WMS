@@ -3055,6 +3055,8 @@ async function importExcelToDatabase() {
     try {
         // INSERT new rows in batches of 10 (rule C.2.2)
         var insertRecords = newRows.map(buildExcelTransactionRecord);
+        // Debug: log batch 0 details for chk_lots_rules diagnosis
+        console.log('DEBUG batch 0 records:', JSON.stringify(insertRecords.slice(0, 10).map(function(r) { return { symbol: r.symbol, security_type: r.security_type, lots: r.lots, quantity: r.quantity, transaction_type: r.transaction_type }; })));
         for (var i = 0; i < insertRecords.length; i += 10) {
             var batch = insertRecords.slice(i, i + 10);
             try {
