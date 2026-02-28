@@ -377,7 +377,7 @@ function isIncomeType(txnType) {
 }
 
 // Get brokerage rate for investor-broker combo (delivery assumed per rule F.2.6)
-function getBrokerageForRow(investorId, brokerId, grossAmount, securityType, assetClass, price, quantity) {
+function getBrokerageForRow(investorId, brokerId, grossAmount, securityType, assetClass, price, quantity, lots) {
     if (!brokerId) return 0;
     var ibaEntry = ibaRatesMap[investorId + '|' + brokerId];
     if (!ibaEntry) return 0;
@@ -396,8 +396,14 @@ function getBrokerageForRow(investorId, brokerId, grossAmount, securityType, ass
     }
     if (!segment) return 0;
 
-    // flat rate (options) vs pct+max (delivery/futures)
-    if (segment.flat !== undefined) return segment.flat;
+    // flat rate (options) — flat × |lots|, capped at max (max 0 = no cap)
+    if (segment.flat !== undefined) {
+        var absLots = Math.abs(lots || 0) || 1;  // fallback to 1 lot if not available
+        var flatCalc = segment.flat * absLots;
+        var flatMax = segment.max || 0;
+        if (flatMax > 0 && flatCalc > flatMax) flatCalc = flatMax;
+        return Math.round(flatCalc * 100) / 100;
+    }
     var pct = segment.pct || 0;
     var max = segment.max || 0;
 
@@ -471,7 +477,7 @@ function autoCalcCharges(row) {
 
     // 1. Brokerage (rule F.2.6)
     if (row.brokerage === null || row.brokerage === undefined || row.brokerage === 0) {
-        row.brokerage = getBrokerageForRow(row.investor_id, row.broker_id, gross, row.security_type, row.asset_class, row.price, row.quantity);
+        row.brokerage = getBrokerageForRow(row.investor_id, row.broker_id, gross, row.security_type, row.asset_class, row.price, row.quantity, row.lots);
     }
 
     if (inclusive) {
@@ -525,8 +531,10 @@ function autoCalcCharges(row) {
         }
     }
 
-    // 6. net_amount: ALWAYS recalculate based on auto-calculated charges (rule F.2.2)
-    if (row.transaction_type === 'BUY') {
+    // 6. net_amount: preserve user-entered value if provided (irrespective of other fields), otherwise calculate (rule F.2.2)
+    if (row._netOverride) {
+        // Already marked as user-entered — keep it
+    } else if (row.transaction_type === 'BUY') {
         row.net_amount = Math.round((gross + row.total_charges) * 100) / 100;
     } else {
         row.net_amount = Math.round((gross - row.total_charges) * 100) / 100;
@@ -539,7 +547,7 @@ function autoCalcCharges(row) {
             row.trader_charges = 0;
         } else {
             // Different trader — calculate from trader's broker rates
-            row.trader_charges = getBrokerageForRow(row.trader_id, row.broker_id, gross, row.security_type, row.asset_class, row.price, row.quantity);
+            row.trader_charges = getBrokerageForRow(row.trader_id, row.broker_id, gross, row.security_type, row.asset_class, row.price, row.quantity, row.lots);
         }
     }
 
@@ -560,7 +568,9 @@ function autoCalcCharges(row) {
         }
         if (segment) {
             if (segment.flat !== undefined) {
-                row._chargesBasis.brokerage = 'Flat ₹' + segment.flat + '/trade';
+                var basisStr = 'Flat ₹' + segment.flat + '/lot × ' + Math.abs(row.lots || 1) + ' lots';
+                if (segment.max > 0) basisStr += ' (max ₹' + segment.max + ')';
+                row._chargesBasis.brokerage = basisStr;
             } else {
                 var pctDisplay = ((segment.pct || 0) * 100).toFixed(2) + '%';
                 row._chargesBasis.brokerage = pctDisplay + ' of price';
@@ -1036,8 +1046,24 @@ async function matchSymbolMultiStage(symbol, securityType, batchMap) {
         var match = batchMap[symUpper];
         // If security_type filter provided, check it matches
         if (securityType && securityType !== 'NFO' && match.security_type !== securityType) {
-            // Type mismatch — flag for review
-            return { status: 'flagged', match: match, matches: [match], error: 'Symbol found but security_type mismatch: expected ' + securityType + ', got ' + match.security_type };
+            // Type mismatch — also search by company_name to offer alternatives
+            var altMatches = [match];
+            try {
+                var altFilter = 'or=(symbol.ilike.*' + encodeURIComponent(symUpper) + '*,nse_symbol.ilike.*' + encodeURIComponent(symUpper) + '*,bse_symbol.ilike.*' + encodeURIComponent(symUpper) + '*,company_name.ilike.*' + encodeURIComponent(symUpper) + '*)';
+                var altResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,nse_symbol,bse_symbol,company_name,security_type,asset_class,lot_size&' + altFilter + '&limit=10', {
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+                });
+                var altRows = await altResp.json();
+                if (altRows.length > 0) {
+                    altMatches = altRows.map(function(r) {
+                        return { id: r.id, symbol: r.nse_symbol || r.bse_symbol || r.symbol, short_symbol: r.nse_symbol || r.bse_symbol || r.symbol, company_name: r.company_name, security_type: r.security_type, asset_class: r.asset_class, exchange: r.nse_symbol ? 'NSE' : 'BSE' };
+                    });
+                    // Ensure the original exact match is included
+                    var hasExact = altMatches.some(function(m) { return m.id === match.id; });
+                    if (!hasExact) altMatches.unshift(match);
+                }
+            } catch (e) { console.warn('Alt match lookup failed:', e); }
+            return { status: 'flagged', match: match, matches: altMatches, error: 'Symbol found but security_type mismatch: expected ' + securityType + ', got ' + match.security_type };
         }
         return { status: 'confirmed', match: match, matches: [match] };
     }
@@ -1595,7 +1621,7 @@ function handleFile(file) {
                 return true;
             });
             if (filteredData.length === 0) throw new Error('No data rows found in the "1. Transactions" sheet.');
-            await processTransactions(filteredData);
+            await processTransactions(filteredData, worksheet);
             tiLoading(false);
         } catch (error) {
             tiAlert('error', 'Error reading Excel file: ' + error.message);
@@ -1611,7 +1637,7 @@ function handleFile(file) {
 // Stage A: Parse & Validate → Stage B: Symbol Match + Charge Calc → Stage C: Duplicate Detection
 // ============================================================================
 
-async function processTransactions(rawData) {
+async function processTransactions(rawData, worksheet) {
     parsedTransactions = [];
     excelConfirmedRows = [];
     excelFlaggedRows = [];
@@ -1641,6 +1667,20 @@ async function processTransactions(rawData) {
         var total_charges_raw = row['total_charges'] !== null && row['total_charges'] !== undefined ? parseFloat(row['total_charges']) : null;
         var trader_charges_raw = row['trader_charges'] !== null && row['trader_charges'] !== undefined ? parseFloat(row['trader_charges']) : null;
         var net_amount_raw = row['net_amount'] !== null && row['net_amount'] !== undefined ? parseFloat(row['net_amount']) : null;
+        // Check if formula cells have formulas (template-calculated) vs user-entered literal
+        var netAmountIsFormula = false;
+        if (worksheet && net_amount_raw !== null) {
+            var netCellAddr = XLSX.utils.encode_cell({ r: rowNum - 1, c: 14 }); // col O = net_amount
+            var netCellObj = worksheet[netCellAddr];
+            if (netCellObj && netCellObj.f) netAmountIsFormula = true;
+        }
+        // Same for gross_amount (col J)
+        var grossAmountIsFormula = false;
+        if (worksheet && gross_amount_raw !== null) {
+            var grossCellAddr = XLSX.utils.encode_cell({ r: rowNum - 1, c: 9 }); // col J = gross_amount
+            var grossCellObj = worksheet[grossCellAddr];
+            if (grossCellObj && grossCellObj.f) grossAmountIsFormula = true;
+        }
         var tags_raw = row['tags'] ? String(row['tags']).trim() : null;
         var notes_raw = row['notes'] ? String(row['notes']).trim() : null;
 
@@ -1752,6 +1792,7 @@ async function processTransactions(rawData) {
             matchStatus: null,
             matchOptions: null,
             _totalOverride: (total_charges_raw !== null && total_charges_raw !== undefined),
+            _netOverride: (net_amount_raw !== null && net_amount_raw !== undefined && !netAmountIsFormula),
             _exchange_charges: null,
             _sebi_charges: null,
             _stamp_duty: null,
@@ -1789,6 +1830,7 @@ async function processTransactions(rawData) {
 
         vr.matchStatus = matchResult.status;
         vr.matchOptions = matchResult.matches || [];
+        vr.matchError = matchResult.error || null;
 
         if (matchResult.status === 'confirmed' && matchResult.match) {
             vr.security_id = matchResult.match.id;
@@ -1976,14 +2018,14 @@ function displayExcelPreview() {
             '<td>' + (index + 1) + '</td>' +
             '<td style="font-size:10px;white-space:nowrap;" title="' + invTooltip.replace(/"/g, '&quot;') + '">' + invLabel + '</td>' +
             '<td class="' + typeClass + '" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:36px;" title="' + typeAbbr + '">' + typeShort + '</td>' +
-            '<td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;" title="' + symbolTitle.replace(/"/g, '&quot;') + '">' + statusBadge + symbolDisplay + dupBadge + '</td>' +
+            '<td style="max-width:180px;" title="' + symbolTitle.replace(/"/g, '&quot;') + '">' + statusBadge + symbolDisplay + dupBadge + (t.company_name ? '<br><span style="font-size:10px;color:#718096;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:170px;">' + t.company_name + '</span>' : '') + '</td>' +
             '<td style="font-size:11px;white-space:nowrap;" title="' + dateTooltip + '">' + formatExcelDate(t.transaction_date) + '</td>' +
             '<td style="text-align:right;" title="Qty: ' + t.quantity + '">' + formatCnQty(t.quantity) + '</td>' +
             '<td style="text-align:right;" title="Price: ' + t.price + '">' + formatCnAmount(t.price) + '</td>' +
             '<td style="text-align:right;" title="Gross: ' + t.gross_amount + '">' + formatCnAmount(t.gross_amount) + '</td>' +
             '<td style="text-align:right;">' + chargesDisplay + '</td>' +
             '<td style="text-align:right;">' + traderChargesDisplay + '</td>' +
-            '<td style="text-align:right;" id="excelNet_' + index + '" title="Net: ' + t.net_amount + '">' + formatCnAmount(t.net_amount) + '</td>';
+            '<td style="text-align:right;' + (t._netOverride ? 'color:#b7791f;font-style:italic;' : '') + '" id="excelNet_' + index + '" title="Net: ' + t.net_amount + (t._netOverride ? ' (user entered)' : '') + '">' + formatCnAmount(t.net_amount) + '</td>';
 
         if (t.matchStatus === 'flagged') {
             row.style.backgroundColor = '#fffff0';
@@ -2084,7 +2126,11 @@ function openReviewPopover(rowIdx) {
 
     // Build popover content
     var title = 'Resolve Symbol — Row ' + (rowIdx + 1) + ': ' + row.symbol;
-    var bodyHtml = '<div style="font-size:11px;color:#718096;margin-bottom:8px;">Multiple matches found. Select the correct security:</div>';
+    var reasonText = row.matchOptions.length === 1
+        ? 'Symbol found but may need review. Confirm or select the correct security:'
+        : 'Multiple matches found. Select the correct security:';
+    if (row.matchError) reasonText = row.matchError + '. Select the correct security:';
+    var bodyHtml = '<div style="font-size:11px;color:#718096;margin-bottom:8px;">' + reasonText + '</div>';
 
     row.matchOptions.forEach(function(opt, i) {
         var selected = (row.security_id === opt.id) ? ' style="background:#edf2f7;border:2px solid #667eea;"' : ' style="border:2px solid transparent;"';
@@ -2479,8 +2525,9 @@ async function importExcelToDatabase() {
     allRows = allRows.filter(function(r, idx) { return includedIndices[idx]; });
     if (allRows.length === 0) { tiAlert('error', 'No rows selected for import'); return; }
 
-    // Values are already in data objects (edited via dblclick inline edit) — just recalc net
+    // Values are already in data objects (edited via dblclick inline edit) — recalc net unless user-entered
     allRows.forEach(function(r) {
+        if (r._netOverride) return; // User entered net_amount — preserve it
         if (r.transaction_type === 'BUY') r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
         else if (r.transaction_type === 'SELL') r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
         else if (isIncomeType(r.transaction_type)) r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;

@@ -54,7 +54,7 @@ function downloadTransactionTemplate() {
             'Charges from the trader\'s perspective. If trader = investor, auto-copied from total_charges. If trader differs, auto-calculated from trader-broker brokerage rates.',
             'Number (e.g. 25.00)'],
         ['net_amount', 'Auto',
-            'Auto-calculated: BUY = gross_amount + total_charges, SELL = gross_amount - total_charges. You can override if needed.',
+            'Auto-calculated: BUY = gross_amount + total_charges, SELL = gross_amount - total_charges. When transaction_type is blank, uses quantity sign (-ve = subtract charges, +ve = add). You can override by typing a value (replaces formula).',
             'Formula (auto-calc) or number'],
         ['tags', 'No',
             'Tag for categorising transactions. If blank, saved as "blank" in the database.',
@@ -147,9 +147,10 @@ function downloadTransactionTemplate() {
         };
 
         // net_amount: BUY → gross + total_charges, SELL → gross - total_charges
+        // When transaction_type is blank, use quantity sign: negative qty = SELL (subtract), positive = BUY (add)
         txnSheet[netCell] = {
             t: 'n',
-            f: 'IF(J' + r + '="","",IF(G' + r + '="SELL",J' + r + '-M' + r + ',J' + r + '+M' + r + '))'
+            f: 'IF(J' + r + '="","",IF(OR(G' + r + '="SELL",AND(G' + r + '="",H' + r + '<0)),J' + r + '-M' + r + ',J' + r + '+M' + r + '))'
         };
     }
 
