@@ -1887,8 +1887,8 @@ window.importCnToDatabase = async function() {
 };
 
 function roundMoney(v) { return Math.round((v || 0) * 100) / 100; }
-// Normalize security_type fallback only (preserve EQUITY_SME, ETF, etc as-is)
-function normSecType(st) { return st || 'EQUITY'; }
+// Normalize security_type for transactions table (EQUITY_SME → EQUITY; others preserved)
+function normSecType(st) { return (st === 'EQUITY_SME') ? 'EQUITY' : (st || 'EQUITY'); }
 
 function buildTransactionRecord(row) {
     return {
@@ -2396,7 +2396,8 @@ function displayExcelPreview() {
             '<div class="cn-tag-dropdown" id="' + excelTagId + '_dd" style="display:none;position:absolute;z-index:100;left:0;right:0;max-height:120px;overflow-y:auto;background:#fff;border:1px solid #cbd5e0;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.12);margin-top:2px;"></div>';
 
         row.dataset.rowIdx = index;
-        row.innerHTML = '<td style="text-align:center;"><input type="checkbox" class="excel-row-cb" data-row="' + index + '" checked></td>' +
+        var isChecked = t.isUpdate ? '' : ' checked';
+        row.innerHTML = '<td style="text-align:center;"><input type="checkbox" class="excel-row-cb" data-row="' + index + '"' + isChecked + '></td>' +
             '<td>' + (index + 1) + '</td>' +
             '<td style="font-size:10px;white-space:nowrap;" title="' + invTooltip.replace(/"/g, '&quot;') + '">' + invLabel + '</td>' +
             '<td style="min-width:140px;" title="' + symbolTitle.replace(/"/g, '&quot;') + '">' + statusBadge + symbolDisplay + dupBadge + (t.company_name ? '<br><span style="font-size:10px;color:#718096;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:110px;">' + t.company_name + '</span>' : '') + '</td>' +
@@ -2446,6 +2447,10 @@ function displayExcelPreview() {
     } else {
         tiAlert('info', allRows.length + ' transactions ready (' + newCount + ' new, ' + updateCount + ' updates). Review and click Import.');
     }
+
+    // Update select-all and import button count (updates are unchecked by default)
+    updateSelectAllState();
+    updateImportBtnCount();
 
     // Open modal overlay
     document.getElementById('excelPreviewOverlay').classList.add('active');
