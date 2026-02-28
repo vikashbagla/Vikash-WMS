@@ -2994,11 +2994,11 @@ async function importExcelToDatabase() {
         for (var i = 0; i < insertRecords.length; i += 10) {
             var batch = insertRecords.slice(i, i + 10);
             try {
-                var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions', {
+                var resp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions', {
                     method: 'POST',
                     headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
                     body: JSON.stringify(batch)
-                });
+                }, 3);
                 if (!resp.ok) {
                     var errBody = await resp.json();
                     importErrors.push('Insert batch ' + Math.floor(i / 10) + ': ' + (errBody.message || errBody.details || 'HTTP ' + resp.status));
@@ -3006,7 +3006,7 @@ async function importExcelToDatabase() {
                     insertCount += batch.length;
                 }
             } catch (e) {
-                importErrors.push('Insert batch ' + Math.floor(i / 10) + ': ' + e.message);
+                importErrors.push('Insert batch ' + Math.floor(i / 10) + ': ' + e.message + ' (after 3 retries)');
             }
         }
 
@@ -3015,11 +3015,11 @@ async function importExcelToDatabase() {
             var ur = updateRows[j];
             var rec = buildExcelTransactionRecord(ur);
             try {
-                var uresp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
+                var uresp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
                     method: 'PATCH',
                     headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
                     body: JSON.stringify(rec)
-                });
+                }, 3);
                 if (!uresp.ok) {
                     var uErrBody = await uresp.json();
                     importErrors.push('Update ' + ur.symbol + ': ' + (uErrBody.message || 'HTTP ' + uresp.status));
@@ -3027,7 +3027,7 @@ async function importExcelToDatabase() {
                     updateCount++;
                 }
             } catch (e) {
-                importErrors.push('Update ' + ur.symbol + ': ' + e.message);
+                importErrors.push('Update ' + ur.symbol + ': ' + e.message + ' (after 3 retries)');
             }
             // Rate limit pause every 10 updates
             if (j > 0 && j % 10 === 0) await new Promise(function(r) { setTimeout(r, 200); });
