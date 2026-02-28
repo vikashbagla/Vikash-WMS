@@ -1887,13 +1887,15 @@ window.importCnToDatabase = async function() {
 };
 
 function roundMoney(v) { return Math.round((v || 0) * 100) / 100; }
+// Normalize security_type for transactions table (EQUITY_SME → EQUITY)
+function normSecType(st) { return (st === 'EQUITY_SME') ? 'EQUITY' : (st || 'EQUITY'); }
 
 function buildTransactionRecord(row) {
     return {
         investor_id: cnSelectedAccount.investor_id,
         broker_id: cnSelectedAccount.broker_id,
         security_id: row.security_id,  // From processAndGroupTrades() security matching
-        security_type: row.security_type,
+        security_type: normSecType(row.security_type),
         symbol: row.symbol,
         short_symbol: row.short_symbol,
         company_name: row.company_name,
@@ -2965,7 +2967,7 @@ function buildExcelTransactionRecord(row) {
         trader_id: row.trader_id || row.investor_id,
         broker_id: row.broker_id || null,
         security_id: row.security_id,
-        security_type: row.security_type || 'EQUITY',
+        security_type: normSecType(row.security_type),
         symbol: row.symbol,
         short_symbol: row.short_symbol || row.symbol,
         company_name: row.company_name || row.symbol,
@@ -3055,8 +3057,6 @@ async function importExcelToDatabase() {
     try {
         // INSERT new rows in batches of 10 (rule C.2.2)
         var insertRecords = newRows.map(buildExcelTransactionRecord);
-        // Debug: log batch 0 details for chk_lots_rules diagnosis
-        console.log('DEBUG batch 0 records:', JSON.stringify(insertRecords.slice(0, 10).map(function(r) { return { symbol: r.symbol, security_type: r.security_type, lots: r.lots, quantity: r.quantity, transaction_type: r.transaction_type }; })));
         for (var i = 0; i < insertRecords.length; i += 10) {
             var batch = insertRecords.slice(i, i + 10);
             try {
