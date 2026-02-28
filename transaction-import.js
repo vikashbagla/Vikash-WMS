@@ -511,8 +511,7 @@ function autoCalcCharges(row) {
         var exchRate = getRegChargeRate('EXCHANGE_CHARGES', txnCat, row.transaction_type, exchange);
         var sebiRate = getRegChargeRate('SEBI_CHARGES', txnCat, row.transaction_type, exchange);
         var stampRate = getRegChargeRate('STAMP_DUTY', txnCat, row.transaction_type, exchange);
-        // IPFT: same rate as SEBI (0.0001%) on all segments for NSE. 0 for BSE.
-        var ipftRate = (exchange === 'NSE') ? sebiRate : 0;
+        var ipftRate = getRegChargeRate('IPFT', txnCat, row.transaction_type, exchange);
 
         // Store individual sub-components for the breakdown popover
         if (!row._exchange_charges && row._exchange_charges !== 0) {

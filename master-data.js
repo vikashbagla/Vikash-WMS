@@ -2594,12 +2594,13 @@ var CHARGE_SEGMENTS = {
         sttLabel: 'CTT'
     }
 };
-var CHARGE_TYPES = ['STT', 'EXCHANGE_CHARGES', 'SEBI_CHARGES', 'STAMP_DUTY'];
+var CHARGE_TYPES = ['STT', 'EXCHANGE_CHARGES', 'SEBI_CHARGES', 'STAMP_DUTY', 'IPFT'];
 var CHARGE_LABELS = {
     'STT': 'STT/CTT',
     'EXCHANGE_CHARGES': 'Transaction Charges',
     'SEBI_CHARGES': 'SEBI Charges',
-    'STAMP_DUTY': 'Stamp Charges'
+    'STAMP_DUTY': 'Stamp Charges',
+    'IPFT': 'NSE IPFT'
 };
 var _activeChargesSubtab = 'equity';
 
