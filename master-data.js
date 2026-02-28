@@ -2707,6 +2707,13 @@ function renderChargesGrid() {
     });
     html += '</tr>';
 
+    // NSE IPFT row
+    html += '<tr><td style="font-weight:600;">NSE IPFT</td>';
+    cats.forEach(function(cat) {
+        html += renderChargeCell(cat, 'IPFT');
+    });
+    html += '</tr>';
+
     html += '</tbody></table>';
     grid.innerHTML = html;
 }
