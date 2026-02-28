@@ -1134,7 +1134,8 @@ function isSTTEligible(row) {
 
 function allocateCharges(rows, segCharges) {
     // Smart charge allocation:
-    // - Brokerage, exchange charges, SEBI, IPFT, GST → allocated to ALL trades proportionally
+    // - Brokerage → equal per-trade if broker uses flat rate (IBA max), else proportional
+    // - Exchange charges, SEBI, IPFT, GST → allocated to ALL trades proportionally
     // - STT, stamp duty → allocated ONLY to non-debt trades (debt instruments are exempt)
 
     var totalGross = 0;
@@ -1151,6 +1152,22 @@ function allocateCharges(rows, segCharges) {
 
     if (totalGross === 0) return;
 
+    // Detect flat-rate brokerage from IBA rates (e.g. Fyers ₹20/trade → max:20)
+    // If broker has a 'max' cap in brokerage_rates, split brokerage equally per trade
+    var useFlatBrokerage = false;
+    if (cnSelectedAccount) {
+        var ibaKey = cnSelectedAccount.investor_id + '|' + cnSelectedAccount.broker_id;
+        var ibaData = ibaRatesMap[ibaKey];
+        if (ibaData && ibaData.rates && ibaData.rates.equity && ibaData.rates.equity.delivery) {
+            var deliveryRates = ibaData.rates.equity.delivery;
+            // If max is set and the total brokerage equals max * numTrades, it's flat-rate
+            if (deliveryRates.max && deliveryRates.max > 0) {
+                useFlatBrokerage = true;
+                console.log('Flat-rate brokerage detected: ₹' + deliveryRates.max + '/trade, splitting equally among ' + rows.length + ' trades');
+            }
+        }
+    }
+
     // Store CN totals for verification display
     var _cnSttTotal = segCharges.stt;
     var _cnStampTotal = segCharges.stampDuty;
@@ -1158,8 +1175,12 @@ function allocateCharges(rows, segCharges) {
     rows.forEach(function(r) {
         var proportion = Math.abs(r.gross_amount) / totalGross;
 
-        // Brokerage: all trades get proportional share
-        r.brokerage = Math.round(segCharges.brokerage * proportion * 100) / 100;
+        // Brokerage: equal split for flat-rate brokers, proportional otherwise
+        if (useFlatBrokerage) {
+            r.brokerage = Math.round(segCharges.brokerage / rows.length * 100) / 100;
+        } else {
+            r.brokerage = Math.round(segCharges.brokerage * proportion * 100) / 100;
+        }
 
         // STT: only STT-eligible trades (EQUITY only, proportional within eligible trades)
         if (r._sttEligible && sttEligibleGross > 0) {
@@ -1455,8 +1476,8 @@ function initTagAutocomplete(inputId, initialValue) {
     var dropdown = document.getElementById(inputId + '_dd');
     if (!input || !pillsDiv || !dropdown) return;
 
-    // Track selected tags
-    var selected = initialValue ? initialValue.split(',').map(function(t) { return t.trim().toLowerCase(); }).filter(function(t) { return t.length > 0 && t !== 'blank'; }) : [];
+    // Track selected tags — preserve case as entered (no toLowerCase)
+    var selected = initialValue ? initialValue.split(/[,;]/).map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0 && t !== 'blank'; }) : [];
 
     // Render selected pills
     function renderPills() {
@@ -1483,34 +1504,36 @@ function initTagAutocomplete(inputId, initialValue) {
         input.dataset.tags = selected.join(', ');
     }
 
+    // Add tags from text (supports comma/semicolon separated)
+    function addTagsFromText(text) {
+        var newTags = text.split(/[,;]/).map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; });
+        var added = false;
+        newTags.forEach(function(tag) {
+            if (selected.indexOf(tag) === -1) {
+                selected.push(tag);
+                added = true;
+                // Add to global tag list if new
+                if (existingTags.indexOf(tag) === -1 && existingTags.indexOf(tag.toLowerCase()) === -1) {
+                    existingTags.push(tag);
+                    existingTags.sort();
+                }
+            }
+        });
+        if (added) {
+            syncInput();
+            renderPills();
+        }
+        input.value = '';
+        dropdown.style.display = 'none';
+    }
+
     // Show dropdown with matching tags as pills
     function showDropdown(filter) {
         dropdown.innerHTML = '';
+        var filterLower = filter.toLowerCase();
         var matches = existingTags.filter(function(tag) {
-            return selected.indexOf(tag) === -1 && tag.indexOf(filter.toLowerCase()) !== -1;
+            return selected.indexOf(tag) === -1 && tag.toLowerCase().indexOf(filterLower) !== -1;
         });
-        if (matches.length === 0 && filter.length > 0) {
-            // Offer to create a new tag
-            var item = document.createElement('span');
-            item.style.cssText = 'display:inline-block;padding:2px 8px;font-size:10px;cursor:pointer;color:#718096;font-style:italic;border:1px dashed #cbd5e0;border-radius:10px;margin:2px;';
-            item.textContent = '+ ' + filter.trim();
-            item.addEventListener('mousedown', function(e) {
-                e.preventDefault();
-                var newTag = filter.trim().toLowerCase();
-                if (newTag && selected.indexOf(newTag) === -1) {
-                    selected.push(newTag);
-                    if (existingTags.indexOf(newTag) === -1) existingTags.push(newTag);
-                    existingTags.sort();
-                    syncInput();
-                    renderPills();
-                    input.value = '';
-                    dropdown.style.display = 'none';
-                }
-            });
-            dropdown.appendChild(item);
-            dropdown.style.display = 'block';
-            return;
-        }
         if (matches.length === 0) { dropdown.style.display = 'none'; return; }
         dropdown.style.cssText += 'display:flex;flex-wrap:wrap;gap:3px;padding:4px 6px;';
         matches.forEach(function(tag) {
@@ -1521,11 +1544,7 @@ function initTagAutocomplete(inputId, initialValue) {
             pill.addEventListener('mouseleave', function() { pill.style.background = '#e2e8f0'; });
             pill.addEventListener('mousedown', function(e) {
                 e.preventDefault();
-                selected.push(tag);
-                syncInput();
-                renderPills();
-                input.value = '';
-                dropdown.style.display = 'none';
+                addTagsFromText(tag);
             });
             dropdown.appendChild(pill);
         });
@@ -1533,7 +1552,24 @@ function initTagAutocomplete(inputId, initialValue) {
     }
 
     // Events
-    input.addEventListener('input', function() { showDropdown(input.value); });
+    input.addEventListener('input', function() {
+        // Auto-add if user types a comma or semicolon
+        var val = input.value;
+        if (val.indexOf(',') !== -1 || val.indexOf(';') !== -1) {
+            addTagsFromText(val);
+            return;
+        }
+        showDropdown(val);
+    });
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            var val = input.value.trim();
+            if (val.length > 0) {
+                addTagsFromText(val);
+            }
+        }
+    });
     input.addEventListener('focus', function() { if (input.value.length > 0) showDropdown(input.value); });
     input.addEventListener('blur', function() { setTimeout(function() { dropdown.style.display = 'none'; }, 150); });
 
@@ -1615,6 +1651,24 @@ function formatCnQty(val) {
 // CN Import to Database
 // ============================================================================
 
+// Retry wrapper for fetch — handles transient "Failed to fetch" network errors
+async function fetchWithRetry(url, options, maxRetries) {
+    maxRetries = maxRetries || 3;
+    for (var attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            var resp = await fetch(url, options);
+            return resp;
+        } catch (e) {
+            if (attempt < maxRetries && /failed to fetch|network|timeout/i.test(e.message)) {
+                console.warn('Fetch attempt ' + attempt + ' failed (' + e.message + '), retrying in ' + (attempt * 500) + 'ms...');
+                await new Promise(function(resolve) { setTimeout(resolve, attempt * 500); });
+            } else {
+                throw e;  // Final attempt or non-transient error
+            }
+        }
+    }
+}
+
 window.importCnToDatabase = async function() {
     var totalRows = cnNewRows.length + cnUpdateRows.length;
     if (totalRows === 0) {
@@ -1656,11 +1710,11 @@ window.importCnToDatabase = async function() {
             var r = cnNewRows[i];
             var data = buildTransactionRecord(r);
             try {
-                var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions', {
+                var resp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions', {
                     method: 'POST',
                     headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
                     body: JSON.stringify(data)
-                });
+                }, 3);
                 var result = await resp.json();
                 if (!resp.ok) {
                     insertErrors.push(r.short_symbol + ' (' + r.transaction_type + '): ' + (result.message || result.details || 'HTTP ' + resp.status));
@@ -1668,7 +1722,7 @@ window.importCnToDatabase = async function() {
                     insertCount++;
                 }
             } catch (e) {
-                insertErrors.push(r.short_symbol + ': ' + e.message);
+                insertErrors.push(r.short_symbol + ': ' + e.message + ' (after 3 retries)');
             }
         }
 
@@ -1678,11 +1732,11 @@ window.importCnToDatabase = async function() {
             var udata = buildTransactionRecord(ur);
             delete udata.created_at; // Don't update created_at
             try {
-                var uresp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
+                var uresp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
                     method: 'PATCH',
                     headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
                     body: JSON.stringify(udata)
-                });
+                }, 3);
                 var uresult = await uresp.json();
                 if (!uresp.ok) {
                     updateErrors.push(ur.short_symbol + ' (' + ur.transaction_type + '): ' + (uresult.message || uresult.details || 'HTTP ' + uresp.status));
@@ -1690,7 +1744,7 @@ window.importCnToDatabase = async function() {
                     updateCount++;
                 }
             } catch (e) {
-                updateErrors.push(ur.short_symbol + ': ' + e.message);
+                updateErrors.push(ur.short_symbol + ': ' + e.message + ' (after 3 retries)');
             }
         }
 
@@ -1734,7 +1788,7 @@ function buildTransactionRecord(row) {
     return {
         investor_id: cnSelectedAccount.investor_id,
         broker_id: cnSelectedAccount.broker_id,
-        security_id: '00000000-0000-0000-0000-000000000000',  // Placeholder UUID (securities_db/nfo use SERIAL IDs)
+        security_id: row.security_id,  // From processAndGroupTrades() security matching
         security_type: row.security_type,
         symbol: row.symbol,
         short_symbol: row.short_symbol,
