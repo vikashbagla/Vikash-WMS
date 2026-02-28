@@ -1887,15 +1887,13 @@ window.importCnToDatabase = async function() {
 };
 
 function roundMoney(v) { return Math.round((v || 0) * 100) / 100; }
-// Normalize security_type for transactions table (EQUITY_SME → EQUITY; others preserved)
-function normSecType(st) { return (st === 'EQUITY_SME') ? 'EQUITY' : (st || 'EQUITY'); }
 
 function buildTransactionRecord(row) {
     return {
         investor_id: cnSelectedAccount.investor_id,
         broker_id: cnSelectedAccount.broker_id,
         security_id: row.security_id,  // From processAndGroupTrades() security matching
-        security_type: normSecType(row.security_type),
+        security_type: row.security_type || 'EQUITY',
         symbol: row.symbol,
         short_symbol: row.short_symbol,
         company_name: row.company_name,
@@ -2974,7 +2972,7 @@ function buildExcelTransactionRecord(row) {
         trader_id: row.trader_id || row.investor_id,
         broker_id: row.broker_id || null,
         security_id: row.security_id,
-        security_type: normSecType(row.security_type),
+        security_type: row.security_type || 'EQUITY',
         symbol: row.symbol,
         short_symbol: row.short_symbol || row.symbol,
         company_name: row.company_name || row.symbol,
