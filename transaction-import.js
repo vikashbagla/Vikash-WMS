@@ -82,8 +82,14 @@ function initTransactionImport() {
             if (e.target === excelOverlay) window.cancelImport();
         });
         document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape' && excelOverlay.classList.contains('active')) {
-                window.cancelImport();
+            if (e.key === 'Escape') {
+                // Close charges popover first if open, then main modal
+                var cpOverlay = document.getElementById('chargesPopoverOverlay');
+                if (cpOverlay && cpOverlay.classList.contains('active')) {
+                    closeChargesPopover();
+                } else if (excelOverlay.classList.contains('active')) {
+                    window.cancelImport();
+                }
             }
         });
     }
@@ -125,13 +131,16 @@ async function loadReferenceData() {
             if (brk.broker_code) brokerCache[brk.broker_code.toLowerCase()] = brk.id;
         });
 
-        // Load investor_broker_accounts with brokerage_rates for charge auto-calc (rule F.2.6)
-        resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=investor_id,broker_id,brokerage_rates&is_active=eq.true', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
+        // Load investor_broker_accounts with brokerage_rates + charges_inclusive for charge auto-calc (rule F.2.6)
+        resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=investor_id,broker_id,brokerage_rates,charges_inclusive&is_active=eq.true', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
         var ibAccounts = await resp.json();
         ibaRatesMap = {};
         ibAccounts.forEach(function(iba) {
             if (iba.brokerage_rates) {
-                ibaRatesMap[iba.investor_id + '|' + iba.broker_id] = iba.brokerage_rates;
+                ibaRatesMap[iba.investor_id + '|' + iba.broker_id] = {
+                    rates: iba.brokerage_rates,
+                    charges_inclusive: !!iba.charges_inclusive
+                };
             }
         });
 
@@ -360,15 +369,15 @@ function isIncomeType(txnType) {
 }
 
 // Get brokerage rate for investor-broker combo (delivery assumed per rule F.2.6)
-function getBrokerageForRow(investorId, brokerId, grossAmount, securityType, assetClass) {
+function getBrokerageForRow(investorId, brokerId, grossAmount, securityType, assetClass, price, quantity) {
     if (!brokerId) return 0;
-    var rates = ibaRatesMap[investorId + '|' + brokerId];
-    if (!rates) return 0;
+    var ibaEntry = ibaRatesMap[investorId + '|' + brokerId];
+    if (!ibaEntry) return 0;
+    var rates = ibaEntry.rates;
 
     // Navigate the rates JSONB: equity.delivery for EQUITY/ETF, derivatives.futures/options for NFO
     var segment = null;
     if (securityType === 'NFO') {
-        // Use derivatives.options for options, derivatives.futures otherwise
         if (assetClass === 'OPTIONS' && rates.derivatives && rates.derivatives.options) {
             segment = rates.derivatives.options;
         } else {
@@ -383,9 +392,25 @@ function getBrokerageForRow(investorId, brokerId, grossAmount, securityType, ass
     if (segment.flat !== undefined) return segment.flat;
     var pct = segment.pct || 0;
     var max = segment.max || 0;
-    var calc = Math.round(grossAmount * (pct / 100) * 100) / 100;
+
+    // pct is stored as decimal (e.g., 0.005 = 0.5%). NOT a percentage — do NOT divide by 100
+    // When charges_inclusive: brokerage = round(price * pct, 2) * abs(qty)
+    // Otherwise: brokerage = round(gross * pct, 2)
+    var calc;
+    if (ibaEntry.charges_inclusive && price && quantity) {
+        var perShare = Math.round(price * pct * 100) / 100;
+        calc = perShare * Math.abs(quantity);
+    } else {
+        calc = Math.round(grossAmount * pct * 100) / 100;
+    }
     if (max > 0 && calc > max) calc = max;
-    return calc;
+    return Math.round(calc * 100) / 100;
+}
+
+// Check if an IBA has charges_inclusive flag set
+function isChargesInclusive(investorId, brokerId) {
+    var ibaEntry = ibaRatesMap[investorId + '|' + brokerId];
+    return ibaEntry ? ibaEntry.charges_inclusive : false;
 }
 
 // Get regulatory charge rate from config (rule F.2.3, F.3.2)
@@ -433,42 +458,52 @@ function autoCalcCharges(row) {
         return;
     }
 
+    // Check charges_inclusive flag
+    var inclusive = isChargesInclusive(row.investor_id, row.broker_id);
+
     // 1. Brokerage (rule F.2.6)
     if (row.brokerage === null || row.brokerage === undefined || row.brokerage === 0) {
-        row.brokerage = getBrokerageForRow(row.investor_id, row.broker_id, gross, row.security_type, row.asset_class);
+        row.brokerage = getBrokerageForRow(row.investor_id, row.broker_id, gross, row.security_type, row.asset_class, row.price, row.quantity);
     }
 
-    // 2. STT — rounded UP to nearest whole number (rule F.2.3)
-    if (row.stt === null || row.stt === undefined || row.stt === 0) {
-        var sttRate = getRegChargeRate('STT', txnCat, row.transaction_type, exchange);
-        if (sttRate > 0) {
-            row.stt = Math.ceil(gross * (sttRate / 100));
-        } else {
-            row.stt = 0;
+    if (inclusive) {
+        // charges_inclusive: brokerage IS all-inclusive (covers STT, exchange, GST, everything)
+        row.stt = 0;
+        row.other_charges = 0;
+        row.gst = 0;
+        row.total_charges = row.brokerage;
+    } else {
+        // 2. STT — rounded UP to nearest whole number (rule F.2.3)
+        if (row.stt === null || row.stt === undefined || row.stt === 0) {
+            var sttRate = getRegChargeRate('STT', txnCat, row.transaction_type, exchange);
+            if (sttRate > 0) {
+                row.stt = Math.ceil(gross * (sttRate / 100));
+            } else {
+                row.stt = 0;
+            }
+        }
+
+        // 3. Other charges = exchange + SEBI + stamp duty + IPFT (rule F.3.2)
+        if (row.other_charges === null || row.other_charges === undefined || row.other_charges === 0) {
+            var exchRate = getRegChargeRate('EXCHANGE_CHARGES', txnCat, row.transaction_type, exchange);
+            var sebiRate = getRegChargeRate('SEBI_CHARGES', txnCat, row.transaction_type, exchange);
+            var stampRate = getRegChargeRate('STAMP_DUTY', txnCat, row.transaction_type, exchange);
+            row.other_charges = Math.round(gross * ((exchRate + sebiRate + stampRate) / 100) * 100) / 100;
+        }
+
+        // 4. GST — 18% on (brokerage + exchange charges) (rule F.3.2)
+        if (row.gst === null || row.gst === undefined || row.gst === 0) {
+            var exchCharges = Math.round(gross * (getRegChargeRate('EXCHANGE_CHARGES', txnCat, row.transaction_type, exchange) / 100) * 100) / 100;
+            row.gst = Math.round((row.brokerage + exchCharges) * 0.18 * 100) / 100;
+        }
+
+        // 5. total_charges = brokerage + stt + other_charges + gst (rule F.2.4)
+        if (row.total_charges === null || row.total_charges === undefined || row.total_charges === 0) {
+            row.total_charges = Math.round((row.brokerage + row.stt + row.other_charges + row.gst) * 100) / 100;
         }
     }
 
-    // 3. Other charges = exchange + SEBI + stamp duty + IPFT (rule F.3.2)
-    if (row.other_charges === null || row.other_charges === undefined || row.other_charges === 0) {
-        var exchRate = getRegChargeRate('EXCHANGE_CHARGES', txnCat, row.transaction_type, exchange);
-        var sebiRate = getRegChargeRate('SEBI_CHARGES', txnCat, row.transaction_type, exchange);
-        var stampRate = getRegChargeRate('STAMP_DUTY', txnCat, row.transaction_type, exchange);
-        row.other_charges = Math.round(gross * ((exchRate + sebiRate + stampRate) / 100) * 100) / 100;
-    }
-
-    // 4. GST — 18% on (brokerage + exchange charges) (rule F.3.2)
-    if (row.gst === null || row.gst === undefined || row.gst === 0) {
-        var exchCharges = Math.round(gross * (getRegChargeRate('EXCHANGE_CHARGES', txnCat, row.transaction_type, exchange) / 100) * 100) / 100;
-        row.gst = Math.round((row.brokerage + exchCharges) * 0.18 * 100) / 100;
-    }
-
-    // 5. total_charges = brokerage + stt + other_charges + gst (rule F.2.4)
-    if (row.total_charges === null || row.total_charges === undefined || row.total_charges === 0) {
-        row.total_charges = Math.round((row.brokerage + row.stt + row.other_charges + row.gst) * 100) / 100;
-    }
-
     // 6. net_amount: ALWAYS recalculate based on auto-calculated charges (rule F.2.2)
-    // (Excel template formula gives gross+0 when charges blank, so we must override)
     if (row.transaction_type === 'BUY') {
         row.net_amount = Math.round((gross + row.total_charges) * 100) / 100;
     } else {
@@ -476,12 +511,13 @@ function autoCalcCharges(row) {
     }
 
     // 7. trader_charges (rule F.2.5)
+    // When investor = trader, trader_charges = 0 (no separate trader charges)
     if (row.trader_charges === null || row.trader_charges === undefined) {
         if (!row.trader_id || row.trader_id === row.investor_id) {
-            row.trader_charges = row.total_charges;
+            row.trader_charges = 0;
         } else {
             // Different trader — calculate from trader's broker rates
-            row.trader_charges = getBrokerageForRow(row.trader_id, row.broker_id, gross, row.security_type, row.asset_class);
+            row.trader_charges = getBrokerageForRow(row.trader_id, row.broker_id, gross, row.security_type, row.asset_class, row.price, row.quantity);
         }
     }
 }
@@ -1258,6 +1294,18 @@ function createCnTotalsRow(rows) {
     return tr;
 }
 
+// Format date as dd-MMM-yy (rule D.x — settled date format)
+function formatExcelDate(dateStr) {
+    if (!dateStr) return '-';
+    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var d = new Date(dateStr + 'T00:00:00');
+    if (isNaN(d.getTime())) return dateStr;
+    var dd = ('0' + d.getDate()).slice(-2);
+    var mmm = months[d.getMonth()];
+    var yy = String(d.getFullYear()).slice(-2);
+    return dd + '-' + mmm + '-' + yy;
+}
+
 function formatCnAmount(val) {
     if (val === null || val === undefined) return '-';
     var unit = getDisplayUnit();
@@ -1842,11 +1890,13 @@ function displayExcelPreview() {
         var chargesDisplay = '<span class="charge-display" data-row="' + index + '" data-field="total_charges" title="Double-click to edit">' + formatCnAmount(t.total_charges || 0) + '</span>';
         var traderChargesDisplay = '<span class="charge-display" data-row="' + index + '" data-field="trader_charges" title="Double-click to edit">' + formatCnAmount(t.trader_charges || 0) + '</span>';
 
-        row.innerHTML = '<td>' + (index + 1) + '</td>' +
+        row.dataset.rowIdx = index;
+        row.innerHTML = '<td style="text-align:center;"><input type="checkbox" class="excel-row-cb" data-row="' + index + '" checked></td>' +
+            '<td>' + (index + 1) + '</td>' +
             '<td style="font-size:10px;white-space:nowrap;">' + buildInvLabel(t) + '</td>' +
             '<td class="' + typeClass + '" style="font-size:10px;">' + t.transaction_type + '</td>' +
             '<td>' + statusBadge + t.symbol + (t.company_name ? '<br><span style="font-size:10px;color:#718096;">' + t.company_name + '</span>' : '') + dupBadge + '</td>' +
-            '<td style="font-size:11px;">' + t.transaction_date + '</td>' +
+            '<td style="font-size:11px;">' + formatExcelDate(t.transaction_date) + '</td>' +
             '<td style="text-align:right;">' + formatCnQty(t.quantity) + '</td>' +
             '<td style="text-align:right;">' + formatCnAmount(t.price) + '</td>' +
             '<td style="text-align:right;">' + formatCnAmount(t.gross_amount) + '</td>' +
@@ -1864,6 +1914,9 @@ function displayExcelPreview() {
     // Attach double-click handlers for charge cells
     attachChargeEditHandlers();
 
+    // Attach row checkbox handlers (include/exclude)
+    attachRowCheckboxHandlers();
+
     // Show error summary if any
     if (excelErrorRows.length > 0) {
         var errHtml = excelErrorRows.slice(0, 10).map(function(e) { return 'Row ' + e.rowNum + ': ' + e.errors.join('; '); }).join('\n');
@@ -1876,29 +1929,90 @@ function displayExcelPreview() {
     document.getElementById('excelPreviewOverlay').classList.add('active');
 }
 
-// Attach dblclick handlers to all .charge-display cells
+// Attach dblclick handlers to all .charge-display cells → opens breakdown popover
 function attachChargeEditHandlers() {
     var cells = document.querySelectorAll('#previewTableBody .charge-display');
     cells.forEach(function(cell) {
         cell.addEventListener('dblclick', function() {
-            startChargeInlineEdit(cell);
+            var rowIdx = parseInt(cell.dataset.row);
+            var field = cell.dataset.field;
+            openChargesPopover(rowIdx, field);
         });
     });
 }
 
-// Double-click → inline input on charge cell (pattern from master-data.js startInlineEdit)
-function startChargeInlineEdit(span) {
-    if (span.querySelector('input')) return;
-    var rowIdx = parseInt(span.dataset.row);
-    var field = span.dataset.field;
+// ============================================================================
+// CHARGES BREAKDOWN POPOVER
+// ============================================================================
+var _cpCurrentRowIdx = null;
+var _cpCurrentField = null; // 'total_charges' or 'trader_charges'
+
+function openChargesPopover(rowIdx, field) {
+    _cpCurrentRowIdx = rowIdx;
+    _cpCurrentField = field;
     var allRows = excelConfirmedRows.concat(excelFlaggedRows);
-    var currentVal = allRows[rowIdx] ? (allRows[rowIdx][field] || 0) : 0;
+    var row = allRows[rowIdx];
+    if (!row) return;
+
+    var isTrader = (field === 'trader_charges');
+    var title = isTrader ? 'Trader Charges' : 'Charges';
+    document.getElementById('cpTitle').textContent = title + ' — Row ' + (rowIdx + 1) + ' ' + (row.symbol || '');
+
+    // Build breakdown rows
+    var chargeFields = [
+        { key: 'brokerage', label: 'Brokerage' },
+        { key: 'stt', label: 'STT' },
+        { key: 'other_charges', label: 'Other (Exch + SEBI + Stamp)' },
+        { key: 'gst', label: 'GST' }
+    ];
+
+    var bodyHtml = '';
+    chargeFields.forEach(function(cf) {
+        var val = row[cf.key] || 0;
+        bodyHtml += '<div class="cp-row">' +
+            '<span class="cp-label">' + cf.label + '</span>' +
+            '<span class="cp-value" data-cp-field="' + cf.key + '" title="Double-click to edit">' + formatCnAmount(val) + '</span>' +
+            '</div>';
+    });
+    document.getElementById('cpBody').innerHTML = bodyHtml;
+
+    // Update total
+    updateCpTotal(row);
+
+    // Attach dblclick to each value
+    document.querySelectorAll('#cpBody .cp-value').forEach(function(valEl) {
+        valEl.addEventListener('dblclick', function() {
+            startCpInlineEdit(valEl, rowIdx);
+        });
+    });
+
+    // Close on overlay click
+    var overlay = document.getElementById('chargesPopoverOverlay');
+    overlay.classList.add('active');
+    overlay.onclick = function(e) {
+        if (e.target === overlay) closeChargesPopover();
+    };
+}
+
+function updateCpTotal(row) {
+    var total = (row.brokerage || 0) + (row.stt || 0) + (row.other_charges || 0) + (row.gst || 0);
+    total = Math.round(total * 100) / 100;
+    document.getElementById('cpTotal').textContent = formatCnAmount(total);
+}
+
+function startCpInlineEdit(span, rowIdx) {
+    if (span.querySelector('input')) return;
+    var field = span.dataset.cpField;
+    var allRows = excelConfirmedRows.concat(excelFlaggedRows);
+    var row = allRows[rowIdx];
+    var currentVal = row ? (row[field] || 0) : 0;
 
     var input = document.createElement('input');
     input.type = 'number';
     input.step = '0.01';
     input.value = currentVal;
     input.className = 'charge-edit-input';
+    input.style.width = '90px';
 
     span.innerHTML = '';
     span.appendChild(input);
@@ -1908,41 +2022,96 @@ function startChargeInlineEdit(span) {
     input.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
             e.preventDefault();
-            commitChargeEdit(span, input, rowIdx, field);
+            commitCpEdit(span, input, rowIdx, field);
         } else if (e.key === 'Escape') {
             e.preventDefault();
-            cancelChargeEdit(span, rowIdx, field);
+            span.textContent = formatCnAmount(currentVal);
         }
     });
 
     input.addEventListener('blur', function() {
-        // Small delay to allow keydown to fire first
         setTimeout(function() {
             if (span.querySelector('input')) {
-                commitChargeEdit(span, input, rowIdx, field);
+                commitCpEdit(span, input, rowIdx, field);
             }
         }, 100);
     });
 }
 
-function commitChargeEdit(span, input, rowIdx, field) {
+function commitCpEdit(span, input, rowIdx, field) {
     var newVal = parseFloat(input.value) || 0;
     var allRows = excelConfirmedRows.concat(excelFlaggedRows);
-    if (!allRows[rowIdx]) return;
+    var row = allRows[rowIdx];
+    if (!row) return;
 
-    allRows[rowIdx][field] = newVal;
+    row[field] = newVal;
     span.textContent = formatCnAmount(newVal);
 
-    // Recalc net_amount if total_charges changed
-    if (field === 'total_charges') {
-        recalcExcelRow(rowIdx);
-    }
+    // Recalculate total_charges from individual charge components
+    row.total_charges = Math.round(((row.brokerage || 0) + (row.stt || 0) + (row.other_charges || 0) + (row.gst || 0)) * 100) / 100;
+    updateCpTotal(row);
+
+    // Update the main table cells
+    var chargesSpan = document.querySelector('.charge-display[data-row="' + rowIdx + '"][data-field="total_charges"]');
+    if (chargesSpan) chargesSpan.textContent = formatCnAmount(row.total_charges);
+
+    // Recalc net_amount
+    recalcExcelRow(rowIdx);
 }
 
-function cancelChargeEdit(span, rowIdx, field) {
-    var allRows = excelConfirmedRows.concat(excelFlaggedRows);
-    var val = allRows[rowIdx] ? (allRows[rowIdx][field] || 0) : 0;
-    span.textContent = formatCnAmount(val);
+window.closeChargesPopover = function() {
+    document.getElementById('chargesPopoverOverlay').classList.remove('active');
+    _cpCurrentRowIdx = null;
+    _cpCurrentField = null;
+};
+
+// Row checkboxes — include/exclude from import
+function attachRowCheckboxHandlers() {
+    // Per-row checkboxes
+    var cbs = document.querySelectorAll('#previewTableBody .excel-row-cb');
+    cbs.forEach(function(cb) {
+        cb.addEventListener('change', function() {
+            var tr = cb.closest('tr');
+            if (cb.checked) {
+                tr.classList.remove('excel-row-excluded');
+            } else {
+                tr.classList.add('excel-row-excluded');
+            }
+            updateSelectAllState();
+            updateImportBtnCount();
+        });
+    });
+
+    // Select-all checkbox
+    var selectAll = document.getElementById('excelSelectAll');
+    if (selectAll) {
+        selectAll.checked = true;
+        selectAll.addEventListener('change', function() {
+            var checked = selectAll.checked;
+            cbs.forEach(function(cb) {
+                cb.checked = checked;
+                var tr = cb.closest('tr');
+                if (checked) tr.classList.remove('excel-row-excluded');
+                else tr.classList.add('excel-row-excluded');
+            });
+            updateImportBtnCount();
+        });
+    }
+    updateImportBtnCount();
+}
+
+function updateSelectAllState() {
+    var cbs = document.querySelectorAll('#previewTableBody .excel-row-cb');
+    var allChecked = true;
+    cbs.forEach(function(cb) { if (!cb.checked) allChecked = false; });
+    var selectAll = document.getElementById('excelSelectAll');
+    if (selectAll) selectAll.checked = allChecked;
+}
+
+function updateImportBtnCount() {
+    var cbs = document.querySelectorAll('#previewTableBody .excel-row-cb:checked');
+    var btn = document.getElementById('importBtn');
+    if (btn) btn.textContent = 'Import ' + cbs.length + ' to Database';
 }
 
 // Recalculate net_amount when user edits charges (now reads from data object, not DOM inputs)
@@ -2008,6 +2177,13 @@ function buildExcelTransactionRecord(row) {
 async function importExcelToDatabase() {
     var allRows = excelConfirmedRows.concat(excelFlaggedRows);
     if (allRows.length === 0) { tiAlert('error', 'No transactions to import'); return; }
+
+    // Filter to only checked (included) rows
+    var checkedCbs = document.querySelectorAll('#previewTableBody .excel-row-cb:checked');
+    var includedIndices = {};
+    checkedCbs.forEach(function(cb) { includedIndices[cb.dataset.row] = true; });
+    allRows = allRows.filter(function(r, idx) { return includedIndices[idx]; });
+    if (allRows.length === 0) { tiAlert('error', 'No rows selected for import'); return; }
 
     // Values are already in data objects (edited via dblclick inline edit) — just recalc net
     allRows.forEach(function(r) {

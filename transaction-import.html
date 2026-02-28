@@ -89,6 +89,39 @@
             width: 70px; padding: 2px 4px; font-size: 11px; border: 2px solid #667eea; border-radius: 3px;
             text-align: right; outline: none;
         }
+
+        /* Charges breakdown popover */
+        .charges-popover-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.25); z-index: 1200; align-items: center; justify-content: center;
+        }
+        .charges-popover-overlay.active { display: flex; }
+        .charges-popover {
+            background: #fff; border-radius: 8px; padding: 14px 16px; min-width: 280px; max-width: 340px;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+        }
+        .charges-popover h4 { margin: 0 0 10px; font-size: 12px; font-weight: 600; color: #2d3748; }
+        .charges-popover .cp-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 5px 0; border-bottom: 1px solid #f0f4f8; font-size: 12px;
+        }
+        .charges-popover .cp-row:last-of-type { border-bottom: none; }
+        .charges-popover .cp-label { color: #4a5568; font-weight: 500; }
+        .charges-popover .cp-value {
+            color: #2d3748; font-weight: 600; text-align: right; min-width: 80px;
+            cursor: default; padding: 2px 4px; border-radius: 3px;
+        }
+        .charges-popover .cp-value:hover { background: #f7fafc; }
+        .charges-popover .cp-total {
+            display: flex; justify-content: space-between; padding: 8px 0 4px;
+            border-top: 2px solid #e2e8f0; margin-top: 4px; font-size: 12px; font-weight: 700; color: #2d3748;
+        }
+        .charges-popover .cp-hint { font-size: 9px; color: #9ca3af; margin-top: 6px; text-align: center; }
+        .charges-popover .cp-footer { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+
+        /* Excluded row styling */
+        tr.excel-row-excluded td { opacity: 0.35; text-decoration: line-through; }
+        tr.excel-row-excluded td:first-child { opacity: 1; text-decoration: none; }
         .table-wrapper { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 6px; }
         table { width: 100%; border-collapse: collapse; }
         th { background: #f7fafc; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; color: #4a5568; text-transform: uppercase; border-bottom: 2px solid #e2e8f0; position: sticky; top: 0; }
@@ -195,12 +228,28 @@
                 </div>
                 <div style="font-size:10px;color:#718096;margin-bottom:6px;">Double-click Charges or Trd Charges to edit</div>
                 <div class="table-wrapper"><table><thead><tr>
-                    <th style="width:30px;">#</th><th style="width:100px;">Inv &gt; Brk</th><th style="width:45px;">Type</th><th>Symbol</th><th style="width:72px;">Date</th><th style="text-align:right;width:55px;">Qty</th><th style="text-align:right;width:65px;">Price</th><th style="text-align:right;width:75px;">Gross</th><th style="text-align:right;width:70px;">Charges</th><th style="text-align:right;width:70px;">Trd Chg</th><th style="text-align:right;width:80px;">Net Amount</th>
+                    <th style="width:28px;text-align:center;"><input type="checkbox" id="excelSelectAll" checked title="Select/Deselect All"></th><th style="width:26px;">#</th><th style="width:100px;">Inv &gt; Brk</th><th style="width:45px;">Type</th><th>Symbol</th><th style="width:72px;">Date</th><th style="text-align:right;width:55px;">Qty</th><th style="text-align:right;width:65px;">Price</th><th style="text-align:right;width:75px;">Gross</th><th style="text-align:right;width:70px;">Charges</th><th style="text-align:right;width:70px;">Trd Chg</th><th style="text-align:right;width:80px;">Net Amount</th>
                 </tr></thead><tbody id="previewTableBody"></tbody></table></div>
             </div>
             <div class="excel-preview-footer">
                 <button class="btn btn-danger" onclick="cancelImport()">Cancel</button>
                 <button class="btn btn-success" id="importBtn" onclick="importToDatabase()">Import to Database</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== CHARGES BREAKDOWN POPOVER ===== -->
+    <div class="charges-popover-overlay" id="chargesPopoverOverlay">
+        <div class="charges-popover" id="chargesPopover">
+            <h4 id="cpTitle">Charges Breakdown — Row #</h4>
+            <div id="cpBody"></div>
+            <div class="cp-total">
+                <span>Total Charges</span>
+                <span id="cpTotal">0.00</span>
+            </div>
+            <div class="cp-hint">Double-click a value to edit</div>
+            <div class="cp-footer">
+                <button class="btn" onclick="closeChargesPopover()" style="padding:4px 12px;font-size:11px;">Close</button>
             </div>
         </div>
     </div>
