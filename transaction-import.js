@@ -1887,8 +1887,8 @@ window.importCnToDatabase = async function() {
 };
 
 function roundMoney(v) { return Math.round((v || 0) * 100) / 100; }
-// Normalize security_type for transactions table (EQUITY_SME → EQUITY)
-function normSecType(st) { return (st === 'EQUITY_SME') ? 'EQUITY' : (st || 'EQUITY'); }
+// Normalize security_type fallback only (preserve EQUITY_SME, ETF, etc as-is)
+function normSecType(st) { return st || 'EQUITY'; }
 
 function buildTransactionRecord(row) {
     return {
@@ -2197,11 +2197,12 @@ async function processTransactions(rawData, worksheet) {
             vr.asset_class = matchResult.match.asset_class;
             if (!vr.security_type) vr.security_type = matchResult.match.security_type;
 
-            // Lots for NFO (chk_lots_rules: NFO lots must not be 0, non-NFO lots must be 0)
-            if (vr.security_type === 'NFO' && matchResult.match.lot_size) {
+            // Lots: NFO & EQUITY_SME must have non-zero lots; others must be 0
+            var needsLots = (vr.security_type === 'NFO' || vr.security_type === 'EQUITY_SME');
+            if (needsLots && matchResult.match.lot_size && matchResult.match.lot_size > 1) {
                 vr.lots = Math.round(Math.abs(vr.quantity) / matchResult.match.lot_size * 100) / 100;
                 if (vr.transaction_type === 'SELL') vr.lots = -Math.abs(vr.lots);
-            } else if (vr.security_type === 'NFO') {
+            } else if (needsLots) {
                 vr.lots = vr.transaction_type === 'SELL' ? -1 : 1;
             } else {
                 vr.lots = 0;
@@ -2215,11 +2216,12 @@ async function processTransactions(rawData, worksheet) {
                 vr.company_name = first.company_name;
                 vr.exchange = first.exchange;
                 if (!vr.security_type) vr.security_type = first.security_type;
-                // NFO: lots must not be 0 (chk_lots_rules), calculate from lot_size or default ±1
-                if ((vr.security_type === 'NFO') && first.lot_size) {
+                // NFO & EQUITY_SME: lots must not be 0, calculate from lot_size or default ±1
+                var flagNeedsLots = (vr.security_type === 'NFO' || vr.security_type === 'EQUITY_SME');
+                if (flagNeedsLots && first.lot_size && first.lot_size > 1) {
                     vr.lots = Math.round(Math.abs(vr.quantity) / first.lot_size * 100) / 100;
                     if (vr.transaction_type === 'SELL') vr.lots = -Math.abs(vr.lots);
-                } else if (vr.security_type === 'NFO') {
+                } else if (flagNeedsLots) {
                     vr.lots = vr.transaction_type === 'SELL' ? -1 : 1;
                 } else {
                     vr.lots = 0;
