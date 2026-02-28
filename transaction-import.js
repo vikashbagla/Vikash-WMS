@@ -1853,6 +1853,8 @@ window.importCnToDatabase = async function() {
     }
 };
 
+function roundMoney(v) { return Math.round((v || 0) * 100) / 100; }
+
 function buildTransactionRecord(row) {
     return {
         investor_id: cnSelectedAccount.investor_id,
@@ -1868,15 +1870,15 @@ function buildTransactionRecord(row) {
         transaction_date: cnTradeDate,
         quantity: row.quantity,
         lots: row.lots,
-        price: row.price,
-        gross_amount: row.gross_amount,
-        brokerage: row.brokerage,
-        stt: row.stt,
-        other_charges: row.other_charges,
-        gst: row.gst,
+        price: roundMoney(row.price),
+        gross_amount: roundMoney(row.gross_amount),
+        brokerage: roundMoney(row.brokerage),
+        stt: roundMoney(row.stt),
+        other_charges: roundMoney(row.other_charges),
+        gst: roundMoney(row.gst),
         tds: null,
-        total_charges: row.total_charges,
-        net_amount: row.net_amount,
+        total_charges: roundMoney(row.total_charges),
+        net_amount: roundMoney(row.net_amount),
         margin_blocked: 0,
         broker_contract_note_no: cnCnNumber,
         broker_trade_id: null,
@@ -2337,17 +2339,20 @@ function displayExcelPreview() {
         var invTooltip = 'Investor: ' + (t.investor_name || t.investor_id || '') + '\nBroker: ' + (t.broker_name || t.broker_id || '') + (t.trader_id && t.trader_id !== t.investor_id ? '\nTrader: ' + (t.trader_name || t.trader_id) : '');
         var dateTooltip = t.transaction_date || '';
 
-        // Tags display
+        // Tags display — autocomplete pill input (same as CN import)
         var tagsArr = Array.isArray(t.tags) ? t.tags.filter(function(tg) { return tg && tg !== 'blank'; }) : (t.tags ? [t.tags] : []);
-        var tagsHtml = tagsArr.map(function(tg) {
-            return '<span class="tag-badge" style="cursor:pointer;" data-row="' + index + '" data-tag="' + tg + '">' + tg + ' ×</span>';
-        }).join('') + '<span class="tag-add-btn" data-row="' + index + '" style="cursor:pointer;font-size:10px;color:#667eea;padding:1px 4px;" title="Add tag">+</span>';
+        var excelTagId = 'excelTag_' + index;
+        var tagsHtml = '<div class="cn-tag-selected" id="' + excelTagId + '_pills" style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:3px;"></div>' +
+            '<input type="text" id="' + excelTagId + '" value="" autocomplete="off" placeholder="tags..." ' +
+            'style="width:100%;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;" ' +
+            'data-row="' + index + '">' +
+            '<div class="cn-tag-dropdown" id="' + excelTagId + '_dd" style="display:none;position:absolute;z-index:100;left:0;right:0;max-height:120px;overflow-y:auto;background:#fff;border:1px solid #cbd5e0;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.12);margin-top:2px;"></div>';
 
         row.dataset.rowIdx = index;
         row.innerHTML = '<td style="text-align:center;"><input type="checkbox" class="excel-row-cb" data-row="' + index + '" checked></td>' +
             '<td>' + (index + 1) + '</td>' +
             '<td style="font-size:10px;white-space:nowrap;" title="' + invTooltip.replace(/"/g, '&quot;') + '">' + invLabel + '</td>' +
-            '<td style="max-width:120px;" title="' + symbolTitle.replace(/"/g, '&quot;') + '">' + statusBadge + symbolDisplay + dupBadge + (t.company_name ? '<br><span style="font-size:10px;color:#718096;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:110px;">' + t.company_name + '</span>' : '') + '</td>' +
+            '<td style="min-width:140px;" title="' + symbolTitle.replace(/"/g, '&quot;') + '">' + statusBadge + symbolDisplay + dupBadge + (t.company_name ? '<br><span style="font-size:10px;color:#718096;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:110px;">' + t.company_name + '</span>' : '') + '</td>' +
             '<td class="' + typeClass + '" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:36px;" title="' + typeAbbr + '">' + typeShort + '</td>' +
             '<td style="font-size:11px;white-space:nowrap;" title="' + dateTooltip + '">' + formatExcelDate(t.transaction_date) + '</td>' +
             '<td style="text-align:right;" title="Qty: ' + t.quantity + '">' + formatCnQty(t.quantity) + '</td>' +
@@ -2356,7 +2361,7 @@ function displayExcelPreview() {
             '<td style="text-align:right;">' + chargesDisplay + '</td>' +
             '<td style="text-align:right;">' + traderChargesDisplay + '</td>' +
             '<td style="text-align:right;' + (t._netOverride ? 'color:#b7791f;font-style:italic;' : '') + '" id="excelNet_' + index + '" class="net-amount-cell" data-row="' + index + '" title="Net: ' + t.net_amount + (t._netOverride ? ' (user entered — dblclick to edit)' : ' (dblclick to edit)') + '">' + formatCnAmount(t.net_amount) + '</td>' +
-            '<td style="font-size:10px;min-width:130px;">' + tagsHtml + '</td>';
+            '<td style="font-size:10px;min-width:160px;position:relative;">' + tagsHtml + '</td>';
 
         if (t.matchStatus === 'flagged') {
             row.style.backgroundColor = '#fffff0';
@@ -2377,9 +2382,15 @@ function displayExcelPreview() {
     // Attach REVIEW badge click handlers
     attachReviewHandlers();
 
-    // Attach net_amount double-click edit + tag edit handlers
+    // Attach net_amount double-click edit handlers
     attachNetAmountEditHandlers();
     attachTagHandlers();
+
+    // Wire up tag autocomplete for each Excel row (same widget as CN import)
+    allRows.forEach(function(t, index) {
+        var tagsValue = Array.isArray(t.tags) ? t.tags.filter(function(tg) { return tg && tg !== 'blank'; }).join(', ') : (t.tags || '');
+        initTagAutocomplete('excelTag_' + index, tagsValue);
+    });
 
     // Show error summary if any
     if (excelErrorRows.length > 0) {
@@ -2921,16 +2932,16 @@ function buildExcelTransactionRecord(row) {
         transaction_date: row.transaction_date,
         quantity: row.quantity,
         lots: row.lots || 0,
-        price: row.price,
-        gross_amount: row.gross_amount,
-        brokerage: row.brokerage || 0,
-        stt: row.stt || 0,
-        other_charges: row.other_charges || 0,
-        gst: row.gst || 0,
-        tds: row.tds || null,
-        total_charges: row.total_charges || 0,
-        trader_charges: row.trader_charges || 0,
-        net_amount: row.net_amount || 0,
+        price: roundMoney(row.price),
+        gross_amount: roundMoney(row.gross_amount),
+        brokerage: roundMoney(row.brokerage || 0),
+        stt: roundMoney(row.stt || 0),
+        other_charges: roundMoney(row.other_charges || 0),
+        gst: roundMoney(row.gst || 0),
+        tds: row.tds ? roundMoney(row.tds) : null,
+        total_charges: roundMoney(row.total_charges || 0),
+        trader_charges: roundMoney(row.trader_charges || 0),
+        net_amount: roundMoney(row.net_amount || 0),
         margin_blocked: 0,
         broker_contract_note_no: null,
         broker_trade_id: null,
@@ -2973,6 +2984,16 @@ async function importExcelToDatabase() {
         if (r.transaction_type === 'BUY') r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
         else if (r.transaction_type === 'SELL') r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
         else if (isIncomeType(r.transaction_type)) r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
+    });
+
+    // Read tags from autocomplete pill inputs (data-tags attr), blank → ['blank']
+    allRows.forEach(function(r, idx) {
+        var input = document.getElementById('excelTag_' + idx);
+        if (input && input.dataset.tags !== undefined) {
+            var val = (input.dataset.tags || '').trim();
+            var parsed = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [];
+            r.tags = parsed.length > 0 ? parsed : ['blank'];
+        }
     });
 
     var newRows = allRows.filter(function(r) { return !r.isUpdate; });
