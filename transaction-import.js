@@ -456,19 +456,19 @@ function autoCalcCharges(row) {
     }
     var exchange = (row.exchange === 'NFO' || !row.exchange) ? 'NSE' : row.exchange;
 
-    // Income types: total_charges → tds, everything else = 0 (rule F.4.2)
+    // Income types: all charges → tds, zero out charge fields (rule F.4.2)
     if (isIncomeType(row.transaction_type)) {
-        row.tds = row.total_charges || 0;
+        var incomeTds = (row.total_charges || 0) + (row.trader_charges || 0);
+        // If both were provided, sum them; if only one, use that
+        if (row.tds && row.tds > 0) incomeTds = row.tds; // explicit tds takes priority
+        row.tds = roundMoney(incomeTds);
         row.brokerage = 0;
         row.stt = 0;
         row.gst = 0;
         row.other_charges = 0;
         row.total_charges = row.tds;
+        row.trader_charges = 0;
         row.net_amount = Math.round((gross - row.tds) * 100) / 100;
-        // trader_charges for income = total_charges
-        if (row.trader_charges === null || row.trader_charges === undefined) {
-            row.trader_charges = row.total_charges;
-        }
         return;
     }
 
