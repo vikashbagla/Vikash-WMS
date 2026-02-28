@@ -490,20 +490,29 @@ function autoCalcCharges(row) {
             row.total_charges = row.brokerage;
         }
     } else {
-        // 2. STT — rounded UP to nearest whole number (rule F.2.3)
+        // 2. STT (rule F.2.3)
+        // Equity delivery: rounded UP to nearest whole number
+        // F&O: rounded to 2 decimal places (not rounded up)
         var sttRate = getRegChargeRate('STT', txnCat, row.transaction_type, exchange);
         if (row.stt === null || row.stt === undefined || row.stt === 0) {
             if (sttRate > 0) {
-                row.stt = Math.ceil(gross * (sttRate / 100));
+                var sttRaw = gross * (sttRate / 100);
+                if (txnCat === 'EQUITY_DELIVERY') {
+                    row.stt = Math.ceil(sttRaw);  // Round UP to whole number for equity delivery
+                } else {
+                    row.stt = Math.round(sttRaw * 100) / 100;  // 2 decimal places for F&O
+                }
             } else {
                 row.stt = 0;
             }
         }
 
-        // 3. Individual regulatory charges (exchange, SEBI, stamp duty)
+        // 3. Individual regulatory charges (exchange, SEBI, stamp duty, IPFT)
         var exchRate = getRegChargeRate('EXCHANGE_CHARGES', txnCat, row.transaction_type, exchange);
         var sebiRate = getRegChargeRate('SEBI_CHARGES', txnCat, row.transaction_type, exchange);
         var stampRate = getRegChargeRate('STAMP_DUTY', txnCat, row.transaction_type, exchange);
+        // IPFT: same rate as SEBI (0.0001%) on all segments for NSE. 0 for BSE.
+        var ipftRate = (exchange === 'NSE') ? sebiRate : 0;
 
         // Store individual sub-components for the breakdown popover
         if (!row._exchange_charges && row._exchange_charges !== 0) {
@@ -515,14 +524,17 @@ function autoCalcCharges(row) {
         if (!row._stamp_duty && row._stamp_duty !== 0) {
             row._stamp_duty = Math.round(gross * (stampRate / 100) * 100) / 100;
         }
-
-        if (row.other_charges === null || row.other_charges === undefined || row.other_charges === 0) {
-            row.other_charges = Math.round((row._exchange_charges + row._sebi_charges + row._stamp_duty) * 100) / 100;
+        if (!row._ipft && row._ipft !== 0) {
+            row._ipft = Math.round(gross * (ipftRate / 100) * 100) / 100;
         }
 
-        // 4. GST — 18% on (brokerage + exchange charges) (rule F.3.2)
+        if (row.other_charges === null || row.other_charges === undefined || row.other_charges === 0) {
+            row.other_charges = Math.round((row._exchange_charges + row._sebi_charges + row._stamp_duty + (row._ipft || 0)) * 100) / 100;
+        }
+
+        // 4. GST — 18% on (brokerage + exchange charges + SEBI charges) (per Fyers/broker standard)
         if (row.gst === null || row.gst === undefined || row.gst === 0) {
-            row.gst = Math.round((row.brokerage + row._exchange_charges) * 0.18 * 100) / 100;
+            row.gst = Math.round((row.brokerage + row._exchange_charges + row._sebi_charges) * 0.18 * 100) / 100;
         }
 
         // 5. total_charges = brokerage + stt + other_charges + gst (rule F.2.4)
@@ -580,16 +592,19 @@ function autoCalcCharges(row) {
         }
     }
     if (!inclusive) {
-        row._chargesBasis.stt = (typeof sttRate !== 'undefined' && sttRate > 0) ? sttRate + '% of gross (rounded up)' : 'N/A';
+        var sttRoundLabel = (txnCat === 'EQUITY_DELIVERY') ? ' (rounded up)' : '';
+        row._chargesBasis.stt = (typeof sttRate !== 'undefined' && sttRate > 0) ? sttRate + '% of gross' + sttRoundLabel : 'N/A';
         row._chargesBasis._exchange_charges = (typeof exchRate !== 'undefined' && exchRate > 0) ? exchRate + '% of gross' : 'N/A';
         row._chargesBasis._sebi_charges = (typeof sebiRate !== 'undefined' && sebiRate > 0) ? sebiRate + '% of gross' : 'N/A';
         row._chargesBasis._stamp_duty = (typeof stampRate !== 'undefined' && stampRate > 0) ? stampRate + '% of gross' : 'N/A';
-        row._chargesBasis.gst = '18% on (brokerage + exchange charges)';
+        row._chargesBasis._ipft = (typeof ipftRate !== 'undefined' && ipftRate > 0) ? ipftRate + '% of gross (IPFT)' : 'N/A';
+        row._chargesBasis.gst = '18% on (brokerage + exchange + SEBI)';
     } else {
         row._chargesBasis.stt = 'Included in brokerage';
         row._chargesBasis._exchange_charges = 'Included in brokerage';
         row._chargesBasis._sebi_charges = 'Included in brokerage';
         row._chargesBasis._stamp_duty = 'Included in brokerage';
+        row._chargesBasis._ipft = 'Included in brokerage';
         row._chargesBasis.gst = 'Included in brokerage';
     }
 }
@@ -1796,6 +1811,7 @@ async function processTransactions(rawData, worksheet) {
             _exchange_charges: null,
             _sebi_charges: null,
             _stamp_duty: null,
+            _ipft: null,
             _chargesBasis: {}
         });
     });
@@ -2013,19 +2029,26 @@ function displayExcelPreview() {
         var invTooltip = 'Investor: ' + (t.investor_name || t.investor_id || '') + '\nBroker: ' + (t.broker_name || t.broker_id || '') + (t.trader_id && t.trader_id !== t.investor_id ? '\nTrader: ' + (t.trader_name || t.trader_id) : '');
         var dateTooltip = t.transaction_date || '';
 
+        // Tags display
+        var tagsArr = Array.isArray(t.tags) ? t.tags.filter(function(tg) { return tg && tg !== 'blank'; }) : (t.tags ? [t.tags] : []);
+        var tagsHtml = tagsArr.map(function(tg) {
+            return '<span class="tag-badge" style="cursor:pointer;" data-row="' + index + '" data-tag="' + tg + '">' + tg + ' ×</span>';
+        }).join('') + '<span class="tag-add-btn" data-row="' + index + '" style="cursor:pointer;font-size:10px;color:#667eea;padding:1px 4px;" title="Add tag">+</span>';
+
         row.dataset.rowIdx = index;
         row.innerHTML = '<td style="text-align:center;"><input type="checkbox" class="excel-row-cb" data-row="' + index + '" checked></td>' +
             '<td>' + (index + 1) + '</td>' +
             '<td style="font-size:10px;white-space:nowrap;" title="' + invTooltip.replace(/"/g, '&quot;') + '">' + invLabel + '</td>' +
-            '<td class="' + typeClass + '" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:36px;" title="' + typeAbbr + '">' + typeShort + '</td>' +
             '<td style="max-width:180px;" title="' + symbolTitle.replace(/"/g, '&quot;') + '">' + statusBadge + symbolDisplay + dupBadge + (t.company_name ? '<br><span style="font-size:10px;color:#718096;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:170px;">' + t.company_name + '</span>' : '') + '</td>' +
+            '<td class="' + typeClass + '" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:36px;" title="' + typeAbbr + '">' + typeShort + '</td>' +
             '<td style="font-size:11px;white-space:nowrap;" title="' + dateTooltip + '">' + formatExcelDate(t.transaction_date) + '</td>' +
             '<td style="text-align:right;" title="Qty: ' + t.quantity + '">' + formatCnQty(t.quantity) + '</td>' +
             '<td style="text-align:right;" title="Price: ' + t.price + '">' + formatCnAmount(t.price) + '</td>' +
             '<td style="text-align:right;" title="Gross: ' + t.gross_amount + '">' + formatCnAmount(t.gross_amount) + '</td>' +
             '<td style="text-align:right;">' + chargesDisplay + '</td>' +
             '<td style="text-align:right;">' + traderChargesDisplay + '</td>' +
-            '<td style="text-align:right;' + (t._netOverride ? 'color:#b7791f;font-style:italic;' : '') + '" id="excelNet_' + index + '" title="Net: ' + t.net_amount + (t._netOverride ? ' (user entered)' : '') + '">' + formatCnAmount(t.net_amount) + '</td>';
+            '<td style="text-align:right;' + (t._netOverride ? 'color:#b7791f;font-style:italic;' : '') + '" id="excelNet_' + index + '" class="net-amount-cell" data-row="' + index + '" title="Net: ' + t.net_amount + (t._netOverride ? ' (user entered — dblclick to edit)' : ' (dblclick to edit)') + '">' + formatCnAmount(t.net_amount) + '</td>' +
+            '<td style="font-size:10px;">' + tagsHtml + '</td>';
 
         if (t.matchStatus === 'flagged') {
             row.style.backgroundColor = '#fffff0';
@@ -2046,6 +2069,10 @@ function displayExcelPreview() {
     // Attach REVIEW badge click handlers
     attachReviewHandlers();
 
+    // Attach net_amount double-click edit + tag edit handlers
+    attachNetAmountEditHandlers();
+    attachTagHandlers();
+
     // Show error summary if any
     if (excelErrorRows.length > 0) {
         var errHtml = excelErrorRows.slice(0, 10).map(function(e) { return 'Row ' + e.rowNum + ': ' + e.errors.join('; '); }).join('\n');
@@ -2064,22 +2091,33 @@ function displayExcelPreview() {
 var _sortField = null;
 var _sortAsc = true;
 
+var _sortHandlersAttached = false;
 function attachSortHandlers() {
-    var ths = document.querySelectorAll('.sortable-th');
-    ths.forEach(function(th) {
-        th.addEventListener('click', function() {
-            var field = th.dataset.sort;
-            if (_sortField === field) {
-                _sortAsc = !_sortAsc;
-            } else {
-                _sortField = field;
-                _sortAsc = true;
-            }
-            sortAndRerenderTable();
-            // Update sort indicator
-            ths.forEach(function(h) { h.textContent = h.textContent.replace(/ [▲▼]/, ''); });
-            th.textContent += _sortAsc ? ' ▲' : ' ▼';
+    if (_sortHandlersAttached) {
+        // Just update sort indicators on re-render
+        var ths = document.querySelectorAll('.sortable-th');
+        ths.forEach(function(h) {
+            var baseText = h.textContent.replace(/ [▲▼]/, '');
+            h.textContent = baseText;
+            if (h.dataset.sort === _sortField) h.textContent += _sortAsc ? ' ▲' : ' ▼';
         });
+        return;
+    }
+    _sortHandlersAttached = true;
+    // Use event delegation on the table header row
+    var thead = document.querySelector('#excelPreviewOverlay thead');
+    if (!thead) return;
+    thead.addEventListener('click', function(e) {
+        var th = e.target.closest('.sortable-th');
+        if (!th) return;
+        var field = th.dataset.sort;
+        if (_sortField === field) {
+            _sortAsc = !_sortAsc;
+        } else {
+            _sortField = field;
+            _sortAsc = true;
+        }
+        sortAndRerenderTable();
     });
 }
 
@@ -2181,6 +2219,89 @@ function openReviewPopover(rowIdx) {
     };
 }
 
+// NET AMOUNT — double-click to edit inline
+function attachNetAmountEditHandlers() {
+    var cells = document.querySelectorAll('#previewTableBody .net-amount-cell');
+    cells.forEach(function(cell) {
+        cell.addEventListener('dblclick', function() {
+            var rowIdx = parseInt(cell.dataset.row);
+            var allRows = excelConfirmedRows.concat(excelFlaggedRows);
+            var row = allRows[rowIdx];
+            if (!row) return;
+            var currentVal = row.net_amount || 0;
+            cell.innerHTML = '<input type="number" step="0.01" value="' + currentVal + '" style="width:75px;font-size:11px;text-align:right;border:1px solid #667eea;border-radius:3px;padding:1px 3px;">';
+            var inp = cell.querySelector('input');
+            inp.focus();
+            inp.select();
+            function commit() {
+                var newVal = parseFloat(inp.value);
+                if (!isNaN(newVal)) {
+                    row.net_amount = Math.round(newVal * 100) / 100;
+                    row._netOverride = true;
+                }
+                cell.innerHTML = formatCnAmount(row.net_amount);
+                cell.style.color = row._netOverride ? '#b7791f' : '';
+                cell.style.fontStyle = row._netOverride ? 'italic' : '';
+                cell.title = 'Net: ' + row.net_amount + (row._netOverride ? ' (user entered)' : '');
+            }
+            inp.addEventListener('blur', commit);
+            inp.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); commit(); }
+                if (e.key === 'Escape') { cell.innerHTML = formatCnAmount(row.net_amount); }
+            });
+        });
+    });
+}
+
+// TAG EDITING — add/remove tags on rows
+function attachTagHandlers() {
+    // Remove tag on click
+    document.querySelectorAll('#previewTableBody .tag-badge').forEach(function(badge) {
+        badge.addEventListener('click', function() {
+            var rowIdx = parseInt(badge.dataset.row);
+            var tag = badge.dataset.tag;
+            var allRows = excelConfirmedRows.concat(excelFlaggedRows);
+            var row = allRows[rowIdx];
+            if (!row) return;
+            if (Array.isArray(row.tags)) {
+                row.tags = row.tags.filter(function(t) { return t !== tag; });
+            }
+            displayExcelPreview();
+        });
+    });
+    // Add tag on '+' click
+    document.querySelectorAll('#previewTableBody .tag-add-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var rowIdx = parseInt(btn.dataset.row);
+            var allRows = excelConfirmedRows.concat(excelFlaggedRows);
+            var row = allRows[rowIdx];
+            if (!row) return;
+            var parentTd = btn.closest('td');
+            // Replace '+' with input
+            var inp = document.createElement('input');
+            inp.type = 'text';
+            inp.placeholder = 'Tag...';
+            inp.style.cssText = 'width:60px;font-size:10px;border:1px solid #667eea;border-radius:3px;padding:1px 3px;';
+            btn.replaceWith(inp);
+            inp.focus();
+            function commitTag() {
+                var val = inp.value.trim();
+                if (val) {
+                    if (!Array.isArray(row.tags)) row.tags = [];
+                    row.tags = row.tags.filter(function(t) { return t !== 'blank'; });
+                    if (row.tags.indexOf(val) === -1) row.tags.push(val);
+                }
+                displayExcelPreview();
+            }
+            inp.addEventListener('blur', commitTag);
+            inp.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); commitTag(); }
+                if (e.key === 'Escape') { displayExcelPreview(); }
+            });
+        });
+    });
+}
+
 // Attach dblclick handlers to all .charge-display cells → opens breakdown popover
 function attachChargeEditHandlers() {
     var cells = document.querySelectorAll('#previewTableBody .charge-display');
@@ -2218,6 +2339,7 @@ function openChargesPopover(rowIdx, field) {
         { key: '_exchange_charges', label: 'Exchange Charges', basis: basis._exchange_charges || '' },
         { key: '_sebi_charges', label: 'SEBI Charges', basis: basis._sebi_charges || '' },
         { key: '_stamp_duty', label: 'Stamp Duty', basis: basis._stamp_duty || '' },
+        { key: '_ipft', label: 'NSE IPFT', basis: basis._ipft || '' },
         { key: 'gst', label: 'GST', basis: basis.gst || '' }
     ];
 
@@ -2514,7 +2636,10 @@ function buildExcelTransactionRecord(row) {
 }
 
 // Import confirmed + flagged rows to database (rule C.2.2: batch ≤10, retry)
+var _importInProgress = false;
 async function importExcelToDatabase() {
+    if (_importInProgress) { tiAlert('warning', 'Import already in progress...'); return; }
+
     var allRows = excelConfirmedRows.concat(excelFlaggedRows);
     if (allRows.length === 0) { tiAlert('error', 'No transactions to import'); return; }
 
@@ -2538,8 +2663,10 @@ async function importExcelToDatabase() {
 
     if (!confirm('Import ' + newRows.length + ' new + ' + updateRows.length + ' updates to database?')) return;
 
+    _importInProgress = true;
     tiLoading(true, 'Importing transactions...');
     document.getElementById('importBtn').disabled = true;
+    document.getElementById('importBtn').textContent = 'Importing...';
 
     var insertCount = 0, updateCount = 0;
     var importErrors = [];
@@ -2590,23 +2717,28 @@ async function importExcelToDatabase() {
         }
 
         tiLoading(false);
+
+        // Always close modal and reset after import attempt
+        document.getElementById('excelPreviewOverlay').classList.remove('active');
+        parsedTransactions = [];
+        excelConfirmedRows = [];
+        excelFlaggedRows = [];
+        excelErrorRows = [];
+        _sortHandlersAttached = false;
+        document.getElementById('fileInput').value = '';
+
         if (importErrors.length > 0) {
-            tiAlert('warning', 'Inserted ' + insertCount + ' new, updated ' + updateCount + '.\n\nErrors:\n' + importErrors.slice(0, 10).join('\n'));
+            tiAlert('warning', 'Imported ' + insertCount + ' new + ' + updateCount + ' updated.\n\n' + importErrors.length + ' errors:\n' + importErrors.slice(0, 10).join('\n'));
         } else {
             tiAlert('success', 'Successfully imported ' + insertCount + ' new + ' + updateCount + ' updated transactions!');
-            // Reset state — close modal
-            document.getElementById('excelPreviewOverlay').classList.remove('active');
-            parsedTransactions = [];
-            excelConfirmedRows = [];
-            excelFlaggedRows = [];
-            excelErrorRows = [];
-            document.getElementById('fileInput').value = '';
         }
     } catch (error) {
         tiLoading(false);
         tiAlert('error', 'Import failed: ' + error.message);
     }
+    _importInProgress = false;
     document.getElementById('importBtn').disabled = false;
+    document.getElementById('importBtn').textContent = 'Import to Database';
 }
 
 window.importToDatabase = function() { importExcelToDatabase(); };
