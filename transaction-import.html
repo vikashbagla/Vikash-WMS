@@ -49,6 +49,46 @@
         /* TABLES */
         .preview-section { display: none; }
         .preview-section.active { display: block; }
+
+        /* EXCEL PREVIEW MODAL */
+        .excel-preview-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.45); z-index: 1100; align-items: flex-start; justify-content: center; padding-top: 30px;
+        }
+        .excel-preview-overlay.active { display: flex; }
+        .excel-preview-card {
+            background: #fff; border-radius: 10px; width: 92vw; max-width: 1200px; max-height: 85vh;
+            display: flex; flex-direction: column; box-shadow: 0 8px 30px rgba(0,0,0,0.18);
+        }
+        .excel-preview-header {
+            padding: 12px 16px; border-bottom: 1px solid #e2e8f0;
+            display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+        }
+        .excel-preview-header h3 { margin: 0; font-size: 14px; font-weight: 600; color: #2d3748; }
+        .excel-preview-body { padding: 14px 16px; overflow-y: auto; flex: 1; min-height: 0; }
+        .excel-preview-footer {
+            padding: 10px 16px; border-top: 1px solid #e2e8f0;
+            display: flex; justify-content: flex-end; gap: 8px; flex-shrink: 0;
+        }
+
+        /* Close modal button */
+        .btn-close-modal {
+            width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+            background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer;
+            font-size: 14px; color: #718096; padding: 0; line-height: 1;
+        }
+        .btn-close-modal:hover { background: #edf2f7; color: #4a5568; }
+
+        /* Double-click-to-edit charge cells */
+        .charge-display {
+            cursor: default; padding: 2px 4px; border-radius: 3px; min-width: 50px; display: inline-block; text-align: right;
+        }
+        .charge-display:hover { background: #f7fafc; }
+        .charge-display[title] { border-bottom: 1px dashed #cbd5e0; }
+        .charge-edit-input {
+            width: 70px; padding: 2px 4px; font-size: 11px; border: 2px solid #667eea; border-radius: 3px;
+            text-align: right; outline: none;
+        }
         .table-wrapper { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 6px; }
         table { width: 100%; border-collapse: collapse; }
         th { background: #f7fafc; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; color: #4a5568; text-transform: uppercase; border-bottom: 2px solid #e2e8f0; position: sticky; top: 0; }
@@ -137,23 +177,31 @@
         </div>
     </div>
 
-    <!-- ===== EXCEL PREVIEW (full width, below both boxes) ===== -->
-    <div class="section preview-section" id="previewSection">
-        <div class="section-title">Excel Import Preview</div>
-        <div class="stats" style="grid-template-columns: repeat(6, 1fr);">
-            <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" id="statTotal">0</div></div>
-            <div class="stat-card" style="border-left-color:#38a169;"><div class="stat-label">Buy</div><div class="stat-value type-buy" id="statBuy">0</div></div>
-            <div class="stat-card" style="border-left-color:#e53e3e;"><div class="stat-label">Sell</div><div class="stat-value type-sell" id="statSell">0</div></div>
-            <div class="stat-card" style="border-left-color:#667eea;"><div class="stat-label">Other</div><div class="stat-value type-other" id="statOther">0</div></div>
-            <div class="stat-card" style="border-left-color:#48bb78;"><div class="stat-label">New</div><div class="stat-value" id="statNew" style="color:#48bb78;">0</div></div>
-            <div class="stat-card" style="border-left-color:#ed8936;"><div class="stat-label">Updates</div><div class="stat-value" id="statUpdate" style="color:#ed8936;">0</div></div>
-        </div>
-        <div class="table-wrapper" style="max-height:50vh; overflow-y:auto;"><table><thead><tr>
-            <th>#</th><th>Investor</th><th>Type</th><th>Symbol</th><th>Date</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross</th><th style="text-align:right;">Charges</th><th style="text-align:right;">Trd Charges</th><th style="text-align:right;">Net Amount</th>
-        </tr></thead><tbody id="previewTableBody"></tbody></table></div>
-        <div class="action-buttons">
-            <button class="btn btn-danger" onclick="cancelImport()">Cancel</button>
-            <button class="btn btn-success" id="importBtn" onclick="importToDatabase()">Import to Database</button>
+    <!-- ===== EXCEL PREVIEW MODAL (blocks all other interaction) ===== -->
+    <div class="excel-preview-overlay" id="excelPreviewOverlay">
+        <div class="excel-preview-card">
+            <div class="excel-preview-header">
+                <h3>📊 Excel Import Preview</h3>
+                <button class="btn-close-modal" onclick="cancelImport()" title="Close">✕</button>
+            </div>
+            <div class="excel-preview-body">
+                <div class="stats" style="grid-template-columns: repeat(6, 1fr);">
+                    <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" id="statTotal">0</div></div>
+                    <div class="stat-card" style="border-left-color:#38a169;"><div class="stat-label">Buy</div><div class="stat-value type-buy" id="statBuy">0</div></div>
+                    <div class="stat-card" style="border-left-color:#e53e3e;"><div class="stat-label">Sell</div><div class="stat-value type-sell" id="statSell">0</div></div>
+                    <div class="stat-card" style="border-left-color:#667eea;"><div class="stat-label">Other</div><div class="stat-value type-other" id="statOther">0</div></div>
+                    <div class="stat-card" style="border-left-color:#48bb78;"><div class="stat-label">New</div><div class="stat-value" id="statNew" style="color:#48bb78;">0</div></div>
+                    <div class="stat-card" style="border-left-color:#ed8936;"><div class="stat-label">Updates</div><div class="stat-value" id="statUpdate" style="color:#ed8936;">0</div></div>
+                </div>
+                <div style="font-size:10px;color:#718096;margin-bottom:6px;">Double-click Charges or Trd Charges to edit</div>
+                <div class="table-wrapper"><table><thead><tr>
+                    <th style="width:30px;">#</th><th style="width:100px;">Inv &gt; Brk</th><th style="width:45px;">Type</th><th>Symbol</th><th style="width:72px;">Date</th><th style="text-align:right;width:55px;">Qty</th><th style="text-align:right;width:65px;">Price</th><th style="text-align:right;width:75px;">Gross</th><th style="text-align:right;width:70px;">Charges</th><th style="text-align:right;width:70px;">Trd Chg</th><th style="text-align:right;width:80px;">Net Amount</th>
+                </tr></thead><tbody id="previewTableBody"></tbody></table></div>
+            </div>
+            <div class="excel-preview-footer">
+                <button class="btn btn-danger" onclick="cancelImport()">Cancel</button>
+                <button class="btn btn-success" id="importBtn" onclick="importToDatabase()">Import to Database</button>
+            </div>
         </div>
     </div>
 

@@ -418,7 +418,10 @@ async function trFetchLivePrices() {
             return;
         }
         var holdings = trCalcHoldings();
-        if (holdings.length === 0) return;
+        if (holdings.length === 0) {
+            trUpdatePriceStatus('last-txn');
+            return;
+        }
 
         var symbols = holdings.map(function(h) { return trGetFyersKey(h); });
         // Deduplicate

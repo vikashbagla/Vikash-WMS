@@ -75,6 +75,19 @@ function initTransactionImport() {
     var cnChooseFileBtn = document.getElementById('cnChooseFileBtn');
     if (cnChooseFileBtn) cnChooseFileBtn.addEventListener('click', function() { cnFileInput.click(); });
 
+    // Excel preview modal — ESC key and overlay click to close
+    var excelOverlay = document.getElementById('excelPreviewOverlay');
+    if (excelOverlay) {
+        excelOverlay.addEventListener('click', function(e) {
+            if (e.target === excelOverlay) window.cancelImport();
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && excelOverlay.classList.contains('active')) {
+                window.cancelImport();
+            }
+        });
+    }
+
     loadReferenceData();
     loadCnAccounts();
     loadExistingTags();
@@ -1793,11 +1806,24 @@ function displayExcelPreview() {
     var tbody = document.getElementById('previewTableBody');
     tbody.innerHTML = '';
 
-    // Build "Inv > Trd > Brk" display (per pattern C.3.1)
+    // Build "Inv > Brk" display using short_name and broker_code
     function buildInvLabel(r) {
-        var parts = [r.investor_name];
-        if (r.trader_name && r.trader_name !== r.investor_name) parts.push(r.trader_name);
-        if (r.broker_name) parts.push(r.broker_name);
+        var invDisplay = r.investor_id && investorObjMap[r.investor_id]
+            ? (investorObjMap[r.investor_id].short_name || investorObjMap[r.investor_id].name)
+            : r.investor_name;
+        var brkDisplay = r.broker_id && brokerObjMap[r.broker_id]
+            ? (brokerObjMap[r.broker_id].broker_code || brokerObjMap[r.broker_id].name)
+            : r.broker_name;
+        // Include trader only if different from investor
+        var trdDisplay = '';
+        if (r.trader_id && r.trader_id !== r.investor_id) {
+            trdDisplay = investorObjMap[r.trader_id]
+                ? (investorObjMap[r.trader_id].short_name || investorObjMap[r.trader_id].name)
+                : r.trader_name;
+        }
+        var parts = [invDisplay];
+        if (trdDisplay) parts.push(trdDisplay);
+        if (brkDisplay) parts.push(brkDisplay);
         return parts.join(' > ');
     }
 
@@ -1812,20 +1838,20 @@ function displayExcelPreview() {
         }
         var dupBadge = t.isUpdate ? '<span style="background:#feebc8;color:#744210;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;margin-left:4px;">UPDATE</span>' : '<span style="background:#c6f6d5;color:#22543d;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;margin-left:4px;">NEW</span>';
 
-        // Editable charges cells
-        var chargesHtml = '<input type="number" step="0.01" value="' + (t.total_charges || 0) + '" data-row="' + index + '" data-field="total_charges" onchange="recalcExcelRow(' + index + ')" style="width:70px;padding:2px 4px;font-size:11px;border:1px solid #e2e8f0;border-radius:3px;text-align:right;">';
-        var traderChargesHtml = '<input type="number" step="0.01" value="' + (t.trader_charges || 0) + '" data-row="' + index + '" data-field="trader_charges" style="width:70px;padding:2px 4px;font-size:11px;border:1px solid #e2e8f0;border-radius:3px;text-align:right;">';
+        // Double-click-to-edit charge display cells
+        var chargesDisplay = '<span class="charge-display" data-row="' + index + '" data-field="total_charges" title="Double-click to edit">' + formatCnAmount(t.total_charges || 0) + '</span>';
+        var traderChargesDisplay = '<span class="charge-display" data-row="' + index + '" data-field="trader_charges" title="Double-click to edit">' + formatCnAmount(t.trader_charges || 0) + '</span>';
 
         row.innerHTML = '<td>' + (index + 1) + '</td>' +
-            '<td style="font-size:11px;">' + buildInvLabel(t) + '</td>' +
-            '<td class="' + typeClass + '">' + t.transaction_type + '</td>' +
+            '<td style="font-size:10px;white-space:nowrap;">' + buildInvLabel(t) + '</td>' +
+            '<td class="' + typeClass + '" style="font-size:10px;">' + t.transaction_type + '</td>' +
             '<td>' + statusBadge + t.symbol + (t.company_name ? '<br><span style="font-size:10px;color:#718096;">' + t.company_name + '</span>' : '') + dupBadge + '</td>' +
-            '<td>' + t.transaction_date + '</td>' +
+            '<td style="font-size:11px;">' + t.transaction_date + '</td>' +
             '<td style="text-align:right;">' + formatCnQty(t.quantity) + '</td>' +
             '<td style="text-align:right;">' + formatCnAmount(t.price) + '</td>' +
             '<td style="text-align:right;">' + formatCnAmount(t.gross_amount) + '</td>' +
-            '<td style="text-align:right;">' + chargesHtml + '</td>' +
-            '<td style="text-align:right;">' + traderChargesHtml + '</td>' +
+            '<td style="text-align:right;">' + chargesDisplay + '</td>' +
+            '<td style="text-align:right;">' + traderChargesDisplay + '</td>' +
             '<td style="text-align:right;" id="excelNet_' + index + '">' + formatCnAmount(t.net_amount) + '</td>';
 
         if (t.matchStatus === 'flagged') {
@@ -1835,6 +1861,9 @@ function displayExcelPreview() {
         tbody.appendChild(row);
     });
 
+    // Attach double-click handlers for charge cells
+    attachChargeEditHandlers();
+
     // Show error summary if any
     if (excelErrorRows.length > 0) {
         var errHtml = excelErrorRows.slice(0, 10).map(function(e) { return 'Row ' + e.rowNum + ': ' + e.errors.join('; '); }).join('\n');
@@ -1843,20 +1872,84 @@ function displayExcelPreview() {
         tiAlert('info', allRows.length + ' transactions ready (' + newCount + ' new, ' + updateCount + ' updates). Review and click Import.');
     }
 
-    document.getElementById('previewSection').classList.add('active');
+    // Open modal overlay
+    document.getElementById('excelPreviewOverlay').classList.add('active');
 }
 
-// Recalculate net_amount when user edits charges inline
+// Attach dblclick handlers to all .charge-display cells
+function attachChargeEditHandlers() {
+    var cells = document.querySelectorAll('#previewTableBody .charge-display');
+    cells.forEach(function(cell) {
+        cell.addEventListener('dblclick', function() {
+            startChargeInlineEdit(cell);
+        });
+    });
+}
+
+// Double-click → inline input on charge cell (pattern from master-data.js startInlineEdit)
+function startChargeInlineEdit(span) {
+    if (span.querySelector('input')) return;
+    var rowIdx = parseInt(span.dataset.row);
+    var field = span.dataset.field;
+    var allRows = excelConfirmedRows.concat(excelFlaggedRows);
+    var currentVal = allRows[rowIdx] ? (allRows[rowIdx][field] || 0) : 0;
+
+    var input = document.createElement('input');
+    input.type = 'number';
+    input.step = '0.01';
+    input.value = currentVal;
+    input.className = 'charge-edit-input';
+
+    span.innerHTML = '';
+    span.appendChild(input);
+    input.focus();
+    input.select();
+
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            commitChargeEdit(span, input, rowIdx, field);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelChargeEdit(span, rowIdx, field);
+        }
+    });
+
+    input.addEventListener('blur', function() {
+        // Small delay to allow keydown to fire first
+        setTimeout(function() {
+            if (span.querySelector('input')) {
+                commitChargeEdit(span, input, rowIdx, field);
+            }
+        }, 100);
+    });
+}
+
+function commitChargeEdit(span, input, rowIdx, field) {
+    var newVal = parseFloat(input.value) || 0;
+    var allRows = excelConfirmedRows.concat(excelFlaggedRows);
+    if (!allRows[rowIdx]) return;
+
+    allRows[rowIdx][field] = newVal;
+    span.textContent = formatCnAmount(newVal);
+
+    // Recalc net_amount if total_charges changed
+    if (field === 'total_charges') {
+        recalcExcelRow(rowIdx);
+    }
+}
+
+function cancelChargeEdit(span, rowIdx, field) {
+    var allRows = excelConfirmedRows.concat(excelFlaggedRows);
+    var val = allRows[rowIdx] ? (allRows[rowIdx][field] || 0) : 0;
+    span.textContent = formatCnAmount(val);
+}
+
+// Recalculate net_amount when user edits charges (now reads from data object, not DOM inputs)
 function recalcExcelRow(index) {
     var allRows = excelConfirmedRows.concat(excelFlaggedRows);
     var row = allRows[index];
     if (!row) return;
-
-    // Read edited total_charges from DOM
-    var chargesInput = document.querySelector('input[data-row="' + index + '"][data-field="total_charges"]');
-    if (chargesInput) {
-        row.total_charges = parseFloat(chargesInput.value) || 0;
-    }
 
     // Recalculate net_amount (rule F.2.2)
     if (row.transaction_type === 'BUY') {
@@ -1916,13 +2009,8 @@ async function importExcelToDatabase() {
     var allRows = excelConfirmedRows.concat(excelFlaggedRows);
     if (allRows.length === 0) { tiAlert('error', 'No transactions to import'); return; }
 
-    // Collect latest edited values from DOM
-    allRows.forEach(function(r, idx) {
-        var chargesInput = document.querySelector('input[data-row="' + idx + '"][data-field="total_charges"]');
-        if (chargesInput) r.total_charges = parseFloat(chargesInput.value) || 0;
-        var trChargesInput = document.querySelector('input[data-row="' + idx + '"][data-field="trader_charges"]');
-        if (trChargesInput) r.trader_charges = parseFloat(trChargesInput.value) || 0;
-        // Recalc net
+    // Values are already in data objects (edited via dblclick inline edit) — just recalc net
+    allRows.forEach(function(r) {
         if (r.transaction_type === 'BUY') r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
         else if (r.transaction_type === 'SELL') r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
         else if (isIncomeType(r.transaction_type)) r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
@@ -1989,8 +2077,8 @@ async function importExcelToDatabase() {
             tiAlert('warning', 'Inserted ' + insertCount + ' new, updated ' + updateCount + '.\n\nErrors:\n' + importErrors.slice(0, 10).join('\n'));
         } else {
             tiAlert('success', 'Successfully imported ' + insertCount + ' new + ' + updateCount + ' updated transactions!');
-            // Reset state
-            document.getElementById('previewSection').classList.remove('active');
+            // Reset state — close modal
+            document.getElementById('excelPreviewOverlay').classList.remove('active');
             parsedTransactions = [];
             excelConfirmedRows = [];
             excelFlaggedRows = [];
@@ -2011,7 +2099,7 @@ window.cancelImport = function() {
     excelConfirmedRows = [];
     excelFlaggedRows = [];
     excelErrorRows = [];
-    document.getElementById('previewSection').classList.remove('active');
+    document.getElementById('excelPreviewOverlay').classList.remove('active');
     document.getElementById('fileInput').value = '';
     tiAlert('info', 'Import cancelled.');
 };
