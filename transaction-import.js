@@ -1244,6 +1244,56 @@ function allocateCharges(rows, segCharges) {
     } else {
         console.log('STT verification passed: CN=' + _cnSttTotal + ', allocated=' + allocatedStt);
     }
+
+    // ========================================================================
+    // CN Total Reconciliation:
+    // Compare total CN charges vs total allocated charges. If there's a gap
+    // (e.g. stamp duty exempted from non-equity instruments), distribute the
+    // unallocated amount proportionally by gross_amount into other_charges
+    // so the import net amount matches the CN exactly.
+    // ========================================================================
+    var cnTotalCharges = Math.round(((segCharges.brokerage || 0) + (segCharges.stt || 0) +
+        (segCharges.gst || 0) + (segCharges.exchangeCharges || 0) + (segCharges.sebiCharges || 0) +
+        (segCharges.stampDuty || 0) + (segCharges.ipft || 0)) * 100) / 100;
+
+    var allocatedTotalCharges = 0;
+    rows.forEach(function(r) { allocatedTotalCharges += r.total_charges; });
+    allocatedTotalCharges = Math.round(allocatedTotalCharges * 100) / 100;
+
+    var chargeGap = Math.round((cnTotalCharges - allocatedTotalCharges) * 100) / 100;
+
+    if (Math.abs(chargeGap) > 0.01) {
+        console.log('CN charge reconciliation: CN total=' + cnTotalCharges + ', allocated=' + allocatedTotalCharges + ', gap=' + chargeGap + ' — distributing to other_charges');
+
+        // Distribute gap proportionally by gross_amount
+        var distributed = 0;
+        rows.forEach(function(r, idx) {
+            var proportion = Math.abs(r.gross_amount) / totalGross;
+            var share;
+            if (idx === rows.length - 1) {
+                // Last row gets remainder to avoid rounding drift
+                share = Math.round((chargeGap - distributed) * 100) / 100;
+            } else {
+                share = Math.round(chargeGap * proportion * 100) / 100;
+            }
+            r.other_charges = Math.round((r.other_charges + share) * 100) / 100;
+            r.total_charges = Math.round((r.brokerage + r.stt + r.gst + r.other_charges) * 100) / 100;
+            if (r.transaction_type === 'BUY') {
+                r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
+            } else {
+                r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
+            }
+            distributed += share;
+        });
+
+        // Store reconciliation info for display
+        window._cnChargeVerification.reconciled = true;
+        window._cnChargeVerification.chargeGap = chargeGap;
+        window._cnChargeVerification.cnTotalCharges = cnTotalCharges;
+    } else {
+        window._cnChargeVerification.reconciled = false;
+        window._cnChargeVerification.chargeGap = 0;
+    }
 }
 
 // ============================================================================
@@ -1326,6 +1376,12 @@ function displayCnPreview(parseResult) {
                 alertDiv.style.color = '#065F46';
                 html += '<div><strong>✓ STT Verified:</strong> CN STT ₹' + v.cnStt.toFixed(2) +
                     ' matches allocated ₹' + v.allocatedStt.toFixed(2) + '.</div>';
+            }
+
+            // Reconciliation info: unallocated charges distributed to match CN total
+            if (v.reconciled) {
+                html += '<div style="margin-top:4px;"><strong>✓ Reconciled:</strong> ₹' + v.chargeGap.toFixed(2) +
+                    ' unallocated charges (exempt stamp duty) distributed proportionally to other_charges so import total matches CN.</div>';
             }
 
             alertDiv.innerHTML = html;
