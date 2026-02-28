@@ -1350,7 +1350,7 @@ function displayCnPreview(parseResult) {
     if (sortedNew.length > 0) {
         document.getElementById('cnNewSection').style.display = '';
         sortedNew.forEach(function(r, i) { newTbody.appendChild(createCnPreviewRow(r, i + 1)); });
-        newTbody.appendChild(createCnTotalsRow(sortedNew));
+        newTbody.appendChild(createCnTotalsRow(sortedNew, 'NEW'));
     } else {
         document.getElementById('cnNewSection').style.display = 'none';
     }
@@ -1361,7 +1361,7 @@ function displayCnPreview(parseResult) {
     if (sortedUpdate.length > 0) {
         document.getElementById('cnUpdateSection').style.display = '';
         sortedUpdate.forEach(function(r, i) { updateTbody.appendChild(createCnPreviewRow(r, i + 1)); });
-        updateTbody.appendChild(createCnTotalsRow(sortedUpdate));
+        updateTbody.appendChild(createCnTotalsRow(sortedUpdate, 'UPDATE'));
     } else {
         document.getElementById('cnUpdateSection').style.display = 'none';
     }
@@ -1464,6 +1464,15 @@ function initCnChargeEditing() {
             if (netEl) {
                 var displayNet = row.transaction_type === 'SELL' ? -Math.abs(row.net_amount) : Math.abs(row.net_amount);
                 netEl.textContent = formatCnAmount(displayNet);
+            }
+
+            // Rebuild totals row for this section (NEW or UPDATE)
+            var sectionRows = (action === 'NEW') ? cnNewRows : cnUpdateRows;
+            var totalsId = 'cnTotals_' + action;
+            var oldTotals = document.getElementById(totalsId);
+            if (oldTotals) {
+                var newTotals = createCnTotalsRow(sectionRows, action);
+                oldTotals.parentNode.replaceChild(newTotals, oldTotals);
             }
 
             // Highlight edited input
@@ -1581,7 +1590,7 @@ function initTagAutocomplete(inputId, initialValue) {
     syncInput();
 }
 
-function createCnTotalsRow(rows) {
+function createCnTotalsRow(rows, sectionId) {
     var totQty = 0, totGross = 0, totBrokerage = 0, totStt = 0, totOther = 0, totGst = 0, totNet = 0;
     rows.forEach(function(r) {
         totQty += Math.abs(r.quantity);
@@ -1598,6 +1607,7 @@ function createCnTotalsRow(rows) {
         }
     });
     var tr = document.createElement('tr');
+    tr.id = 'cnTotals_' + (sectionId || 'all');
     tr.style.fontWeight = '700';
     tr.style.borderTop = '2px solid #4a5568';
     tr.style.background = '#f7fafc';
