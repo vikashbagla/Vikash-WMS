@@ -936,13 +936,17 @@ async function processAndGroupTrades(parseResult) {
             other_charges: 0,
             gst: 0,
             total_charges: 0,
-            net_amount: 0
+            net_amount: 0,
+            // Preserve DB security classification for smart charge allocation
+            _db_security_type: secMatch.security_type || 'EQUITY',
+            _db_asset_class: secMatch.asset_class || ''
         };
 
         cnParsedRows.push(row);
     }
 
     // Allocate equity charges proportionally by gross_amount
+    // Pass CN-level STT total for verification
     allocateCharges(cnParsedRows, charges.equity);
 
     return cnParsedRows;
@@ -1114,20 +1118,74 @@ async function matchSymbolMultiStage(symbol, securityType, batchMap) {
     return { status: 'error', match: null, matches: [], error: 'Symbol "' + symbol + '" not found in securities_db' + (securityType ? ' (type: ' + securityType + ')' : '') };
 }
 
+// Determine if a security attracts STT (Securities Transaction Tax).
+// ONLY plain EQUITY stocks attract STT in the equity delivery segment.
+// All non-equity instruments (ETFs, MFs, debt funds, SGBs, REITs, InvITs, NCDs, etc.)
+// do NOT attract STT or stamp duty.
+function isSTTEligible(row) {
+    var secType = (row._db_security_type || '').toUpperCase();
+
+    // Only EQUITY stocks attract STT
+    if (secType === 'EQUITY') return true;
+
+    // Everything else (ETF, MF, REIT, INVIT, SGB, GOVT_BOND, NCD, LIQUID, DEBT, etc.) is exempt
+    return false;
+}
+
 function allocateCharges(rows, segCharges) {
-    // Proportionally allocate charges by gross_amount
-    var total = 0;
-    rows.forEach(function(r) { total += Math.abs(r.gross_amount); });
-    if (total === 0) return;
+    // Smart charge allocation:
+    // - Brokerage, exchange charges, SEBI, IPFT, GST → allocated to ALL trades proportionally
+    // - STT, stamp duty → allocated ONLY to non-debt trades (debt instruments are exempt)
+
+    var totalGross = 0;
+    var sttEligibleGross = 0;
 
     rows.forEach(function(r) {
-        var proportion = Math.abs(r.gross_amount) / total;
+        var absGross = Math.abs(r.gross_amount);
+        totalGross += absGross;
+        r._sttEligible = isSTTEligible(r);
+        if (r._sttEligible) {
+            sttEligibleGross += absGross;
+        }
+    });
 
+    if (totalGross === 0) return;
+
+    // Store CN totals for verification display
+    var _cnSttTotal = segCharges.stt;
+    var _cnStampTotal = segCharges.stampDuty;
+
+    rows.forEach(function(r) {
+        var proportion = Math.abs(r.gross_amount) / totalGross;
+
+        // Brokerage: all trades get proportional share
         r.brokerage = Math.round(segCharges.brokerage * proportion * 100) / 100;
-        r.stt = Math.round(segCharges.stt * proportion * 100) / 100;
+
+        // STT: only STT-eligible trades (EQUITY only, proportional within eligible trades)
+        if (r._sttEligible && sttEligibleGross > 0) {
+            var sttProportion = Math.abs(r.gross_amount) / sttEligibleGross;
+            r.stt = Math.round(segCharges.stt * sttProportion * 100) / 100;
+        } else {
+            r.stt = 0;
+        }
+
+        // Exchange charges, SEBI, IPFT: all trades get proportional share
+        var exchShare = Math.round(segCharges.exchangeCharges * proportion * 100) / 100;
+        var sebiShare = Math.round(segCharges.sebiCharges * proportion * 100) / 100;
+        var ipftShare = Math.round(segCharges.ipft * proportion * 100) / 100;
+
+        // Stamp duty: only STT-eligible trades (same exemption as STT)
+        var stampShare = 0;
+        if (r._sttEligible && sttEligibleGross > 0) {
+            var stampProportion = Math.abs(r.gross_amount) / sttEligibleGross;
+            stampShare = Math.round(segCharges.stampDuty * stampProportion * 100) / 100;
+        }
+
+        r.other_charges = Math.round((exchShare + sebiShare + stampShare + ipftShare) * 100) / 100;
+
+        // GST: 18% on (brokerage + exchange + SEBI) — all trades
         r.gst = Math.round(segCharges.gst * proportion * 100) / 100;
-        // other_charges = exchange + SEBI + stamp + IPFT
-        r.other_charges = Math.round((segCharges.exchangeCharges + segCharges.sebiCharges + segCharges.stampDuty + segCharges.ipft) * proportion * 100) / 100;
+
         r.total_charges = Math.round((r.brokerage + r.stt + r.gst + r.other_charges) * 100) / 100;
 
         // net_amount = gross_amount + total_charges (charges always add for buys, subtract from sells)
@@ -1137,6 +1195,31 @@ function allocateCharges(rows, segCharges) {
             r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
         }
     });
+
+    // STT verification: sum allocated STT vs CN total
+    var allocatedStt = 0;
+    rows.forEach(function(r) { allocatedStt += r.stt; });
+    allocatedStt = Math.round(allocatedStt * 100) / 100;
+    var sttDiff = Math.abs(allocatedStt - _cnSttTotal);
+
+    // Store verification result on the module-level for display
+    window._cnChargeVerification = {
+        cnStt: _cnSttTotal,
+        allocatedStt: allocatedStt,
+        sttMatch: sttDiff < 0.02,  // Allow 2 paise rounding tolerance
+        sttDiff: sttDiff,
+        cnStamp: _cnStampTotal,
+        sttExemptSymbols: rows.filter(function(r) { return !r._sttEligible; }).map(function(r) { return r.short_symbol + ' (' + (r._db_security_type || '?') + ')'; }),
+        sttEligibleSymbols: rows.filter(function(r) { return r._sttEligible; }).map(function(r) { return r.short_symbol; })
+    };
+
+    if (!window._cnChargeVerification.sttMatch) {
+        console.warn('STT MISMATCH: CN total=' + _cnSttTotal + ', allocated=' + allocatedStt + ', diff=' + sttDiff);
+        console.warn('STT exempt: ' + window._cnChargeVerification.sttExemptSymbols.join(', '));
+        console.warn('STT eligible: ' + window._cnChargeVerification.sttEligibleSymbols.join(', '));
+    } else {
+        console.log('STT verification passed: CN=' + _cnSttTotal + ', allocated=' + allocatedStt);
+    }
 }
 
 // ============================================================================
@@ -1188,6 +1271,45 @@ function displayCnPreview(parseResult) {
     document.getElementById('cnStatUpdate').textContent = cnUpdateRows.length;
     document.getElementById('cnStatError').textContent = cnErrorRows.length;
 
+    // STT / Charge verification alert
+    var alertDiv = document.getElementById('cnChargeAlert');
+    if (alertDiv && window._cnChargeVerification) {
+        var v = window._cnChargeVerification;
+        if (v.sttExemptSymbols.length > 0 || !v.sttMatch) {
+            alertDiv.style.display = 'block';
+            var html = '';
+
+            // Info about STT-exempt symbols
+            if (v.sttExemptSymbols.length > 0) {
+                html += '<div style="margin-bottom:6px;"><strong>STT-Exempt Instruments:</strong> ' +
+                    v.sttExemptSymbols.join(', ') + ' — STT and stamp duty not allocated to these symbols.</div>';
+            }
+
+            if (!v.sttMatch) {
+                // Mismatch warning
+                alertDiv.style.background = '#FEF3C7';
+                alertDiv.style.border = '1px solid #F59E0B';
+                alertDiv.style.color = '#92400E';
+                html += '<div><strong>⚠ STT Mismatch:</strong> CN total STT = ₹' + v.cnStt.toFixed(2) +
+                    ', Allocated STT = ₹' + v.allocatedStt.toFixed(2) +
+                    ' (diff: ₹' + v.sttDiff.toFixed(2) + '). ' +
+                    'This may indicate some symbols are classified incorrectly. ' +
+                    '<strong>You can edit charge amounts directly in the table below.</strong></div>';
+            } else {
+                // All good info
+                alertDiv.style.background = '#ECFDF5';
+                alertDiv.style.border = '1px solid #10B981';
+                alertDiv.style.color = '#065F46';
+                html += '<div><strong>✓ STT Verified:</strong> CN STT ₹' + v.cnStt.toFixed(2) +
+                    ' matches allocated ₹' + v.allocatedStt.toFixed(2) + '.</div>';
+            }
+
+            alertDiv.innerHTML = html;
+        } else {
+            alertDiv.style.display = 'none';
+        }
+    }
+
     // Sort: BUY first, then SELL
     function sortBuyFirst(arr) {
         return arr.slice().sort(function(a, b) {
@@ -1237,6 +1359,18 @@ function displayCnPreview(parseResult) {
     // Show preview section and ensure import button is enabled
     document.getElementById('cnImportBtn').disabled = false;
     document.getElementById('cnPreviewSection').classList.add('active');
+
+    // Wire up editable charge inputs after DOM is rendered
+    setTimeout(function() { initCnChargeEditing(); }, 50);
+}
+
+function cnChargeInputHtml(row, field, rowKey) {
+    // Editable charge input cell — inline number input that updates the row object
+    var val = row[field] || 0;
+    var inputId = 'cnChg_' + rowKey + '_' + field;
+    return '<input type="number" step="0.01" id="' + inputId + '" value="' + val.toFixed(2) + '" ' +
+        'style="width:70px;text-align:right;padding:2px 4px;border:1px solid #e2e8f0;border-radius:3px;font-size:11px;background:#fff;" ' +
+        'data-row-key="' + rowKey + '" data-field="' + field + '" class="cn-charge-input">';
 }
 
 function createCnPreviewRow(r, idx) {
@@ -1244,17 +1378,22 @@ function createCnPreviewRow(r, idx) {
     var typeClass = r.transaction_type === 'BUY' ? 'type-buy' : 'type-sell';
     var tagsValue = Array.isArray(r.tags) ? r.tags.filter(function(t) { return t !== 'blank'; }).join(', ') : (r.tags || '');
     var tagInputId = 'cnTag_' + r._action + '_' + (idx - 1);
+    var rowKey = r._action + '_' + (idx - 1);
+    var netAmtId = 'cnNet_' + rowKey;
+    var sttExemptBadge = (r._sttEligible === false) ? ' <span style="font-size:9px;color:#9333ea;font-weight:600;" title="STT exempt (non-equity)">●</span>' : '';
+
     tr.innerHTML = '<td>' + idx + '</td>' +
         '<td class="' + typeClass + '">' + r.transaction_type + '</td>' +
-        '<td title="' + r.symbol + '">' + r.short_symbol + '</td>' +
+        '<td title="' + r.symbol + (r._db_security_type ? ' (' + r._db_security_type + ')' : '') + '">' + r.short_symbol + sttExemptBadge + '</td>' +
         '<td style="text-align:right;">' + formatCnQty(r.quantity) + '</td>' +
         '<td style="text-align:right;">' + formatCnAmount(r.price) + '</td>' +
         '<td style="text-align:right;">' + formatCnAmount(r.gross_amount) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(r.brokerage) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(r.stt) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(r.other_charges) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(r.gst) + '</td>' +
-        '<td style="text-align:right;font-weight:600;" class="' + (r.transaction_type === 'SELL' ? 'negative' : '') + '">' + formatCnAmount(r.transaction_type === 'SELL' ? -Math.abs(r.net_amount) : Math.abs(r.net_amount)) + '</td>' +
+        '<td style="text-align:right;">' + cnChargeInputHtml(r, 'brokerage', rowKey) + '</td>' +
+        '<td style="text-align:right;">' + cnChargeInputHtml(r, 'stt', rowKey) + '</td>' +
+        '<td style="text-align:right;">' + cnChargeInputHtml(r, 'other_charges', rowKey) + '</td>' +
+        '<td style="text-align:right;">' + cnChargeInputHtml(r, 'gst', rowKey) + '</td>' +
+        '<td style="text-align:right;font-weight:600;" id="' + netAmtId + '" class="' + (r.transaction_type === 'SELL' ? 'negative' : '') + '">' +
+            formatCnAmount(r.transaction_type === 'SELL' ? -Math.abs(r.net_amount) : Math.abs(r.net_amount)) + '</td>' +
         '<td style="min-width:140px;position:relative;">' +
             '<div class="cn-tag-selected" id="' + tagInputId + '_pills" style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:3px;"></div>' +
             '<input type="text" id="' + tagInputId + '" value="" autocomplete="off" placeholder="type to search tags..." style="width:100%;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;">' +
@@ -1265,6 +1404,49 @@ function createCnPreviewRow(r, idx) {
     setTimeout(function() { initTagAutocomplete(tagInputId, tagsValue); }, 0);
 
     return tr;
+}
+
+// Wire up charge input change handlers (called once after all preview rows rendered)
+function initCnChargeEditing() {
+    var inputs = document.querySelectorAll('.cn-charge-input');
+    inputs.forEach(function(input) {
+        input.addEventListener('change', function() {
+            var rowKey = input.dataset.rowKey;
+            var field = input.dataset.field;
+            var newVal = parseFloat(input.value) || 0;
+
+            // Find the row object
+            var parts = rowKey.split('_');
+            var action = parts[0];
+            var idx = parseInt(parts[1]);
+            var row = null;
+            if (action === 'NEW') row = cnNewRows[idx];
+            else if (action === 'UPDATE') row = cnUpdateRows[idx];
+            if (!row) return;
+
+            // Update the field
+            row[field] = Math.round(newVal * 100) / 100;
+
+            // Recalculate total_charges and net_amount
+            row.total_charges = Math.round((row.brokerage + row.stt + row.gst + row.other_charges) * 100) / 100;
+            if (row.transaction_type === 'BUY') {
+                row.net_amount = Math.round((row.gross_amount + row.total_charges) * 100) / 100;
+            } else {
+                row.net_amount = Math.round((row.gross_amount - row.total_charges) * 100) / 100;
+            }
+
+            // Update net amount display
+            var netEl = document.getElementById('cnNet_' + rowKey);
+            if (netEl) {
+                var displayNet = row.transaction_type === 'SELL' ? -Math.abs(row.net_amount) : Math.abs(row.net_amount);
+                netEl.textContent = formatCnAmount(displayNet);
+            }
+
+            // Highlight edited input
+            input.style.borderColor = '#667eea';
+            input.style.background = '#f0f0ff';
+        });
+    });
 }
 
 function initTagAutocomplete(inputId, initialValue) {
@@ -1755,7 +1937,7 @@ async function processTransactions(rawData, worksheet) {
         var quantity = quantity_raw || 0;
         if (transaction_type === 'BUY') quantity = Math.abs(quantity);
         else if (transaction_type === 'SELL') quantity = -Math.abs(quantity);
-        else if (isIncome) quantity = Math.abs(quantity);
+        else if (isIncome) quantity = Math.abs(quantity) || 1;  // Income types: default to 1 if blank (DB constraint: qty != 0)
 
         // Gross amount (rule F.2.1)
         var gross_amount = gross_amount_raw;
@@ -1872,6 +2054,10 @@ async function processTransactions(rawData, worksheet) {
                 vr.exchange = first.exchange;
                 if (!vr.security_type) vr.security_type = first.security_type;
                 vr.lots = 0;
+            } else {
+                // Flagged with zero matches → treat as error (security_id would be null)
+                vr.matchStatus = 'error';
+                vr.matchError = 'Symbol flagged but no candidate matches found';
             }
         }
 
@@ -2038,7 +2224,7 @@ function displayExcelPreview() {
         row.innerHTML = '<td style="text-align:center;"><input type="checkbox" class="excel-row-cb" data-row="' + index + '" checked></td>' +
             '<td>' + (index + 1) + '</td>' +
             '<td style="font-size:10px;white-space:nowrap;" title="' + invTooltip.replace(/"/g, '&quot;') + '">' + invLabel + '</td>' +
-            '<td style="max-width:180px;" title="' + symbolTitle.replace(/"/g, '&quot;') + '">' + statusBadge + symbolDisplay + dupBadge + (t.company_name ? '<br><span style="font-size:10px;color:#718096;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:170px;">' + t.company_name + '</span>' : '') + '</td>' +
+            '<td style="max-width:120px;" title="' + symbolTitle.replace(/"/g, '&quot;') + '">' + statusBadge + symbolDisplay + dupBadge + (t.company_name ? '<br><span style="font-size:10px;color:#718096;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:110px;">' + t.company_name + '</span>' : '') + '</td>' +
             '<td class="' + typeClass + '" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:36px;" title="' + typeAbbr + '">' + typeShort + '</td>' +
             '<td style="font-size:11px;white-space:nowrap;" title="' + dateTooltip + '">' + formatExcelDate(t.transaction_date) + '</td>' +
             '<td style="text-align:right;" title="Qty: ' + t.quantity + '">' + formatCnQty(t.quantity) + '</td>' +
@@ -2047,7 +2233,7 @@ function displayExcelPreview() {
             '<td style="text-align:right;">' + chargesDisplay + '</td>' +
             '<td style="text-align:right;">' + traderChargesDisplay + '</td>' +
             '<td style="text-align:right;' + (t._netOverride ? 'color:#b7791f;font-style:italic;' : '') + '" id="excelNet_' + index + '" class="net-amount-cell" data-row="' + index + '" title="Net: ' + t.net_amount + (t._netOverride ? ' (user entered — dblclick to edit)' : ' (dblclick to edit)') + '">' + formatCnAmount(t.net_amount) + '</td>' +
-            '<td style="font-size:10px;">' + tagsHtml + '</td>';
+            '<td style="font-size:10px;min-width:130px;">' + tagsHtml + '</td>';
 
         if (t.matchStatus === 'flagged') {
             row.style.backgroundColor = '#fffff0';
@@ -2648,6 +2834,15 @@ async function importExcelToDatabase() {
     checkedCbs.forEach(function(cb) { includedIndices[cb.dataset.row] = true; });
     allRows = allRows.filter(function(r, idx) { return includedIndices[idx]; });
     if (allRows.length === 0) { tiAlert('error', 'No rows selected for import'); return; }
+
+    // Safety: skip rows with null security_id or zero quantity (DB constraints)
+    var skippedRows = allRows.filter(function(r) { return !r.security_id || r.quantity === 0; });
+    if (skippedRows.length > 0) {
+        var skipSymbols = skippedRows.map(function(r) { return r.symbol + ((!r.security_id) ? ' [no security match]' : ' [qty=0]'); });
+        console.warn('Skipping ' + skippedRows.length + ' rows with invalid data: ' + skipSymbols.join(', '));
+    }
+    allRows = allRows.filter(function(r) { return r.security_id && r.quantity !== 0; });
+    if (allRows.length === 0) { tiAlert('error', 'No valid rows to import (all skipped due to missing security_id or zero quantity)'); return; }
 
     // Values are already in data objects (edited via dblclick inline edit) — recalc net unless user-entered
     allRows.forEach(function(r) {

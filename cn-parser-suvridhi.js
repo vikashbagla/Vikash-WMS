@@ -76,8 +76,8 @@ CN_PARSERS.suvridhi = function(pages, numPages) {
         for (var li = 0; li < lines.length; li++) {
             var lineText = lines[li].text;
 
-            // Look for ISIN anywhere in the line
-            var isinMatch = lineText.match(/(INE[A-Z0-9]{9})/);
+            // Look for ISIN anywhere in the line (INE for equities, INF for mutual funds/ETFs)
+            var isinMatch = lineText.match(/(IN[EF][A-Z0-9]{9})/);
             if (!isinMatch) continue;
 
             var isin = isinMatch[1];
@@ -123,8 +123,20 @@ CN_PARSERS.suvridhi = function(pages, numPages) {
 // ============================================================================
 
 function parseSuvridhiTradeData(lineText, isin) {
-    // Text after ISIN, e.g.: "SURYAROSNI Delivery 2,500 262.4139 0.3900 262.0239 6,55,059.75 -2,500 6,55,059.75"
-    // Purely text-based parsing (no item positions needed).
+    // Suvridhi equity summary row format:
+    //   Symbol Delivery [BUY: Qty WAP BrokPerShare WAPAfter Total] [SELL: Qty WAP BrokPerShare WAPAfter Total] NetQty NetObligation
+    //
+    // BUY-only:  "AFCOM Delivery 1,200 904.7900 1.3600 906.1500 1,087,380.00 1,200 -1,087,380.00"
+    //   Numbers: [1200, 904.79, 1.36, 906.15, 1087380.00, 1200, -1087380.00]
+    //   NetQty = second-to-last number (1200, positive = BUY)
+    //
+    // SELL-only: "MON100 Delivery 2,610 229.0000 229.0000 597,690.00 -2,610 597,690.00"
+    //   Numbers: [2610, 229.00, 229.00, 597690.00, -2610, 597690.00]
+    //   NetQty = second-to-last number (-2610, negative = SELL)
+    //
+    // FIX for G.8.3 bug: Old logic searched for first negative integer and picked up
+    // the negative Net Obligation (e.g. -1087380) which parses as integer when .00.
+    // New logic: NetQty is ALWAYS the second-to-last number, NetObligation is last.
 
     if (!lineText || lineText.trim().length < 5) return null;
 
@@ -139,7 +151,7 @@ function parseSuvridhiTradeData(lineText, isin) {
     }
     if (!symbol) return null;
 
-    // Extract all numbers from the line
+    // Extract all numbers from the line (preserving order)
     var allNums = [];
     var numMatches = lineText.match(/-?[\d,]+\.?\d*/g);
     if (numMatches) {
@@ -150,59 +162,65 @@ function parseSuvridhiTradeData(lineText, isin) {
         });
     }
 
-    if (allNums.length < 2) return null;
+    if (allNums.length < 3) return null;
 
-    // Determine buy vs sell from the data pattern:
-    //
-    // BUY-only row:  BuyQty, BuyWAP, BuyBrokPerShare, BuyWAPAfter, BuyTotal, <empty sell>, NetQty(+), NetObligation
-    // SELL-only row: <empty buy>, SellQty, SellWAP, SellBrokPerShare, SellWAPAfter, SellTotal, NetQty(-), NetObligation
-    // Both (intraday): BuyQty, BuyWAP, ..., BuyTotal, SellQty, SellWAP, ..., SellTotal, NetQty, NetObligation
-    //
-    // Key insight: if there's a negative integer, it's the net qty indicating net sell.
+    // NetQty = second-to-last number, NetObligation = last number
+    // NetQty sign determines BUY (+) or SELL (-)
+    var netQtyVal = allNums[allNums.length - 2];
+    // var netObligation = allNums[allNums.length - 1]; // not used currently
 
-    var netQty = 0;
-    var hasNegativeQty = false;
+    var buySell, qty;
 
-    // Find negative integer (net qty for sells)
-    for (var i = 0; i < allNums.length; i++) {
-        if (allNums[i] < 0 && Number.isInteger(allNums[i])) {
-            netQty = allNums[i];
-            hasNegativeQty = true;
-            break;
-        }
+    if (netQtyVal < 0) {
+        buySell = 'SELL';
+        qty = Math.abs(netQtyVal);
+    } else {
+        buySell = 'BUY';
+        qty = Math.abs(netQtyVal);
     }
 
-    // If no negative qty found, look for positive integers
-    if (!hasNegativeQty) {
+    // Sanity check: netQty should be a reasonable quantity (integer-like, < 10 million)
+    if (qty === 0 || qty > 10000000) {
+        console.warn('Suvridhi parser: netQty looks wrong (' + netQtyVal + '), falling back to first integer. Line: ' + lineText);
+        // Fallback: use the first positive integer as qty, assume BUY
+        qty = 0;
+        buySell = 'BUY';
         for (var j = 0; j < allNums.length; j++) {
-            if (Number.isInteger(allNums[j]) && allNums[j] > 0 && allNums[j] < 1000000) {
-                netQty = allNums[j];
+            var absVal = Math.abs(allNums[j]);
+            if (absVal > 0 && absVal < 1000000 && absVal === Math.floor(absVal)) {
+                qty = absVal;
                 break;
             }
         }
     }
 
-    var buySell, qty, price, amount;
-
-    if (hasNegativeQty) {
-        buySell = 'SELL';
-        qty = Math.abs(netQty);
-    } else {
-        buySell = 'BUY';
-        qty = Math.abs(netQty);
-    }
-
-    // Price = WAP before brokerage (first decimal number in the line)
+    // Price = WAP before brokerage (first decimal number with fractional part in the line)
     // The Suvridhi CN line has: Qty, WAP, BrokPerShare, WAPAfterBrok, TotalAfterBrok, NetQty, NetObligation
     // We need WAP (before brokerage) because charges are applied separately by allocateCharges().
-    var decimals = allNums.filter(function(v) { return !Number.isInteger(v) && v > 0; });
-    price = decimals.length > 0 ? decimals[0] : 0;  // WAP (across exchanges) — before brokerage
+    var price = 0;
+    for (var d = 0; d < allNums.length - 2; d++) {  // -2 to skip NetQty and NetObligation
+        var v = allNums[d];
+        if (v > 0 && v !== qty && (v % 1 !== 0 || v < 100)) {
+            // First positive number that's not the quantity and has decimals (or is small enough to be a price)
+            price = v;
+            break;
+        }
+    }
+    // Fallback: find any decimal > 0 before the last 2 numbers
+    if (price === 0) {
+        for (var d2 = 0; d2 < allNums.length - 2; d2++) {
+            if (allNums[d2] > 0 && allNums[d2] % 1 !== 0) {
+                price = allNums[d2];
+                break;
+            }
+        }
+    }
 
     // IMPORTANT: amount = qty × WAP (pre-brokerage gross amount)
     // The CN's "Net Obligation" / "Total Value" is AFTER brokerage deduction per share,
     // but allocateCharges() will apply brokerage from the charges section separately.
     // Using the CN's post-brokerage amount would double-count brokerage.
-    amount = qty * price;
+    var amount = qty * price;
 
     if (qty === 0 || price === 0) {
         console.warn('Suvridhi parser: skipping trade row with qty=' + qty + ' price=' + price + ' line: ' + lineText);
