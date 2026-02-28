@@ -1047,8 +1047,41 @@ async function matchSymbolMultiStage(symbol, securityType, batchMap) {
 
                     var instrType = parsed.optionType ? 'OPTIONS' : 'FUTURES';
                     var instrName = parsed.underlying + ' ' + parsed.expiryStr + (parsed.strikePrice ? ' ' + parsed.strikePrice + ' ' + parsed.optionType : ' FUT');
+
+                    // Auto-insert into securities_nfo so future imports find it (schema rule: add on encounter)
+                    var newNfoId = null;
+                    try {
+                        var nfoRecord = {
+                            symbol: symUpper,
+                            instrument_name: instrName,
+                            exchange: 'NSE',
+                            instrument_type: instrType,
+                            underlying_symbol: parsed.underlying,
+                            expiry_date: parsed.expiryDate,
+                            strike_price: parsed.strikePrice || null,
+                            option_type: parsed.optionType || null,
+                            lot_size: lotSize,
+                            is_active: true
+                        };
+                        var insertResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
+                            method: 'POST',
+                            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+                            body: JSON.stringify(nfoRecord)
+                        });
+                        if (insertResp.ok) {
+                            var inserted = await insertResp.json();
+                            if (inserted && inserted.length > 0) {
+                                newNfoId = inserted[0].id;
+                                console.log('Auto-inserted NFO security: ' + symUpper + ' → ' + newNfoId);
+                            }
+                        } else {
+                            var errBody = await insertResp.json();
+                            console.warn('Failed to auto-insert NFO ' + symUpper + ':', errBody.message || errBody.details);
+                        }
+                    } catch (e3) { console.warn('NFO auto-insert failed for ' + symUpper, e3); }
+
                     return { status: 'confirmed', match: {
-                        id: null, symbol: symUpper, short_symbol: parsed.underlying,
+                        id: newNfoId, symbol: symUpper, short_symbol: parsed.underlying,
                         company_name: instrName, security_type: 'NFO',
                         asset_class: instrType, exchange: 'NSE', lot_size: lotSize,
                         strike_price: parsed.strikePrice, option_type: parsed.optionType,
@@ -2162,10 +2195,12 @@ async function processTransactions(rawData, worksheet) {
             vr.asset_class = matchResult.match.asset_class;
             if (!vr.security_type) vr.security_type = matchResult.match.security_type;
 
-            // Lots for NFO
+            // Lots for NFO (chk_lots_rules: NFO lots must not be 0, non-NFO lots must be 0)
             if (vr.security_type === 'NFO' && matchResult.match.lot_size) {
                 vr.lots = Math.round(Math.abs(vr.quantity) / matchResult.match.lot_size * 100) / 100;
                 if (vr.transaction_type === 'SELL') vr.lots = -Math.abs(vr.lots);
+            } else if (vr.security_type === 'NFO') {
+                vr.lots = vr.transaction_type === 'SELL' ? -1 : 1;
             } else {
                 vr.lots = 0;
             }
@@ -2178,7 +2213,15 @@ async function processTransactions(rawData, worksheet) {
                 vr.company_name = first.company_name;
                 vr.exchange = first.exchange;
                 if (!vr.security_type) vr.security_type = first.security_type;
-                vr.lots = 0;
+                // NFO: lots must not be 0 (chk_lots_rules), calculate from lot_size or default ±1
+                if ((vr.security_type === 'NFO') && first.lot_size) {
+                    vr.lots = Math.round(Math.abs(vr.quantity) / first.lot_size * 100) / 100;
+                    if (vr.transaction_type === 'SELL') vr.lots = -Math.abs(vr.lots);
+                } else if (vr.security_type === 'NFO') {
+                    vr.lots = vr.transaction_type === 'SELL' ? -1 : 1;
+                } else {
+                    vr.lots = 0;
+                }
             } else {
                 // Flagged with zero matches → treat as error (security_id would be null)
                 vr.matchStatus = 'error';
@@ -2361,7 +2404,7 @@ function displayExcelPreview() {
             '<td style="text-align:right;">' + chargesDisplay + '</td>' +
             '<td style="text-align:right;">' + traderChargesDisplay + '</td>' +
             '<td style="text-align:right;' + (t._netOverride ? 'color:#b7791f;font-style:italic;' : '') + '" id="excelNet_' + index + '" class="net-amount-cell" data-row="' + index + '" title="Net: ' + t.net_amount + (t._netOverride ? ' (user entered — dblclick to edit)' : ' (dblclick to edit)') + '">' + formatCnAmount(t.net_amount) + '</td>' +
-            '<td style="font-size:10px;min-width:160px;position:relative;">' + tagsHtml + '</td>';
+            '<td style="font-size:10px;width:160px;max-width:160px;position:relative;">' + tagsHtml + '</td>';
 
         if (t.matchStatus === 'flagged') {
             row.style.backgroundColor = '#fffff0';
