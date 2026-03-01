@@ -83,24 +83,6 @@
 .trading-container .total-row td { font-weight: 600; }
 .trading-container .total-row .number-main { font-weight: 600; }
 
-/* Pill-style items inside filter dropdown */
-.tr-pill-dropdown {
-    display: none;
-    padding: 8px;
-}
-.tr-pill-dropdown.show {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-}
-.tr-pill-dropdown .tr-pill {
-    padding: 3px 10px; border-radius: 20px; border: 1.5px solid #e2e8f0;
-    font-size: 11px; font-weight: 600; cursor: pointer; color: #718096;
-    background: white; transition: all 0.1s; white-space: nowrap; user-select: none;
-}
-.tr-pill-dropdown .tr-pill:hover { border-color: #667eea; color: #667eea; }
-.tr-pill-dropdown .tr-pill.on { background: #667eea; border-color: #667eea; color: white; }
-
 /* View Tabs Bar */
 .tr-view-tabs-bar {
     display: flex; align-items: center; gap: 0; padding: 0 8px;
@@ -566,7 +548,7 @@
                 </div>
                 <div class="filter-search-container">
                     <input type="text" class="filter-search-input" id="tr-investor-search" placeholder="Type to search investors...">
-                    <div class="filter-dropdown tr-pill-dropdown" id="tr-investor-dropdown"></div>
+                    <div class="wms-pill-dropdown" id="tr-investor-dropdown"></div>
                 </div>
                 <div class="filter-selected-tags" id="tr-selected-investors"></div>
             </div>
@@ -577,7 +559,7 @@
                 </div>
                 <div class="filter-search-container">
                     <input type="text" class="filter-search-input" id="tr-trader-search" placeholder="Type to search traders...">
-                    <div class="filter-dropdown tr-pill-dropdown" id="tr-trader-dropdown"></div>
+                    <div class="wms-pill-dropdown" id="tr-trader-dropdown"></div>
                 </div>
                 <div class="filter-selected-tags" id="tr-selected-traders"></div>
             </div>
@@ -588,7 +570,7 @@
                 </div>
                 <div class="filter-search-container">
                     <input type="text" class="filter-search-input" id="tr-broker-search" placeholder="Type to search brokers...">
-                    <div class="filter-dropdown tr-pill-dropdown" id="tr-broker-dropdown"></div>
+                    <div class="wms-pill-dropdown" id="tr-broker-dropdown"></div>
                 </div>
                 <div class="filter-selected-tags" id="tr-selected-brokers"></div>
             </div>
@@ -606,7 +588,7 @@
                 </div>
                 <div class="filter-search-container">
                     <input type="text" class="filter-search-input" id="tr-tag-search" placeholder="Type to search tags...">
-                    <div class="filter-dropdown tr-pill-dropdown" id="tr-tag-dropdown"></div>
+                    <div class="wms-pill-dropdown" id="tr-tag-dropdown"></div>
                 </div>
                 <div class="filter-selected-tags" id="tr-selected-tags"></div>
             </div>

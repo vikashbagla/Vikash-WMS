@@ -669,3 +669,524 @@ function wmsFormatOptionsDisplay(fyersSymbol, underlying, strike, optionType) {
 
     return underlying + ' ' + actualStrike + ' ' + optionType + ' ' + expiryLabel;
 }
+
+// ============================================================================
+// SHARED UI COMPONENTS — Phase 3 UI Standardization
+// These replace 5+ separate dropdown implementations, 3 tag input patterns,
+// and inconsistent display helpers across all modules.
+// ============================================================================
+
+/**
+ * HTML-escape a string for safe insertion into innerHTML.
+ * @param {string} text
+ * @returns {string} Escaped HTML string
+ */
+var _wmsEscDiv = null;
+function wmsEsc(text) {
+    if (!text) return '';
+    if (!_wmsEscDiv) _wmsEscDiv = document.createElement('div');
+    _wmsEscDiv.textContent = text;
+    return _wmsEscDiv.innerHTML;
+}
+
+// ============================================================================
+// wmsDropdown — Unified autocomplete/keyboard-navigable dropdown
+//
+// Manages keyboard navigation (ArrowUp/Down/Enter/Escape), highlighting,
+// scroll-into-view, click selection, blur-to-close, and click-outside-close.
+//
+// Usage:
+//   var dd = wmsDropdown(inputEl, ddEl, {
+//       onSelect: function(itemEl) { ... },
+//       itemSelector: '.wms-dd-item',      // default
+//       closeOnSelect: true,               // default
+//       blurDelay: 200,                    // ms before closing on blur (default)
+//       escClearsInput: true,              // default
+//       onClose: function() { ... }        // optional
+//   });
+//   // Caller populates ddEl.innerHTML with items, then calls dd.show()
+//   dd.show();   dd.close();   dd.resetIdx();   dd.isOpen();
+// ============================================================================
+
+function wmsDropdown(inputEl, ddEl, opts) {
+    opts = opts || {};
+    var itemSelector = opts.itemSelector || '.wms-dd-item';
+    var highlightClass = 'wms-dd-highlight';
+    var closeOnSelect = opts.closeOnSelect !== false;
+    var blurDelay = opts.blurDelay !== undefined ? opts.blurDelay : 200;
+    var escClearsInput = opts.escClearsInput !== false;
+    var onSelect = opts.onSelect || function() {};
+    var onClose = opts.onClose || function() {};
+    var highlightIdx = -1;
+
+    function getItems() {
+        return ddEl.querySelectorAll(itemSelector);
+    }
+
+    function highlightItem(items, idx) {
+        for (var i = 0; i < items.length; i++) {
+            if (i === idx) {
+                items[i].classList.add(highlightClass);
+                items[i].scrollIntoView({ block: 'nearest' });
+            } else {
+                items[i].classList.remove(highlightClass);
+            }
+        }
+    }
+
+    // Keyboard navigation on the input
+    inputEl.addEventListener('keydown', function(e) {
+        if (!ddEl.classList.contains('show')) return;
+        var items = getItems();
+        if (items.length === 0) {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                controller.close();
+                if (escClearsInput) inputEl.value = '';
+                inputEl.blur();
+            }
+            return;
+        }
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            highlightIdx = Math.min(highlightIdx + 1, items.length - 1);
+            highlightItem(items, highlightIdx);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            highlightIdx = Math.max(highlightIdx - 1, 0);
+            highlightItem(items, highlightIdx);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (highlightIdx >= 0 && highlightIdx < items.length) {
+                onSelect(items[highlightIdx]);
+                if (closeOnSelect) controller.close();
+            } else if (items.length === 1) {
+                onSelect(items[0]);
+                if (closeOnSelect) controller.close();
+            }
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            controller.close();
+            if (escClearsInput) inputEl.value = '';
+            inputEl.blur();
+        }
+    });
+
+    // Blur → close after delay (so click on item fires first)
+    if (blurDelay > 0) {
+        inputEl.addEventListener('blur', function() {
+            setTimeout(function() {
+                if (ddEl.classList.contains('show')) {
+                    controller.close();
+                }
+            }, blurDelay);
+        });
+    }
+
+    // Click-outside close
+    var outsideHandler = function(e) {
+        if (!ddEl.classList.contains('show')) return;
+        if (e.target === inputEl || inputEl.contains(e.target)) return;
+        if (ddEl.contains(e.target)) return;
+        controller.close();
+    };
+    document.addEventListener('click', outsideHandler);
+
+    var controller = {
+        show: function() {
+            highlightIdx = -1;
+            ddEl.classList.add('show');
+        },
+        close: function() {
+            ddEl.classList.remove('show');
+            highlightIdx = -1;
+            onClose();
+        },
+        resetIdx: function() {
+            highlightIdx = -1;
+            var items = getItems();
+            highlightItem(items, -1);
+        },
+        isOpen: function() {
+            return ddEl.classList.contains('show');
+        },
+        getHighlightIdx: function() {
+            return highlightIdx;
+        },
+        destroy: function() {
+            document.removeEventListener('click', outsideHandler);
+        }
+    };
+
+    return controller;
+}
+
+// ============================================================================
+// wmsPillFilter — Pill-based multi-select filter (Trading Portfolio / Transactions)
+//
+// Renders items as clickable pills inside a dropdown container.
+// Click toggles selection. Search input filters visible pills.
+// ESC closes dropdown and clears search. Click-outside closes.
+//
+// Usage:
+//   var pf = wmsPillFilter(inputEl, ddEl, tagsEl, {
+//       items: [{id: 'uuid', label: 'Vikash'}],
+//       selectedIds: someArray,    // mutated in place
+//       onChange: function() { renderTable(); },
+//       pillClass: 'wms-pill'     // default
+//   });
+//   pf.setItems(newItems);  pf.syncStates();  pf.clearAll();
+// ============================================================================
+
+function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
+    opts = opts || {};
+    var items = opts.items || [];
+    var selectedIds = opts.selectedIds || [];
+    var onChange = opts.onChange || function() {};
+    var pillClass = opts.pillClass || 'wms-pill';
+
+    function render() {
+        ddEl.innerHTML = items.map(function(item) {
+            var isOn = selectedIds.indexOf(item.id) >= 0;
+            return '<span class="' + pillClass + (isOn ? ' on' : '') + '" data-wms-id="' + wmsEsc(String(item.id)) + '">' +
+                wmsEsc(item.label) + '</span>';
+        }).join('');
+        attachPillClicks();
+    }
+
+    function attachPillClicks() {
+        ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
+            pill.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var id = pill.getAttribute('data-wms-id');
+                var idx = selectedIds.indexOf(id);
+                if (idx >= 0) selectedIds.splice(idx, 1);
+                else selectedIds.push(id);
+                pill.classList.toggle('on', selectedIds.indexOf(id) >= 0);
+                renderSelectedTags();
+                onChange();
+            });
+        });
+    }
+
+    function renderSelectedTags() {
+        if (!tagsEl) return;
+        tagsEl.innerHTML = selectedIds.map(function(id) {
+            var item = items.find(function(it) { return String(it.id) === String(id); });
+            var label = item ? item.label : id;
+            return '<span class="filter-tag-item">' + wmsEsc(label) +
+                '<span class="filter-tag-remove" data-wms-id="' + wmsEsc(String(id)) + '">&times;</span></span>';
+        }).join('');
+        tagsEl.querySelectorAll('.filter-tag-remove').forEach(function(x) {
+            x.addEventListener('click', function() {
+                var id = x.getAttribute('data-wms-id');
+                var idx = selectedIds.indexOf(id);
+                if (idx >= 0) selectedIds.splice(idx, 1);
+                syncStates();
+                renderSelectedTags();
+                onChange();
+            });
+        });
+    }
+
+    function syncStates() {
+        ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
+            var id = pill.getAttribute('data-wms-id');
+            pill.classList.toggle('on', selectedIds.indexOf(id) >= 0);
+        });
+    }
+
+    // Search input — show dropdown, filter pills by text
+    inputEl.addEventListener('click', function() { ddEl.classList.add('show'); });
+    inputEl.addEventListener('input', function() {
+        ddEl.classList.add('show');
+        var query = inputEl.value.toLowerCase();
+        ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
+            pill.style.display = pill.textContent.toLowerCase().indexOf(query) >= 0 ? '' : 'none';
+        });
+    });
+
+    // ESC closes dropdown + clears search
+    inputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            inputEl.value = '';
+            ddEl.classList.remove('show');
+            // Reset visibility of all pills
+            ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
+                pill.style.display = '';
+            });
+            inputEl.blur();
+        }
+    });
+
+    // Click-outside close
+    var outsideHandler = function(e) {
+        if (!e.target.closest('.filter-search-container') ||
+            (!inputEl.contains(e.target) && !ddEl.contains(e.target) && !(tagsEl && tagsEl.contains(e.target)))) {
+            ddEl.classList.remove('show');
+        }
+    };
+    document.addEventListener('click', outsideHandler);
+
+    // Initial render
+    render();
+    renderSelectedTags();
+
+    return {
+        setItems: function(newItems) {
+            items = newItems;
+            render();
+            renderSelectedTags();
+        },
+        syncStates: syncStates,
+        renderSelectedTags: renderSelectedTags,
+        clearAll: function() {
+            selectedIds.length = 0;
+            syncStates();
+            renderSelectedTags();
+            onChange();
+        },
+        destroy: function() {
+            document.removeEventListener('click', outsideHandler);
+        }
+    };
+}
+
+// ============================================================================
+// wmsTagInput — Unified tag entry component with autocomplete
+//
+// Handles: comma/semicolon to add, autocomplete dropdown of existing tags,
+// pill rendering with × remove, Enter to add highlighted or typed tag.
+// Uses wmsDropdown internally for keyboard navigation.
+//
+// Usage:
+//   var ti = wmsTagInput(inputEl, pillsEl, ddEl, {
+//       tags: row.tags,           // array (mutated in place)
+//       existingTags: wmsRefData.tags,
+//       onChange: function() { ... }
+//   });
+//   ti.refresh();  ti.getTags();  ti.setExistingTags(arr);
+// ============================================================================
+
+function wmsTagInput(inputEl, pillsEl, ddEl, opts) {
+    opts = opts || {};
+    var tags = opts.tags || [];
+    var existingTags = opts.existingTags || [];
+    var onChange = opts.onChange || function() {};
+
+    function addTag(tagText) {
+        var trimmed = tagText.trim();
+        if (!trimmed) return false;
+        if (tags.indexOf(trimmed) >= 0) return false;
+        tags.push(trimmed);
+        // Add to existingTags if new
+        if (existingTags.indexOf(trimmed) === -1 && existingTags.indexOf(trimmed.toLowerCase()) === -1) {
+            existingTags.push(trimmed);
+            existingTags.sort();
+        }
+        return true;
+    }
+
+    function removeTag(tag) {
+        var idx = tags.indexOf(tag);
+        if (idx >= 0) tags.splice(idx, 1);
+        renderPills();
+        onChange();
+    }
+
+    function renderPills() {
+        pillsEl.innerHTML = '';
+        tags.forEach(function(tag) {
+            var pill = document.createElement('span');
+            pill.className = 'wms-pill on';
+            pill.textContent = tag;
+            var x = document.createElement('span');
+            x.className = 'wms-pill-remove';
+            x.textContent = '\u00d7';
+            x.addEventListener('click', function(e) {
+                e.stopPropagation();
+                removeTag(tag);
+            });
+            pill.appendChild(x);
+            pillsEl.appendChild(pill);
+        });
+    }
+
+    function showDd(filter) {
+        var filterLower = (filter || '').toLowerCase();
+        var matches = existingTags.filter(function(tag) {
+            return tags.indexOf(tag) === -1 &&
+                tag.toLowerCase().indexOf(filterLower) !== -1;
+        });
+        if (matches.length === 0) {
+            ddEl.classList.remove('show');
+            return;
+        }
+        ddEl.innerHTML = matches.map(function(tag) {
+            return '<div class="wms-dd-item">' + wmsEsc(tag) + '</div>';
+        }).join('');
+
+        // Attach mousedown (not click) to fire before blur
+        ddEl.querySelectorAll('.wms-dd-item').forEach(function(el) {
+            el.addEventListener('mousedown', function(e) {
+                e.preventDefault();
+                addTag(el.textContent);
+                inputEl.value = '';
+                ddEl.classList.remove('show');
+                renderPills();
+                onChange();
+            });
+        });
+
+        ddCtrl.show();
+    }
+
+    // Set up dropdown keyboard nav
+    var ddCtrl = wmsDropdown(inputEl, ddEl, {
+        onSelect: function(itemEl) {
+            addTag(itemEl.textContent);
+            inputEl.value = '';
+            ddEl.classList.remove('show');
+            renderPills();
+            onChange();
+        },
+        closeOnSelect: true,
+        escClearsInput: true,
+        blurDelay: 150
+    });
+
+    // Input handler — auto-add on comma/semicolon, otherwise show autocomplete
+    inputEl.addEventListener('input', function() {
+        var val = inputEl.value;
+        if (val.indexOf(',') !== -1 || val.indexOf(';') !== -1) {
+            var parts = val.split(/[,;]/).map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; });
+            var added = false;
+            parts.forEach(function(t) {
+                if (addTag(t)) added = true;
+            });
+            inputEl.value = '';
+            ddEl.classList.remove('show');
+            if (added) { renderPills(); onChange(); }
+            return;
+        }
+        if (val.trim().length > 0) {
+            showDd(val);
+        } else {
+            ddEl.classList.remove('show');
+        }
+    });
+
+    inputEl.addEventListener('focus', function() {
+        if (inputEl.value.trim().length > 0) showDd(inputEl.value);
+    });
+
+    // Override Enter to also add typed text if no dropdown highlight
+    var origKeydown = inputEl.onkeydown;
+    inputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !ddEl.classList.contains('show')) {
+            e.preventDefault();
+            var val = inputEl.value.trim();
+            if (val && addTag(val)) {
+                inputEl.value = '';
+                renderPills();
+                onChange();
+            }
+        }
+    });
+
+    renderPills();
+
+    return {
+        refresh: renderPills,
+        getTags: function() { return tags; },
+        setExistingTags: function(arr) { existingTags = arr; },
+        destroy: function() { ddCtrl.destroy(); }
+    };
+}
+
+// ============================================================================
+// wmsFormatSecurity — Standardized company name/symbol display
+//
+// Canonical rule: use short_symbol when available, company_name as secondary.
+// Formats: 'symbol-only', 'symbol-name', 'name-only', 'full'
+//
+// Usage:
+//   wmsFormatSecurity({symbol: 'RELIANCE', short_symbol: 'RELIANCE',
+//       company_name: 'Reliance Industries Ltd', exchange: 'NSE'}, 'symbol-name')
+//   → 'RELIANCE — Reliance Industries Ltd'
+// ============================================================================
+
+function wmsFormatSecurity(sec, format) {
+    if (!sec) return '';
+    var sym = sec.short_symbol || sec.nse_symbol || sec.bse_symbol || sec.symbol || '';
+    var name = sec.company_name || sec.instrument_name || '';
+    var exchange = sec.exchange || '';
+
+    switch (format || 'symbol-name') {
+        case 'symbol-only':
+            return sym;
+        case 'name-only':
+            return name || sym;
+        case 'full':
+            var parts = [];
+            if (exchange) parts.push(exchange + ':');
+            parts.push(sym);
+            if (name) parts.push(' \u2014 ' + name);
+            return parts.join('');
+        case 'symbol-name':
+        default:
+            if (name && name !== sym) return sym + ' \u2014 ' + name;
+            return sym;
+    }
+}
+
+// ============================================================================
+// wmsModal — Unified modal open/close with ESC + click-outside
+//
+// Usage:
+//   var modal = wmsModal(overlayEl, {
+//       onClose: function() { ... }  // optional callback
+//   });
+//   modal.open();  modal.close();  modal.isOpen();
+// ============================================================================
+
+function wmsModal(overlayEl, opts) {
+    opts = opts || {};
+    var onClose = opts.onClose || function() {};
+
+    function escHandler(e) {
+        if (e.key === 'Escape' && overlayEl.classList.contains('show')) {
+            e.preventDefault();
+            controller.close();
+        }
+    }
+
+    function clickOutsideHandler(e) {
+        // Click on overlay background (not on dialog content)
+        if (e.target === overlayEl) {
+            controller.close();
+        }
+    }
+
+    var controller = {
+        open: function() {
+            overlayEl.classList.add('show');
+            document.addEventListener('keydown', escHandler);
+            overlayEl.addEventListener('click', clickOutsideHandler);
+        },
+        close: function() {
+            overlayEl.classList.remove('show');
+            document.removeEventListener('keydown', escHandler);
+            overlayEl.removeEventListener('click', clickOutsideHandler);
+            onClose();
+        },
+        isOpen: function() {
+            return overlayEl.classList.contains('show');
+        }
+    };
+
+    return controller;
+}

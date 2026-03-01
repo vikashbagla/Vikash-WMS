@@ -15,6 +15,10 @@ var trSelectedTraderIds = [];
 var trSelectedBrokerIds = [];
 var trSelectedTagNames = [];
 var trTagFilterLogic = 'OR';
+var trInvPillFilter = null;
+var trTrdPillFilter = null;
+var trBrkPillFilter = null;
+var trTagPillFilter = null;
 var trViewMode = 'default';        // 'default' | 'holdings' | 'fno'
 var trSortColumn = 'company';
 var trSortDirection = 'asc';
@@ -499,43 +503,61 @@ function trToggleZeroHoldings() {
 // ============================================================================
 
 function trInitFilterPills() {
-    // Investor dropdown — pills
-    var invDd = document.getElementById('tr-investor-dropdown');
-    if (invDd) {
-        invDd.innerHTML = trInvestors.map(function(inv) {
-            var label = inv.short_name || inv.name;
-            return '<span class="tr-pill" data-type="investor" data-id="' + inv.id + '">' + label + '</span>';
-        }).join('');
-    }
-    // Trader dropdown — pills (same investors list, different filter)
-    var trdDd = document.getElementById('tr-trader-dropdown');
-    if (trdDd) {
-        trdDd.innerHTML = trInvestors.map(function(inv) {
-            var label = inv.short_name || inv.name;
-            return '<span class="tr-pill" data-type="trader" data-id="' + inv.id + '">' + label + '</span>';
-        }).join('');
-    }
-    // Broker dropdown — pills
-    var brkDd = document.getElementById('tr-broker-dropdown');
-    if (brkDd) {
-        brkDd.innerHTML = trBrokers.map(function(b) {
-            var label = b.broker_code || b.name;
-            return '<span class="tr-pill" data-type="broker" data-id="' + b.id + '">' + label + '</span>';
-        }).join('');
-    }
-    // Tag dropdown — pills
+    // Investor filter
+    var invItems = trInvestors.map(function(inv) { return {id: inv.id, label: inv.short_name || inv.name}; });
+    trInvPillFilter = wmsPillFilter(
+        document.getElementById('tr-investor-search'),
+        document.getElementById('tr-investor-dropdown'),
+        document.getElementById('tr-selected-investors'),
+        {
+            items: invItems,
+            selectedIds: trSelectedInvestorIds,
+            onChange: function() { trRenderPortfolio(); }
+        }
+    );
+
+    // Trader filter (same investors list)
+    var trdItems = trInvestors.map(function(inv) { return {id: inv.id, label: inv.short_name || inv.name}; });
+    trTrdPillFilter = wmsPillFilter(
+        document.getElementById('tr-trader-search'),
+        document.getElementById('tr-trader-dropdown'),
+        document.getElementById('tr-selected-traders'),
+        {
+            items: trdItems,
+            selectedIds: trSelectedTraderIds,
+            onChange: function() { trRenderPortfolio(); }
+        }
+    );
+
+    // Broker filter
+    var brkItems = trBrokers.map(function(b) { return {id: b.id, label: b.broker_code || b.name}; });
+    trBrkPillFilter = wmsPillFilter(
+        document.getElementById('tr-broker-search'),
+        document.getElementById('tr-broker-dropdown'),
+        document.getElementById('tr-selected-brokers'),
+        {
+            items: brkItems,
+            selectedIds: trSelectedBrokerIds,
+            onChange: function() { trRenderPortfolio(); }
+        }
+    );
+
+    // Tag filter (built from transactions)
     var allTags = {};
     trTransactions.forEach(function(t) {
         if (t.tags) t.tags.forEach(function(tag) { if (tag !== 'blank') allTags[tag] = true; });
     });
-    var tagDd = document.getElementById('tr-tag-dropdown');
-    if (tagDd) {
-        tagDd.innerHTML = Object.keys(allTags).sort().map(function(tag) {
-            return '<span class="tr-pill" data-type="tag" data-id="' + tag + '">' + tag + '</span>';
-        }).join('');
-    }
-    // Attach pill click handlers
-    trAttachPillListeners();
+    var tagItems = Object.keys(allTags).sort().map(function(tag) { return {id: tag, label: tag}; });
+    trTagPillFilter = wmsPillFilter(
+        document.getElementById('tr-tag-search'),
+        document.getElementById('tr-tag-dropdown'),
+        document.getElementById('tr-selected-tags'),
+        {
+            items: tagItems,
+            selectedIds: trSelectedTagNames,
+            onChange: function() { trRenderPortfolio(); }
+        }
+    );
 }
 
 function trGetFilterArray(type) {
@@ -546,60 +568,28 @@ function trGetFilterArray(type) {
 }
 
 function trAttachPillListeners() {
-    document.querySelectorAll('.tr-pill-dropdown .tr-pill').forEach(function(pill) {
-        pill.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var type = pill.dataset.type;
-            var id = pill.dataset.id;
-            var arr = trGetFilterArray(type);
-
-            var idx = arr.indexOf(id);
-            if (idx >= 0) arr.splice(idx, 1);
-            else arr.push(id);
-
-            pill.classList.toggle('on', arr.indexOf(id) >= 0);
-            trRenderSelectedTags(type);
-            trRenderPortfolio();
-        });
-    });
+    // Functionality now handled by wmsPillFilter — kept for compatibility
 }
 
 function trSetupFilters() {
-    // Search inputs — show dropdown on click/type, filter pills by text
-    ['investor', 'trader', 'broker', 'tag'].forEach(function(type) {
-        var input = document.getElementById('tr-' + type + '-search');
-        var dd = document.getElementById('tr-' + type + '-dropdown');
-        if (!input || !dd) return;
-        input.addEventListener('click', function() { dd.classList.add('show'); });
-        input.addEventListener('input', function() {
-            dd.classList.add('show');
-            var query = input.value.toLowerCase();
-            dd.querySelectorAll('.tr-pill').forEach(function(pill) {
-                pill.style.display = pill.textContent.toLowerCase().indexOf(query) >= 0 ? '' : 'none';
-            });
-        });
-    });
-    // Clear buttons
-    ['investors', 'traders', 'brokers', 'tags'].forEach(function(plural) {
-        var btn = document.getElementById('tr-clear-' + plural);
+    // Clear buttons — delegate to pill filter controllers
+    var clearConfig = [
+        {plural: 'investors', controller: function() { return trInvPillFilter; }},
+        {plural: 'traders', controller: function() { return trTrdPillFilter; }},
+        {plural: 'brokers', controller: function() { return trBrkPillFilter; }},
+        {plural: 'tags', controller: function() { return trTagPillFilter; }}
+    ];
+    clearConfig.forEach(function(config) {
+        var btn = document.getElementById('tr-clear-' + config.plural);
         if (!btn) return;
         btn.addEventListener('click', function() {
-            var type = plural === 'investors' ? 'investor' : plural === 'traders' ? 'trader' : plural === 'brokers' ? 'broker' : 'tag';
-            if (type === 'investor') trSelectedInvestorIds = [];
-            else if (type === 'trader') trSelectedTraderIds = [];
-            else if (type === 'broker') trSelectedBrokerIds = [];
-            else trSelectedTagNames = [];
-            trSyncPillStates(type);
-            trRenderSelectedTags(type);
-            trRenderPortfolio();
+            var ctrl = config.controller();
+            if (ctrl) ctrl.clearAll();
         });
     });
-    // Close dropdowns on outside click
+
+    // Close More dropdown on outside click (keep existing More dropdown logic)
     document.addEventListener('click', function(e) {
-        if (!e.target.closest('.filter-search-container')) {
-            document.querySelectorAll('.tr-pill-dropdown').forEach(function(dd) { dd.classList.remove('show'); });
-        }
-        // Close More dropdown too
         if (!e.target.closest('#tr-more-btn') && !e.target.closest('#tr-more-dropdown')) {
             var mdd = document.getElementById('tr-more-dropdown');
             if (mdd) mdd.style.display = 'none';
@@ -608,51 +598,29 @@ function trSetupFilters() {
 }
 
 function trRenderSelectedTags(type) {
-    var arr, container, labelFn;
-    if (type === 'investor') {
-        arr = trSelectedInvestorIds;
-        container = document.getElementById('tr-selected-investors');
-        labelFn = function(id) { var inv = trInvestors.find(function(i) { return i.id === id; }); return inv ? (inv.short_name || inv.name) : id; };
-    } else if (type === 'trader') {
-        arr = trSelectedTraderIds;
-        container = document.getElementById('tr-selected-traders');
-        labelFn = function(id) { var inv = trInvestors.find(function(i) { return i.id === id; }); return inv ? (inv.short_name || inv.name) : id; };
-    } else if (type === 'broker') {
-        arr = trSelectedBrokerIds;
-        container = document.getElementById('tr-selected-brokers');
-        labelFn = function(id) { var b = trBrokers.find(function(i) { return i.id === id; }); return b ? (b.broker_code || b.name) : id; };
-    } else {
-        arr = trSelectedTagNames;
-        container = document.getElementById('tr-selected-tags');
-        labelFn = function(id) { return id; };
+    // Delegate to pill filter controller's renderSelectedTags method
+    if (type === 'investor' && trInvPillFilter) {
+        trInvPillFilter.renderSelectedTags();
+    } else if (type === 'trader' && trTrdPillFilter) {
+        trTrdPillFilter.renderSelectedTags();
+    } else if (type === 'broker' && trBrkPillFilter) {
+        trBrkPillFilter.renderSelectedTags();
+    } else if ((type === 'tag' || !type) && trTagPillFilter) {
+        trTagPillFilter.renderSelectedTags();
     }
-    if (!container) return;
-    container.innerHTML = arr.map(function(id) {
-        return '<span class="filter-tag-item">' + labelFn(id) +
-            ' <span class="filter-tag-remove" data-type="' + type + '" data-id="' + id + '">×</span></span>';
-    }).join('');
-    container.querySelectorAll('.filter-tag-remove').forEach(function(btn) {
-        btn.addEventListener('click', function() {
-            var t = btn.dataset.type;
-            var rid = btn.dataset.id;
-            var a = trGetFilterArray(t);
-            var ix = a.indexOf(rid);
-            if (ix >= 0) a.splice(ix, 1);
-            trSyncPillStates(t);
-            trRenderSelectedTags(t);
-            trRenderPortfolio();
-        });
-    });
 }
 
 function trSyncPillStates(type) {
-    var selector = type ? '#tr-' + type + '-dropdown .tr-pill' : '.tr-pill-dropdown .tr-pill';
-    document.querySelectorAll(selector).forEach(function(pill) {
-        var t = pill.dataset.type;
-        var id = pill.dataset.id;
-        var arr = trGetFilterArray(t);
-        pill.classList.toggle('on', arr.indexOf(id) >= 0);
-    });
+    // Delegate to pill filter controller's syncStates method
+    if (type === 'investor' && trInvPillFilter) {
+        trInvPillFilter.syncStates();
+    } else if (type === 'trader' && trTrdPillFilter) {
+        trTrdPillFilter.syncStates();
+    } else if (type === 'broker' && trBrkPillFilter) {
+        trBrkPillFilter.syncStates();
+    } else if ((type === 'tag' || !type) && trTagPillFilter) {
+        trTagPillFilter.syncStates();
+    }
 }
 
 // ============================================================================

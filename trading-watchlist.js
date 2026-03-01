@@ -18,6 +18,9 @@ var trWlSortState = {};        // watchlist_id → { field: 'name'|'chp', dir: '
 var trWlDragItemState = null;  // { wlId, itemId, fromIdx } for drag-reorder within card
 var trWlResolvedSymbols = {};  // security_id → true (tracks which items have been resolved)
 var trWlFirstFetchDone = false; // Skip resolution/Yahoo on auto-refresh cycles
+var trWlSearchDdCtrl = null;   // wmsDropdown controller for search autocomplete
+var trWlAddModal = null;       // wmsModal controller for add-security dialog
+var trWlReorderModal = null;   // wmsModal controller for reorder dialog
 
 // ============================================================================
 // INITIALIZATION
@@ -73,47 +76,51 @@ function trWlSetupEventHandlers() {
         if (e.key === 'Escape') trWlCancelNewWatchlist();
     });
 
-    // Add dialog — close
-    document.getElementById('trWlAddClose').addEventListener('click', trWlCloseAddDialog);
-    document.getElementById('trWlAddCancelBtn').addEventListener('click', trWlCloseAddDialog);
-    document.getElementById('trWlAddOverlay').addEventListener('click', function(e) {
-        if (e.target === this) trWlCloseAddDialog();
+    // Add dialog — initialize modal and dropdown with wms-shared.js
+    var searchInput = document.getElementById('trWlAddSearch');
+    var addResultsEl = document.getElementById('trWlAddResults');
+    var addOverlayEl = document.getElementById('trWlAddOverlay');
+    var searchTimer = null;
+
+    // Create wmsModal for add dialog (handles ESC and click-outside)
+    trWlAddModal = wmsModal(addOverlayEl, {
+        onClose: function() {
+            trWlAddTargetId = null;
+            trWlRender(); // Re-render to show any newly added items
+            if (trWlSearchDdCtrl) trWlSearchDdCtrl.close();
+        }
     });
 
-    // Add dialog — search input with keyboard navigation
-    var searchInput = document.getElementById('trWlAddSearch');
-    var searchTimer = null;
-    var trWlSearchHighlightIdx = -1; // Currently highlighted result index
+    // Setup close buttons (buttons now call modal.close instead of classList manipulation)
+    document.getElementById('trWlAddClose').addEventListener('click', function() {
+        trWlAddModal.close();
+    });
+    document.getElementById('trWlAddCancelBtn').addEventListener('click', function() {
+        trWlAddModal.close();
+    });
 
+    // Create wmsDropdown for search autocomplete
+    trWlSearchDdCtrl = wmsDropdown(searchInput, addResultsEl, {
+        itemSelector: '.wl-add-result-item:not(.added)',
+        closeOnSelect: false,  // Dialog stays open for adding more items
+        blurDelay: 0,           // Modal dialog, not standard input
+        escClearsInput: false,  // ESC handled by wmsModal
+        onSelect: function(itemEl) {
+            var idx = parseInt(itemEl.dataset.idx);
+            var cached = trWlSearchCache[idx];
+            if (!cached) return;
+            trWlAddItem(cached);
+            // Reset dropdown highlight since items list changed
+            if (trWlSearchDdCtrl) trWlSearchDdCtrl.resetIdx();
+        }
+    });
+
+    // Add dialog — search input with debounced search
     searchInput.addEventListener('input', function() {
         clearTimeout(searchTimer);
-        trWlSearchHighlightIdx = -1; // Reset highlight on new input
         searchTimer = setTimeout(function() {
             trWlSearchSecurities(searchInput.value.trim());
         }, 300);
-    });
-
-    searchInput.addEventListener('keydown', function(e) {
-        var resultsEl = document.getElementById('trWlAddResults');
-        var items = resultsEl.querySelectorAll('.wl-add-result-item:not(.added)');
-        if (items.length === 0) return;
-
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            trWlSearchHighlightIdx = Math.min(trWlSearchHighlightIdx + 1, items.length - 1);
-            trWlHighlightSearchResult(items, trWlSearchHighlightIdx);
-        } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            trWlSearchHighlightIdx = Math.max(trWlSearchHighlightIdx - 1, 0);
-            trWlHighlightSearchResult(items, trWlSearchHighlightIdx);
-        } else if (e.key === 'Enter') {
-            e.preventDefault();
-            if (trWlSearchHighlightIdx >= 0 && trWlSearchHighlightIdx < items.length) {
-                items[trWlSearchHighlightIdx].click();
-                // After adding, move highlight to next item or stay
-                trWlSearchHighlightIdx = Math.min(trWlSearchHighlightIdx, items.length - 1);
-            }
-        }
     });
 
     // Manual refresh button
@@ -129,13 +136,22 @@ function trWlSetupEventHandlers() {
     // Reorder button
     document.getElementById('trWlReorderBtn').addEventListener('click', trWlOpenReorderModal);
 
-    // Reorder modal — close/save
-    document.getElementById('trWlReorderClose').addEventListener('click', trWlCloseReorderModal);
-    document.getElementById('trWlReorderCancelBtn').addEventListener('click', trWlCloseReorderModal);
-    document.getElementById('trWlReorderSaveBtn').addEventListener('click', trWlSaveReorder);
-    document.getElementById('trWlReorderOverlay').addEventListener('click', function(e) {
-        if (e.target === this) trWlCloseReorderModal();
+    // Reorder modal — initialize with wms-shared.js (handles ESC and click-outside)
+    var reorderOverlayEl = document.getElementById('trWlReorderOverlay');
+    trWlReorderModal = wmsModal(reorderOverlayEl, {
+        onClose: function() {
+            trWlReorderList = [];
+        }
     });
+
+    // Reorder modal — close/save buttons
+    document.getElementById('trWlReorderClose').addEventListener('click', function() {
+        trWlReorderModal.close();
+    });
+    document.getElementById('trWlReorderCancelBtn').addEventListener('click', function() {
+        trWlReorderModal.close();
+    });
+    document.getElementById('trWlReorderSaveBtn').addEventListener('click', trWlSaveReorder);
 
     // Close card menus and alert popover on outside click
     document.addEventListener('click', function(e) {
@@ -166,20 +182,7 @@ function trWlSetupEventHandlers() {
         }
     });
 
-    // ESC closes modals (reorder or add)
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            var reorderOverlay = document.getElementById('trWlReorderOverlay');
-            if (reorderOverlay && reorderOverlay.classList.contains('show')) {
-                trWlCloseReorderModal();
-                return;
-            }
-            var addOverlay = document.getElementById('trWlAddOverlay');
-            if (addOverlay && addOverlay.classList.contains('show')) {
-                trWlCloseAddDialog();
-            }
-        }
-    });
+    // ESC handling is now provided by wmsModal (applied to both add and reorder dialogs)
 }
 
 // ============================================================================
@@ -917,7 +920,7 @@ function trWlRender() {
             collapsedBar.innerHTML = collapsed.map(function(wl) {
                 return '<div class="wl-collapsed-chip" data-wl-id="' + wl.id + '" title="Click to expand">' +
                     '<span class="wl-chip-arrow">►</span>' +
-                    '<span class="wl-chip-name">' + trWlEsc(wl.name) + '</span>' +
+                    '<span class="wl-chip-name">' + wmsEsc(wl.name) + '</span>' +
                     '<span class="wl-chip-count">(' + wl.items.length + ')</span>' +
                 '</div>';
             }).join('');
@@ -962,7 +965,7 @@ function trWlRender() {
                 '<div class="wl-card-header" data-wl-id="' + wl.id + '">' +
                     '<div class="wl-card-title">' +
                         '<span class="wl-arrow">▼</span>' +
-                        '<span class="wl-name" data-wl-id="' + wl.id + '">' + trWlEsc(wl.name) + '</span>' +
+                        '<span class="wl-name" data-wl-id="' + wl.id + '">' + wmsEsc(wl.name) + '</span>' +
                         '<span class="wl-item-count">(' + wl.items.length + ')</span>' +
                     '</div>' +
                     '<div class="wl-card-actions" style="position:relative;">' +
@@ -1078,12 +1081,12 @@ function trWlRenderSecurityRow(item) {
     var tooltipText = (displayExchange ? displayExchange + ':' : '') + displaySym + (item.company_name ? ' — ' + item.company_name : '');
 
     var expiredClass = isExpiredOption ? ' wl-expired-option' : '';
-    return '<div class="wl-security-row' + expiredClass + '" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + trWlEsc(tooltipText) + '" style="position:relative;">' +
+    return '<div class="wl-security-row' + expiredClass + '" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + wmsEsc(tooltipText) + '" style="position:relative;">' +
         '<div class="wl-row-top">' +
             '<div class="wl-sec-drag" title="Drag to reorder">☰</div>' +
             '<div class="wl-sec-symbol">' +
-                '<div class="wl-sym-main">' + trWlEsc(displaySym) + '</div>' +
-                '<div class="wl-sym-sub">' + trWlEsc(subRowText) + '</div>' +
+                '<div class="wl-sym-main">' + wmsEsc(displaySym) + '</div>' +
+                '<div class="wl-sym-sub">' + wmsEsc(subRowText) + '</div>' +
             '</div>' +
             '<div class="wl-sec-price">' +
                 alertDotHtml +
@@ -1344,7 +1347,8 @@ function trWlOpenAddDialog(wlId) {
     document.getElementById('trWlAddTitle').textContent = 'Add Security to ' + (wl ? wl.name : 'Watchlist');
     document.getElementById('trWlAddSearch').value = '';
     document.getElementById('trWlAddResults').innerHTML = '<div class="wl-add-no-results">Type to search securities...</div>';
-    document.getElementById('trWlAddOverlay').classList.add('show');
+    if (trWlAddModal) trWlAddModal.open();
+    if (trWlSearchDdCtrl) trWlSearchDdCtrl.close(); // Close dropdown on open
     setTimeout(function() { document.getElementById('trWlAddSearch').focus(); }, 100);
 }
 
@@ -1406,21 +1410,13 @@ function trWlBuildExpirySubRow(item, displaySym, displayExchange) {
 }
 
 function trWlHighlightSearchResult(items, idx) {
-    // Remove highlight from all
-    items.forEach(function(el) { el.classList.remove('wl-search-highlight'); });
-    // Highlight the selected one
-    if (idx >= 0 && idx < items.length) {
-        items[idx].classList.add('wl-search-highlight');
-        // Scroll into view if needed
-        items[idx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }
+    // Stub: highlighting now handled by wmsDropdown using '.wms-dd-highlight' class
+    // Kept for backward compatibility if referenced elsewhere
 }
 
 function trWlCloseAddDialog() {
-    document.getElementById('trWlAddOverlay').classList.remove('show');
-    trWlAddTargetId = null;
-    // Re-render to show any newly added items
-    trWlRender();
+    // Use modal controller to close (handles cleanup via onClose callback)
+    if (trWlAddModal) trWlAddModal.close();
 }
 
 // ============================================================================
@@ -1464,7 +1460,7 @@ async function trWlSearchOptions(parsed, resultsEl) {
 
     if (candidates.length === 0) {
         resultsEl.innerHTML = '<div class="wl-add-no-results">Could not build option symbols for "' +
-            trWlEsc(parsed.underlying) + '"</div>';
+            wmsEsc(parsed.underlying) + '"</div>';
         return;
     }
 
@@ -1492,7 +1488,7 @@ async function trWlSearchOptions(parsed, resultsEl) {
 
         if (validResults.length === 0) {
             resultsEl.innerHTML = '<div class="wl-add-no-results">No active options found for "' +
-                trWlEsc(parsed.underlying + ' ' + parsed.strike + ' ' + parsed.optionType) + '"<br>' +
+                wmsEsc(parsed.underlying + ' ' + parsed.strike + ' ' + parsed.optionType) + '"<br>' +
                 '<span style="font-size:11px;color:#718096;">Try a different strike price or expiry month.</span></div>';
             return;
         }
@@ -1537,13 +1533,13 @@ async function trWlSearchOptions(parsed, resultsEl) {
 
             var tagsHtml = '<span class="wl-res-tags">' +
                 '<span class="wl-res-type">OPT</span>' +
-                '<span class="wl-res-exchange">' + trWlEsc(item.exchange) + '</span>' +
+                '<span class="wl-res-exchange">' + wmsEsc(item.exchange) + '</span>' +
                 priceHtml + ' ' + changeHtml +
                 (item.isAdded ? '<span style="font-size:10px;color:#059669;">✓</span>' : '') +
                 '</span>';
-            html += '<div class="wl-add-result-item' + (item.isAdded ? ' added' : '') + '" data-idx="' + idx + '" title="' + trWlEsc(item.security_id) + '">' +
-                '<span class="wl-res-symbol">' + trWlEsc(item.short_symbol) + '</span>' +
-                '<span class="wl-res-name">' + trWlEsc(item.company_name) + '</span>' +
+            html += '<div class="wl-add-result-item' + (item.isAdded ? ' added' : '') + '" data-idx="' + idx + '" title="' + wmsEsc(item.security_id) + '">' +
+                '<span class="wl-res-symbol">' + wmsEsc(item.short_symbol) + '</span>' +
+                '<span class="wl-res-name">' + wmsEsc(item.company_name) + '</span>' +
                 tagsHtml +
                 '</div>';
         });
@@ -1559,6 +1555,9 @@ async function trWlSearchOptions(parsed, resultsEl) {
                 trWlAddItem(cached);
             });
         });
+
+        // Show dropdown with results
+        if (trWlSearchDdCtrl) trWlSearchDdCtrl.show();
 
     } catch (err) {
         resultsEl.innerHTML = '<div class="wl-add-no-results">Options search failed: ' + err.message + '</div>';
@@ -1657,20 +1656,20 @@ async function trWlSearchSecurities(query) {
         var html = '';
         trWlSearchCache.forEach(function(item, idx) {
             var tagsHtml = '<span class="wl-res-tags">' +
-                '<span class="wl-res-type">' + trWlEsc(item.security_type) + '</span>' +
-                (item.exchange ? '<span class="wl-res-exchange">' + trWlEsc(item.exchange) + '</span>' : '') +
+                '<span class="wl-res-type">' + wmsEsc(item.security_type) + '</span>' +
+                (item.exchange ? '<span class="wl-res-exchange">' + wmsEsc(item.exchange) + '</span>' : '') +
                 (item.isAdded ? '<span style="font-size:10px;color:#059669;">✓</span>' : '') +
                 '</span>';
-            html += '<div class="wl-add-result-item' + (item.isAdded ? ' added' : '') + '" data-idx="' + idx + '" title="' + trWlEsc(item.company_name) + '">' +
-                '<span class="wl-res-symbol">' + trWlEsc(item.short_symbol) + '</span>' +
-                '<span class="wl-res-name">' + trWlEsc(item.company_name) + '</span>' +
+            html += '<div class="wl-add-result-item' + (item.isAdded ? ' added' : '') + '" data-idx="' + idx + '" title="' + wmsEsc(item.company_name) + '">' +
+                '<span class="wl-res-symbol">' + wmsEsc(item.short_symbol) + '</span>' +
+                '<span class="wl-res-name">' + wmsEsc(item.company_name) + '</span>' +
                 tagsHtml +
                 '</div>';
         });
 
         if (!html) {
             html = '<div class="wl-add-no-results">' +
-                'No results found for "' + trWlEsc(query) + '"<br>' +
+                'No results found for "' + wmsEsc(query) + '"<br>' +
                 '<span style="font-size:11px;color:#718096;margin-top:6px;display:inline-block;">' +
                 'Either update the Master Database to add this security,<br>or enter the full security symbol to search on the broker website.' +
                 '</span></div>';
@@ -1687,6 +1686,11 @@ async function trWlSearchSecurities(query) {
                 trWlAddItem(cached);
             });
         });
+
+        // Show dropdown with results
+        if (html.indexOf('wl-add-result-item') !== -1 && trWlSearchDdCtrl) {
+            trWlSearchDdCtrl.show();
+        }
 
     } catch (err) {
         resultsEl.innerHTML = '<div class="wl-add-no-results">Search failed: ' + err.message + '</div>';
@@ -2174,12 +2178,12 @@ function trWlOpenReorderModal() {
         return { id: wl.id, name: wl.name, itemCount: wl.items.length };
     });
     trWlRenderReorderList();
-    document.getElementById('trWlReorderOverlay').classList.add('show');
+    if (trWlReorderModal) trWlReorderModal.open();
 }
 
 function trWlCloseReorderModal() {
-    document.getElementById('trWlReorderOverlay').classList.remove('show');
-    trWlReorderList = [];
+    // Use modal controller to close (handles cleanup via onClose callback)
+    if (trWlReorderModal) trWlReorderModal.close();
 }
 
 function trWlRenderReorderList() {
@@ -2188,7 +2192,7 @@ function trWlRenderReorderList() {
     body.innerHTML = trWlReorderList.map(function(wl, idx) {
         return '<div class="wl-reorder-item" data-idx="' + idx + '">' +
             '<span class="wl-reorder-handle">☰</span>' +
-            '<span class="wl-reorder-name" data-wl-id="' + wl.id + '" title="Click to rename">' + trWlEsc(wl.name) +
+            '<span class="wl-reorder-name" data-wl-id="' + wl.id + '" title="Click to rename">' + wmsEsc(wl.name) +
                 '<span class="wl-reorder-count">(' + wl.itemCount + ')</span>' +
             '</span>' +
             '<div class="wl-reorder-arrows">' +
@@ -2624,12 +2628,7 @@ async function trWlSaveAlert(item, alertAbove, alertBelow) {
 // UTILITY
 // ============================================================================
 
-function trWlEsc(text) {
-    if (!text) return '';
-    var div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+// wmsEsc is provided by wms-shared.js
 
 // ============================================================================
 // WINDOW EXPORTS

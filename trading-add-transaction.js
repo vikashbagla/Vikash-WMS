@@ -20,10 +20,18 @@ var atSelectedBroker = null;    // {id, name, broker_code}
 var atRows = [];                // Array of row data objects
 var atNextRowId = 1;
 
-// Dropdown keyboard nav state
-var atInvDdIdx = -1;
-var atBrkDdIdx = -1;
-var atSymDdIdx = {};          // rowId → highlighted index
+// Dropdown controllers (wmsDropdown)
+var atInvDdCtrl = null;
+var atBrkDdCtrl = null;
+var atSymDdCtrls = {};        // rowId → wmsDropdown controller
+
+// Tag input controllers (wmsTagInput)
+var atTagInputCtrls = {};     // rowId → wmsTagInput controller
+
+// Dropdown data (for wmsDropdown onSelect callback)
+var atInvDdItems = [];        // Current investor matches
+var atBrkDdItems = [];        // Current broker matches
+var atSymDdItems = {};        // rowId → symbol results array
 
 // Options constants now in wms-shared.js (WMS_MONTHS_SHORT, WMS_WEEKLY_EXPIRY_UNDERLYINGS)
 
@@ -141,23 +149,46 @@ function setupAddTxnInvSearch() {
     var input = document.getElementById('addTxnInvInput');
     var dd = document.getElementById('addTxnInvDd');
 
+    // Create wmsDropdown controller
+    atInvDdCtrl = wmsDropdown(input, dd, {
+        onSelect: function(itemEl) {
+            var idx = parseInt(itemEl.dataset.idx);
+            if (idx >= 0 && idx < atInvDdItems.length) {
+                selectAddTxnInvestor(atInvDdItems[idx]);
+            }
+        },
+        itemSelector: '.wms-dd-item',
+        closeOnSelect: true,
+        blurDelay: 200,
+        escClearsInput: true
+    });
+
     input.addEventListener('input', function() {
-        atInvDdIdx = -1;
         var q = input.value.trim().toLowerCase();
-        if (q.length === 0) { dd.classList.remove('show'); return; }
+        if (q.length === 0) {
+            atInvDdCtrl.close();
+            return;
+        }
         var matches = atInvestors.filter(function(inv) {
             return (inv.short_name && inv.short_name.toLowerCase().indexOf(q) !== -1) ||
                    (inv.name && inv.name.toLowerCase().indexOf(q) !== -1);
         });
-        renderAddTxnDd(dd, matches, function(inv) {
-            return (inv.short_name || inv.name) + '<span class="sub">' + inv.name + '</span>';
-        }, function(inv) {
-            selectAddTxnInvestor(inv);
-        });
-    });
+        atInvDdItems = matches;
 
-    input.addEventListener('keydown', function(e) {
-        handleAddTxnDdNav(e, dd, function(idx) { atInvDdIdx = idx; return atInvDdIdx; }, function() { return atInvDdIdx; });
+        dd.innerHTML = '';
+        if (matches.length === 0) {
+            dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">No matches</div>';
+        } else {
+            matches.forEach(function(inv, idx) {
+                var div = document.createElement('div');
+                div.className = 'wms-dd-item';
+                div.dataset.idx = idx;
+                div.innerHTML = (inv.short_name || inv.name) + '<span class="sub">' + inv.name + '</span>';
+                dd.appendChild(div);
+            });
+        }
+        atInvDdCtrl.show();
+        atInvDdCtrl.resetIdx();
     });
 
     input.addEventListener('focus', function() {
@@ -170,23 +201,46 @@ function setupAddTxnBrkSearch() {
     var input = document.getElementById('addTxnBrkInput');
     var dd = document.getElementById('addTxnBrkDd');
 
+    // Create wmsDropdown controller
+    atBrkDdCtrl = wmsDropdown(input, dd, {
+        onSelect: function(itemEl) {
+            var idx = parseInt(itemEl.dataset.idx);
+            if (idx >= 0 && idx < atBrkDdItems.length) {
+                selectAddTxnBroker(atBrkDdItems[idx]);
+            }
+        },
+        itemSelector: '.wms-dd-item',
+        closeOnSelect: true,
+        blurDelay: 200,
+        escClearsInput: true
+    });
+
     input.addEventListener('input', function() {
-        atBrkDdIdx = -1;
         var q = input.value.trim().toLowerCase();
-        if (q.length === 0) { dd.classList.remove('show'); return; }
+        if (q.length === 0) {
+            atBrkDdCtrl.close();
+            return;
+        }
         var matches = atBrokers.filter(function(b) {
             return (b.name && b.name.toLowerCase().indexOf(q) !== -1) ||
                    (b.broker_code && b.broker_code.toLowerCase().indexOf(q) !== -1);
         });
-        renderAddTxnDd(dd, matches, function(b) {
-            return (b.broker_code || b.name) + '<span class="sub">' + b.name + '</span>';
-        }, function(b) {
-            selectAddTxnBroker(b);
-        });
-    });
+        atBrkDdItems = matches;
 
-    input.addEventListener('keydown', function(e) {
-        handleAddTxnDdNav(e, dd, function(idx) { atBrkDdIdx = idx; return atBrkDdIdx; }, function() { return atBrkDdIdx; });
+        dd.innerHTML = '';
+        if (matches.length === 0) {
+            dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">No matches</div>';
+        } else {
+            matches.forEach(function(b, idx) {
+                var div = document.createElement('div');
+                div.className = 'wms-dd-item';
+                div.dataset.idx = idx;
+                div.innerHTML = (b.broker_code || b.name) + '<span class="sub">' + b.name + '</span>';
+                dd.appendChild(div);
+            });
+        }
+        atBrkDdCtrl.show();
+        atBrkDdCtrl.resetIdx();
     });
 
     input.addEventListener('focus', function() {
@@ -195,61 +249,11 @@ function setupAddTxnBrkSearch() {
     });
 }
 
-function renderAddTxnDd(dd, items, labelFn, selectFn) {
-    dd.innerHTML = '';
-    if (items.length === 0) {
-        dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">No matches</div>';
-        dd.classList.add('show');
-        return;
-    }
-    items.forEach(function(item, idx) {
-        var div = document.createElement('div');
-        div.className = 'addTxn-dd-item';
-        div.innerHTML = labelFn(item);
-        div.dataset.idx = idx;
-        div.addEventListener('click', function() {
-            selectFn(item);
-            dd.classList.remove('show');
-        });
-        dd.appendChild(div);
-    });
-    dd.classList.add('show');
-}
-
-function handleAddTxnDdNav(e, dd, setIdx, getIdx) {
-    if (!dd.classList.contains('show')) return;
-    var items = dd.querySelectorAll('.addTxn-dd-item');
-    if (items.length === 0) return;
-
-    if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        var idx = getIdx();
-        idx = Math.min(idx + 1, items.length - 1);
-        setIdx(idx);
-        highlightDdItem(items, idx);
-    } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        var idx2 = getIdx();
-        idx2 = Math.max(idx2 - 1, 0);
-        setIdx(idx2);
-        highlightDdItem(items, idx2);
-    } else if (e.key === 'Enter') {
-        e.preventDefault();
-        var ci = getIdx();
-        if (ci >= 0 && ci < items.length) {
-            items[ci].click();
-        } else if (items.length === 1) {
-            items[0].click();
-        }
-    }
-}
-
-function highlightDdItem(items, idx) {
-    items.forEach(function(el, i) {
-        el.classList.toggle('highlighted', i === idx);
-        if (i === idx) el.scrollIntoView({ block: 'nearest' });
-    });
-}
+// renderAddTxnDd, handleAddTxnDdNav, highlightDdItem — removed (using wmsDropdown)
+// Legacy: kept as empty stubs if called elsewhere (currently not used)
+function renderAddTxnDd() {}
+function handleAddTxnDdNav() {}
+function highlightDdItem() {}
 
 function selectAddTxnInvestor(inv) {
     atSelectedInvestor = inv;
@@ -442,41 +446,36 @@ function attachAddTxnRowHandlers(rowId) {
 
     // --- Symbol search ---
     var symSearchTimer = null;
+    var dd = document.getElementById('addTxnSymDd_' + rowId);
+
+    // Create wmsDropdown for this row's symbol search
+    atSymDdCtrls[rowId] = wmsDropdown(symInput, dd, {
+        onSelect: function(itemEl) {
+            var idx = parseInt(itemEl.dataset.idx);
+            if (idx >= 0 && atSymDdItems[rowId] && idx < atSymDdItems[rowId].length) {
+                var sec = atSymDdItems[rowId][idx];
+                // Check if this is an options contract (has _fyersSymbol field)
+                if (sec._fyersSymbol) {
+                    atSelectOptionsContract(rowId, sec._fyersSymbol, sec._parsed, sec._displayLabel);
+                } else {
+                    selectAddTxnSecurity(rowId, sec);
+                }
+            }
+        },
+        itemSelector: '.wms-dd-item',
+        closeOnSelect: true,
+        blurDelay: 200,
+        escClearsInput: false
+    });
+
     symInput.addEventListener('input', function() {
         clearTimeout(symSearchTimer);
         var q = symInput.value.trim();
         if (q.length < 2) {
-            document.getElementById('addTxnSymDd_' + rowId).classList.remove('show');
+            atSymDdCtrls[rowId].close();
             return;
         }
         symSearchTimer = setTimeout(function() { searchAddTxnSymbol(rowId, q); }, 300);
-    });
-    symInput.addEventListener('keydown', function(e) {
-        var dd = document.getElementById('addTxnSymDd_' + rowId);
-        if (dd.classList.contains('show')) {
-            var items = dd.querySelectorAll('.addTxn-dd-item');
-            if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                var curIdx = (atSymDdIdx[rowId] !== undefined && atSymDdIdx[rowId] !== null) ? atSymDdIdx[rowId] : -1;
-                atSymDdIdx[rowId] = Math.min(curIdx + 1, items.length - 1);
-                highlightDdItem(items, atSymDdIdx[rowId]);
-            } else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                var curIdx2 = (atSymDdIdx[rowId] !== undefined && atSymDdIdx[rowId] !== null) ? atSymDdIdx[rowId] : 0;
-                atSymDdIdx[rowId] = Math.max(curIdx2 - 1, 0);
-                highlightDdItem(items, atSymDdIdx[rowId]);
-            } else if (e.key === 'Enter') {
-                e.preventDefault();
-                var ci = atSymDdIdx[rowId];
-                if (ci >= 0 && ci < items.length) { items[ci].click(); }
-                else if (items.length === 1) { items[0].click(); }
-            } else if (e.key === 'Escape') {
-                dd.classList.remove('show');
-            }
-        }
-    });
-    symInput.addEventListener('blur', function() {
-        setTimeout(function() { document.getElementById('addTxnSymDd_' + rowId).classList.remove('show'); }, 200);
     });
 
     // --- Lots change ---
@@ -601,24 +600,26 @@ async function atSearchOptions(rowId, parsed, dd) {
             return;
         }
         dd.innerHTML = '';
+        var allSecurities = [];
         validResults.forEach(function(r, idx) {
             var displayLabel = atFormatOptionsDisplay(r.symbol, parsed.underlying, parsed.strike, parsed.optionType);
-            var isOpt = true;
             var div = document.createElement('div');
-            div.className = 'addTxn-dd-item nfo';
+            div.className = 'wms-dd-item nfo';
             div.dataset.idx = idx;
             div.innerHTML = displayLabel +
                 ' <span class="sub">₹' + r.lp.toFixed(2) + '</span>' +
                 ' <span class="sub" style="color:' + (r.chp >= 0 ? '#059669' : '#dc2626') + ';">' +
                 (r.chp >= 0 ? '+' : '') + r.chp.toFixed(2) + '%</span>';
-            div.addEventListener('click', function() {
-                // Determine lot size from underlying — search securities_nfo for this specific symbol
-                atSelectOptionsContract(rowId, r.symbol, parsed, displayLabel);
-                dd.classList.remove('show');
-            });
             dd.appendChild(div);
+            allSecurities.push({
+                _fyersSymbol: r.symbol,
+                _displayLabel: displayLabel,
+                _parsed: parsed
+            });
         });
-        dd.classList.add('show');
+        atSymDdItems[rowId] = allSecurities;
+        atSymDdCtrls[rowId].show();
+        atSymDdCtrls[rowId].resetIdx();
     } catch (err) {
         dd.innerHTML = '<div style="padding:8px;color:#dc2626;font-size:11px;">Options search failed: ' + err.message + '</div>';
     }
@@ -661,7 +662,6 @@ async function atSelectOptionsContract(rowId, fyersSymbol, parsed, displayLabel)
 
 async function searchAddTxnSymbol(rowId, query) {
     var dd = document.getElementById('addTxnSymDd_' + rowId);
-    atSymDdIdx[rowId] = -1;
 
     // Check if this is an options query (contains CE/PE + strike) — same logic as watchlist
     var optionsParsed = atParseOptionsQuery(query);
@@ -693,65 +693,65 @@ async function searchAddTxnSymbol(rowId, query) {
         var dbResults = results[0];
         var nfoResults = results[1];
 
-        dd.innerHTML = '';
-        if (dbResults.length === 0 && nfoResults.length === 0) {
-            dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">No matches</div>';
-            dd.classList.add('show');
-            return;
-        }
+        // Build combined security results array for the dropdown controller
+        var allSecurities = [];
 
         // CM results
-        dbResults.forEach(function(sec, idx) {
-            var displaySym = sec.nse_symbol || sec.bse_symbol || sec.symbol;
-            var div = document.createElement('div');
-            div.className = 'addTxn-dd-item';
-            div.dataset.idx = idx;
-            div.innerHTML = displaySym + '<span class="sub">' + (sec.company_name || '') + '</span>';
-            div.addEventListener('click', function() {
-                selectAddTxnSecurity(rowId, {
-                    security_id: sec.id,
-                    symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
-                    short_symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
-                    company_name: sec.company_name || sec.symbol,
-                    security_type: sec.security_type || 'EQUITY',
-                    asset_class: sec.asset_class || null,
-                    exchange: sec.nse_symbol ? 'NSE' : 'BSE',
-                    lot_size: sec.lot_size || 1,
-                    broker_tokens: sec.broker_tokens
-                });
-                dd.classList.remove('show');
+        dbResults.forEach(function(sec) {
+            allSecurities.push({
+                security_id: sec.id,
+                symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
+                short_symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
+                company_name: sec.company_name || sec.symbol,
+                security_type: sec.security_type || 'EQUITY',
+                asset_class: sec.asset_class || null,
+                exchange: sec.nse_symbol ? 'NSE' : 'BSE',
+                lot_size: sec.lot_size || 1,
+                broker_tokens: sec.broker_tokens,
+                _displaySym: sec.nse_symbol || sec.bse_symbol || sec.symbol,
+                _displayName: sec.company_name || '',
+                _isNfo: false
             });
-            dd.appendChild(div);
         });
 
         // NFO results
-        nfoResults.forEach(function(sec, idx) {
-            var div = document.createElement('div');
-            div.className = 'addTxn-dd-item nfo';
-            div.dataset.idx = dbResults.length + idx;
-            var label = sec.symbol;
-            if (sec.expiry_date) label += ' <span class="sub">exp ' + sec.expiry_date + '</span>';
-            div.innerHTML = label;
-            div.addEventListener('click', function() {
-                // Determine if options
-                var isOpt = sec.symbol && (sec.symbol.match(/(CE|PE)$/) !== null);
-                selectAddTxnSecurity(rowId, {
-                    security_id: sec.id,
-                    symbol: sec.symbol,
-                    short_symbol: sec.underlying_symbol || sec.symbol,
-                    company_name: sec.instrument_name || sec.symbol,
-                    security_type: 'NFO',
-                    asset_class: isOpt ? 'OPTIONS' : 'FUTURES',
-                    exchange: sec.exchange || 'NSE',
-                    lot_size: sec.lot_size || 1,
-                    broker_tokens: sec.broker_tokens
-                });
-                dd.classList.remove('show');
+        nfoResults.forEach(function(sec) {
+            var isOpt = sec.symbol && (sec.symbol.match(/(CE|PE)$/) !== null);
+            allSecurities.push({
+                security_id: sec.id,
+                symbol: sec.symbol,
+                short_symbol: sec.underlying_symbol || sec.symbol,
+                company_name: sec.instrument_name || sec.symbol,
+                security_type: 'NFO',
+                asset_class: isOpt ? 'OPTIONS' : 'FUTURES',
+                exchange: sec.exchange || 'NSE',
+                lot_size: sec.lot_size || 1,
+                broker_tokens: sec.broker_tokens,
+                _displaySym: sec.symbol,
+                _displayExpiry: sec.expiry_date,
+                _isNfo: true
             });
-            dd.appendChild(div);
         });
 
-        dd.classList.add('show');
+        atSymDdItems[rowId] = allSecurities;
+
+        dd.innerHTML = '';
+        if (allSecurities.length === 0) {
+            dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">No matches</div>';
+        } else {
+            allSecurities.forEach(function(sec, idx) {
+                var div = document.createElement('div');
+                div.className = sec._isNfo ? 'wms-dd-item nfo' : 'wms-dd-item';
+                div.dataset.idx = idx;
+                var label = sec._displaySym;
+                if (sec._displayExpiry) label += ' <span class="sub">exp ' + sec._displayExpiry + '</span>';
+                else if (sec._displayName) label += '<span class="sub">' + sec._displayName + '</span>';
+                div.innerHTML = label;
+                dd.appendChild(div);
+            });
+        }
+        atSymDdCtrls[rowId].show();
+        atSymDdCtrls[rowId].resetIdx();
     } catch (e) {
         console.error('Symbol search error:', e);
     }
@@ -1057,95 +1057,61 @@ function startAddTxnCpTotalEdit(el) {
 // ============================================================================
 
 function setupAddTxnTagInput(rowId) {
+    var row = atRows.find(function(r) { return r.rowId === rowId; });
+    if (!row) return;
+
     var input = document.querySelector('.addTxn-tags-input[data-rid="' + rowId + '"]');
+    var pillsDiv = document.getElementById('addTxnTagPills_' + rowId);
     var dd = document.getElementById('addTxnTagDd_' + rowId);
 
-    input.addEventListener('input', function() {
-        var val = input.value;
-        // Auto-add on comma/semicolon
-        if (val.indexOf(',') !== -1 || val.indexOf(';') !== -1) {
-            addAddTxnTagFromText(rowId, val);
-            return;
+    // Create wmsTagInput controller
+    atTagInputCtrls[rowId] = wmsTagInput(input, pillsDiv, dd, {
+        tags: row.tags,
+        existingTags: atExistingTags,
+        onChange: function() {
+            // Tags are automatically updated in row.tags (passed by reference)
         }
-        showAddTxnTagDd(rowId, val);
-    });
-
-    input.addEventListener('focus', function() {
-        if (input.value.length > 0) showAddTxnTagDd(rowId, input.value);
-    });
-    input.addEventListener('blur', function() {
-        setTimeout(function() { dd.classList.remove('show'); }, 150);
     });
 }
 
+// Legacy functions — kept as thin delegating stubs if called from other places
 function addAddTxnTagFromText(rowId, text) {
-    var row = atRows.find(function(r) { return r.rowId === rowId; });
-    if (!row) return;
-    var newTags = text.split(/[,;]/).map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; });
-    var added = false;
-    newTags.forEach(function(tag) {
-        if (row.tags.indexOf(tag) === -1) {
-            row.tags.push(tag);
-            added = true;
-            if (atExistingTags.indexOf(tag) === -1 && atExistingTags.indexOf(tag.toLowerCase()) === -1) {
-                atExistingTags.push(tag);
-                atExistingTags.sort();
+    if (atTagInputCtrls[rowId]) {
+        var row = atRows.find(function(r) { return r.rowId === rowId; });
+        if (!row) return;
+        var newTags = text.split(/[,;]/).map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; });
+        var added = false;
+        newTags.forEach(function(tag) {
+            if (row.tags.indexOf(tag) === -1) {
+                row.tags.push(tag);
+                added = true;
             }
+        });
+        if (added) {
+            atTagInputCtrls[rowId].refresh();
         }
-    });
-    var input = document.querySelector('.addTxn-tags-input[data-rid="' + rowId + '"]');
-    input.value = '';
-    document.getElementById('addTxnTagDd_' + rowId).classList.remove('show');
-    if (added) renderAddTxnTagPills(rowId);
+        var input = document.querySelector('.addTxn-tags-input[data-rid="' + rowId + '"]');
+        if (input) input.value = '';
+    }
 }
 
 function removeAddTxnTag(rowId, tag) {
     var row = atRows.find(function(r) { return r.rowId === rowId; });
     if (!row) return;
     row.tags = row.tags.filter(function(t) { return t !== tag; });
-    renderAddTxnTagPills(rowId);
+    if (atTagInputCtrls[rowId]) {
+        atTagInputCtrls[rowId].refresh();
+    }
 }
 
 function renderAddTxnTagPills(rowId) {
-    var row = atRows.find(function(r) { return r.rowId === rowId; });
-    if (!row) return;
-    var pillsDiv = document.getElementById('addTxnTagPills_' + rowId);
-    pillsDiv.innerHTML = '';
-    row.tags.forEach(function(tag) {
-        var pill = document.createElement('span');
-        pill.className = 'addTxn-tag-pill';
-        pill.textContent = tag;
-        var x = document.createElement('span');
-        x.className = 'x';
-        x.textContent = '\u00d7';
-        pill.appendChild(x);
-        pill.addEventListener('click', function() { removeAddTxnTag(rowId, tag); });
-        pillsDiv.appendChild(pill);
-    });
+    if (atTagInputCtrls[rowId]) {
+        atTagInputCtrls[rowId].refresh();
+    }
 }
 
-function showAddTxnTagDd(rowId, filter) {
-    var row = atRows.find(function(r) { return r.rowId === rowId; });
-    if (!row) return;
-    var dd = document.getElementById('addTxnTagDd_' + rowId);
-    dd.innerHTML = '';
-    var filterLower = filter.toLowerCase();
-    var matches = atExistingTags.filter(function(tag) {
-        return row.tags.indexOf(tag) === -1 && tag.toLowerCase().indexOf(filterLower) !== -1;
-    });
-    if (matches.length === 0) { dd.classList.remove('show'); return; }
-    matches.forEach(function(tag) {
-        var pill = document.createElement('span');
-        pill.className = 'addTxn-tag-dd-pill';
-        pill.textContent = tag;
-        pill.addEventListener('mousedown', function(e) {
-            e.preventDefault();
-            addAddTxnTagFromText(rowId, tag);
-        });
-        dd.appendChild(pill);
-    });
-    dd.classList.add('show');
-}
+// showAddTxnTagDd — functionality now handled by wmsTagInput
+function showAddTxnTagDd() {}
 
 // ============================================================================
 // Confirmation & Save

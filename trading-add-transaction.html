@@ -104,26 +104,27 @@
 .addTxn-search-dd.show {
     display: block;
 }
-.addTxn-dd-item {
+/* wms-dd-item styling — used for investor/broker/symbol dropdowns */
+.addTxn-search-dd .wms-dd-item {
     padding: 6px 10px;
     cursor: pointer;
     font-size: 12px;
     color: #2d3748;
     border-bottom: 1px solid #f0f4f8;
 }
-.addTxn-dd-item:last-child {
+.addTxn-search-dd .wms-dd-item:last-child {
     border-bottom: none;
 }
-.addTxn-dd-item:hover,
-.addTxn-dd-item.highlighted {
+.addTxn-search-dd .wms-dd-item:hover,
+.addTxn-search-dd .wms-dd-item.wms-dd-highlight {
     background: #edf2f7;
 }
-.addTxn-dd-item .sub {
+.addTxn-search-dd .wms-dd-item .sub {
     font-size: 10px;
     color: #a0aec0;
     margin-left: 6px;
 }
-.addTxn-dd-item.nfo {
+.addTxn-search-dd .wms-dd-item.nfo {
     color: #667eea;
 }
 
@@ -255,6 +256,29 @@
     margin-top: 1px;
 }
 .addTxn-sym-dd.show { display: block; }
+/* wms-dd-item styling in symbol dropdown */
+.addTxn-sym-dd .wms-dd-item {
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #2d3748;
+    border-bottom: 1px solid #f0f4f8;
+}
+.addTxn-sym-dd .wms-dd-item:last-child {
+    border-bottom: none;
+}
+.addTxn-sym-dd .wms-dd-item:hover,
+.addTxn-sym-dd .wms-dd-item.wms-dd-highlight {
+    background: #edf2f7;
+}
+.addTxn-sym-dd .wms-dd-item .sub {
+    font-size: 10px;
+    color: #a0aec0;
+    margin-left: 6px;
+}
+.addTxn-sym-dd .wms-dd-item.nfo {
+    color: #667eea;
+}
 
 /* Tag pills */
 .addTxn-tag-pills {
@@ -263,22 +287,28 @@
     gap: 2px;
     margin-top: 2px;
 }
-.addTxn-tag-pill {
+/* wms-pill styling for addTxn tag pills */
+.addTxn-tag-pills .wms-pill {
     display: inline-flex;
     align-items: center;
     gap: 2px;
     padding: 1px 7px;
     font-size: 10px;
-    background: #bee3f8;
-    color: #2b6cb0;
+    background: #e2e8f0;
+    color: #4a5568;
     border-radius: 10px;
     cursor: pointer;
     white-space: nowrap;
 }
-.addTxn-tag-pill .x {
+.addTxn-tag-pills .wms-pill.on {
+    background: #bee3f8;
+    color: #2b6cb0;
+}
+.addTxn-tag-pills .wms-pill-remove {
     font-size: 12px;
     font-weight: 700;
     margin-left: 1px;
+    cursor: pointer;
 }
 .addTxn-tag-dd {
     display: none;
@@ -298,7 +328,8 @@
     gap: 3px;
 }
 .addTxn-tag-dd.show { display: flex; }
-.addTxn-tag-dd-pill {
+/* wms-dd-item styling in tag dropdown */
+.addTxn-tag-dd .wms-dd-item {
     display: inline-block;
     padding: 2px 8px;
     font-size: 10px;
@@ -308,7 +339,8 @@
     cursor: pointer;
     white-space: nowrap;
 }
-.addTxn-tag-dd-pill:hover {
+.addTxn-tag-dd .wms-dd-item:hover,
+.addTxn-tag-dd .wms-dd-item.wms-dd-highlight {
     background: #cbd5e0;
 }
 
