@@ -27,6 +27,10 @@ var atInvDdIdx = -1;
 var atBrkDdIdx = -1;
 var atSymDdIdx = {};          // rowId → highlighted index
 
+// Options search constants (same as trading-watchlist.js — keep in sync)
+var AT_MONTHS_SHORT = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+var AT_WEEKLY_EXPIRY_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
+
 // Charges popover state
 var atCpRowId = null;
 
@@ -509,11 +513,13 @@ function attachAddTxnRowHandlers(rowId) {
             var items = dd.querySelectorAll('.addTxn-dd-item');
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
-                atSymDdIdx[rowId] = Math.min((atSymDdIdx[rowId] || -1) + 1, items.length - 1);
+                var curIdx = (atSymDdIdx[rowId] !== undefined && atSymDdIdx[rowId] !== null) ? atSymDdIdx[rowId] : -1;
+                atSymDdIdx[rowId] = Math.min(curIdx + 1, items.length - 1);
                 highlightDdItem(items, atSymDdIdx[rowId]);
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
-                atSymDdIdx[rowId] = Math.max((atSymDdIdx[rowId] || 0) - 1, 0);
+                var curIdx2 = (atSymDdIdx[rowId] !== undefined && atSymDdIdx[rowId] !== null) ? atSymDdIdx[rowId] : 0;
+                atSymDdIdx[rowId] = Math.max(curIdx2 - 1, 0);
                 highlightDdItem(items, atSymDdIdx[rowId]);
             } else if (e.key === 'Enter') {
                 e.preventDefault();
@@ -611,11 +617,247 @@ function attachAddTxnRowHandlers(rowId) {
 
 // ============================================================================
 // Symbol Search
+// NOTE: The search process below mirrors trading-watchlist.js trWlSearchSecurities.
+// This is the standard process for symbol search across the app:
+//   1. Check if query is an options query (contains CE/PE + underlying + strike)
+//   2. If options: build Fyers symbol candidates across expiry dates, validate via
+//      Fyers quotes API, display valid contracts
+//   3. If not options: parallel search securities_db (CM) + securities_nfo (NFO/F&O)
+//      via Supabase ilike on symbol/name fields, display combined results
+// Any new symbol search in the app should follow this same process.
 // ============================================================================
+
+// --- Options Query Parser (ported from trading-watchlist.js trWlParseOptionsQuery) ---
+function atParseOptionsQuery(query) {
+    if (!query) return null;
+    var upper = query.toUpperCase().trim();
+    if (upper.indexOf('CE') < 0 && upper.indexOf('PE') < 0) return null;
+    var parts = upper.replace(/\s+/g, ' ').split(' ');
+    var underlying = null;
+    var strike = null;
+    var optionType = null;
+    var expiryHint = null;
+    for (var i = 0; i < parts.length; i++) {
+        var p = parts[i];
+        if (p === 'CE' || p === 'PE') { optionType = p; continue; }
+        var suffixMatch = p.match(/^(\d+(?:\.\d+)?)(CE|PE)$/);
+        if (suffixMatch) { strike = parseFloat(suffixMatch[1]); optionType = suffixMatch[2]; continue; }
+        if (/^\d+(?:\.\d+)?$/.test(p)) { strike = parseFloat(p); continue; }
+        if (AT_MONTHS_SHORT.indexOf(p) >= 0) { expiryHint = p; continue; }
+        if (!underlying && /^[A-Z&]+$/.test(p)) { underlying = p; }
+    }
+    if (!underlying || strike === null || !optionType) return null;
+    return { underlying: underlying, strike: strike, optionType: optionType, expiryHint: expiryHint };
+}
+
+// --- Fyers option symbol candidate builder (ported from trWlBuildOptionsCandidates) ---
+function atNextThursday(from) {
+    var d = new Date(from);
+    var day = d.getDay();
+    var diff = (4 - day + 7) % 7;
+    if (diff === 0 && d.getHours() >= 15) diff = 7;
+    d.setDate(d.getDate() + diff);
+    return d;
+}
+function atGetWeeklyExpiries(year, month) {
+    var thursdays = [];
+    var d = new Date(year, month, 1);
+    while (d.getMonth() === month) {
+        if (d.getDay() === 4) thursdays.push(new Date(d));
+        d.setDate(d.getDate() + 1);
+    }
+    return thursdays;
+}
+function atGetMonthlyExpiry(year, month) {
+    var d = new Date(year, month + 1, 0);
+    while (d.getDay() !== 4) d.setDate(d.getDate() - 1);
+    return d;
+}
+function atBuildOptionsCandidates(underlying, strike, optionType, expiryHint) {
+    var now = new Date();
+    var candidates = [];
+    var exchange = 'NSE';
+    var mcxUnderlyings = ['CRUDEOIL', 'NATURALGAS', 'GOLD', 'GOLDM', 'SILVER', 'SILVERM', 'COPPER'];
+    if (mcxUnderlyings.indexOf(underlying) >= 0) exchange = 'MCX';
+    var strikeStr = strike % 1 === 0 ? String(Math.round(strike)) : String(strike);
+    var isWeekly = AT_WEEKLY_EXPIRY_UNDERLYINGS.indexOf(underlying) >= 0;
+    if (expiryHint) {
+        var monthIdx = AT_MONTHS_SHORT.indexOf(expiryHint);
+        var year = now.getFullYear();
+        if (monthIdx < now.getMonth()) year++;
+        var yy = String(year).slice(2);
+        candidates.push(exchange + ':' + underlying + yy + expiryHint + strikeStr + optionType);
+        if (isWeekly) {
+            var weeklyDates = atGetWeeklyExpiries(year, monthIdx);
+            var monthlyLast = atGetMonthlyExpiry(year, monthIdx);
+            weeklyDates.forEach(function(d) {
+                if (d.getDate() === monthlyLast.getDate() && d.getMonth() === monthlyLast.getMonth()) return;
+                var mm = String(d.getMonth() + 1).padStart(2, '0');
+                var dd2 = String(d.getDate()).padStart(2, '0');
+                candidates.push(exchange + ':' + underlying + yy + mm + dd2 + strikeStr + optionType);
+            });
+        }
+    } else {
+        if (isWeekly) {
+            var seenDates = {};
+            for (var w = 0; w < 6; w++) {
+                var targetDate = new Date(now);
+                targetDate.setDate(targetDate.getDate() + (w * 7));
+                var thu = atNextThursday(targetDate);
+                var dateKey = thu.toISOString().slice(0, 10);
+                if (seenDates[dateKey]) continue;
+                seenDates[dateKey] = true;
+                var yr = thu.getFullYear();
+                var yy2 = String(yr).slice(2);
+                var monthlyExp = atGetMonthlyExpiry(yr, thu.getMonth());
+                if (thu.getDate() === monthlyExp.getDate() && thu.getMonth() === monthlyExp.getMonth()) {
+                    candidates.push(exchange + ':' + underlying + yy2 + AT_MONTHS_SHORT[thu.getMonth()] + strikeStr + optionType);
+                } else {
+                    var mm2 = String(thu.getMonth() + 1).padStart(2, '0');
+                    var dd3 = String(thu.getDate()).padStart(2, '0');
+                    candidates.push(exchange + ':' + underlying + yy2 + mm2 + dd3 + strikeStr + optionType);
+                }
+            }
+        } else {
+            for (var m = 0; m < 3; m++) {
+                var d2 = new Date(now.getFullYear(), now.getMonth() + m, 1);
+                var yy3 = String(d2.getFullYear()).slice(2);
+                candidates.push(exchange + ':' + underlying + yy3 + AT_MONTHS_SHORT[d2.getMonth()] + strikeStr + optionType);
+            }
+        }
+    }
+    return candidates;
+}
+
+// --- Format options Fyers symbol for display ---
+function atFormatOptionsDisplay(fyersSymbol, underlying, strike, optionType) {
+    var afterExchange = fyersSymbol.split(':')[1] || fyersSymbol;
+    var rest = afterExchange.substring(underlying.length);
+    var strikeInt = String(Math.round(strike));
+    var expiryPart = rest;
+    var suffixInt = strikeInt + optionType;
+    var suffixOrig = String(strike) + optionType;
+    if (expiryPart.endsWith(suffixInt)) {
+        expiryPart = expiryPart.substring(0, expiryPart.length - suffixInt.length);
+    } else if (expiryPart.endsWith(suffixOrig)) {
+        expiryPart = expiryPart.substring(0, expiryPart.length - suffixOrig.length);
+    }
+    var actualStrike = strike;
+    var afterExpiry = rest.substring(expiryPart.length);
+    var strikeFromSymbol = afterExpiry.replace(optionType, '');
+    if (strikeFromSymbol && !isNaN(Number(strikeFromSymbol))) actualStrike = Number(strikeFromSymbol);
+    var expiryLabel = expiryPart;
+    if (expiryPart.length === 5) {
+        expiryLabel = expiryPart;
+    } else if (expiryPart.length === 6) {
+        var yyW = expiryPart.substring(0, 2);
+        var mmW = parseInt(expiryPart.substring(2, 4)) - 1;
+        var ddW = expiryPart.substring(4, 6);
+        if (mmW >= 0 && mmW < 12) expiryLabel = ddW + AT_MONTHS_SHORT[mmW] + yyW;
+    }
+    return underlying + ' ' + actualStrike + ' ' + optionType + ' ' + expiryLabel;
+}
+
+// --- Options search via Fyers API (ported from trWlSearchOptions) ---
+async function atSearchOptions(rowId, parsed, dd) {
+    if (!window.fyersToken) {
+        dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">Fyers not connected — cannot search options.<br>Options search requires an active Fyers connection.</div>';
+        dd.classList.add('show');
+        return;
+    }
+    dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">Searching options...</div>';
+    dd.classList.add('show');
+    var candidates = atBuildOptionsCandidates(parsed.underlying, parsed.strike, parsed.optionType, parsed.expiryHint);
+    if (candidates.length === 0) {
+        dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">Could not build option symbols</div>';
+        return;
+    }
+    console.log('AddTxn: Options search candidates:', candidates);
+    try {
+        var data = await window.fyersCall({ action: 'quotes', symbols: candidates });
+        var validResults = [];
+        if (data && data.d && data.d.length > 0) {
+            data.d.forEach(function(item) {
+                if (item.v && item.v.lp > 0) {
+                    validResults.push({ symbol: item.v.symbol, lp: item.v.lp, ch: item.v.ch || 0, chp: item.v.chp || 0 });
+                }
+            });
+        }
+        if (validResults.length === 0) {
+            dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">No active options found for "' +
+                parsed.underlying + ' ' + parsed.strike + ' ' + parsed.optionType + '"<br>Try a different strike price or expiry month.</div>';
+            return;
+        }
+        dd.innerHTML = '';
+        validResults.forEach(function(r, idx) {
+            var displayLabel = atFormatOptionsDisplay(r.symbol, parsed.underlying, parsed.strike, parsed.optionType);
+            var isOpt = true;
+            var div = document.createElement('div');
+            div.className = 'addTxn-dd-item nfo';
+            div.dataset.idx = idx;
+            div.innerHTML = displayLabel +
+                ' <span class="sub">₹' + r.lp.toFixed(2) + '</span>' +
+                ' <span class="sub" style="color:' + (r.chp >= 0 ? '#059669' : '#dc2626') + ';">' +
+                (r.chp >= 0 ? '+' : '') + r.chp.toFixed(2) + '%</span>';
+            div.addEventListener('click', function() {
+                // Determine lot size from underlying — search securities_nfo for this specific symbol
+                atSelectOptionsContract(rowId, r.symbol, parsed, displayLabel);
+                dd.classList.remove('show');
+            });
+            dd.appendChild(div);
+        });
+        dd.classList.add('show');
+    } catch (err) {
+        dd.innerHTML = '<div style="padding:8px;color:#dc2626;font-size:11px;">Options search failed: ' + err.message + '</div>';
+    }
+}
+
+// --- Select an options contract from Fyers search results ---
+async function atSelectOptionsContract(rowId, fyersSymbol, parsed, displayLabel) {
+    var row = atRows.find(function(r) { return r.rowId === rowId; });
+    if (!row) return;
+    // Try to find this in securities_nfo first (may have been added via watchlist)
+    var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+    var nfoCheck = SUPABASE_URL + '/rest/v1/securities_nfo?symbol=eq.' + encodeURIComponent(fyersSymbol.split(':')[1] || fyersSymbol) +
+        '&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,lot_size,broker_tokens,expiry_date&limit=1';
+    var nfoResp = await fetch(nfoCheck, { headers: headers }).then(function(r) { return r.ok ? r.json() : []; }).catch(function() { return []; });
+    var lotSize = 1;
+    var secId = fyersSymbol; // default: use Fyers symbol as ID
+    if (nfoResp.length > 0) {
+        var nfo = nfoResp[0];
+        lotSize = nfo.lot_size || 1;
+        secId = nfo.id;
+    } else {
+        // Estimate lot size from underlying's NFO records
+        var lotCheck = SUPABASE_URL + '/rest/v1/securities_nfo?underlying_symbol=eq.' + encodeURIComponent(parsed.underlying) +
+            '&select=lot_size&limit=1';
+        var lotResp = await fetch(lotCheck, { headers: headers }).then(function(r) { return r.ok ? r.json() : []; }).catch(function() { return []; });
+        if (lotResp.length > 0) lotSize = lotResp[0].lot_size || 1;
+    }
+    selectAddTxnSecurity(rowId, {
+        security_id: secId,
+        symbol: fyersSymbol.split(':')[1] || fyersSymbol,
+        short_symbol: displayLabel,
+        company_name: parsed.underlying + ' Option',
+        security_type: 'NFO',
+        asset_class: 'OPTIONS',
+        exchange: fyersSymbol.split(':')[0] || 'NSE',
+        lot_size: lotSize,
+        broker_tokens: {}
+    });
+}
 
 async function searchAddTxnSymbol(rowId, query) {
     var dd = document.getElementById('addTxnSymDd_' + rowId);
     atSymDdIdx[rowId] = -1;
+
+    // Check if this is an options query (contains CE/PE + strike) — same logic as watchlist
+    var optionsParsed = atParseOptionsQuery(query);
+    if (optionsParsed) {
+        await atSearchOptions(rowId, optionsParsed, dd);
+        return;
+    }
+
     var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
     var searchQ = encodeURIComponent('%' + query + '%');
 
@@ -903,18 +1145,30 @@ function atAutoCalcCharges(row) {
 
     var inclusive = atIsChargesInclusive(investorId, brokerId);
 
-    // 1. Brokerage
+    // Debug: log charge calc inputs
+    console.log('AddTxn charges calc:', {
+        symbol: row.symbol, gross: gross, txnCat: txnCat, exchange: exchange,
+        txnType: txnType, inclusive: inclusive, secType: row.security_type,
+        assetClass: row.asset_class, price: row.price, qty: row.quantity, lots: row.lots
+    });
+
+    // 1. Brokerage (rule F.2.6) — pct is stored as decimal (0.005 = 0.5%). Do NOT divide by 100.
+    // charges_inclusive: ROUNDUP(price × pct, 2) × |qty|. Otherwise: round(gross × pct, 2).
     row.brokerage = atGetBrokerage(investorId, brokerId, gross, row.security_type, row.asset_class, row.price, row.quantity, row.lots);
 
     if (inclusive) {
+        // charges_inclusive: brokerage IS all-inclusive (covers STT, exchange, GST, everything)
         row.stt = 0;
         row.other_charges = 0;
         row.gst = 0;
         if (!row._totalOverride) {
             row.total_charges = row.brokerage;
         }
+        console.log('AddTxn charges (inclusive):', { brokerage: row.brokerage, total: row.total_charges });
     } else {
-        // 2. STT
+        // 2. STT (rule F.2.3)
+        // Equity delivery: rounded UP to nearest whole number
+        // F&O: rounded to 2 decimal places (not rounded up)
         var sttRate = atGetRegRate('STT', txnCat, txnType, exchange);
         if (sttRate > 0) {
             var sttRaw = gross * (sttRate / 100);
@@ -925,7 +1179,7 @@ function atAutoCalcCharges(row) {
             }
         }
 
-        // 3. Other regulatory charges
+        // 3. Individual regulatory charges (exchange, SEBI, stamp duty, IPFT)
         var exchRate = atGetRegRate('EXCHANGE_CHARGES', txnCat, txnType, exchange);
         var sebiRate = atGetRegRate('SEBI_CHARGES', txnCat, txnType, exchange);
         var stampRate = atGetRegRate('STAMP_DUTY', txnCat, txnType, exchange);
@@ -935,18 +1189,27 @@ function atAutoCalcCharges(row) {
         row._sebi_charges = atRound(gross * (sebiRate / 100));
         row._stamp_duty = atRound(gross * (stampRate / 100));
         row._ipft = atRound(gross * (ipftRate / 100));
-        row.other_charges = atRound(row._exchange_charges + row._sebi_charges + row._stamp_duty + row._ipft);
+        row.other_charges = atRound(row._exchange_charges + row._sebi_charges + row._stamp_duty + (row._ipft || 0));
 
-        // 4. GST — 18% on (brokerage + exchange + SEBI)
+        // 4. GST — 18% on (brokerage + exchange charges + SEBI charges)
         row.gst = atRound((row.brokerage + row._exchange_charges + row._sebi_charges) * 0.18);
 
-        // 5. Total charges
+        // 5. Total charges = brokerage + stt + other_charges + gst (rule F.2.4)
         if (!row._totalOverride) {
             row.total_charges = atRound(row.brokerage + row.stt + row.other_charges + row.gst);
         }
+
+        console.log('AddTxn charges (non-inclusive):', {
+            brokerage: row.brokerage, stt: row.stt, sttRate: sttRate,
+            exchRate: exchRate, exch: row._exchange_charges,
+            sebiRate: sebiRate, sebi: row._sebi_charges,
+            stampRate: stampRate, stamp: row._stamp_duty,
+            ipftRate: ipftRate, ipft: row._ipft,
+            other: row.other_charges, gst: row.gst, total: row.total_charges
+        });
     }
 
-    // 6. Net amount
+    // 6. Net amount: BUY = gross + charges, SELL = gross - charges (rule F.2.2)
     if (!row._netOverride) {
         if (txnType === 'BUY') {
             row.net_amount = atRound(gross + row.total_charges);
@@ -955,7 +1218,8 @@ function atAutoCalcCharges(row) {
         }
     }
 
-    // 7. Trader charges
+    // 7. Trader charges (rule F.2.5)
+    // When investor = trader, trader_charges = 0
     var traderId = row.trader_id || investorId;
     if (traderId !== investorId) {
         row.trader_charges = atGetBrokerage(traderId, brokerId, gross, row.security_type, row.asset_class, row.price, row.quantity, row.lots);
@@ -963,7 +1227,7 @@ function atAutoCalcCharges(row) {
         row.trader_charges = 0;
     }
 
-    // 8. Basis info for popover
+    // 8. Basis info for popover display
     row._chargesBasis = {};
     var ibaEntry = atIbaRatesMap[investorId + '|' + brokerId];
     if (ibaEntry) {
@@ -981,12 +1245,15 @@ function atAutoCalcCharges(row) {
                 if (segment.max > 0) bStr += ' (max ₹' + segment.max + ')';
                 row._chargesBasis.brokerage = bStr;
             } else {
-                var pctD = ((segment.pct || 0) * 100).toFixed(2) + '%';
-                row._chargesBasis.brokerage = pctD + ' of price';
+                var pctD = ((segment.pct || 0) * 100).toFixed(4) + '%';
+                row._chargesBasis.brokerage = pctD + ' of gross';
+                if (inclusive) row._chargesBasis.brokerage = pctD + ' of price (per-share ROUNDUP) [inclusive]';
                 if (segment.max > 0) row._chargesBasis.brokerage += ' (max ₹' + segment.max + ')';
-                if (inclusive) row._chargesBasis.brokerage += ' [inclusive]';
             }
         }
+        console.log('AddTxn IBA rates:', { key: investorId + '|' + brokerId, rates: JSON.stringify(rates), inclusive: inclusive, segment: segment });
+    } else {
+        console.warn('AddTxn: No IBA entry found for', investorId + '|' + brokerId);
     }
     if (!inclusive) {
         var sttRoundLabel = (txnCat === 'EQUITY_DELIVERY') ? ' (rounded up)' : '';
