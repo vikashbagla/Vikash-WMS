@@ -6,15 +6,13 @@
 
 // SUPABASE_URL and SUPABASE_ANON_KEY are globals from app.html — do not redeclare
 
-// Reference data (loaded on first modal open)
-var atInvestors = [];         // [{id, name, short_name, stt_accounting_method, financial_year_start}]
-var atBrokers = [];           // [{id, name, broker_code}]
-var atInvObjMap = {};         // investor_id → investor object
-var atBrkObjMap = {};         // broker_id → broker object
-var atIbaRatesMap = {};       // "investorId|brokerId" → {rates, charges_inclusive}
-var atRegCharges = [];        // Active regulatory_charges_config rows
-var atExistingTags = [];      // Distinct tags from transactions
-var atRefDataLoaded = false;
+// Reference data — aliases to wmsRefData (loaded once at app startup in wms-shared.js)
+// Local aliases for backward compatibility with dropdown/autocomplete code
+var atInvestors = [];         // Synced from wmsRefData.investors
+var atBrokers = [];           // Synced from wmsRefData.brokers
+var atInvObjMap = {};         // Synced from wmsRefData.investorObjMap
+var atBrkObjMap = {};         // Synced from wmsRefData.brokerObjMap
+var atExistingTags = [];      // Synced from wmsRefData.tags
 
 // Form state
 var atSelectedInvestor = null;  // {id, name, short_name}
@@ -82,10 +80,16 @@ function initAddTxnModule() {
 // ============================================================================
 
 async function openAddTxnModal() {
-    // Load ref data on first open
-    if (!atRefDataLoaded) {
-        await loadAddTxnRefData();
+    // Ensure shared ref data is loaded (loaded once at app startup)
+    if (!wmsRefData.ready) {
+        await wmsLoadRefData();
     }
+    // Sync local aliases from shared ref data
+    atInvestors = wmsRefData.investors;
+    atBrokers = wmsRefData.brokers;
+    atInvObjMap = wmsRefData.investorObjMap;
+    atBrkObjMap = wmsRefData.brokerObjMap;
+    atExistingTags = wmsRefData.tags;
 
     // Reset state
     atSelectedInvestor = null;
@@ -127,65 +131,7 @@ function closeAddTxnModal() {
 window.openAddTxnModal = openAddTxnModal;
 window.closeAddTxnModal = closeAddTxnModal;
 
-// ============================================================================
-// Reference Data Loading
-// ============================================================================
-
-async function loadAddTxnRefData() {
-    var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
-    try {
-        var resp;
-
-        // Investors
-        resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start&is_active=eq.true', { headers: headers });
-        atInvestors = await resp.json();
-        atInvObjMap = {};
-        atInvestors.forEach(function(inv) { atInvObjMap[inv.id] = inv; });
-
-        // Brokers
-        resp = await fetch(SUPABASE_URL + '/rest/v1/brokers?select=id,name,broker_code&is_active=eq.true', { headers: headers });
-        atBrokers = await resp.json();
-        atBrkObjMap = {};
-        atBrokers.forEach(function(b) { atBrkObjMap[b.id] = b; });
-
-        // IBA rates
-        resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=investor_id,broker_id,brokerage_rates,charges_inclusive&is_active=eq.true', { headers: headers });
-        var ibAccounts = await resp.json();
-        atIbaRatesMap = {};
-        ibAccounts.forEach(function(iba) {
-            if (iba.brokerage_rates) {
-                atIbaRatesMap[iba.investor_id + '|' + iba.broker_id] = {
-                    rates: iba.brokerage_rates,
-                    charges_inclusive: !!iba.charges_inclusive
-                };
-            }
-        });
-
-        // Regulatory charges (active only)
-        resp = await fetch(SUPABASE_URL + '/rest/v1/regulatory_charges_config?effective_to=is.null&select=*', { headers: headers });
-        atRegCharges = await resp.json();
-
-        // Existing tags
-        resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?select=tags&tags=not.is.null&limit=5000', { headers: headers });
-        var tagRows = await resp.json();
-        var tagSet = {};
-        tagRows.forEach(function(r) {
-            if (Array.isArray(r.tags)) {
-                r.tags.forEach(function(t) {
-                    var trimmed = t.trim().toLowerCase();
-                    if (trimmed && trimmed !== 'blank') tagSet[trimmed] = true;
-                });
-            }
-        });
-        atExistingTags = Object.keys(tagSet).sort();
-
-        atRefDataLoaded = true;
-        console.log('AddTxn ref data: ' + atInvestors.length + ' inv, ' + atBrokers.length + ' brk, ' + Object.keys(atIbaRatesMap).length + ' IBA, ' + atRegCharges.length + ' reg, ' + atExistingTags.length + ' tags');
-    } catch (e) {
-        console.error('AddTxn ref data error:', e);
-        showAlert('Error loading reference data: ' + e.message, 'error');
-    }
-}
+// Reference data loading removed — now uses wmsRefData from wms-shared.js (loaded at app startup)
 
 // ============================================================================
 // Investor / Broker Type-to-Search
@@ -923,231 +869,23 @@ function updateAddTxnRowDisplay(rowId) {
 }
 
 // ============================================================================
-// Charge Calculation (ported from transaction-import.js autoCalcCharges)
+// Charge Calculation — thin wrappers calling wms-shared.js canonical functions
 // ============================================================================
 
 function atRound(v) { return wmsRoundMoney(v); }
 
-function atGetBrokerage(investorId, brokerId, gross, secType, assetClass, price, quantity, lots) {
-    if (!brokerId) return 0;
-    var ibaEntry = atIbaRatesMap[investorId + '|' + brokerId];
-    if (!ibaEntry) return 0;
-    var rates = ibaEntry.rates;
-
-    var segment = null;
-    if (secType === 'NFO') {
-        if (assetClass === 'OPTIONS' && rates.derivatives && rates.derivatives.options) {
-            segment = rates.derivatives.options;
-        } else {
-            segment = rates.derivatives ? rates.derivatives.futures : null;
-        }
-    } else {
-        segment = rates.equity ? rates.equity.delivery : null;
-    }
-    if (!segment) return 0;
-
-    // Flat rate (options) — flat × |lots|
-    if (segment.flat !== undefined) {
-        var absLots = Math.abs(lots || 0) || 1;
-        var flatCalc = segment.flat * absLots;
-        var flatMax = segment.max || 0;
-        if (flatMax > 0 && flatCalc > flatMax) flatCalc = flatMax;
-        return atRound(flatCalc);
-    }
-
-    var pct = segment.pct || 0;
-    var max = segment.max || 0;
-    var calc;
-    if (ibaEntry.charges_inclusive && price && quantity) {
-        var perShare = Math.ceil(price * pct * 100) / 100;
-        calc = perShare * Math.abs(quantity);
-    } else {
-        calc = atRound(gross * pct);
-    }
-    if (max > 0 && calc > max) calc = max;
-    return atRound(calc);
-}
-
-function atIsChargesInclusive(investorId, brokerId) {
-    var ibaEntry = atIbaRatesMap[investorId + '|' + brokerId];
-    return ibaEntry ? ibaEntry.charges_inclusive : false;
-}
-
-function atGetRegRate(chargeType, txnCat, txnType, exchange) {
-    var exch = exchange || 'NSE';
-    for (var i = 0; i < atRegCharges.length; i++) {
-        var rc = atRegCharges[i];
-        if (rc.charge_type === chargeType &&
-            rc.transaction_category === txnCat &&
-            rc.transaction_type === txnType &&
-            rc.exchange === exch) {
-            return rc.rate_percentage || 0;
-        }
-    }
-    // Fallback: if exchange-specific rate not found (e.g. BSE missing STT/SEBI/stamp),
-    // try NSE as fallback since STT, SEBI, stamp duty are national charges, not exchange-specific
-    if (exch !== 'NSE') {
-        for (var j = 0; j < atRegCharges.length; j++) {
-            var rc2 = atRegCharges[j];
-            if (rc2.charge_type === chargeType &&
-                rc2.transaction_category === txnCat &&
-                rc2.transaction_type === txnType &&
-                rc2.exchange === 'NSE') {
-                return rc2.rate_percentage || 0;
-            }
-        }
-    }
-    return 0;
-}
-
 function atAutoCalcCharges(row) {
     var investorId = atSelectedInvestor ? atSelectedInvestor.id : null;
     var brokerId = atSelectedBroker ? atSelectedBroker.id : null;
-    var gross = row.gross_amount || 0;
 
-    if (!investorId || !brokerId || gross === 0) {
-        row.net_amount = gross;
-        return;
-    }
-
-    // Determine transaction category
-    var txnCat = 'EQUITY_DELIVERY';
-    if (row.security_type === 'NFO') {
-        var symUp = (row.symbol || '').toUpperCase();
-        if (symUp.match(/(CE|PE)$/) || (row.asset_class && row.asset_class === 'OPTIONS')) {
-            txnCat = 'EQUITY_OPTIONS';
-        } else {
-            txnCat = 'EQUITY_FUTURES';
-        }
-    }
-    var exchange = (row.exchange === 'NFO' || !row.exchange) ? 'NSE' : row.exchange;
-    var txnType = row.transaction_type || 'BUY';
-
-    var inclusive = atIsChargesInclusive(investorId, brokerId);
-
-    // Debug: log charge calc inputs
-    console.log('AddTxn charges calc:', {
-        symbol: row.symbol, gross: gross, txnCat: txnCat, exchange: exchange,
-        txnType: txnType, inclusive: inclusive, secType: row.security_type,
-        assetClass: row.asset_class, price: row.price, qty: row.quantity, lots: row.lots
+    wmsAutoCalcCharges(row, {
+        ibaRatesMap: wmsRefData.ibaRatesMap,
+        regCharges: wmsRefData.regCharges,
+        investorId: investorId,
+        brokerId: brokerId,
+        preserveExisting: false,  // Add Txn always recalculates fresh
+        debug: true
     });
-
-    // 1. Brokerage (rule F.2.6) — pct is stored as decimal (0.005 = 0.5%). Do NOT divide by 100.
-    // charges_inclusive: ROUNDUP(price × pct, 2) × |qty|. Otherwise: round(gross × pct, 2).
-    row.brokerage = atGetBrokerage(investorId, brokerId, gross, row.security_type, row.asset_class, row.price, row.quantity, row.lots);
-
-    if (inclusive) {
-        // charges_inclusive: brokerage IS all-inclusive (covers STT, exchange, GST, everything)
-        row.stt = 0;
-        row.other_charges = 0;
-        row.gst = 0;
-        if (!row._totalOverride) {
-            row.total_charges = row.brokerage;
-        }
-        console.log('AddTxn charges (inclusive):', { brokerage: row.brokerage, total: row.total_charges });
-    } else {
-        // 2. STT (rule F.2.3)
-        // Equity delivery: rounded UP to nearest whole number
-        // F&O: rounded to 2 decimal places (not rounded up)
-        var sttRate = atGetRegRate('STT', txnCat, txnType, exchange);
-        if (sttRate > 0) {
-            var sttRaw = gross * (sttRate / 100);
-            if (txnCat === 'EQUITY_DELIVERY') {
-                row.stt = Math.ceil(sttRaw);
-            } else {
-                row.stt = atRound(sttRaw);
-            }
-        }
-
-        // 3. Individual regulatory charges (exchange, SEBI, stamp duty, IPFT)
-        var exchRate = atGetRegRate('EXCHANGE_CHARGES', txnCat, txnType, exchange);
-        var sebiRate = atGetRegRate('SEBI_CHARGES', txnCat, txnType, exchange);
-        var stampRate = atGetRegRate('STAMP_DUTY', txnCat, txnType, exchange);
-        var ipftRate = atGetRegRate('IPFT', txnCat, txnType, exchange);
-
-        row._exchange_charges = atRound(gross * (exchRate / 100));
-        row._sebi_charges = atRound(gross * (sebiRate / 100));
-        row._stamp_duty = atRound(gross * (stampRate / 100));
-        row._ipft = atRound(gross * (ipftRate / 100));
-        row.other_charges = atRound(row._exchange_charges + row._sebi_charges + row._stamp_duty + (row._ipft || 0));
-
-        // 4. GST — 18% on (brokerage + exchange charges + SEBI charges)
-        row.gst = atRound((row.brokerage + row._exchange_charges + row._sebi_charges) * 0.18);
-
-        // 5. Total charges = brokerage + stt + other_charges + gst (rule F.2.4)
-        if (!row._totalOverride) {
-            row.total_charges = atRound(row.brokerage + row.stt + row.other_charges + row.gst);
-        }
-
-        console.log('AddTxn charges (non-inclusive):', {
-            brokerage: row.brokerage, stt: row.stt, sttRate: sttRate,
-            exchRate: exchRate, exch: row._exchange_charges,
-            sebiRate: sebiRate, sebi: row._sebi_charges,
-            stampRate: stampRate, stamp: row._stamp_duty,
-            ipftRate: ipftRate, ipft: row._ipft,
-            other: row.other_charges, gst: row.gst, total: row.total_charges
-        });
-    }
-
-    // 6. Net amount: BUY = gross + charges, SELL = gross - charges (rule F.2.2)
-    if (!row._netOverride) {
-        if (txnType === 'BUY') {
-            row.net_amount = atRound(gross + row.total_charges);
-        } else {
-            row.net_amount = atRound(gross - row.total_charges);
-        }
-    }
-
-    // 7. Trader charges (rule F.2.5)
-    // When investor = trader, trader_charges = 0
-    var traderId = row.trader_id || investorId;
-    if (traderId !== investorId) {
-        row.trader_charges = atGetBrokerage(traderId, brokerId, gross, row.security_type, row.asset_class, row.price, row.quantity, row.lots);
-    } else {
-        row.trader_charges = 0;
-    }
-
-    // 8. Basis info for popover display
-    row._chargesBasis = {};
-    var ibaEntry = atIbaRatesMap[investorId + '|' + brokerId];
-    if (ibaEntry) {
-        var rates = ibaEntry.rates || {};
-        var segment = null;
-        if (row.security_type === 'NFO') {
-            if (row.asset_class === 'OPTIONS' && rates.derivatives && rates.derivatives.options) segment = rates.derivatives.options;
-            else segment = rates.derivatives ? rates.derivatives.futures : null;
-        } else {
-            segment = rates.equity ? rates.equity.delivery : null;
-        }
-        if (segment) {
-            if (segment.flat !== undefined) {
-                var bStr = 'Flat ₹' + segment.flat + '/lot × ' + Math.abs(row.lots || 1) + ' lots';
-                if (segment.max > 0) bStr += ' (max ₹' + segment.max + ')';
-                row._chargesBasis.brokerage = bStr;
-            } else {
-                var pctD = ((segment.pct || 0) * 100).toFixed(4) + '%';
-                row._chargesBasis.brokerage = pctD + ' of gross';
-                if (inclusive) row._chargesBasis.brokerage = pctD + ' of price (per-share ROUNDUP) [inclusive]';
-                if (segment.max > 0) row._chargesBasis.brokerage += ' (max ₹' + segment.max + ')';
-            }
-        }
-        console.log('AddTxn IBA rates:', { key: investorId + '|' + brokerId, rates: JSON.stringify(rates), inclusive: inclusive, segment: segment });
-    } else {
-        console.warn('AddTxn: No IBA entry found for', investorId + '|' + brokerId);
-    }
-    if (!inclusive) {
-        var sttRoundLabel = (txnCat === 'EQUITY_DELIVERY') ? ' (rounded up)' : '';
-        row._chargesBasis.stt = (sttRate > 0) ? sttRate + '% of gross' + sttRoundLabel : 'N/A';
-        row._chargesBasis._exchange_charges = (exchRate > 0) ? exchRate + '% of gross' : 'N/A';
-        row._chargesBasis._sebi_charges = (sebiRate > 0) ? sebiRate + '% of gross' : 'N/A';
-        row._chargesBasis._stamp_duty = (stampRate > 0) ? stampRate + '% of gross' : 'N/A';
-        row._chargesBasis._ipft = (ipftRate > 0) ? ipftRate + '% of gross (IPFT)' : 'N/A';
-        row._chargesBasis.gst = '18% on (brokerage + exchange + SEBI)';
-    } else {
-        ['stt', '_exchange_charges', '_sebi_charges', '_stamp_duty', '_ipft', 'gst'].forEach(function(k) {
-            row._chargesBasis[k] = 'Included in brokerage';
-        });
-    }
 }
 
 // ============================================================================

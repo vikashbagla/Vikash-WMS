@@ -8,12 +8,13 @@ window.CN_UTILS = window.CN_UTILS || {};
 
 // Use var for module-level state (project convention — avoids redeclaration errors on reload)
 var parsedTransactions = [];
-var investorCache = {};        // { lowerName/lowerShortName → uuid }
-var brokerCache = {};          // { lowerName/lowerBrokerCode → uuid }
-var investorObjMap = {};       // { uuid → { id, name, short_name, stt_accounting_method, financial_year_start } }
-var brokerObjMap = {};         // { uuid → { id, name, broker_code } }
-var ibaRatesMap = {};          // { "investorId|brokerId" → brokerage_rates JSONB }
-var regulatoryCharges = [];    // Array of regulatory_charges_config rows (active rates)
+// Reference data — local aliases synced from wmsRefData (loaded once at app startup in wms-shared.js)
+var investorCache = {};        // Synced from wmsRefData.investorCache
+var brokerCache = {};          // Synced from wmsRefData.brokerCache
+var investorObjMap = {};       // Synced from wmsRefData.investorObjMap
+var brokerObjMap = {};         // Synced from wmsRefData.brokerObjMap
+var ibaRatesMap = {};          // Synced from wmsRefData.ibaRatesMap
+var regulatoryCharges = [];    // Synced from wmsRefData.regCharges
 
 // Excel import state
 var excelConfirmedRows = [];   // Ready to import (symbol resolved, charges calculated)
@@ -109,47 +110,22 @@ document.addEventListener('DOMContentLoaded', initTransactionImport);
 
 async function loadReferenceData() {
     try {
-        // Load investors — cache by name AND short_name (case-insensitive) per rule F.1.2
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start&is_active=eq.true', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
-        var investors = await resp.json();
-        investorCache = {};
-        investorObjMap = {};
-        investors.forEach(function(inv) {
-            investorObjMap[inv.id] = inv;
-            if (inv.name) investorCache[inv.name.toLowerCase()] = inv.id;
-            if (inv.short_name) investorCache[inv.short_name.toLowerCase()] = inv.id;
-        });
-
-        // Load brokers — cache by name AND broker_code (case-insensitive) per rule F.1.4
-        resp = await fetch(SUPABASE_URL + '/rest/v1/brokers?select=id,name,broker_code&is_active=eq.true', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
-        var brokers = await resp.json();
-        brokerCache = {};
-        brokerObjMap = {};
-        brokers.forEach(function(brk) {
-            brokerObjMap[brk.id] = brk;
-            if (brk.name) brokerCache[brk.name.toLowerCase()] = brk.id;
-            if (brk.broker_code) brokerCache[brk.broker_code.toLowerCase()] = brk.id;
-        });
-
-        // Load investor_broker_accounts with brokerage_rates + charges_inclusive for charge auto-calc (rule F.2.6)
-        resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=investor_id,broker_id,brokerage_rates,charges_inclusive&is_active=eq.true', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
-        var ibAccounts = await resp.json();
-        ibaRatesMap = {};
-        ibAccounts.forEach(function(iba) {
-            if (iba.brokerage_rates) {
-                ibaRatesMap[iba.investor_id + '|' + iba.broker_id] = {
-                    rates: iba.brokerage_rates,
-                    charges_inclusive: !!iba.charges_inclusive
-                };
-            }
-        });
-
-        // Load regulatory_charges_config — active rates (effective_to IS NULL) for STT/other charge calc
-        resp = await fetch(SUPABASE_URL + '/rest/v1/regulatory_charges_config?effective_to=is.null&select=*', { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
-        regulatoryCharges = await resp.json();
+        // Ensure shared ref data is loaded (loaded once at app startup in wms-shared.js)
+        if (!wmsRefData.ready) {
+            await wmsLoadRefData();
+        }
+        // Sync local aliases from shared ref data
+        investorCache = wmsRefData.investorCache;
+        investorObjMap = wmsRefData.investorObjMap;
+        brokerCache = wmsRefData.brokerCache;
+        brokerObjMap = wmsRefData.brokerObjMap;
+        ibaRatesMap = wmsRefData.ibaRatesMap;
+        regulatoryCharges = wmsRefData.regCharges;
 
         _refDataReady = true;
-        console.log('Reference data loaded: ' + investors.length + ' investors, ' + brokers.length + ' brokers, ' + ibAccounts.length + ' IBA rates, ' + regulatoryCharges.length + ' regulatory configs');
+        console.log('Import ref data synced from wmsRefData: ' + wmsRefData.investors.length + ' investors, ' +
+            wmsRefData.brokers.length + ' brokers, ' + Object.keys(ibaRatesMap).length + ' IBA, ' +
+            regulatoryCharges.length + ' reg charges');
     } catch (e) {
         console.error('Error loading reference data:', e);
     }
@@ -371,255 +347,31 @@ function parseNfoSymbol(sym) {
 }
 
 // Income type check (rule F.4.1)
-var INCOME_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION'];
-function isIncomeType(txnType) {
-    return INCOME_TYPES.indexOf(txnType) >= 0;
-}
+// INCOME_TYPES and isIncomeType now in wms-shared.js as WMS_INCOME_TYPES and wmsIsIncomeType
+var INCOME_TYPES = WMS_INCOME_TYPES;  // Alias for backward compatibility
+function isIncomeType(txnType) { return wmsIsIncomeType(txnType); }
 
-// Get brokerage rate for investor-broker combo (delivery assumed per rule F.2.6)
+// Charge calculation helpers — thin wrappers calling wms-shared.js canonical functions
 function getBrokerageForRow(investorId, brokerId, grossAmount, securityType, assetClass, price, quantity, lots) {
-    if (!brokerId) return 0;
-    var ibaEntry = ibaRatesMap[investorId + '|' + brokerId];
-    if (!ibaEntry) return 0;
-    var rates = ibaEntry.rates;
-
-    // Navigate the rates JSONB: equity.delivery for EQUITY/ETF, derivatives.futures/options for NFO
-    var segment = null;
-    if (securityType === 'NFO') {
-        if (assetClass === 'OPTIONS' && rates.derivatives && rates.derivatives.options) {
-            segment = rates.derivatives.options;
-        } else {
-            segment = rates.derivatives ? rates.derivatives.futures : null;
-        }
-    } else {
-        segment = rates.equity ? rates.equity.delivery : null;
-    }
-    if (!segment) return 0;
-
-    // flat rate (options) — flat × |lots|, capped at max (max 0 = no cap)
-    if (segment.flat !== undefined) {
-        var absLots = Math.abs(lots || 0) || 1;  // fallback to 1 lot if not available
-        var flatCalc = segment.flat * absLots;
-        var flatMax = segment.max || 0;
-        if (flatMax > 0 && flatCalc > flatMax) flatCalc = flatMax;
-        return Math.round(flatCalc * 100) / 100;
-    }
-    var pct = segment.pct || 0;
-    var max = segment.max || 0;
-
-    // pct is stored as decimal (e.g., 0.005 = 0.5%). NOT a percentage — do NOT divide by 100
-    // When charges_inclusive: brokerage = ROUNDUP(price * pct, 2) * abs(qty)
-    // Otherwise: brokerage = round(gross * pct, 2)
-    var calc;
-    if (ibaEntry.charges_inclusive && price && quantity) {
-        var perShare = Math.ceil(price * pct * 100) / 100;  // ROUNDUP to 2 decimal places
-        calc = perShare * Math.abs(quantity);
-    } else {
-        calc = Math.round(grossAmount * pct * 100) / 100;
-    }
-    if (max > 0 && calc > max) calc = max;
-    return Math.round(calc * 100) / 100;
+    return wmsGetBrokerage(ibaRatesMap, investorId, brokerId, grossAmount, securityType, assetClass, price, quantity, lots);
 }
-
-// Check if an IBA has charges_inclusive flag set
 function isChargesInclusive(investorId, brokerId) {
-    var ibaEntry = ibaRatesMap[investorId + '|' + brokerId];
-    return ibaEntry ? ibaEntry.charges_inclusive : false;
+    return wmsIsChargesInclusive(ibaRatesMap, investorId, brokerId);
 }
-
-// Get regulatory charge rate from config (rule F.2.3, F.3.2)
 function getRegChargeRate(chargeType, txnCategory, txnType, exchange) {
-    var exch = exchange || 'NSE';
-    for (var i = 0; i < regulatoryCharges.length; i++) {
-        var rc = regulatoryCharges[i];
-        if (rc.charge_type === chargeType &&
-            rc.transaction_category === txnCategory &&
-            rc.transaction_type === txnType &&
-            rc.exchange === exch) {
-            return rc.rate_percentage || 0;
-        }
-    }
-    // Fallback: if exchange-specific rate not found (e.g. BSE missing STT/SEBI/stamp),
-    // try NSE as fallback since STT, SEBI, stamp duty are national charges, not exchange-specific
-    if (exch !== 'NSE') {
-        for (var j = 0; j < regulatoryCharges.length; j++) {
-            var rc2 = regulatoryCharges[j];
-            if (rc2.charge_type === chargeType &&
-                rc2.transaction_category === txnCategory &&
-                rc2.transaction_type === txnType &&
-                rc2.exchange === 'NSE') {
-                return rc2.rate_percentage || 0;
-            }
-        }
-    }
-    return 0;
+    return wmsGetRegRate(regulatoryCharges, chargeType, txnCategory, txnType, exchange);
 }
 
-// Auto-calculate charges for a row (rules F.2.1–F.2.7, F.3.2, F.4.2)
+// Auto-calculate charges — delegates to wmsAutoCalcCharges with preserveExisting=true (Excel import mode)
 function autoCalcCharges(row) {
-    var gross = row.gross_amount || 0;
-    var txnCat = 'EQUITY_DELIVERY';
-    if (row.security_type === 'NFO') {
-        // Determine futures vs options from symbol pattern (CE/PE suffix = options)
-        var symUp = (row.symbol || '').toUpperCase();
-        if (symUp.match(/(CE|PE)$/) || (row.asset_class && row.asset_class === 'OPTIONS')) {
-            txnCat = 'EQUITY_OPTIONS';
-        } else {
-            txnCat = 'EQUITY_FUTURES';
-        }
-    }
-    var exchange = (row.exchange === 'NFO' || !row.exchange) ? 'NSE' : row.exchange;
-
-    // Income types: all charges → tds, zero out charge fields (rule F.4.2)
-    if (isIncomeType(row.transaction_type)) {
-        var incomeTds = (row.total_charges || 0) + (row.trader_charges || 0);
-        // If both were provided, sum them; if only one, use that
-        if (row.tds && row.tds > 0) incomeTds = row.tds; // explicit tds takes priority
-        row.tds = roundMoney(incomeTds);
-        row.brokerage = 0;
-        row.stt = 0;
-        row.gst = 0;
-        row.other_charges = 0;
-        row.total_charges = row.tds;
-        row.trader_charges = 0;
-        row.net_amount = Math.round((gross - row.tds) * 100) / 100;
-        return;
-    }
-
-    // Check charges_inclusive flag
-    var inclusive = isChargesInclusive(row.investor_id, row.broker_id);
-
-    // 1. Brokerage (rule F.2.6)
-    if (row.brokerage === null || row.brokerage === undefined || row.brokerage === 0) {
-        row.brokerage = getBrokerageForRow(row.investor_id, row.broker_id, gross, row.security_type, row.asset_class, row.price, row.quantity, row.lots);
-    }
-
-    if (inclusive) {
-        // charges_inclusive: brokerage IS all-inclusive (covers STT, exchange, GST, everything)
-        row.stt = 0;
-        row.other_charges = 0;
-        row.gst = 0;
-        // Only set total_charges if user didn't provide one
-        if (row.total_charges === null || row.total_charges === undefined) {
-            row.total_charges = row.brokerage;
-        }
-    } else {
-        // 2. STT (rule F.2.3)
-        // Equity delivery: rounded UP to nearest whole number
-        // F&O: rounded to 2 decimal places (not rounded up)
-        var sttRate = getRegChargeRate('STT', txnCat, row.transaction_type, exchange);
-        if (row.stt === null || row.stt === undefined || row.stt === 0) {
-            if (sttRate > 0) {
-                var sttRaw = gross * (sttRate / 100);
-                if (txnCat === 'EQUITY_DELIVERY') {
-                    row.stt = Math.ceil(sttRaw);  // Round UP to whole number for equity delivery
-                } else {
-                    row.stt = Math.round(sttRaw * 100) / 100;  // 2 decimal places for F&O
-                }
-            } else {
-                row.stt = 0;
-            }
-        }
-
-        // 3. Individual regulatory charges (exchange, SEBI, stamp duty, IPFT)
-        var exchRate = getRegChargeRate('EXCHANGE_CHARGES', txnCat, row.transaction_type, exchange);
-        var sebiRate = getRegChargeRate('SEBI_CHARGES', txnCat, row.transaction_type, exchange);
-        var stampRate = getRegChargeRate('STAMP_DUTY', txnCat, row.transaction_type, exchange);
-        var ipftRate = getRegChargeRate('IPFT', txnCat, row.transaction_type, exchange);
-
-        // Store individual sub-components for the breakdown popover
-        if (!row._exchange_charges && row._exchange_charges !== 0) {
-            row._exchange_charges = Math.round(gross * (exchRate / 100) * 100) / 100;
-        }
-        if (!row._sebi_charges && row._sebi_charges !== 0) {
-            row._sebi_charges = Math.round(gross * (sebiRate / 100) * 100) / 100;
-        }
-        if (!row._stamp_duty && row._stamp_duty !== 0) {
-            row._stamp_duty = Math.round(gross * (stampRate / 100) * 100) / 100;
-        }
-        if (!row._ipft && row._ipft !== 0) {
-            row._ipft = Math.round(gross * (ipftRate / 100) * 100) / 100;
-        }
-
-        if (row.other_charges === null || row.other_charges === undefined || row.other_charges === 0) {
-            row.other_charges = Math.round((row._exchange_charges + row._sebi_charges + row._stamp_duty + (row._ipft || 0)) * 100) / 100;
-        }
-
-        // 4. GST — 18% on (brokerage + exchange charges + SEBI charges) (per Fyers/broker standard)
-        if (row.gst === null || row.gst === undefined || row.gst === 0) {
-            row.gst = Math.round((row.brokerage + row._exchange_charges + row._sebi_charges) * 0.18 * 100) / 100;
-        }
-
-        // 5. total_charges = brokerage + stt + other_charges + gst (rule F.2.4)
-        if (row.total_charges === null || row.total_charges === undefined || row.total_charges === 0) {
-            row.total_charges = Math.round((row.brokerage + row.stt + row.other_charges + row.gst) * 100) / 100;
-        }
-    }
-
-    // 6. net_amount: preserve user-entered value if provided (irrespective of other fields), otherwise calculate (rule F.2.2)
-    if (row._netOverride) {
-        // Already marked as user-entered — keep it
-    } else if (row.transaction_type === 'BUY') {
-        row.net_amount = Math.round((gross + row.total_charges) * 100) / 100;
-    } else {
-        row.net_amount = Math.round((gross - row.total_charges) * 100) / 100;
-    }
-
-    // 7. trader_charges (rule F.2.5)
-    // When investor = trader, trader_charges = 0 (no separate trader charges)
-    if (row.trader_charges === null || row.trader_charges === undefined) {
-        if (!row.trader_id || row.trader_id === row.investor_id) {
-            row.trader_charges = 0;
-        } else {
-            // Different trader — calculate from trader's broker rates
-            row.trader_charges = getBrokerageForRow(row.trader_id, row.broker_id, gross, row.security_type, row.asset_class, row.price, row.quantity, row.lots);
-        }
-    }
-
-    // 8. Store rate basis info for breakdown popover display
-    row._chargesBasis = {};
-    var ibaEntry = ibaRatesMap[(row.investor_id || '') + '|' + (row.broker_id || '')];
-    if (ibaEntry) {
-        var rates = ibaEntry.rates || {};
-        var segment = null;
-        if (row.security_type === 'NFO') {
-            if (row.asset_class === 'OPTIONS' && rates.derivatives && rates.derivatives.options) {
-                segment = rates.derivatives.options;
-            } else {
-                segment = rates.derivatives ? rates.derivatives.futures : null;
-            }
-        } else {
-            segment = rates.equity ? rates.equity.delivery : null;
-        }
-        if (segment) {
-            if (segment.flat !== undefined) {
-                var basisStr = 'Flat ₹' + segment.flat + '/lot × ' + Math.abs(row.lots || 1) + ' lots';
-                if (segment.max > 0) basisStr += ' (max ₹' + segment.max + ')';
-                row._chargesBasis.brokerage = basisStr;
-            } else {
-                var pctDisplay = ((segment.pct || 0) * 100).toFixed(2) + '%';
-                row._chargesBasis.brokerage = pctDisplay + ' of price';
-                if (segment.max > 0) row._chargesBasis.brokerage += ' (max ₹' + segment.max + ')';
-                if (inclusive) row._chargesBasis.brokerage += ' [inclusive]';
-            }
-        }
-    }
-    if (!inclusive) {
-        var sttRoundLabel = (txnCat === 'EQUITY_DELIVERY') ? ' (rounded up)' : '';
-        row._chargesBasis.stt = (typeof sttRate !== 'undefined' && sttRate > 0) ? sttRate + '% of gross' + sttRoundLabel : 'N/A';
-        row._chargesBasis._exchange_charges = (typeof exchRate !== 'undefined' && exchRate > 0) ? exchRate + '% of gross' : 'N/A';
-        row._chargesBasis._sebi_charges = (typeof sebiRate !== 'undefined' && sebiRate > 0) ? sebiRate + '% of gross' : 'N/A';
-        row._chargesBasis._stamp_duty = (typeof stampRate !== 'undefined' && stampRate > 0) ? stampRate + '% of gross' : 'N/A';
-        row._chargesBasis._ipft = (typeof ipftRate !== 'undefined' && ipftRate > 0) ? ipftRate + '% of gross (IPFT)' : 'N/A';
-        row._chargesBasis.gst = '18% on (brokerage + exchange + SEBI)';
-    } else {
-        row._chargesBasis.stt = 'Included in brokerage';
-        row._chargesBasis._exchange_charges = 'Included in brokerage';
-        row._chargesBasis._sebi_charges = 'Included in brokerage';
-        row._chargesBasis._stamp_duty = 'Included in brokerage';
-        row._chargesBasis._ipft = 'Included in brokerage';
-        row._chargesBasis.gst = 'Included in brokerage';
-    }
+    wmsAutoCalcCharges(row, {
+        ibaRatesMap: ibaRatesMap,
+        regCharges: regulatoryCharges,
+        investorId: row.investor_id,
+        brokerId: row.broker_id,
+        preserveExisting: true,  // Excel import: preserve user-entered values
+        debug: false
+    });
 }
 
 // ============================================================================
@@ -1168,18 +920,9 @@ async function matchSymbolMultiStage(symbol, securityType, batchMap) {
     return { status: 'error', match: null, matches: [], error: 'Symbol "' + symbol + '" not found in securities_db' + (securityType ? ' (type: ' + securityType + ')' : '') };
 }
 
-// Determine if a security attracts STT (Securities Transaction Tax).
-// ONLY plain EQUITY stocks attract STT in the equity delivery segment.
-// All non-equity instruments (ETFs, MFs, debt funds, SGBs, REITs, InvITs, NCDs, etc.)
-// do NOT attract STT or stamp duty.
+// STT eligibility — thin wrapper calling wms-shared.js canonical function
 function isSTTEligible(row) {
-    var secType = (row._db_security_type || '').toUpperCase();
-
-    // Only EQUITY stocks attract STT
-    if (secType === 'EQUITY') return true;
-
-    // Everything else (ETF, MF, REIT, INVIT, SGB, GOVT_BOND, NCD, LIQUID, DEBT, etc.) is exempt
-    return false;
+    return wmsIsSTTEligible(row._db_security_type || row.security_type);
 }
 
 function allocateCharges(rows, segCharges) {

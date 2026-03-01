@@ -343,6 +343,7 @@
     document.addEventListener('DOMContentLoaded', () => {
         if (!checkAuth()) return;
         checkFyersAuth();
+        wmsLoadRefData(); // Load shared reference data (investors, brokers, IBA rates, reg charges, tags) once
         startIndexRefresh(); // Start index ticker
         document.getElementById('logoutBtn').addEventListener('click', logout);
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {

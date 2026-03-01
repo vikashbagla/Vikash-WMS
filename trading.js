@@ -4,7 +4,8 @@
 // Uses 'tr' prefix to avoid naming conflicts with portfolio.js and utils.js.
 // All module-level state uses var (project convention — avoids TDZ on reload).
 
-var INCOME_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION'];
+// INCOME_TYPES now canonical in wms-shared.js as WMS_INCOME_TYPES
+var INCOME_TYPES = WMS_INCOME_TYPES;
 
 var trTransactions = [];
 var trInvestors = [];

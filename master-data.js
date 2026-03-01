@@ -561,6 +561,7 @@ async function saveInvestor() {
         
         closeInvestorModal();
         loadInvestors();
+        wmsLoadRefData(); // Refresh shared ref data after investor/IBA changes
     } catch (error) {
         console.error('Error saving investor:', error);
         alert('Error: ' + error.message);
@@ -744,6 +745,7 @@ async function saveBroker() {
         }
         closeBrokerModal();
         loadBrokers();
+        wmsLoadRefData(); // Refresh shared ref data after broker changes
     } catch (error) {
         console.error('Error saving broker:', error);
         alert('Error: ' + error.message);
@@ -2873,6 +2875,7 @@ async function saveInlineEdit(td, input, origRate) {
         // Reload data and re-render
         _chargesData = await DB.getChargesConfig();
         renderChargesGrid();
+        wmsLoadRefData(); // Refresh shared ref data after reg charges change
     } catch (e) {
         console.error('Failed to save charge:', e);
         alert('Error saving: ' + e.message);
