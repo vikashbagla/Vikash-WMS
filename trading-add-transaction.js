@@ -1108,13 +1108,27 @@ function atIsChargesInclusive(investorId, brokerId) {
 }
 
 function atGetRegRate(chargeType, txnCat, txnType, exchange) {
+    var exch = exchange || 'NSE';
     for (var i = 0; i < atRegCharges.length; i++) {
         var rc = atRegCharges[i];
         if (rc.charge_type === chargeType &&
             rc.transaction_category === txnCat &&
             rc.transaction_type === txnType &&
-            rc.exchange === (exchange || 'NSE')) {
+            rc.exchange === exch) {
             return rc.rate_percentage || 0;
+        }
+    }
+    // Fallback: if exchange-specific rate not found (e.g. BSE missing STT/SEBI/stamp),
+    // try NSE as fallback since STT, SEBI, stamp duty are national charges, not exchange-specific
+    if (exch !== 'NSE') {
+        for (var j = 0; j < atRegCharges.length; j++) {
+            var rc2 = atRegCharges[j];
+            if (rc2.charge_type === chargeType &&
+                rc2.transaction_category === txnCat &&
+                rc2.transaction_type === txnType &&
+                rc2.exchange === 'NSE') {
+                return rc2.rate_percentage || 0;
+            }
         }
     }
     return 0;

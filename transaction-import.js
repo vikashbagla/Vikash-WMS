@@ -429,13 +429,27 @@ function isChargesInclusive(investorId, brokerId) {
 
 // Get regulatory charge rate from config (rule F.2.3, F.3.2)
 function getRegChargeRate(chargeType, txnCategory, txnType, exchange) {
+    var exch = exchange || 'NSE';
     for (var i = 0; i < regulatoryCharges.length; i++) {
         var rc = regulatoryCharges[i];
         if (rc.charge_type === chargeType &&
             rc.transaction_category === txnCategory &&
             rc.transaction_type === txnType &&
-            rc.exchange === (exchange || 'NSE')) {
+            rc.exchange === exch) {
             return rc.rate_percentage || 0;
+        }
+    }
+    // Fallback: if exchange-specific rate not found (e.g. BSE missing STT/SEBI/stamp),
+    // try NSE as fallback since STT, SEBI, stamp duty are national charges, not exchange-specific
+    if (exch !== 'NSE') {
+        for (var j = 0; j < regulatoryCharges.length; j++) {
+            var rc2 = regulatoryCharges[j];
+            if (rc2.charge_type === chargeType &&
+                rc2.transaction_category === txnCategory &&
+                rc2.transaction_type === txnType &&
+                rc2.exchange === 'NSE') {
+                return rc2.rate_percentage || 0;
+            }
         }
     }
     return 0;
