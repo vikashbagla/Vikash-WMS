@@ -1378,6 +1378,16 @@ function displayCnPreview(parseResult) {
     document.getElementById('cnStatUpdate').textContent = cnUpdateRows.length;
     document.getElementById('cnStatError').textContent = cnErrorRows.length;
 
+    // Info banner — Date, CN Number, Investor, Broker
+    var bannerDate = document.getElementById('cnBannerDate');
+    var bannerCnNo = document.getElementById('cnBannerCnNo');
+    var bannerInv = document.getElementById('cnBannerInvestor');
+    var bannerBrk = document.getElementById('cnBannerBroker');
+    if (bannerDate) bannerDate.textContent = cnTradeDate ? formatDate(cnTradeDate) : '—';
+    if (bannerCnNo) bannerCnNo.textContent = cnCnNumber || '—';
+    if (bannerInv && cnSelectedAccount) bannerInv.textContent = cnSelectedAccount.investor_short_name || '—';
+    if (bannerBrk && cnSelectedAccount) bannerBrk.textContent = cnSelectedAccount.broker_name || cnSelectedAccount.broker_code || '—';
+
     // STT / Charge verification alert
     var alertDiv = document.getElementById('cnChargeAlert');
     if (alertDiv && window._cnChargeVerification) {
@@ -1507,9 +1517,9 @@ function createCnPreviewRow(r, idx) {
         '<td style="text-align:right;">' + cnChargeInputHtml(r, 'gst', rowKey) + '</td>' +
         '<td style="text-align:right;font-weight:600;" id="' + netAmtId + '" class="' + (r.transaction_type === 'SELL' ? 'negative' : '') + '">' +
             formatCnAmount(r.transaction_type === 'SELL' ? -Math.abs(r.net_amount) : Math.abs(r.net_amount)) + '</td>' +
-        '<td style="min-width:140px;position:relative;">' +
-            '<div class="cn-tag-selected" id="' + tagInputId + '_pills" style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:3px;"></div>' +
-            '<input type="text" id="' + tagInputId + '" value="" autocomplete="off" placeholder="type to search tags..." style="width:100%;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;">' +
+        '<td style="width:140px;max-width:140px;position:relative;">' +
+            '<div class="cn-tag-selected" id="' + tagInputId + '_pills" style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:3px;max-width:140px;"></div>' +
+            '<input type="text" id="' + tagInputId + '" value="" autocomplete="off" placeholder="tags..." style="width:100%;max-width:140px;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;box-sizing:border-box;">' +
             '<div class="cn-tag-dropdown" id="' + tagInputId + '_dd" style="display:none;position:absolute;z-index:100;left:0;right:0;max-height:120px;overflow-y:auto;background:#fff;border:1px solid #cbd5e0;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.12);margin-top:2px;"></div>' +
         '</td>';
 

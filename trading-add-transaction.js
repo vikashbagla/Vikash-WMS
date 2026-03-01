@@ -1311,6 +1311,60 @@ function closeAddTxnConfirm() {
 async function importAddTxnToDb() {
     closeAddTxnConfirm();
     document.getElementById('addTxnSaveBtn').disabled = true;
+
+    // --- Duplicate Detection (same logic as Excel import Stage C) ---
+    var txnDate = document.getElementById('addTxnDate').value;
+    var investorId = atSelectedInvestor.id;
+    var brokerId = atSelectedBroker.id;
+    var dupHeaders = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+
+    try {
+        var dupFilter = 'investor_id=eq.' + investorId + '&broker_id=eq.' + brokerId + '&transaction_date=eq.' + txnDate;
+        var dupResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?select=id,symbol,transaction_type,quantity,price&' + dupFilter, { headers: dupHeaders });
+        var existingTxns = dupResp.ok ? await dupResp.json() : [];
+
+        if (existingTxns.length > 0) {
+            // Check each row for duplicates
+            var dupes = [];
+            atRows.forEach(function(row, idx) {
+                var txnType = row.quantity >= 0 ? 'BUY' : 'SELL';
+                for (var e = 0; e < existingTxns.length; e++) {
+                    var ex = existingTxns[e];
+                    if (ex.symbol === row.symbol && ex.transaction_type === txnType) {
+                        dupes.push({
+                            rowNum: idx + 1,
+                            symbol: row.symbol,
+                            type: txnType,
+                            existingQty: ex.quantity,
+                            existingPrice: ex.price,
+                            newQty: Math.abs(row.quantity),
+                            newPrice: row.price
+                        });
+                        break;
+                    }
+                }
+            });
+
+            if (dupes.length > 0) {
+                var dupMsg = 'Potential duplicate(s) found for ' + txnDate + ':\n\n';
+                dupes.forEach(function(d) {
+                    dupMsg += 'Row ' + d.rowNum + ': ' + d.symbol + ' ' + d.type +
+                        ' — existing: ' + d.existingQty + ' @ ' + d.existingPrice +
+                        ', new: ' + d.newQty + ' @ ' + d.newPrice + '\n';
+                });
+                dupMsg += '\nProceed anyway?';
+
+                if (!confirm(dupMsg)) {
+                    document.getElementById('addTxnSaveBtn').disabled = false;
+                    return;
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('Duplicate check failed (proceeding anyway):', e);
+    }
+
+    // --- Proceed with Import ---
     showAlert('Importing ' + atRows.length + ' transaction(s)...', 'info', 3000);
 
     try {

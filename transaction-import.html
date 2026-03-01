@@ -272,6 +272,14 @@
     <div class="section preview-section" id="cnPreviewSection">
         <div class="section-title">Contract Note Preview</div>
 
+        <!-- Info Banner: Date, CN Number, Investor, Broker -->
+        <div id="cnInfoBanner" style="display:flex; gap:24px; padding:8px 14px; margin-bottom:10px; background:#ebf4ff; border:1px solid #bee3f8; border-radius:6px; font-size:12px; color:#2d3748; align-items:center; flex-wrap:wrap;">
+            <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Date:</span> <span id="cnBannerDate" style="font-weight:600;">—</span></div>
+            <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">CN No:</span> <span id="cnBannerCnNo" style="font-weight:600;">—</span></div>
+            <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Investor:</span> <span id="cnBannerInvestor" style="font-weight:600;">—</span></div>
+            <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Broker:</span> <span id="cnBannerBroker" style="font-weight:600;">—</span></div>
+        </div>
+
         <div class="stats">
             <div class="stat-card"><div class="stat-label">Total Rows</div><div class="stat-value" id="cnStatTotal">0</div></div>
             <div class="stat-card" style="border-left-color:#38a169;"><div class="stat-label">New</div><div class="stat-value" id="cnStatNew" style="color:#38a169;">0</div></div>
