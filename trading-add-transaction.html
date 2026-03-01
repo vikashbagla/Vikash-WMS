@@ -1,0 +1,594 @@
+<head>
+<style>
+/* Add Transaction Modal */
+.addTxn-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.4);
+    z-index: 1200;
+    align-items: center;
+    justify-content: center;
+}
+.addTxn-overlay.show {
+    display: flex;
+}
+.addTxn-modal {
+    background: #fff;
+    border-radius: 10px;
+    max-width: 1200px;
+    width: 95%;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+.addTxn-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.addTxn-header h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #2d3748;
+}
+.addTxn-body {
+    padding: 12px 16px;
+    overflow-y: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+.addTxn-footer {
+    padding: 10px 16px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* Header fields row */
+.addTxn-fields-row {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 12px;
+    align-items: flex-end;
+}
+.addTxn-field {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+.addTxn-field label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #718096;
+    text-transform: uppercase;
+    margin-bottom: 3px;
+    letter-spacing: 0.3px;
+}
+.addTxn-field input[type="date"],
+.addTxn-field input[type="text"] {
+    padding: 5px 8px;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #2d3748;
+    outline: none;
+}
+.addTxn-field input:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102,126,234,0.15);
+}
+
+/* Search dropdowns */
+.addTxn-search-dd {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 300;
+    background: white;
+    border: 1px solid #cbd5e0;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    margin-top: 2px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+.addTxn-search-dd.show {
+    display: block;
+}
+.addTxn-dd-item {
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #2d3748;
+    border-bottom: 1px solid #f0f4f8;
+}
+.addTxn-dd-item:last-child {
+    border-bottom: none;
+}
+.addTxn-dd-item:hover,
+.addTxn-dd-item.highlighted {
+    background: #edf2f7;
+}
+.addTxn-dd-item .sub {
+    font-size: 10px;
+    color: #a0aec0;
+    margin-left: 6px;
+}
+.addTxn-dd-item.nfo {
+    color: #667eea;
+}
+
+/* Selected badge (shown next to input after selection) */
+.addTxn-selected-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: #ebf4ff;
+    color: #3182ce;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 10px;
+    margin-top: 3px;
+}
+.addTxn-selected-badge .clear {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+    color: #a0aec0;
+    margin-left: 2px;
+}
+.addTxn-selected-badge .clear:hover {
+    color: #dc2626;
+}
+
+/* Entry table */
+.addTxn-table-wrap {
+    flex: 1;
+    min-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+}
+.addTxn-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.addTxn-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.addTxn-table th {
+    background: #f7fafc;
+    padding: 6px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #718096;
+    text-transform: uppercase;
+    border-bottom: 2px solid #e2e8f0;
+    white-space: nowrap;
+    letter-spacing: 0.3px;
+}
+.addTxn-table th.r { text-align: right; }
+.addTxn-table td {
+    padding: 4px 4px;
+    border-bottom: 1px solid #f0f4f8;
+    font-size: 11px;
+    vertical-align: top;
+}
+.addTxn-table td.r { text-align: right; }
+
+/* Inputs inside table */
+.addTxn-table input[type="text"],
+.addTxn-table input[type="number"],
+.addTxn-table select {
+    padding: 4px 5px;
+    border: 1px solid #e2e8f0;
+    border-radius: 3px;
+    font-size: 11px;
+    color: #2d3748;
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+}
+.addTxn-table input:focus,
+.addTxn-table select:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 1px rgba(102,126,234,0.2);
+}
+.addTxn-table input[type="number"] {
+    text-align: right;
+}
+.addTxn-table input.disabled-lots {
+    background: #f7fafc;
+    color: #a0aec0;
+    cursor: not-allowed;
+}
+.addTxn-table input.error-border {
+    border-color: #dc2626 !important;
+}
+
+/* Read-only cells */
+.addTxn-ro {
+    background: #f7fafc;
+    color: #2d3748;
+    font-weight: 500;
+    text-align: right;
+    padding: 5px 6px !important;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+/* Charges cell — dashed border hint for dblclick */
+.addTxn-charges-cell {
+    cursor: pointer;
+    border: 1px dashed #cbd5e0 !important;
+    border-radius: 3px;
+}
+.addTxn-charges-cell:hover {
+    background: #ebf4ff;
+}
+
+/* Symbol dropdown inside table */
+.addTxn-sym-dd {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 200;
+    background: white;
+    border: 1px solid #cbd5e0;
+    border-radius: 3px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    max-height: 180px;
+    overflow-y: auto;
+    margin-top: 1px;
+}
+.addTxn-sym-dd.show { display: block; }
+
+/* Tag pills */
+.addTxn-tag-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    margin-top: 2px;
+}
+.addTxn-tag-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 1px 7px;
+    font-size: 10px;
+    background: #bee3f8;
+    color: #2b6cb0;
+    border-radius: 10px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.addTxn-tag-pill .x {
+    font-size: 12px;
+    font-weight: 700;
+    margin-left: 1px;
+}
+.addTxn-tag-dd {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    z-index: 200;
+    background: white;
+    border: 1px solid #cbd5e0;
+    border-radius: 3px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    max-height: 120px;
+    overflow-y: auto;
+    padding: 4px 6px;
+    flex-wrap: wrap;
+    gap: 3px;
+}
+.addTxn-tag-dd.show { display: flex; }
+.addTxn-tag-dd-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 10px;
+    background: #e2e8f0;
+    color: #4a5568;
+    border-radius: 10px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.addTxn-tag-dd-pill:hover {
+    background: #cbd5e0;
+}
+
+/* Delete row button */
+.addTxn-del-btn {
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 12px;
+    color: #a0aec0;
+    border-radius: 3px;
+    padding: 0;
+    line-height: 22px;
+    text-align: center;
+}
+.addTxn-del-btn:hover {
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+/* Charges Breakdown Popover */
+.addTxn-cp-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.25);
+    z-index: 1300;
+    align-items: center;
+    justify-content: center;
+}
+.addTxn-cp-overlay.show { display: flex; }
+.addTxn-cp-modal {
+    background: white;
+    border-radius: 8px;
+    padding: 14px 16px;
+    min-width: 340px;
+    max-width: 420px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+}
+.addTxn-cp-title {
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #2d3748;
+}
+.addTxn-cp-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 4px 0;
+    border-bottom: 1px solid #f0f4f8;
+    font-size: 12px;
+}
+.addTxn-cp-label {
+    color: #4a5568;
+    flex: 1;
+}
+.addTxn-cp-basis {
+    display: block;
+    font-size: 9px;
+    color: #a0aec0;
+    margin-top: 1px;
+}
+.addTxn-cp-value {
+    text-align: right;
+    min-width: 80px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+}
+.addTxn-cp-value:hover {
+    background: #f7fafc;
+}
+.addTxn-cp-total-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0 4px;
+    border-top: 2px solid #e2e8f0;
+    margin-top: 4px;
+    font-weight: 700;
+    color: #2d3748;
+    font-size: 12px;
+}
+.addTxn-cp-total-val {
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 3px;
+    min-width: 80px;
+    text-align: right;
+}
+.addTxn-cp-total-val:hover {
+    background: #f7fafc;
+}
+.addTxn-cp-hint {
+    font-size: 9px;
+    color: #9ca3af;
+    margin-top: 6px;
+    text-align: center;
+}
+.addTxn-cp-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 10px;
+}
+.charge-edit-input {
+    padding: 2px 4px;
+    border: 1px solid #667eea;
+    border-radius: 3px;
+    font-size: 12px;
+    text-align: right;
+    outline: none;
+    background: #ebf4ff;
+}
+
+/* Confirmation overlay */
+.addTxn-confirm-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.35);
+    z-index: 1300;
+    align-items: center;
+    justify-content: center;
+}
+.addTxn-confirm-overlay.show { display: flex; }
+.addTxn-confirm-modal {
+    background: white;
+    border-radius: 8px;
+    padding: 16px 20px;
+    min-width: 400px;
+    max-width: 700px;
+    max-height: 60vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+}
+.addTxn-confirm-modal h4 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #2d3748;
+}
+.addTxn-confirm-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    flex: 1;
+    overflow-y: auto;
+}
+.addTxn-confirm-table th {
+    background: #f7fafc;
+    padding: 5px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #718096;
+    text-transform: uppercase;
+    text-align: left;
+    border-bottom: 1px solid #e2e8f0;
+}
+.addTxn-confirm-table th.r { text-align: right; }
+.addTxn-confirm-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #f0f4f8;
+}
+.addTxn-confirm-table td.r { text-align: right; font-variant-numeric: tabular-nums; }
+.addTxn-confirm-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #e2e8f0;
+}
+.type-buy { color: #059669; font-weight: 600; }
+.type-sell { color: #dc2626; font-weight: 600; }
+</style>
+</head>
+<body>
+<!-- Add Transaction Modal -->
+<div class="addTxn-overlay" id="addTxnOverlay">
+    <div class="addTxn-modal">
+        <div class="addTxn-header">
+            <h3>Add Transaction</h3>
+            <button class="btn-close-modal" id="addTxnCloseBtn">&#x2715;</button>
+        </div>
+        <div class="addTxn-body">
+            <!-- Header fields -->
+            <div class="addTxn-fields-row">
+                <div class="addTxn-field" style="width: 140px;">
+                    <label>Date</label>
+                    <input type="date" id="addTxnDate">
+                </div>
+                <div class="addTxn-field" style="flex: 1;">
+                    <label>Investor</label>
+                    <input type="text" id="addTxnInvInput" placeholder="Type to search..." autocomplete="off">
+                    <div class="addTxn-search-dd" id="addTxnInvDd"></div>
+                    <div id="addTxnInvBadge"></div>
+                </div>
+                <div class="addTxn-field" style="flex: 1;">
+                    <label>Broker</label>
+                    <input type="text" id="addTxnBrkInput" placeholder="Type to search..." autocomplete="off">
+                    <div class="addTxn-search-dd" id="addTxnBrkDd"></div>
+                    <div id="addTxnBrkBadge"></div>
+                </div>
+            </div>
+
+            <div style="border-top: 1px solid #e2e8f0; margin-bottom: 10px;"></div>
+
+            <!-- Entry table -->
+            <div class="addTxn-table-wrap">
+                <table class="addTxn-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 110px;">Trader</th>
+                            <th style="width: 170px;">Symbol</th>
+                            <th class="r" style="width: 60px;">Lots</th>
+                            <th class="r" style="width: 70px;">Qty</th>
+                            <th class="r" style="width: 80px;">Price</th>
+                            <th class="r" style="width: 90px;">Gross Amt</th>
+                            <th class="r" style="width: 85px;">Tot Charges</th>
+                            <th class="r" style="width: 85px;">Trd Charges</th>
+                            <th class="r" style="width: 90px;">Net Amt</th>
+                            <th style="width: 130px;">Tags</th>
+                            <th style="width: 26px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="addTxnTbody"></tbody>
+                </table>
+            </div>
+        </div>
+        <div class="addTxn-footer">
+            <button class="btn-secondary" id="addTxnCancelBtn">Cancel</button>
+            <button class="btn-primary" id="addTxnSaveBtn">Save Transactions</button>
+        </div>
+    </div>
+</div>
+
+<!-- Charges Breakdown Popover -->
+<div class="addTxn-cp-overlay" id="addTxnCpOverlay">
+    <div class="addTxn-cp-modal">
+        <h4 class="addTxn-cp-title" id="addTxnCpTitle">Charges</h4>
+        <div id="addTxnCpBody"></div>
+        <div class="addTxn-cp-total-row">
+            <span>Total</span>
+            <span class="addTxn-cp-total-val" id="addTxnCpTotal" title="Double-click to override">0.00</span>
+        </div>
+        <div class="addTxn-cp-hint">Double-click values to edit</div>
+        <div class="addTxn-cp-footer">
+            <button class="btn-secondary" style="padding: 4px 12px; font-size: 11px;" id="addTxnCpCloseBtn">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Confirmation Dialog -->
+<div class="addTxn-confirm-overlay" id="addTxnConfirmOverlay">
+    <div class="addTxn-confirm-modal">
+        <h4 id="addTxnConfirmTitle">Confirm Transactions</h4>
+        <div style="flex: 1; overflow-y: auto;">
+            <table class="addTxn-confirm-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Symbol</th>
+                        <th>Type</th>
+                        <th class="r">Qty</th>
+                        <th class="r">Price</th>
+                        <th class="r">Net Amt</th>
+                    </tr>
+                </thead>
+                <tbody id="addTxnConfirmBody"></tbody>
+            </table>
+        </div>
+        <div class="addTxn-confirm-footer">
+            <button class="btn-secondary" id="addTxnConfirmCancelBtn">Cancel</button>
+            <button class="btn-primary" id="addTxnConfirmOkBtn">Confirm Import</button>
+        </div>
+    </div>
+</div>
+</body>

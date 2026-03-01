@@ -83,7 +83,7 @@ function trSetupEventHandlers() {
 
     // Header buttons
     document.getElementById('trAddTxnBtn').addEventListener('click', function() {
-        showAlert('Add Transaction — Coming soon!', 'info', 2000);
+        trOpenAddTransaction();
     });
     document.getElementById('trRefreshBtn').addEventListener('click', trRefresh);
     document.getElementById('trToggleZeroBtn').addEventListener('click', trToggleZeroHoldings);
@@ -1707,6 +1707,61 @@ async function trLoadTransactionsModule() {
     // Initialize or re-activate
     if (window.trTxInit) {
         window.trTxInit();
+    }
+}
+
+// ============================================================================
+// ADD TRANSACTION MODULE (loaded on demand)
+// ============================================================================
+
+var trAddTxnLoaded = false;
+
+async function trOpenAddTransaction() {
+    if (!trAddTxnLoaded) {
+        try {
+            // Load HTML
+            var htmlResp = await fetch('trading-add-transaction.html?t=' + Date.now());
+            if (!htmlResp.ok) throw new Error('Failed to load trading-add-transaction.html');
+            var htmlText = await htmlResp.text();
+
+            // Extract <style> and inject to <head>
+            var parser = new DOMParser();
+            var doc = parser.parseFromString(htmlText, 'text/html');
+            var styles = doc.querySelectorAll('style');
+            styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+
+            // Inject body content (modal overlays) into a container div
+            var container = document.createElement('div');
+            container.id = 'tr-add-txn-container';
+            container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
+            document.body.appendChild(container);
+
+            // Load JS
+            await new Promise(function(resolve, reject) {
+                var script = document.createElement('script');
+                script.src = 'trading-add-transaction.js?t=' + Date.now();
+                script.onload = resolve;
+                script.onerror = function() { reject(new Error('Failed to load trading-add-transaction.js')); };
+                document.body.appendChild(script);
+            });
+
+            trAddTxnLoaded = true;
+
+            // Small delay for init to complete, then open
+            setTimeout(function() {
+                if (typeof window.openAddTxnModal === 'function') {
+                    window.openAddTxnModal();
+                }
+            }, 100);
+        } catch (err) {
+            console.error('Trading: Failed to load add-transaction module:', err);
+            showAlert('Failed to load Add Transaction: ' + err.message, 'error');
+        }
+    } else {
+        // Already loaded — just open
+        if (typeof window.openAddTxnModal === 'function') {
+            window.openAddTxnModal();
+        }
     }
 }
 
