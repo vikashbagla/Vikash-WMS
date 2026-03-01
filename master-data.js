@@ -1230,7 +1230,7 @@ async function startSync() {
 
     } catch (err) {
         progLbl.textContent = '❌ Error: ' + err.message;
-        progBar.style.background = '#e53e3e';
+        progBar.style.background = '#dc2626';
         console.error(err);
     } finally {
         btn.disabled = false;

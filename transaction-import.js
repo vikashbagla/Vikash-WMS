@@ -1229,7 +1229,7 @@ function displayCnPreview(parseResult) {
         document.getElementById('cnErrorSection').style.display = '';
         cnErrorRows.forEach(function(e, i) {
             var tr = document.createElement('tr');
-            tr.innerHTML = '<td>' + (i+1) + '</td><td>' + e.description + '</td><td style="color:#e53e3e;">' + e.error + '</td>';
+            tr.innerHTML = '<td>' + (i+1) + '</td><td>' + e.description + '</td><td style="color:#dc2626;">' + e.error + '</td>';
             errorTbody.appendChild(tr);
         });
     } else {
