@@ -561,7 +561,7 @@ function attachAddTxnRowHandlers(rowId) {
 // ============================================================================
 // SYMBOL SEARCH
 // Options parsing & candidate building delegated to wms-shared.js.
-// See WMS-CODE-CONSOLIDATION.md for the standard symbol search process.
+// See WMS-LESSONS.md Section B.9 for the shared module inventory.
 // ============================================================================
 
 // --- Options functions: delegated to wms-shared.js ---

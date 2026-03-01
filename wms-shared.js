@@ -1,7 +1,7 @@
 // ============================================================================
 // WMS SHARED MODULE — Canonical implementations used across the entire app.
 // Any function here MUST NOT be duplicated elsewhere.
-// See WMS-CODE-CONSOLIDATION.md for the full audit and rules.
+// See WMS-LESSONS.md Section B.6-B.9 for shared code rules and inventory.
 //
 // Naming: all shared functions use `wms` prefix.
 // Loading: this file is loaded in app.html AFTER utils.js, BEFORE feature modules.
