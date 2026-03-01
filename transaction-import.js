@@ -1741,16 +1741,7 @@ function createCnTotalsRow(rows, sectionId) {
 }
 
 // Format date as dd-MMM-yy (rule D.x — settled date format)
-function formatExcelDate(dateStr) {
-    if (!dateStr) return '-';
-    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    var d = new Date(dateStr + 'T00:00:00');
-    if (isNaN(d.getTime())) return dateStr;
-    var dd = ('0' + d.getDate()).slice(-2);
-    var mmm = months[d.getMonth()];
-    var yy = String(d.getFullYear()).slice(-2);
-    return dd + '-' + mmm + '-' + yy;
-}
+function formatExcelDate(dateStr) { return formatDate(dateStr); }
 
 function formatCnAmount(val) {
     if (val === null || val === undefined) return '-';
@@ -1910,7 +1901,7 @@ window.importCnToDatabase = async function() {
     }
 };
 
-function roundMoney(v) { return Math.round((v || 0) * 100) / 100; }
+function roundMoney(v) { return wmsRoundMoney(v); }
 
 function buildTransactionRecord(row) {
     return {

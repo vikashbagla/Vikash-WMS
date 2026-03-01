@@ -359,6 +359,7 @@
     const _v = Date.now();
     document.getElementById('app-styles-link').href = `app-styles.css?v=${_v}`;
     document.write(`<script src="utils.js?v=${_v}"><\/script>`);
+    document.write(`<script src="wms-shared.js?v=${_v}"><\/script>`);
     document.write(`<script src="portfolio.js?v=${_v}"><\/script>`);
     </script>
 </body>

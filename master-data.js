@@ -2784,11 +2784,7 @@ function renderExchangeChargeCell(cat) {
     return '<td style="text-align:center;line-height:1.8;">' + lines.join('<br>') + '</td>';
 }
 
-function formatDateShort(dateStr) {
-    var d = new Date(dateStr + 'T00:00:00');
-    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return ('0' + d.getDate()).slice(-2) + '-' + months[d.getMonth()] + '-' + String(d.getFullYear()).slice(-2);
-}
+function formatDateShort(dateStr) { return formatDate(dateStr); }
 
 function startInlineEdit(td) {
     // Don't open another input if already editing

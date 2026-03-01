@@ -1427,250 +1427,26 @@ function trWlCloseAddDialog() {
 // OPTIONS ON-DEMAND SEARCH
 // ============================================================================
 
-// Indices that have weekly expiries (all others are monthly)
-var WEEKLY_EXPIRY_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
-var MONTHS_SHORT = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+// Options constants — aliases for wms-shared.js (used by other functions in this file)
+var MONTHS_SHORT = WMS_MONTHS_SHORT;
+var WEEKLY_EXPIRY_UNDERLYINGS = WMS_WEEKLY_EXPIRY_UNDERLYINGS;
 
 /**
- * Parse user input to detect options intent.
- * Accepts formats like: "NIFTY 25000 CE", "RELIANCE 2800 PE MAR", "BANKNIFTY 52000CE FEB"
- * Returns null if not an options query.
- * Returns { underlying, strike, optionType, expiryHint } if detected.
+ * Delegated to wms-shared.js (wmsParseOptionsQuery)
  */
-function trWlParseOptionsQuery(query) {
-    if (!query) return null;
-    var upper = query.toUpperCase().trim();
-
-    // Must contain CE or PE
-    if (upper.indexOf('CE') < 0 && upper.indexOf('PE') < 0) return null;
-
-    // Normalize — remove extra spaces, split by space
-    var parts = upper.replace(/\s+/g, ' ').split(' ');
-
-    var underlying = null;
-    var strike = null;
-    var optionType = null;
-    var expiryHint = null;
-
-    for (var i = 0; i < parts.length; i++) {
-        var p = parts[i];
-
-        // Check for option type (CE/PE) — could be standalone or suffix on a number
-        if (p === 'CE' || p === 'PE') {
-            optionType = p;
-            continue;
-        }
-        // Number with CE/PE suffix — e.g., "25000CE"
-        var suffixMatch = p.match(/^(\d+(?:\.\d+)?)(CE|PE)$/);
-        if (suffixMatch) {
-            strike = parseFloat(suffixMatch[1]);
-            optionType = suffixMatch[2];
-            continue;
-        }
-
-        // Pure number — strike price
-        if (/^\d+(?:\.\d+)?$/.test(p)) {
-            strike = parseFloat(p);
-            continue;
-        }
-
-        // Month hint — 3 letter month name
-        if (MONTHS_SHORT.indexOf(p) >= 0) {
-            expiryHint = p;
-            continue;
-        }
-
-        // Otherwise treat as underlying symbol
-        if (!underlying && /^[A-Z&]+$/.test(p)) {
-            underlying = p;
-        }
-    }
-
-    if (!underlying || strike === null || !optionType) return null;
-
-    return {
-        underlying: underlying,
-        strike: strike,
-        optionType: optionType,
-        expiryHint: expiryHint  // null or 'FEB', 'MAR', etc.
-    };
-}
+function trWlParseOptionsQuery(query) { return wmsParseOptionsQuery(query); }
 
 /**
- * Build Fyers option symbol candidates for given underlying + strike + type.
- * Generates candidates across multiple expiry dates.
- * For weekly expiry underlyings: current + next 3 weekly expiries (Thu format: YYMMDD)
- * For monthly: current month + next 2 months (YY + MMM format)
- *
- * Fyers options format:
- *   Monthly: NSE:NIFTY25FEB25000CE  (exchange:underlying + YY + MMM + strike + CE/PE)
- *   Weekly:  NSE:NIFTY2502725000CE  (exchange:underlying + YY + MM + DD + strike + CE/PE)
- *            — BUT monthly expiry week still uses MMM format
+ * Delegated to wms-shared.js (wmsBuildOptionsCandidates)
  */
-function trWlBuildOptionsCandidates(underlying, strike, optionType, expiryHint) {
-    var now = new Date();
-    var candidates = [];
-    var exchange = 'NSE';
+function trWlBuildOptionsCandidates(underlying, strike, optionType, expiryHint) { return wmsBuildOptionsCandidates(underlying, strike, optionType, expiryHint); }
 
-    // MCX underlyings
-    var mcxUnderlyings = ['CRUDEOIL', 'NATURALGAS', 'GOLD', 'GOLDM', 'SILVER', 'SILVERM', 'COPPER'];
-    if (mcxUnderlyings.indexOf(underlying) >= 0) {
-        exchange = 'MCX';
-    }
-
-    // Format strike — Fyers uses integer for whole numbers, decimal otherwise
-    var strikeStr = strike % 1 === 0 ? String(Math.round(strike)) : String(strike);
-
-    var isWeekly = WEEKLY_EXPIRY_UNDERLYINGS.indexOf(underlying) >= 0;
-
-    if (expiryHint) {
-        // User specified a month — generate only that month's candidates
-        var monthIdx = MONTHS_SHORT.indexOf(expiryHint);
-        var year = now.getFullYear();
-        // If the hint month is before current month, assume next year
-        if (monthIdx < now.getMonth()) year++;
-        var yy = String(year).slice(2);
-
-        // Monthly format: NSE:NIFTY25FEB25000CE
-        candidates.push(exchange + ':' + underlying + yy + expiryHint + strikeStr + optionType);
-
-        // For weekly underlyings, also generate weekly expiries within that month
-        if (isWeekly) {
-            var weeklyDates = trWlGetWeeklyExpiries(year, monthIdx);
-            var monthlyLast = trWlGetMonthlyExpiry(year, monthIdx);
-            weeklyDates.forEach(function(d) {
-                // Skip the monthly expiry date (already covered by MMM format)
-                if (d.getDate() === monthlyLast.getDate() && d.getMonth() === monthlyLast.getMonth()) return;
-                var mm = String(d.getMonth() + 1).padStart(2, '0');
-                var dd = String(d.getDate()).padStart(2, '0');
-                candidates.push(exchange + ':' + underlying + yy + mm + dd + strikeStr + optionType);
-            });
-        }
-    } else {
-        // No expiry hint — generate upcoming expiries
-        if (isWeekly) {
-            // Generate next 6 weekly expiries + monthly expiries for next 2 months
-            var seenDates = {};
-            for (var w = 0; w < 6; w++) {
-                var targetDate = new Date(now);
-                targetDate.setDate(targetDate.getDate() + (w * 7));
-                var thu = trWlNextThursday(targetDate);
-                var dateKey = thu.toISOString().slice(0, 10);
-                if (seenDates[dateKey]) continue;
-                seenDates[dateKey] = true;
-
-                var yr = thu.getFullYear();
-                var yy2 = String(yr).slice(2);
-
-                // Check if this is a monthly expiry (last Thursday of the month)
-                var monthlyExp = trWlGetMonthlyExpiry(yr, thu.getMonth());
-                if (thu.getDate() === monthlyExp.getDate() && thu.getMonth() === monthlyExp.getMonth()) {
-                    // Monthly format
-                    candidates.push(exchange + ':' + underlying + yy2 + MONTHS_SHORT[thu.getMonth()] + strikeStr + optionType);
-                } else {
-                    // Weekly format: YYMMDD
-                    var mm2 = String(thu.getMonth() + 1).padStart(2, '0');
-                    var dd2 = String(thu.getDate()).padStart(2, '0');
-                    candidates.push(exchange + ':' + underlying + yy2 + mm2 + dd2 + strikeStr + optionType);
-                }
-            }
-        } else {
-            // Monthly options — generate current month + next 2 months
-            for (var m = 0; m < 3; m++) {
-                var d2 = new Date(now.getFullYear(), now.getMonth() + m, 1);
-                var yy3 = String(d2.getFullYear()).slice(2);
-                candidates.push(exchange + ':' + underlying + yy3 + MONTHS_SHORT[d2.getMonth()] + strikeStr + optionType);
-            }
-        }
-    }
-
-    return candidates;
-}
-
-// Get the next Thursday on or after the given date
-function trWlNextThursday(from) {
-    var d = new Date(from);
-    var day = d.getDay(); // 0=Sun, 4=Thu
-    var diff = (4 - day + 7) % 7;
-    if (diff === 0 && d.getHours() >= 15) diff = 7; // If already past market close on Thu, next Thu
-    d.setDate(d.getDate() + diff);
-    return d;
-}
-
-// Get all Thursdays in a given month (for weekly expiry dates)
-function trWlGetWeeklyExpiries(year, month) {
-    var thursdays = [];
-    var d = new Date(year, month, 1);
-    while (d.getMonth() === month) {
-        if (d.getDay() === 4) { // Thursday
-            thursdays.push(new Date(d));
-        }
-        d.setDate(d.getDate() + 1);
-    }
-    return thursdays;
-}
-
-// Get the last Thursday of a month (monthly expiry date)
-function trWlGetMonthlyExpiry(year, month) {
-    var d = new Date(year, month + 1, 0); // Last day of month
-    while (d.getDay() !== 4) {
-        d.setDate(d.getDate() - 1);
-    }
-    return d;
-}
+// Date helpers (wmsNextThursday, wmsGetWeeklyExpiries, wmsGetMonthlyExpiry) now in wms-shared.js
 
 /**
- * Format an options Fyers symbol into a human-readable display label.
- * e.g., "NSE:NIFTY25FEB25000CE" → "NIFTY 25000 CE FEB25"
- *        "NSE:NIFTY25022725000CE" → "NIFTY 25000 CE 27FEB25"
- *
- * Extracts strike and expiry from the Fyers symbol itself (not from parsed input)
- * to ensure the display matches what Fyers actually returned.
+ * Delegated to wms-shared.js (wmsFormatOptionsDisplay)
  */
-function trWlFormatOptionsDisplay(fyersSymbol, underlying, strike, optionType) {
-    // Extract everything after exchange prefix and underlying name
-    var afterExchange = fyersSymbol.split(':')[1] || fyersSymbol;
-    var rest = afterExchange.substring(underlying.length);
-    // rest is like "25FEB25000CE" (monthly) or "25022725000CE" (weekly)
-
-    // Remove the strike+optionType suffix to isolate the expiry part
-    // Try both integer and original strike representations
-    var strikeInt = String(Math.round(strike));
-    var expiryPart = rest;
-    // Remove from the END — find last occurrence of strikeStr+optionType
-    var suffixInt = strikeInt + optionType;
-    var suffixOrig = String(strike) + optionType;
-    if (expiryPart.endsWith(suffixInt)) {
-        expiryPart = expiryPart.substring(0, expiryPart.length - suffixInt.length);
-    } else if (expiryPart.endsWith(suffixOrig)) {
-        expiryPart = expiryPart.substring(0, expiryPart.length - suffixOrig.length);
-    }
-
-    // Also extract the actual strike from the symbol (in case it differs from parsed input)
-    var actualStrike = strike; // default to parsed
-    var afterExpiry = rest.substring(expiryPart.length);
-    var strikeFromSymbol = afterExpiry.replace(optionType, '');
-    if (strikeFromSymbol && !isNaN(Number(strikeFromSymbol))) {
-        actualStrike = Number(strikeFromSymbol);
-    }
-
-    var expiryLabel = expiryPart; // fallback
-    if (expiryPart.length === 5) {
-        // Monthly: YYMMM → e.g., "26MAR" — keep as-is (standard format)
-        expiryLabel = expiryPart;
-    } else if (expiryPart.length === 6) {
-        // Weekly: YYMMDD → convert to "DDMMMYY"
-        var yyW = expiryPart.substring(0, 2);
-        var mmW = parseInt(expiryPart.substring(2, 4)) - 1;
-        var ddW = expiryPart.substring(4, 6);
-        if (mmW >= 0 && mmW < 12) {
-            expiryLabel = ddW + MONTHS_SHORT[mmW] + yyW;
-        }
-    }
-
-    console.log('Watchlist: Display format — fyersSymbol:', fyersSymbol, '→ expiry:', expiryPart, '→ label:', expiryLabel, '→ strike:', actualStrike);
-    return underlying + ' ' + actualStrike + ' ' + optionType + ' ' + expiryLabel;
-}
+function trWlFormatOptionsDisplay(fyersSymbol, underlying, strike, optionType) { return wmsFormatOptionsDisplay(fyersSymbol, underlying, strike, optionType); }
 
 /**
  * Search options via Fyers API — builds candidates, batch validates, returns valid ones.

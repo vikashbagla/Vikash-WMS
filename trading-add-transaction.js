@@ -27,9 +27,7 @@ var atInvDdIdx = -1;
 var atBrkDdIdx = -1;
 var atSymDdIdx = {};          // rowId → highlighted index
 
-// Options search constants (same as trading-watchlist.js — keep in sync)
-var AT_MONTHS_SHORT = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-var AT_WEEKLY_EXPIRY_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
+// Options constants now in wms-shared.js (WMS_MONTHS_SHORT, WMS_WEEKLY_EXPIRY_UNDERLYINGS)
 
 // Charges popover state
 var atCpRowId = null;
@@ -616,147 +614,15 @@ function attachAddTxnRowHandlers(rowId) {
 }
 
 // ============================================================================
-// Symbol Search
-// NOTE: The search process below mirrors trading-watchlist.js trWlSearchSecurities.
-// This is the standard process for symbol search across the app:
-//   1. Check if query is an options query (contains CE/PE + underlying + strike)
-//   2. If options: build Fyers symbol candidates across expiry dates, validate via
-//      Fyers quotes API, display valid contracts
-//   3. If not options: parallel search securities_db (CM) + securities_nfo (NFO/F&O)
-//      via Supabase ilike on symbol/name fields, display combined results
-// Any new symbol search in the app should follow this same process.
+// SYMBOL SEARCH
+// Options parsing & candidate building delegated to wms-shared.js.
+// See WMS-CODE-CONSOLIDATION.md for the standard symbol search process.
 // ============================================================================
 
-// --- Options Query Parser (ported from trading-watchlist.js trWlParseOptionsQuery) ---
-function atParseOptionsQuery(query) {
-    if (!query) return null;
-    var upper = query.toUpperCase().trim();
-    if (upper.indexOf('CE') < 0 && upper.indexOf('PE') < 0) return null;
-    var parts = upper.replace(/\s+/g, ' ').split(' ');
-    var underlying = null;
-    var strike = null;
-    var optionType = null;
-    var expiryHint = null;
-    for (var i = 0; i < parts.length; i++) {
-        var p = parts[i];
-        if (p === 'CE' || p === 'PE') { optionType = p; continue; }
-        var suffixMatch = p.match(/^(\d+(?:\.\d+)?)(CE|PE)$/);
-        if (suffixMatch) { strike = parseFloat(suffixMatch[1]); optionType = suffixMatch[2]; continue; }
-        if (/^\d+(?:\.\d+)?$/.test(p)) { strike = parseFloat(p); continue; }
-        if (AT_MONTHS_SHORT.indexOf(p) >= 0) { expiryHint = p; continue; }
-        if (!underlying && /^[A-Z&]+$/.test(p)) { underlying = p; }
-    }
-    if (!underlying || strike === null || !optionType) return null;
-    return { underlying: underlying, strike: strike, optionType: optionType, expiryHint: expiryHint };
-}
-
-// --- Fyers option symbol candidate builder (ported from trWlBuildOptionsCandidates) ---
-function atNextThursday(from) {
-    var d = new Date(from);
-    var day = d.getDay();
-    var diff = (4 - day + 7) % 7;
-    if (diff === 0 && d.getHours() >= 15) diff = 7;
-    d.setDate(d.getDate() + diff);
-    return d;
-}
-function atGetWeeklyExpiries(year, month) {
-    var thursdays = [];
-    var d = new Date(year, month, 1);
-    while (d.getMonth() === month) {
-        if (d.getDay() === 4) thursdays.push(new Date(d));
-        d.setDate(d.getDate() + 1);
-    }
-    return thursdays;
-}
-function atGetMonthlyExpiry(year, month) {
-    var d = new Date(year, month + 1, 0);
-    while (d.getDay() !== 4) d.setDate(d.getDate() - 1);
-    return d;
-}
-function atBuildOptionsCandidates(underlying, strike, optionType, expiryHint) {
-    var now = new Date();
-    var candidates = [];
-    var exchange = 'NSE';
-    var mcxUnderlyings = ['CRUDEOIL', 'NATURALGAS', 'GOLD', 'GOLDM', 'SILVER', 'SILVERM', 'COPPER'];
-    if (mcxUnderlyings.indexOf(underlying) >= 0) exchange = 'MCX';
-    var strikeStr = strike % 1 === 0 ? String(Math.round(strike)) : String(strike);
-    var isWeekly = AT_WEEKLY_EXPIRY_UNDERLYINGS.indexOf(underlying) >= 0;
-    if (expiryHint) {
-        var monthIdx = AT_MONTHS_SHORT.indexOf(expiryHint);
-        var year = now.getFullYear();
-        if (monthIdx < now.getMonth()) year++;
-        var yy = String(year).slice(2);
-        candidates.push(exchange + ':' + underlying + yy + expiryHint + strikeStr + optionType);
-        if (isWeekly) {
-            var weeklyDates = atGetWeeklyExpiries(year, monthIdx);
-            var monthlyLast = atGetMonthlyExpiry(year, monthIdx);
-            weeklyDates.forEach(function(d) {
-                if (d.getDate() === monthlyLast.getDate() && d.getMonth() === monthlyLast.getMonth()) return;
-                var mm = String(d.getMonth() + 1).padStart(2, '0');
-                var dd2 = String(d.getDate()).padStart(2, '0');
-                candidates.push(exchange + ':' + underlying + yy + mm + dd2 + strikeStr + optionType);
-            });
-        }
-    } else {
-        if (isWeekly) {
-            var seenDates = {};
-            for (var w = 0; w < 6; w++) {
-                var targetDate = new Date(now);
-                targetDate.setDate(targetDate.getDate() + (w * 7));
-                var thu = atNextThursday(targetDate);
-                var dateKey = thu.toISOString().slice(0, 10);
-                if (seenDates[dateKey]) continue;
-                seenDates[dateKey] = true;
-                var yr = thu.getFullYear();
-                var yy2 = String(yr).slice(2);
-                var monthlyExp = atGetMonthlyExpiry(yr, thu.getMonth());
-                if (thu.getDate() === monthlyExp.getDate() && thu.getMonth() === monthlyExp.getMonth()) {
-                    candidates.push(exchange + ':' + underlying + yy2 + AT_MONTHS_SHORT[thu.getMonth()] + strikeStr + optionType);
-                } else {
-                    var mm2 = String(thu.getMonth() + 1).padStart(2, '0');
-                    var dd3 = String(thu.getDate()).padStart(2, '0');
-                    candidates.push(exchange + ':' + underlying + yy2 + mm2 + dd3 + strikeStr + optionType);
-                }
-            }
-        } else {
-            for (var m = 0; m < 3; m++) {
-                var d2 = new Date(now.getFullYear(), now.getMonth() + m, 1);
-                var yy3 = String(d2.getFullYear()).slice(2);
-                candidates.push(exchange + ':' + underlying + yy3 + AT_MONTHS_SHORT[d2.getMonth()] + strikeStr + optionType);
-            }
-        }
-    }
-    return candidates;
-}
-
-// --- Format options Fyers symbol for display ---
-function atFormatOptionsDisplay(fyersSymbol, underlying, strike, optionType) {
-    var afterExchange = fyersSymbol.split(':')[1] || fyersSymbol;
-    var rest = afterExchange.substring(underlying.length);
-    var strikeInt = String(Math.round(strike));
-    var expiryPart = rest;
-    var suffixInt = strikeInt + optionType;
-    var suffixOrig = String(strike) + optionType;
-    if (expiryPart.endsWith(suffixInt)) {
-        expiryPart = expiryPart.substring(0, expiryPart.length - suffixInt.length);
-    } else if (expiryPart.endsWith(suffixOrig)) {
-        expiryPart = expiryPart.substring(0, expiryPart.length - suffixOrig.length);
-    }
-    var actualStrike = strike;
-    var afterExpiry = rest.substring(expiryPart.length);
-    var strikeFromSymbol = afterExpiry.replace(optionType, '');
-    if (strikeFromSymbol && !isNaN(Number(strikeFromSymbol))) actualStrike = Number(strikeFromSymbol);
-    var expiryLabel = expiryPart;
-    if (expiryPart.length === 5) {
-        expiryLabel = expiryPart;
-    } else if (expiryPart.length === 6) {
-        var yyW = expiryPart.substring(0, 2);
-        var mmW = parseInt(expiryPart.substring(2, 4)) - 1;
-        var ddW = expiryPart.substring(4, 6);
-        if (mmW >= 0 && mmW < 12) expiryLabel = ddW + AT_MONTHS_SHORT[mmW] + yyW;
-    }
-    return underlying + ' ' + actualStrike + ' ' + optionType + ' ' + expiryLabel;
-}
+// --- Options functions: delegated to wms-shared.js ---
+function atParseOptionsQuery(query) { return wmsParseOptionsQuery(query); }
+function atBuildOptionsCandidates(underlying, strike, optionType, expiryHint) { return wmsBuildOptionsCandidates(underlying, strike, optionType, expiryHint); }
+function atFormatOptionsDisplay(fyersSymbol, underlying, strike, optionType) { return wmsFormatOptionsDisplay(fyersSymbol, underlying, strike, optionType); }
 
 // --- Options search via Fyers API (ported from trWlSearchOptions) ---
 async function atSearchOptions(rowId, parsed, dd) {
@@ -1060,7 +926,7 @@ function updateAddTxnRowDisplay(rowId) {
 // Charge Calculation (ported from transaction-import.js autoCalcCharges)
 // ============================================================================
 
-function atRound(v) { return Math.round((v || 0) * 100) / 100; }
+function atRound(v) { return wmsRoundMoney(v); }
 
 function atGetBrokerage(investorId, brokerId, gross, secType, assetClass, price, quantity, lots) {
     if (!brokerId) return 0;
