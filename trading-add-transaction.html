@@ -540,10 +540,9 @@
 .addTxn-confirm-info span { font-weight: 600; color: #2d3748; }
 .addTxn-confirm-table {
     width: 100%;
+    max-width: 100%;
     border-collapse: collapse;
     font-size: 11px;
-    flex: 1;
-    overflow-y: auto;
     table-layout: fixed;
 }
 .addTxn-confirm-table th {
@@ -560,13 +559,10 @@
 .addTxn-confirm-table td {
     padding: 5px 8px;
     border-bottom: 1px solid #f0f4f8;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 .addTxn-confirm-table td.r { text-align: right; font-variant-numeric: tabular-nums; }
 .addTxn-confirm-table th,
-.addTxn-confirm-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.addTxn-confirm-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0; }
 .addTxn-confirm-footer {
     display: flex;
     justify-content: flex-end;
@@ -661,16 +657,24 @@
     <div class="addTxn-confirm-modal">
         <h4 id="addTxnConfirmTitle">Confirm Transactions</h4>
         <div class="addTxn-confirm-info" id="addTxnConfirmInfo"></div>
-        <div style="flex: 1; overflow-y: auto; overflow-x: hidden;">
+        <div style="flex: 1; overflow: hidden;">
             <table class="addTxn-confirm-table">
+                <colgroup>
+                    <col style="width:24px;">
+                    <col>
+                    <col style="width:40px;">
+                    <col style="width:58px;">
+                    <col style="width:62px;">
+                    <col style="width:78px;">
+                </colgroup>
                 <thead>
                     <tr>
-                        <th style="width:24px;">#</th>
+                        <th>#</th>
                         <th>Symbol</th>
-                        <th style="width:36px;">Type</th>
-                        <th class="r" style="width:55px;">Qty</th>
-                        <th class="r" style="width:60px;">Price</th>
-                        <th class="r" style="width:75px;">Net Amt</th>
+                        <th>Type</th>
+                        <th class="r">Qty</th>
+                        <th class="r">Price</th>
+                        <th class="r">Net Amt</th>
                     </tr>
                 </thead>
                 <tbody id="addTxnConfirmBody"></tbody>
