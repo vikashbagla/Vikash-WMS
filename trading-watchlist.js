@@ -1560,6 +1560,13 @@ async function trWlSearchSecurities(query) {
     }
 
     try {
+        // Ensure securities cache is loaded (wait if still downloading on startup)
+        if (!wmsRefData.securitiesCmReady || !wmsRefData.securitiesNfoReady) {
+            resultsEl.innerHTML = '<div class="wl-add-no-results">Loading securities data...</div>';
+            if (!wmsRefData.securitiesCmReady) await wmsLoadSecuritiesCm();
+            if (!wmsRefData.securitiesNfoReady) await wmsLoadSecuritiesNfo();
+        }
+
         // Client-side search from shared cache (no network calls)
         var cached = wmsSearchSecurities(query);
 

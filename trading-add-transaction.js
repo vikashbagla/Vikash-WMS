@@ -671,6 +671,14 @@ async function searchAddTxnSymbol(rowId, query) {
     }
 
     try {
+        // Ensure securities cache is loaded (wait if still downloading on startup)
+        if (!wmsRefData.securitiesCmReady || !wmsRefData.securitiesNfoReady) {
+            dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">Loading securities data...</div>';
+            atSymDdCtrls[rowId].show();
+            if (!wmsRefData.securitiesCmReady) await wmsLoadSecuritiesCm();
+            if (!wmsRefData.securitiesNfoReady) await wmsLoadSecuritiesNfo();
+        }
+
         // Client-side search from shared cache (no network calls)
         var cached = wmsSearchSecurities(query);
 
