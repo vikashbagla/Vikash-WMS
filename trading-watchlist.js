@@ -227,6 +227,16 @@ async function trWlLoad() {
 }
 
 async function trWlLoadBrokerTokens() {
+    // Ensure securities cache is loaded before looking up broker tokens
+    if (!wmsRefData.securitiesCmReady) {
+        console.log('Watchlist: Waiting for CM cache before loading broker tokens...');
+        await wmsLoadSecuritiesCm();
+    }
+    if (!wmsRefData.securitiesNfoReady) {
+        console.log('Watchlist: Waiting for NFO cache before loading broker tokens...');
+        await wmsLoadSecuritiesNfo();
+    }
+
     // Collect all security IDs by source
     var dbIds = [];
     var nfoIds = [];

@@ -340,13 +340,31 @@
     }
 
     // Init
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
         if (!checkAuth()) return;
         checkFyersAuth();
-        wmsLoadRefData(); // Load shared reference data (investors, brokers, IBA rates, reg charges, tags) once
-        // Background-load securities master data (non-blocking — ~19k rows)
-        wmsLoadSecuritiesCm().catch(function(e) { console.error('CM startup load err:', e); });
-        wmsLoadSecuritiesNfo().catch(function(e) { console.error('NFO startup load err:', e); });
+
+        // Show loading state while master data loads
+        var mainEl = document.querySelector('.main-content');
+        mainEl.style.opacity = '0.4';
+        mainEl.style.pointerEvents = 'none';
+
+        // Load all master data before activating any module
+        try {
+            await Promise.all([
+                wmsLoadRefData(),
+                wmsLoadSecuritiesCm(),
+                wmsLoadSecuritiesNfo()
+            ]);
+            console.log('All master data loaded — activating app');
+        } catch (e) {
+            console.error('Master data load error (activating anyway):', e);
+        }
+
+        // Restore interactive state
+        mainEl.style.opacity = '';
+        mainEl.style.pointerEvents = '';
+
         startIndexRefresh(); // Start index ticker
         document.getElementById('logoutBtn').addEventListener('click', logout);
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
