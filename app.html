@@ -16,6 +16,15 @@
         <p>Loading...</p>
     </div>
 
+    <!-- Startup loading screen — shown until all master data is cached -->
+    <div id="startupLoader" class="startup-loader">
+        <div class="startup-loader-box">
+            <div class="spinner-light"></div>
+            <p class="startup-loader-title">Loading WMS</p>
+            <p class="startup-loader-sub" id="startupLoaderMsg">Connecting to database...</p>
+        </div>
+    </div>
+
     <div id="alert-container" class="alert-container"></div>
 
     <header class="app-header">
@@ -344,15 +353,18 @@
         if (!checkAuth()) return;
         checkFyersAuth();
 
-        // Show loading state while master data loads
-        var mainEl = document.querySelector('.main-content');
-        mainEl.style.opacity = '0.4';
-        mainEl.style.pointerEvents = 'none';
+        // Show startup loader while master data loads
+        var loaderEl = document.getElementById('startupLoader');
+        var loaderMsg = document.getElementById('startupLoaderMsg');
 
         // Load all master data before activating any module
         try {
+            loaderMsg.textContent = 'Loading investors, brokers & config...';
+            var refPromise = wmsLoadRefData();
+
+            loaderMsg.textContent = 'Loading securities data...';
             await Promise.all([
-                wmsLoadRefData(),
+                refPromise,
                 wmsLoadSecuritiesCm(),
                 wmsLoadSecuritiesNfo()
             ]);
@@ -361,9 +373,9 @@
             console.error('Master data load error (activating anyway):', e);
         }
 
-        // Restore interactive state
-        mainEl.style.opacity = '';
-        mainEl.style.pointerEvents = '';
+        // Fade out and remove startup loader
+        loaderEl.classList.add('fade-out');
+        setTimeout(function() { loaderEl.remove(); }, 350);
 
         startIndexRefresh(); // Start index ticker
         document.getElementById('logoutBtn').addEventListener('click', logout);
