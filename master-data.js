@@ -1938,6 +1938,34 @@ function renderUnified(resetPage) {
     if (fSector.size) rows = rows.filter(r => r.sector && fSector.has(r.sector));
     if (fSize.size) rows = rows.filter(r => r.size && fSize.has(r.size));
 
+    // Sort: EQ first, then FUTURES, then OPTIONS; F&O sorted by expiry asc, inactive last
+    var _typeOrder = { 'cm': 0, 'FUTURES': 1, 'OPTIONS': 2 };
+    rows.sort(function(a, b) {
+        // Group order: CM(0) < FUTURES(1) < OPTIONS(2)
+        var aOrd = a._src === 'cm' ? 0 : (_typeOrder[a.type] || 1);
+        var bOrd = b._src === 'cm' ? 0 : (_typeOrder[b.type] || 1);
+        if (aOrd !== bOrd) return aOrd - bOrd;
+
+        // Within CM: alphabetical by symbol
+        if (a._src === 'cm' && b._src === 'cm') {
+            return a.symbol.toUpperCase() < b.symbol.toUpperCase() ? -1 :
+                   (a.symbol.toUpperCase() > b.symbol.toUpperCase() ? 1 : 0);
+        }
+
+        // Within same F&O type: inactive last
+        var aInactive = a.is_active ? 0 : 1;
+        var bInactive = b.is_active ? 0 : 1;
+        if (aInactive !== bInactive) return aInactive - bInactive;
+
+        // Then by expiry date ascending
+        var aExp = a.expiry_dt ? a.expiry_dt.toISOString().slice(0, 10) : '';
+        var bExp = b.expiry_dt ? b.expiry_dt.toISOString().slice(0, 10) : '';
+        if (aExp !== bExp) return aExp < bExp ? -1 : (aExp > bExp ? 1 : 0);
+
+        return a.symbol.toUpperCase() < b.symbol.toUpperCase() ? -1 :
+               (a.symbol.toUpperCase() > b.symbol.toUpperCase() ? 1 : 0);
+    });
+
     _uniRows = rows;
 
     if (!rows.length) {
