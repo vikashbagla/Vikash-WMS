@@ -1053,7 +1053,7 @@ function atAutoPopulateTags(rowId, row) {
 }
 
 function atShowBalanceQtyTooltip(rowId, row) {
-    // Calculate balance qty for Investor > Trader > Broker > Symbol from existing transactions
+    // Calculate balance qty for Investor > Broker > Trader > Symbol from existing transactions
     if (!atSelectedInvestor || !atSelectedBroker || !row.security_id) return;
     var investorId = atSelectedInvestor.id;
     var brokerId = atSelectedBroker.id;
@@ -1071,9 +1071,20 @@ function atShowBalanceQtyTooltip(rowId, row) {
         }
     }
 
+    // Show balance as tooltip AND as a visible label below the Qty input
     var qtyInput = document.querySelector('.addTxn-qty-input[data-rid="' + rowId + '"]');
     if (qtyInput) {
-        qtyInput.title = 'Balance: ' + balanceQty + ' qty';
+        qtyInput.title = 'Current holding: ' + formatQuantity(balanceQty);
+        // Add/update a small balance label below the input
+        var td = qtyInput.closest('td');
+        var existing = td.querySelector('.atQty-balance');
+        if (existing) existing.remove();
+        if (balanceQty !== 0) {
+            var lbl = document.createElement('div');
+            lbl.className = 'atQty-balance';
+            lbl.textContent = 'Bal: ' + formatQuantity(balanceQty);
+            td.appendChild(lbl);
+        }
     }
 }
 
@@ -1411,7 +1422,7 @@ function openAddTxnConfirmation() {
         var tr = document.createElement('tr');
         tr.innerHTML =
             '<td>' + (idx + 1) + '</td>' +
-            '<td>' + row.symbol + '</td>' +
+            '<td title="' + row.symbol + '">' + row.symbol + '</td>' +
             '<td class="' + typeClass + '">' + type + '</td>' +
             '<td class="r">' + formatQuantity(Math.abs(row.quantity)) + '</td>' +
             '<td class="r">' + formatPrice(row.price) + '</td>' +

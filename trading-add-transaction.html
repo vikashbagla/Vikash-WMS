@@ -119,6 +119,15 @@
     pointer-events: none;
 }
 
+/* Balance qty label under Qty input */
+.atQty-balance {
+    font-size: 9px;
+    color: #667eea;
+    text-align: right;
+    margin-top: 1px;
+    line-height: 1;
+}
+
 /* Search dropdowns */
 .addTxn-search-dd {
     display: none;
@@ -551,8 +560,13 @@
 .addTxn-confirm-table td {
     padding: 5px 8px;
     border-bottom: 1px solid #f0f4f8;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .addTxn-confirm-table td.r { text-align: right; font-variant-numeric: tabular-nums; }
+.addTxn-confirm-table th,
+.addTxn-confirm-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .addTxn-confirm-footer {
     display: flex;
     justify-content: flex-end;
@@ -647,7 +661,7 @@
     <div class="addTxn-confirm-modal">
         <h4 id="addTxnConfirmTitle">Confirm Transactions</h4>
         <div class="addTxn-confirm-info" id="addTxnConfirmInfo"></div>
-        <div style="flex: 1; overflow-y: auto;">
+        <div style="flex: 1; overflow-y: auto; overflow-x: hidden;">
             <table class="addTxn-confirm-table">
                 <thead>
                     <tr>
