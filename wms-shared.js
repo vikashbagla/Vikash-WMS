@@ -146,8 +146,10 @@ async function wmsFetchAllRows(table, select, orderCol) {
 /**
  * Load all CM (Cash Market) securities into wmsRefData.securitiesCm.
  * Called at app startup (background) and after CM Sync.
+ * Retries up to 3 times with 3s/6s/12s backoff on network failure.
  */
-async function wmsLoadSecuritiesCm() {
+async function wmsLoadSecuritiesCm(retryCount) {
+    retryCount = retryCount || 0;
     try {
         var rows = await wmsFetchAllRows('securities_db',
             'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,sector,size,is_active,lot_size,broker_tokens',
@@ -158,15 +160,23 @@ async function wmsLoadSecuritiesCm() {
         wmsRefData.securitiesCmReady = true;
         console.log('Securities CM loaded: ' + rows.length + ' rows');
     } catch (e) {
-        console.error('Securities CM load error:', e);
+        console.error('Securities CM load error (attempt ' + (retryCount + 1) + '):', e);
+        if (retryCount < 3) {
+            var delay = 3000 * Math.pow(2, retryCount); // 3s, 6s, 12s
+            console.log('Retrying CM load in ' + (delay / 1000) + 's...');
+            await new Promise(function(resolve) { setTimeout(resolve, delay); });
+            return wmsLoadSecuritiesCm(retryCount + 1);
+        }
     }
 }
 
 /**
  * Load all F&O (Futures & Options) securities into wmsRefData.securitiesNfo.
  * Called at app startup (background) and after F&O Sync.
+ * Retries up to 3 times with 3s/6s/12s backoff on network failure.
  */
-async function wmsLoadSecuritiesNfo() {
+async function wmsLoadSecuritiesNfo(retryCount) {
+    retryCount = retryCount || 0;
     try {
         var rows = await wmsFetchAllRows('securities_nfo',
             'id,symbol,instrument_name,exchange,instrument_type,underlying_symbol,expiry_date,strike_price,option_type,lot_size,is_active,broker_tokens',
@@ -177,7 +187,13 @@ async function wmsLoadSecuritiesNfo() {
         wmsRefData.securitiesNfoReady = true;
         console.log('Securities NFO loaded: ' + rows.length + ' rows');
     } catch (e) {
-        console.error('Securities NFO load error:', e);
+        console.error('Securities NFO load error (attempt ' + (retryCount + 1) + '):', e);
+        if (retryCount < 3) {
+            var delay = 3000 * Math.pow(2, retryCount);
+            console.log('Retrying NFO load in ' + (delay / 1000) + 's...');
+            await new Promise(function(resolve) { setTimeout(resolve, delay); });
+            return wmsLoadSecuritiesNfo(retryCount + 1);
+        }
     }
 }
 
