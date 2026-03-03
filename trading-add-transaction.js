@@ -20,17 +20,18 @@ var atSelectedBroker = null;    // {id, name, broker_code}
 var atRows = [];                // Array of row data objects
 var atNextRowId = 1;
 
+// Combined investor-broker pairs (built from ibaRatesMap)
+var atInvBrkPairs = [];         // [{investor, broker, label, searchStr}]
+var atInvBrkDdCtrl = null;
+var atInvBrkDdItems = [];
+
 // Dropdown controllers (wmsDropdown)
-var atInvDdCtrl = null;
-var atBrkDdCtrl = null;
 var atSymDdCtrls = {};        // rowId → wmsDropdown controller
 
 // Tag input controllers (wmsTagInput)
 var atTagInputCtrls = {};     // rowId → wmsTagInput controller
 
 // Dropdown data (for wmsDropdown onSelect callback)
-var atInvDdItems = [];        // Current investor matches
-var atBrkDdItems = [];        // Current broker matches
 var atSymDdItems = {};        // rowId → symbol results array
 
 // Options constants now in wms-shared.js (WMS_MONTHS_SHORT, WMS_WEEKLY_EXPIRY_UNDERLYINGS)
@@ -63,11 +64,8 @@ function initAddTxnModule() {
     document.getElementById('addTxnConfirmCancelBtn').addEventListener('click', closeAddTxnConfirm);
     document.getElementById('addTxnConfirmOkBtn').addEventListener('click', importAddTxnToDb);
 
-    // Investor search
-    setupAddTxnInvSearch();
-
-    // Broker search
-    setupAddTxnBrkSearch();
+    // Combined investor > broker search
+    setupAddTxnInvBrkSearch();
 
     // ESC key handler
     document.addEventListener('keydown', function(e) {
@@ -99,26 +97,48 @@ async function openAddTxnModal() {
     atBrkObjMap = wmsRefData.brokerObjMap;
     atExistingTags = wmsRefData.tags;
 
+    // Build combined investor-broker pairs from ibaRatesMap
+    atInvBrkPairs = [];
+    var ibaKeys = Object.keys(wmsRefData.ibaRatesMap);
+    ibaKeys.forEach(function(key) {
+        var parts = key.split('|');
+        var inv = wmsRefData.investorObjMap[parts[0]];
+        var brk = wmsRefData.brokerObjMap[parts[1]];
+        if (inv && brk) {
+            var invLabel = inv.short_name || inv.name;
+            var brkLabel = brk.broker_code || brk.name;
+            var label = invLabel + ' > ' + brkLabel;
+            atInvBrkPairs.push({
+                investor: inv,
+                broker: brk,
+                label: label,
+                searchStr: (invLabel + ' ' + (inv.name || '') + ' ' + brkLabel + ' ' + (brk.name || '')).toLowerCase()
+            });
+        }
+    });
+    // Sort by investor name, then broker
+    atInvBrkPairs.sort(function(a, b) {
+        return a.label.toLowerCase() < b.label.toLowerCase() ? -1 : (a.label.toLowerCase() > b.label.toLowerCase() ? 1 : 0);
+    });
+
     // Reset state
     atSelectedInvestor = null;
     atSelectedBroker = null;
     atRows = [];
     atNextRowId = 1;
     document.getElementById('addTxnTbody').innerHTML = '';
-    document.getElementById('addTxnInvInput').value = '';
-    document.getElementById('addTxnBrkInput').value = '';
-    document.getElementById('addTxnInvBadge').innerHTML = '';
-    document.getElementById('addTxnBrkBadge').innerHTML = '';
-    document.getElementById('addTxnInvInput').disabled = false;
-    document.getElementById('addTxnBrkInput').disabled = false;
+    document.getElementById('addTxnInvBrkInput').value = '';
+    document.getElementById('addTxnInvBrkBadge').innerHTML = '';
+    document.getElementById('addTxnInvBrkInput').disabled = false;
     document.getElementById('addTxnSaveBtn').disabled = false;
 
-    // Default date to today
+    // Default date to today (dd-mmm-yyyy display)
     var today = new Date();
     var yyyy = today.getFullYear();
     var mm = String(today.getMonth() + 1).padStart(2, '0');
     var dd = String(today.getDate()).padStart(2, '0');
     document.getElementById('addTxnDate').value = yyyy + '-' + mm + '-' + dd;
+    document.getElementById('addTxnDateDisplay').value = atFormatDateDisplay(today);
 
     // Add first empty row
     addAddTxnRow();
@@ -126,9 +146,9 @@ async function openAddTxnModal() {
     // Show modal
     document.getElementById('addTxnOverlay').classList.add('show');
 
-    // Focus investor input
+    // Focus investor-broker input
     setTimeout(function() {
-        document.getElementById('addTxnInvInput').focus();
+        document.getElementById('addTxnInvBrkInput').focus();
     }, 100);
 }
 
@@ -145,16 +165,15 @@ window.closeAddTxnModal = closeAddTxnModal;
 // Investor / Broker Type-to-Search
 // ============================================================================
 
-function setupAddTxnInvSearch() {
-    var input = document.getElementById('addTxnInvInput');
-    var dd = document.getElementById('addTxnInvDd');
+function setupAddTxnInvBrkSearch() {
+    var input = document.getElementById('addTxnInvBrkInput');
+    var dd = document.getElementById('addTxnInvBrkDd');
 
-    // Create wmsDropdown controller
-    atInvDdCtrl = wmsDropdown(input, dd, {
+    atInvBrkDdCtrl = wmsDropdown(input, dd, {
         onSelect: function(itemEl) {
             var idx = parseInt(itemEl.dataset.idx);
-            if (idx >= 0 && idx < atInvDdItems.length) {
-                selectAddTxnInvestor(atInvDdItems[idx]);
+            if (idx >= 0 && idx < atInvBrkDdItems.length) {
+                selectAddTxnInvBrk(atInvBrkDdItems[idx]);
             }
         },
         itemSelector: '.wms-dd-item',
@@ -166,121 +185,66 @@ function setupAddTxnInvSearch() {
     input.addEventListener('input', function() {
         var q = input.value.trim().toLowerCase();
         if (q.length === 0) {
-            atInvDdCtrl.close();
-            return;
+            // Show all pairs when empty (on focus)
+            atInvBrkDdItems = atInvBrkPairs;
+        } else {
+            atInvBrkDdItems = atInvBrkPairs.filter(function(pair) {
+                return pair.searchStr.indexOf(q) !== -1;
+            });
         }
-        var matches = atInvestors.filter(function(inv) {
-            return (inv.short_name && inv.short_name.toLowerCase().indexOf(q) !== -1) ||
-                   (inv.name && inv.name.toLowerCase().indexOf(q) !== -1);
-        });
-        atInvDdItems = matches;
 
         dd.innerHTML = '';
-        if (matches.length === 0) {
+        if (atInvBrkDdItems.length === 0) {
             dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">No matches</div>';
         } else {
-            matches.forEach(function(inv, idx) {
+            atInvBrkDdItems.forEach(function(pair, idx) {
                 var div = document.createElement('div');
                 div.className = 'wms-dd-item';
                 div.dataset.idx = idx;
-                div.innerHTML = (inv.short_name || inv.name) + '<span class="sub">' + inv.name + '</span>';
+                var invLabel = pair.investor.short_name || pair.investor.name;
+                var brkLabel = pair.broker.broker_code || pair.broker.name;
+                div.innerHTML = '<span style="font-weight:600;">' + invLabel + '</span>' +
+                    '<span style="color:#a0aec0;margin:0 4px;">&gt;</span>' +
+                    '<span>' + brkLabel + '</span>' +
+                    '<span class="sub">' + pair.investor.name + ' — ' + pair.broker.name + '</span>';
                 dd.appendChild(div);
             });
         }
-        atInvDdCtrl.show();
-        atInvDdCtrl.resetIdx();
+        atInvBrkDdCtrl.show();
+        atInvBrkDdCtrl.resetIdx();
     });
 
     input.addEventListener('focus', function() {
         if (atSelectedInvestor) return;
-        if (input.value.trim().length > 0) input.dispatchEvent(new Event('input'));
-    });
-}
-
-function setupAddTxnBrkSearch() {
-    var input = document.getElementById('addTxnBrkInput');
-    var dd = document.getElementById('addTxnBrkDd');
-
-    // Create wmsDropdown controller
-    atBrkDdCtrl = wmsDropdown(input, dd, {
-        onSelect: function(itemEl) {
-            var idx = parseInt(itemEl.dataset.idx);
-            if (idx >= 0 && idx < atBrkDdItems.length) {
-                selectAddTxnBroker(atBrkDdItems[idx]);
-            }
-        },
-        itemSelector: '.wms-dd-item',
-        closeOnSelect: true,
-        blurDelay: 200,
-        escClearsInput: true
+        // Show all pairs on focus
+        input.dispatchEvent(new Event('input'));
     });
 
-    input.addEventListener('input', function() {
-        var q = input.value.trim().toLowerCase();
-        if (q.length === 0) {
-            atBrkDdCtrl.close();
-            return;
+    // Date display click opens native date picker
+    var dateDisplay = document.getElementById('addTxnDateDisplay');
+    var dateHidden = document.getElementById('addTxnDate');
+    dateDisplay.addEventListener('click', function() {
+        dateHidden.showPicker ? dateHidden.showPicker() : dateHidden.click();
+    });
+    dateHidden.addEventListener('change', function() {
+        if (dateHidden.value) {
+            var parts = dateHidden.value.split('-');
+            var d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+            dateDisplay.value = atFormatDateDisplay(d);
         }
-        var matches = atBrokers.filter(function(b) {
-            return (b.name && b.name.toLowerCase().indexOf(q) !== -1) ||
-                   (b.broker_code && b.broker_code.toLowerCase().indexOf(q) !== -1);
-        });
-        atBrkDdItems = matches;
-
-        dd.innerHTML = '';
-        if (matches.length === 0) {
-            dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">No matches</div>';
-        } else {
-            matches.forEach(function(b, idx) {
-                var div = document.createElement('div');
-                div.className = 'wms-dd-item';
-                div.dataset.idx = idx;
-                div.innerHTML = (b.broker_code || b.name) + '<span class="sub">' + b.name + '</span>';
-                dd.appendChild(div);
-            });
-        }
-        atBrkDdCtrl.show();
-        atBrkDdCtrl.resetIdx();
-    });
-
-    input.addEventListener('focus', function() {
-        if (atSelectedBroker) return;
-        if (input.value.trim().length > 0) input.dispatchEvent(new Event('input'));
     });
 }
 
-// renderAddTxnDd, handleAddTxnDdNav, highlightDdItem — removed (using wmsDropdown)
-// Legacy: kept as empty stubs if called elsewhere (currently not used)
-function renderAddTxnDd() {}
-function handleAddTxnDdNav() {}
-function highlightDdItem() {}
-
-function selectAddTxnInvestor(inv) {
-    atSelectedInvestor = inv;
-    var input = document.getElementById('addTxnInvInput');
-    input.value = inv.short_name || inv.name;
+function selectAddTxnInvBrk(pair) {
+    atSelectedInvestor = pair.investor;
+    atSelectedBroker = pair.broker;
+    var input = document.getElementById('addTxnInvBrkInput');
+    input.value = pair.label;
     input.disabled = true;
-    document.getElementById('addTxnInvDd').classList.remove('show');
 
-    // Show badge with clear button
-    document.getElementById('addTxnInvBadge').innerHTML =
-        '<span class="addTxn-selected-badge">' + (inv.short_name || inv.name) +
-        '<span class="clear" onclick="clearAddTxnInvestor()">&times;</span></span>';
-
-    // Focus broker input
-    setTimeout(function() { document.getElementById('addTxnBrkInput').focus(); }, 50);
-}
-
-function selectAddTxnBroker(brk) {
-    atSelectedBroker = brk;
-    var input = document.getElementById('addTxnBrkInput');
-    input.value = brk.broker_code || brk.name;
-    input.disabled = true;
-    document.getElementById('addTxnBrkDd').classList.remove('show');
-
-    document.getElementById('addTxnBrkBadge').innerHTML =
-        '<span class="addTxn-selected-badge">' + (brk.broker_code || brk.name) +
-        '<span class="clear" onclick="clearAddTxnBroker()">&times;</span></span>';
+    document.getElementById('addTxnInvBrkBadge').innerHTML =
+        '<span class="addTxn-selected-badge">' + pair.label +
+        '<span class="clear" onclick="clearAddTxnInvBrk()">&times;</span></span>';
 
     // Focus first row symbol
     setTimeout(function() {
@@ -289,26 +253,26 @@ function selectAddTxnBroker(brk) {
     }, 50);
 }
 
-function clearAddTxnInvestor() {
+function clearAddTxnInvBrk() {
     atSelectedInvestor = null;
-    var input = document.getElementById('addTxnInvInput');
-    input.value = '';
-    input.disabled = false;
-    document.getElementById('addTxnInvBadge').innerHTML = '';
-    input.focus();
-}
-
-function clearAddTxnBroker() {
     atSelectedBroker = null;
-    var input = document.getElementById('addTxnBrkInput');
+    var input = document.getElementById('addTxnInvBrkInput');
     input.value = '';
     input.disabled = false;
-    document.getElementById('addTxnBrkBadge').innerHTML = '';
+    document.getElementById('addTxnInvBrkBadge').innerHTML = '';
     input.focus();
 }
 
-window.clearAddTxnInvestor = clearAddTxnInvestor;
-window.clearAddTxnBroker = clearAddTxnBroker;
+window.clearAddTxnInvBrk = clearAddTxnInvBrk;
+
+// Date formatting helper (dd-mmm-yyyy)
+var AT_MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function atFormatDateDisplay(date) {
+    var dd = String(date.getDate()).padStart(2, '0');
+    var mmm = AT_MONTHS_SHORT[date.getMonth()];
+    var yyyy = date.getFullYear();
+    return dd + '-' + mmm + '-' + yyyy;
+}
 
 // ============================================================================
 // Row Management
@@ -788,11 +752,75 @@ function selectAddTxnSecurity(rowId, sec) {
 
     recalcAddTxnRow(rowId);
 
+    // Auto-populate tags from matching transactions (Investor + Trader + Symbol)
+    atAutoPopulateTags(rowId, row);
+
+    // Show balance qty tooltip on Qty field
+    atShowBalanceQtyTooltip(rowId, row);
+
     // Focus lots (if NFO) or qty
     setTimeout(function() {
         if (sec.lot_size > 1) lotsInput.focus();
         else document.querySelector('.addTxn-qty-input[data-rid="' + rowId + '"]').focus();
     }, 50);
+}
+
+// ============================================================================
+// Auto-populate Tags & Balance Qty Tooltip
+// ============================================================================
+
+function atAutoPopulateTags(rowId, row) {
+    // Look up tags from existing transactions matching investor + trader + symbol
+    if (!atSelectedInvestor || !row.security_id) return;
+    var investorId = atSelectedInvestor.id;
+    var traderId = row.trader_id || investorId;
+    var symbol = row.symbol;
+
+    // Get transactions from trading module (trTransactions is the in-memory cache)
+    var txns = (typeof trTransactions !== 'undefined') ? trTransactions : [];
+    var matchingTags = {};
+    for (var i = 0; i < txns.length; i++) {
+        var t = txns[i];
+        if (t.investor_id === investorId && (t.trader_id || t.investor_id) === traderId && t.symbol === symbol) {
+            if (Array.isArray(t.tags)) {
+                t.tags.forEach(function(tag) {
+                    var trimmed = tag.trim().toLowerCase();
+                    if (trimmed && trimmed !== 'blank') matchingTags[trimmed] = tag.trim();
+                });
+            }
+        }
+    }
+
+    var tagList = Object.values(matchingTags);
+    if (tagList.length > 0 && row.tags.length === 0) {
+        row.tags = tagList;
+        renderAddTxnTagPills(rowId);
+    }
+}
+
+function atShowBalanceQtyTooltip(rowId, row) {
+    // Calculate balance qty for Investor > Trader > Broker > Symbol from existing transactions
+    if (!atSelectedInvestor || !atSelectedBroker || !row.security_id) return;
+    var investorId = atSelectedInvestor.id;
+    var brokerId = atSelectedBroker.id;
+    var traderId = row.trader_id || investorId;
+    var symbol = row.symbol;
+
+    var txns = (typeof trTransactions !== 'undefined') ? trTransactions : [];
+    var balanceQty = 0;
+    for (var i = 0; i < txns.length; i++) {
+        var t = txns[i];
+        if (t.investor_id === investorId && t.broker_id === brokerId &&
+            (t.trader_id || t.investor_id) === traderId && t.symbol === symbol &&
+            !t.dont_display && !t.ignore_for_avg_cost) {
+            balanceQty += (t.quantity || 0);
+        }
+    }
+
+    var qtyInput = document.querySelector('.addTxn-qty-input[data-rid="' + rowId + '"]');
+    if (qtyInput) {
+        qtyInput.title = 'Balance: ' + balanceQty + ' qty';
+    }
 }
 
 // ============================================================================
@@ -1107,8 +1135,7 @@ function showAddTxnTagDd() {}
 function openAddTxnConfirmation() {
     // Validate
     var errors = [];
-    if (!atSelectedInvestor) errors.push('Investor not selected');
-    if (!atSelectedBroker) errors.push('Broker not selected');
+    if (!atSelectedInvestor || !atSelectedBroker) errors.push('Investor > Broker not selected');
 
     atRows.forEach(function(row, idx) {
         if (!row.security_id) errors.push('Row ' + (idx + 1) + ': Symbol not selected');
@@ -1139,6 +1166,12 @@ function openAddTxnConfirmation() {
     });
 
     document.getElementById('addTxnConfirmTitle').textContent = 'Confirm ' + atRows.length + ' Transaction(s)';
+    // Show investor > broker and date in confirmation header
+    var invLabel = atSelectedInvestor.short_name || atSelectedInvestor.name;
+    var brkLabel = atSelectedBroker.broker_code || atSelectedBroker.name;
+    var dateDisplay = document.getElementById('addTxnDateDisplay').value;
+    document.getElementById('addTxnConfirmInfo').innerHTML =
+        '<span>' + invLabel + '</span> &gt; <span>' + brkLabel + '</span> &nbsp;&middot;&nbsp; ' + dateDisplay;
     document.getElementById('addTxnConfirmOverlay').classList.add('show');
 }
 

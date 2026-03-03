@@ -474,8 +474,9 @@
     background: white;
     border-radius: 8px;
     padding: 16px 20px;
-    min-width: 400px;
-    max-width: 700px;
+    min-width: 340px;
+    max-width: 520px;
+    width: 90%;
     max-height: 60vh;
     display: flex;
     flex-direction: column;
@@ -487,12 +488,20 @@
     font-weight: 600;
     color: #2d3748;
 }
+.addTxn-confirm-info {
+    font-size: 11px;
+    color: #4a5568;
+    margin-bottom: 8px;
+    line-height: 1.5;
+}
+.addTxn-confirm-info span { font-weight: 600; color: #2d3748; }
 .addTxn-confirm-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 11px;
     flex: 1;
     overflow-y: auto;
+    table-layout: fixed;
 }
 .addTxn-confirm-table th {
     background: #f7fafc;
@@ -535,19 +544,14 @@
             <div class="addTxn-fields-row">
                 <div class="addTxn-field" style="width: 140px;">
                     <label>Date</label>
-                    <input type="date" id="addTxnDate">
+                    <input type="text" id="addTxnDateDisplay" placeholder="dd-mmm-yyyy" readonly style="cursor:pointer;">
+                    <input type="date" id="addTxnDate" style="display:none;">
                 </div>
                 <div class="addTxn-field" style="flex: 1;">
-                    <label>Investor</label>
-                    <input type="text" id="addTxnInvInput" placeholder="Type to search..." autocomplete="off">
-                    <div class="addTxn-search-dd" id="addTxnInvDd"></div>
-                    <div id="addTxnInvBadge"></div>
-                </div>
-                <div class="addTxn-field" style="flex: 1;">
-                    <label>Broker</label>
-                    <input type="text" id="addTxnBrkInput" placeholder="Type to search..." autocomplete="off">
-                    <div class="addTxn-search-dd" id="addTxnBrkDd"></div>
-                    <div id="addTxnBrkBadge"></div>
+                    <label>Investor &gt; Broker</label>
+                    <input type="text" id="addTxnInvBrkInput" placeholder="Type to search investor or broker..." autocomplete="off">
+                    <div class="addTxn-search-dd" id="addTxnInvBrkDd"></div>
+                    <div id="addTxnInvBrkBadge"></div>
                 </div>
             </div>
 
@@ -602,16 +606,17 @@
 <div class="addTxn-confirm-overlay" id="addTxnConfirmOverlay">
     <div class="addTxn-confirm-modal">
         <h4 id="addTxnConfirmTitle">Confirm Transactions</h4>
+        <div class="addTxn-confirm-info" id="addTxnConfirmInfo"></div>
         <div style="flex: 1; overflow-y: auto;">
             <table class="addTxn-confirm-table">
                 <thead>
                     <tr>
-                        <th>#</th>
+                        <th style="width:24px;">#</th>
                         <th>Symbol</th>
-                        <th>Type</th>
-                        <th class="r">Qty</th>
-                        <th class="r">Price</th>
-                        <th class="r">Net Amt</th>
+                        <th style="width:36px;">Type</th>
+                        <th class="r" style="width:55px;">Qty</th>
+                        <th class="r" style="width:60px;">Price</th>
+                        <th class="r" style="width:75px;">Net Amt</th>
                     </tr>
                 </thead>
                 <tbody id="addTxnConfirmBody"></tbody>
