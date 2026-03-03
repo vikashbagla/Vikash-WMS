@@ -1190,3 +1190,52 @@ function wmsModal(overlayEl, opts) {
 
     return controller;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Symbol Search Sort — shared across add-transaction + watchlist
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Sort combined CM + NFO search results:
+ *   1. CM/Equity securities first (sorted alphabetically by symbol)
+ *   2. NFO securities sorted by expiry_date ascending (nearest first)
+ *   3. Expired NFO contracts at the bottom
+ *
+ * Each item must have:
+ *   _isNfo (boolean) — true for NFO, false for CM
+ *   _expiryDate or _displayExpiry (string, YYYY-MM-DD) — for NFO sort
+ *
+ * @param {Array} items - combined search results
+ * @returns {Array} sorted copy (does not mutate original)
+ */
+function wmsSortSearchResults(items) {
+    var today = new Date().toISOString().slice(0, 10);
+    return items.slice().sort(function(a, b) {
+        // 1. CM before NFO (supports both _isNfo flag and security_source field)
+        var aIsNfo = (a._isNfo || a.security_source === 'securities_nfo') ? 1 : 0;
+        var bIsNfo = (b._isNfo || b.security_source === 'securities_nfo') ? 1 : 0;
+        if (aIsNfo !== bIsNfo) return aIsNfo - bIsNfo;
+
+        // 2. Within CM: alphabetical by symbol
+        if (aIsNfo === 0 && bIsNfo === 0) {
+            var aSym = (a._displaySym || a.short_symbol || a.symbol || '').toUpperCase();
+            var bSym = (b._displaySym || b.short_symbol || b.symbol || '').toUpperCase();
+            return aSym < bSym ? -1 : (aSym > bSym ? 1 : 0);
+        }
+
+        // 3. Within NFO: active before expired, then by expiry ascending
+        var aExp = a._expiryDate || a._displayExpiry || '';
+        var bExp = b._expiryDate || b._displayExpiry || '';
+        var aExpired = aExp && aExp < today ? 1 : 0;
+        var bExpired = bExp && bExp < today ? 1 : 0;
+        if (aExpired !== bExpired) return aExpired - bExpired;
+
+        // Both active or both expired: sort by expiry ascending
+        if (aExp !== bExp) return aExp < bExp ? -1 : (aExp > bExp ? 1 : 0);
+
+        // Same expiry: alphabetical by symbol
+        var aSym2 = (a._displaySym || a.short_symbol || a.symbol || '').toUpperCase();
+        var bSym2 = (b._displaySym || b.short_symbol || b.symbol || '').toUpperCase();
+        return aSym2 < bSym2 ? -1 : (aSym2 > bSym2 ? 1 : 0);
+    });
+}

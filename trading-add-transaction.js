@@ -683,7 +683,7 @@ async function searchAddTxnSymbol(rowId, query) {
         var nfoUrl = SUPABASE_URL + '/rest/v1/securities_nfo?or=(symbol.ilike.' + searchQ +
             ',underlying_symbol.ilike.' + searchQ +
             ',instrument_name.ilike.' + searchQ +
-            ')&is_active=eq.true&limit=10&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,lot_size,broker_tokens,expiry_date&order=symbol';
+            ')&is_active=eq.true&limit=10&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,lot_size,broker_tokens,expiry_date&order=expiry_date';
 
         var results = await Promise.all([
             fetch(dbUrl, { headers: headers }).then(function(r) { return r.ok ? r.json() : []; }),
@@ -733,6 +733,7 @@ async function searchAddTxnSymbol(rowId, query) {
             });
         });
 
+        allSecurities = wmsSortSearchResults(allSecurities);
         atSymDdItems[rowId] = allSecurities;
 
         dd.innerHTML = '';

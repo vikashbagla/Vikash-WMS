@@ -1590,7 +1590,7 @@ async function trWlSearchSecurities(query) {
     var nfoUrl = SUPABASE_URL + '/rest/v1/securities_nfo?or=(symbol.ilike.' + searchQ +
         ',underlying_symbol.ilike.' + searchQ +
         ',instrument_name.ilike.' + searchQ +
-        ')&is_active=eq.true&limit=15&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,broker_tokens,expiry_date&order=symbol';
+        ')&is_active=eq.true&limit=15&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,broker_tokens,expiry_date&order=expiry_date';
 
     resultsEl.innerHTML = '<div class="wl-add-no-results">Searching...</div>';
 
@@ -1651,6 +1651,9 @@ async function trWlSearchSecurities(query) {
                 _instrumentName: r.instrument_name || ''
             });
         });
+
+        // Sort: CM first, then NFO by expiry ascending, expired last
+        trWlSearchCache = wmsSortSearchResults(trWlSearchCache);
 
         // Render results — only data-idx attribute needed (index into trWlSearchCache)
         var html = '';
