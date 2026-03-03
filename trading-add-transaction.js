@@ -1438,21 +1438,22 @@ function openAddTxnConfirmation() {
         return;
     }
 
-    // Build confirmation table
-    var tbody = document.getElementById('addTxnConfirmBody');
-    tbody.innerHTML = '';
+    // Build confirmation rows (flex divs – no table)
+    var cBody = document.getElementById('addTxnConfirmBody');
+    cBody.innerHTML = '';
     atRows.forEach(function(row, idx) {
         var type = row.quantity >= 0 ? 'BUY' : 'SELL';
         var typeClass = type === 'BUY' ? 'type-buy' : 'type-sell';
-        var tr = document.createElement('tr');
-        tr.innerHTML =
-            '<td>' + (idx + 1) + '</td>' +
-            '<td title="' + row.symbol + '">' + row.symbol + '</td>' +
-            '<td class="' + typeClass + '">' + type + '</td>' +
-            '<td class="r">' + formatQuantity(Math.abs(row.quantity)) + '</td>' +
-            '<td class="r">' + formatPrice(row.price) + '</td>' +
-            '<td class="r">' + atFmtAmt(row.net_amount) + '</td>';
-        tbody.appendChild(tr);
+        var div = document.createElement('div');
+        div.className = 'atc-row';
+        div.innerHTML =
+            '<span class="atc-n">' + (idx + 1) + '</span>' +
+            '<span class="atc-sym" title="' + row.symbol + '">' + row.symbol + '</span>' +
+            '<span class="atc-typ ' + typeClass + '">' + type + '</span>' +
+            '<span class="atc-qty">' + formatQuantity(Math.abs(row.quantity)) + '</span>' +
+            '<span class="atc-prc">' + formatPrice(row.price) + '</span>' +
+            '<span class="atc-amt">' + atFmtAmt(row.net_amount) + '</span>';
+        cBody.appendChild(div);
     });
 
     document.getElementById('addTxnConfirmTitle').textContent = 'Confirm ' + atRows.length + ' Transaction(s)';

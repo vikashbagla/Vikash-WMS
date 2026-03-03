@@ -538,36 +538,28 @@
     line-height: 1.5;
 }
 .addTxn-confirm-info span { font-weight: 600; color: #2d3748; }
-.addTxn-confirm-table {
-    width: 100%;
-    border-collapse: collapse;
+.atc-row {
+    display: flex;
     font-size: 11px;
-    table-layout: fixed;
+    padding: 4px 0;
+    border-bottom: 1px solid #f0f4f8;
 }
-.addTxn-confirm-table th {
-    background: #f7fafc;
-    padding: 4px 6px;
+.atc-hdr {
+    display: flex;
     font-size: 10px;
     font-weight: 600;
     color: #718096;
     text-transform: uppercase;
-    text-align: left;
+    padding: 5px 0;
+    background: #f7fafc;
     border-bottom: 1px solid #e2e8f0;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.addTxn-confirm-table th.r { text-align: right; }
-.addTxn-confirm-table td {
-    padding: 4px 6px;
-    border-bottom: 1px solid #f0f4f8;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.addTxn-confirm-table td.r { text-align: right; font-variant-numeric: tabular-nums; }
-.addTxn-confirm-table col:nth-child(1) { width: 6%; }
-.addTxn-confirm-table col:nth-child(2) { width: 34%; }
-.addTxn-confirm-table col:nth-child(3) { width: 10%; }
-.addTxn-confirm-table col:nth-child(4) { width: 14%; }
-.addTxn-confirm-table col:nth-child(5) { width: 16%; }
-.addTxn-confirm-table col:nth-child(6) { width: 20%; }
+.atc-n   { width: 22px; flex-shrink: 0; padding: 0 4px; }
+.atc-sym { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
+.atc-typ { width: 36px; flex-shrink: 0; padding: 0 4px; }
+.atc-qty { width: 56px; flex-shrink: 0; text-align: right; padding: 0 4px; font-variant-numeric: tabular-nums; }
+.atc-prc { width: 64px; flex-shrink: 0; text-align: right; padding: 0 4px; font-variant-numeric: tabular-nums; }
+.atc-amt { width: 80px; flex-shrink: 0; text-align: right; padding: 0 4px; font-variant-numeric: tabular-nums; }
 .addTxn-confirm-footer {
     display: flex;
     justify-content: flex-end;
@@ -662,21 +654,16 @@
     <div class="addTxn-confirm-modal">
         <h4 id="addTxnConfirmTitle">Confirm Transactions</h4>
         <div class="addTxn-confirm-info" id="addTxnConfirmInfo"></div>
-        <div style="flex: 1; overflow: hidden;">
-            <table class="addTxn-confirm-table">
-                <colgroup><col><col><col><col><col><col></colgroup>
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Symbol</th>
-                        <th>Type</th>
-                        <th class="r">Qty</th>
-                        <th class="r">Price</th>
-                        <th class="r">Net Amt</th>
-                    </tr>
-                </thead>
-                <tbody id="addTxnConfirmBody"></tbody>
-            </table>
+        <div style="flex: 1; overflow-y: auto;">
+            <div class="atc-hdr">
+                <span class="atc-n">#</span>
+                <span class="atc-sym">Symbol</span>
+                <span class="atc-typ">Type</span>
+                <span class="atc-qty">Qty</span>
+                <span class="atc-prc">Price</span>
+                <span class="atc-amt">Net Amt</span>
+            </div>
+            <div id="addTxnConfirmBody"></div>
         </div>
         <div class="addTxn-confirm-footer">
             <button class="btn-secondary" id="addTxnConfirmCancelBtn">Cancel</button>
