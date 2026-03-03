@@ -1057,6 +1057,8 @@ function buildRecordMap(nseRows, bseRows) {
 
 var _syncPending = null; // { toAdd:[], toUpdate:[], missing:[], unchanged:[] }
 var _syncModalMode = null; // 'cm' or 'fo' — tracks which sync is active in the modal
+var _syncActiveCard = null; // 'new' | 'edit' | 'miss' | null — which stat card is selected
+var _syncPreviewData = null; // { toAdd:[], toUpdate:[], missing:[] } — unified data for card click rendering
 
 // Compare two records for meaningful changes ───────────────────
 
@@ -1119,11 +1121,12 @@ function openSyncModal(title, missLabel) {
     document.getElementById('pvSame').textContent = '0';
     if (missLabel) document.getElementById('pvMissLbl').textContent = missLabel;
     else document.getElementById('pvMissLbl').textContent = 'In DB, Not in CSV';
-    // Reset sections
-    document.getElementById('changesSection').style.display = 'none';
-    document.getElementById('missingSection').style.display = 'none';
-    document.getElementById('changesTbody').innerHTML = '';
-    document.getElementById('missingTbody').innerHTML = '';
+    // Reset preview section + card states
+    _syncActiveCard = null;
+    _syncPreviewData = null;
+    document.getElementById('syncPreviewSection').style.display = 'none';
+    document.getElementById('syncPreviewTbody').innerHTML = '';
+    document.querySelectorAll('.sync-stat-box').forEach(function(b) { b.classList.remove('active'); });
     // Reset progress
     document.getElementById('syncProgressWrap').style.display = 'none';
     document.getElementById('syncProgressBar').style.width = '0%';
@@ -1148,6 +1151,8 @@ function closeSyncModal() {
     if (_syncModalMode === 'cm') { _syncPending = null; }
     if (_syncModalMode === 'fo') { _foCsvMap = null; _foDbMap = null; }
     _syncModalMode = null;
+    _syncActiveCard = null;
+    _syncPreviewData = null;
 }
 
 function _syncModalEscHandler(e) {
@@ -1242,38 +1247,139 @@ function renderSyncPreview({ toAdd, toUpdate, missing, unchanged }) {
     document.getElementById('pvNew').textContent  = toAdd.length.toLocaleString('en-IN');
     document.getElementById('pvEdit').textContent = toUpdate.length.toLocaleString('en-IN');
     document.getElementById('pvMiss').textContent = missing.length.toLocaleString('en-IN');
-    document.getElementById('pvSame').textContent = unchanged.length.toLocaleString('en-IN');
+    document.getElementById('pvSame').textContent = (Array.isArray(unchanged) ? unchanged.length : unchanged).toLocaleString('en-IN');
 
-    const changesSection = document.getElementById('changesSection');
-    changesSection.style.display = (toUpdate.length + missing.length > 0) ? 'block' : 'none';
+    // Store data for card click rendering
+    _syncPreviewData = { toAdd: toAdd, toUpdate: toUpdate, missing: missing };
 
-    // Changes table
-    document.getElementById('editCountLabel').textContent = toUpdate.length;
-    const tbody = document.getElementById('changesTbody');
-    tbody.innerHTML = '';
-    for (const { record, diffs } of toUpdate) {
-        for (const d of diffs) {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td><strong>${record.symbol || ''}</strong></td>
-                <td style="font-size:10px;color:#718096;">${record.isin}</td>
-                <td><span class="change-tag tag-edit">${d.field}</span></td>
-                <td style="color:#718096;font-size:11px;">${d.from ?? '—'}</td>
-                <td style="color:#2d3748;font-size:11px;">${d.to ?? '—'}</td>`;
-            tbody.appendChild(tr);
-        }
+    // Auto-select the first non-zero card: prefer edit, then new, then miss
+    if (toUpdate.length > 0) syncCardClick('edit');
+    else if (toAdd.length > 0) syncCardClick('new');
+    else if (missing.length > 0) syncCardClick('miss');
+}
+
+// ── Sync card click handler (shared by CM and F&O) ──────────
+function syncCardClick(card) {
+    if (!_syncPreviewData) return;
+    // Toggle: clicking active card deselects it
+    if (_syncActiveCard === card) {
+        _syncActiveCard = null;
+        document.querySelectorAll('.sync-stat-box').forEach(function(b) { b.classList.remove('active'); });
+        document.getElementById('syncPreviewSection').style.display = 'none';
+        return;
     }
+    _syncActiveCard = card;
+    // Highlight active card
+    document.querySelectorAll('.sync-stat-box').forEach(function(b) { b.classList.remove('active'); });
+    var cardMap = { 'new': 'syncCardNew', 'edit': 'syncCardEdit', 'miss': 'syncCardMiss', 'same': 'syncCardSame' };
+    var el = document.getElementById(cardMap[card]);
+    if (el) el.classList.add('active');
+    // Render the table for the selected card
+    renderSyncCardTable(card);
+}
 
-    // Missing table
-    const missingTbody = document.getElementById('missingTbody');
-    missingTbody.innerHTML = '';
-    for (const r of missing) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${r.symbol||''}</td><td style="font-size:10px;">${r.isin}</td>
-            <td>${r.company_name||''}</td><td style="color:#718096;font-size:10px;">No longer in CSV — kept as-is</td>`;
-        missingTbody.appendChild(tr);
+function renderSyncCardTable(card) {
+    var section = document.getElementById('syncPreviewSection');
+    var title = document.getElementById('syncPreviewTitle');
+    var thead = document.getElementById('syncPreviewThead');
+    var tbody = document.getElementById('syncPreviewTbody');
+    tbody.innerHTML = '';
+    thead.innerHTML = '';
+
+    if (_syncModalMode === 'cm') {
+        renderSyncCardTableCM(card, title, thead, tbody);
+    } else if (_syncModalMode === 'fo') {
+        renderSyncCardTableFO(card, title, thead, tbody);
+    }
+    section.style.display = 'block';
+}
+
+function renderSyncCardTableCM(card, title, thead, tbody) {
+    var d = _syncPreviewData;
+    if (card === 'new') {
+        title.textContent = d.toAdd.length + ' new securities to add';
+        thead.innerHTML = '<tr><th>Symbol</th><th>ISIN</th><th>Company</th><th>Type</th><th>Exchange</th></tr>';
+        d.toAdd.forEach(function(r) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td><strong>' + (r.symbol || '') + '</strong></td>' +
+                '<td style="font-size:10px;color:#718096;">' + (r.isin || '') + '</td>' +
+                '<td>' + (r.company_name || '') + '</td>' +
+                '<td><span class="change-tag tag-new">' + (r.security_type || '') + '</span></td>' +
+                '<td style="font-size:11px;color:#718096;">' + (r.nse_symbol ? 'NSE' : '') + (r.nse_symbol && r.bse_symbol ? ' / ' : '') + (r.bse_symbol ? 'BSE' : '') + '</td>';
+            tbody.appendChild(tr);
+        });
+    } else if (card === 'edit') {
+        title.textContent = d.toUpdate.length + ' securities will be updated';
+        thead.innerHTML = '<tr><th>Symbol</th><th>ISIN</th><th>Field</th><th>Current Value</th><th>New Value</th></tr>';
+        d.toUpdate.forEach(function(u) {
+            u.diffs.forEach(function(diff) {
+                var tr = document.createElement('tr');
+                tr.innerHTML = '<td><strong>' + (u.record.symbol || '') + '</strong></td>' +
+                    '<td style="font-size:10px;color:#718096;">' + (u.record.isin || '') + '</td>' +
+                    '<td><span class="change-tag tag-edit">' + diff.field + '</span></td>' +
+                    '<td style="color:#718096;font-size:11px;">' + (diff.from == null ? '—' : diff.from) + '</td>' +
+                    '<td style="color:#2d3748;font-size:11px;">' + (diff.to == null ? '—' : diff.to) + '</td>';
+                tbody.appendChild(tr);
+            });
+        });
+    } else if (card === 'miss') {
+        title.textContent = d.missing.length + ' in DB but not in CSV (kept as-is)';
+        thead.innerHTML = '<tr><th>Symbol</th><th>ISIN</th><th>Company</th><th>Note</th></tr>';
+        d.missing.forEach(function(r) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + (r.symbol || '') + '</td>' +
+                '<td style="font-size:10px;">' + (r.isin || '') + '</td>' +
+                '<td>' + (r.company_name || '') + '</td>' +
+                '<td style="color:#718096;font-size:10px;">No longer in CSV — kept as-is</td>';
+            tbody.appendChild(tr);
+        });
     }
 }
+
+function renderSyncCardTableFO(card, title, thead, tbody) {
+    var d = _syncPreviewData;
+    if (card === 'new') {
+        title.textContent = d.toAdd.length + ' new contracts to add';
+        thead.innerHTML = '<tr><th>Symbol</th><th>Underlying</th><th>Exchange</th><th>Type</th><th>Lot Size</th><th>Expiry</th></tr>';
+        d.toAdd.forEach(function(r) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td><strong>' + (r.symbol || '') + '</strong></td>' +
+                '<td>' + (r.underlying_symbol || '') + '</td>' +
+                '<td>' + (r.exchange || '') + '</td>' +
+                '<td><span class="change-tag tag-new">' + (r.instrument_type || '') + '</span></td>' +
+                '<td style="text-align:right;">' + (r.lot_size || '') + '</td>' +
+                '<td style="font-size:11px;color:#718096;">' + (r.expiry_date || '') + '</td>';
+            tbody.appendChild(tr);
+        });
+    } else if (card === 'edit') {
+        title.textContent = d.toUpdate.length + ' contracts will be updated';
+        thead.innerHTML = '<tr><th>Symbol</th><th>Field</th><th>Current Value</th><th>New Value</th></tr>';
+        d.toUpdate.forEach(function(u) {
+            u.diffs.forEach(function(diff) {
+                var tr = document.createElement('tr');
+                tr.innerHTML = '<td><strong>' + (u.symbol || '') + '</strong></td>' +
+                    '<td><span class="change-tag tag-edit">' + diff.field + '</span></td>' +
+                    '<td style="color:#718096;font-size:11px;">' + (diff.from == null ? '—' : diff.from) + '</td>' +
+                    '<td style="color:#2d3748;font-size:11px;">' + (diff.to == null ? '—' : diff.to) + '</td>';
+                tbody.appendChild(tr);
+            });
+        });
+    } else if (card === 'miss') {
+        var missLabel = document.getElementById('pvMissLbl').textContent;
+        title.textContent = d.missing.length + ' ' + missLabel.toLowerCase();
+        thead.innerHTML = '<tr><th>Symbol</th><th>Underlying</th><th>Exchange</th><th>Expiry</th><th>Note</th></tr>';
+        d.missing.forEach(function(r) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + (r.symbol || '') + '</td>' +
+                '<td>' + (r.underlying_symbol || '') + '</td>' +
+                '<td>' + (r.exchange || '') + '</td>' +
+                '<td style="font-size:11px;color:#718096;">' + (r.expiry_date || '') + '</td>' +
+                '<td style="color:#718096;font-size:10px;">Will be deactivated</td>';
+            tbody.appendChild(tr);
+        });
+    }
+}
+window.syncCardClick = syncCardClick;
 
 async function commitSync() {
     if (!_syncPending) return;
@@ -2348,12 +2454,14 @@ async function startFOSync() {
         progBar.style.width = '100%';
         progLbl.textContent = 'Done.';
 
-        // ── 5. Show preview ─────────────────────────────────────────
-        document.getElementById('pvNew').textContent  = _foToAdd.length.toLocaleString('en-IN');
-        document.getElementById('pvEdit').textContent = _foToUpdate.length.toLocaleString('en-IN');
-        document.getElementById('pvMiss').textContent = _foToDeactivate.length.toLocaleString('en-IN');
-        document.getElementById('pvSame').textContent =
-            (_foCsvMap.size - _foToAdd.length - _foToUpdate.length).toLocaleString('en-IN');
+        // ── 5. Show preview (using shared card-click pattern) ──────
+        var unchangedCount = _foCsvMap.size - _foToAdd.length - _foToUpdate.length;
+        renderSyncPreview({
+            toAdd: _foToAdd,
+            toUpdate: _foToUpdate,
+            missing: _foToDeactivate,
+            unchanged: unchangedCount
+        });
 
         document.getElementById('btnCommit').disabled =
             (_foToAdd.length + _foToUpdate.length + _foToDeactivate.length === 0);
