@@ -628,6 +628,11 @@ function addAddTxnRow(copyFromId) {
         renderAddTxnTagPills(rowId);
     }
 
+    // Show balance on copied rows that already have a symbol
+    if (copyFrom && row.security_id) {
+        atShowBalanceQtyTooltip(rowId, row);
+    }
+
     return rowId;
 }
 
@@ -659,6 +664,11 @@ function attachAddTxnRowHandlers(rowId) {
     traderSel.addEventListener('change', function() {
         row.trader_id = traderSel.value || null;
         recalcAddTxnRow(rowId);
+        // Refresh balance and tags for the new trader
+        if (row.security_id) {
+            atShowBalanceQtyTooltip(rowId, row);
+            atAutoPopulateTags(rowId, row);
+        }
     });
 
     // --- Symbol search ---
@@ -1071,11 +1081,10 @@ function atShowBalanceQtyTooltip(rowId, row) {
         }
     }
 
-    // Show balance as tooltip AND as a visible label below the Qty input
+    // Show balance as tooltip AND as a visible label below the Qty and Lots inputs
     var qtyInput = document.querySelector('.addTxn-qty-input[data-rid="' + rowId + '"]');
     if (qtyInput) {
         qtyInput.title = 'Current holding: ' + formatQuantity(balanceQty);
-        // Add/update a small balance label below the input
         var td = qtyInput.closest('td');
         var existing = td.querySelector('.atQty-balance');
         if (existing) existing.remove();
@@ -1084,6 +1093,22 @@ function atShowBalanceQtyTooltip(rowId, row) {
             lbl.className = 'atQty-balance';
             lbl.textContent = 'Bal: ' + formatQuantity(balanceQty);
             td.appendChild(lbl);
+        }
+    }
+
+    // Also show on Lots field if F&O (lot_size > 1)
+    var lotsInput = document.querySelector('.addTxn-lots-input[data-rid="' + rowId + '"]');
+    if (lotsInput && row.lot_size > 1) {
+        var balanceLots = Math.round(balanceQty / row.lot_size);
+        lotsInput.title = 'Current holding: ' + balanceLots + ' lots (' + formatQuantity(balanceQty) + ' qty)';
+        var lotsTd = lotsInput.closest('td');
+        var existingLots = lotsTd.querySelector('.atQty-balance');
+        if (existingLots) existingLots.remove();
+        if (balanceLots !== 0) {
+            var lotsLbl = document.createElement('div');
+            lotsLbl.className = 'atQty-balance';
+            lotsLbl.textContent = 'Bal: ' + balanceLots + ' lots';
+            lotsTd.appendChild(lotsLbl);
         }
     }
 }
