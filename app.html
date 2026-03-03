@@ -344,6 +344,9 @@
         if (!checkAuth()) return;
         checkFyersAuth();
         wmsLoadRefData(); // Load shared reference data (investors, brokers, IBA rates, reg charges, tags) once
+        // Background-load securities master data (non-blocking — ~19k rows)
+        wmsLoadSecuritiesCm().catch(function(e) { console.error('CM startup load err:', e); });
+        wmsLoadSecuritiesNfo().catch(function(e) { console.error('NFO startup load err:', e); });
         startIndexRefresh(); // Start index ticker
         document.getElementById('logoutBtn').addEventListener('click', logout);
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {

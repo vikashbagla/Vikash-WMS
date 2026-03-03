@@ -97,35 +97,11 @@ async function loadPortfolioData() {
     
     console.log(`✅ Loaded ${txnData?.length || 0} transactions`);
 
-    console.log('Loading investors...');
-    
-    // Load investors
-    const { data: invData, error: invError } = await supabaseClient
-        .from('investors')
-        .select('id, name')
-        .order('name');
-
-    if (invError) {
-        console.error('❌ Error loading investors:', invError);
-        throw invError;
-    }
-    
-    console.log(`✅ Loaded ${invData?.length || 0} investors`);
-
-    console.log('Loading brokers...');
-    
-    // Load brokers
-    const { data: brkData, error: brkError } = await supabaseClient
-        .from('brokers')
-        .select('id, name')
-        .order('name');
-
-    if (brkError) {
-        console.error('❌ Error loading brokers:', brkError);
-        throw brkError;
-    }
-    
-    console.log(`✅ Loaded ${brkData?.length || 0} brokers`);
+    // Use shared reference data for investors and brokers (loaded at app startup)
+    if (!wmsRefData.ready) await wmsLoadRefData();
+    var invData = wmsRefData.investors;
+    var brkData = wmsRefData.brokers;
+    console.log('✅ Using cached investors (' + invData.length + ') and brokers (' + brkData.length + ')');
 
     // Transform transactions
     transactions = txnData.map(txn => ({

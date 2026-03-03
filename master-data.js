@@ -1087,24 +1087,9 @@ function diffRecord(existing, incoming) {
     return diffs;
 }
 
-// Fetch ALL rows from a table, bypassing the 1000-row default limit
-// by paginating with .range() until we get a partial page
+// Thin wrapper — delegates to shared wmsFetchAllRows() in wms-shared.js
 async function fetchAllRows(table, select, orderCol) {
-    orderCol = orderCol || 'symbol';
-    const BATCH = 1000;
-    let all = [], from = 0;
-    while (true) {
-        const { data, error } = await window.supabaseClient
-            .from(table)
-            .select(select)
-            .order(orderCol, { ascending: true })
-            .range(from, from + BATCH - 1);
-        if (error) throw error;
-        all = all.concat(data || []);
-        if (!data || data.length < BATCH) break;
-        from += BATCH;
-    }
-    return all;
+    return wmsFetchAllRows(table, select, orderCol);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1427,7 +1412,7 @@ async function commitSync() {
         _syncPending = null;
         closeSyncModal();
         await loadSecuritiesStats();
-        await loadSecuritiesTable();
+        await loadSecuritiesTable(true);
 
     } catch (err) {
         alert('❌ Commit failed: ' + err.message);
@@ -1560,7 +1545,7 @@ async function startSectorSync() {
 
         alert('Sector Sync complete!\nUpdated: ' + updated + (failed > 0 ? ' | Failed: ' + failed : ''));
         await loadSecuritiesStats();
-        await loadSecuritiesTable();
+        await loadSecuritiesTable(true);
 
     } catch (err) {
         alert('Sector Sync error: ' + err.message);
@@ -1657,7 +1642,7 @@ async function startSizeSync() {
 
         alert('Size Update complete!\nUpdated: ' + updated + ' | Skipped (no market cap): ' + skipped + (failed > 0 ? ' | Failed: ' + failed : ''));
         await loadSecuritiesStats();
-        await loadSecuritiesTable();
+        await loadSecuritiesTable(true);
 
     } catch (err) {
         alert('Size Update error: ' + err.message);
@@ -1717,7 +1702,7 @@ async function postCommitSectorFetch(newRecords) {
 
 // Browse / filter table ────────────────────────────────────────
 
-var _securitiesAll = [];
+// _securitiesAll / _foAll removed — now read from wmsRefData.securitiesCm / securitiesNfo
 
 async function loadSecuritiesStats() {
     try {
@@ -1757,19 +1742,19 @@ function setSecLoading(on, msg) {
     if (btnExport) btnExport.disabled = on;
 }
 
-async function loadSecuritiesTable() {
-    const tbody = document.getElementById('secTbody');
+async function loadSecuritiesTable(forceRefresh) {
+    var tbody = document.getElementById('secTbody');
     setSecLoading(true, 'Loading securities...');
     try {
-        // Fetch all rows using paginated helper (bypasses 1000-row default limit)
-        const all = await fetchAllRows('securities_db',
-            'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,sector,size,is_active', 'isin');
-        _securitiesAll = all;
+        // Use shared cache — force refresh after sync, else use cached data
+        if (forceRefresh || !wmsRefData.securitiesCmReady) {
+            await wmsLoadSecuritiesCm();
+        }
         populateSectorPills();
         renderSecurities();
     } catch(e) {
         console.warn('Securities table load error', e);
-        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#718096;padding:20px;">Connect to Supabase to browse securities</td></tr>';
+        if (tbody) tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#718096;padding:20px;">Connect to Supabase to browse securities</td></tr>';
     } finally {
         setSecLoading(false);
     }
@@ -1785,8 +1770,9 @@ function populateSectorPills() {
     var container = document.getElementById('msSectorPills');
     if (!container) return;
     var sectors = new Set();
-    for (var i = 0; i < (_securitiesAll || []).length; i++) {
-        var s = _securitiesAll[i].sector;
+    var cmData = wmsRefData.securitiesCm || [];
+    for (var i = 0; i < cmData.length; i++) {
+        var s = cmData[i].sector;
         if (s) sectors.add(s);
     }
     _allSectors = Array.from(sectors).sort();
@@ -1866,7 +1852,7 @@ function renderUnified(resetPage) {
     const q       = (document.getElementById('secSearch')?.value || '').trim().toLowerCase();
     
     // Debug logging
-    if (q) console.log('[renderUnified] Search:', q, '| CM rows:', (_securitiesAll||[]).length, '| FO rows:', (_foAll||[]).length);
+    if (q) console.log('[renderUnified] Search:', q, '| CM rows:', (wmsRefData.securitiesCm||[]).length, '| FO rows:', (wmsRefData.securitiesNfo||[]).length);
     const fTypes  = getMsValues('msType');
     const fExch   = getMsValues('msExch');
     const fClass  = getMsValues('msClass');
@@ -1884,7 +1870,7 @@ function renderUnified(resetPage) {
     }
 
     // Build unified row list from both datasets
-    const cmRows = (_securitiesAll || []).map(r => ({
+    const cmRows = (wmsRefData.securitiesCm || []).map(r => ({
         symbol:      r.symbol || '',
         name:        r.company_name || '',
         type:        r.security_type || '',
@@ -1900,7 +1886,7 @@ function renderUnified(resetPage) {
         _src:        'cm'
     }));
 
-    const foRows = (_foAll || []).map(r => ({
+    const foRows = (wmsRefData.securitiesNfo || []).map(r => ({
         symbol:      r.symbol || '',
         name:        r.instrument_name || '',
         type:        r.instrument_type || '',
@@ -2211,7 +2197,7 @@ async function importClassification(input) {
 
         const failed = failedIsins.length;
         alert(`✓ Classification updated for ${updates.length - failed} records.` + (failed ? ` (${failed} still failed: ${failedIsins.join(', ')})` : ''));
-        await loadSecuritiesTable();
+        await loadSecuritiesTable(true);
 
     } catch (e) {
         console.error('Classification import failed', e);
@@ -2313,7 +2299,6 @@ if (!window._msClickHandlerAttached) {
 // F&O STATS + TABLE
 // ═══════════════════════════════════════════════════════════════
 
-var _foAll = [];
 var _foTableLoaded = false;
 
 async function loadFOStats() {
@@ -2344,13 +2329,14 @@ async function loadFOStats() {
 async function loadFOTable() {
     setSecLoading(true, 'Loading F&O contracts...');
     try {
-        _foAll = await fetchAllRows('securities_nfo',
-            'id,symbol,instrument_name,exchange,instrument_type,underlying_symbol,' +
-            'expiry_date,strike_price,option_type,lot_size,is_active');
+        if (!wmsRefData.securitiesNfoReady) {
+            await wmsLoadSecuritiesNfo();
+        }
         renderUnified();
     } catch(e) {
         console.warn('FO table load error', e);
-        document.getElementById('foTbody').innerHTML =
+        var foTb = document.getElementById('foTbody');
+        if (foTb) foTb.innerHTML =
             '<tr><td colspan="8" style="text-align:center;color:#718096;padding:20px;">Could not load F&O contracts</td></tr>';
     } finally {
         setSecLoading(false);
@@ -2579,10 +2565,8 @@ async function commitFOSync() {
 
         await loadFOStats();
 
-        // Reload FO data into memory and re-render
-        _foAll = await fetchAllRows('securities_nfo',
-            'id,symbol,instrument_name,exchange,instrument_type,underlying_symbol,' +
-            'expiry_date,strike_price,option_type,lot_size,is_active');
+        // Refresh shared FO cache and re-render
+        await wmsLoadSecuritiesNfo();
         renderUnified();
 
         // Close modal

@@ -345,17 +345,10 @@ async function trLoadData() {
 
     trTransactions = txnData;
 
-    // Load investors
-    var invResp = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name&order=name', {
-        headers: headers
-    });
-    trInvestors = invResp.ok ? await invResp.json() : [];
-
-    // Load brokers
-    var brkResp = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/brokers?select=id,name,broker_code&order=name', {
-        headers: headers
-    });
-    trBrokers = brkResp.ok ? await brkResp.json() : [];
+    // Use shared reference data for investors and brokers (loaded at app startup)
+    if (!wmsRefData.ready) await wmsLoadRefData();
+    trInvestors = wmsRefData.investors;
+    trBrokers = wmsRefData.brokers;
 
     trInitFilterPills();
 }

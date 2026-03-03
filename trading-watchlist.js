@@ -248,40 +248,21 @@ async function trWlLoadBrokerTokens() {
     dbIds = dbIds.filter(function(v, i, a) { return a.indexOf(v) === i; });
     nfoIds = nfoIds.filter(function(v, i, a) { return a.indexOf(v) === i; });
 
-    // Fetch broker_tokens from securities_db
-    // Note: securities_db.id is UUID type. Some legacy watchlist items may have integer
-    // security_ids (from a different table/era). Mixing them in one IN() query causes
-    // Supabase to error "invalid input syntax for type uuid". Split by format.
+    // Lookup broker_tokens from shared cache (no network calls)
     var dbTokenMap = {};
     if (dbIds.length > 0) {
-        var uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        var uuidIds = dbIds.filter(function(id) { return uuidPattern.test(id); });
-        var nonUuidIds = dbIds.filter(function(id) { return !uuidPattern.test(id); });
-
-        if (nonUuidIds.length > 0) {
-            console.warn('Watchlist: Skipping', nonUuidIds.length, 'non-UUID security_ids:', nonUuidIds.join(', '));
-        }
-
-        if (uuidIds.length > 0) {
-            var dbResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=in.(' + uuidIds.join(',') + ')&select=id,broker_tokens,nse_symbol,bse_symbol,symbol,security_type', {
-                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
-            });
-            var dbRows = dbResp.ok ? await dbResp.json() : [];
-            if (!dbResp.ok) {
-                console.error('Watchlist: securities_db fetch failed:', dbResp.status);
-            }
-            dbRows.forEach(function(r) { dbTokenMap[r.id] = r; });
-        }
+        dbIds.forEach(function(id) {
+            var cached = wmsRefData.securitiesCmMap[id];
+            if (cached) dbTokenMap[id] = cached;
+        });
     }
 
-    // Fetch broker_tokens from securities_nfo
     var nfoTokenMap = {};
     if (nfoIds.length > 0) {
-        var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?id=in.(' + nfoIds.join(',') + ')&select=id,broker_tokens,symbol,expiry_date,exchange,instrument_name', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        nfoIds.forEach(function(id) {
+            var cached = wmsRefData.securitiesNfoMap[id];
+            if (cached) nfoTokenMap[id] = cached;
         });
-        var nfoRows = nfoResp.ok ? await nfoResp.json() : [];
-        nfoRows.forEach(function(r) { nfoTokenMap[r.id] = r; });
     }
 
     // Attach Fyers symbol and display symbol to each item
@@ -1578,31 +1559,9 @@ async function trWlSearchSecurities(query) {
         return;
     }
 
-    // Search securities_db (symbol, nse_symbol, company_name) — use ilike
-    var searchQ = encodeURIComponent('%' + query + '%');
-    var dbUrl = SUPABASE_URL + '/rest/v1/securities_db?or=(symbol.ilike.' + searchQ +
-        ',nse_symbol.ilike.' + searchQ +
-        ',bse_symbol.ilike.' + searchQ +
-        ',company_name.ilike.' + searchQ +
-        ')&is_active=eq.true&limit=30&select=id,symbol,nse_symbol,bse_symbol,company_name,security_type,asset_class,broker_tokens&order=symbol';
-
-    // Search securities_nfo (symbol, underlying_symbol, instrument_name)
-    var nfoUrl = SUPABASE_URL + '/rest/v1/securities_nfo?or=(symbol.ilike.' + searchQ +
-        ',underlying_symbol.ilike.' + searchQ +
-        ',instrument_name.ilike.' + searchQ +
-        ')&is_active=eq.true&limit=15&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,broker_tokens,expiry_date&order=expiry_date';
-
-    resultsEl.innerHTML = '<div class="wl-add-no-results">Searching...</div>';
-
     try {
-        var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
-        var responses = await Promise.all([
-            fetch(dbUrl, { headers: headers }),
-            fetch(nfoUrl, { headers: headers })
-        ]);
-
-        var dbResults = responses[0].ok ? await responses[0].json() : [];
-        var nfoResults = responses[1].ok ? await responses[1].json() : [];
+        // Client-side search from shared cache (no network calls)
+        var cached = wmsSearchSecurities(query);
 
         // Check which securities are already in the target watchlist
         var wl = trWlWatchlists.find(function(w) { return w.id === trWlAddTargetId; });
@@ -1613,47 +1572,43 @@ async function trWlSearchSecurities(query) {
             });
         }
 
-        // Build search cache — store full objects in JS array, reference by index
-        // This avoids putting complex data (JSON broker_tokens) in HTML data-attributes
+        // Build search cache from shared cache results
         trWlSearchCache = [];
 
-        // CM results
-        dbResults.forEach(function(r) {
-            var displaySymbol = r.nse_symbol || r.bse_symbol || r.symbol;
-            trWlSearchCache.push({
-                security_id: r.id,
-                security_source: 'securities_db',
-                short_symbol: displaySymbol,
-                company_name: r.company_name || '',
-                security_type: r.security_type || 'EQ',
-                exchange: r.nse_symbol ? 'NSE' : (r.bse_symbol ? 'BSE' : ''),
-                broker_tokens: r.broker_tokens || {},
-                nse_symbol: r.nse_symbol || '',
-                bse_symbol: r.bse_symbol || '',
-                isAdded: !!existingKeys['securities_db:' + r.id]
-            });
+        cached.forEach(function(r) {
+            if (r._isNfo) {
+                // NFO result
+                trWlSearchCache.push({
+                    security_id: r.id,
+                    security_source: 'securities_nfo',
+                    short_symbol: r.symbol || r.underlying_symbol,
+                    company_name: r.instrument_name || r.symbol,
+                    security_type: r.instrument_type || 'F&O',
+                    exchange: r.exchange || '',
+                    broker_tokens: r.broker_tokens || {},
+                    nse_symbol: '',
+                    bse_symbol: '',
+                    isAdded: !!existingKeys['securities_nfo:' + r.id],
+                    _expiryDate: r.expiry_date || null,
+                    _instrumentName: r.instrument_name || ''
+                });
+            } else {
+                // CM result
+                var displaySymbol = r.nse_symbol || r.bse_symbol || r.symbol;
+                trWlSearchCache.push({
+                    security_id: r.id,
+                    security_source: 'securities_db',
+                    short_symbol: displaySymbol,
+                    company_name: r.company_name || '',
+                    security_type: r.security_type || 'EQ',
+                    exchange: r.nse_symbol ? 'NSE' : (r.bse_symbol ? 'BSE' : ''),
+                    broker_tokens: r.broker_tokens || {},
+                    nse_symbol: r.nse_symbol || '',
+                    bse_symbol: r.bse_symbol || '',
+                    isAdded: !!existingKeys['securities_db:' + r.id]
+                });
+            }
         });
-
-        // NFO results — use full symbol (e.g. NATIONALUM26APRFUT) as short_symbol
-        nfoResults.forEach(function(r) {
-            trWlSearchCache.push({
-                security_id: r.id,
-                security_source: 'securities_nfo',
-                short_symbol: r.symbol || r.underlying_symbol,
-                company_name: r.instrument_name || r.symbol,
-                security_type: r.instrument_type || 'F&O',
-                exchange: r.exchange || '',
-                broker_tokens: r.broker_tokens || {},
-                nse_symbol: '',
-                bse_symbol: '',
-                isAdded: !!existingKeys['securities_nfo:' + r.id],
-                _expiryDate: r.expiry_date || null,
-                _instrumentName: r.instrument_name || ''
-            });
-        });
-
-        // Sort: CM first, then NFO by expiry ascending, expired last
-        trWlSearchCache = wmsSortSearchResults(trWlSearchCache);
 
         // Render results — only data-idx attribute needed (index into trWlSearchCache)
         var html = '';

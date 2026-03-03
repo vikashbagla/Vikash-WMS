@@ -670,70 +670,48 @@ async function searchAddTxnSymbol(rowId, query) {
         return;
     }
 
-    var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
-    var searchQ = encodeURIComponent('%' + query + '%');
-
     try {
-        var dbUrl = SUPABASE_URL + '/rest/v1/securities_db?or=(symbol.ilike.' + searchQ +
-            ',nse_symbol.ilike.' + searchQ +
-            ',bse_symbol.ilike.' + searchQ +
-            ',company_name.ilike.' + searchQ +
-            ')&is_active=eq.true&limit=20&select=id,symbol,nse_symbol,bse_symbol,company_name,security_type,asset_class,lot_size,broker_tokens&order=symbol';
-
-        var nfoUrl = SUPABASE_URL + '/rest/v1/securities_nfo?or=(symbol.ilike.' + searchQ +
-            ',underlying_symbol.ilike.' + searchQ +
-            ',instrument_name.ilike.' + searchQ +
-            ')&is_active=eq.true&limit=10&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,lot_size,broker_tokens,expiry_date&order=expiry_date';
-
-        var results = await Promise.all([
-            fetch(dbUrl, { headers: headers }).then(function(r) { return r.ok ? r.json() : []; }),
-            fetch(nfoUrl, { headers: headers }).then(function(r) { return r.ok ? r.json() : []; })
-        ]);
-
-        var dbResults = results[0];
-        var nfoResults = results[1];
+        // Client-side search from shared cache (no network calls)
+        var cached = wmsSearchSecurities(query);
 
         // Build combined security results array for the dropdown controller
         var allSecurities = [];
 
-        // CM results
-        dbResults.forEach(function(sec) {
-            allSecurities.push({
-                security_id: sec.id,
-                symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
-                short_symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
-                company_name: sec.company_name || sec.symbol,
-                security_type: sec.security_type || 'EQUITY',
-                asset_class: sec.asset_class || null,
-                exchange: sec.nse_symbol ? 'NSE' : 'BSE',
-                lot_size: sec.lot_size || 1,
-                broker_tokens: sec.broker_tokens,
-                _displaySym: sec.nse_symbol || sec.bse_symbol || sec.symbol,
-                _displayName: sec.company_name || '',
-                _isNfo: false
-            });
+        // CM results from cache
+        cached.forEach(function(sec) {
+            if (sec._isNfo) {
+                var isOpt = sec.symbol && (sec.symbol.match(/(CE|PE)$/) !== null);
+                allSecurities.push({
+                    security_id: sec.id,
+                    symbol: sec.symbol,
+                    short_symbol: sec.underlying_symbol || sec.symbol,
+                    company_name: sec.instrument_name || sec.symbol,
+                    security_type: 'NFO',
+                    asset_class: isOpt ? 'OPTIONS' : 'FUTURES',
+                    exchange: sec.exchange || 'NSE',
+                    lot_size: sec.lot_size || 1,
+                    broker_tokens: sec.broker_tokens,
+                    _displaySym: sec.symbol,
+                    _displayExpiry: sec.expiry_date,
+                    _isNfo: true
+                });
+            } else {
+                allSecurities.push({
+                    security_id: sec.id,
+                    symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
+                    short_symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
+                    company_name: sec.company_name || sec.symbol,
+                    security_type: sec.security_type || 'EQUITY',
+                    asset_class: sec.asset_class || null,
+                    exchange: sec.nse_symbol ? 'NSE' : 'BSE',
+                    lot_size: sec.lot_size || 1,
+                    broker_tokens: sec.broker_tokens,
+                    _displaySym: sec.nse_symbol || sec.bse_symbol || sec.symbol,
+                    _displayName: sec.company_name || '',
+                    _isNfo: false
+                });
+            }
         });
-
-        // NFO results
-        nfoResults.forEach(function(sec) {
-            var isOpt = sec.symbol && (sec.symbol.match(/(CE|PE)$/) !== null);
-            allSecurities.push({
-                security_id: sec.id,
-                symbol: sec.symbol,
-                short_symbol: sec.underlying_symbol || sec.symbol,
-                company_name: sec.instrument_name || sec.symbol,
-                security_type: 'NFO',
-                asset_class: isOpt ? 'OPTIONS' : 'FUTURES',
-                exchange: sec.exchange || 'NSE',
-                lot_size: sec.lot_size || 1,
-                broker_tokens: sec.broker_tokens,
-                _displaySym: sec.symbol,
-                _displayExpiry: sec.expiry_date,
-                _isNfo: true
-            });
-        });
-
-        allSecurities = wmsSortSearchResults(allSecurities);
         atSymDdItems[rowId] = allSecurities;
 
         dd.innerHTML = '';

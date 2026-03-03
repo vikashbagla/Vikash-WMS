@@ -31,7 +31,15 @@ var wmsRefData = {
     ibaRatesMap: {},     // "investorId|brokerId" → {rates, charges_inclusive}
     regCharges: [],      // Array from regulatory_charges_config (active only)
     tags: [],            // Sorted array of distinct tag strings
-    ready: false         // True after initial load completes
+    ready: false,        // True after initial load completes
+
+    // Securities master data — loaded once at startup, refreshed after sync
+    securitiesCm: [],        // All rows from securities_db
+    securitiesNfo: [],       // All rows from securities_nfo
+    securitiesCmMap: {},     // id → row (O(1) lookups)
+    securitiesNfoMap: {},    // id → row (O(1) lookups)
+    securitiesCmReady: false,
+    securitiesNfoReady: false
 };
 
 /**
@@ -105,6 +113,127 @@ async function wmsLoadRefData() {
     } catch (e) {
         console.error('WMS ref data load error:', e);
     }
+}
+
+// ============================================================================
+// SECURITIES MASTER DATA — Paginated loader + client-side search
+// Loaded once at app startup (background), refreshed after CM/F&O Sync.
+// All modules read from wmsRefData.securitiesCm / securitiesNfo.
+// ============================================================================
+
+/**
+ * Fetch ALL rows from a Supabase table, bypassing the 1000-row default limit
+ * by paginating with .range() until a partial page is returned.
+ */
+async function wmsFetchAllRows(table, select, orderCol) {
+    orderCol = orderCol || 'symbol';
+    var BATCH = 1000;
+    var all = [], from = 0;
+    while (true) {
+        var result = await window.supabaseClient
+            .from(table)
+            .select(select)
+            .order(orderCol, { ascending: true })
+            .range(from, from + BATCH - 1);
+        if (result.error) throw result.error;
+        all = all.concat(result.data || []);
+        if (!result.data || result.data.length < BATCH) break;
+        from += BATCH;
+    }
+    return all;
+}
+
+/**
+ * Load all CM (Cash Market) securities into wmsRefData.securitiesCm.
+ * Called at app startup (background) and after CM Sync.
+ */
+async function wmsLoadSecuritiesCm() {
+    try {
+        var rows = await wmsFetchAllRows('securities_db',
+            'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,sector,size,is_active,lot_size,broker_tokens',
+            'isin');
+        wmsRefData.securitiesCm = rows;
+        wmsRefData.securitiesCmMap = {};
+        rows.forEach(function(r) { wmsRefData.securitiesCmMap[r.id] = r; });
+        wmsRefData.securitiesCmReady = true;
+        console.log('Securities CM loaded: ' + rows.length + ' rows');
+    } catch (e) {
+        console.error('Securities CM load error:', e);
+    }
+}
+
+/**
+ * Load all F&O (Futures & Options) securities into wmsRefData.securitiesNfo.
+ * Called at app startup (background) and after F&O Sync.
+ */
+async function wmsLoadSecuritiesNfo() {
+    try {
+        var rows = await wmsFetchAllRows('securities_nfo',
+            'id,symbol,instrument_name,exchange,instrument_type,underlying_symbol,expiry_date,strike_price,option_type,lot_size,is_active,broker_tokens',
+            'expiry_date');
+        wmsRefData.securitiesNfo = rows;
+        wmsRefData.securitiesNfoMap = {};
+        rows.forEach(function(r) { wmsRefData.securitiesNfoMap[r.id] = r; });
+        wmsRefData.securitiesNfoReady = true;
+        console.log('Securities NFO loaded: ' + rows.length + ' rows');
+    } catch (e) {
+        console.error('Securities NFO load error:', e);
+    }
+}
+
+/**
+ * Client-side symbol search across cached securities data.
+ * Returns sorted results: CM first (alpha), then F&O by expiry, inactive filtered out.
+ * Used by Add Transaction, Watchlist, and any future symbol search.
+ */
+function wmsSearchSecurities(query) {
+    var q = (query || '').trim().toLowerCase();
+    if (!q) return [];
+
+    // Search CM securities (active only)
+    var cmMatches = [];
+    if (wmsRefData.securitiesCmReady) {
+        var cmAll = wmsRefData.securitiesCm;
+        for (var i = 0; i < cmAll.length; i++) {
+            var sec = cmAll[i];
+            if (sec.is_active === false) continue;
+            if ((sec.symbol || '').toLowerCase().indexOf(q) !== -1 ||
+                (sec.nse_symbol || '').toLowerCase().indexOf(q) !== -1 ||
+                (sec.bse_symbol || '').toLowerCase().indexOf(q) !== -1 ||
+                (sec.company_name || '').toLowerCase().indexOf(q) !== -1 ||
+                (sec.isin || '').toLowerCase().indexOf(q) === 0) {
+                cmMatches.push(sec);
+                if (cmMatches.length >= 20) break;
+            }
+        }
+    }
+
+    // Search NFO securities (active only)
+    var nfoMatches = [];
+    if (wmsRefData.securitiesNfoReady) {
+        var nfoAll = wmsRefData.securitiesNfo;
+        for (var j = 0; j < nfoAll.length; j++) {
+            var nfo = nfoAll[j];
+            if (nfo.is_active === false) continue;
+            if ((nfo.symbol || '').toLowerCase().indexOf(q) !== -1 ||
+                (nfo.underlying_symbol || '').toLowerCase().indexOf(q) !== -1 ||
+                (nfo.instrument_name || '').toLowerCase().indexOf(q) !== -1) {
+                nfoMatches.push(nfo);
+                if (nfoMatches.length >= 15) break;
+            }
+        }
+    }
+
+    // Mark source for sort function, then combine and sort
+    cmMatches.forEach(function(r) { r._isNfo = false; r._displaySym = r.symbol; });
+    nfoMatches.forEach(function(r) {
+        r._isNfo = true;
+        r._displaySym = r.symbol;
+        r._expiryDate = r.expiry_date || '';
+    });
+
+    var all = cmMatches.concat(nfoMatches);
+    return wmsSortSearchResults(all);
 }
 
 // ============================================================================
