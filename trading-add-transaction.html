@@ -85,6 +85,40 @@
     box-shadow: 0 0 0 2px rgba(102,126,234,0.15);
 }
 
+/* Segmented date input (dd-mmm-yyyy) */
+.atDate-wrap {
+    display: flex;
+    align-items: center;
+    padding: 5px 8px;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #2d3748;
+    outline: none;
+    cursor: text;
+    user-select: none;
+    background: #fff;
+}
+.atDate-wrap:focus-within {
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102,126,234,0.15);
+}
+.atDate-seg {
+    padding: 1px 2px;
+    border-radius: 2px;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+}
+.atDate-seg.active {
+    background: #667eea;
+    color: #fff;
+}
+.atDate-sep {
+    color: #a0aec0;
+    margin: 0 1px;
+    pointer-events: none;
+}
+
 /* Search dropdowns */
 .addTxn-search-dd {
     display: none;
@@ -544,8 +578,14 @@
             <div class="addTxn-fields-row">
                 <div class="addTxn-field" style="width: 140px;">
                     <label>Date</label>
-                    <input type="text" id="addTxnDateDisplay" placeholder="dd-mmm-yyyy" readonly style="cursor:pointer;">
-                    <input type="date" id="addTxnDate" style="display:none;">
+                    <div class="atDate-wrap" id="addTxnDateWrap" tabindex="0">
+                        <span class="atDate-seg" data-seg="dd" id="atDateDd">03</span>
+                        <span class="atDate-sep">-</span>
+                        <span class="atDate-seg" data-seg="mmm" id="atDateMmm">Mar</span>
+                        <span class="atDate-sep">-</span>
+                        <span class="atDate-seg" data-seg="yyyy" id="atDateYyyy">2026</span>
+                    </div>
+                    <input type="hidden" id="addTxnDate">
                 </div>
                 <div class="addTxn-field" style="flex: 1;">
                     <label>Investor &gt; Broker</label>

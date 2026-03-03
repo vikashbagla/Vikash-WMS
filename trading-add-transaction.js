@@ -132,13 +132,8 @@ async function openAddTxnModal() {
     document.getElementById('addTxnInvBrkInput').disabled = false;
     document.getElementById('addTxnSaveBtn').disabled = false;
 
-    // Default date to today (dd-mmm-yyyy display)
-    var today = new Date();
-    var yyyy = today.getFullYear();
-    var mm = String(today.getMonth() + 1).padStart(2, '0');
-    var dd = String(today.getDate()).padStart(2, '0');
-    document.getElementById('addTxnDate').value = yyyy + '-' + mm + '-' + dd;
-    document.getElementById('addTxnDateDisplay').value = atFormatDateDisplay(today);
+    // Default date to today
+    atDateSetFromDate(new Date());
 
     // Add first empty row
     addAddTxnRow();
@@ -220,19 +215,8 @@ function setupAddTxnInvBrkSearch() {
         input.dispatchEvent(new Event('input'));
     });
 
-    // Date display click opens native date picker
-    var dateDisplay = document.getElementById('addTxnDateDisplay');
-    var dateHidden = document.getElementById('addTxnDate');
-    dateDisplay.addEventListener('click', function() {
-        dateHidden.showPicker ? dateHidden.showPicker() : dateHidden.click();
-    });
-    dateHidden.addEventListener('change', function() {
-        if (dateHidden.value) {
-            var parts = dateHidden.value.split('-');
-            var d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-            dateDisplay.value = atFormatDateDisplay(d);
-        }
-    });
+    // Segmented date input
+    atInitDateWidget();
 }
 
 function selectAddTxnInvBrk(pair) {
@@ -265,13 +249,282 @@ function clearAddTxnInvBrk() {
 
 window.clearAddTxnInvBrk = clearAddTxnInvBrk;
 
-// Date formatting helper (dd-mmm-yyyy)
+// ============================================================================
+// Segmented Date Widget (dd-mmm-yyyy)
+// ============================================================================
+
 var AT_MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+var atDateState = { day: 1, month: 0, year: 2026 }; // current date values
+var atDateActiveSeg = null; // 'dd', 'mmm', or 'yyyy'
+var atDateTypeBuf = '';     // typed characters buffer
+var atDateTypeTimer = null; // clear buffer after delay
+
 function atFormatDateDisplay(date) {
     var dd = String(date.getDate()).padStart(2, '0');
     var mmm = AT_MONTHS_SHORT[date.getMonth()];
     var yyyy = date.getFullYear();
     return dd + '-' + mmm + '-' + yyyy;
+}
+
+function atInitDateWidget() {
+    var wrap = document.getElementById('addTxnDateWrap');
+    var segs = wrap.querySelectorAll('.atDate-seg');
+
+    // Click on a segment to activate it
+    segs.forEach(function(seg) {
+        seg.addEventListener('mousedown', function(e) {
+            e.preventDefault(); // prevent blur
+            atDateSetActive(seg.dataset.seg);
+            wrap.focus();
+        });
+    });
+
+    // Click on wrap focuses dd by default
+    wrap.addEventListener('mousedown', function(e) {
+        if (e.target === wrap) {
+            e.preventDefault();
+            atDateSetActive('dd');
+            wrap.focus();
+        }
+    });
+
+    // Keyboard navigation
+    wrap.addEventListener('keydown', function(e) {
+        if (!atDateActiveSeg) atDateSetActive('dd');
+
+        var key = e.key;
+
+        if (key === 'ArrowLeft') {
+            e.preventDefault();
+            atDateMoveSeg(-1);
+        } else if (key === 'ArrowRight') {
+            e.preventDefault();
+            atDateMoveSeg(1);
+        } else if (key === 'ArrowUp') {
+            e.preventDefault();
+            atDateAdjust(1);
+        } else if (key === 'ArrowDown') {
+            e.preventDefault();
+            atDateAdjust(-1);
+        } else if (key === 'Tab') {
+            // Tab within segments, then exit to next field
+            if (!e.shiftKey && atDateActiveSeg !== 'yyyy') {
+                e.preventDefault();
+                atDateMoveSeg(1);
+            } else if (e.shiftKey && atDateActiveSeg !== 'dd') {
+                e.preventDefault();
+                atDateMoveSeg(-1);
+            } else {
+                // Let Tab leave the widget naturally
+                atDateClearActive();
+            }
+        } else if (key === 'Enter') {
+            e.preventDefault();
+            if (atDateActiveSeg !== 'yyyy') {
+                atDateMoveSeg(1);
+            } else {
+                // Exit to next field (investor-broker)
+                atDateClearActive();
+                var nextInput = document.getElementById('addTxnInvBrkInput');
+                if (nextInput && !nextInput.disabled) nextInput.focus();
+            }
+        } else if (/^[0-9]$/.test(key)) {
+            e.preventDefault();
+            atDateTypeDigit(key);
+        } else if (/^[a-zA-Z]$/.test(key)) {
+            e.preventDefault();
+            atDateTypeLetter(key);
+        }
+    });
+
+    // Focus/blur
+    wrap.addEventListener('focus', function() {
+        if (!atDateActiveSeg) atDateSetActive('dd');
+    });
+    wrap.addEventListener('blur', function() {
+        atDateClearActive();
+    });
+}
+
+function atDateSetActive(seg) {
+    atDateActiveSeg = seg;
+    atDateTypeBuf = '';
+    var wrap = document.getElementById('addTxnDateWrap');
+    wrap.querySelectorAll('.atDate-seg').forEach(function(el) {
+        el.classList.toggle('active', el.dataset.seg === seg);
+    });
+}
+
+function atDateClearActive() {
+    atDateActiveSeg = null;
+    atDateTypeBuf = '';
+    var wrap = document.getElementById('addTxnDateWrap');
+    if (wrap) {
+        wrap.querySelectorAll('.atDate-seg').forEach(function(el) {
+            el.classList.remove('active');
+        });
+    }
+}
+
+function atDateMoveSeg(dir) {
+    var order = ['dd', 'mmm', 'yyyy'];
+    var idx = order.indexOf(atDateActiveSeg);
+    var next = idx + dir;
+    if (next >= 0 && next < order.length) {
+        atDateSetActive(order[next]);
+    }
+}
+
+function atDateAdjust(delta) {
+    if (atDateActiveSeg === 'dd') {
+        atDateState.day += delta;
+        var maxDay = atDateDaysInMonth(atDateState.month, atDateState.year);
+        if (atDateState.day > maxDay) atDateState.day = 1;
+        if (atDateState.day < 1) atDateState.day = maxDay;
+    } else if (atDateActiveSeg === 'mmm') {
+        atDateState.month += delta;
+        if (atDateState.month > 11) atDateState.month = 0;
+        if (atDateState.month < 0) atDateState.month = 11;
+        // Clamp day to valid range
+        var maxD = atDateDaysInMonth(atDateState.month, atDateState.year);
+        if (atDateState.day > maxD) atDateState.day = maxD;
+    } else if (atDateActiveSeg === 'yyyy') {
+        atDateState.year += delta;
+        if (atDateState.year < 2000) atDateState.year = 2000;
+        if (atDateState.year > 2099) atDateState.year = 2099;
+        var maxD2 = atDateDaysInMonth(atDateState.month, atDateState.year);
+        if (atDateState.day > maxD2) atDateState.day = maxD2;
+    }
+    atDateRender();
+}
+
+function atDateTypeDigit(digit) {
+    clearTimeout(atDateTypeTimer);
+
+    if (atDateActiveSeg === 'dd') {
+        atDateTypeBuf += digit;
+        if (atDateTypeBuf.length >= 2) {
+            var val = parseInt(atDateTypeBuf);
+            var maxDay = atDateDaysInMonth(atDateState.month, atDateState.year);
+            if (val >= 1 && val <= maxDay) atDateState.day = val;
+            atDateTypeBuf = '';
+            atDateRender();
+            atDateMoveSeg(1); // auto-advance to month
+        } else {
+            // If first digit > 3, accept immediately (can't be a valid 2-digit day start > 31)
+            var first = parseInt(atDateTypeBuf);
+            if (first > 3) {
+                if (first >= 1) atDateState.day = first;
+                atDateTypeBuf = '';
+                atDateRender();
+                atDateMoveSeg(1);
+            } else {
+                // Show typed digit, wait for second
+                atDateRender();
+                atDateTypeTimer = setTimeout(function() {
+                    if (atDateTypeBuf.length === 1) {
+                        var v = parseInt(atDateTypeBuf);
+                        if (v >= 1) atDateState.day = v;
+                        atDateTypeBuf = '';
+                        atDateRender();
+                        atDateMoveSeg(1);
+                    }
+                }, 800);
+            }
+        }
+    } else if (atDateActiveSeg === 'yyyy') {
+        atDateTypeBuf += digit;
+        if (atDateTypeBuf.length >= 4) {
+            var yr = parseInt(atDateTypeBuf);
+            if (yr >= 2000 && yr <= 2099) atDateState.year = yr;
+            atDateTypeBuf = '';
+            atDateRender();
+        } else {
+            atDateTypeTimer = setTimeout(function() {
+                // Accept partial year entry
+                atDateTypeBuf = '';
+            }, 1500);
+        }
+    } else if (atDateActiveSeg === 'mmm') {
+        // Digits 1-12 for month
+        atDateTypeBuf += digit;
+        if (atDateTypeBuf.length >= 2) {
+            var mVal = parseInt(atDateTypeBuf);
+            if (mVal >= 1 && mVal <= 12) atDateState.month = mVal - 1;
+            atDateTypeBuf = '';
+            atDateRender();
+            atDateMoveSeg(1); // auto-advance to year
+        } else {
+            var mFirst = parseInt(atDateTypeBuf);
+            if (mFirst > 1) {
+                if (mFirst >= 1 && mFirst <= 9) atDateState.month = mFirst - 1;
+                atDateTypeBuf = '';
+                atDateRender();
+                atDateMoveSeg(1);
+            } else {
+                atDateTypeTimer = setTimeout(function() {
+                    if (atDateTypeBuf.length === 1) {
+                        var v = parseInt(atDateTypeBuf);
+                        if (v >= 1) atDateState.month = v - 1;
+                        atDateTypeBuf = '';
+                        atDateRender();
+                        atDateMoveSeg(1);
+                    }
+                }, 800);
+            }
+        }
+    }
+}
+
+function atDateTypeLetter(letter) {
+    if (atDateActiveSeg !== 'mmm') return;
+    clearTimeout(atDateTypeTimer);
+    atDateTypeBuf += letter.toLowerCase();
+
+    // Match against month names
+    var matched = -1;
+    for (var i = 0; i < AT_MONTHS_SHORT.length; i++) {
+        if (AT_MONTHS_SHORT[i].toLowerCase().indexOf(atDateTypeBuf) === 0) {
+            matched = i;
+            break;
+        }
+    }
+    if (matched >= 0) {
+        atDateState.month = matched;
+        atDateRender();
+    }
+    // If typed 3 chars, auto-advance
+    if (atDateTypeBuf.length >= 3) {
+        atDateTypeBuf = '';
+        atDateMoveSeg(1);
+    } else {
+        atDateTypeTimer = setTimeout(function() { atDateTypeBuf = ''; }, 800);
+    }
+}
+
+function atDateDaysInMonth(month, year) {
+    return new Date(year, month + 1, 0).getDate();
+}
+
+function atDateRender() {
+    document.getElementById('atDateDd').textContent = String(atDateState.day).padStart(2, '0');
+    document.getElementById('atDateMmm').textContent = AT_MONTHS_SHORT[atDateState.month];
+    document.getElementById('atDateYyyy').textContent = String(atDateState.year);
+    // Sync hidden input (yyyy-mm-dd for DB)
+    var mm = String(atDateState.month + 1).padStart(2, '0');
+    var dd = String(atDateState.day).padStart(2, '0');
+    document.getElementById('addTxnDate').value = atDateState.year + '-' + mm + '-' + dd;
+}
+
+function atDateSetFromDate(date) {
+    atDateState.day = date.getDate();
+    atDateState.month = date.getMonth();
+    atDateState.year = date.getFullYear();
+    atDateRender();
+}
+
+function atDateGetDisplayStr() {
+    return String(atDateState.day).padStart(2, '0') + '-' + AT_MONTHS_SHORT[atDateState.month] + '-' + atDateState.year;
 }
 
 // ============================================================================
@@ -793,7 +1046,8 @@ function atAutoPopulateTags(rowId, row) {
 
     var tagList = Object.values(matchingTags);
     if (tagList.length > 0 && row.tags.length === 0) {
-        row.tags = tagList;
+        // Push into existing array (don't replace — wmsTagInput holds a reference to it)
+        tagList.forEach(function(t) { row.tags.push(t); });
         renderAddTxnTagPills(rowId);
     }
 }
@@ -1169,7 +1423,7 @@ function openAddTxnConfirmation() {
     // Show investor > broker and date in confirmation header
     var invLabel = atSelectedInvestor.short_name || atSelectedInvestor.name;
     var brkLabel = atSelectedBroker.broker_code || atSelectedBroker.name;
-    var dateDisplay = document.getElementById('addTxnDateDisplay').value;
+    var dateDisplay = atDateGetDisplayStr();
     document.getElementById('addTxnConfirmInfo').innerHTML =
         '<span>' + invLabel + '</span> &gt; <span>' + brkLabel + '</span> &nbsp;&middot;&nbsp; ' + dateDisplay;
     document.getElementById('addTxnConfirmOverlay').classList.add('show');
