@@ -345,6 +345,34 @@ function atInitDateWidget() {
     wrap.addEventListener('blur', function() {
         atDateClearActive();
     });
+
+    // Calendar icon — opens native date picker, syncs back to segmented widget
+    var calBtn = document.getElementById('atDateCalBtn');
+    var calPicker = document.getElementById('atDateCalPicker');
+    if (calBtn && calPicker) {
+        calBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            // Sync current state to the hidden date input
+            var mm = String(atDateState.month + 1).padStart(2, '0');
+            var dd = String(atDateState.day).padStart(2, '0');
+            calPicker.value = atDateState.year + '-' + mm + '-' + dd;
+            // Programmatically open the native date picker
+            if (typeof calPicker.showPicker === 'function') {
+                calPicker.showPicker();
+            } else {
+                calPicker.focus();
+                calPicker.click();
+            }
+        });
+        calPicker.addEventListener('change', function() {
+            if (calPicker.value) {
+                var parts = calPicker.value.split('-');
+                var picked = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+                atDateSetFromDate(picked);
+            }
+        });
+    }
 }
 
 function atDateSetActive(seg) {

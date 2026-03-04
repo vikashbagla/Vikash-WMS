@@ -1539,13 +1539,19 @@ var wmsGetFYRange = function(fyStartMonth, offsetYears) {
 
 /**
  * wmsDateFilter(containerEl, opts)
- * Creates a date range filter UI with preset buttons and custom date picker.
+ * Creates a date range filter UI with 3 dropdown controls:
+ *   1) Period dropdown — Last 7 days, 30 days, 90 days, ALL
+ *   2) FY dropdown — populated from transaction data (or explicit list)
+ *   3) Custom date range — from/to with calendar icon popovers
+ *
+ * Selecting any one control deselects the others (mutually exclusive).
+ *
  * @param {HTMLElement} containerEl - Container to render filter into
  * @param {Object} opts - Configuration options
- *   - default: 'last7'|'last30'|'last90'|'currentFY'|'lastFY'|'all' (default: 'all')
+ *   - default: 'last7'|'last30'|'last90'|'all'|'currentFY'|'custom' (default: 'all')
  *   - onChange: function(from, to) - Called when filter changes
  *   - fyStartMonth: number 1-12 (default: 4)
- *   - showAll: boolean (default: true)
+ *   - transactions: Array — if provided, FY list is built from transaction dates
  * @returns {Object} Controller with getRange(), setPreset(), getPreset(), destroy()
  */
 var wmsDateFilter = function(containerEl, opts) {
@@ -1553,263 +1559,223 @@ var wmsDateFilter = function(containerEl, opts) {
     var defaultPreset = opts.default || 'all';
     var onChangeCallback = opts.onChange || function() {};
     var fyStartMonth = opts.fyStartMonth || 4;
-    var showAll = opts.showAll !== false;
+    var transactions = opts.transactions || [];
 
-    var currentPreset = defaultPreset;
+    var MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    var currentPreset = null; // will be set at end
     var currentCustomFrom = null;
     var currentCustomTo = null;
-    var customPopoverOpen = false;
 
-    // Calculate FY labels — show ending year (Apr2025-Mar2026 = "FY26")
-    var now = new Date();
-    var currentMonth = now.getMonth() + 1;
-    var currentYear = now.getFullYear();
-    var currentFYStart = (currentMonth >= fyStartMonth) ? currentYear : currentYear - 1;
-    var currentFYEnd = currentFYStart + 1; // FY ends next year
-    var lastFYEnd = currentFYEnd - 1;
-    var currentFYLabel = 'FY' + String(currentFYEnd).slice(-2);
-    var lastFYLabel = 'FY' + String(lastFYEnd).slice(-2);
+    // ────── FY list from data ──────
+    // Determine which FYs have transactions. FY is defined by fyStartMonth.
+    // A date falls in FY ending in year Y if: date >= (Y-1)-fyStartMonth-01 and date < Y-fyStartMonth-01
+    var fyList = []; // [{label:'FY26 (Apr25 – Mar26)', value:'fy_2026', from:'2025-04-01', to:'2026-03-31'}, ...]
+    (function buildFYList() {
+        var fySet = {};
+        var allDates = [];
+        // Gather dates from transactions
+        if (transactions.length > 0) {
+            transactions.forEach(function(t) {
+                if (t.transaction_date) allDates.push(t.transaction_date);
+            });
+        }
+        // Also always include current FY
+        var now = new Date();
+        var curM = now.getMonth() + 1;
+        var curY = now.getFullYear();
+        var currentFYEndYear = (curM >= fyStartMonth) ? curY + 1 : curY;
+        fySet[currentFYEndYear] = true;
 
-    // Create container with relative positioning
+        allDates.forEach(function(d) {
+            var parts = d.split('-');
+            var y = parseInt(parts[0]);
+            var m = parseInt(parts[1]);
+            var endYear = (m >= fyStartMonth) ? y + 1 : y;
+            fySet[endYear] = true;
+        });
+
+        var years = Object.keys(fySet).map(Number).sort(function(a,b){ return b - a; }); // descending
+        years.forEach(function(endYear) {
+            var startYear = endYear - 1;
+            var fy = wmsGetFYRange(fyStartMonth, 0); // just for structure
+            // Build actual range
+            var fromStr = startYear + '-' + String(fyStartMonth).padStart(2, '0') + '-01';
+            var endMonth = fyStartMonth - 1;
+            var ey = endYear;
+            if (endMonth < 1) { endMonth = 12; ey = startYear; }
+            var lastDay = new Date(ey, endMonth, 0).getDate();
+            var toStr = ey + '-' + String(endMonth).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+
+            var startMonthName = MONTHS_SHORT[fyStartMonth - 1];
+            var endMonthName = MONTHS_SHORT[endMonth - 1];
+
+            fyList.push({
+                label: 'FY' + String(endYear).slice(-2) + ' (' + startMonthName + String(startYear).slice(-2) + ' \u2013 ' + endMonthName + String(endYear).slice(-2) + ')',
+                value: 'fy_' + endYear,
+                from: fromStr,
+                to: toStr
+            });
+        });
+    })();
+
+    // ────── Helpers ──────
+
+    var formatYMD = function(date) {
+        return date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0') + '-' + String(date.getDate()).padStart(2,'0');
+    };
+
+    var getPresetRange = function(preset) {
+        var today = new Date();
+        if (preset === 'last7')  return { from: formatYMD(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7)), to: formatYMD(today) };
+        if (preset === 'last30') return { from: formatYMD(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30)), to: formatYMD(today) };
+        if (preset === 'last90') return { from: formatYMD(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 90)), to: formatYMD(today) };
+        if (preset === 'all')    return { from: null, to: null };
+        if (preset === 'custom') return { from: currentCustomFrom, to: currentCustomTo };
+        // FY presets — look up in fyList
+        for (var i = 0; i < fyList.length; i++) {
+            if (fyList[i].value === preset) return { from: fyList[i].from, to: fyList[i].to };
+        }
+        return { from: null, to: null };
+    };
+
+    var fireChange = function() {
+        var range = getPresetRange(currentPreset);
+        onChangeCallback(range.from, range.to);
+    };
+
+    // ────── Build UI ──────
+
+    containerEl.className = 'wms-date-filter';
     containerEl.style.position = 'relative';
     containerEl.style.display = 'inline-flex';
     containerEl.style.alignItems = 'center';
-    containerEl.style.gap = '2px';
-    containerEl.className = 'wms-date-filter';
+    containerEl.style.gap = '6px';
     containerEl.innerHTML = '';
 
-    // Helper: calculate date range for a preset
-    var getPresetRange = function(preset) {
-        var today = new Date();
-        var from = new Date(today);
-        var to = new Date(today);
+    // 1) Period dropdown
+    var periodSelect = document.createElement('select');
+    periodSelect.className = 'wms-df-select';
+    periodSelect.innerHTML =
+        '<option value="last7">Last 7 days</option>' +
+        '<option value="last30">Last 30 days</option>' +
+        '<option value="last90">Last 90 days</option>' +
+        '<option value="all" selected>All</option>';
 
-        switch (preset) {
-            case 'last7':
-                from.setDate(today.getDate() - 7);
-                break;
-            case 'last30':
-                from.setDate(today.getDate() - 30);
-                break;
-            case 'last90':
-                from.setDate(today.getDate() - 90);
-                break;
-            case 'currentFY':
-                var fy = wmsGetFYRange(fyStartMonth, 0);
-                return {
-                    from: fy.from,
-                    to: fy.to
-                };
-            case 'lastFY':
-                var fy2 = wmsGetFYRange(fyStartMonth, -1);
-                return {
-                    from: fy2.from,
-                    to: fy2.to
-                };
-            case 'all':
-                return { from: null, to: null };
-            case 'custom':
-                return {
-                    from: currentCustomFrom,
-                    to: currentCustomTo
-                };
-            default:
-                return { from: null, to: null };
-        }
+    periodSelect.addEventListener('change', function() {
+        currentPreset = periodSelect.value;
+        fySelect.value = 'fy_all';
+        clearCustomHighlight();
+        fireChange();
+    });
+    containerEl.appendChild(periodSelect);
 
-        // Format as YYYY-MM-DD
-        var fromStr = from.getFullYear() + '-' +
-                      String(from.getMonth() + 1).padStart(2, '0') + '-' +
-                      String(from.getDate()).padStart(2, '0');
-        var toStr = to.getFullYear() + '-' +
-                    String(to.getMonth() + 1).padStart(2, '0') + '-' +
-                    String(to.getDate()).padStart(2, '0');
+    // 2) FY dropdown
+    var fySelect = document.createElement('select');
+    fySelect.className = 'wms-df-select';
+    var fyHtml = '<option value="fy_all">FY: All</option>';
+    fyList.forEach(function(fy) {
+        fyHtml += '<option value="' + fy.value + '">' + fy.label + '</option>';
+    });
+    fySelect.innerHTML = fyHtml;
 
-        return { from: fromStr, to: toStr };
-    };
-
-    // Helper: format date for display
-    var formatDateForDisplay = function(dateStr) {
-        if (!dateStr) return '';
-        var parts = dateStr.split('-');
-        var month = parts[1];
-        var day = parts[2];
-        return day + '-' + month;
-    };
-
-    // Helper: close custom popover
-    var closeCustomPopover = function() {
-        var popover = containerEl.querySelector('.wms-df-custom-popover');
-        if (popover) {
-            popover.remove();
-        }
-        customPopoverOpen = false;
-    };
-
-    // Helper: update all button states
-    var updateButtonStates = function() {
-        var buttons = containerEl.querySelectorAll('.wms-df-btn');
-        buttons.forEach(function(btn) {
-            var preset = btn.getAttribute('data-preset');
-            if (preset === currentPreset) {
-                btn.classList.add('active');
-            } else {
-                btn.classList.remove('active');
-            }
-        });
-    };
-
-    // Create preset button
-    var createButton = function(label, preset) {
-        var btn = document.createElement('button');
-        btn.className = 'wms-df-btn';
-        btn.textContent = label;
-        btn.setAttribute('data-preset', preset);
-        btn.style.position = 'relative';
-
-        btn.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            if (preset === 'custom') {
-                // Toggle custom popover
-                if (customPopoverOpen) {
-                    closeCustomPopover();
-                } else {
-                    closeCustomPopover();
-                    createCustomPopover();
-                }
-            } else {
-                currentPreset = preset;
-                closeCustomPopover();
-                updateButtonStates();
-                var range = getPresetRange(preset);
-                onChangeCallback(range.from, range.to);
-            }
-        });
-
-        return btn;
-    };
-
-    // Create custom date popover
-    var createCustomPopover = function() {
-        var btn = containerEl.querySelector('[data-preset="custom"]');
-        if (!btn) return;
-
-        var popover = document.createElement('div');
-        popover.className = 'wms-df-custom-popover';
-
-        var labelFrom = document.createElement('label');
-        labelFrom.textContent = 'From:';
-        labelFrom.style.marginRight = '0';
-
-        var inputFrom = document.createElement('input');
-        inputFrom.type = 'date';
-        inputFrom.value = currentCustomFrom || '';
-
-        var labelTo = document.createElement('label');
-        labelTo.textContent = 'To:';
-        labelTo.style.marginLeft = '8px';
-        labelTo.style.marginRight = '0';
-
-        var inputTo = document.createElement('input');
-        inputTo.type = 'date';
-        inputTo.value = currentCustomTo || '';
-
-        // Update on input change
-        inputFrom.addEventListener('change', function() {
-            currentCustomFrom = inputFrom.value;
-            currentPreset = 'custom';
-            updateButtonStates();
-            var range = { from: currentCustomFrom, to: currentCustomTo };
-            onChangeCallback(range.from, range.to);
-            updateCustomButtonLabel();
-        });
-
-        inputTo.addEventListener('change', function() {
-            currentCustomTo = inputTo.value;
-            currentPreset = 'custom';
-            updateButtonStates();
-            var range = { from: currentCustomFrom, to: currentCustomTo };
-            onChangeCallback(range.from, range.to);
-            updateCustomButtonLabel();
-        });
-
-        popover.appendChild(labelFrom);
-        popover.appendChild(inputFrom);
-        popover.appendChild(labelTo);
-        popover.appendChild(inputTo);
-
-        containerEl.appendChild(popover);
-        customPopoverOpen = true;
-
-        // Close on outside click
-        var docClickHandler = function(e) {
-            if (!containerEl.contains(e.target)) {
-                closeCustomPopover();
-                document.removeEventListener('click', docClickHandler);
-            }
-        };
-        document.addEventListener('click', docClickHandler);
-
-        // Close on ESC
-        var escHandler = function(e) {
-            if (e.key === 'Escape') {
-                closeCustomPopover();
-                document.removeEventListener('keydown', escHandler);
-            }
-        };
-        document.addEventListener('keydown', escHandler);
-    };
-
-    // Update custom button label to show date range
-    var updateCustomButtonLabel = function() {
-        var btn = containerEl.querySelector('[data-preset="custom"]');
-        if (!btn) return;
-
-        if (currentCustomFrom && currentCustomTo) {
-            var fromDisplay = formatDateForDisplay(currentCustomFrom);
-            var toDisplay = formatDateForDisplay(currentCustomTo);
-            btn.textContent = fromDisplay + ' — ' + toDisplay;
+    fySelect.addEventListener('change', function() {
+        if (fySelect.value === 'fy_all') {
+            // Revert to period dropdown's current selection
+            currentPreset = periodSelect.value;
         } else {
-            btn.textContent = 'Custom ▾';
+            currentPreset = fySelect.value;
+            periodSelect.value = 'all'; // reset period dropdown visually
         }
+        clearCustomHighlight();
+        fireChange();
+    });
+    containerEl.appendChild(fySelect);
+
+    // 3) Custom date range — From and To with native date inputs
+    var customWrap = document.createElement('div');
+    customWrap.className = 'wms-df-custom-wrap';
+
+    var inputFrom = document.createElement('input');
+    inputFrom.type = 'date';
+    inputFrom.className = 'wms-df-date-input';
+    inputFrom.title = 'From date';
+
+    var sep = document.createElement('span');
+    sep.className = 'wms-df-date-sep';
+    sep.textContent = '–';
+
+    var inputTo = document.createElement('input');
+    inputTo.type = 'date';
+    inputTo.className = 'wms-df-date-input';
+    inputTo.title = 'To date';
+
+    var onCustomChange = function() {
+        currentCustomFrom = inputFrom.value || null;
+        currentCustomTo = inputTo.value || null;
+        if (currentCustomFrom || currentCustomTo) {
+            currentPreset = 'custom';
+            periodSelect.value = 'all';
+            fySelect.value = 'fy_all';
+            customWrap.classList.add('active');
+        } else {
+            currentPreset = periodSelect.value;
+            customWrap.classList.remove('active');
+        }
+        fireChange();
+    };
+    inputFrom.addEventListener('change', onCustomChange);
+    inputTo.addEventListener('change', onCustomChange);
+
+    customWrap.appendChild(inputFrom);
+    customWrap.appendChild(sep);
+    customWrap.appendChild(inputTo);
+    containerEl.appendChild(customWrap);
+
+    var clearCustomHighlight = function() {
+        customWrap.classList.remove('active');
+        // Don't clear the date inputs — user may want to reuse them
     };
 
-    // Build the button row
-    var buttons = [];
-    buttons.push({ label: 'Last 7d', preset: 'last7' });
-    buttons.push({ label: '30d', preset: 'last30' });
-    buttons.push({ label: '90d', preset: 'last90' });
-    buttons.push({ label: currentFYLabel, preset: 'currentFY' });
-    buttons.push({ label: lastFYLabel, preset: 'lastFY' });
-    buttons.push({ label: 'Custom ▾', preset: 'custom' });
-    if (showAll) {
-        buttons.push({ label: 'All', preset: 'all' });
+    // ────── Apply default preset ──────
+    // Determine which control to set as default
+    if (defaultPreset === 'last7' || defaultPreset === 'last30' || defaultPreset === 'last90' || defaultPreset === 'all') {
+        periodSelect.value = defaultPreset;
+        currentPreset = defaultPreset;
+    } else if (defaultPreset.indexOf('fy_') === 0 || defaultPreset === 'currentFY') {
+        if (defaultPreset === 'currentFY' && fyList.length > 0) {
+            fySelect.value = fyList[0].value; // first is most recent
+            currentPreset = fyList[0].value;
+        } else {
+            fySelect.value = defaultPreset;
+            currentPreset = defaultPreset;
+        }
+        periodSelect.value = 'all';
+    } else {
+        periodSelect.value = 'all';
+        currentPreset = 'all';
     }
 
-    buttons.forEach(function(b) {
-        var btn = createButton(b.label, b.preset);
-        containerEl.appendChild(btn);
-    });
+    // Fire initial change
+    fireChange();
 
-    // Apply default preset
-    currentPreset = defaultPreset;
-    updateButtonStates();
-    var initialRange = getPresetRange(defaultPreset);
-    onChangeCallback(initialRange.from, initialRange.to);
-
-    // Return controller object
+    // ────── Controller ──────
     return {
         getRange: function() {
             return getPresetRange(currentPreset);
         },
         setPreset: function(preset) {
             currentPreset = preset;
-            closeCustomPopover();
-            updateButtonStates();
-            var range = getPresetRange(preset);
-            onChangeCallback(range.from, range.to);
+            if (preset === 'last7' || preset === 'last30' || preset === 'last90' || preset === 'all') {
+                periodSelect.value = preset;
+                fySelect.value = 'fy_all';
+                clearCustomHighlight();
+            } else if (preset.indexOf('fy_') === 0) {
+                fySelect.value = preset;
+                periodSelect.value = 'all';
+                clearCustomHighlight();
+            }
+            fireChange();
         },
         getPreset: function() {
             return currentPreset;

@@ -118,6 +118,27 @@
     margin: 0 1px;
     pointer-events: none;
 }
+/* Calendar picker button + hidden native input */
+.atDate-cal-btn {
+    background: none;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 3px 5px;
+    line-height: 1;
+    transition: border-color 0.15s;
+}
+.atDate-cal-btn:hover { border-color: #667eea; }
+.atDate-cal-picker {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    border: 0;
+    padding: 0;
+    pointer-events: none;
+}
 
 /* Balance qty label under Qty input */
 .atQty-balance {
@@ -585,12 +606,16 @@
             <div class="addTxn-fields-row">
                 <div class="addTxn-field" style="width: 140px;">
                     <label>Date</label>
-                    <div class="atDate-wrap" id="addTxnDateWrap" tabindex="0">
-                        <span class="atDate-seg" data-seg="dd" id="atDateDd">03</span>
-                        <span class="atDate-sep">-</span>
-                        <span class="atDate-seg" data-seg="mmm" id="atDateMmm">Mar</span>
-                        <span class="atDate-sep">-</span>
-                        <span class="atDate-seg" data-seg="yyyy" id="atDateYyyy">2026</span>
+                    <div style="display:flex; align-items:center; gap:4px;">
+                        <div class="atDate-wrap" id="addTxnDateWrap" tabindex="0">
+                            <span class="atDate-seg" data-seg="dd" id="atDateDd">03</span>
+                            <span class="atDate-sep">-</span>
+                            <span class="atDate-seg" data-seg="mmm" id="atDateMmm">Mar</span>
+                            <span class="atDate-sep">-</span>
+                            <span class="atDate-seg" data-seg="yyyy" id="atDateYyyy">2026</span>
+                        </div>
+                        <button type="button" class="atDate-cal-btn" id="atDateCalBtn" title="Pick date from calendar">📅</button>
+                        <input type="date" id="atDateCalPicker" class="atDate-cal-picker">
                     </div>
                     <input type="hidden" id="addTxnDate">
                 </div>

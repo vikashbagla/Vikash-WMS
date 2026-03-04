@@ -263,7 +263,7 @@ function trTxSetupOptionsBar() {
         trTxDateFilterInstance = wmsDateFilter(dateContainer, {
             default: 'last7',
             fyStartMonth: fyStartMonth,
-            showAll: true,
+            transactions: trTransactions,
             onChange: function(from, to) {
                 trTxDateRange = { from: from, to: to };
                 trTxRender();
