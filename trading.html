@@ -357,6 +357,64 @@
 .txn-summary-card .summary-value { font-size: 15px; font-weight: 700; color: #2d3748; line-height: 1.2; }
 .txn-summary-card .summary-sub { font-size: 10px; color: #a0aec0; margin-top: 2px; }
 
+/* Txn modal view toggle */
+.txn-view-toggle, .txn-match-method {
+    display: inline-flex;
+    border: 1px solid #e2e8f0;
+    border-radius: 5px;
+    overflow: hidden;
+}
+.txn-vtog, .txn-mtog {
+    background: none;
+    border: none;
+    padding: 3px 10px;
+    font-size: 11px;
+    color: #718096;
+    cursor: pointer;
+    border-right: 1px solid #e2e8f0;
+}
+.txn-vtog:last-child, .txn-mtog:last-child { border-right: none; }
+.txn-vtog:hover, .txn-mtog:hover { background: #f7fafc; }
+.txn-vtog.active, .txn-mtog.active {
+    background: #667eea;
+    color: #fff;
+}
+.txn-days-filter {
+    border: 1px solid #e2e8f0;
+    border-radius: 5px;
+    padding: 3px 6px;
+    font-size: 11px;
+    color: #4a5568;
+    background: #fff;
+    cursor: pointer;
+}
+
+/* Matching trade view columns */
+.trM-buy-start { border-left: 2px solid #d1fae5; }
+.trM-sell-start { border-left: 2px solid #fee2e2; }
+#trTxnMatchView td.trM-buy-start { border-left: 2px solid #d1fae5; }
+#trTxnMatchView td.trM-sell-start { border-left: 2px solid #fee2e2; }
+
+/* Matching view group header */
+.trM-group-header {
+    cursor: pointer;
+    background: #f7fafc !important;
+}
+.trM-group-header:hover { background: #edf2f7 !important; }
+.trM-group-header td { font-weight: 600; font-size: 12px; padding: 6px 8px; }
+.trM-collapse-icon {
+    display: inline-block;
+    transition: transform 0.15s;
+    font-size: 10px;
+}
+.trM-group-header.collapsed .trM-collapse-icon { transform: rotate(-90deg); }
+.trM-detail-row.collapsed-row { display: none; }
+.trM-match-open td { opacity: 0.6; font-style: italic; }
+.trM-group-total { font-weight: 700; font-size: 11px; }
+.trM-pnl-positive { color: #059669; }
+.trM-pnl-negative { color: #dc2626; }
+.trM-contract-detail { font-size: 10px; color: #a0aec0; }
+
 /* Txn row hide button */
 .btn-hide-txn {
     background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; opacity: 0.5;
@@ -691,27 +749,69 @@
                 <h3 id="trTxnModalTitle">Transactions</h3>
             </div>
             <div class="txn-modal-header-actions">
+                <div class="txn-view-toggle" id="trTxnViewToggle">
+                    <button class="txn-vtog active" data-view="list">List</button>
+                    <button class="txn-vtog" data-view="matching">Matching</button>
+                </div>
+                <select class="txn-days-filter" id="trTxnDaysFilter" title="Filter by days">
+                    <option value="0">All</option>
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">6 months</option>
+                    <option value="365">1 year</option>
+                    <option value="730">2 years</option>
+                    <option value="1095">3 years</option>
+                </select>
+                <div class="txn-match-method" id="trTxnMatchMethodWrap" style="display:none;">
+                    <button class="txn-mtog active" data-method="lifo">LIFO</button>
+                    <button class="txn-mtog" data-method="fifo">FIFO</button>
+                </div>
                 <button class="btn-toggle-hidden" id="trToggleHiddenBtn" title="Show/hide temporarily hidden trades">👁 Show All</button>
                 <button class="btn-icon btn-close-modal" id="trTxnModalClose" title="Close">✕</button>
             </div>
         </div>
         <div class="txn-modal-body">
-            <table>
-                <thead>
-                    <tr>
-                        <th class="sortable" id="trTxnThDate">Date <span class="sort-indicator" id="trTxnSortDate">▲</span></th>
-                        <th>Investor &gt; Trader &gt; Broker</th>
-                        <th class="sortable" id="trTxnThSymbol">Symbol <span class="sort-indicator" id="trTxnSortSymbol"></span></th>
-                        <th class="text-right">Qty</th>
-                        <th class="text-right">Price</th>
-                        <th class="text-right">Value</th>
-                        <th class="text-right">Run. Qty</th>
-                        <th style="width:60px;text-align:center;">Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="trTxnModalBody"></tbody>
-            </table>
-            <div class="txn-summary-cards" id="trTxnSummary"></div>
+            <!-- List view table -->
+            <div id="trTxnListView">
+                <table>
+                    <thead>
+                        <tr>
+                            <th class="sortable" id="trTxnThDate">Date <span class="sort-indicator" id="trTxnSortDate">▲</span></th>
+                            <th>Investor &gt; Trader &gt; Broker</th>
+                            <th class="sortable" id="trTxnThSymbol">Symbol <span class="sort-indicator" id="trTxnSortSymbol"></span></th>
+                            <th class="text-right">Qty</th>
+                            <th class="text-right">Price</th>
+                            <th class="text-right">Value</th>
+                            <th class="text-right">Run. Qty</th>
+                            <th style="width:60px;text-align:center;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trTxnModalBody"></tbody>
+                </table>
+                <div class="txn-summary-cards" id="trTxnSummary"></div>
+            </div>
+            <!-- Matching trade view -->
+            <div id="trTxnMatchView" style="display:none;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Inv &gt; Trader &gt; Broker</th>
+                            <th>Symbol</th>
+                            <th class="text-right">Qty</th>
+                            <th class="trM-buy-start">Buy Date</th>
+                            <th class="text-right">Price</th>
+                            <th class="text-right">Amount</th>
+                            <th class="trM-sell-start">Sell Date</th>
+                            <th class="text-right">Price</th>
+                            <th class="text-right">Amount</th>
+                            <th class="text-right">P&amp;L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trTxnMatchBody"></tbody>
+                </table>
+                <div class="txn-summary-cards" id="trTxnMatchSummary"></div>
+            </div>
         </div>
     </div>
 </div>
