@@ -65,17 +65,27 @@
 .trading-tab-content.active { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 
 /* Portfolio table — Company cell */
+.company-cell {
+    max-width: 180px;
+    overflow: hidden;
+}
 .company-cell .company-main {
     font-size: 12px;
     font-weight: 600;
     color: #2d3748;
     cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .company-cell .company-main:hover { color: #667eea; }
 .company-cell .company-sub {
     font-size: 10px;
     color: #a0aec0;
     margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Remove bold from number cells (only company name, total row, summary boxes stay bold) */

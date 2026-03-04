@@ -678,8 +678,9 @@ function trCalcHoldings() {
         if ((txn.exchange || 'NSE') === 'NSE') {
             groups[key].exchange = 'NSE';
         }
-        // Use company_name from first equity txn if available
-        if (txn.company_name && (!groups[key].companyName || groups[key].companyName === groups[key].shortSymbol)) {
+        // Use company_name from equity txn (not F&O contract name)
+        if (txn.company_name && txn.exchange !== 'NFO' &&
+            (!groups[key].companyName || groups[key].companyName === groups[key].shortSymbol)) {
             groups[key].companyName = txn.company_name;
         }
 
@@ -689,6 +690,23 @@ function trCalcHoldings() {
         if (!isIncome && (!groups[key].latestDate || txnDate > groups[key].latestDate)) {
             groups[key].latestDate = txnDate;
             groups[key].latestPrice = txn.price;
+        }
+    });
+
+    // Resolve company names from CM securities master when transaction data has F&O names
+    Object.keys(groups).forEach(function(key) {
+        var g = groups[key];
+        if (!g.companyName || g.companyName === g.shortSymbol) {
+            // Try wmsRefData CM securities
+            if (wmsRefData.securitiesCmReady) {
+                for (var i = 0; i < wmsRefData.securitiesCm.length; i++) {
+                    var s = wmsRefData.securitiesCm[i];
+                    if (s.symbol === g.shortSymbol || s.nse_symbol === g.shortSymbol || s.bse_symbol === g.shortSymbol) {
+                        g.companyName = s.company_name || g.shortSymbol;
+                        break;
+                    }
+                }
+            }
         }
     });
 
@@ -876,8 +894,8 @@ function trRenderPortfolio() {
         var mainRow =
             '<tr class="' + expClass + '">' +
                 '<td class="company-cell">' +
-                    '<div class="company-main" data-key="' + symbolKey + '">' + (h.companyName || h.shortSymbol) + '</div>' +
-                    '<div class="company-sub">' + h.shortSymbol + '</div>' +
+                    '<div class="company-main" data-key="' + symbolKey + '" title="' + wmsEsc(h.companyName || h.shortSymbol) + '">' + wmsEsc(h.companyName || h.shortSymbol) + '</div>' +
+                    '<div class="company-sub">' + wmsEsc(h.shortSymbol) + '</div>' +
                 '</td>' +
                 '<td class="text-right">' + qtyHtml +
                     '<div class="number-sub">' + formatPrice(h.avgCost, false) + '</div></td>' +
@@ -1026,9 +1044,36 @@ function trCloseAllActionMenus() {
 // ============================================================================
 
 function trBuildInvestorDetail(h, price, md) {
+    // Apply the same filters as trCalcHoldings so detail rows respect active filters
     var symbolTxns = trTransactions.filter(function(txn) {
         return !txn.dont_display && (txn.short_symbol || txn.symbol) === h.shortSymbol;
     });
+    if (trSelectedInvestorIds.length > 0) {
+        symbolTxns = symbolTxns.filter(function(t) { return trSelectedInvestorIds.indexOf(t.investor_id) >= 0; });
+    }
+    if (trSelectedTraderIds.length > 0) {
+        symbolTxns = symbolTxns.filter(function(t) { return t.trader_id && trSelectedTraderIds.indexOf(t.trader_id) >= 0; });
+    }
+    if (trSelectedBrokerIds.length > 0) {
+        symbolTxns = symbolTxns.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });
+    }
+    if (trSelectedTagNames.length > 0) {
+        if (trTagFilterLogic === 'AND') {
+            symbolTxns = symbolTxns.filter(function(t) {
+                return trSelectedTagNames.every(function(tag) { return t.tags && t.tags.indexOf(tag) >= 0; });
+            });
+        } else {
+            symbolTxns = symbolTxns.filter(function(t) {
+                return t.tags && t.tags.some(function(tag) { return trSelectedTagNames.indexOf(tag) >= 0; });
+            });
+        }
+    }
+    // View Mode filter
+    if (trViewMode === 'holdings') {
+        symbolTxns = symbolTxns.filter(function(t) { return t.exchange !== 'NFO'; });
+    } else if (trViewMode === 'fno') {
+        symbolTxns = symbolTxns.filter(function(t) { return t.exchange === 'NFO'; });
+    }
 
     // Group transactions by investor, then use wmsCalcAvgCost per investor
     var groups = {};
