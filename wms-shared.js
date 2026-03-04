@@ -1494,3 +1494,328 @@ function wmsSortSearchResults(items) {
         return aSym2 < bSym2 ? -1 : (aSym2 > bSym2 ? 1 : 0);
     });
 }
+
+/* ============================================================================
+   SHARED DATE FILTER COMPONENT (wmsDateFilter)
+   ============================================================================ */
+
+/**
+ * wmsGetFYRange(fyStartMonth, offsetYears)
+ * Helper function to calculate fiscal year date range.
+ * @param {number} fyStartMonth - Month (1-12) when fiscal year starts. Default 4 (April).
+ * @param {number} offsetYears - 0 = current FY, -1 = last FY, etc.
+ * @returns {Object} {from: 'YYYY-MM-DD', to: 'YYYY-MM-DD'}
+ */
+var wmsGetFYRange = function(fyStartMonth, offsetYears) {
+    fyStartMonth = fyStartMonth || 4;
+    offsetYears = (offsetYears !== undefined) ? offsetYears : 0;
+
+    var now = new Date();
+    var currentMonth = now.getMonth() + 1; // 1-12
+    var currentYear = now.getFullYear();
+
+    // Determine which fiscal year we're in
+    var fy;
+    if (currentMonth >= fyStartMonth) {
+        fy = currentYear + offsetYears;
+    } else {
+        fy = currentYear - 1 + offsetYears;
+    }
+
+    // Build start and end dates
+    var startStr = fy + '-' + String(fyStartMonth).padStart(2, '0') + '-01';
+    var endMonth = fyStartMonth - 1;
+    var endYear = fy + 1;
+    if (endMonth < 1) {
+        endMonth = 12;
+        endYear = fy;
+    }
+    // Last day of endMonth: create date for 1st of next month, subtract 1 day
+    var lastDay = new Date(endYear, endMonth, 0).getDate();
+    var endStr = endYear + '-' + String(endMonth).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+
+    return { from: startStr, to: endStr };
+};
+
+/**
+ * wmsDateFilter(containerEl, opts)
+ * Creates a date range filter UI with preset buttons and custom date picker.
+ * @param {HTMLElement} containerEl - Container to render filter into
+ * @param {Object} opts - Configuration options
+ *   - default: 'last7'|'last30'|'last90'|'currentFY'|'lastFY'|'all' (default: 'all')
+ *   - onChange: function(from, to) - Called when filter changes
+ *   - fyStartMonth: number 1-12 (default: 4)
+ *   - showAll: boolean (default: true)
+ * @returns {Object} Controller with getRange(), setPreset(), getPreset(), destroy()
+ */
+var wmsDateFilter = function(containerEl, opts) {
+    opts = opts || {};
+    var defaultPreset = opts.default || 'all';
+    var onChangeCallback = opts.onChange || function() {};
+    var fyStartMonth = opts.fyStartMonth || 4;
+    var showAll = opts.showAll !== false;
+
+    var currentPreset = defaultPreset;
+    var currentCustomFrom = null;
+    var currentCustomTo = null;
+    var customPopoverOpen = false;
+
+    // Calculate FY labels — show ending year (Apr2025-Mar2026 = "FY26")
+    var now = new Date();
+    var currentMonth = now.getMonth() + 1;
+    var currentYear = now.getFullYear();
+    var currentFYStart = (currentMonth >= fyStartMonth) ? currentYear : currentYear - 1;
+    var currentFYEnd = currentFYStart + 1; // FY ends next year
+    var lastFYEnd = currentFYEnd - 1;
+    var currentFYLabel = 'FY' + String(currentFYEnd).slice(-2);
+    var lastFYLabel = 'FY' + String(lastFYEnd).slice(-2);
+
+    // Create container with relative positioning
+    containerEl.style.position = 'relative';
+    containerEl.style.display = 'inline-flex';
+    containerEl.style.alignItems = 'center';
+    containerEl.style.gap = '2px';
+    containerEl.className = 'wms-date-filter';
+    containerEl.innerHTML = '';
+
+    // Helper: calculate date range for a preset
+    var getPresetRange = function(preset) {
+        var today = new Date();
+        var from = new Date(today);
+        var to = new Date(today);
+
+        switch (preset) {
+            case 'last7':
+                from.setDate(today.getDate() - 7);
+                break;
+            case 'last30':
+                from.setDate(today.getDate() - 30);
+                break;
+            case 'last90':
+                from.setDate(today.getDate() - 90);
+                break;
+            case 'currentFY':
+                var fy = wmsGetFYRange(fyStartMonth, 0);
+                return {
+                    from: fy.from,
+                    to: fy.to
+                };
+            case 'lastFY':
+                var fy2 = wmsGetFYRange(fyStartMonth, -1);
+                return {
+                    from: fy2.from,
+                    to: fy2.to
+                };
+            case 'all':
+                return { from: null, to: null };
+            case 'custom':
+                return {
+                    from: currentCustomFrom,
+                    to: currentCustomTo
+                };
+            default:
+                return { from: null, to: null };
+        }
+
+        // Format as YYYY-MM-DD
+        var fromStr = from.getFullYear() + '-' +
+                      String(from.getMonth() + 1).padStart(2, '0') + '-' +
+                      String(from.getDate()).padStart(2, '0');
+        var toStr = to.getFullYear() + '-' +
+                    String(to.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(to.getDate()).padStart(2, '0');
+
+        return { from: fromStr, to: toStr };
+    };
+
+    // Helper: format date for display
+    var formatDateForDisplay = function(dateStr) {
+        if (!dateStr) return '';
+        var parts = dateStr.split('-');
+        var month = parts[1];
+        var day = parts[2];
+        return day + '-' + month;
+    };
+
+    // Helper: close custom popover
+    var closeCustomPopover = function() {
+        var popover = containerEl.querySelector('.wms-df-custom-popover');
+        if (popover) {
+            popover.remove();
+        }
+        customPopoverOpen = false;
+    };
+
+    // Helper: update all button states
+    var updateButtonStates = function() {
+        var buttons = containerEl.querySelectorAll('.wms-df-btn');
+        buttons.forEach(function(btn) {
+            var preset = btn.getAttribute('data-preset');
+            if (preset === currentPreset) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+    };
+
+    // Create preset button
+    var createButton = function(label, preset) {
+        var btn = document.createElement('button');
+        btn.className = 'wms-df-btn';
+        btn.textContent = label;
+        btn.setAttribute('data-preset', preset);
+        btn.style.position = 'relative';
+
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (preset === 'custom') {
+                // Toggle custom popover
+                if (customPopoverOpen) {
+                    closeCustomPopover();
+                } else {
+                    closeCustomPopover();
+                    createCustomPopover();
+                }
+            } else {
+                currentPreset = preset;
+                closeCustomPopover();
+                updateButtonStates();
+                var range = getPresetRange(preset);
+                onChangeCallback(range.from, range.to);
+            }
+        });
+
+        return btn;
+    };
+
+    // Create custom date popover
+    var createCustomPopover = function() {
+        var btn = containerEl.querySelector('[data-preset="custom"]');
+        if (!btn) return;
+
+        var popover = document.createElement('div');
+        popover.className = 'wms-df-custom-popover';
+
+        var labelFrom = document.createElement('label');
+        labelFrom.textContent = 'From:';
+        labelFrom.style.marginRight = '0';
+
+        var inputFrom = document.createElement('input');
+        inputFrom.type = 'date';
+        inputFrom.value = currentCustomFrom || '';
+
+        var labelTo = document.createElement('label');
+        labelTo.textContent = 'To:';
+        labelTo.style.marginLeft = '8px';
+        labelTo.style.marginRight = '0';
+
+        var inputTo = document.createElement('input');
+        inputTo.type = 'date';
+        inputTo.value = currentCustomTo || '';
+
+        // Update on input change
+        inputFrom.addEventListener('change', function() {
+            currentCustomFrom = inputFrom.value;
+            currentPreset = 'custom';
+            updateButtonStates();
+            var range = { from: currentCustomFrom, to: currentCustomTo };
+            onChangeCallback(range.from, range.to);
+            updateCustomButtonLabel();
+        });
+
+        inputTo.addEventListener('change', function() {
+            currentCustomTo = inputTo.value;
+            currentPreset = 'custom';
+            updateButtonStates();
+            var range = { from: currentCustomFrom, to: currentCustomTo };
+            onChangeCallback(range.from, range.to);
+            updateCustomButtonLabel();
+        });
+
+        popover.appendChild(labelFrom);
+        popover.appendChild(inputFrom);
+        popover.appendChild(labelTo);
+        popover.appendChild(inputTo);
+
+        containerEl.appendChild(popover);
+        customPopoverOpen = true;
+
+        // Close on outside click
+        var docClickHandler = function(e) {
+            if (!containerEl.contains(e.target)) {
+                closeCustomPopover();
+                document.removeEventListener('click', docClickHandler);
+            }
+        };
+        document.addEventListener('click', docClickHandler);
+
+        // Close on ESC
+        var escHandler = function(e) {
+            if (e.key === 'Escape') {
+                closeCustomPopover();
+                document.removeEventListener('keydown', escHandler);
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+    };
+
+    // Update custom button label to show date range
+    var updateCustomButtonLabel = function() {
+        var btn = containerEl.querySelector('[data-preset="custom"]');
+        if (!btn) return;
+
+        if (currentCustomFrom && currentCustomTo) {
+            var fromDisplay = formatDateForDisplay(currentCustomFrom);
+            var toDisplay = formatDateForDisplay(currentCustomTo);
+            btn.textContent = fromDisplay + ' — ' + toDisplay;
+        } else {
+            btn.textContent = 'Custom ▾';
+        }
+    };
+
+    // Build the button row
+    var buttons = [];
+    buttons.push({ label: 'Last 7d', preset: 'last7' });
+    buttons.push({ label: '30d', preset: 'last30' });
+    buttons.push({ label: '90d', preset: 'last90' });
+    buttons.push({ label: currentFYLabel, preset: 'currentFY' });
+    buttons.push({ label: lastFYLabel, preset: 'lastFY' });
+    buttons.push({ label: 'Custom ▾', preset: 'custom' });
+    if (showAll) {
+        buttons.push({ label: 'All', preset: 'all' });
+    }
+
+    buttons.forEach(function(b) {
+        var btn = createButton(b.label, b.preset);
+        containerEl.appendChild(btn);
+    });
+
+    // Apply default preset
+    currentPreset = defaultPreset;
+    updateButtonStates();
+    var initialRange = getPresetRange(defaultPreset);
+    onChangeCallback(initialRange.from, initialRange.to);
+
+    // Return controller object
+    return {
+        getRange: function() {
+            return getPresetRange(currentPreset);
+        },
+        setPreset: function(preset) {
+            currentPreset = preset;
+            closeCustomPopover();
+            updateButtonStates();
+            var range = getPresetRange(preset);
+            onChangeCallback(range.from, range.to);
+        },
+        getPreset: function() {
+            return currentPreset;
+        },
+        destroy: function() {
+            containerEl.innerHTML = '';
+        }
+    };
+};

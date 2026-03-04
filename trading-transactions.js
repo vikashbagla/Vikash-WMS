@@ -11,12 +11,14 @@ var trTxSortColumn = 'date';
 var trTxSortDirection = 'desc';
 var trTxSymbolSearch = '';
 var trTxSelectedInvestorIds = [];
+var trTxSelectedTraderIds = [];
 var trTxSelectedBrokerIds = [];
 var trTxSelectedTagNames = [];
 var trTxTagLogic = 'OR';
 var trTxInitialized = false;
 var trTxOpenMenuId = null;
 var trTxInvPillFilter = null;
+var trTxTrdPillFilter = null;
 var trTxBrkPillFilter = null;
 var trTxTagPillFilter = null;
 
@@ -25,6 +27,13 @@ var trTxViewMode = 'list';        // 'list' or 'matching'
 var trTxMatchMethod = 'lifo';     // 'fifo' or 'lifo'
 var trTxShowAll = false;
 var trTxFnoOnly = false;
+
+// Date filter state
+var trTxDateFilterInstance = null;
+var trTxDateRange = { from: null, to: null };
+
+// Checkbox / bulk selection state
+var trTxSelectedIds = {};         // { txnId: true, ... }
 
 // Set of row indices hidden in matching view (view-only, not persisted)
 var trTxMatchHiddenRows = {};
@@ -37,6 +46,7 @@ function trTxInit() {
     if (!trTxInitialized) {
         trTxSetupFilters();
         trTxSetupOptionsBar();
+        trTxSetupCheckboxes();
         trTxInitialized = true;
     }
     // Always repopulate pills — data may not have been ready on first load
@@ -62,6 +72,21 @@ function trTxInitPills() {
             pillClass: 'wms-pill'
         });
     }
+
+    // Trader pills (same investors list — traders are investors)
+    var trdInput = document.getElementById('trTx-trader-search');
+    var trdDd = document.getElementById('trTx-trader-dropdown');
+    var trdTags = document.getElementById('trTx-selected-traders');
+    if (trdInput && trdDd) {
+        var trdItems = trInvestors.map(function(inv) { return {id: String(inv.id), label: inv.short_name || inv.name}; });
+        trTxTrdPillFilter = wmsPillFilter(trdInput, trdDd, trdTags, {
+            items: trdItems,
+            selectedIds: trTxSelectedTraderIds,
+            onChange: trTxRender,
+            pillClass: 'wms-pill'
+        });
+    }
+
     // Broker pills
     var brkInput = document.getElementById('trTx-broker-search');
     var brkDd = document.getElementById('trTx-broker-dropdown');
@@ -75,6 +100,7 @@ function trTxInitPills() {
             pillClass: 'wms-pill'
         });
     }
+
     // Tag pills — collect all unique tags from transactions
     var allTags = {};
     trTransactions.forEach(function(t) {
@@ -129,6 +155,12 @@ function trTxSetupFilters() {
     if (clearInv) {
         clearInv.addEventListener('click', function() {
             if (trTxInvPillFilter) trTxInvPillFilter.clearAll();
+        });
+    }
+    var clearTrd = document.getElementById('trTx-clear-traders');
+    if (clearTrd) {
+        clearTrd.addEventListener('click', function() {
+            if (trTxTrdPillFilter) trTxTrdPillFilter.clearAll();
         });
     }
     var clearBrk = document.getElementById('trTx-clear-brokers');
@@ -220,6 +252,176 @@ function trTxSetupOptionsBar() {
             });
         });
     }
+
+    // Date filter — initialize shared wmsDateFilter component
+    var dateContainer = document.getElementById('trTx-date-filter');
+    if (dateContainer) {
+        var fyStartMonth = 4; // Default April; override from user prefs if available
+        if (window.wmsRefData && wmsRefData.userPrefs && wmsRefData.userPrefs.fy_start_month) {
+            fyStartMonth = wmsRefData.userPrefs.fy_start_month;
+        }
+        trTxDateFilterInstance = wmsDateFilter(dateContainer, {
+            default: 'last7',
+            fyStartMonth: fyStartMonth,
+            showAll: true,
+            onChange: function(from, to) {
+                trTxDateRange = { from: from, to: to };
+                trTxRender();
+            }
+        });
+        // Set initial range from default preset
+        if (trTxDateFilterInstance) {
+            trTxDateRange = trTxDateFilterInstance.getRange();
+        }
+    }
+}
+
+// ============================================================================
+// CHECKBOX / BULK SELECTION SETUP
+// ============================================================================
+
+function trTxSetupCheckboxes() {
+    // Select-all checkbox in header
+    var selectAll = document.getElementById('trTx-select-all');
+    if (selectAll) {
+        selectAll.addEventListener('change', function() {
+            var checked = selectAll.checked;
+            // Get currently visible transaction IDs
+            var filtered = trTxGetFilteredTransactions();
+            trTxSelectedIds = {};
+            if (checked) {
+                filtered.forEach(function(t) {
+                    trTxSelectedIds[t.id] = true;
+                });
+            }
+            trTxUpdateCheckboxUI();
+            trTxUpdateBulkBar();
+        });
+    }
+}
+
+function trTxUpdateCheckboxUI() {
+    // Update individual row checkboxes
+    document.querySelectorAll('#trTx-list input.trTx-row-cb').forEach(function(cb) {
+        cb.checked = !!trTxSelectedIds[cb.dataset.txnId];
+    });
+    // Update select-all checkbox state
+    var selectAll = document.getElementById('trTx-select-all');
+    if (selectAll) {
+        var filtered = trTxGetFilteredTransactions();
+        var count = Object.keys(trTxSelectedIds).length;
+        selectAll.checked = filtered.length > 0 && count === filtered.length;
+        selectAll.indeterminate = count > 0 && count < filtered.length;
+    }
+}
+
+function trTxUpdateBulkBar() {
+    var count = Object.keys(trTxSelectedIds).length;
+    var bar = document.getElementById('trTx-bulk-bar');
+    if (bar) {
+        bar.style.display = count > 0 ? 'flex' : 'none';
+    }
+    var countEl = document.getElementById('trTx-bulk-count');
+    if (countEl) {
+        countEl.textContent = count + ' selected';
+    }
+}
+
+function trTxClearSelection() {
+    trTxSelectedIds = {};
+    trTxUpdateCheckboxUI();
+    trTxUpdateBulkBar();
+}
+
+// ============================================================================
+// BULK ACTIONS
+// ============================================================================
+
+async function trTxBulkHide() {
+    var ids = Object.keys(trTxSelectedIds);
+    if (ids.length === 0) return;
+    if (!confirm('Hide ' + ids.length + ' transaction(s) from display?')) return;
+
+    var headers = {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+    };
+
+    var failed = 0;
+    for (var i = 0; i < ids.length; i++) {
+        var txnId = ids[i];
+        var txn = trTransactions.find(function(t) { return t.id === txnId; });
+        if (!txn || txn.dont_display) continue;
+
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txnId, {
+            method: 'PATCH',
+            headers: headers,
+            body: JSON.stringify({ dont_display: true })
+        });
+        if (resp.ok) {
+            txn.dont_display = true;
+        } else {
+            failed++;
+        }
+    }
+
+    trTxClearSelection();
+    trTxRender();
+    trRenderPortfolio();
+    if (failed > 0) {
+        showAlert(failed + ' transaction(s) failed to hide', 'error');
+    } else {
+        showAlert(ids.length + ' transaction(s) hidden', 'success', 2000);
+    }
+}
+
+async function trTxBulkDelete() {
+    var ids = Object.keys(trTxSelectedIds);
+    if (ids.length === 0) return;
+
+    // Check for locked transactions
+    var lockedCount = 0;
+    ids.forEach(function(id) {
+        var txn = trTransactions.find(function(t) { return t.id === id; });
+        if (txn && txn.is_locked) lockedCount++;
+    });
+    if (lockedCount > 0) {
+        showAlert(lockedCount + ' locked transaction(s) cannot be deleted. Unlock them first.', 'error');
+        return;
+    }
+
+    if (!confirm('Delete ' + ids.length + ' transaction(s)? This cannot be undone.')) return;
+
+    var headers = {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+        'Prefer': 'return=minimal'
+    };
+
+    var failed = 0;
+    for (var i = 0; i < ids.length; i++) {
+        var txnId = ids[i];
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txnId, {
+            method: 'DELETE',
+            headers: headers
+        });
+        if (resp.ok) {
+            trTransactions = trTransactions.filter(function(t) { return t.id !== txnId; });
+        } else {
+            failed++;
+        }
+    }
+
+    trTxClearSelection();
+    trTxRender();
+    trRenderPortfolio();
+    if (failed > 0) {
+        showAlert(failed + ' transaction(s) failed to delete', 'error');
+    } else {
+        showAlert(ids.length + ' transaction(s) deleted', 'success', 2000);
+    }
 }
 
 // ============================================================================
@@ -230,6 +432,8 @@ function trTxRenderSelectedTags(type) {
     // Delegate to wmsPillFilter's renderSelectedTags method
     if (type === 'investor' && trTxInvPillFilter) {
         trTxInvPillFilter.renderSelectedTags();
+    } else if (type === 'trader' && trTxTrdPillFilter) {
+        trTxTrdPillFilter.renderSelectedTags();
     } else if (type === 'broker' && trTxBrkPillFilter) {
         trTxBrkPillFilter.renderSelectedTags();
     } else if (type === 'tag' && trTxTagPillFilter) {
@@ -241,6 +445,8 @@ function trTxSyncPillStates(type) {
     // Delegate to wmsPillFilter's syncStates method
     if (type === 'investor' && trTxInvPillFilter) {
         trTxInvPillFilter.syncStates();
+    } else if (type === 'trader' && trTxTrdPillFilter) {
+        trTxTrdPillFilter.syncStates();
     } else if (type === 'broker' && trTxBrkPillFilter) {
         trTxBrkPillFilter.syncStates();
     } else if (type === 'tag' && trTxTagPillFilter) {
@@ -270,6 +476,26 @@ function trTxUpdateSortIndicators() {
     }
 }
 
+// Multi-level sort comparator for default sort:
+// Primary: Date desc → Secondary: Symbol asc → Tertiary: Investor>Trader>Broker asc
+function trTxMultiSort(a, b) {
+    // Primary: date descending
+    var dateA = new Date(a.transaction_date);
+    var dateB = new Date(b.transaction_date);
+    if (dateA.getTime() !== dateB.getTime()) {
+        return dateB - dateA;
+    }
+    // Secondary: symbol ascending
+    var symA = (a.short_symbol || a.symbol || '').toLowerCase();
+    var symB = (b.short_symbol || b.symbol || '').toLowerCase();
+    var symCmp = symA.localeCompare(symB);
+    if (symCmp !== 0) return symCmp;
+    // Tertiary: investor>trader>broker ascending
+    var invA = (trInvName(a.investor_id) + ' ' + trBrkCode(a.broker_id)).toLowerCase();
+    var invB = (trInvName(b.investor_id) + ' ' + trBrkCode(b.broker_id)).toLowerCase();
+    return invA.localeCompare(invB);
+}
+
 // ============================================================================
 // COMMON FILTER LOGIC
 // ============================================================================
@@ -289,6 +515,18 @@ function trTxGetFilteredTransactions() {
         });
     }
 
+    // Filter: date range
+    if (trTxDateRange.from) {
+        filtered = filtered.filter(function(t) {
+            return t.transaction_date >= trTxDateRange.from;
+        });
+    }
+    if (trTxDateRange.to) {
+        filtered = filtered.filter(function(t) {
+            return t.transaction_date <= trTxDateRange.to;
+        });
+    }
+
     // Filter: symbol search (uses enriched _searchText from wmsRefData, Rule B.9.2)
     if (trTxSymbolSearch) {
         var symTokens = wmsTokenize(trTxSymbolSearch);
@@ -301,6 +539,13 @@ function trTxGetFilteredTransactions() {
     if (trTxSelectedInvestorIds.length > 0) {
         filtered = filtered.filter(function(t) {
             return t.investor_id && trTxSelectedInvestorIds.indexOf(String(t.investor_id)) >= 0;
+        });
+    }
+
+    // Filter: traders (use String() for safe comparison)
+    if (trTxSelectedTraderIds.length > 0) {
+        filtered = filtered.filter(function(t) {
+            return t.trader_id && trTxSelectedTraderIds.indexOf(String(t.trader_id)) >= 0;
         });
     }
 
@@ -360,31 +605,38 @@ function trTxRender() {
 // ============================================================================
 
 function trTxRenderList(filtered) {
-    // Sort
-    filtered.sort(function(a, b) {
-        var valA, valB;
-        switch (trTxSortColumn) {
-            case 'investor':
-                valA = (trInvName(a.investor_id) + ' ' + trBrkCode(a.broker_id)).toLowerCase();
-                valB = (trInvName(b.investor_id) + ' ' + trBrkCode(b.broker_id)).toLowerCase();
-                return trTxSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-            case 'symbol':
-                valA = (a.short_symbol || a.symbol || '').toLowerCase();
-                valB = (b.short_symbol || b.symbol || '').toLowerCase();
-                return trTxSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-            case 'date':
-            default:
-                valA = new Date(a.transaction_date);
-                valB = new Date(b.transaction_date);
-                return trTxSortDirection === 'asc' ? valA - valB : valB - valA;
-        }
-    });
+    // Sort: if user clicked a column header, use single-column sort;
+    // otherwise (default state: date desc) use multi-level sort
+    if (trTxSortColumn === 'date' && trTxSortDirection === 'desc') {
+        // Default multi-level sort: date desc > symbol asc > investor asc
+        filtered.sort(trTxMultiSort);
+    } else {
+        // User-selected single-column sort
+        filtered.sort(function(a, b) {
+            var valA, valB;
+            switch (trTxSortColumn) {
+                case 'investor':
+                    valA = (trInvName(a.investor_id) + ' ' + trBrkCode(a.broker_id)).toLowerCase();
+                    valB = (trInvName(b.investor_id) + ' ' + trBrkCode(b.broker_id)).toLowerCase();
+                    return trTxSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                case 'symbol':
+                    valA = (a.short_symbol || a.symbol || '').toLowerCase();
+                    valB = (b.short_symbol || b.symbol || '').toLowerCase();
+                    return trTxSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                case 'date':
+                default:
+                    valA = new Date(a.transaction_date);
+                    valB = new Date(b.transaction_date);
+                    return trTxSortDirection === 'asc' ? valA - valB : valB - valA;
+            }
+        });
+    }
 
     var tbody = document.getElementById('trTx-list');
     if (!tbody) return;
 
     if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#9ca3af;">No transactions match the current filters</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;color:#9ca3af;">No transactions match the current filters</td></tr>';
         trTxUpdateSortIndicators();
         return;
     }
@@ -394,7 +646,8 @@ function trTxRenderList(filtered) {
         var isIncome = INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
         var qty = Math.abs(txn.quantity || 0);
         var netAmt = txn.net_amount || 0;
-        var acqCost = qty !== 0 ? Math.abs(netAmt / qty) : 0;
+        var tradedPrice = txn.price || 0;
+        var netPrice = qty !== 0 ? Math.abs(netAmt / qty) : 0;
 
         // Row classes
         var rowClasses = [];
@@ -450,7 +703,13 @@ function trTxRenderList(filtered) {
         var hideIcon = txn.dont_display ? '👁' : '👁';
         var hideTitle = txn.dont_display ? 'Show in Display' : 'Hide from Display';
 
+        // Checkbox state
+        var cbChecked = trTxSelectedIds[txn.id] ? ' checked' : '';
+
         return '<tr' + rowClass + ' data-txn-id="' + txn.id + '">' +
+            '<td class="trTx-checkbox-cell">' +
+                '<input type="checkbox" class="trTx-row-cb" data-txn-id="' + txn.id + '"' + cbChecked + '>' +
+            '</td>' +
             '<td>' + formatDate(txn.transaction_date) + '</td>' +
             '<td>' + invBrk + '</td>' +
             '<td>' + (txn.symbol || txn.short_symbol || '') +
@@ -462,7 +721,8 @@ function trTxRenderList(filtered) {
                 '</span>' +
             '</td>' +
             '<td class="text-right">' + qtyHtml + '</td>' +
-            '<td class="text-right">' + formatPrice(acqCost, false) + '</td>' +
+            '<td class="text-right">' + formatPrice(tradedPrice, false) + '</td>' +
+            '<td class="text-right">' + formatPrice(netPrice, false) + '</td>' +
             '<td class="text-right">' + netAmtHtml + '</td>' +
             '<td>' + tagHtml + '</td>' +
             '<td class="action-cell">' +
@@ -523,10 +783,11 @@ function trTxAttachRowListeners() {
         });
     });
 
-    // Row click opens edit modal (except action cell), but not for locked
+    // Row click opens edit modal (except action cell and checkbox cell), but not for locked
     document.querySelectorAll('#trTx-list tr[data-txn-id]').forEach(function(row) {
         row.addEventListener('click', function(e) {
             if (e.target.closest('.action-cell')) return;
+            if (e.target.closest('.trTx-checkbox-cell')) return;
             var txnId = row.dataset.txnId;
             var txn = trTransactions.find(function(t) { return t.id === txnId; });
             if (txn && txn.is_locked) {
@@ -536,6 +797,38 @@ function trTxAttachRowListeners() {
             trOpenEditModal(txnId);
         });
     });
+
+    // Individual row checkboxes
+    document.querySelectorAll('#trTx-list input.trTx-row-cb').forEach(function(cb) {
+        cb.addEventListener('change', function(e) {
+            e.stopPropagation();
+            var txnId = cb.dataset.txnId;
+            if (cb.checked) {
+                trTxSelectedIds[txnId] = true;
+            } else {
+                delete trTxSelectedIds[txnId];
+            }
+            trTxUpdateCheckboxUI();
+            trTxUpdateBulkBar();
+        });
+    });
+
+    // Bulk action buttons — attach once (safe to re-attach, won't duplicate because they're static elements)
+    var bulkHideBtn = document.getElementById('trTx-bulk-hide');
+    var bulkDeleteBtn = document.getElementById('trTx-bulk-delete');
+    var bulkClearBtn = document.getElementById('trTx-bulk-clear');
+    if (bulkHideBtn && !bulkHideBtn._bound) {
+        bulkHideBtn.addEventListener('click', trTxBulkHide);
+        bulkHideBtn._bound = true;
+    }
+    if (bulkDeleteBtn && !bulkDeleteBtn._bound) {
+        bulkDeleteBtn.addEventListener('click', trTxBulkDelete);
+        bulkDeleteBtn._bound = true;
+    }
+    if (bulkClearBtn && !bulkClearBtn._bound) {
+        bulkClearBtn.addEventListener('click', trTxClearSelection);
+        bulkClearBtn._bound = true;
+    }
 }
 
 function trTxCloseAllMenus() {

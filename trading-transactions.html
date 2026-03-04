@@ -9,6 +9,8 @@
 .trTx-hidden-row td { text-decoration: line-through; }
 .trTx-hidden-row td.action-cell,
 .trTx-hidden-row td.action-cell * { text-decoration: none; }
+.trTx-hidden-row td.trTx-checkbox-cell,
+.trTx-hidden-row td.trTx-checkbox-cell * { text-decoration: none; }
 
 /* Type badge */
 .trTx-type-badge {
@@ -86,7 +88,18 @@
     display: flex;
 }
 
-/* Icon-only action menu */
+/* Date filter right-aligned spacer */
+.trTx-options-spacer { flex: 1; }
+
+/* Icon-only action menu — tight column */
+#trTx-list .action-cell {
+    width: 30px;
+    max-width: 30px;
+    padding: 2px 0 !important;
+    text-align: center;
+    position: relative;
+    overflow: visible;
+}
 #trTx-list .action-menu {
     min-width: auto;
     width: auto;
@@ -105,6 +118,58 @@
 }
 #trTx-list .action-menu-item.disabled:hover {
     background: none;
+}
+
+/* Checkbox column */
+.trTx-checkbox-cell {
+    width: 28px;
+    max-width: 28px;
+    padding: 2px 4px !important;
+    text-align: center;
+}
+.trTx-checkbox-cell input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+/* Bulk action bar */
+.trTx-bulk-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 10px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+    margin-bottom: 4px;
+    flex-shrink: 0;
+}
+.trTx-bulk-bar .trTx-bulk-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: #dc2626;
+}
+.trTx-bulk-bar button {
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid #e2e8f0;
+    background: white;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.trTx-bulk-bar button:hover {
+    border-color: #667eea;
+    color: #667eea;
+}
+.trTx-bulk-bar button.danger {
+    border-color: #fecaca;
+    color: #dc2626;
+}
+.trTx-bulk-bar button.danger:hover {
+    background: #fee2e2;
+    border-color: #dc2626;
 }
 
 /* Matching trades table */
@@ -202,7 +267,7 @@
 }
 </style>
 
-<!-- Options bar -->
+<!-- Options bar with date filter right-aligned -->
 <div class="trTx-options-bar" style="flex-shrink:0; margin-bottom:6px;">
     <label title="Show hidden (dont_display) transactions">
         <input type="checkbox" id="trTx-show-all"> Show All
@@ -220,44 +285,57 @@
         <button class="trTx-toggle-btn" data-method="fifo">FIFO</button>
         <button class="trTx-toggle-btn active" data-method="lifo">LIFO</button>
     </div>
+    <div class="trTx-options-spacer"></div>
+    <div id="trTx-date-filter" style="display:inline-flex;"></div>
 </div>
 
-<!-- Filters — 4-column: Symbol search, Investor, Broker, Tags -->
-<div class="filters-grid" style="flex-shrink:0; grid-template-columns: repeat(4, 1fr);">
+<!-- Filters — 5-column: Symbol, Investor, Trader, Broker, Tags -->
+<div class="filters-grid" style="flex-shrink:0; grid-template-columns: repeat(5, 1fr);">
     <div class="filter-group">
         <div class="filter-header">
             <label>Search Symbol</label>
             <span class="clear-link" id="trTx-clear-symbol" style="visibility:hidden;">Clear</span>
         </div>
         <div class="filter-search-container">
-            <input type="text" class="filter-search-input" id="trTx-symbol-search" placeholder="Symbol or company name...">
+            <input type="text" class="filter-search-input" id="trTx-symbol-search" placeholder="Symbol or company...">
         </div>
     </div>
     <div class="filter-group">
         <div class="filter-header">
-            <label>Filter by Investor</label>
+            <label>Investor</label>
             <span class="clear-link" id="trTx-clear-investors">Clear all</span>
         </div>
         <div class="filter-search-container">
-            <input type="text" class="filter-search-input" id="trTx-investor-search" placeholder="Type to search investors...">
+            <input type="text" class="filter-search-input" id="trTx-investor-search" placeholder="Search investors...">
             <div class="wms-pill-dropdown" id="trTx-investor-dropdown"></div>
         </div>
         <div class="filter-selected-tags" id="trTx-selected-investors"></div>
     </div>
     <div class="filter-group">
         <div class="filter-header">
-            <label>Filter by Broker</label>
+            <label>Trader</label>
+            <span class="clear-link" id="trTx-clear-traders">Clear all</span>
+        </div>
+        <div class="filter-search-container">
+            <input type="text" class="filter-search-input" id="trTx-trader-search" placeholder="Search traders...">
+            <div class="wms-pill-dropdown" id="trTx-trader-dropdown"></div>
+        </div>
+        <div class="filter-selected-tags" id="trTx-selected-traders"></div>
+    </div>
+    <div class="filter-group">
+        <div class="filter-header">
+            <label>Broker</label>
             <span class="clear-link" id="trTx-clear-brokers">Clear all</span>
         </div>
         <div class="filter-search-container">
-            <input type="text" class="filter-search-input" id="trTx-broker-search" placeholder="Type to search brokers...">
+            <input type="text" class="filter-search-input" id="trTx-broker-search" placeholder="Search brokers...">
             <div class="wms-pill-dropdown" id="trTx-broker-dropdown"></div>
         </div>
         <div class="filter-selected-tags" id="trTx-selected-brokers"></div>
     </div>
     <div class="filter-group">
         <div class="filter-header">
-            <label>Filter by Tag</label>
+            <label>Tag</label>
             <div style="display: flex; align-items: center; gap: 12px;">
                 <div class="tag-match-options">
                     <span style="font-size: 11px; color: #718096;">Match:</span>
@@ -268,11 +346,19 @@
             </div>
         </div>
         <div class="filter-search-container">
-            <input type="text" class="filter-search-input" id="trTx-tag-search" placeholder="Type to search tags...">
+            <input type="text" class="filter-search-input" id="trTx-tag-search" placeholder="Search tags...">
             <div class="wms-pill-dropdown" id="trTx-tag-dropdown"></div>
         </div>
         <div class="filter-selected-tags" id="trTx-selected-tags"></div>
     </div>
+</div>
+
+<!-- Bulk action bar (hidden by default) -->
+<div id="trTx-bulk-bar" class="trTx-bulk-bar" style="display:none;">
+    <span class="trTx-bulk-count" id="trTx-bulk-count">0 selected</span>
+    <button id="trTx-bulk-hide" title="Hide selected transactions from display">👁 Hide</button>
+    <button id="trTx-bulk-delete" class="danger" title="Delete selected transactions">🗑️ Delete</button>
+    <button id="trTx-bulk-clear" style="margin-left:auto; border:none; background:none; color:#718096; font-size:11px; cursor:pointer;">✕ Clear selection</button>
 </div>
 
 <!-- Transaction count -->
@@ -285,25 +371,29 @@
     <table id="trTx-table">
         <thead>
             <tr>
-                <th class="sortable" id="trTx-th-date" style="width:9%;">
+                <th class="trTx-checkbox-cell">
+                    <input type="checkbox" id="trTx-select-all" title="Select all">
+                </th>
+                <th class="sortable" id="trTx-th-date" style="width:8%;">
                     Date <span class="sort-indicator" id="trTx-sort-date">▼</span>
                 </th>
-                <th class="sortable" id="trTx-th-investor" style="width:13%;">
+                <th class="sortable" id="trTx-th-investor" style="width:11%;">
                     Inv > Trd > Brk <span class="sort-indicator" id="trTx-sort-investor"></span>
                 </th>
-                <th class="sortable" id="trTx-th-symbol" style="width:16%;">
+                <th class="sortable" id="trTx-th-symbol" style="width:14%;">
                     Symbol <span class="sort-indicator" id="trTx-sort-symbol"></span>
                 </th>
-                <th style="width:6%; text-align:center;">Type</th>
-                <th class="text-right" style="width:8%;">Qty</th>
-                <th class="text-right" style="width:9%;">Acq. Cost</th>
-                <th class="text-right" style="width:11%;">Net Amount</th>
-                <th style="width:10%;">Tags</th>
-                <th style="width:30px; text-align:center;">⋮</th>
+                <th style="width:5%; text-align:center;">Type</th>
+                <th class="text-right" style="width:7%;">Qty</th>
+                <th class="text-right" style="width:8%;">Traded Price</th>
+                <th class="text-right" style="width:8%;">Net Price</th>
+                <th class="text-right" style="width:9%;">Net Amount</th>
+                <th style="width:8%;">Tags</th>
+                <th class="action-cell" style="width:30px;">⋮</th>
             </tr>
         </thead>
         <tbody id="trTx-list">
-            <tr><td colspan="9" style="text-align:center;padding:40px;color:#9ca3af;">Loading transactions...</td></tr>
+            <tr><td colspan="11" style="text-align:center;padding:40px;color:#9ca3af;">Loading transactions...</td></tr>
         </tbody>
     </table>
 </div>

@@ -512,6 +512,46 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
 .wms-context-menu-item.danger:hover { background: #fef2f2; }
 
 /* ============================================================================ */
+/* Shared Date Filter Component */
+.wms-date-filter { display:inline-flex; align-items:center; gap:2px; }
+.wms-df-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid #e2e8f0;
+    background: #f7fafc;
+    color: #718096;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+    line-height: 1.4;
+}
+.wms-df-btn:hover { border-color: #667eea; color: #667eea; }
+.wms-df-btn.active { background: #667eea; color: white; border-color: #667eea; }
+.wms-df-custom-popover {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    padding: 8px 10px;
+    z-index: 100;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.wms-df-custom-popover label { font-size: 11px; color: #718096; }
+.wms-df-custom-popover input[type="date"] {
+    padding: 3px 6px;
+    font-size: 11px;
+    border: 1px solid #cbd5e0;
+    border-radius: 4px;
+    color: #2d3748;
+}
 
 /* RESPONSIVE */
 @media (max-width:1024px) {
