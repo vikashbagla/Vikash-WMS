@@ -18,8 +18,9 @@ var regulatoryCharges = [];    // Synced from wmsRefData.regCharges
 
 // Excel import state
 var excelConfirmedRows = [];   // Ready to import (symbol resolved, charges calculated)
-var excelFlaggedRows = [];     // Need user review (symbol ambiguous, multiple matches)
-var excelErrorRows = [];       // Skipped (validation failures)
+var excelFlaggedRows = [];     // Need user review (symbol ambiguous, not found, errors)
+var excelErrorRows = [];       // Rejected in Stage A (missing required fields — cannot show in preview)
+var excelActiveFilter = 'all'; // Current summary bar filter: 'all', 'confirmed', 'review'
 
 // CN import state
 var cnAccounts = [];           // {id, investor_id, broker_id, investor_short_name, broker_code, broker_name, cn_password, cn_parser_template}
@@ -1997,16 +1998,17 @@ async function processTransactions(rawData, worksheet) {
         }
     }
 
-    // Classify rows
+    // Classify rows — errors and flagged both become 'review' (visible in preview, not importable)
     excelConfirmedRows = [];
     excelFlaggedRows = [];
     validRows.forEach(function(r) {
         if (r.matchStatus === 'confirmed') {
             excelConfirmedRows.push(r);
-        } else if (r.matchStatus === 'flagged') {
-            excelFlaggedRows.push(r);
         } else {
-            excelErrorRows.push({ rowNum: r.rowNum, errors: ['Symbol not found: ' + r.symbol], raw: r });
+            // Both 'flagged' (multiple matches) and 'error' (symbol not found) → review
+            r.matchStatus = 'review';
+            if (!r.matchError) r.matchError = 'Symbol not found: ' + r.symbol;
+            excelFlaggedRows.push(r);
         }
     });
 
@@ -2077,19 +2079,28 @@ async function processTransactions(rawData, worksheet) {
 
 function displayExcelPreview() {
     var allRows = excelConfirmedRows.concat(excelFlaggedRows);
-    var buyCount = allRows.filter(function(t) { return t.transaction_type === 'BUY'; }).length;
-    var sellCount = allRows.filter(function(t) { return t.transaction_type === 'SELL'; }).length;
-    var otherCount = allRows.length - buyCount - sellCount;
-    var newCount = allRows.filter(function(t) { return !t.isUpdate; }).length;
-    var updateCount = allRows.filter(function(t) { return t.isUpdate; }).length;
+    var confirmedCount = excelConfirmedRows.length;
+    var reviewCount = excelFlaggedRows.length;
+    var rejectedCount = excelErrorRows.length;
 
-    // Update stats
-    document.getElementById('statTotal').textContent = allRows.length;
-    document.getElementById('statBuy').textContent = buyCount;
-    document.getElementById('statSell').textContent = sellCount;
-    document.getElementById('statOther').textContent = otherCount;
-    document.getElementById('statNew').textContent = newCount;
-    document.getElementById('statUpdate').textContent = updateCount;
+    // Update sticky summary bar
+    var totalLabel = allRows.length + (rejectedCount > 0 ? ' (' + rejectedCount + ' rejected)' : '');
+    document.getElementById('statTotal').textContent = totalLabel;
+    document.getElementById('statConfirmed').textContent = confirmedCount;
+    document.getElementById('statReview').textContent = reviewCount;
+
+    // Highlight active filter card
+    document.querySelectorAll('.excel-summary-card').forEach(function(card) {
+        card.classList.toggle('active', card.dataset.filter === excelActiveFilter);
+    });
+
+    // Apply filter
+    var displayRows = allRows;
+    if (excelActiveFilter === 'confirmed') {
+        displayRows = excelConfirmedRows.slice();
+    } else if (excelActiveFilter === 'review') {
+        displayRows = excelFlaggedRows.slice();
+    }
 
     // Render preview table
     var tbody = document.getElementById('previewTableBody');
@@ -2116,17 +2127,24 @@ function displayExcelPreview() {
         return parts.join(' > ');
     }
 
-    allRows.forEach(function(t, index) {
+    displayRows.forEach(function(t) {
+        // Use allRows index for data integrity (charge edits, tag reads, etc.)
+        var index = allRows.indexOf(t);
+        var isReview = (t.matchStatus === 'review');
         var row = document.createElement('tr');
         var typeClass = t.transaction_type === 'BUY' ? 'type-buy' : t.transaction_type === 'SELL' ? 'type-sell' : 'type-other';
 
-        // Status badge
+        // Status badge — show REVIEW for all review rows (both flagged and error)
         var statusBadge = '';
-        if (t.matchStatus === 'flagged') {
-            var matchInfo = (t.matchOptions || []).length + ' possible matches';
-            statusBadge = '<span class="review-badge" data-row="' + index + '" style="background:#feebc8;color:#744210;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;cursor:pointer;" title="Click to resolve: ' + matchInfo + '">REVIEW</span> ';
+        if (isReview) {
+            var reviewTitle = t.matchError || 'Needs review';
+            var hasOptions = (t.matchOptions || []).length > 0;
+            statusBadge = '<span class="review-badge" data-row="' + index + '" title="' + reviewTitle.replace(/"/g, '&quot;') + (hasOptions ? ' — click to resolve' : '') + '">REVIEW</span> ';
         }
-        var dupBadge = t.isUpdate ? '<span style="background:#feebc8;color:#744210;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;margin-left:4px;">UPD</span>' : '<span style="background:#c6f6d5;color:#22543d;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;margin-left:4px;">NEW</span>';
+        var dupBadge = '';
+        if (!isReview) {
+            dupBadge = t.isUpdate ? '<span style="background:#feebc8;color:#744210;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;margin-left:4px;">UPD</span>' : '<span style="background:#c6f6d5;color:#22543d;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;margin-left:4px;">NEW</span>';
+        }
 
         // Type abbreviation with tooltip
         var typeAbbr = t.transaction_type;
@@ -2135,6 +2153,7 @@ function displayExcelPreview() {
         // Symbol display — truncate and use tooltip for full name
         var symbolDisplay = t.short_symbol || t.symbol;
         var symbolTitle = t.symbol + (t.company_name ? ' — ' + t.company_name : '') + (t.exchange ? ' (' + t.exchange + ')' : '');
+        if (isReview && t.matchError) symbolTitle += '\n⚠ ' + t.matchError;
 
         // Double-click-to-edit charge display cells
         var chargesDisplay = '<span class="charge-display" data-row="' + index + '" data-field="total_charges" title="Double-click for breakdown">' + formatCnAmount(t.total_charges || 0) + '</span>';
@@ -2155,8 +2174,15 @@ function displayExcelPreview() {
             '<div class="cn-tag-dropdown" id="' + excelTagId + '_dd" style="display:none;position:absolute;z-index:100;left:0;right:0;max-height:120px;overflow-y:auto;background:#fff;border:1px solid #cbd5e0;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.12);margin-top:2px;"></div>';
 
         row.dataset.rowIdx = index;
-        var isChecked = t.isUpdate ? '' : ' checked';
-        row.innerHTML = '<td style="text-align:center;"><input type="checkbox" class="excel-row-cb" data-row="' + index + '"' + isChecked + '></td>' +
+        // Review rows: no checkbox (not importable). Confirmed: checked unless it's an update.
+        var checkboxHtml = '';
+        if (isReview) {
+            checkboxHtml = '<td style="text-align:center;"><span style="font-size:10px;color:#d97706;" title="Resolve to import">⚠</span></td>';
+        } else {
+            var isChecked = t.isUpdate ? '' : ' checked';
+            checkboxHtml = '<td style="text-align:center;"><input type="checkbox" class="excel-row-cb" data-row="' + index + '"' + isChecked + '></td>';
+        }
+        row.innerHTML = checkboxHtml +
             '<td>' + (index + 1) + '</td>' +
             '<td style="font-size:10px;white-space:nowrap;" title="' + invTooltip.replace(/"/g, '&quot;') + '">' + invLabel + '</td>' +
             '<td style="min-width:140px;" title="' + symbolTitle.replace(/"/g, '&quot;') + '">' + statusBadge + symbolDisplay + dupBadge + (t.company_name ? '<br><span style="font-size:10px;color:#718096;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:110px;">' + t.company_name + '</span>' : '') + '</td>' +
@@ -2170,8 +2196,8 @@ function displayExcelPreview() {
             '<td style="text-align:right;' + (t._netOverride ? 'color:#b7791f;font-style:italic;' : '') + '" id="excelNet_' + index + '" class="net-amount-cell" data-row="' + index + '" title="Net: ' + t.net_amount + (t._netOverride ? ' (user entered — dblclick to edit)' : ' (dblclick to edit)') + '">' + formatCnAmount(t.net_amount) + '</td>' +
             '<td style="font-size:10px;width:160px;max-width:160px;position:relative;">' + tagsHtml + '</td>';
 
-        if (t.matchStatus === 'flagged') {
-            row.style.backgroundColor = '#fffff0';
+        if (isReview) {
+            row.classList.add('excel-review-row');
         }
 
         tbody.appendChild(row);
@@ -2194,7 +2220,8 @@ function displayExcelPreview() {
     attachTagHandlers();
 
     // Lazy-init tag autocomplete — only initialize when input is focused (saves ~1-2s for 40+ rows)
-    allRows.forEach(function(t, index) {
+    displayRows.forEach(function(t) {
+        var index = allRows.indexOf(t);
         var input = document.getElementById('excelTag_' + index);
         if (!input) return;
         var tagsValue = Array.isArray(t.tags) ? t.tags.filter(function(tg) { return tg && tg !== 'blank'; }).join(', ') : (t.tags || '');
@@ -2226,13 +2253,11 @@ function displayExcelPreview() {
         }
     });
 
-    // Show error summary if any
-    if (excelErrorRows.length > 0) {
-        var errHtml = excelErrorRows.slice(0, 10).map(function(e) { return 'Row ' + e.rowNum + ': ' + e.errors.join('; '); }).join('\n');
-        tiAlert('warning', allRows.length + ' transactions ready. ' + excelErrorRows.length + ' rows skipped:\n\n' + errHtml);
-    } else {
-        tiAlert('info', allRows.length + ' transactions ready (' + newCount + ' new, ' + updateCount + ' updates). Review and click Import.');
-    }
+    // Show summary alert
+    var summaryParts = [confirmedCount + ' confirmed'];
+    if (reviewCount > 0) summaryParts.push(reviewCount + ' need review');
+    if (rejectedCount > 0) summaryParts.push(rejectedCount + ' rejected (missing required fields)');
+    tiAlert(reviewCount > 0 || rejectedCount > 0 ? 'warning' : 'info', summaryParts.join(', ') + '. Review rows must be resolved before import.');
 
     // Update select-all and import button count (updates are unchecked by default)
     updateSelectAllState();
@@ -2241,6 +2266,13 @@ function displayExcelPreview() {
     // Open modal overlay
     document.getElementById('excelPreviewOverlay').classList.add('active');
 }
+
+// Summary bar filter — click Confirmed/Review/All to filter the table
+function excelFilterRows(filter) {
+    excelActiveFilter = filter;
+    displayExcelPreview();
+}
+window.excelFilterRows = excelFilterRows;
 
 // ============================================================================
 // TABLE SORTING
@@ -2292,7 +2324,7 @@ function sortAndRerenderTable() {
     });
     // Re-split back into confirmed and flagged preserving sort order
     excelConfirmedRows = allRows.filter(function(r) { return r.matchStatus === 'confirmed'; });
-    excelFlaggedRows = allRows.filter(function(r) { return r.matchStatus === 'flagged'; });
+    excelFlaggedRows = allRows.filter(function(r) { return r.matchStatus === 'review'; });
     // Re-render the preview (this will call showExcelPreview internals)
     displayExcelPreview();
 }
@@ -2728,6 +2760,7 @@ function updateSelectAllState() {
 }
 
 function updateImportBtnCount() {
+    // Only count confirmed rows that are checked (review rows have no checkboxes)
     var cbs = document.querySelectorAll('#previewTableBody .excel-row-cb:checked');
     var btn = document.getElementById('importBtn');
     if (btn) btn.textContent = 'Import ' + cbs.length + ' to Database';
@@ -2792,19 +2825,27 @@ function buildExcelTransactionRecord(row) {
     return rec;
 }
 
-// Import confirmed + flagged rows to database (rule C.2.2: batch ≤10, retry)
+// Import confirmed rows to database (rule C.2.2: batch ≤10, retry)
+// Review rows are excluded — only confirmed, checked rows are imported
 var _importInProgress = false;
 async function importExcelToDatabase() {
     if (_importInProgress) { tiAlert('warning', 'Import already in progress...'); return; }
 
-    var allRows = excelConfirmedRows.concat(excelFlaggedRows);
-    if (allRows.length === 0) { tiAlert('error', 'No transactions to import'); return; }
+    // Only consider confirmed rows (review rows are never imported)
+    var allRows = excelConfirmedRows.slice();
+    if (allRows.length === 0) { tiAlert('error', 'No confirmed transactions to import'); return; }
 
-    // Filter to only checked (included) rows
+    // Build index map: allRows index → row (for checkbox data-row matching)
+    var fullList = excelConfirmedRows.concat(excelFlaggedRows);
+
+    // Filter to only checked (included) rows using checkbox data-row attribute
     var checkedCbs = document.querySelectorAll('#previewTableBody .excel-row-cb:checked');
     var includedIndices = {};
     checkedCbs.forEach(function(cb) { includedIndices[cb.dataset.row] = true; });
-    allRows = allRows.filter(function(r, idx) { return includedIndices[idx]; });
+    allRows = allRows.filter(function(r) {
+        var idx = fullList.indexOf(r);
+        return includedIndices[idx];
+    });
     if (allRows.length === 0) { tiAlert('error', 'No rows selected for import'); return; }
 
     // Safety: skip rows with null security_id or zero quantity (DB constraints)
@@ -2825,8 +2866,10 @@ async function importExcelToDatabase() {
     });
 
     // Read tags from autocomplete pill inputs (data-tags attr), blank → ['blank']
-    allRows.forEach(function(r, idx) {
-        var input = document.getElementById('excelTag_' + idx);
+    // Tag inputs use fullList index (excelTag_{index}), not the filtered allRows index
+    allRows.forEach(function(r) {
+        var tagIdx = fullList.indexOf(r);
+        var input = document.getElementById('excelTag_' + tagIdx);
         if (input && input.dataset.tags !== undefined) {
             var val = (input.dataset.tags || '').trim();
             var parsed = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [];
