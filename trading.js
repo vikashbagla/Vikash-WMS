@@ -2002,10 +2002,15 @@ function trApplyView(viewId) {
     }
 
     var f = view.filters || {};
-    trSelectedInvestorIds = (f.investorIds || []).slice();
-    trSelectedTraderIds = (f.traderIds || []).slice();
-    trSelectedBrokerIds = (f.brokerIds || []).slice();
-    trSelectedTagNames = (f.tagNames || []).slice();
+    // Mutate arrays in-place so wmsPillSearch controllers keep valid references
+    trSelectedInvestorIds.length = 0;
+    Array.prototype.push.apply(trSelectedInvestorIds, f.investorIds || []);
+    trSelectedTraderIds.length = 0;
+    Array.prototype.push.apply(trSelectedTraderIds, f.traderIds || []);
+    trSelectedBrokerIds.length = 0;
+    Array.prototype.push.apply(trSelectedBrokerIds, f.brokerIds || []);
+    trSelectedTagNames.length = 0;
+    Array.prototype.push.apply(trSelectedTagNames, f.tagNames || []);
     trTagFilterLogic = f.tagLogic || 'OR';
     trViewMode = f.viewMode || 'default';
     trActiveViewId = viewId;
