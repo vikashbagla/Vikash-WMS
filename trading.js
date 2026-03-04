@@ -653,81 +653,67 @@ function trCalcHoldings() {
     }
 
     // Group by short_symbol (underlying) — combines equity + F&O
-    var holdings = {};
+    var groups = {};
     filtered.forEach(function(txn) {
         var key = txn.short_symbol || txn.symbol;
         if (!key) return;
 
-        if (!holdings[key]) {
-            holdings[key] = {
+        if (!groups[key]) {
+            groups[key] = {
                 symbol: txn.symbol,
                 shortSymbol: txn.short_symbol || txn.symbol,
                 companyName: txn.company_name,
                 securityId: txn.security_id,
                 exchange: txn.exchange || 'NSE',
-                quantity: 0,
-                totalCost: 0,
                 tags: {},
                 latestPrice: 0,
-                latestDate: null
+                latestDate: null,
+                txns: []
             };
         }
 
+        groups[key].txns.push(txn);
+
         // Prefer NSE exchange for Fyers lookup
         if ((txn.exchange || 'NSE') === 'NSE') {
-            holdings[key].exchange = 'NSE';
+            groups[key].exchange = 'NSE';
         }
         // Use company_name from first equity txn if available
-        if (txn.company_name && (!holdings[key].companyName || holdings[key].companyName === holdings[key].shortSymbol)) {
-            holdings[key].companyName = txn.company_name;
+        if (txn.company_name && (!groups[key].companyName || groups[key].companyName === groups[key].shortSymbol)) {
+            groups[key].companyName = txn.company_name;
         }
 
+        if (txn.tags) txn.tags.forEach(function(tag) { if (tag !== 'blank') groups[key].tags[tag] = true; });
         var isIncome = INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
-
-        if (isIncome) {
-            // Income transactions reduce cost basis, don't affect quantity
-            if (!txn.ignore_for_avg_cost) {
-                holdings[key].totalCost -= Math.abs(txn.net_amount || 0);
-            }
-        } else {
-            // BUY/SELL: add quantity
-            holdings[key].quantity += txn.quantity;
-            // Add to cost only if not ignored
-            if (!txn.ignore_for_avg_cost) {
-                holdings[key].totalCost += txn.net_amount || 0;
-            }
-        }
-
-        if (txn.tags) txn.tags.forEach(function(tag) { if (tag !== 'blank') holdings[key].tags[tag] = true; });
         var txnDate = new Date(txn.transaction_date);
-        if (!isIncome && (!holdings[key].latestDate || txnDate > holdings[key].latestDate)) {
-            holdings[key].latestDate = txnDate;
-            holdings[key].latestPrice = txn.price;
+        if (!isIncome && (!groups[key].latestDate || txnDate > groups[key].latestDate)) {
+            groups[key].latestDate = txnDate;
+            groups[key].latestPrice = txn.price;
         }
     });
 
-    return Object.keys(holdings).map(function(key) {
-        var h = holdings[key];
-        if (!trShowZeroHoldings && h.quantity === 0) return null;
+    return Object.keys(groups).map(function(key) {
+        var g = groups[key];
+        // Use consolidated global function (Spec A1)
+        var calc = wmsCalcAvgCost(g.txns);
+        if (!trShowZeroHoldings && calc.netQuantity === 0) return null;
         var rec = {
             key: key,
-            symbol: h.symbol,
-            shortSymbol: h.shortSymbol,
-            companyName: h.companyName,
-            securityId: h.securityId,
-            exchange: h.exchange,
-            quantity: h.quantity,
-            totalCost: h.totalCost,
-            avgCost: h.quantity !== 0
-                ? (h.totalCost !== 0 ? h.totalCost / Math.abs(h.quantity) : h.latestPrice)
-                : 0,
-            tags: Object.keys(h.tags),
-            latestPrice: h.latestPrice
+            symbol: g.symbol,
+            shortSymbol: g.shortSymbol,
+            companyName: g.companyName,
+            securityId: g.securityId,
+            exchange: g.exchange,
+            quantity: calc.netQuantity,
+            totalCost: calc.totalCost,
+            avgCost: calc.avgCost,
+            tags: Object.keys(g.tags),
+            latestPrice: g.latestPrice
         };
         // Build comprehensive search text from wmsRefData (Rule B.9.2)
         rec._searchText = wmsBuildSecuritySearchText({
-            securityId: h.securityId, symbol: h.symbol,
-            shortSymbol: h.shortSymbol, companyName: h.companyName
+            securityId: g.securityId, symbol: g.symbol,
+            shortSymbol: g.shortSymbol, companyName: g.companyName
         });
         return rec;
     }).filter(function(h) { return h !== null; });
@@ -1044,35 +1030,32 @@ function trBuildInvestorDetail(h, price, md) {
         return !txn.dont_display && (txn.short_symbol || txn.symbol) === h.shortSymbol;
     });
 
+    // Group transactions by investor, then use wmsCalcAvgCost per investor
     var groups = {};
     symbolTxns.forEach(function(txn) {
         if (!groups[txn.investor_id]) {
             groups[txn.investor_id] = {
                 investorId: txn.investor_id,
                 name: trInvName(txn.investor_id),
-                quantity: 0,
-                totalCost: 0,
-                tags: {}
+                tags: {},
+                txns: []
             };
         }
-        var isIncome = INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
-        if (isIncome) {
-            if (!txn.ignore_for_avg_cost) {
-                groups[txn.investor_id].totalCost -= Math.abs(txn.net_amount || 0);
-            }
-        } else {
-            groups[txn.investor_id].quantity += txn.quantity;
-            if (!txn.ignore_for_avg_cost) {
-                groups[txn.investor_id].totalCost += txn.net_amount || 0;
-            }
-        }
+        groups[txn.investor_id].txns.push(txn);
         if (txn.tags) txn.tags.forEach(function(tag) { if (tag !== 'blank') groups[txn.investor_id].tags[tag] = true; });
     });
 
     var investorRows = Object.values(groups)
+        .map(function(g) {
+            var calc = wmsCalcAvgCost(g.txns);
+            g.quantity = calc.netQuantity;
+            g.totalCost = calc.totalCost;
+            g.avgCost = calc.avgCost;
+            return g;
+        })
         .filter(function(g) { return trShowZeroHoldings || g.quantity !== 0; })
         .map(function(g) {
-            var avg = g.quantity !== 0 ? (g.totalCost !== 0 ? g.totalCost / Math.abs(g.quantity) : h.latestPrice) : 0;
+            var avg = g.avgCost;
             var inv = g.totalCost;
             var val = g.quantity * price;
             var pl = val - inv;

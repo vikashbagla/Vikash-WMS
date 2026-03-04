@@ -387,6 +387,124 @@ function wmsIsIncomeType(txnType) {
 }
 
 // ============================================================================
+// AVERAGE COST CALCULATION (Spec A1)
+// Single source of truth — used by portfolio.js, trading.js, and any future module.
+//
+// Rules:
+//   totalCost  = sum(BUY net_amount) − sum(SELL net_amount) − sum(INCOME net_amount)
+//   net_amount in DB is ALWAYS positive (BUY = gross+charges, SELL/INCOME = gross−charges)
+//   Respects ignore_for_avg_cost flag (skips cost but keeps quantity for BUY/SELL)
+//   INCOME never affects quantity
+//   net_quantity = sum(all BUY/SELL quantities) where BUY>0, SELL<0
+//   Long  (net_qty > 0): if totalCost < 0 → avgCost = 0
+//   Short (net_qty < 0): avgCost = |totalCost / net_qty|
+//   Flat  (net_qty = 0): avgCost = 0
+// ============================================================================
+
+function wmsCalcAvgCost(transactions) {
+    var totalCost = 0;
+    var netQuantity = 0;
+
+    for (var i = 0; i < transactions.length; i++) {
+        var txn = transactions[i];
+        var isIncome = WMS_INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
+        var netAmt = txn.net_amount || 0;
+
+        if (isIncome) {
+            // Income reduces cost basis, never affects quantity
+            if (!txn.ignore_for_avg_cost) {
+                totalCost -= Math.abs(netAmt);
+            }
+        } else {
+            // BUY/SELL: always accumulate quantity (buy positive, sell negative)
+            netQuantity += txn.quantity;
+
+            if (!txn.ignore_for_avg_cost) {
+                if (txn.transaction_type === 'BUY') {
+                    totalCost += netAmt;   // money out
+                } else {
+                    totalCost -= netAmt;   // money in (SELL)
+                }
+            }
+        }
+    }
+
+    var avgCost = 0;
+    if (netQuantity > 0) {
+        // Long position — if cost has gone negative (income > cost), cap at 0
+        avgCost = totalCost > 0 ? totalCost / netQuantity : 0;
+    } else if (netQuantity < 0) {
+        // Short position — always show positive avg cost
+        avgCost = Math.abs(totalCost / netQuantity);
+    }
+    // netQuantity === 0 → avgCost stays 0
+
+    return {
+        avgCost: wmsRoundMoney(avgCost),
+        netQuantity: netQuantity,
+        totalCost: wmsRoundMoney(totalCost)
+    };
+}
+
+// ============================================================================
+// FIFO COST CALCULATION (Spec A2)
+// Matches sells against buys in chronological order (FIFO). Partially matched
+// buys retain remaining qty at original per-unit cost. Average cost is then
+// sum(remaining cost) / sum(remaining qty) — only considering unsquared buys.
+// Income transactions are ignored (they don't participate in FIFO matching).
+// ============================================================================
+
+function wmsCalcFifoCost(transactions) {
+    var buys = [];
+    var totalSellQty = 0;
+
+    for (var i = 0; i < transactions.length; i++) {
+        var txn = transactions[i];
+        if (WMS_INCOME_TYPES.indexOf(txn.transaction_type) >= 0) continue;
+
+        if (txn.transaction_type === 'BUY') {
+            buys.push({
+                date: txn.transaction_date,
+                qty: Math.abs(txn.quantity),
+                netAmount: txn.net_amount || 0,
+                remaining: Math.abs(txn.quantity)
+            });
+        } else {
+            totalSellQty += Math.abs(txn.quantity);
+        }
+    }
+
+    // Sort buys chronologically (FIFO = earliest first)
+    buys.sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); });
+
+    // Consume sells against earliest buys
+    var sellRemaining = totalSellQty;
+    for (var j = 0; j < buys.length && sellRemaining > 0; j++) {
+        var matchQty = Math.min(sellRemaining, buys[j].remaining);
+        buys[j].remaining -= matchQty;
+        sellRemaining -= matchQty;
+    }
+
+    // Sum cost of unsquared (remaining) buy portions
+    var remainingCost = 0;
+    var remainingQty = 0;
+    for (var k = 0; k < buys.length; k++) {
+        if (buys[k].remaining <= 0) continue;
+        var ppu = buys[k].qty > 0 ? buys[k].netAmount / buys[k].qty : 0;
+        remainingCost += buys[k].remaining * ppu;
+        remainingQty += buys[k].remaining;
+    }
+
+    var fifoCost = remainingQty > 0 ? remainingCost / remainingQty : 0;
+
+    return {
+        avgCost: wmsRoundMoney(fifoCost),
+        netQuantity: remainingQty,
+        totalCost: wmsRoundMoney(remainingCost)
+    };
+}
+
+// ============================================================================
 // STT ELIGIBILITY CHECK (Rule G.8.5)
 // Only plain EQUITY stocks attract STT. All non-equity instruments (ETFs, MFs,
 // debt, SGBs, REITs, InvITs, NCDs, etc.) are exempt from STT and stamp duty.
