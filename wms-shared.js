@@ -1125,6 +1125,11 @@ function wmsPillSearch(containerEl, opts) {
     }
     buildSearchText();
 
+    // ── Destroy previous instance if any (prevents event listener leaks) ──
+    if (containerEl._wmsPillSearch && typeof containerEl._wmsPillSearch.destroy === 'function') {
+        containerEl._wmsPillSearch.destroy();
+    }
+
     // ── Build DOM ──
     containerEl.innerHTML = '';
     containerEl.className = (containerEl.className || '').replace(/\bfilter-group\b/g, '').trim();
@@ -1346,7 +1351,7 @@ function wmsPillSearch(containerEl, opts) {
     renderSelectedTags();
 
     // ── Controller ──
-    return {
+    var controller = {
         getSelected: function() { return selectedIds.slice(); },
         setItems: function(newItems) {
             items = newItems;
@@ -1367,8 +1372,11 @@ function wmsPillSearch(containerEl, opts) {
         destroy: function() {
             document.removeEventListener('click', outsideHandler);
             containerEl.innerHTML = '';
+            containerEl._wmsPillSearch = null;
         }
     };
+    containerEl._wmsPillSearch = controller;
+    return controller;
 }
 
 // ============================================================================
