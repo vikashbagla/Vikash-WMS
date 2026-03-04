@@ -741,10 +741,9 @@ function trCalcHoldings() {
 
     return Object.keys(groups).map(function(key) {
         var g = groups[key];
-        // Exclude open options contracts before calculating avg cost (Rule E.12)
-        var costTxns = wmsExcludeOpenOptions(g.txns);
         // Use consolidated global function (Spec A1)
-        var calc = wmsCalcAvgCost(costTxns);
+        // Open options exclusion is built into wmsCalcAvgCost (Rule E.12)
+        var calc = wmsCalcAvgCost(g.txns);
         if (!trShowZeroHoldings && calc.netQuantity === 0) return null;
         var rec = {
             key: key,
@@ -1123,8 +1122,7 @@ function trBuildInvestorDetail(h, price, md) {
 
     var investorRows = Object.values(groups)
         .map(function(g) {
-            var costTxns = wmsExcludeOpenOptions(g.txns);
-            var calc = wmsCalcAvgCost(costTxns);
+            var calc = wmsCalcAvgCost(g.txns);
             g.quantity = calc.netQuantity;
             g.totalCost = calc.totalCost;
             g.avgCost = calc.avgCost;
@@ -1457,9 +1455,8 @@ function trRenderTxnSummary(txns) {
     var container = document.getElementById('trTxnSummary');
     if (!container) return;
 
-    // Calculate summary: exclude open options contracts (Rule E.12) + ignore_for_avg_cost
-    var filteredTxns = wmsExcludeOpenOptions(txns);
-    var calc = wmsCalcAvgCost(filteredTxns);
+    // Calculate summary — open options exclusion is built into wmsCalcAvgCost (Rule E.12)
+    var calc = wmsCalcAvgCost(txns);
     var netQty = calc.netQuantity;
     var totalCost = calc.totalCost;
     var avgCost = calc.avgCost;

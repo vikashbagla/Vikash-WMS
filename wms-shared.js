@@ -402,41 +402,97 @@ function wmsIsIncomeType(txnType) {
 // ============================================================================
 
 function wmsCalcAvgCost(transactions) {
+    // ----------------------------------------------------------------
+    // Rule E.12: Options handling
+    // ----------------------------------------------------------------
+    // Options (CE/PE) NEVER contribute quantity. Cost rule is simple:
+    //   netCost = sum(buy) − sum(sell) for the option contract.
+    //   • netQty != 0 AND netCost > 0  →  IGNORE entirely
+    //   • netQty != 0 AND netCost <= 0  →  include netCost (surplus)
+    //   • netQty == 0                   →  include netCost (realized P&L)
+    // ----------------------------------------------------------------
+
+    var i, txn, sym, shortSym, txnType, isIncome;
+
+    // Step 0: identify option contracts, compute net qty AND net cost
+    var optionData = {};  // fullSymbol → { netQty, netCost }
+
+    for (i = 0; i < transactions.length; i++) {
+        txn = transactions[i];
+        sym = txn.symbol || '';
+        shortSym = txn.short_symbol || txn.shortSymbol || txn.symbol || '';
+        if (!wmsIsOptionContract(sym, shortSym)) continue;
+        if (txn.ignore_for_avg_cost) continue;
+        txnType = txn.transaction_type || txn.type || '';
+        isIncome = WMS_INCOME_TYPES.indexOf(txnType) >= 0;
+        if (isIncome) continue;
+
+        if (!optionData[sym]) optionData[sym] = { netQty: 0, netCost: 0 };
+        var netAmt = txn.net_amount !== undefined ? txn.net_amount : (txn.netAmount || 0);
+        optionData[sym].netQty += (txn.quantity || 0);
+        if (txnType === 'BUY') {
+            optionData[sym].netCost += netAmt;
+        } else if (txnType === 'SELL') {
+            optionData[sym].netCost -= netAmt;
+        }
+    }
+
+    // Classify each option contract
+    var ignoreSymbols = {};   // open + netCost > 0 → skip entirely
+    var includeSymbols = {};  // closed OR netCost <= 0 → include netCost only
+    var optionKeys = Object.keys(optionData);
+    for (i = 0; i < optionKeys.length; i++) {
+        var od = optionData[optionKeys[i]];
+        if (od.netQty !== 0 && od.netCost > 0) {
+            ignoreSymbols[optionKeys[i]] = true;
+        } else {
+            includeSymbols[optionKeys[i]] = od.netCost;
+        }
+    }
+
+    // Step 1: accumulate cost and quantity (non-option transactions)
     var totalCost = 0;
     var netQuantity = 0;
 
-    for (var i = 0; i < transactions.length; i++) {
-        var txn = transactions[i];
-        var isIncome = WMS_INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
-        var netAmt = txn.net_amount || 0;
+    for (i = 0; i < transactions.length; i++) {
+        txn = transactions[i];
+        sym = txn.symbol || '';
+
+        // Skip all option transactions — handled via includeSymbols above
+        if (ignoreSymbols[sym] || includeSymbols[sym] !== undefined) continue;
+
+        txnType = txn.transaction_type || txn.type || '';
+        isIncome = WMS_INCOME_TYPES.indexOf(txnType) >= 0;
+        // Support both snake_case (trading.js) and camelCase (portfolio.js)
+        var netAmt = txn.net_amount !== undefined ? txn.net_amount : (txn.netAmount || 0);
 
         if (isIncome) {
-            // Income reduces cost basis, never affects quantity
             if (!txn.ignore_for_avg_cost) {
                 totalCost -= Math.abs(netAmt);
             }
         } else {
-            // BUY/SELL: ignored trades skip BOTH cost and quantity
             if (txn.ignore_for_avg_cost) continue;
-
             netQuantity += txn.quantity;
-            if (txn.transaction_type === 'BUY') {
-                totalCost += netAmt;   // money out
+            if (txnType === 'BUY') {
+                totalCost += netAmt;
             } else {
-                totalCost -= netAmt;   // money in (SELL)
+                totalCost -= netAmt;
             }
         }
     }
 
+    // Step 2: apply option contract net costs (closed + surplus)
+    var inclKeys = Object.keys(includeSymbols);
+    for (i = 0; i < inclKeys.length; i++) {
+        totalCost += includeSymbols[inclKeys[i]];
+    }
+
     var avgCost = 0;
     if (netQuantity > 0) {
-        // Long position — if cost has gone negative (income > cost), cap at 0
         avgCost = totalCost > 0 ? totalCost / netQuantity : 0;
     } else if (netQuantity < 0) {
-        // Short position — always show positive avg cost
         avgCost = Math.abs(totalCost / netQuantity);
     }
-    // netQuantity === 0 → avgCost stays 0
 
     return {
         avgCost: wmsRoundMoney(avgCost),
@@ -451,6 +507,9 @@ function wmsCalcAvgCost(transactions) {
 // Options contracts (CE/PE suffix) that are still open (net qty != 0 per
 // contract) should NOT contribute to the underlying symbol's avg cost or
 // net quantity. Only closed (squared-off) options are included.
+//
+// This logic is built INTO wmsCalcAvgCost itself so every caller benefits
+// automatically. The helpers below are also available for standalone use.
 //
 // wmsIsOptionContract(symbol, shortSymbol):
 //   Returns true if the full symbol represents an options contract.
