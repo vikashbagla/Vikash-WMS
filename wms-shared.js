@@ -393,8 +393,8 @@ function wmsIsIncomeType(txnType) {
 // Rules:
 //   totalCost  = sum(BUY net_amount) − sum(SELL net_amount) − sum(INCOME net_amount)
 //   net_amount in DB is ALWAYS positive (BUY = gross+charges, SELL/INCOME = gross−charges)
-//   Respects ignore_for_avg_cost flag (skips cost but keeps quantity for BUY/SELL)
-//   INCOME never affects quantity
+//   Respects ignore_for_avg_cost flag (skips BOTH cost and quantity for BUY/SELL)
+//   INCOME never affects quantity (even if qty field is populated in DB)
 //   net_quantity = sum(all BUY/SELL quantities) where BUY>0, SELL<0
 //   Long  (net_qty > 0): if totalCost < 0 → avgCost = 0
 //   Short (net_qty < 0): avgCost = |totalCost / net_qty|
@@ -416,15 +416,14 @@ function wmsCalcAvgCost(transactions) {
                 totalCost -= Math.abs(netAmt);
             }
         } else {
-            // BUY/SELL: always accumulate quantity (buy positive, sell negative)
-            netQuantity += txn.quantity;
+            // BUY/SELL: ignored trades skip BOTH cost and quantity
+            if (txn.ignore_for_avg_cost) continue;
 
-            if (!txn.ignore_for_avg_cost) {
-                if (txn.transaction_type === 'BUY') {
-                    totalCost += netAmt;   // money out
-                } else {
-                    totalCost -= netAmt;   // money in (SELL)
-                }
+            netQuantity += txn.quantity;
+            if (txn.transaction_type === 'BUY') {
+                totalCost += netAmt;   // money out
+            } else {
+                totalCost -= netAmt;   // money in (SELL)
             }
         }
     }
