@@ -400,17 +400,23 @@ function trInvBrk(txn) {
 // LIVE PRICES FROM FYERS
 // ============================================================================
 
-function trGetFyersKey(h) {
-    // Always use equity key: NSE:SYMBOL-EQ
-    return 'NSE:' + (h.shortSymbol || h.symbol) + '-EQ';
-}
-
 function trGetPrice(h) {
-    return trLivePrices[trGetFyersKey(h)] || h.latestPrice;
+    var sym = h.shortSymbol || h.symbol;
+    var cached = wmsLivePrices[sym];
+    if (cached && cached.lp > 0) return cached.lp;
+    // Legacy fallback to module-level cache (for backward compat)
+    var fk = 'NSE:' + sym + '-EQ';
+    if (trLivePrices[fk]) return trLivePrices[fk];
+    return h.latestPrice;
 }
 
 function trGetLiveData(h) {
-    return trLiveData[trGetFyersKey(h)] || null;
+    var sym = h.shortSymbol || h.symbol;
+    var cached = wmsLivePrices[sym];
+    if (cached && cached.lp > 0) return cached;
+    // Legacy fallback
+    var fk = 'NSE:' + sym + '-EQ';
+    return trLiveData[fk] || null;
 }
 
 async function trFetchLivePrices() {
@@ -425,33 +431,22 @@ async function trFetchLivePrices() {
             return;
         }
 
-        var symbols = holdings.map(function(h) { return trGetFyersKey(h); });
-        // Deduplicate
-        symbols = symbols.filter(function(s, i) { return symbols.indexOf(s) === i; });
+        // Build items for shared price fetch
+        var priceItems = holdings.map(function(h) {
+            return { shortSymbol: h.shortSymbol, securityId: h.securityId };
+        });
 
         trUpdatePriceStatus('loading');
-        var data = await window.fyersCall({ action: 'quotes', symbols: symbols });
+        await wmsFetchEquityPrices(priceItems);
 
-        if (data && data.d && data.d.length > 0) {
-            data.d.forEach(function(item) {
-                if (item.v && item.v.symbol) {
-                    var key = item.v.symbol;
-                    trLivePrices[key] = item.v.lp || 0;
-                    trLiveData[key] = {
-                        lp: item.v.lp || 0,
-                        ch: item.v.ch || 0,
-                        chp: item.v.chp || 0,
-                        high: item.v.high_price || null,
-                        low: item.v.low_price || null
-                    };
-                }
-            });
-            trUpdatePriceStatus('live');
-        } else {
-            trUpdatePriceStatus('last-txn');
-        }
+        // Check if any prices were loaded
+        var hasLive = holdings.some(function(h) {
+            var cached = wmsLivePrices[h.shortSymbol];
+            return cached && cached.lp > 0;
+        });
+        trUpdatePriceStatus(hasLive ? 'live' : 'last-txn');
     } catch (err) {
-        console.warn('Trading: Fyers price fetch failed:', err.message || err);
+        console.warn('Trading: Price fetch failed:', err.message || err);
         trUpdatePriceStatus('last-txn');
     }
 }

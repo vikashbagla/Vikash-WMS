@@ -504,6 +504,270 @@ function wmsCalcFifoCost(transactions) {
 }
 
 // ============================================================================
+// SHARED LIVE PRICE CACHE + FETCH PROTOCOL
+// Both Positions and Watchlist read/write this cache so prices are shared.
+// Key = shortSymbol (underlying), Value = { lp, ch, chp, high, low, resolvedSymbol }
+// ============================================================================
+
+var wmsLivePrices = {};       // shortSymbol → { lp, ch, chp, high, low, resolvedSymbol }
+var wmsLivePriceFirstFetch = false;  // Stage 2+3 only on first load
+
+/**
+ * wmsFetchEquityPrices — 3-stage price resolution protocol.
+ *   Stage 1: Fyers batch with NSE:SYMBOL-EQ
+ *   Stage 2: Alternate Fyers symbols (BSE, -SM, broker_tokens) for unresolved
+ *   Stage 3: Yahoo Finance fallback
+ *
+ * @param {Array} items — [{ shortSymbol, securityId }]
+ * @returns {Promise} — resolves when done; prices stored in wmsLivePrices
+ */
+async function wmsFetchEquityPrices(items) {
+    if (!items || items.length === 0) return;
+    if (!window.fyersToken && !window.SUPABASE_URL) return;
+
+    // De-duplicate by shortSymbol, skip those already in cache with a positive lp
+    var toFetch = [];
+    var seen = {};
+    items.forEach(function(it) {
+        var sym = it.shortSymbol;
+        if (!sym || seen[sym]) return;
+        seen[sym] = true;
+        if (wmsLivePrices[sym] && wmsLivePrices[sym].lp > 0) return; // already cached
+        toFetch.push(it);
+    });
+    if (toFetch.length === 0) return;
+
+    // ── Stage 1: Fyers batch with NSE:SYMBOL-EQ ──
+    var respondedSymbols = {};
+    if (window.fyersToken && window.fyersCall) {
+        var fyersKeys = toFetch.map(function(it) { return 'NSE:' + it.shortSymbol + '-EQ'; });
+        // Deduplicate
+        fyersKeys = fyersKeys.filter(function(s, i) { return fyersKeys.indexOf(s) === i; });
+
+        // Batch into chunks of 50
+        for (var i = 0; i < fyersKeys.length; i += 50) {
+            var chunk = fyersKeys.slice(i, i + 50);
+            try {
+                var data = await window.fyersCall({ action: 'quotes', symbols: chunk });
+                if (data && data.d && data.d.length > 0) {
+                    data.d.forEach(function(item) {
+                        if (item.v && item.v.symbol) {
+                            respondedSymbols[item.v.symbol] = true;
+                            // Extract shortSymbol from Fyers key (NSE:SYMBOL-EQ → SYMBOL)
+                            var parts = item.v.symbol.match(/^[A-Z]+:(.+)-[A-Z]+$/);
+                            var ss = parts ? parts[1] : null;
+                            if (ss) {
+                                wmsLivePrices[ss] = {
+                                    lp: item.v.lp || 0,
+                                    ch: item.v.ch || 0,
+                                    chp: item.v.chp || 0,
+                                    high: item.v.high_price || null,
+                                    low: item.v.low_price || null,
+                                    resolvedSymbol: item.v.symbol
+                                };
+                            }
+                        }
+                    });
+                }
+            } catch (err) {
+                console.warn('wmsLivePrices: Fyers batch error:', err.message);
+            }
+            if (i + 50 < fyersKeys.length) {
+                await new Promise(function(r) { setTimeout(r, 200); });
+            }
+        }
+    }
+
+    // Stage 2+3: only on first fetch, not on auto-refresh
+    if (wmsLivePriceFirstFetch) return;
+
+    // Identify unresolved items (no response or lp=0)
+    var unresolved = toFetch.filter(function(it) {
+        var cached = wmsLivePrices[it.shortSymbol];
+        return !cached || cached.lp <= 0;
+    });
+
+    if (unresolved.length === 0) {
+        wmsLivePriceFirstFetch = true;
+        return;
+    }
+
+    // ── Stage 2: Alternate Fyers symbols ──
+    if (window.fyersToken && window.fyersCall) {
+        for (var j = 0; j < unresolved.length; j++) {
+            var uItem = unresolved[j];
+            var sym = uItem.shortSymbol;
+            var sid = uItem.securityId;
+
+            // Build candidate symbols from wmsRefData
+            var candidates = [];
+            var dbRec = sid && wmsRefData.securitiesCmMap ? wmsRefData.securitiesCmMap[sid] : null;
+            if (!dbRec && wmsRefData.securitiesCmReady) {
+                for (var k = 0; k < wmsRefData.securitiesCm.length; k++) {
+                    var s = wmsRefData.securitiesCm[k];
+                    if (s.symbol === sym || s.nse_symbol === sym || s.bse_symbol === sym) {
+                        dbRec = s; break;
+                    }
+                }
+            }
+
+            var baseSymbols = [];
+            if (dbRec) {
+                // Check broker_tokens first (most reliable)
+                if (dbRec.broker_tokens && dbRec.broker_tokens.fyers) {
+                    var btf = dbRec.broker_tokens.fyers;
+                    if (btf.nse_symbol && candidates.indexOf(btf.nse_symbol) < 0) candidates.push(btf.nse_symbol);
+                    if (btf.bse_symbol && candidates.indexOf(btf.bse_symbol) < 0) candidates.push(btf.bse_symbol);
+                }
+                if (dbRec.nse_symbol) baseSymbols.push(dbRec.nse_symbol);
+                if (dbRec.bse_symbol) baseSymbols.push(dbRec.bse_symbol);
+                if (dbRec.symbol && baseSymbols.indexOf(dbRec.symbol) < 0) baseSymbols.push(dbRec.symbol);
+            }
+            if (baseSymbols.indexOf(sym) < 0) baseSymbols.push(sym);
+
+            var bseSuffixes = ['', '-A', '-B', '-D', '-E', '-G', '-M', '-P', '-R', '-T', '-W', '-X', '-Z'];
+            baseSymbols.forEach(function(bs) {
+                var nseEq = 'NSE:' + bs + '-EQ';
+                var nseSm = 'NSE:' + bs + '-SM';
+                if (candidates.indexOf(nseEq) < 0) candidates.push(nseEq);
+                if (candidates.indexOf(nseSm) < 0) candidates.push(nseSm);
+                bseSuffixes.forEach(function(sfx) {
+                    var bseSym = 'BSE:' + bs + sfx;
+                    if (candidates.indexOf(bseSym) < 0) candidates.push(bseSym);
+                });
+            });
+
+            // Remove the symbol already tried in Stage 1
+            var tried = 'NSE:' + sym + '-EQ';
+            candidates = candidates.filter(function(c) { return c !== tried; });
+            if (candidates.length === 0) continue;
+
+            try {
+                var data2 = await window.fyersCall({ action: 'quotes', symbols: candidates });
+                if (data2 && data2.d && data2.d.length > 0) {
+                    for (var m = 0; m < data2.d.length; m++) {
+                        var q = data2.d[m];
+                        if (q.v && q.v.lp > 0) {
+                            wmsLivePrices[sym] = {
+                                lp: q.v.lp, ch: q.v.ch || 0, chp: q.v.chp || 0,
+                                high: q.v.high_price || null, low: q.v.low_price || null,
+                                resolvedSymbol: q.v.symbol
+                            };
+                            console.log('wmsLivePrices: Resolved', sym, '→', q.v.symbol);
+                            // Persist broker_tokens in background
+                            if (sid) wmsUpdateBrokerToken(sid, q.v.symbol);
+                            break;
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('wmsLivePrices: Resolution failed for', sym, ':', err.message);
+            }
+
+            if (j < unresolved.length - 1) {
+                await new Promise(function(r) { setTimeout(r, 150); });
+            }
+        }
+    }
+
+    // Refresh unresolved list after Stage 2
+    unresolved = unresolved.filter(function(it) {
+        var cached = wmsLivePrices[it.shortSymbol];
+        return !cached || cached.lp <= 0;
+    });
+
+    // ── Stage 3: Yahoo Finance fallback ──
+    if (unresolved.length > 0 && window.SUPABASE_URL) {
+        var yahooSymbolMap = {};
+        unresolved.forEach(function(uIt) {
+            var s = uIt.shortSymbol;
+            var dr = uIt.securityId && wmsRefData.securitiesCmMap ? wmsRefData.securitiesCmMap[uIt.securityId] : null;
+            var bases = [];
+            if (dr) {
+                if (dr.nse_symbol) bases.push(dr.nse_symbol + '.NS');
+                if (dr.bse_symbol) bases.push(dr.bse_symbol + '.BO');
+                if (!dr.nse_symbol && !dr.bse_symbol && dr.symbol) {
+                    bases.push(dr.symbol + '.NS');
+                    bases.push(dr.symbol + '.BO');
+                }
+            }
+            if (bases.length === 0) {
+                bases.push(s + '.NS');
+                bases.push(s + '.BO');
+            }
+            bases.forEach(function(ys) {
+                if (!yahooSymbolMap[ys]) yahooSymbolMap[ys] = [];
+                yahooSymbolMap[ys].push(uIt);
+            });
+        });
+
+        var yahooSymbols = Object.keys(yahooSymbolMap);
+        if (yahooSymbols.length > 0) {
+            try {
+                var resp = await fetch(SUPABASE_URL + '/functions/v1/yahoo-finance', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+                    },
+                    body: JSON.stringify({ symbols: yahooSymbols })
+                });
+                if (resp.ok) {
+                    var result = await resp.json();
+                    if (result && result.results) {
+                        yahooSymbols.forEach(function(ySym) {
+                            var yData = result.results[ySym];
+                            if (!yData || !yData.regularMarketPrice || yData.regularMarketPrice <= 0) return;
+                            var mappedItems = yahooSymbolMap[ySym];
+                            mappedItems.forEach(function(mIt) {
+                                if (wmsLivePrices[mIt.shortSymbol] && wmsLivePrices[mIt.shortSymbol].lp > 0) return;
+                                wmsLivePrices[mIt.shortSymbol] = {
+                                    lp: yData.regularMarketPrice,
+                                    ch: yData.regularMarketChange || 0,
+                                    chp: yData.regularMarketChangePercent || 0,
+                                    high: yData.regularMarketDayHigh || null,
+                                    low: yData.regularMarketDayLow || null,
+                                    resolvedSymbol: 'YAHOO:' + ySym
+                                };
+                                console.log('wmsLivePrices: Yahoo resolved', mIt.shortSymbol, '→', ySym);
+                            });
+                        });
+                    }
+                }
+            } catch (err) {
+                console.warn('wmsLivePrices: Yahoo fallback error:', err.message);
+            }
+        }
+    }
+
+    wmsLivePriceFirstFetch = true;
+}
+
+/**
+ * Persist resolved Fyers symbol to securities_db broker_tokens (background).
+ */
+function wmsUpdateBrokerToken(securityId, fyersSymbol) {
+    if (!securityId || !fyersSymbol) return;
+    fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + securityId + '&select=broker_tokens', {
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+    }).then(function(resp) { return resp.json(); }).then(function(rows) {
+        if (!rows || rows.length === 0) return;
+        var bt = rows[0].broker_tokens || {};
+        if (!bt.fyers) bt.fyers = {};
+        if (fyersSymbol.indexOf('NSE:') === 0) bt.fyers.nse_symbol = fyersSymbol;
+        else if (fyersSymbol.indexOf('BSE:') === 0) bt.fyers.bse_symbol = fyersSymbol;
+        return fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + securityId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ broker_tokens: bt })
+        });
+    }).catch(function(err) { console.warn('wmsUpdateBrokerToken:', err.message); });
+}
+
+// ============================================================================
 // STT ELIGIBILITY CHECK (Rule G.8.5)
 // Only plain EQUITY stocks attract STT. All non-equity instruments (ETFs, MFs,
 // debt, SGBs, REITs, InvITs, NCDs, etc.) are exempt from STT and stamp duty.

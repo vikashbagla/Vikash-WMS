@@ -454,11 +454,42 @@ async function trWlFetchPrices() {
         var t2 = performance.now();
         console.log('Watchlist: Total price fetch took ' + Math.round(t2 - t0) + 'ms');
 
+        // Sync equity prices to shared wmsLivePrices cache (for Positions tab)
+        trWlSyncToSharedCache();
+
         trWlUpdatePriceStatus('live');
     } catch (err) {
         console.warn('Watchlist: Price fetch failed:', err.message || err);
         trWlUpdatePriceStatus('error');
     }
+}
+
+/**
+ * Copy equity prices from watchlist's trWlPrices into the shared wmsLivePrices cache.
+ * This allows Positions to reuse prices already fetched by the Watchlist.
+ */
+function trWlSyncToSharedCache() {
+    if (typeof wmsLivePrices === 'undefined') return;
+    var count = 0;
+    trWlWatchlists.forEach(function(wl) {
+        wl.items.forEach(function(item) {
+            if (!item._fyersSymbol || !item.short_symbol) return;
+            // Only sync securities_db equity items (not options_dynamic)
+            if (item.security_source !== 'securities_db') return;
+            var price = trWlPrices[item._fyersSymbol];
+            if (!price || price.lp <= 0) return;
+            var sym = item.short_symbol;
+            // Don't overwrite if shared cache already has a positive price
+            if (wmsLivePrices[sym] && wmsLivePrices[sym].lp > 0) return;
+            wmsLivePrices[sym] = {
+                lp: price.lp, ch: price.ch, chp: price.chp,
+                high: price.high, low: price.low,
+                resolvedSymbol: item._fyersSymbol
+            };
+            count++;
+        });
+    });
+    if (count > 0) console.log('Watchlist: Synced', count, 'prices to shared cache');
 }
 
 // Try alternate Fyers symbol formats for items that didn't get prices
