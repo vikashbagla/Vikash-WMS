@@ -1474,9 +1474,16 @@ async function trDeleteTransaction(txnId) {
 // ============================================================================
 
 // Format number: 2 decimal places with comma grouping (no unit conversion)
+// Format number: 2 decimal places with comma grouping
 function trEditFmt(val) {
     var n = parseFloat(val) || 0;
     return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// Format integer with comma grouping (0 decimal places)
+function trEditFmtInt(val) {
+    var n = parseInt(val) || 0;
+    return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
 // Parse formatted number back to float (strip commas)
@@ -1519,8 +1526,8 @@ function trOpenEditModal(txnId) {
     // Lots before Qty — for SELL show both as absolute values (schema stores negative qty, lots can be negative)
     var lotsVal = parseFloat(txn.lots) || 0;
     var qtyVal = txn.quantity || 0;
-    document.getElementById('trEditLots').value = isSell ? Math.abs(lotsVal) : lotsVal;
-    document.getElementById('trEditQty').value = isSell ? Math.abs(qtyVal) : qtyVal;
+    document.getElementById('trEditLots').value = trEditFmt(isSell ? Math.abs(lotsVal) : lotsVal);
+    document.getElementById('trEditQty').value = trEditFmtInt(isSell ? Math.abs(qtyVal) : qtyVal);
     document.getElementById('trEditPrice').value = trEditFmt(txn.price || 0);
 
     // Gross amount (editable, computed highlight)

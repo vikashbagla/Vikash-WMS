@@ -710,7 +710,10 @@
 <div class="edit-modal-overlay" id="trEditModal">
     <div class="edit-modal">
         <div class="edit-modal-header">
-            <h3 id="trEditModalTitle">Edit Transaction</h3>
+            <div style="display:flex; align-items:baseline; gap:8px;">
+                <h3 id="trEditModalTitle">Edit Transaction</h3>
+                <span style="font-size:10px; color:#a0aec0;">All amounts in ₹</span>
+            </div>
             <button class="btn-icon btn-close-modal" id="trEditModalClose" title="Close">✕</button>
         </div>
         <div class="edit-modal-body" id="trEditForm">
@@ -816,22 +819,22 @@
                         <input type="text" id="trEditGst" class="editable-field amt-field">
                     </div>
                     <div class="form-group">
-                        <label>TDS</label>
-                        <input type="text" id="trEditTds" class="editable-field amt-field">
-                    </div>
-                    <div class="form-group">
                         <label>Total Charges</label>
                         <input type="text" id="trEditTotalCharges" class="editable-field computed-field amt-field">
                     </div>
-                </div>
-                <div class="edit-row cols-3">
                     <div class="form-group">
                         <label>Net Amount</label>
                         <input type="text" id="trEditNetAmount" class="editable-field computed-field amt-field">
                     </div>
+                </div>
+                <div class="edit-row cols-3">
                     <div class="form-group">
                         <label>Trader Charges</label>
                         <input type="text" id="trEditTraderCharges" class="editable-field amt-field">
+                    </div>
+                    <div class="form-group">
+                        <label>TDS</label>
+                        <input type="text" id="trEditTds" class="editable-field amt-field">
                     </div>
                     <div class="form-group">
                         <label>Margin Blocked</label>
