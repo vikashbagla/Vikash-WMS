@@ -214,10 +214,7 @@ function trSetupEventHandlers() {
         if (e.target === this) trCloseEditModal();
     });
 
-    // Edit modal auto-calc
-    ['trEditQty', 'trEditPrice'].forEach(function(id) {
-        document.getElementById(id).addEventListener('input', trRecalcGross);
-    });
+    // Edit modal auto-calc — charges only (qty/price/type are read-only)
     ['trEditBrokerage', 'trEditStt', 'trEditOther', 'trEditGst', 'trEditTds'].forEach(function(id) {
         document.getElementById(id).addEventListener('input', trRecalcCharges);
     });
@@ -336,7 +333,7 @@ async function trLoadData() {
     var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
 
     // Load ALL transactions (no transaction_type filter — includes DIVIDEND, etc.)
-    var resp = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display&order=transaction_date.asc', {
+    var resp = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,product,transaction_type,transaction_date,quantity,lots,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display&order=transaction_date.asc', {
         headers: headers
     });
     if (!resp.ok) throw new Error('Failed to load transactions: HTTP ' + resp.status);
@@ -1482,27 +1479,29 @@ function trOpenEditModal(txnId) {
     if (!txn) return;
     trEditingTxnId = txnId;
 
+    // Security identity banner
+    document.getElementById('trEditBannerSymbol').textContent = txn.short_symbol || txn.symbol || '-';
+    document.getElementById('trEditBannerCompany').textContent = txn.company_name || '';
+    document.getElementById('trEditBannerType').textContent = txn.security_type || '-';
+
+    // Parties (all read-only)
     document.getElementById('trEditInvestor').value = trInvName(txn.investor_id);
-
-    // Populate trader dropdown
-    var traderSelect = document.getElementById('trEditTrader');
-    traderSelect.innerHTML = '<option value="">(None)</option>' +
-        trInvestors.map(function(inv) {
-            var label = inv.short_name || inv.name;
-            var selected = inv.id === txn.trader_id ? ' selected' : '';
-            return '<option value="' + inv.id + '"' + selected + '>' + label + '</option>';
-        }).join('');
-
+    document.getElementById('trEditTraderDisplay').value = txn.trader_id ? trInvName(txn.trader_id) : '-';
     document.getElementById('trEditBroker').value = trBrkCode(txn.broker_id) || '-';
-    document.getElementById('trEditDate').value = txn.transaction_date || '';
-    document.getElementById('trEditType').value = txn.transaction_type || 'BUY';
-    document.getElementById('trEditSymbol').value = txn.symbol || '';
-    document.getElementById('trEditExchange').value = txn.exchange || '';
-    document.getElementById('trEditQty').value = Math.abs(txn.quantity) || '';
-    document.getElementById('trEditPrice').value = txn.price || '';
+
+    // Trade details (all read-only)
+    document.getElementById('trEditDate').value = formatDate(txn.transaction_date);
+    document.getElementById('trEditType').value = txn.transaction_type || '-';
+    document.getElementById('trEditExchange').value = txn.exchange || '-';
+    document.getElementById('trEditProduct').value = txn.product || '-';
+    document.getElementById('trEditQty').value = Math.abs(txn.quantity) || 0;
+    document.getElementById('trEditLots').value = txn.lots || 0;
+    document.getElementById('trEditPrice').value = formatPrice(txn.price || 0, false);
     var grossEl = document.getElementById('trEditGross');
     grossEl.value = formatPrice(txn.gross_amount || 0, false);
     grossEl.dataset.rawValue = (txn.gross_amount || 0).toFixed(2);
+
+    // Charges (editable)
     document.getElementById('trEditBrokerage').value = txn.brokerage || 0;
     document.getElementById('trEditStt').value = txn.stt || 0;
     document.getElementById('trEditOther').value = txn.other_charges || 0;
@@ -1511,12 +1510,22 @@ function trOpenEditModal(txnId) {
     var totalEl = document.getElementById('trEditTotalCharges');
     totalEl.value = formatPrice(txn.total_charges || 0, false);
     totalEl.dataset.rawValue = (txn.total_charges || 0).toFixed(2);
+    document.getElementById('trEditTraderCharges').value = formatPrice(txn.trader_charges || 0, false);
     var netEl = document.getElementById('trEditNetAmount');
     netEl.value = formatPrice(txn.net_amount || 0, false);
     netEl.dataset.rawValue = (txn.net_amount || 0).toFixed(2);
     document.getElementById('trEditMargin').value = txn.margin_blocked || 0;
+
+    // Reference
+    document.getElementById('trEditCnNo').value = txn.broker_contract_note_no || '';
+    document.getElementById('trEditTradeId').value = txn.broker_trade_id || '-';
+    document.getElementById('trEditSecurityId').value = txn.security_id || '-';
+
+    // Tags & Notes (editable)
     document.getElementById('trEditTags').value = (txn.tags || []).filter(function(t) { return t !== 'blank'; }).join(', ');
     document.getElementById('trEditNotes').value = txn.notes || '';
+
+    // Flags
     document.getElementById('trEditLocked').checked = !!txn.is_locked;
     document.getElementById('trEditIgnoreAvg').checked = !!txn.ignore_for_avg_cost;
     document.getElementById('trEditDontDisplay').checked = !!txn.dont_display;
@@ -1525,9 +1534,9 @@ function trOpenEditModal(txnId) {
     var lockWarn = document.getElementById('trEditLockWarning');
     lockWarn.style.display = txn.is_locked ? '' : 'none';
 
-    // Disable fields if locked
-    var fields = document.querySelectorAll('#trEditForm input:not(#trEditLocked):not(#trEditInvestor):not(#trEditBroker), #trEditForm select, #trEditForm textarea');
-    fields.forEach(function(f) { f.disabled = !!txn.is_locked; });
+    // Disable editable fields if locked (only the .editable-field inputs + checkboxes)
+    var editableFields = document.querySelectorAll('#trEditForm .editable-field, #trEditForm input[type="checkbox"]:not(#trEditLocked)');
+    editableFields.forEach(function(f) { f.disabled = !!txn.is_locked; });
 
     document.getElementById('trEditModal').classList.add('show');
 }
@@ -1535,15 +1544,6 @@ function trOpenEditModal(txnId) {
 function trCloseEditModal() {
     document.getElementById('trEditModal').classList.remove('show');
     trEditingTxnId = null;
-}
-
-function trRecalcGross() {
-    var qty = parseFloat(document.getElementById('trEditQty').value) || 0;
-    var price = parseFloat(document.getElementById('trEditPrice').value) || 0;
-    var gross = qty * price;
-    document.getElementById('trEditGross').value = formatPrice(gross, false);
-    document.getElementById('trEditGross').dataset.rawValue = gross.toFixed(2);
-    trRecalcCharges();
 }
 
 function trRecalcCharges() {
@@ -1558,7 +1558,9 @@ function trRecalcCharges() {
 
     var grossEl = document.getElementById('trEditGross');
     var gross = parseFloat(grossEl.dataset.rawValue || grossEl.value.replace(/,/g, '')) || 0;
-    var type = document.getElementById('trEditType').value;
+    // Read type from the read-only text input
+    var txn = trTransactions.find(function(t) { return t.id === trEditingTxnId; });
+    var type = txn ? txn.transaction_type : 'BUY';
     var net = type === 'BUY' ? gross + totalCharges : gross - totalCharges;
     document.getElementById('trEditNetAmount').value = formatPrice(net, false);
     document.getElementById('trEditNetAmount').dataset.rawValue = net.toFixed(2);
@@ -1576,24 +1578,11 @@ async function trSaveEdit() {
         return;
     }
 
-    var qty = parseInt(document.getElementById('trEditQty').value) || 0;
-    var type = document.getElementById('trEditType').value;
-    var signedQty = type === 'SELL' ? -Math.abs(qty) : Math.abs(qty);
-
     var tagsRaw = document.getElementById('trEditTags').value.trim();
     var tags = tagsRaw ? tagsRaw.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : ['blank'];
 
-    var traderVal = document.getElementById('trEditTrader').value;
-
+    // Only save editable fields: charges, contract note, tags, notes, flags
     var body = {
-        trader_id: traderVal || null,
-        transaction_date: document.getElementById('trEditDate').value,
-        transaction_type: type,
-        symbol: document.getElementById('trEditSymbol').value,
-        exchange: document.getElementById('trEditExchange').value,
-        quantity: signedQty,
-        price: parseFloat(document.getElementById('trEditPrice').value) || 0,
-        gross_amount: parseFloat(document.getElementById('trEditGross').dataset.rawValue || document.getElementById('trEditGross').value.replace(/,/g, '')) || 0,
         brokerage: parseFloat(document.getElementById('trEditBrokerage').value) || 0,
         stt: parseFloat(document.getElementById('trEditStt').value) || 0,
         other_charges: parseFloat(document.getElementById('trEditOther').value) || 0,
@@ -1602,6 +1591,7 @@ async function trSaveEdit() {
         total_charges: parseFloat(document.getElementById('trEditTotalCharges').dataset.rawValue || document.getElementById('trEditTotalCharges').value.replace(/,/g, '')) || 0,
         net_amount: parseFloat(document.getElementById('trEditNetAmount').dataset.rawValue || document.getElementById('trEditNetAmount').value.replace(/,/g, '')) || 0,
         margin_blocked: parseFloat(document.getElementById('trEditMargin').value) || 0,
+        broker_contract_note_no: document.getElementById('trEditCnNo').value.trim() || null,
         tags: tags,
         notes: document.getElementById('trEditNotes').value || null,
         is_locked: isLocked,

@@ -362,7 +362,7 @@
     z-index: 1200;
     justify-content: center;
     align-items: flex-start;
-    padding: 40px 20px;
+    padding: 30px 20px;
     overflow-y: auto;
 }
 .edit-modal-overlay.show { display: flex; }
@@ -370,13 +370,13 @@
     background: #fff;
     border-radius: 10px;
     width: 100%;
-    max-width: 680px;
-    max-height: 80vh;
+    max-width: 780px;
+    max-height: 85vh;
     display: flex;
     flex-direction: column;
 }
 .edit-modal-header {
-    padding: 12px 16px;
+    padding: 10px 16px;
     border-bottom: 1px solid #e2e8f0;
     display: flex;
     justify-content: space-between;
@@ -384,62 +384,107 @@
 }
 .edit-modal-header h3 { margin: 0; font-size: 14px; color: #2d3748; }
 .edit-modal-body {
-    padding: 14px 16px;
+    padding: 12px 16px;
     overflow-y: auto;
     flex: 1;
 }
 .edit-modal-footer {
-    padding: 10px 16px;
+    padding: 8px 16px;
     border-top: 1px solid #e2e8f0;
     display: flex;
     justify-content: flex-end;
     gap: 8px;
 }
-.edit-form-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px 16px;
+/* Section groups in edit modal */
+.edit-section { margin-bottom: 10px; }
+.edit-section-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #a0aec0;
+    margin-bottom: 5px;
 }
-.edit-form-grid .form-group { display: flex; flex-direction: column; }
-.edit-form-grid .form-group.full-width { grid-column: 1 / -1; }
-.edit-form-grid label { font-size: 11px; font-weight: 600; color: #4a5568; margin-bottom: 3px; }
-.edit-form-grid input, .edit-form-grid select, .edit-form-grid textarea {
-    padding: 5px 8px;
+.edit-row {
+    display: grid;
+    gap: 6px 10px;
+    margin-bottom: 6px;
+}
+.edit-row.cols-2 { grid-template-columns: 1fr 1fr; }
+.edit-row.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+.edit-row.cols-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+.edit-row .form-group { display: flex; flex-direction: column; min-width: 0; }
+.edit-row .form-group.span-2 { grid-column: span 2; }
+.edit-row .form-group.span-3 { grid-column: span 3; }
+.edit-row .form-group.span-full { grid-column: 1 / -1; }
+.edit-row label { font-size: 10px; font-weight: 600; color: #718096; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.edit-row input, .edit-row select, .edit-row textarea {
+    padding: 4px 6px;
     border: 1px solid #e2e8f0;
     border-radius: 4px;
     font-size: 12px;
+    min-width: 0;
 }
-.edit-form-grid input:disabled, .edit-form-grid select:disabled {
+.edit-row input:disabled, .edit-row select:disabled {
     background: #f7fafc;
     color: #a0aec0;
+    border-color: #edf2f7;
 }
-.edit-form-grid .form-row-flags {
-    grid-column: 1 / -1;
+.edit-row input.editable-field {
+    background: #fff;
+    border-color: #cbd5e0;
+}
+.edit-row input.computed-field {
+    background: #f0fdf4;
+}
+.edit-row input.amt-field { text-align: left; }
+.edit-form-flags {
     display: flex;
-    gap: 20px;
-    padding: 8px 0;
+    gap: 18px;
+    padding: 4px 0;
 }
-.edit-form-grid .flag-label {
+.edit-form-flags .flag-label {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     font-size: 11px;
     color: #4a5568;
+    cursor: pointer;
 }
 .locked-warning {
     background: #fefce8;
     border: 1px solid #fde68a;
     border-radius: 6px;
-    padding: 8px 12px;
+    padding: 6px 10px;
     font-size: 11px;
     color: #92400e;
+    margin-bottom: 8px;
+}
+.edit-section-divider {
+    border: none;
+    border-top: 1px solid #edf2f7;
+    margin: 6px 0;
+}
+/* Security identity banner */
+.edit-security-banner {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 0 8px 0;
+    border-bottom: 1px solid #edf2f7;
     margin-bottom: 10px;
 }
-.form-separator {
-    grid-column: 1 / -1;
-    border: none;
-    border-top: 1px solid #e2e8f0;
-    margin: 4px 0;
+.edit-security-banner .sec-symbol { font-size: 15px; font-weight: 700; color: #2d3748; }
+.edit-security-banner .sec-company { font-size: 12px; color: #718096; }
+.edit-security-banner .sec-type-badge {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    background: #edf2f7;
+    color: #4a5568;
+    padding: 2px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.3px;
 }
 
 /* Consistent button styles */
@@ -641,117 +686,175 @@
             <h3 id="trEditModalTitle">Edit Transaction</h3>
             <button class="btn-icon btn-close-modal" id="trEditModalClose" title="Close">✕</button>
         </div>
-        <div class="edit-modal-body">
+        <div class="edit-modal-body" id="trEditForm">
             <div class="locked-warning" id="trEditLockWarning" style="display:none;">
-                🔒 This transaction is locked. Unlock it to make changes.
+                🔒 This transaction is locked. Uncheck the lock below to save changes.
             </div>
-            <div class="edit-form-grid" id="trEditForm">
-                <!-- Row 1: Read-only context -->
-                <div class="form-group">
-                    <label>Investor</label>
-                    <input type="text" id="trEditInvestor" disabled>
-                </div>
-                <div class="form-group">
-                    <label>Trader</label>
-                    <select id="trEditTrader"></select>
-                </div>
-                <div class="form-group">
-                    <label>Broker</label>
-                    <input type="text" id="trEditBroker" disabled>
-                </div>
 
-                <hr class="form-separator">
+            <!-- Security Identity Banner -->
+            <div class="edit-security-banner">
+                <span class="sec-symbol" id="trEditBannerSymbol"></span>
+                <span class="sec-company" id="trEditBannerCompany"></span>
+                <span class="sec-type-badge" id="trEditBannerType"></span>
+            </div>
 
-                <!-- Row 2: Core fields -->
-                <div class="form-group">
-                    <label>Transaction Date</label>
-                    <input type="date" id="trEditDate">
+            <!-- SECTION: Parties -->
+            <div class="edit-section">
+                <div class="edit-section-label">Parties</div>
+                <div class="edit-row cols-3">
+                    <div class="form-group">
+                        <label>Investor</label>
+                        <input type="text" id="trEditInvestor" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>Trader</label>
+                        <input type="text" id="trEditTraderDisplay" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>Broker</label>
+                        <input type="text" id="trEditBroker" disabled>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Type</label>
-                    <select id="trEditType">
-                        <option value="BUY">BUY</option>
-                        <option value="SELL">SELL</option>
-                    </select>
-                </div>
+            </div>
 
-                <div class="form-group">
-                    <label>Symbol</label>
-                    <input type="text" id="trEditSymbol">
-                </div>
-                <div class="form-group">
-                    <label>Exchange</label>
-                    <input type="text" id="trEditExchange">
-                </div>
+            <hr class="edit-section-divider">
 
-                <div class="form-group">
-                    <label>Quantity</label>
-                    <input type="number" id="trEditQty" step="1">
+            <!-- SECTION: Trade Details -->
+            <div class="edit-section">
+                <div class="edit-section-label">Trade Details</div>
+                <div class="edit-row cols-4">
+                    <div class="form-group">
+                        <label>Date</label>
+                        <input type="text" id="trEditDate" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>Type</label>
+                        <input type="text" id="trEditType" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>Exchange</label>
+                        <input type="text" id="trEditExchange" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>Product</label>
+                        <input type="text" id="trEditProduct" disabled>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Price</label>
-                    <input type="number" id="trEditPrice" step="0.01">
+                <div class="edit-row cols-4">
+                    <div class="form-group">
+                        <label>Quantity</label>
+                        <input type="text" id="trEditQty" disabled class="amt-field">
+                    </div>
+                    <div class="form-group">
+                        <label>Lots</label>
+                        <input type="text" id="trEditLots" disabled class="amt-field">
+                    </div>
+                    <div class="form-group">
+                        <label>Price</label>
+                        <input type="text" id="trEditPrice" disabled class="amt-field">
+                    </div>
+                    <div class="form-group">
+                        <label>Gross Amount</label>
+                        <input type="text" id="trEditGross" disabled class="computed-field amt-field">
+                    </div>
                 </div>
+            </div>
 
-                <div class="form-group">
-                    <label>Gross Amount</label>
-                    <input type="text" id="trEditGross" disabled style="background:#f0fdf4;">
-                </div>
+            <hr class="edit-section-divider">
 
-                <hr class="form-separator">
+            <!-- SECTION: Charges (editable) -->
+            <div class="edit-section">
+                <div class="edit-section-label">Charges</div>
+                <div class="edit-row cols-3">
+                    <div class="form-group">
+                        <label>Brokerage</label>
+                        <input type="number" id="trEditBrokerage" step="0.01" class="editable-field amt-field">
+                    </div>
+                    <div class="form-group">
+                        <label>STT</label>
+                        <input type="number" id="trEditStt" step="0.01" class="editable-field amt-field">
+                    </div>
+                    <div class="form-group">
+                        <label>Other Charges</label>
+                        <input type="number" id="trEditOther" step="0.01" class="editable-field amt-field">
+                    </div>
+                </div>
+                <div class="edit-row cols-3">
+                    <div class="form-group">
+                        <label>GST</label>
+                        <input type="number" id="trEditGst" step="0.01" class="editable-field amt-field">
+                    </div>
+                    <div class="form-group">
+                        <label>TDS</label>
+                        <input type="number" id="trEditTds" step="0.01" class="editable-field amt-field">
+                    </div>
+                    <div class="form-group">
+                        <label>Total Charges</label>
+                        <input type="text" id="trEditTotalCharges" disabled class="computed-field amt-field">
+                    </div>
+                </div>
+                <div class="edit-row cols-3">
+                    <div class="form-group">
+                        <label>Trader Charges</label>
+                        <input type="text" id="trEditTraderCharges" disabled class="amt-field">
+                    </div>
+                    <div class="form-group">
+                        <label>Net Amount</label>
+                        <input type="text" id="trEditNetAmount" disabled class="computed-field amt-field">
+                    </div>
+                    <div class="form-group">
+                        <label>Margin Blocked</label>
+                        <input type="number" id="trEditMargin" step="0.01" class="editable-field amt-field">
+                    </div>
+                </div>
+            </div>
 
-                <!-- Row 3: Charges -->
-                <div class="form-group">
-                    <label>Brokerage</label>
-                    <input type="number" id="trEditBrokerage" step="0.01">
-                </div>
-                <div class="form-group">
-                    <label>STT</label>
-                    <input type="number" id="trEditStt" step="0.01">
-                </div>
-                <div class="form-group">
-                    <label>Other Charges</label>
-                    <input type="number" id="trEditOther" step="0.01">
-                </div>
-                <div class="form-group">
-                    <label>GST</label>
-                    <input type="number" id="trEditGst" step="0.01">
-                </div>
-                <div class="form-group">
-                    <label>TDS</label>
-                    <input type="number" id="trEditTds" step="0.01">
-                </div>
-                <div class="form-group">
-                    <label>Total Charges</label>
-                    <input type="text" id="trEditTotalCharges" disabled style="background:#f0fdf4;">
-                </div>
+            <hr class="edit-section-divider">
 
-                <div class="form-group">
-                    <label>Net Amount</label>
-                    <input type="text" id="trEditNetAmount" disabled style="background:#f0fdf4;">
+            <!-- SECTION: Reference -->
+            <div class="edit-section">
+                <div class="edit-section-label">Reference</div>
+                <div class="edit-row cols-3">
+                    <div class="form-group">
+                        <label>Contract Note No</label>
+                        <input type="text" id="trEditCnNo" class="editable-field">
+                    </div>
+                    <div class="form-group">
+                        <label>Trade ID</label>
+                        <input type="text" id="trEditTradeId" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>Security ID</label>
+                        <input type="text" id="trEditSecurityId" disabled style="font-size:10px;">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Margin Blocked</label>
-                    <input type="number" id="trEditMargin" step="0.01">
-                </div>
+            </div>
 
-                <hr class="form-separator">
+            <hr class="edit-section-divider">
 
-                <!-- Row 4: Tags & Notes -->
-                <div class="form-group full-width">
-                    <label>Tags (comma-separated)</label>
-                    <input type="text" id="trEditTags" placeholder="e.g. swing, fno">
+            <!-- SECTION: Tags & Notes (editable) -->
+            <div class="edit-section">
+                <div class="edit-section-label">Tags & Notes</div>
+                <div class="edit-row cols-2">
+                    <div class="form-group">
+                        <label>Tags (comma-separated)</label>
+                        <input type="text" id="trEditTags" class="editable-field" placeholder="e.g. swing, fno">
+                    </div>
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <input type="text" id="trEditNotes" class="editable-field" placeholder="Optional notes...">
+                    </div>
                 </div>
-                <div class="form-group full-width">
-                    <label>Notes</label>
-                    <textarea id="trEditNotes" rows="2" style="resize:vertical;"></textarea>
-                </div>
+            </div>
 
-                <!-- Flags -->
-                <div class="form-row-flags">
+            <hr class="edit-section-divider">
+
+            <!-- SECTION: Flags -->
+            <div class="edit-section">
+                <div class="edit-form-flags">
                     <label class="flag-label"><input type="checkbox" id="trEditLocked"> Locked</label>
-                    <label class="flag-label"><input type="checkbox" id="trEditIgnoreAvg"> Ignore for Avg Cost</label>
                     <label class="flag-label"><input type="checkbox" id="trEditDontDisplay"> Don't Display</label>
+                    <label class="flag-label"><input type="checkbox" id="trEditIgnoreAvg"> Ignore for Avg Cost</label>
                 </div>
             </div>
         </div>
