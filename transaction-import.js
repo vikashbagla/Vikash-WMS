@@ -1825,9 +1825,36 @@ async function processTransactions(rawData, worksheet) {
             errors.push('price or amount is required for income transactions');
         }
 
-        // If errors, add to error list and skip
+        // If errors, build a partial review row (visible in preview, not importable)
         if (errors.length > 0) {
             excelErrorRows.push({ rowNum: rowNum, errors: errors, raw: row });
+            validRows.push({
+                rowNum: rowNum,
+                investor_id: investorMatch ? investorMatch.id : null,
+                investor_name: investorMatch ? investorMatch.name : (investor_raw || ''),
+                trader_id: null, trader_name: null,
+                broker_id: brokerMatch ? brokerMatch.id : null,
+                broker_name: brokerMatch ? brokerMatch.name : (broker_raw || ''),
+                symbol: symbol_raw || '—',
+                security_type: security_type_raw,
+                transaction_type: transaction_type || '—',
+                transaction_date: dateResult ? dateResult.date : '',
+                quantity: quantity_raw || 0,
+                price: price_raw || 0,
+                gross_amount: gross_amount_raw || 0,
+                brokerage: 0, stt: 0, total_charges: 0, trader_charges: 0,
+                net_amount: 0, tags: ['blank'], notes: notes_raw,
+                security_id: null, short_symbol: null, company_name: null,
+                exchange: null, asset_class: null, lots: 0,
+                other_charges: 0, gst: 0, tds: 0,
+                matchStatus: 'error',
+                matchError: errors.join('; '),
+                matchOptions: null,
+                _totalOverride: false, _netOverride: false,
+                _exchange_charges: 0, _sebi_charges: 0, _stamp_duty: 0, _ipft: 0,
+                _chargesBasis: {},
+                _stageAError: true
+            });
             return;
         }
 
@@ -1901,11 +1928,11 @@ async function processTransactions(rawData, worksheet) {
         });
     });
 
-    console.log('Stage A complete: ' + validRows.length + ' valid, ' + excelErrorRows.length + ' errors');
+    var nonErrorCount = validRows.filter(function(r) { return !r._stageAError; }).length;
+    console.log('Stage A complete: ' + nonErrorCount + ' valid, ' + excelErrorRows.length + ' errors (all shown in preview)');
 
     if (validRows.length === 0) {
-        var errSummary = excelErrorRows.slice(0, 10).map(function(e) { return 'Row ' + e.rowNum + ': ' + e.errors.join('; '); }).join('\n');
-        tiAlert('error', 'No valid rows found.\n\n' + errSummary);
+        tiAlert('error', 'No rows found in the file.');
         return;
     }
 
@@ -1922,9 +1949,10 @@ async function processTransactions(rawData, worksheet) {
         await wmsLoadSecuritiesNfo();
     }
 
-    // Collect unique symbols for local batch lookup (non-NFO rows)
+    // Collect unique symbols for local batch lookup (non-NFO rows, skip Stage A errors)
     var uniqueSymbols = [];
     validRows.forEach(function(r) {
+        if (r._stageAError) return;
         var sym = r.symbol.toUpperCase();
         if (r.security_type !== 'NFO' && uniqueSymbols.indexOf(sym) < 0) {
             uniqueSymbols.push(sym);
@@ -1937,6 +1965,10 @@ async function processTransactions(rawData, worksheet) {
     // Match each row (all local — no await needed)
     for (var i = 0; i < validRows.length; i++) {
         var vr = validRows[i];
+
+        // Skip Stage A error rows — already marked, no symbol matching needed
+        if (vr._stageAError) continue;
+
         var matchResult = matchSymbolMultiStage(vr.symbol, vr.security_type, batchMap);
 
         vr.matchStatus = matchResult.status;
@@ -2081,13 +2113,31 @@ function displayExcelPreview() {
     var allRows = excelConfirmedRows.concat(excelFlaggedRows);
     var confirmedCount = excelConfirmedRows.length;
     var reviewCount = excelFlaggedRows.length;
-    var rejectedCount = excelErrorRows.length;
 
     // Update sticky summary bar
-    var totalLabel = allRows.length + (rejectedCount > 0 ? ' (' + rejectedCount + ' rejected)' : '');
-    document.getElementById('statTotal').textContent = totalLabel;
+    document.getElementById('statTotal').textContent = allRows.length;
     document.getElementById('statConfirmed').textContent = confirmedCount;
     document.getElementById('statReview').textContent = reviewCount;
+
+    // Sub-labels: Confirmed shows new/update breakdown, Review shows validation vs symbol errors
+    var newCount = excelConfirmedRows.filter(function(r) { return !r.isUpdate; }).length;
+    var updCount = excelConfirmedRows.filter(function(r) { return r.isUpdate; }).length;
+    var confirmedSub = document.getElementById('statConfirmedSub');
+    if (confirmedSub) {
+        var parts = [];
+        if (newCount > 0) parts.push(newCount + ' new');
+        if (updCount > 0) parts.push(updCount + ' update');
+        confirmedSub.textContent = parts.join(', ');
+    }
+    var stageACount = excelFlaggedRows.filter(function(r) { return r._stageAError; }).length;
+    var symbolCount = reviewCount - stageACount;
+    var reviewSub = document.getElementById('statReviewSub');
+    if (reviewSub) {
+        var rParts = [];
+        if (stageACount > 0) rParts.push(stageACount + ' validation');
+        if (symbolCount > 0) rParts.push(symbolCount + ' symbol');
+        reviewSub.textContent = rParts.join(', ');
+    }
 
     // Highlight active filter card
     document.querySelectorAll('.excel-summary-card').forEach(function(card) {
@@ -2255,9 +2305,9 @@ function displayExcelPreview() {
 
     // Show summary alert
     var summaryParts = [confirmedCount + ' confirmed'];
+    if (updCount > 0) summaryParts.push(updCount + ' updates');
     if (reviewCount > 0) summaryParts.push(reviewCount + ' need review');
-    if (rejectedCount > 0) summaryParts.push(rejectedCount + ' rejected (missing required fields)');
-    tiAlert(reviewCount > 0 || rejectedCount > 0 ? 'warning' : 'info', summaryParts.join(', ') + '. Review rows must be resolved before import.');
+    tiAlert(reviewCount > 0 ? 'warning' : 'info', summaryParts.join(', ') + (reviewCount > 0 ? '. Review rows must be resolved before import.' : '.'));
 
     // Update select-all and import button count (updates are unchecked by default)
     updateSelectAllState();
