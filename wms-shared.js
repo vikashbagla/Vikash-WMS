@@ -1078,20 +1078,303 @@ function wmsDropdown(inputEl, ddEl, opts) {
 }
 
 // ============================================================================
-// wmsPillFilter — Pill-based multi-select filter (Trading Portfolio / Transactions)
+// wmsPillSearch — Self-contained pill-based filter widget
 //
-// Renders items as clickable pills inside a dropdown container.
-// Click toggles selection. Search input filters visible pills.
-// ESC closes dropdown and clears search. Click-outside closes.
+// Creates its own DOM (label, search input, pill dropdown, selected tags,
+// "Clear all" link) inside a container element. Encapsulates ALL behavior:
+//   - Multi-token search (wmsTokenize + wmsMultiTokenMatch)
+//   - Keyboard navigation (ArrowDown/Up + Enter to toggle)
+//   - Text clearing on select/deselect/blur/clearAll
+//   - Click-outside close
+//   - ESC to close + clear
+//   - Selected tag chips with × remove
 //
 // Usage:
-//   var pf = wmsPillFilter(inputEl, ddEl, tagsEl, {
-//       items: [{id: 'uuid', label: 'Vikash'}],
+//   var pf = wmsPillSearch(containerEl, {
+//       label: 'Investor',
+//       placeholder: 'Search investors...',
+//       items: [{id: 'uuid', label: 'Vikash', searchText: 'Vikash Bagla'}],
 //       selectedIds: someArray,    // mutated in place
-//       onChange: function() { renderTable(); },
-//       pillClass: 'wms-pill'     // default
+//       onChange: function() { renderTable(); }
 //   });
-//   pf.setItems(newItems);  pf.syncStates();  pf.clearAll();
+//   pf.setItems(newItems);  pf.clearAll();  pf.getSelected();  pf.destroy();
+//
+// Optional opts:
+//   - headerExtra: HTMLElement — extra content for header (e.g., tag logic radios)
+//   - pillClass: 'wms-pill' (default)
+// ============================================================================
+
+function wmsPillSearch(containerEl, opts) {
+    opts = opts || {};
+    var label = opts.label || 'Filter';
+    var placeholder = opts.placeholder || 'Type to search...';
+    var items = opts.items || [];
+    var selectedIds = opts.selectedIds || [];
+    var onChange = opts.onChange || function() {};
+    var pillClass = opts.pillClass || 'wms-pill';
+    var headerExtra = opts.headerExtra || null;
+    var highlightIdx = -1;
+
+    // Build searchText for each item
+    function buildSearchText() {
+        items.forEach(function(item) {
+            var parts = [item.label || ''];
+            if (item.searchText) parts.push(item.searchText);
+            item._searchText = parts.join(' ').toLowerCase();
+        });
+    }
+    buildSearchText();
+
+    // ── Build DOM ──
+    containerEl.innerHTML = '';
+    containerEl.className = (containerEl.className || '').replace(/\bfilter-group\b/g, '').trim();
+    containerEl.classList.add('filter-group');
+
+    // Header row: label + clear link (and optional extra content)
+    var headerDiv = document.createElement('div');
+    headerDiv.className = 'filter-header';
+    var labelEl = document.createElement('label');
+    labelEl.textContent = label;
+    headerDiv.appendChild(labelEl);
+
+    if (headerExtra) {
+        // Wrap extra + clear in a flex row
+        var rightDiv = document.createElement('div');
+        rightDiv.style.cssText = 'display:flex; align-items:center; gap:12px;';
+        rightDiv.appendChild(headerExtra);
+        var clearEl = document.createElement('span');
+        clearEl.className = 'clear-link';
+        clearEl.textContent = 'Clear all';
+        rightDiv.appendChild(clearEl);
+        headerDiv.appendChild(rightDiv);
+    } else {
+        var clearEl = document.createElement('span');
+        clearEl.className = 'clear-link';
+        clearEl.textContent = 'Clear all';
+        headerDiv.appendChild(clearEl);
+    }
+    containerEl.appendChild(headerDiv);
+
+    // Search container
+    var searchContainer = document.createElement('div');
+    searchContainer.className = 'filter-search-container';
+    var inputEl = document.createElement('input');
+    inputEl.type = 'text';
+    inputEl.className = 'filter-search-input';
+    inputEl.placeholder = placeholder;
+    var ddEl = document.createElement('div');
+    ddEl.className = 'wms-pill-dropdown';
+    searchContainer.appendChild(inputEl);
+    searchContainer.appendChild(ddEl);
+    containerEl.appendChild(searchContainer);
+
+    // Selected tags
+    var tagsEl = document.createElement('div');
+    tagsEl.className = 'filter-selected-tags';
+    containerEl.appendChild(tagsEl);
+
+    // ── Pill rendering ──
+    function render() {
+        ddEl.innerHTML = items.map(function(item) {
+            var isOn = selectedIds.indexOf(item.id) >= 0;
+            return '<span class="' + pillClass + (isOn ? ' on' : '') + '" data-wms-id="' + wmsEsc(String(item.id)) + '">' +
+                wmsEsc(item.label) + '</span>';
+        }).join('');
+        attachPillClicks();
+    }
+
+    function resetSearch() {
+        inputEl.value = '';
+        highlightIdx = -1;
+        ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
+            pill.style.display = '';
+            pill.classList.remove('wms-pill-highlight');
+        });
+    }
+
+    function togglePill(pill) {
+        var id = pill.getAttribute('data-wms-id');
+        var idx = selectedIds.indexOf(id);
+        if (idx >= 0) selectedIds.splice(idx, 1);
+        else selectedIds.push(id);
+        syncStates();
+        renderSelectedTags();
+        resetSearch();
+        ddEl.classList.remove('show');
+        onChange();
+    }
+
+    function getVisiblePills() {
+        var all = ddEl.querySelectorAll('.' + pillClass);
+        var visible = [];
+        all.forEach(function(pill) {
+            if (pill.style.display !== 'none') visible.push(pill);
+        });
+        return visible;
+    }
+
+    function highlightPillAt(newIdx) {
+        var visible = getVisiblePills();
+        highlightIdx = newIdx;
+        visible.forEach(function(pill, i) {
+            pill.classList.toggle('wms-pill-highlight', i === highlightIdx);
+        });
+        if (highlightIdx >= 0 && highlightIdx < visible.length) {
+            visible[highlightIdx].scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    function attachPillClicks() {
+        ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
+            pill.addEventListener('mousedown', function(e) {
+                e.preventDefault(); // Prevent blur from firing before click completes
+                e.stopPropagation();
+                togglePill(pill);
+            });
+        });
+    }
+
+    function renderSelectedTags() {
+        tagsEl.innerHTML = selectedIds.map(function(id) {
+            var item = items.find(function(it) { return String(it.id) === String(id); });
+            var lbl = item ? item.label : id;
+            return '<span class="filter-tag-item">' + wmsEsc(lbl) +
+                '<span class="filter-tag-remove" data-wms-id="' + wmsEsc(String(id)) + '">&times;</span></span>';
+        }).join('');
+        tagsEl.querySelectorAll('.filter-tag-remove').forEach(function(x) {
+            x.addEventListener('click', function() {
+                var id = x.getAttribute('data-wms-id');
+                var idx = selectedIds.indexOf(id);
+                if (idx >= 0) selectedIds.splice(idx, 1);
+                syncStates();
+                renderSelectedTags();
+                resetSearch();
+                onChange();
+            });
+        });
+    }
+
+    function syncStates() {
+        ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
+            var id = pill.getAttribute('data-wms-id');
+            pill.classList.toggle('on', selectedIds.indexOf(id) >= 0);
+        });
+    }
+
+    // ── Search input ──
+    inputEl.addEventListener('click', function() { ddEl.classList.add('show'); });
+    inputEl.addEventListener('input', function() {
+        ddEl.classList.add('show');
+        highlightIdx = -1;
+        var tokens = wmsTokenize(inputEl.value);
+        var pills = ddEl.querySelectorAll('.' + pillClass);
+        pills.forEach(function(pill, idx) {
+            pill.classList.remove('wms-pill-highlight');
+            if (tokens.length === 0) { pill.style.display = ''; return; }
+            var item = items[idx];
+            var st = item ? item._searchText : pill.textContent.toLowerCase();
+            pill.style.display = wmsMultiTokenMatch(tokens, st) ? '' : 'none';
+        });
+    });
+
+    // Keyboard: ESC, ArrowDown/Up, Enter
+    inputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            resetSearch();
+            ddEl.classList.remove('show');
+            inputEl.blur();
+            return;
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
+            // Open dropdown if not open
+            if (!ddEl.classList.contains('show')) {
+                ddEl.classList.add('show');
+                if (e.key !== 'Enter') { e.preventDefault(); return; }
+            }
+        }
+        if (!ddEl.classList.contains('show')) return;
+        var visible = getVisiblePills();
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!visible.length) return;
+            highlightPillAt(Math.min(highlightIdx + 1, visible.length - 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!visible.length) return;
+            highlightPillAt(Math.max(highlightIdx - 1, 0));
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            if (highlightIdx >= 0 && highlightIdx < visible.length) {
+                togglePill(visible[highlightIdx]);
+            } else if (visible.length === 1) {
+                togglePill(visible[0]);
+            }
+        }
+    });
+
+    // Blur — clear search text and close
+    inputEl.addEventListener('blur', function() {
+        setTimeout(function() {
+            resetSearch();
+            ddEl.classList.remove('show');
+        }, 150);
+    });
+
+    // Click-outside close
+    var outsideHandler = function(e) {
+        if (!containerEl.contains(e.target)) {
+            resetSearch();
+            ddEl.classList.remove('show');
+        }
+    };
+    document.addEventListener('click', outsideHandler);
+
+    // Clear all button
+    clearEl.addEventListener('click', function() {
+        selectedIds.length = 0;
+        syncStates();
+        renderSelectedTags();
+        resetSearch();
+        onChange();
+    });
+
+    // ── Initial render ──
+    render();
+    renderSelectedTags();
+
+    // ── Controller ──
+    return {
+        getSelected: function() { return selectedIds.slice(); },
+        setItems: function(newItems) {
+            items = newItems;
+            buildSearchText();
+            render();
+            renderSelectedTags();
+        },
+        clearAll: function() {
+            selectedIds.length = 0;
+            syncStates();
+            renderSelectedTags();
+            resetSearch();
+            onChange();
+        },
+        syncStates: syncStates,
+        renderSelectedTags: renderSelectedTags,
+        getInputEl: function() { return inputEl; },
+        destroy: function() {
+            document.removeEventListener('click', outsideHandler);
+            containerEl.innerHTML = '';
+        }
+    };
+}
+
+// ============================================================================
+// wmsPillFilter — LEGACY wrapper (same as wmsPillSearch but takes pre-built DOM)
+//
+// Kept for backward compatibility. New code should use wmsPillSearch instead.
 // ============================================================================
 
 function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
@@ -1135,9 +1418,10 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
         var idx = selectedIds.indexOf(id);
         if (idx >= 0) selectedIds.splice(idx, 1);
         else selectedIds.push(id);
-        pill.classList.toggle('on', selectedIds.indexOf(id) >= 0);
+        syncStates();
         renderSelectedTags();
         resetSearch();
+        ddEl.classList.remove('show');
         onChange();
     }
 
@@ -1150,9 +1434,9 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
         return visible;
     }
 
-    function highlightPillAt(idx) {
+    function highlightPillAt(newIdx) {
         var visible = getVisiblePills();
-        highlightIdx = idx;
+        highlightIdx = newIdx;
         visible.forEach(function(pill, i) {
             pill.classList.toggle('wms-pill-highlight', i === highlightIdx);
         });
@@ -1163,7 +1447,8 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
 
     function attachPillClicks() {
         ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
-            pill.addEventListener('click', function(e) {
+            pill.addEventListener('mousedown', function(e) {
+                e.preventDefault();
                 e.stopPropagation();
                 togglePill(pill);
             });
@@ -1224,6 +1509,12 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
             inputEl.blur();
             return;
         }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
+            if (!ddEl.classList.contains('show')) {
+                ddEl.classList.add('show');
+                if (e.key !== 'Enter') { e.preventDefault(); return; }
+            }
+        }
         if (!ddEl.classList.contains('show')) return;
         var visible = getVisiblePills();
         if (e.key === 'ArrowDown') {
@@ -1236,6 +1527,7 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
             highlightPillAt(Math.max(highlightIdx - 1, 0));
         } else if (e.key === 'Enter') {
             e.preventDefault();
+            e.stopPropagation();
             if (highlightIdx >= 0 && highlightIdx < visible.length) {
                 togglePill(visible[highlightIdx]);
             } else if (visible.length === 1) {

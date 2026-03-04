@@ -505,60 +505,68 @@ function trToggleZeroHoldings() {
 
 function trInitFilterPills() {
     // Investor filter
-    var invItems = trInvestors.map(function(inv) { return {id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '')}; });
-    trInvPillFilter = wmsPillFilter(
-        document.getElementById('tr-investor-search'),
-        document.getElementById('tr-investor-dropdown'),
-        document.getElementById('tr-selected-investors'),
-        {
+    var invContainer = document.getElementById('tr-filter-investor');
+    if (invContainer) {
+        var invItems = trInvestors.map(function(inv) { return {id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '')}; });
+        trInvPillFilter = wmsPillSearch(invContainer, {
+            label: 'Filter by Investor',
+            placeholder: 'Type to search investors...',
             items: invItems,
             selectedIds: trSelectedInvestorIds,
             onChange: function() { trRenderPortfolio(); }
-        }
-    );
+        });
+    }
 
     // Trader filter (same investors list)
-    var trdItems = trInvestors.map(function(inv) { return {id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '')}; });
-    trTrdPillFilter = wmsPillFilter(
-        document.getElementById('tr-trader-search'),
-        document.getElementById('tr-trader-dropdown'),
-        document.getElementById('tr-selected-traders'),
-        {
+    var trdContainer = document.getElementById('tr-filter-trader');
+    if (trdContainer) {
+        var trdItems = trInvestors.map(function(inv) { return {id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '')}; });
+        trTrdPillFilter = wmsPillSearch(trdContainer, {
+            label: 'Filter by Trader',
+            placeholder: 'Type to search traders...',
             items: trdItems,
             selectedIds: trSelectedTraderIds,
             onChange: function() { trRenderPortfolio(); }
-        }
-    );
+        });
+    }
 
     // Broker filter
-    var brkItems = trBrokers.map(function(b) { return {id: b.id, label: b.broker_code || b.name, searchText: (b.name || '') + ' ' + (b.broker_code || '')}; });
-    trBrkPillFilter = wmsPillFilter(
-        document.getElementById('tr-broker-search'),
-        document.getElementById('tr-broker-dropdown'),
-        document.getElementById('tr-selected-brokers'),
-        {
+    var brkContainer = document.getElementById('tr-filter-broker');
+    if (brkContainer) {
+        var brkItems = trBrokers.map(function(b) { return {id: b.id, label: b.broker_code || b.name, searchText: (b.name || '') + ' ' + (b.broker_code || '')}; });
+        trBrkPillFilter = wmsPillSearch(brkContainer, {
+            label: 'Filter by Broker',
+            placeholder: 'Type to search brokers...',
             items: brkItems,
             selectedIds: trSelectedBrokerIds,
             onChange: function() { trRenderPortfolio(); }
-        }
-    );
+        });
+    }
 
     // Tag filter (built from transactions)
     var allTags = {};
     trTransactions.forEach(function(t) {
         if (t.tags) t.tags.forEach(function(tag) { if (tag !== 'blank') allTags[tag] = true; });
     });
-    var tagItems = Object.keys(allTags).sort().map(function(tag) { return {id: tag, label: tag}; });
-    trTagPillFilter = wmsPillFilter(
-        document.getElementById('tr-tag-search'),
-        document.getElementById('tr-tag-dropdown'),
-        document.getElementById('tr-selected-tags'),
-        {
+    var tagContainer = document.getElementById('tr-filter-tag');
+    if (tagContainer) {
+        var tagItems = Object.keys(allTags).sort().map(function(tag) { return {id: tag, label: tag}; });
+        // Build tag-logic radios as headerExtra
+        var tagExtra = document.createElement('div');
+        tagExtra.className = 'tag-match-options';
+        tagExtra.innerHTML =
+            '<span style="font-size:11px;color:#718096;">Match:</span>' +
+            '<label class="radio-label"><input type="radio" name="tr-tag-logic" value="OR" checked> <span>Any</span></label>' +
+            '<label class="radio-label"><input type="radio" name="tr-tag-logic" value="AND"> <span>All</span></label>';
+        trTagPillFilter = wmsPillSearch(tagContainer, {
+            label: 'Filter by Tag',
+            placeholder: 'Type to search tags...',
             items: tagItems,
             selectedIds: trSelectedTagNames,
-            onChange: function() { trRenderPortfolio(); }
-        }
-    );
+            onChange: function() { trRenderPortfolio(); },
+            headerExtra: tagExtra
+        });
+    }
 }
 
 function trGetFilterArray(type) {
@@ -573,21 +581,7 @@ function trAttachPillListeners() {
 }
 
 function trSetupFilters() {
-    // Clear buttons — delegate to pill filter controllers
-    var clearConfig = [
-        {plural: 'investors', controller: function() { return trInvPillFilter; }},
-        {plural: 'traders', controller: function() { return trTrdPillFilter; }},
-        {plural: 'brokers', controller: function() { return trBrkPillFilter; }},
-        {plural: 'tags', controller: function() { return trTagPillFilter; }}
-    ];
-    clearConfig.forEach(function(config) {
-        var btn = document.getElementById('tr-clear-' + config.plural);
-        if (!btn) return;
-        btn.addEventListener('click', function() {
-            var ctrl = config.controller();
-            if (ctrl) ctrl.clearAll();
-        });
-    });
+    // Clear buttons now handled internally by wmsPillSearch
 
     // Close More dropdown on outside click (keep existing More dropdown logic)
     document.addEventListener('click', function(e) {

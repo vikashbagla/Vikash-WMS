@@ -541,57 +541,10 @@
                 </div>
             </div>
         <div class="filters-grid" style="flex:1; grid-template-columns: repeat(4, 1fr);">
-            <div class="filter-group">
-                <div class="filter-header">
-                    <label>Filter by Investor</label>
-                    <span class="clear-link" id="tr-clear-investors">Clear all</span>
-                </div>
-                <div class="filter-search-container">
-                    <input type="text" class="filter-search-input" id="tr-investor-search" placeholder="Type to search investors...">
-                    <div class="wms-pill-dropdown" id="tr-investor-dropdown"></div>
-                </div>
-                <div class="filter-selected-tags" id="tr-selected-investors"></div>
-            </div>
-            <div class="filter-group">
-                <div class="filter-header">
-                    <label>Filter by Trader</label>
-                    <span class="clear-link" id="tr-clear-traders">Clear all</span>
-                </div>
-                <div class="filter-search-container">
-                    <input type="text" class="filter-search-input" id="tr-trader-search" placeholder="Type to search traders...">
-                    <div class="wms-pill-dropdown" id="tr-trader-dropdown"></div>
-                </div>
-                <div class="filter-selected-tags" id="tr-selected-traders"></div>
-            </div>
-            <div class="filter-group">
-                <div class="filter-header">
-                    <label>Filter by Broker</label>
-                    <span class="clear-link" id="tr-clear-brokers">Clear all</span>
-                </div>
-                <div class="filter-search-container">
-                    <input type="text" class="filter-search-input" id="tr-broker-search" placeholder="Type to search brokers...">
-                    <div class="wms-pill-dropdown" id="tr-broker-dropdown"></div>
-                </div>
-                <div class="filter-selected-tags" id="tr-selected-brokers"></div>
-            </div>
-            <div class="filter-group">
-                <div class="filter-header">
-                    <label>Filter by Tag</label>
-                    <div style="display: flex; align-items: center; gap: 12px;">
-                        <div class="tag-match-options">
-                            <span style="font-size: 11px; color: #718096;">Match:</span>
-                            <label class="radio-label"><input type="radio" name="tr-tag-logic" value="OR" checked> <span>Any</span></label>
-                            <label class="radio-label"><input type="radio" name="tr-tag-logic" value="AND"> <span>All</span></label>
-                        </div>
-                        <span class="clear-link" id="tr-clear-tags">Clear all</span>
-                    </div>
-                </div>
-                <div class="filter-search-container">
-                    <input type="text" class="filter-search-input" id="tr-tag-search" placeholder="Type to search tags...">
-                    <div class="wms-pill-dropdown" id="tr-tag-dropdown"></div>
-                </div>
-                <div class="filter-selected-tags" id="tr-selected-tags"></div>
-            </div>
+            <div id="tr-filter-investor"></div>
+            <div id="tr-filter-trader"></div>
+            <div id="tr-filter-broker"></div>
+            <div id="tr-filter-tag"></div>
         </div>
         </div><!-- close filters flex wrapper -->
 

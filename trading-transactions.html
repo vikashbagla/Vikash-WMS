@@ -290,7 +290,7 @@
     <div id="trTx-date-filter" style="display:inline-flex;"></div>
 </div>
 
-<!-- Filters — 5-column: Symbol, Investor, Trader, Broker, Tags -->
+<!-- Filters — 5-column: Symbol + 4 × wmsPillSearch containers -->
 <div class="filters-grid" style="flex-shrink:0; grid-template-columns: repeat(5, 1fr);">
     <div class="filter-group">
         <div class="filter-header">
@@ -301,57 +301,10 @@
             <input type="text" class="filter-search-input" id="trTx-symbol-search" placeholder="Symbol or company...">
         </div>
     </div>
-    <div class="filter-group">
-        <div class="filter-header">
-            <label>Investor</label>
-            <span class="clear-link" id="trTx-clear-investors">Clear all</span>
-        </div>
-        <div class="filter-search-container">
-            <input type="text" class="filter-search-input" id="trTx-investor-search" placeholder="Search investors...">
-            <div class="wms-pill-dropdown" id="trTx-investor-dropdown"></div>
-        </div>
-        <div class="filter-selected-tags" id="trTx-selected-investors"></div>
-    </div>
-    <div class="filter-group">
-        <div class="filter-header">
-            <label>Trader</label>
-            <span class="clear-link" id="trTx-clear-traders">Clear all</span>
-        </div>
-        <div class="filter-search-container">
-            <input type="text" class="filter-search-input" id="trTx-trader-search" placeholder="Search traders...">
-            <div class="wms-pill-dropdown" id="trTx-trader-dropdown"></div>
-        </div>
-        <div class="filter-selected-tags" id="trTx-selected-traders"></div>
-    </div>
-    <div class="filter-group">
-        <div class="filter-header">
-            <label>Broker</label>
-            <span class="clear-link" id="trTx-clear-brokers">Clear all</span>
-        </div>
-        <div class="filter-search-container">
-            <input type="text" class="filter-search-input" id="trTx-broker-search" placeholder="Search brokers...">
-            <div class="wms-pill-dropdown" id="trTx-broker-dropdown"></div>
-        </div>
-        <div class="filter-selected-tags" id="trTx-selected-brokers"></div>
-    </div>
-    <div class="filter-group">
-        <div class="filter-header">
-            <label>Tag</label>
-            <div style="display: flex; align-items: center; gap: 12px;">
-                <div class="tag-match-options">
-                    <span style="font-size: 11px; color: #718096;">Match:</span>
-                    <label class="radio-label"><input type="radio" name="trTx-tag-logic" value="OR" checked> <span>Any</span></label>
-                    <label class="radio-label"><input type="radio" name="trTx-tag-logic" value="AND"> <span>All</span></label>
-                </div>
-                <span class="clear-link" id="trTx-clear-tags">Clear all</span>
-            </div>
-        </div>
-        <div class="filter-search-container">
-            <input type="text" class="filter-search-input" id="trTx-tag-search" placeholder="Search tags...">
-            <div class="wms-pill-dropdown" id="trTx-tag-dropdown"></div>
-        </div>
-        <div class="filter-selected-tags" id="trTx-selected-tags"></div>
-    </div>
+    <div id="trTx-filter-investor"></div>
+    <div id="trTx-filter-trader"></div>
+    <div id="trTx-filter-broker"></div>
+    <div id="trTx-filter-tag"></div>
 </div>
 
 <!-- Bulk action bar (hidden by default) -->

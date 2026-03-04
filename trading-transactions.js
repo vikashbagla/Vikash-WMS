@@ -63,44 +63,41 @@ function trTxInit() {
 
 function trTxInitPills() {
     // Investor pills
-    var invInput = document.getElementById('trTx-investor-search');
-    var invDd = document.getElementById('trTx-investor-dropdown');
-    var invTags = document.getElementById('trTx-selected-investors');
-    if (invInput && invDd) {
+    var invContainer = document.getElementById('trTx-filter-investor');
+    if (invContainer) {
         var invItems = trInvestors.map(function(inv) { return {id: String(inv.id), label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '')}; });
-        trTxInvPillFilter = wmsPillFilter(invInput, invDd, invTags, {
+        trTxInvPillFilter = wmsPillSearch(invContainer, {
+            label: 'Investor',
+            placeholder: 'Search investors...',
             items: invItems,
             selectedIds: trTxSelectedInvestorIds,
-            onChange: trTxRender,
-            pillClass: 'wms-pill'
+            onChange: trTxRender
         });
     }
 
     // Trader pills (same investors list — traders are investors)
-    var trdInput = document.getElementById('trTx-trader-search');
-    var trdDd = document.getElementById('trTx-trader-dropdown');
-    var trdTags = document.getElementById('trTx-selected-traders');
-    if (trdInput && trdDd) {
+    var trdContainer = document.getElementById('trTx-filter-trader');
+    if (trdContainer) {
         var trdItems = trInvestors.map(function(inv) { return {id: String(inv.id), label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '')}; });
-        trTxTrdPillFilter = wmsPillFilter(trdInput, trdDd, trdTags, {
+        trTxTrdPillFilter = wmsPillSearch(trdContainer, {
+            label: 'Trader',
+            placeholder: 'Search traders...',
             items: trdItems,
             selectedIds: trTxSelectedTraderIds,
-            onChange: trTxRender,
-            pillClass: 'wms-pill'
+            onChange: trTxRender
         });
     }
 
     // Broker pills
-    var brkInput = document.getElementById('trTx-broker-search');
-    var brkDd = document.getElementById('trTx-broker-dropdown');
-    var brkTags = document.getElementById('trTx-selected-brokers');
-    if (brkInput && brkDd) {
+    var brkContainer = document.getElementById('trTx-filter-broker');
+    if (brkContainer) {
         var brkItems = trBrokers.map(function(b) { return {id: String(b.id), label: b.broker_code || b.name, searchText: (b.name || '') + ' ' + (b.broker_code || '')}; });
-        trTxBrkPillFilter = wmsPillFilter(brkInput, brkDd, brkTags, {
+        trTxBrkPillFilter = wmsPillSearch(brkContainer, {
+            label: 'Broker',
+            placeholder: 'Search brokers...',
             items: brkItems,
             selectedIds: trTxSelectedBrokerIds,
-            onChange: trTxRender,
-            pillClass: 'wms-pill'
+            onChange: trTxRender
         });
     }
 
@@ -109,16 +106,30 @@ function trTxInitPills() {
     trTransactions.forEach(function(t) {
         if (t.tags) t.tags.forEach(function(tag) { if (tag && tag !== 'blank') allTags[tag] = true; });
     });
-    var tagInput = document.getElementById('trTx-tag-search');
-    var tagDd = document.getElementById('trTx-tag-dropdown');
-    var tagTags = document.getElementById('trTx-selected-tags');
-    if (tagInput && tagDd) {
+    var tagContainer = document.getElementById('trTx-filter-tag');
+    if (tagContainer) {
         var tagItems = Object.keys(allTags).sort().map(function(tag) { return {id: tag, label: tag}; });
-        trTxTagPillFilter = wmsPillFilter(tagInput, tagDd, tagTags, {
+        // Build tag-logic radios as headerExtra
+        var tagExtra = document.createElement('div');
+        tagExtra.className = 'tag-match-options';
+        tagExtra.innerHTML =
+            '<span style="font-size:11px;color:#718096;">Match:</span>' +
+            '<label class="radio-label"><input type="radio" name="trTx-tag-logic" value="OR" checked> <span>Any</span></label>' +
+            '<label class="radio-label"><input type="radio" name="trTx-tag-logic" value="AND"> <span>All</span></label>';
+        trTxTagPillFilter = wmsPillSearch(tagContainer, {
+            label: 'Tag',
+            placeholder: 'Search tags...',
             items: tagItems,
             selectedIds: trTxSelectedTagNames,
             onChange: trTxRender,
-            pillClass: 'wms-pill'
+            headerExtra: tagExtra
+        });
+        // Re-attach tag logic radio listeners
+        tagContainer.querySelectorAll('input[name="trTx-tag-logic"]').forEach(function(r) {
+            r.addEventListener('change', function() {
+                trTxTagLogic = r.value;
+                trTxRender();
+            });
         });
     }
 }
@@ -153,33 +164,8 @@ function trTxSetupFilters() {
         });
     }
 
-    // Pill filter clear buttons — delegate to wmsPillFilter.clearAll()
-    var clearInv = document.getElementById('trTx-clear-investors');
-    if (clearInv) {
-        clearInv.addEventListener('click', function() {
-            if (trTxInvPillFilter) trTxInvPillFilter.clearAll();
-        });
-    }
-    var clearTrd = document.getElementById('trTx-clear-traders');
-    if (clearTrd) {
-        clearTrd.addEventListener('click', function() {
-            if (trTxTrdPillFilter) trTxTrdPillFilter.clearAll();
-        });
-    }
-    var clearBrk = document.getElementById('trTx-clear-brokers');
-    if (clearBrk) {
-        clearBrk.addEventListener('click', function() {
-            if (trTxBrkPillFilter) trTxBrkPillFilter.clearAll();
-        });
-    }
-    var clearTags = document.getElementById('trTx-clear-tags');
-    if (clearTags) {
-        clearTags.addEventListener('click', function() {
-            if (trTxTagPillFilter) trTxTagPillFilter.clearAll();
-        });
-    }
-
-    // Tag logic radio
+    // Tag logic radio — setup deferred to trTxInitPills() where wmsPillSearch creates the DOM
+    // (kept for reference — old tag logic handler was here)
     document.querySelectorAll('input[name="trTx-tag-logic"]').forEach(function(r) {
         r.addEventListener('change', function() {
             trTxTagLogic = r.value;
