@@ -1161,31 +1161,32 @@ function trOpenTxnModal(companyKey, investorId) {
     trTxnHiddenIds = {};
     trShowHiddenTrades = false;
 
-    var shortSymbol = companyKey;
+    var txns = trGetTxnModalTxns();
 
-    // Get all transactions for this company (including hidden + ignored + income)
-    var txns = trTransactions.filter(function(t) {
-        return (t.short_symbol || t.symbol) === shortSymbol;
-    });
-
-    // Optional investor filter
-    if (investorId) {
-        txns = txns.filter(function(t) { return t.investor_id === investorId; });
-    }
-
+    // Resolve company name: prefer equity txn, then CM master, then shortSymbol
     var companyName = '';
     for (var i = 0; i < txns.length; i++) {
-        if (txns[i].company_name) { companyName = txns[i].company_name; break; }
+        if (txns[i].company_name && txns[i].security_type !== 'NFO') {
+            companyName = txns[i].company_name; break;
+        }
     }
-    companyName = companyName || shortSymbol;
+    if (!companyName && wmsRefData.securitiesCmReady) {
+        for (var j = 0; j < wmsRefData.securitiesCm.length; j++) {
+            var s = wmsRefData.securitiesCm[j];
+            if (s.symbol === companyKey || s.nse_symbol === companyKey || s.bse_symbol === companyKey) {
+                companyName = s.company_name; break;
+            }
+        }
+    }
+    companyName = companyName || companyKey;
 
     // Title
     var titleExtra = '';
     if (investorId) {
         titleExtra = ' <span style="font-size:11px;color:#667eea;">(' + trInvName(investorId) + ')</span>';
     }
-    document.getElementById('trTxnModalTitle').innerHTML = companyName +
-        '<span class="company-sub">' + shortSymbol + '</span>' + titleExtra;
+    document.getElementById('trTxnModalTitle').innerHTML = wmsEsc(companyName) +
+        '<span class="company-sub">' + wmsEsc(companyKey) + '</span>' + titleExtra;
 
     // Reset sort
     trTxnSortColumn = 'date';
@@ -1208,8 +1209,30 @@ function trGetTxnModalTxns() {
     var txns = trTransactions.filter(function(t) {
         return (t.short_symbol || t.symbol) === shortSymbol;
     });
+    // Apply specific investor filter (from detail row click)
     if (trCurrentTxnInvestorId) {
         txns = txns.filter(function(t) { return t.investor_id === trCurrentTxnInvestorId; });
+    }
+    // Apply active view filters (same as trCalcHoldings / trBuildInvestorDetail)
+    if (trSelectedInvestorIds.length > 0) {
+        txns = txns.filter(function(t) { return trSelectedInvestorIds.indexOf(t.investor_id) >= 0; });
+    }
+    if (trSelectedTraderIds.length > 0) {
+        txns = txns.filter(function(t) { return t.trader_id && trSelectedTraderIds.indexOf(t.trader_id) >= 0; });
+    }
+    if (trSelectedBrokerIds.length > 0) {
+        txns = txns.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });
+    }
+    if (trSelectedTagNames.length > 0) {
+        if (trTagFilterLogic === 'AND') {
+            txns = txns.filter(function(t) {
+                return trSelectedTagNames.every(function(tag) { return t.tags && t.tags.indexOf(tag) >= 0; });
+            });
+        } else {
+            txns = txns.filter(function(t) {
+                return t.tags && t.tags.some(function(tag) { return trSelectedTagNames.indexOf(tag) >= 0; });
+            });
+        }
     }
     return txns;
 }
