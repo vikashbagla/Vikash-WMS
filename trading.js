@@ -655,7 +655,9 @@ function trCalcHoldings() {
 
         if (!groups[key]) {
             // Only use company_name from equity txns (NFO names are contract names like "MANAPPURAM 26 Feb 24 FUT")
-            var initName = (txn.exchange !== 'NFO' && txn.company_name) ? txn.company_name : null;
+            // Check security_type (not exchange) — NFO txns can have exchange='NSE'
+            var isNFO = txn.security_type === 'NFO';
+            var initName = (!isNFO && txn.company_name) ? txn.company_name : null;
             groups[key] = {
                 symbol: txn.symbol,
                 shortSymbol: txn.short_symbol || txn.symbol,
@@ -676,7 +678,7 @@ function trCalcHoldings() {
             groups[key].exchange = 'NSE';
         }
         // Use company_name from equity txn (not F&O contract name)
-        if (txn.company_name && txn.exchange !== 'NFO' && !groups[key].companyName) {
+        if (txn.company_name && txn.security_type !== 'NFO' && !groups[key].companyName) {
             groups[key].companyName = txn.company_name;
         }
 
