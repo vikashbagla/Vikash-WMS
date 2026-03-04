@@ -48,6 +48,9 @@ function trTxInit() {
         trTxSetupOptionsBar();
         trTxSetupCheckboxes();
         trTxInitialized = true;
+    } else {
+        // Rebuild date filter — data may have loaded after first init
+        trTxRebuildDateFilter();
     }
     // Always repopulate pills — data may not have been ready on first load
     trTxInitPills();
@@ -273,6 +276,32 @@ function trTxSetupOptionsBar() {
         if (trTxDateFilterInstance) {
             trTxDateRange = trTxDateFilterInstance.getRange();
         }
+    }
+}
+
+// Rebuild date filter with fresh transaction data (FY list depends on data)
+function trTxRebuildDateFilter() {
+    var dateContainer = document.getElementById('trTx-date-filter');
+    if (!dateContainer) return;
+    // Preserve current preset if possible
+    var prevPreset = trTxDateFilterInstance ? trTxDateFilterInstance.getPreset() : 'last7';
+    if (trTxDateFilterInstance) trTxDateFilterInstance.destroy();
+
+    var fyStartMonth = 4;
+    if (window.wmsRefData && wmsRefData.userPrefs && wmsRefData.userPrefs.fy_start_month) {
+        fyStartMonth = wmsRefData.userPrefs.fy_start_month;
+    }
+    trTxDateFilterInstance = wmsDateFilter(dateContainer, {
+        default: prevPreset,
+        fyStartMonth: fyStartMonth,
+        transactions: trTransactions,
+        onChange: function(from, to) {
+            trTxDateRange = { from: from, to: to };
+            trTxRender();
+        }
+    });
+    if (trTxDateFilterInstance) {
+        trTxDateRange = trTxDateFilterInstance.getRange();
     }
 }
 

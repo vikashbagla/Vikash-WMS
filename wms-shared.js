@@ -1496,8 +1496,10 @@ function wmsSortSearchResults(items) {
 }
 
 /* ============================================================================
-   SHARED DATE FILTER COMPONENT (wmsDateFilter)
+   SHARED DATE COMPONENTS
    ============================================================================ */
+
+var WMS_MONTHS_SHORT_FULL = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 /**
  * wmsGetFYRange(fyStartMonth, offsetYears)
@@ -1537,23 +1539,327 @@ var wmsGetFYRange = function(fyStartMonth, offsetYears) {
     return { from: startStr, to: endStr };
 };
 
-/**
+/* ────────────────────────────────────────────────────────────────────────────
+ * wmsDateInput(containerEl, opts)
+ * Reusable segmented date widget (dd-mmm-yyyy) with optional calendar icon.
+ *
+ * @param {HTMLElement} containerEl — will be emptied and filled
+ * @param {Object} opts
+ *   - onChange: function(ymdStr)  — called when date changes (YYYY-MM-DD)
+ *   - compact: boolean            — smaller font/padding for toolbar use
+ * @returns {Object} controller: getValue(), setValue(Date|string), destroy()
+ * ──────────────────────────────────────────────────────────────────────────── */
+var wmsDateInput = function(containerEl, opts) {
+    opts = opts || {};
+    var onChangeCallback = opts.onChange || function() {};
+    var compact = !!opts.compact;
+
+    var state = { day: 1, month: 0, year: 2026 }; // month 0-indexed
+    var activeSeg = null;
+    var typeBuf = '';
+    var typeTimer = null;
+
+    // ── helpers ──
+    var daysInMonth = function(m, y) { return new Date(y, m + 1, 0).getDate(); };
+    var toYMD = function() {
+        return state.year + '-' + String(state.month + 1).padStart(2, '0') + '-' + String(state.day).padStart(2, '0');
+    };
+    var render = function() {
+        ddEl.textContent = String(state.day).padStart(2, '0');
+        mmmEl.textContent = WMS_MONTHS_SHORT_FULL[state.month];
+        yyyyEl.textContent = String(state.year);
+        onChangeCallback(toYMD());
+    };
+
+    // ── Build DOM ──
+    containerEl.innerHTML = '';
+    var outerWrap = document.createElement('div');
+    outerWrap.style.display = 'inline-flex';
+    outerWrap.style.alignItems = 'center';
+    outerWrap.style.gap = '3px';
+
+    var wrap = document.createElement('div');
+    wrap.className = 'wms-di-wrap' + (compact ? ' wms-di-compact' : '');
+    wrap.tabIndex = 0;
+
+    var ddEl = document.createElement('span');
+    ddEl.className = 'wms-di-seg';
+    ddEl.dataset.seg = 'dd';
+    var sep1 = document.createElement('span');
+    sep1.className = 'wms-di-sep';
+    sep1.textContent = '-';
+    var mmmEl = document.createElement('span');
+    mmmEl.className = 'wms-di-seg';
+    mmmEl.dataset.seg = 'mmm';
+    var sep2 = document.createElement('span');
+    sep2.className = 'wms-di-sep';
+    sep2.textContent = '-';
+    var yyyyEl = document.createElement('span');
+    yyyyEl.className = 'wms-di-seg';
+    yyyyEl.dataset.seg = 'yyyy';
+
+    wrap.appendChild(ddEl);
+    wrap.appendChild(sep1);
+    wrap.appendChild(mmmEl);
+    wrap.appendChild(sep2);
+    wrap.appendChild(yyyyEl);
+    outerWrap.appendChild(wrap);
+
+    // Calendar button + hidden native input
+    var calBtn = document.createElement('button');
+    calBtn.type = 'button';
+    calBtn.className = 'wms-di-cal-btn';
+    calBtn.title = 'Pick from calendar';
+    calBtn.textContent = '\uD83D\uDCC5'; // 📅
+    var calInput = document.createElement('input');
+    calInput.type = 'date';
+    calInput.className = 'wms-di-cal-hidden';
+    outerWrap.appendChild(calBtn);
+    outerWrap.appendChild(calInput);
+
+    containerEl.appendChild(outerWrap);
+
+    // ── Segment activation ──
+    var setActive = function(seg) {
+        activeSeg = seg;
+        typeBuf = '';
+        wrap.querySelectorAll('.wms-di-seg').forEach(function(el) {
+            el.classList.toggle('active', el.dataset.seg === seg);
+        });
+    };
+    var clearActive = function() {
+        activeSeg = null;
+        typeBuf = '';
+        wrap.querySelectorAll('.wms-di-seg').forEach(function(el) { el.classList.remove('active'); });
+    };
+    var moveSeg = function(dir) {
+        var order = ['dd', 'mmm', 'yyyy'];
+        var idx = order.indexOf(activeSeg);
+        var next = idx + dir;
+        if (next >= 0 && next < order.length) setActive(order[next]);
+    };
+    var adjust = function(delta) {
+        if (activeSeg === 'dd') {
+            state.day += delta;
+            var mx = daysInMonth(state.month, state.year);
+            if (state.day > mx) state.day = 1;
+            if (state.day < 1) state.day = mx;
+        } else if (activeSeg === 'mmm') {
+            state.month += delta;
+            if (state.month > 11) state.month = 0;
+            if (state.month < 0) state.month = 11;
+            var mx2 = daysInMonth(state.month, state.year);
+            if (state.day > mx2) state.day = mx2;
+        } else if (activeSeg === 'yyyy') {
+            state.year += delta;
+            if (state.year < 2000) state.year = 2000;
+            if (state.year > 2099) state.year = 2099;
+            var mx3 = daysInMonth(state.month, state.year);
+            if (state.day > mx3) state.day = mx3;
+        }
+        render();
+    };
+
+    // ── Typed input ──
+    var typeDigit = function(digit) {
+        clearTimeout(typeTimer);
+        if (activeSeg === 'dd') {
+            typeBuf += digit;
+            if (typeBuf.length >= 2) {
+                var val = parseInt(typeBuf);
+                var maxD = daysInMonth(state.month, state.year);
+                if (val >= 1 && val <= maxD) state.day = val;
+                typeBuf = '';
+                render();
+                moveSeg(1);
+            } else {
+                var first = parseInt(typeBuf);
+                if (first > 3) {
+                    if (first >= 1) state.day = first;
+                    typeBuf = '';
+                    render();
+                    moveSeg(1);
+                } else {
+                    render();
+                    typeTimer = setTimeout(function() {
+                        if (typeBuf.length === 1) {
+                            var v = parseInt(typeBuf);
+                            if (v >= 1) state.day = v;
+                            typeBuf = '';
+                            render();
+                            moveSeg(1);
+                        }
+                    }, 600);
+                }
+            }
+        } else if (activeSeg === 'mmm') {
+            typeBuf += digit;
+            if (typeBuf.length >= 2) {
+                var mVal = parseInt(typeBuf);
+                if (mVal >= 1 && mVal <= 12) state.month = mVal - 1;
+                typeBuf = '';
+                render();
+                moveSeg(1);
+            } else {
+                var mFirst = parseInt(typeBuf);
+                if (mFirst > 1) {
+                    if (mFirst >= 1 && mFirst <= 9) state.month = mFirst - 1;
+                    typeBuf = '';
+                    render();
+                    moveSeg(1);
+                } else {
+                    typeTimer = setTimeout(function() {
+                        if (typeBuf.length === 1) {
+                            var v2 = parseInt(typeBuf);
+                            if (v2 >= 1) state.month = v2 - 1;
+                            typeBuf = '';
+                            render();
+                            moveSeg(1);
+                        }
+                    }, 600);
+                }
+            }
+        } else if (activeSeg === 'yyyy') {
+            typeBuf += digit;
+            if (typeBuf.length >= 4) {
+                var yr = parseInt(typeBuf);
+                if (yr >= 2000 && yr <= 2099) state.year = yr;
+                typeBuf = '';
+                render();
+            } else {
+                typeTimer = setTimeout(function() { typeBuf = ''; }, 1200);
+            }
+        }
+    };
+
+    var typeLetter = function(letter) {
+        if (activeSeg !== 'mmm') return;
+        clearTimeout(typeTimer);
+        typeBuf += letter.toLowerCase();
+        var matched = -1;
+        for (var i = 0; i < 12; i++) {
+            if (WMS_MONTHS_SHORT_FULL[i].toLowerCase().indexOf(typeBuf) === 0) {
+                matched = i;
+                break;
+            }
+        }
+        if (matched >= 0) {
+            state.month = matched;
+            render();
+        }
+        if (typeBuf.length >= 3) {
+            typeBuf = '';
+            moveSeg(1);
+        } else {
+            typeTimer = setTimeout(function() { typeBuf = ''; }, 800);
+        }
+    };
+
+    // ── Event listeners ──
+    wrap.querySelectorAll('.wms-di-seg').forEach(function(seg) {
+        seg.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            setActive(seg.dataset.seg);
+            wrap.focus();
+        });
+    });
+    wrap.addEventListener('mousedown', function(e) {
+        if (e.target === wrap) {
+            e.preventDefault();
+            setActive('dd');
+            wrap.focus();
+        }
+    });
+    wrap.addEventListener('focus', function() {
+        if (!activeSeg) setActive('dd');
+    });
+    wrap.addEventListener('blur', function() { clearActive(); });
+
+    wrap.addEventListener('keydown', function(e) {
+        if (!activeSeg) setActive('dd');
+        var key = e.key;
+        if (key === 'ArrowLeft') { e.preventDefault(); moveSeg(-1); }
+        else if (key === 'ArrowRight') { e.preventDefault(); moveSeg(1); }
+        else if (key === 'ArrowUp') { e.preventDefault(); adjust(1); }
+        else if (key === 'ArrowDown') { e.preventDefault(); adjust(-1); }
+        else if (key === 'Tab') {
+            if (!e.shiftKey && activeSeg !== 'yyyy') { e.preventDefault(); moveSeg(1); }
+            else if (e.shiftKey && activeSeg !== 'dd') { e.preventDefault(); moveSeg(-1); }
+            else { clearActive(); }
+        } else if (key === 'Enter') {
+            e.preventDefault();
+            if (activeSeg !== 'yyyy') moveSeg(1); else clearActive();
+        } else if (/^[0-9]$/.test(key)) { e.preventDefault(); typeDigit(key); }
+        else if (/^[a-zA-Z]$/.test(key)) { e.preventDefault(); typeLetter(key); }
+    });
+
+    // Calendar button
+    calBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        calInput.value = toYMD();
+        if (typeof calInput.showPicker === 'function') {
+            calInput.showPicker();
+        } else {
+            calInput.focus();
+            calInput.click();
+        }
+    });
+    calInput.addEventListener('change', function() {
+        if (calInput.value) {
+            var p = calInput.value.split('-');
+            state.year = parseInt(p[0]);
+            state.month = parseInt(p[1]) - 1;
+            state.day = parseInt(p[2]);
+            render();
+        }
+    });
+
+    // ── Set initial value (today) ──
+    var now = new Date();
+    state.day = now.getDate();
+    state.month = now.getMonth();
+    state.year = now.getFullYear();
+    // silent render (don't fire onChange for initial)
+    ddEl.textContent = String(state.day).padStart(2, '0');
+    mmmEl.textContent = WMS_MONTHS_SHORT_FULL[state.month];
+    yyyyEl.textContent = String(state.year);
+
+    // ── Controller ──
+    return {
+        getValue: function() { return toYMD(); },
+        setValue: function(v) {
+            if (v instanceof Date) {
+                state.day = v.getDate(); state.month = v.getMonth(); state.year = v.getFullYear();
+            } else if (typeof v === 'string' && v) {
+                var p = v.split('-');
+                state.year = parseInt(p[0]); state.month = parseInt(p[1]) - 1; state.day = parseInt(p[2]);
+            }
+            ddEl.textContent = String(state.day).padStart(2, '0');
+            mmmEl.textContent = WMS_MONTHS_SHORT_FULL[state.month];
+            yyyyEl.textContent = String(state.year);
+        },
+        destroy: function() { containerEl.innerHTML = ''; }
+    };
+};
+
+/* ────────────────────────────────────────────────────────────────────────────
  * wmsDateFilter(containerEl, opts)
- * Creates a date range filter UI with 3 dropdown controls:
+ * Date range filter with 3 controls:
  *   1) Period dropdown — Last 7 days, 30 days, 90 days, ALL
- *   2) FY dropdown — populated from transaction data (or explicit list)
- *   3) Custom date range — from/to with calendar icon popovers
+ *   2) FY dropdown — populated from transaction dates; label "FY26 (Mar26)"
+ *   3) Custom button — opens popover with two wmsDateInput widgets
  *
- * Selecting any one control deselects the others (mutually exclusive).
+ * Selecting any one deselects the others (mutually exclusive).
  *
- * @param {HTMLElement} containerEl - Container to render filter into
- * @param {Object} opts - Configuration options
- *   - default: 'last7'|'last30'|'last90'|'all'|'currentFY'|'custom' (default: 'all')
- *   - onChange: function(from, to) - Called when filter changes
- *   - fyStartMonth: number 1-12 (default: 4)
- *   - transactions: Array — if provided, FY list is built from transaction dates
- * @returns {Object} Controller with getRange(), setPreset(), getPreset(), destroy()
- */
+ * @param {HTMLElement} containerEl
+ * @param {Object} opts
+ *   - default: 'last7'|'last30'|'last90'|'all'|'currentFY' (default: 'all')
+ *   - onChange: function(from, to)
+ *   - fyStartMonth: 1-12 (default: 4)
+ *   - transactions: Array — transaction records with transaction_date field
+ * @returns controller: getRange(), setPreset(), getPreset(), destroy()
+ * ──────────────────────────────────────────────────────────────────────────── */
 var wmsDateFilter = function(containerEl, opts) {
     opts = opts || {};
     var defaultPreset = opts.default || 'all';
@@ -1561,66 +1867,53 @@ var wmsDateFilter = function(containerEl, opts) {
     var fyStartMonth = opts.fyStartMonth || 4;
     var transactions = opts.transactions || [];
 
-    var MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-    var currentPreset = null; // will be set at end
+    var currentPreset = null;
     var currentCustomFrom = null;
     var currentCustomTo = null;
+    var popoverOpen = false;
+    var customFromCtrl = null;
+    var customToCtrl = null;
 
-    // ────── FY list from data ──────
-    // Determine which FYs have transactions. FY is defined by fyStartMonth.
-    // A date falls in FY ending in year Y if: date >= (Y-1)-fyStartMonth-01 and date < Y-fyStartMonth-01
-    var fyList = []; // [{label:'FY26 (Apr25 – Mar26)', value:'fy_2026', from:'2025-04-01', to:'2026-03-31'}, ...]
-    (function buildFYList() {
-        var fySet = {};
-        var allDates = [];
-        // Gather dates from transactions
-        if (transactions.length > 0) {
-            transactions.forEach(function(t) {
-                if (t.transaction_date) allDates.push(t.transaction_date);
-            });
-        }
-        // Also always include current FY
-        var now = new Date();
-        var curM = now.getMonth() + 1;
-        var curY = now.getFullYear();
-        var currentFYEndYear = (curM >= fyStartMonth) ? curY + 1 : curY;
-        fySet[currentFYEndYear] = true;
+    // ────── Build FY list from transaction data ──────
+    var fyList = [];
+    var fySet = {};
+    // Always include current FY
+    var now = new Date();
+    var curM = now.getMonth() + 1;
+    var curY = now.getFullYear();
+    var currentFYEndYear = (curM >= fyStartMonth) ? curY + 1 : curY;
+    fySet[currentFYEndYear] = true;
 
-        allDates.forEach(function(d) {
-            var parts = d.split('-');
-            var y = parseInt(parts[0]);
-            var m = parseInt(parts[1]);
-            var endYear = (m >= fyStartMonth) ? y + 1 : y;
-            fySet[endYear] = true;
+    transactions.forEach(function(t) {
+        if (!t.transaction_date) return;
+        var parts = t.transaction_date.split('-');
+        var y = parseInt(parts[0]);
+        var m = parseInt(parts[1]);
+        var endYear = (m >= fyStartMonth) ? y + 1 : y;
+        fySet[endYear] = true;
+    });
+
+    var years = Object.keys(fySet).map(Number).sort(function(a,b){ return b - a; });
+    years.forEach(function(endYear) {
+        var startYear = endYear - 1;
+        var fromStr = startYear + '-' + String(fyStartMonth).padStart(2, '0') + '-01';
+        var endMonth = fyStartMonth - 1;
+        var ey = endYear;
+        if (endMonth < 1) { endMonth = 12; ey = startYear; }
+        var lastDay = new Date(ey, endMonth, 0).getDate();
+        var toStr = ey + '-' + String(endMonth).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+
+        // Label: "FY26 (Mar26)"
+        var endMonthName = WMS_MONTHS_SHORT_FULL[endMonth - 1];
+        fyList.push({
+            label: 'FY' + String(endYear).slice(-2) + ' (' + endMonthName + String(endYear).slice(-2) + ')',
+            value: 'fy_' + endYear,
+            from: fromStr,
+            to: toStr
         });
-
-        var years = Object.keys(fySet).map(Number).sort(function(a,b){ return b - a; }); // descending
-        years.forEach(function(endYear) {
-            var startYear = endYear - 1;
-            var fy = wmsGetFYRange(fyStartMonth, 0); // just for structure
-            // Build actual range
-            var fromStr = startYear + '-' + String(fyStartMonth).padStart(2, '0') + '-01';
-            var endMonth = fyStartMonth - 1;
-            var ey = endYear;
-            if (endMonth < 1) { endMonth = 12; ey = startYear; }
-            var lastDay = new Date(ey, endMonth, 0).getDate();
-            var toStr = ey + '-' + String(endMonth).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
-
-            var startMonthName = MONTHS_SHORT[fyStartMonth - 1];
-            var endMonthName = MONTHS_SHORT[endMonth - 1];
-
-            fyList.push({
-                label: 'FY' + String(endYear).slice(-2) + ' (' + startMonthName + String(startYear).slice(-2) + ' \u2013 ' + endMonthName + String(endYear).slice(-2) + ')',
-                value: 'fy_' + endYear,
-                from: fromStr,
-                to: toStr
-            });
-        });
-    })();
+    });
 
     // ────── Helpers ──────
-
     var formatYMD = function(date) {
         return date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0') + '-' + String(date.getDate()).padStart(2,'0');
     };
@@ -1632,7 +1925,6 @@ var wmsDateFilter = function(containerEl, opts) {
         if (preset === 'last90') return { from: formatYMD(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 90)), to: formatYMD(today) };
         if (preset === 'all')    return { from: null, to: null };
         if (preset === 'custom') return { from: currentCustomFrom, to: currentCustomTo };
-        // FY presets — look up in fyList
         for (var i = 0; i < fyList.length; i++) {
             if (fyList[i].value === preset) return { from: fyList[i].from, to: fyList[i].to };
         }
@@ -1645,7 +1937,6 @@ var wmsDateFilter = function(containerEl, opts) {
     };
 
     // ────── Build UI ──────
-
     containerEl.className = 'wms-date-filter';
     containerEl.style.position = 'relative';
     containerEl.style.display = 'inline-flex';
@@ -1665,7 +1956,8 @@ var wmsDateFilter = function(containerEl, opts) {
     periodSelect.addEventListener('change', function() {
         currentPreset = periodSelect.value;
         fySelect.value = 'fy_all';
-        clearCustomHighlight();
+        customBtn.classList.remove('active');
+        closePopover();
         fireChange();
     });
     containerEl.appendChild(periodSelect);
@@ -1681,107 +1973,163 @@ var wmsDateFilter = function(containerEl, opts) {
 
     fySelect.addEventListener('change', function() {
         if (fySelect.value === 'fy_all') {
-            // Revert to period dropdown's current selection
             currentPreset = periodSelect.value;
         } else {
             currentPreset = fySelect.value;
-            periodSelect.value = 'all'; // reset period dropdown visually
+            periodSelect.value = 'all';
         }
-        clearCustomHighlight();
+        customBtn.classList.remove('active');
+        closePopover();
         fireChange();
     });
     containerEl.appendChild(fySelect);
 
-    // 3) Custom date range — From and To with native date inputs
-    var customWrap = document.createElement('div');
-    customWrap.className = 'wms-df-custom-wrap';
+    // 3) Custom button + popover
+    var customBtn = document.createElement('button');
+    customBtn.type = 'button';
+    customBtn.className = 'wms-df-btn';
+    customBtn.textContent = 'Custom';
 
-    var inputFrom = document.createElement('input');
-    inputFrom.type = 'date';
-    inputFrom.className = 'wms-df-date-input';
-    inputFrom.title = 'From date';
+    var closePopover = function() {
+        var existing = containerEl.querySelector('.wms-df-popover');
+        if (existing) existing.remove();
+        popoverOpen = false;
+    };
 
-    var sep = document.createElement('span');
-    sep.className = 'wms-df-date-sep';
-    sep.textContent = '–';
+    var openPopover = function() {
+        closePopover();
+        popoverOpen = true;
 
-    var inputTo = document.createElement('input');
-    inputTo.type = 'date';
-    inputTo.className = 'wms-df-date-input';
-    inputTo.title = 'To date';
+        var pop = document.createElement('div');
+        pop.className = 'wms-df-popover';
 
-    var onCustomChange = function() {
-        currentCustomFrom = inputFrom.value || null;
-        currentCustomTo = inputTo.value || null;
-        if (currentCustomFrom || currentCustomTo) {
+        // From row
+        var fromLabel = document.createElement('span');
+        fromLabel.className = 'wms-df-popover-label';
+        fromLabel.textContent = 'From';
+        var fromContainer = document.createElement('div');
+        fromContainer.className = 'wms-df-popover-field';
+
+        // To row
+        var toLabel = document.createElement('span');
+        toLabel.className = 'wms-df-popover-label';
+        toLabel.textContent = 'To';
+        var toContainer = document.createElement('div');
+        toContainer.className = 'wms-df-popover-field';
+
+        // Apply button
+        var applyBtn = document.createElement('button');
+        applyBtn.type = 'button';
+        applyBtn.className = 'wms-df-popover-apply';
+        applyBtn.textContent = 'Apply';
+
+        pop.appendChild(fromLabel);
+        pop.appendChild(fromContainer);
+        pop.appendChild(toLabel);
+        pop.appendChild(toContainer);
+        pop.appendChild(applyBtn);
+        containerEl.appendChild(pop);
+
+        // Create segmented date inputs
+        customFromCtrl = wmsDateInput(fromContainer, {
+            compact: true,
+            onChange: function() {} // don't fire on every segment change
+        });
+        customToCtrl = wmsDateInput(toContainer, {
+            compact: true,
+            onChange: function() {}
+        });
+
+        // Pre-populate if we already have custom values
+        if (currentCustomFrom) customFromCtrl.setValue(currentCustomFrom);
+        if (currentCustomTo) customToCtrl.setValue(currentCustomTo);
+
+        applyBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            currentCustomFrom = customFromCtrl.getValue();
+            currentCustomTo = customToCtrl.getValue();
             currentPreset = 'custom';
             periodSelect.value = 'all';
             fySelect.value = 'fy_all';
-            customWrap.classList.add('active');
+            customBtn.classList.add('active');
+            // Update button label
+            updateCustomLabel();
+            closePopover();
+            fireChange();
+        });
+
+        // Close on outside click (delayed to avoid catching the button click itself)
+        setTimeout(function() {
+            var docClickHandler = function(ev) {
+                if (!containerEl.contains(ev.target)) {
+                    closePopover();
+                    document.removeEventListener('click', docClickHandler);
+                }
+            };
+            document.addEventListener('click', docClickHandler);
+            var escHandler = function(ev) {
+                if (ev.key === 'Escape') {
+                    closePopover();
+                    document.removeEventListener('keydown', escHandler);
+                }
+            };
+            document.addEventListener('keydown', escHandler);
+        }, 10);
+    };
+
+    var updateCustomLabel = function() {
+        if (currentCustomFrom && currentCustomTo) {
+            var fp = currentCustomFrom.split('-');
+            var tp = currentCustomTo.split('-');
+            var fromDisp = fp[2] + '-' + WMS_MONTHS_SHORT_FULL[parseInt(fp[1])-1];
+            var toDisp = tp[2] + '-' + WMS_MONTHS_SHORT_FULL[parseInt(tp[1])-1];
+            customBtn.textContent = fromDisp + ' \u2013 ' + toDisp;
         } else {
-            currentPreset = periodSelect.value;
-            customWrap.classList.remove('active');
+            customBtn.textContent = 'Custom';
         }
-        fireChange();
     };
-    inputFrom.addEventListener('change', onCustomChange);
-    inputTo.addEventListener('change', onCustomChange);
 
-    customWrap.appendChild(inputFrom);
-    customWrap.appendChild(sep);
-    customWrap.appendChild(inputTo);
-    containerEl.appendChild(customWrap);
-
-    var clearCustomHighlight = function() {
-        customWrap.classList.remove('active');
-        // Don't clear the date inputs — user may want to reuse them
-    };
+    customBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (popoverOpen) { closePopover(); } else { openPopover(); }
+    });
+    containerEl.appendChild(customBtn);
 
     // ────── Apply default preset ──────
-    // Determine which control to set as default
     if (defaultPreset === 'last7' || defaultPreset === 'last30' || defaultPreset === 'last90' || defaultPreset === 'all') {
         periodSelect.value = defaultPreset;
         currentPreset = defaultPreset;
-    } else if (defaultPreset.indexOf('fy_') === 0 || defaultPreset === 'currentFY') {
-        if (defaultPreset === 'currentFY' && fyList.length > 0) {
-            fySelect.value = fyList[0].value; // first is most recent
-            currentPreset = fyList[0].value;
-        } else {
-            fySelect.value = defaultPreset;
-            currentPreset = defaultPreset;
-        }
+    } else if (defaultPreset === 'currentFY' && fyList.length > 0) {
+        fySelect.value = fyList[0].value;
+        currentPreset = fyList[0].value;
         periodSelect.value = 'all';
     } else {
         periodSelect.value = 'all';
         currentPreset = 'all';
     }
 
-    // Fire initial change
     fireChange();
 
     // ────── Controller ──────
     return {
-        getRange: function() {
-            return getPresetRange(currentPreset);
-        },
+        getRange: function() { return getPresetRange(currentPreset); },
         setPreset: function(preset) {
             currentPreset = preset;
             if (preset === 'last7' || preset === 'last30' || preset === 'last90' || preset === 'all') {
                 periodSelect.value = preset;
                 fySelect.value = 'fy_all';
-                clearCustomHighlight();
+                customBtn.classList.remove('active');
             } else if (preset.indexOf('fy_') === 0) {
                 fySelect.value = preset;
                 periodSelect.value = 'all';
-                clearCustomHighlight();
+                customBtn.classList.remove('active');
             }
+            closePopover();
             fireChange();
         },
-        getPreset: function() {
-            return currentPreset;
-        },
-        destroy: function() {
-            containerEl.innerHTML = '';
-        }
+        getPreset: function() { return currentPreset; },
+        destroy: function() { closePopover(); containerEl.innerHTML = ''; }
     };
 };

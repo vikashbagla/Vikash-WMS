@@ -512,8 +512,7 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
 .wms-context-menu-item.danger:hover { background: #fef2f2; }
 
 /* ============================================================================ */
-/* Shared Date Filter Component */
-/* Shared date filter — 3 dropdowns (Period, FY, Custom) */
+/* Shared Date Filter (Period + FY dropdowns + Custom popover) */
 .wms-date-filter { display:inline-flex; align-items:center; gap:6px; }
 .wms-df-select {
     padding: 3px 20px 3px 6px;
@@ -534,28 +533,85 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
 }
 .wms-df-select:hover { border-color: #667eea; }
 .wms-df-select:focus { border-color: #667eea; outline: none; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
-.wms-df-custom-wrap {
+.wms-df-btn {
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid #e2e8f0;
+    background: #f7fafc;
+    color: #4a5568;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    line-height: 1.4;
+    transition: all 0.15s;
+}
+.wms-df-btn:hover { border-color: #667eea; color: #667eea; }
+.wms-df-btn.active { background: #667eea; color: white; border-color: #667eea; }
+.wms-df-popover {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    padding: 10px 12px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 240px;
+}
+.wms-df-popover-label { font-size: 11px; color: #718096; font-weight: 500; }
+.wms-df-popover-field { display: inline-flex; }
+.wms-df-popover-apply {
+    align-self: flex-end;
+    padding: 4px 16px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-top: 2px;
+}
+.wms-df-popover-apply:hover { background: #5a67d8; }
+
+/* Shared segmented date input (wmsDateInput) */
+.wms-di-wrap {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 1px 4px;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    transition: border-color 0.15s;
-}
-.wms-df-custom-wrap.active { border-color: #667eea; background: rgba(102,126,234,0.04); }
-.wms-df-date-input {
-    padding: 2px 4px;
-    font-size: 11px;
+    padding: 4px 8px;
     border: 1px solid #e2e8f0;
     border-radius: 4px;
-    color: #4a5568;
-    width: 110px;
-    line-height: 1.4;
+    font-size: 12px;
+    color: #2d3748;
+    outline: none;
+    cursor: text;
+    user-select: none;
+    background: #fff;
 }
-.wms-df-date-input:hover { border-color: #667eea; }
-.wms-df-date-input:focus { border-color: #667eea; outline: none; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
-.wms-df-date-sep { font-size: 11px; color: #a0aec0; }
+.wms-di-wrap:focus-within { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+.wms-di-compact { padding: 3px 6px; font-size: 11px; }
+.wms-di-seg { padding: 1px 2px; border-radius: 2px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.wms-di-seg.active { background: #667eea; color: #fff; }
+.wms-di-sep { color: #a0aec0; margin: 0 1px; pointer-events: none; }
+.wms-di-cal-btn {
+    background: none;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 4px;
+    line-height: 1;
+    transition: border-color 0.15s;
+}
+.wms-di-cal-btn:hover { border-color: #667eea; }
+.wms-di-cal-hidden { position: absolute; opacity: 0; width: 0; height: 0; border: 0; padding: 0; pointer-events: none; }
 
 /* RESPONSIVE */
 @media (max-width:1024px) {
