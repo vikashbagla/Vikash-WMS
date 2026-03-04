@@ -387,12 +387,55 @@ function wmsIsIncomeType(txnType) {
 }
 
 // ============================================================================
+// TRANSACTION SANITIZATION (Rule E.14)
+// ============================================================================
+// When investor ≠ trader, the investor's actual cost is gross_amount ± trader_charges
+// (NOT net_amount, which reflects the trader's market-facing charges).
+// This function adjusts net_amount in-place so all downstream consumers
+// (avg cost, matching trades, summary cards, display) automatically use the
+// investor-perspective amount.
+//
+// Original net_amount is preserved as _origNetAmount for future use (e.g. Portfolio).
+//
+// Call once after loading transactions from DB — before any calculations or display.
+// ============================================================================
+
+function wmsSanitizeTransactions(transactions) {
+    for (var i = 0; i < transactions.length; i++) {
+        var txn = transactions[i];
+        var investorId = txn.investor_id || '';
+        var traderId = txn.trader_id || investorId;
+
+        // Preserve original DB net_amount
+        txn._origNetAmount = txn.net_amount;
+
+        if (traderId && traderId !== investorId) {
+            // Investor ≠ trader: cost to investor = gross ± trader_charges
+            var gross = Math.abs(txn.gross_amount || 0);
+            var traderCh = Math.abs(txn.trader_charges || 0);
+            var txnType = txn.transaction_type || '';
+
+            if (txnType === 'BUY') {
+                txn.net_amount = wmsRoundMoney(gross + traderCh);
+            } else if (txnType === 'SELL') {
+                txn.net_amount = wmsRoundMoney(gross - traderCh);
+            }
+            // INCOME types: trader_charges is always 0 per charge calc rules — no change needed
+        }
+    }
+    return transactions;
+}
+
+// ============================================================================
 // AVERAGE COST CALCULATION (Spec A1)
 // Single source of truth — used by portfolio.js, trading.js, and any future module.
 //
+// PREREQUISITE: transactions must be sanitized via wmsSanitizeTransactions() first.
+//   When investor ≠ trader, net_amount is adjusted to gross ± trader_charges (Rule E.14).
+//
 // Rules:
 //   totalCost  = sum(BUY net_amount) − sum(SELL net_amount) − sum(INCOME net_amount)
-//   net_amount in DB is ALWAYS positive (BUY = gross+charges, SELL/INCOME = gross−charges)
+//   net_amount is ALWAYS positive (BUY = gross+charges, SELL/INCOME = gross−charges)
 //   Respects ignore_for_avg_cost flag (skips BOTH cost and quantity for BUY/SELL)
 //   INCOME never affects quantity (even if qty field is populated in DB)
 //   net_quantity = sum(all BUY/SELL quantities) where BUY>0, SELL<0

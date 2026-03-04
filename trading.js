@@ -368,7 +368,7 @@ async function trLoadData() {
     var txnData = await resp.json();
     console.log('Trading: Loaded ' + txnData.length + ' transactions (all types)');
 
-    trTransactions = txnData;
+    trTransactions = wmsSanitizeTransactions(txnData);
 
     // Build comprehensive search text for each transaction (Rule B.9.2)
     trTransactions.forEach(function(txn) {
