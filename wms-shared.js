@@ -241,6 +241,73 @@ function wmsMultiTokenMatch(tokens) {
 }
 
 /**
+ * Build a comprehensive search text for any security by enriching from wmsRefData.
+ * Looks up by security_id first (CM map, then NFO map), falls back to symbol scan.
+ * Returns a single lowercase string containing all searchable fields.
+ * Call once per record at data-load time, store as _searchText for fast filtering.
+ *
+ * @param {object} opts - { securityId, symbol, shortSymbol, companyName }
+ * @returns {string} Combined lowercase search text
+ */
+function wmsBuildSecuritySearchText(opts) {
+    var parts = [];
+    var sid = opts.securityId;
+    var sym = opts.symbol || '';
+    var shortSym = opts.shortSymbol || '';
+    var co = opts.companyName || '';
+
+    // Always include the record's own fields
+    if (sym) parts.push(sym);
+    if (shortSym && shortSym !== sym) parts.push(shortSym);
+    if (co) parts.push(co);
+
+    // Enrich from CM cache
+    var cmRec = null;
+    if (sid && wmsRefData.securitiesCmMap) {
+        cmRec = wmsRefData.securitiesCmMap[sid];
+    }
+    if (!cmRec && shortSym && wmsRefData.securitiesCmReady) {
+        // Fallback: scan by symbol match
+        for (var i = 0; i < wmsRefData.securitiesCm.length; i++) {
+            var s = wmsRefData.securitiesCm[i];
+            if (s.symbol === shortSym || s.nse_symbol === shortSym || s.bse_symbol === shortSym) {
+                cmRec = s; break;
+            }
+        }
+    }
+    if (cmRec) {
+        if (cmRec.symbol) parts.push(cmRec.symbol);
+        if (cmRec.company_name) parts.push(cmRec.company_name);
+        if (cmRec.isin) parts.push(cmRec.isin);
+        if (cmRec.nse_symbol) parts.push(cmRec.nse_symbol);
+        if (cmRec.bse_symbol) parts.push(cmRec.bse_symbol);
+    }
+
+    // Enrich from NFO cache
+    var nfoRec = null;
+    if (sid && wmsRefData.securitiesNfoMap) {
+        nfoRec = wmsRefData.securitiesNfoMap[sid];
+    }
+    if (!nfoRec && sym && wmsRefData.securitiesNfoReady) {
+        for (var j = 0; j < wmsRefData.securitiesNfo.length; j++) {
+            var n = wmsRefData.securitiesNfo[j];
+            if (n.symbol === sym) { nfoRec = n; break; }
+        }
+    }
+    if (nfoRec) {
+        if (nfoRec.symbol) parts.push(nfoRec.symbol);
+        if (nfoRec.instrument_name) parts.push(nfoRec.instrument_name);
+        if (nfoRec.underlying_symbol) parts.push(nfoRec.underlying_symbol);
+        if (nfoRec.exchange) parts.push(nfoRec.exchange);
+        if (nfoRec.expiry_date) parts.push(nfoRec.expiry_date);
+        if (nfoRec.strike_price) parts.push(String(nfoRec.strike_price));
+        if (nfoRec.option_type) parts.push(nfoRec.option_type);
+    }
+
+    return parts.join(' ').toLowerCase();
+}
+
+/**
  * Client-side symbol search across cached securities data.
  * Returns sorted results: CM first (alpha), then F&O by expiry, inactive filtered out.
  * Used by Add Transaction, Watchlist, and any future symbol search.
@@ -273,7 +340,10 @@ function wmsSearchSecurities(query) {
             var nfo = nfoAll[j];
             if (nfo.is_active === false) continue;
             if (wmsMultiTokenMatch(tokens,
-                    nfo.symbol, nfo.underlying_symbol, nfo.instrument_name)) {
+                    nfo.symbol, nfo.underlying_symbol, nfo.instrument_name,
+                    nfo.exchange, nfo.expiry_date,
+                    nfo.strike_price ? String(nfo.strike_price) : '',
+                    nfo.option_type)) {
                 nfoMatches.push(nfo);
                 if (nfoMatches.length >= 15) break;
             }

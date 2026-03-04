@@ -345,6 +345,14 @@ async function trLoadData() {
 
     trTransactions = txnData;
 
+    // Build comprehensive search text for each transaction (Rule B.9.2)
+    trTransactions.forEach(function(txn) {
+        txn._searchText = wmsBuildSecuritySearchText({
+            securityId: txn.security_id, symbol: txn.symbol,
+            shortSymbol: txn.short_symbol, companyName: txn.company_name
+        });
+    });
+
     // Use shared reference data for investors and brokers (loaded at app startup)
     if (!wmsRefData.ready) await wmsLoadRefData();
     trInvestors = wmsRefData.investors;
@@ -665,6 +673,7 @@ function trCalcHoldings() {
                 symbol: txn.symbol,
                 shortSymbol: txn.short_symbol || txn.symbol,
                 companyName: txn.company_name,
+                securityId: txn.security_id,
                 exchange: txn.exchange || 'NSE',
                 quantity: 0,
                 totalCost: 0,
@@ -710,11 +719,12 @@ function trCalcHoldings() {
     return Object.keys(holdings).map(function(key) {
         var h = holdings[key];
         if (!trShowZeroHoldings && h.quantity === 0) return null;
-        return {
+        var rec = {
             key: key,
             symbol: h.symbol,
             shortSymbol: h.shortSymbol,
             companyName: h.companyName,
+            securityId: h.securityId,
             exchange: h.exchange,
             quantity: h.quantity,
             totalCost: h.totalCost,
@@ -724,6 +734,12 @@ function trCalcHoldings() {
             tags: Object.keys(h.tags),
             latestPrice: h.latestPrice
         };
+        // Build comprehensive search text from wmsRefData (Rule B.9.2)
+        rec._searchText = wmsBuildSecuritySearchText({
+            securityId: h.securityId, symbol: h.symbol,
+            shortSymbol: h.shortSymbol, companyName: h.companyName
+        });
+        return rec;
     }).filter(function(h) { return h !== null; });
 }
 
@@ -781,11 +797,11 @@ function trRenderPortfolio() {
 
     var holdings = trCalcHoldings();
 
-    // Inline company search filter
+    // Inline company search filter (uses enriched _searchText from wmsRefData)
     if (trCompanySearchText) {
         var tokens = wmsTokenize(trCompanySearchText);
         holdings = holdings.filter(function(h) {
-            return wmsMultiTokenMatch(tokens, h.shortSymbol, h.companyName);
+            return wmsMultiTokenMatch(tokens, h._searchText);
         });
     }
 

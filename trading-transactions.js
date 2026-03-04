@@ -289,12 +289,11 @@ function trTxGetFilteredTransactions() {
         });
     }
 
-    // Filter: symbol search (multi-token AND match)
+    // Filter: symbol search (uses enriched _searchText from wmsRefData, Rule B.9.2)
     if (trTxSymbolSearch) {
         var symTokens = wmsTokenize(trTxSymbolSearch);
         filtered = filtered.filter(function(t) {
-            return wmsMultiTokenMatch(symTokens,
-                t.short_symbol || t.symbol, t.company_name);
+            return wmsMultiTokenMatch(symTokens, t._searchText);
         });
     }
 

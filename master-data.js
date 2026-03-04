@@ -1883,6 +1883,8 @@ function renderUnified(resetPage) {
         exchanges:   (r.nse_symbol ? 'NSE' : '') + (r.nse_symbol && r.bse_symbol ? ' ' : '') + (r.bse_symbol ? 'BSE' : ''),
         is_active:   r.is_active,
         isin:        r.isin || '',
+        nse_symbol:  r.nse_symbol || '',
+        bse_symbol:  r.bse_symbol || '',
         _src:        'cm'
     }));
 
@@ -1899,6 +1901,9 @@ function renderUnified(resetPage) {
         exchanges:   r.exchange || '',
         is_active:   r.is_active,
         isin:        '',
+        strike_price: r.strike_price ? String(r.strike_price) : '',
+        option_type: r.option_type || '',
+        expiry_date_str: r.expiry_date || '',
         _src:        'fo'
     }));
 
@@ -1907,7 +1912,11 @@ function renderUnified(resetPage) {
     if (q) {
         var tokens = wmsTokenize(q);
         rows = rows.filter(function(r) {
-            return wmsMultiTokenMatch(tokens, r.symbol, r.name, r.underlying, r.isin);
+            // CM: symbol, name, isin, nse_symbol, bse_symbol
+            // NFO: symbol, name, underlying, exchange, expiry_date, strike_price, option_type
+            return wmsMultiTokenMatch(tokens, r.symbol, r.name, r.isin,
+                r.nse_symbol, r.bse_symbol, r.underlying,
+                r.exchanges, r.expiry_date_str, r.strike_price, r.option_type);
         });
     }
 
