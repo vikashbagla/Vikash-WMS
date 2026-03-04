@@ -1810,15 +1810,18 @@ async function processTransactions(rawData, worksheet) {
             }
         }
 
-        // Quantity validation — income types can have blank quantity (rule F.4.3)
+        // Quantity validation — mandatory for ALL types including income
         var isIncome = transaction_type ? isIncomeType(transaction_type) : false;
-        if (!isIncome && (quantity_raw === null || quantity_raw === 0)) {
-            errors.push('quantity is required for ' + (transaction_type || 'BUY/SELL') + ' transactions');
+        if (quantity_raw === null || quantity_raw === 0) {
+            errors.push('quantity is required for ' + (transaction_type || 'all') + ' transactions');
         }
 
-        // Price validation
+        // Price validation — income types: price can be derived from amount/qty
         if (!isIncome && (price_raw === null || price_raw === 0) && (gross_amount_raw === null || gross_amount_raw === 0)) {
             errors.push('price is required');
+        }
+        if (isIncome && (price_raw === null || price_raw === 0) && (gross_amount_raw === null || gross_amount_raw === 0)) {
+            errors.push('price or amount is required for income transactions');
         }
 
         // If errors, add to error list and skip
@@ -1831,12 +1834,18 @@ async function processTransactions(rawData, worksheet) {
         var quantity = quantity_raw || 0;
         if (transaction_type === 'BUY') quantity = Math.abs(quantity);
         else if (transaction_type === 'SELL') quantity = -Math.abs(quantity);
-        else if (isIncome) quantity = Math.abs(quantity) || 1;  // Income types: default to 1 if blank (DB constraint: qty != 0)
+        else if (isIncome) quantity = Math.abs(quantity);  // Income types: always positive, user must provide qty
+
+        // Price derivation: if price is blank but amount and qty exist, calculate price = amount / qty
+        var price = price_raw || 0;
+        if ((!price_raw || price_raw === 0) && gross_amount_raw && quantity !== 0) {
+            price = Math.round(gross_amount_raw / Math.abs(quantity) * 100) / 100;
+        }
 
         // Gross amount (rule F.2.1)
         var gross_amount = gross_amount_raw;
-        if ((gross_amount === null || isNaN(gross_amount)) && quantity !== 0 && price_raw) {
-            gross_amount = Math.round(Math.abs(quantity) * price_raw * 100) / 100;
+        if ((gross_amount === null || isNaN(gross_amount)) && quantity !== 0 && price) {
+            gross_amount = Math.round(Math.abs(quantity) * price * 100) / 100;
         }
 
         // Tags normalization (rule A.2.1)
@@ -1860,7 +1869,7 @@ async function processTransactions(rawData, worksheet) {
             transaction_type: transaction_type,
             transaction_date: dateResult.date,
             quantity: quantity,
-            price: price_raw || 0,
+            price: price,
             gross_amount: gross_amount || 0,
             brokerage: brokerage_raw,           // null = auto-calc later
             stt: stt_raw,                       // null = auto-calc later
