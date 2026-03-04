@@ -798,18 +798,13 @@ function trTxAttachRowListeners() {
         });
     });
 
-    // Row click opens edit modal (except action cell and checkbox cell), but not for locked
+    // Row click opens edit modal (except action cell and checkbox cell)
+    // Locked transactions open in view-only mode (Save disabled, fields read-only)
     document.querySelectorAll('#trTx-list tr[data-txn-id]').forEach(function(row) {
         row.addEventListener('click', function(e) {
             if (e.target.closest('.action-cell')) return;
             if (e.target.closest('.trTx-checkbox-cell')) return;
-            var txnId = row.dataset.txnId;
-            var txn = trTransactions.find(function(t) { return t.id === txnId; });
-            if (txn && txn.is_locked) {
-                showAlert('Transaction is locked. Unlock it first to edit.', 'error');
-                return;
-            }
-            trOpenEditModal(txnId);
+            trOpenEditModal(row.dataset.txnId);
         });
     });
 

@@ -430,14 +430,18 @@
     color: #a0aec0;
     border-color: #edf2f7;
 }
-.edit-row input.editable-field {
+.edit-row input.editable-field, .edit-row select.editable-field {
     background: #fff;
     border-color: #cbd5e0;
 }
 .edit-row input.computed-field {
     background: #f0fdf4;
 }
-.edit-row input.amt-field { text-align: left; }
+.edit-row input.editable-field.computed-field {
+    background: #f0fdf4;
+    border-color: #cbd5e0;
+}
+.edit-row input.amt-field { text-align: right; font-variant-numeric: tabular-nums; }
 .edit-form-flags {
     display: flex;
     gap: 18px;
@@ -486,6 +490,28 @@
     border-radius: 3px;
     letter-spacing: 0.3px;
 }
+/* Tag pills & dropdown in edit modal (mirrors addTxn styles) */
+.edit-modal .addTxn-tag-pills { display: flex; flex-wrap: wrap; gap: 2px; }
+.edit-modal .addTxn-tag-pills .wms-pill {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 1px 7px; font-size: 10px; background: #e2e8f0; color: #4a5568;
+    border-radius: 10px; cursor: pointer; white-space: nowrap;
+}
+.edit-modal .addTxn-tag-pills .wms-pill.on { background: #bee3f8; color: #2b6cb0; }
+.edit-modal .addTxn-tag-pills .wms-pill-remove { font-size: 12px; font-weight: 700; margin-left: 1px; cursor: pointer; }
+.edit-modal .addTxn-tag-dd {
+    display: none; position: absolute; bottom: 100%; left: 0; right: 0; z-index: 200;
+    background: white; border: 1px solid #cbd5e0; border-radius: 3px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12); max-height: 120px; overflow-y: auto;
+    padding: 4px 6px; flex-wrap: wrap; gap: 3px;
+}
+.edit-modal .addTxn-tag-dd.show { display: flex; }
+.edit-modal .addTxn-tag-dd .wms-dd-item {
+    display: inline-block; padding: 2px 8px; font-size: 10px;
+    background: #e2e8f0; color: #4a5568; border-radius: 10px; cursor: pointer; white-space: nowrap;
+}
+.edit-modal .addTxn-tag-dd .wms-dd-item:hover,
+.edit-modal .addTxn-tag-dd .wms-dd-item.wms-dd-highlight { background: #cbd5e0; }
 
 /* Consistent button styles */
 .btn-primary {
@@ -499,6 +525,7 @@
     cursor: pointer;
 }
 .btn-primary:hover { background: #5a67d8; }
+.btn-primary:disabled { background: #cbd5e0; cursor: not-allowed; }
 .btn-secondary {
     background: #f7fafc;
     color: #4a5568;
@@ -698,21 +725,25 @@
                 <span class="sec-type-badge" id="trEditBannerType"></span>
             </div>
 
-            <!-- SECTION: Parties -->
+            <!-- SECTION: Parties & Reference -->
             <div class="edit-section">
                 <div class="edit-section-label">Parties</div>
-                <div class="edit-row cols-3">
+                <div class="edit-row cols-4">
                     <div class="form-group">
                         <label>Investor</label>
                         <input type="text" id="trEditInvestor" disabled>
                     </div>
                     <div class="form-group">
-                        <label>Trader</label>
-                        <input type="text" id="trEditTraderDisplay" disabled>
-                    </div>
-                    <div class="form-group">
                         <label>Broker</label>
                         <input type="text" id="trEditBroker" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>Contract Note No</label>
+                        <input type="text" id="trEditCnNo" class="editable-field">
+                    </div>
+                    <div class="form-group">
+                        <label>Trader</label>
+                        <select id="trEditTrader" class="editable-field"></select>
                     </div>
                 </div>
             </div>
@@ -725,7 +756,7 @@
                 <div class="edit-row cols-4">
                     <div class="form-group">
                         <label>Date</label>
-                        <input type="text" id="trEditDate" disabled>
+                        <input type="text" id="trEditDate" disabled style="text-align:right;">
                     </div>
                     <div class="form-group">
                         <label>Type</label>
@@ -742,12 +773,12 @@
                 </div>
                 <div class="edit-row cols-4">
                     <div class="form-group">
-                        <label>Quantity</label>
-                        <input type="text" id="trEditQty" disabled class="amt-field">
-                    </div>
-                    <div class="form-group">
                         <label>Lots</label>
                         <input type="text" id="trEditLots" disabled class="amt-field">
+                    </div>
+                    <div class="form-group">
+                        <label>Quantity</label>
+                        <input type="text" id="trEditQty" disabled class="amt-field">
                     </div>
                     <div class="form-group">
                         <label>Price</label>
@@ -755,90 +786,71 @@
                     </div>
                     <div class="form-group">
                         <label>Gross Amount</label>
-                        <input type="text" id="trEditGross" disabled class="computed-field amt-field">
+                        <input type="text" id="trEditGross" class="editable-field computed-field amt-field">
                     </div>
                 </div>
             </div>
 
             <hr class="edit-section-divider">
 
-            <!-- SECTION: Charges (editable) -->
+            <!-- SECTION: Charges -->
             <div class="edit-section">
                 <div class="edit-section-label">Charges</div>
                 <div class="edit-row cols-3">
                     <div class="form-group">
                         <label>Brokerage</label>
-                        <input type="number" id="trEditBrokerage" step="0.01" class="editable-field amt-field">
+                        <input type="text" id="trEditBrokerage" class="editable-field amt-field">
                     </div>
                     <div class="form-group">
                         <label>STT</label>
-                        <input type="number" id="trEditStt" step="0.01" class="editable-field amt-field">
+                        <input type="text" id="trEditStt" class="editable-field amt-field">
                     </div>
                     <div class="form-group">
                         <label>Other Charges</label>
-                        <input type="number" id="trEditOther" step="0.01" class="editable-field amt-field">
+                        <input type="text" id="trEditOther" class="editable-field amt-field">
                     </div>
                 </div>
                 <div class="edit-row cols-3">
                     <div class="form-group">
                         <label>GST</label>
-                        <input type="number" id="trEditGst" step="0.01" class="editable-field amt-field">
+                        <input type="text" id="trEditGst" class="editable-field amt-field">
                     </div>
                     <div class="form-group">
                         <label>TDS</label>
-                        <input type="number" id="trEditTds" step="0.01" class="editable-field amt-field">
+                        <input type="text" id="trEditTds" class="editable-field amt-field">
                     </div>
                     <div class="form-group">
                         <label>Total Charges</label>
-                        <input type="text" id="trEditTotalCharges" disabled class="computed-field amt-field">
+                        <input type="text" id="trEditTotalCharges" class="editable-field computed-field amt-field">
                     </div>
                 </div>
                 <div class="edit-row cols-3">
                     <div class="form-group">
-                        <label>Trader Charges</label>
-                        <input type="text" id="trEditTraderCharges" disabled class="amt-field">
+                        <label>Net Amount</label>
+                        <input type="text" id="trEditNetAmount" class="editable-field computed-field amt-field">
                     </div>
                     <div class="form-group">
-                        <label>Net Amount</label>
-                        <input type="text" id="trEditNetAmount" disabled class="computed-field amt-field">
+                        <label>Trader Charges</label>
+                        <input type="text" id="trEditTraderCharges" class="editable-field amt-field">
                     </div>
                     <div class="form-group">
                         <label>Margin Blocked</label>
-                        <input type="number" id="trEditMargin" step="0.01" class="editable-field amt-field">
+                        <input type="text" id="trEditMargin" class="editable-field amt-field">
                     </div>
                 </div>
             </div>
 
             <hr class="edit-section-divider">
 
-            <!-- SECTION: Reference -->
-            <div class="edit-section">
-                <div class="edit-section-label">Reference</div>
-                <div class="edit-row cols-3">
-                    <div class="form-group">
-                        <label>Contract Note No</label>
-                        <input type="text" id="trEditCnNo" class="editable-field">
-                    </div>
-                    <div class="form-group">
-                        <label>Trade ID</label>
-                        <input type="text" id="trEditTradeId" disabled>
-                    </div>
-                    <div class="form-group">
-                        <label>Security ID</label>
-                        <input type="text" id="trEditSecurityId" disabled style="font-size:10px;">
-                    </div>
-                </div>
-            </div>
-
-            <hr class="edit-section-divider">
-
-            <!-- SECTION: Tags & Notes (editable) -->
+            <!-- SECTION: Tags & Notes -->
             <div class="edit-section">
                 <div class="edit-section-label">Tags & Notes</div>
                 <div class="edit-row cols-2">
-                    <div class="form-group">
-                        <label>Tags (comma-separated)</label>
-                        <input type="text" id="trEditTags" class="editable-field" placeholder="e.g. swing, fno">
+                    <div class="form-group" style="position:relative;">
+                        <label>Tags</label>
+                        <input type="text" id="trEditTagsInput" class="editable-field" placeholder="Type tag + Enter or comma..." autocomplete="off">
+                        <div class="addTxn-tag-pills" id="trEditTagPills" style="margin-top:3px;"></div>
+                        <div class="addTxn-tag-dd" id="trEditTagDd"></div>
                     </div>
                     <div class="form-group">
                         <label>Notes</label>
@@ -852,7 +864,7 @@
             <!-- SECTION: Flags -->
             <div class="edit-section">
                 <div class="edit-form-flags">
-                    <label class="flag-label"><input type="checkbox" id="trEditLocked"> Locked</label>
+                    <label class="flag-label"><input type="checkbox" id="trEditLocked" disabled> Locked</label>
                     <label class="flag-label"><input type="checkbox" id="trEditDontDisplay"> Don't Display</label>
                     <label class="flag-label"><input type="checkbox" id="trEditIgnoreAvg"> Ignore for Avg Cost</label>
                 </div>

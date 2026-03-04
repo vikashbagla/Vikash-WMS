@@ -34,6 +34,7 @@ var trOpenActionMenu = null;
 var trCurrentTxnModalKey = null;
 var trCurrentTxnInvestorId = null; // optional investor filter for txn modal
 var trEditingTxnId = null;
+var trEditTagCtrl = null;  // wmsTagInput controller for edit modal
 
 // Txn modal state
 var trTxnSortColumn = 'date';
@@ -214,10 +215,8 @@ function trSetupEventHandlers() {
         if (e.target === this) trCloseEditModal();
     });
 
-    // Edit modal auto-calc — charges only (qty/price/type are read-only)
-    ['trEditBrokerage', 'trEditStt', 'trEditOther', 'trEditGst', 'trEditTds'].forEach(function(id) {
-        document.getElementById(id).addEventListener('input', trRecalcCharges);
-    });
+    // Edit modal — recalculate trader_charges when trader changes
+    document.getElementById('trEditTrader').addEventListener('change', trRecalcTraderCharges);
 
     // Close action menus on outside click
     document.addEventListener('click', function(e) {
@@ -1474,55 +1473,93 @@ async function trDeleteTransaction(txnId) {
 // EDIT MODAL
 // ============================================================================
 
+// Format number: 2 decimal places with comma grouping (no unit conversion)
+function trEditFmt(val) {
+    var n = parseFloat(val) || 0;
+    return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// Parse formatted number back to float (strip commas)
+function trEditParse(el) {
+    return parseFloat((el.value || '0').replace(/,/g, '')) || 0;
+}
+
 function trOpenEditModal(txnId) {
     var txn = trTransactions.find(function(t) { return t.id === txnId; });
     if (!txn) return;
     trEditingTxnId = txnId;
+
+    var isSell = txn.transaction_type === 'SELL';
 
     // Security identity banner
     document.getElementById('trEditBannerSymbol').textContent = txn.short_symbol || txn.symbol || '-';
     document.getElementById('trEditBannerCompany').textContent = txn.company_name || '';
     document.getElementById('trEditBannerType').textContent = txn.security_type || '-';
 
-    // Parties (all read-only)
+    // Parties
     document.getElementById('trEditInvestor').value = trInvName(txn.investor_id);
-    document.getElementById('trEditTraderDisplay').value = txn.trader_id ? trInvName(txn.trader_id) : '-';
     document.getElementById('trEditBroker').value = trBrkCode(txn.broker_id) || '-';
+    document.getElementById('trEditCnNo').value = txn.broker_contract_note_no || '';
+
+    // Trader dropdown (editable)
+    var traderSelect = document.getElementById('trEditTrader');
+    traderSelect.innerHTML = '<option value="">(Same as Investor)</option>' +
+        trInvestors.map(function(inv) {
+            var label = inv.short_name || inv.name;
+            var selected = inv.id === txn.trader_id ? ' selected' : '';
+            return '<option value="' + inv.id + '"' + selected + '>' + label + '</option>';
+        }).join('');
 
     // Trade details (all read-only)
     document.getElementById('trEditDate').value = formatDate(txn.transaction_date);
     document.getElementById('trEditType').value = txn.transaction_type || '-';
     document.getElementById('trEditExchange').value = txn.exchange || '-';
     document.getElementById('trEditProduct').value = txn.product || '-';
-    document.getElementById('trEditQty').value = Math.abs(txn.quantity) || 0;
-    document.getElementById('trEditLots').value = txn.lots || 0;
-    document.getElementById('trEditPrice').value = formatPrice(txn.price || 0, false);
-    var grossEl = document.getElementById('trEditGross');
-    grossEl.value = formatPrice(txn.gross_amount || 0, false);
-    grossEl.dataset.rawValue = (txn.gross_amount || 0).toFixed(2);
 
-    // Charges (editable)
-    document.getElementById('trEditBrokerage').value = txn.brokerage || 0;
-    document.getElementById('trEditStt').value = txn.stt || 0;
-    document.getElementById('trEditOther').value = txn.other_charges || 0;
-    document.getElementById('trEditGst').value = txn.gst || 0;
-    document.getElementById('trEditTds').value = txn.tds || 0;
-    var totalEl = document.getElementById('trEditTotalCharges');
-    totalEl.value = formatPrice(txn.total_charges || 0, false);
-    totalEl.dataset.rawValue = (txn.total_charges || 0).toFixed(2);
-    document.getElementById('trEditTraderCharges').value = formatPrice(txn.trader_charges || 0, false);
-    var netEl = document.getElementById('trEditNetAmount');
-    netEl.value = formatPrice(txn.net_amount || 0, false);
-    netEl.dataset.rawValue = (txn.net_amount || 0).toFixed(2);
-    document.getElementById('trEditMargin').value = txn.margin_blocked || 0;
+    // Lots before Qty — for SELL show both as absolute values (schema stores negative qty, lots can be negative)
+    var lotsVal = parseFloat(txn.lots) || 0;
+    var qtyVal = txn.quantity || 0;
+    document.getElementById('trEditLots').value = isSell ? Math.abs(lotsVal) : lotsVal;
+    document.getElementById('trEditQty').value = isSell ? Math.abs(qtyVal) : qtyVal;
+    document.getElementById('trEditPrice').value = trEditFmt(txn.price || 0);
 
-    // Reference
-    document.getElementById('trEditCnNo').value = txn.broker_contract_note_no || '';
-    document.getElementById('trEditTradeId').value = txn.broker_trade_id || '-';
-    document.getElementById('trEditSecurityId').value = txn.security_id || '-';
+    // Gross amount (editable, computed highlight)
+    document.getElementById('trEditGross').value = trEditFmt(txn.gross_amount || 0);
 
-    // Tags & Notes (editable)
-    document.getElementById('trEditTags').value = (txn.tags || []).filter(function(t) { return t !== 'blank'; }).join(', ');
+    // Charges (all editable, formatted with commas)
+    document.getElementById('trEditBrokerage').value = trEditFmt(txn.brokerage || 0);
+    document.getElementById('trEditStt').value = trEditFmt(txn.stt || 0);
+    document.getElementById('trEditOther').value = trEditFmt(txn.other_charges || 0);
+    document.getElementById('trEditGst').value = trEditFmt(txn.gst || 0);
+    document.getElementById('trEditTds').value = trEditFmt(txn.tds || 0);
+    document.getElementById('trEditTotalCharges').value = trEditFmt(txn.total_charges || 0);
+
+    // Net amount, then trader charges, then margin
+    document.getElementById('trEditNetAmount').value = trEditFmt(txn.net_amount || 0);
+    document.getElementById('trEditTraderCharges').value = trEditFmt(txn.trader_charges || 0);
+    document.getElementById('trEditMargin').value = trEditFmt(txn.margin_blocked || 0);
+
+    // Tags — pill-based input using wmsTagInput
+    if (trEditTagCtrl) { trEditTagCtrl.destroy(); trEditTagCtrl = null; }
+    var currentTags = (txn.tags || []).filter(function(t) { return t !== 'blank'; });
+    // Collect all existing tags across transactions for autocomplete
+    var allExistingTags = {};
+    trTransactions.forEach(function(t) {
+        if (t.tags) t.tags.forEach(function(tag) { if (tag && tag !== 'blank') allExistingTags[tag] = true; });
+    });
+    var tagInput = document.getElementById('trEditTagsInput');
+    var tagPills = document.getElementById('trEditTagPills');
+    var tagDd = document.getElementById('trEditTagDd');
+    tagInput.value = '';
+    tagPills.innerHTML = '';
+    tagDd.innerHTML = '';
+    trEditTagCtrl = wmsTagInput(tagInput, tagPills, tagDd, {
+        tags: currentTags.slice(),
+        existingTags: Object.keys(allExistingTags).sort(),
+        onChange: function() {}
+    });
+
+    // Notes (editable)
     document.getElementById('trEditNotes').value = txn.notes || '';
 
     // Flags
@@ -1534,9 +1571,12 @@ function trOpenEditModal(txnId) {
     var lockWarn = document.getElementById('trEditLockWarning');
     lockWarn.style.display = txn.is_locked ? '' : 'none';
 
-    // Disable editable fields if locked (only the .editable-field inputs + checkboxes)
-    var editableFields = document.querySelectorAll('#trEditForm .editable-field, #trEditForm input[type="checkbox"]:not(#trEditLocked)');
-    editableFields.forEach(function(f) { f.disabled = !!txn.is_locked; });
+    // Disable editable fields and Save button if locked
+    var isLocked = !!txn.is_locked;
+    var editableFields = document.querySelectorAll('#trEditForm .editable-field, #trEditForm select.editable-field, #trEditForm input[type="checkbox"]:not(#trEditLocked)');
+    editableFields.forEach(function(f) { f.disabled = isLocked; });
+    document.getElementById('trEditSaveBtn').disabled = isLocked;
+    document.getElementById('trEditModalTitle').textContent = isLocked ? 'View Transaction (Locked)' : 'Edit Transaction';
 
     document.getElementById('trEditModal').classList.add('show');
 }
@@ -1546,24 +1586,24 @@ function trCloseEditModal() {
     trEditingTxnId = null;
 }
 
-function trRecalcCharges() {
-    var brokerage = parseFloat(document.getElementById('trEditBrokerage').value) || 0;
-    var stt = parseFloat(document.getElementById('trEditStt').value) || 0;
-    var other = parseFloat(document.getElementById('trEditOther').value) || 0;
-    var gst = parseFloat(document.getElementById('trEditGst').value) || 0;
-    var tds = parseFloat(document.getElementById('trEditTds').value) || 0;
-    var totalCharges = brokerage + stt + other + gst + tds;
-    document.getElementById('trEditTotalCharges').value = formatPrice(totalCharges, false);
-    document.getElementById('trEditTotalCharges').dataset.rawValue = totalCharges.toFixed(2);
-
-    var grossEl = document.getElementById('trEditGross');
-    var gross = parseFloat(grossEl.dataset.rawValue || grossEl.value.replace(/,/g, '')) || 0;
-    // Read type from the read-only text input
+// Recalculate trader_charges when trader dropdown changes
+function trRecalcTraderCharges() {
+    if (!trEditingTxnId) return;
     var txn = trTransactions.find(function(t) { return t.id === trEditingTxnId; });
-    var type = txn ? txn.transaction_type : 'BUY';
-    var net = type === 'BUY' ? gross + totalCharges : gross - totalCharges;
-    document.getElementById('trEditNetAmount').value = formatPrice(net, false);
-    document.getElementById('trEditNetAmount').dataset.rawValue = net.toFixed(2);
+    if (!txn) return;
+
+    var traderId = document.getElementById('trEditTrader').value || txn.investor_id;
+    var investorId = txn.investor_id;
+    var brokerId = txn.broker_id;
+
+    if (traderId !== investorId && wmsRefData && wmsRefData.ibaRatesMap) {
+        var gross = Math.abs(parseFloat(txn.gross_amount) || 0);
+        var traderCharges = wmsGetBrokerage(wmsRefData.ibaRatesMap, traderId, brokerId, gross,
+            txn.security_type, txn.asset_class, txn.price, txn.quantity, txn.lots);
+        document.getElementById('trEditTraderCharges').value = trEditFmt(traderCharges);
+    } else {
+        document.getElementById('trEditTraderCharges').value = trEditFmt(0);
+    }
 }
 
 async function trSaveEdit() {
@@ -1572,29 +1612,33 @@ async function trSaveEdit() {
     var txn = trTransactions.find(function(t) { return t.id === trEditingTxnId; });
     if (!txn) return;
 
-    var isLocked = document.getElementById('trEditLocked').checked;
-    if (txn.is_locked && isLocked) {
-        showAlert('Transaction is locked. Uncheck the lock to save changes.', 'error');
+    // Locked transactions cannot be edited
+    if (txn.is_locked) {
+        showAlert('Transaction is locked and cannot be edited.', 'error');
         return;
     }
 
-    var tagsRaw = document.getElementById('trEditTags').value.trim();
-    var tags = tagsRaw ? tagsRaw.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : ['blank'];
+    var tags = trEditTagCtrl ? trEditTagCtrl.getTags() : [];
+    if (tags.length === 0) tags = ['blank'];
 
-    // Only save editable fields: charges, contract note, tags, notes, flags
+    var traderVal = document.getElementById('trEditTrader').value;
+
+    // Save editable fields — values saved directly to DB as entered
     var body = {
-        brokerage: parseFloat(document.getElementById('trEditBrokerage').value) || 0,
-        stt: parseFloat(document.getElementById('trEditStt').value) || 0,
-        other_charges: parseFloat(document.getElementById('trEditOther').value) || 0,
-        gst: parseFloat(document.getElementById('trEditGst').value) || 0,
-        tds: parseFloat(document.getElementById('trEditTds').value) || 0,
-        total_charges: parseFloat(document.getElementById('trEditTotalCharges').dataset.rawValue || document.getElementById('trEditTotalCharges').value.replace(/,/g, '')) || 0,
-        net_amount: parseFloat(document.getElementById('trEditNetAmount').dataset.rawValue || document.getElementById('trEditNetAmount').value.replace(/,/g, '')) || 0,
-        margin_blocked: parseFloat(document.getElementById('trEditMargin').value) || 0,
+        trader_id: traderVal || null,
+        gross_amount: trEditParse(document.getElementById('trEditGross')),
+        brokerage: trEditParse(document.getElementById('trEditBrokerage')),
+        stt: trEditParse(document.getElementById('trEditStt')),
+        other_charges: trEditParse(document.getElementById('trEditOther')),
+        gst: trEditParse(document.getElementById('trEditGst')),
+        tds: trEditParse(document.getElementById('trEditTds')),
+        total_charges: trEditParse(document.getElementById('trEditTotalCharges')),
+        net_amount: trEditParse(document.getElementById('trEditNetAmount')),
+        trader_charges: trEditParse(document.getElementById('trEditTraderCharges')),
+        margin_blocked: trEditParse(document.getElementById('trEditMargin')),
         broker_contract_note_no: document.getElementById('trEditCnNo').value.trim() || null,
         tags: tags,
         notes: document.getElementById('trEditNotes').value || null,
-        is_locked: isLocked,
         ignore_for_avg_cost: document.getElementById('trEditIgnoreAvg').checked,
         dont_display: document.getElementById('trEditDontDisplay').checked
     };
