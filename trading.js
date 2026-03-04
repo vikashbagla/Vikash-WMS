@@ -505,7 +505,7 @@ function trToggleZeroHoldings() {
 
 function trInitFilterPills() {
     // Investor filter
-    var invItems = trInvestors.map(function(inv) { return {id: inv.id, label: inv.short_name || inv.name}; });
+    var invItems = trInvestors.map(function(inv) { return {id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '')}; });
     trInvPillFilter = wmsPillFilter(
         document.getElementById('tr-investor-search'),
         document.getElementById('tr-investor-dropdown'),
@@ -518,7 +518,7 @@ function trInitFilterPills() {
     );
 
     // Trader filter (same investors list)
-    var trdItems = trInvestors.map(function(inv) { return {id: inv.id, label: inv.short_name || inv.name}; });
+    var trdItems = trInvestors.map(function(inv) { return {id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '')}; });
     trTrdPillFilter = wmsPillFilter(
         document.getElementById('tr-trader-search'),
         document.getElementById('tr-trader-dropdown'),
@@ -531,7 +531,7 @@ function trInitFilterPills() {
     );
 
     // Broker filter
-    var brkItems = trBrokers.map(function(b) { return {id: b.id, label: b.broker_code || b.name}; });
+    var brkItems = trBrokers.map(function(b) { return {id: b.id, label: b.broker_code || b.name, searchText: (b.name || '') + ' ' + (b.broker_code || '')}; });
     trBrkPillFilter = wmsPillFilter(
         document.getElementById('tr-broker-search'),
         document.getElementById('tr-broker-dropdown'),

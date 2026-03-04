@@ -1101,6 +1101,15 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
     var onChange = opts.onChange || function() {};
     var pillClass = opts.pillClass || 'wms-pill';
 
+    // Build searchText for each item: label + any extra searchable fields
+    items.forEach(function(item) {
+        if (!item._searchText) {
+            var parts = [item.label || ''];
+            if (item.searchText) parts.push(item.searchText);
+            item._searchText = parts.join(' ').toLowerCase();
+        }
+    });
+
     function render() {
         ddEl.innerHTML = items.map(function(item) {
             var isOn = selectedIds.indexOf(item.id) >= 0;
@@ -1156,9 +1165,13 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
     inputEl.addEventListener('click', function() { ddEl.classList.add('show'); });
     inputEl.addEventListener('input', function() {
         ddEl.classList.add('show');
-        var query = inputEl.value.toLowerCase();
-        ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
-            pill.style.display = pill.textContent.toLowerCase().indexOf(query) >= 0 ? '' : 'none';
+        var tokens = wmsTokenize(inputEl.value);
+        var pills = ddEl.querySelectorAll('.' + pillClass);
+        pills.forEach(function(pill, idx) {
+            if (tokens.length === 0) { pill.style.display = ''; return; }
+            var item = items[idx];
+            var searchText = item ? item._searchText : pill.textContent.toLowerCase();
+            pill.style.display = wmsMultiTokenMatch(tokens, searchText) ? '' : 'none';
         });
     });
 

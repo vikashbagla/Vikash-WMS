@@ -67,7 +67,7 @@ function trTxInitPills() {
     var invDd = document.getElementById('trTx-investor-dropdown');
     var invTags = document.getElementById('trTx-selected-investors');
     if (invInput && invDd) {
-        var invItems = trInvestors.map(function(inv) { return {id: String(inv.id), label: inv.short_name || inv.name}; });
+        var invItems = trInvestors.map(function(inv) { return {id: String(inv.id), label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '')}; });
         trTxInvPillFilter = wmsPillFilter(invInput, invDd, invTags, {
             items: invItems,
             selectedIds: trTxSelectedInvestorIds,
@@ -81,7 +81,7 @@ function trTxInitPills() {
     var trdDd = document.getElementById('trTx-trader-dropdown');
     var trdTags = document.getElementById('trTx-selected-traders');
     if (trdInput && trdDd) {
-        var trdItems = trInvestors.map(function(inv) { return {id: String(inv.id), label: inv.short_name || inv.name}; });
+        var trdItems = trInvestors.map(function(inv) { return {id: String(inv.id), label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '')}; });
         trTxTrdPillFilter = wmsPillFilter(trdInput, trdDd, trdTags, {
             items: trdItems,
             selectedIds: trTxSelectedTraderIds,
@@ -95,7 +95,7 @@ function trTxInitPills() {
     var brkDd = document.getElementById('trTx-broker-dropdown');
     var brkTags = document.getElementById('trTx-selected-brokers');
     if (brkInput && brkDd) {
-        var brkItems = trBrokers.map(function(b) { return {id: String(b.id), label: b.broker_code || b.name}; });
+        var brkItems = trBrokers.map(function(b) { return {id: String(b.id), label: b.broker_code || b.name, searchText: (b.name || '') + ' ' + (b.broker_code || '')}; });
         trTxBrkPillFilter = wmsPillFilter(brkInput, brkDd, brkTags, {
             items: brkItems,
             selectedIds: trTxSelectedBrokerIds,
