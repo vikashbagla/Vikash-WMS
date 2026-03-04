@@ -1831,10 +1831,10 @@ async function processTransactions(rawData, worksheet) {
             validRows.push({
                 rowNum: rowNum,
                 investor_id: investorMatch ? investorMatch.id : null,
-                investor_name: investorMatch ? investorMatch.name : (investor_raw || ''),
-                trader_id: null, trader_name: null,
+                investor_name: investorMatch ? investorMatch.name : (investor_name || ''),
+                trader_id: null, trader_name: trader_name || '',
                 broker_id: brokerMatch ? brokerMatch.id : null,
-                broker_name: brokerMatch ? brokerMatch.name : (broker_raw || ''),
+                broker_name: brokerMatch ? brokerMatch.name : (broker_name || ''),
                 symbol: symbol_raw || '—',
                 security_type: security_type_raw,
                 transaction_type: transaction_type || '—',
