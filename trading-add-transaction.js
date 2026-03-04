@@ -183,8 +183,9 @@ function setupAddTxnInvBrkSearch() {
             // Show all pairs when empty (on focus)
             atInvBrkDdItems = atInvBrkPairs;
         } else {
+            var tokens = wmsTokenize(q);
             atInvBrkDdItems = atInvBrkPairs.filter(function(pair) {
-                return pair.searchStr.indexOf(q) !== -1;
+                return wmsMultiTokenMatch(tokens, pair.searchStr);
             });
         }
 

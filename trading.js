@@ -783,10 +783,9 @@ function trRenderPortfolio() {
 
     // Inline company search filter
     if (trCompanySearchText) {
-        var q = trCompanySearchText.toLowerCase();
+        var tokens = wmsTokenize(trCompanySearchText);
         holdings = holdings.filter(function(h) {
-            return (h.shortSymbol && h.shortSymbol.toLowerCase().indexOf(q) >= 0) ||
-                   (h.companyName && h.companyName.toLowerCase().indexOf(q) >= 0);
+            return wmsMultiTokenMatch(tokens, h.shortSymbol, h.companyName);
         });
     }
 

@@ -1904,11 +1904,12 @@ function renderUnified(resetPage) {
 
     let rows = [...cmRows, ...foRows];
 
-    if (q) rows = rows.filter(r =>
-        r.symbol.toLowerCase().includes(q) ||
-        r.name.toLowerCase().includes(q) ||
-        r.underlying.toLowerCase().includes(q) ||
-        r.isin.toLowerCase().startsWith(q));
+    if (q) {
+        var tokens = wmsTokenize(q);
+        rows = rows.filter(function(r) {
+            return wmsMultiTokenMatch(tokens, r.symbol, r.name, r.underlying, r.isin);
+        });
+    }
 
     if (fTypes.size) rows = rows.filter(r => fTypes.has(r.type));
 

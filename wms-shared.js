@@ -197,14 +197,57 @@ async function wmsLoadSecuritiesNfo(retryCount) {
     }
 }
 
+// ============================================================================
+// MULTI-TOKEN SEARCH HELPER (Rule B.9.2)
+// Splits query into tokens, returns true if ALL tokens match at least one field.
+// Used by ALL search/filter across the app — single source of truth.
+// Usage: wmsMultiTokenMatch(tokens, field1, field2, ...)
+//   tokens = array from wmsTokenize(query)
+//   remaining args = string fields to search against
+// ============================================================================
+
+/**
+ * Tokenize a search query: lowercase, split on whitespace, remove empties.
+ * Returns array of lowercase tokens. Returns [] if input is empty.
+ */
+function wmsTokenize(query) {
+    var q = (query || '').trim().toLowerCase();
+    if (!q) return [];
+    return q.split(/\s+/);
+}
+
+/**
+ * Multi-token AND match. Returns true if EVERY token in `tokens` is found
+ * in at least one of the remaining string arguments.
+ * Concatenates all fields into one string for matching — so a token can
+ * match across any field.
+ *
+ * @param {string[]} tokens - Array from wmsTokenize()
+ * @param {...string} fields - One or more string fields to search
+ * @returns {boolean}
+ */
+function wmsMultiTokenMatch(tokens) {
+    // Build combined lowercase string from all field arguments
+    var parts = [];
+    for (var i = 1; i < arguments.length; i++) {
+        if (arguments[i]) parts.push(String(arguments[i]).toLowerCase());
+    }
+    var combined = parts.join(' ');
+    // Every token must appear somewhere in the combined string
+    for (var t = 0; t < tokens.length; t++) {
+        if (combined.indexOf(tokens[t]) === -1) return false;
+    }
+    return true;
+}
+
 /**
  * Client-side symbol search across cached securities data.
  * Returns sorted results: CM first (alpha), then F&O by expiry, inactive filtered out.
  * Used by Add Transaction, Watchlist, and any future symbol search.
  */
 function wmsSearchSecurities(query) {
-    var q = (query || '').trim().toLowerCase();
-    if (!q) return [];
+    var tokens = wmsTokenize(query);
+    if (tokens.length === 0) return [];
 
     // Search CM securities (active only)
     var cmMatches = [];
@@ -213,11 +256,9 @@ function wmsSearchSecurities(query) {
         for (var i = 0; i < cmAll.length; i++) {
             var sec = cmAll[i];
             if (sec.is_active === false) continue;
-            if ((sec.symbol || '').toLowerCase().indexOf(q) !== -1 ||
-                (sec.nse_symbol || '').toLowerCase().indexOf(q) !== -1 ||
-                (sec.bse_symbol || '').toLowerCase().indexOf(q) !== -1 ||
-                (sec.company_name || '').toLowerCase().indexOf(q) !== -1 ||
-                (sec.isin || '').toLowerCase().indexOf(q) === 0) {
+            if (wmsMultiTokenMatch(tokens,
+                    sec.symbol, sec.nse_symbol, sec.bse_symbol,
+                    sec.company_name, sec.isin)) {
                 cmMatches.push(sec);
                 if (cmMatches.length >= 20) break;
             }
@@ -231,9 +272,8 @@ function wmsSearchSecurities(query) {
         for (var j = 0; j < nfoAll.length; j++) {
             var nfo = nfoAll[j];
             if (nfo.is_active === false) continue;
-            if ((nfo.symbol || '').toLowerCase().indexOf(q) !== -1 ||
-                (nfo.underlying_symbol || '').toLowerCase().indexOf(q) !== -1 ||
-                (nfo.instrument_name || '').toLowerCase().indexOf(q) !== -1) {
+            if (wmsMultiTokenMatch(tokens,
+                    nfo.symbol, nfo.underlying_symbol, nfo.instrument_name)) {
                 nfoMatches.push(nfo);
                 if (nfoMatches.length >= 15) break;
             }

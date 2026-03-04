@@ -289,12 +289,12 @@ function trTxGetFilteredTransactions() {
         });
     }
 
-    // Filter: symbol search
+    // Filter: symbol search (multi-token AND match)
     if (trTxSymbolSearch) {
+        var symTokens = wmsTokenize(trTxSymbolSearch);
         filtered = filtered.filter(function(t) {
-            var sym = (t.short_symbol || t.symbol || '').toLowerCase();
-            var co = (t.company_name || '').toLowerCase();
-            return sym.indexOf(trTxSymbolSearch) >= 0 || co.indexOf(trTxSymbolSearch) >= 0;
+            return wmsMultiTokenMatch(symTokens,
+                t.short_symbol || t.symbol, t.company_name);
         });
     }
 
