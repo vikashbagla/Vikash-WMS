@@ -505,8 +505,34 @@ function wmsCalcFifoCost(transactions) {
 
 // ============================================================================
 // SHARED LIVE PRICE CACHE + FETCH PROTOCOL
-// Both Positions and Watchlist read/write this cache so prices are shared.
-// Key = shortSymbol (underlying), Value = { lp, ch, chp, high, low, resolvedSymbol }
+// ============================================================================
+//
+// SINGLE SOURCE OF TRUTH for equity price resolution.
+// Both Positions (trading.js) and Watchlist (trading-watchlist.js) use this.
+//
+// Architecture:
+//   wmsLivePrices    — shared cache, key = shortSymbol (underlying)
+//   wmsFetchEquityPrices() — 3-stage resolution, writes to wmsLivePrices
+//
+// Consumers:
+//   Positions:  calls wmsFetchEquityPrices() directly in trFetchLivePrices()
+//   Watchlist:  Stage 1 (Fyers batch) is watchlist-specific because it uses
+//               per-item _fyersSymbol (which may already be BSE/broker_tokens).
+//               For unresolved equity items, it delegates to wmsFetchEquityPrices().
+//               After each fetch cycle, trWlSyncToSharedCache() copies all
+//               watchlist equity prices into wmsLivePrices.
+//
+// If a price is already in wmsLivePrices with lp > 0, it's reused (not refetched).
+// This means: if Watchlist runs first, Positions skips those symbols.
+//
+// Protocol (3 stages):
+//   Stage 1: Fyers batch with NSE:SYMBOL-EQ
+//   Stage 2: Alternate Fyers symbols (BSE, -SM, broker_tokens from securities_db)
+//   Stage 3: Yahoo Finance fallback via Supabase edge function
+//
+// Stages 2+3 only run on the first fetch cycle (not auto-refresh).
+// Resolved symbols are persisted to securities_db.broker_tokens via
+// wmsUpdateBrokerToken() so future fetches hit Stage 1 directly.
 // ============================================================================
 
 var wmsLivePrices = {};       // shortSymbol → { lp, ch, chp, high, low, resolvedSymbol }

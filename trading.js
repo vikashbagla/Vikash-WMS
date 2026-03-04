@@ -654,10 +654,12 @@ function trCalcHoldings() {
         if (!key) return;
 
         if (!groups[key]) {
+            // Only use company_name from equity txns (NFO names are contract names like "MANAPPURAM 26 Feb 24 FUT")
+            var initName = (txn.exchange !== 'NFO' && txn.company_name) ? txn.company_name : null;
             groups[key] = {
                 symbol: txn.symbol,
                 shortSymbol: txn.short_symbol || txn.symbol,
-                companyName: txn.company_name,
+                companyName: initName,
                 securityId: txn.security_id,
                 exchange: txn.exchange || 'NSE',
                 tags: {},
@@ -674,8 +676,7 @@ function trCalcHoldings() {
             groups[key].exchange = 'NSE';
         }
         // Use company_name from equity txn (not F&O contract name)
-        if (txn.company_name && txn.exchange !== 'NFO' &&
-            (!groups[key].companyName || groups[key].companyName === groups[key].shortSymbol)) {
+        if (txn.company_name && txn.exchange !== 'NFO' && !groups[key].companyName) {
             groups[key].companyName = txn.company_name;
         }
 
@@ -688,10 +689,10 @@ function trCalcHoldings() {
         }
     });
 
-    // Resolve company names from CM securities master when transaction data has F&O names
+    // Resolve company names from CM securities master for groups without an equity company name
     Object.keys(groups).forEach(function(key) {
         var g = groups[key];
-        if (!g.companyName || g.companyName === g.shortSymbol) {
+        if (!g.companyName) {
             // Try wmsRefData CM securities
             if (wmsRefData.securitiesCmReady) {
                 for (var i = 0; i < wmsRefData.securitiesCm.length; i++) {
@@ -702,6 +703,8 @@ function trCalcHoldings() {
                     }
                 }
             }
+            // Final fallback: use shortSymbol if nothing found
+            if (!g.companyName) g.companyName = g.shortSymbol;
         }
     });
 

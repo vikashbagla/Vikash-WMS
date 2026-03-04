@@ -438,24 +438,56 @@ async function trWlFetchPrices() {
         }
 
         // Lazy resolution + Yahoo fallback: ONLY on first load, not auto-refresh.
+        // Delegates to shared wmsFetchEquityPrices() (wms-shared.js) — single protocol.
         if (!trWlFirstFetchDone) {
-            // Stage 2: Try alternate Fyers symbols for items Fyers did NOT respond to
-            await trWlResolveUnpricedItems(respondedSymbols);
+            // Collect unresolved equity items for shared resolution
+            var unresolvedEquity = [];
+            var seenSids = {};
+            trWlWatchlists.forEach(function(wl) {
+                wl.items.forEach(function(item) {
+                    if (!item._fyersSymbol) return;
+                    if (item.security_source !== 'securities_db') return;
+                    // Only resolve items Fyers did NOT respond to, or responded with lp=0
+                    var existing = trWlPrices[item._fyersSymbol];
+                    if (existing && existing.lp > 0) return;
+                    if (seenSids[item.security_id]) return;
+                    seenSids[item.security_id] = true;
+                    unresolvedEquity.push({ shortSymbol: item.short_symbol, securityId: item.security_id });
+                });
+            });
 
-            // Stage 3: Yahoo fallback for items still without a usable price
-            // This covers: (a) items Fyers didn't respond to AND Stage 2 failed,
-            //              (b) items Fyers responded to with lp=0 (valid symbol, no trades)
-            await trWlYahooFallback();
-            console.log('Watchlist: Stage 3 (Yahoo) done (' + Math.round(performance.now() - t0) + 'ms)');
+            if (unresolvedEquity.length > 0) {
+                console.log('Watchlist: Delegating', unresolvedEquity.length, 'unresolved to shared wmsFetchEquityPrices');
+                await wmsFetchEquityPrices(unresolvedEquity);
+
+                // Map resolved prices back to watchlist structures
+                trWlWatchlists.forEach(function(wl) {
+                    wl.items.forEach(function(item) {
+                        if (!item.short_symbol || item.security_source !== 'securities_db') return;
+                        var cached = wmsLivePrices[item.short_symbol];
+                        if (!cached || cached.lp <= 0) return;
+                        // Already has a good price? Skip.
+                        var existing = trWlPrices[item._fyersSymbol];
+                        if (existing && existing.lp > 0) return;
+                        // Store in watchlist's price map and update _fyersSymbol
+                        var resolvedKey = cached.resolvedSymbol || item._fyersSymbol;
+                        trWlPrices[resolvedKey] = {
+                            lp: cached.lp, ch: cached.ch, chp: cached.chp,
+                            high: cached.high, low: cached.low
+                        };
+                        item._fyersSymbol = resolvedKey;
+                    });
+                });
+            }
 
             trWlFirstFetchDone = true;
         }
 
+        // Sync all equity prices to shared cache (for Positions tab)
+        trWlSyncToSharedCache();
+
         var t2 = performance.now();
         console.log('Watchlist: Total price fetch took ' + Math.round(t2 - t0) + 'ms');
-
-        // Sync equity prices to shared wmsLivePrices cache (for Positions tab)
-        trWlSyncToSharedCache();
 
         trWlUpdatePriceStatus('live');
     } catch (err) {
@@ -492,8 +524,14 @@ function trWlSyncToSharedCache() {
     if (count > 0) console.log('Watchlist: Synced', count, 'prices to shared cache');
 }
 
-// Try alternate Fyers symbol formats for items that didn't get prices
-async function trWlResolveUnpricedItems(respondedSymbols) {
+// ── REMOVED: trWlResolveUnpricedItems + trWlYahooFallback ──
+// Equity price resolution (alternate Fyers symbols + Yahoo Finance fallback)
+// is now handled by the shared wmsFetchEquityPrices() in wms-shared.js.
+// See trWlFetchPrices() above which delegates to it for unresolved equity items.
+// ────────────────────────────────────────────────────────────────────────────
+
+// [LEGACY - kept for reference, no longer called]
+async function trWlResolveUnpricedItems_LEGACY(respondedSymbols) {
     if (!window.fyersToken) return;
     var t0 = performance.now();
 
@@ -623,7 +661,7 @@ async function trWlResolveUnpricedItems(respondedSymbols) {
 // Covers two cases:
 //   (a) Fyers didn't respond at all (symbol not recognized, even after Stage 2 resolution)
 //   (b) Fyers responded with lp=0 (valid symbol but no trades — illiquid/market closed)
-async function trWlYahooFallback() {
+async function trWlYahooFallback_LEGACY() {
     var yahooItems = [];
     trWlWatchlists.forEach(function(wl) {
         wl.items.forEach(function(item) {
