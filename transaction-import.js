@@ -20,7 +20,7 @@ var regulatoryCharges = [];    // Synced from wmsRefData.regCharges
 var excelConfirmedRows = [];   // Ready to import (symbol resolved, charges calculated)
 var excelFlaggedRows = [];     // Need user review (symbol ambiguous, not found, errors)
 var excelErrorRows = [];       // Rejected in Stage A (missing required fields — cannot show in preview)
-var excelActiveFilter = 'all'; // Current summary bar filter: 'all', 'confirmed', 'review'
+var excelActiveFilter = 'all'; // 'all','confirmed','review','confirmed_new','confirmed_update','review_validation','review_symbol'
 
 // CN import state
 var cnAccounts = [];           // {id, investor_id, broker_id, investor_short_name, broker_code, broker_name, cn_password, cn_parser_template}
@@ -2119,37 +2119,46 @@ function displayExcelPreview() {
     document.getElementById('statConfirmed').textContent = confirmedCount;
     document.getElementById('statReview').textContent = reviewCount;
 
-    // Sub-labels: Confirmed shows new/update breakdown, Review shows validation vs symbol errors
+    // Sub-labels: clickable sub-filters for new/update and validation/symbol
     var newCount = excelConfirmedRows.filter(function(r) { return !r.isUpdate; }).length;
     var updCount = excelConfirmedRows.filter(function(r) { return r.isUpdate; }).length;
     var confirmedSub = document.getElementById('statConfirmedSub');
     if (confirmedSub) {
-        var parts = [];
-        if (newCount > 0) parts.push(newCount + ' new');
-        if (updCount > 0) parts.push(updCount + ' update');
-        confirmedSub.textContent = parts.join(', ');
+        var cParts = [];
+        if (newCount > 0) cParts.push('<span class="esc-sub-link' + (excelActiveFilter === 'confirmed_new' ? ' esc-sub-active' : '') + '" onclick="event.stopPropagation();excelFilterRows(\'confirmed_new\')">' + newCount + ' new</span>');
+        if (updCount > 0) cParts.push('<span class="esc-sub-link' + (excelActiveFilter === 'confirmed_update' ? ' esc-sub-active' : '') + '" onclick="event.stopPropagation();excelFilterRows(\'confirmed_update\')">' + updCount + ' update</span>');
+        confirmedSub.innerHTML = cParts.join(' · ');
     }
     var stageACount = excelFlaggedRows.filter(function(r) { return r._stageAError; }).length;
     var symbolCount = reviewCount - stageACount;
     var reviewSub = document.getElementById('statReviewSub');
     if (reviewSub) {
         var rParts = [];
-        if (stageACount > 0) rParts.push(stageACount + ' validation');
-        if (symbolCount > 0) rParts.push(symbolCount + ' symbol');
-        reviewSub.textContent = rParts.join(', ');
+        if (stageACount > 0) rParts.push('<span class="esc-sub-link' + (excelActiveFilter === 'review_validation' ? ' esc-sub-active' : '') + '" onclick="event.stopPropagation();excelFilterRows(\'review_validation\')">' + stageACount + ' validation</span>');
+        if (symbolCount > 0) rParts.push('<span class="esc-sub-link' + (excelActiveFilter === 'review_symbol' ? ' esc-sub-active' : '') + '" onclick="event.stopPropagation();excelFilterRows(\'review_symbol\')">' + symbolCount + ' symbol</span>');
+        reviewSub.innerHTML = rParts.join(' · ');
     }
 
-    // Highlight active filter card
+    // Highlight active filter card (sub-filters highlight their parent card)
+    var parentFilter = excelActiveFilter.split('_')[0]; // 'confirmed_new' → 'confirmed'
     document.querySelectorAll('.excel-summary-card').forEach(function(card) {
-        card.classList.toggle('active', card.dataset.filter === excelActiveFilter);
+        card.classList.toggle('active', card.dataset.filter === excelActiveFilter || card.dataset.filter === parentFilter);
     });
 
-    // Apply filter
+    // Apply filter (including sub-filters)
     var displayRows = allRows;
     if (excelActiveFilter === 'confirmed') {
         displayRows = excelConfirmedRows.slice();
+    } else if (excelActiveFilter === 'confirmed_new') {
+        displayRows = excelConfirmedRows.filter(function(r) { return !r.isUpdate; });
+    } else if (excelActiveFilter === 'confirmed_update') {
+        displayRows = excelConfirmedRows.filter(function(r) { return r.isUpdate; });
     } else if (excelActiveFilter === 'review') {
         displayRows = excelFlaggedRows.slice();
+    } else if (excelActiveFilter === 'review_validation') {
+        displayRows = excelFlaggedRows.filter(function(r) { return r._stageAError; });
+    } else if (excelActiveFilter === 'review_symbol') {
+        displayRows = excelFlaggedRows.filter(function(r) { return !r._stageAError; });
     }
 
     // Render preview table
@@ -2317,9 +2326,16 @@ function displayExcelPreview() {
     document.getElementById('excelPreviewOverlay').classList.add('active');
 }
 
-// Summary bar filter — click Confirmed/Review/All to filter the table
+// Summary bar filter — click cards or sub-labels to filter the table
+// Clicking an active filter toggles it off (back to parent or 'all')
 function excelFilterRows(filter) {
-    excelActiveFilter = filter;
+    if (excelActiveFilter === filter) {
+        // Toggle off: sub-filter → parent, parent → all
+        var parent = filter.split('_')[0];
+        excelActiveFilter = (parent === filter) ? 'all' : parent;
+    } else {
+        excelActiveFilter = filter;
+    }
     displayExcelPreview();
 }
 window.excelFilterRows = excelFilterRows;
