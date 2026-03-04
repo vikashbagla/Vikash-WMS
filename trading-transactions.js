@@ -409,6 +409,9 @@ async function trTxBulkDelete() {
 
     if (!confirm('Delete ' + ids.length + ' transaction(s)? This cannot be undone.')) return;
 
+    // Block UI during bulk delete
+    showLoading(true, 'Deleting ' + ids.length + ' transaction(s)...');
+
     var headers = {
         'apikey': SUPABASE_ANON_KEY,
         'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
@@ -429,6 +432,7 @@ async function trTxBulkDelete() {
         }
     }
 
+    showLoading(false);
     trTxClearSelection();
     trTxRender();
     trRenderPortfolio();
@@ -893,6 +897,7 @@ async function trTxDeleteTransaction(txnId) {
 
     if (!confirm('Delete this ' + txn.transaction_type + ' transaction for ' + txn.symbol + '?\n\nThis cannot be undone.')) return;
 
+    showLoading(true, 'Deleting transaction...');
     var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txnId, {
         method: 'DELETE',
         headers: {
@@ -902,6 +907,7 @@ async function trTxDeleteTransaction(txnId) {
         }
     });
 
+    showLoading(false);
     if (resp.ok) {
         trTransactions = trTransactions.filter(function(t) { return t.id !== txnId; });
         showAlert('Transaction deleted', 'success', 2000);

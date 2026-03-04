@@ -163,11 +163,24 @@ function fetchWithTimeout(url, options, timeoutMs) {
     ]);
 }
 
-// Show loading indicator
-const showLoading = (show, containerId = 'loading-indicator') => {
-    const loader = document.getElementById(containerId);
+// Show loading indicator with optional message (blocks UI — full-screen overlay)
+const showLoading = (show, messageOrContainerId) => {
+    // Legacy support: if second arg looks like an element ID, use it as container
+    var containerId = 'loading-indicator';
+    var message = null;
+    if (messageOrContainerId && document.getElementById(messageOrContainerId)) {
+        containerId = messageOrContainerId;
+    } else if (typeof messageOrContainerId === 'string') {
+        message = messageOrContainerId;
+    }
+    var loader = document.getElementById(containerId);
     if (loader) {
         loader.style.display = show ? 'flex' : 'none';
+        // Update message text if provided
+        var msgEl = loader.querySelector('p');
+        if (msgEl) {
+            msgEl.textContent = message || 'Loading...';
+        }
     }
 };
 
