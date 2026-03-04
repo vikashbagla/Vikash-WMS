@@ -446,6 +446,64 @@ function wmsCalcAvgCost(transactions) {
 }
 
 // ============================================================================
+// OPEN OPTIONS EXCLUSION
+// ============================================================================
+// Options contracts (CE/PE suffix) that are still open (net qty != 0 per
+// contract) should NOT contribute to the underlying symbol's avg cost or
+// net quantity. Only closed (squared-off) options are included.
+//
+// wmsIsOptionContract(symbol, shortSymbol):
+//   Returns true if the full symbol represents an options contract.
+//   Detection: symbol != shortSymbol AND ends with CE or PE.
+//
+// wmsExcludeOpenOptions(txns):
+//   Returns a filtered copy of txns where transactions belonging to open
+//   options contracts are removed. Closed options (net qty = 0) are kept.
+//   Does NOT mutate the input array or transaction objects.
+// ============================================================================
+
+function wmsIsOptionContract(symbol, shortSymbol) {
+    if (!symbol || !shortSymbol) return false;
+    if (symbol === shortSymbol) return false;
+    return /(?:CE|PE)$/i.test(symbol);
+}
+
+function wmsExcludeOpenOptions(txns) {
+    // Step 1: identify all option contracts and compute net qty per contract
+    var optionContracts = {};   // fullSymbol → net qty
+    for (var i = 0; i < txns.length; i++) {
+        var t = txns[i];
+        var sym = t.symbol || '';
+        var shortSym = t.short_symbol || t.symbol || '';
+        if (!wmsIsOptionContract(sym, shortSym)) continue;
+        if (t.ignore_for_avg_cost) continue;
+        var isIncome = WMS_INCOME_TYPES.indexOf(t.transaction_type) >= 0;
+        if (isIncome) continue;
+
+        if (optionContracts[sym] === undefined) optionContracts[sym] = 0;
+        optionContracts[sym] += (t.quantity || 0);
+    }
+
+    // Step 2: build set of open option contracts (net qty != 0)
+    var openContracts = {};
+    var keys = Object.keys(optionContracts);
+    for (var j = 0; j < keys.length; j++) {
+        if (optionContracts[keys[j]] !== 0) {
+            openContracts[keys[j]] = true;
+        }
+    }
+
+    // Step 3: if no open options, return original array (fast path)
+    if (Object.keys(openContracts).length === 0) return txns;
+
+    // Step 4: filter out transactions belonging to open option contracts
+    return txns.filter(function(t) {
+        var sym = t.symbol || '';
+        return !openContracts[sym];
+    });
+}
+
+// ============================================================================
 // FIFO COST CALCULATION (Spec A2)
 // Matches sells against buys in chronological order (FIFO). Partially matched
 // buys retain remaining qty at original per-unit cost. Average cost is then
