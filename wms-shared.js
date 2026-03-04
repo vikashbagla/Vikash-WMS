@@ -389,12 +389,16 @@ function wmsIsIncomeType(txnType) {
 // ============================================================================
 // TRANSACTION SANITIZATION (Rule E.14)
 // ============================================================================
-// When investor ≠ trader, the investor's actual cost is gross_amount ± trader_charges
-// (NOT net_amount, which reflects the trader's market-facing charges).
+// When investor ≠ trader, the investor's account is used by the trader
+// (the trader is the beneficiary). The trader's actual cost is
+// gross_amount ± trader_charges — NOT the market-facing net_amount stored
+// in the DB (which reflects the investor's brokerage charges).
+//
 // This function adjusts net_amount in-place so all downstream consumers
 // (avg cost, matching trades, summary cards, display) automatically use the
-// investor-perspective amount.
+// trader-perspective amount.
 //
+// For non-BUY/SELL types (DIVIDEND, INTEREST, etc.), net_amount is unchanged.
 // Original net_amount is preserved as _origNetAmount for future use (e.g. Portfolio).
 //
 // Call once after loading transactions from DB — before any calculations or display.
@@ -410,17 +414,19 @@ function wmsSanitizeTransactions(transactions) {
         txn._origNetAmount = txn.net_amount;
 
         if (traderId && traderId !== investorId) {
-            // Investor ≠ trader: cost to investor = gross ± trader_charges
-            var gross = Math.abs(txn.gross_amount || 0);
-            var traderCh = Math.abs(txn.trader_charges || 0);
             var txnType = txn.transaction_type || '';
 
-            if (txnType === 'BUY') {
-                txn.net_amount = wmsRoundMoney(gross + traderCh);
-            } else if (txnType === 'SELL') {
-                txn.net_amount = wmsRoundMoney(gross - traderCh);
+            if (txnType === 'BUY' || txnType === 'SELL') {
+                // Trader's cost = gross ± trader_charges
+                var gross = Math.abs(txn.gross_amount || 0);
+                var traderCh = Math.abs(txn.trader_charges || 0);
+                if (txnType === 'BUY') {
+                    txn.net_amount = wmsRoundMoney(gross + traderCh);
+                } else {
+                    txn.net_amount = wmsRoundMoney(gross - traderCh);
+                }
             }
-            // INCOME types: trader_charges is always 0 per charge calc rules — no change needed
+            // All other types (DIVIDEND, INTEREST, etc.): net_amount unchanged
         }
     }
     return transactions;
@@ -431,7 +437,8 @@ function wmsSanitizeTransactions(transactions) {
 // Single source of truth — used by portfolio.js, trading.js, and any future module.
 //
 // PREREQUISITE: transactions must be sanitized via wmsSanitizeTransactions() first.
-//   When investor ≠ trader, net_amount is adjusted to gross ± trader_charges (Rule E.14).
+//   When investor ≠ trader (investor's account used by trader), net_amount is
+//   adjusted to gross ± trader_charges for BUY/SELL; unchanged for other types (Rule E.14).
 //
 // Rules:
 //   totalCost  = sum(BUY net_amount) − sum(SELL net_amount) − sum(INCOME net_amount)
