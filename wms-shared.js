@@ -93,6 +93,13 @@ async function wmsLoadRefData() {
         resp = await fetch(SUPABASE_URL + '/rest/v1/regulatory_charges_config?effective_to=is.null&select=*', { headers: headers });
         wmsRefData.regCharges = await resp.json();
 
+        // Build indexed map for O(1) regulatory rate lookups: "chargeType|txnCategory|txnType|exchange" → rate
+        wmsRefData.regChargesIndex = {};
+        wmsRefData.regCharges.forEach(function(rc) {
+            var key = rc.charge_type + '|' + rc.transaction_category + '|' + rc.transaction_type + '|' + rc.exchange;
+            wmsRefData.regChargesIndex[key] = rc.rate_percentage || 0;
+        });
+
         // 5. Existing tags (for autocomplete across modules)
         resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?select=tags&tags=not.is.null&limit=5000', { headers: headers });
         var tagRows = await resp.json();
@@ -476,6 +483,22 @@ function wmsGetBrokerage(ibaRatesMap, investorId, brokerId, grossAmount, securit
  */
 function wmsGetRegRate(regCharges, chargeType, txnCategory, txnType, exchange) {
     var exch = exchange || 'NSE';
+
+    // Fast path: use pre-built index if available (O(1) lookup)
+    if (wmsRefData.regChargesIndex) {
+        var key = chargeType + '|' + txnCategory + '|' + txnType + '|' + exch;
+        var rate = wmsRefData.regChargesIndex[key];
+        if (rate !== undefined) return rate;
+        // Fallback: BSE/MCX → try NSE (national charges)
+        if (exch !== 'NSE') {
+            var nseKey = chargeType + '|' + txnCategory + '|' + txnType + '|NSE';
+            var nseRate = wmsRefData.regChargesIndex[nseKey];
+            if (nseRate !== undefined) return nseRate;
+        }
+        return 0;
+    }
+
+    // Slow path fallback: linear scan (only if index not built yet)
     for (var i = 0; i < regCharges.length; i++) {
         var rc = regCharges[i];
         if (rc.charge_type === chargeType &&
@@ -485,7 +508,6 @@ function wmsGetRegRate(regCharges, chargeType, txnCategory, txnType, exchange) {
             return rc.rate_percentage || 0;
         }
     }
-    // Fallback: BSE/MCX missing STT/SEBI/stamp → try NSE (national charges)
     if (exch !== 'NSE') {
         for (var j = 0; j < regCharges.length; j++) {
             var rc2 = regCharges[j];

@@ -658,7 +658,7 @@ async function processAndGroupTrades(parseResult) {
         groups[key].totalAmount += t.amount;
     });
 
-    // Match all securities in ONE batch query
+    // Match all securities from local wmsRefData.securitiesCm
     cnParsedRows = [];
     cnErrorRows = [];
 
@@ -671,8 +671,8 @@ async function processAndGroupTrades(parseResult) {
         if (uniqueSymbols.indexOf(sym) === -1) uniqueSymbols.push(sym);
     });
 
-    // Single batch query to Supabase for all symbols at once
-    var secMap = await batchMatchSecurities(uniqueSymbols);
+    // Local batch lookup from in-memory securitiesCm (zero API calls)
+    var secMap = batchMatchSecurities(uniqueSymbols);
 
     for (var k = 0; k < keys.length; k++) {
         var g = groups[keys[k]];
@@ -721,52 +721,48 @@ async function processAndGroupTrades(parseResult) {
     return cnParsedRows;
 }
 
-// Batch query Supabase for all symbols in one call
-// Returns a map: { SYMBOL_UPPER: { id, symbol, short_symbol, company_name, security_type, asset_class, exchange }, ... }
-async function batchMatchSecurities(symbols) {
+// Local batch lookup from wmsRefData.securitiesCm (loaded at app startup — zero API calls)
+// Returns a map: { SYMBOL_UPPER: { id, symbol, short_symbol, company_name, security_type, asset_class, exchange, lot_size }, ... }
+function batchMatchSecurities(symbols) {
     var secMap = {};
     if (!symbols || symbols.length === 0) return secMap;
-
-    // Build OR filter: symbol.in.(SYM1,SYM2),nse_symbol.in.(SYM1,SYM2),bse_symbol.in.(SYM1,SYM2)
-    var symList = symbols.map(function(s) { return encodeURIComponent(s); }).join(',');
-    var orFilter = 'or=(symbol.in.(' + symList + '),nse_symbol.in.(' + symList + '),bse_symbol.in.(' + symList + '))';
-    var url = SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,nse_symbol,bse_symbol,company_name,security_type,asset_class,lot_size&' + orFilter;
-
-    console.log('Batch security lookup for ' + symbols.length + ' symbol(s): ' + symbols.join(', '));
-    var resp = await fetch(url, {
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
-    });
-    if (!resp.ok) {
-        console.error('Batch security lookup failed: HTTP ' + resp.status);
+    if (!wmsRefData.securitiesCmReady) {
+        console.error('batchMatchSecurities: securitiesCm not loaded yet');
         return secMap;
     }
-    var rows = await resp.json();
-    console.log('Batch query returned ' + rows.length + ' match(es)');
 
-    // Build lookup map — match each queried symbol to its result (full security object)
-    rows.forEach(function(m) {
-        var matchInfo = {
-            id: m.id,
-            symbol: m.nse_symbol || m.bse_symbol || m.symbol,
-            short_symbol: m.nse_symbol || m.bse_symbol || m.symbol,
-            company_name: m.company_name,
-            security_type: m.security_type || 'EQUITY',
-            asset_class: m.asset_class,
-            exchange: m.nse_symbol ? 'NSE' : (m.bse_symbol ? 'BSE' : 'NSE'),
-            lot_size: m.lot_size || 1
-        };
-        // Map by all possible symbol fields so lookup works regardless of which column matched
-        if (m.symbol) secMap[m.symbol.toUpperCase()] = matchInfo;
-        if (m.nse_symbol) secMap[m.nse_symbol.toUpperCase()] = matchInfo;
-        if (m.bse_symbol) secMap[m.bse_symbol.toUpperCase()] = matchInfo;
+    console.log('Local batch security lookup for ' + symbols.length + ' symbol(s): ' + symbols.join(', '));
+
+    // Build lookup maps from in-memory securitiesCm (symbol, nse_symbol, bse_symbol → row)
+    var cmRows = wmsRefData.securitiesCm;
+    var symLookup = {};  // UPPER_SYMBOL → cmRow
+    cmRows.forEach(function(m) {
+        if (m.symbol) symLookup[m.symbol.toUpperCase()] = m;
+        if (m.nse_symbol) symLookup[m.nse_symbol.toUpperCase()] = m;
+        if (m.bse_symbol) symLookup[m.bse_symbol.toUpperCase()] = m;
     });
 
-    // Log matches and misses
     symbols.forEach(function(sym) {
-        if (secMap[sym]) {
-            console.log('Matched: ' + sym + ' → ' + secMap[sym].symbol + ' (' + secMap[sym].company_name + ')');
+        var m = symLookup[sym];
+        if (m) {
+            var matchInfo = {
+                id: m.id,
+                symbol: m.nse_symbol || m.bse_symbol || m.symbol,
+                short_symbol: m.nse_symbol || m.bse_symbol || m.symbol,
+                company_name: m.company_name,
+                security_type: m.security_type || 'EQUITY',
+                asset_class: m.asset_class || null,
+                exchange: m.nse_symbol ? 'NSE' : (m.bse_symbol ? 'BSE' : 'NSE'),
+                lot_size: m.lot_size || 1
+            };
+            // Map by all symbol variants so downstream lookups work
+            secMap[sym] = matchInfo;
+            if (m.symbol) secMap[m.symbol.toUpperCase()] = matchInfo;
+            if (m.nse_symbol) secMap[m.nse_symbol.toUpperCase()] = matchInfo;
+            if (m.bse_symbol) secMap[m.bse_symbol.toUpperCase()] = matchInfo;
+            console.log('Matched: ' + sym + ' → ' + matchInfo.symbol + ' (' + matchInfo.company_name + ')');
         } else {
-            console.warn('NOT FOUND in securities_db: ' + sym);
+            console.warn('NOT FOUND in securities_db (local): ' + sym);
         }
     });
 
@@ -774,147 +770,129 @@ async function batchMatchSecurities(symbols) {
 }
 
 // Multi-stage symbol matching for a single row (rule F.1.6)
+// Fully local: searches wmsRefData.securitiesNfo + securitiesCm in memory (zero API calls).
+// NFO auto-insert is deferred to import time — new NFO symbols get _pendingNfoInsert flag.
 // Returns: { status: 'confirmed'|'flagged'|'error', match: {security object}, matches: [], error: '' }
-async function matchSymbolMultiStage(symbol, securityType, batchMap) {
+function matchSymbolMultiStage(symbol, securityType, batchMap) {
     var symUpper = symbol.toUpperCase();
 
-    // Stage 1: If security_type is NFO, search securities_nfo
-    if (securityType === 'NFO') {
-        try {
-            var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?symbol=ilike.*' + encodeURIComponent(symUpper) + '*&select=id,symbol,instrument_name,underlying_symbol,exchange,instrument_type,lot_size,expiry_date,strike_price,option_type&limit=5', {
-                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
-            });
-            var nfoRows = await nfoResp.json();
-            if (nfoRows.length === 1) {
-                var nfo = nfoRows[0];
-                return { status: 'confirmed', match: {
-                    id: nfo.id, symbol: nfo.symbol, short_symbol: nfo.underlying_symbol || nfo.symbol,
-                    company_name: nfo.instrument_name || nfo.symbol, security_type: 'NFO',
-                    asset_class: nfo.instrument_type || null, exchange: nfo.exchange || 'NSE', lot_size: nfo.lot_size || 1
-                }, matches: nfoRows };
-            } else if (nfoRows.length > 1) {
-                return { status: 'flagged', match: null, matches: nfoRows.map(function(n) {
-                    return { id: n.id, symbol: n.symbol, short_symbol: n.underlying_symbol, company_name: n.instrument_name, security_type: 'NFO', exchange: n.exchange };
-                }) };
-            }
-            // If no match found, try parsing the NFO symbol format
-            if (nfoRows.length === 0) {
-                var parsed = parseNfoSymbol(symUpper);
-                if (parsed) {
-                    // Look up underlying futures contract for lot_size
-                    var lotSize = 1;
-                    try {
-                        var futResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?underlying_symbol=eq.' + encodeURIComponent(parsed.underlying) + '&instrument_type=eq.FUTURES&select=lot_size&limit=1', {
-                            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
-                        });
-                        var futRows = await futResp.json();
-                        if (futRows.length > 0 && futRows[0].lot_size) lotSize = futRows[0].lot_size;
-                    } catch (e2) { console.warn('Lot size lookup failed for ' + parsed.underlying, e2); }
+    // Stage 1: If security_type is NFO, search local wmsRefData.securitiesNfo
+    if (securityType === 'NFO' && wmsRefData.securitiesNfoReady) {
+        var nfoArr = wmsRefData.securitiesNfo;
+        // ilike contains match on symbol (case-insensitive)
+        var nfoMatches = nfoArr.filter(function(n) {
+            return n.symbol && n.symbol.toUpperCase().indexOf(symUpper) >= 0;
+        });
 
-                    var instrType = parsed.optionType ? 'OPTIONS' : 'FUTURES';
-                    var instrName = parsed.underlying + ' ' + parsed.expiryStr + (parsed.strikePrice ? ' ' + parsed.strikePrice + ' ' + parsed.optionType : ' FUT');
-
-                    // Auto-insert into securities_nfo so future imports find it (schema rule: add on encounter)
-                    var newNfoId = null;
-                    try {
-                        var nfoRecord = {
-                            symbol: symUpper,
-                            instrument_name: instrName,
-                            exchange: 'NSE',
-                            instrument_type: instrType,
-                            underlying_symbol: parsed.underlying,
-                            expiry_date: parsed.expiryDate,
-                            strike_price: parsed.strikePrice || null,
-                            option_type: parsed.optionType || null,
-                            lot_size: lotSize,
-                            is_active: true
-                        };
-                        var insertResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
-                            method: 'POST',
-                            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-                            body: JSON.stringify(nfoRecord)
-                        });
-                        if (insertResp.ok) {
-                            var inserted = await insertResp.json();
-                            if (inserted && inserted.length > 0) {
-                                newNfoId = inserted[0].id;
-                                console.log('Auto-inserted NFO security: ' + symUpper + ' → ' + newNfoId);
-                            }
-                        } else {
-                            var errBody = await insertResp.json();
-                            console.warn('Failed to auto-insert NFO ' + symUpper + ':', errBody.message || errBody.details);
-                        }
-                    } catch (e3) { console.warn('NFO auto-insert failed for ' + symUpper, e3); }
-
-                    return { status: 'confirmed', match: {
-                        id: newNfoId, symbol: symUpper, short_symbol: parsed.underlying,
-                        company_name: instrName, security_type: 'NFO',
-                        asset_class: instrType, exchange: 'NSE', lot_size: lotSize,
-                        strike_price: parsed.strikePrice, option_type: parsed.optionType,
-                        expiry_date: parsed.expiryDate
-                    }, matches: [] };
-                }
-            }
-            // Fall through to securities_db if no NFO match
-        } catch (e) {
-            console.error('NFO lookup error:', e);
+        if (nfoMatches.length === 1) {
+            var nfo = nfoMatches[0];
+            return { status: 'confirmed', match: {
+                id: nfo.id, symbol: nfo.symbol, short_symbol: nfo.underlying_symbol || nfo.symbol,
+                company_name: nfo.instrument_name || nfo.symbol, security_type: 'NFO',
+                asset_class: nfo.instrument_type || null, exchange: nfo.exchange || 'NSE', lot_size: nfo.lot_size || 1
+            }, matches: nfoMatches };
+        } else if (nfoMatches.length > 1) {
+            return { status: 'flagged', match: null, matches: nfoMatches.map(function(n) {
+                return { id: n.id, symbol: n.symbol, short_symbol: n.underlying_symbol, company_name: n.instrument_name, security_type: 'NFO', exchange: n.exchange };
+            }) };
         }
+
+        // No NFO match — try parsing the NFO symbol format and build a pending record
+        if (nfoMatches.length === 0) {
+            var parsed = parseNfoSymbol(symUpper);
+            if (parsed) {
+                // Look up lot_size from in-memory NFO data (find a futures contract for the same underlying)
+                var lotSize = 1;
+                for (var fi = 0; fi < nfoArr.length; fi++) {
+                    if (nfoArr[fi].underlying_symbol === parsed.underlying &&
+                        nfoArr[fi].instrument_type === 'FUTURES' &&
+                        nfoArr[fi].lot_size && nfoArr[fi].lot_size > 0) {
+                        lotSize = nfoArr[fi].lot_size;
+                        break;
+                    }
+                }
+
+                var instrType = parsed.optionType ? 'OPTIONS' : 'FUTURES';
+                var instrName = parsed.underlying + ' ' + parsed.expiryStr + (parsed.strikePrice ? ' ' + parsed.strikePrice + ' ' + parsed.optionType : ' FUT');
+
+                // Defer insert to import time — mark with _pendingNfoInsert
+                return { status: 'confirmed', match: {
+                    id: null, symbol: symUpper, short_symbol: parsed.underlying,
+                    company_name: instrName, security_type: 'NFO',
+                    asset_class: instrType, exchange: 'NSE', lot_size: lotSize,
+                    strike_price: parsed.strikePrice, option_type: parsed.optionType,
+                    expiry_date: parsed.expiryDate,
+                    _pendingNfoInsert: true,
+                    _nfoRecord: {
+                        symbol: symUpper,
+                        instrument_name: instrName,
+                        exchange: 'NSE',
+                        instrument_type: instrType,
+                        underlying_symbol: parsed.underlying,
+                        expiry_date: parsed.expiryDate,
+                        strike_price: parsed.strikePrice || null,
+                        option_type: parsed.optionType || null,
+                        lot_size: lotSize,
+                        is_active: true
+                    }
+                }, matches: [] };
+            }
+        }
+        // Fall through to securities_db if no NFO match and can't parse
     }
 
-    // Stage 2: Exact match from batch map (already queried in bulk)
+    // Stage 2: Exact match from batch map (local — already built from wmsRefData.securitiesCm)
     if (batchMap[symUpper]) {
         var match = batchMap[symUpper];
         // If security_type filter provided, check it matches
         if (securityType && securityType !== 'NFO' && match.security_type !== securityType) {
-            // Type mismatch — also search by company_name to offer alternatives
+            // Type mismatch — search local securitiesCm for alternatives
             var altMatches = [match];
-            try {
-                var altFilter = 'or=(symbol.ilike.*' + encodeURIComponent(symUpper) + '*,nse_symbol.ilike.*' + encodeURIComponent(symUpper) + '*,bse_symbol.ilike.*' + encodeURIComponent(symUpper) + '*,company_name.ilike.*' + encodeURIComponent(symUpper) + '*)';
-                var altResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,nse_symbol,bse_symbol,company_name,security_type,asset_class,lot_size&' + altFilter + '&limit=10', {
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            var cmRows = wmsRefData.securitiesCm;
+            var symLower = symUpper.toLowerCase();
+            var alts = cmRows.filter(function(r) {
+                var s = (r.symbol || '').toLowerCase();
+                var ns = (r.nse_symbol || '').toLowerCase();
+                var bs = (r.bse_symbol || '').toLowerCase();
+                var cn = (r.company_name || '').toLowerCase();
+                return s.indexOf(symLower) >= 0 || ns.indexOf(symLower) >= 0 ||
+                       bs.indexOf(symLower) >= 0 || cn.indexOf(symLower) >= 0;
+            }).slice(0, 10);
+            if (alts.length > 0) {
+                altMatches = alts.map(function(r) {
+                    return { id: r.id, symbol: r.nse_symbol || r.bse_symbol || r.symbol, short_symbol: r.nse_symbol || r.bse_symbol || r.symbol, company_name: r.company_name, security_type: r.security_type, asset_class: r.asset_class, exchange: r.nse_symbol ? 'NSE' : 'BSE' };
                 });
-                var altRows = await altResp.json();
-                if (altRows.length > 0) {
-                    altMatches = altRows.map(function(r) {
-                        return { id: r.id, symbol: r.nse_symbol || r.bse_symbol || r.symbol, short_symbol: r.nse_symbol || r.bse_symbol || r.symbol, company_name: r.company_name, security_type: r.security_type, asset_class: r.asset_class, exchange: r.nse_symbol ? 'NSE' : 'BSE' };
-                    });
-                    // Ensure the original exact match is included
-                    var hasExact = altMatches.some(function(m) { return m.id === match.id; });
-                    if (!hasExact) altMatches.unshift(match);
-                }
-            } catch (e) { console.warn('Alt match lookup failed:', e); }
+                var hasExact = altMatches.some(function(m) { return m.id === match.id; });
+                if (!hasExact) altMatches.unshift(match);
+            }
             return { status: 'flagged', match: match, matches: altMatches, error: 'Symbol found but security_type mismatch: expected ' + securityType + ', got ' + match.security_type };
         }
         return { status: 'confirmed', match: match, matches: [match] };
     }
 
-    // Stage 3: Contains match on company_name (rule F.1.6 step 2)
-    try {
-        var companyFilter = 'company_name=ilike.*' + encodeURIComponent(symUpper) + '*';
-        if (securityType && securityType !== 'NFO') {
-            companyFilter += '&security_type=eq.' + encodeURIComponent(securityType);
-        }
-        var compResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,nse_symbol,bse_symbol,company_name,security_type,asset_class,lot_size&' + companyFilter + '&limit=10', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
-        });
-        var compRows = await compResp.json();
+    // Stage 3: Contains match on company_name from local securitiesCm (rule F.1.6 step 2)
+    if (wmsRefData.securitiesCmReady) {
+        var cmAll = wmsRefData.securitiesCm;
+        var searchLower = symUpper.toLowerCase();
+        var compMatches = cmAll.filter(function(r) {
+            if (securityType && securityType !== 'NFO' && r.security_type !== securityType) return false;
+            return r.company_name && r.company_name.toLowerCase().indexOf(searchLower) >= 0;
+        }).slice(0, 10);
 
-        if (compRows.length === 1) {
-            var cm = compRows[0];
+        if (compMatches.length === 1) {
+            var cm = compMatches[0];
             return { status: 'confirmed', match: {
                 id: cm.id, symbol: cm.nse_symbol || cm.bse_symbol || cm.symbol,
                 short_symbol: cm.nse_symbol || cm.bse_symbol || cm.symbol,
                 company_name: cm.company_name, security_type: cm.security_type || 'EQUITY',
                 asset_class: cm.asset_class, exchange: cm.nse_symbol ? 'NSE' : 'BSE',
                 lot_size: cm.lot_size || 1
-            }, matches: compRows };
-        } else if (compRows.length > 1) {
-            return { status: 'flagged', match: null, matches: compRows.map(function(r) {
+            }, matches: compMatches };
+        } else if (compMatches.length > 1) {
+            return { status: 'flagged', match: null, matches: compMatches.map(function(r) {
                 return { id: r.id, symbol: r.nse_symbol || r.bse_symbol || r.symbol, short_symbol: r.nse_symbol || r.bse_symbol || r.symbol, company_name: r.company_name, security_type: r.security_type, exchange: r.nse_symbol ? 'NSE' : 'BSE' };
             }) };
         }
-    } catch (e) {
-        console.error('Company name lookup error:', e);
     }
 
     return { status: 'error', match: null, matches: [], error: 'Symbol "' + symbol + '" not found in securities_db' + (securityType ? ' (type: ' + securityType + ')' : '') };
@@ -1922,9 +1900,19 @@ async function processTransactions(rawData, worksheet) {
     }
 
     // ── Stage B: Symbol Matching + Charge Calculation ────────────────
+    // Fully local: uses wmsRefData.securitiesCm/securitiesNfo (loaded at app startup)
     tiLoading(true, 'Matching symbols (' + validRows.length + ' rows)...');
 
-    // Collect unique symbols for batch query (non-NFO rows)
+    // Ensure securities master data is loaded
+    if (!wmsRefData.securitiesCmReady) {
+        tiLoading(true, 'Loading securities data...');
+        await wmsLoadSecuritiesCm();
+    }
+    if (!wmsRefData.securitiesNfoReady) {
+        await wmsLoadSecuritiesNfo();
+    }
+
+    // Collect unique symbols for local batch lookup (non-NFO rows)
     var uniqueSymbols = [];
     validRows.forEach(function(r) {
         var sym = r.symbol.toUpperCase();
@@ -1933,13 +1921,13 @@ async function processTransactions(rawData, worksheet) {
         }
     });
 
-    // Batch query securities_db for all non-NFO symbols
-    var batchMap = await batchMatchSecurities(uniqueSymbols);
+    // Local batch lookup from in-memory securitiesCm (zero API calls)
+    var batchMap = batchMatchSecurities(uniqueSymbols);
 
-    // Match each row individually (handles NFO, company_name fallback, multi-match)
+    // Match each row (all local — no await needed)
     for (var i = 0; i < validRows.length; i++) {
         var vr = validRows[i];
-        var matchResult = await matchSymbolMultiStage(vr.symbol, vr.security_type, batchMap);
+        var matchResult = matchSymbolMultiStage(vr.symbol, vr.security_type, batchMap);
 
         vr.matchStatus = matchResult.status;
         vr.matchOptions = matchResult.matches || [];
@@ -1952,6 +1940,11 @@ async function processTransactions(rawData, worksheet) {
             vr.exchange = matchResult.match.exchange;
             vr.asset_class = matchResult.match.asset_class;
             if (!vr.security_type) vr.security_type = matchResult.match.security_type;
+            // Carry pending NFO insert data for deferred insert at import time
+            if (matchResult.match._pendingNfoInsert) {
+                vr._pendingNfoInsert = true;
+                vr._nfoRecord = matchResult.match._nfoRecord;
+            }
 
             // Lots: NFO & EQUITY_SME must have non-zero lots; others must be 0
             var needsLots = (vr.security_type === 'NFO' || vr.security_type === 'EQUITY_SME');
@@ -2010,52 +2003,53 @@ async function processTransactions(rawData, worksheet) {
 
     console.log('Stage B complete: ' + excelConfirmedRows.length + ' confirmed, ' + excelFlaggedRows.length + ' flagged, ' + excelErrorRows.length + ' errors');
 
-    // ── Stage C: Duplicate Detection ─────────────────────────────────
+    // ── Stage C: Duplicate Detection (single batched query) ─────────
     tiLoading(true, 'Checking for duplicates...');
 
     var allGoodRows = excelConfirmedRows.concat(excelFlaggedRows);
 
-    // Group rows by investor_id + broker_id + transaction_date
-    var groupMap = {};
+    // Initialize all rows as new
+    allGoodRows.forEach(function(r) { r.isUpdate = false; r._existingId = null; });
+
+    // Collect unique dates and investor_ids for a single OR query
+    var uniqueDates = [];
+    var uniqueInvestorIds = [];
     allGoodRows.forEach(function(r) {
-        var key = (r.investor_id || '') + '|' + (r.broker_id || '') + '|' + r.transaction_date;
-        if (!groupMap[key]) groupMap[key] = [];
-        groupMap[key].push(r);
+        if (r.transaction_date && uniqueDates.indexOf(r.transaction_date) < 0) uniqueDates.push(r.transaction_date);
+        if (r.investor_id && uniqueInvestorIds.indexOf(r.investor_id) < 0) uniqueInvestorIds.push(r.investor_id);
     });
 
-    // For each group, query existing transactions
-    var groupKeys = Object.keys(groupMap);
-    for (var g = 0; g < groupKeys.length; g++) {
-        var gk = groupKeys[g];
-        var parts = gk.split('|');
-        var gInvestorId = parts[0];
-        var gBrokerId = parts[1];
-        var gDate = parts[2];
-
-        var dupFilter = 'investor_id=eq.' + gInvestorId + '&transaction_date=eq.' + gDate;
-        if (gBrokerId) dupFilter += '&broker_id=eq.' + gBrokerId;
-        else dupFilter += '&broker_id=is.null';
-
+    if (uniqueDates.length > 0 && uniqueInvestorIds.length > 0) {
         try {
-            var dupResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?select=id,symbol,transaction_type,quantity,price&' + dupFilter, {
+            // Single query: fetch all existing transactions for these investor+date combos
+            var dupUrl = SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,symbol,transaction_type,transaction_date,quantity,price' +
+                '&investor_id=in.(' + uniqueInvestorIds.join(',') + ')' +
+                '&transaction_date=in.(' + uniqueDates.join(',') + ')';
+            var dupResp = await fetch(dupUrl, {
                 headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
             });
             var existingTxns = await dupResp.json();
 
-            groupMap[gk].forEach(function(r) {
-                r.isUpdate = false;
-                r._existingId = null;
-                for (var e = 0; e < existingTxns.length; e++) {
-                    var ex = existingTxns[e];
-                    if (ex.symbol === r.symbol && ex.transaction_type === r.transaction_type) {
-                        r.isUpdate = true;
-                        r._existingId = ex.id;
-                        break;
-                    }
+            // Build lookup: "investor_id|broker_id|date|symbol|type" → existing txn
+            var existMap = {};
+            existingTxns.forEach(function(ex) {
+                var eKey = (ex.investor_id || '') + '|' + (ex.broker_id || '') + '|' + ex.transaction_date + '|' + ex.symbol + '|' + ex.transaction_type;
+                existMap[eKey] = ex;
+            });
+
+            // Match import rows against existing
+            allGoodRows.forEach(function(r) {
+                var rKey = (r.investor_id || '') + '|' + (r.broker_id || '') + '|' + r.transaction_date + '|' + r.symbol + '|' + r.transaction_type;
+                var existing = existMap[rKey];
+                if (existing) {
+                    r.isUpdate = true;
+                    r._existingId = existing.id;
                 }
             });
+
+            console.log('Duplicate check: ' + existingTxns.length + ' existing txns found in 1 query');
         } catch (e) {
-            console.error('Duplicate check error for group ' + gk + ':', e);
+            console.error('Duplicate check error:', e);
         }
     }
 
@@ -2190,10 +2184,37 @@ function displayExcelPreview() {
     attachNetAmountEditHandlers();
     attachTagHandlers();
 
-    // Wire up tag autocomplete for each Excel row (same widget as CN import)
+    // Lazy-init tag autocomplete — only initialize when input is focused (saves ~1-2s for 40+ rows)
     allRows.forEach(function(t, index) {
+        var input = document.getElementById('excelTag_' + index);
+        if (!input) return;
         var tagsValue = Array.isArray(t.tags) ? t.tags.filter(function(tg) { return tg && tg !== 'blank'; }).join(', ') : (t.tags || '');
-        initTagAutocomplete('excelTag_' + index, tagsValue);
+        // Store initial value; init on first focus
+        input.dataset.initialTags = tagsValue;
+        input.dataset.tagInited = 'false';
+        input.addEventListener('focus', function() {
+            if (this.dataset.tagInited === 'false') {
+                this.dataset.tagInited = 'true';
+                initTagAutocomplete(this.id, this.dataset.initialTags);
+            }
+        });
+        // Always store in data-tags so import can read them even if never focused
+        input.dataset.tags = tagsValue || '';
+        // Pre-render pills for rows that already have tags (visual only, no dropdown wiring)
+        if (tagsValue) {
+            var pillsDiv = document.getElementById('excelTag_' + index + '_pills');
+            if (pillsDiv) {
+                tagsValue.split(',').forEach(function(tag) {
+                    tag = tag.trim();
+                    if (!tag) return;
+                    var pill = document.createElement('span');
+                    pill.className = 'cn-tag-pill';
+                    pill.textContent = tag;
+                    pill.style.cssText = 'background:#edf2f7;color:#2d3748;padding:1px 6px;border-radius:3px;font-size:10px;display:inline-block;';
+                    pillsDiv.appendChild(pill);
+                });
+            }
+        }
     });
 
     // Show error summary if any
@@ -2818,6 +2839,62 @@ async function importExcelToDatabase() {
     var importErrors = [];
 
     try {
+        // ── Step 0: Insert pending NFO securities (deferred from preview) ──
+        var pendingNfoRows = allRows.filter(function(r) { return r._pendingNfoInsert && r._nfoRecord; });
+        if (pendingNfoRows.length > 0) {
+            tiLoading(true, 'Registering ' + pendingNfoRows.length + ' new NFO securities...');
+            // Deduplicate by symbol (same NFO contract may appear in multiple rows)
+            var nfoBySymbol = {};
+            pendingNfoRows.forEach(function(r) {
+                if (!nfoBySymbol[r._nfoRecord.symbol]) {
+                    nfoBySymbol[r._nfoRecord.symbol] = { record: r._nfoRecord, rows: [r] };
+                } else {
+                    nfoBySymbol[r._nfoRecord.symbol].rows.push(r);
+                }
+            });
+
+            var nfoSymbols = Object.keys(nfoBySymbol);
+            // Batch insert all pending NFO records in one POST
+            var nfoBatch = nfoSymbols.map(function(sym) { return nfoBySymbol[sym].record; });
+            try {
+                var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
+                    method: 'POST',
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+                    body: JSON.stringify(nfoBatch)
+                });
+                if (nfoResp.ok) {
+                    var insertedNfos = await nfoResp.json();
+                    // Map inserted IDs back to the rows
+                    insertedNfos.forEach(function(ins) {
+                        var entry = nfoBySymbol[ins.symbol];
+                        if (entry) {
+                            entry.rows.forEach(function(r) { r.security_id = ins.id; });
+                            console.log('NFO inserted: ' + ins.symbol + ' → ' + ins.id);
+                        }
+                    });
+                    // Refresh local NFO cache
+                    await wmsLoadSecuritiesNfo();
+                } else {
+                    var nfoErr = await nfoResp.json();
+                    importErrors.push('NFO batch insert: ' + (nfoErr.message || nfoErr.details || 'HTTP ' + nfoResp.status));
+                    console.error('NFO batch insert failed:', nfoErr);
+                }
+            } catch (nfoE) {
+                importErrors.push('NFO batch insert: ' + nfoE.message);
+                console.error('NFO batch insert error:', nfoE);
+            }
+
+            // Remove rows where NFO insert failed (security_id still null)
+            var nfoFailedRows = allRows.filter(function(r) { return r._pendingNfoInsert && !r.security_id; });
+            if (nfoFailedRows.length > 0) {
+                console.warn('Skipping ' + nfoFailedRows.length + ' rows: NFO security insert failed');
+                importErrors.push(nfoFailedRows.length + ' NFO rows skipped (security insert failed): ' + nfoFailedRows.map(function(r) { return r.symbol; }).join(', '));
+                allRows = allRows.filter(function(r) { return !r._pendingNfoInsert || r.security_id; });
+                newRows = allRows.filter(function(r) { return !r.isUpdate; });
+                updateRows = allRows.filter(function(r) { return r.isUpdate; });
+            }
+        }
+
         // INSERT new rows in batches of 10 (rule C.2.2)
         var insertRecords = newRows.map(buildExcelTransactionRecord);
         for (var i = 0; i < insertRecords.length; i += 10) {
