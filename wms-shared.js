@@ -1119,17 +1119,53 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
         attachPillClicks();
     }
 
+    var highlightIdx = -1;
+
+    function resetSearch() {
+        inputEl.value = '';
+        highlightIdx = -1;
+        ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
+            pill.style.display = '';
+            pill.classList.remove('wms-pill-highlight');
+        });
+    }
+
+    function togglePill(pill) {
+        var id = pill.getAttribute('data-wms-id');
+        var idx = selectedIds.indexOf(id);
+        if (idx >= 0) selectedIds.splice(idx, 1);
+        else selectedIds.push(id);
+        pill.classList.toggle('on', selectedIds.indexOf(id) >= 0);
+        renderSelectedTags();
+        resetSearch();
+        onChange();
+    }
+
+    function getVisiblePills() {
+        var all = ddEl.querySelectorAll('.' + pillClass);
+        var visible = [];
+        all.forEach(function(pill) {
+            if (pill.style.display !== 'none') visible.push(pill);
+        });
+        return visible;
+    }
+
+    function highlightPillAt(idx) {
+        var visible = getVisiblePills();
+        highlightIdx = idx;
+        visible.forEach(function(pill, i) {
+            pill.classList.toggle('wms-pill-highlight', i === highlightIdx);
+        });
+        if (highlightIdx >= 0 && highlightIdx < visible.length) {
+            visible[highlightIdx].scrollIntoView({ block: 'nearest' });
+        }
+    }
+
     function attachPillClicks() {
         ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
             pill.addEventListener('click', function(e) {
                 e.stopPropagation();
-                var id = pill.getAttribute('data-wms-id');
-                var idx = selectedIds.indexOf(id);
-                if (idx >= 0) selectedIds.splice(idx, 1);
-                else selectedIds.push(id);
-                pill.classList.toggle('on', selectedIds.indexOf(id) >= 0);
-                renderSelectedTags();
-                onChange();
+                togglePill(pill);
             });
         });
     }
@@ -1149,6 +1185,7 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
                 if (idx >= 0) selectedIds.splice(idx, 1);
                 syncStates();
                 renderSelectedTags();
+                resetSearch();
                 onChange();
             });
         });
@@ -1165,9 +1202,11 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
     inputEl.addEventListener('click', function() { ddEl.classList.add('show'); });
     inputEl.addEventListener('input', function() {
         ddEl.classList.add('show');
+        highlightIdx = -1;
         var tokens = wmsTokenize(inputEl.value);
         var pills = ddEl.querySelectorAll('.' + pillClass);
         pills.forEach(function(pill, idx) {
+            pill.classList.remove('wms-pill-highlight');
             if (tokens.length === 0) { pill.style.display = ''; return; }
             var item = items[idx];
             var searchText = item ? item._searchText : pill.textContent.toLowerCase();
@@ -1175,25 +1214,49 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
         });
     });
 
-    // ESC closes dropdown + clears search
+    // Keyboard: ESC closes, Arrow keys navigate visible pills, Enter toggles
     inputEl.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
             e.preventDefault();
             e.stopPropagation();
-            inputEl.value = '';
+            resetSearch();
             ddEl.classList.remove('show');
-            // Reset visibility of all pills
-            ddEl.querySelectorAll('.' + pillClass).forEach(function(pill) {
-                pill.style.display = '';
-            });
             inputEl.blur();
+            return;
         }
+        if (!ddEl.classList.contains('show')) return;
+        var visible = getVisiblePills();
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!visible.length) return;
+            highlightPillAt(Math.min(highlightIdx + 1, visible.length - 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!visible.length) return;
+            highlightPillAt(Math.max(highlightIdx - 1, 0));
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (highlightIdx >= 0 && highlightIdx < visible.length) {
+                togglePill(visible[highlightIdx]);
+            } else if (visible.length === 1) {
+                togglePill(visible[0]);
+            }
+        }
+    });
+
+    // Blur — clear search text and reset pill visibility
+    inputEl.addEventListener('blur', function() {
+        setTimeout(function() {
+            resetSearch();
+            ddEl.classList.remove('show');
+        }, 150);
     });
 
     // Click-outside close
     var outsideHandler = function(e) {
         if (!e.target.closest('.filter-search-container') ||
             (!inputEl.contains(e.target) && !ddEl.contains(e.target) && !(tagsEl && tagsEl.contains(e.target)))) {
+            resetSearch();
             ddEl.classList.remove('show');
         }
     };
@@ -1215,6 +1278,7 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
             selectedIds.length = 0;
             syncStates();
             renderSelectedTags();
+            resetSearch();
             onChange();
         },
         destroy: function() {

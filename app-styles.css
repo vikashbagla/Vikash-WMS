@@ -368,6 +368,8 @@ tr:hover:not(.total-row) { background:#f9fafb; }
     margin-left: 2px; opacity: 0.7;
 }
 .wms-pill .wms-pill-remove:hover { opacity: 1; }
+.wms-pill.wms-pill-highlight { border-color: #667eea; color: #667eea; box-shadow: 0 0 0 1px #667eea; }
+.wms-pill.on.wms-pill-highlight { box-shadow: 0 0 0 2px #4c63d2; }
 
 /* Pill container (for filter dropdowns) */
 .wms-pill-dropdown {
