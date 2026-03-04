@@ -118,18 +118,18 @@
     margin: 0 1px;
     pointer-events: none;
 }
-/* Calendar picker button + hidden native input */
+/* Calendar picker button — inside the segmented wrap */
 .atDate-cal-btn {
     background: none;
-    border: 1px solid #e2e8f0;
-    border-radius: 4px;
+    border: none;
     cursor: pointer;
-    font-size: 14px;
-    padding: 3px 5px;
+    font-size: 12px;
+    padding: 0 0 0 4px;
     line-height: 1;
-    transition: border-color 0.15s;
+    opacity: 0.5;
+    transition: opacity 0.15s;
 }
-.atDate-cal-btn:hover { border-color: #667eea; }
+.atDate-cal-btn:hover { opacity: 1; }
 .atDate-cal-picker {
     position: absolute;
     opacity: 0;
@@ -606,14 +606,12 @@
             <div class="addTxn-fields-row">
                 <div class="addTxn-field" style="width: 140px;">
                     <label>Date</label>
-                    <div style="display:flex; align-items:center; gap:4px;">
-                        <div class="atDate-wrap" id="addTxnDateWrap" tabindex="0">
-                            <span class="atDate-seg" data-seg="dd" id="atDateDd">03</span>
-                            <span class="atDate-sep">-</span>
-                            <span class="atDate-seg" data-seg="mmm" id="atDateMmm">Mar</span>
-                            <span class="atDate-sep">-</span>
-                            <span class="atDate-seg" data-seg="yyyy" id="atDateYyyy">2026</span>
-                        </div>
+                    <div class="atDate-wrap" id="addTxnDateWrap" tabindex="0">
+                        <span class="atDate-seg" data-seg="dd" id="atDateDd">03</span>
+                        <span class="atDate-sep">-</span>
+                        <span class="atDate-seg" data-seg="mmm" id="atDateMmm">Mar</span>
+                        <span class="atDate-sep">-</span>
+                        <span class="atDate-seg" data-seg="yyyy" id="atDateYyyy">2026</span>
                         <button type="button" class="atDate-cal-btn" id="atDateCalBtn" title="Pick date from calendar">📅</button>
                         <input type="date" id="atDateCalPicker" class="atDate-cal-picker">
                     </div>

@@ -1573,10 +1573,6 @@ var wmsDateInput = function(containerEl, opts) {
 
     // ── Build DOM ──
     containerEl.innerHTML = '';
-    var outerWrap = document.createElement('div');
-    outerWrap.style.display = 'inline-flex';
-    outerWrap.style.alignItems = 'center';
-    outerWrap.style.gap = '3px';
 
     var wrap = document.createElement('div');
     wrap.className = 'wms-di-wrap' + (compact ? ' wms-di-compact' : '');
@@ -1598,14 +1594,7 @@ var wmsDateInput = function(containerEl, opts) {
     yyyyEl.className = 'wms-di-seg';
     yyyyEl.dataset.seg = 'yyyy';
 
-    wrap.appendChild(ddEl);
-    wrap.appendChild(sep1);
-    wrap.appendChild(mmmEl);
-    wrap.appendChild(sep2);
-    wrap.appendChild(yyyyEl);
-    outerWrap.appendChild(wrap);
-
-    // Calendar button + hidden native input
+    // Calendar button + hidden native input — inside the wrap
     var calBtn = document.createElement('button');
     calBtn.type = 'button';
     calBtn.className = 'wms-di-cal-btn';
@@ -1614,10 +1603,16 @@ var wmsDateInput = function(containerEl, opts) {
     var calInput = document.createElement('input');
     calInput.type = 'date';
     calInput.className = 'wms-di-cal-hidden';
-    outerWrap.appendChild(calBtn);
-    outerWrap.appendChild(calInput);
 
-    containerEl.appendChild(outerWrap);
+    wrap.appendChild(ddEl);
+    wrap.appendChild(sep1);
+    wrap.appendChild(mmmEl);
+    wrap.appendChild(sep2);
+    wrap.appendChild(yyyyEl);
+    wrap.appendChild(calBtn);
+    wrap.appendChild(calInput);
+
+    containerEl.appendChild(wrap);
 
     // ── Segment activation ──
     var setActive = function(seg) {

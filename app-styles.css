@@ -602,15 +602,15 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
 .wms-di-sep { color: #a0aec0; margin: 0 1px; pointer-events: none; }
 .wms-di-cal-btn {
     background: none;
-    border: 1px solid #e2e8f0;
-    border-radius: 4px;
+    border: none;
     cursor: pointer;
-    font-size: 13px;
-    padding: 2px 4px;
+    font-size: 12px;
+    padding: 0 0 0 4px;
     line-height: 1;
-    transition: border-color 0.15s;
+    opacity: 0.5;
+    transition: opacity 0.15s;
 }
-.wms-di-cal-btn:hover { border-color: #667eea; }
+.wms-di-cal-btn:hover { opacity: 1; }
 .wms-di-cal-hidden { position: absolute; opacity: 0; width: 0; height: 0; border: 0; padding: 0; pointer-events: none; }
 
 /* RESPONSIVE */
