@@ -2463,6 +2463,12 @@ function trRenderViewTabs() {
             input.focus();
             input.select();
 
+            // Isolate input from parent button — prevent ALL events from bubbling
+            // to the tab's click handler (which would trigger trApplyView → re-render → destroy input)
+            ['click', 'mousedown', 'mouseup', 'dblclick', 'keydown', 'keyup', 'keypress'].forEach(function(evt) {
+                input.addEventListener(evt, function(ie) { ie.stopPropagation(); });
+            });
+
             var finished = false;
             function finishRename() {
                 if (finished) return;
@@ -2488,6 +2494,7 @@ function trRenderViewTabs() {
 
             input.addEventListener('blur', finishRename);
             input.addEventListener('keydown', function(ke) {
+                ke.stopPropagation();
                 if (ke.key === 'Enter') { ke.preventDefault(); input.blur(); }
                 if (ke.key === 'Escape') { ke.preventDefault(); input.value = view.name; input.blur(); }
             });
