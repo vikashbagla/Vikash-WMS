@@ -1681,6 +1681,7 @@ function trRenderTxnMatchingView() {
             }
             // Unrealised P&L using CMP
             if (cmp > 0) {
+                row.cmp = cmp;
                 var openCost = row.isShort ? row.sellAmount : row.buyAmount;
                 var openValue = row.qty * cmp;
                 row.unrealisedPnl = row.isShort ? (openCost - openValue) : (openValue - openCost);
@@ -1828,17 +1829,32 @@ function trRenderTxnMatchingView() {
             var hasBuy = row.buyAvg > 0 || row.buyAmount > 0;
             var hasSell = row.sellAvg > 0 || row.sellAmount > 0;
 
+            // For open positions, show CMP in the empty price cell (sell for long, buy for short)
+            var buyPriceHtml = hasBuy ? formatPrice(row.buyAvg, false) : '-';
+            var buyAmtHtml = hasBuy ? formatAmount(row.buyAmount) : '-';
+            var sellPriceHtml = hasSell ? formatPrice(row.sellAvg, false) : '-';
+            var sellAmtHtml = hasSell ? formatAmount(row.sellAmount) : '-';
+            if (isOpen && row.cmp > 0) {
+                if (!row.isShort && !hasSell) {
+                    sellPriceHtml = '<span class="trM-unrealised">' + formatPrice(row.cmp, false) + '</span>';
+                    sellAmtHtml = '-';
+                } else if (row.isShort && !hasBuy) {
+                    buyPriceHtml = '<span class="trM-unrealised">' + formatPrice(row.cmp, false) + '</span>';
+                    buyAmtHtml = '-';
+                }
+            }
+
             html += '<tr class="' + rowClass + '" data-group-id="' + groupId + '" data-row-id="' + rowId + '"' +
                 ' data-buy-txn-id="' + buyTxnId + '" data-sell-txn-id="' + sellTxnId + '">' +
                 '<td>' + wmsEsc(grp.groupLabel) + '</td>' +
                 '<td class="trM-contract-col">' + wmsEsc(grp.contractLabel) + '</td>' +
                 '<td class="text-right">' + formatQuantity(row.qty) + '</td>' +
                 '<td class="trM-buy-start">' + buyDateHtml + '</td>' +
-                '<td class="text-right">' + (hasBuy ? formatPrice(row.buyAvg, false) : '-') + '</td>' +
-                '<td class="text-right">' + (hasBuy ? formatAmount(row.buyAmount) : '-') + '</td>' +
+                '<td class="text-right">' + buyPriceHtml + '</td>' +
+                '<td class="text-right">' + buyAmtHtml + '</td>' +
                 '<td class="trM-sell-start">' + sellDateHtml + '</td>' +
-                '<td class="text-right">' + (hasSell ? formatPrice(row.sellAvg, false) : '-') + '</td>' +
-                '<td class="text-right">' + (hasSell ? formatAmount(row.sellAmount) : '-') + '</td>' +
+                '<td class="text-right">' + sellPriceHtml + '</td>' +
+                '<td class="text-right">' + sellAmtHtml + '</td>' +
                 '<td class="text-right">' + pnlHtml + '</td>' +
             '</tr>';
         });
