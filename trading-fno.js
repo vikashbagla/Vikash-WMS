@@ -33,14 +33,15 @@ function trFnoInit() {
         });
     });
 
-    // Match method
-    var methodSel = document.getElementById('trFnoMatchMethod');
-    if (methodSel) {
-        methodSel.addEventListener('change', function() {
-            trFnoMatchMethod = methodSel.value;
+    // Match method toggle (LIFO/FIFO)
+    document.querySelectorAll('[data-fno-match]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('[data-fno-match]').forEach(function(b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            trFnoMatchMethod = btn.dataset.fnoMatch;
             trFnoRender();
         });
-    }
+    });
 
     // Flat view toggle
     var flatToggle = document.getElementById('trFnoFlatToggle');
