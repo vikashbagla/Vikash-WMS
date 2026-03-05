@@ -145,6 +145,14 @@ function trSetupEventHandlers() {
         });
     }
 
+    // New blank view button
+    var newViewBtn = document.getElementById('tr-new-view-btn');
+    if (newViewBtn) {
+        newViewBtn.addEventListener('click', function() {
+            trCreateBlankView();
+        });
+    }
+
     // Save New button → show inline prompt
     var saveNewBtn = document.getElementById('tr-save-new-btn');
     if (saveNewBtn) {
@@ -2685,6 +2693,37 @@ function trGetCurrentFilters() {
         tagLogic: trTagFilterLogic,
         viewMode: trViewMode
     };
+}
+
+async function trCreateBlankView() {
+    var blankFilters = {};
+    var sortOrder = trPortfolioViews.length;
+    var name = 'New View';
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
+            method: 'POST',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            },
+            body: JSON.stringify({ name: name, filters: blankFilters, sort_order: sortOrder, is_default: false, show_in_tabs: true })
+        });
+        if (resp.ok) {
+            var rows = await resp.json();
+            if (rows.length > 0) {
+                trPortfolioViews.push(rows[0]);
+                trApplyView(rows[0].id);
+                showAlert('New view created — double-click tab to rename', 'success', 3000);
+            }
+        } else {
+            showAlert('Failed to create view', 'error');
+        }
+    } catch (err) {
+        showAlert('Failed to create view: ' + err.message, 'error');
+    }
 }
 
 async function trSaveCurrentView(name) {
