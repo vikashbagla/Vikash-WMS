@@ -991,7 +991,12 @@ function trRenderPortfolio() {
                 '<div class="number-sub ' + getAmountClass(totalPLPct) + '">' + formatPercent(totalPLPct) + '</div></td>' +
             '<td class="text-right">' + formatAmount(totalValue) + '</td>' +
             '<td>-</td>' +
-            '<td>-</td>' +
+            '<td class="action-cell">' +
+                '<button class="btn-action" data-key="__ALL__" title="Actions">⋮</button>' +
+                '<div class="action-menu" id="am-__ALL__">' +
+                    '<button class="action-menu-item" data-action="transactions" data-key="__ALL__">📋 Show Transactions</button>' +
+                '</div>' +
+            '</td>' +
         '</tr>';
 
     list.innerHTML = totalRow + rows;
@@ -1203,30 +1208,36 @@ function trOpenTxnModal(companyKey, investorId) {
 
     var txns = trGetTxnModalTxns();
 
-    // Resolve company name: prefer equity txn, then CM master, then shortSymbol
+    // Resolve title
     var companyName = '';
-    for (var i = 0; i < txns.length; i++) {
-        if (txns[i].company_name && txns[i].security_type !== 'NFO') {
-            companyName = txns[i].company_name; break;
-        }
-    }
-    if (!companyName && wmsRefData.securitiesCmReady) {
-        for (var j = 0; j < wmsRefData.securitiesCm.length; j++) {
-            var s = wmsRefData.securitiesCm[j];
-            if (s.symbol === companyKey || s.nse_symbol === companyKey || s.bse_symbol === companyKey) {
-                companyName = s.company_name; break;
+    var titleExtra = '';
+    if (companyKey === '__ALL__') {
+        // Portfolio-level: use active view name
+        var activeView = trPortfolioViews.find(function(v) { return v.id === trActiveViewId; });
+        companyName = 'All Transactions';
+        titleExtra = activeView ? ' <span style="font-size:11px;color:#667eea;">(' + wmsEsc(activeView.name) + ')</span>' : '';
+    } else {
+        // Company-level: prefer equity txn, then CM master, then shortSymbol
+        for (var i = 0; i < txns.length; i++) {
+            if (txns[i].company_name && txns[i].security_type !== 'NFO') {
+                companyName = txns[i].company_name; break;
             }
         }
-    }
-    companyName = companyName || companyKey;
-
-    // Title
-    var titleExtra = '';
-    if (investorId) {
-        titleExtra = ' <span style="font-size:11px;color:#667eea;">(' + trInvName(investorId) + ')</span>';
+        if (!companyName && wmsRefData.securitiesCmReady) {
+            for (var j = 0; j < wmsRefData.securitiesCm.length; j++) {
+                var s = wmsRefData.securitiesCm[j];
+                if (s.symbol === companyKey || s.nse_symbol === companyKey || s.bse_symbol === companyKey) {
+                    companyName = s.company_name; break;
+                }
+            }
+        }
+        companyName = companyName || companyKey;
+        if (investorId) {
+            titleExtra = ' <span style="font-size:11px;color:#667eea;">(' + trInvName(investorId) + ')</span>';
+        }
     }
     document.getElementById('trTxnModalTitle').innerHTML = wmsEsc(companyName) +
-        '<span class="company-sub">' + wmsEsc(companyKey) + '</span>' + titleExtra;
+        (companyKey !== '__ALL__' ? '<span class="company-sub">' + wmsEsc(companyKey) + '</span>' : '') + titleExtra;
 
     // Reset sort
     trTxnSortColumn = 'date';
@@ -1263,9 +1274,14 @@ function trOpenTxnModal(companyKey, investorId) {
 
 function trGetTxnModalTxns() {
     var shortSymbol = trCurrentTxnModalKey;
-    var txns = trTransactions.filter(function(t) {
-        return (t.short_symbol || t.symbol) === shortSymbol;
-    });
+    var txns;
+    if (shortSymbol === '__ALL__') {
+        txns = trTransactions.slice();   // portfolio-level: all transactions
+    } else {
+        txns = trTransactions.filter(function(t) {
+            return (t.short_symbol || t.symbol) === shortSymbol;
+        });
+    }
     // Apply specific investor filter (from detail row click)
     if (trCurrentTxnInvestorId) {
         txns = txns.filter(function(t) { return t.investor_id === trCurrentTxnInvestorId; });
