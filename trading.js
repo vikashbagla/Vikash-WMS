@@ -313,6 +313,11 @@ function trSwitchTab(tabId) {
     if (tabId === 'tr-transactions') {
         trLoadTransactionsModule();
     }
+
+    // Load F&O positions sub-module on demand
+    if (tabId === 'tr-fno-positions') {
+        trLoadFnoModule();
+    }
 }
 
 async function trLoadWatchlistModule() {
@@ -3037,6 +3042,33 @@ function trCloseCompanySearch(keepFilter) {
     }
 
     trUpdateSortIndicators();
+}
+
+// ============================================================================
+// F&O POSITIONS TAB (loaded from trading-fno.js)
+// ============================================================================
+
+var trFnoLoaded = false;
+
+async function trLoadFnoModule() {
+    if (!trFnoLoaded) {
+        try {
+            await new Promise(function(resolve, reject) {
+                var script = document.createElement('script');
+                script.src = 'trading-fno.js?t=' + Date.now();
+                script.onload = resolve;
+                script.onerror = function() { reject(new Error('Failed to load trading-fno.js')); };
+                document.body.appendChild(script);
+            });
+            trFnoLoaded = true;
+        } catch (err) {
+            console.error('Trading: Failed to load F&O module:', err);
+            var body = document.getElementById('trFnoBody');
+            if (body) body.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#dc2626;">Failed to load F&O module: ' + err.message + '</td></tr>';
+            return;
+        }
+    }
+    if (typeof trFnoRender === 'function') trFnoRender();
 }
 
 // ============================================================================

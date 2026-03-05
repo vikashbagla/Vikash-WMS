@@ -450,6 +450,81 @@
 }
 .btn-hide-txn:hover { opacity: 1; }
 
+/* ================================================================
+   F&O POSITIONS TAB
+   ================================================================ */
+.trFno-filters-bar {
+    flex-shrink: 0; display: flex; align-items: center; gap: 10px;
+    padding: 6px 8px; border-bottom: 1px solid #e2e8f0; flex-wrap: wrap;
+}
+.trFno-filter-group { display: flex; align-items: center; gap: 8px; }
+.trFno-toggle-group {
+    display: flex; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;
+}
+.trFno-toggle-btn {
+    padding: 4px 12px; border: none; background: white; font-size: 11px;
+    cursor: pointer; color: #718096; border-right: 1px solid #e2e8f0;
+}
+.trFno-toggle-btn:last-child { border-right: none; }
+.trFno-toggle-btn:hover { background: #f7fafc; }
+.trFno-toggle-btn.active { background: #667eea; color: white; }
+.trFno-match-method {
+    padding: 3px 6px; border: 1px solid #e2e8f0; border-radius: 4px;
+    font-size: 11px; color: #718096; cursor: pointer;
+}
+.trFno-flat-toggle {
+    font-size: 11px; color: #718096; cursor: pointer; display: flex;
+    align-items: center; gap: 4px;
+}
+.trFno-flat-toggle input { margin: 0; }
+.trFno-snap-btn {
+    padding: 3px 10px; border: 1px solid #e2e8f0; border-radius: 4px;
+    background: white; font-size: 11px; cursor: pointer; color: #718096;
+}
+.trFno-snap-btn:hover { border-color: #667eea; color: #667eea; }
+
+/* F&O symbol-level main row (same height as portfolio rows) */
+.trFno-symbol-row { cursor: pointer; }
+.trFno-symbol-row:hover { background: #f7fafc; }
+.trFno-symbol-row td { padding: 8px 8px; font-size: 12px; }
+.trFno-symbol-name { font-weight: 600; color: #2d3748; }
+.trFno-symbol-sub { font-size: 10px; color: #a0aec0; }
+
+/* F&O expanded detail rows */
+.trFno-detail-header {
+    background: #f0f4ff !important; cursor: pointer;
+}
+.trFno-detail-header td { font-weight: 600; font-size: 11px; padding: 5px 8px; color: #4a5568; }
+.trFno-detail-row td { padding: 4px 8px; font-size: 11px; }
+.trFno-detail-row:hover { background: #fafbff; }
+.trFno-detail-open td { font-style: italic; color: #718096; }
+.trFno-collapse-icon {
+    display: inline-block; transition: transform 0.15s; font-size: 10px;
+}
+.trFno-collapsed .trFno-collapse-icon { transform: rotate(-90deg); }
+.trFno-hide-row { display: none; }
+
+/* F&O Summary */
+.trFno-summary {
+    flex-shrink: 0; padding: 6px 8px; border-top: 1px solid #e2e8f0;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 6px;
+}
+.trFno-summary-card {
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
+    padding: 6px 10px; text-align: center;
+}
+.trFno-summary-label { font-size: 10px; color: #718096; text-transform: uppercase; }
+.trFno-summary-value { font-size: 14px; font-weight: 700; margin-top: 2px; }
+
+/* F&O Flat view snapshot styling */
+.trFno-flat-mode .trFno-symbol-row { display: none; }
+.trFno-flat-mode .trFno-detail-header { display: none; }
+.trFno-flat-mode .trFno-hide-row { display: table-row !important; }
+.trFno-flat-mode .trFno-detail-row td { padding: 4px 6px; font-size: 10px; }
+
+/* F&O Expiry dropdown (reuses contract filter styles) */
+.trFno-expiry-wrap { position: relative; display: inline-block; }
+
 /* Edit Modal */
 .edit-modal-overlay {
     display: none;
@@ -675,6 +750,7 @@
         <button class="trading-tab-btn" data-tab="tr-portfolio">Portfolio</button>
         <button class="trading-tab-btn active" data-tab="tr-watchlist">Watchlist</button>
         <button class="trading-tab-btn" data-tab="tr-transactions">Transactions</button>
+        <button class="trading-tab-btn" data-tab="tr-fno-positions">F&amp;O Positions</button>
     </div>
 
     <!-- Tab: Portfolio -->
@@ -768,6 +844,63 @@
         <div id="tr-transactions-container" style="display:flex;flex-direction:column;flex:1;min-height:0;">
             <div style="text-align:center;padding:60px;color:#9ca3af;">Loading transactions...</div>
         </div>
+    </div>
+
+    <!-- Tab: F&O Positions -->
+    <div id="tr-fno-positions" class="trading-tab-content">
+        <!-- F&O shared filters bar (investor/trader/broker/tag) — populated by JS -->
+        <div id="trFnoSharedFilters" style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
+            <div class="filters-grid" style="flex:1; grid-template-columns: repeat(4, 1fr);">
+                <div id="tr-fno-filter-investor"></div>
+                <div id="tr-fno-filter-trader"></div>
+                <div id="tr-fno-filter-broker"></div>
+                <div id="tr-fno-filter-tag"></div>
+            </div>
+        </div>
+        <!-- F&O Filters Bar -->
+        <div class="trFno-filters-bar">
+            <div class="trFno-filter-group">
+                <div class="trFno-toggle-group">
+                    <button class="trFno-toggle-btn active" data-fno-mode="open">Open</button>
+                    <button class="trFno-toggle-btn" data-fno-mode="all">All</button>
+                </div>
+                <div class="trFno-expiry-wrap" id="trFnoExpiryWrap"></div>
+                <select class="trFno-match-method" id="trFnoMatchMethod" title="Match method">
+                    <option value="lifo">LIFO</option>
+                    <option value="fifo">FIFO</option>
+                </select>
+            </div>
+            <div class="trFno-filter-group" style="margin-left:auto; gap:6px;">
+                <label class="trFno-flat-toggle" title="Flat view for sharing">
+                    <input type="checkbox" id="trFnoFlatToggle"> Flat View
+                </label>
+                <button class="trFno-snap-btn" id="trFnoSnapBtn" title="Capture snapshot for sharing">📸 Snapshot</button>
+            </div>
+        </div>
+        <!-- F&O Positions Table (scrollable) -->
+        <div class="table-container" id="trFnoTableWrap" style="flex:1; min-height:0; overflow:auto;">
+            <table id="trFnoTable">
+                <thead id="trFnoThead">
+                    <tr>
+                        <th style="width:14%;">Underlying</th>
+                        <th style="width:10%;">Contract</th>
+                        <th class="text-right" style="width:6%;">Qty</th>
+                        <th class="trM-buy-start">Buy Date</th>
+                        <th class="text-right">Price</th>
+                        <th class="text-right">Amount</th>
+                        <th class="trM-sell-start">Sell Date</th>
+                        <th class="text-right">Price</th>
+                        <th class="text-right">Amount</th>
+                        <th class="text-right">P&amp;L</th>
+                    </tr>
+                </thead>
+                <tbody id="trFnoBody">
+                    <tr><td colspan="10" style="text-align:center;padding:40px;color:#9ca3af;">Loading F&amp;O positions...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <!-- F&O Summary Footer -->
+        <div class="trFno-summary" id="trFnoSummary"></div>
     </div>
 </div>
 
