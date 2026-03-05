@@ -959,7 +959,7 @@ function trRenderPortfolio() {
     }).join('');
 
     // Total row
-    var totalDayPL = Object.keys(trLiveData).length > 0
+    var totalDayPL = (Object.keys(wmsLivePrices).length > 0 || Object.keys(trLiveData).length > 0)
         ? holdings.reduce(function(sum, h) { var m = trGetLiveData(h); return sum + (m ? h.quantity * m.ch : 0); }, 0)
         : null;
     var totalDayPLPct = (totalDayPL !== null && totalInvested !== 0)
@@ -1128,7 +1128,7 @@ function trBuildInvestorDetail(h, price, md) {
             g.avgCost = calc.avgCost;
             return g;
         })
-        .filter(function(g) { return trShowZeroHoldings || g.quantity !== 0; })
+        .filter(function(g) { return trShowZeroHoldings || g.quantity !== 0 || (trSelectedInvestorIds.length > 0 && trSelectedInvestorIds.indexOf(g.investorId) >= 0); })
         .map(function(g) {
             var avg = g.avgCost;
             var inv = g.totalCost;
