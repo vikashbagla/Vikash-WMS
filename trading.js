@@ -45,6 +45,7 @@ var trTxnViewMode = 'list';     // 'list' | 'matching'
 var trTxnDaysFilter = 0;        // 0 = ALL, else # of days
 var trTxnMatchMethod = 'lifo';  // 'fifo' | 'lifo' (default LIFO)
 var trTxnContractFilter = [];   // [] = show all, else array of contract labels to show
+var trRenamingTab = false;       // flag: true while inline rename input is active (prevents trApplyView from firing)
 
 // ============================================================================
 // INITIALIZATION
@@ -2436,6 +2437,7 @@ function trRenderViewTabs() {
             if (clickTimer) clearTimeout(clickTimer);
             clickTimer = setTimeout(function() {
                 clickTimer = null;
+                if (trRenamingTab) return;   // don't re-render while rename input is active
                 trApplyView(tab.dataset.viewId);
             }, 250);
         });
@@ -2445,6 +2447,7 @@ function trRenderViewTabs() {
             e.stopPropagation();
             // Cancel the pending single click
             if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+            trRenamingTab = true;
 
             var viewId = tab.dataset.viewId;
             var view = trPortfolioViews.find(function(v) { return v.id === viewId; });
@@ -2473,6 +2476,7 @@ function trRenderViewTabs() {
             function finishRename() {
                 if (finished) return;
                 finished = true;
+                trRenamingTab = false;
                 var newName = input.value.trim();
                 if (newName && newName !== view.name) {
                     view.name = newName;
