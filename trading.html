@@ -336,12 +336,16 @@
 .txn-modal-body tr.temp-hidden-row td { opacity: 0.35; }
 .txn-modal-body tr.clickable-row { cursor: pointer; }
 
+/* Transactions modal footer (sticky summary at bottom) */
+.txn-modal-footer {
+    padding: 0 16px 12px;
+    flex-shrink: 0;
+}
 /* Transactions summary cards */
 .txn-summary-cards {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
     gap: 6px;
-    margin-top: 8px;
     padding-top: 8px;
     border-top: 1px solid #e2e8f0;
 }
@@ -816,7 +820,6 @@
                     </thead>
                     <tbody id="trTxnModalBody"></tbody>
                 </table>
-                <div class="txn-summary-cards" id="trTxnSummary"></div>
             </div>
             <!-- Matching trade view -->
             <div id="trTxnMatchView" style="display:none;">
@@ -837,8 +840,12 @@
                     </thead>
                     <tbody id="trTxnMatchBody"></tbody>
                 </table>
-                <div class="txn-summary-cards" id="trTxnMatchSummary"></div>
             </div>
+        </div>
+        <!-- Summary footer (sticky at bottom, outside scrollable body) -->
+        <div class="txn-modal-footer">
+            <div class="txn-summary-cards" id="trTxnSummary"></div>
+            <div class="txn-summary-cards" id="trTxnMatchSummary"></div>
         </div>
     </div>
 </div>

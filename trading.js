@@ -1264,6 +1264,11 @@ function trOpenTxnModal(companyKey, investorId) {
     // Show list, hide matching
     document.getElementById('trTxnListView').style.display = '';
     document.getElementById('trTxnMatchView').style.display = 'none';
+    // Show list summary, hide matching summary (both now in footer)
+    var listSummary = document.getElementById('trTxnSummary');
+    var matchSummary = document.getElementById('trTxnMatchSummary');
+    if (listSummary) listSummary.style.display = '';
+    if (matchSummary) matchSummary.style.display = 'none';
 
     // Render
     trRenderTxnTable(txns);
@@ -1535,12 +1540,16 @@ function trTxnSwitchView() {
     var matchMethodWrap = document.getElementById('trTxnMatchMethodWrap');
     var hiddenBtn = document.getElementById('trToggleHiddenBtn');
     var contractFilterWrap = document.getElementById('trTxnContractFilterWrap');
+    var listSummary = document.getElementById('trTxnSummary');
+    var matchSummary = document.getElementById('trTxnMatchSummary');
 
     if (trTxnViewMode === 'matching') {
         listView.style.display = 'none';
         matchView.style.display = '';
         matchMethodWrap.style.display = '';
         hiddenBtn.style.display = 'none';
+        if (listSummary) listSummary.style.display = 'none';
+        if (matchSummary) matchSummary.style.display = '';
         trRenderTxnMatchingView();
     } else {
         listView.style.display = '';
@@ -1548,6 +1557,8 @@ function trTxnSwitchView() {
         matchMethodWrap.style.display = 'none';
         hiddenBtn.style.display = '';
         if (contractFilterWrap) contractFilterWrap.style.display = 'none';
+        if (listSummary) listSummary.style.display = '';
+        if (matchSummary) matchSummary.style.display = 'none';
         trRenderTxnTable();
     }
 }
