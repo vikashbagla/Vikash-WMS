@@ -1622,7 +1622,29 @@ function trRenderTxnMatchingView() {
         var cl = groups[k].contractLabel || 'Equity';
         allContracts[cl] = true;
     });
-    trBuildContractFilter(Object.keys(allContracts).sort());
+    // Sort contracts: latest expiry first, "Equity" last
+    var contractKeys = Object.keys(allContracts);
+    var monthIdx = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11 };
+    function parseContractDate(label) {
+        // Format: "DD Mon YY [Strike] Type" e.g. "27 Feb 25 Fut", "26 Mar 26 305 PE"
+        var parts = label.split(' ');
+        if (parts.length >= 3 && monthIdx[parts[1]] !== undefined) {
+            var day = parseInt(parts[0], 10);
+            var mon = monthIdx[parts[1]];
+            var yr = 2000 + parseInt(parts[2], 10);
+            return new Date(yr, mon, day).getTime();
+        }
+        return -1;   // "Equity" or unparseable → sort last
+    }
+    contractKeys.sort(function(a, b) {
+        var da = parseContractDate(a);
+        var db = parseContractDate(b);
+        if (da === -1 && db === -1) return a.localeCompare(b);
+        if (da === -1) return 1;   // a (Equity) goes after b
+        if (db === -1) return -1;  // b (Equity) goes after a
+        return db - da;            // latest expiry first
+    });
+    trBuildContractFilter(contractKeys);
 
     // Build matched results per group
     var groupResults = [];
