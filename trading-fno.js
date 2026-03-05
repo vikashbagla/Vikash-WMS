@@ -10,11 +10,13 @@
 
 var trFnoMode = 'open';           // 'open' | 'all'
 var trFnoMatchMethod = 'lifo';    // 'fifo' | 'lifo'
-var trFnoExpiryFilter = [];       // [] = show all, else array of expiry labels
+var trFnoExpiryFilter = null;      // null = not yet initialized (will default to current+prev month)
 var trFnoFlatView = false;        // true = flat (ungrouped) for snapshot
-var trFnoExpandedSymbols = {};    // { symbol: true } for expanded rows
+var trFnoExpandedSymbols = {};    // { symbol: true } for expanded symbol rows
+var trFnoExpandedGroups = {};     // { 'symbol|idx': true } for expanded sub-group rows
 var trFnoInitDone = false;
-var trFnoColCount = 10;
+var trFnoColCount = 11;
+var trFnoContractPricesFetched = false;
 
 function trFnoInit() {
     if (trFnoInitDone) return;
@@ -24,9 +26,9 @@ function trFnoInit() {
     trFnoInitFilters();
 
     // Open/All toggle
-    document.querySelectorAll('.trFno-toggle-btn').forEach(function(btn) {
+    document.querySelectorAll('[data-fno-mode]').forEach(function(btn) {
         btn.addEventListener('click', function() {
-            document.querySelectorAll('.trFno-toggle-btn').forEach(function(b) { b.classList.remove('active'); });
+            document.querySelectorAll('[data-fno-mode]').forEach(function(b) { b.classList.remove('active'); });
             btn.classList.add('active');
             trFnoMode = btn.dataset.fnoMode;
             trFnoRender();
@@ -54,10 +56,10 @@ function trFnoInit() {
         });
     }
 
-    // Snapshot button
+    // Snapshot button — use wrapper so it always calls current trFnoSnapshot
     var snapBtn = document.getElementById('trFnoSnapBtn');
     if (snapBtn) {
-        snapBtn.addEventListener('click', trFnoSnapshot);
+        snapBtn.addEventListener('click', function() { trFnoSnapshot(); });
     }
 }
 
@@ -252,6 +254,9 @@ function trFnoCalcPositions() {
         var symbolTotalOpenQty = 0, symbolTotalCost = 0;
         var symbolTotalBuyAmt = 0, symbolTotalSellAmt = 0;
         var hasOpenPosition = false;
+        // Futures-only tracking (options distort qty and avg_cost)
+        var symbolFutOpenQty = 0, symbolFutOpenCost = 0;
+        var symbolFutIsShort = false;
 
         Object.keys(groups).sort().forEach(function(key) {
             var g = groups[key];
@@ -318,9 +323,10 @@ function trFnoCalcPositions() {
                     row.buyDate = opener.date; row.buyAvg = ppu; row.buyAmount = opener.remaining * ppu;
                     row.sellDate = null; row.sellAvg = 0; row.sellAmount = 0;
                 }
-                // Unrealised P&L using CMP
-                var mockH = { shortSymbol: underlying, symbol: underlying, exchange: 'NSE', latestPrice: 0 };
-                var cmp = trGetPrice(mockH);
+                // Unrealised P&L using contract-specific CMP (not equity CMP)
+                var contractSym = opener.txn.symbol;
+                var contractCache = wmsLivePrices[contractSym];
+                var cmp = contractCache ? contractCache.lp : 0;
                 if (cmp > 0) {
                     row.cmp = cmp;
                     var openCost = row.isShort ? row.sellAmount : row.buyAmount;
@@ -370,9 +376,17 @@ function trFnoCalcPositions() {
             symbolTotalBuyAmt += totalBuyAmt;
             symbolTotalSellAmt += totalSellAmt;
 
+            // Track futures-only data (options distort qty & avg_cost)
+            var isFuture = g.contractLabel.indexOf('Fut') >= 0;
+            if (isFuture && openQty > 0) {
+                symbolFutOpenQty += isShort ? -openQty : openQty;
+                symbolFutOpenCost += openCost;
+                symbolFutIsShort = isShort;
+            }
+
             contractGroups.push({
                 groupLabel: groupLabel, contractLabel: g.contractLabel,
-                isShort: isShort, rows: matchedRows,
+                isShort: isShort, isFuture: isFuture, rows: matchedRows,
                 totalQty: totalQty, totalBuyAmt: totalBuyAmt, totalSellAmt: totalSellAmt,
                 totalPnl: totalPnl, openQty: openQty, openCost: openCost,
                 unrealisedPnl: unrealisedPnl
@@ -381,8 +395,11 @@ function trFnoCalcPositions() {
 
         if (contractGroups.length === 0) return;
 
-        // In "open" mode, skip symbols with no open positions
-        if (trFnoMode === 'open' && !hasOpenPosition) return;
+        // In "open" mode, filter contract groups to only those with open positions
+        if (trFnoMode === 'open') {
+            contractGroups = contractGroups.filter(function(cg) { return cg.openQty > 0; });
+            if (contractGroups.length === 0) return;
+        }
 
         // Resolve company name from CM securities master
         var companyName = underlying;
@@ -396,19 +413,22 @@ function trFnoCalcPositions() {
             }
         }
 
-        // Get CMP for underlying
-        var mockH = { shortSymbol: underlying, symbol: underlying, exchange: 'NSE', latestPrice: 0 };
-        var cmp = trGetPrice(mockH);
+        // Futures avg cost
+        var absFutQty = Math.abs(symbolFutOpenQty);
+        var futAvgCost = absFutQty > 0 ? symbolFutOpenCost / absFutQty : 0;
 
         symbolResults.push({
-            underlying: underlying, companyName: companyName, cmp: cmp,
+            underlying: underlying, companyName: companyName,
             contractGroups: contractGroups,
             totalRealisedPnl: symbolTotalRealisedPnl,
             totalUnrealisedPnl: symbolTotalUnrealisedPnl,
             totalOpenQty: symbolTotalOpenQty,
             totalOpenCost: symbolTotalCost,
             totalBuyAmt: symbolTotalBuyAmt,
-            totalSellAmt: symbolTotalSellAmt
+            totalSellAmt: symbolTotalSellAmt,
+            futOpenQty: absFutQty,
+            futAvgCost: futAvgCost,
+            futIsShort: symbolFutIsShort
         });
     });
 
@@ -425,17 +445,18 @@ function trFnoRender() {
     if (!tbody) return;
 
     var positions = trFnoCalcPositions();
+    window._trFnoLastPositions = positions;  // Store for snapshot
     if (!positions || positions.length === 0) {
         tbody.innerHTML = '<tr><td colspan="' + trFnoColCount + '" style="text-align:center;padding:40px;color:#9ca3af;">No F&O positions found</td></tr>';
-        trFnoRenderSummary(positions || []);
         return;
     }
 
     var html = trFnoFlatView ? trFnoRenderFlat(positions) : trFnoRenderGrouped(positions);
     tbody.innerHTML = html;
 
-    // Wire symbol row click handlers for expand/collapse (grouped view only)
+    // Wire click handlers for expand/collapse (grouped view only)
     if (!trFnoFlatView) {
+        // Symbol-level expand/collapse
         tbody.querySelectorAll('.trFno-symbol-row').forEach(function(row) {
             row.addEventListener('click', function() {
                 var sym = row.dataset.fnoSymbol;
@@ -444,70 +465,135 @@ function trFnoRender() {
                 trFnoRender();
             });
         });
+        // Sub-group expand/collapse
+        tbody.querySelectorAll('.trFno-group-row').forEach(function(row) {
+            row.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var gk = row.dataset.fnoGroup;
+                if (trFnoExpandedGroups[gk]) delete trFnoExpandedGroups[gk];
+                else trFnoExpandedGroups[gk] = true;
+                trFnoRender();
+            });
+        });
     }
 
-    trFnoRenderSummary(positions);
+    // Async: fetch F&O contract prices on first render
+    if (!trFnoContractPricesFetched && window.fyersToken) {
+        trFnoContractPricesFetched = true;
+        trFnoFetchAndRefresh();
+    }
+}
+
+// ============================================================================
+// RENDERING: Total row helper (split into cells so borders show)
+// ============================================================================
+
+function trFnoBuildTotalRow(totExposure, totRealised, totUnrealised, totNet) {
+    var ptRClass = totRealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+    var ptUClass = totUnrealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+    var ptNClass = totNet >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+    return '<tr class="trFno-total-row">' +
+        '<td colspan="3">TOTAL</td>' +
+        '<td colspan="2" class="trM-buy-start"></td>' +
+        '<td colspan="2" class="trM-sell-start"></td>' +
+        '<td class="text-right trFno-pnl-start">' + formatAmount(totExposure) + '</td>' +
+        '<td class="text-right"><span class="' + ptRClass + '">' + formatAmount(totRealised) + '</span></td>' +
+        '<td class="text-right"><span class="' + ptUClass + '">' + formatAmount(totUnrealised) + '</span></td>' +
+        '<td class="text-right"><span class="' + ptNClass + '">' + formatAmount(totNet) + '</span></td>' +
+    '</tr>';
 }
 
 // ============================================================================
 // RENDERING: Grouped view (symbol → contract group → detail rows)
-// Columns: Underlying | Contract | Qty | Buy Date | Buy Price | Buy Amt | Sell Date | Sell Price | Sell Amt | P&L
 // ============================================================================
 
 function trFnoRenderGrouped(positions) {
-    var html = '';
+    // Page totals — exposure = only open positions
+    var pageTotExposure = 0, pageTotRealised = 0, pageTotUnrealised = 0, pageTotNet = 0;
+
+    positions.forEach(function(p) {
+        pageTotExposure += p.totalOpenCost;
+        pageTotRealised += p.totalRealisedPnl;
+        pageTotUnrealised += p.totalUnrealisedPnl;
+        pageTotNet += p.totalRealisedPnl + p.totalUnrealisedPnl;
+    });
+
+    // TOTAL row at the top (sticky below header)
+    var html = trFnoBuildTotalRow(pageTotExposure, pageTotRealised, pageTotUnrealised, pageTotNet);
 
     positions.forEach(function(p) {
         var isExpanded = trFnoExpandedSymbols[p.underlying];
-        var expandIcon = isExpanded ? '▼' : '▶';
 
-        var realisedClass = p.totalRealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-        var totalPnl = p.totalRealisedPnl + p.totalUnrealisedPnl;
-        var totalPnlClass = totalPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+        var rPnl = p.totalRealisedPnl;
+        var uPnl = p.totalUnrealisedPnl;
+        var netPnl = rPnl + uPnl;
+        var exposure = p.totalOpenCost;
+        var rClass = rPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+        var uClass = uPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+        var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
 
-        // Contract summary
-        var contractLabels = {};
-        p.contractGroups.forEach(function(cg) { contractLabels[cg.contractLabel] = true; });
-        var contractSummary = Object.keys(contractLabels).join(', ');
+        // Avg cost: buy-price if net long, sell-price if net short
+        var avgBuyPrice = (!p.futIsShort && p.futAvgCost > 0) ? formatPrice(p.futAvgCost, false) : '';
+        var avgSellPrice = (p.futIsShort && p.futAvgCost > 0) ? formatPrice(p.futAvgCost, false) : '';
 
-        // Symbol-level summary row (10 cols)
+        // Symbol-level summary row — highlighted, no arrow, no contract list
         html += '<tr class="trFno-symbol-row" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
-            '<td><span class="trFno-collapse-icon">' + expandIcon + '</span> ' +
-                '<span class="trFno-symbol-name">' + wmsEsc(p.companyName) + '</span>' +
+            '<td><span class="trFno-symbol-name">' + wmsEsc(p.companyName) + '</span>' +
                 '<div class="trFno-symbol-sub">' + wmsEsc(p.underlying) + '</div></td>' +
-            '<td style="font-size:10px;color:#718096;">' + wmsEsc(contractSummary) + '</td>' +
-            '<td class="text-right">' + (p.totalOpenQty > 0 ? formatQuantity(p.totalOpenQty) : '-') + '</td>' +
+            '<td></td>' +
+            '<td class="text-right">' + (p.futOpenQty > 0 ? formatQuantity(p.futOpenQty) : '-') + '</td>' +
             '<td class="trM-buy-start"></td>' +
-            '<td class="text-right"></td>' +
-            '<td class="text-right">' + (p.totalBuyAmt > 0 ? formatAmount(p.totalBuyAmt) : '-') + '</td>' +
+            '<td class="text-right">' + avgBuyPrice + '</td>' +
             '<td class="trM-sell-start"></td>' +
-            '<td class="text-right"></td>' +
-            '<td class="text-right">' + (p.totalSellAmt > 0 ? formatAmount(p.totalSellAmt) : '-') + '</td>' +
-            '<td class="text-right"><span class="' + totalPnlClass + '">' + formatAmount(totalPnl) + '</span></td>' +
+            '<td class="text-right">' + avgSellPrice + '</td>' +
+            '<td class="text-right trFno-pnl-start">' + (exposure > 0 ? formatAmount(exposure) : '-') + '</td>' +
+            '<td class="text-right"><span class="' + rClass + '">' + formatAmount(rPnl) + '</span></td>' +
+            '<td class="text-right"><span class="' + uClass + '">' + formatAmount(uPnl) + '</span></td>' +
+            '<td class="text-right"><span class="' + nClass + '">' + formatAmount(netPnl) + '</span></td>' +
         '</tr>';
 
-        // Expanded detail
+        // Expanded: show contract sub-groups (each also expandable)
         if (isExpanded) {
-            p.contractGroups.forEach(function(cg) {
+            p.contractGroups.forEach(function(cg, cgIdx) {
+                var groupKey = p.underlying + '|' + cgIdx;
+                var isGroupExpanded = trFnoExpandedGroups[groupKey];
                 var shortLabel = cg.isShort ? ' <span style="color:#dc2626;font-size:10px;">(Short)</span>' : '';
-                var grpPnlClass = cg.totalPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
 
-                // Contract group header
-                html += '<tr class="trFno-detail-header">' +
-                    '<td colspan="3" style="padding-left:24px;">' + wmsEsc(cg.groupLabel) + ' — ' + wmsEsc(cg.contractLabel) + shortLabel + '</td>' +
+                // Sub-group P&L breakdown
+                var cgRealised = cg.totalPnl;
+                var cgUnrealised = cg.unrealisedPnl || 0;
+                var cgNet = cgRealised + cgUnrealised;
+                var cgExposure = cg.openCost || 0;
+                var cgRClass = cgRealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+                var cgUClass = cgUnrealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+                var cgNClass = cgNet >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+
+                // Sub-group avg price
+                var cgAvgPrice = (cg.openQty > 0 && cgExposure > 0) ? formatPrice(cgExposure / cg.openQty, false) : '';
+                var cgBuyPrice = (!cg.isShort && cgAvgPrice) ? cgAvgPrice : '';
+                var cgSellPrice = (cg.isShort && cgAvgPrice) ? cgAvgPrice : '';
+
+                // Sub-group header row (clickable to expand detail rows)
+                html += '<tr class="trFno-detail-header trFno-group-row" data-fno-group="' + wmsEsc(groupKey) + '">' +
+                    '<td style="padding-left:24px;">' + wmsEsc(cg.groupLabel) + '</td>' +
+                    '<td>' + wmsEsc(cg.contractLabel) + shortLabel + '</td>' +
+                    '<td class="text-right">' + (cg.openQty > 0 ? formatQuantity(cg.openQty) : '-') + '</td>' +
                     '<td class="trM-buy-start"></td>' +
-                    '<td class="text-right"></td>' +
-                    '<td class="text-right">' + (cg.totalBuyAmt > 0 ? formatAmount(cg.totalBuyAmt) : '') + '</td>' +
+                    '<td class="text-right">' + cgBuyPrice + '</td>' +
                     '<td class="trM-sell-start"></td>' +
-                    '<td class="text-right"></td>' +
-                    '<td class="text-right">' + (cg.totalSellAmt > 0 ? formatAmount(cg.totalSellAmt) : '') + '</td>' +
-                    '<td class="text-right"><span class="' + grpPnlClass + '">' + formatAmount(cg.totalPnl) + '</span></td>' +
+                    '<td class="text-right">' + cgSellPrice + '</td>' +
+                    '<td class="text-right trFno-pnl-start">' + (cgExposure > 0 ? formatAmount(cgExposure) : '-') + '</td>' +
+                    '<td class="text-right"><span class="' + cgRClass + '">' + formatAmount(cgRealised) + '</span></td>' +
+                    '<td class="text-right"><span class="' + cgUClass + '">' + (cgUnrealised !== 0 ? formatAmount(cgUnrealised) : '-') + '</span></td>' +
+                    '<td class="text-right"><span class="' + cgNClass + '">' + formatAmount(cgNet) + '</span></td>' +
                 '</tr>';
 
-                // Detail rows
-                cg.rows.forEach(function(r) {
-                    html += trFnoRenderDetailRow(r, cg, p.cmp);
-                });
+                // Detail rows — only if sub-group is expanded
+                if (isGroupExpanded) {
+                    cg.rows.forEach(function(r) {
+                        html += trFnoRenderDetailRow(r, cg);
+                    });
+                }
             });
         }
     });
@@ -528,22 +614,41 @@ function trFnoRenderFlat(positions) {
                 flatRows.push({
                     underlying: p.underlying, companyName: p.companyName,
                     contractLabel: cg.contractLabel, groupLabel: cg.groupLabel,
-                    isShort: cg.isShort, row: row, cmp: p.cmp
+                    isShort: cg.isShort, row: row
                 });
             });
         });
     });
 
-    // Sort: underlying_symbol, then date (buy for long, sell for short)
+    // Sort: open positions first, then closed; within each group sort by symbol then date
     flatRows.sort(function(a, b) {
+        var aOpen = a.row.type === 'open' ? 0 : 1;
+        var bOpen = b.row.type === 'open' ? 0 : 1;
+        if (aOpen !== bOpen) return aOpen - bOpen;
         var c = a.underlying.localeCompare(b.underlying);
         if (c !== 0) return c;
-        var dateA = a.isShort ? (a.row.sellDate || '9999') : (a.row.buyDate || '9999');
-        var dateB = b.isShort ? (b.row.sellDate || '9999') : (b.row.buyDate || '9999');
+        var dateA = a.row.buyDate || a.row.sellDate || '9999';
+        var dateB = b.row.buyDate || b.row.sellDate || '9999';
         return new Date(dateA) - new Date(dateB);
     });
 
-    var html = '';
+    // Calculate page totals first — exposure only from open positions
+    var pageTotExposure = 0, pageTotRealised = 0, pageTotUnrealised = 0, pageTotNet = 0;
+    flatRows.forEach(function(fr) {
+        var r = fr.row;
+        if (r.type === 'open') {
+            pageTotExposure += r.isShort ? r.sellAmount : r.buyAmount;
+            pageTotUnrealised += (r.unrealisedPnl !== undefined) ? r.unrealisedPnl : 0;
+        }
+        if (r.type === 'matched') {
+            pageTotRealised += r.pnl;
+        }
+    });
+    pageTotNet = pageTotRealised + pageTotUnrealised;
+
+    // TOTAL row at the top (sticky below header)
+    var html = trFnoBuildTotalRow(pageTotExposure, pageTotRealised, pageTotUnrealised, pageTotNet);
+
     flatRows.forEach(function(fr) {
         var r = fr.row;
         var isOpen = r.type === 'open';
@@ -556,33 +661,48 @@ function trFnoRenderFlat(positions) {
         var hasSell = r.sellAvg > 0 || r.sellAmount > 0;
 
         var buyPriceHtml = hasBuy ? formatPrice(r.buyAvg, false) : '-';
-        var buyAmtHtml = hasBuy ? formatAmount(r.buyAmount) : '-';
         var sellPriceHtml = hasSell ? formatPrice(r.sellAvg, false) : '-';
-        var sellAmtHtml = hasSell ? formatAmount(r.sellAmount) : '-';
 
         if (isOpen && r.cmp > 0) {
             if (!r.isShort && !hasSell) {
                 sellPriceHtml = '<span class="trM-unrealised">' + formatPrice(r.cmp, false) + '</span>';
-                sellAmtHtml = '-';
             } else if (r.isShort && !hasBuy) {
                 buyPriceHtml = '<span class="trM-unrealised">' + formatPrice(r.cmp, false) + '</span>';
-                buyAmtHtml = '-';
             }
         }
 
-        var pnlHtml = trFnoFormatPnl(r);
+        // Exposure = qty × opening price (only for open positions)
+        var exposureHtml = '-';
+        if (r.type === 'open') {
+            var exposure = r.isShort ? r.sellAmount : r.buyAmount;
+            exposureHtml = exposure > 0 ? formatAmount(exposure) : '-';
+        }
+
+        // P&L columns
+        var realisedPnl = (r.type === 'matched') ? r.pnl : 0;
+        var unrealisedPnl = (r.type === 'open' && r.unrealisedPnl !== undefined) ? r.unrealisedPnl : 0;
+        var netPnl = realisedPnl + unrealisedPnl;
+
+        var rClass = realisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+        var uClass = unrealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+        var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+
+        var realisedHtml = (r.type === 'matched') ? '<span class="' + rClass + '">' + formatAmount(realisedPnl) + '</span>' : '-';
+        var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="trM-unrealised ' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
+        var netHtml = netPnl !== 0 ? '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' : '-';
 
         html += '<tr class="' + rowClass + '">' +
             '<td>' + wmsEsc(fr.companyName) + '<div class="trFno-symbol-sub">' + wmsEsc(fr.groupLabel) + '</div></td>' +
             '<td>' + wmsEsc(fr.contractLabel) + '</td>' +
             '<td class="text-right">' + formatQuantity(r.qty) + '</td>' +
-            '<td class="trM-buy-start">' + buyDateHtml + '</td>' +
+            '<td class="text-right trM-buy-start">' + buyDateHtml + '</td>' +
             '<td class="text-right">' + buyPriceHtml + '</td>' +
-            '<td class="text-right">' + buyAmtHtml + '</td>' +
-            '<td class="trM-sell-start">' + sellDateHtml + '</td>' +
+            '<td class="text-right trM-sell-start">' + sellDateHtml + '</td>' +
             '<td class="text-right">' + sellPriceHtml + '</td>' +
-            '<td class="text-right">' + sellAmtHtml + '</td>' +
-            '<td class="text-right">' + pnlHtml + '</td>' +
+            '<td class="text-right trFno-pnl-start">' + exposureHtml + '</td>' +
+            '<td class="text-right">' + realisedHtml + '</td>' +
+            '<td class="text-right">' + unrealisedHtml + '</td>' +
+            '<td class="text-right">' + netHtml + '</td>' +
         '</tr>';
     });
 
@@ -590,10 +710,11 @@ function trFnoRenderFlat(positions) {
 }
 
 // ============================================================================
-// RENDERING: Single detail row helper (10 columns matching txn modal)
+// RENDERING: Single detail row helper (11 columns)
+// Cols: Underlying | Contract | Qty | Buy Date | Buy Price | Sell Date | Sell Price | Exposure | Realised | Unrealised | Net
 // ============================================================================
 
-function trFnoRenderDetailRow(r, cg, cmp) {
+function trFnoRenderDetailRow(r, cg) {
     var isOpen = r.type === 'open';
     var rowClass = 'trFno-detail-row';
     if (isOpen) rowClass += ' trFno-detail-open';
@@ -604,33 +725,49 @@ function trFnoRenderDetailRow(r, cg, cmp) {
     var hasSell = r.sellAvg > 0 || r.sellAmount > 0;
 
     var buyPriceHtml = hasBuy ? formatPrice(r.buyAvg, false) : '-';
-    var buyAmtHtml = hasBuy ? formatAmount(r.buyAmount) : '-';
     var sellPriceHtml = hasSell ? formatPrice(r.sellAvg, false) : '-';
-    var sellAmtHtml = hasSell ? formatAmount(r.sellAmount) : '-';
 
+    // CMP display for open positions
     if (isOpen && r.cmp > 0) {
         if (!r.isShort && !hasSell) {
             sellPriceHtml = '<span class="trM-unrealised">' + formatPrice(r.cmp, false) + '</span>';
-            sellAmtHtml = '-';
         } else if (r.isShort && !hasBuy) {
             buyPriceHtml = '<span class="trM-unrealised">' + formatPrice(r.cmp, false) + '</span>';
-            buyAmtHtml = '-';
         }
     }
 
-    var pnlHtml = trFnoFormatPnl(r);
+    // Exposure = qty × opening price (only for open positions)
+    var exposureHtml = '-';
+    if (r.type === 'open') {
+        var exposure = r.isShort ? r.sellAmount : r.buyAmount;
+        exposureHtml = exposure > 0 ? formatAmount(exposure) : '-';
+    }
+
+    // P&L columns
+    var realisedPnl = (r.type === 'matched') ? r.pnl : 0;
+    var unrealisedPnl = (r.type === 'open' && r.unrealisedPnl !== undefined) ? r.unrealisedPnl : 0;
+    var netPnl = realisedPnl + unrealisedPnl;
+
+    var rClass = realisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+    var uClass = unrealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+    var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+
+    var realisedHtml = (r.type === 'matched') ? '<span class="' + rClass + '">' + formatAmount(realisedPnl) + '</span>' : '-';
+    var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="trM-unrealised ' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
+    var netHtml = netPnl !== 0 ? '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' : '-';
 
     return '<tr class="' + rowClass + '">' +
-        '<td style="padding-left:36px;">' + wmsEsc(cg.groupLabel) + '</td>' +
-        '<td>' + wmsEsc(cg.contractLabel) + '</td>' +
+        '<td style="padding-left:36px;"></td>' +
+        '<td></td>' +
         '<td class="text-right">' + formatQuantity(r.qty) + '</td>' +
-        '<td class="trM-buy-start">' + buyDateHtml + '</td>' +
+        '<td class="text-right trM-buy-start">' + buyDateHtml + '</td>' +
         '<td class="text-right">' + buyPriceHtml + '</td>' +
-        '<td class="text-right">' + buyAmtHtml + '</td>' +
-        '<td class="trM-sell-start">' + sellDateHtml + '</td>' +
+        '<td class="text-right trM-sell-start">' + sellDateHtml + '</td>' +
         '<td class="text-right">' + sellPriceHtml + '</td>' +
-        '<td class="text-right">' + sellAmtHtml + '</td>' +
-        '<td class="text-right">' + pnlHtml + '</td>' +
+        '<td class="text-right trFno-pnl-start">' + exposureHtml + '</td>' +
+        '<td class="text-right">' + realisedHtml + '</td>' +
+        '<td class="text-right">' + unrealisedHtml + '</td>' +
+        '<td class="text-right">' + netHtml + '</td>' +
     '</tr>';
 }
 
@@ -711,6 +848,21 @@ function trFnoBuildExpiryFilter(expiryLabels) {
         return;
     }
     wrap.style.display = '';
+
+    // Default: current + previous month on first load
+    if (trFnoExpiryFilter === null) {
+        var monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        var now = new Date();
+        var curMon = monthNames[now.getMonth()];
+        var curYY = String(now.getFullYear()).slice(-2);
+        var prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        var prevMon = monthNames[prevDate.getMonth()];
+        var prevYY = String(prevDate.getFullYear()).slice(-2);
+        var defaults = [curMon + ' ' + curYY, prevMon + ' ' + prevYY];
+        var matched = expiryLabels.filter(function(el) { return defaults.indexOf(el) >= 0; });
+        trFnoExpiryFilter = matched.length > 0 ? matched : [];
+    }
+
     var html = '<button class="trM-cf-btn" id="trFnoExpiryToggle">Expiry ▾</button>' +
         '<div class="trM-cf-dropdown" id="trFnoExpiryDropdown" style="display:none;">';
     expiryLabels.forEach(function(el) {
@@ -744,60 +896,298 @@ function trFnoBuildExpiryFilter(expiryLabels) {
 }
 
 // ============================================================================
-// SNAPSHOT: Capture table as image for WhatsApp sharing
+// F&O CONTRACT PRICES: Async fetch for open position CMP
+// ============================================================================
+
+async function trFnoFetchAndRefresh() {
+    var txns = trFnoGetTxns();
+    var symbols = {};
+    txns.forEach(function(t) {
+        // Collect full F&O symbols (different from short_symbol)
+        if (t.symbol && t.symbol !== t.short_symbol) {
+            symbols[t.symbol] = true;
+        }
+    });
+    var symList = Object.keys(symbols);
+    if (symList.length > 0 && typeof wmsFetchFnoContractPrices === 'function') {
+        await wmsFetchFnoContractPrices(symList);
+        trFnoRender(); // Re-render with updated contract prices
+    }
+}
+
+// ============================================================================
+// SNAPSHOT: Build table image from data for WhatsApp sharing
+// Draws directly on canvas — no html2canvas, no scroll/viewport limits
 // ============================================================================
 
 function trFnoSnapshot() {
-    var tableWrap = document.getElementById('trFnoTableWrap');
-    if (!tableWrap) return;
-
-    // Temporarily switch to flat view for snapshot
-    var wasFlat = trFnoFlatView;
-    if (!wasFlat) {
-        trFnoFlatView = true;
-        tableWrap.classList.add('trFno-flat-mode');
-        trFnoRender();
+    // Get flat positions data (reuse the same logic as trFnoRenderFlat)
+    var positions = window._trFnoLastPositions;
+    if (!positions || positions.length === 0) {
+        showAlert('No positions to snapshot', 'error', 2000);
+        return;
     }
 
-    // Use html2canvas (lazy-load if needed)
-    if (typeof html2canvas !== 'undefined') {
-        html2canvas(tableWrap, { scale: 1.5, backgroundColor: '#ffffff' }).then(function(canvas) {
-            // Resize for WhatsApp (max width ~800px)
-            var maxW = 800;
-            var ratio = canvas.width > maxW ? maxW / canvas.width : 1;
-            var resizedCanvas = document.createElement('canvas');
-            resizedCanvas.width = canvas.width * ratio;
-            resizedCanvas.height = canvas.height * ratio;
-            var ctx = resizedCanvas.getContext('2d');
-            ctx.drawImage(canvas, 0, 0, resizedCanvas.width, resizedCanvas.height);
-
-            resizedCanvas.toBlob(function(blob) {
-                var url = URL.createObjectURL(blob);
-                var a = document.createElement('a');
-                a.href = url;
-                a.download = 'fno-positions-' + new Date().toISOString().slice(0, 10) + '.png';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                showAlert('Snapshot saved!', 'success', 2000);
-            }, 'image/png');
-
-            // Restore if needed
-            if (!wasFlat) {
-                trFnoFlatView = false;
-                tableWrap.classList.remove('trFno-flat-mode');
-                trFnoRender();
-                var cb = document.getElementById('trFnoFlatToggle');
-                if (cb) cb.checked = false;
-            }
+    // Collect flat rows
+    var flatRows = [];
+    positions.forEach(function(p) {
+        p.contractGroups.forEach(function(cg) {
+            cg.rows.forEach(function(row) {
+                flatRows.push({
+                    underlying: p.underlying, companyName: p.companyName,
+                    contractLabel: cg.contractLabel, isShort: cg.isShort, row: row
+                });
+            });
         });
-    } else {
-        // Dynamically load html2canvas
-        var script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-        script.onload = function() { trFnoSnapshot(); };
-        document.head.appendChild(script);
-        showAlert('Loading snapshot library...', 'info', 2000);
-    }
+    });
+
+    // Sort: open first, then closed; within each sort by symbol then date
+    flatRows.sort(function(a, b) {
+        var aOpen = a.row.type === 'open' ? 0 : 1;
+        var bOpen = b.row.type === 'open' ? 0 : 1;
+        if (aOpen !== bOpen) return aOpen - bOpen;
+        var c = a.underlying.localeCompare(b.underlying);
+        if (c !== 0) return c;
+        var dateA = a.row.buyDate || a.row.sellDate || '9999';
+        var dateB = b.row.buyDate || b.row.sellDate || '9999';
+        return new Date(dateA) - new Date(dateB);
+    });
+
+    // Calculate totals (exposure only from open)
+    var totExposure = 0, totRealised = 0, totUnrealised = 0, totNet = 0;
+    flatRows.forEach(function(fr) {
+        var r = fr.row;
+        if (r.type === 'open') {
+            totExposure += r.isShort ? r.sellAmount : r.buyAmount;
+            totUnrealised += (r.unrealisedPnl !== undefined) ? r.unrealisedPnl : 0;
+        }
+        if (r.type === 'matched') totRealised += r.pnl;
+    });
+    totNet = totRealised + totUnrealised;
+
+    // Column definitions: label, width, align (merged underlying+contract into one)
+    var cols = [
+        { label: 'CONTRACT',    w: 230, align: 'left' },
+        { label: 'QTY',         w: 55,  align: 'right' },
+        { label: 'BUY DATE',    w: 75,  align: 'right' },
+        { label: 'BUY PRICE',   w: 70,  align: 'right' },
+        { label: 'SELL DATE',   w: 75,  align: 'right' },
+        { label: 'SELL PRICE',  w: 70,  align: 'right' },
+        { label: 'EXPOSURE',    w: 80,  align: 'right' },
+        { label: 'REALISED P&L', w: 90, align: 'right' },
+        { label: 'UNREAL. P&L', w: 90,  align: 'right' },
+        { label: 'NET P&L',     w: 85,  align: 'right' }
+    ];
+
+    var dpr = 2;
+    var pad = 6;
+    var rowH = 22;
+    var titleH = 22;
+    var headerH = 26;
+    var totalRowH = 26;
+    var totalW = cols.reduce(function(s, c) { return s + c.w; }, 0) + pad * 2;
+    var totalH = titleH + headerH + totalRowH + flatRows.length * rowH + pad;
+
+    var canvas = document.createElement('canvas');
+    canvas.width = totalW * dpr;
+    canvas.height = totalH * dpr;
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    // Background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, totalW, totalH);
+
+    // Helper to format numbers (divide by 1000 to match page display unit)
+    var fmtAmt = function(v) {
+        if (v === 0 || v === undefined || v === null) return '-';
+        var neg = v < 0;
+        var abs = (Math.abs(v) / 1000).toFixed(2);
+        var parts = abs.split('.');
+        var intPart = parts[0].replace(/\B(?=(\d{2})+(\d)(?!\d))/g, ',');
+        var result = intPart + '.' + parts[1];
+        return neg ? '(' + result + ')' : result;
+    };
+    var fmtQty = function(v) {
+        return v.toString().replace(/\B(?=(\d{2})+(\d)(?!\d))/g, ',');
+    };
+    var fmtDate = function(d) {
+        if (!d) return '-';
+        var dt = new Date(d);
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return ('0' + dt.getDate()).slice(-2) + '-' + months[dt.getMonth()] + '-' + String(dt.getFullYear()).slice(-2);
+    };
+    var fmtPrice = function(v) {
+        if (!v || v === 0) return '-';
+        return v.toFixed(2);
+    };
+
+    // Draw text helper
+    var drawCell = function(text, x, w, y, align, color, bold) {
+        ctx.fillStyle = color || '#2d3748';
+        ctx.font = (bold ? 'bold ' : '') + '10px -apple-system, BlinkMacSystemFont, sans-serif';
+        var tx = align === 'right' ? x + w - 4 : x + 4;
+        ctx.textAlign = align === 'right' ? 'right' : 'left';
+        ctx.textBaseline = 'middle';
+        // Truncate if needed
+        var maxW = w - 8;
+        if (ctx.measureText(text).width > maxW) {
+            while (text.length > 0 && ctx.measureText(text + '…').width > maxW) text = text.slice(0, -1);
+            text = text + '…';
+        }
+        ctx.fillText(text, tx, y);
+    };
+
+    // Column borders (buy group, sell group, pnl group)
+    var drawColBorders = function(y, h) {
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 0.5;
+        // Buy group left border (after CONTRACT, QTY = cols 0,1)
+        var bx = pad + cols[0].w + cols[1].w;
+        ctx.beginPath(); ctx.moveTo(bx, y); ctx.lineTo(bx, y + h); ctx.stroke();
+        // Sell group left border (after BUY DATE, BUY PRICE = cols 2,3)
+        var sx = bx + cols[2].w + cols[3].w;
+        ctx.beginPath(); ctx.moveTo(sx, y); ctx.lineTo(sx, y + h); ctx.stroke();
+        // Pnl group left border (after SELL DATE, SELL PRICE = cols 4,5)
+        var px = sx + cols[4].w + cols[5].w;
+        ctx.beginPath(); ctx.moveTo(px, y); ctx.lineTo(px, y + h); ctx.stroke();
+    };
+
+    var y = 0;
+
+    // --- TITLE ROW ---
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, y, totalW, titleH);
+    ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillStyle = '#2d3748';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('F&O Positions', pad + 4, y + titleH / 2);
+    ctx.font = '9px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillStyle = '#a0aec0';
+    ctx.textAlign = 'right';
+    var today = new Date();
+    var dateStr = ('0' + today.getDate()).slice(-2) + '-' +
+        ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][today.getMonth()] + '-' +
+        today.getFullYear();
+    ctx.fillText('all amounts in \u20B9 \'000  |  ' + dateStr, totalW - pad - 4, y + titleH / 2);
+    y += titleH;
+
+    // --- HEADER ROW ---
+    ctx.fillStyle = '#f7fafc';
+    ctx.fillRect(0, y, totalW, headerH);
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, y + headerH); ctx.lineTo(totalW, y + headerH); ctx.stroke();
+    var hx = pad;
+    cols.forEach(function(col) {
+        drawCell(col.label, hx, col.w, y + headerH / 2, col.align, '#718096', true);
+        hx += col.w;
+    });
+    drawColBorders(y, headerH);
+    y += headerH;
+
+    // --- TOTAL ROW ---
+    ctx.fillStyle = '#edf2f7';
+    ctx.fillRect(0, y, totalW, totalRowH);
+    ctx.strokeStyle = '#cbd5e0';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, y + totalRowH); ctx.lineTo(totalW, y + totalRowH); ctx.stroke();
+    drawCell('TOTAL', pad, cols[0].w, y + totalRowH / 2, 'left', '#2d3748', true);
+    var tx = pad;
+    for (var ti = 0; ti < 6; ti++) tx += cols[ti].w;
+    drawCell(fmtAmt(totExposure), tx, cols[6].w, y + totalRowH / 2, 'right', '#2d3748', true);
+    tx += cols[6].w;
+    drawCell(fmtAmt(totRealised), tx, cols[7].w, y + totalRowH / 2, 'right', totRealised >= 0 ? '#38a169' : '#e53e3e', true);
+    tx += cols[7].w;
+    drawCell(fmtAmt(totUnrealised), tx, cols[8].w, y + totalRowH / 2, 'right', totUnrealised >= 0 ? '#38a169' : '#e53e3e', true);
+    tx += cols[8].w;
+    drawCell(fmtAmt(totNet), tx, cols[9].w, y + totalRowH / 2, 'right', totNet >= 0 ? '#38a169' : '#e53e3e', true);
+    drawColBorders(y, totalRowH);
+    y += totalRowH;
+
+    // --- DATA ROWS ---
+    flatRows.forEach(function(fr, idx) {
+        var r = fr.row;
+        var isOpen = r.type === 'open';
+        var textColor = isOpen ? '#2d3748' : '#a0aec0';
+
+        // Alternate row background
+        if (idx % 2 === 1) {
+            ctx.fillStyle = '#f9fafb';
+            ctx.fillRect(0, y, totalW, rowH);
+        }
+
+        // Row bottom border
+        ctx.strokeStyle = '#edf2f7';
+        ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(0, y + rowH); ctx.lineTo(totalW, y + rowH); ctx.stroke();
+
+        var rx = pad;
+        // Contract (merged: symbol + contractLabel)
+        var contractName = fr.underlying + ' ' + fr.contractLabel;
+        drawCell(contractName, rx, cols[0].w, y + rowH / 2, 'left', textColor, false);
+        rx += cols[0].w;
+        // Qty
+        drawCell(fmtQty(r.qty), rx, cols[1].w, y + rowH / 2, 'right', textColor, false);
+        rx += cols[1].w;
+        // Buy Date
+        drawCell(fmtDate(r.buyDate), rx, cols[2].w, y + rowH / 2, 'right', textColor, false);
+        rx += cols[2].w;
+        // Buy Price
+        var bpText = (r.buyAvg > 0) ? fmtPrice(r.buyAvg) : '-';
+        if (isOpen && r.cmp > 0 && r.isShort && !(r.buyAvg > 0)) bpText = fmtPrice(r.cmp);
+        drawCell(bpText, rx, cols[3].w, y + rowH / 2, 'right', textColor, false);
+        rx += cols[3].w;
+        // Sell Date
+        drawCell(fmtDate(r.sellDate), rx, cols[4].w, y + rowH / 2, 'right', textColor, false);
+        rx += cols[4].w;
+        // Sell Price
+        var spText = (r.sellAvg > 0) ? fmtPrice(r.sellAvg) : '-';
+        if (isOpen && r.cmp > 0 && !r.isShort && !(r.sellAvg > 0)) spText = fmtPrice(r.cmp);
+        drawCell(spText, rx, cols[5].w, y + rowH / 2, 'right', textColor, false);
+        rx += cols[5].w;
+        // Exposure
+        var expText = '-';
+        if (isOpen) {
+            var exp = r.isShort ? r.sellAmount : r.buyAmount;
+            expText = exp > 0 ? fmtAmt(exp) : '-';
+        }
+        drawCell(expText, rx, cols[6].w, y + rowH / 2, 'right', textColor, false);
+        rx += cols[6].w;
+        // Realised P&L
+        var realPnl = (r.type === 'matched') ? r.pnl : 0;
+        var realColor = isOpen ? textColor : (realPnl >= 0 ? '#38a169' : '#e53e3e');
+        if (!isOpen) realColor = realPnl >= 0 ? '#b7d4c4' : '#e8a8a8';
+        drawCell(r.type === 'matched' ? fmtAmt(realPnl) : '-', rx, cols[7].w, y + rowH / 2, 'right', realColor, false);
+        rx += cols[7].w;
+        // Unrealised P&L
+        var unPnl = (isOpen && r.unrealisedPnl !== undefined) ? r.unrealisedPnl : 0;
+        var unColor = isOpen ? (unPnl >= 0 ? '#38a169' : '#e53e3e') : textColor;
+        drawCell(isOpen && unPnl !== 0 ? fmtAmt(unPnl) : '-', rx, cols[8].w, y + rowH / 2, 'right', unColor, false);
+        rx += cols[8].w;
+        // Net P&L
+        var netPnl = realPnl + unPnl;
+        var netColor = textColor;
+        if (isOpen) netColor = netPnl >= 0 ? '#38a169' : '#e53e3e';
+        else if (r.type === 'matched') netColor = netPnl >= 0 ? '#b7d4c4' : '#e8a8a8';
+        drawCell(netPnl !== 0 ? fmtAmt(netPnl) : '-', rx, cols[9].w, y + rowH / 2, 'right', netColor, false);
+
+        drawColBorders(y, rowH);
+        y += rowH;
+    });
+
+    // Copy canvas to clipboard
+    canvas.toBlob(function(blob) {
+        if (!blob) { showAlert('Snapshot failed', 'error', 2000); return; }
+        if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+            navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(function() {
+                showAlert('Snapshot copied to clipboard!', 'success', 2000);
+            }).catch(function(err) {
+                showAlert('Clipboard copy failed: ' + err.message, 'error', 3000);
+            });
+        } else {
+            showAlert('Clipboard not supported in this browser', 'error', 2000);
+        }
+    }, 'image/png');
 }

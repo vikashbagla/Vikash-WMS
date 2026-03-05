@@ -483,44 +483,59 @@
 }
 .trFno-snap-btn:hover { border-color: #667eea; color: #667eea; }
 
-/* F&O symbol-level main row (same height as portfolio rows) */
-.trFno-symbol-row { cursor: pointer; }
-.trFno-symbol-row:hover { background: #f7fafc; }
-.trFno-symbol-row td { padding: 8px 8px; font-size: 12px; }
+/* F&O symbol-level main row — highlighted to show grouping */
+.trFno-symbol-row { cursor: pointer; background: #f0f4ff; }
+.trFno-symbol-row:hover { background: #e2eafc; }
+.trFno-symbol-row td { padding: 8px 8px; font-size: 12px; font-weight: 600; }
 .trFno-symbol-name { font-weight: 600; color: #2d3748; }
-.trFno-symbol-sub { font-size: 10px; color: #a0aec0; }
+.trFno-symbol-sub { font-size: 10px; color: #a0aec0; font-weight: 400; }
 
-/* F&O expanded detail rows */
-.trFno-detail-header {
-    background: #f0f4ff !important; cursor: pointer;
-}
+/* F&O sub-group header rows (clickable to expand detail) */
+.trFno-detail-header { cursor: pointer; }
+.trFno-detail-header:hover { background: #f7fafc; }
 .trFno-detail-header td { font-weight: 600; font-size: 11px; padding: 5px 8px; color: #4a5568; }
 .trFno-detail-row td { padding: 4px 8px; font-size: 11px; }
 .trFno-detail-row:hover { background: #fafbff; }
-.trFno-detail-open td { font-style: italic; color: #718096; }
+.trFno-detail-row:not(.trFno-detail-open) td { color: #a0aec0; }
+.trFno-detail-row:not(.trFno-detail-open) td span { color: #a0aec0 !important; }
+.trFno-total-row { background: #edf2f7; border-bottom: 2px solid #cbd5e0; }
+.trFno-total-row td { padding: 8px 8px; font-size: 12px; font-weight: 600; background: #edf2f7; }
 .trFno-collapse-icon {
     display: inline-block; transition: transform 0.15s; font-size: 10px;
 }
 .trFno-collapsed .trFno-collapse-icon { transform: rotate(-90deg); }
 .trFno-hide-row { display: none; }
 
-/* F&O Summary */
-.trFno-summary {
-    flex-shrink: 0; padding: 6px 8px; border-top: 1px solid #e2e8f0;
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 6px;
-}
-.trFno-summary-card {
-    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
-    padding: 6px 10px; text-align: center;
-}
-.trFno-summary-label { font-size: 10px; color: #718096; text-transform: uppercase; }
-.trFno-summary-value { font-size: 14px; font-weight: 700; margin-top: 2px; }
+/* F&O Summary — removed, using TOTAL row instead */
 
 /* F&O Flat view snapshot styling */
 .trFno-flat-mode .trFno-symbol-row { display: none; }
 .trFno-flat-mode .trFno-detail-header { display: none; }
 .trFno-flat-mode .trFno-hide-row { display: table-row !important; }
 .trFno-flat-mode .trFno-detail-row td { padding: 4px 6px; font-size: 10px; }
+/* Snapshot mode: hide investor>broker group labels */
+.trFno-snapshot-mode .trFno-symbol-sub { display: none !important; }
+
+/* F&O Table column widths */
+/* F&O Table: 11-column layout */
+#trFnoTable { table-layout: fixed; width: 100%; }
+#trFnoThead th:nth-child(1)  { width: 13%; }  /* Underlying */
+#trFnoThead th:nth-child(2)  { width: 11%; }  /* Contract */
+#trFnoThead th:nth-child(3)  { width: 5%; }   /* Qty */
+#trFnoThead th:nth-child(4)  { width: 7%; }   /* Buy Date */
+#trFnoThead th:nth-child(5)  { width: 6%; }   /* Buy Price */
+#trFnoThead th:nth-child(6)  { width: 7%; }   /* Sell Date */
+#trFnoThead th:nth-child(7)  { width: 6%; }   /* Sell Price */
+#trFnoThead th:nth-child(8)  { width: 9%; }   /* Exposure */
+#trFnoThead th:nth-child(9)  { width: 12%; }  /* Realised P&L */
+#trFnoThead th:nth-child(10) { width: 12%; }  /* Unrealised P&L */
+#trFnoThead th:nth-child(11) { width: 12%; }  /* Net P&L */
+#trFnoTable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#trFnoTable td:first-child { overflow: visible; }
+#trFnoTable thead th { position: sticky; top: 0; background: #f7fafc; z-index: 2; white-space: nowrap; font-size: 10px; padding: 6px 4px; }
+.trFno-total-row td { position: sticky; top: 26px; z-index: 1; }
+/* P&L section border separator */
+.trFno-pnl-start { border-left: 2px solid #cbd5e0 !important; }
 
 /* F&O Expiry dropdown (reuses contract filter styles) */
 .trFno-expiry-wrap { position: relative; display: inline-block; }
@@ -882,25 +897,24 @@
             <table id="trFnoTable">
                 <thead id="trFnoThead">
                     <tr>
-                        <th style="width:14%;">Underlying</th>
-                        <th style="width:10%;">Contract</th>
-                        <th class="text-right" style="width:6%;">Qty</th>
-                        <th class="trM-buy-start">Buy Date</th>
-                        <th class="text-right">Price</th>
-                        <th class="text-right">Amount</th>
-                        <th class="trM-sell-start">Sell Date</th>
-                        <th class="text-right">Price</th>
-                        <th class="text-right">Amount</th>
-                        <th class="text-right">P&amp;L</th>
+                        <th>UNDERLYING</th>
+                        <th>CONTRACT</th>
+                        <th class="text-right">QTY</th>
+                        <th class="text-right trM-buy-start">BUY DATE</th>
+                        <th class="text-right">BUY PRICE</th>
+                        <th class="text-right trM-sell-start">SELL DATE</th>
+                        <th class="text-right">SELL PRICE</th>
+                        <th class="text-right trFno-pnl-start">EXPOSURE</th>
+                        <th class="text-right">REALISED P&amp;L</th>
+                        <th class="text-right">UNREAL. P&amp;L</th>
+                        <th class="text-right">NET P&amp;L</th>
                     </tr>
                 </thead>
                 <tbody id="trFnoBody">
-                    <tr><td colspan="10" style="text-align:center;padding:40px;color:#9ca3af;">Loading F&amp;O positions...</td></tr>
+                    <tr><td colspan="11" style="text-align:center;padding:40px;color:#9ca3af;">Loading F&amp;O positions...</td></tr>
                 </tbody>
             </table>
         </div>
-        <!-- F&O Summary Footer -->
-        <div class="trFno-summary" id="trFnoSummary"></div>
     </div>
 </div>
 

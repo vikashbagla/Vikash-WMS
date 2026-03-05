@@ -706,6 +706,53 @@ var wmsLivePrices = {};       // shortSymbol → { lp, ch, chp, high, low, resol
 var wmsLivePriceFirstFetch = false;  // Stage 2+3 only on first load
 
 /**
+ * wmsFetchFnoContractPrices — fetch live prices for F&O contracts.
+ * Uses full symbol (e.g. MANAPPURAM26MAR305PE) with NSE: prefix for Fyers.
+ * Stores results in wmsLivePrices keyed by full symbol.
+ *
+ * @param {Array} symbols — array of full F&O symbol strings
+ * @returns {Promise} — resolves when done; prices stored in wmsLivePrices
+ */
+async function wmsFetchFnoContractPrices(symbols) {
+    if (!symbols || symbols.length === 0) return;
+    if (!window.fyersToken || !window.fyersCall) return;
+
+    // Filter out already-cached symbols
+    var toFetch = symbols.filter(function(sym) {
+        return !wmsLivePrices[sym] || wmsLivePrices[sym].lp <= 0;
+    });
+    if (toFetch.length === 0) return;
+
+    // Batch fetch from Fyers (NSE: prefix for F&O contracts)
+    for (var i = 0; i < toFetch.length; i += 50) {
+        var chunk = toFetch.slice(i, i + 50);
+        var fyersKeys = chunk.map(function(s) { return 'NSE:' + s; });
+        try {
+            var data = await window.fyersCall({ action: 'quotes', symbols: fyersKeys });
+            if (data && data.d) {
+                data.d.forEach(function(item) {
+                    if (item.v && item.v.lp > 0 && item.v.short_name) {
+                        wmsLivePrices[item.v.short_name] = {
+                            lp: item.v.lp,
+                            ch: item.v.ch || 0,
+                            chp: item.v.chp || 0,
+                            high: item.v.high_price || null,
+                            low: item.v.low_price || null,
+                            resolvedSymbol: item.v.symbol
+                        };
+                    }
+                });
+            }
+        } catch (err) {
+            console.warn('wmsFetchFnoContractPrices: error:', err.message);
+        }
+        if (i + 50 < toFetch.length) {
+            await new Promise(function(r) { setTimeout(r, 200); });
+        }
+    }
+}
+
+/**
  * wmsFetchEquityPrices — 3-stage price resolution protocol.
  *   Stage 1: Fyers batch with NSE:SYMBOL-EQ
  *   Stage 2: Alternate Fyers symbols (BSE, -SM, broker_tokens) for unresolved

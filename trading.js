@@ -44,6 +44,7 @@ var trShowHiddenTrades = false;  // toggle for showing hidden trades
 var trTxnViewMode = 'list';     // 'list' | 'matching'
 var trTxnDaysFilter = 0;        // 0 = ALL, else # of days
 var trTxnMatchMethod = 'lifo';  // 'fifo' | 'lifo' (default LIFO)
+var trTxnFnoPricesFetched = false;  // reset each modal open
 var trTxnContractFilter = [];   // [] = show all, else array of expiry labels (e.g. "Mar 26") to show
 var trRenamingTab = false;       // flag: true while inline rename input is active (prevents trApplyView from firing)
 
@@ -1210,6 +1211,7 @@ function trOpenTxnModal(companyKey, investorId) {
     trCurrentTxnInvestorId = investorId || null;
     trTxnHiddenIds = {};
     trShowHiddenTrades = false;
+    trTxnFnoPricesFetched = false;
 
     var txns = trGetTxnModalTxns();
 
@@ -1674,12 +1676,6 @@ function trRenderTxnMatchingView() {
     var groupResults = [];
     var colCount = 10;
 
-    // Get CMP for unrealised P&L
-    var shortSymbol = trCurrentTxnModalKey;
-    var mockH = { shortSymbol: shortSymbol, symbol: shortSymbol, exchange: 'NSE', latestPrice: 0 };
-    var cmp = trGetPrice(mockH);
-    var md = trGetLiveData(mockH);
-
     Object.keys(groups).sort().forEach(function(key) {
         var g = groups[key];
 
@@ -1745,6 +1741,10 @@ function trRenderTxnMatchingView() {
         });
 
         // Open positions (unmatched openers)
+        // Get CMP: use contract-specific price for F&O, equity price for stocks
+        var contractCache = wmsLivePrices[g.fullSymbol];
+        var cmp = contractCache ? contractCache.lp : trGetPrice({ shortSymbol: g.shortSymbol, symbol: g.shortSymbol, exchange: 'NSE', latestPrice: 0 });
+
         openerOrder.forEach(function(opener) {
             if (opener.remaining <= 0) return;
             var ppu = opener.qty > 0 ? opener.netAmount / opener.qty : 0;
@@ -1760,7 +1760,7 @@ function trRenderTxnMatchingView() {
                 row.buyDate = opener.date; row.buyAvg = ppu; row.buyAmount = opener.remaining * ppu;
                 row.sellDate = null; row.sellAvg = 0; row.sellAmount = 0;
             }
-            // Unrealised P&L using CMP
+            // Unrealised P&L using contract-specific CMP
             if (cmp > 0) {
                 row.cmp = cmp;
                 var openCost = row.isShort ? row.sellAmount : row.buyAmount;
@@ -1978,6 +1978,23 @@ function trRenderTxnMatchingView() {
 
     // Render matching summary
     trRenderTxnMatchSummary(groupResults);
+
+    // Async: fetch F&O contract prices if any F&O symbols need pricing
+    if (!trTxnFnoPricesFetched) {
+        var fnoSymbols = {};
+        txns.forEach(function(t) {
+            if ((t.security_type === 'NFO' || t.security_type === 'MCX') && t.symbol && t.symbol !== t.short_symbol) {
+                fnoSymbols[t.symbol] = true;
+            }
+        });
+        var fnoSymList = Object.keys(fnoSymbols);
+        if (fnoSymList.length > 0 && window.fyersToken && typeof wmsFetchFnoContractPrices === 'function') {
+            trTxnFnoPricesFetched = true;
+            wmsFetchFnoContractPrices(fnoSymList).then(function() {
+                trRenderTxnMatchingView(); // Re-render with updated contract prices
+            });
+        }
+    }
 }
 
 // Extract expiry label from contract label: "27 Feb 25 Fut" → "Feb 25", "Equity" → "Equity"
