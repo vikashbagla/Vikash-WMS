@@ -1128,7 +1128,7 @@ function trBuildInvestorDetail(h, price, md) {
             g.avgCost = calc.avgCost;
             return g;
         })
-        .filter(function(g) { return trShowZeroHoldings || g.quantity !== 0 || (trSelectedInvestorIds.length > 0 && trSelectedInvestorIds.indexOf(g.investorId) >= 0); })
+        .filter(function(g) { return g.txns.length > 0; })
         .map(function(g) {
             var avg = g.avgCost;
             var inv = g.totalCost;
