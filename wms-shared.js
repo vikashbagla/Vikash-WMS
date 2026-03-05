@@ -2420,6 +2420,62 @@ function wmsModal(overlayEl, opts) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Contract Display — shared across trading.js + trading-transactions.js
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Format a transaction's contract for display in matching trade views.
+ * Equity → "Equity". NFO → "DD Mon YY [Strike] Type" from securities_nfo lookup,
+ * fallback to symbol parsing if NFO record unavailable (expired contracts).
+ *
+ * @param {Object} txn — transaction record with symbol, short_symbol, security_type, security_id
+ * @returns {string} formatted contract label
+ */
+function wmsFormatContract(txn) {
+    if (!txn) return '';
+    // Non-NFO → Equity
+    if (txn.security_type !== 'NFO') return 'Equity';
+    if (txn.symbol === txn.short_symbol) return 'Equity';
+
+    // Try NFO lookup by security_id for structured data
+    if (txn.security_id && wmsRefData.securitiesNfoMap) {
+        var nfo = wmsRefData.securitiesNfoMap[txn.security_id];
+        if (nfo && nfo.expiry_date) {
+            var d = new Date(nfo.expiry_date + 'T00:00:00');
+            var parts = [];
+            parts.push(d.getDate());
+            parts.push(WMS_MONTHS_SHORT_FULL[d.getMonth()]);
+            parts.push(String(d.getFullYear()).slice(-2));
+            if (nfo.strike_price) parts.push(Math.round(nfo.strike_price));
+            parts.push(nfo.option_type ? nfo.option_type.toUpperCase() : 'Fut');
+            return parts.join(' ');
+        }
+    }
+
+    // Fallback: parse from symbol string
+    var suffix = txn.symbol || '';
+    var short = (txn.short_symbol || '').toUpperCase();
+    if (short && suffix.toUpperCase().indexOf(short) === 0) {
+        suffix = suffix.substring(short.length);
+    }
+    if (!suffix) return 'NFO';
+
+    // Pattern: YY + MON + (optional strike) + FUT/CE/PE
+    var m = suffix.match(/^(\d{2})([A-Z]{3})(\d+)?(FUT|CE|PE)$/i);
+    if (m) {
+        var monIdx = WMS_MONTHS_SHORT.indexOf(m[2].toUpperCase());
+        var monLabel = monIdx >= 0 ? WMS_MONTHS_SHORT_FULL[monIdx] : m[2];
+        var parts = [monLabel, m[1]];
+        if (m[3]) parts.push(m[3]);
+        parts.push(m[4].toUpperCase() === 'FUT' ? 'Fut' : m[4].toUpperCase());
+        return parts.join(' ');
+    }
+
+    // Last resort: just clean up the suffix
+    return suffix.replace(/(FUT|CE|PE)$/i, ' $1').trim();
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Symbol Search Sort — shared across add-transaction + watchlist
 // ═══════════════════════════════════════════════════════════════
 

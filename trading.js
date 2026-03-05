@@ -44,6 +44,7 @@ var trShowHiddenTrades = false;  // toggle for showing hidden trades
 var trTxnViewMode = 'list';     // 'list' | 'matching'
 var trTxnDaysFilter = 0;        // 0 = ALL, else # of days
 var trTxnMatchMethod = 'lifo';  // 'fifo' | 'lifo' (default LIFO)
+var trTxnContractFilter = [];   // [] = show all, else array of contract labels to show
 
 // ============================================================================
 // INITIALIZATION
@@ -1226,6 +1227,7 @@ function trOpenTxnModal(companyKey, investorId) {
     trTxnViewMode = 'list';
     trTxnDaysFilter = 0;
     trTxnMatchMethod = 'lifo';
+    trTxnContractFilter = [];
 
     // Update toggle button
     var toggleBtn = document.getElementById('trToggleHiddenBtn');
@@ -1495,6 +1497,7 @@ function trCloseTxnModal() {
     trTxnViewMode = 'list';
     trTxnDaysFilter = 0;
     trTxnMatchMethod = 'lifo';
+    trTxnContractFilter = [];
 }
 
 // ============================================================================
@@ -1506,6 +1509,7 @@ function trTxnSwitchView() {
     var matchView = document.getElementById('trTxnMatchView');
     var matchMethodWrap = document.getElementById('trTxnMatchMethodWrap');
     var hiddenBtn = document.getElementById('trToggleHiddenBtn');
+    var contractFilterWrap = document.getElementById('trTxnContractFilterWrap');
 
     if (trTxnViewMode === 'matching') {
         listView.style.display = 'none';
@@ -1518,6 +1522,7 @@ function trTxnSwitchView() {
         matchView.style.display = 'none';
         matchMethodWrap.style.display = 'none';
         hiddenBtn.style.display = '';
+        if (contractFilterWrap) contractFilterWrap.style.display = 'none';
         trRenderTxnTable();
     }
 }
@@ -1541,20 +1546,22 @@ function trRenderTxnMatchingView() {
         return t.transaction_type === 'BUY' || t.transaction_type === 'SELL';
     });
 
-    // Group by investor_id + trader_id + broker_id + short_symbol
+    // Group by investor_id + trader_id + broker_id + full symbol (contract level)
     var groups = {};
     trades.forEach(function(t) {
         var invId = t.investor_id || '';
         var trdId = t.trader_id || '';
         var brkId = t.broker_id || '';
-        var sym = t.short_symbol || t.symbol || '';
-        var key = invId + '|' + trdId + '|' + brkId + '|' + sym;
+        var fullSym = t.symbol || t.short_symbol || '';
+        var key = invId + '|' + trdId + '|' + brkId + '|' + fullSym;
         if (!groups[key]) {
             groups[key] = {
                 investorId: t.investor_id,
                 traderId: t.trader_id,
                 brokerId: t.broker_id,
-                symbol: sym,
+                fullSymbol: fullSym,
+                shortSymbol: t.short_symbol || t.symbol || '',
+                contractLabel: wmsFormatContract(t),
                 buys: [],
                 sells: []
             };
@@ -1564,7 +1571,6 @@ function trRenderTxnMatchingView() {
             qty: Math.abs(t.quantity || 0),
             netAmount: Math.abs(t.net_amount || 0),
             remaining: Math.abs(t.quantity || 0),
-            displaySymbol: t.symbol || t.short_symbol || '',
             txn: t
         };
         if (t.transaction_type === 'BUY') {
@@ -1574,12 +1580,29 @@ function trRenderTxnMatchingView() {
         }
     });
 
+    // Build contract filter options (unique contract labels)
+    var allContracts = {};
+    Object.keys(groups).forEach(function(k) {
+        var cl = groups[k].contractLabel || 'Equity';
+        allContracts[cl] = true;
+    });
+    trBuildContractFilter(Object.keys(allContracts).sort());
+
     // Build matched results per group
     var groupResults = [];
     var colCount = 10;
 
+    // Get CMP for unrealised P&L
+    var shortSymbol = trCurrentTxnModalKey;
+    var mockH = { shortSymbol: shortSymbol, symbol: shortSymbol, exchange: 'NSE', latestPrice: 0 };
+    var cmp = trGetPrice(mockH);
+    var md = trGetLiveData(mockH);
+
     Object.keys(groups).sort().forEach(function(key) {
         var g = groups[key];
+
+        // Apply contract filter
+        if (trTxnContractFilter.length > 0 && trTxnContractFilter.indexOf(g.contractLabel) < 0) return;
 
         // Sort chronologically
         g.buys.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
@@ -1591,10 +1614,10 @@ function trRenderTxnMatchingView() {
         var isShort = firstSellDate < firstBuyDate;
 
         var buys = g.buys.map(function(b) {
-            return { date: b.date, qty: b.qty, netAmount: b.netAmount, remaining: b.qty, displaySymbol: b.displaySymbol, txn: b.txn };
+            return { date: b.date, qty: b.qty, netAmount: b.netAmount, remaining: b.qty, txn: b.txn };
         });
         var sells = g.sells.map(function(s) {
-            return { date: s.date, qty: s.qty, netAmount: s.netAmount, remaining: s.qty, displaySymbol: s.displaySymbol, txn: s.txn };
+            return { date: s.date, qty: s.qty, netAmount: s.netAmount, remaining: s.qty, txn: s.txn };
         });
 
         var openers = isShort ? sells : buys;
@@ -1614,23 +1637,24 @@ function trRenderTxnMatchingView() {
                 var matchQty = Math.min(closerRemaining, opener.remaining);
                 var openerPpu = opener.qty > 0 ? opener.netAmount / opener.qty : 0;
 
-                var buyDate, buyAvg, buyAmount, sellDate, sellAvg, sellAmount, displaySymbol;
+                var buyDate, buyAvg, buyAmount, sellDate, sellAvg, sellAmount, openerTxn, closerTxn;
                 if (isShort) {
                     sellDate = opener.date; sellAvg = openerPpu; sellAmount = matchQty * openerPpu;
                     buyDate = closer.date; buyAvg = closerPpu; buyAmount = matchQty * closerPpu;
-                    displaySymbol = opener.displaySymbol || closer.displaySymbol;
+                    openerTxn = opener.txn; closerTxn = closer.txn;
                 } else {
                     buyDate = opener.date; buyAvg = openerPpu; buyAmount = matchQty * openerPpu;
                     sellDate = closer.date; sellAvg = closerPpu; sellAmount = matchQty * closerPpu;
-                    displaySymbol = opener.displaySymbol || closer.displaySymbol;
+                    openerTxn = opener.txn; closerTxn = closer.txn;
                 }
 
                 matchedRows.push({
                     type: 'matched', isShort: isShort,
-                    displaySymbol: displaySymbol,
                     qty: matchQty, buyDate: buyDate, buyAvg: buyAvg, buyAmount: buyAmount,
                     sellDate: sellDate, sellAvg: sellAvg, sellAmount: sellAmount,
-                    pnl: sellAmount - buyAmount
+                    pnl: sellAmount - buyAmount,
+                    buyTxnId: isShort ? closerTxn.id : openerTxn.id,
+                    sellTxnId: isShort ? openerTxn.id : closerTxn.id
                 });
                 opener.remaining -= matchQty;
                 closerRemaining -= matchQty;
@@ -1644,8 +1668,8 @@ function trRenderTxnMatchingView() {
             var ppu = opener.qty > 0 ? opener.netAmount / opener.qty : 0;
             var row = {
                 type: 'open', isShort: isShort,
-                displaySymbol: opener.displaySymbol,
-                qty: opener.remaining, pnl: 0
+                qty: opener.remaining, pnl: 0,
+                openerTxnId: opener.txn.id
             };
             if (isShort) {
                 row.buyDate = null; row.buyAvg = 0; row.buyAmount = 0;
@@ -1653,6 +1677,12 @@ function trRenderTxnMatchingView() {
             } else {
                 row.buyDate = opener.date; row.buyAvg = ppu; row.buyAmount = opener.remaining * ppu;
                 row.sellDate = null; row.sellAvg = 0; row.sellAmount = 0;
+            }
+            // Unrealised P&L using CMP
+            if (cmp > 0) {
+                var openCost = row.isShort ? row.sellAmount : row.buyAmount;
+                var openValue = row.qty * cmp;
+                row.unrealisedPnl = row.isShort ? (openCost - openValue) : (openValue - openCost);
             }
             matchedRows.push(row);
         });
@@ -1663,8 +1693,8 @@ function trRenderTxnMatchingView() {
             var ppu = closer.qty > 0 ? closer.netAmount / closer.qty : 0;
             var row = {
                 type: 'unmatched-closer', isShort: isShort,
-                displaySymbol: closer.displaySymbol,
-                qty: closer.remaining
+                qty: closer.remaining,
+                closerTxnId: closer.txn.id
             };
             if (isShort) {
                 row.buyDate = closer.date; row.buyAvg = ppu; row.buyAmount = closer.remaining * ppu;
@@ -1680,7 +1710,7 @@ function trRenderTxnMatchingView() {
 
         if (matchedRows.length === 0) return;
 
-        // Sort by opening date
+        // Sort by opening date (buy date for long, sell date for short)
         matchedRows.sort(function(a, b) {
             var dateA = isShort ? (a.sellDate || '9999') : (a.buyDate || '9999');
             var dateB = isShort ? (b.sellDate || '9999') : (b.buyDate || '9999');
@@ -1689,10 +1719,15 @@ function trRenderTxnMatchingView() {
 
         // Totals for matched (completed) trades only
         var totalQty = 0, totalBuyAmt = 0, totalSellAmt = 0, totalPnl = 0;
+        var totalOpenQty = 0, totalUnrealisedPnl = 0;
         matchedRows.forEach(function(r) {
             if (r.type === 'matched') {
                 totalQty += r.qty; totalBuyAmt += r.buyAmount;
                 totalSellAmt += r.sellAmount; totalPnl += r.pnl;
+            }
+            if (r.type === 'open') {
+                totalOpenQty += r.qty;
+                if (r.unrealisedPnl !== undefined) totalUnrealisedPnl += r.unrealisedPnl;
             }
         });
 
@@ -1705,9 +1740,11 @@ function trRenderTxnMatchingView() {
         if (brkLabel) groupLabel += ' > ' + brkLabel;
 
         groupResults.push({
-            symbol: g.symbol, groupLabel: groupLabel, isShort: isShort,
-            rows: matchedRows, totalQty: totalQty,
-            totalBuyAmt: totalBuyAmt, totalSellAmt: totalSellAmt, totalPnl: totalPnl
+            fullSymbol: g.fullSymbol, contractLabel: g.contractLabel,
+            groupLabel: groupLabel, isShort: isShort,
+            rows: matchedRows, totalQty: totalQty, totalOpenQty: totalOpenQty,
+            totalBuyAmt: totalBuyAmt, totalSellAmt: totalSellAmt,
+            totalPnl: totalPnl, totalUnrealisedPnl: totalUnrealisedPnl
         });
     });
 
@@ -1731,14 +1768,14 @@ function trRenderTxnMatchingView() {
             ? '<span class="' + totalPnlClass + '">(' + formatAmount(Math.abs(grp.totalPnl)) + ')</span>'
             : '<span class="' + totalPnlClass + '">' + formatAmount(grp.totalPnl) + '</span>';
 
-        // Group header row (starts expanded for single-group, collapsed for multi)
+        // Group header: starts expanded for single-group, collapsed for multi
         var startCollapsed = groupResults.length > 1;
         var collapsedClass = startCollapsed ? ' collapsed' : '';
 
         html += '<tr class="trM-group-header' + collapsedClass + '" data-group-id="' + groupId + '">' +
             '<td colspan="3">' +
                 '<span class="trM-collapse-icon">▼</span> ' +
-                wmsEsc(grp.groupLabel) + ' — ' + grp.symbol + shortLabel +
+                wmsEsc(grp.groupLabel) + ' — ' + wmsEsc(grp.contractLabel) + shortLabel +
             '</td>' +
             '<td class="trM-buy-start"></td>' +
             '<td></td>' +
@@ -1756,18 +1793,26 @@ function trRenderTxnMatchingView() {
 
             var isOpen = row.type === 'open';
             var isUnmatched = row.type === 'unmatched-closer';
-            var rowClass = 'trM-detail-row';
+            var rowClass = 'trM-detail-row trM-clickable';
             if (startCollapsed) rowClass += ' collapsed-row';
             if (isOpen) rowClass += ' trM-match-open';
 
-            // Contract detail (abbreviated F&O name)
-            var contract = (typeof trTxFormatContract === 'function') ? trTxFormatContract(row.displaySymbol, grp.symbol) : '';
-            var contractHtml = contract ? '<span class="trM-contract-detail">' + contract + '</span>' : '';
+            // Store original txn IDs for click-to-edit
+            var buyTxnId = row.buyTxnId || row.openerTxnId || '';
+            var sellTxnId = row.sellTxnId || row.closerTxnId || '';
 
-            // P&L
+            // P&L column
             var pnlHtml = '';
             if (isOpen) {
-                pnlHtml = '<span style="color:#718096;">' + (row.isShort ? 'Short Open' : 'Open') + '</span>';
+                if (row.unrealisedPnl !== undefined) {
+                    var uPnlClass = row.unrealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+                    var uPnlFmt = row.unrealisedPnl < 0
+                        ? '(' + formatAmount(Math.abs(row.unrealisedPnl)) + ')'
+                        : formatAmount(row.unrealisedPnl);
+                    pnlHtml = '<span class="trM-unrealised">' + uPnlFmt + '</span>';
+                } else {
+                    pnlHtml = '<span class="trM-unrealised">' + (row.isShort ? 'Short Open' : 'Open') + '</span>';
+                }
             } else if (isUnmatched) {
                 pnlHtml = '<span style="color:#718096;">Unmatched</span>';
             } else {
@@ -1782,9 +1827,10 @@ function trRenderTxnMatchingView() {
             var hasBuy = row.buyAvg > 0 || row.buyAmount > 0;
             var hasSell = row.sellAvg > 0 || row.sellAmount > 0;
 
-            html += '<tr class="' + rowClass + '" data-group-id="' + groupId + '" data-row-id="' + rowId + '">' +
+            html += '<tr class="' + rowClass + '" data-group-id="' + groupId + '" data-row-id="' + rowId + '"' +
+                ' data-buy-txn-id="' + buyTxnId + '" data-sell-txn-id="' + sellTxnId + '">' +
                 '<td>' + wmsEsc(grp.groupLabel) + '</td>' +
-                '<td>' + contractHtml + '</td>' +
+                '<td class="trM-contract-col">' + wmsEsc(grp.contractLabel) + '</td>' +
                 '<td class="text-right">' + formatQuantity(row.qty) + '</td>' +
                 '<td class="trM-buy-start">' + buyDateHtml + '</td>' +
                 '<td class="text-right">' + (hasBuy ? formatPrice(row.buyAvg, false) : '-') + '</td>' +
@@ -1799,18 +1845,36 @@ function trRenderTxnMatchingView() {
 
     tbody.innerHTML = html;
 
-    // Collapse/expand handlers
+    // Collapse/expand handlers on group headers
     tbody.querySelectorAll('.trM-group-header').forEach(function(header) {
         header.addEventListener('click', function() {
             var gid = header.dataset.groupId;
             var isCollapsed = header.classList.toggle('collapsed');
             tbody.querySelectorAll('.trM-detail-row[data-group-id="' + gid + '"]').forEach(function(row) {
-                if (isCollapsed) {
-                    row.classList.add('collapsed-row');
-                } else {
-                    row.classList.remove('collapsed-row');
-                }
+                if (isCollapsed) row.classList.add('collapsed-row');
+                else row.classList.remove('collapsed-row');
             });
+        });
+    });
+
+    // Click-to-edit on detail rows
+    tbody.querySelectorAll('.trM-clickable').forEach(function(row) {
+        row.addEventListener('click', function(e) {
+            if (e.target.closest('.trM-group-header')) return;
+            // Determine which side was clicked (buy or sell)
+            var cell = e.target.closest('td');
+            var allTds = Array.prototype.slice.call(row.children);
+            var cellIdx = allTds.indexOf(cell);
+            var txnId = '';
+            // Columns: 0=group, 1=contract, 2=qty, 3=buyDate, 4=buyPrice, 5=buyAmt, 6=sellDate, 7=sellPrice, 8=sellAmt, 9=pnl
+            if (cellIdx >= 6 && cellIdx <= 8 && row.dataset.sellTxnId) {
+                txnId = row.dataset.sellTxnId;
+            } else if (row.dataset.buyTxnId) {
+                txnId = row.dataset.buyTxnId;
+            } else if (row.dataset.sellTxnId) {
+                txnId = row.dataset.sellTxnId;
+            }
+            if (txnId) trOpenEditModal(txnId);
         });
     });
 
@@ -1818,39 +1882,107 @@ function trRenderTxnMatchingView() {
     trRenderTxnMatchSummary(groupResults);
 }
 
+// Build/update the contract filter dropdown in the modal header
+function trBuildContractFilter(contractLabels) {
+    var wrap = document.getElementById('trTxnContractFilterWrap');
+    if (!wrap) return;
+    if (contractLabels.length <= 1) {
+        // Only one contract type (e.g., all Equity) — hide filter
+        wrap.style.display = 'none';
+        return;
+    }
+    wrap.style.display = '';
+    var html = '<button class="trM-cf-btn" id="trMCfToggle">Contracts ▾</button>' +
+        '<div class="trM-cf-dropdown" id="trMCfDropdown" style="display:none;">';
+    contractLabels.forEach(function(cl) {
+        var checked = (trTxnContractFilter.length === 0 || trTxnContractFilter.indexOf(cl) >= 0) ? ' checked' : '';
+        html += '<label class="trM-cf-item"><input type="checkbox" value="' + wmsEsc(cl) + '"' + checked + '> ' + wmsEsc(cl) + '</label>';
+    });
+    html += '</div>';
+    wrap.innerHTML = html;
+
+    // Toggle dropdown
+    var toggleBtn = document.getElementById('trMCfToggle');
+    var dropdown = document.getElementById('trMCfDropdown');
+    toggleBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        dropdown.style.display = dropdown.style.display === 'none' ? '' : 'none';
+    });
+
+    // Checkbox changes
+    dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(cb) {
+        cb.addEventListener('change', function() {
+            var checked = [];
+            dropdown.querySelectorAll('input[type="checkbox"]:checked').forEach(function(c) {
+                checked.push(c.value);
+            });
+            // If all checked, reset to empty (show all)
+            if (checked.length === contractLabels.length) {
+                trTxnContractFilter = [];
+            } else {
+                trTxnContractFilter = checked;
+            }
+            trRenderTxnMatchingView();
+        });
+    });
+
+    // Close on outside click
+    document.addEventListener('click', function trMCfOutside(e) {
+        if (!wrap.contains(e.target)) {
+            dropdown.style.display = 'none';
+        }
+    });
+}
+
 function trRenderTxnMatchSummary(groupResults) {
     var container = document.getElementById('trTxnMatchSummary');
     if (!container) return;
 
     var totalMatchedQty = 0, totalBuyAmt = 0, totalSellAmt = 0, totalPnl = 0;
-    var totalOpenQty = 0;
+    var totalOpenQty = 0, totalUnrealisedPnl = 0;
+    var hasUnrealised = false;
     groupResults.forEach(function(grp) {
         totalBuyAmt += grp.totalBuyAmt;
         totalSellAmt += grp.totalSellAmt;
         totalPnl += grp.totalPnl;
         totalMatchedQty += grp.totalQty;
-        grp.rows.forEach(function(r) {
-            if (r.type === 'open') totalOpenQty += r.qty;
-        });
+        totalOpenQty += (grp.totalOpenQty || 0);
+        if (grp.totalUnrealisedPnl) { totalUnrealisedPnl += grp.totalUnrealisedPnl; hasUnrealised = true; }
     });
 
     var pnlPct = totalBuyAmt !== 0 ? (totalPnl / totalBuyAmt) * 100 : 0;
 
-    container.innerHTML =
+    // Open Qty is primary, Matched Qty is secondary
+    var openCard =
         '<div class="txn-summary-card">' +
-            '<div class="summary-label">Matched Qty</div>' +
-            '<div class="summary-value">' + formatQuantity(totalMatchedQty) + '</div>' +
-            '<div class="summary-sub">Open: ' + formatQuantity(totalOpenQty) + '</div>' +
-        '</div>' +
-        '<div class="txn-summary-card">' +
-            '<div class="summary-label">Total Buy</div>' +
-            '<div class="summary-value">' + formatAmount(totalBuyAmt) + '</div>' +
-        '</div>' +
+            '<div class="summary-label">Open Position</div>' +
+            '<div class="summary-value">' + formatQuantity(totalOpenQty) + '</div>' +
+            '<div class="summary-sub">Matched: ' + formatQuantity(totalMatchedQty) + '</div>' +
+        '</div>';
+
+    var realisedCard =
         '<div class="txn-summary-card ' + getAmountClass(totalPnl) + '">' +
-            '<div class="summary-label">Realized P&L</div>' +
+            '<div class="summary-label">Realised P&L</div>' +
             '<div class="summary-value ' + getAmountClass(totalPnl) + '">' + formatAmount(totalPnl) + '</div>' +
             '<div class="summary-sub ' + getAmountClass(totalPnl) + '">' + formatPercent(pnlPct) + ' on buy</div>' +
         '</div>';
+
+    var unrealisedCard = '';
+    if (hasUnrealised) {
+        unrealisedCard =
+            '<div class="txn-summary-card ' + getAmountClass(totalUnrealisedPnl) + '">' +
+                '<div class="summary-label">Unrealised P&L</div>' +
+                '<div class="summary-value ' + getAmountClass(totalUnrealisedPnl) + '">' + formatAmount(totalUnrealisedPnl) + '</div>' +
+            '</div>';
+    }
+
+    var buyCard =
+        '<div class="txn-summary-card">' +
+            '<div class="summary-label">Total Buy</div>' +
+            '<div class="summary-value">' + formatAmount(totalBuyAmt) + '</div>' +
+        '</div>';
+
+    container.innerHTML = openCard + buyCard + realisedCard + unrealisedCard;
 }
 
 // ============================================================================
@@ -1883,7 +2015,7 @@ async function trToggleTxnFlag(txnId, flagName) {
     if (resp.ok) {
         txn[flagName] = newValue;
         showAlert(flagName.replace(/_/g, ' ') + ' ' + (newValue ? 'enabled' : 'disabled'), 'success', 2000);
-        if (trCurrentTxnModalKey) trRenderTxnTable();
+        if (trCurrentTxnModalKey) trTxnRefreshCurrentView();
         trRenderPortfolio();
     } else {
         showAlert('Failed to update: HTTP ' + resp.status, 'error');
@@ -1916,7 +2048,7 @@ async function trDeleteTransaction(txnId) {
     if (resp.ok) {
         trTransactions = trTransactions.filter(function(t) { return t.id !== txnId; });
         showAlert('Transaction deleted', 'success', 2000);
-        if (trCurrentTxnModalKey) trRenderTxnTable();
+        if (trCurrentTxnModalKey) trTxnRefreshCurrentView();
         trRenderPortfolio();
     } else {
         showAlert('Failed to delete: HTTP ' + resp.status, 'error');
@@ -2119,7 +2251,7 @@ async function trSaveEdit() {
         Object.keys(body).forEach(function(k) { txn[k] = body[k]; });
         showAlert('Transaction saved', 'success', 2000);
         trCloseEditModal();
-        if (trCurrentTxnModalKey) trRenderTxnTable();
+        if (trCurrentTxnModalKey) trTxnRefreshCurrentView();
         trRenderPortfolio();
     } else {
         var errText = await resp.text();

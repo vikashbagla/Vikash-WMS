@@ -394,6 +394,7 @@
 .trM-sell-start { border-left: 2px solid #fee2e2; }
 #trTxnMatchView td.trM-buy-start { border-left: 2px solid #d1fae5; }
 #trTxnMatchView td.trM-sell-start { border-left: 2px solid #fee2e2; }
+.trM-contract-col { min-width: 120px; white-space: nowrap; }
 
 /* Matching view group header */
 .trM-group-header {
@@ -409,11 +410,35 @@
 }
 .trM-group-header.collapsed .trM-collapse-icon { transform: rotate(-90deg); }
 .trM-detail-row.collapsed-row { display: none; }
-.trM-match-open td { opacity: 0.6; font-style: italic; }
+.trM-match-open td { font-style: italic; }
 .trM-group-total { font-weight: 700; font-size: 11px; }
 .trM-pnl-positive { color: #059669; }
 .trM-pnl-negative { color: #dc2626; }
-.trM-contract-detail { font-size: 10px; color: #a0aec0; }
+.trM-unrealised { color: #9ca3af; font-style: italic; }
+
+/* Clickable detail rows */
+.trM-clickable { cursor: pointer; }
+.trM-clickable:hover { background: #f0f4ff !important; }
+
+/* Contract filter dropdown */
+.trM-cf-wrap { position: relative; display: inline-block; }
+.trM-cf-btn {
+    background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px;
+    padding: 4px 10px; font-size: 11px; cursor: pointer; white-space: nowrap;
+}
+.trM-cf-btn:hover { background: #e5e7eb; }
+.trM-cf-dropdown {
+    position: absolute; top: 100%; left: 0; z-index: 100;
+    background: white; border: 1px solid #d1d5db; border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 6px 0;
+    min-width: 160px; max-height: 240px; overflow-y: auto;
+}
+.trM-cf-item {
+    display: block; padding: 4px 12px; font-size: 12px; cursor: pointer;
+    white-space: nowrap;
+}
+.trM-cf-item:hover { background: #f3f4f6; }
+.trM-cf-item input { margin-right: 6px; }
 
 /* Txn row hide button */
 .btn-hide-txn {
@@ -749,6 +774,7 @@
                 <h3 id="trTxnModalTitle">Transactions</h3>
             </div>
             <div class="txn-modal-header-actions">
+                <div class="trM-cf-wrap" id="trTxnContractFilterWrap" style="display:none;"></div>
                 <div class="txn-view-toggle" id="trTxnViewToggle">
                     <button class="txn-vtog active" data-view="list">List</button>
                     <button class="txn-vtog" data-view="matching">Matching</button>
@@ -797,7 +823,7 @@
                     <thead>
                         <tr>
                             <th>Inv &gt; Trader &gt; Broker</th>
-                            <th>Symbol</th>
+                            <th class="trM-contract-col">Contract</th>
                             <th class="text-right">Qty</th>
                             <th class="trM-buy-start">Buy Date</th>
                             <th class="text-right">Price</th>
