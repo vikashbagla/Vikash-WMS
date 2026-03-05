@@ -44,7 +44,7 @@ var trShowHiddenTrades = false;  // toggle for showing hidden trades
 var trTxnViewMode = 'list';     // 'list' | 'matching'
 var trTxnDaysFilter = 0;        // 0 = ALL, else # of days
 var trTxnMatchMethod = 'lifo';  // 'fifo' | 'lifo' (default LIFO)
-var trTxnContractFilter = [];   // [] = show all, else array of contract labels to show
+var trTxnContractFilter = [];   // [] = show all, else array of expiry labels (e.g. "Mar 26") to show
 var trRenamingTab = false;       // flag: true while inline rename input is active (prevents trApplyView from firing)
 
 // ============================================================================
@@ -1326,6 +1326,27 @@ function trGetTxnModalTxns() {
 function trRenderTxnTable(txns) {
     if (!txns) txns = trGetTxnModalTxns();
 
+    // Build expiry filter for list view (from unfiltered txns)
+    if (trTxnViewMode === 'list') {
+        var allExpiries = {};
+        var monthIdx = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11 };
+        txns.forEach(function(t) {
+            var expiry = trGetExpiryLabel(wmsFormatContract(t));
+            allExpiries[expiry] = true;
+        });
+        var expiryKeys = Object.keys(allExpiries);
+        expiryKeys.sort(function(a, b) {
+            if (a === 'Equity' && b === 'Equity') return 0;
+            if (a === 'Equity') return 1;
+            if (b === 'Equity') return -1;
+            var pa = a.split(' '), pb = b.split(' ');
+            var tA = (monthIdx[pa[0]] !== undefined) ? new Date(2000 + parseInt(pa[1], 10), monthIdx[pa[0]], 1).getTime() : -1;
+            var tB = (monthIdx[pb[0]] !== undefined) ? new Date(2000 + parseInt(pb[1], 10), monthIdx[pb[0]], 1).getTime() : -1;
+            return tB - tA;
+        });
+        trBuildContractFilter(expiryKeys);
+    }
+
     // Calculate running qty (always chronological, excluding income — hide is visual only)
     var chronoTxns = txns.slice().sort(function(a, b) {
         return new Date(a.transaction_date) - new Date(b.transaction_date);
@@ -1339,6 +1360,14 @@ function trRenderTxnTable(txns) {
         }
         runningQtyMap[t.id] = runSum;
     });
+
+    // Apply expiry filter in list view
+    if (trTxnContractFilter.length > 0) {
+        txns = txns.filter(function(t) {
+            var expiry = trGetExpiryLabel(wmsFormatContract(t));
+            return trTxnContractFilter.indexOf(expiry) >= 0;
+        });
+    }
 
     // Sort for display
     var displayTxns = txns.slice();
@@ -1556,7 +1585,6 @@ function trTxnSwitchView() {
         matchView.style.display = 'none';
         matchMethodWrap.style.display = 'none';
         hiddenBtn.style.display = '';
-        if (contractFilterWrap) contractFilterWrap.style.display = 'none';
         if (listSummary) listSummary.style.display = '';
         if (matchSummary) matchSummary.style.display = 'none';
         trRenderTxnTable();
@@ -1616,35 +1644,26 @@ function trRenderTxnMatchingView() {
         }
     });
 
-    // Build contract filter options (unique contract labels)
-    var allContracts = {};
+    // Build expiry filter options (group contracts by expiry e.g. "Mar 26")
+    var allExpiries = {};
     Object.keys(groups).forEach(function(k) {
-        var cl = groups[k].contractLabel || 'Equity';
-        allContracts[cl] = true;
+        var expiry = trGetExpiryLabel(groups[k].contractLabel);
+        allExpiries[expiry] = true;
     });
-    // Sort contracts: latest expiry first, "Equity" last
-    var contractKeys = Object.keys(allContracts);
+    // Sort expiries: latest first, "Equity" last
+    var expiryKeys = Object.keys(allExpiries);
     var monthIdx = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11 };
-    function parseContractDate(label) {
-        // Format: "DD Mon YY [Strike] Type" e.g. "27 Feb 25 Fut", "26 Mar 26 305 PE"
-        var parts = label.split(' ');
-        if (parts.length >= 3 && monthIdx[parts[1]] !== undefined) {
-            var day = parseInt(parts[0], 10);
-            var mon = monthIdx[parts[1]];
-            var yr = 2000 + parseInt(parts[2], 10);
-            return new Date(yr, mon, day).getTime();
-        }
-        return -1;   // "Equity" or unparseable → sort last
-    }
-    contractKeys.sort(function(a, b) {
-        var da = parseContractDate(a);
-        var db = parseContractDate(b);
-        if (da === -1 && db === -1) return a.localeCompare(b);
-        if (da === -1) return 1;   // a (Equity) goes after b
-        if (db === -1) return -1;  // b (Equity) goes after a
-        return db - da;            // latest expiry first
+    expiryKeys.sort(function(a, b) {
+        if (a === 'Equity' && b === 'Equity') return 0;
+        if (a === 'Equity') return 1;
+        if (b === 'Equity') return -1;
+        // Parse "Mon YY" e.g. "Mar 26"
+        var pa = a.split(' '), pb = b.split(' ');
+        var tA = (monthIdx[pa[0]] !== undefined) ? new Date(2000 + parseInt(pa[1], 10), monthIdx[pa[0]], 1).getTime() : -1;
+        var tB = (monthIdx[pb[0]] !== undefined) ? new Date(2000 + parseInt(pb[1], 10), monthIdx[pb[0]], 1).getTime() : -1;
+        return tB - tA;   // latest first
     });
-    trBuildContractFilter(contractKeys);
+    trBuildContractFilter(expiryKeys);
 
     // Build matched results per group
     var groupResults = [];
@@ -1659,8 +1678,8 @@ function trRenderTxnMatchingView() {
     Object.keys(groups).sort().forEach(function(key) {
         var g = groups[key];
 
-        // Apply contract filter
-        if (trTxnContractFilter.length > 0 && trTxnContractFilter.indexOf(g.contractLabel) < 0) return;
+        // Apply expiry filter
+        if (trTxnContractFilter.length > 0 && trTxnContractFilter.indexOf(trGetExpiryLabel(g.contractLabel)) < 0) return;
 
         // Sort chronologically
         g.buys.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
@@ -1956,6 +1975,18 @@ function trRenderTxnMatchingView() {
     trRenderTxnMatchSummary(groupResults);
 }
 
+// Extract expiry label from contract label: "27 Feb 25 Fut" → "Feb 25", "Equity" → "Equity"
+function trGetExpiryLabel(contractLabel) {
+    if (!contractLabel || contractLabel === 'Equity') return 'Equity';
+    var parts = contractLabel.split(' ');
+    // Format: "DD Mon YY ..." — extract "Mon YY"
+    if (parts.length >= 3) {
+        var monthIdx = { Jan:1, Feb:1, Mar:1, Apr:1, May:1, Jun:1, Jul:1, Aug:1, Sep:1, Oct:1, Nov:1, Dec:1 };
+        if (monthIdx[parts[1]]) return parts[1] + ' ' + parts[2];
+    }
+    return contractLabel;
+}
+
 // Build/update the contract filter dropdown in the modal header
 function trBuildContractFilter(contractLabels) {
     var wrap = document.getElementById('trTxnContractFilterWrap');
@@ -1966,7 +1997,7 @@ function trBuildContractFilter(contractLabels) {
         return;
     }
     wrap.style.display = '';
-    var html = '<button class="trM-cf-btn" id="trMCfToggle">Contracts ▾</button>' +
+    var html = '<button class="trM-cf-btn" id="trMCfToggle">Expiry ▾</button>' +
         '<div class="trM-cf-dropdown" id="trMCfDropdown" style="display:none;">';
     contractLabels.forEach(function(cl) {
         var checked = (trTxnContractFilter.length === 0 || trTxnContractFilter.indexOf(cl) >= 0) ? ' checked' : '';
@@ -1996,7 +2027,7 @@ function trBuildContractFilter(contractLabels) {
             } else {
                 trTxnContractFilter = checked;
             }
-            trRenderTxnMatchingView();
+            trTxnRefreshCurrentView();
         });
     });
 
