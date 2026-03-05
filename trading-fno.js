@@ -154,7 +154,7 @@ function trFnoInitFilters() {
 
 function trFnoGetTxns() {
     var txns = trTransactions.filter(function(t) {
-        return t.exchange === 'NFO' || t.exchange === 'MCX';
+        return t.security_type === 'NFO' || t.security_type === 'MCX';
     });
     // Apply same portfolio filters (investor, trader, broker, tag)
     if (trSelectedInvestorIds.length > 0) {
