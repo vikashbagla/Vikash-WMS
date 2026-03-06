@@ -831,9 +831,9 @@ function trFnoRenderFlat(positions) {
 
         if (isOpen && r.cmp > 0) {
             if (!r.isShort && !hasSell) {
-                sellPriceHtml = '<span class="trM-unrealised">' + formatPrice(r.cmp, false) + '</span>';
+                sellPriceHtml = formatPrice(r.cmp, false);
             } else if (r.isShort && !hasBuy) {
-                buyPriceHtml = '<span class="trM-unrealised">' + formatPrice(r.cmp, false) + '</span>';
+                buyPriceHtml = formatPrice(r.cmp, false);
             }
         }
 
@@ -904,9 +904,9 @@ function trFnoRenderDetailRow(r, cg) {
     // CMP display for open positions
     if (isOpen && r.cmp > 0) {
         if (!r.isShort && !hasSell) {
-            sellPriceHtml = '<span class="trM-unrealised">' + formatPrice(r.cmp, false) + '</span>';
+            sellPriceHtml = formatPrice(r.cmp, false);
         } else if (r.isShort && !hasBuy) {
-            buyPriceHtml = '<span class="trM-unrealised">' + formatPrice(r.cmp, false) + '</span>';
+            buyPriceHtml = formatPrice(r.cmp, false);
         }
     }
 

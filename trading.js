@@ -1955,10 +1955,10 @@ function trRenderTxnMatchingView() {
             var sellAmtHtml = hasSell ? formatAmount(row.sellAmount) : '-';
             if (isOpen && row.cmp > 0) {
                 if (!row.isShort && !hasSell) {
-                    sellPriceHtml = '<span class="trM-unrealised">' + formatPrice(row.cmp, false) + '</span>';
+                    sellPriceHtml = formatPrice(row.cmp, false);
                     sellAmtHtml = '-';
                 } else if (row.isShort && !hasBuy) {
-                    buyPriceHtml = '<span class="trM-unrealised">' + formatPrice(row.cmp, false) + '</span>';
+                    buyPriceHtml = formatPrice(row.cmp, false);
                     buyAmtHtml = '-';
                 }
             }

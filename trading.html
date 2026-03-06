@@ -517,21 +517,23 @@
 .trFno-snapshot-mode .trFno-symbol-sub { display: none !important; }
 
 /* F&O Table column widths */
-/* F&O Table: 11-column layout */
+/* F&O Table: 12-column layout */
 #trFnoTable { table-layout: fixed; width: 100%; }
-#trFnoThead th:nth-child(1)  { width: 13%; }  /* Underlying */
-#trFnoThead th:nth-child(2)  { width: 11%; }  /* Contract */
+#trFnoThead th:nth-child(1)  { width: 12%; }  /* Underlying */
+#trFnoThead th:nth-child(2)  { width: 10%; }  /* Contract */
 #trFnoThead th:nth-child(3)  { width: 5%; }   /* Qty */
 #trFnoThead th:nth-child(4)  { width: 7%; }   /* Buy Date */
 #trFnoThead th:nth-child(5)  { width: 6%; }   /* Buy Price */
 #trFnoThead th:nth-child(6)  { width: 7%; }   /* Sell Date */
 #trFnoThead th:nth-child(7)  { width: 6%; }   /* Sell Price */
-#trFnoThead th:nth-child(8)  { width: 9%; }   /* Exposure */
-#trFnoThead th:nth-child(9)  { width: 12%; }  /* Realised P&L */
-#trFnoThead th:nth-child(10) { width: 12%; }  /* Unrealised P&L */
-#trFnoThead th:nth-child(11) { width: 12%; }  /* Net P&L */
+#trFnoThead th:nth-child(8)  { width: 8%; }   /* Exposure */
+#trFnoThead th:nth-child(9)  { width: 7%; }   /* Day's P&L */
+#trFnoThead th:nth-child(10) { width: 8%; }   /* Realised P&L */
+#trFnoThead th:nth-child(11) { width: 10%; }  /* Unrealised P&L */
+#trFnoThead th:nth-child(12) { width: 8%; }   /* Net P&L */
+/* 12+10+5+7+6+7+6+8+7+8+10+8 = 94%; remaining 6% absorbs padding/borders */
 #trFnoTable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#trFnoTable td:first-child { overflow: visible; }
+#trFnoTable td:first-child { overflow: visible; white-space: normal; }
 #trFnoTable thead th { position: sticky; top: 0; background: #f7fafc; z-index: 2; white-space: nowrap; font-size: 10px; padding: 6px 4px; }
 .trFno-total-row td { position: sticky; top: 26px; z-index: 1; }
 /* P&L section border separator */
