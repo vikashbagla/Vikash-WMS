@@ -15,7 +15,7 @@ var trFnoFlatView = false;        // true = flat (ungrouped) for snapshot
 var trFnoExpandedSymbols = {};    // { symbol: true } for expanded symbol rows
 var trFnoExpandedGroups = {};     // { 'symbol|idx': true } for expanded sub-group rows
 var trFnoInitDone = false;
-var trFnoColCount = 11;
+var trFnoColCount = 12;
 var trFnoContractPricesFetched = false;
 
 function trFnoInit() {
@@ -52,6 +52,32 @@ function trFnoInit() {
             trFnoFlatView = flatToggle.checked;
             var tableWrap = document.getElementById('trFnoTableWrap');
             if (tableWrap) tableWrap.classList.toggle('trFno-flat-mode', trFnoFlatView);
+            trFnoRender();
+        });
+    }
+
+    // Collapse All / Expand All buttons
+    var collapseBtn = document.getElementById('trFnoCollapseAll');
+    if (collapseBtn) {
+        collapseBtn.addEventListener('click', function() {
+            trFnoExpandedSymbols = {};
+            trFnoExpandedGroups = {};
+            trFnoRender();
+        });
+    }
+    var expandBtn = document.getElementById('trFnoExpandAll');
+    if (expandBtn) {
+        expandBtn.addEventListener('click', function() {
+            // Expand all symbols and all sub-groups
+            var positions = window._trFnoLastPositions;
+            if (positions) {
+                positions.forEach(function(p) {
+                    trFnoExpandedSymbols[p.underlying] = true;
+                    p.contractGroups.forEach(function(cg, cgIdx) {
+                        trFnoExpandedGroups[p.underlying + '|' + cgIdx] = true;
+                    });
+                });
+            }
             trFnoRender();
         });
     }
@@ -335,7 +361,7 @@ function trFnoCalcPositions() {
         });
 
         var contractGroups = [];
-        var symbolTotalRealisedPnl = 0, symbolTotalUnrealisedPnl = 0;
+        var symbolTotalRealisedPnl = 0, symbolTotalUnrealisedPnl = 0, symbolTotalDayPnl = 0;
         var symbolTotalOpenQty = 0, symbolTotalCost = 0;
         var symbolTotalBuyAmt = 0, symbolTotalSellAmt = 0;
         var hasOpenPosition = false;
@@ -427,6 +453,11 @@ function trFnoCalcPositions() {
                     var openValue = row.qty * cmp;
                     row.unrealisedPnl = row.isShort ? (openCost - openValue) : (openValue - openCost);
                 }
+                // Day's P&L = qty × today's price change (ch)
+                var ch = contractCache ? (contractCache.ch || 0) : 0;
+                if (ch !== 0) {
+                    row.dayPnl = row.isShort ? (-row.qty * ch) : (row.qty * ch);
+                }
                 matchedRows.push(row);
             });
 
@@ -441,7 +472,7 @@ function trFnoCalcPositions() {
 
             // Aggregate totals
             var totalQty = 0, totalBuyAmt = 0, totalSellAmt = 0, totalPnl = 0;
-            var openQty = 0, unrealisedPnl = 0, openCost = 0;
+            var openQty = 0, unrealisedPnl = 0, openCost = 0, dayPnl = 0;
             matchedRows.forEach(function(r) {
                 if (r.type === 'matched') {
                     totalQty += r.qty; totalBuyAmt += r.buyAmount;
@@ -451,6 +482,7 @@ function trFnoCalcPositions() {
                     openQty += r.qty;
                     openCost += r.isShort ? r.sellAmount : r.buyAmount;
                     if (r.unrealisedPnl !== undefined) unrealisedPnl += r.unrealisedPnl;
+                    if (r.dayPnl !== undefined) dayPnl += r.dayPnl;
                     hasOpenPosition = true;
                 }
             });
@@ -465,6 +497,7 @@ function trFnoCalcPositions() {
 
             symbolTotalRealisedPnl += totalPnl;
             symbolTotalUnrealisedPnl += unrealisedPnl;
+            symbolTotalDayPnl += dayPnl;
             symbolTotalOpenQty += openQty;
             symbolTotalCost += openCost;
             symbolTotalBuyAmt += totalBuyAmt;
@@ -483,7 +516,7 @@ function trFnoCalcPositions() {
                 isShort: isShort, isFuture: isFuture, rows: matchedRows,
                 totalQty: totalQty, totalBuyAmt: totalBuyAmt, totalSellAmt: totalSellAmt,
                 totalPnl: totalPnl, openQty: openQty, openCost: openCost,
-                unrealisedPnl: unrealisedPnl
+                unrealisedPnl: unrealisedPnl, dayPnl: dayPnl
             });
         });
 
@@ -516,6 +549,7 @@ function trFnoCalcPositions() {
             contractGroups: contractGroups,
             totalRealisedPnl: symbolTotalRealisedPnl,
             totalUnrealisedPnl: symbolTotalUnrealisedPnl,
+            totalDayPnl: symbolTotalDayPnl,
             totalOpenQty: symbolTotalOpenQty,
             totalOpenCost: symbolTotalCost,
             totalBuyAmt: symbolTotalBuyAmt,
@@ -605,7 +639,8 @@ function trFnoRender() {
 // RENDERING: Total row helper (split into cells so borders show)
 // ============================================================================
 
-function trFnoBuildTotalRow(totExposure, totRealised, totUnrealised, totNet) {
+function trFnoBuildTotalRow(totExposure, totDayPnl, totRealised, totUnrealised, totNet) {
+    var ptDClass = totDayPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
     var ptRClass = totRealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
     var ptUClass = totUnrealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
     var ptNClass = totNet >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
@@ -614,6 +649,7 @@ function trFnoBuildTotalRow(totExposure, totRealised, totUnrealised, totNet) {
         '<td colspan="2" class="trM-buy-start"></td>' +
         '<td colspan="2" class="trM-sell-start"></td>' +
         '<td class="text-right trFno-pnl-start">' + formatAmount(totExposure) + '</td>' +
+        '<td class="text-right"><span class="' + ptDClass + '">' + (totDayPnl !== 0 ? formatAmount(totDayPnl) : '-') + '</span></td>' +
         '<td class="text-right"><span class="' + ptRClass + '">' + formatAmount(totRealised) + '</span></td>' +
         '<td class="text-right"><span class="' + ptUClass + '">' + formatAmount(totUnrealised) + '</span></td>' +
         '<td class="text-right"><span class="' + ptNClass + '">' + formatAmount(totNet) + '</span></td>' +
@@ -626,25 +662,28 @@ function trFnoBuildTotalRow(totExposure, totRealised, totUnrealised, totNet) {
 
 function trFnoRenderGrouped(positions) {
     // Page totals — exposure = only open positions
-    var pageTotExposure = 0, pageTotRealised = 0, pageTotUnrealised = 0, pageTotNet = 0;
+    var pageTotExposure = 0, pageTotDayPnl = 0, pageTotRealised = 0, pageTotUnrealised = 0, pageTotNet = 0;
 
     positions.forEach(function(p) {
         pageTotExposure += p.totalOpenCost;
+        pageTotDayPnl += p.totalDayPnl || 0;
         pageTotRealised += p.totalRealisedPnl;
         pageTotUnrealised += p.totalUnrealisedPnl;
         pageTotNet += p.totalRealisedPnl + p.totalUnrealisedPnl;
     });
 
     // TOTAL row at the top (sticky below header)
-    var html = trFnoBuildTotalRow(pageTotExposure, pageTotRealised, pageTotUnrealised, pageTotNet);
+    var html = trFnoBuildTotalRow(pageTotExposure, pageTotDayPnl, pageTotRealised, pageTotUnrealised, pageTotNet);
 
     positions.forEach(function(p) {
         var isExpanded = trFnoExpandedSymbols[p.underlying];
 
         var rPnl = p.totalRealisedPnl;
         var uPnl = p.totalUnrealisedPnl;
+        var dPnl = p.totalDayPnl || 0;
         var netPnl = rPnl + uPnl;
         var exposure = p.totalOpenCost;
+        var dClass = dPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
         var rClass = rPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
         var uClass = uPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
         var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
@@ -664,6 +703,7 @@ function trFnoRenderGrouped(positions) {
             '<td class="trM-sell-start"></td>' +
             '<td class="text-right">' + avgSellPrice + '</td>' +
             '<td class="text-right trFno-pnl-start">' + (exposure > 0 ? formatAmount(exposure) : '-') + '</td>' +
+            '<td class="text-right"><span class="' + dClass + '">' + (dPnl !== 0 ? formatAmount(dPnl) : '-') + '</span></td>' +
             '<td class="text-right"><span class="' + rClass + '">' + formatAmount(rPnl) + '</span></td>' +
             '<td class="text-right"><span class="' + uClass + '">' + formatAmount(uPnl) + '</span></td>' +
             '<td class="text-right"><span class="' + nClass + '">' + formatAmount(netPnl) + '</span></td>' +
@@ -679,8 +719,10 @@ function trFnoRenderGrouped(positions) {
                 // Sub-group P&L breakdown
                 var cgRealised = cg.totalPnl;
                 var cgUnrealised = cg.unrealisedPnl || 0;
+                var cgDayPnl = cg.dayPnl || 0;
                 var cgNet = cgRealised + cgUnrealised;
                 var cgExposure = cg.openCost || 0;
+                var cgDClass = cgDayPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
                 var cgRClass = cgRealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
                 var cgUClass = cgUnrealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
                 var cgNClass = cgNet >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
@@ -700,6 +742,7 @@ function trFnoRenderGrouped(positions) {
                     '<td class="trM-sell-start"></td>' +
                     '<td class="text-right">' + cgSellPrice + '</td>' +
                     '<td class="text-right trFno-pnl-start">' + (cgExposure > 0 ? formatAmount(cgExposure) : '-') + '</td>' +
+                    '<td class="text-right"><span class="' + cgDClass + '">' + (cgDayPnl !== 0 ? formatAmount(cgDayPnl) : '-') + '</span></td>' +
                     '<td class="text-right"><span class="' + cgRClass + '">' + formatAmount(cgRealised) + '</span></td>' +
                     '<td class="text-right"><span class="' + cgUClass + '">' + (cgUnrealised !== 0 ? formatAmount(cgUnrealised) : '-') + '</span></td>' +
                     '<td class="text-right"><span class="' + cgNClass + '">' + formatAmount(cgNet) + '</span></td>' +
@@ -750,11 +793,12 @@ function trFnoRenderFlat(positions) {
     });
 
     // Calculate page totals first — exposure only from open positions
-    var pageTotExposure = 0, pageTotRealised = 0, pageTotUnrealised = 0, pageTotNet = 0;
+    var pageTotExposure = 0, pageTotDayPnl = 0, pageTotRealised = 0, pageTotUnrealised = 0, pageTotNet = 0;
     flatRows.forEach(function(fr) {
         var r = fr.row;
         if (r.type === 'open') {
             pageTotExposure += r.isShort ? r.sellAmount : r.buyAmount;
+            pageTotDayPnl += (r.dayPnl !== undefined) ? r.dayPnl : 0;
             pageTotUnrealised += (r.unrealisedPnl !== undefined) ? r.unrealisedPnl : 0;
         }
         if (r.type === 'matched') {
@@ -764,7 +808,7 @@ function trFnoRenderFlat(positions) {
     pageTotNet = pageTotRealised + pageTotUnrealised;
 
     // TOTAL row at the top (sticky below header)
-    var html = trFnoBuildTotalRow(pageTotExposure, pageTotRealised, pageTotUnrealised, pageTotNet);
+    var html = trFnoBuildTotalRow(pageTotExposure, pageTotDayPnl, pageTotRealised, pageTotUnrealised, pageTotNet);
 
     flatRows.forEach(function(fr) {
         var r = fr.row;
@@ -796,14 +840,17 @@ function trFnoRenderFlat(positions) {
         }
 
         // P&L columns
+        var dayPnl = (r.type === 'open' && r.dayPnl !== undefined) ? r.dayPnl : 0;
         var realisedPnl = (r.type === 'matched') ? r.pnl : 0;
         var unrealisedPnl = (r.type === 'open' && r.unrealisedPnl !== undefined) ? r.unrealisedPnl : 0;
         var netPnl = realisedPnl + unrealisedPnl;
 
+        var dClass = dayPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
         var rClass = realisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
         var uClass = unrealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
         var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
 
+        var dayPnlHtml = (r.type === 'open' && dayPnl !== 0) ? '<span class="trM-unrealised ' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
         var realisedHtml = (r.type === 'matched') ? '<span class="' + rClass + '">' + formatAmount(realisedPnl) + '</span>' : '-';
         var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="trM-unrealised ' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
         var netHtml = netPnl !== 0 ? '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' : '-';
@@ -821,6 +868,7 @@ function trFnoRenderFlat(positions) {
             '<td class="text-right trM-sell-start">' + sellDateHtml + '</td>' +
             '<td class="text-right">' + sellPriceHtml + '</td>' +
             '<td class="text-right trFno-pnl-start">' + exposureHtml + '</td>' +
+            '<td class="text-right">' + dayPnlHtml + '</td>' +
             '<td class="text-right">' + realisedHtml + '</td>' +
             '<td class="text-right">' + unrealisedHtml + '</td>' +
             '<td class="text-right">' + netHtml + '</td>' +
@@ -865,14 +913,17 @@ function trFnoRenderDetailRow(r, cg) {
     }
 
     // P&L columns
+    var dayPnl = (r.type === 'open' && r.dayPnl !== undefined) ? r.dayPnl : 0;
     var realisedPnl = (r.type === 'matched') ? r.pnl : 0;
     var unrealisedPnl = (r.type === 'open' && r.unrealisedPnl !== undefined) ? r.unrealisedPnl : 0;
     var netPnl = realisedPnl + unrealisedPnl;
 
+    var dClass = dayPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
     var rClass = realisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
     var uClass = unrealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
     var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
 
+    var dayPnlHtml = (r.type === 'open' && dayPnl !== 0) ? '<span class="trM-unrealised ' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
     var realisedHtml = (r.type === 'matched') ? '<span class="' + rClass + '">' + formatAmount(realisedPnl) + '</span>' : '-';
     var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="trM-unrealised ' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
     var netHtml = netPnl !== 0 ? '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' : '-';
@@ -890,6 +941,7 @@ function trFnoRenderDetailRow(r, cg) {
         '<td class="text-right trM-sell-start">' + sellDateHtml + '</td>' +
         '<td class="text-right">' + sellPriceHtml + '</td>' +
         '<td class="text-right trFno-pnl-start">' + exposureHtml + '</td>' +
+        '<td class="text-right">' + dayPnlHtml + '</td>' +
         '<td class="text-right">' + realisedHtml + '</td>' +
         '<td class="text-right">' + unrealisedHtml + '</td>' +
         '<td class="text-right">' + netHtml + '</td>' +
@@ -1095,9 +1147,9 @@ function trFnoSnapshot() {
         { label: 'CONTRACT',    w: 230, align: 'left' },
         { label: 'QTY',         w: 55,  align: 'right' },
         { label: 'BUY DATE',    w: 75,  align: 'right' },
-        { label: 'BUY PRICE',   w: 70,  align: 'right' },
+        { label: 'BUY PRICE',   w: 80,  align: 'right' },
         { label: 'SELL DATE',   w: 75,  align: 'right' },
-        { label: 'SELL PRICE',  w: 70,  align: 'right' },
+        { label: 'SELL PRICE',  w: 80,  align: 'right' },
         { label: 'EXPOSURE',    w: 80,  align: 'right' },
         { label: 'REALISED P&L', w: 90, align: 'right' },
         { label: 'UNREAL. P&L', w: 90,  align: 'right' },
