@@ -31,7 +31,7 @@ async function trWlInit() {
         // Already initialized — just refresh prices and re-render
         await trWlFetchPrices();
         trWlRender();
-        if (trWlIsMarketHours()) {
+        if (wmsIsMarketHours()) {
             trWlStartAutoRefresh();
         } else {
             trWlUpdatePriceStatus('market-closed');
@@ -43,7 +43,7 @@ async function trWlInit() {
     await trWlLoad();
     await trWlFetchPrices();
     trWlRender();
-    if (trWlIsMarketHours()) {
+    if (wmsIsMarketHours()) {
         trWlStartAutoRefresh();
     } else {
         trWlUpdatePriceStatus('market-closed');
@@ -128,7 +128,7 @@ function trWlSetupEventHandlers() {
         await trWlFetchPrices();
         trWlUpdatePricesInPlace();
         // Restart auto-refresh if market is open
-        if (trWlIsMarketHours()) {
+        if (wmsIsMarketHours()) {
             trWlStartAutoRefresh();
         }
     });
@@ -173,7 +173,7 @@ function trWlSetupEventHandlers() {
             var wlTab = document.getElementById('tr-watchlist');
             if (wlTab && wlTab.classList.contains('active')) {
                 trWlFetchPrices().then(function() { trWlUpdatePricesInPlace(); });
-                if (trWlIsMarketHours()) {
+                if (wmsIsMarketHours()) {
                     trWlStartAutoRefresh();
                 } else {
                     trWlUpdatePriceStatus('market-closed');
@@ -813,7 +813,7 @@ function trWlStartAutoRefresh() {
         if (!wlTab || !wlTab.classList.contains('active')) return;
 
         // Check market hours — stop auto-refresh if market is closed
-        if (!trWlIsMarketHours()) {
+        if (!wmsIsMarketHours()) {
             trWlStopAutoRefresh();
             trWlUpdatePriceStatus('market-closed');
             return;
@@ -917,26 +917,8 @@ function trWlUpdatePricesInPlace() {
 }
 
 // ============================================================================
-// MARKET HOURS CHECK
+// MARKET HOURS CHECK — now uses shared wmsIsMarketHours() from wms-shared.js (Rule D.12.11)
 // ============================================================================
-
-function trWlIsMarketHours() {
-    // Indian market hours: Mon-Fri 9:15 AM - 3:30 PM IST
-    var now = new Date();
-    // Convert to IST (UTC+5:30)
-    var utcMs = now.getTime() + (now.getTimezoneOffset() * 60000);
-    var ist = new Date(utcMs + (5.5 * 3600000));
-
-    var day = ist.getDay(); // 0=Sun, 6=Sat
-    if (day === 0 || day === 6) return false;
-
-    var hours = ist.getHours();
-    var minutes = ist.getMinutes();
-    var timeInMinutes = hours * 60 + minutes;
-
-    // Market: 9:15 (555 min) to 15:30 (930 min) — add 5 min buffer on each side
-    return timeInMinutes >= 550 && timeInMinutes <= 935;
-}
 
 // ============================================================================
 // RENDERING

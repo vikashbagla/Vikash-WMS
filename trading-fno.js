@@ -628,10 +628,15 @@ function trFnoRender() {
         });
     });
 
-    // Async: fetch F&O contract prices on first render
+    // Async: fetch F&O contract prices on first render, then start auto-refresh
     if (!trFnoContractPricesFetched && window.fyersToken) {
         trFnoContractPricesFetched = true;
-        trFnoFetchAndRefresh();
+        trFnoFetchAndRefresh().then(function() {
+            trFnoStartAutoRefresh();
+        });
+    } else if (trFnoContractPricesFetched) {
+        // Re-entering the tab — restart auto-refresh
+        trFnoStartAutoRefresh();
     }
 }
 
@@ -1076,7 +1081,7 @@ function trFnoBuildExpiryFilter(expiryLabels) {
 // F&O CONTRACT PRICES: Async fetch for open position CMP
 // ============================================================================
 
-async function trFnoFetchAndRefresh() {
+async function trFnoFetchAndRefresh(forceRefresh) {
     var txns = trFnoGetTxns();
     var symbols = {};
     txns.forEach(function(t) {
@@ -1087,9 +1092,30 @@ async function trFnoFetchAndRefresh() {
     });
     var symList = Object.keys(symbols);
     if (symList.length > 0 && typeof wmsFetchFnoContractPrices === 'function') {
-        await wmsFetchFnoContractPrices(symList);
+        await wmsFetchFnoContractPrices(symList, forceRefresh);
         trFnoRender(); // Re-render with updated contract prices
     }
+}
+
+// ============================================================================
+// AUTO-REFRESH: Uses shared wmsStartAutoRefresh (Rule D.12.11)
+// ============================================================================
+
+function trFnoStartAutoRefresh() {
+    if (typeof wmsStartAutoRefresh !== 'function') return;
+    wmsStartAutoRefresh('fno', {
+        interval: 10000,
+        fetchFn: function(force) { return trFnoFetchAndRefresh(force); },
+        renderFn: null, // trFnoFetchAndRefresh already calls trFnoRender
+        isActiveFn: function() {
+            var tab = document.getElementById('tr-fno-positions');
+            return tab && tab.classList.contains('active');
+        }
+    });
+}
+
+function trFnoStopAutoRefresh() {
+    if (typeof wmsStopAutoRefresh === 'function') wmsStopAutoRefresh('fno');
 }
 
 // ============================================================================

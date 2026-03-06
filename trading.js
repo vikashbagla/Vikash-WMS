@@ -69,6 +69,7 @@ async function initTrading() {
     await trFetchLivePrices();
     trUpdateUnitLabels();
     trRenderPortfolio();
+    trStartPortfolioAutoRefresh();
 
     // Load saved views
     await trLoadViews();
@@ -294,6 +295,13 @@ function trSwitchTab(tabId) {
     if (prevTab && prevTab.id === 'tr-watchlist' && window.trWlDestroy) {
         window.trWlDestroy();
     }
+    // Stop auto-refresh for tabs being left
+    if (prevTab && prevTab.id === 'tr-fno-positions' && typeof trFnoStopAutoRefresh === 'function') {
+        trFnoStopAutoRefresh();
+    }
+    if (prevTab && prevTab.id === 'tr-portfolio' && typeof wmsStopAutoRefresh === 'function') {
+        wmsStopAutoRefresh('portfolio');
+    }
 
     document.querySelectorAll('.trading-tab-btn').forEach(function(b) { b.classList.remove('active'); });
     document.querySelectorAll('.trading-tab-content').forEach(function(c) { c.classList.remove('active'); });
@@ -318,6 +326,11 @@ function trSwitchTab(tabId) {
     // Load F&O positions sub-module on demand
     if (tabId === 'tr-fno-positions') {
         trLoadFnoModule();
+    }
+
+    // Restart auto-refresh for the tab being entered
+    if (tabId === 'tr-portfolio') {
+        trStartPortfolioAutoRefresh();
     }
 }
 
@@ -464,7 +477,7 @@ function trGetLiveData(h) {
     return trLiveData[fk] || null;
 }
 
-async function trFetchLivePrices() {
+async function trFetchLivePrices(forceRefresh) {
     try {
         if (!window.fyersToken) {
             trUpdatePriceStatus('last-txn');
@@ -481,8 +494,8 @@ async function trFetchLivePrices() {
             return { shortSymbol: h.shortSymbol, securityId: h.securityId };
         });
 
-        trUpdatePriceStatus('loading');
-        await wmsFetchEquityPrices(priceItems);
+        if (!forceRefresh) trUpdatePriceStatus('loading');
+        await wmsFetchEquityPrices(priceItems, forceRefresh);
 
         // Check if any prices were loaded
         var hasLive = holdings.some(function(h) {
@@ -510,6 +523,31 @@ function trUpdatePriceStatus(status) {
         el.innerHTML = '🟡 Last transaction prices';
         el.style.color = '#d97706';
     }
+}
+
+// ============================================================================
+// PORTFOLIO AUTO-REFRESH (Rule D.12.11)
+// Uses shared wmsStartAutoRefresh from wms-shared.js
+// ============================================================================
+
+function trStartPortfolioAutoRefresh() {
+    if (typeof wmsStartAutoRefresh !== 'function') return;
+    wmsStartAutoRefresh('portfolio', {
+        interval: 10000,
+        fetchFn: function(force) { return trFetchLivePrices(force); },
+        renderFn: function() {
+            trRenderPortfolio();
+            var now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+            trUpdatePriceStatus('live');
+        },
+        isActiveFn: function() {
+            var tab = document.getElementById('tr-portfolio');
+            return tab && tab.classList.contains('active');
+        },
+        onMarketClose: function() {
+            trUpdatePriceStatus('last-txn');
+        }
+    });
 }
 
 // ============================================================================

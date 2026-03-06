@@ -711,14 +711,15 @@ var wmsLivePriceFirstFetch = false;  // Stage 2+3 only on first load
  * Stores results in wmsLivePrices keyed by full symbol.
  *
  * @param {Array} symbols — array of full F&O symbol strings
+ * @param {boolean} [forceRefresh] — if true, re-fetch even cached symbols
  * @returns {Promise} — resolves when done; prices stored in wmsLivePrices
  */
-async function wmsFetchFnoContractPrices(symbols) {
+async function wmsFetchFnoContractPrices(symbols, forceRefresh) {
     if (!symbols || symbols.length === 0) return;
     if (!window.fyersToken || !window.fyersCall) return;
 
-    // Filter out already-cached symbols
-    var toFetch = symbols.filter(function(sym) {
+    // Filter out already-cached symbols (unless forceRefresh)
+    var toFetch = forceRefresh ? symbols.slice() : symbols.filter(function(sym) {
         return !wmsLivePrices[sym] || wmsLivePrices[sym].lp <= 0;
     });
     if (toFetch.length === 0) return;
@@ -759,9 +760,10 @@ async function wmsFetchFnoContractPrices(symbols) {
  *   Stage 3: Yahoo Finance fallback
  *
  * @param {Array} items — [{ shortSymbol, securityId }]
+ * @param {boolean} [forceRefresh] — if true, re-fetch even cached symbols
  * @returns {Promise} — resolves when done; prices stored in wmsLivePrices
  */
-async function wmsFetchEquityPrices(items) {
+async function wmsFetchEquityPrices(items, forceRefresh) {
     if (!items || items.length === 0) return;
     if (!window.fyersToken && !window.SUPABASE_URL) return;
 
@@ -772,7 +774,7 @@ async function wmsFetchEquityPrices(items) {
         var sym = it.shortSymbol;
         if (!sym || seen[sym]) return;
         seen[sym] = true;
-        if (wmsLivePrices[sym] && wmsLivePrices[sym].lp > 0) return; // already cached
+        if (!forceRefresh && wmsLivePrices[sym] && wmsLivePrices[sym].lp > 0) return; // already cached
         toFetch.push(it);
     });
     if (toFetch.length === 0) return;
@@ -1006,6 +1008,71 @@ function wmsUpdateBrokerToken(securityId, fyersSymbol) {
         });
     }).catch(function(err) { console.warn('wmsUpdateBrokerToken:', err.message); });
 }
+
+// ============================================================================
+// SHARED AUTO-REFRESH (Rule D.12.11)
+// Centralised market-hours check and per-tab auto-refresh timer management.
+// Any tab can register with wmsStartAutoRefresh(id, opts) and prices will
+// be re-fetched at the given interval while the market is open.
+// ============================================================================
+
+var wmsAutoRefreshTimers = {};  // id → intervalId
+
+/**
+ * wmsIsMarketHours — returns true during Indian market hours.
+ * Mon-Fri 9:15 AM – 3:30 PM IST with a 5-min buffer on each side.
+ */
+function wmsIsMarketHours() {
+    var now = new Date();
+    var utcMs = now.getTime() + (now.getTimezoneOffset() * 60000);
+    var ist = new Date(utcMs + (5.5 * 3600000));
+    var day = ist.getDay();
+    if (day === 0 || day === 6) return false;
+    var timeInMinutes = ist.getHours() * 60 + ist.getMinutes();
+    return timeInMinutes >= 550 && timeInMinutes <= 935;
+}
+
+/**
+ * wmsStartAutoRefresh — start periodic price refresh for a tab.
+ * @param {string} id        — unique identifier (e.g. 'portfolio', 'fno', 'watchlist')
+ * @param {Object} opts
+ *   @param {number}   [opts.interval=10000] — ms between refreshes
+ *   @param {Function} opts.fetchFn          — async fn(forceRefresh) to fetch prices
+ *   @param {Function} [opts.renderFn]       — called after fetch to re-render
+ *   @param {Function} [opts.isActiveFn]     — return false to skip this cycle
+ *   @param {Function} [opts.onMarketClose]  — called when market is detected closed
+ */
+function wmsStartAutoRefresh(id, opts) {
+    wmsStopAutoRefresh(id);
+    var interval = opts.interval || 10000;
+    wmsAutoRefreshTimers[id] = setInterval(async function() {
+        if (document.hidden) return;
+        if (!wmsIsMarketHours()) {
+            wmsStopAutoRefresh(id);
+            if (opts.onMarketClose) opts.onMarketClose();
+            return;
+        }
+        if (opts.isActiveFn && !opts.isActiveFn()) return;
+        await opts.fetchFn(true);
+        if (opts.renderFn) opts.renderFn();
+    }, interval);
+}
+
+/**
+ * wmsStopAutoRefresh — stop the timer for a given tab.
+ */
+function wmsStopAutoRefresh(id) {
+    if (wmsAutoRefreshTimers[id]) {
+        clearInterval(wmsAutoRefreshTimers[id]);
+        delete wmsAutoRefreshTimers[id];
+    }
+}
+
+// Pause all auto-refresh when tab is hidden, resume when visible
+document.addEventListener('visibilitychange', function() {
+    // Note: each tab's fetchFn already checks document.hidden,
+    // but we also let individual modules hook into this via their own listeners.
+});
 
 // ============================================================================
 // STT ELIGIBILITY CHECK (Rule G.8.5)
