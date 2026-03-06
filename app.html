@@ -315,26 +315,27 @@
         container.innerHTML = '<div class="loading-module">Loading...</div>';
         
         try {
+            var _cb = '?t=' + Date.now(); // cache bust for HTML modules
             if (moduleName === 'portfolio') {
-                const resp = await fetch('portfolio.html');
+                const resp = await fetch('portfolio.html' + _cb);
                 container.innerHTML = await resp.text();
                 if (typeof initPortfolio === 'function') await initPortfolio();
 
             } else if (moduleName === 'master-data') {
-                const html = await (await fetch('master-data.html')).text();
+                const html = await (await fetch('master-data.html' + _cb)).text();
                 injectModule(html, container);
                 await loadScript('master-data.js');
                 if (typeof initMasterData === 'function') initMasterData();
 
             } else if (moduleName === 'import-transactions') {
-                const html = await (await fetch('transaction-import.html')).text();
+                const html = await (await fetch('transaction-import.html' + _cb)).text();
                 injectModule(html, container);
                 await loadScript('transaction-import.js');
                 await loadScript('transaction-template.js');
                 if (typeof initTransactionImport === 'function') initTransactionImport();
 
             } else if (moduleName === 'trading') {
-                const html = await (await fetch('trading.html')).text();
+                const html = await (await fetch('trading.html' + _cb)).text();
                 injectModule(html, container);
                 await loadScript('trading.js');
                 if (typeof initTrading === 'function') initTrading();
