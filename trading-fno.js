@@ -855,9 +855,9 @@ function trFnoRenderFlat(positions) {
         var uClass = unrealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
         var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
 
-        var dayPnlHtml = (r.type === 'open' && dayPnl !== 0) ? '<span class="trM-unrealised ' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
+        var dayPnlHtml = (r.type === 'open' && dayPnl !== 0) ? '<span class="' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
         var realisedHtml = (r.type === 'matched') ? '<span class="' + rClass + '">' + formatAmount(realisedPnl) + '</span>' : '-';
-        var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="trM-unrealised ' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
+        var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
         var netHtml = netPnl !== 0 ? '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' : '-';
 
         var dataAttrs = '';
@@ -928,9 +928,9 @@ function trFnoRenderDetailRow(r, cg) {
     var uClass = unrealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
     var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
 
-    var dayPnlHtml = (r.type === 'open' && dayPnl !== 0) ? '<span class="trM-unrealised ' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
+    var dayPnlHtml = (r.type === 'open' && dayPnl !== 0) ? '<span class="' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
     var realisedHtml = (r.type === 'matched') ? '<span class="' + rClass + '">' + formatAmount(realisedPnl) + '</span>' : '-';
-    var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="trM-unrealised ' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
+    var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
     var netHtml = netPnl !== 0 ? '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' : '-';
 
     var dataAttrs = '';
@@ -964,7 +964,7 @@ function trFnoFormatPnl(r) {
             var uFmt = r.unrealisedPnl < 0
                 ? '(' + formatAmount(Math.abs(r.unrealisedPnl)) + ')'
                 : formatAmount(r.unrealisedPnl);
-            return '<span class="trM-unrealised ' + uCls + '">' + uFmt + '</span>';
+            return '<span class="' + uCls + '">' + uFmt + '</span>';
         }
         return '<span class="trM-unrealised">' + (r.isShort ? 'Short Open' : 'Open') + '</span>';
     }
