@@ -863,6 +863,26 @@
 
     <!-- Tab: F&O Positions -->
     <div id="tr-fno-positions" class="trading-tab-content">
+        <!-- F&O View Tabs Bar -->
+        <div class="tr-view-tabs-bar">
+            <div class="tr-view-tabs-container" id="tr-fno-view-tabs"></div>
+            <div class="tr-view-tabs-actions">
+                <button class="tr-vta-btn" id="tr-fno-new-view-btn" title="New blank view">+</button>
+                <div style="position:relative;">
+                    <button class="tr-vta-btn" id="tr-fno-more-btn" title="All views">&#9662; More</button>
+                    <div class="tr-more-dropdown" id="tr-fno-more-dropdown" style="display:none;">
+                        <div id="tr-fno-more-list"></div>
+                    </div>
+                </div>
+                <button class="tr-vta-btn" id="tr-fno-update-view-btn" title="Update current view with active filters" disabled>&#8635; Update</button>
+                <button class="tr-vta-btn" id="tr-fno-save-new-btn" title="Save as new view">+ Save New</button>
+                <div class="tr-save-prompt" id="tr-fno-save-prompt">
+                    <input type="text" id="tr-fno-save-prompt-name" placeholder="View name...">
+                    <button class="tr-vta-btn" id="tr-fno-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">&#10003;</button>
+                    <button class="tr-vta-btn" id="tr-fno-save-prompt-cancel">&#10005;</button>
+                </div>
+            </div>
+        </div>
         <!-- F&O shared filters bar (investor/trader/broker/tag) — populated by JS -->
         <div id="trFnoSharedFilters" style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
             <div class="filters-grid" style="flex:1; grid-template-columns: repeat(4, 1fr);">

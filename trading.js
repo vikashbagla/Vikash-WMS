@@ -2496,7 +2496,7 @@ async function trOpenAddTransaction() {
 
 async function trLoadViews() {
     try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?select=id,name,filters,sort_order,is_default,show_in_tabs&order=sort_order.asc,created_at.asc', {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?or=(module.eq.trading_portfolio,module.is.null)&select=id,name,filters,sort_order,is_default,show_in_tabs&order=sort_order.asc,created_at.asc', {
             headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
         });
         trPortfolioViews = resp.ok ? await resp.json() : [];
@@ -2811,7 +2811,7 @@ async function trCreateBlankView() {
                 'Content-Type': 'application/json',
                 'Prefer': 'return=representation'
             },
-            body: JSON.stringify({ name: name, filters: blankFilters, sort_order: sortOrder, is_default: false, show_in_tabs: true })
+            body: JSON.stringify({ name: name, filters: blankFilters, sort_order: sortOrder, is_default: false, show_in_tabs: true, module: 'trading_portfolio' })
         });
         if (resp.ok) {
             var rows = await resp.json();
@@ -2842,7 +2842,7 @@ async function trSaveCurrentView(name) {
                 'Content-Type': 'application/json',
                 'Prefer': 'return=representation'
             },
-            body: JSON.stringify({ name: name, filters: filters, sort_order: sortOrder, is_default: isFirst, show_in_tabs: true })
+            body: JSON.stringify({ name: name, filters: filters, sort_order: sortOrder, is_default: isFirst, show_in_tabs: true, module: 'trading_portfolio' })
         });
         if (resp.ok) {
             var rows = await resp.json();

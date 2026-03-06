@@ -61,6 +61,91 @@ function trFnoInit() {
     if (snapBtn) {
         snapBtn.addEventListener('click', function() { trFnoSnapshot(); });
     }
+
+    // ---- View bar event handlers ----
+
+    // More dropdown toggle
+    var fnoMoreBtn = document.getElementById('tr-fno-more-btn');
+    if (fnoMoreBtn) {
+        fnoMoreBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var dd = document.getElementById('tr-fno-more-dropdown');
+            dd.style.display = (dd.style.display === 'none') ? 'block' : 'none';
+        });
+    }
+
+    // Update View button
+    var fnoUpdateBtn = document.getElementById('tr-fno-update-view-btn');
+    if (fnoUpdateBtn) {
+        fnoUpdateBtn.addEventListener('click', function() {
+            if (trFnoActiveViewId) trFnoUpdateCurrentView();
+        });
+    }
+
+    // New blank view button
+    var fnoNewViewBtn = document.getElementById('tr-fno-new-view-btn');
+    if (fnoNewViewBtn) {
+        fnoNewViewBtn.addEventListener('click', function() {
+            trFnoCreateBlankView();
+        });
+    }
+
+    // Save New button → show inline prompt
+    var fnoSaveNewBtn = document.getElementById('tr-fno-save-new-btn');
+    if (fnoSaveNewBtn) {
+        fnoSaveNewBtn.addEventListener('click', function() {
+            var prompt = document.getElementById('tr-fno-save-prompt');
+            prompt.classList.add('show');
+            document.getElementById('tr-fno-save-prompt-name').focus();
+            fnoSaveNewBtn.style.display = 'none';
+        });
+    }
+
+    // Confirm save in inline prompt
+    var fnoSaveOk = document.getElementById('tr-fno-save-prompt-ok');
+    if (fnoSaveOk) {
+        fnoSaveOk.addEventListener('click', function() {
+            var name = document.getElementById('tr-fno-save-prompt-name').value.trim();
+            if (name) trFnoSaveCurrentView(name);
+        });
+    }
+
+    // Cancel save prompt
+    var fnoSaveCancel = document.getElementById('tr-fno-save-prompt-cancel');
+    if (fnoSaveCancel) {
+        fnoSaveCancel.addEventListener('click', function() {
+            document.getElementById('tr-fno-save-prompt').classList.remove('show');
+            document.getElementById('tr-fno-save-prompt-name').value = '';
+            document.getElementById('tr-fno-save-new-btn').style.display = '';
+        });
+    }
+
+    // Enter/Escape in save prompt name field
+    var fnoSaveName = document.getElementById('tr-fno-save-prompt-name');
+    if (fnoSaveName) {
+        fnoSaveName.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                var name = e.target.value.trim();
+                if (name) trFnoSaveCurrentView(name);
+            } else if (e.key === 'Escape') {
+                document.getElementById('tr-fno-save-prompt').classList.remove('show');
+                fnoSaveName.value = '';
+                document.getElementById('tr-fno-save-new-btn').style.display = '';
+            }
+        });
+    }
+
+    // Close More dropdown on outside click
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('#tr-fno-more-btn') && !e.target.closest('#tr-fno-more-dropdown')) {
+            var mdd = document.getElementById('tr-fno-more-dropdown');
+            if (mdd) mdd.style.display = 'none';
+        }
+    });
+
+    // Load saved views from DB
+    trFnoLoadViews();
 }
 
 // ============================================================================
@@ -299,11 +384,18 @@ function trFnoCalcPositions() {
                         buyDate = opener.date; buyAvg = openerPpu; buyAmount = matchQty * openerPpu;
                         sellDate = closer.date; sellAvg = closerPpu; sellAmount = matchQty * closerPpu;
                     }
+                    var buyTxnId, sellTxnId;
+                    if (isShort) {
+                        sellTxnId = opener.txn.id; buyTxnId = closer.txn.id;
+                    } else {
+                        buyTxnId = opener.txn.id; sellTxnId = closer.txn.id;
+                    }
                     matchedRows.push({
                         type: 'matched', isShort: isShort, qty: matchQty,
                         buyDate: buyDate, buyAvg: buyAvg, buyAmount: buyAmount,
                         sellDate: sellDate, sellAvg: sellAvg, sellAmount: sellAmount,
-                        pnl: sellAmount - buyAmount
+                        pnl: sellAmount - buyAmount,
+                        buyTxnId: buyTxnId, sellTxnId: sellTxnId
                     });
                     opener.remaining -= matchQty;
                     closerRemaining -= matchQty;
@@ -319,9 +411,11 @@ function trFnoCalcPositions() {
                 if (isShort) {
                     row.buyDate = null; row.buyAvg = 0; row.buyAmount = 0;
                     row.sellDate = opener.date; row.sellAvg = ppu; row.sellAmount = opener.remaining * ppu;
+                    row.sellTxnId = opener.txn.id;
                 } else {
                     row.buyDate = opener.date; row.buyAvg = ppu; row.buyAmount = opener.remaining * ppu;
                     row.sellDate = null; row.sellAvg = 0; row.sellAmount = 0;
+                    row.buyTxnId = opener.txn.id;
                 }
                 // Unrealised P&L using contract-specific CMP (not equity CMP)
                 var contractSym = opener.txn.symbol;
@@ -476,6 +570,29 @@ function trFnoRender() {
             });
         });
     }
+
+    // Click-to-edit: clicking buy/sell side opens the edit modal for that transaction
+    tbody.querySelectorAll('.trFno-detail-row.clickable-row').forEach(function(row) {
+        row.addEventListener('click', function(e) {
+            // Don't interfere with expand/collapse rows
+            if (e.target.closest('.trFno-symbol-row') || e.target.closest('.trFno-group-row')) return;
+            var td = e.target.closest('td');
+            if (!td) return;
+            var tdIndex = Array.from(row.children).indexOf(td);
+            var txnId;
+            // Grouped view: cols 0-1=underlying/contract, 2=qty, 3-4=buy, 5-6=sell, 7-10=pnl
+            // Flat view: cols 0-1=name/contract, 2=qty, 3-4=buy, 5-6=sell, 7-10=pnl
+            if (tdIndex === 3 || tdIndex === 4) {
+                txnId = row.dataset.buyTxnId;
+            } else if (tdIndex === 5 || tdIndex === 6) {
+                txnId = row.dataset.sellTxnId;
+            } else {
+                // Default: open whichever side exists (buy preferred)
+                txnId = row.dataset.buyTxnId || row.dataset.sellTxnId;
+            }
+            if (txnId) trOpenEditModal(txnId);
+        });
+    });
 
     // Async: fetch F&O contract prices on first render
     if (!trFnoContractPricesFetched && window.fyersToken) {
@@ -691,7 +808,11 @@ function trFnoRenderFlat(positions) {
         var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="trM-unrealised ' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
         var netHtml = netPnl !== 0 ? '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' : '-';
 
-        html += '<tr class="' + rowClass + '">' +
+        var dataAttrs = '';
+        if (r.buyTxnId) dataAttrs += ' data-buy-txn-id="' + wmsEsc(r.buyTxnId) + '"';
+        if (r.sellTxnId) dataAttrs += ' data-sell-txn-id="' + wmsEsc(r.sellTxnId) + '"';
+
+        html += '<tr class="' + rowClass + ' clickable-row" style="cursor:pointer;"' + dataAttrs + '>' +
             '<td>' + wmsEsc(fr.companyName) + '<div class="trFno-symbol-sub">' + wmsEsc(fr.groupLabel) + '</div></td>' +
             '<td>' + wmsEsc(fr.contractLabel) + '</td>' +
             '<td class="text-right">' + formatQuantity(r.qty) + '</td>' +
@@ -756,7 +877,11 @@ function trFnoRenderDetailRow(r, cg) {
     var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="trM-unrealised ' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
     var netHtml = netPnl !== 0 ? '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' : '-';
 
-    return '<tr class="' + rowClass + '">' +
+    var dataAttrs = '';
+    if (r.buyTxnId) dataAttrs += ' data-buy-txn-id="' + wmsEsc(r.buyTxnId) + '"';
+    if (r.sellTxnId) dataAttrs += ' data-sell-txn-id="' + wmsEsc(r.sellTxnId) + '"';
+
+    return '<tr class="' + rowClass + ' clickable-row" style="cursor:pointer;"' + dataAttrs + '>' +
         '<td style="padding-left:36px;"></td>' +
         '<td></td>' +
         '<td class="text-right">' + formatQuantity(r.qty) + '</td>' +
@@ -1190,4 +1315,544 @@ function trFnoSnapshot() {
             showAlert('Clipboard not supported in this browser', 'error', 2000);
         }
     }, 'image/png');
+}
+
+// ============================================================================
+// SAVE VIEW: State variables and functions (mirrors Portfolio pattern)
+// DB: portfolio_views table with module='trading_fno'
+// ============================================================================
+
+var trFnoViews = [];
+var trFnoActiveViewId = null;
+var trFnoRenamingTab = false;
+
+// ---- GET CURRENT FILTERS (shared + F&O-specific) ----
+
+function trFnoGetCurrentFilters() {
+    return {
+        investorIds: trSelectedInvestorIds.slice(),
+        traderIds: trSelectedTraderIds.slice(),
+        brokerIds: trSelectedBrokerIds.slice(),
+        tagNames: trSelectedTagNames.slice(),
+        tagLogic: trTagFilterLogic,
+        fnoMode: trFnoMode,
+        matchMethod: trFnoMatchMethod,
+        expiryFilter: trFnoExpiryFilter ? trFnoExpiryFilter.slice() : [],
+        flatView: trFnoFlatView
+    };
+}
+
+// ---- SYNC F&O PILL STATES (after view apply) ----
+
+function trFnoSyncPillStates() {
+    if (trFnoInvPillFilter) trFnoInvPillFilter.syncStates();
+    if (trFnoTrdPillFilter) trFnoTrdPillFilter.syncStates();
+    if (trFnoBrkPillFilter) trFnoBrkPillFilter.syncStates();
+    if (trFnoTagPillFilter) trFnoTagPillFilter.syncStates();
+}
+
+function trFnoRenderSelectedTags() {
+    if (trFnoInvPillFilter) trFnoInvPillFilter.renderSelectedTags();
+    if (trFnoTrdPillFilter) trFnoTrdPillFilter.renderSelectedTags();
+    if (trFnoBrkPillFilter) trFnoBrkPillFilter.renderSelectedTags();
+    if (trFnoTagPillFilter) trFnoTagPillFilter.renderSelectedTags();
+}
+
+// ---- LOAD VIEWS FROM DB ----
+
+async function trFnoLoadViews() {
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?module=eq.trading_fno&select=id,name,filters,sort_order,is_default,show_in_tabs&order=sort_order.asc,created_at.asc', {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        });
+        trFnoViews = resp.ok ? await resp.json() : [];
+    } catch (err) {
+        console.warn('F&O: Failed to load views:', err.message);
+        trFnoViews = [];
+    }
+    trFnoRenderViewTabs();
+    trFnoRenderMoreDropdown();
+    trFnoUpdateViewButtons();
+
+    // Auto-apply default view on first load
+    if (!trFnoActiveViewId) {
+        var defaultView = trFnoViews.find(function(v) { return v.is_default; });
+        if (defaultView) {
+            trFnoApplyView(defaultView.id);
+        }
+    }
+}
+
+// ---- RENDER VIEW TABS ----
+
+function trFnoRenderViewTabs() {
+    var container = document.getElementById('tr-fno-view-tabs');
+    if (!container) return;
+
+    var defaultView = trFnoViews.find(function(v) { return v.is_default; });
+    var tabViews = trFnoViews.filter(function(v) {
+        return v.show_in_tabs !== false && !v.is_default;
+    });
+
+    var html = '';
+
+    if (defaultView) {
+        var isActive = defaultView.id === trFnoActiveViewId;
+        html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' + defaultView.id + '">' +
+            '<span class="tr-tab-star">\u2605</span> ' + defaultView.name +
+            '</button>';
+    }
+
+    tabViews.forEach(function(v) {
+        var isActive = v.id === trFnoActiveViewId;
+        html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' + v.id + '">' +
+            v.name +
+            ' <span class="tr-tab-close" data-close-id="' + v.id + '" title="Remove from tabs">\u2715</span>' +
+            '</button>';
+    });
+
+    container.innerHTML = html;
+
+    // Attach click/dblclick handlers
+    container.querySelectorAll('.tr-view-tab').forEach(function(tab) {
+        var clickTimer = null;
+        tab.addEventListener('click', function(e) {
+            if (e.target.classList.contains('tr-tab-close')) {
+                e.stopPropagation();
+                trFnoCloseViewTab(e.target.dataset.closeId);
+                return;
+            }
+            if (clickTimer) clearTimeout(clickTimer);
+            clickTimer = setTimeout(function() {
+                clickTimer = null;
+                if (trFnoRenamingTab) return;
+                trFnoApplyView(tab.dataset.viewId);
+            }, 250);
+        });
+        // Double-click to rename
+        tab.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+            trFnoRenamingTab = true;
+
+            var viewId = tab.dataset.viewId;
+            var view = trFnoViews.find(function(v) { return v.id === viewId; });
+            if (!view) return;
+
+            trFnoActiveViewId = viewId;
+
+            var input = document.createElement('input');
+            input.type = 'text';
+            input.value = view.name;
+            input.style.cssText = 'width:100px; font-size:11px; padding:1px 4px; border:1px solid #667eea; border-radius:3px; outline:none; background:white;';
+            tab.innerHTML = '';
+            tab.appendChild(input);
+            input.focus();
+            input.select();
+
+            ['click', 'mousedown', 'mouseup', 'dblclick', 'keydown', 'keyup', 'keypress'].forEach(function(evt) {
+                input.addEventListener(evt, function(ie) { ie.stopPropagation(); });
+            });
+
+            var finished = false;
+            function finishRename() {
+                if (finished) return;
+                finished = true;
+                trFnoRenamingTab = false;
+                var newName = input.value.trim();
+                if (newName && newName !== view.name) {
+                    view.name = newName;
+                    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+                        method: 'PATCH',
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        body: JSON.stringify({ name: newName })
+                    }).catch(function(err) { console.warn('Failed to rename view:', err.message); });
+                }
+                trFnoRenderViewTabs();
+                trFnoRenderMoreDropdown();
+            }
+
+            input.addEventListener('blur', finishRename);
+            input.addEventListener('keydown', function(ke) {
+                ke.stopPropagation();
+                if (ke.key === 'Enter') { ke.preventDefault(); input.blur(); }
+                if (ke.key === 'Escape') { ke.preventDefault(); input.value = view.name; input.blur(); }
+            });
+        });
+    });
+}
+
+// ---- CLOSE VIEW TAB ----
+
+async function trFnoCloseViewTab(viewId) {
+    try {
+        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ show_in_tabs: false })
+        });
+    } catch (err) {
+        console.warn('Failed to update tab state:', err.message);
+    }
+
+    var v = trFnoViews.find(function(v) { return v.id === viewId; });
+    if (v) v.show_in_tabs = false;
+
+    if (trFnoActiveViewId === viewId) {
+        var defaultView = trFnoViews.find(function(v) { return v.is_default; });
+        if (defaultView) {
+            trFnoApplyView(defaultView.id);
+            return;
+        } else {
+            trFnoActiveViewId = null;
+        }
+    }
+
+    trFnoRenderViewTabs();
+    trFnoRenderMoreDropdown();
+}
+
+// ---- MORE DROPDOWN ----
+
+function trFnoRenderMoreDropdown() {
+    var list = document.getElementById('tr-fno-more-list');
+    if (!list) return;
+
+    if (trFnoViews.length === 0) {
+        list.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:#a0aec0;">No saved views</div>';
+        return;
+    }
+
+    list.innerHTML = trFnoViews.map(function(v) {
+        var isActive = v.id === trFnoActiveViewId;
+        var isDefault = v.is_default;
+        var inTabs = v.show_in_tabs !== false;
+        return '<div class="tr-more-item' + (isActive ? ' active' : '') + '" data-view-id="' + v.id + '">' +
+            (isActive ? '<span style="color:#667eea;font-size:11px;">\u2713</span> ' : '<span style="width:16px;display:inline-block;"></span> ') +
+            '<span class="tr-more-name">' + v.name + '</span>' +
+            (isDefault ? '<span class="tr-more-badge">\u2605 Default</span>' : '') +
+            '<span class="tr-more-actions">' +
+                (!isDefault ? '<button class="tr-more-action-btn" data-action="default" data-id="' + v.id + '" title="Set as default">\u2605</button>' : '') +
+                (inTabs && !isDefault ? '<button class="tr-more-action-btn" data-action="hide-tab" data-id="' + v.id + '" title="Remove from tabs">\u229F</button>' : '') +
+                (!inTabs ? '<button class="tr-more-action-btn" data-action="show-tab" data-id="' + v.id + '" title="Show in tabs">\u229E</button>' : '') +
+                '<button class="tr-more-action-btn danger" data-action="delete" data-id="' + v.id + '" title="Delete view">\u2715</button>' +
+            '</span>' +
+        '</div>';
+    }).join('');
+
+    // Click to apply
+    list.querySelectorAll('.tr-more-item').forEach(function(item) {
+        item.addEventListener('click', function(e) {
+            if (e.target.closest('.tr-more-action-btn')) return;
+            trFnoApplyView(item.dataset.viewId);
+            document.getElementById('tr-fno-more-dropdown').style.display = 'none';
+        });
+    });
+
+    // Action buttons
+    list.querySelectorAll('.tr-more-action-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var action = btn.dataset.action;
+            var id = btn.dataset.id;
+            if (action === 'default') trFnoSetDefaultView(id);
+            else if (action === 'hide-tab') trFnoCloseViewTab(id);
+            else if (action === 'show-tab') trFnoShowViewTab(id);
+            else if (action === 'delete') trFnoDeleteView(id);
+        });
+    });
+}
+
+// ---- APPLY VIEW ----
+
+function trFnoApplyView(viewId) {
+    var view = trFnoViews.find(function(v) { return v.id === viewId; });
+    if (!view) return;
+
+    // Auto-add to tabs if not already showing
+    if (view.show_in_tabs === false || view.show_in_tabs === null) {
+        view.show_in_tabs = true;
+        fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ show_in_tabs: true })
+        }).catch(function(err) { console.warn('Failed to show tab:', err.message); });
+    }
+
+    var f = view.filters || {};
+
+    // Shared filters — mutate in-place to preserve pill controller references
+    trSelectedInvestorIds.length = 0;
+    Array.prototype.push.apply(trSelectedInvestorIds, f.investorIds || []);
+    trSelectedTraderIds.length = 0;
+    Array.prototype.push.apply(trSelectedTraderIds, f.traderIds || []);
+    trSelectedBrokerIds.length = 0;
+    Array.prototype.push.apply(trSelectedBrokerIds, f.brokerIds || []);
+    trSelectedTagNames.length = 0;
+    Array.prototype.push.apply(trSelectedTagNames, f.tagNames || []);
+    trTagFilterLogic = f.tagLogic || 'OR';
+
+    // F&O-specific state
+    trFnoMode = f.fnoMode || 'open';
+    trFnoMatchMethod = f.matchMethod || 'lifo';
+    if (f.expiryFilter !== undefined) {
+        trFnoExpiryFilter = f.expiryFilter && f.expiryFilter.length > 0 ? f.expiryFilter.slice() : [];
+    }
+    trFnoFlatView = f.flatView || false;
+
+    trFnoActiveViewId = viewId;
+
+    // Update F&O pill filter UI
+    trFnoSyncPillStates();
+    trFnoRenderSelectedTags();
+
+    // Update tag logic radio
+    document.querySelectorAll('input[name="tr-fno-tag-logic"]').forEach(function(r) {
+        r.checked = r.value === trTagFilterLogic;
+    });
+
+    // Update F&O toggle buttons
+    document.querySelectorAll('[data-fno-mode]').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.fnoMode === trFnoMode);
+    });
+    document.querySelectorAll('[data-fno-match]').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.fnoMatch === trFnoMatchMethod);
+    });
+
+    // Update flat view checkbox
+    var flatToggle = document.getElementById('trFnoFlatToggle');
+    if (flatToggle) flatToggle.checked = trFnoFlatView;
+    var tableWrap = document.getElementById('trFnoTableWrap');
+    if (tableWrap) tableWrap.classList.toggle('trFno-flat-mode', trFnoFlatView);
+
+    trFnoRenderViewTabs();
+    trFnoRenderMoreDropdown();
+    trFnoUpdateViewButtons();
+    trFnoRender();
+}
+
+// ---- UPDATE VIEW BUTTONS ----
+
+function trFnoUpdateViewButtons() {
+    var updateBtn = document.getElementById('tr-fno-update-view-btn');
+    if (updateBtn) {
+        updateBtn.disabled = !trFnoActiveViewId;
+    }
+}
+
+// ---- SAVE CURRENT VIEW ----
+
+async function trFnoSaveCurrentView(name) {
+    var filters = trFnoGetCurrentFilters();
+    var sortOrder = trFnoViews.length;
+    var isFirst = trFnoViews.length === 0;
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
+            method: 'POST',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            },
+            body: JSON.stringify({ name: name, filters: filters, sort_order: sortOrder, is_default: isFirst, show_in_tabs: true, module: 'trading_fno' })
+        });
+        if (resp.ok) {
+            var rows = await resp.json();
+            if (rows.length > 0) {
+                trFnoViews.push(rows[0]);
+                trFnoActiveViewId = rows[0].id;
+                trFnoRenderViewTabs();
+                trFnoRenderMoreDropdown();
+                trFnoUpdateViewButtons();
+                showAlert('View "' + name + '" saved', 'success', 2000);
+            }
+        } else {
+            showAlert('Failed to save view', 'error');
+        }
+    } catch (err) {
+        showAlert('Failed to save view: ' + err.message, 'error');
+    }
+
+    // Hide prompt
+    document.getElementById('tr-fno-save-prompt').classList.remove('show');
+    document.getElementById('tr-fno-save-prompt-name').value = '';
+    document.getElementById('tr-fno-save-new-btn').style.display = '';
+}
+
+// ---- CREATE BLANK VIEW ----
+
+async function trFnoCreateBlankView() {
+    var blankFilters = {};
+    var sortOrder = trFnoViews.length;
+    var name = 'New View';
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
+            method: 'POST',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            },
+            body: JSON.stringify({ name: name, filters: blankFilters, sort_order: sortOrder, is_default: false, show_in_tabs: true, module: 'trading_fno' })
+        });
+        if (resp.ok) {
+            var rows = await resp.json();
+            if (rows.length > 0) {
+                trFnoViews.push(rows[0]);
+                trFnoApplyView(rows[0].id);
+                showAlert('New view created \u2014 double-click tab to rename', 'success', 3000);
+            }
+        } else {
+            showAlert('Failed to create view', 'error');
+        }
+    } catch (err) {
+        showAlert('Failed to create view: ' + err.message, 'error');
+    }
+}
+
+// ---- UPDATE CURRENT VIEW ----
+
+async function trFnoUpdateCurrentView() {
+    if (!trFnoActiveViewId) return;
+    var filters = trFnoGetCurrentFilters();
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + trFnoActiveViewId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ filters: filters })
+        });
+        if (resp.ok) {
+            var v = trFnoViews.find(function(v) { return v.id === trFnoActiveViewId; });
+            if (v) v.filters = filters;
+            showAlert('View updated', 'success', 2000);
+        } else {
+            showAlert('Failed to update view', 'error');
+        }
+    } catch (err) {
+        showAlert('Failed to update view: ' + err.message, 'error');
+    }
+}
+
+// ---- DELETE VIEW ----
+
+async function trFnoDeleteView(viewId) {
+    if (!confirm('Delete this saved view?')) return;
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+            method: 'DELETE',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Prefer': 'return=minimal'
+            }
+        });
+        if (resp.ok) {
+            trFnoViews = trFnoViews.filter(function(v) { return v.id !== viewId; });
+            if (trFnoActiveViewId === viewId) {
+                trFnoActiveViewId = null;
+            }
+            trFnoRenderViewTabs();
+            trFnoRenderMoreDropdown();
+            trFnoUpdateViewButtons();
+            showAlert('View deleted', 'success', 2000);
+        }
+    } catch (err) {
+        showAlert('Failed to delete view: ' + err.message, 'error');
+    }
+}
+
+// ---- SET DEFAULT VIEW ----
+
+async function trFnoSetDefaultView(viewId) {
+    var oldDefault = trFnoViews.find(function(v) { return v.is_default; });
+    if (oldDefault && oldDefault.id !== viewId) {
+        try {
+            await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + oldDefault.id, {
+                method: 'PATCH',
+                headers: {
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                body: JSON.stringify({ is_default: false })
+            });
+            oldDefault.is_default = false;
+        } catch (err) {
+            console.warn('Failed to unset old default:', err.message);
+        }
+    }
+
+    try {
+        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ is_default: true, show_in_tabs: true })
+        });
+        var v = trFnoViews.find(function(v) { return v.id === viewId; });
+        if (v) { v.is_default = true; v.show_in_tabs = true; }
+    } catch (err) {
+        console.warn('Failed to set default:', err.message);
+    }
+
+    trFnoRenderViewTabs();
+    trFnoRenderMoreDropdown();
+    showAlert('Default view updated', 'success', 2000);
+}
+
+// ---- SHOW VIEW TAB ----
+
+async function trFnoShowViewTab(viewId) {
+    try {
+        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ show_in_tabs: true })
+        });
+    } catch (err) {
+        console.warn('Failed to show tab:', err.message);
+    }
+
+    var v = trFnoViews.find(function(v) { return v.id === viewId; });
+    if (v) v.show_in_tabs = true;
+
+    trFnoRenderViewTabs();
+    trFnoRenderMoreDropdown();
 }
