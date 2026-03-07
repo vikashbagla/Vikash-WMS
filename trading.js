@@ -608,7 +608,6 @@ function trToggleZeroHoldings() {
     trShowZeroHoldings = !trShowZeroHoldings;
     var btn = document.getElementById('trToggleZeroBtn');
     if (btn) {
-        btn.textContent = trShowZeroHoldings ? '👁 Hide Zero Holdings' : '👁 Show Zero Holdings';
         btn.classList.toggle('active', trShowZeroHoldings);
     }
     trRenderPortfolio();
