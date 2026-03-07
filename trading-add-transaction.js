@@ -624,7 +624,7 @@ function addAddTxnRow(copyFromId) {
         // Lots
         '<td><input type="number" class="addTxn-lots-input' + (isNfo ? '' : ' disabled-lots') + '" data-rid="' + rowId + '" step="1" value="' + (row.lots || '') + '"' + (isNfo ? '' : ' disabled') + '></td>' +
         // Qty
-        '<td><input type="number" class="addTxn-qty-input" data-rid="' + rowId + '" step="1" value="' + (row.quantity || '') + '"></td>' +
+        '<td><input type="text" class="addTxn-qty-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtQty(row.quantity) + '"></td>' +
         // Price
         '<td><input type="number" class="addTxn-price-input" data-rid="' + rowId + '" step="0.01" value="' + (row.price || '') + '"></td>' +
         // Gross (editable)
@@ -745,14 +745,24 @@ function attachAddTxnRowHandlers(rowId) {
         row.lots = lots;
         if (row.lot_size > 1) {
             row.quantity = Math.round(lots * row.lot_size);
-            qtyInput.value = row.quantity || '';
+            qtyInput.value = atFmtQty(row.quantity);
         }
         recalcAddTxnRow(rowId);
     });
 
+    // --- Qty focus/blur formatting ---
+    qtyInput.addEventListener('focus', function() {
+        var raw = parseInt(qtyInput.value.replace(/,/g, '')) || 0;
+        qtyInput.value = raw || '';
+    });
+    qtyInput.addEventListener('blur', function() {
+        var raw = parseInt(qtyInput.value.replace(/,/g, '')) || 0;
+        qtyInput.value = atFmtQty(raw);
+    });
+
     // --- Qty change ---
     qtyInput.addEventListener('input', function() {
-        var qty = parseInt(qtyInput.value) || 0;
+        var qty = parseInt(qtyInput.value.replace(/,/g, '')) || 0;
         row.quantity = qty;
         if (row.lot_size > 1 && qty !== 0) {
             row.lots = Math.round(Math.abs(qty) / row.lot_size * 100) / 100;
@@ -1688,10 +1698,16 @@ async function importAddTxnToDb() {
 // Formatting Helpers
 // ============================================================================
 
+function atFmtQty(value) {
+    if (value === null || value === undefined || isNaN(value) || value === 0) return '';
+    var abs = Math.abs(Math.round(value));
+    var formatted = abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return value < 0 ? '-' + formatted : formatted;
+}
+
 function atFmtAmt(value) {
     if (value === null || value === undefined || isNaN(value)) return '0.00';
-    // Use formatAmount from utils.js if available, otherwise basic format
-    if (typeof formatAmount === 'function') return formatAmount(value);
+    // Always show full amount with commas — no display unit division in this modal
     var abs = Math.abs(value);
     var formatted = abs.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     if (value < 0) return '(' + formatted + ')';
