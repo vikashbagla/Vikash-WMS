@@ -465,6 +465,8 @@ function trGetPrice(h) {
     // Legacy fallback to module-level cache (for backward compat)
     var fk = 'NSE:' + sym + '-EQ';
     if (trLivePrices[fk]) return trLivePrices[fk];
+    // PE security fallback: use avg cost as CMP when no live price available
+    if (h.isin && h.isin.startsWith('PE-') && h.avgCost > 0) return h.avgCost;
     return h.latestPrice;
 }
 
@@ -799,12 +801,15 @@ function trCalcHoldings() {
         // Open options exclusion is built into wmsCalcAvgCost (Rule E.12)
         var calc = wmsCalcAvgCost(g.txns);
         if (!trShowZeroHoldings && calc.netQuantity === 0) return null;
+        // Resolve ISIN from securities master (needed for PE- fallback pricing)
+        var _secMaster = g.securityId && wmsRefData.securitiesCmMap[g.securityId];
         var rec = {
             key: key,
             symbol: g.symbol,
             shortSymbol: g.shortSymbol,
             companyName: g.companyName,
             securityId: g.securityId,
+            isin: _secMaster ? _secMaster.isin : null,
             exchange: g.exchange,
             quantity: calc.netQuantity,
             totalCost: calc.totalCost,

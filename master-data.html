@@ -756,10 +756,45 @@
                     </div>
                 </form>
             </div>
+            <div id="peMergedBanner" style="display:none;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:8px 12px;margin:0 16px 8px;font-size:12px;color:#92400e;"></div>
             <div class="modal-footer">
                 <button class="btn-secondary" onclick="closePeSecurityModal()">Cancel</button>
                 <button class="btn-primary" id="btnPeDelete" onclick="deletePeSecurity()" style="background:#e53e3e;display:none;">Delete</button>
+                <button class="btn-primary" id="btnPeMerge" onclick="openMergeSecurityModal()" style="background:#2563eb;display:none;">Merge with Listed Security</button>
                 <button class="btn-primary" onclick="savePeSecurity()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Merge Security Modal -->
+    <div id="mergeSecurityModal" class="modal" onclick="if(event.target===this)closeMergeSecurityModal()">
+        <div class="modal-content" style="max-width:560px;">
+            <div class="modal-header">
+                <h3>Merge into Listed Security</h3>
+                <button class="btn-close-modal" onclick="closeMergeSecurityModal()" title="Close">✕</button>
+            </div>
+            <div class="modal-body">
+                <!-- Source summary -->
+                <div id="mergeSourceSummary" style="background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px;"></div>
+
+                <!-- Target search -->
+                <div style="margin-bottom:10px;">
+                    <label style="display:block;font-size:11px;font-weight:600;color:#4a5568;margin-bottom:4px;">Search Target Security</label>
+                    <input type="text" id="mergeTargetSearch" placeholder="Type to search listed securities..." style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:4px;font-size:12px;" oninput="_mergeSearchTarget(this.value)">
+                </div>
+
+                <!-- Search results -->
+                <div id="mergeSearchResults" style="max-height:200px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:4px;display:none;"></div>
+
+                <!-- Selected target -->
+                <div id="mergeSelectedTarget" style="display:none;background:#ecfdf5;border:1px solid #10b981;border-radius:6px;padding:10px 14px;margin-top:10px;font-size:12px;"></div>
+
+                <!-- Confirm summary -->
+                <div id="mergeConfirmSummary" style="display:none;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px 14px;margin-top:10px;font-size:12px;color:#92400e;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeMergeSecurityModal()">Cancel</button>
+                <button class="btn-primary" id="btnMergeConfirm" onclick="executeMergeSecurity()" style="background:#2563eb;display:none;">Confirm Merge</button>
             </div>
         </div>
     </div>

@@ -2085,8 +2085,9 @@ function renderUnified(resetPage) {
             ? r.expiry_dt.toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'2-digit' })
             : '<span style="color:#cbd5e0;">—</span>';
         const expiryCol  = r.expiry_dt ? (expired ? 'color:#dc2626;' : 'color:#059669;') : '';
-        var symCell = r.type === 'PRIVATE_EQUITY'
-            ? '<td><strong style="font-size:12px;"><a href="#" onclick="openEditPeSecurityModal(\'' + r._id + '\');return false;" style="color:#9333ea;text-decoration:none;" title="Edit PE security">' + r.symbol + ' ✎</a></strong></td>'
+        var isPeUser = r.isin && r.isin.startsWith('PE-');
+        var symCell = isPeUser
+            ? '<td><strong style="font-size:12px;"><a href="#" onclick="openEditPeSecurityModal(\'' + r._id + '\');return false;" style="color:#9333ea;text-decoration:none;" title="Edit user-defined security">' + r.symbol + ' ✎</a></strong></td>'
             : '<td><strong style="font-size:12px;">' + r.symbol + '</strong></td>';
         var trAttr = r._src === 'cm' && r._id
             ? '<tr data-secid="' + r._id + '" style="cursor:pointer;" title="Double-click to view details">'
@@ -3346,6 +3347,10 @@ function openAddPeSecurityModal() {
     document.getElementById('peStatus').value = 'true';
     document.getElementById('peIsin').value = '';
     document.getElementById('btnPeDelete').style.display = 'none';
+    var btnMerge = document.getElementById('btnPeMerge');
+    if (btnMerge) btnMerge.style.display = 'none';
+    var mergedBanner = document.getElementById('peMergedBanner');
+    if (mergedBanner) mergedBanner.style.display = 'none';
     _populatePeTypeDropdown('PRIVATE_EQUITY');
     _populatePeAssetClassDropdown('');
     _populatePeSectorDropdown('');
@@ -3365,7 +3370,7 @@ function openEditPeSecurityModal(secId) {
     if (!sec) { alert('Security not found'); return; }
 
     editingPeSecurityId = secId;
-    document.getElementById('peSecurityModalTitle').textContent = 'Edit PE Security';
+    document.getElementById('peSecurityModalTitle').textContent = 'Edit Security';
     document.getElementById('peSecurityId').value = sec.id;
     document.getElementById('peSymbol').value = sec.symbol || '';
     document.getElementById('peCompanyName').value = sec.company_name || '';
@@ -3375,7 +3380,22 @@ function openEditPeSecurityModal(secId) {
     document.getElementById('peLotSize').value = sec.lot_size || 1;
     document.getElementById('peStatus').value = sec.is_active !== false ? 'true' : 'false';
     document.getElementById('peIsin').value = sec.isin || '';
-    document.getElementById('btnPeDelete').style.display = 'inline-block';
+    document.getElementById('btnPeDelete').style.display = sec.merged_into_id ? 'none' : 'inline-block';
+    // Show merge button only if NOT already merged
+    var btnMerge = document.getElementById('btnPeMerge');
+    if (btnMerge) btnMerge.style.display = sec.merged_into_id ? 'none' : 'inline-block';
+    // Show merged status banner if merged
+    var mergedBanner = document.getElementById('peMergedBanner');
+    if (mergedBanner) {
+        if (sec.merged_into_id) {
+            var target = wmsRefData.securitiesCmMap[sec.merged_into_id];
+            var targetName = target ? (target.symbol + ' — ' + target.company_name) : sec.merged_into_id;
+            mergedBanner.innerHTML = '⚠️ This security was merged into <strong>' + wmsEsc(targetName) + '</strong> on ' + new Date(sec.merged_at).toLocaleDateString('en-IN');
+            mergedBanner.style.display = 'block';
+        } else {
+            mergedBanner.style.display = 'none';
+        }
+    }
     document.getElementById('peSecurityModal').classList.add('show');
     document.addEventListener('keydown', _peModalEscHandler);
     // Auto-update ISIN preview
@@ -3476,10 +3496,36 @@ async function savePeSecurity() {
 
 async function deletePeSecurity() {
     if (!editingPeSecurityId) return;
+    var sec = wmsRefData.securitiesCmMap[editingPeSecurityId];
     var symbol = document.getElementById('peSymbol').value.trim().toUpperCase();
-    if (!confirm('Delete PE security "' + symbol + '"?\n\nThis cannot be undone. Any transactions referencing this security will remain but the security master data will be removed.')) return;
+
+    // Block delete if already merged
+    if (sec && sec.merged_into_id) {
+        alert('Cannot delete "' + symbol + '" — it has already been merged into another security.');
+        return;
+    }
 
     try {
+        // Check transaction count referencing this security
+        var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Prefer': 'count=exact' };
+        var countResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?security_id=eq.' + editingPeSecurityId + '&select=id', { headers: headers });
+        var txnCount = 0;
+        var contentRange = countResp.headers.get('content-range');
+        if (contentRange) {
+            var parts = contentRange.split('/');
+            txnCount = parts[1] && parts[1] !== '*' ? parseInt(parts[1]) : 0;
+        }
+        if (!txnCount) {
+            var txnRows = await countResp.json();
+            txnCount = txnRows.length;
+        }
+
+        var msg = 'Delete security "' + symbol + '"?\n\nThis cannot be undone.';
+        if (txnCount > 0) {
+            msg += '\n\n⚠️ WARNING: ' + txnCount + ' transaction(s) reference this security. They will remain but lose their security master data link.';
+        }
+        if (!confirm(msg)) return;
+
         var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + editingPeSecurityId, {
             method: 'DELETE',
             headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
@@ -3492,7 +3538,7 @@ async function deletePeSecurity() {
         await wmsLoadSecuritiesCm();
         await loadSecuritiesStats();
         await loadSecuritiesTable(true);
-        alert('PE Security "' + symbol + '" deleted.');
+        alert('Security "' + symbol + '" deleted.');
     } catch (e) {
         console.error('Error deleting PE security:', e);
         alert('Error: ' + e.message);
@@ -3503,6 +3549,210 @@ function closePeSecurityModal() {
     document.getElementById('peSecurityModal').classList.remove('show');
     document.removeEventListener('keydown', _peModalEscHandler);
     editingPeSecurityId = null;
+}
+
+// ============================================================================
+// MERGE SECURITY MODAL — Merge PE security into a listed security
+// ============================================================================
+
+var _mergeSourceId = null;
+var _mergeTargetId = null;
+var _mergeSourceTxnCount = 0;
+
+function _mergeModalEscHandler(e) {
+    if (e.key === 'Escape') closeMergeSecurityModal();
+}
+
+async function openMergeSecurityModal() {
+    if (!editingPeSecurityId) return;
+    var sec = wmsRefData.securitiesCmMap[editingPeSecurityId];
+    if (!sec) return;
+    if (sec.merged_into_id) {
+        alert('This security has already been merged.');
+        return;
+    }
+
+    _mergeSourceId = editingPeSecurityId;
+    _mergeTargetId = null;
+    _mergeSourceTxnCount = 0;
+
+    // Fetch transaction count for source
+    try {
+        var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?security_id=eq.' + _mergeSourceId + '&select=id', { headers: headers });
+        var txns = await resp.json();
+        _mergeSourceTxnCount = Array.isArray(txns) ? txns.length : 0;
+    } catch (e) { console.error('Error fetching txn count for merge:', e); }
+
+    // Populate source summary
+    var srcHtml = '<div style="font-weight:600;margin-bottom:4px;">Source (user-defined security)</div>' +
+        '<div><strong>' + wmsEsc(sec.symbol) + '</strong> — ' + wmsEsc(sec.company_name || '') + '</div>' +
+        '<div style="color:#718096;margin-top:2px;">ISIN: ' + wmsEsc(sec.isin || '') + ' · Type: ' + wmsEsc(sec.security_type || '') + ' · Transactions: ' + _mergeSourceTxnCount + '</div>';
+    document.getElementById('mergeSourceSummary').innerHTML = srcHtml;
+
+    // Reset target state
+    document.getElementById('mergeTargetSearch').value = '';
+    document.getElementById('mergeSearchResults').style.display = 'none';
+    document.getElementById('mergeSearchResults').innerHTML = '';
+    document.getElementById('mergeSelectedTarget').style.display = 'none';
+    document.getElementById('mergeConfirmSummary').style.display = 'none';
+    document.getElementById('btnMergeConfirm').style.display = 'none';
+
+    // Close PE modal, open merge modal
+    closePeSecurityModal();
+    document.getElementById('mergeSecurityModal').classList.add('show');
+    document.addEventListener('keydown', _mergeModalEscHandler);
+    document.getElementById('mergeTargetSearch').focus();
+}
+
+function closeMergeSecurityModal() {
+    document.getElementById('mergeSecurityModal').classList.remove('show');
+    document.removeEventListener('keydown', _mergeModalEscHandler);
+    _mergeSourceId = null;
+    _mergeTargetId = null;
+}
+
+function _mergeSearchTarget(query) {
+    var resultsDiv = document.getElementById('mergeSearchResults');
+    if (!query || query.length < 2) {
+        resultsDiv.style.display = 'none';
+        return;
+    }
+    var results = wmsSearchSecurities(query);
+    // Filter out PE- ISINs (user-defined securities) — we only want listed securities as targets
+    results = results.filter(function(s) { return !s.isin || !s.isin.startsWith('PE-'); });
+    // Also filter out NFO securities (from securitiesNfo — they have instrument_name not company_name)
+    results = results.filter(function(s) { return s.company_name; });
+    if (results.length === 0) {
+        resultsDiv.innerHTML = '<div style="padding:8px 12px;color:#a0aec0;font-size:12px;">No listed securities found</div>';
+        resultsDiv.style.display = 'block';
+        return;
+    }
+    var html = '';
+    results.slice(0, 15).forEach(function(s) {
+        var sym = s.nse_symbol || s.bse_symbol || s.symbol;
+        html += '<div style="padding:6px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:12px;" ' +
+            'onmouseover="this.style.background=\'#f7fafc\'" onmouseout="this.style.background=\'white\'" ' +
+            'onclick="_mergeSelectTarget(\'' + s.id + '\')">' +
+            '<strong>' + wmsEsc(sym) + '</strong> — ' + wmsEsc(s.company_name || '') +
+            '<span style="color:#a0aec0;margin-left:8px;">' + wmsEsc(s.isin || '') + '</span>' +
+            '</div>';
+    });
+    resultsDiv.innerHTML = html;
+    resultsDiv.style.display = 'block';
+}
+
+function _mergeSelectTarget(targetId) {
+    var target = wmsRefData.securitiesCmMap[targetId];
+    if (!target) return;
+    _mergeTargetId = targetId;
+
+    // Hide search results, show selected target
+    document.getElementById('mergeSearchResults').style.display = 'none';
+    var sym = target.nse_symbol || target.bse_symbol || target.symbol;
+    document.getElementById('mergeSelectedTarget').innerHTML =
+        '<div style="font-weight:600;margin-bottom:4px;">Target (listed security)</div>' +
+        '<div><strong>' + wmsEsc(sym) + '</strong> — ' + wmsEsc(target.company_name || '') + '</div>' +
+        '<div style="color:#065f46;margin-top:2px;">ISIN: ' + wmsEsc(target.isin || '') + ' · Type: ' + wmsEsc(target.security_type || '') + '</div>';
+    document.getElementById('mergeSelectedTarget').style.display = 'block';
+
+    // Show confirm summary
+    var source = wmsRefData.securitiesCmMap[_mergeSourceId];
+    document.getElementById('mergeConfirmSummary').innerHTML =
+        '⚠️ <strong>This will transfer ' + _mergeSourceTxnCount + ' transaction(s)</strong> from ' +
+        wmsEsc(source ? source.symbol : '') + ' to ' + wmsEsc(sym) + '. ' +
+        'Transactions will be tagged with <code>merged:' + wmsEsc(source ? source.isin : '') + '</code> for traceability. ' +
+        'This action cannot be undone.';
+    document.getElementById('mergeConfirmSummary').style.display = 'block';
+    document.getElementById('btnMergeConfirm').style.display = 'inline-block';
+}
+
+async function executeMergeSecurity() {
+    if (!_mergeSourceId || !_mergeTargetId) return;
+    var source = wmsRefData.securitiesCmMap[_mergeSourceId];
+    var target = wmsRefData.securitiesCmMap[_mergeTargetId];
+    if (!source || !target) { alert('Source or target security not found.'); return; }
+
+    var btn = document.getElementById('btnMergeConfirm');
+    btn.textContent = 'Merging...';
+    btn.disabled = true;
+
+    try {
+        var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' };
+        var headersRead = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+
+        // 1. Fetch all transactions for source security
+        var txnResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?security_id=eq.' + _mergeSourceId + '&select=id,tags', { headers: headersRead });
+        if (!txnResp.ok) throw new Error('Failed to fetch transactions: ' + await txnResp.text());
+        var txns = await txnResp.json();
+
+        // 2. Resolve target display fields
+        var targetSymbol = target.nse_symbol || target.bse_symbol || target.symbol;
+        var targetShortSymbol = target.nse_symbol || target.bse_symbol || target.symbol;
+        var targetCompanyName = target.company_name;
+        var targetExchange = target.nse_symbol ? 'NSE' : (target.bse_symbol ? 'BSE' : 'NSE');
+        var targetSecurityType = target.security_type || 'EQUITY';
+        var mergeTag = 'merged:' + (source.isin || 'PE-' + source.symbol);
+
+        // 3. Update each transaction
+        var successCount = 0;
+        for (var i = 0; i < txns.length; i++) {
+            var txn = txns[i];
+            // Build updated tags array — append merge tag (deduplicated)
+            var existingTags = Array.isArray(txn.tags) ? txn.tags.slice() : ['blank'];
+            if (existingTags.indexOf(mergeTag) < 0) existingTags.push(mergeTag);
+
+            var patchData = {
+                security_id: _mergeTargetId,
+                symbol: targetSymbol,
+                short_symbol: targetShortSymbol,
+                company_name: targetCompanyName,
+                exchange: targetExchange,
+                security_type: targetSecurityType,
+                tags: existingTags
+            };
+
+            var patchResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txn.id, {
+                method: 'PATCH',
+                headers: headers,
+                body: JSON.stringify(patchData)
+            });
+            if (!patchResp.ok) {
+                var errText = await patchResp.text();
+                throw new Error('Failed to update transaction ' + txn.id + ': ' + errText);
+            }
+            successCount++;
+        }
+
+        // 4. Mark source PE security as merged
+        var mergeResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + _mergeSourceId, {
+            method: 'PATCH',
+            headers: headers,
+            body: JSON.stringify({
+                merged_into_id: _mergeTargetId,
+                merged_at: new Date().toISOString(),
+                is_active: false
+            })
+        });
+        if (!mergeResp.ok) throw new Error('Failed to mark source as merged: ' + await mergeResp.text());
+
+        // 5. Refresh caches
+        await wmsLoadSecuritiesCm();
+        await loadSecuritiesStats();
+        await loadSecuritiesTable(true);
+        // Refresh trading data if trading module is loaded
+        if (typeof trLoadData === 'function') {
+            try { await trLoadData(); } catch (e) { /* ignore */ }
+        }
+
+        closeMergeSecurityModal();
+        alert('Merge complete! ' + successCount + ' transaction(s) transferred from ' + source.symbol + ' to ' + targetSymbol + '.');
+    } catch (e) {
+        console.error('Merge error:', e);
+        alert('Merge failed: ' + e.message + '\n\nPartially updated transactions may exist. You can retry the merge.');
+        btn.textContent = 'Confirm Merge';
+        btn.disabled = false;
+    }
 }
 
 // ============================================================================
