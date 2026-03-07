@@ -3239,6 +3239,39 @@ function _peModalEscHandler(e) {
 
 // --- Dynamic dropdowns for PE modal ---
 
+function _populatePeTypeDropdown(selectedValue) {
+    var sel = document.getElementById('peType');
+    var newInput = document.getElementById('peTypeNew');
+    newInput.style.display = 'none';
+    newInput.value = '';
+    var vals = {};
+    (wmsRefData.securitiesCm || []).forEach(function(s) {
+        if (s.security_type) vals[s.security_type] = true;
+    });
+    // Ensure PRIVATE_EQUITY is always an option
+    vals['PRIVATE_EQUITY'] = true;
+    var sorted = Object.keys(vals).sort();
+    var html = '';
+    var defaultVal = selectedValue || 'PRIVATE_EQUITY';
+    sorted.forEach(function(v) {
+        html += '<option value="' + wmsEsc(v) + '"' + (v === defaultVal ? ' selected' : '') + '>' + wmsEsc(v) + '</option>';
+    });
+    if (defaultVal && !vals[defaultVal]) {
+        html = '<option value="' + wmsEsc(defaultVal) + '" selected>' + wmsEsc(defaultVal) + '</option>' + html;
+    }
+    html += '<option value="__new__">+ Add new...</option>';
+    sel.innerHTML = html;
+    sel.onchange = function() {
+        if (sel.value === '__new__') {
+            newInput.style.display = '';
+            newInput.focus();
+        } else {
+            newInput.style.display = 'none';
+            newInput.value = '';
+        }
+    };
+}
+
 function _populatePeAssetClassDropdown(selectedValue) {
     var sel = document.getElementById('peAssetClass');
     var newInput = document.getElementById('peAssetClassNew');
@@ -3313,6 +3346,7 @@ function openAddPeSecurityModal() {
     document.getElementById('peStatus').value = 'true';
     document.getElementById('peIsin').value = '';
     document.getElementById('btnPeDelete').style.display = 'none';
+    _populatePeTypeDropdown('PRIVATE_EQUITY');
     _populatePeAssetClassDropdown('');
     _populatePeSectorDropdown('');
     document.getElementById('peSecurityModal').classList.add('show');
@@ -3335,6 +3369,7 @@ function openEditPeSecurityModal(secId) {
     document.getElementById('peSecurityId').value = sec.id;
     document.getElementById('peSymbol').value = sec.symbol || '';
     document.getElementById('peCompanyName').value = sec.company_name || '';
+    _populatePeTypeDropdown(sec.security_type || 'PRIVATE_EQUITY');
     _populatePeAssetClassDropdown(sec.asset_class || '');
     _populatePeSectorDropdown(sec.sector || '');
     document.getElementById('peLotSize').value = sec.lot_size || 1;
@@ -3359,6 +3394,11 @@ async function savePeSecurity() {
     if (!companyName) { alert('Please enter a company name'); return; }
 
     var isin = 'PE-' + symbol;
+    // Resolve type — if "Add new" was selected, use the text input
+    var typeSel = document.getElementById('peType').value;
+    var securityType = typeSel === '__new__'
+        ? (document.getElementById('peTypeNew').value.trim().toUpperCase() || 'PRIVATE_EQUITY')
+        : typeSel || 'PRIVATE_EQUITY';
     // Resolve asset class — if "Add new" was selected, use the text input
     var acSel = document.getElementById('peAssetClass').value;
     var assetClass = acSel === '__new__'
@@ -3373,7 +3413,7 @@ async function savePeSecurity() {
         symbol: symbol,
         company_name: companyName,
         isin: isin,
-        security_type: 'PRIVATE_EQUITY',
+        security_type: securityType,
         asset_class: assetClass,
         sector: sector,
         lot_size: parseInt(document.getElementById('peLotSize').value) || 1,
