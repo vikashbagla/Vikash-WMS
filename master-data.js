@@ -1751,6 +1751,9 @@ async function loadSecuritiesTable(forceRefresh) {
             await wmsLoadSecuritiesCm();
         }
         populateTypePills();
+        populateAssetClassPills();
+        populateExchangePills();
+        populateSizePills();
         populateSectorPills();
         renderSecurities();
     } catch(e) {
@@ -1785,6 +1788,80 @@ function populateTypePills() {
     container.innerHTML = sorted.map(function(t) {
         var isOn = selected.has(t) ? ' on' : '';
         return '<span class="ms-pill' + isOn + '" data-ms="msType" data-val="' + t + '" onclick="togglePill(this)">' + t + '</span>';
+    }).join('');
+}
+
+// Populate asset class filter pills dynamically from loaded data
+function populateAssetClassPills() {
+    var container = document.getElementById('msClassPills');
+    if (!container) return;
+    var classes = new Set();
+    var cmData = wmsRefData.securitiesCm || [];
+    for (var i = 0; i < cmData.length; i++) {
+        var c = cmData[i].asset_class;
+        if (c) classes.add(c);
+    }
+    // NFO: derive asset class from exchange
+    var nfoData = wmsRefData.securitiesNfo || [];
+    for (var j = 0; j < nfoData.length; j++) {
+        var exch = nfoData[j].exchange;
+        if (exch === 'MCX') classes.add('Commodity');
+        else classes.add('Indian Equity');
+    }
+    var selected = getMsValues('msClass');
+    var sorted = Array.from(classes).sort();
+    container.innerHTML = sorted.map(function(c) {
+        var isOn = selected.has(c) ? ' on' : '';
+        return '<span class="ms-pill' + isOn + '" data-ms="msClass" data-val="' + c + '" onclick="togglePill(this)">' + c + '</span>';
+    }).join('');
+}
+
+// Populate exchange filter pills dynamically from loaded data
+function populateExchangePills() {
+    var container = document.getElementById('msExchPills');
+    if (!container) return;
+    var exchanges = new Set();
+    var cmData = wmsRefData.securitiesCm || [];
+    for (var i = 0; i < cmData.length; i++) {
+        if (cmData[i].nse_symbol) exchanges.add('NSE');
+        if (cmData[i].bse_symbol) exchanges.add('BSE');
+    }
+    var nfoData = wmsRefData.securitiesNfo || [];
+    for (var j = 0; j < nfoData.length; j++) {
+        var exch = nfoData[j].exchange;
+        if (exch) exchanges.add(exch);
+    }
+    var selected = getMsValues('msExch');
+    var sorted = Array.from(exchanges).sort();
+    container.innerHTML = sorted.map(function(e) {
+        var isOn = selected.has(e) ? ' on' : '';
+        return '<span class="ms-pill' + isOn + '" data-ms="msExch" data-val="' + e + '" onclick="togglePill(this)">' + e + '</span>';
+    }).join('');
+}
+
+// Populate size filter pills dynamically from loaded data
+function populateSizePills() {
+    var container = document.getElementById('msSizePills');
+    if (!container) return;
+    var sizes = new Set();
+    var cmData = wmsRefData.securitiesCm || [];
+    for (var i = 0; i < cmData.length; i++) {
+        var s = cmData[i].size;
+        if (s) sizes.add(s);
+    }
+    var selected = getMsValues('msSize');
+    // Custom sort order for market cap sizes
+    var order = ['Large Cap', 'Mid Cap', 'Small Cap', 'Micro Cap'];
+    var sorted = Array.from(sizes).sort(function(a, b) {
+        var ai = order.indexOf(a);
+        var bi = order.indexOf(b);
+        if (ai === -1) ai = 999;
+        if (bi === -1) bi = 999;
+        return ai - bi;
+    });
+    container.innerHTML = sorted.map(function(s) {
+        var isOn = selected.has(s) ? ' on' : '';
+        return '<span class="ms-pill' + isOn + '" data-ms="msSize" data-val="' + s + '" onclick="togglePill(this)">' + s + '</span>';
     }).join('');
 }
 

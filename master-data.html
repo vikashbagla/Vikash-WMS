@@ -338,17 +338,7 @@
                         <span class="ms-arrow">▼</span>
                     </div>
                     <div class="ms-dropdown" id="msClassDropdown">
-                        <div class="ms-pills">
-                            <span class="ms-pill" data-ms="msClass" data-val="Indian Equity"        onclick="togglePill(this)">Indian Equity</span>
-                            <span class="ms-pill" data-ms="msClass" data-val="International Equity" onclick="togglePill(this)">Intl Equity</span>
-                            <span class="ms-pill" data-ms="msClass" data-val="Gold"                 onclick="togglePill(this)">Gold</span>
-                            <span class="ms-pill" data-ms="msClass" data-val="Silver"               onclick="togglePill(this)">Silver</span>
-                            <span class="ms-pill" data-ms="msClass" data-val="Commodity"            onclick="togglePill(this)">Commodity</span>
-                            <span class="ms-pill" data-ms="msClass" data-val="Real Estate"          onclick="togglePill(this)">Real Estate</span>
-                            <span class="ms-pill" data-ms="msClass" data-val="Infrastructure"       onclick="togglePill(this)">Infrastructure</span>
-                            <span class="ms-pill" data-ms="msClass" data-val="Debt"                 onclick="togglePill(this)">Debt</span>
-                            <span class="ms-pill" data-ms="msClass" data-val="Cash Equivalent"      onclick="togglePill(this)">Cash Equiv</span>
-                        </div>
+                        <div class="ms-pills" id="msClassPills"><!-- populated dynamically --></div>
                         <div class="ms-reset" onclick="clearMs('msClass')">Clear</div>
                     </div>
                 </div>
@@ -358,11 +348,7 @@
                         <span class="ms-arrow">▼</span>
                     </div>
                     <div class="ms-dropdown" id="msExchDropdown">
-                        <div class="ms-pills">
-                            <span class="ms-pill" data-ms="msExch" data-val="NSE" onclick="togglePill(this)">NSE</span>
-                            <span class="ms-pill" data-ms="msExch" data-val="BSE" onclick="togglePill(this)">BSE</span>
-                            <span class="ms-pill" data-ms="msExch" data-val="MCX" onclick="togglePill(this)">MCX</span>
-                        </div>
+                        <div class="ms-pills" id="msExchPills"><!-- populated dynamically --></div>
                         <div class="ms-reset" onclick="clearMs('msExch')">Clear</div>
                     </div>
                 </div>
@@ -386,12 +372,7 @@
                         <span class="ms-arrow">▼</span>
                     </div>
                     <div class="ms-dropdown" id="msSizeDropdown">
-                        <div class="ms-pills">
-                            <span class="ms-pill" data-ms="msSize" data-val="Large Cap"  onclick="togglePill(this)">Large Cap</span>
-                            <span class="ms-pill" data-ms="msSize" data-val="Mid Cap"    onclick="togglePill(this)">Mid Cap</span>
-                            <span class="ms-pill" data-ms="msSize" data-val="Small Cap"  onclick="togglePill(this)">Small Cap</span>
-                            <span class="ms-pill" data-ms="msSize" data-val="Micro Cap"  onclick="togglePill(this)">Micro Cap</span>
-                        </div>
+                        <div class="ms-pills" id="msSizePills"><!-- populated dynamically --></div>
                         <div class="ms-reset" onclick="clearMs('msSize')">Clear</div>
                     </div>
                 </div>
