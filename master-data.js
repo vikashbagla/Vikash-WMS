@@ -3349,6 +3349,8 @@ function openAddPeSecurityModal() {
     document.getElementById('btnPeDelete').style.display = 'none';
     var btnMerge = document.getElementById('btnPeMerge');
     if (btnMerge) btnMerge.style.display = 'none';
+    var btnReverseMerge = document.getElementById('btnPeReverseMerge');
+    if (btnReverseMerge) btnReverseMerge.style.display = 'none';
     var mergedBanner = document.getElementById('peMergedBanner');
     if (mergedBanner) mergedBanner.style.display = 'none';
     _populatePeTypeDropdown('PRIVATE_EQUITY');
@@ -3381,9 +3383,11 @@ function openEditPeSecurityModal(secId) {
     document.getElementById('peStatus').value = sec.is_active !== false ? 'true' : 'false';
     document.getElementById('peIsin').value = sec.isin || '';
     document.getElementById('btnPeDelete').style.display = sec.merged_into_id ? 'none' : 'inline-block';
-    // Show merge button only if NOT already merged
+    // Show merge button only if NOT already merged; show reverse merge if merged
     var btnMerge = document.getElementById('btnPeMerge');
     if (btnMerge) btnMerge.style.display = sec.merged_into_id ? 'none' : 'inline-block';
+    var btnReverseMerge = document.getElementById('btnPeReverseMerge');
+    if (btnReverseMerge) btnReverseMerge.style.display = sec.merged_into_id ? 'inline-block' : 'none';
     // Show merged status banner if merged
     var mergedBanner = document.getElementById('peMergedBanner');
     if (mergedBanner) {
@@ -3501,34 +3505,27 @@ async function deletePeSecurity() {
 
     // Block delete if already merged
     if (sec && sec.merged_into_id) {
-        alert('Cannot delete "' + symbol + '" — it has already been merged into another security.');
+        alert('Cannot delete "' + symbol + '" — it has been merged into another security. Use "Reverse Merge" first if you need to remove it.');
         return;
     }
 
     try {
-        // Check transaction count referencing this security
-        var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Prefer': 'count=exact' };
+        // Block delete if any transactions reference this security
+        var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
         var countResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?security_id=eq.' + editingPeSecurityId + '&select=id', { headers: headers });
-        var txnCount = 0;
-        var contentRange = countResp.headers.get('content-range');
-        if (contentRange) {
-            var parts = contentRange.split('/');
-            txnCount = parts[1] && parts[1] !== '*' ? parseInt(parts[1]) : 0;
-        }
-        if (!txnCount) {
-            var txnRows = await countResp.json();
-            txnCount = txnRows.length;
+        var txnRows = await countResp.json();
+        var txnCount = Array.isArray(txnRows) ? txnRows.length : 0;
+
+        if (txnCount > 0) {
+            alert('Cannot delete "' + symbol + '" — ' + txnCount + ' transaction(s) reference this security.\n\nDelete or reassign the transactions first, then try again.');
+            return;
         }
 
-        var msg = 'Delete security "' + symbol + '"?\n\nThis cannot be undone.';
-        if (txnCount > 0) {
-            msg += '\n\n⚠️ WARNING: ' + txnCount + ' transaction(s) reference this security. They will remain but lose their security master data link.';
-        }
-        if (!confirm(msg)) return;
+        if (!confirm('Delete security "' + symbol + '"?\n\nThis cannot be undone.')) return;
 
         var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + editingPeSecurityId, {
             method: 'DELETE',
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            headers: headers
         });
         if (!resp.ok) {
             var errBody = await resp.text();
@@ -3661,8 +3658,8 @@ function _mergeSelectTarget(targetId) {
     document.getElementById('mergeConfirmSummary').innerHTML =
         '⚠️ <strong>This will transfer ' + _mergeSourceTxnCount + ' transaction(s)</strong> from ' +
         wmsEsc(source ? source.symbol : '') + ' to ' + wmsEsc(sym) + '. ' +
-        'Transactions will be tagged with <code>merged:' + wmsEsc(source ? source.isin : '') + '</code> for traceability. ' +
-        'This action cannot be undone.';
+        'A merge note will be appended to each transaction\'s notes field for audit traceability. ' +
+        'You can reverse this merge later if needed.';
     document.getElementById('mergeConfirmSummary').style.display = 'block';
     document.getElementById('btnMergeConfirm').style.display = 'inline-block';
 }
@@ -3682,7 +3679,7 @@ async function executeMergeSecurity() {
         var headersRead = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
 
         // 1. Fetch all transactions for source security
-        var txnResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?security_id=eq.' + _mergeSourceId + '&select=id,tags', { headers: headersRead });
+        var txnResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?security_id=eq.' + _mergeSourceId + '&select=id,notes', { headers: headersRead });
         if (!txnResp.ok) throw new Error('Failed to fetch transactions: ' + await txnResp.text());
         var txns = await txnResp.json();
 
@@ -3692,15 +3689,16 @@ async function executeMergeSecurity() {
         var targetCompanyName = target.company_name;
         var targetExchange = target.nse_symbol ? 'NSE' : (target.bse_symbol ? 'BSE' : 'NSE');
         var targetSecurityType = target.security_type || 'EQUITY';
-        var mergeTag = 'merged:' + (source.isin || 'PE-' + source.symbol);
+        // Merge note for traceability — appended to notes field (tags are never modified programmatically)
+        var mergeNote = '[MERGED from ' + (source.isin || 'PE-' + source.symbol) + ' (' + (source.company_name || source.symbol) + ') on ' + new Date().toLocaleDateString('en-IN') + ']';
 
-        // 3. Update each transaction
+        // 3. Update each transaction — change security fields + append merge note
         var successCount = 0;
         for (var i = 0; i < txns.length; i++) {
             var txn = txns[i];
-            // Build updated tags array — append merge tag (deduplicated)
-            var existingTags = Array.isArray(txn.tags) ? txn.tags.slice() : ['blank'];
-            if (existingTags.indexOf(mergeTag) < 0) existingTags.push(mergeTag);
+            // Append merge note to existing notes
+            var existingNotes = txn.notes || '';
+            var updatedNotes = existingNotes ? existingNotes + ' ' + mergeNote : mergeNote;
 
             var patchData = {
                 security_id: _mergeTargetId,
@@ -3709,7 +3707,7 @@ async function executeMergeSecurity() {
                 company_name: targetCompanyName,
                 exchange: targetExchange,
                 security_type: targetSecurityType,
-                tags: existingTags
+                notes: updatedNotes
             };
 
             var patchResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txn.id, {
@@ -3752,6 +3750,96 @@ async function executeMergeSecurity() {
         alert('Merge failed: ' + e.message + '\n\nPartially updated transactions may exist. You can retry the merge.');
         btn.textContent = 'Confirm Merge';
         btn.disabled = false;
+    }
+}
+
+async function reverseMergeSecurity() {
+    if (!editingPeSecurityId) return;
+    var sec = wmsRefData.securitiesCmMap[editingPeSecurityId];
+    if (!sec || !sec.merged_into_id) {
+        alert('This security has not been merged.');
+        return;
+    }
+
+    var target = wmsRefData.securitiesCmMap[sec.merged_into_id];
+    var targetName = target ? (target.symbol + ' — ' + target.company_name) : sec.merged_into_id;
+
+    if (!confirm('Reverse merge of "' + sec.symbol + '"?\n\nThis will:\n• Move transactions back from ' + targetName + ' to ' + sec.symbol + '\n• Restore this security as active\n• Remove merge notes from transactions\n\nProceed?')) return;
+
+    try {
+        var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' };
+        var headersRead = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+
+        // 1. Find transactions that were merged — search notes containing the merge marker
+        // Use PostgREST `like` for substring match since user may have added their own notes
+        var mergeMarker = '[MERGED from ' + (sec.isin || 'PE-' + sec.symbol);
+        var txnResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?security_id=eq.' + sec.merged_into_id + '&notes=like.*' + encodeURIComponent(mergeMarker) + '*&select=id,notes', { headers: headersRead });
+        if (!txnResp.ok) throw new Error('Failed to find merged transactions: ' + await txnResp.text());
+        var txns = await txnResp.json();
+
+        if (txns.length === 0) {
+            alert('No transactions found with the merge note. The merge may have already been reversed, or the notes were manually cleared.');
+            return;
+        }
+
+        // 2. Build source security display fields for restoring transactions
+        var sourceSymbol = sec.symbol;
+        var sourceShortSymbol = sec.symbol;
+        var sourceCompanyName = sec.company_name;
+        var sourceExchange = sec.nse_symbol ? 'NSE' : (sec.bse_symbol ? 'BSE' : 'NSE');
+        var sourceSecurityType = sec.security_type || 'PRIVATE_EQUITY';
+
+        // 3. Update each transaction back to the source
+        var successCount = 0;
+        for (var i = 0; i < txns.length; i++) {
+            var txn = txns[i];
+            // Remove the merge note from notes — find and strip the [MERGED from ...] block
+            var cleanedNotes = (txn.notes || '').replace(/\s*\[MERGED from PE-[^\]]*\]/g, '').trim() || null;
+
+            var patchData = {
+                security_id: editingPeSecurityId,
+                symbol: sourceSymbol,
+                short_symbol: sourceShortSymbol,
+                company_name: sourceCompanyName,
+                exchange: sourceExchange,
+                security_type: sourceSecurityType,
+                notes: cleanedNotes
+            };
+
+            var patchResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txn.id, {
+                method: 'PATCH',
+                headers: headers,
+                body: JSON.stringify(patchData)
+            });
+            if (!patchResp.ok) throw new Error('Failed to update transaction ' + txn.id + ': ' + await patchResp.text());
+            successCount++;
+        }
+
+        // 4. Clear merge fields on source PE security, restore as active
+        var clearResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + editingPeSecurityId, {
+            method: 'PATCH',
+            headers: headers,
+            body: JSON.stringify({
+                merged_into_id: null,
+                merged_at: null,
+                is_active: true
+            })
+        });
+        if (!clearResp.ok) throw new Error('Failed to clear merge on source security: ' + await clearResp.text());
+
+        // 5. Refresh caches
+        closePeSecurityModal();
+        await wmsLoadSecuritiesCm();
+        await loadSecuritiesStats();
+        await loadSecuritiesTable(true);
+        if (typeof trLoadData === 'function') {
+            try { await trLoadData(); } catch (e) { /* ignore */ }
+        }
+
+        alert('Merge reversed! ' + successCount + ' transaction(s) moved back to ' + sourceSymbol + '.');
+    } catch (e) {
+        console.error('Reverse merge error:', e);
+        alert('Reverse merge failed: ' + e.message);
     }
 }
 
