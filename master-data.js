@@ -3513,36 +3513,69 @@ function _secDetailsEscHandler(e) {
     if (e.key === 'Escape') closeSecDetailsModal();
 }
 
+function _secDetailBlock(title, rows) {
+    var html = '<div style="margin-bottom:12px;">' +
+        '<div style="font-size:11px;font-weight:700;color:#667eea;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;padding:0 2px;">' + wmsEsc(title) + '</div>' +
+        '<div style="background:#f7fafc;border:1px solid #edf2f7;border-radius:6px;overflow:hidden;">';
+    rows.forEach(function(r, i) {
+        var val = r[1] != null && r[1] !== '' ? String(r[1]) : '—';
+        var borderStyle = i < rows.length - 1 ? 'border-bottom:1px solid #edf2f7;' : '';
+        html += '<div style="display:flex;padding:5px 10px;' + borderStyle + 'font-size:11px;">' +
+            '<span style="width:120px;flex-shrink:0;font-weight:600;color:#4a5568;">' + wmsEsc(r[0]) + '</span>' +
+            '<span style="color:#2d3748;word-break:break-all;">' + wmsEsc(val) + '</span></div>';
+    });
+    html += '</div></div>';
+    return html;
+}
+
 function openSecDetailsModal(secId) {
     var sec = wmsRefData.securitiesCmMap[secId];
     if (!sec) return;
 
     document.getElementById('secDetailsTitle').textContent = (sec.symbol || '') + ' — Details';
 
-    var rows = [
+    var html = '';
+
+    // Block 1: Identity
+    html += _secDetailBlock('Identity', [
         ['Symbol', sec.symbol],
         ['Company Name', sec.company_name],
         ['ISIN', sec.isin],
-        ['NSE Symbol', sec.nse_symbol],
-        ['BSE Symbol', sec.bse_symbol],
+        ['ID', sec.id]
+    ]);
+
+    // Block 2: Classification
+    html += _secDetailBlock('Classification', [
         ['Security Type', sec.security_type],
         ['Asset Class', sec.asset_class],
         ['Sector', sec.sector],
-        ['Size', sec.size],
-        ['Lot Size', sec.lot_size],
-        ['Exchange', (sec.nse_symbol ? 'NSE' : '') + (sec.nse_symbol && sec.bse_symbol ? ', ' : '') + (sec.bse_symbol ? 'BSE' : '')],
-        ['Status', sec.is_active !== false ? 'Active' : 'Inactive']
-    ];
+        ['Size', sec.size]
+    ]);
 
-    var html = '<table style="width:100%;border-collapse:collapse;">';
-    rows.forEach(function(r) {
-        var val = r[1] || '—';
-        html += '<tr style="border-bottom:1px solid #edf2f7;">' +
-            '<td style="padding:8px 12px;font-weight:600;color:#4a5568;width:140px;vertical-align:top;">' + wmsEsc(r[0]) + '</td>' +
-            '<td style="padding:8px 12px;color:#2d3748;">' + wmsEsc(String(val)) + '</td>' +
-            '</tr>';
-    });
-    html += '</table>';
+    // Block 3: Exchange
+    html += _secDetailBlock('Exchange', [
+        ['NSE Symbol', sec.nse_symbol],
+        ['BSE Symbol', sec.bse_symbol],
+        ['Lot Size', sec.lot_size],
+        ['Status', sec.is_active !== false ? 'Active' : 'Inactive']
+    ]);
+
+    // Block 4: Broker Tokens (if any)
+    var bt = sec.broker_tokens;
+    if (bt && typeof bt === 'object') {
+        var brokerNames = Object.keys(bt);
+        brokerNames.forEach(function(broker) {
+            var bData = bt[broker];
+            if (!bData || typeof bData !== 'object') return;
+            var bRows = [];
+            Object.keys(bData).sort().forEach(function(key) {
+                bRows.push([key, bData[key]]);
+            });
+            if (bRows.length) {
+                html += _secDetailBlock('Broker: ' + broker.charAt(0).toUpperCase() + broker.slice(1), bRows);
+            }
+        });
+    }
 
     document.getElementById('secDetailsBody').innerHTML = html;
     document.getElementById('secDetailsModal').classList.add('show');
