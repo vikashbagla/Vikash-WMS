@@ -595,7 +595,9 @@ function addAddTxnRow(copyFromId) {
         _stamp_duty: 0,
         _ipft: 0,
         _chargesBasis: {},
+        _grossOverride: false,
         _totalOverride: false,
+        _trdChgOverride: false,
         _netOverride: false
     };
 
@@ -625,14 +627,14 @@ function addAddTxnRow(copyFromId) {
         '<td><input type="number" class="addTxn-qty-input" data-rid="' + rowId + '" step="1" value="' + (row.quantity || '') + '"></td>' +
         // Price
         '<td><input type="number" class="addTxn-price-input" data-rid="' + rowId + '" step="0.01" value="' + (row.price || '') + '"></td>' +
-        // Gross (read-only)
-        '<td class="r addTxn-ro addTxn-gross" data-rid="' + rowId + '">' + atFmtAmt(row.gross_amount) + '</td>' +
-        // Total charges (dblclick)
-        '<td class="r addTxn-ro addTxn-charges-cell addTxn-totchg" data-rid="' + rowId + '" title="Double-click for breakdown">' + atFmtAmt(row.total_charges) + '</td>' +
-        // Trader charges
-        '<td class="r addTxn-ro addTxn-trdchg" data-rid="' + rowId + '">' + atFmtAmt(row.trader_charges) + '</td>' +
-        // Net amount
-        '<td class="r addTxn-ro addTxn-net" data-rid="' + rowId + '">' + atFmtAmt(row.net_amount) + '</td>' +
+        // Gross (editable)
+        '<td><input type="number" class="addTxn-gross-input" data-rid="' + rowId + '" step="0.01" value="' + (row.gross_amount || '') + '"></td>' +
+        // Total charges (editable, dblclick for breakdown)
+        '<td><input type="number" class="addTxn-totchg-input" data-rid="' + rowId + '" step="0.01" value="' + (row.total_charges || '') + '" title="Double-click for breakdown"></td>' +
+        // Trader charges (editable)
+        '<td><input type="number" class="addTxn-trdchg-input" data-rid="' + rowId + '" step="0.01" value="' + (row.trader_charges || '') + '"></td>' +
+        // Net amount (editable)
+        '<td><input type="number" class="addTxn-net-input" data-rid="' + rowId + '" step="0.01" value="' + (row.net_amount || '') + '"></td>' +
         // Tags
         '<td style="position:relative;">' +
             '<input type="text" class="addTxn-tags-input" data-rid="' + rowId + '" placeholder="Tags..." autocomplete="off">' +
@@ -686,8 +688,11 @@ function attachAddTxnRowHandlers(rowId) {
     var qtyInput = document.querySelector('.addTxn-qty-input[data-rid="' + rowId + '"]');
     var priceInput = document.querySelector('.addTxn-price-input[data-rid="' + rowId + '"]');
     var tagsInput = document.querySelector('.addTxn-tags-input[data-rid="' + rowId + '"]');
+    var grossInput = document.querySelector('.addTxn-gross-input[data-rid="' + rowId + '"]');
+    var totchgInput = document.querySelector('.addTxn-totchg-input[data-rid="' + rowId + '"]');
+    var trdchgInput = document.querySelector('.addTxn-trdchg-input[data-rid="' + rowId + '"]');
+    var netInput = document.querySelector('.addTxn-net-input[data-rid="' + rowId + '"]');
     var delBtn = document.querySelector('.addTxn-del-btn[data-rid="' + rowId + '"]');
-    var totchgCell = document.querySelector('.addTxn-totchg[data-rid="' + rowId + '"]');
 
     // --- Trader change ---
     traderSel.addEventListener('change', function() {
@@ -754,18 +759,54 @@ function attachAddTxnRowHandlers(rowId) {
             if (qty < 0) row.lots = -Math.abs(row.lots);
             lotsInput.value = row.lots || '';
         }
+        // Qty change clears gross/net overrides — auto-calc resumes
+        row._grossOverride = false;
+        row._netOverride = false;
         recalcAddTxnRow(rowId);
     });
 
     // --- Price change ---
     priceInput.addEventListener('input', function() {
         row.price = parseFloat(priceInput.value) || 0;
+        // Price change clears gross/net overrides — auto-calc resumes
+        row._grossOverride = false;
+        row._netOverride = false;
+        recalcAddTxnRow(rowId);
+    });
+
+    // --- Gross amount input ---
+    grossInput.addEventListener('input', function() {
+        row.gross_amount = parseFloat(grossInput.value) || 0;
+        row._grossOverride = true;
+        // Recalc charges based on new gross (but don't overwrite gross)
+        recalcAddTxnRow(rowId);
+    });
+
+    // --- Total charges input ---
+    totchgInput.addEventListener('input', function() {
+        row.total_charges = parseFloat(totchgInput.value) || 0;
+        row._totalOverride = true;
         recalcAddTxnRow(rowId);
     });
 
     // --- Total charges dblclick → popover ---
-    totchgCell.addEventListener('dblclick', function() {
+    totchgInput.addEventListener('dblclick', function() {
         openAddTxnCp(rowId);
+    });
+
+    // --- Trader charges input ---
+    trdchgInput.addEventListener('input', function() {
+        row.trader_charges = parseFloat(trdchgInput.value) || 0;
+        row._trdChgOverride = true;
+        recalcAddTxnRow(rowId);
+    });
+
+    // --- Net amount input ---
+    netInput.addEventListener('input', function() {
+        row.net_amount = parseFloat(netInput.value) || 0;
+        row._netOverride = true;
+        // Don't recalc — user set it explicitly
+        updateAddTxnRowDisplay(rowId);
     });
 
     // --- Tags autocomplete ---
@@ -775,7 +816,7 @@ function attachAddTxnRowHandlers(rowId) {
     delBtn.addEventListener('click', function() { removeAddTxnRow(rowId); });
 
     // --- Keyboard: Tab navigation ---
-    var tabbable = [traderSel, symInput, lotsInput, qtyInput, priceInput, tagsInput];
+    var tabbable = [traderSel, symInput, lotsInput, qtyInput, priceInput, grossInput, totchgInput, trdchgInput, netInput, tagsInput];
     tabbable.forEach(function(field, idx) {
         field.addEventListener('keydown', function(e) {
             if (e.key === 'Tab' && !e.shiftKey) {
@@ -1150,8 +1191,10 @@ function recalcAddTxnRow(rowId) {
     var row = atRows.find(function(r) { return r.rowId === rowId; });
     if (!row) return;
 
-    // Gross = |qty| × price
-    row.gross_amount = atRound(Math.abs(row.quantity) * (row.price || 0));
+    // Gross = |qty| × price (unless user overrode gross)
+    if (!row._grossOverride) {
+        row.gross_amount = atRound(Math.abs(row.quantity) * (row.price || 0));
+    }
 
     // Derive transaction_type from qty sign
     row.transaction_type = row.quantity >= 0 ? 'BUY' : 'SELL';
@@ -1166,7 +1209,7 @@ function recalcAddTxnRow(rowId) {
     row._stamp_duty = 0;
     row._ipft = 0;
     if (!row._totalOverride) row.total_charges = 0;
-    row.trader_charges = 0;
+    if (!row._trdChgOverride) row.trader_charges = 0;
 
     atAutoCalcCharges(row);
 
@@ -1178,16 +1221,17 @@ function updateAddTxnRowDisplay(rowId) {
     var row = atRows.find(function(r) { return r.rowId === rowId; });
     if (!row) return;
 
-    var grossEl = document.querySelector('.addTxn-gross[data-rid="' + rowId + '"]');
-    var totchgEl = document.querySelector('.addTxn-totchg[data-rid="' + rowId + '"]');
-    var trdchgEl = document.querySelector('.addTxn-trdchg[data-rid="' + rowId + '"]');
-    var netEl = document.querySelector('.addTxn-net[data-rid="' + rowId + '"]');
+    var grossEl = document.querySelector('.addTxn-gross-input[data-rid="' + rowId + '"]');
+    var totchgEl = document.querySelector('.addTxn-totchg-input[data-rid="' + rowId + '"]');
+    var trdchgEl = document.querySelector('.addTxn-trdchg-input[data-rid="' + rowId + '"]');
+    var netEl = document.querySelector('.addTxn-net-input[data-rid="' + rowId + '"]');
 
-    if (grossEl) grossEl.textContent = atFmtAmt(row.gross_amount);
-    if (totchgEl) totchgEl.textContent = atFmtAmt(row.total_charges);
-    if (trdchgEl) trdchgEl.textContent = atFmtAmt(row.trader_charges);
-    if (netEl) {
-        netEl.textContent = atFmtAmt(row.net_amount);
+    // Only update value if the field is NOT currently focused (don't overwrite while user types)
+    if (grossEl && document.activeElement !== grossEl) grossEl.value = row.gross_amount || '';
+    if (totchgEl && document.activeElement !== totchgEl) totchgEl.value = row.total_charges || '';
+    if (trdchgEl && document.activeElement !== trdchgEl) trdchgEl.value = row.trader_charges || '';
+    if (netEl && document.activeElement !== netEl) {
+        netEl.value = row.net_amount || '';
         // Color the net amount based on buy/sell
         netEl.style.color = row.quantity < 0 ? '#dc2626' : '';
     }

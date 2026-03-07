@@ -1383,9 +1383,9 @@ function wmsAutoCalcCharges(row, opts) {
     }
 
     // Step 9: Trader charges (Rule G.2.9)
-    var shouldCalcTrader = preserve
+    var shouldCalcTrader = row._trdChgOverride ? false : (preserve
         ? (row.trader_charges === null || row.trader_charges === undefined)
-        : true;
+        : true);
     if (shouldCalcTrader) {
         var traderId = row.trader_id || investorId;
         if (traderId !== investorId) {

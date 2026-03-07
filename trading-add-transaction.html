@@ -273,6 +273,12 @@
 }
 .addTxn-table input[type="number"] {
     text-align: right;
+    -moz-appearance: textfield;
+}
+.addTxn-table input[type="number"]::-webkit-outer-spin-button,
+.addTxn-table input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
 }
 .addTxn-table input.disabled-lots {
     background: #f7fafc;
@@ -283,7 +289,7 @@
     border-color: #dc2626 !important;
 }
 
-/* Read-only cells */
+/* Read-only cells (legacy — kept for compat) */
 .addTxn-ro {
     background: #f7fafc;
     color: #2d3748;
@@ -292,6 +298,31 @@
     padding: 5px 6px !important;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
+}
+/* Editable amount inputs — right-aligned, compact, no spinner */
+.addTxn-gross-input,
+.addTxn-totchg-input,
+.addTxn-trdchg-input,
+.addTxn-net-input {
+    width: 100%;
+    text-align: right;
+    padding: 4px 5px;
+    border: 1px solid #e2e8f0;
+    border-radius: 3px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    color: #2d3748;
+    background: #fff;
+    box-sizing: border-box;
+}
+.addTxn-gross-input:focus,
+.addTxn-totchg-input:focus,
+.addTxn-trdchg-input:focus,
+.addTxn-net-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 1px #667eea33;
 }
 /* Charges cell — dashed border hint for dblclick */
 .addTxn-charges-cell {
@@ -377,7 +408,7 @@
 .addTxn-tag-dd {
     display: none;
     position: absolute;
-    bottom: 100%;
+    top: 100%;
     left: 0;
     right: 0;
     z-index: 200;
@@ -390,6 +421,13 @@
     padding: 4px 6px;
     flex-wrap: wrap;
     gap: 3px;
+}
+/* Ensure last row tag dropdown isn't clipped by table scroll */
+#addTxnTbody tr:last-child {
+    position: relative;
+}
+#addTxnTbody {
+    padding-bottom: 130px;
 }
 .addTxn-tag-dd.show { display: flex; }
 /* wms-dd-item styling in tag dropdown */
