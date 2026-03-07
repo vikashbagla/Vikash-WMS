@@ -687,10 +687,11 @@
     </div>
     
     <!-- PE Security Modal -->
-    <div id="peSecurityModal" class="modal">
+    <div id="peSecurityModal" class="modal" onclick="if(event.target===this)closePeSecurityModal()">
         <div class="modal-content" style="max-width:520px;">
             <div class="modal-header">
                 <h3 id="peSecurityModalTitle">Add PE Security</h3>
+                <button class="btn-close-modal" onclick="closePeSecurityModal()" title="Close">✕</button>
             </div>
             <div class="modal-body">
                 <form id="peSecurityForm" onsubmit="return false;">
@@ -710,16 +711,13 @@
                         <div class="form-row">
                             <div class="form-group">
                                 <label>Asset Class</label>
-                                <select id="peAssetClass">
-                                    <option value="Indian Equity" selected>Indian Equity</option>
-                                    <option value="International Equity">International Equity</option>
-                                    <option value="Real Estate">Real Estate</option>
-                                    <option value="Debt">Debt</option>
-                                </select>
+                                <select id="peAssetClass"><!-- populated dynamically --></select>
+                                <input type="text" id="peAssetClassNew" placeholder="Type new asset class..." style="display:none;margin-top:4px;">
                             </div>
                             <div class="form-group">
                                 <label>Sector</label>
-                                <input type="text" id="peSector" placeholder="e.g., Technology">
+                                <select id="peSector"><!-- populated dynamically --></select>
+                                <input type="text" id="peSectorNew" placeholder="Type new sector..." style="display:none;margin-top:4px;">
                             </div>
                         </div>
                         <div class="form-row">
@@ -748,6 +746,22 @@
                 <button class="btn-secondary" onclick="closePeSecurityModal()">Cancel</button>
                 <button class="btn-primary" id="btnPeDelete" onclick="deletePeSecurity()" style="background:#e53e3e;display:none;">Delete</button>
                 <button class="btn-primary" onclick="savePeSecurity()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Security Details Modal (read-only) -->
+    <div id="secDetailsModal" class="modal" onclick="if(event.target===this)closeSecDetailsModal()">
+        <div class="modal-content" style="max-width:560px;">
+            <div class="modal-header">
+                <h3 id="secDetailsTitle">Security Details</h3>
+                <button class="btn-close-modal" onclick="closeSecDetailsModal()" title="Close">✕</button>
+            </div>
+            <div class="modal-body" id="secDetailsBody" style="font-size:12px;">
+                <!-- populated dynamically -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeSecDetailsModal()">Close</button>
             </div>
         </div>
     </div>

@@ -2088,7 +2088,10 @@ function renderUnified(resetPage) {
         var symCell = r.type === 'PRIVATE_EQUITY'
             ? '<td><strong style="font-size:12px;"><a href="#" onclick="openEditPeSecurityModal(' + r._id + ');return false;" style="color:#9333ea;text-decoration:none;" title="Edit PE security">' + r.symbol + ' ✎</a></strong></td>'
             : '<td><strong style="font-size:12px;">' + r.symbol + '</strong></td>';
-        return '<tr>' +
+        var trAttr = r._src === 'cm' && r._id
+            ? '<tr data-secid="' + r._id + '" style="cursor:pointer;" title="Double-click to view details">'
+            : '<tr>';
+        return trAttr +
             symCell +
             '<td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + r.name + '</td>' +
             '<td>' + _typeBadge(r.type) + '</td>' +
@@ -3228,17 +3231,90 @@ async function seedDefaultCharges() {
 
 var editingPeSecurityId = null;
 
+function _peModalEscHandler(e) {
+    if (e.key === 'Escape') closePeSecurityModal();
+}
+
+// --- Dynamic dropdowns for PE modal ---
+
+function _populatePeAssetClassDropdown(selectedValue) {
+    var sel = document.getElementById('peAssetClass');
+    var newInput = document.getElementById('peAssetClassNew');
+    newInput.style.display = 'none';
+    newInput.value = '';
+    // Gather unique asset_class values from securitiesCm
+    var vals = {};
+    (wmsRefData.securitiesCm || []).forEach(function(s) {
+        if (s.asset_class) vals[s.asset_class] = true;
+    });
+    var sorted = Object.keys(vals).sort();
+    var html = '';
+    sorted.forEach(function(v) {
+        html += '<option value="' + wmsEsc(v) + '"' + (v === selectedValue ? ' selected' : '') + '>' + wmsEsc(v) + '</option>';
+    });
+    // If selectedValue not in list and not empty, add it
+    if (selectedValue && !vals[selectedValue]) {
+        html = '<option value="' + wmsEsc(selectedValue) + '" selected>' + wmsEsc(selectedValue) + '</option>' + html;
+    }
+    html += '<option value="__new__">+ Add new...</option>';
+    sel.innerHTML = html;
+    // Toggle new-input on "Add new" selection
+    sel.onchange = function() {
+        if (sel.value === '__new__') {
+            newInput.style.display = '';
+            newInput.focus();
+        } else {
+            newInput.style.display = 'none';
+            newInput.value = '';
+        }
+    };
+}
+
+function _populatePeSectorDropdown(selectedValue) {
+    var sel = document.getElementById('peSector');
+    var newInput = document.getElementById('peSectorNew');
+    newInput.style.display = 'none';
+    newInput.value = '';
+    // Gather unique sector values from securitiesCm
+    var vals = {};
+    (wmsRefData.securitiesCm || []).forEach(function(s) {
+        if (s.sector) vals[s.sector] = true;
+    });
+    var sorted = Object.keys(vals).sort();
+    var html = '<option value="">(none)</option>';
+    sorted.forEach(function(v) {
+        html += '<option value="' + wmsEsc(v) + '"' + (v === selectedValue ? ' selected' : '') + '>' + wmsEsc(v) + '</option>';
+    });
+    // If selectedValue not in list and not empty, add it
+    if (selectedValue && !vals[selectedValue]) {
+        html += '<option value="' + wmsEsc(selectedValue) + '" selected>' + wmsEsc(selectedValue) + '</option>';
+    }
+    html += '<option value="__new__">+ Add new...</option>';
+    sel.innerHTML = html;
+    sel.onchange = function() {
+        if (sel.value === '__new__') {
+            newInput.style.display = '';
+            newInput.focus();
+        } else {
+            newInput.style.display = 'none';
+            newInput.value = '';
+        }
+    };
+}
+
 function openAddPeSecurityModal() {
     editingPeSecurityId = null;
     document.getElementById('peSecurityModalTitle').textContent = 'Add PE Security';
     document.getElementById('peSecurityForm').reset();
     document.getElementById('peSecurityId').value = '';
-    document.getElementById('peAssetClass').value = 'Indian Equity';
     document.getElementById('peLotSize').value = '1';
     document.getElementById('peStatus').value = 'true';
     document.getElementById('peIsin').value = '';
     document.getElementById('btnPeDelete').style.display = 'none';
+    _populatePeAssetClassDropdown('');
+    _populatePeSectorDropdown('');
     document.getElementById('peSecurityModal').classList.add('show');
+    document.addEventListener('keydown', _peModalEscHandler);
     // Auto-update ISIN preview as user types symbol
     var symInput = document.getElementById('peSymbol');
     symInput.oninput = function() {
@@ -3257,13 +3333,14 @@ function openEditPeSecurityModal(secId) {
     document.getElementById('peSecurityId').value = sec.id;
     document.getElementById('peSymbol').value = sec.symbol || '';
     document.getElementById('peCompanyName').value = sec.company_name || '';
-    document.getElementById('peAssetClass').value = sec.asset_class || 'Indian Equity';
-    document.getElementById('peSector').value = sec.sector || '';
+    _populatePeAssetClassDropdown(sec.asset_class || '');
+    _populatePeSectorDropdown(sec.sector || '');
     document.getElementById('peLotSize').value = sec.lot_size || 1;
     document.getElementById('peStatus').value = sec.is_active !== false ? 'true' : 'false';
     document.getElementById('peIsin').value = sec.isin || '';
     document.getElementById('btnPeDelete').style.display = 'inline-block';
     document.getElementById('peSecurityModal').classList.add('show');
+    document.addEventListener('keydown', _peModalEscHandler);
     // Auto-update ISIN preview
     var symInput = document.getElementById('peSymbol');
     symInput.oninput = function() {
@@ -3280,13 +3357,23 @@ async function savePeSecurity() {
     if (!companyName) { alert('Please enter a company name'); return; }
 
     var isin = 'PE-' + symbol;
+    // Resolve asset class — if "Add new" was selected, use the text input
+    var acSel = document.getElementById('peAssetClass').value;
+    var assetClass = acSel === '__new__'
+        ? document.getElementById('peAssetClassNew').value.trim() || null
+        : acSel || null;
+    // Resolve sector — same logic
+    var secSel = document.getElementById('peSector').value;
+    var sector = secSel === '__new__'
+        ? document.getElementById('peSectorNew').value.trim() || null
+        : secSel || null;
     var data = {
         symbol: symbol,
         company_name: companyName,
         isin: isin,
         security_type: 'PRIVATE_EQUITY',
-        asset_class: document.getElementById('peAssetClass').value || null,
-        sector: document.getElementById('peSector').value.trim() || null,
+        asset_class: assetClass,
+        sector: sector,
         lot_size: parseInt(document.getElementById('peLotSize').value) || 1,
         is_active: document.getElementById('peStatus').value === 'true'
     };
@@ -3372,7 +3459,57 @@ async function deletePeSecurity() {
 
 function closePeSecurityModal() {
     document.getElementById('peSecurityModal').classList.remove('show');
+    document.removeEventListener('keydown', _peModalEscHandler);
     editingPeSecurityId = null;
+}
+
+// ============================================================================
+// SECURITY DETAILS MODAL — Read-only view on double-click
+// ============================================================================
+
+function _secDetailsEscHandler(e) {
+    if (e.key === 'Escape') closeSecDetailsModal();
+}
+
+function openSecDetailsModal(secId) {
+    var sec = wmsRefData.securitiesCmMap[secId];
+    if (!sec) return;
+
+    document.getElementById('secDetailsTitle').textContent = (sec.symbol || '') + ' — Details';
+
+    var rows = [
+        ['Symbol', sec.symbol],
+        ['Company Name', sec.company_name],
+        ['ISIN', sec.isin],
+        ['NSE Symbol', sec.nse_symbol],
+        ['BSE Symbol', sec.bse_symbol],
+        ['Security Type', sec.security_type],
+        ['Asset Class', sec.asset_class],
+        ['Sector', sec.sector],
+        ['Size', sec.size],
+        ['Lot Size', sec.lot_size],
+        ['Exchange', (sec.nse_symbol ? 'NSE' : '') + (sec.nse_symbol && sec.bse_symbol ? ', ' : '') + (sec.bse_symbol ? 'BSE' : '')],
+        ['Status', sec.is_active !== false ? 'Active' : 'Inactive']
+    ];
+
+    var html = '<table style="width:100%;border-collapse:collapse;">';
+    rows.forEach(function(r) {
+        var val = r[1] || '—';
+        html += '<tr style="border-bottom:1px solid #edf2f7;">' +
+            '<td style="padding:8px 12px;font-weight:600;color:#4a5568;width:140px;vertical-align:top;">' + wmsEsc(r[0]) + '</td>' +
+            '<td style="padding:8px 12px;color:#2d3748;">' + wmsEsc(String(val)) + '</td>' +
+            '</tr>';
+    });
+    html += '</table>';
+
+    document.getElementById('secDetailsBody').innerHTML = html;
+    document.getElementById('secDetailsModal').classList.add('show');
+    document.addEventListener('keydown', _secDetailsEscHandler);
+}
+
+function closeSecDetailsModal() {
+    document.getElementById('secDetailsModal').classList.remove('show');
+    document.removeEventListener('keydown', _secDetailsEscHandler);
 }
 
 // ============================================================================
@@ -3542,10 +3679,20 @@ async function _secSaveInlineEdit(secId, field, value, cell) {
         var tbody = document.getElementById('secTbody');
         if (!tbody || tbody._secInlineEditAttached) return;
         tbody.addEventListener('dblclick', function(e) {
+            // 1) Inline edit on Asset Class / Sector cells
             var cell = e.target.closest('.sec-inline-edit');
-            if (!cell) return;
-            e.preventDefault();
-            _secOpenInlineDropdown(cell);
+            if (cell) {
+                e.preventDefault();
+                _secOpenInlineDropdown(cell);
+                return;
+            }
+            // 2) Details modal on any other part of a CM row
+            var row = e.target.closest('tr[data-secid]');
+            if (row) {
+                e.preventDefault();
+                var secId = parseInt(row.dataset.secid);
+                if (secId) openSecDetailsModal(secId);
+            }
         });
         tbody._secInlineEditAttached = true;
     }
