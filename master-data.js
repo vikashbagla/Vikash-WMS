@@ -2094,7 +2094,9 @@ function renderUnified(resetPage) {
         return trAttr +
             symCell +
             '<td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + r.name + '</td>' +
-            '<td>' + _typeBadge(r.type) + '</td>' +
+            (r._src === 'cm'
+                ? '<td class="sec-inline-edit" data-field="security_type" data-secid="' + r._id + '" style="cursor:pointer;" title="Double-click to edit">' + _typeBadge(r.type) + '</td>'
+                : '<td>' + _typeBadge(r.type) + '</td>') +
             (r._src === 'cm'
                 ? '<td class="sec-inline-edit" data-field="asset_class" data-secid="' + r._id + '" style="font-size:11px;color:#4a5568;cursor:pointer;" title="Double-click to edit">' + (r.asset_class || '<span style="color:#cbd5e0;">—</span>') + '</td>'
                 : '<td style="font-size:11px;color:#4a5568;">' + (r.asset_class || '<span style="color:#cbd5e0;">—</span>') + '</td>') +
@@ -3550,7 +3552,7 @@ function _secOpenInlineDropdown(cell) {
     if (currentVal === '—') currentVal = '';
 
     var allValues = _secGetUniqueValues(field);
-    var fieldLabel = field === 'asset_class' ? 'Asset Class' : field === 'sector' ? 'Sector' : 'Size';
+    var fieldLabel = field === 'asset_class' ? 'Asset Class' : field === 'sector' ? 'Sector' : field === 'security_type' ? 'Type' : 'Size';
 
     // Create dropdown
     var dd = document.createElement('div');
@@ -3661,12 +3663,17 @@ async function _secSaveInlineEdit(secId, field, value, cell) {
         if (sec) sec[field] = value;
 
         // Update cell display
-        cell.innerHTML = value ? value : '<span style="color:#cbd5e0;">—</span>';
+        if (field === 'security_type') {
+            cell.innerHTML = value ? _typeBadge(value) : '<span style="color:#cbd5e0;">—</span>';
+        } else {
+            cell.innerHTML = value ? value : '<span style="color:#cbd5e0;">—</span>';
+        }
 
         // Refresh filter pills if the value is new
         if (field === 'asset_class') populateAssetClassPills();
         else if (field === 'sector') populateSectorPills();
         else if (field === 'size') populateSizePills();
+        else if (field === 'security_type') populateTypePills();
     } catch (e) {
         console.error('Inline edit save error:', e);
         alert('Error saving: ' + e.message);
