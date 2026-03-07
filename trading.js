@@ -555,15 +555,14 @@ function trUpdatePriceStatus(status) {
     var el = document.getElementById('fyers-refresh-time');
     if (!el) return;
     var now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    if (status === 'live') {
-        el.textContent = now;
-        el.style.color = '#059669';
-    } else if (status === 'loading') {
+    if (status === 'loading') {
         el.textContent = 'Refreshing...';
         el.style.color = '#667eea';
     } else {
-        el.textContent = 'Last txn prices';
-        el.style.color = '#d97706';
+        // Always show last updated time; green if market open, red if closed
+        el.textContent = now;
+        var marketOpen = typeof wmsIsMarketHours === 'function' && wmsIsMarketHours();
+        el.style.color = marketOpen ? '#059669' : '#dc2626';
     }
 }
 
