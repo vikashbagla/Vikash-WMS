@@ -749,16 +749,26 @@
     <!-- Sticky Header -->
     <div class="trading-header-bar">
         <div>
-            <h2 style="margin: 0; font-size: 15px; color: #2d3748; display: inline;">Trading</h2>
-            <span id="tr-unit-desc" style="font-size: 11px; color: #718096; margin-left: 8px;"></span>
+            <h2 style="margin: 0; font-size: 15px; color: #2d3748;">Trading</h2>
+            <span id="tr-unit-desc" style="font-size: 10px; color: #a0aec0; display: block;"></span>
         </div>
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <span id="tr-price-status" style="font-size: 12px; color: #718096;">⏳ Loading prices...</span>
-            <button class="btn-toggle-zero" id="trToggleZeroBtn" title="Show/hide zero quantity holdings">
-                👁 Show Zero Holdings
-            </button>
-            <button class="btn-refresh" id="trRefreshBtn" title="Refresh data">🔄 Refresh</button>
-            <button class="btn-add-txn" id="trAddTxnBtn">➕ Add Transaction</button>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <button class="btn-toggle-zero" id="trToggleZeroBtn" title="Show/hide zero holdings" style="padding: 4px 8px; font-size: 11px;">👁 Zero</button>
+            <div style="position: relative; display: inline-block;">
+                <button class="btn-others" id="trOthersBtn" title="Income &amp; Corporate Actions">+ Others ▾</button>
+                <div class="tr-others-dropdown" id="trOthersDropdown" style="display:none;">
+                    <div class="tr-others-group-label">Income</div>
+                    <button class="tr-others-item" data-type="DIVIDEND">Dividend</button>
+                    <button class="tr-others-item" data-type="INTEREST">Interest</button>
+                    <button class="tr-others-item" data-type="OTHER_INCOME">Other Income</button>
+                    <button class="tr-others-item" data-type="CAPITAL_REDUCTION">Capital Reduction</button>
+                    <div class="tr-others-group-label">Corporate Actions</div>
+                    <button class="tr-others-item" data-type="RIGHTS_PAYMENT">Rights Payment</button>
+                    <button class="tr-others-item" data-type="BONUS" disabled>Bonus (coming soon)</button>
+                    <button class="tr-others-item" data-type="SPLIT" disabled>Split (coming soon)</button>
+                </div>
+            </div>
+            <button class="btn-add-txn" id="trAddTxnBtn">+/- Trade</button>
         </div>
     </div>
 
@@ -785,6 +795,7 @@
                 </div>
                 <button class="tr-vta-btn" id="tr-update-view-btn" title="Update current view with active filters" disabled>↻ Update</button>
                 <button class="tr-vta-btn" id="tr-save-new-btn" title="Save as new view">+ Save New</button>
+                <button class="tr-vta-btn" id="tr-filters-toggle" title="Toggle filters" style="font-size:10px;">▼</button>
                 <div class="tr-save-prompt" id="tr-save-prompt">
                     <input type="text" id="tr-save-prompt-name" placeholder="View name...">
                     <button class="tr-vta-btn" id="tr-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">✓</button>
@@ -794,7 +805,7 @@
         </div>
 
         <!-- Filters — View Mode + 4 filter columns -->
-        <div style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
+        <div id="trPortfolioFilters" style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
             <!-- View Mode Toggle (stacked 2-row layout) -->
             <div class="tr-view-mode-group" style="margin-top:12px; flex-direction:column; border:none; border-radius:0; overflow:visible; gap:3px;">
                 <button class="tr-view-mode-btn" data-mode="holdings" style="border:1px solid #e2e8f0; border-radius:4px; width:100%;">Holdings</button>
@@ -878,6 +889,7 @@
                 </div>
                 <button class="tr-vta-btn" id="tr-fno-update-view-btn" title="Update current view with active filters" disabled>&#8635; Update</button>
                 <button class="tr-vta-btn" id="tr-fno-save-new-btn" title="Save as new view">+ Save New</button>
+                <button class="tr-vta-btn" id="tr-fno-filters-toggle" title="Toggle filters" style="font-size:10px;">▼</button>
                 <div class="tr-save-prompt" id="tr-fno-save-prompt">
                     <input type="text" id="tr-fno-save-prompt-name" placeholder="View name...">
                     <button class="tr-vta-btn" id="tr-fno-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">&#10003;</button>

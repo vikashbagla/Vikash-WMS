@@ -157,6 +157,40 @@ body {
 .btn-toggle-zero:hover  { background:#eef2ff; }
 .btn-toggle-zero.active:hover { background:#5568d3; }
 
+/* App Banner — Refresh button + Fyers indicator */
+.btn-refresh-app {
+    background: none; border: 1px solid #e2e8f0; border-radius: 5px;
+    padding: 3px 8px; font-size: 13px; cursor: pointer; line-height: 1;
+    transition: all 0.2s;
+}
+.btn-refresh-app:hover { background: #eef2ff; border-color: #667eea; }
+.fyers-indicator { text-align: center; min-width: 60px; margin-right: 8px; }
+
+/* + Others dropdown */
+.btn-others {
+    background: white; color: #4a5568; border: 1px solid #e2e8f0;
+    padding: 4px 10px; border-radius: 5px; font-size: 12px; cursor: pointer;
+    font-weight: 500; transition: all 0.2s;
+}
+.btn-others:hover { background: #f7fafc; border-color: #cbd5e0; }
+.tr-others-dropdown {
+    position: absolute; top: 100%; right: 0; z-index: 100;
+    background: white; border: 1px solid #e2e8f0; border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); min-width: 180px;
+    padding: 4px 0; margin-top: 2px;
+}
+.tr-others-group-label {
+    font-size: 10px; font-weight: 600; color: #a0aec0; text-transform: uppercase;
+    padding: 6px 12px 2px; letter-spacing: 0.5px;
+}
+.tr-others-item {
+    display: block; width: 100%; text-align: left; background: none; border: none;
+    padding: 6px 12px; font-size: 12px; color: #2d3748; cursor: pointer;
+    transition: background 0.15s;
+}
+.tr-others-item:hover:not(:disabled) { background: #eef2ff; }
+.tr-others-item:disabled { color: #cbd5e0; cursor: default; }
+
 /* FILTERS */
 .filters-grid { flex-shrink:0; display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding-bottom:6px; }
 .filter-group { display:flex; flex-direction:column; gap:3px; }

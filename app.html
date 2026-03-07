@@ -52,7 +52,11 @@
                 </div>
             </div>
             <div class="user-section">
-                <span id="fyers-status" style="font-size:12px; margin-right:16px;">⏳ Fyers...</span>
+                <button class="btn-refresh-app" id="appRefreshBtn" title="Refresh prices">🔄</button>
+                <div class="fyers-indicator" id="fyers-indicator">
+                    <span id="fyers-status" style="font-size:12px;">⏳ Fyers...</span>
+                    <span id="fyers-refresh-time" style="font-size:10px; color:#a0aec0; display:block;"></span>
+                </div>
                 <span class="user-email" id="user-email">Loading...</span>
                 <button class="btn-logout" id="logoutBtn" title="Logout">⏻</button>
             </div>
@@ -135,12 +139,12 @@
         if (token) {
             window.fyersToken = token;
             console.log('✅ Fyers token valid for today');
-            document.getElementById('fyers-status').innerHTML = '🟢 Fyers Connected';
+            document.getElementById('fyers-status').innerHTML = '🟢 Fyers';
             document.getElementById('fyers-status').style.color = '#059669';
         } else {
             window.fyersToken = null;
-            document.getElementById('fyers-status').innerHTML = 
-                '🔴 <a href="fyers-oauth.html" style="color:#dc2626;font-weight:600;">Connect Fyers</a>';
+            document.getElementById('fyers-status').innerHTML =
+                '🔴 <a href="fyers-oauth.html" style="color:#dc2626;font-weight:600;">Fyers</a>';
             console.log('⚠️ Fyers token missing or expired');
         }
     }
@@ -380,6 +384,9 @@
 
         startIndexRefresh(); // Start index ticker
         document.getElementById('logoutBtn').addEventListener('click', logout);
+        document.getElementById('appRefreshBtn').addEventListener('click', function() {
+            if (typeof trRefresh === 'function') trRefresh();
+        });
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
             btn.addEventListener('click', () => loadModule(btn.dataset.module));
         });

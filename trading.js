@@ -98,8 +98,48 @@ function trSetupEventHandlers() {
     document.getElementById('trAddTxnBtn').addEventListener('click', function() {
         trOpenAddTransaction();
     });
-    document.getElementById('trRefreshBtn').addEventListener('click', trRefresh);
     document.getElementById('trToggleZeroBtn').addEventListener('click', trToggleZeroHoldings);
+
+    // Filter toggle — Portfolio
+    document.getElementById('tr-filters-toggle').addEventListener('click', function() {
+        var filtersDiv = document.getElementById('trPortfolioFilters');
+        var isHidden = filtersDiv.style.display === 'none';
+        filtersDiv.style.display = isHidden ? '' : 'none';
+        this.textContent = isHidden ? '▼' : '▲';
+    });
+
+    // Filter toggle — F&O
+    document.getElementById('tr-fno-filters-toggle').addEventListener('click', function() {
+        var shared = document.getElementById('trFnoSharedFilters');
+        var fnoBar = document.querySelector('.trFno-filters-bar');
+        var isHidden = shared.style.display === 'none';
+        shared.style.display = isHidden ? '' : 'none';
+        if (fnoBar) fnoBar.style.display = isHidden ? '' : 'none';
+        this.textContent = isHidden ? '▼' : '▲';
+    });
+
+    // + Others dropdown
+    var othersBtn = document.getElementById('trOthersBtn');
+    var othersDropdown = document.getElementById('trOthersDropdown');
+    if (othersBtn && othersDropdown) {
+        othersBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var isOpen = othersDropdown.style.display !== 'none';
+            othersDropdown.style.display = isOpen ? 'none' : 'block';
+        });
+        document.addEventListener('click', function() {
+            othersDropdown.style.display = 'none';
+        });
+        othersDropdown.addEventListener('click', function(e) {
+            var item = e.target.closest('.tr-others-item');
+            if (!item) return;
+            e.stopPropagation();
+            othersDropdown.style.display = 'none';
+            if (item.disabled) return;
+            var txnType = item.dataset.type;
+            alert('Transaction type "' + txnType + '" — form coming soon.');
+        });
+    }
 
     // Sort headers
     document.getElementById('tr-th-company').addEventListener('click', function() { trSort('company'); });
@@ -512,17 +552,17 @@ async function trFetchLivePrices(forceRefresh) {
 }
 
 function trUpdatePriceStatus(status) {
-    var el = document.getElementById('tr-price-status');
+    var el = document.getElementById('fyers-refresh-time');
     if (!el) return;
-    var now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    var now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     if (status === 'live') {
-        el.innerHTML = '🟢 Live prices as of ' + now;
+        el.textContent = now;
         el.style.color = '#059669';
     } else if (status === 'loading') {
-        el.innerHTML = '⏳ Fetching live prices...';
+        el.textContent = 'Refreshing...';
         el.style.color = '#667eea';
     } else {
-        el.innerHTML = '🟡 Last transaction prices';
+        el.textContent = 'Last txn prices';
         el.style.color = '#d97706';
     }
 }
