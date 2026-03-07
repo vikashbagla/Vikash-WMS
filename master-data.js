@@ -2086,7 +2086,7 @@ function renderUnified(resetPage) {
             : '<span style="color:#cbd5e0;">—</span>';
         const expiryCol  = r.expiry_dt ? (expired ? 'color:#dc2626;' : 'color:#059669;') : '';
         var symCell = r.type === 'PRIVATE_EQUITY'
-            ? '<td><strong style="font-size:12px;"><a href="#" onclick="openEditPeSecurityModal(' + r._id + ');return false;" style="color:#9333ea;text-decoration:none;" title="Edit PE security">' + r.symbol + ' ✎</a></strong></td>'
+            ? '<td><strong style="font-size:12px;"><a href="#" onclick="openEditPeSecurityModal(\'' + r._id + '\');return false;" style="color:#9333ea;text-decoration:none;" title="Edit PE security">' + r.symbol + ' ✎</a></strong></td>'
             : '<td><strong style="font-size:12px;">' + r.symbol + '</strong></td>';
         var trAttr = r._src === 'cm' && r._id
             ? '<tr data-secid="' + r._id + '" style="cursor:pointer;" title="Double-click to view details">'
@@ -3737,7 +3737,7 @@ async function _secSaveInlineEdit(secId, field, value, cell) {
             var row = e.target.closest('tr[data-secid]');
             if (row) {
                 e.preventDefault();
-                var secId = parseInt(row.dataset.secid);
+                var secId = row.dataset.secid;
                 if (secId) openSecDetailsModal(secId);
             }
         });
