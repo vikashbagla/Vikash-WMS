@@ -2098,9 +2098,7 @@ function renderUnified(resetPage) {
             (r._src === 'cm'
                 ? '<td class="sec-inline-edit" data-field="sector" data-secid="' + r._id + '" style="font-size:11px;color:#4a5568;cursor:pointer;" title="Double-click to edit">' + (r.sector || '<span style="color:#cbd5e0;">—</span>') + '</td>'
                 : '<td style="font-size:11px;color:#4a5568;">' + (r.sector || '<span style="color:#cbd5e0;">—</span>') + '</td>') +
-            (r._src === 'cm'
-                ? '<td class="sec-inline-edit" data-field="size" data-secid="' + r._id + '" style="font-size:11px;color:#4a5568;cursor:pointer;" title="Double-click to edit">' + (r.size || '<span style="color:#cbd5e0;">—</span>') + '</td>'
-                : '<td style="font-size:11px;color:#4a5568;">' + (r.size || '<span style="color:#cbd5e0;">—</span>') + '</td>') +
+            '<td style="font-size:11px;color:#4a5568;">' + (r.size || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
             '<td style="font-size:11px;font-weight:600;">' + (r.underlying || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
             '<td style="font-size:11px;' + expiryCol + '">' + expiryStr + '</td>' +
             '<td style="font-size:11px;text-align:right;">' + (r.lot_size || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
