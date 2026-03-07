@@ -328,22 +328,7 @@
                         <span class="ms-arrow">▼</span>
                     </div>
                     <div class="ms-dropdown" id="msTypeDropdown">
-                        <div class="ms-pills">
-                            <span class="ms-pill" data-ms="msType" data-val="EQUITY"     onclick="togglePill(this)">EQUITY</span>
-                            <span class="ms-pill" data-ms="msType" data-val="EQUITY_SME" onclick="togglePill(this)">EQUITY_SME</span>
-                            <span class="ms-pill" data-ms="msType" data-val="ETF"        onclick="togglePill(this)">ETF</span>
-                            <span class="ms-pill" data-ms="msType" data-val="MF"         onclick="togglePill(this)">MF</span>
-                            <span class="ms-pill" data-ms="msType" data-val="SGB"        onclick="togglePill(this)">SGB</span>
-                            <span class="ms-pill" data-ms="msType" data-val="REIT"       onclick="togglePill(this)">REIT</span>
-                            <span class="ms-pill" data-ms="msType" data-val="INVIT"      onclick="togglePill(this)">INVIT</span>
-                            <span class="ms-pill" data-ms="msType" data-val="GOVT_BOND"  onclick="togglePill(this)">GOVT_BOND</span>
-                            <span class="ms-pill" data-ms="msType" data-val="NCD"        onclick="togglePill(this)">NCD</span>
-                            <span class="ms-pill" data-ms="msType" data-val="PREF_SHARE" onclick="togglePill(this)">PREF_SHARE</span>
-                            <span class="ms-pill" data-ms="msType" data-val="RIGHTS"     onclick="togglePill(this)">RIGHTS</span>
-                            <span class="ms-pill" data-ms="msType" data-val="PRIVATE_EQUITY" onclick="togglePill(this)">PRIVATE_EQUITY</span>
-                            <span class="ms-pill" data-ms="msType" data-val="FUTURES"    onclick="togglePill(this)">FUTURES</span>
-                            <span class="ms-pill" data-ms="msType" data-val="OPTIONS"    onclick="togglePill(this)">OPTIONS</span>
-                        </div>
+                        <div class="ms-pills" id="msTypePills"><!-- populated dynamically --></div>
                         <div class="ms-reset" onclick="clearMs('msType')">Clear</div>
                     </div>
                 </div>

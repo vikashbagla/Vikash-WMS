@@ -1750,6 +1750,7 @@ async function loadSecuritiesTable(forceRefresh) {
         if (forceRefresh || !wmsRefData.securitiesCmReady) {
             await wmsLoadSecuritiesCm();
         }
+        populateTypePills();
         populateSectorPills();
         renderSecurities();
     } catch(e) {
@@ -1762,6 +1763,30 @@ async function loadSecuritiesTable(forceRefresh) {
 
 // renderSecurities kept as alias for pill filter changes triggered before unified is wired
 function renderSecurities() { renderUnified(); }
+
+// Populate type filter pills dynamically from loaded data
+function populateTypePills() {
+    var container = document.getElementById('msTypePills');
+    if (!container) return;
+    var types = new Set();
+    var cmData = wmsRefData.securitiesCm || [];
+    for (var i = 0; i < cmData.length; i++) {
+        var t = cmData[i].security_type;
+        if (t) types.add(t);
+    }
+    // Also add NFO types
+    var nfoData = wmsRefData.securitiesNfo || [];
+    for (var j = 0; j < nfoData.length; j++) {
+        var it = nfoData[j].instrument_type;
+        if (it) types.add(it);
+    }
+    var selected = getMsValues('msType');
+    var sorted = Array.from(types).sort();
+    container.innerHTML = sorted.map(function(t) {
+        var isOn = selected.has(t) ? ' on' : '';
+        return '<span class="ms-pill' + isOn + '" data-ms="msType" data-val="' + t + '" onclick="togglePill(this)">' + t + '</span>';
+    }).join('');
+}
 
 // Populate sector filter pills dynamically from loaded data
 var _allSectors = [];
