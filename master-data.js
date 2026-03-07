@@ -1839,7 +1839,8 @@ function _typeBadge(t) {
         INVIT:'#ffe4c4:#7b341e',  GOVT_BOND:'#e2e8f0:#4a5568',
         NCD:'#e2e8f0:#4a5568',    PREF_SHARE:'#c6f6d5:#22543d',
         RIGHTS:'#fce8e8:#822727', WARRANT:'#fce8e8:#822727',
-        FUTURES:'#fef3c7:#78350f', OPTIONS:'#dbeafe:#1e40af'
+        FUTURES:'#fef3c7:#78350f', OPTIONS:'#dbeafe:#1e40af',
+        PRIVATE_EQUITY:'#f3e8ff:#7c3aed'
     };
     const [bg, fg] = (colors[t]||'#e2e8f0:#4a5568').split(':');
     return `<span style="background:${bg};color:${fg};padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;">${t}</span>`;
@@ -1871,6 +1872,7 @@ function renderUnified(resetPage) {
 
     // Build unified row list from both datasets
     const cmRows = (wmsRefData.securitiesCm || []).map(r => ({
+        _id:         r.id,
         symbol:      r.symbol || '',
         name:        r.company_name || '',
         type:        r.security_type || '',
@@ -1981,8 +1983,11 @@ function renderUnified(resetPage) {
             ? r.expiry_dt.toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'2-digit' })
             : '<span style="color:#cbd5e0;">—</span>';
         const expiryCol  = r.expiry_dt ? (expired ? 'color:#dc2626;' : 'color:#059669;') : '';
+        var symCell = r.type === 'PRIVATE_EQUITY'
+            ? '<td><strong style="font-size:12px;"><a href="#" onclick="openEditPeSecurityModal(' + r._id + ');return false;" style="color:#9333ea;text-decoration:none;" title="Edit PE security">' + r.symbol + ' ✎</a></strong></td>'
+            : '<td><strong style="font-size:12px;">' + r.symbol + '</strong></td>';
         return '<tr>' +
-            '<td><strong style="font-size:12px;">' + r.symbol + '</strong></td>' +
+            symCell +
             '<td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + r.name + '</td>' +
             '<td>' + _typeBadge(r.type) + '</td>' +
             '<td style="font-size:11px;color:#4a5568;">' + (r.asset_class || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
@@ -3109,4 +3114,157 @@ async function seedDefaultCharges() {
         console.error('Failed to seed charges:', e);
         alert('Error: ' + e.message);
     }
+}
+
+// ============================================================================
+// PRIVATE EQUITY (PE) SECURITIES
+// ============================================================================
+
+var editingPeSecurityId = null;
+
+function openAddPeSecurityModal() {
+    editingPeSecurityId = null;
+    document.getElementById('peSecurityModalTitle').textContent = 'Add PE Security';
+    document.getElementById('peSecurityForm').reset();
+    document.getElementById('peSecurityId').value = '';
+    document.getElementById('peAssetClass').value = 'Indian Equity';
+    document.getElementById('peLotSize').value = '1';
+    document.getElementById('peStatus').value = 'true';
+    document.getElementById('peIsin').value = '';
+    document.getElementById('btnPeDelete').style.display = 'none';
+    document.getElementById('peSecurityModal').classList.add('show');
+    // Auto-update ISIN preview as user types symbol
+    var symInput = document.getElementById('peSymbol');
+    symInput.oninput = function() {
+        var sym = symInput.value.trim().toUpperCase();
+        document.getElementById('peIsin').value = sym ? 'PE-' + sym : '';
+    };
+}
+
+function openEditPeSecurityModal(secId) {
+    // Find the security in wmsRefData cache
+    var sec = wmsRefData.securitiesCmMap[secId];
+    if (!sec) { alert('Security not found'); return; }
+
+    editingPeSecurityId = secId;
+    document.getElementById('peSecurityModalTitle').textContent = 'Edit PE Security';
+    document.getElementById('peSecurityId').value = sec.id;
+    document.getElementById('peSymbol').value = sec.symbol || '';
+    document.getElementById('peCompanyName').value = sec.company_name || '';
+    document.getElementById('peAssetClass').value = sec.asset_class || 'Indian Equity';
+    document.getElementById('peSector').value = sec.sector || '';
+    document.getElementById('peLotSize').value = sec.lot_size || 1;
+    document.getElementById('peStatus').value = sec.is_active !== false ? 'true' : 'false';
+    document.getElementById('peIsin').value = sec.isin || '';
+    document.getElementById('btnPeDelete').style.display = 'inline-block';
+    document.getElementById('peSecurityModal').classList.add('show');
+    // Auto-update ISIN preview
+    var symInput = document.getElementById('peSymbol');
+    symInput.oninput = function() {
+        var sym = symInput.value.trim().toUpperCase();
+        document.getElementById('peIsin').value = sym ? 'PE-' + sym : '';
+    };
+}
+
+async function savePeSecurity() {
+    var symbol = document.getElementById('peSymbol').value.trim().toUpperCase();
+    var companyName = document.getElementById('peCompanyName').value.trim();
+
+    if (!symbol) { alert('Please enter a symbol'); return; }
+    if (!companyName) { alert('Please enter a company name'); return; }
+
+    var isin = 'PE-' + symbol;
+    var data = {
+        symbol: symbol,
+        company_name: companyName,
+        isin: isin,
+        security_type: 'PRIVATE_EQUITY',
+        asset_class: document.getElementById('peAssetClass').value || null,
+        sector: document.getElementById('peSector').value.trim() || null,
+        lot_size: parseInt(document.getElementById('peLotSize').value) || 1,
+        is_active: document.getElementById('peStatus').value === 'true'
+    };
+
+    try {
+        var headers = {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+        };
+
+        if (editingPeSecurityId) {
+            // Update existing PE security
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + editingPeSecurityId, {
+                method: 'PATCH',
+                headers: headers,
+                body: JSON.stringify(data)
+            });
+            if (!resp.ok) {
+                var errBody = await resp.text();
+                throw new Error('Update failed: ' + errBody);
+            }
+        } else {
+            // Check if PE-SYMBOL ISIN already exists
+            var checkResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?isin=eq.' + encodeURIComponent(isin) + '&select=id', {
+                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            });
+            var existing = await checkResp.json();
+            if (existing && existing.length > 0) {
+                alert('A PE security with symbol "' + symbol + '" already exists (ISIN: ' + isin + ').');
+                return;
+            }
+
+            // Insert new PE security
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(data)
+            });
+            if (!resp.ok) {
+                var errBody = await resp.text();
+                throw new Error('Insert failed: ' + errBody);
+            }
+        }
+
+        closePeSecurityModal();
+        // Refresh securities cache so new PE security appears in searches
+        await wmsLoadSecuritiesCm();
+        await loadSecuritiesStats();
+        await loadSecuritiesTable(true);
+        alert('PE Security "' + symbol + '" saved successfully.');
+    } catch (e) {
+        console.error('Error saving PE security:', e);
+        alert('Error: ' + e.message);
+    }
+}
+
+async function deletePeSecurity() {
+    if (!editingPeSecurityId) return;
+    var symbol = document.getElementById('peSymbol').value.trim().toUpperCase();
+    if (!confirm('Delete PE security "' + symbol + '"?\n\nThis cannot be undone. Any transactions referencing this security will remain but the security master data will be removed.')) return;
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + editingPeSecurityId, {
+            method: 'DELETE',
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        });
+        if (!resp.ok) {
+            var errBody = await resp.text();
+            throw new Error('Delete failed: ' + errBody);
+        }
+        closePeSecurityModal();
+        await wmsLoadSecuritiesCm();
+        await loadSecuritiesStats();
+        await loadSecuritiesTable(true);
+        alert('PE Security "' + symbol + '" deleted.');
+    } catch (e) {
+        console.error('Error deleting PE security:', e);
+        alert('Error: ' + e.message);
+    }
+}
+
+function closePeSecurityModal() {
+    document.getElementById('peSecurityModal').classList.remove('show');
+    editingPeSecurityId = null;
 }

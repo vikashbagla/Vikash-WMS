@@ -294,6 +294,7 @@
                         <button class="btn-secondary" onclick="exportSecuritiesExcel()" id="btnExport">⬇ Export</button>
                         <button class="btn-secondary" onclick="document.getElementById('classImportFile').click()" id="btnClassImport" style="background:#805ad5;color:#fff;">⬆ Import Classification</button>
                         <input type="file" id="classImportFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="importClassification(this)">
+                        <button class="btn-primary" onclick="openAddPeSecurityModal()" style="background:#9333ea;">+ Add PE Security</button>
                     </div>
                     <div class="sec-panel-stats">
                         <div class="sec-stat-pill">Total: <span id="statTotal">—</span></div>
@@ -339,6 +340,7 @@
                             <span class="ms-pill" data-ms="msType" data-val="NCD"        onclick="togglePill(this)">NCD</span>
                             <span class="ms-pill" data-ms="msType" data-val="PREF_SHARE" onclick="togglePill(this)">PREF_SHARE</span>
                             <span class="ms-pill" data-ms="msType" data-val="RIGHTS"     onclick="togglePill(this)">RIGHTS</span>
+                            <span class="ms-pill" data-ms="msType" data-val="PRIVATE_EQUITY" onclick="togglePill(this)">PRIVATE_EQUITY</span>
                             <span class="ms-pill" data-ms="msType" data-val="FUTURES"    onclick="togglePill(this)">FUTURES</span>
                             <span class="ms-pill" data-ms="msType" data-val="OPTIONS"    onclick="togglePill(this)">OPTIONS</span>
                         </div>
@@ -713,6 +715,72 @@
         </div>
     </div>
     
+    <!-- PE Security Modal -->
+    <div id="peSecurityModal" class="modal">
+        <div class="modal-content" style="max-width:520px;">
+            <div class="modal-header">
+                <h3 id="peSecurityModalTitle">Add PE Security</h3>
+            </div>
+            <div class="modal-body">
+                <form id="peSecurityForm" onsubmit="return false;">
+                    <input type="hidden" id="peSecurityId">
+                    <div class="form-section">
+                        <div class="form-section-title">Security Details</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Symbol *</label>
+                                <input type="text" id="peSymbol" required style="text-transform:uppercase;" placeholder="e.g., MYCOMPANY">
+                            </div>
+                            <div class="form-group">
+                                <label>Company Name *</label>
+                                <input type="text" id="peCompanyName" required placeholder="Full company name">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Asset Class</label>
+                                <select id="peAssetClass">
+                                    <option value="Indian Equity" selected>Indian Equity</option>
+                                    <option value="International Equity">International Equity</option>
+                                    <option value="Real Estate">Real Estate</option>
+                                    <option value="Debt">Debt</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Sector</label>
+                                <input type="text" id="peSector" placeholder="e.g., Technology">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Lot Size</label>
+                                <input type="number" id="peLotSize" value="1" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>Status</label>
+                                <select id="peStatus">
+                                    <option value="true" selected>Active</option>
+                                    <option value="false">Inactive</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group" style="grid-column: 1 / -1;">
+                                <label>ISIN (auto-generated for PE)</label>
+                                <input type="text" id="peIsin" readonly style="background:#f7fafc;color:#718096;" placeholder="Auto-generated: PE-SYMBOL">
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closePeSecurityModal()">Cancel</button>
+                <button class="btn-primary" id="btnPeDelete" onclick="deletePeSecurity()" style="background:#e53e3e;display:none;">Delete</button>
+                <button class="btn-primary" onclick="savePeSecurity()">Save</button>
+            </div>
+        </div>
+    </div>
+
     <script src="master-data.js"></script>
 </body>
 </html>
