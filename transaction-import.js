@@ -2413,7 +2413,8 @@ function openReviewPopover(rowIdx) {
     var allRows = excelConfirmedRows.concat(excelFlaggedRows);
     var row = allRows[rowIdx];
     if (!row || !row.matchOptions || row.matchOptions.length === 0) {
-        tiAlert('info', 'No alternative matches available for this row.');
+        var msg = row && row.matchError ? row.matchError : 'No alternative matches available for this row.';
+        tiAlert('warning', msg);
         return;
     }
 
@@ -3102,12 +3103,20 @@ window.cancelImport = function() {
 function tiAlert(type, message) {
     var container = document.getElementById('alertContainer');
     var alertClass = type === 'success' ? 'alert-success' : type === 'error' ? 'alert-error' : type === 'info' ? 'alert-info' : 'alert-warning';
+    // Ensure alert appears above modals (excel preview overlay is z-index:1100)
+    container.style.position = 'fixed';
+    container.style.top = '70px';
+    container.style.left = '50%';
+    container.style.transform = 'translateX(-50%)';
+    container.style.zIndex = '1200';
+    container.style.width = 'auto';
+    container.style.maxWidth = '600px';
     var el = document.createElement('div');
     el.className = 'alert ' + alertClass;
     el.textContent = message;
     container.innerHTML = '';
     container.appendChild(el);
-    if (type === 'success') { setTimeout(function() { el.style.opacity = '0'; setTimeout(function() { el.remove(); }, 300); }, 5000); }
+    setTimeout(function() { el.style.opacity = '0'; setTimeout(function() { el.remove(); }, 300); }, 5000);
 }
 
 function tiLoading(show, text) {
