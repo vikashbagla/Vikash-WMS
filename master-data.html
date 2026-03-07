@@ -155,6 +155,11 @@
         .ms-reset:hover { color: #667eea; }
         /* sub-tab styles removed — unified table used instead */
 
+        /* Inline-editable cells in securities table */
+        .sec-inline-edit:hover { background: #EBF5FB; cursor: pointer; }
+        .sec-inline-edit::after { content: ' ✎'; font-size: 9px; color: #a0aec0; opacity: 0; transition: opacity 0.15s; }
+        .sec-inline-edit:hover::after { opacity: 1; }
+
         /* Close button */
         .btn-close-modal { width: 28px; height: 28px; display: inline-flex; align-items: center;
             justify-content: center; background: #f7fafc; border: 1px solid #e2e8f0;

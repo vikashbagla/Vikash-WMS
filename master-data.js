@@ -2092,9 +2092,15 @@ function renderUnified(resetPage) {
             symCell +
             '<td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + r.name + '</td>' +
             '<td>' + _typeBadge(r.type) + '</td>' +
-            '<td style="font-size:11px;color:#4a5568;">' + (r.asset_class || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
-            '<td style="font-size:11px;color:#4a5568;">' + (r.sector || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
-            '<td style="font-size:11px;color:#4a5568;">' + (r.size || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
+            (r._src === 'cm'
+                ? '<td class="sec-inline-edit" data-field="asset_class" data-secid="' + r._id + '" style="font-size:11px;color:#4a5568;cursor:pointer;" title="Double-click to edit">' + (r.asset_class || '<span style="color:#cbd5e0;">—</span>') + '</td>'
+                : '<td style="font-size:11px;color:#4a5568;">' + (r.asset_class || '<span style="color:#cbd5e0;">—</span>') + '</td>') +
+            (r._src === 'cm'
+                ? '<td class="sec-inline-edit" data-field="sector" data-secid="' + r._id + '" style="font-size:11px;color:#4a5568;cursor:pointer;" title="Double-click to edit">' + (r.sector || '<span style="color:#cbd5e0;">—</span>') + '</td>'
+                : '<td style="font-size:11px;color:#4a5568;">' + (r.sector || '<span style="color:#cbd5e0;">—</span>') + '</td>') +
+            (r._src === 'cm'
+                ? '<td class="sec-inline-edit" data-field="size" data-secid="' + r._id + '" style="font-size:11px;color:#4a5568;cursor:pointer;" title="Double-click to edit">' + (r.size || '<span style="color:#cbd5e0;">—</span>') + '</td>'
+                : '<td style="font-size:11px;color:#4a5568;">' + (r.size || '<span style="color:#cbd5e0;">—</span>') + '</td>') +
             '<td style="font-size:11px;font-weight:600;">' + (r.underlying || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
             '<td style="font-size:11px;' + expiryCol + '">' + expiryStr + '</td>' +
             '<td style="font-size:11px;text-align:right;">' + (r.lot_size || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
@@ -3370,3 +3376,190 @@ function closePeSecurityModal() {
     document.getElementById('peSecurityModal').classList.remove('show');
     editingPeSecurityId = null;
 }
+
+// ============================================================================
+// INLINE EDIT — Double-click on Asset Class, Sector, Size cells in table
+// Shows a single-select dropdown with existing values + text input for new.
+// ============================================================================
+
+var _secInlineDropdown = null; // currently open inline dropdown element
+var _secInlineOutsideHandler = null;
+
+function _secGetUniqueValues(field) {
+    var vals = new Set();
+    var cmData = wmsRefData.securitiesCm || [];
+    for (var i = 0; i < cmData.length; i++) {
+        var v = cmData[i][field];
+        if (v) vals.add(v);
+    }
+    return Array.from(vals).sort();
+}
+
+function _secCloseInlineDropdown() {
+    if (_secInlineDropdown) {
+        _secInlineDropdown.remove();
+        _secInlineDropdown = null;
+    }
+    if (_secInlineOutsideHandler) {
+        document.removeEventListener('mousedown', _secInlineOutsideHandler);
+        _secInlineOutsideHandler = null;
+    }
+}
+
+function _secOpenInlineDropdown(cell) {
+    _secCloseInlineDropdown();
+
+    var field = cell.dataset.field;
+    var secId = cell.dataset.secid;
+    var currentVal = (cell.textContent || '').trim();
+    if (currentVal === '—') currentVal = '';
+
+    var allValues = _secGetUniqueValues(field);
+    var fieldLabel = field === 'asset_class' ? 'Asset Class' : field === 'sector' ? 'Sector' : 'Size';
+
+    // Create dropdown
+    var dd = document.createElement('div');
+    dd.className = 'sec-inline-dd';
+    dd.style.cssText = 'position:absolute;z-index:1000;background:white;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.12);padding:8px;min-width:200px;max-width:280px;';
+
+    // Search input
+    var inp = document.createElement('input');
+    inp.type = 'text';
+    inp.value = currentVal;
+    inp.placeholder = 'Type to search or add new...';
+    inp.style.cssText = 'width:100%;padding:5px 8px;border:1px solid #e2e8f0;border-radius:5px;font-size:11px;margin-bottom:6px;box-sizing:border-box;outline:none;';
+    dd.appendChild(inp);
+
+    // Pills container
+    var pillsWrap = document.createElement('div');
+    pillsWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;max-height:160px;overflow-y:auto;';
+    dd.appendChild(pillsWrap);
+
+    function renderPills(query) {
+        var q = (query || '').toLowerCase().trim();
+        var filtered = q ? allValues.filter(function(v) { return v.toLowerCase().indexOf(q) >= 0; }) : allValues;
+        pillsWrap.innerHTML = filtered.map(function(v) {
+            var isOn = v === currentVal ? ' style="background:#667eea;border-color:#667eea;color:white;"' : '';
+            return '<span class="ms-pill" data-val="' + v.replace(/"/g, '&quot;') + '"' + isOn + '>' + v + '</span>';
+        }).join('');
+        // If query doesn't match any existing value, show "Add new" pill
+        if (q && !allValues.some(function(v) { return v.toLowerCase() === q; })) {
+            pillsWrap.insertAdjacentHTML('afterbegin',
+                '<span class="ms-pill" data-val="__new__" style="background:#f0fff4;border-color:#48bb78;color:#22543d;font-style:italic;">+ "' + query.trim() + '"</span>');
+        }
+        // Clear option
+        if (currentVal) {
+            pillsWrap.insertAdjacentHTML('beforeend',
+                '<span class="ms-pill" data-val="__clear__" style="background:#fff5f5;border-color:#fc8181;color:#822727;font-style:italic;">✕ Clear</span>');
+        }
+    }
+
+    renderPills('');
+
+    // Click on a pill
+    pillsWrap.addEventListener('click', function(e) {
+        var pill = e.target.closest('.ms-pill');
+        if (!pill) return;
+        var val = pill.dataset.val;
+        if (val === '__new__') val = inp.value.trim();
+        else if (val === '__clear__') val = null;
+        _secSaveInlineEdit(secId, field, val, cell);
+    });
+
+    // Search filter on input
+    inp.addEventListener('input', function() {
+        renderPills(inp.value);
+    });
+
+    // Enter key = save typed value
+    inp.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            var val = inp.value.trim() || null;
+            _secSaveInlineEdit(secId, field, val, cell);
+        }
+        if (e.key === 'Escape') {
+            _secCloseInlineDropdown();
+        }
+    });
+
+    // Position relative to cell
+    var rect = cell.getBoundingClientRect();
+    dd.style.position = 'fixed';
+    dd.style.left = rect.left + 'px';
+    dd.style.top = (rect.bottom + 2) + 'px';
+    document.body.appendChild(dd);
+    _secInlineDropdown = dd;
+    inp.focus();
+    inp.select();
+
+    // Close on click outside
+    setTimeout(function() {
+        _secInlineOutsideHandler = function(e) {
+            if (!dd.contains(e.target) && e.target !== cell) {
+                _secCloseInlineDropdown();
+            }
+        };
+        document.addEventListener('mousedown', _secInlineOutsideHandler);
+    }, 10);
+}
+
+async function _secSaveInlineEdit(secId, field, value, cell) {
+    _secCloseInlineDropdown();
+    var patch = {};
+    patch[field] = value;
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + secId, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            },
+            body: JSON.stringify(patch)
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+
+        // Update local cache
+        var sec = wmsRefData.securitiesCmMap[secId];
+        if (sec) sec[field] = value;
+
+        // Update cell display
+        cell.innerHTML = value ? value : '<span style="color:#cbd5e0;">—</span>';
+
+        // Refresh filter pills if the value is new
+        if (field === 'asset_class') populateAssetClassPills();
+        else if (field === 'sector') populateSectorPills();
+        else if (field === 'size') populateSizePills();
+    } catch (e) {
+        console.error('Inline edit save error:', e);
+        alert('Error saving: ' + e.message);
+    }
+}
+
+// Attach dblclick handler via event delegation on tbody
+(function() {
+    function attachSecInlineEdit() {
+        var tbody = document.getElementById('secTbody');
+        if (!tbody || tbody._secInlineEditAttached) return;
+        tbody.addEventListener('dblclick', function(e) {
+            var cell = e.target.closest('.sec-inline-edit');
+            if (!cell) return;
+            e.preventDefault();
+            _secOpenInlineDropdown(cell);
+        });
+        tbody._secInlineEditAttached = true;
+    }
+    // Attach after DOM ready — try immediately, then retry on tab switch
+    if (document.getElementById('secTbody')) attachSecInlineEdit();
+    var origSwitch = window.switchTab;
+    if (origSwitch) {
+        window.switchTab = function(event, tabName) {
+            origSwitch(event, tabName);
+            if (tabName === 'securities') setTimeout(attachSecInlineEdit, 100);
+        };
+    }
+    // Also try on DOMContentLoaded
+    document.addEventListener('DOMContentLoaded', attachSecInlineEdit);
+})();
