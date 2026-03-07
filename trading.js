@@ -104,7 +104,7 @@ function trSetupEventHandlers() {
     document.getElementById('tr-filters-toggle').addEventListener('click', function() {
         var filtersDiv = document.getElementById('trPortfolioFilters');
         var isHidden = filtersDiv.style.display === 'none';
-        filtersDiv.style.display = isHidden ? '' : 'none';
+        filtersDiv.style.display = isHidden ? 'flex' : 'none';
         this.textContent = isHidden ? '▼' : '▲';
     });
 
@@ -113,7 +113,7 @@ function trSetupEventHandlers() {
         var shared = document.getElementById('trFnoSharedFilters');
         var fnoBar = document.querySelector('.trFno-filters-bar');
         var isHidden = shared.style.display === 'none';
-        shared.style.display = isHidden ? '' : 'none';
+        shared.style.display = isHidden ? 'flex' : 'none';
         if (fnoBar) fnoBar.style.display = isHidden ? '' : 'none';
         this.textContent = isHidden ? '▼' : '▲';
     });
@@ -137,7 +137,13 @@ function trSetupEventHandlers() {
             othersDropdown.style.display = 'none';
             if (item.disabled) return;
             var txnType = item.dataset.type;
-            alert('Transaction type "' + txnType + '" — form coming soon.');
+            if (txnType === 'RIGHTS_ENTITLEMENT') {
+                trLoadRightsModule(function() { openRightsEntitlementModal(); });
+            } else if (txnType === 'RIGHTS_PAYMENT') {
+                trLoadRightsModule(function() { openRightsPaymentModal(); });
+            } else {
+                alert('Transaction type "' + txnType + '" — form coming soon.');
+            }
         });
     }
 
@@ -2568,6 +2574,57 @@ async function trOpenAddTransaction() {
         if (typeof window.openAddTxnModal === 'function') {
             window.openAddTxnModal();
         }
+    }
+}
+
+// ============================================================================
+// RIGHTS MODULE (loaded on demand)
+// ============================================================================
+
+var trRightsLoaded = false;
+
+async function trLoadRightsModule(callback) {
+    if (trRightsLoaded) {
+        if (typeof callback === 'function') callback();
+        return;
+    }
+    try {
+        // Load HTML
+        var htmlResp = await fetch('trading-rights.html?t=' + Date.now());
+        if (!htmlResp.ok) throw new Error('Failed to load trading-rights.html');
+        var htmlText = await htmlResp.text();
+
+        // Extract <style> and inject to <head>
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(htmlText, 'text/html');
+        var styles = doc.querySelectorAll('style');
+        styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+
+        // Inject body content (modal overlays) into a container div
+        var container = document.createElement('div');
+        container.id = 'tr-rights-container';
+        container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
+        document.body.appendChild(container);
+
+        // Load JS
+        await new Promise(function(resolve, reject) {
+            var script = document.createElement('script');
+            script.src = 'trading-rights.js?t=' + Date.now();
+            script.onload = resolve;
+            script.onerror = function() { reject(new Error('Failed to load trading-rights.js')); };
+            document.body.appendChild(script);
+        });
+
+        trRightsLoaded = true;
+
+        // Small delay for init to complete, then callback
+        setTimeout(function() {
+            if (typeof initRightsModule === 'function') initRightsModule();
+            if (typeof callback === 'function') callback();
+        }, 100);
+    } catch (err) {
+        console.error('Trading: Failed to load rights module:', err);
+        showAlert('Failed to load Rights module: ' + err.message, 'error');
     }
 }
 
