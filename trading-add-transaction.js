@@ -628,13 +628,13 @@ function addAddTxnRow(copyFromId) {
         // Price
         '<td><input type="number" class="addTxn-price-input" data-rid="' + rowId + '" step="0.01" value="' + (row.price || '') + '"></td>' +
         // Gross (editable)
-        '<td><input type="number" class="addTxn-gross-input" data-rid="' + rowId + '" step="0.01" value="' + (row.gross_amount || '') + '"></td>' +
+        '<td><input type="text" class="addTxn-gross-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.gross_amount) + '"></td>' +
         // Total charges (editable, dblclick for breakdown)
-        '<td><input type="number" class="addTxn-totchg-input" data-rid="' + rowId + '" step="0.01" value="' + (row.total_charges || '') + '" title="Double-click for breakdown"></td>' +
+        '<td><input type="text" class="addTxn-totchg-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.total_charges) + '" title="Double-click for breakdown"></td>' +
         // Trader charges (editable)
-        '<td><input type="number" class="addTxn-trdchg-input" data-rid="' + rowId + '" step="0.01" value="' + (row.trader_charges || '') + '"></td>' +
+        '<td><input type="text" class="addTxn-trdchg-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.trader_charges) + '"></td>' +
         // Net amount (editable)
-        '<td><input type="number" class="addTxn-net-input" data-rid="' + rowId + '" step="0.01" value="' + (row.net_amount || '') + '"></td>' +
+        '<td><input type="text" class="addTxn-net-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.net_amount) + '"></td>' +
         // Tags
         '<td style="position:relative;">' +
             '<input type="text" class="addTxn-tags-input" data-rid="' + rowId + '" placeholder="Tags..." autocomplete="off">' +
@@ -774,17 +774,28 @@ function attachAddTxnRowHandlers(rowId) {
         recalcAddTxnRow(rowId);
     });
 
+    // --- Amount field focus/blur formatting (show raw on focus, formatted on blur) ---
+    [grossInput, totchgInput, trdchgInput, netInput].forEach(function(el) {
+        el.addEventListener('focus', function() {
+            var raw = parseFloat(el.value.replace(/,/g, '')) || 0;
+            el.value = raw || '';
+        });
+        el.addEventListener('blur', function() {
+            var raw = parseFloat(el.value.replace(/,/g, '')) || 0;
+            el.value = atFmtAmt(raw);
+        });
+    });
+
     // --- Gross amount input ---
     grossInput.addEventListener('input', function() {
-        row.gross_amount = parseFloat(grossInput.value) || 0;
+        row.gross_amount = parseFloat(grossInput.value.replace(/,/g, '')) || 0;
         row._grossOverride = true;
-        // Recalc charges based on new gross (but don't overwrite gross)
         recalcAddTxnRow(rowId);
     });
 
     // --- Total charges input ---
     totchgInput.addEventListener('input', function() {
-        row.total_charges = parseFloat(totchgInput.value) || 0;
+        row.total_charges = parseFloat(totchgInput.value.replace(/,/g, '')) || 0;
         row._totalOverride = true;
         recalcAddTxnRow(rowId);
     });
@@ -796,16 +807,15 @@ function attachAddTxnRowHandlers(rowId) {
 
     // --- Trader charges input ---
     trdchgInput.addEventListener('input', function() {
-        row.trader_charges = parseFloat(trdchgInput.value) || 0;
+        row.trader_charges = parseFloat(trdchgInput.value.replace(/,/g, '')) || 0;
         row._trdChgOverride = true;
         recalcAddTxnRow(rowId);
     });
 
     // --- Net amount input ---
     netInput.addEventListener('input', function() {
-        row.net_amount = parseFloat(netInput.value) || 0;
+        row.net_amount = parseFloat(netInput.value.replace(/,/g, '')) || 0;
         row._netOverride = true;
-        // Don't recalc — user set it explicitly
         updateAddTxnRowDisplay(rowId);
     });
 
@@ -1227,11 +1237,11 @@ function updateAddTxnRowDisplay(rowId) {
     var netEl = document.querySelector('.addTxn-net-input[data-rid="' + rowId + '"]');
 
     // Only update value if the field is NOT currently focused (don't overwrite while user types)
-    if (grossEl && document.activeElement !== grossEl) grossEl.value = row.gross_amount || '';
-    if (totchgEl && document.activeElement !== totchgEl) totchgEl.value = row.total_charges || '';
-    if (trdchgEl && document.activeElement !== trdchgEl) trdchgEl.value = row.trader_charges || '';
+    if (grossEl && document.activeElement !== grossEl) grossEl.value = atFmtAmt(row.gross_amount);
+    if (totchgEl && document.activeElement !== totchgEl) totchgEl.value = atFmtAmt(row.total_charges);
+    if (trdchgEl && document.activeElement !== trdchgEl) trdchgEl.value = atFmtAmt(row.trader_charges);
     if (netEl && document.activeElement !== netEl) {
-        netEl.value = row.net_amount || '';
+        netEl.value = atFmtAmt(row.net_amount);
         // Color the net amount based on buy/sell
         netEl.style.color = row.quantity < 0 ? '#dc2626' : '';
     }
