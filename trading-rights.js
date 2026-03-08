@@ -519,7 +519,7 @@ function rhEntConfirmAndReview() {
             if (qty > 0) hasAny = true;
         }
     });
-    if (!hasAny) { alert('Please enter at least one rights quantity.'); return; }
+    if (!hasAny) { showAlert('Please enter at least one rights quantity.', 'error', 3000); return; }
 
     var sec = rhEntSelectedSecurity;
     var shortSym = sec.nse_symbol || sec.symbol;
@@ -576,7 +576,7 @@ async function rhEntSave() {
     var companyName = document.getElementById('rhEntReCompany').value.trim();
     var isin = document.getElementById('rhEntReIsin').value.trim();
 
-    if (!shortSym || !companyName) { alert('Symbol and company name are required.'); return; }
+    if (!shortSym || !companyName) { showAlert('Symbol and company name are required.', 'error', 3000); return; }
 
     document.getElementById('rhEntConfirmBtn').disabled = true;
     document.getElementById('rhEntConfirmBtn').textContent = 'Saving...';
@@ -674,8 +674,7 @@ async function rhEntSave() {
         showAlert('Rights entitlement created: ' + txns.length + ' transaction(s) for ' + isin, 'success', 4000);
 
     } catch (e) {
-        console.error('Rights entitlement error:', e);
-        alert('Error: ' + e.message);
+        wmsShowError('Rights entitlement save failed', e);
         document.getElementById('rhEntConfirmBtn').disabled = false;
         document.getElementById('rhEntConfirmBtn').textContent = 'Save';
     }
@@ -773,7 +772,7 @@ function rhPayUpdateTotal(idx) {
 
 async function rhPaySaveTransactions() {
     var dateStr = rhDateGetIsoStr('rhPay');
-    if (!rhPaySelectedSecurity) { alert('Select date and security first.'); return; }
+    if (!rhPaySelectedSecurity) { showAlert('Select date and security first.', 'error', 3000); return; }
 
     var sec = rhPaySelectedSecurity;
     var sym = sec.nse_symbol || sec.symbol;
@@ -824,7 +823,7 @@ async function rhPaySaveTransactions() {
         });
     });
 
-    if (txns.length === 0) { alert('No valid rows to save. Enter a price for at least one row.'); return; }
+    if (txns.length === 0) { showAlert('No valid rows to save. Enter a price for at least one row.', 'error', 3000); return; }
 
     try {
         document.getElementById('rhPaySaveBtn').disabled = true;
@@ -833,8 +832,7 @@ async function rhPaySaveTransactions() {
         if (typeof trRefresh === 'function') await trRefresh();
         showAlert('Rights payment: ' + txns.length + ' transaction(s) saved.', 'success', 4000);
     } catch (e) {
-        console.error('Rights payment error:', e);
-        alert('Error: ' + e.message);
+        wmsShowError('Rights payment save failed', e);
         document.getElementById('rhPaySaveBtn').disabled = false;
     }
 }

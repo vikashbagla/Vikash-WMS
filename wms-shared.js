@@ -17,6 +17,73 @@ var WMS_WEEKLY_EXPIRY_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIF
 var WMS_INCOME_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION'];
 
 // ============================================================================
+// SUPABASE ERROR PARSER — Turns raw Supabase/PostgREST JSON errors into
+// short, human-readable messages for showAlert(). Full details go to console.
+// Usage: catch(e) { wmsShowError('Save failed', e); }
+// ============================================================================
+
+/**
+ * Parse a Supabase/PostgREST error and show a friendly toast.
+ * @param {string} prefix  — short context, e.g. "Rights entitlement save failed"
+ * @param {Error|string} err — the caught error (Error object or raw string)
+ * @param {number} [duration] — toast duration in ms (default 6000)
+ */
+function wmsShowError(prefix, err, duration) {
+    duration = duration || 6000;
+    var raw = (err && err.message) ? err.message : String(err || '');
+    var friendly = '';
+
+    // Try to extract Supabase JSON body from "DB error: 4xx — {...}" pattern
+    var jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+        try {
+            var parsed = JSON.parse(jsonMatch[0]);
+            // Map common PostgreSQL error codes to plain language
+            var code = parsed.code || '';
+            var msg = parsed.message || '';
+            if (code === '23505') {
+                friendly = 'Duplicate entry — a record with these details already exists.';
+            } else if (code === '23514') {
+                // CHECK constraint violation — extract constraint name
+                var cName = (msg.match(/constraint "([^"]+)"/) || [])[1] || '';
+                if (cName.indexOf('transaction_type') >= 0) {
+                    friendly = 'Invalid transaction type. Check if the DB constraint has been updated.';
+                } else if (cName.indexOf('quantity') >= 0) {
+                    friendly = 'Quantity must not be zero.';
+                } else {
+                    friendly = 'Data validation failed' + (cName ? ' (' + cName + ')' : '') + '.';
+                }
+            } else if (code === '23503') {
+                friendly = 'Referenced record not found (foreign key error).';
+            } else if (code === '42501') {
+                friendly = 'Permission denied — check Supabase RLS policies.';
+            } else if (code === '42P01') {
+                friendly = 'Table not found — check database schema.';
+            } else if (msg) {
+                // Fallback: use the message but trim technical prefix
+                friendly = msg.replace(/^new row for relation "[^"]+" violates check constraint "[^"]+"/, 'Data validation failed.');
+            }
+            // Always log the full details for debugging
+            console.error(prefix + ':', parsed);
+        } catch (ignore) {
+            // JSON parse failed — fall through to raw message
+        }
+    }
+
+    if (!friendly) {
+        // Non-JSON error or parse failed — show a trimmed version
+        if (raw.length > 120) {
+            friendly = raw.substring(0, 120) + '…';
+        } else {
+            friendly = raw || 'Unknown error';
+        }
+        console.error(prefix + ':', raw);
+    }
+
+    showAlert(prefix + ': ' + friendly, 'error', duration);
+}
+
+// ============================================================================
 // SHARED REFERENCE DATA — loaded once at app startup, refreshed after edits.
 // Feature modules read from these instead of loading their own copies.
 // ============================================================================
