@@ -2618,7 +2618,9 @@ async function trLoadRightsModule(callback) {
         container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
         document.body.appendChild(container);
 
-        // Load JS
+        // Load JS (remove any existing script tag first to prevent duplicates)
+        var oldScript = document.querySelector('script[src*="trading-rights.js"]');
+        if (oldScript) oldScript.remove();
         await new Promise(function(resolve, reject) {
             var script = document.createElement('script');
             script.src = 'trading-rights.js?t=' + Date.now();

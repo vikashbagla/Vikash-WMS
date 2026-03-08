@@ -28,8 +28,10 @@ var RH_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','No
 // ============================================================================
 
 function initRightsModule() {
-    if (window._rhModuleInitDone) return;
-    window._rhModuleInitDone = true;
+    // Guard moved to END of function so that if init throws partway,
+    // a re-load can retry. Also resets dropdown controllers in case
+    // the script was loaded twice (second load re-declares vars to null).
+    window._rhModuleInitDone = false;
 
     // ------------------------------------------------------------------
     // Helper: clone an element in-place to strip ALL existing listeners
@@ -129,6 +131,9 @@ function initRightsModule() {
             }
         }
     });
+
+    // Mark init complete AFTER all setup succeeds (not before)
+    window._rhModuleInitDone = true;
 }
 
 // ============================================================================
