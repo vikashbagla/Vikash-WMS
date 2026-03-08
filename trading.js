@@ -2584,12 +2584,22 @@ async function trOpenAddTransaction() {
 // ============================================================================
 
 var trRightsLoaded = false;
+var trRightsLoading = false;       // prevents race condition on double-click
+var trRightsCallbacks = [];        // queued callbacks while loading
 
 async function trLoadRightsModule(callback) {
     if (trRightsLoaded) {
         if (typeof callback === 'function') callback();
         return;
     }
+    // Queue callback if already loading (prevents double-load on fast clicks)
+    if (trRightsLoading) {
+        if (typeof callback === 'function') trRightsCallbacks.push(callback);
+        return;
+    }
+    trRightsLoading = true;
+    if (typeof callback === 'function') trRightsCallbacks.push(callback);
+
     try {
         // Load HTML
         var htmlResp = await fetch('trading-rights.html?t=' + Date.now());
@@ -2619,14 +2629,17 @@ async function trLoadRightsModule(callback) {
 
         trRightsLoaded = true;
 
-        // Small delay for init to complete, then callback
+        // Small delay for init to complete, then fire all queued callbacks
         setTimeout(function() {
             if (typeof initRightsModule === 'function') initRightsModule();
-            if (typeof callback === 'function') callback();
+            trRightsCallbacks.forEach(function(cb) { cb(); });
+            trRightsCallbacks = [];
         }, 100);
     } catch (err) {
         console.error('Trading: Failed to load rights module:', err);
         showAlert('Failed to load Rights module: ' + err.message, 'error');
+        trRightsLoading = false;
+        trRightsCallbacks = [];
     }
 }
 

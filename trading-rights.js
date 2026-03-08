@@ -10,6 +10,7 @@ var rhEntDdCtrl = null;             // wmsDropdown controller for entitlement sy
 var rhEntDateState = { day: 1, month: 0, year: 2026 };
 var rhEntDateActiveSeg = null;
 var rhEntDateTypeBuf = '';
+var rhEntCurrentStep = 1;           // 1 = holdings table, 2 = review RE security
 
 // Payment state
 var rhPaySelectedSecurity = null;   // RE- security object
@@ -23,22 +24,46 @@ var rhPayDateTypeBuf = '';
 var RH_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // ============================================================================
-// INIT
+// INIT — called once; uses clone trick to guarantee no duplicate listeners
 // ============================================================================
 
 function initRightsModule() {
     if (window._rhModuleInitDone) return;
     window._rhModuleInitDone = true;
 
-    // --- Entitlement modal ---
-    document.getElementById('rhEntCloseBtn').addEventListener('click', closeRightsEntitlementModal);
-    document.getElementById('rhEntCancelBtn').addEventListener('click', closeRightsEntitlementModal);
-    document.getElementById('rightsEntitlementOverlay').addEventListener('click', function(e) {
-        if (e.target === this) closeRightsEntitlementModal();
-    });
-    document.getElementById('rhEntConfirmBtn').addEventListener('click', rhEntConfirmAndReview);
+    // ------------------------------------------------------------------
+    // Helper: clone an element in-place to strip ALL existing listeners
+    // ------------------------------------------------------------------
+    function freshClone(id) {
+        var el = document.getElementById(id);
+        if (!el) return null;
+        var clone = el.cloneNode(true);
+        el.parentNode.replaceChild(clone, el);
+        return clone;
+    }
 
-    // Entitlement date widget
+    // --- Entitlement modal ---
+    var entCloseBtn   = freshClone('rhEntCloseBtn');
+    var entCancelBtn  = freshClone('rhEntCancelBtn');
+    var entConfirmBtn = freshClone('rhEntConfirmBtn');
+    var entOverlay    = document.getElementById('rightsEntitlementOverlay');
+
+    // Single delegating handler — checks rhEntCurrentStep
+    entConfirmBtn.addEventListener('click', function() {
+        if (rhEntCurrentStep === 1) rhEntConfirmAndReview();
+        else rhEntSave();
+    });
+    entCancelBtn.addEventListener('click', function() {
+        if (rhEntCurrentStep === 1) closeRightsEntitlementModal();
+        else rhEntBackToStep1();
+    });
+    entCloseBtn.addEventListener('click', closeRightsEntitlementModal);
+    entOverlay.addEventListener('click', function(e) {
+        if (e.target === entOverlay) closeRightsEntitlementModal();
+    });
+
+    // Entitlement date widget (clone the wrap to strip any old listeners)
+    freshClone('rhEntDateWrap');
     rhInitDateWidget('rhEnt');
 
     // Entitlement symbol search with wmsDropdown
@@ -60,14 +85,20 @@ function initRightsModule() {
     });
 
     // --- Payment modal ---
-    document.getElementById('rhPayCloseBtn').addEventListener('click', closeRightsPaymentModal);
-    document.getElementById('rhPayCancelBtn').addEventListener('click', closeRightsPaymentModal);
-    document.getElementById('rightsPaymentOverlay').addEventListener('click', function(e) {
-        if (e.target === this) closeRightsPaymentModal();
-    });
-    document.getElementById('rhPaySaveBtn').addEventListener('click', rhPaySaveTransactions);
+    var payCloseBtn  = freshClone('rhPayCloseBtn');
+    var payCancelBtn = freshClone('rhPayCancelBtn');
+    var paySaveBtn   = freshClone('rhPaySaveBtn');
+    var payOverlay   = document.getElementById('rightsPaymentOverlay');
 
-    // Payment date widget
+    payCloseBtn.addEventListener('click', closeRightsPaymentModal);
+    payCancelBtn.addEventListener('click', closeRightsPaymentModal);
+    paySaveBtn.addEventListener('click', rhPaySaveTransactions);
+    payOverlay.addEventListener('click', function(e) {
+        if (e.target === payOverlay) closeRightsPaymentModal();
+    });
+
+    // Payment date widget (clone wrap to strip old listeners)
+    freshClone('rhPayDateWrap');
     rhInitDateWidget('rhPay');
 
     // Payment security search (unrestricted — any security)
@@ -88,7 +119,7 @@ function initRightsModule() {
         rhSearchSymbol(payInput, payDd, rhPayDdCtrl, false);
     });
 
-    // ESC handler
+    // ESC handler (only one needed — checks which modal is visible)
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
             if (document.getElementById('rightsEntitlementOverlay').classList.contains('show')) {
@@ -110,7 +141,6 @@ function rhInitDateWidget(prefix) {
     var calBtn = document.getElementById(prefix + 'DateCalBtn');
     var calPicker = document.getElementById(prefix + 'DateCalPicker');
     var segs = wrap.querySelectorAll('.rhDate-seg');
-    var stateObj = prefix === 'rhEnt' ? 'rhEntDateState' : 'rhPayDateState';
 
     // Click on segment to activate
     segs.forEach(function(seg) {
@@ -406,11 +436,17 @@ function rhCalcHoldingsAsOfDate(shortSymbol, targetDate) {
 function openRightsEntitlementModal() {
     rhEntSelectedSecurity = null;
     rhEntHoldings = [];
+    rhEntCurrentStep = 1;
     rhDateSetFromDate('rhEnt', new Date());
     document.getElementById('rhEntSymbolInput').value = '';
     document.getElementById('rhEntSymbolBadge').innerHTML = '';
     document.getElementById('rhEntTableWrap').innerHTML = '<div class="rights-empty">Select a date and symbol to view holdings</div>';
     document.getElementById('rhEntConfirmBtn').disabled = true;
+    // Reset UI to step 1
+    document.getElementById('rhEntStep1').style.display = '';
+    document.getElementById('rhEntStep2').classList.remove('show');
+    document.getElementById('rhEntConfirmBtn').textContent = 'Confirm & Review';
+    document.getElementById('rhEntCancelBtn').textContent = 'Cancel';
     document.getElementById('rightsEntitlementOverlay').classList.add('show');
     setTimeout(function() { document.getElementById('rhEntSymbolInput').focus(); }, 100);
 }
@@ -468,7 +504,8 @@ function rhEntPopulateHoldings() {
 }
 
 // ============================================================================
-// ENTITLEMENT: Confirm → Open PE modal for RE- security review
+// ENTITLEMENT: Step 1 → Step 2 (Review RE security details)
+// Uses rhEntCurrentStep state — NO listener swapping
 // ============================================================================
 
 function rhEntConfirmAndReview() {
@@ -484,86 +521,64 @@ function rhEntConfirmAndReview() {
     });
     if (!hasAny) { alert('Please enter at least one rights quantity.'); return; }
 
-    document.getElementById('rightsEntitlementOverlay').classList.remove('show');
-
     var sec = rhEntSelectedSecurity;
     var shortSym = sec.nse_symbol || sec.symbol;
 
-    if (typeof openAddPeSecurityModal !== 'function') {
-        alert('Master Data module must be loaded first. Please open Master Database tab, then try again.');
-        document.getElementById('rightsEntitlementOverlay').classList.add('show');
-        return;
-    }
+    // Pre-fill review fields (symbol and ISIN are editable)
+    var reSymInput = document.getElementById('rhEntReSymbol');
+    var reIsinInput = document.getElementById('rhEntReIsin');
+    reSymInput.value = shortSym;
+    document.getElementById('rhEntReCompany').value = sec.company_name || shortSym;
+    reIsinInput.value = 'RE-' + shortSym;
+    document.getElementById('rhEntReType').value = 'RIGHTS';
 
-    openAddPeSecurityModal();
+    // Auto-sync ISIN when symbol is edited
+    reSymInput.oninput = function() {
+        reIsinInput.value = 'RE-' + reSymInput.value.trim().toUpperCase();
+    };
 
-    setTimeout(function() {
-        document.getElementById('peSecurityModalTitle').textContent = 'New Rights Security (Review & Save)';
-        document.getElementById('peSymbol').value = shortSym;
-        document.getElementById('peCompanyName').value = sec.company_name || shortSym;
-        document.getElementById('peIsin').value = 'RE-' + shortSym;
-        var typeSelect = document.getElementById('peType');
-        var hasRights = false;
-        for (var i = 0; i < typeSelect.options.length; i++) {
-            if (typeSelect.options[i].value === 'RIGHTS') { hasRights = true; break; }
+    // Build summary
+    var lines = [];
+    rhEntHoldings.forEach(function(h) {
+        if (h.rightsReceived > 0) {
+            lines.push(h.combinedLabel + ': ' + h.rightsReceived.toLocaleString() + ' rights');
         }
-        if (hasRights) {
-            typeSelect.value = 'RIGHTS';
-        } else {
-            typeSelect.value = '__new__';
-            document.getElementById('peTypeNew').style.display = 'block';
-            document.getElementById('peTypeNew').value = 'RIGHTS';
-        }
+    });
+    document.getElementById('rhEntReviewSummary').innerHTML =
+        '<strong>Entitlements to create:</strong><br>' + lines.join('<br>');
 
-        document.getElementById('peSymbol').oninput = function() {
-            var sym = this.value.trim().toUpperCase();
-            document.getElementById('peIsin').value = sym ? 'RE-' + sym : '';
-        };
+    // Show step 2, hide step 1
+    document.getElementById('rhEntStep1').style.display = 'none';
+    document.getElementById('rhEntStep2').classList.add('show');
 
-        window._rhOrigSavePeSecurity = window.savePeSecurity;
-        window.savePeSecurity = async function() {
-            await rhEntSaveSecurityAndTransactions();
-        };
-    }, 150);
+    // Update button labels (handlers stay the same — they check rhEntCurrentStep)
+    document.getElementById('rhEntConfirmBtn').textContent = 'Save';
+    document.getElementById('rhEntCancelBtn').textContent = 'Back';
+    rhEntCurrentStep = 2;
+}
+
+function rhEntBackToStep1() {
+    document.getElementById('rhEntStep1').style.display = '';
+    document.getElementById('rhEntStep2').classList.remove('show');
+    document.getElementById('rhEntConfirmBtn').textContent = 'Confirm & Review';
+    document.getElementById('rhEntCancelBtn').textContent = 'Cancel';
+    rhEntCurrentStep = 1;
 }
 
 // ============================================================================
 // ENTITLEMENT: Save RE security + create entitlement transactions
 // ============================================================================
 
-async function rhEntSaveSecurityAndTransactions() {
-    var symbol = document.getElementById('peSymbol').value.trim().toUpperCase();
-    var companyName = document.getElementById('peCompanyName').value.trim();
-    if (!symbol) { alert('Please enter a symbol'); return; }
-    if (!companyName) { alert('Please enter a company name'); return; }
+async function rhEntSave() {
+    var sec = rhEntSelectedSecurity;
+    var shortSym = document.getElementById('rhEntReSymbol').value.trim().toUpperCase();
+    var companyName = document.getElementById('rhEntReCompany').value.trim();
+    var isin = document.getElementById('rhEntReIsin').value.trim();
 
-    var isin = 'RE-' + symbol;
+    if (!shortSym || !companyName) { alert('Symbol and company name are required.'); return; }
 
-    var typeSel = document.getElementById('peType').value;
-    var securityType = typeSel === '__new__'
-        ? (document.getElementById('peTypeNew').value.trim().toUpperCase() || 'RIGHTS')
-        : typeSel || 'RIGHTS';
-
-    var acSel = document.getElementById('peAssetClass').value;
-    var assetClass = acSel === '__new__'
-        ? document.getElementById('peAssetClassNew').value.trim() || null
-        : acSel || null;
-
-    var secSel = document.getElementById('peSector').value;
-    var sector = secSel === '__new__'
-        ? document.getElementById('peSectorNew').value.trim() || null
-        : secSel || null;
-
-    var secData = {
-        symbol: symbol,
-        company_name: companyName,
-        isin: isin,
-        security_type: securityType,
-        asset_class: assetClass,
-        sector: sector,
-        lot_size: parseInt(document.getElementById('peLotSize').value) || 1,
-        is_active: document.getElementById('peStatus').value === 'true'
-    };
+    document.getElementById('rhEntConfirmBtn').disabled = true;
+    document.getElementById('rhEntConfirmBtn').textContent = 'Saving...';
 
     try {
         var headers = {
@@ -573,28 +588,40 @@ async function rhEntSaveSecurityAndTransactions() {
             'Prefer': 'return=representation'
         };
 
+        // Check if RE security already exists
         var checkResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?isin=eq.' + encodeURIComponent(isin) + '&select=id', {
             headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
         });
         var existing = await checkResp.json();
+        var newSecId;
+
         if (existing && existing.length > 0) {
-            alert('A security with ISIN "' + isin + '" already exists.');
-            return;
+            newSecId = existing[0].id;
+        } else {
+            var secData = {
+                symbol: shortSym,
+                company_name: companyName,
+                isin: isin,
+                security_type: 'RIGHTS',
+                asset_class: sec.asset_class || null,
+                sector: sec.sector || null,
+                lot_size: 1,
+                is_active: true
+            };
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(secData)
+            });
+            if (!resp.ok) {
+                var errBody = await resp.text();
+                throw new Error('Insert failed: ' + errBody);
+            }
+            var created = await resp.json();
+            newSecId = Array.isArray(created) ? created[0].id : created.id;
         }
 
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db', {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(secData)
-        });
-        if (!resp.ok) {
-            var errBody = await resp.text();
-            throw new Error('Insert failed: ' + errBody);
-        }
-
-        var created = await resp.json();
-        var newSecId = Array.isArray(created) ? created[0].id : created.id;
-
+        // Create entitlement transactions
         var dateStr = rhDateGetIsoStr('rhEnt');
         var txns = [];
         rhEntHoldings.forEach(function(h) {
@@ -604,7 +631,7 @@ async function rhEntSaveSecurityAndTransactions() {
                 trader_id: h.trader_id || null,
                 broker_id: h.broker_id,
                 security_id: newSecId,
-                security_type: securityType,
+                security_type: 'RIGHTS',
                 symbol: isin,
                 short_symbol: isin,
                 company_name: companyName,
@@ -628,7 +655,7 @@ async function rhEntSaveSecurityAndTransactions() {
                 broker_contract_note_no: null,
                 broker_trade_id: null,
                 tags: ['blank'],
-                notes: '[Rights Entitlement from ' + (rhEntSelectedSecurity.nse_symbol || rhEntSelectedSecurity.symbol) + ' on ' + dateStr + ']',
+                notes: '[Rights Entitlement from ' + shortSym + ' on ' + dateStr + ']',
                 is_locked: false,
                 ignore_for_avg_cost: false,
                 dont_display: false
@@ -639,13 +666,7 @@ async function rhEntSaveSecurityAndTransactions() {
             await rhBatchCreateTransactions(txns);
         }
 
-        if (window._rhOrigSavePeSecurity) {
-            window.savePeSecurity = window._rhOrigSavePeSecurity;
-            delete window._rhOrigSavePeSecurity;
-        }
-
-        if (typeof closePeSecurityModal === 'function') closePeSecurityModal();
-
+        closeRightsEntitlementModal();
         await wmsLoadSecuritiesCm();
         if (typeof trRefresh === 'function') await trRefresh();
 
@@ -654,6 +675,8 @@ async function rhEntSaveSecurityAndTransactions() {
     } catch (e) {
         console.error('Rights entitlement error:', e);
         alert('Error: ' + e.message);
+        document.getElementById('rhEntConfirmBtn').disabled = false;
+        document.getElementById('rhEntConfirmBtn').textContent = 'Save';
     }
 }
 
