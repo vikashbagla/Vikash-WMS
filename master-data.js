@@ -2085,9 +2085,10 @@ function renderUnified(resetPage) {
             ? r.expiry_dt.toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'2-digit' })
             : '<span style="color:#cbd5e0;">—</span>';
         const expiryCol  = r.expiry_dt ? (expired ? 'color:#dc2626;' : 'color:#059669;') : '';
-        var isPeUser = r.isin && r.isin.startsWith('PE-');
-        var symCell = isPeUser
-            ? '<td><strong style="font-size:12px;"><a href="#" onclick="openEditPeSecurityModal(\'' + r._id + '\');return false;" style="color:#9333ea;text-decoration:none;" title="Edit user-defined security">' + r.symbol + ' ✎</a></strong></td>'
+        var isUserDefined = r.isin && (r.isin.startsWith('PE-') || r.isin.startsWith('RE-'));
+        var udColor = r.isin && r.isin.startsWith('RE-') ? '#2563eb' : '#9333ea';
+        var symCell = isUserDefined
+            ? '<td><strong style="font-size:12px;"><a href="#" onclick="openEditPeSecurityModal(\'' + r._id + '\');return false;" style="color:' + udColor + ';text-decoration:none;" title="Edit user-defined security">' + r.symbol + ' ✎</a></strong></td>'
             : '<td><strong style="font-size:12px;">' + r.symbol + '</strong></td>';
         var trAttr = r._src === 'cm' && r._id
             ? '<tr data-secid="' + r._id + '" style="cursor:pointer;" title="Double-click to view details">'
@@ -3402,11 +3403,12 @@ function openEditPeSecurityModal(secId) {
     }
     document.getElementById('peSecurityModal').classList.add('show');
     document.addEventListener('keydown', _peModalEscHandler);
-    // Auto-update ISIN preview
+    // Auto-update ISIN preview — use correct prefix (PE- or RE-)
     var symInput = document.getElementById('peSymbol');
+    var isinPrefix = (sec.isin && sec.isin.startsWith('RE-')) ? 'RE-' : 'PE-';
     symInput.oninput = function() {
         var sym = symInput.value.trim().toUpperCase();
-        document.getElementById('peIsin').value = sym ? 'PE-' + sym : '';
+        document.getElementById('peIsin').value = sym ? isinPrefix + sym : '';
     };
 }
 
@@ -3417,7 +3419,10 @@ async function savePeSecurity() {
     if (!symbol) { alert('Please enter a symbol'); return; }
     if (!companyName) { alert('Please enter a company name'); return; }
 
-    var isin = 'PE-' + symbol;
+    // Preserve existing ISIN prefix (RE- for RIGHTS, PE- for private equity)
+    var existingIsin = document.getElementById('peIsin').value.trim();
+    var isinPrefix = existingIsin.startsWith('RE-') ? 'RE-' : 'PE-';
+    var isin = isinPrefix + symbol;
     // Resolve type — if "Add new" was selected, use the text input
     var typeSel = document.getElementById('peType').value;
     var securityType = typeSel === '__new__'

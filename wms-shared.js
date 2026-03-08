@@ -520,6 +520,12 @@ function wmsCalcAvgCost(transactions) {
             if (!txn.ignore_for_avg_cost) {
                 totalCost -= Math.abs(netAmt);
             }
+        } else if (txnType === 'RIGHTS_PAYMENT') {
+            // Rights payment: adds cost only, does NOT change quantity
+            // (the quantity was already added by RIGHTS_ENTITLEMENT)
+            if (!txn.ignore_for_avg_cost) {
+                totalCost += netAmt;
+            }
         } else {
             if (txn.ignore_for_avg_cost) continue;
             netQuantity += txn.quantity;

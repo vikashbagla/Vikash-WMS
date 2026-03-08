@@ -1484,7 +1484,7 @@ function trRenderTxnTable(txns) {
         tbody.innerHTML = displayTxns.map(function(txn) {
             var invBrk = trInvBrk(txn);
             var isIncome = INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
-            var typeClass = txn.transaction_type === 'BUY' ? 'positive' : (txn.transaction_type === 'SELL' ? 'negative' : '');
+            var typeClass = (txn.transaction_type === 'BUY' || txn.transaction_type === 'RIGHTS_ENTITLEMENT') ? 'positive' : (txn.transaction_type === 'SELL' ? 'negative' : (txn.transaction_type === 'RIGHTS_PAYMENT' ? 'neutral' : ''));
             var qty = txn.quantity || 0;
             var val = txn.net_amount || txn.gross_amount || 0;
             var displayPrice = (qty !== 0) ? Math.abs(val / qty) : 0;
