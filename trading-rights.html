@@ -39,6 +39,7 @@
 .rights-field input[type="text"] {
     padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 4px;
     font-size: 12px; color: #2d3748; outline: none;
+    height: 28px; box-sizing: border-box;
 }
 .rights-field input:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
 
@@ -47,12 +48,13 @@
     display: flex; align-items: center;
     padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 4px;
     cursor: text; user-select: none; font-size: 12px; color: #2d3748;
+    height: 28px; box-sizing: border-box;
 }
 .rhDate-wrap:focus-within { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
 .rhDate-seg { padding: 1px 2px; border-radius: 2px; cursor: pointer; }
 .rhDate-seg.active { background: #667eea; color: #fff; }
 .rhDate-sep { margin: 0 1px; color: #a0aec0; }
-.rhDate-cal-btn { background: none; border: none; cursor: pointer; font-size: 13px; margin-left: 4px; padding: 0; }
+.rhDate-cal-btn { background: none; border: none; cursor: pointer; font-size: 11px; margin-left: 4px; padding: 0; line-height: 1; }
 .rhDate-cal-picker { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
 
 /* Search dropdown — uses wmsDropdown with .show class */
@@ -159,14 +161,14 @@
                     </div>
                 </div>
                 <div class="rights-field" style="flex: 1;">
-                    <label>RE-Security</label>
-                    <input type="text" id="rhPaySecurityInput" placeholder="Search RE- security..." autocomplete="off">
+                    <label>Security</label>
+                    <input type="text" id="rhPaySecurityInput" placeholder="Search security..." autocomplete="off">
                     <div class="rights-search-dd" id="rhPaySecurityDd"></div>
                     <div id="rhPaySecurityBadge"></div>
                 </div>
             </div>
             <div id="rhPayTableWrap">
-                <div class="rights-empty">Select a date and RE-security to view holdings</div>
+                <div class="rights-empty">Select a date and security to view holdings</div>
             </div>
         </div>
         <div class="rights-footer">

@@ -307,8 +307,13 @@ function rhSearchSymbol(input, dd, ddCtrl, reOnly) {
 
     var results = wmsSearchSecurities(q);
     if (reOnly) {
+        // Filter to securities that have RIGHTS_ENTITLEMENT transactions
+        var reSecIds = {};
+        trTransactions.forEach(function(t) {
+            if (t.transaction_type === 'RIGHTS_ENTITLEMENT') reSecIds[t.security_id] = true;
+        });
         results = results.filter(function(s) {
-            return s.isin && s.isin.indexOf('RE-') === 0;
+            return reSecIds[s.id];
         });
     }
 
@@ -658,7 +663,7 @@ function openRightsPaymentModal() {
     rhDateSetFromDate('rhPay', new Date());
     document.getElementById('rhPaySecurityInput').value = '';
     document.getElementById('rhPaySecurityBadge').innerHTML = '';
-    document.getElementById('rhPayTableWrap').innerHTML = '<div class="rights-empty">Select a date and RE-security to view holdings</div>';
+    document.getElementById('rhPayTableWrap').innerHTML = '<div class="rights-empty">Select a date and security to view holdings</div>';
     document.getElementById('rhPaySaveBtn').disabled = true;
     document.getElementById('rightsPaymentOverlay').classList.add('show');
     setTimeout(function() { document.getElementById('rhPaySecurityInput').focus(); }, 100);
@@ -684,7 +689,7 @@ function rhPaySelectSecurity(security) {
 function rhPayPopulateHoldings() {
     var dateStr = rhDateGetIsoStr('rhPay');
     if (!rhPaySelectedSecurity) {
-        document.getElementById('rhPayTableWrap').innerHTML = '<div class="rights-empty">Select a date and RE-security to view holdings</div>';
+        document.getElementById('rhPayTableWrap').innerHTML = '<div class="rights-empty">Select a date and security to view holdings</div>';
         document.getElementById('rhPaySaveBtn').disabled = true;
         return;
     }
@@ -694,7 +699,7 @@ function rhPayPopulateHoldings() {
     rhPayHoldings = holdings;
 
     if (holdings.length === 0) {
-        document.getElementById('rhPayTableWrap').innerHTML = '<div class="rights-empty">No RE holdings found for ' + shortSym + ' as of ' + dateStr + '</div>';
+        document.getElementById('rhPayTableWrap').innerHTML = '<div class="rights-empty">No holdings found for ' + shortSym + ' as of ' + dateStr + '</div>';
         document.getElementById('rhPaySaveBtn').disabled = true;
         return;
     }
