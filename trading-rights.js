@@ -6,10 +6,21 @@
 // Entitlement state
 var rhEntSelectedSecurity = null;   // {id, symbol, company_name, ...} from wmsRefData
 var rhEntHoldings = [];             // [{investor_id, trader_id, broker_id, netQuantity, ...}]
+var rhEntDdCtrl = null;             // wmsDropdown controller for entitlement symbol search
+var rhEntDateState = { day: 1, month: 0, year: 2026 };
+var rhEntDateActiveSeg = null;
+var rhEntDateTypeBuf = '';
 
 // Payment state
 var rhPaySelectedSecurity = null;   // RE- security object
 var rhPayHoldings = [];
+var rhPayDdCtrl = null;             // wmsDropdown controller for payment security search
+var rhPayDateState = { day: 1, month: 0, year: 2026 };
+var rhPayDateActiveSeg = null;
+var rhPayDateTypeBuf = '';
+
+// Month names for segmented date widget
+var RH_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // ============================================================================
 // INIT
@@ -23,25 +34,26 @@ function initRightsModule() {
         if (e.target === this) closeRightsEntitlementModal();
     });
     document.getElementById('rhEntConfirmBtn').addEventListener('click', rhEntConfirmAndReview);
-    document.getElementById('rhEntDate').addEventListener('change', rhEntPopulateHoldings);
 
-    // Entitlement symbol search
+    // Entitlement date widget
+    rhInitDateWidget('rhEnt');
+
+    // Entitlement symbol search with wmsDropdown
     var entInput = document.getElementById('rhEntSymbolInput');
     var entDd = document.getElementById('rhEntSymbolDd');
+    rhEntDdCtrl = wmsDropdown(entInput, entDd, {
+        itemSelector: '.wms-dd-item',
+        closeOnSelect: true,
+        blurDelay: 200,
+        escClearsInput: false,
+        onSelect: function(itemEl) {
+            var idx = parseInt(itemEl.dataset.idx);
+            var results = entDd._rhResults || [];
+            if (results[idx]) rhEntSelectSymbol(results[idx]);
+        }
+    });
     entInput.addEventListener('input', function() {
-        rhSearchSymbol(entInput, entDd, false);
-    });
-    entInput.addEventListener('blur', function() {
-        setTimeout(function() { entDd.style.display = 'none'; }, 200);
-    });
-    entDd.addEventListener('mousedown', function(e) {
-        var item = e.target.closest('.rh-dd-item');
-        if (!item) return;
-        e.preventDefault();
-        var idx = parseInt(item.dataset.idx);
-        var results = entDd._rhResults || [];
-        if (results[idx]) rhEntSelectSymbol(results[idx]);
-        entDd.style.display = 'none';
+        rhSearchSymbol(entInput, entDd, rhEntDdCtrl, false);
     });
 
     // --- Payment modal ---
@@ -51,25 +63,26 @@ function initRightsModule() {
         if (e.target === this) closeRightsPaymentModal();
     });
     document.getElementById('rhPaySaveBtn').addEventListener('click', rhPaySaveTransactions);
-    document.getElementById('rhPayDate').addEventListener('change', rhPayPopulateHoldings);
+
+    // Payment date widget
+    rhInitDateWidget('rhPay');
 
     // Payment security search (RE- only)
     var payInput = document.getElementById('rhPaySecurityInput');
     var payDd = document.getElementById('rhPaySecurityDd');
+    rhPayDdCtrl = wmsDropdown(payInput, payDd, {
+        itemSelector: '.wms-dd-item',
+        closeOnSelect: true,
+        blurDelay: 200,
+        escClearsInput: false,
+        onSelect: function(itemEl) {
+            var idx = parseInt(itemEl.dataset.idx);
+            var results = payDd._rhResults || [];
+            if (results[idx]) rhPaySelectSecurity(results[idx]);
+        }
+    });
     payInput.addEventListener('input', function() {
-        rhSearchSymbol(payInput, payDd, true);
-    });
-    payInput.addEventListener('blur', function() {
-        setTimeout(function() { payDd.style.display = 'none'; }, 200);
-    });
-    payDd.addEventListener('mousedown', function(e) {
-        var item = e.target.closest('.rh-dd-item');
-        if (!item) return;
-        e.preventDefault();
-        var idx = parseInt(item.dataset.idx);
-        var results = payDd._rhResults || [];
-        if (results[idx]) rhPaySelectSecurity(results[idx]);
-        payDd.style.display = 'none';
+        rhSearchSymbol(payInput, payDd, rhPayDdCtrl, true);
     });
 
     // ESC handler
@@ -85,16 +98,215 @@ function initRightsModule() {
 }
 
 // ============================================================================
-// SHARED: Symbol search
+// SEGMENTED DATE WIDGET (reusable for both modals)
+// prefix = 'rhEnt' or 'rhPay'
 // ============================================================================
 
-function rhSearchSymbol(input, dd, reOnly) {
+function rhInitDateWidget(prefix) {
+    var wrap = document.getElementById(prefix + 'DateWrap');
+    var calBtn = document.getElementById(prefix + 'DateCalBtn');
+    var calPicker = document.getElementById(prefix + 'DateCalPicker');
+    var segs = wrap.querySelectorAll('.rhDate-seg');
+    var stateObj = prefix === 'rhEnt' ? 'rhEntDateState' : 'rhPayDateState';
+
+    // Click on segment to activate
+    segs.forEach(function(seg) {
+        seg.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            rhDateSetActive(prefix, seg.dataset.seg);
+            wrap.focus();
+        });
+    });
+
+    // Calendar button
+    calBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        calPicker.showPicker ? calPicker.showPicker() : calPicker.click();
+    });
+    calPicker.addEventListener('change', function() {
+        if (!calPicker.value) return;
+        var d = new Date(calPicker.value + 'T00:00:00');
+        rhDateSetFromDate(prefix, d);
+        rhDateOnChange(prefix);
+    });
+
+    // Keyboard navigation
+    wrap.addEventListener('keydown', function(e) {
+        var activeSeg = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+        if (!activeSeg) rhDateSetActive(prefix, 'dd');
+
+        if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            rhDateMoveSeg(prefix, -1);
+        } else if (e.key === 'ArrowRight' || e.key === 'Tab' && !e.shiftKey) {
+            var seg = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+            if (seg !== 'yyyy') {
+                e.preventDefault();
+                rhDateMoveSeg(prefix, 1);
+            } else {
+                rhDateClearActive(prefix);
+            }
+        } else if (e.key === 'Tab' && e.shiftKey) {
+            var seg2 = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+            if (seg2 !== 'dd') {
+                e.preventDefault();
+                rhDateMoveSeg(prefix, -1);
+            } else {
+                rhDateClearActive(prefix);
+            }
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            rhDateAdjust(prefix, 1);
+        } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            rhDateAdjust(prefix, -1);
+        } else if (/^[0-9]$/.test(e.key)) {
+            e.preventDefault();
+            rhDateTypeDigit(prefix, e.key);
+        } else if (/^[a-zA-Z]$/.test(e.key)) {
+            e.preventDefault();
+            rhDateTypeLetter(prefix, e.key);
+        }
+    });
+}
+
+function rhDateGetState(prefix) {
+    return prefix === 'rhEnt' ? rhEntDateState : rhPayDateState;
+}
+
+function rhDateDaysInMonth(month, year) {
+    return new Date(year, month + 1, 0).getDate();
+}
+
+function rhDateSetActive(prefix, seg) {
+    if (prefix === 'rhEnt') { rhEntDateActiveSeg = seg; rhEntDateTypeBuf = ''; }
+    else { rhPayDateActiveSeg = seg; rhPayDateTypeBuf = ''; }
+    var wrap = document.getElementById(prefix + 'DateWrap');
+    wrap.querySelectorAll('.rhDate-seg').forEach(function(el) {
+        el.classList.toggle('active', el.dataset.seg === seg);
+    });
+}
+
+function rhDateClearActive(prefix) {
+    if (prefix === 'rhEnt') { rhEntDateActiveSeg = null; }
+    else { rhPayDateActiveSeg = null; }
+    var wrap = document.getElementById(prefix + 'DateWrap');
+    wrap.querySelectorAll('.rhDate-seg').forEach(function(el) { el.classList.remove('active'); });
+}
+
+function rhDateMoveSeg(prefix, dir) {
+    var order = ['dd', 'mmm', 'yyyy'];
+    var active = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+    var idx = order.indexOf(active);
+    var next = idx + dir;
+    if (next >= 0 && next < order.length) rhDateSetActive(prefix, order[next]);
+}
+
+function rhDateAdjust(prefix, delta) {
+    var st = rhDateGetState(prefix);
+    var active = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+    if (active === 'dd') {
+        st.day += delta;
+        var maxDay = rhDateDaysInMonth(st.month, st.year);
+        if (st.day > maxDay) st.day = 1;
+        if (st.day < 1) st.day = maxDay;
+    } else if (active === 'mmm') {
+        st.month += delta;
+        if (st.month > 11) st.month = 0;
+        if (st.month < 0) st.month = 11;
+        var maxD = rhDateDaysInMonth(st.month, st.year);
+        if (st.day > maxD) st.day = maxD;
+    } else if (active === 'yyyy') {
+        st.year += delta;
+    }
+    rhDateRender(prefix);
+    rhDateOnChange(prefix);
+}
+
+function rhDateTypeDigit(prefix, ch) {
+    var st = rhDateGetState(prefix);
+    var active = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+    var buf = prefix === 'rhEnt' ? rhEntDateTypeBuf : rhPayDateTypeBuf;
+    buf += ch;
+    if (prefix === 'rhEnt') rhEntDateTypeBuf = buf; else rhPayDateTypeBuf = buf;
+
+    if (active === 'dd') {
+        var d = parseInt(buf);
+        if (buf.length >= 2 || d > 3) {
+            st.day = Math.min(Math.max(d, 1), rhDateDaysInMonth(st.month, st.year));
+            rhDateRender(prefix);
+            rhDateMoveSeg(prefix, 1);
+            rhDateOnChange(prefix);
+        }
+    } else if (active === 'yyyy') {
+        if (buf.length >= 4) {
+            st.year = parseInt(buf) || st.year;
+            rhDateRender(prefix);
+            rhDateOnChange(prefix);
+            if (prefix === 'rhEnt') rhEntDateTypeBuf = ''; else rhPayDateTypeBuf = '';
+        }
+    }
+}
+
+function rhDateTypeLetter(prefix, ch) {
+    var active = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+    if (active !== 'mmm') return;
+    var buf = prefix === 'rhEnt' ? rhEntDateTypeBuf : rhPayDateTypeBuf;
+    buf += ch.toLowerCase();
+    if (prefix === 'rhEnt') rhEntDateTypeBuf = buf; else rhPayDateTypeBuf = buf;
+
+    var st = rhDateGetState(prefix);
+    for (var i = 0; i < 12; i++) {
+        if (RH_MONTHS[i].toLowerCase().indexOf(buf) === 0) {
+            st.month = i;
+            var maxD = rhDateDaysInMonth(st.month, st.year);
+            if (st.day > maxD) st.day = maxD;
+            rhDateRender(prefix);
+            if (buf.length >= 3) {
+                rhDateMoveSeg(prefix, 1);
+                rhDateOnChange(prefix);
+            }
+            return;
+        }
+    }
+}
+
+function rhDateRender(prefix) {
+    var st = rhDateGetState(prefix);
+    document.getElementById(prefix + 'DateDd').textContent = (st.day < 10 ? '0' : '') + st.day;
+    document.getElementById(prefix + 'DateMmm').textContent = RH_MONTHS[st.month];
+    document.getElementById(prefix + 'DateYyyy').textContent = st.year;
+}
+
+function rhDateSetFromDate(prefix, d) {
+    var st = rhDateGetState(prefix);
+    st.day = d.getDate();
+    st.month = d.getMonth();
+    st.year = d.getFullYear();
+    rhDateRender(prefix);
+}
+
+function rhDateGetIsoStr(prefix) {
+    var st = rhDateGetState(prefix);
+    var m = st.month + 1;
+    return st.year + '-' + (m < 10 ? '0' : '') + m + '-' + (st.day < 10 ? '0' : '') + st.day;
+}
+
+function rhDateOnChange(prefix) {
+    if (prefix === 'rhEnt') rhEntPopulateHoldings();
+    else rhPayPopulateHoldings();
+}
+
+// ============================================================================
+// SHARED: Symbol search (populates dropdown, uses wmsDropdown for keyboard nav)
+// ============================================================================
+
+function rhSearchSymbol(input, dd, ddCtrl, reOnly) {
     var q = input.value.trim();
-    if (q.length < 1) { dd.style.display = 'none'; dd._rhResults = []; return; }
+    if (q.length < 1) { ddCtrl.close(); dd._rhResults = []; return; }
 
     var results = wmsSearchSecurities(q);
     if (reOnly) {
-        // Filter to RE- prefix securities only
         results = results.filter(function(s) {
             return s.isin && s.isin.indexOf('RE-') === 0;
         });
@@ -104,17 +316,18 @@ function rhSearchSymbol(input, dd, reOnly) {
     dd.innerHTML = '';
     if (results.length === 0) {
         dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">No securities found</div>';
-        dd.style.display = 'block';
+        ddCtrl.show();
         return;
     }
     results.forEach(function(sec, idx) {
         var div = document.createElement('div');
-        div.className = 'rh-dd-item';
+        div.className = 'wms-dd-item';
         div.dataset.idx = idx;
         div.innerHTML = '<strong>' + (sec.nse_symbol || sec.symbol) + '</strong> — ' + sec.company_name;
         dd.appendChild(div);
     });
-    dd.style.display = 'block';
+    ddCtrl.show();
+    ddCtrl.resetIdx();
 }
 
 // ============================================================================
@@ -122,13 +335,11 @@ function rhSearchSymbol(input, dd, reOnly) {
 // ============================================================================
 
 function rhCalcHoldingsAsOfDate(shortSymbol, targetDate) {
-    // Filter transactions: matching symbol, date <= targetDate, not hidden
     var filtered = trTransactions.filter(function(t) {
         var sym = t.short_symbol || t.symbol;
         return !t.dont_display && sym === shortSymbol && t.transaction_date <= targetDate;
     });
 
-    // Group by investor_id|trader_id|broker_id
     var groups = {};
     filtered.forEach(function(t) {
         var key = (t.investor_id || '') + '|' + (t.trader_id || '') + '|' + (t.broker_id || '');
@@ -143,7 +354,6 @@ function rhCalcHoldingsAsOfDate(shortSymbol, targetDate) {
         groups[key].txns.push(t);
     });
 
-    // Calc avg cost per group, resolve display names
     var invMap = wmsRefData.investorObjMap || {};
     var brkMap = wmsRefData.brokerObjMap || {};
     var results = [];
@@ -151,19 +361,28 @@ function rhCalcHoldingsAsOfDate(shortSymbol, targetDate) {
     Object.keys(groups).forEach(function(key) {
         var g = groups[key];
         var calc = wmsCalcAvgCost(g.txns);
-        if (calc.netQuantity <= 0) return; // skip zero/negative
+        if (calc.netQuantity <= 0) return;
 
         var inv = invMap[g.investor_id];
         var trader = g.trader_id ? invMap[g.trader_id] : null;
         var brk = brkMap[g.broker_id];
 
+        // Build combined "Inv > Trader > Broker" label
+        var invLabel = inv ? (inv.short_name || inv.name) : '—';
+        var trdLabel = trader ? (trader.short_name || trader.name) : '';
+        var brkLabel = brk ? (brk.broker_code || brk.name) : '—';
+        var combined = invLabel;
+        if (trdLabel && trdLabel !== invLabel) combined += ' > ' + trdLabel;
+        if (brkLabel) combined += ' > ' + brkLabel;
+
         results.push({
             investor_id: g.investor_id,
             trader_id: g.trader_id,
             broker_id: g.broker_id,
-            invName: inv ? (inv.short_name || inv.name) : '—',
-            traderName: trader ? (trader.short_name || trader.name) : '',
-            brkName: brk ? (brk.broker_code || brk.name) : '—',
+            invName: invLabel,
+            traderName: trdLabel,
+            brkName: brkLabel,
+            combinedLabel: combined,
             netQuantity: calc.netQuantity,
             avgCost: calc.avgCost
         });
@@ -179,7 +398,7 @@ function rhCalcHoldingsAsOfDate(shortSymbol, targetDate) {
 function openRightsEntitlementModal() {
     rhEntSelectedSecurity = null;
     rhEntHoldings = [];
-    document.getElementById('rhEntDate').value = new Date().toISOString().split('T')[0];
+    rhDateSetFromDate('rhEnt', new Date());
     document.getElementById('rhEntSymbolInput').value = '';
     document.getElementById('rhEntSymbolBadge').innerHTML = '';
     document.getElementById('rhEntTableWrap').innerHTML = '<div class="rights-empty">Select a date and symbol to view holdings</div>';
@@ -206,8 +425,8 @@ function rhEntSelectSymbol(security) {
 }
 
 function rhEntPopulateHoldings() {
-    var dateStr = document.getElementById('rhEntDate').value;
-    if (!dateStr || !rhEntSelectedSecurity) {
+    var dateStr = rhDateGetIsoStr('rhEnt');
+    if (!rhEntSelectedSecurity) {
         document.getElementById('rhEntTableWrap').innerHTML = '<div class="rights-empty">Select a date and symbol to view holdings</div>';
         document.getElementById('rhEntConfirmBtn').disabled = true;
         return;
@@ -224,15 +443,13 @@ function rhEntPopulateHoldings() {
     }
 
     var html = '<table class="rights-table"><thead><tr>' +
-        '<th>Investor</th><th>Trader</th><th>Broker</th>' +
+        '<th>Investor &gt; Trader &gt; Broker</th>' +
         '<th class="r">Current Qty</th><th class="r">Rights Recd</th>' +
         '</tr></thead><tbody>';
     holdings.forEach(function(h, idx) {
         html += '<tr>' +
-            '<td>' + h.invName + '</td>' +
-            '<td>' + h.traderName + '</td>' +
-            '<td>' + h.brkName + '</td>' +
-            '<td class="r">' + h.netQuantity + '</td>' +
+            '<td>' + h.combinedLabel + '</td>' +
+            '<td class="r">' + h.netQuantity.toLocaleString() + '</td>' +
             '<td class="r"><input type="number" min="0" step="1" data-idx="' + idx + '" class="rh-ent-qty"></td>' +
             '</tr>';
     });
@@ -246,7 +463,6 @@ function rhEntPopulateHoldings() {
 // ============================================================================
 
 function rhEntConfirmAndReview() {
-    // Collect quantities
     var inputs = document.querySelectorAll('.rh-ent-qty');
     var hasAny = false;
     inputs.forEach(function(inp) {
@@ -259,30 +475,24 @@ function rhEntConfirmAndReview() {
     });
     if (!hasAny) { alert('Please enter at least one rights quantity.'); return; }
 
-    // Close entitlement modal (keep state)
     document.getElementById('rightsEntitlementOverlay').classList.remove('show');
 
-    // Pre-fill the PE modal for RE- security creation
     var sec = rhEntSelectedSecurity;
     var shortSym = sec.nse_symbol || sec.symbol;
 
-    // Check if master-data module is loaded (PE modal is there)
     if (typeof openAddPeSecurityModal !== 'function') {
         alert('Master Data module must be loaded first. Please open Master Database tab, then try again.');
         document.getElementById('rightsEntitlementOverlay').classList.add('show');
         return;
     }
 
-    // Open as new (not edit)
     openAddPeSecurityModal();
 
-    // Override fields for RE- security
     setTimeout(function() {
         document.getElementById('peSecurityModalTitle').textContent = 'New Rights Security (Review & Save)';
         document.getElementById('peSymbol').value = shortSym;
         document.getElementById('peCompanyName').value = sec.company_name || shortSym;
         document.getElementById('peIsin').value = 'RE-' + shortSym;
-        // Set type to RIGHTS if available in dropdown, else set as new
         var typeSelect = document.getElementById('peType');
         var hasRights = false;
         for (var i = 0; i < typeSelect.options.length; i++) {
@@ -296,13 +506,11 @@ function rhEntConfirmAndReview() {
             document.getElementById('peTypeNew').value = 'RIGHTS';
         }
 
-        // Override ISIN auto-update to use RE- prefix
         document.getElementById('peSymbol').oninput = function() {
             var sym = this.value.trim().toUpperCase();
             document.getElementById('peIsin').value = sym ? 'RE-' + sym : '';
         };
 
-        // Override savePeSecurity to chain into rights flow
         window._rhOrigSavePeSecurity = window.savePeSecurity;
         window.savePeSecurity = async function() {
             await rhEntSaveSecurityAndTransactions();
@@ -322,19 +530,16 @@ async function rhEntSaveSecurityAndTransactions() {
 
     var isin = 'RE-' + symbol;
 
-    // Resolve type
     var typeSel = document.getElementById('peType').value;
     var securityType = typeSel === '__new__'
         ? (document.getElementById('peTypeNew').value.trim().toUpperCase() || 'RIGHTS')
         : typeSel || 'RIGHTS';
 
-    // Resolve asset class
     var acSel = document.getElementById('peAssetClass').value;
     var assetClass = acSel === '__new__'
         ? document.getElementById('peAssetClassNew').value.trim() || null
         : acSel || null;
 
-    // Resolve sector
     var secSel = document.getElementById('peSector').value;
     var sector = secSel === '__new__'
         ? document.getElementById('peSectorNew').value.trim() || null
@@ -359,7 +564,6 @@ async function rhEntSaveSecurityAndTransactions() {
             'Prefer': 'return=representation'
         };
 
-        // Check if RE-SYMBOL ISIN already exists
         var checkResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?isin=eq.' + encodeURIComponent(isin) + '&select=id', {
             headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
         });
@@ -369,7 +573,6 @@ async function rhEntSaveSecurityAndTransactions() {
             return;
         }
 
-        // Insert new RE security
         var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db', {
             method: 'POST',
             headers: headers,
@@ -383,8 +586,7 @@ async function rhEntSaveSecurityAndTransactions() {
         var created = await resp.json();
         var newSecId = Array.isArray(created) ? created[0].id : created.id;
 
-        // Now create entitlement transactions
-        var dateStr = document.getElementById('rhEntDate').value;
+        var dateStr = rhDateGetIsoStr('rhEnt');
         var txns = [];
         rhEntHoldings.forEach(function(h) {
             if (!h.rightsReceived || h.rightsReceived <= 0) return;
@@ -428,16 +630,13 @@ async function rhEntSaveSecurityAndTransactions() {
             await rhBatchCreateTransactions(txns);
         }
 
-        // Restore original savePeSecurity
         if (window._rhOrigSavePeSecurity) {
             window.savePeSecurity = window._rhOrigSavePeSecurity;
             delete window._rhOrigSavePeSecurity;
         }
 
-        // Close PE modal
-        closePeSecurityModal();
+        if (typeof closePeSecurityModal === 'function') closePeSecurityModal();
 
-        // Refresh caches
         await wmsLoadSecuritiesCm();
         if (typeof trRefresh === 'function') await trRefresh();
 
@@ -456,7 +655,7 @@ async function rhEntSaveSecurityAndTransactions() {
 function openRightsPaymentModal() {
     rhPaySelectedSecurity = null;
     rhPayHoldings = [];
-    document.getElementById('rhPayDate').value = new Date().toISOString().split('T')[0];
+    rhDateSetFromDate('rhPay', new Date());
     document.getElementById('rhPaySecurityInput').value = '';
     document.getElementById('rhPaySecurityBadge').innerHTML = '';
     document.getElementById('rhPayTableWrap').innerHTML = '<div class="rights-empty">Select a date and RE-security to view holdings</div>';
@@ -483,8 +682,8 @@ function rhPaySelectSecurity(security) {
 }
 
 function rhPayPopulateHoldings() {
-    var dateStr = document.getElementById('rhPayDate').value;
-    if (!dateStr || !rhPaySelectedSecurity) {
+    var dateStr = rhDateGetIsoStr('rhPay');
+    if (!rhPaySelectedSecurity) {
         document.getElementById('rhPayTableWrap').innerHTML = '<div class="rights-empty">Select a date and RE-security to view holdings</div>';
         document.getElementById('rhPaySaveBtn').disabled = true;
         return;
@@ -501,16 +700,14 @@ function rhPayPopulateHoldings() {
     }
 
     var html = '<table class="rights-table"><thead><tr>' +
-        '<th>Investor</th><th>Trader</th><th>Broker</th>' +
+        '<th>Inv &gt; Trader &gt; Broker</th>' +
         '<th class="r">RE Qty</th><th class="r">Price</th>' +
         '<th class="r">Charges</th><th class="r">Total</th>' +
         '</tr></thead><tbody>';
     holdings.forEach(function(h, idx) {
         html += '<tr>' +
-            '<td>' + h.invName + '</td>' +
-            '<td>' + h.traderName + '</td>' +
-            '<td>' + h.brkName + '</td>' +
-            '<td class="r">' + h.netQuantity + '</td>' +
+            '<td>' + h.combinedLabel + '</td>' +
+            '<td class="r">' + h.netQuantity.toLocaleString() + '</td>' +
             '<td class="r"><input type="number" min="0" step="0.01" data-idx="' + idx + '" class="rh-pay-price" oninput="rhPayUpdateTotal(' + idx + ')"></td>' +
             '<td class="r"><input type="number" min="0" step="0.01" data-idx="' + idx + '" class="rh-pay-charges" value="0" oninput="rhPayUpdateTotal(' + idx + ')"></td>' +
             '<td class="r"><span id="rh-pay-total-' + idx + '">0</span></td>' +
@@ -540,8 +737,8 @@ function rhPayUpdateTotal(idx) {
 // ============================================================================
 
 async function rhPaySaveTransactions() {
-    var dateStr = document.getElementById('rhPayDate').value;
-    if (!dateStr || !rhPaySelectedSecurity) { alert('Select date and security first.'); return; }
+    var dateStr = rhDateGetIsoStr('rhPay');
+    if (!rhPaySelectedSecurity) { alert('Select date and security first.'); return; }
 
     var sec = rhPaySelectedSecurity;
     var sym = sec.nse_symbol || sec.symbol;
@@ -553,7 +750,7 @@ async function rhPaySaveTransactions() {
         var chargesInput = document.querySelector('.rh-pay-charges[data-idx="' + idx + '"]');
         var price = parseFloat(priceInput ? priceInput.value : 0) || 0;
         var charges = parseFloat(chargesInput ? chargesInput.value : 0) || 0;
-        if (price <= 0) return; // skip rows with no price
+        if (price <= 0) return;
 
         var grossAmount = h.netQuantity * price;
         txns.push({

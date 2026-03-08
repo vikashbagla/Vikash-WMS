@@ -127,7 +127,9 @@ function trSetupEventHandlers() {
             var isOpen = othersDropdown.style.display !== 'none';
             othersDropdown.style.display = isOpen ? 'none' : 'block';
         });
-        document.addEventListener('click', function() {
+        document.addEventListener('click', function(e) {
+            if (othersBtn.contains(e.target)) return;
+            if (othersDropdown.contains(e.target)) return;
             othersDropdown.style.display = 'none';
         });
         othersDropdown.addEventListener('click', function(e) {
