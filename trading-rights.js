@@ -67,7 +67,7 @@ function initRightsModule() {
     // Payment date widget
     rhInitDateWidget('rhPay');
 
-    // Payment security search (RE- only)
+    // Payment security search (unrestricted — any security)
     var payInput = document.getElementById('rhPaySecurityInput');
     var payDd = document.getElementById('rhPaySecurityDd');
     rhPayDdCtrl = wmsDropdown(payInput, payDd, {
@@ -82,7 +82,7 @@ function initRightsModule() {
         }
     });
     payInput.addEventListener('input', function() {
-        rhSearchSymbol(payInput, payDd, rhPayDdCtrl, true);
+        rhSearchSymbol(payInput, payDd, rhPayDdCtrl, false);
     });
 
     // ESC handler
