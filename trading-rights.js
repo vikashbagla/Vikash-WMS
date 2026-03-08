@@ -27,6 +27,9 @@ var RH_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','No
 // ============================================================================
 
 function initRightsModule() {
+    if (window._rhModuleInitDone) return;
+    window._rhModuleInitDone = true;
+
     // --- Entitlement modal ---
     document.getElementById('rhEntCloseBtn').addEventListener('click', closeRightsEntitlementModal);
     document.getElementById('rhEntCancelBtn').addEventListener('click', closeRightsEntitlementModal);
