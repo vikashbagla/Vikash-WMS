@@ -231,7 +231,7 @@ function getPrice(holding) {
     const fyersKey = exch === 'NFO'
         ? `NSE:${holding.symbol}`                           // F&O: NSE:NATIONALUM26FEBFUT
         : `${exch}:${holding.shortSymbol || holding.symbol}-EQ`; // Equity: NSE:RELIANCE-EQ
-    return livePrices[fyersKey] || holding.latestPrice;
+    return livePrices[fyersKey] || holding.avgCost || holding.latestPrice;
 }
 
 // ============================================================================
