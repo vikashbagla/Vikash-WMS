@@ -448,9 +448,9 @@ function rhEntPopulateHoldings() {
     }
 
     var html = '<table class="rights-table"><thead><tr>' +
-        '<th>Inv &gt; Trd &gt; Brk</th>' +
-        '<th class="r" style="width:80px">Cur Qty</th>' +
-        '<th class="r" style="width:80px">Rights Recd</th>' +
+        '<th style="width:40%">Inv &gt; Trd &gt; Brk</th>' +
+        '<th class="r" style="width:30%">Cur Qty</th>' +
+        '<th class="r" style="width:30%">Rights Recd</th>' +
         '</tr></thead><tbody>';
     holdings.forEach(function(h, idx) {
         html += '<tr>' +
@@ -706,11 +706,11 @@ function rhPayPopulateHoldings() {
     }
 
     var html = '<table class="rights-table"><thead><tr>' +
-        '<th>Inv &gt; Trd &gt; Brk</th>' +
-        '<th class="r" style="width:60px">RE Qty</th>' +
-        '<th class="r" style="width:70px">Price</th>' +
-        '<th class="r" style="width:70px">Charges</th>' +
-        '<th class="r" style="width:70px">Total</th>' +
+        '<th style="width:30%">Inv &gt; Trd &gt; Brk</th>' +
+        '<th class="r" style="width:14%">RE Qty</th>' +
+        '<th class="r" style="width:19%">Price</th>' +
+        '<th class="r" style="width:19%">Charges</th>' +
+        '<th class="r" style="width:18%">Total</th>' +
         '</tr></thead><tbody>';
     holdings.forEach(function(h, idx) {
         html += '<tr>' +
