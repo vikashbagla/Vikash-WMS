@@ -1450,8 +1450,7 @@ function trRenderTxnTable(txns) {
     var runningQtyMap = {};
     var runSum = 0;
     chronoTxns.forEach(function(t) {
-        var isIncome = INCOME_TYPES.indexOf(t.transaction_type) >= 0;
-        if (!isIncome) {
+        if (!wmsIsQtyExcluded(t.transaction_type)) {
             runSum += (t.quantity || 0);
         }
         runningQtyMap[t.id] = runSum;

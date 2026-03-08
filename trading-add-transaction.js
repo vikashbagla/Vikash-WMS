@@ -1161,15 +1161,17 @@ function atShowBalanceQtyTooltip(rowId, row) {
     var symbol = row.symbol;
 
     var txns = (typeof trTransactions !== 'undefined') ? trTransactions : [];
-    var balanceQty = 0;
+    var filtered = [];
     for (var i = 0; i < txns.length; i++) {
         var t = txns[i];
         if (t.investor_id === investorId && t.broker_id === brokerId &&
             (t.trader_id || t.investor_id) === traderId && t.symbol === symbol &&
-            !t.dont_display && !t.ignore_for_avg_cost) {
-            balanceQty += (t.quantity || 0);
+            !t.dont_display) {
+            filtered.push(t);
         }
     }
+    var calc = wmsCalcAvgCost(filtered);
+    var balanceQty = calc.netQuantity;
 
     // Show balance as tooltip AND as a visible label below the Qty and Lots inputs
     var qtyInput = document.querySelector('.addTxn-qty-input[data-rid="' + rowId + '"]');

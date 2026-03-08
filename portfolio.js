@@ -505,7 +505,9 @@ function calculateHoldings() {
             };
         }
         
-        holdings[key].quantity += txn.quantity;
+        if (!wmsIsQtyExcluded(txn.type)) {
+            holdings[key].quantity += txn.quantity;
+        }
         holdings[key].totalCost += txn.netAmount;
         
         if (txn.tags) {
@@ -738,7 +740,9 @@ function renderPortfolio() {
                         quantity: 0, totalCost: 0, tags: new Set()
                     };
                 }
-                investorGroups[txn.investorId].quantity  += txn.quantity;
+                if (!wmsIsQtyExcluded(txn.type)) {
+                    investorGroups[txn.investorId].quantity += txn.quantity;
+                }
                 investorGroups[txn.investorId].totalCost += txn.netAmount;
                 if (txn.tags) txn.tags.forEach(function(tag) { investorGroups[txn.investorId].tags.add(tag); });
             });

@@ -16,6 +16,19 @@ var WMS_MONTHS_SHORT = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','O
 var WMS_WEEKLY_EXPIRY_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
 var WMS_INCOME_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION'];
 
+// Transaction types whose quantity does NOT count toward holdings/balance.
+// Income types carry a quantity for display but don't change holdings.
+// RIGHTS_PAYMENT stores qty for audit (units paid for) but doesn't change holdings.
+var WMS_QTY_EXCLUDED_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION', 'RIGHTS_PAYMENT'];
+
+/**
+ * Check if a transaction type's quantity should be excluded from holdings.
+ * Use this everywhere instead of inline income-type checks.
+ */
+function wmsIsQtyExcluded(transactionType) {
+    return WMS_QTY_EXCLUDED_TYPES.indexOf(transactionType) >= 0;
+}
+
 // ============================================================================
 // SUPABASE ERROR PARSER — Turns raw Supabase/PostgREST JSON errors into
 // short, human-readable messages for showAlert(). Full details go to console.
