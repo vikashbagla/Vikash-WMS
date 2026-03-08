@@ -801,7 +801,7 @@ async function rhPaySaveTransactions() {
             product: null,
             transaction_type: 'RIGHTS_PAYMENT',
             transaction_date: dateStr,
-            quantity: 0,
+            quantity: h.netQuantity,
             lots: 0,
             price: Math.round(price * 100) / 100,
             gross_amount: Math.round(grossAmount * 100) / 100,
