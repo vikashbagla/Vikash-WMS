@@ -75,20 +75,24 @@
 /* Holdings table */
 .rights-table {
     width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 10px;
+    table-layout: fixed;
 }
 .rights-table th {
     background: #f7fafc; padding: 6px 8px; text-align: left;
     font-size: 10px; font-weight: 600; color: #4a5568;
     text-transform: uppercase; border-bottom: 2px solid #e2e8f0;
-    white-space: nowrap;
+    white-space: nowrap; overflow: hidden;
 }
 .rights-table th.r { text-align: right; }
-.rights-table td { padding: 6px 8px; border-bottom: 1px solid #f0f4f8; vertical-align: middle; }
+.rights-table td {
+    padding: 6px 8px; border-bottom: 1px solid #f0f4f8; vertical-align: middle;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .rights-table td.r { text-align: right; }
 .rights-table tr:hover td { background: #f9fafb; }
 .rights-table input[type="number"] {
     padding: 4px 6px; border: 1px solid #e2e8f0; border-radius: 4px;
-    font-size: 11px; width: 80px; text-align: right; box-sizing: border-box;
+    font-size: 11px; width: 100%; text-align: right; box-sizing: border-box;
 }
 .rights-table input:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
 .rights-empty { padding: 20px; text-align: center; color: #a0aec0; font-size: 12px; }

@@ -448,8 +448,9 @@ function rhEntPopulateHoldings() {
     }
 
     var html = '<table class="rights-table"><thead><tr>' +
-        '<th>Investor &gt; Trader &gt; Broker</th>' +
-        '<th class="r">Current Qty</th><th class="r">Rights Recd</th>' +
+        '<th>Inv &gt; Trd &gt; Brk</th>' +
+        '<th class="r" style="width:80px">Cur Qty</th>' +
+        '<th class="r" style="width:80px">Rights Recd</th>' +
         '</tr></thead><tbody>';
     holdings.forEach(function(h, idx) {
         html += '<tr>' +
@@ -705,9 +706,11 @@ function rhPayPopulateHoldings() {
     }
 
     var html = '<table class="rights-table"><thead><tr>' +
-        '<th>Inv &gt; Trader &gt; Broker</th>' +
-        '<th class="r">RE Qty</th><th class="r">Price</th>' +
-        '<th class="r">Charges</th><th class="r">Total</th>' +
+        '<th>Inv &gt; Trd &gt; Brk</th>' +
+        '<th class="r" style="width:60px">RE Qty</th>' +
+        '<th class="r" style="width:70px">Price</th>' +
+        '<th class="r" style="width:70px">Charges</th>' +
+        '<th class="r" style="width:70px">Total</th>' +
         '</tr></thead><tbody>';
     holdings.forEach(function(h, idx) {
         html += '<tr>' +
