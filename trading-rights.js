@@ -524,17 +524,18 @@ function rhEntConfirmAndReview() {
     var sec = rhEntSelectedSecurity;
     var shortSym = sec.nse_symbol || sec.symbol;
 
-    // Pre-fill review fields (symbol and ISIN are editable)
+    // Pre-fill review fields — symbol defaults to RE-{parent} (same as ISIN)
     var reSymInput = document.getElementById('rhEntReSymbol');
     var reIsinInput = document.getElementById('rhEntReIsin');
-    reSymInput.value = shortSym;
+    var reSymbol = 'RE-' + shortSym;
+    reSymInput.value = reSymbol;
     document.getElementById('rhEntReCompany').value = sec.company_name || shortSym;
-    reIsinInput.value = 'RE-' + shortSym;
+    reIsinInput.value = reSymbol;
     document.getElementById('rhEntReType').value = 'RIGHTS';
 
-    // Auto-sync ISIN when symbol is edited
+    // Keep ISIN in sync with symbol (they are the same for RE securities)
     reSymInput.oninput = function() {
-        reIsinInput.value = 'RE-' + reSymInput.value.trim().toUpperCase();
+        reIsinInput.value = reSymInput.value.trim().toUpperCase();
     };
 
     // Build summary
@@ -655,7 +656,7 @@ async function rhEntSave() {
                 broker_contract_note_no: null,
                 broker_trade_id: null,
                 tags: ['blank'],
-                notes: '[Rights Entitlement from ' + shortSym + ' on ' + dateStr + ']',
+                notes: '[Rights Entitlement from ' + (sec.nse_symbol || sec.symbol) + ' on ' + dateStr + ']',
                 is_locked: false,
                 ignore_for_avg_cost: false,
                 dont_display: false
