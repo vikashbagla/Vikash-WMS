@@ -3492,14 +3492,14 @@ async function savePeSecurity() {
         }
 
         closePeSecurityModal();
-        // Refresh securities cache so new PE security appears in searches
+        showAlert('Security "' + symbol + '" saved.', 'success', 4000);
+        // Refresh securities cache in background (no double-load)
         await wmsLoadSecuritiesCm();
-        await loadSecuritiesStats();
-        await loadSecuritiesTable(true);
-        alert('PE Security "' + symbol + '" saved successfully.');
+        loadSecuritiesStats();
+        loadSecuritiesTable(false);
     } catch (e) {
         console.error('Error saving PE security:', e);
-        alert('Error: ' + e.message);
+        wmsShowError('Save failed', e);
     }
 }
 
@@ -3537,13 +3537,14 @@ async function deletePeSecurity() {
             throw new Error('Delete failed: ' + errBody);
         }
         closePeSecurityModal();
+        showAlert('Security "' + symbol + '" deleted.', 'success', 4000);
+        // Refresh securities cache in background (no double-load)
         await wmsLoadSecuritiesCm();
-        await loadSecuritiesStats();
-        await loadSecuritiesTable(true);
-        alert('Security "' + symbol + '" deleted.');
+        loadSecuritiesStats();
+        loadSecuritiesTable(false);
     } catch (e) {
         console.error('Error deleting PE security:', e);
-        alert('Error: ' + e.message);
+        wmsShowError('Delete failed', e);
     }
 }
 
@@ -3740,19 +3741,18 @@ async function executeMergeSecurity() {
         if (!mergeResp.ok) throw new Error('Failed to mark source as merged: ' + await mergeResp.text());
 
         // 5. Refresh caches
+        closeMergeSecurityModal();
+        showAlert('Merge complete! ' + successCount + ' transaction(s) transferred from ' + source.symbol + ' to ' + targetSymbol + '.', 'success', 5000);
         await wmsLoadSecuritiesCm();
-        await loadSecuritiesStats();
-        await loadSecuritiesTable(true);
+        loadSecuritiesStats();
+        loadSecuritiesTable(false);
         // Refresh trading data if trading module is loaded
         if (typeof trLoadData === 'function') {
             try { await trLoadData(); } catch (e) { /* ignore */ }
         }
-
-        closeMergeSecurityModal();
-        alert('Merge complete! ' + successCount + ' transaction(s) transferred from ' + source.symbol + ' to ' + targetSymbol + '.');
     } catch (e) {
         console.error('Merge error:', e);
-        alert('Merge failed: ' + e.message + '\n\nPartially updated transactions may exist. You can retry the merge.');
+        wmsShowError('Merge failed', e);
         btn.textContent = 'Confirm Merge';
         btn.disabled = false;
     }
@@ -3834,17 +3834,16 @@ async function reverseMergeSecurity() {
 
         // 5. Refresh caches
         closePeSecurityModal();
+        showAlert('Merge reversed! ' + successCount + ' transaction(s) moved back to ' + sourceSymbol + '.', 'success', 5000);
         await wmsLoadSecuritiesCm();
-        await loadSecuritiesStats();
-        await loadSecuritiesTable(true);
+        loadSecuritiesStats();
+        loadSecuritiesTable(false);
         if (typeof trLoadData === 'function') {
             try { await trLoadData(); } catch (e) { /* ignore */ }
         }
-
-        alert('Merge reversed! ' + successCount + ' transaction(s) moved back to ' + sourceSymbol + '.');
     } catch (e) {
         console.error('Reverse merge error:', e);
-        alert('Reverse merge failed: ' + e.message);
+        wmsShowError('Reverse merge failed', e);
     }
 }
 

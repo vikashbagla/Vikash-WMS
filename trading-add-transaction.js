@@ -44,6 +44,8 @@ var atCpRowId = null;
 // ============================================================================
 
 function initAddTxnModule() {
+    if (window._atModuleInitDone) return;
+
     // Modal close handlers
     document.getElementById('addTxnCloseBtn').addEventListener('click', closeAddTxnModal);
     document.getElementById('addTxnCancelBtn').addEventListener('click', closeAddTxnModal);
@@ -79,6 +81,8 @@ function initAddTxnModule() {
             }
         }
     });
+
+    window._atModuleInitDone = true;
 }
 
 // ============================================================================

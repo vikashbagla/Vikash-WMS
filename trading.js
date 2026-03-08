@@ -2549,7 +2549,9 @@ async function trOpenAddTransaction() {
             container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
             document.body.appendChild(container);
 
-            // Load JS
+            // Load JS — remove any old script tag first (prevents double-init on reload)
+            var oldAtScript = document.querySelector('script[src*="trading-add-transaction.js"]');
+            if (oldAtScript) oldAtScript.remove();
             await new Promise(function(resolve, reject) {
                 var script = document.createElement('script');
                 script.src = 'trading-add-transaction.js?t=' + Date.now();
