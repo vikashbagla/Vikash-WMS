@@ -489,7 +489,14 @@ async function trTxApplyBulkTags() {
     var ids = Object.keys(trTxSelectedIds);
     if (ids.length === 0) return;
 
-    var newTags = trTxBulkTagCtrl ? trTxBulkTagCtrl.getTags() : [];
+    // Capture confirmed tags + any pending text in the input (user typed but didn't press Enter)
+    var newTags = trTxBulkTagCtrl ? trTxBulkTagCtrl.getTags().slice() : [];
+    var pendingInput = document.getElementById('trTx-tag-popup-input');
+    if (pendingInput && pendingInput.value.trim()) {
+        pendingInput.value.split(/[,;]/).map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }).forEach(function(p) {
+            if (newTags.indexOf(p) === -1) newTags.push(p);
+        });
+    }
     var tagsToSave = newTags.length > 0 ? newTags : ['blank'];
 
     trTxCloseTagPopup();
