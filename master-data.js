@@ -1397,18 +1397,18 @@ async function commitSync() {
         localStorage.setItem('wms_last_securities_sync', new Date().toISOString());
 
         // Post-commit: fetch sector for newly added equities
-        var sectorMsg = '';
+        var yahooMsg = '';
         if (toAdd.length > 0) {
-            btn.textContent = '⏳ Fetching sector for new records...';
+            btn.textContent = '⏳ Fetching Yahoo data for new records...';
             try {
-                var sectorCount = await postCommitSectorFetch(toAdd);
-                if (sectorCount > 0) sectorMsg = ' | Sector populated: ' + sectorCount;
-            } catch (sectorErr) {
-                console.warn('Post-commit sector fetch error:', sectorErr);
+                var yahooCount = await postCommitYahooFetch(toAdd);
+                if (yahooCount > 0) yahooMsg = ' | Yahoo data populated: ' + yahooCount;
+            } catch (yahooErr) {
+                console.warn('Post-commit Yahoo fetch error:', yahooErr);
             }
         }
 
-        alert('✓ Done! Added: ' + toAdd.length + ' | Updated: ' + toUpdate.length + sectorMsg);
+        alert('✓ Done! Added: ' + toAdd.length + ' | Updated: ' + toUpdate.length + yahooMsg);
         _syncPending = null;
         closeSyncModal();
         await loadSecuritiesStats();
@@ -1463,204 +1463,12 @@ function deriveSizeFromMarketCap(marketCap) {
     return 'micro-cap';                                    // <= 1,000 Cr
 }
 
-// ── Sector Sync ──────────────────────────────────────────────
-// Updates sector for all active equities where sector is NULL
+// ── Yahoo Sync (unified: sector + size + 52-week high/low) ──
+// Single function replaces startSectorSync, startSizeSync, startWeek52Sync.
+// Yahoo edge function returns all fields in one call — no need for 3 passes.
 
-async function startSectorSync() {
-    var btn = document.getElementById('btnSectorSync');
-    btn.disabled = true;
-    btn.textContent = '⏳ Loading...';
-    setSecLoading(true, 'Fetching equities with missing sector...');
-
-    try {
-        // Fetch all active equities with null sector
-        var all = [];
-        var from = 0;
-        var BATCH = 1000;
-        while (true) {
-            var result = await window.supabaseClient
-                .from('securities_db')
-                .select('id,isin,symbol,nse_symbol,bse_symbol,sector,security_type')
-                .eq('is_active', true)
-                .in('security_type', ['EQUITY', 'EQUITY_SME'])
-                .is('sector', null)
-                .order('isin', { ascending: true })
-                .range(from, from + BATCH - 1);
-            if (result.error) throw result.error;
-            all = all.concat(result.data || []);
-            if (!result.data || result.data.length < BATCH) break;
-            from += BATCH;
-        }
-
-        if (all.length === 0) {
-            alert('All equities already have sector populated!');
-            return;
-        }
-
-        setSecLoading(true, 'Found ' + all.length + ' equities without sector. Fetching from Yahoo Finance...');
-
-        // Build yahoo symbol → record map
-        var yahooMap = {};   // yahooSymbol → [records]
-        var symbols = [];
-        for (var i = 0; i < all.length; i++) {
-            var ySym = deriveYahooSymbol(all[i]);
-            if (!ySym) continue;
-            if (!yahooMap[ySym]) { yahooMap[ySym] = []; symbols.push(ySym); }
-            yahooMap[ySym].push(all[i]);
-        }
-
-        // Call Yahoo Finance in batches of 30
-        var YBATCH = 30;
-        var updated = 0;
-        var failed = 0;
-        for (var b = 0; b < symbols.length; b += YBATCH) {
-            var batch = symbols.slice(b, b + YBATCH);
-            setSecLoading(true, 'Fetching sector... ' + Math.min(b + YBATCH, symbols.length) + '/' + symbols.length);
-
-            try {
-                var result = await callYahooFinance(batch);
-                var results = result.results || {};
-
-                // Update DB for each symbol that returned a sector
-                for (var s = 0; s < batch.length; s++) {
-                    var sym = batch[s];
-                    var data = results[sym];
-                    if (data && data.sector) {
-                        var recs = yahooMap[sym] || [];
-                        for (var r = 0; r < recs.length; r++) {
-                            var upd = await window.supabaseClient
-                                .from('securities_db')
-                                .update({ sector: data.sector })
-                                .eq('id', recs[r].id);
-                            if (upd.error) { failed++; console.warn('Sector update failed for', recs[r].symbol, upd.error); }
-                            else { updated++; }
-                        }
-                    }
-                }
-            } catch (batchErr) {
-                console.warn('Yahoo batch failed:', batchErr);
-                failed += batch.length;
-            }
-        }
-
-        alert('Sector Sync complete!\nUpdated: ' + updated + (failed > 0 ? ' | Failed: ' + failed : ''));
-        await loadSecuritiesStats();
-        await loadSecuritiesTable(true);
-
-    } catch (err) {
-        alert('Sector Sync error: ' + err.message);
-        console.error(err);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = '⟳ Sector Sync';
-        setSecLoading(false);
-    }
-}
-
-// ── Update Size ──────────────────────────────────────────────
-// Fetches marketCap for all active equities, derives size
-
-async function startSizeSync() {
-    var btn = document.getElementById('btnSizeSync');
-    btn.disabled = true;
-    btn.textContent = '⏳ Loading...';
-    setSecLoading(true, 'Fetching active equities...');
-
-    try {
-        // Fetch all active equities (regardless of current size)
-        var all = [];
-        var from = 0;
-        var BATCH = 1000;
-        while (true) {
-            var result = await window.supabaseClient
-                .from('securities_db')
-                .select('id,isin,symbol,nse_symbol,bse_symbol,size,security_type')
-                .eq('is_active', true)
-                .in('security_type', ['EQUITY', 'EQUITY_SME'])
-                .order('isin', { ascending: true })
-                .range(from, from + BATCH - 1);
-            if (result.error) throw result.error;
-            all = all.concat(result.data || []);
-            if (!result.data || result.data.length < BATCH) break;
-            from += BATCH;
-        }
-
-        if (all.length === 0) {
-            alert('No active equities found.');
-            return;
-        }
-
-        setSecLoading(true, 'Found ' + all.length + ' equities. Fetching market cap from Yahoo Finance...');
-
-        // Build yahoo symbol → record map
-        var yahooMap = {};
-        var symbols = [];
-        for (var i = 0; i < all.length; i++) {
-            var ySym = deriveYahooSymbol(all[i]);
-            if (!ySym) continue;
-            if (!yahooMap[ySym]) { yahooMap[ySym] = []; symbols.push(ySym); }
-            yahooMap[ySym].push(all[i]);
-        }
-
-        // Call Yahoo Finance in batches of 30
-        var YBATCH = 30;
-        var updated = 0;
-        var skipped = 0;
-        var failed = 0;
-        for (var b = 0; b < symbols.length; b += YBATCH) {
-            var batch = symbols.slice(b, b + YBATCH);
-            setSecLoading(true, 'Fetching market cap... ' + Math.min(b + YBATCH, symbols.length) + '/' + symbols.length);
-
-            try {
-                var result = await callYahooFinance(batch);
-                var results = result.results || {};
-
-                for (var s = 0; s < batch.length; s++) {
-                    var sym = batch[s];
-                    var data = results[sym];
-                    if (data && data.marketCap) {
-                        var newSize = deriveSizeFromMarketCap(data.marketCap);
-                        if (!newSize) { skipped++; continue; }
-                        var recs = yahooMap[sym] || [];
-                        for (var r = 0; r < recs.length; r++) {
-                            var upd = await window.supabaseClient
-                                .from('securities_db')
-                                .update({ size: newSize })
-                                .eq('id', recs[r].id);
-                            if (upd.error) { failed++; console.warn('Size update failed for', recs[r].symbol, upd.error); }
-                            else { updated++; }
-                        }
-                    } else {
-                        skipped++;
-                    }
-                }
-            } catch (batchErr) {
-                console.warn('Yahoo batch failed:', batchErr);
-                failed += batch.length;
-            }
-        }
-
-        alert('Size Update complete!\nUpdated: ' + updated + ' | Skipped (no market cap): ' + skipped + (failed > 0 ? ' | Failed: ' + failed : ''));
-        await loadSecuritiesStats();
-        await loadSecuritiesTable(true);
-
-    } catch (err) {
-        alert('Size Update error: ' + err.message);
-        console.error(err);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = '⟳ Update Size';
-        setSecLoading(false);
-    }
-}
-
-// ── 52-Week High/Low Sync ────────────────────────────────────
-// Fetches 52-week high/low from Yahoo Finance and updates securities_db.
-// Uses the v7 batch quote API (via existing callYahooFinance edge function)
-// which already returns week52High/week52Low in the response.
-
-async function startWeek52Sync() {
-    var btn = document.getElementById('btnWeek52Sync');
+async function startYahooSync() {
+    var btn = document.getElementById('btnYahooSync');
     btn.disabled = true;
     btn.textContent = '⏳ Loading...';
     setSecLoading(true, 'Fetching active equities...');
@@ -1673,7 +1481,7 @@ async function startWeek52Sync() {
         while (true) {
             var result = await window.supabaseClient
                 .from('securities_db')
-                .select('id,isin,symbol,nse_symbol,bse_symbol,security_type')
+                .select('id,isin,symbol,nse_symbol,bse_symbol,sector,size,security_type')
                 .eq('is_active', true)
                 .in('security_type', ['EQUITY', 'EQUITY_SME'])
                 .order('isin', { ascending: true })
@@ -1689,7 +1497,7 @@ async function startWeek52Sync() {
             return;
         }
 
-        setSecLoading(true, 'Found ' + all.length + ' equities. Fetching 52-week data from Yahoo Finance...');
+        setSecLoading(true, 'Found ' + all.length + ' equities. Fetching data from Yahoo Finance...');
 
         // Build yahoo symbol → record map
         var yahooMap = {};
@@ -1707,9 +1515,10 @@ async function startWeek52Sync() {
         var skipped = 0;
         var failed = 0;
         var now = new Date().toISOString();
+
         for (var b = 0; b < symbols.length; b += YBATCH) {
             var batch = symbols.slice(b, b + YBATCH);
-            setSecLoading(true, 'Fetching 52-week data... ' + Math.min(b + YBATCH, symbols.length) + '/' + symbols.length);
+            setSecLoading(true, 'Yahoo Sync... ' + Math.min(b + YBATCH, symbols.length) + '/' + symbols.length);
 
             try {
                 var result = await callYahooFinance(batch);
@@ -1718,50 +1527,71 @@ async function startWeek52Sync() {
                 for (var s = 0; s < batch.length; s++) {
                     var sym = batch[s];
                     var data = results[sym];
-                    if (data && data.week52High && data.week52Low) {
-                        var recs = yahooMap[sym] || [];
-                        for (var r = 0; r < recs.length; r++) {
+                    if (!data) { skipped++; continue; }
+
+                    var recs = yahooMap[sym] || [];
+                    for (var r = 0; r < recs.length; r++) {
+                        var rec = recs[r];
+                        var updateObj = {};
+
+                        // Sector: only fill if currently null (don't overwrite manual entries)
+                        if (data.sector && !rec.sector) {
+                            updateObj.sector = data.sector;
+                        }
+
+                        // Size: always update from latest market cap
+                        if (data.marketCap) {
+                            var newSize = deriveSizeFromMarketCap(data.marketCap);
+                            if (newSize) updateObj.size = newSize;
+                        }
+
+                        // 52-week high/low: always update if available
+                        if (data.week52High && data.week52Low) {
+                            updateObj.week_52_high = data.week52High;
+                            updateObj.week_52_low = data.week52Low;
+                            updateObj.week_52_updated_at = now;
+                        }
+
+                        // Single DB update per record
+                        if (Object.keys(updateObj).length > 0) {
                             var upd = await window.supabaseClient
                                 .from('securities_db')
-                                .update({
-                                    week_52_high: data.week52High,
-                                    week_52_low: data.week52Low,
-                                    week_52_updated_at: now
-                                })
-                                .eq('id', recs[r].id);
-                            if (upd.error) { failed++; console.warn('52wk update failed for', recs[r].symbol, upd.error); }
+                                .update(updateObj)
+                                .eq('id', rec.id);
+                            if (upd.error) { failed++; console.warn('Yahoo update failed for', rec.symbol, upd.error); }
                             else { updated++; }
+                        } else {
+                            skipped++;
                         }
-                    } else {
-                        skipped++;
                     }
                 }
             } catch (batchErr) {
-                console.warn('Yahoo 52wk batch failed:', batchErr);
+                console.warn('Yahoo batch failed:', batchErr);
                 failed += batch.length;
             }
         }
 
-        alert('52-Week Sync complete!\nUpdated: ' + updated + ' | Skipped (no data): ' + skipped + (failed > 0 ? ' | Failed: ' + failed : ''));
+        alert('Yahoo Sync complete!\nUpdated: ' + updated + ' | Skipped (no data): ' + skipped + (failed > 0 ? ' | Failed: ' + failed : ''));
         await loadSecuritiesStats();
         await loadSecuritiesTable(true);
-        // Refresh the securities cache so Portfolio picks up new 52wk values
+        // Refresh the securities cache so Portfolio picks up new values
         await wmsLoadSecuritiesCm();
 
     } catch (err) {
-        alert('52-Week Sync error: ' + err.message);
+        alert('Yahoo Sync error: ' + err.message);
         console.error(err);
     } finally {
         btn.disabled = false;
-        btn.textContent = '⟳ 52wk Sync';
+        btn.textContent = '⟳ Yahoo Sync';
         setSecLoading(false);
     }
 }
 
-// ── Post-CM-Sync sector fetch for newly added records ────────
-// Called after commitSync() completes successfully
+// ── Post-CM-Sync Yahoo fetch for newly added records ─────────
+// Called after commitSync() completes successfully.
+// Fetches sector + size + 52wk for newly added equities in one pass.
 
-async function postCommitSectorFetch(newRecords) {
+async function postCommitYahooFetch(newRecords) {
     // Filter to equities with NSE or BSE symbols
     var eligible = [];
     for (var i = 0; i < newRecords.length; i++) {
@@ -1776,6 +1606,7 @@ async function postCommitSectorFetch(newRecords) {
 
     var updated = 0;
     var YBATCH = 30;
+    var now = new Date().toISOString();
 
     for (var b = 0; b < eligible.length; b += YBATCH) {
         var batch = eligible.slice(b, b + YBATCH);
@@ -1788,16 +1619,30 @@ async function postCommitSectorFetch(newRecords) {
             for (var s = 0; s < batch.length; s++) {
                 var item = batch[s];
                 var data = results[item.yahooSymbol];
-                if (data && data.sector) {
+                if (!data) continue;
+
+                var updateObj = {};
+                if (data.sector) updateObj.sector = data.sector;
+                if (data.marketCap) {
+                    var newSize = deriveSizeFromMarketCap(data.marketCap);
+                    if (newSize) updateObj.size = newSize;
+                }
+                if (data.week52High && data.week52Low) {
+                    updateObj.week_52_high = data.week52High;
+                    updateObj.week_52_low = data.week52Low;
+                    updateObj.week_52_updated_at = now;
+                }
+
+                if (Object.keys(updateObj).length > 0) {
                     await window.supabaseClient
                         .from('securities_db')
-                        .update({ sector: data.sector })
+                        .update(updateObj)
                         .eq('isin', item.rec.isin);
                     updated++;
                 }
             }
         } catch (err) {
-            console.warn('Post-commit sector fetch batch failed:', err);
+            console.warn('Post-commit Yahoo fetch batch failed:', err);
         }
     }
 
