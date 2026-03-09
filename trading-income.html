@@ -3,27 +3,31 @@
 /* Income Modal — reuses .rights-* CSS from trading-rights.html */
 /* Only income-specific overrides go here */
 
-.inc-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.inc-table { width: 100%; border-collapse: collapse; font-size: 10px; }
 .inc-table th {
-    text-align: left; font-size: 10px; font-weight: 600; color: #718096;
-    text-transform: uppercase; padding: 4px 6px; border-bottom: 1px solid #e2e8f0;
+    text-align: left; font-size: 9px; font-weight: 600; color: #718096;
+    text-transform: uppercase; padding: 3px 3px; border-bottom: 1px solid #e2e8f0;
     letter-spacing: 0.3px;
 }
 .inc-table th.r, .inc-table td.r { text-align: right; }
-.inc-table td { padding: 5px 6px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+.inc-table td { padding: 3px 3px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
 .inc-table tr:last-child td { border-bottom: none; }
 
 .inc-table input[type="text"] {
-    width: 100%; padding: 3px 6px; border: 1px solid #e2e8f0; border-radius: 3px;
-    font-size: 11px; color: #2d3748; text-align: right; outline: none;
-    height: 26px; box-sizing: border-box;
+    width: 100%; padding: 1px 2px; border: 1px solid #e2e8f0; border-radius: 3px;
+    font-size: 10px; color: #2d3748; text-align: right; outline: none;
+    height: 22px; box-sizing: border-box;
 }
 .inc-table input[type="text"]:focus {
     border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15);
 }
 
-.inc-label-cell { font-size: 11px; color: #4a5568; line-height: 1.3; }
-.inc-qty-cell { font-size: 11px; color: #2d3748; font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+.inc-label-cell { font-size: 10px; color: #4a5568; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inc-qty-cell { font-size: 10px; color: #2d3748; font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+.inc-net-cell { font-size: 10px; color: #2d3748; font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Income modal: 6 columns (Inv>Trd>Brk, Qty, Price, TDS, Amount, Net Amount) */
+.rights-modal.inc-wide { max-width: 980px; }
 </style>
 </head>
 <body>
@@ -31,7 +35,7 @@
 <!-- INCOME MODAL (Dividend / Interest / Other Income / Cap Red)  -->
 <!-- ============================================================ -->
 <div class="rights-overlay" id="incomeOverlay">
-  <div class="rights-modal wide">
+  <div class="rights-modal inc-wide">
     <!-- Header -->
     <div class="rights-header">
       <h3 id="incModalTitle">Dividend</h3>
@@ -60,7 +64,7 @@
         <div class="rights-field" style="flex:1;">
           <label>Security</label>
           <input type="text" id="incSecurityInput" placeholder="Search symbol or name..." autocomplete="off">
-          <div class="wms-dropdown" id="incSecurityDd" style="display:none;"></div>
+          <div class="rights-search-dd" id="incSecurityDd"></div>
           <div id="incSecurityBadge" style="margin-top:3px;"></div>
         </div>
       </div>

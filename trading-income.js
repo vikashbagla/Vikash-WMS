@@ -70,6 +70,17 @@ function initIncomeModule() {
         incSearchSecurity();
     });
 
+    // Click handler on dropdown items (wmsDropdown only handles keyboard)
+    secDd.addEventListener('mousedown', function(e) {
+        var item = e.target.closest('.wms-dd-item');
+        if (!item) return;
+        e.preventDefault(); // prevent blur from closing dropdown before selection fires
+        var idx = parseInt(item.dataset.idx);
+        var results = secDd._incResults || [];
+        if (results[idx]) incSelectSecurity(results[idx]);
+        incDdCtrl.close();
+    });
+
     // ESC handler
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
@@ -94,6 +105,8 @@ function openIncomeModal(txnType) {
     document.getElementById('incModalTitle').textContent = INC_TYPE_LABELS[txnType] || txnType;
     document.getElementById('incSecurityInput').value = '';
     document.getElementById('incSecurityBadge').innerHTML = '';
+    document.getElementById('incSecurityDd').innerHTML = '';
+    if (incDdCtrl) incDdCtrl.close();
     document.getElementById('incTableWrap').innerHTML = '<div class="rights-empty">Select a date and security to view holdings</div>';
     document.getElementById('incSaveBtn').disabled = true;
 
@@ -182,11 +195,12 @@ function incPopulateHoldings() {
     }
 
     html += '<table class="inc-table"><thead><tr>' +
-        '<th style="width:35%">Inv &gt; Trd &gt; Brk</th>' +
-        '<th class="r" style="width:13%">Qty</th>' +
-        '<th class="r" style="width:17%">Price</th>' +
-        '<th class="r" style="width:17%">TDS 10%</th>' +
+        '<th style="width:26%">Inv &gt; Trd &gt; Brk</th>' +
+        '<th class="r" style="width:10%">Qty</th>' +
+        '<th class="r" style="width:14%">Price</th>' +
+        '<th class="r" style="width:14%">TDS 10%</th>' +
         '<th class="r" style="width:18%">Amount</th>' +
+        '<th class="r" style="width:18%">Net Amt</th>' +
         '</tr></thead><tbody>';
 
     holdings.forEach(function(h, idx) {
@@ -194,11 +208,12 @@ function incPopulateHoldings() {
         var rowStyle = isDup ? ' style="background:#fef3c7;"' : '';
         var dupTag = isDup ? ' <span style="color:#d97706;font-size:9px;font-weight:600;">(EXISTS)</span>' : '';
         html += '<tr' + rowStyle + '>' +
-            '<td class="inc-label-cell">' + h.combinedLabel + dupTag + '</td>' +
+            '<td class="inc-label-cell" title="' + h.combinedLabel + '">' + h.combinedLabel + dupTag + '</td>' +
             '<td class="inc-qty-cell">' + h.netQuantity.toLocaleString() + '</td>' +
             '<td class="r"><input type="text" id="inc-price-' + idx + '" data-idx="' + idx + '" class="inc-price" placeholder="0.00"></td>' +
             '<td class="r"><input type="text" id="inc-tds-' + idx + '" data-idx="' + idx + '" class="inc-tds" placeholder="0.00"></td>' +
             '<td class="r"><input type="text" id="inc-amt-' + idx + '" data-idx="' + idx + '" class="inc-amt" placeholder="0.00"></td>' +
+            '<td class="inc-net-cell" id="inc-net-' + idx + '"></td>' +
             '</tr>';
     });
     html += '</tbody></table>';
@@ -221,6 +236,8 @@ function incPopulateHoldings() {
                 var v = parseFloat(el.value.replace(/,/g, '')) || 0;
                 el.dataset.rawValue = v ? v.toString() : '';
                 el.value = v ? wmsFmtAmt(v) : '';
+                // Recalc Net Amount on any field blur
+                incUpdateNetAmt(idx);
             });
         });
 
@@ -229,6 +246,18 @@ function incPopulateHoldings() {
         // TDS/Amount manual edits: mark as user-overridden
         tdsEl.addEventListener('input', function() { tdsEl.dataset.userEdited = 'true'; });
         amtEl.addEventListener('input', function() { amtEl.dataset.userEdited = 'true'; });
+
+        // Pre-populate duplicate rows with existing transaction data
+        var dupTxn = incFindMatchingDup(existingDups, h);
+        if (dupTxn) {
+            var dp = dupTxn.price || 0;
+            var dt = dupTxn.tds || 0;
+            var da = dupTxn.gross_amount || 0;
+            if (dp) { priceEl.value = wmsFmtAmt(dp); priceEl.dataset.rawValue = dp.toString(); }
+            if (dt) { tdsEl.value = wmsFmtAmt(dt); tdsEl.dataset.rawValue = dt.toString(); }
+            if (da) { amtEl.value = wmsFmtAmt(da); amtEl.dataset.rawValue = da.toString(); }
+            incUpdateNetAmt(idx);
+        }
     });
 }
 
@@ -257,6 +286,22 @@ function incOnPriceChange(idx) {
         amtEl.dataset.rawValue = grossAmount ? grossAmount.toString() : '';
         amtEl.value = grossAmount ? wmsFmtAmt(grossAmount) : '';
     }
+
+    // Update Net Amount display (Amount - TDS, non-editable)
+    incUpdateNetAmt(idx);
+}
+
+// Recalculate Net Amount display cell from current TDS + Amount values
+function incUpdateNetAmt(idx) {
+    var tdsEl = document.getElementById('inc-tds-' + idx);
+    var amtEl = document.getElementById('inc-amt-' + idx);
+    var netEl = document.getElementById('inc-net-' + idx);
+    if (!netEl) return;
+
+    var tds = parseFloat((tdsEl.dataset.rawValue || tdsEl.value || '').replace(/,/g, '')) || 0;
+    var amt = parseFloat((amtEl.dataset.rawValue || amtEl.value || '').replace(/,/g, '')) || 0;
+    var net = Math.round((amt - tds) * 100) / 100;
+    netEl.textContent = net ? wmsFmtAmt(net) : '';
 }
 
 // ============================================================================
@@ -291,6 +336,16 @@ function incIsDuplicateRow(existingDups, holding) {
     });
 }
 
+function incFindMatchingDup(existingDups, holding) {
+    for (var i = 0; i < existingDups.length; i++) {
+        var t = existingDups[i];
+        if (t.investor_id === holding.investor_id &&
+            (t.trader_id || null) === (holding.trader_id || null) &&
+            t.broker_id === holding.broker_id) return t;
+    }
+    return null;
+}
+
 // ============================================================================
 // SAVE TRANSACTIONS
 // ============================================================================
@@ -323,7 +378,8 @@ async function incSaveTransactions() {
             grossAmount = Math.round(h.netQuantity * price * 100) / 100;
         }
 
-        var netAmount = Math.round((grossAmount - tds) * 100) / 100;
+        // DB: both gross_amount and net_amount store qty × price; tds is saved separately
+        var netAmount = Math.round(grossAmount * 100) / 100;
 
         txns.push({
             investor_id: h.investor_id,
