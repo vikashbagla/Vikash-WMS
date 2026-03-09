@@ -644,7 +644,7 @@ async function rhEntSave() {
         }
 
         closeRightsEntitlementModal();
-        await wmsLoadSecuritiesCm();
+        await wmsLoadSecuritiesCm(0, {all: true});
         if (typeof trRefresh === 'function') await trRefresh();
 
         showAlert('Rights entitlement created: ' + txns.length + ' transaction(s) for ' + isin, 'success', 4000);

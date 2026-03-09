@@ -230,7 +230,7 @@ async function trWlLoadBrokerTokens() {
     // Ensure securities cache is loaded before looking up broker tokens
     if (!wmsRefData.securitiesCmReady) {
         console.log('Watchlist: Waiting for CM cache before loading broker tokens...');
-        await wmsLoadSecuritiesCm();
+        await wmsLoadSecuritiesCm(0, {all: true});
     }
     if (!wmsRefData.securitiesNfoReady) {
         console.log('Watchlist: Waiting for NFO cache before loading broker tokens...');
@@ -1624,7 +1624,7 @@ async function trWlSearchSecurities(query) {
         // Ensure securities cache is loaded (wait if still downloading on startup)
         if (!wmsRefData.securitiesCmReady || !wmsRefData.securitiesNfoReady) {
             resultsEl.innerHTML = '<div class="wl-add-no-results">Loading securities data...</div>';
-            if (!wmsRefData.securitiesCmReady) await wmsLoadSecuritiesCm();
+            if (!wmsRefData.securitiesCmReady) await wmsLoadSecuritiesCm(0, {all: true});
             if (!wmsRefData.securitiesNfoReady) await wmsLoadSecuritiesNfo();
         }
 

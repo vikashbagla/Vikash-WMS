@@ -213,16 +213,18 @@ async function wmsLoadRefData() {
  * Fetch ALL rows from a Supabase table, bypassing the 1000-row default limit
  * by paginating with .range() until a partial page is returned.
  */
-async function wmsFetchAllRows(table, select, orderCol) {
+async function wmsFetchAllRows(table, select, orderCol, filterFn) {
     orderCol = orderCol || 'symbol';
     var BATCH = 1000;
     var all = [], from = 0;
     while (true) {
-        var result = await window.supabaseClient
+        var query = window.supabaseClient
             .from(table)
             .select(select)
-            .order(orderCol, { ascending: true })
-            .range(from, from + BATCH - 1);
+            .order(orderCol, { ascending: true });
+        if (filterFn) query = filterFn(query);
+        query = query.range(from, from + BATCH - 1);
+        var result = await query;
         if (result.error) throw result.error;
         all = all.concat(result.data || []);
         if (!result.data || result.data.length < BATCH) break;
@@ -231,30 +233,72 @@ async function wmsFetchAllRows(table, select, orderCol) {
     return all;
 }
 
+// Shared column list for securities_db fetches
+var WMS_SECURITIES_CM_SELECT = 'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,sector,size,is_active,lot_size,broker_tokens,merged_into_id,merged_at,week_52_high,week_52_low';
+
+// Debt security types excluded from initial load (loaded in background)
+var WMS_DEBT_TYPES = ['NCD', 'GOVT_BOND'];
+
 /**
- * Load all CM (Cash Market) securities into wmsRefData.securitiesCm.
- * Called at app startup (background) and after CM Sync.
+ * Load CM (Cash Market) securities into wmsRefData.securitiesCm.
+ * Excludes NCD/GOVT_BOND for fast startup; those are loaded in background
+ * via wmsLoadSecuritiesDebt(). After CM Sync, pass {all: true} to reload everything.
  * Retries up to 3 times with 3s/6s/12s backoff on network failure.
  */
-async function wmsLoadSecuritiesCm(retryCount) {
+async function wmsLoadSecuritiesCm(retryCount, opts) {
     retryCount = retryCount || 0;
+    opts = opts || {};
     try {
-        var rows = await wmsFetchAllRows('securities_db',
-            'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,sector,size,is_active,lot_size,broker_tokens,merged_into_id,merged_at,week_52_high,week_52_low',
-            'isin');
+        var filterFn = null;
+        if (!opts.all) {
+            // Exclude debt types for fast startup
+            filterFn = function(q) {
+                return q.not('security_type', 'in', '(' + WMS_DEBT_TYPES.join(',') + ')');
+            };
+        }
+        var rows = await wmsFetchAllRows('securities_db', WMS_SECURITIES_CM_SELECT, 'isin', filterFn);
         wmsRefData.securitiesCm = rows;
         wmsRefData.securitiesCmMap = {};
         rows.forEach(function(r) { wmsRefData.securitiesCmMap[r.id] = r; });
         wmsRefData.securitiesCmReady = true;
-        console.log('Securities CM loaded: ' + rows.length + ' rows');
+        wmsRefData.securitiesDebtLoaded = !!opts.all;
+        console.log('Securities CM loaded: ' + rows.length + ' rows' + (opts.all ? ' (full)' : ' (excl. debt)'));
     } catch (e) {
         console.error('Securities CM load error (attempt ' + (retryCount + 1) + '):', e);
         if (retryCount < 3) {
             var delay = 3000 * Math.pow(2, retryCount); // 3s, 6s, 12s
             console.log('Retrying CM load in ' + (delay / 1000) + 's...');
             await new Promise(function(resolve) { setTimeout(resolve, delay); });
-            return wmsLoadSecuritiesCm(retryCount + 1);
+            return wmsLoadSecuritiesCm(retryCount + 1, opts);
         }
+    }
+}
+
+/**
+ * Background-load debt securities (NCD, GOVT_BOND) and merge into securitiesCm.
+ * Called after app startup completes. Non-blocking — search works without it,
+ * debt results just appear once this finishes.
+ */
+async function wmsLoadSecuritiesDebt() {
+    if (wmsRefData.securitiesDebtLoaded) return; // already loaded (e.g. after CM Sync)
+    try {
+        var filterFn = function(q) {
+            return q.in('security_type', WMS_DEBT_TYPES);
+        };
+        var rows = await wmsFetchAllRows('securities_db', WMS_SECURITIES_CM_SELECT, 'isin', filterFn);
+        // Merge into existing arrays (avoid duplicates by checking map)
+        var added = 0;
+        rows.forEach(function(r) {
+            if (!wmsRefData.securitiesCmMap[r.id]) {
+                wmsRefData.securitiesCm.push(r);
+                wmsRefData.securitiesCmMap[r.id] = r;
+                added++;
+            }
+        });
+        wmsRefData.securitiesDebtLoaded = true;
+        console.log('Securities debt loaded: ' + rows.length + ' rows (' + added + ' new)');
+    } catch (e) {
+        console.error('Securities debt background load error:', e);
     }
 }
 

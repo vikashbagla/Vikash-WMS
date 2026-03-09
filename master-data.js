@@ -1579,7 +1579,7 @@ async function startYahooSync() {
         await loadSecuritiesStats();
         await loadSecuritiesTable(true);
         // Refresh the securities cache so Portfolio picks up new values
-        await wmsLoadSecuritiesCm();
+        await wmsLoadSecuritiesCm(0, {all: true});
 
     } catch (err) {
         alert('Yahoo Sync error: ' + err.message);
@@ -1701,7 +1701,7 @@ async function loadSecuritiesTable(forceRefresh) {
     try {
         // Use shared cache — force refresh after sync, else use cached data
         if (forceRefresh || !wmsRefData.securitiesCmReady) {
-            await wmsLoadSecuritiesCm();
+            await wmsLoadSecuritiesCm(0, {all: true});
         }
         populateTypePills();
         populateAssetClassPills();
@@ -3447,7 +3447,7 @@ async function savePeSecurity() {
         closePeSecurityModal();
         showAlert('Security "' + symbol + '" saved.', 'success', 4000);
         // Refresh securities cache in background (no double-load)
-        await wmsLoadSecuritiesCm();
+        await wmsLoadSecuritiesCm(0, {all: true});
         loadSecuritiesStats();
         loadSecuritiesTable(false);
     } catch (e) {
@@ -3492,7 +3492,7 @@ async function deletePeSecurity() {
         closePeSecurityModal();
         showAlert('Security "' + symbol + '" deleted.', 'success', 4000);
         // Refresh securities cache in background (no double-load)
-        await wmsLoadSecuritiesCm();
+        await wmsLoadSecuritiesCm(0, {all: true});
         loadSecuritiesStats();
         loadSecuritiesTable(false);
     } catch (e) {
@@ -3694,7 +3694,7 @@ async function executeMergeSecurity() {
         // 5. Refresh caches
         closeMergeSecurityModal();
         showAlert('Merge complete! ' + successCount + ' transaction(s) transferred from ' + source.symbol + ' to ' + targetSymbol + '.', 'success', 5000);
-        await wmsLoadSecuritiesCm();
+        await wmsLoadSecuritiesCm(0, {all: true});
         loadSecuritiesStats();
         loadSecuritiesTable(false);
         // Refresh trading data if trading module is loaded
@@ -3786,7 +3786,7 @@ async function reverseMergeSecurity() {
         // 5. Refresh caches
         closePeSecurityModal();
         showAlert('Merge reversed! ' + successCount + ' transaction(s) moved back to ' + sourceSymbol + '.', 'success', 5000);
-        await wmsLoadSecuritiesCm();
+        await wmsLoadSecuritiesCm(0, {all: true});
         loadSecuritiesStats();
         loadSecuritiesTable(false);
         if (typeof trLoadData === 'function') {

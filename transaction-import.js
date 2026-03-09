@@ -1943,7 +1943,7 @@ async function processTransactions(rawData, worksheet) {
     // Ensure securities master data is loaded
     if (!wmsRefData.securitiesCmReady) {
         tiLoading(true, 'Loading securities data...');
-        await wmsLoadSecuritiesCm();
+        await wmsLoadSecuritiesCm(0, {all: true});
     }
     if (!wmsRefData.securitiesNfoReady) {
         await wmsLoadSecuritiesNfo();

@@ -382,6 +382,9 @@
         loaderEl.classList.add('fade-out');
         setTimeout(function() { loaderEl.remove(); }, 350);
 
+        // Background: load debt securities (NCD, GOVT_BOND) — non-blocking
+        wmsLoadSecuritiesDebt();
+
         startIndexRefresh(); // Start index ticker
         document.getElementById('logoutBtn').addEventListener('click', logout);
         document.getElementById('appRefreshBtn').addEventListener('click', function() {
