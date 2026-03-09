@@ -104,7 +104,7 @@ function trTxInitPills() {
     // Tag pills — collect all unique tags from transactions
     var allTags = {};
     trTransactions.forEach(function(t) {
-        if (t.tags) t.tags.forEach(function(tag) { if (tag && tag !== 'blank') allTags[tag] = true; });
+        if (t.tags) t.tags.forEach(function(tag) { if (tag) allTags[tag] = true; });
     });
     var tagContainer = document.getElementById('trTx-filter-tag');
     if (tagContainer) {
@@ -444,6 +444,93 @@ async function trTxBulkDelete() {
 }
 
 // ============================================================================
+// BULK TAG CHANGE
+// ============================================================================
+
+var trTxBulkTagCtrl = null;
+
+function trTxOpenTagPopup() {
+    var popup = document.getElementById('trTx-tag-popup');
+    if (!popup) return;
+
+    // Destroy previous controller
+    if (trTxBulkTagCtrl) { trTxBulkTagCtrl.destroy(); trTxBulkTagCtrl = null; }
+
+    // Collect all existing tags for autocomplete
+    var allTags = {};
+    trTransactions.forEach(function(t) {
+        if (t.tags) t.tags.forEach(function(tag) { if (tag) allTags[tag] = true; });
+    });
+
+    var inputEl = document.getElementById('trTx-tag-popup-input');
+    var pillsEl = document.getElementById('trTx-tag-popup-pills');
+    var ddEl = document.getElementById('trTx-tag-popup-dd');
+    inputEl.value = '';
+    pillsEl.innerHTML = '';
+    ddEl.innerHTML = '';
+
+    trTxBulkTagCtrl = wmsTagInput(inputEl, pillsEl, ddEl, {
+        tags: [],
+        existingTags: Object.keys(allTags).sort(),
+        onChange: function() {}
+    });
+
+    popup.classList.add('show');
+    inputEl.focus();
+}
+
+function trTxCloseTagPopup() {
+    var popup = document.getElementById('trTx-tag-popup');
+    if (popup) popup.classList.remove('show');
+    if (trTxBulkTagCtrl) { trTxBulkTagCtrl.destroy(); trTxBulkTagCtrl = null; }
+}
+
+async function trTxApplyBulkTags() {
+    var ids = Object.keys(trTxSelectedIds);
+    if (ids.length === 0) return;
+
+    var newTags = trTxBulkTagCtrl ? trTxBulkTagCtrl.getTags() : [];
+    var tagsToSave = newTags.length > 0 ? newTags : ['blank'];
+
+    trTxCloseTagPopup();
+    showLoading(true, 'Updating tags on ' + ids.length + ' transaction(s)...');
+
+    var headers = {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+    };
+
+    var failed = 0;
+    for (var i = 0; i < ids.length; i++) {
+        var txnId = ids[i];
+        var txn = trTransactions.find(function(t) { return t.id === txnId; });
+        if (!txn) continue;
+
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txnId, {
+            method: 'PATCH',
+            headers: headers,
+            body: JSON.stringify({ tags: tagsToSave })
+        });
+        if (resp.ok) {
+            txn.tags = tagsToSave.slice();
+        } else {
+            failed++;
+        }
+    }
+
+    showLoading(false);
+    trTxClearSelection();
+    trTxRender();
+    if (failed > 0) {
+        showAlert(failed + ' transaction(s) failed to update', 'error');
+    } else {
+        showAlert(ids.length + ' transaction(s) tags updated', 'success', 2000);
+    }
+}
+
+// ============================================================================
 // SELECTED TAGS (filter chips)
 // ============================================================================
 
@@ -578,7 +665,7 @@ function trTxGetFilteredTransactions() {
     // Filter: tags
     if (trTxSelectedTagNames.length > 0) {
         filtered = filtered.filter(function(t) {
-            var txnTags = (t.tags || []).filter(function(tg) { return tg && tg !== 'blank'; });
+            var txnTags = (t.tags || []).filter(function(tg) { return tg; });
             if (trTxTagLogic === 'AND') {
                 return trTxSelectedTagNames.every(function(st) { return txnTags.indexOf(st) >= 0; });
             } else {
@@ -707,7 +794,7 @@ function trTxRenderList(filtered) {
 
         // Tags
         var tagHtml = '';
-        var tags = (txn.tags || []).filter(function(tg) { return tg && tg !== 'blank'; });
+        var tags = (txn.tags || []).filter(function(tg) { return tg; });
         if (tags.length > 0) {
             tagHtml = '<div class="tag-pills">' + tags.map(function(tg) {
                 return '<span class="tag-pill">' + tg + '</span>';
@@ -842,6 +929,21 @@ function trTxAttachRowListeners() {
     if (bulkClearBtn && !bulkClearBtn._bound) {
         bulkClearBtn.addEventListener('click', trTxClearSelection);
         bulkClearBtn._bound = true;
+    }
+    var bulkTagsBtn = document.getElementById('trTx-bulk-tags');
+    if (bulkTagsBtn && !bulkTagsBtn._bound) {
+        bulkTagsBtn.addEventListener('click', trTxOpenTagPopup);
+        bulkTagsBtn._bound = true;
+    }
+    var tagPopupCancel = document.getElementById('trTx-tag-popup-cancel');
+    if (tagPopupCancel && !tagPopupCancel._bound) {
+        tagPopupCancel.addEventListener('click', trTxCloseTagPopup);
+        tagPopupCancel._bound = true;
+    }
+    var tagPopupApply = document.getElementById('trTx-tag-popup-apply');
+    if (tagPopupApply && !tagPopupApply._bound) {
+        tagPopupApply.addEventListener('click', trTxApplyBulkTags);
+        tagPopupApply._bound = true;
     }
 }
 

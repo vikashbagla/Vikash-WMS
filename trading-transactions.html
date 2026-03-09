@@ -173,6 +173,34 @@
     border-color: #dc2626;
 }
 
+/* Bulk tag change popup */
+.trTx-tag-popup {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 300;
+    background: white;
+    border: 1px solid #cbd5e0;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    padding: 10px;
+    width: 300px;
+    margin-top: 4px;
+}
+.trTx-tag-popup.show { display: block; }
+.trTx-tag-popup label { font-size: 10px; font-weight: 600; color: #718096; text-transform: uppercase; letter-spacing: 0.3px; display: block; margin-bottom: 3px; }
+.trTx-tag-popup input[type="text"] {
+    width: 100%; padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 4px;
+    font-size: 12px; color: #2d3748; outline: none; box-sizing: border-box; height: 32px;
+}
+.trTx-tag-popup input[type="text"]:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+.trTx-tag-popup-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+.trTx-tag-popup-actions button { padding: 4px 12px; font-size: 11px; border-radius: 4px; cursor: pointer; }
+.trTx-tag-popup-actions .btn-cancel { border: 1px solid #e2e8f0; background: white; color: #718096; }
+.trTx-tag-popup-actions .btn-apply { border: none; background: #667eea; color: white; font-weight: 600; }
+.trTx-tag-popup-actions .btn-apply:hover { background: #5a67d8; }
+
 /* Matching trades table */
 #trTx-matching-container { display: none; }
 #trTx-matching-container.visible { display: flex; flex-direction: column; }
@@ -308,11 +336,23 @@
 </div>
 
 <!-- Bulk action bar (hidden by default) -->
-<div id="trTx-bulk-bar" class="trTx-bulk-bar" style="display:none;">
+<div id="trTx-bulk-bar" class="trTx-bulk-bar" style="display:none; position:relative;">
     <span class="trTx-bulk-count" id="trTx-bulk-count">0 selected</span>
     <button id="trTx-bulk-hide" title="Hide selected transactions from display">👁 Hide</button>
+    <button id="trTx-bulk-tags" title="Change tags on selected transactions">🏷 Tags</button>
     <button id="trTx-bulk-delete" class="danger" title="Delete selected transactions">🗑️ Delete</button>
     <button id="trTx-bulk-clear" style="margin-left:auto; border:none; background:none; color:#718096; font-size:11px; cursor:pointer;">✕ Clear selection</button>
+    <!-- Tag change popup -->
+    <div class="trTx-tag-popup" id="trTx-tag-popup">
+        <label>Replace tags on selected rows</label>
+        <input type="text" id="trTx-tag-popup-input" placeholder="Type tag + Enter or comma..." autocomplete="off">
+        <div class="addTxn-tag-pills" id="trTx-tag-popup-pills" style="margin-top:3px;"></div>
+        <div class="addTxn-tag-dd" id="trTx-tag-popup-dd"></div>
+        <div class="trTx-tag-popup-actions">
+            <button class="btn-cancel" id="trTx-tag-popup-cancel">Cancel</button>
+            <button class="btn-apply" id="trTx-tag-popup-apply">Apply</button>
+        </div>
+    </div>
 </div>
 
 <!-- Transaction count -->

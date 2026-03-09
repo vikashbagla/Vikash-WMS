@@ -189,7 +189,7 @@ async function wmsLoadRefData() {
             if (Array.isArray(r.tags)) {
                 r.tags.forEach(function(t) {
                     var trimmed = t.trim().toLowerCase();
-                    if (trimmed && trimmed !== 'blank') tagSet[trimmed] = true;
+                    if (trimmed) tagSet[trimmed] = true;
                 });
             }
         });

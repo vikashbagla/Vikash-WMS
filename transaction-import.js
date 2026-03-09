@@ -199,7 +199,7 @@ async function loadExistingTags() {
             if (Array.isArray(r.tags)) {
                 r.tags.forEach(function(t) {
                     var trimmed = t.trim().toLowerCase();
-                    if (trimmed && trimmed !== 'blank') tagSet[trimmed] = true;
+                    if (trimmed) tagSet[trimmed] = true;
                 });
             }
         });
@@ -1235,7 +1235,7 @@ function cnChargeInputHtml(row, field, rowKey) {
 function createCnPreviewRow(r, idx) {
     var tr = document.createElement('tr');
     var typeClass = r.transaction_type === 'BUY' ? 'type-buy' : 'type-sell';
-    var tagsValue = Array.isArray(r.tags) ? r.tags.filter(function(t) { return t !== 'blank'; }).join(', ') : (r.tags || '');
+    var tagsValue = Array.isArray(r.tags) ? r.tags.filter(function(t) { return !!t; }).join(', ') : (r.tags || '');
     var tagInputId = 'cnTag_' + r._action + '_' + (idx - 1);
     var rowKey = r._action + '_' + (idx - 1);
     var netAmtId = 'cnNet_' + rowKey;
@@ -1324,7 +1324,7 @@ function initTagAutocomplete(inputId, initialValue) {
     if (!input || !pillsDiv || !dropdown) return;
 
     // Track selected tags — preserve case as entered (no toLowerCase)
-    var selected = initialValue ? initialValue.split(/[,;]/).map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0 && t !== 'blank'; }) : [];
+    var selected = initialValue ? initialValue.split(/[,;]/).map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [];
 
     // Render selected pills
     function renderPills() {
@@ -2224,7 +2224,7 @@ function displayExcelPreview() {
         var dateTooltip = t.transaction_date || '';
 
         // Tags display — autocomplete pill input (same as CN import)
-        var tagsArr = Array.isArray(t.tags) ? t.tags.filter(function(tg) { return tg && tg !== 'blank'; }) : (t.tags ? [t.tags] : []);
+        var tagsArr = Array.isArray(t.tags) ? t.tags.filter(function(tg) { return !!tg; }) : (t.tags ? [t.tags] : []);
         var excelTagId = 'excelTag_' + index;
         var tagsHtml = '<div class="cn-tag-selected" id="' + excelTagId + '_pills" style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:3px;"></div>' +
             '<input type="text" id="' + excelTagId + '" value="" autocomplete="off" placeholder="tags..." ' +
@@ -2283,7 +2283,7 @@ function displayExcelPreview() {
         var index = allRows.indexOf(t);
         var input = document.getElementById('excelTag_' + index);
         if (!input) return;
-        var tagsValue = Array.isArray(t.tags) ? t.tags.filter(function(tg) { return tg && tg !== 'blank'; }).join(', ') : (t.tags || '');
+        var tagsValue = Array.isArray(t.tags) ? t.tags.filter(function(tg) { return !!tg; }).join(', ') : (t.tags || '');
         // Store initial value; init on first focus
         input.dataset.initialTags = tagsValue;
         input.dataset.tagInited = 'false';
@@ -2544,7 +2544,7 @@ function attachTagHandlers() {
                 var val = inp.value.trim();
                 if (val) {
                     if (!Array.isArray(row.tags)) row.tags = [];
-                    row.tags = row.tags.filter(function(t) { return t !== 'blank'; });
+                    row.tags = row.tags.filter(function(t) { return !!t; });
                     if (row.tags.indexOf(val) === -1) row.tags.push(val);
                 }
                 displayExcelPreview();

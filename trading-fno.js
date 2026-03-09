@@ -235,7 +235,7 @@ function trFnoInitFilters() {
     if (tagC && !trFnoTagPillFilter) {
         var allTags = {};
         trTransactions.forEach(function(t) {
-            if (t.tags) t.tags.forEach(function(tag) { if (tag !== 'blank') allTags[tag] = true; });
+            if (t.tags) t.tags.forEach(function(tag) { if (tag) allTags[tag] = true; });
         });
         var tagItems = Object.keys(allTags).sort().map(function(tag) { return { id: tag, label: tag }; });
         var tagExtra = document.createElement('div');

@@ -672,7 +672,7 @@ function trInitFilterPills() {
     // Tag filter (built from transactions)
     var allTags = {};
     trTransactions.forEach(function(t) {
-        if (t.tags) t.tags.forEach(function(tag) { if (tag !== 'blank') allTags[tag] = true; });
+        if (t.tags) t.tags.forEach(function(tag) { if (tag) allTags[tag] = true; });
     });
     var tagContainer = document.getElementById('tr-filter-tag');
     if (tagContainer) {
@@ -817,7 +817,7 @@ function trCalcHoldings() {
             groups[key].companyName = txn.company_name;
         }
 
-        if (txn.tags) txn.tags.forEach(function(tag) { if (tag !== 'blank') groups[key].tags[tag] = true; });
+        if (txn.tags) txn.tags.forEach(function(tag) { if (tag) groups[key].tags[tag] = true; });
         var isIncome = INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
         var txnDate = new Date(txn.transaction_date);
         if (!isIncome && (!groups[key].latestDate || txnDate > groups[key].latestDate)) {
@@ -1237,7 +1237,7 @@ function trBuildInvestorDetail(h, price, md) {
             };
         }
         groups[txn.investor_id].txns.push(txn);
-        if (txn.tags) txn.tags.forEach(function(tag) { if (tag !== 'blank') groups[txn.investor_id].tags[tag] = true; });
+        if (txn.tags) txn.tags.forEach(function(tag) { if (tag) groups[txn.investor_id].tags[tag] = true; });
     });
 
     var investorRows = Object.values(groups)
@@ -2359,11 +2359,11 @@ function trOpenEditModal(txnId) {
 
     // Tags — pill-based input using wmsTagInput
     if (trEditTagCtrl) { trEditTagCtrl.destroy(); trEditTagCtrl = null; }
-    var currentTags = (txn.tags || []).filter(function(t) { return t !== 'blank'; });
+    var currentTags = (txn.tags || []).filter(function(t) { return !!t; });
     // Collect all existing tags across transactions for autocomplete
     var allExistingTags = {};
     trTransactions.forEach(function(t) {
-        if (t.tags) t.tags.forEach(function(tag) { if (tag && tag !== 'blank') allExistingTags[tag] = true; });
+        if (t.tags) t.tags.forEach(function(tag) { if (tag) allExistingTags[tag] = true; });
     });
     var tagInput = document.getElementById('trEditTagsInput');
     var tagPills = document.getElementById('trEditTagPills');

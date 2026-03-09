@@ -1142,7 +1142,7 @@ function atAutoPopulateTags(rowId, row) {
             if (Array.isArray(t.tags)) {
                 t.tags.forEach(function(tag) {
                     var trimmed = tag.trim().toLowerCase();
-                    if (trimmed && trimmed !== 'blank') matchingTags[trimmed] = tag.trim();
+                    if (trimmed) matchingTags[trimmed] = tag.trim();
                 });
             }
         }
