@@ -1457,10 +1457,10 @@ async function callYahooFinance(yahooSymbols) {
 // 1 Cr = 10,000,000
 function deriveSizeFromMarketCap(marketCap) {
     if (!marketCap || marketCap <= 0) return null;
-    if (marketCap > 750000000000)  return 'Large Cap';    // > 75,000 Cr
-    if (marketCap > 250000000000)  return 'Mid Cap';      // 25,001 - 75,000 Cr
-    if (marketCap > 10000000000)   return 'Small Cap';    // 1,001 - 25,000 Cr
-    return 'Micro Cap';                                    // <= 1,000 Cr
+    if (marketCap > 750000000000)  return 'large-cap';    // > 75,000 Cr
+    if (marketCap > 250000000000)  return 'mid-cap';      // 25,001 - 75,000 Cr
+    if (marketCap > 10000000000)   return 'small-cap';    // 1,001 - 25,000 Cr
+    return 'micro-cap';                                    // <= 1,000 Cr
 }
 
 // ── Sector Sync ──────────────────────────────────────────────
@@ -1851,7 +1851,7 @@ function populateSizePills() {
     }
     var selected = getMsValues('msSize');
     // Custom sort order for market cap sizes
-    var order = ['Large Cap', 'Mid Cap', 'Small Cap', 'Micro Cap'];
+    var order = ['large-cap', 'mid-cap', 'small-cap', 'micro-cap'];
     var sorted = Array.from(sizes).sort(function(a, b) {
         var ai = order.indexOf(a);
         var bi = order.indexOf(b);
