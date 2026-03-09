@@ -1433,8 +1433,12 @@ function cancelSync() {
 // ═══════════════════════════════════════════════════════════════
 
 // Derive Yahoo Finance symbol from securities_db record
+// NSE equities: SYMBOL.NS, NSE SME: SYMBOL-SM.NS, BSE-only: SYMBOL.BO
 function deriveYahooSymbol(rec) {
-    if (rec.nse_symbol) return rec.nse_symbol + '.NS';
+    if (rec.nse_symbol) {
+        if (rec.security_type === 'EQUITY_SME') return rec.nse_symbol + '-SM.NS';
+        return rec.nse_symbol + '.NS';
+    }
     if (rec.bse_symbol) return rec.bse_symbol + '.BO';
     return null;
 }
