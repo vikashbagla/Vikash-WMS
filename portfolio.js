@@ -611,6 +611,12 @@ function renderPortfolio() {
         return;
     }
 
+    // Build symbol → securities_db map for 52-week data lookup
+    var secBySymbol = {};
+    (wmsRefData.securitiesCm || []).forEach(function(s) {
+        if (!secBySymbol[s.symbol]) secBySymbol[s.symbol] = s;
+    });
+
     // Totals
     let totalInvested = 0;
     let totalValue = 0;
@@ -674,11 +680,14 @@ function renderPortfolio() {
         const dayPL        = md ? h.quantity * md.ch : null;
         const dayChp       = md ? md.chp : null;  // % change for the day
 
-        // CMP slider — day range (52w not available from Fyers Quotes API)
-        const cmpSlider = (md && md.high && md.low)
-            ? buildSlider(md.lp, md.low, md.high,
-                formatPrice(md.low, false),
-                formatPrice(md.high, false))
+        // CMP slider — 52-week range from securities_db (synced via Yahoo Finance)
+        var sec52 = secBySymbol[h.symbol];
+        var w52h = sec52 && sec52.week_52_high ? Number(sec52.week_52_high) : null;
+        var w52l = sec52 && sec52.week_52_low  ? Number(sec52.week_52_low)  : null;
+        const cmpSlider = (w52h && w52l)
+            ? buildSlider(price, w52l, w52h,
+                formatPrice(w52l, false),
+                formatPrice(w52h, false))
             : '';
 
         const qtyHtml = h.quantity < 0

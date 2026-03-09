@@ -239,7 +239,7 @@ async function wmsLoadSecuritiesCm(retryCount) {
     retryCount = retryCount || 0;
     try {
         var rows = await wmsFetchAllRows('securities_db',
-            'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,sector,size,is_active,lot_size,broker_tokens,merged_into_id,merged_at',
+            'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,sector,size,is_active,lot_size,broker_tokens,merged_into_id,merged_at,week_52_high,week_52_low',
             'isin');
         wmsRefData.securitiesCm = rows;
         wmsRefData.securitiesCmMap = {};

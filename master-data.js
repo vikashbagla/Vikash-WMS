@@ -1654,6 +1654,110 @@ async function startSizeSync() {
     }
 }
 
+// ── 52-Week High/Low Sync ────────────────────────────────────
+// Fetches 52-week high/low from Yahoo Finance and updates securities_db.
+// Uses the v7 batch quote API (via existing callYahooFinance edge function)
+// which already returns week52High/week52Low in the response.
+
+async function startWeek52Sync() {
+    var btn = document.getElementById('btnWeek52Sync');
+    btn.disabled = true;
+    btn.textContent = '⏳ Loading...';
+    setSecLoading(true, 'Fetching active equities...');
+
+    try {
+        // Fetch all active equities
+        var all = [];
+        var from = 0;
+        var BATCH = 1000;
+        while (true) {
+            var result = await window.supabaseClient
+                .from('securities_db')
+                .select('id,isin,symbol,nse_symbol,bse_symbol,security_type')
+                .eq('is_active', true)
+                .in('security_type', ['EQUITY', 'EQUITY_SME'])
+                .order('isin', { ascending: true })
+                .range(from, from + BATCH - 1);
+            if (result.error) throw result.error;
+            all = all.concat(result.data || []);
+            if (!result.data || result.data.length < BATCH) break;
+            from += BATCH;
+        }
+
+        if (all.length === 0) {
+            alert('No active equities found.');
+            return;
+        }
+
+        setSecLoading(true, 'Found ' + all.length + ' equities. Fetching 52-week data from Yahoo Finance...');
+
+        // Build yahoo symbol → record map
+        var yahooMap = {};
+        var symbols = [];
+        for (var i = 0; i < all.length; i++) {
+            var ySym = deriveYahooSymbol(all[i]);
+            if (!ySym) continue;
+            if (!yahooMap[ySym]) { yahooMap[ySym] = []; symbols.push(ySym); }
+            yahooMap[ySym].push(all[i]);
+        }
+
+        // Call Yahoo Finance in batches of 30
+        var YBATCH = 30;
+        var updated = 0;
+        var skipped = 0;
+        var failed = 0;
+        var now = new Date().toISOString();
+        for (var b = 0; b < symbols.length; b += YBATCH) {
+            var batch = symbols.slice(b, b + YBATCH);
+            setSecLoading(true, 'Fetching 52-week data... ' + Math.min(b + YBATCH, symbols.length) + '/' + symbols.length);
+
+            try {
+                var result = await callYahooFinance(batch);
+                var results = result.results || {};
+
+                for (var s = 0; s < batch.length; s++) {
+                    var sym = batch[s];
+                    var data = results[sym];
+                    if (data && data.week52High && data.week52Low) {
+                        var recs = yahooMap[sym] || [];
+                        for (var r = 0; r < recs.length; r++) {
+                            var upd = await window.supabaseClient
+                                .from('securities_db')
+                                .update({
+                                    week_52_high: data.week52High,
+                                    week_52_low: data.week52Low,
+                                    week_52_updated_at: now
+                                })
+                                .eq('id', recs[r].id);
+                            if (upd.error) { failed++; console.warn('52wk update failed for', recs[r].symbol, upd.error); }
+                            else { updated++; }
+                        }
+                    } else {
+                        skipped++;
+                    }
+                }
+            } catch (batchErr) {
+                console.warn('Yahoo 52wk batch failed:', batchErr);
+                failed += batch.length;
+            }
+        }
+
+        alert('52-Week Sync complete!\nUpdated: ' + updated + ' | Skipped (no data): ' + skipped + (failed > 0 ? ' | Failed: ' + failed : ''));
+        await loadSecuritiesStats();
+        await loadSecuritiesTable(true);
+        // Refresh the securities cache so Portfolio picks up new 52wk values
+        await wmsLoadSecuritiesCm();
+
+    } catch (err) {
+        alert('52-Week Sync error: ' + err.message);
+        console.error(err);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '⟳ 52wk Sync';
+        setSecLoading(false);
+    }
+}
+
 // ── Post-CM-Sync sector fetch for newly added records ────────
 // Called after commitSync() completes successfully
 
