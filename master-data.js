@@ -3571,12 +3571,10 @@ function _mergeSearchTarget(query) {
         return;
     }
     var results = wmsSearchSecurities(query);
-    // Filter out PE- ISINs (user-defined securities) — we only want listed securities as targets
-    results = results.filter(function(s) { return !s.isin || !s.isin.startsWith('PE-'); });
-    // Also filter out NFO securities (from securitiesNfo — they have instrument_name not company_name)
-    results = results.filter(function(s) { return s.company_name; });
+    // Filter out the source security itself and NFO securities
+    results = results.filter(function(s) { return s.id !== _mergeSourceId && s.company_name; });
     if (results.length === 0) {
-        resultsDiv.innerHTML = '<div style="padding:8px 12px;color:#a0aec0;font-size:12px;">No listed securities found</div>';
+        resultsDiv.innerHTML = '<div style="padding:8px 12px;color:#a0aec0;font-size:12px;">No matching securities found</div>';
         resultsDiv.style.display = 'block';
         return;
     }
