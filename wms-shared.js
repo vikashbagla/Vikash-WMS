@@ -780,7 +780,7 @@ function wmsCalcFifoCost(transactions) {
 // This means: if Watchlist runs first, Positions skips those symbols.
 //
 // Protocol (3 stages):
-//   Stage 1: Fyers batch with NSE:SYMBOL-EQ
+//   Stage 1: Fyers batch — uses broker_tokens.fyers if available, else NSE:SYMBOL-EQ
 //   Stage 2: Alternate Fyers symbols (BSE, -SM, broker_tokens from securities_db)
 //   Stage 3: Yahoo Finance fallback via Supabase edge function
 //
@@ -842,7 +842,7 @@ async function wmsFetchFnoContractPrices(symbols, forceRefresh) {
 
 /**
  * wmsFetchEquityPrices — 3-stage price resolution protocol.
- *   Stage 1: Fyers batch with NSE:SYMBOL-EQ
+ *   Stage 1: Fyers batch — broker_tokens.fyers if available, else NSE:SYMBOL-EQ
  *   Stage 2: Alternate Fyers symbols (BSE, -SM, broker_tokens) for unresolved
  *   Stage 3: Yahoo Finance fallback
  *
@@ -866,12 +866,28 @@ async function wmsFetchEquityPrices(items, forceRefresh) {
     });
     if (toFetch.length === 0) return;
 
-    // ── Stage 1: Fyers batch with NSE:SYMBOL-EQ ──
+    // ── Stage 1: Fyers batch — use broker_tokens if available, else NSE:SYMBOL-EQ ──
     var respondedSymbols = {};
+    // Map each Fyers key back to its shortSymbol for response parsing
+    var fyersKeyToShort = {};
     if (window.fyersToken && window.fyersCall) {
-        var fyersKeys = toFetch.map(function(it) { return 'NSE:' + it.shortSymbol + '-EQ'; });
-        // Deduplicate
-        fyersKeys = fyersKeys.filter(function(s, i) { return fyersKeys.indexOf(s) === i; });
+        var fyersKeys = [];
+        toFetch.forEach(function(it) {
+            var fKey = null;
+            // Use broker_tokens.fyers if available (previously resolved, most reliable)
+            var dbRec = it.securityId && wmsRefData.securitiesCmMap
+                ? wmsRefData.securitiesCmMap[it.securityId] : null;
+            if (dbRec && dbRec.broker_tokens && dbRec.broker_tokens.fyers) {
+                var btf = dbRec.broker_tokens.fyers;
+                fKey = btf.nse_symbol || btf.bse_symbol || null;
+            }
+            // Default: NSE:SYMBOL-EQ
+            if (!fKey) fKey = 'NSE:' + it.shortSymbol + '-EQ';
+            if (fyersKeys.indexOf(fKey) < 0) {
+                fyersKeys.push(fKey);
+            }
+            fyersKeyToShort[fKey] = it.shortSymbol;
+        });
 
         // Batch into chunks of 50
         for (var i = 0; i < fyersKeys.length; i += 50) {
@@ -882,9 +898,12 @@ async function wmsFetchEquityPrices(items, forceRefresh) {
                     data.d.forEach(function(item) {
                         if (item.v && item.v.symbol) {
                             respondedSymbols[item.v.symbol] = true;
-                            // Extract shortSymbol from Fyers key (NSE:SYMBOL-EQ → SYMBOL)
-                            var parts = item.v.symbol.match(/^[A-Z]+:(.+)-[A-Z]+$/);
-                            var ss = parts ? parts[1] : null;
+                            // Resolve shortSymbol: first try our map, then regex fallback
+                            var ss = fyersKeyToShort[item.v.symbol];
+                            if (!ss) {
+                                var parts = item.v.symbol.match(/^[A-Z]+:(.+)-[A-Z]+$/);
+                                ss = parts ? parts[1] : null;
+                            }
                             if (ss) {
                                 wmsLivePrices[ss] = {
                                     lp: item.v.lp || 0,
