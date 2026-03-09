@@ -1004,9 +1004,15 @@ function trRenderPortfolio() {
         var dayPL = md ? h.quantity * md.ch : null;
         var dayChp = md ? md.chp : null;
 
-        var cmpSlider = (md && md.high && md.low)
-            ? trBuildSlider(md.lp, md.low, md.high, formatPrice(md.low, false), formatPrice(md.high, false))
-            : '';
+        // CMP slider: use 52-week high/low from securities_db (not day H/L)
+        var cmpSlider = '';
+        var _sec52 = (wmsRefData.securitiesCm || []).find(function(s) {
+            return s.symbol === h.shortSymbol || s.nse_symbol === h.shortSymbol || s.bse_symbol === h.shortSymbol;
+        });
+        if (_sec52 && _sec52.week_52_high && _sec52.week_52_low && _sec52.week_52_high > _sec52.week_52_low) {
+            cmpSlider = trBuildSlider(price, _sec52.week_52_low, _sec52.week_52_high,
+                formatPrice(_sec52.week_52_low, false), formatPrice(_sec52.week_52_high, false));
+        }
 
         var qtyHtml = h.quantity < 0
             ? '<div class="number-main negative">(' + formatQuantity(Math.abs(h.quantity)) + ')</div>'
