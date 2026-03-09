@@ -286,6 +286,11 @@ async function wmsLoadSecuritiesDebt() {
             return q.in('security_type', WMS_DEBT_TYPES);
         };
         var rows = await wmsFetchAllRows('securities_db', WMS_SECURITIES_CM_SELECT, 'isin', filterFn);
+        // Re-check after await: CM Sync may have loaded everything while we were fetching
+        if (wmsRefData.securitiesDebtLoaded) {
+            console.log('Securities debt: skipped merge — already loaded by CM Sync');
+            return;
+        }
         // Merge into existing arrays (avoid duplicates by checking map)
         var added = 0;
         rows.forEach(function(r) {
