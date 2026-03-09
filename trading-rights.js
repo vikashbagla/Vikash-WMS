@@ -170,14 +170,14 @@ function rhInitDateWidget(prefix) {
 
     // Keyboard navigation
     wrap.addEventListener('keydown', function(e) {
-        var activeSeg = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+        var activeSeg = rhDateGetActiveSeg(prefix);
         if (!activeSeg) rhDateSetActive(prefix, 'dd');
 
         if (e.key === 'ArrowLeft') {
             e.preventDefault();
             rhDateMoveSeg(prefix, -1);
         } else if (e.key === 'ArrowRight' || e.key === 'Tab' && !e.shiftKey) {
-            var seg = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+            var seg = rhDateGetActiveSeg(prefix);
             if (seg !== 'yyyy') {
                 e.preventDefault();
                 rhDateMoveSeg(prefix, 1);
@@ -185,7 +185,7 @@ function rhInitDateWidget(prefix) {
                 rhDateClearActive(prefix);
             }
         } else if (e.key === 'Tab' && e.shiftKey) {
-            var seg2 = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+            var seg2 = rhDateGetActiveSeg(prefix);
             if (seg2 !== 'dd') {
                 e.preventDefault();
                 rhDateMoveSeg(prefix, -1);
@@ -209,7 +209,9 @@ function rhInitDateWidget(prefix) {
 }
 
 function rhDateGetState(prefix) {
-    return prefix === 'rhEnt' ? rhEntDateState : rhPayDateState;
+    if (prefix === 'rhEnt') return rhEntDateState;
+    if (prefix === 'inc' && typeof incDateState !== 'undefined') return incDateState;
+    return rhPayDateState;
 }
 
 function rhDateDaysInMonth(month, year) {
@@ -218,6 +220,7 @@ function rhDateDaysInMonth(month, year) {
 
 function rhDateSetActive(prefix, seg) {
     if (prefix === 'rhEnt') { rhEntDateActiveSeg = seg; rhEntDateTypeBuf = ''; }
+    else if (prefix === 'inc' && typeof incDateActiveSeg !== 'undefined') { incDateActiveSeg = seg; incDateTypeBuf = ''; }
     else { rhPayDateActiveSeg = seg; rhPayDateTypeBuf = ''; }
     var wrap = document.getElementById(prefix + 'DateWrap');
     wrap.querySelectorAll('.rhDate-seg').forEach(function(el) {
@@ -227,14 +230,33 @@ function rhDateSetActive(prefix, seg) {
 
 function rhDateClearActive(prefix) {
     if (prefix === 'rhEnt') { rhEntDateActiveSeg = null; }
+    else if (prefix === 'inc' && typeof incDateActiveSeg !== 'undefined') { incDateActiveSeg = null; }
     else { rhPayDateActiveSeg = null; }
     var wrap = document.getElementById(prefix + 'DateWrap');
     wrap.querySelectorAll('.rhDate-seg').forEach(function(el) { el.classList.remove('active'); });
 }
 
+function rhDateGetActiveSeg(prefix) {
+    if (prefix === 'rhEnt') return rhEntDateActiveSeg;
+    if (prefix === 'inc' && typeof incDateActiveSeg !== 'undefined') return incDateActiveSeg;
+    return rhPayDateActiveSeg;
+}
+
+function rhDateGetTypeBuf(prefix) {
+    if (prefix === 'rhEnt') return rhEntDateTypeBuf;
+    if (prefix === 'inc' && typeof incDateTypeBuf !== 'undefined') return incDateTypeBuf;
+    return rhPayDateTypeBuf;
+}
+
+function rhDateSetTypeBuf(prefix, val) {
+    if (prefix === 'rhEnt') rhEntDateTypeBuf = val;
+    else if (prefix === 'inc' && typeof incDateTypeBuf !== 'undefined') incDateTypeBuf = val;
+    else rhPayDateTypeBuf = val;
+}
+
 function rhDateMoveSeg(prefix, dir) {
     var order = ['dd', 'mmm', 'yyyy'];
-    var active = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+    var active = rhDateGetActiveSeg(prefix);
     var idx = order.indexOf(active);
     var next = idx + dir;
     if (next >= 0 && next < order.length) rhDateSetActive(prefix, order[next]);
@@ -242,7 +264,7 @@ function rhDateMoveSeg(prefix, dir) {
 
 function rhDateAdjust(prefix, delta) {
     var st = rhDateGetState(prefix);
-    var active = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+    var active = rhDateGetActiveSeg(prefix);
     if (active === 'dd') {
         st.day += delta;
         var maxDay = rhDateDaysInMonth(st.month, st.year);
@@ -263,10 +285,10 @@ function rhDateAdjust(prefix, delta) {
 
 function rhDateTypeDigit(prefix, ch) {
     var st = rhDateGetState(prefix);
-    var active = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
-    var buf = prefix === 'rhEnt' ? rhEntDateTypeBuf : rhPayDateTypeBuf;
+    var active = rhDateGetActiveSeg(prefix);
+    var buf = rhDateGetTypeBuf(prefix);
     buf += ch;
-    if (prefix === 'rhEnt') rhEntDateTypeBuf = buf; else rhPayDateTypeBuf = buf;
+    rhDateSetTypeBuf(prefix, buf);
 
     if (active === 'dd') {
         var d = parseInt(buf);
@@ -281,17 +303,17 @@ function rhDateTypeDigit(prefix, ch) {
             st.year = parseInt(buf) || st.year;
             rhDateRender(prefix);
             rhDateOnChange(prefix);
-            if (prefix === 'rhEnt') rhEntDateTypeBuf = ''; else rhPayDateTypeBuf = '';
+            rhDateSetTypeBuf(prefix, '');
         }
     }
 }
 
 function rhDateTypeLetter(prefix, ch) {
-    var active = prefix === 'rhEnt' ? rhEntDateActiveSeg : rhPayDateActiveSeg;
+    var active = rhDateGetActiveSeg(prefix);
     if (active !== 'mmm') return;
-    var buf = prefix === 'rhEnt' ? rhEntDateTypeBuf : rhPayDateTypeBuf;
+    var buf = rhDateGetTypeBuf(prefix);
     buf += ch.toLowerCase();
-    if (prefix === 'rhEnt') rhEntDateTypeBuf = buf; else rhPayDateTypeBuf = buf;
+    rhDateSetTypeBuf(prefix, buf);
 
     var st = rhDateGetState(prefix);
     for (var i = 0; i < 12; i++) {
@@ -332,7 +354,8 @@ function rhDateGetIsoStr(prefix) {
 
 function rhDateOnChange(prefix) {
     if (prefix === 'rhEnt') rhEntPopulateHoldings();
-    else rhPayPopulateHoldings();
+    else if (prefix === 'rhPay') rhPayPopulateHoldings();
+    else if (prefix === 'inc' && typeof incDateOnChange === 'function') incDateOnChange();
 }
 
 // ============================================================================
@@ -374,64 +397,12 @@ function rhSearchSymbol(input, dd, ddCtrl, reOnly) {
 }
 
 // ============================================================================
-// SHARED: Holdings as-of-date calculation
+// SHARED: Holdings as-of-date — thin wrapper calling wmsCalcHoldingsAsOfDate
+// (canonical implementation is in wms-shared.js)
 // ============================================================================
 
 function rhCalcHoldingsAsOfDate(shortSymbol, targetDate) {
-    var filtered = trTransactions.filter(function(t) {
-        var sym = t.short_symbol || t.symbol;
-        return !t.dont_display && sym === shortSymbol && t.transaction_date <= targetDate;
-    });
-
-    var groups = {};
-    filtered.forEach(function(t) {
-        var key = (t.investor_id || '') + '|' + (t.trader_id || '') + '|' + (t.broker_id || '');
-        if (!groups[key]) {
-            groups[key] = {
-                investor_id: t.investor_id,
-                trader_id: t.trader_id,
-                broker_id: t.broker_id,
-                txns: []
-            };
-        }
-        groups[key].txns.push(t);
-    });
-
-    var invMap = wmsRefData.investorObjMap || {};
-    var brkMap = wmsRefData.brokerObjMap || {};
-    var results = [];
-
-    Object.keys(groups).forEach(function(key) {
-        var g = groups[key];
-        var calc = wmsCalcAvgCost(g.txns);
-        if (calc.netQuantity <= 0) return;
-
-        var inv = invMap[g.investor_id];
-        var trader = g.trader_id ? invMap[g.trader_id] : null;
-        var brk = brkMap[g.broker_id];
-
-        // Build combined "Inv > Trader > Broker" label
-        var invLabel = inv ? (inv.short_name || inv.name) : '—';
-        var trdLabel = trader ? (trader.short_name || trader.name) : '';
-        var brkLabel = brk ? (brk.broker_code || brk.name) : '—';
-        var combined = invLabel;
-        if (trdLabel && trdLabel !== invLabel) combined += ' > ' + trdLabel;
-        if (brkLabel) combined += ' > ' + brkLabel;
-
-        results.push({
-            investor_id: g.investor_id,
-            trader_id: g.trader_id,
-            broker_id: g.broker_id,
-            invName: invLabel,
-            traderName: trdLabel,
-            brkName: brkLabel,
-            combinedLabel: combined,
-            netQuantity: calc.netQuantity,
-            avgCost: calc.avgCost
-        });
-    });
-
-    return results;
+    return wmsCalcHoldingsAsOfDate(shortSymbol, targetDate, trTransactions);
 }
 
 // ============================================================================
@@ -747,28 +718,47 @@ function rhPayPopulateHoldings() {
         html += '<tr>' +
             '<td>' + h.combinedLabel + '</td>' +
             '<td class="r">' + h.netQuantity.toLocaleString() + '</td>' +
-            '<td class="r"><input type="number" min="0" step="0.01" data-idx="' + idx + '" class="rh-pay-price" oninput="rhPayUpdateTotal(' + idx + ')"></td>' +
-            '<td class="r"><input type="number" min="0" step="0.01" data-idx="' + idx + '" class="rh-pay-charges" value="0" oninput="rhPayUpdateTotal(' + idx + ')"></td>' +
-            '<td class="r"><span id="rh-pay-total-' + idx + '">0</span></td>' +
+            '<td class="r"><input type="text" data-idx="' + idx + '" id="rh-pay-price-' + idx + '" class="rh-pay-price" placeholder="0.00"></td>' +
+            '<td class="r"><input type="text" data-idx="' + idx + '" id="rh-pay-charges-' + idx + '" class="rh-pay-charges" placeholder="0.00"></td>' +
+            '<td class="r"><span id="rh-pay-total-' + idx + '">0.00</span></td>' +
             '</tr>';
     });
     html += '</tbody></table>';
     document.getElementById('rhPayTableWrap').innerHTML = html;
     document.getElementById('rhPaySaveBtn').disabled = false;
+
+    // Bind focus/blur formatting handlers (parity with Add Transaction modal)
+    holdings.forEach(function(h, idx) {
+        var priceEl = document.getElementById('rh-pay-price-' + idx);
+        var chargesEl = document.getElementById('rh-pay-charges-' + idx);
+        [priceEl, chargesEl].forEach(function(el) {
+            if (!el) return;
+            el.addEventListener('focus', function() {
+                var raw = el.dataset.rawValue || '';
+                el.value = (raw && parseFloat(raw) !== 0) ? raw : '';
+            });
+            el.addEventListener('blur', function() {
+                var v = parseFloat(el.value.replace(/,/g, '')) || 0;
+                el.dataset.rawValue = v ? v.toString() : '';
+                el.value = v ? wmsFmtAmt(v) : '';
+            });
+            el.addEventListener('input', function() { rhPayUpdateTotal(idx); });
+        });
+    });
 }
 
 function rhPayUpdateTotal(idx) {
     if (idx < 0 || idx >= rhPayHoldings.length) return;
     var h = rhPayHoldings[idx];
-    var priceInput = document.querySelector('.rh-pay-price[data-idx="' + idx + '"]');
-    var chargesInput = document.querySelector('.rh-pay-charges[data-idx="' + idx + '"]');
+    var priceInput = document.getElementById('rh-pay-price-' + idx);
+    var chargesInput = document.getElementById('rh-pay-charges-' + idx);
     var totalSpan = document.getElementById('rh-pay-total-' + idx);
     if (!priceInput || !totalSpan) return;
 
-    var price = parseFloat(priceInput.value) || 0;
-    var charges = parseFloat(chargesInput ? chargesInput.value : 0) || 0;
+    var price = parseFloat((priceInput.dataset.rawValue || priceInput.value || '').replace(/,/g, '')) || 0;
+    var charges = parseFloat((chargesInput ? (chargesInput.dataset.rawValue || chargesInput.value || '') : '0').replace(/,/g, '')) || 0;
     var total = (h.netQuantity * price) + charges;
-    totalSpan.textContent = total > 0 ? total.toFixed(2) : '0';
+    totalSpan.textContent = total > 0 ? wmsFmtAmt(total) : '0.00';
 }
 
 // ============================================================================
@@ -785,10 +775,10 @@ async function rhPaySaveTransactions() {
 
     rhPayHoldings.forEach(function(h, idx) {
         if (h.netQuantity <= 0) return;
-        var priceInput = document.querySelector('.rh-pay-price[data-idx="' + idx + '"]');
-        var chargesInput = document.querySelector('.rh-pay-charges[data-idx="' + idx + '"]');
-        var price = parseFloat(priceInput ? priceInput.value : 0) || 0;
-        var charges = parseFloat(chargesInput ? chargesInput.value : 0) || 0;
+        var priceInput = document.getElementById('rh-pay-price-' + idx);
+        var chargesInput = document.getElementById('rh-pay-charges-' + idx);
+        var price = parseFloat((priceInput ? (priceInput.dataset.rawValue || priceInput.value || '') : '0').replace(/,/g, '')) || 0;
+        var charges = parseFloat((chargesInput ? (chargesInput.dataset.rawValue || chargesInput.value || '') : '0').replace(/,/g, '')) || 0;
         if (price <= 0) return;
 
         var grossAmount = h.netQuantity * price;
@@ -843,28 +833,12 @@ async function rhPaySaveTransactions() {
 }
 
 // ============================================================================
-// SHARED: Batch create transactions
+// SHARED: Batch create transactions — thin wrapper calling wmsBatchCreateTransactions
+// (canonical implementation is in wms-shared.js)
 // ============================================================================
 
 async function rhBatchCreateTransactions(txns) {
-    var headers = {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
-    };
-    for (var i = 0; i < txns.length; i += 10) {
-        var batch = txns.slice(i, i + 10);
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions', {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(batch)
-        });
-        if (!resp.ok) {
-            var errText = await resp.text();
-            throw new Error('DB error: ' + resp.status + ' — ' + errText);
-        }
-    }
+    return wmsBatchCreateTransactions(txns);
 }
 
 // ============================================================================

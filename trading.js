@@ -143,6 +143,8 @@ function trSetupEventHandlers() {
                 trLoadRightsModule(function() { openRightsEntitlementModal(); });
             } else if (txnType === 'RIGHTS_PAYMENT') {
                 trLoadRightsModule(function() { openRightsPaymentModal(); });
+            } else if (WMS_INCOME_TYPES.indexOf(txnType) >= 0) {
+                trLoadIncomeModule(function() { openIncomeModal(txnType); });
             } else {
                 alert('Transaction type "' + txnType + '" — form coming soon.');
             }
@@ -2643,6 +2645,82 @@ async function trLoadRightsModule(callback) {
         showAlert('Failed to load Rights module: ' + err.message, 'error');
         trRightsLoading = false;
         trRightsCallbacks = [];
+    }
+}
+
+// ============================================================================
+// INCOME MODULE (loaded on demand — same pattern as Rights)
+// ============================================================================
+
+var trIncomeLoaded = false;
+var trIncomeLoading = false;
+var trIncomeCallbacks = [];
+
+async function trLoadIncomeModule(callback) {
+    if (trIncomeLoaded) {
+        if (typeof callback === 'function') callback();
+        return;
+    }
+    if (trIncomeLoading) {
+        if (typeof callback === 'function') trIncomeCallbacks.push(callback);
+        return;
+    }
+    trIncomeLoading = true;
+    if (typeof callback === 'function') trIncomeCallbacks.push(callback);
+
+    // Income module needs the Rights module for date widget functions
+    // Load Rights first if not already loaded
+    if (!trRightsLoaded) {
+        await new Promise(function(resolve, reject) {
+            trLoadRightsModule(resolve);
+            // Timeout safety: if rights doesn't load in 10s, reject
+            setTimeout(function() { reject(new Error('Rights module timeout')); }, 10000);
+        }).catch(function(err) {
+            console.warn('Trading: Rights pre-load warning:', err.message);
+        });
+    }
+
+    try {
+        // Load HTML
+        var htmlResp = await fetch('trading-income.html?t=' + Date.now());
+        if (!htmlResp.ok) throw new Error('Failed to load trading-income.html');
+        var htmlText = await htmlResp.text();
+
+        // Extract <style> and inject to <head>
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(htmlText, 'text/html');
+        var styles = doc.querySelectorAll('style');
+        styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+
+        // Inject body content
+        var container = document.createElement('div');
+        container.id = 'tr-income-container';
+        container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
+        document.body.appendChild(container);
+
+        // Load JS
+        var oldScript = document.querySelector('script[src*="trading-income.js"]');
+        if (oldScript) oldScript.remove();
+        await new Promise(function(resolve, reject) {
+            var script = document.createElement('script');
+            script.src = 'trading-income.js?t=' + Date.now();
+            script.onload = resolve;
+            script.onerror = function() { reject(new Error('Failed to load trading-income.js')); };
+            document.body.appendChild(script);
+        });
+
+        trIncomeLoaded = true;
+
+        // Small delay for init to complete, then fire all queued callbacks
+        setTimeout(function() {
+            trIncomeCallbacks.forEach(function(cb) { cb(); });
+            trIncomeCallbacks = [];
+        }, 100);
+    } catch (err) {
+        console.error('Trading: Failed to load income module:', err);
+        showAlert('Failed to load Income module: ' + err.message, 'error');
+        trIncomeLoading = false;
+        trIncomeCallbacks = [];
     }
 }
 

@@ -15,6 +15,7 @@
 var WMS_MONTHS_SHORT = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 var WMS_WEEKLY_EXPIRY_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
 var WMS_INCOME_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION'];
+var WMS_TDS_DEFAULT_RATE = 0.10; // 10% TDS — TODO: move to DB config table (see G.8.1)
 
 // Transaction types whose quantity does NOT count toward holdings/balance.
 // Income types carry a quantity for display but don't change holdings.
@@ -3357,3 +3358,112 @@ var wmsDateFilter = function(containerEl, opts) {
         destroy: function() { closePopover(); containerEl.innerHTML = ''; }
     };
 };
+
+// ============================================================================
+// SHARED: Holdings as-of-date calculation
+// Used by: trading-rights.js, trading-income.js
+// Accepts explicit transactions array — caller passes their module's data.
+// ============================================================================
+
+/**
+ * Calculate holdings for a symbol as of a given date, grouped by inv>trader>broker.
+ * @param {string} shortSymbol — e.g. "RELIANCE"
+ * @param {string} targetDate — ISO date string e.g. "2026-03-09"
+ * @param {Array} transactions — full transactions array from caller
+ * @returns {Array} [{investor_id, trader_id, broker_id, combinedLabel, netQuantity, avgCost}]
+ */
+function wmsCalcHoldingsAsOfDate(shortSymbol, targetDate, transactions) {
+    var filtered = transactions.filter(function(t) {
+        var sym = t.short_symbol || t.symbol;
+        return !t.dont_display && sym === shortSymbol && t.transaction_date <= targetDate;
+    });
+
+    var groups = {};
+    filtered.forEach(function(t) {
+        var key = (t.investor_id || '') + '|' + (t.trader_id || '') + '|' + (t.broker_id || '');
+        if (!groups[key]) {
+            groups[key] = {
+                investor_id: t.investor_id,
+                trader_id: t.trader_id,
+                broker_id: t.broker_id,
+                txns: []
+            };
+        }
+        groups[key].txns.push(t);
+    });
+
+    var invMap = wmsRefData.investorObjMap || {};
+    var brkMap = wmsRefData.brokerObjMap || {};
+    var results = [];
+
+    Object.keys(groups).forEach(function(key) {
+        var g = groups[key];
+        var calc = wmsCalcAvgCost(g.txns);
+        if (calc.netQuantity <= 0) return;
+
+        var inv = invMap[g.investor_id];
+        var trader = g.trader_id ? invMap[g.trader_id] : null;
+        var brk = brkMap[g.broker_id];
+
+        var invLabel = inv ? (inv.short_name || inv.name) : '—';
+        var trdLabel = trader ? (trader.short_name || trader.name) : '';
+        var brkLabel = brk ? (brk.broker_code || brk.name) : '—';
+        var combined = invLabel;
+        if (trdLabel && trdLabel !== invLabel) combined += ' > ' + trdLabel;
+        if (brkLabel) combined += ' > ' + brkLabel;
+
+        results.push({
+            investor_id: g.investor_id,
+            trader_id: g.trader_id,
+            broker_id: g.broker_id,
+            invName: invLabel,
+            traderName: trdLabel,
+            brkName: brkLabel,
+            combinedLabel: combined,
+            netQuantity: calc.netQuantity,
+            avgCost: calc.avgCost
+        });
+    });
+
+    return results;
+}
+
+// ============================================================================
+// SHARED: Batch create transactions
+// Used by: trading-rights.js, trading-income.js
+// Inserts in chunks of 10 to stay within PostgREST limits.
+// ============================================================================
+
+async function wmsBatchCreateTransactions(txns) {
+    var headers = {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+    };
+    for (var i = 0; i < txns.length; i += 10) {
+        var batch = txns.slice(i, i + 10);
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(batch)
+        });
+        if (!resp.ok) {
+            var errText = await resp.text();
+            throw new Error('DB error: ' + resp.status + ' — ' + errText);
+        }
+    }
+}
+
+// ============================================================================
+// SHARED: Amount formatting (commas, 2 decimals, parentheses for negatives)
+// Used by: trading-add-transaction.js, trading-income.js, trading-rights.js
+// ============================================================================
+
+function wmsFmtAmt(value) {
+    if (value === null || value === undefined || isNaN(value)) return '0.00';
+    var abs = Math.abs(value);
+    var formatted = abs.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (value < 0) return '(' + formatted + ')';
+    return formatted;
+}

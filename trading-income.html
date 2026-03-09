@@ -1,0 +1,81 @@
+<head>
+<style>
+/* Income Modal — reuses .rights-* CSS from trading-rights.html */
+/* Only income-specific overrides go here */
+
+.inc-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.inc-table th {
+    text-align: left; font-size: 10px; font-weight: 600; color: #718096;
+    text-transform: uppercase; padding: 4px 6px; border-bottom: 1px solid #e2e8f0;
+    letter-spacing: 0.3px;
+}
+.inc-table th.r, .inc-table td.r { text-align: right; }
+.inc-table td { padding: 5px 6px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+.inc-table tr:last-child td { border-bottom: none; }
+
+.inc-table input[type="text"] {
+    width: 100%; padding: 3px 6px; border: 1px solid #e2e8f0; border-radius: 3px;
+    font-size: 11px; color: #2d3748; text-align: right; outline: none;
+    height: 26px; box-sizing: border-box;
+}
+.inc-table input[type="text"]:focus {
+    border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15);
+}
+
+.inc-label-cell { font-size: 11px; color: #4a5568; line-height: 1.3; }
+.inc-qty-cell { font-size: 11px; color: #2d3748; font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<!-- ============================================================ -->
+<!-- INCOME MODAL (Dividend / Interest / Other Income / Cap Red)  -->
+<!-- ============================================================ -->
+<div class="rights-overlay" id="incomeOverlay">
+  <div class="rights-modal wide">
+    <!-- Header -->
+    <div class="rights-header">
+      <h3 id="incModalTitle">Dividend</h3>
+      <button class="rights-close-btn" id="incCloseBtn">&times;</button>
+    </div>
+
+    <!-- Body -->
+    <div class="rights-body">
+      <!-- Row 1: Date + Security search -->
+      <div class="rights-fields-row">
+        <!-- Date widget -->
+        <div class="rights-field" style="flex:0 0 140px;">
+          <label>Date</label>
+          <div class="rhDate-wrap" id="incDateWrap" tabindex="0">
+            <span class="rhDate-seg" data-seg="dd" id="incDateDd">01</span>
+            <span class="rhDate-sep">-</span>
+            <span class="rhDate-seg" data-seg="mmm" id="incDateMmm">Jan</span>
+            <span class="rhDate-sep">-</span>
+            <span class="rhDate-seg" data-seg="yyyy" id="incDateYyyy">2026</span>
+            <button class="rhDate-cal-btn" id="incDateCalBtn">&#128197;</button>
+            <input type="date" class="rhDate-cal-picker" id="incDateCalPicker" tabindex="-1">
+          </div>
+        </div>
+
+        <!-- Security search -->
+        <div class="rights-field" style="flex:1;">
+          <label>Security</label>
+          <input type="text" id="incSecurityInput" placeholder="Search symbol or name..." autocomplete="off">
+          <div class="wms-dropdown" id="incSecurityDd" style="display:none;"></div>
+          <div id="incSecurityBadge" style="margin-top:3px;"></div>
+        </div>
+      </div>
+
+      <!-- Holdings table -->
+      <div id="incTableWrap">
+        <div class="rights-empty">Select a date and security to view holdings</div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="rights-footer">
+      <button class="btn-secondary" id="incCancelBtn">Cancel</button>
+      <button class="btn-primary" id="incSaveBtn" disabled>Save</button>
+    </div>
+  </div>
+</div>
+</body>
