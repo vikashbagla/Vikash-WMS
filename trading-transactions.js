@@ -738,6 +738,13 @@ function trTxRenderList(filtered) {
         });
     }
 
+    // When Show All is ON, push dont_display rows to the bottom (retain sort within each group)
+    if (trTxShowAll) {
+        var normal = filtered.filter(function(t) { return !t.dont_display; });
+        var hidden = filtered.filter(function(t) { return t.dont_display; });
+        filtered = normal.concat(hidden);
+    }
+
     var tbody = document.getElementById('trTx-list');
     if (!tbody) return;
 
