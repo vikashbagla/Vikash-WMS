@@ -145,6 +145,8 @@ function trSetupEventHandlers() {
                 trLoadRightsModule(function() { openRightsPaymentModal(); });
             } else if (WMS_INCOME_TYPES.indexOf(txnType) >= 0) {
                 trLoadIncomeModule(function() { openIncomeModal(txnType); });
+            } else if (txnType === 'HISTORICAL_PL') {
+                trLoadHistPlModule(function() { openHistPlModal(); });
             } else {
                 alert('Transaction type "' + txnType + '" — form coming soon.');
             }
@@ -2727,6 +2729,75 @@ async function trLoadIncomeModule(callback) {
         showAlert('Failed to load Income module: ' + err.message, 'error');
         trIncomeLoading = false;
         trIncomeCallbacks = [];
+    }
+}
+
+// ============================================================================
+// HISTORICAL P&L MODULE (lazy-loaded)
+// ============================================================================
+
+var trHistPlLoaded = false;
+var trHistPlLoading = false;
+var trHistPlCallbacks = [];
+
+async function trLoadHistPlModule(callback) {
+    if (trHistPlLoaded) {
+        if (typeof callback === 'function') callback();
+        return;
+    }
+    if (trHistPlLoading) {
+        if (typeof callback === 'function') trHistPlCallbacks.push(callback);
+        return;
+    }
+    trHistPlLoading = true;
+    if (typeof callback === 'function') trHistPlCallbacks.push(callback);
+
+    // HistPl module needs Rights module for date widget functions
+    if (!trRightsLoaded) {
+        await new Promise(function(resolve, reject) {
+            trLoadRightsModule(resolve);
+            setTimeout(function() { reject(new Error('Rights module timeout')); }, 10000);
+        }).catch(function(err) {
+            console.warn('Trading: Rights pre-load warning:', err.message);
+        });
+    }
+
+    try {
+        var htmlResp = await fetch('trading-histpl.html?t=' + Date.now());
+        if (!htmlResp.ok) throw new Error('Failed to load trading-histpl.html');
+        var htmlText = await htmlResp.text();
+
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(htmlText, 'text/html');
+        var styles = doc.querySelectorAll('style');
+        styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+
+        var container = document.createElement('div');
+        container.id = 'tr-histpl-container';
+        container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
+        document.body.appendChild(container);
+
+        var oldScript = document.querySelector('script[src*="trading-histpl.js"]');
+        if (oldScript) oldScript.remove();
+        await new Promise(function(resolve, reject) {
+            var script = document.createElement('script');
+            script.src = 'trading-histpl.js?t=' + Date.now();
+            script.onload = resolve;
+            script.onerror = function() { reject(new Error('Failed to load trading-histpl.js')); };
+            document.body.appendChild(script);
+        });
+
+        trHistPlLoaded = true;
+
+        setTimeout(function() {
+            trHistPlCallbacks.forEach(function(cb) { cb(); });
+            trHistPlCallbacks = [];
+        }, 100);
+    } catch (err) {
+        console.error('Trading: Failed to load HistPl module:', err);
+        showAlert('Failed to load Historical P&L module: ' + err.message, 'error');
+        trHistPlLoading = false;
+        trHistPlCallbacks = [];
     }
 }
 

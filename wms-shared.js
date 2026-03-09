@@ -20,7 +20,7 @@ var WMS_TDS_DEFAULT_RATE = 0.10; // 10% TDS — TODO: move to DB config table (s
 // Transaction types whose quantity does NOT count toward holdings/balance.
 // Income types carry a quantity for display but don't change holdings.
 // RIGHTS_PAYMENT stores qty for audit (units paid for) but doesn't change holdings.
-var WMS_QTY_EXCLUDED_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION', 'RIGHTS_PAYMENT'];
+var WMS_QTY_EXCLUDED_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION', 'RIGHTS_PAYMENT', 'HISTORICAL_PL'];
 
 /**
  * Check if a transaction type's quantity should be excluded from holdings.
@@ -600,6 +600,11 @@ function wmsCalcAvgCost(transactions) {
         if (isIncome) {
             if (!txn.ignore_for_avg_cost) {
                 totalCost -= Math.abs(netAmt);
+            }
+        } else if (txnType === 'HISTORICAL_PL') {
+            // Historical P&L: signed amount — profit (+) reduces cost, loss (-) increases cost
+            if (!txn.ignore_for_avg_cost) {
+                totalCost -= netAmt;
             }
         } else if (txnType === 'RIGHTS_PAYMENT') {
             // Rights payment: adds cost only, does NOT change quantity

@@ -1,0 +1,110 @@
+<head>
+<style>
+/* Historical P&L Modal — reuses .rights-* CSS from trading-rights.html */
+/* Only HPL-specific overrides go here */
+
+.hpl-form-row {
+    display: flex; gap: 12px; margin-bottom: 10px; align-items: flex-end;
+}
+.hpl-form-row .rights-field { flex: 1; }
+.hpl-form-row .rights-field label { display: block; font-size: 10px; font-weight: 600; color: #718096; margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.3px; }
+.hpl-form-row .rights-field input[type="text"] {
+    width: 100%; padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 4px;
+    font-size: 12px; color: #2d3748; outline: none; box-sizing: border-box; height: 32px;
+}
+.hpl-form-row .rights-field input[type="text"]:focus {
+    border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15);
+}
+.hpl-badge {
+    display: inline-block; background: #edf2f7; padding: 2px 8px; border-radius: 3px;
+    font-size: 11px; color: #2d3748; margin-top: 3px; cursor: pointer;
+}
+.hpl-badge:hover { background: #e2e8f0; }
+.hpl-badge .hpl-badge-x { color: #a0aec0; margin-left: 4px; font-weight: 600; }
+.hpl-badge .hpl-badge-x:hover { color: #e53e3e; }
+.hpl-amount-input {
+    font-size: 14px !important; font-weight: 600; text-align: right !important;
+    font-variant-numeric: tabular-nums;
+}
+.hpl-amount-hint {
+    font-size: 9px; color: #a0aec0; margin-top: 2px; text-align: right;
+}
+.rights-modal.hpl-modal { max-width: 560px; }
+</style>
+</head>
+<body>
+<!-- ============================================================ -->
+<!-- HISTORICAL P&L MODAL                                         -->
+<!-- ============================================================ -->
+<div class="rights-overlay" id="hplOverlay">
+  <div class="rights-modal hpl-modal">
+    <!-- Header -->
+    <div class="rights-header">
+      <h3>Historical P&L</h3>
+      <button class="rights-close-btn" id="hplCloseBtn">&times;</button>
+    </div>
+
+    <!-- Body -->
+    <div class="rights-body">
+      <!-- Row 1: Date -->
+      <div class="hpl-form-row">
+        <div class="rights-field" style="flex:0 0 140px;">
+          <label>Date</label>
+          <div class="rhDate-wrap" id="hplDateWrap" tabindex="0">
+            <span class="rhDate-seg" data-seg="dd" id="hplDateDd">01</span>
+            <span class="rhDate-sep">-</span>
+            <span class="rhDate-seg" data-seg="mmm" id="hplDateMmm">Jan</span>
+            <span class="rhDate-sep">-</span>
+            <span class="rhDate-seg" data-seg="yyyy" id="hplDateYyyy">2026</span>
+            <button class="rhDate-cal-btn" id="hplDateCalBtn">&#128197;</button>
+            <input type="date" class="rhDate-cal-picker" id="hplDateCalPicker" tabindex="-1">
+          </div>
+        </div>
+        <div class="rights-field" style="flex:1;">
+          <label>Security</label>
+          <input type="text" id="hplSecurityInput" placeholder="Search symbol or name..." autocomplete="off">
+          <div class="rights-search-dd" id="hplSecurityDd"></div>
+          <div id="hplSecurityBadge"></div>
+        </div>
+      </div>
+
+      <!-- Row 2: Investor + Trader -->
+      <div class="hpl-form-row">
+        <div class="rights-field">
+          <label>Investor *</label>
+          <input type="text" id="hplInvestorInput" placeholder="Search investor..." autocomplete="off">
+          <div class="rights-search-dd" id="hplInvestorDd"></div>
+          <div id="hplInvestorBadge"></div>
+        </div>
+        <div class="rights-field">
+          <label>Trader <span style="font-weight:400;color:#a0aec0;">(optional)</span></label>
+          <input type="text" id="hplTraderInput" placeholder="Search trader..." autocomplete="off">
+          <div class="rights-search-dd" id="hplTraderDd"></div>
+          <div id="hplTraderBadge"></div>
+        </div>
+      </div>
+
+      <!-- Row 3: Broker + Amount -->
+      <div class="hpl-form-row">
+        <div class="rights-field">
+          <label>Broker <span style="font-weight:400;color:#a0aec0;">(optional)</span></label>
+          <input type="text" id="hplBrokerInput" placeholder="Search broker..." autocomplete="off">
+          <div class="rights-search-dd" id="hplBrokerDd"></div>
+          <div id="hplBrokerBadge"></div>
+        </div>
+        <div class="rights-field">
+          <label>Amount (P&L)</label>
+          <input type="text" id="hplAmountInput" class="hpl-amount-input" placeholder="0.00" autocomplete="off">
+          <div class="hpl-amount-hint">+ve = profit, -ve = loss</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="rights-footer">
+      <button class="btn-secondary" id="hplCancelBtn">Cancel</button>
+      <button class="btn-primary" id="hplSaveBtn" disabled>Save</button>
+    </div>
+  </div>
+</div>
+</body>
