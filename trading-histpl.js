@@ -471,3 +471,6 @@ window.hplClearInvestor = hplClearInvestor;
 window.hplClearTrader = hplClearTrader;
 window.hplClearBroker = hplClearBroker;
 window.hplClearSecurity = hplClearSecurity;
+
+// Auto-init on script load (same pattern as trading-income.js)
+initHistPlModule();

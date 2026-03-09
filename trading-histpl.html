@@ -46,7 +46,23 @@
 
     <!-- Body -->
     <div class="rights-body">
-      <!-- Row 1: Date -->
+      <!-- Row 1: Investor + Trader -->
+      <div class="hpl-form-row">
+        <div class="rights-field">
+          <label>Investor *</label>
+          <input type="text" id="hplInvestorInput" placeholder="Search investor..." autocomplete="off">
+          <div class="rights-search-dd" id="hplInvestorDd"></div>
+          <div id="hplInvestorBadge"></div>
+        </div>
+        <div class="rights-field">
+          <label>Trader <span style="font-weight:400;color:#a0aec0;">(optional)</span></label>
+          <input type="text" id="hplTraderInput" placeholder="Search trader..." autocomplete="off">
+          <div class="rights-search-dd" id="hplTraderDd"></div>
+          <div id="hplTraderBadge"></div>
+        </div>
+      </div>
+
+      <!-- Row 2: Date + Security -->
       <div class="hpl-form-row">
         <div class="rights-field" style="flex:0 0 140px;">
           <label>Date</label>
@@ -65,22 +81,6 @@
           <input type="text" id="hplSecurityInput" placeholder="Search symbol or name..." autocomplete="off">
           <div class="rights-search-dd" id="hplSecurityDd"></div>
           <div id="hplSecurityBadge"></div>
-        </div>
-      </div>
-
-      <!-- Row 2: Investor + Trader -->
-      <div class="hpl-form-row">
-        <div class="rights-field">
-          <label>Investor *</label>
-          <input type="text" id="hplInvestorInput" placeholder="Search investor..." autocomplete="off">
-          <div class="rights-search-dd" id="hplInvestorDd"></div>
-          <div id="hplInvestorBadge"></div>
-        </div>
-        <div class="rights-field">
-          <label>Trader <span style="font-weight:400;color:#a0aec0;">(optional)</span></label>
-          <input type="text" id="hplTraderInput" placeholder="Search trader..." autocomplete="off">
-          <div class="rights-search-dd" id="hplTraderDd"></div>
-          <div id="hplTraderBadge"></div>
         </div>
       </div>
 
