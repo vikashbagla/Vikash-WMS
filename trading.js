@@ -74,9 +74,14 @@ async function initTrading() {
     // Load saved views
     await trLoadViews();
 
-    // Re-init transactions module if already loaded (pills need data that may not have been ready)
+    // Re-init sub-modules if already loaded (pills need data that may not have been ready)
     if (window.trTxInit && trTxLoaded) {
         window.trTxInit();
+    }
+    if (typeof trFnoRender === 'function' && trFnoLoaded) {
+        // Reset pill filter refs so trFnoInitFilters() rebuilds them with populated data
+        if (typeof trFnoResetFilters === 'function') trFnoResetFilters();
+        trFnoRender();
     }
 
     showLoading(false);
@@ -2990,15 +2995,19 @@ function trRenderMoreDropdown() {
         return;
     }
 
-    list.innerHTML = trPortfolioViews.map(function(v) {
+    list.innerHTML = trPortfolioViews.map(function(v, idx) {
         var isActive = v.id === trActiveViewId;
         var isDefault = v.is_default;
         var inTabs = v.show_in_tabs !== false;
+        var isFirst = idx === 0;
+        var isLast = idx === trPortfolioViews.length - 1;
         return '<div class="tr-more-item' + (isActive ? ' active' : '') + '" data-view-id="' + v.id + '">' +
             (isActive ? '<span style="color:#667eea;font-size:11px;">✓</span> ' : '<span style="width:16px;display:inline-block;"></span> ') +
             '<span class="tr-more-name">' + v.name + '</span>' +
             (isDefault ? '<span class="tr-more-badge">★ Default</span>' : '') +
             '<span class="tr-more-actions">' +
+                (!isFirst ? '<button class="tr-more-action-btn" data-action="move-up" data-id="' + v.id + '" title="Move up">↑</button>' : '') +
+                (!isLast ? '<button class="tr-more-action-btn" data-action="move-down" data-id="' + v.id + '" title="Move down">↓</button>' : '') +
                 (!isDefault ? '<button class="tr-more-action-btn" data-action="default" data-id="' + v.id + '" title="Set as default">★</button>' : '') +
                 (inTabs && !isDefault ? '<button class="tr-more-action-btn" data-action="hide-tab" data-id="' + v.id + '" title="Remove from tabs">⊟</button>' : '') +
                 (!inTabs ? '<button class="tr-more-action-btn" data-action="show-tab" data-id="' + v.id + '" title="Show in tabs">⊞</button>' : '') +
@@ -3026,8 +3035,40 @@ function trRenderMoreDropdown() {
             else if (action === 'hide-tab') trCloseViewTab(id);
             else if (action === 'show-tab') trShowViewTab(id);
             else if (action === 'delete') trDeleteView(id);
+            else if (action === 'move-up') trMoveView(id, -1);
+            else if (action === 'move-down') trMoveView(id, 1);
         });
     });
+}
+
+// ---- MOVE VIEW (reorder) ----
+
+function trMoveView(viewId, direction) {
+    var idx = trPortfolioViews.findIndex(function(v) { return v.id === viewId; });
+    if (idx < 0) return;
+    var swapIdx = idx + direction;
+    if (swapIdx < 0 || swapIdx >= trPortfolioViews.length) return;
+
+    // Swap in local array
+    var temp = trPortfolioViews[idx];
+    trPortfolioViews[idx] = trPortfolioViews[swapIdx];
+    trPortfolioViews[swapIdx] = temp;
+
+    // Update sort_order for both
+    trPortfolioViews.forEach(function(v, i) { v.sort_order = i; });
+
+    // Persist both to DB
+    var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };
+    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + trPortfolioViews[idx].id, {
+        method: 'PATCH', headers: headers, body: JSON.stringify({ sort_order: idx })
+    }).catch(function(err) { console.warn('Move view PATCH error:', err.message); });
+    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + trPortfolioViews[swapIdx].id, {
+        method: 'PATCH', headers: headers, body: JSON.stringify({ sort_order: swapIdx })
+    }).catch(function(err) { console.warn('Move view PATCH error:', err.message); });
+
+    // Re-render
+    trRenderViewTabs();
+    trRenderMoreDropdown();
 }
 
 // ---- APPLY VIEW ----

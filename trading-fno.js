@@ -184,6 +184,17 @@ var trFnoTrdPillFilter = null;
 var trFnoBrkPillFilter = null;
 var trFnoTagPillFilter = null;
 
+/**
+ * Reset pill filter refs so trFnoInitFilters() rebuilds them.
+ * Called from trading.js after trLoadData() completes when F&O was loaded before data was ready.
+ */
+function trFnoResetFilters() {
+    trFnoInvPillFilter = null;
+    trFnoTrdPillFilter = null;
+    trFnoBrkPillFilter = null;
+    trFnoTagPillFilter = null;
+}
+
 function trFnoInitFilters() {
     // Investor
     var invC = document.getElementById('tr-fno-filter-investor');
@@ -1612,15 +1623,19 @@ function trFnoRenderMoreDropdown() {
         return;
     }
 
-    list.innerHTML = trFnoViews.map(function(v) {
+    list.innerHTML = trFnoViews.map(function(v, idx) {
         var isActive = v.id === trFnoActiveViewId;
         var isDefault = v.is_default;
         var inTabs = v.show_in_tabs !== false;
+        var isFirst = idx === 0;
+        var isLast = idx === trFnoViews.length - 1;
         return '<div class="tr-more-item' + (isActive ? ' active' : '') + '" data-view-id="' + v.id + '">' +
             (isActive ? '<span style="color:#667eea;font-size:11px;">\u2713</span> ' : '<span style="width:16px;display:inline-block;"></span> ') +
             '<span class="tr-more-name">' + v.name + '</span>' +
             (isDefault ? '<span class="tr-more-badge">\u2605 Default</span>' : '') +
             '<span class="tr-more-actions">' +
+                (!isFirst ? '<button class="tr-more-action-btn" data-action="move-up" data-id="' + v.id + '" title="Move up">\u2191</button>' : '') +
+                (!isLast ? '<button class="tr-more-action-btn" data-action="move-down" data-id="' + v.id + '" title="Move down">\u2193</button>' : '') +
                 (!isDefault ? '<button class="tr-more-action-btn" data-action="default" data-id="' + v.id + '" title="Set as default">\u2605</button>' : '') +
                 (inTabs && !isDefault ? '<button class="tr-more-action-btn" data-action="hide-tab" data-id="' + v.id + '" title="Remove from tabs">\u229F</button>' : '') +
                 (!inTabs ? '<button class="tr-more-action-btn" data-action="show-tab" data-id="' + v.id + '" title="Show in tabs">\u229E</button>' : '') +
@@ -1648,8 +1663,40 @@ function trFnoRenderMoreDropdown() {
             else if (action === 'hide-tab') trFnoCloseViewTab(id);
             else if (action === 'show-tab') trFnoShowViewTab(id);
             else if (action === 'delete') trFnoDeleteView(id);
+            else if (action === 'move-up') trFnoMoveView(id, -1);
+            else if (action === 'move-down') trFnoMoveView(id, 1);
         });
     });
+}
+
+// ---- MOVE VIEW (reorder) ----
+
+function trFnoMoveView(viewId, direction) {
+    var idx = trFnoViews.findIndex(function(v) { return v.id === viewId; });
+    if (idx < 0) return;
+    var swapIdx = idx + direction;
+    if (swapIdx < 0 || swapIdx >= trFnoViews.length) return;
+
+    // Swap in local array
+    var temp = trFnoViews[idx];
+    trFnoViews[idx] = trFnoViews[swapIdx];
+    trFnoViews[swapIdx] = temp;
+
+    // Update sort_order for both
+    trFnoViews.forEach(function(v, i) { v.sort_order = i; });
+
+    // Persist both to DB
+    var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };
+    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + trFnoViews[idx].id, {
+        method: 'PATCH', headers: headers, body: JSON.stringify({ sort_order: idx })
+    }).catch(function(err) { console.warn('Move view PATCH error:', err.message); });
+    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + trFnoViews[swapIdx].id, {
+        method: 'PATCH', headers: headers, body: JSON.stringify({ sort_order: swapIdx })
+    }).catch(function(err) { console.warn('Move view PATCH error:', err.message); });
+
+    // Re-render
+    trFnoRenderViewTabs();
+    trFnoRenderMoreDropdown();
 }
 
 // ---- APPLY VIEW ----

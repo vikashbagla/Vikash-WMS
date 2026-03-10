@@ -2900,11 +2900,13 @@ var wmsDateInput = function(containerEl, opts) {
     var calBtn = document.createElement('button');
     calBtn.type = 'button';
     calBtn.className = 'wms-di-cal-btn';
+    calBtn.tabIndex = -1; // exclude from tab order — click-only
     calBtn.title = 'Pick from calendar';
     calBtn.textContent = '\uD83D\uDCC5'; // 📅
     var calInput = document.createElement('input');
     calInput.type = 'date';
     calInput.className = 'wms-di-cal-hidden';
+    calInput.tabIndex = -1; // exclude from tab order
 
     wrap.appendChild(ddEl);
     wrap.appendChild(sep1);

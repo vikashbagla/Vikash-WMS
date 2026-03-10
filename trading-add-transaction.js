@@ -39,6 +39,9 @@ var atSymDdItems = {};        // rowId → symbol results array
 // Charges popover state
 var atCpRowId = null;
 
+// Last saved date — persists between modal opens so user can keep entering same-day trades
+var atLastSavedDate = null;  // Date object or null (first open uses today)
+
 // ============================================================================
 // Module Init
 // ============================================================================
@@ -136,8 +139,8 @@ async function openAddTxnModal() {
     document.getElementById('addTxnInvBrkInput').disabled = false;
     document.getElementById('addTxnSaveBtn').disabled = false;
 
-    // Default date to today
-    atDateSetFromDate(new Date());
+    // Default date: last saved date if available, otherwise today
+    atDateSetFromDate(atLastSavedDate || new Date());
 
     // Add first empty row
     addAddTxnRow();
@@ -145,9 +148,10 @@ async function openAddTxnModal() {
     // Show modal
     document.getElementById('addTxnOverlay').classList.add('show');
 
-    // Focus investor-broker input
+    // Focus date field (user typically enters date first)
     setTimeout(function() {
-        document.getElementById('addTxnInvBrkInput').focus();
+        var dateWrap = document.getElementById('addTxnDateWrap');
+        if (dateWrap) dateWrap.focus();
     }, 100);
 }
 
@@ -1686,6 +1690,9 @@ async function importAddTxnToDb() {
                 throw new Error('DB error: ' + resp.status + ' — ' + errText);
             }
         }
+
+        // Remember the date for next modal open
+        atLastSavedDate = new Date(atDateState.year, atDateState.month, atDateState.day);
 
         showAlert('Successfully added ' + records.length + ' transaction(s)', 'success', 3000);
         closeAddTxnModal();
