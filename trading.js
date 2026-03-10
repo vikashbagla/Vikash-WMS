@@ -2999,19 +2999,16 @@ function trRenderMoreDropdown() {
         var isActive = v.id === trActiveViewId;
         var isDefault = v.is_default;
         var inTabs = v.show_in_tabs !== false;
-        var isFirst = idx === 0;
-        var isLast = idx === trPortfolioViews.length - 1;
-        return '<div class="tr-more-item' + (isActive ? ' active' : '') + '" data-view-id="' + v.id + '">' +
-            (isActive ? '<span style="color:#667eea;font-size:11px;">✓</span> ' : '<span style="width:16px;display:inline-block;"></span> ') +
+        return '<div class="tr-more-item' + (isActive ? ' active' : '') + '" draggable="true" data-view-id="' + v.id + '" data-view-idx="' + idx + '">' +
+            '<span class="tr-more-drag-handle" title="Drag to reorder">\u2630</span>' +
+            (isActive ? '<span style="color:#667eea;font-size:11px;">\u2713</span> ' : '<span style="width:16px;display:inline-block;"></span> ') +
             '<span class="tr-more-name">' + v.name + '</span>' +
-            (isDefault ? '<span class="tr-more-badge">★ Default</span>' : '') +
+            (isDefault ? '<span class="tr-more-badge">\u2605 Default</span>' : '') +
             '<span class="tr-more-actions">' +
-                (!isFirst ? '<button class="tr-more-action-btn" data-action="move-up" data-id="' + v.id + '" title="Move up">↑</button>' : '') +
-                (!isLast ? '<button class="tr-more-action-btn" data-action="move-down" data-id="' + v.id + '" title="Move down">↓</button>' : '') +
-                (!isDefault ? '<button class="tr-more-action-btn" data-action="default" data-id="' + v.id + '" title="Set as default">★</button>' : '') +
-                (inTabs && !isDefault ? '<button class="tr-more-action-btn" data-action="hide-tab" data-id="' + v.id + '" title="Remove from tabs">⊟</button>' : '') +
-                (!inTabs ? '<button class="tr-more-action-btn" data-action="show-tab" data-id="' + v.id + '" title="Show in tabs">⊞</button>' : '') +
-                '<button class="tr-more-action-btn danger" data-action="delete" data-id="' + v.id + '" title="Delete view">✕</button>' +
+                (!isDefault ? '<button class="tr-more-action-btn" data-action="default" data-id="' + v.id + '" title="Set as default">\u2605</button>' : '') +
+                (inTabs && !isDefault ? '<button class="tr-more-action-btn" data-action="hide-tab" data-id="' + v.id + '" title="Remove from tabs">\u229F</button>' : '') +
+                (!inTabs ? '<button class="tr-more-action-btn" data-action="show-tab" data-id="' + v.id + '" title="Show in tabs">\u229E</button>' : '') +
+                '<button class="tr-more-action-btn danger" data-action="delete" data-id="' + v.id + '" title="Delete view">\u2715</button>' +
             '</span>' +
         '</div>';
     }).join('');
@@ -3019,7 +3016,7 @@ function trRenderMoreDropdown() {
     // Click to apply
     list.querySelectorAll('.tr-more-item').forEach(function(item) {
         item.addEventListener('click', function(e) {
-            if (e.target.closest('.tr-more-action-btn')) return;
+            if (e.target.closest('.tr-more-action-btn') || e.target.closest('.tr-more-drag-handle')) return;
             trApplyView(item.dataset.viewId);
             document.getElementById('tr-more-dropdown').style.display = 'none';
         });
@@ -3035,40 +3032,101 @@ function trRenderMoreDropdown() {
             else if (action === 'hide-tab') trCloseViewTab(id);
             else if (action === 'show-tab') trShowViewTab(id);
             else if (action === 'delete') trDeleteView(id);
-            else if (action === 'move-up') trMoveView(id, -1);
-            else if (action === 'move-down') trMoveView(id, 1);
         });
+    });
+
+    // Drag-to-reorder (same pattern as watchlist)
+    trMoreAttachDragHandlers(list, trPortfolioViews, function() {
+        trRenderViewTabs();
+        trRenderMoreDropdown();
     });
 }
 
-// ---- MOVE VIEW (reorder) ----
+// ---- DRAG-TO-REORDER VIEWS (shared helper) ----
 
-function trMoveView(viewId, direction) {
-    var idx = trPortfolioViews.findIndex(function(v) { return v.id === viewId; });
-    if (idx < 0) return;
-    var swapIdx = idx + direction;
-    if (swapIdx < 0 || swapIdx >= trPortfolioViews.length) return;
+function trMoreAttachDragHandlers(listEl, viewsArr, onReorder) {
+    var dragIdx = -1;
 
-    // Swap in local array
-    var temp = trPortfolioViews[idx];
-    trPortfolioViews[idx] = trPortfolioViews[swapIdx];
-    trPortfolioViews[swapIdx] = temp;
+    listEl.querySelectorAll('.tr-more-item').forEach(function(item) {
+        // Only allow drag when initiated from the handle
+        item.addEventListener('mousedown', function(e) {
+            if (!e.target.closest('.tr-more-drag-handle')) {
+                item.setAttribute('draggable', 'false');
+            } else {
+                item.setAttribute('draggable', 'true');
+            }
+        });
 
-    // Update sort_order for both
-    trPortfolioViews.forEach(function(v, i) { v.sort_order = i; });
+        item.addEventListener('dragstart', function(e) {
+            if (!e.target.closest || e.target.closest('.tr-more-action-btn')) {
+                e.preventDefault();
+                return;
+            }
+            dragIdx = parseInt(item.dataset.viewIdx);
+            item.classList.add('tr-more-dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        });
 
-    // Persist both to DB
-    var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };
-    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + trPortfolioViews[idx].id, {
-        method: 'PATCH', headers: headers, body: JSON.stringify({ sort_order: idx })
-    }).catch(function(err) { console.warn('Move view PATCH error:', err.message); });
-    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + trPortfolioViews[swapIdx].id, {
-        method: 'PATCH', headers: headers, body: JSON.stringify({ sort_order: swapIdx })
-    }).catch(function(err) { console.warn('Move view PATCH error:', err.message); });
+        item.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            // Clear all indicators
+            listEl.querySelectorAll('.tr-more-item').forEach(function(el) {
+                el.classList.remove('tr-more-drag-over-top', 'tr-more-drag-over-bottom');
+            });
+            var rect = item.getBoundingClientRect();
+            var mid = rect.top + rect.height / 2;
+            if (e.clientY < mid) {
+                item.classList.add('tr-more-drag-over-top');
+            } else {
+                item.classList.add('tr-more-drag-over-bottom');
+            }
+        });
 
-    // Re-render
-    trRenderViewTabs();
-    trRenderMoreDropdown();
+        item.addEventListener('dragleave', function() {
+            item.classList.remove('tr-more-drag-over-top', 'tr-more-drag-over-bottom');
+        });
+
+        item.addEventListener('drop', function(e) {
+            e.preventDefault();
+            var targetIdx = parseInt(item.dataset.viewIdx);
+            var rect = item.getBoundingClientRect();
+            var mid = rect.top + rect.height / 2;
+            var insertIdx = e.clientY < mid ? targetIdx : targetIdx + 1;
+            if (dragIdx < 0 || dragIdx === insertIdx || dragIdx + 1 === insertIdx) {
+                // No actual move needed
+                dragIdx = -1;
+                return;
+            }
+
+            // Reorder the array
+            var moved = viewsArr.splice(dragIdx, 1)[0];
+            var newIdx = insertIdx > dragIdx ? insertIdx - 1 : insertIdx;
+            viewsArr.splice(newIdx, 0, moved);
+
+            // Update sort_order for all and persist
+            var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };
+            viewsArr.forEach(function(v, i) {
+                if (v.sort_order !== i) {
+                    v.sort_order = i;
+                    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + v.id, {
+                        method: 'PATCH', headers: headers, body: JSON.stringify({ sort_order: i })
+                    }).catch(function(err) { console.warn('Reorder PATCH error:', err.message); });
+                }
+            });
+
+            dragIdx = -1;
+            onReorder();
+        });
+
+        item.addEventListener('dragend', function() {
+            item.classList.remove('tr-more-dragging');
+            listEl.querySelectorAll('.tr-more-item').forEach(function(el) {
+                el.classList.remove('tr-more-drag-over-top', 'tr-more-drag-over-bottom');
+            });
+            dragIdx = -1;
+        });
+    });
 }
 
 // ---- APPLY VIEW ----
