@@ -373,8 +373,8 @@ function trFnoCalcPositions() {
             var g = groups[key];
             var contractExpiry = trGetExpiryLabel(g.contractLabel);
 
-            // Apply expiry filter
-            if (trFnoExpiryFilter.length > 0 && trFnoExpiryFilter.indexOf(contractExpiry) < 0) return;
+            // Apply expiry filter (null = not yet initialized, treat as no filter)
+            if (trFnoExpiryFilter && trFnoExpiryFilter.length > 0 && trFnoExpiryFilter.indexOf(contractExpiry) < 0) return;
 
             // Sort chronologically
             g.buys.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });

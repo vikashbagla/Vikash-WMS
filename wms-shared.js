@@ -469,20 +469,19 @@ function wmsSearchSecurities(query) {
         }
     }
 
-    // Search NFO securities (active only)
+    // Search NFO securities (include inactive/expired for historical entries)
     var nfoMatches = [];
     if (wmsRefData.securitiesNfoReady) {
         var nfoAll = wmsRefData.securitiesNfo;
         for (var j = 0; j < nfoAll.length; j++) {
             var nfo = nfoAll[j];
-            if (nfo.is_active === false) continue;
             if (wmsMultiTokenMatch(tokens,
                     nfo.symbol, nfo.underlying_symbol, nfo.instrument_name,
                     nfo.exchange, nfo.expiry_date,
                     nfo.strike_price ? String(nfo.strike_price) : '',
                     nfo.option_type)) {
                 nfoMatches.push(nfo);
-                if (nfoMatches.length >= 15) break;
+                if (nfoMatches.length >= 20) break;
             }
         }
     }
