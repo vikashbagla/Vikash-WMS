@@ -51,19 +51,24 @@ function formatWithCommas(num, commaStyle) {
     return formatted + '.' + decimal;
 }
 
-// Format price with display unit (NO ₹ SYMBOL - only for actual prices, not converted)
+// Format price (NO ₹ SYMBOL)
+// Rule: #,##0.00 (+ve); (#,##0.00) (-ve, in red via CSS); '-' (zero)
+// applyUnit=true divides by display unit; applyUnit=false shows raw price
 const formatPrice = (value, applyUnit = false) => {
-    if (value === null || value === undefined || isNaN(value)) return '0.00';
-    
+    if (value === null || value === undefined || isNaN(value) || value === 0) return '-';
+
+    const unit = getDisplayUnit();
+    const config = getUnitConfig(unit);
+
     if (applyUnit) {
         // For values (apply display unit)
-        const unit = getDisplayUnit();
-        const config = getUnitConfig(unit);
-        const convertedValue = value / config.divisor;
-        return formatWithCommas(convertedValue, config.comma);
+        const convertedValue = Math.abs(value) / config.divisor;
+        const formatted = formatWithCommas(convertedValue, config.comma);
+        return value < 0 ? '(' + formatted + ')' : formatted;
     } else {
-        // For actual prices (always in rupees, no conversion)
-        return value.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        // For actual prices (always in rupees, no conversion, same comma style)
+        const formatted = formatWithCommas(Math.abs(value), config.comma);
+        return value < 0 ? '(' + formatted + ')' : formatted;
     }
 };
 
@@ -109,8 +114,9 @@ const formatQuantity = (value) => {
 };
 
 // Format lots (1 decimal)
+// Rule: zero lots display as '-' (consistent with all formatters)
 const formatLots = (value) => {
-    if (value === null || value === undefined || isNaN(value)) return '0.0';
+    if (value === null || value === undefined || isNaN(value) || value === 0) return '-';
     return parseFloat(value).toFixed(1);
 };
 
@@ -125,9 +131,9 @@ const formatPercent = (value) => {
     return value.toFixed(2) + '%';
 };
 
-// Get CSS class for positive/negative values
+// Get CSS class for positive/negative values (no class for zero — stays neutral)
 const getAmountClass = (value) => {
-    if (value === null || value === undefined || isNaN(value)) return '';
+    if (value === null || value === undefined || isNaN(value) || value === 0) return '';
     return value < 0 ? 'negative' : 'positive';
 };
 

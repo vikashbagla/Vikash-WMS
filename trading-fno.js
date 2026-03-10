@@ -657,10 +657,11 @@ function trFnoRender() {
 // ============================================================================
 
 function trFnoBuildTotalRow(totExposure, totDayPnl, totRealised, totUnrealised, totNet) {
-    var ptDClass = totDayPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-    var ptRClass = totRealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-    var ptUClass = totUnrealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-    var ptNClass = totNet >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+    // No color class for zero (neutral '-' display)
+    var ptDClass = totDayPnl === 0 ? '' : (totDayPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+    var ptRClass = totRealised === 0 ? '' : (totRealised > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+    var ptUClass = totUnrealised === 0 ? '' : (totUnrealised > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+    var ptNClass = totNet === 0 ? '' : (totNet > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
     return '<tr class="trFno-total-row">' +
         '<td colspan="3">TOTAL</td>' +
         '<td colspan="2" class="trM-buy-start"></td>' +
@@ -700,10 +701,11 @@ function trFnoRenderGrouped(positions) {
         var dPnl = p.totalDayPnl || 0;
         var netPnl = rPnl + uPnl;
         var exposure = p.totalOpenCost;
-        var dClass = dPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-        var rClass = rPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-        var uClass = uPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-        var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+        // No color class for zero (neutral '-' display)
+        var dClass = dPnl === 0 ? '' : (dPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+        var rClass = rPnl === 0 ? '' : (rPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+        var uClass = uPnl === 0 ? '' : (uPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+        var nClass = netPnl === 0 ? '' : (netPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
 
         // Avg cost: buy-price if net long, sell-price if net short
         var avgBuyPrice = (!p.futIsShort && p.futAvgCost > 0) ? formatPrice(p.futAvgCost, false) : '';
@@ -739,10 +741,11 @@ function trFnoRenderGrouped(positions) {
                 var cgDayPnl = cg.dayPnl || 0;
                 var cgNet = cgRealised + cgUnrealised;
                 var cgExposure = cg.openCost || 0;
-                var cgDClass = cgDayPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-                var cgRClass = cgRealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-                var cgUClass = cgUnrealised >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-                var cgNClass = cgNet >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+                // No color class for zero (neutral '-' display)
+                var cgDClass = cgDayPnl === 0 ? '' : (cgDayPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+                var cgRClass = cgRealised === 0 ? '' : (cgRealised > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+                var cgUClass = cgUnrealised === 0 ? '' : (cgUnrealised > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+                var cgNClass = cgNet === 0 ? '' : (cgNet > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
 
                 // Sub-group avg price
                 var cgAvgPrice = (cg.openQty > 0 && cgExposure > 0) ? formatPrice(cgExposure / cg.openQty, false) : '';
@@ -862,10 +865,11 @@ function trFnoRenderFlat(positions) {
         var unrealisedPnl = (r.type === 'open' && r.unrealisedPnl !== undefined) ? r.unrealisedPnl : 0;
         var netPnl = realisedPnl + unrealisedPnl;
 
-        var dClass = dayPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-        var rClass = realisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-        var uClass = unrealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-        var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+        // No color class for zero (neutral '-' display)
+        var dClass = dayPnl === 0 ? '' : (dayPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+        var rClass = realisedPnl === 0 ? '' : (realisedPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+        var uClass = unrealisedPnl === 0 ? '' : (unrealisedPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+        var nClass = netPnl === 0 ? '' : (netPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
 
         // formatAmount returns '-' for zero values (centralized rule)
         var dayPnlHtml = (r.type === 'open') ? '<span class="' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
@@ -936,10 +940,11 @@ function trFnoRenderDetailRow(r, cg) {
     var unrealisedPnl = (r.type === 'open' && r.unrealisedPnl !== undefined) ? r.unrealisedPnl : 0;
     var netPnl = realisedPnl + unrealisedPnl;
 
-    var dClass = dayPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-    var rClass = realisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-    var uClass = unrealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
-    var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
+    // No color class for zero (neutral '-' display)
+    var dClass = dayPnl === 0 ? '' : (dayPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+    var rClass = realisedPnl === 0 ? '' : (realisedPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+    var uClass = unrealisedPnl === 0 ? '' : (unrealisedPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
+    var nClass = netPnl === 0 ? '' : (netPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
 
     // formatAmount returns '-' for zero values (centralized rule)
     var dayPnlHtml = (r.type === 'open') ? '<span class="' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
