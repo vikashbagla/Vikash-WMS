@@ -68,8 +68,9 @@ const formatPrice = (value, applyUnit = false) => {
 };
 
 // Format amount with display unit and negative handling (NO ₹ SYMBOL)
+// Rule: zero amounts display as '-' (immediate visual indicator of no value)
 const formatAmount = (value) => {
-    if (value === null || value === undefined || isNaN(value)) return '0.00';
+    if (value === null || value === undefined || isNaN(value) || value === 0) return '-';
     
     const unit = getDisplayUnit();
     const config = getUnitConfig(unit);
@@ -101,8 +102,9 @@ const getUnitDescription = () => {
 };
 
 // Format quantity (0 decimals)
+// Rule: zero quantities display as '-' (consistent with formatAmount)
 const formatQuantity = (value) => {
-    if (value === null || value === undefined || isNaN(value)) return '0';
+    if (value === null || value === undefined || isNaN(value) || value === 0) return '-';
     return Math.round(value).toLocaleString('en-IN');
 };
 
@@ -113,8 +115,9 @@ const formatLots = (value) => {
 };
 
 // Format percentage (2 decimals)
+// Rule: zero percentages display as '-' (consistent with formatAmount)
 const formatPercent = (value) => {
-    if (value === null || value === undefined || isNaN(value)) return '0.00%';
+    if (value === null || value === undefined || isNaN(value) || value === 0) return '-';
     
     if (value < 0) {
         return '(' + Math.abs(value).toFixed(2) + '%)';

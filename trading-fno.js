@@ -455,7 +455,8 @@ function trFnoCalcPositions() {
                     row.buyTxnId = opener.txn.id;
                 }
                 // Unrealised P&L using contract-specific CMP (not equity CMP)
-                var contractSym = opener.txn.symbol;
+                // Strip exchange prefix (e.g. "NSE:") — wmsLivePrices keyed by bare symbol
+                var contractSym = (opener.txn.symbol || '').replace(/^[A-Z]+:/, '');
                 var contractCache = wmsLivePrices[contractSym];
                 var cmp = contractCache ? contractCache.lp : 0;
                 if (cmp > 0) {
@@ -665,7 +666,7 @@ function trFnoBuildTotalRow(totExposure, totDayPnl, totRealised, totUnrealised, 
         '<td colspan="2" class="trM-buy-start"></td>' +
         '<td colspan="2" class="trM-sell-start"></td>' +
         '<td class="text-right trFno-pnl-start">' + formatAmount(totExposure) + '</td>' +
-        '<td class="text-right"><span class="' + ptDClass + '">' + (totDayPnl !== 0 ? formatAmount(totDayPnl) : '-') + '</span></td>' +
+        '<td class="text-right"><span class="' + ptDClass + '">' + formatAmount(totDayPnl) + '</span></td>' +
         '<td class="text-right"><span class="' + ptRClass + '">' + formatAmount(totRealised) + '</span></td>' +
         '<td class="text-right"><span class="' + ptUClass + '">' + formatAmount(totUnrealised) + '</span></td>' +
         '<td class="text-right"><span class="' + ptNClass + '">' + formatAmount(totNet) + '</span></td>' +
@@ -713,13 +714,13 @@ function trFnoRenderGrouped(positions) {
             '<td><span class="trFno-symbol-name">' + wmsEsc(p.companyName) + '</span>' +
                 '<div class="trFno-symbol-sub">' + wmsEsc(p.underlying) + '</div></td>' +
             '<td></td>' +
-            '<td class="text-right">' + (p.futOpenQty > 0 ? formatQuantity(p.futOpenQty) : '-') + '</td>' +
+            '<td class="text-right">' + formatQuantity(p.futOpenQty) + '</td>' +
             '<td class="trM-buy-start"></td>' +
             '<td class="text-right">' + avgBuyPrice + '</td>' +
             '<td class="trM-sell-start"></td>' +
             '<td class="text-right">' + avgSellPrice + '</td>' +
-            '<td class="text-right trFno-pnl-start">' + (exposure > 0 ? formatAmount(exposure) : '-') + '</td>' +
-            '<td class="text-right"><span class="' + dClass + '">' + (dPnl !== 0 ? formatAmount(dPnl) : '-') + '</span></td>' +
+            '<td class="text-right trFno-pnl-start">' + formatAmount(exposure) + '</td>' +
+            '<td class="text-right"><span class="' + dClass + '">' + formatAmount(dPnl) + '</span></td>' +
             '<td class="text-right"><span class="' + rClass + '">' + formatAmount(rPnl) + '</span></td>' +
             '<td class="text-right"><span class="' + uClass + '">' + formatAmount(uPnl) + '</span></td>' +
             '<td class="text-right"><span class="' + nClass + '">' + formatAmount(netPnl) + '</span></td>' +
@@ -752,15 +753,15 @@ function trFnoRenderGrouped(positions) {
                 html += '<tr class="trFno-detail-header trFno-group-row" data-fno-group="' + wmsEsc(groupKey) + '">' +
                     '<td style="padding-left:24px;">' + wmsEsc(cg.groupLabel) + '</td>' +
                     '<td>' + wmsEsc(cg.contractLabel) + shortLabel + '</td>' +
-                    '<td class="text-right">' + (cg.openQty > 0 ? formatQuantity(cg.openQty) : '-') + '</td>' +
+                    '<td class="text-right">' + formatQuantity(cg.openQty) + '</td>' +
                     '<td class="trM-buy-start"></td>' +
                     '<td class="text-right">' + cgBuyPrice + '</td>' +
                     '<td class="trM-sell-start"></td>' +
                     '<td class="text-right">' + cgSellPrice + '</td>' +
-                    '<td class="text-right trFno-pnl-start">' + (cgExposure > 0 ? formatAmount(cgExposure) : '-') + '</td>' +
-                    '<td class="text-right"><span class="' + cgDClass + '">' + (cgDayPnl !== 0 ? formatAmount(cgDayPnl) : '-') + '</span></td>' +
+                    '<td class="text-right trFno-pnl-start">' + formatAmount(cgExposure) + '</td>' +
+                    '<td class="text-right"><span class="' + cgDClass + '">' + formatAmount(cgDayPnl) + '</span></td>' +
                     '<td class="text-right"><span class="' + cgRClass + '">' + formatAmount(cgRealised) + '</span></td>' +
-                    '<td class="text-right"><span class="' + cgUClass + '">' + (cgUnrealised !== 0 ? formatAmount(cgUnrealised) : '-') + '</span></td>' +
+                    '<td class="text-right"><span class="' + cgUClass + '">' + formatAmount(cgUnrealised) + '</span></td>' +
                     '<td class="text-right"><span class="' + cgNClass + '">' + formatAmount(cgNet) + '</span></td>' +
                 '</tr>';
 
@@ -852,7 +853,7 @@ function trFnoRenderFlat(positions) {
         var exposureHtml = '-';
         if (r.type === 'open') {
             var exposure = r.isShort ? r.sellAmount : r.buyAmount;
-            exposureHtml = exposure > 0 ? formatAmount(exposure) : '-';
+            exposureHtml = formatAmount(exposure);
         }
 
         // P&L columns
@@ -866,10 +867,11 @@ function trFnoRenderFlat(positions) {
         var uClass = unrealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
         var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
 
-        var dayPnlHtml = (r.type === 'open' && dayPnl !== 0) ? '<span class="' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
+        // formatAmount returns '-' for zero values (centralized rule)
+        var dayPnlHtml = (r.type === 'open') ? '<span class="' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
         var realisedHtml = (r.type === 'matched') ? '<span class="' + rClass + '">' + formatAmount(realisedPnl) + '</span>' : '-';
-        var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
-        var netHtml = netPnl !== 0 ? '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' : '-';
+        var unrealisedHtml = (r.type === 'open') ? '<span class="' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
+        var netHtml = '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>';
 
         var dataAttrs = '';
         if (r.buyTxnId) dataAttrs += ' data-buy-txn-id="' + wmsEsc(r.buyTxnId) + '"';
@@ -925,7 +927,7 @@ function trFnoRenderDetailRow(r, cg) {
     var exposureHtml = '-';
     if (r.type === 'open') {
         var exposure = r.isShort ? r.sellAmount : r.buyAmount;
-        exposureHtml = exposure > 0 ? formatAmount(exposure) : '-';
+        exposureHtml = formatAmount(exposure);
     }
 
     // P&L columns
@@ -939,10 +941,11 @@ function trFnoRenderDetailRow(r, cg) {
     var uClass = unrealisedPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
     var nClass = netPnl >= 0 ? 'trM-pnl-positive' : 'trM-pnl-negative';
 
-    var dayPnlHtml = (r.type === 'open' && dayPnl !== 0) ? '<span class="' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
+    // formatAmount returns '-' for zero values (centralized rule)
+    var dayPnlHtml = (r.type === 'open') ? '<span class="' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
     var realisedHtml = (r.type === 'matched') ? '<span class="' + rClass + '">' + formatAmount(realisedPnl) + '</span>' : '-';
-    var unrealisedHtml = (r.type === 'open' && unrealisedPnl !== 0) ? '<span class="' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
-    var netHtml = netPnl !== 0 ? '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' : '-';
+    var unrealisedHtml = (r.type === 'open') ? '<span class="' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
+    var netHtml = '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>';
 
     var dataAttrs = '';
     if (r.buyTxnId) dataAttrs += ' data-buy-txn-id="' + wmsEsc(r.buyTxnId) + '"';
@@ -1097,8 +1100,10 @@ async function trFnoFetchAndRefresh(forceRefresh) {
     var symbols = {};
     txns.forEach(function(t) {
         // Collect full F&O symbols (different from short_symbol)
+        // Strip exchange prefix (e.g. "NSE:") — wmsFetchFnoContractPrices adds it
         if (t.symbol && t.symbol !== t.short_symbol) {
-            symbols[t.symbol] = true;
+            var sym = t.symbol.replace(/^[A-Z]+:/, '');
+            symbols[sym] = true;
         }
     });
     var symList = Object.keys(symbols);
