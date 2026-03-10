@@ -123,16 +123,6 @@ function trWlSetupEventHandlers() {
         }, 300);
     });
 
-    // Manual refresh button
-    document.getElementById('trWlRefreshBtn').addEventListener('click', async function() {
-        await trWlFetchPrices();
-        trWlUpdatePricesInPlace();
-        // Restart auto-refresh if market is open
-        if (wmsIsMarketHours()) {
-            trWlStartAutoRefresh();
-        }
-    });
-
     // Reorder button
     document.getElementById('trWlReorderBtn').addEventListener('click', trWlOpenReorderModal);
 
