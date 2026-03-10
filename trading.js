@@ -494,7 +494,10 @@ async function trRefresh() {
     } else if (activeId === 'tr-transactions') {
         if (typeof trTxRender === 'function') trTxRender();
     } else if (activeId === 'tr-watchlist') {
-        // Watchlist manages its own refresh
+        if (typeof trWlFetchPrices === 'function') {
+            await trWlFetchPrices();
+            if (typeof trWlRender === 'function') trWlRender();
+        }
     } else {
         // Default: Portfolio
         await trFetchLivePrices();
