@@ -481,8 +481,26 @@ async function trRefresh() {
         showLoading(false);
         return;
     }
-    await trFetchLivePrices();
-    trRenderPortfolio();
+
+    // Detect active tab and re-render it (not just Portfolio)
+    var activeTab = document.querySelector('.trading-tab-content.active');
+    var activeId = activeTab ? activeTab.id : '';
+
+    if (activeId === 'tr-fno-positions') {
+        // F&O: reset price-fetched flag so prices are re-fetched for any new symbols
+        if (typeof trFnoResetFilters === 'function') trFnoResetFilters();
+        trFnoContractPricesFetched = false;
+        if (typeof trFnoRender === 'function') trFnoRender();
+    } else if (activeId === 'tr-transactions') {
+        if (typeof trTxRender === 'function') trTxRender();
+    } else if (activeId === 'tr-watchlist') {
+        // Watchlist manages its own refresh
+    } else {
+        // Default: Portfolio
+        await trFetchLivePrices();
+        trRenderPortfolio();
+    }
+
     showLoading(false);
     showAlert('Refreshed', 'success', 2000);
 }
