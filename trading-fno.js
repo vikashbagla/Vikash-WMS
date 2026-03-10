@@ -581,6 +581,7 @@ function trFnoCalcPositions() {
 
 function trFnoRender() {
     trFnoInit();
+    trFnoInitFilters();  // Idempotent — rebuilds only if pill refs are null
     var tbody = document.getElementById('trFnoBody');
     if (!tbody) return;
 
