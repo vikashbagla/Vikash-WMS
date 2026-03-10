@@ -309,6 +309,12 @@ function trSetupEventHandlers() {
     document.getElementById('trEditModalClose').addEventListener('click', trCloseEditModal);
     document.getElementById('trEditCancelBtn').addEventListener('click', trCloseEditModal);
     document.getElementById('trEditSaveBtn').addEventListener('click', trSaveEdit);
+    document.getElementById('trEditDeleteBtn').addEventListener('click', function() {
+        if (!trEditingTxnId) return;
+        var txnId = trEditingTxnId;
+        trCloseEditModal();
+        trDeleteTransaction(txnId);
+    });
     document.getElementById('trEditModal').addEventListener('click', function(e) {
         if (e.target === this) trCloseEditModal();
     });
@@ -2421,6 +2427,7 @@ function trOpenEditModal(txnId) {
     var editableFields = document.querySelectorAll('#trEditForm .editable-field, #trEditForm select.editable-field, #trEditForm input[type="checkbox"]:not(#trEditLocked)');
     editableFields.forEach(function(f) { f.disabled = isLocked; });
     document.getElementById('trEditSaveBtn').disabled = isLocked;
+    document.getElementById('trEditDeleteBtn').disabled = isLocked;
     document.getElementById('trEditModalTitle').textContent = isLocked ? 'View Transaction (Locked)' : 'Edit Transaction';
 
     document.getElementById('trEditModal').classList.add('show');

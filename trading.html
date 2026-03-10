@@ -590,9 +590,25 @@
     padding: 8px 16px;
     border-top: 1px solid #e2e8f0;
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
+    align-items: center;
+}
+.edit-modal-footer-right {
+    display: flex;
     gap: 8px;
 }
+.btn-danger {
+    background: #e53e3e;
+    color: #fff;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    font-weight: 500;
+}
+.btn-danger:hover { background: #c53030; }
+.btn-danger:disabled { background: #cbd5e0; color: #a0aec0; cursor: not-allowed; }
 /* Section groups in edit modal */
 .edit-section { margin-bottom: 10px; }
 .edit-section-label {
@@ -1216,8 +1232,11 @@
             </div>
         </div>
         <div class="edit-modal-footer">
-            <button class="btn-secondary" id="trEditCancelBtn">Cancel</button>
-            <button class="btn-primary" id="trEditSaveBtn">Save Changes</button>
+            <button class="btn-danger" id="trEditDeleteBtn">Delete</button>
+            <div class="edit-modal-footer-right">
+                <button class="btn-secondary" id="trEditCancelBtn">Cancel</button>
+                <button class="btn-primary" id="trEditSaveBtn">Save Changes</button>
+            </div>
         </div>
     </div>
 </div>
