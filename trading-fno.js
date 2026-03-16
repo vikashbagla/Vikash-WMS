@@ -515,6 +515,7 @@ function trFnoCalcPositions() {
 
             contractGroups.push({
                 groupLabel: groupLabel, contractLabel: g.contractLabel,
+                fullSymbol: g.fullSymbol,
                 isShort: isShort, isFuture: isFuture, rows: matchedRows,
                 totalQty: totalQty, totalBuyAmt: totalBuyAmt, totalSellAmt: totalSellAmt,
                 totalPnl: totalPnl, openQty: openQty, openCost: openCost,
@@ -712,10 +713,39 @@ function trFnoRenderGrouped(positions) {
         var avgBuyPrice = (!p.futIsShort && p.futAvgCost > 0) ? formatPrice(p.futAvgCost, false) : '';
         var avgSellPrice = (p.futIsShort && p.futAvgCost > 0) ? formatPrice(p.futAvgCost, false) : '';
 
+        // Current month contract % change — find nearest-expiry futures contract
+        var contractChpHtml = '';
+        var nearestFut = null;
+        p.contractGroups.forEach(function(cg) {
+            if (!cg.isFuture || !cg.openQty) return;
+            // Pick first futures contract with open positions (they're sorted by expiry)
+            if (!nearestFut) nearestFut = cg;
+        });
+        if (nearestFut && nearestFut.fullSymbol) {
+            var futSym = nearestFut.fullSymbol.replace(/^[A-Z]+:/, '');
+            var futCache = wmsLivePrices[futSym];
+            if (futCache && futCache.chp !== undefined) {
+                var chpVal = futCache.chp;
+                var chpSign = chpVal >= 0 ? '+' : '';
+                var chpColor = chpVal > 0 ? '#059669' : chpVal < 0 ? '#dc2626' : '#9ca3af';
+                contractChpHtml = '<div style="font-size:11px;color:' + chpColor + ';">' + chpSign + chpVal.toFixed(2) + '%</div>';
+            }
+        }
+
+        // P&L as % of exposure
+        var uPctHtml = '';
+        var nPctHtml = '';
+        if (exposure > 0) {
+            var uPct = (uPnl / exposure) * 100;
+            var nPct = (netPnl / exposure) * 100;
+            uPctHtml = '<div style="font-size:11px;" class="' + uClass + '">(' + (uPct >= 0 ? '+' : '') + uPct.toFixed(2) + '%)</div>';
+            nPctHtml = '<div style="font-size:11px;" class="' + nClass + '">(' + (nPct >= 0 ? '+' : '') + nPct.toFixed(2) + '%)</div>';
+        }
+
         // Symbol-level summary row — highlighted, no arrow, no contract list
         html += '<tr class="trFno-symbol-row" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
             '<td><span class="trFno-symbol-name">' + wmsEsc(p.companyName) + '</span>' +
-                '<div class="trFno-symbol-sub">' + wmsEsc(p.underlying) + '</div></td>' +
+                '<div class="trFno-symbol-sub">' + wmsEsc(p.underlying) + '</div>' + contractChpHtml + '</td>' +
             '<td></td>' +
             '<td class="text-right">' + formatQuantity(p.futOpenQty) + '</td>' +
             '<td class="trM-buy-start"></td>' +
@@ -725,8 +755,8 @@ function trFnoRenderGrouped(positions) {
             '<td class="text-right trFno-pnl-start">' + formatAmount(exposure) + '</td>' +
             '<td class="text-right"><span class="' + dClass + '">' + formatAmount(dPnl) + '</span></td>' +
             '<td class="text-right"><span class="' + rClass + '">' + formatAmount(rPnl) + '</span></td>' +
-            '<td class="text-right"><span class="' + uClass + '">' + formatAmount(uPnl) + '</span></td>' +
-            '<td class="text-right"><span class="' + nClass + '">' + formatAmount(netPnl) + '</span></td>' +
+            '<td class="text-right"><span class="' + uClass + '">' + formatAmount(uPnl) + '</span>' + uPctHtml + '</td>' +
+            '<td class="text-right"><span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' + nPctHtml + '</td>' +
         '</tr>';
 
         // Expanded: show contract sub-groups (each also expandable)
