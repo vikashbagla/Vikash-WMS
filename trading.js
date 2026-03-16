@@ -113,13 +113,11 @@ function trSetupEventHandlers() {
         this.textContent = isHidden ? '▼' : '▲';
     });
 
-    // Filter toggle — F&O
+    // Filter toggle — F&O: only hide investor/trader/broker/tag row; keep open/all + expiry row visible
     document.getElementById('tr-fno-filters-toggle').addEventListener('click', function() {
         var shared = document.getElementById('trFnoSharedFilters');
-        var fnoBar = document.querySelector('.trFno-filters-bar');
         var isHidden = shared.style.display === 'none';
         shared.style.display = isHidden ? 'flex' : 'none';
-        if (fnoBar) fnoBar.style.display = isHidden ? '' : 'none';
         this.textContent = isHidden ? '▼' : '▲';
     });
 
@@ -702,14 +700,10 @@ function trInitFilterPills() {
         });
     }
 
-    // Tag filter (built from transactions)
-    var allTags = {};
-    trTransactions.forEach(function(t) {
-        if (t.tags) t.tags.forEach(function(tag) { if (tag) allTags[tag] = true; });
-    });
+    // Tag filter (built from transactions) — case-insensitive dedup (Rule D.5.5)
     var tagContainer = document.getElementById('tr-filter-tag');
     if (tagContainer) {
-        var tagItems = Object.keys(allTags).sort().map(function(tag) { return {id: tag, label: tag}; });
+        var tagItems = wmsBuildTagItems(trTransactions);
         // Build tag-logic radios as headerExtra
         var tagExtra = document.createElement('div');
         tagExtra.className = 'tag-match-options';
@@ -795,15 +789,9 @@ function trCalcHoldings() {
         filtered = filtered.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });
     }
     if (trSelectedTagNames.length > 0) {
-        if (trTagFilterLogic === 'AND') {
-            filtered = filtered.filter(function(t) {
-                return trSelectedTagNames.every(function(tag) { return t.tags && t.tags.indexOf(tag) >= 0; });
-            });
-        } else {
-            filtered = filtered.filter(function(t) {
-                return t.tags && t.tags.some(function(tag) { return trSelectedTagNames.indexOf(tag) >= 0; });
-            });
-        }
+        filtered = filtered.filter(function(t) {
+            return wmsMatchTagsFilter(t.tags, trSelectedTagNames, trTagFilterLogic);
+        });
     }
 
     // View Mode filter
@@ -1241,15 +1229,9 @@ function trBuildInvestorDetail(h, price, md) {
         symbolTxns = symbolTxns.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });
     }
     if (trSelectedTagNames.length > 0) {
-        if (trTagFilterLogic === 'AND') {
-            symbolTxns = symbolTxns.filter(function(t) {
-                return trSelectedTagNames.every(function(tag) { return t.tags && t.tags.indexOf(tag) >= 0; });
-            });
-        } else {
-            symbolTxns = symbolTxns.filter(function(t) {
-                return t.tags && t.tags.some(function(tag) { return trSelectedTagNames.indexOf(tag) >= 0; });
-            });
-        }
+        symbolTxns = symbolTxns.filter(function(t) {
+            return wmsMatchTagsFilter(t.tags, trSelectedTagNames, trTagFilterLogic);
+        });
     }
     // View Mode filter
     if (trViewMode === 'holdings') {
@@ -1441,15 +1423,9 @@ function trGetTxnModalTxns() {
         txns = txns.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });
     }
     if (trSelectedTagNames.length > 0) {
-        if (trTagFilterLogic === 'AND') {
-            txns = txns.filter(function(t) {
-                return trSelectedTagNames.every(function(tag) { return t.tags && t.tags.indexOf(tag) >= 0; });
-            });
-        } else {
-            txns = txns.filter(function(t) {
-                return t.tags && t.tags.some(function(tag) { return trSelectedTagNames.indexOf(tag) >= 0; });
-            });
-        }
+        txns = txns.filter(function(t) {
+            return wmsMatchTagsFilter(t.tags, trSelectedTagNames, trTagFilterLogic);
+        });
     }
     // Apply days filter
     if (trTxnDaysFilter > 0) {

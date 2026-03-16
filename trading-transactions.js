@@ -101,14 +101,10 @@ function trTxInitPills() {
         });
     }
 
-    // Tag pills — collect all unique tags from transactions
-    var allTags = {};
-    trTransactions.forEach(function(t) {
-        if (t.tags) t.tags.forEach(function(tag) { if (tag) allTags[tag] = true; });
-    });
+    // Tag pills — case-insensitive dedup (Rule D.5.5)
     var tagContainer = document.getElementById('trTx-filter-tag');
     if (tagContainer) {
-        var tagItems = Object.keys(allTags).sort().map(function(tag) { return {id: tag, label: tag}; });
+        var tagItems = wmsBuildTagItems(trTransactions);
         // Build tag-logic radios as headerExtra
         var tagExtra = document.createElement('div');
         tagExtra.className = 'tag-match-options';
@@ -457,11 +453,6 @@ function trTxOpenTagPopup() {
     if (trTxBulkTagCtrl) { trTxBulkTagCtrl.destroy(); trTxBulkTagCtrl = null; }
 
     // Collect all existing tags for autocomplete
-    var allTags = {};
-    trTransactions.forEach(function(t) {
-        if (t.tags) t.tags.forEach(function(tag) { if (tag) allTags[tag] = true; });
-    });
-
     var inputEl = document.getElementById('trTx-tag-popup-input');
     var pillsEl = document.getElementById('trTx-tag-popup-pills');
     var ddEl = document.getElementById('trTx-tag-popup-dd');
@@ -471,7 +462,7 @@ function trTxOpenTagPopup() {
 
     trTxBulkTagCtrl = wmsTagInput(inputEl, pillsEl, ddEl, {
         tags: [],
-        existingTags: Object.keys(allTags).sort(),
+        existingTags: wmsBuildTagItems(trTransactions).map(function(it) { return it.label; }),
         onChange: function() {}
     });
 
@@ -669,15 +660,10 @@ function trTxGetFilteredTransactions() {
         });
     }
 
-    // Filter: tags
+    // Filter: tags — case-insensitive (Rule D.5.5)
     if (trTxSelectedTagNames.length > 0) {
         filtered = filtered.filter(function(t) {
-            var txnTags = (t.tags || []).filter(function(tg) { return tg; });
-            if (trTxTagLogic === 'AND') {
-                return trTxSelectedTagNames.every(function(st) { return txnTags.indexOf(st) >= 0; });
-            } else {
-                return trTxSelectedTagNames.some(function(st) { return txnTags.indexOf(st) >= 0; });
-            }
+            return wmsMatchTagsFilter(t.tags, trTxSelectedTagNames, trTxTagLogic);
         });
     }
 

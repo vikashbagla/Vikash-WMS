@@ -244,11 +244,7 @@ function trFnoInitFilters() {
     // Tag
     var tagC = document.getElementById('tr-fno-filter-tag');
     if (tagC && !trFnoTagPillFilter) {
-        var allTags = {};
-        trTransactions.forEach(function(t) {
-            if (t.tags) t.tags.forEach(function(tag) { if (tag) allTags[tag] = true; });
-        });
-        var tagItems = Object.keys(allTags).sort().map(function(tag) { return { id: tag, label: tag }; });
+        var tagItems = wmsBuildTagItems(trTransactions);
         var tagExtra = document.createElement('div');
         tagExtra.className = 'tag-match-options';
         tagExtra.innerHTML =
@@ -292,15 +288,9 @@ function trFnoGetTxns() {
         txns = txns.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });
     }
     if (trSelectedTagNames.length > 0) {
-        if (trTagFilterLogic === 'AND') {
-            txns = txns.filter(function(t) {
-                return trSelectedTagNames.every(function(tag) { return t.tags && t.tags.indexOf(tag) >= 0; });
-            });
-        } else {
-            txns = txns.filter(function(t) {
-                return t.tags && t.tags.some(function(tag) { return trSelectedTagNames.indexOf(tag) >= 0; });
-            });
-        }
+        txns = txns.filter(function(t) {
+            return wmsMatchTagsFilter(t.tags, trSelectedTagNames, trTagFilterLogic);
+        });
     }
     return txns;
 }
@@ -1065,8 +1055,12 @@ function trFnoBuildExpiryFilter(expiryLabels) {
         trFnoExpiryFilter = matched.length > 0 ? matched : [];
     }
 
+    // Determine if all are currently selected
+    var allSelected = (trFnoExpiryFilter.length === 0);
     var html = '<button class="trM-cf-btn" id="trFnoExpiryToggle">Expiry ▾</button>' +
-        '<div class="trM-cf-dropdown" id="trFnoExpiryDropdown" style="display:none;">';
+        '<div class="trM-cf-dropdown" id="trFnoExpiryDropdown" style="display:none;">' +
+        '<div id="trFnoExpirySelectAll" style="padding:4px 12px;font-size:11px;color:#667eea;cursor:pointer;border-bottom:1px solid #e2e8f0;margin-bottom:2px;font-weight:600;">' +
+        (allSelected ? 'Deselect All' : 'Select All') + '</div>';
     expiryLabels.forEach(function(el) {
         var checked = (trFnoExpiryFilter.length === 0 || trFnoExpiryFilter.indexOf(el) >= 0) ? ' checked' : '';
         html += '<label class="trM-cf-item"><input type="checkbox" value="' + wmsEsc(el) + '"' + checked + '> ' + wmsEsc(el) + '</label>';
@@ -1076,9 +1070,30 @@ function trFnoBuildExpiryFilter(expiryLabels) {
 
     var toggleBtn = document.getElementById('trFnoExpiryToggle');
     var dropdown = document.getElementById('trFnoExpiryDropdown');
+    var selectAllEl = document.getElementById('trFnoExpirySelectAll');
     toggleBtn.addEventListener('click', function(e) {
         e.stopPropagation();
         dropdown.style.display = dropdown.style.display === 'none' ? '' : 'none';
+    });
+
+    function updateSelectAllLabel() {
+        var cbs = dropdown.querySelectorAll('input[type="checkbox"]');
+        var allChecked = true;
+        cbs.forEach(function(c) { if (!c.checked) allChecked = false; });
+        selectAllEl.textContent = allChecked ? 'Deselect All' : 'Select All';
+    }
+
+    selectAllEl.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var cbs = dropdown.querySelectorAll('input[type="checkbox"]');
+        var allChecked = true;
+        cbs.forEach(function(c) { if (!c.checked) allChecked = false; });
+        var newState = !allChecked;
+        cbs.forEach(function(c) { c.checked = newState; });
+        // [] = all selected (no filter), ['__none__'] = none selected (hide all)
+        trFnoExpiryFilter = newState ? [] : ['__none__'];
+        updateSelectAllLabel();
+        trFnoRender();
     });
 
     dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(cb) {
@@ -1087,7 +1102,14 @@ function trFnoBuildExpiryFilter(expiryLabels) {
             dropdown.querySelectorAll('input[type="checkbox"]:checked').forEach(function(c) {
                 checked.push(c.value);
             });
-            trFnoExpiryFilter = (checked.length === expiryLabels.length) ? [] : checked;
+            if (checked.length === expiryLabels.length) {
+                trFnoExpiryFilter = []; // all selected = no filter
+            } else if (checked.length === 0) {
+                trFnoExpiryFilter = ['__none__']; // none selected = hide all
+            } else {
+                trFnoExpiryFilter = checked;
+            }
+            updateSelectAllLabel();
             trFnoRender();
         });
     });

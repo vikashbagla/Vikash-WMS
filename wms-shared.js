@@ -516,6 +516,49 @@ function wmsIsIncomeType(txnType) {
 }
 
 // ============================================================================
+// TAG HELPERS — Case-insensitive tag handling (Rule D.5.5)
+// ============================================================================
+
+/**
+ * Build unique tag items for pill filters. Case-insensitive dedup:
+ * "Intraday" and "intraday" merge into one item. First-seen casing used
+ * for display label; id is always lowercase.
+ * @param {Array} transactions - array with .tags arrays
+ * @returns {Array} sorted [{id: 'lowertag', label: 'OriginalCase'}, ...]
+ */
+function wmsBuildTagItems(transactions) {
+    var tagMap = {}; // lowercase → first-seen original casing
+    transactions.forEach(function(t) {
+        if (t.tags) t.tags.forEach(function(tag) {
+            if (tag) {
+                var lower = tag.toLowerCase();
+                if (!tagMap.hasOwnProperty(lower)) tagMap[lower] = tag;
+            }
+        });
+    });
+    return Object.keys(tagMap).sort().map(function(lower) {
+        return { id: lower, label: tagMap[lower] };
+    });
+}
+
+/**
+ * Case-insensitive tag filter. Returns true if txn matches the selected tags.
+ * @param {Array} txnTags - the transaction's tags array
+ * @param {Array} selectedTags - selected tag IDs (already lowercase from pill)
+ * @param {string} logic - 'AND' or 'OR'
+ */
+function wmsMatchTagsFilter(txnTags, selectedTags, logic) {
+    if (!selectedTags || selectedTags.length === 0) return true;
+    if (!txnTags || txnTags.length === 0) return false;
+    var lowerTxnTags = txnTags.map(function(t) { return t ? t.toLowerCase() : ''; });
+    if (logic === 'AND') {
+        return selectedTags.every(function(st) { return lowerTxnTags.indexOf(st) >= 0; });
+    } else {
+        return lowerTxnTags.some(function(t) { return selectedTags.indexOf(t) >= 0; });
+    }
+}
+
+// ============================================================================
 // TRANSACTION SANITIZATION (Rule E.14)
 // ============================================================================
 // When investor ≠ trader, the investor's account is used by the trader
