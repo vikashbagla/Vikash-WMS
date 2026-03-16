@@ -59,8 +59,10 @@ function trUpdateDayPLBanner() {
     var banner = document.getElementById('trDayPLBanner');
     if (!banner) return;
 
-    var stocksPL = window._trStocksDayPL;   // null if no live data yet (from trRenderPortfolio)
-    var fnoPL    = window._trFnoDayPnl;      // undefined if F&O not rendered yet
+    var stocksPL = window._trStocksDayPL;   // null if no live data yet
+    var fnoPL    = window._trFnoDayPnl;      // undefined if F&O not computed yet
+    var stocksInv = window._trStocksInvested || 0;
+    var fnoExp   = window._trFnoExposure || 0;
 
     // Don't show banner until at least one source has data
     if (stocksPL == null && fnoPL == null) {
@@ -72,27 +74,48 @@ function trUpdateDayPLBanner() {
     var fPL = (fnoPL != null) ? fnoPL : 0;
     var tPL = sPL + fPL;
 
+    // Percentages: Day P&L / base amount
+    var sPct = (stocksInv !== 0) ? (sPL / Math.abs(stocksInv)) * 100 : null;
+    var fPct = (fnoExp !== 0) ? (fPL / Math.abs(fnoExp)) * 100 : null;
+    var totalBase = stocksInv + fnoExp;
+    var tPct = (totalBase !== 0) ? (tPL / Math.abs(totalBase)) * 100 : null;
+
+    function plColor(val) {
+        if (val == null) return 'color:#a0aec0';
+        return val > 0 ? 'color:#16a34a' : val < 0 ? 'color:#dc2626' : 'color:#4a5568';
+    }
     function plHtml(val) {
         if (val == null) return '<span style="color:#a0aec0;">-</span>';
-        var cls = val > 0 ? 'color:#16a34a' : val < 0 ? 'color:#dc2626' : 'color:#4a5568';
-        return '<span style="' + cls + ';">' + formatAmount(val) + '</span>';
+        return '<span style="' + plColor(val) + ';">' + formatAmount(val) + '</span>';
+    }
+    function pctHtml(val) {
+        if (val == null) return '';
+        return '<span style="' + plColor(val) + ';">' + formatPercent(val) + '</span>';
     }
 
-    banner.innerHTML =
-        '<div class="tr-pl-card">' +
-            '<div class="tr-pl-label">Stocks</div>' +
-            '<div class="tr-pl-value">' + plHtml(sPL) + '</div>' +
-        '</div>' +
-        '<div class="tr-pl-sep"></div>' +
-        '<div class="tr-pl-card">' +
-            '<div class="tr-pl-label">F&amp;O</div>' +
-            '<div class="tr-pl-value">' + plHtml(fPL) + '</div>' +
-        '</div>' +
-        '<div class="tr-pl-sep"></div>' +
-        '<div class="tr-pl-card">' +
-            '<div class="tr-pl-label">Total</div>' +
-            '<div class="tr-pl-value">' + plHtml(tPL) + '</div>' +
+    function card(label, pl, pct) {
+        return '<div class="tr-pl-card">' +
+            '<div class="tr-pl-label">' + label + '</div>' +
+            '<div class="tr-pl-value">' + plHtml(pl) + '</div>' +
+            '<div class="tr-pl-pct">' + pctHtml(pct) + '</div>' +
         '</div>';
+    }
+
+    // Total exposure = stocks invested + F&O exposure
+    var totalExp = stocksInv + fnoExp;
+    var expHtml = '<div class="tr-pl-card">' +
+        '<div class="tr-pl-label">Exposure</div>' +
+        '<div class="tr-pl-value" style="color:#4a5568;">' + formatAmount(totalExp) + '</div>' +
+    '</div>';
+
+    banner.innerHTML =
+        card('Stocks', sPL, sPct) +
+        '<div class="tr-pl-sep"></div>' +
+        card('F&amp;O', fPL, fPct) +
+        '<div class="tr-pl-sep"></div>' +
+        card('Total', tPL, tPct) +
+        '<div class="tr-pl-sep"></div>' +
+        expHtml;
 }
 
 // ============================================================================
@@ -117,6 +140,11 @@ async function initTrading() {
     trUpdateUnitLabels();
     trRenderPortfolio();
     trStartPortfolioAutoRefresh();
+
+    // Background F&O banner refresh (fetch contract prices + compute totals)
+    if (typeof trFnoBannerRefresh === 'function' && window.fyersToken) {
+        trFnoBannerRefresh();  // fire-and-forget, non-blocking
+    }
 
     // Load saved views
     await trLoadViews();
@@ -665,7 +693,11 @@ function trStartPortfolioAutoRefresh() {
     if (typeof wmsStartAutoRefresh !== 'function') return;
     wmsStartAutoRefresh('portfolio', {
         interval: 10000,
-        fetchFn: function(force) { return trFetchLivePrices(force); },
+        fetchFn: function(force) {
+            // Also refresh F&O contract prices for banner (piggybacked on portfolio refresh)
+            if (typeof trFnoBannerRefresh === 'function') trFnoBannerRefresh(force);
+            return trFetchLivePrices(force);
+        },
         renderFn: function() {
             trRenderPortfolio();
             var now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
@@ -1022,6 +1054,8 @@ function trRenderPortfolio() {
         if (summaryEl) summaryEl.innerHTML = '';
         trUpdateSortIndicators();
         window._trStocksDayPL = 0;
+        window._trStocksInvested = 0;
+        window._trPortfolioInvested = 0;
         trUpdateDayPLBanner();
         return;
     }
@@ -1165,7 +1199,12 @@ function trRenderPortfolio() {
     var stocksDayPL = hasLive
         ? holdings.reduce(function(sum, h) { var m = trGetLiveData(h); return sum + (m ? h.stockQty * m.ch : 0); }, 0)
         : null;
+    // Stocks-only invested for % calc (sum of totalCost for holdings with stockQty > 0)
+    var stocksInvested = 0;
+    holdings.forEach(function(h) { if (h.stockQty !== 0) stocksInvested += h.totalCost; });
     window._trStocksDayPL = stocksDayPL;
+    window._trStocksInvested = stocksInvested;
+    window._trPortfolioInvested = totalInvested;
     if (typeof trUpdateDayPLBanner === 'function') trUpdateDayPLBanner();
 
     var totalDayPLHtml = totalDayPL !== null
