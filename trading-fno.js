@@ -661,13 +661,11 @@ function trFnoBuildTotalRow(totExposure, totDayPnl, totRealised, totUnrealised, 
     var ptUClass = totUnrealised === 0 ? '' : (totUnrealised > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
     var ptNClass = totNet === 0 ? '' : (totNet > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
 
-    // % of exposure for Day's P&L, Unreal P&L, Net P&L in total row
-    var totDPctHtml = '', totUPctHtml = '', totNPctHtml = '';
+    // % of exposure for Unreal P&L, Net P&L in total row
+    var totUPctHtml = '', totNPctHtml = '';
     if (totExposure > 0) {
-        var dPct = (totDayPnl / totExposure) * 100;
         var uPct = (totUnrealised / totExposure) * 100;
         var nPct = (totNet / totExposure) * 100;
-        totDPctHtml = '<div style="font-size:11px;" class="' + ptDClass + '">(' + (dPct >= 0 ? '+' : '') + dPct.toFixed(2) + '%)</div>';
         totUPctHtml = '<div style="font-size:11px;" class="' + ptUClass + '">(' + (uPct >= 0 ? '+' : '') + uPct.toFixed(2) + '%)</div>';
         totNPctHtml = '<div style="font-size:11px;" class="' + ptNClass + '">(' + (nPct >= 0 ? '+' : '') + nPct.toFixed(2) + '%)</div>';
     }
@@ -677,7 +675,7 @@ function trFnoBuildTotalRow(totExposure, totDayPnl, totRealised, totUnrealised, 
         '<td colspan="2" class="trM-buy-start"></td>' +
         '<td colspan="2" class="trM-sell-start"></td>' +
         '<td class="text-right trFno-pnl-start">' + formatAmount(totExposure) + '</td>' +
-        '<td class="text-right"><span class="' + ptDClass + '">' + formatAmount(totDayPnl) + '</span>' + totDPctHtml + '</td>' +
+        '<td class="text-right"><span class="' + ptDClass + '">' + formatAmount(totDayPnl) + '</span></td>' +
         '<td class="text-right"><span class="' + ptRClass + '">' + formatAmount(totRealised) + '</span></td>' +
         '<td class="text-right"><span class="' + ptUClass + '">' + formatAmount(totUnrealised) + '</span>' + totUPctHtml + '</td>' +
         '<td class="text-right"><span class="' + ptNClass + '">' + formatAmount(totNet) + '</span>' + totNPctHtml + '</td>' +
@@ -745,14 +743,11 @@ function trFnoRenderGrouped(positions) {
         }
 
         // P&L as % of exposure
-        var dPctHtml = '';
         var uPctHtml = '';
         var nPctHtml = '';
         if (exposure > 0) {
-            var dPct = (dPnl / exposure) * 100;
             var uPct = (uPnl / exposure) * 100;
             var nPct = (netPnl / exposure) * 100;
-            dPctHtml = '<div style="font-size:11px;" class="' + dClass + '">(' + (dPct >= 0 ? '+' : '') + dPct.toFixed(2) + '%)</div>';
             uPctHtml = '<div style="font-size:11px;" class="' + uClass + '">(' + (uPct >= 0 ? '+' : '') + uPct.toFixed(2) + '%)</div>';
             nPctHtml = '<div style="font-size:11px;" class="' + nClass + '">(' + (nPct >= 0 ? '+' : '') + nPct.toFixed(2) + '%)</div>';
         }
@@ -768,7 +763,7 @@ function trFnoRenderGrouped(positions) {
             '<td class="trM-sell-start"></td>' +
             '<td class="text-right">' + avgSellPrice + '</td>' +
             '<td class="text-right trFno-pnl-start">' + formatAmount(exposure) + '</td>' +
-            '<td class="text-right"><span class="' + dClass + '">' + formatAmount(dPnl) + '</span>' + dPctHtml + contractChpHtml + '</td>' +
+            '<td class="text-right"><span class="' + dClass + '">' + formatAmount(dPnl) + '</span>' + contractChpHtml + '</td>' +
             '<td class="text-right"><span class="' + rClass + '">' + formatAmount(rPnl) + '</span></td>' +
             '<td class="text-right"><span class="' + uClass + '">' + formatAmount(uPnl) + '</span>' + uPctHtml + '</td>' +
             '<td class="text-right"><span class="' + nClass + '">' + formatAmount(netPnl) + '</span>' + nPctHtml + '</td>' +
