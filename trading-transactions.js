@@ -327,7 +327,8 @@ function trTxUpdateCheckboxUI() {
 }
 
 function trTxUpdateBulkBar() {
-    var count = Object.keys(trTxSelectedIds).length;
+    var ids = Object.keys(trTxSelectedIds);
+    var count = ids.length;
     var bar = document.getElementById('trTx-bulk-bar');
     if (bar) {
         bar.style.display = count > 0 ? 'flex' : 'none';
@@ -335,6 +336,24 @@ function trTxUpdateBulkBar() {
     var countEl = document.getElementById('trTx-bulk-count');
     if (countEl) {
         countEl.textContent = count + ' selected';
+    }
+    // Dynamic label for ignore_for_avg_cost toggle
+    var ignoreBtn = document.getElementById('trTx-bulk-ignore');
+    if (ignoreBtn && count > 0) {
+        var ignoredCount = 0;
+        ids.forEach(function(id) {
+            var txn = trTransactions.find(function(t) { return t.id === id; });
+            if (txn && txn.ignore_for_avg_cost) ignoredCount++;
+        });
+        if (ignoredCount === count) {
+            // All ignored → offer to include
+            ignoreBtn.textContent = '✅ Include Avg';
+            ignoreBtn.title = 'Include all selected in avg cost calculation';
+        } else {
+            // None or mixed → offer to ignore all
+            ignoreBtn.textContent = '⊘ Ignore Avg';
+            ignoreBtn.title = 'Ignore all selected for avg cost calculation';
+        }
     }
 }
 
@@ -385,6 +404,62 @@ async function trTxBulkHide() {
         showAlert(failed + ' transaction(s) failed to hide', 'error');
     } else {
         showAlert(ids.length + ' transaction(s) hidden', 'success', 2000);
+    }
+}
+
+async function trTxBulkIgnoreAvg() {
+    var ids = Object.keys(trTxSelectedIds);
+    if (ids.length === 0) return;
+
+    // Silently skip locked transactions
+    ids = ids.filter(function(id) {
+        var txn = trTransactions.find(function(t) { return t.id === id; });
+        return txn && !txn.is_locked;
+    });
+    if (ids.length === 0) return;
+
+    // Determine toggle direction: if ALL selected (non-locked) are already ignored → include them; else → ignore them
+    var allIgnored = ids.every(function(id) {
+        var txn = trTransactions.find(function(t) { return t.id === id; });
+        return txn && txn.ignore_for_avg_cost;
+    });
+    var newValue = !allIgnored;
+    var label = newValue ? 'Ignore for avg cost' : 'Include in avg cost';
+
+    if (!confirm(label + ' for ' + ids.length + ' transaction(s)?')) return;
+
+    var headers = {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+    };
+
+    var failed = 0;
+    for (var i = 0; i < ids.length; i++) {
+        var txnId = ids[i];
+        var txn = trTransactions.find(function(t) { return t.id === txnId; });
+        if (!txn) continue;
+
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txnId, {
+            method: 'PATCH',
+            headers: headers,
+            body: JSON.stringify({ ignore_for_avg_cost: newValue })
+        });
+        if (resp.ok) {
+            txn.ignore_for_avg_cost = newValue;
+        } else {
+            failed++;
+        }
+    }
+
+    trTxClearSelection();
+    trTxRender();
+    trRenderPortfolio();
+    if (failed > 0) {
+        showAlert(failed + ' transaction(s) failed to update', 'error');
+    } else {
+        showAlert(ids.length + ' transaction(s) ' + (newValue ? 'ignored' : 'included') + ' for avg cost', 'success', 2000);
     }
 }
 
@@ -921,6 +996,11 @@ function trTxAttachRowListeners() {
     if (bulkHideBtn && !bulkHideBtn._bound) {
         bulkHideBtn.addEventListener('click', trTxBulkHide);
         bulkHideBtn._bound = true;
+    }
+    var bulkIgnoreBtn = document.getElementById('trTx-bulk-ignore');
+    if (bulkIgnoreBtn && !bulkIgnoreBtn._bound) {
+        bulkIgnoreBtn.addEventListener('click', trTxBulkIgnoreAvg);
+        bulkIgnoreBtn._bound = true;
     }
     if (bulkDeleteBtn && !bulkDeleteBtn._bound) {
         bulkDeleteBtn.addEventListener('click', trTxBulkDelete);
