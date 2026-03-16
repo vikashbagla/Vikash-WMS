@@ -411,13 +411,6 @@ async function trTxBulkIgnoreAvg() {
     var ids = Object.keys(trTxSelectedIds);
     if (ids.length === 0) return;
 
-    // Silently skip locked transactions
-    ids = ids.filter(function(id) {
-        var txn = trTransactions.find(function(t) { return t.id === id; });
-        return txn && !txn.is_locked;
-    });
-    if (ids.length === 0) return;
-
     // Determine toggle direction: if ALL selected (non-locked) are already ignored → include them; else → ignore them
     var allIgnored = ids.every(function(id) {
         var txn = trTransactions.find(function(t) { return t.id === id; });
