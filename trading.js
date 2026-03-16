@@ -118,6 +118,7 @@ function trUpdateDayPLBanner() {
         '</div>';
 
     // --- Block 2: Total (from Portfolio default view) ---
+    var currentValue = portfolioInvested + (portfolioTotalPL || 0);
     var totalBlock =
         '<div class="tr-pl-block">' +
             '<div class="tr-pl-block-label">Portfolio</div>' +
@@ -128,6 +129,11 @@ function trUpdateDayPLBanner() {
                 '</div>' +
                 '<div class="tr-pl-sep"></div>' +
                 card('Total P&amp;L', portfolioTotalPL, portfolioTotalPLPct) +
+                '<div class="tr-pl-sep"></div>' +
+                '<div class="tr-pl-card">' +
+                    '<div class="tr-pl-label">Current Value</div>' +
+                    '<div class="tr-pl-value" style="color:#4a5568;">' + formatAmount(currentValue) + '</div>' +
+                '</div>' +
             '</div>' +
         '</div>';
 
