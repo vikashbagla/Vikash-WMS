@@ -49,6 +49,54 @@ var trTxnContractFilter = [];   // [] = show all, else array of expiry labels (e
 var trRenamingTab = false;       // flag: true while inline rename input is active (prevents trApplyView from firing)
 
 // ============================================================================
+// DAY'S P&L BANNER (header card)
+// ============================================================================
+// Reads stored totals from renderPortfolio() and trFnoRender().
+// Stocks = Portfolio − F&O | F&O | Total = Stocks + F&O
+// Auto-updates on every render (including live price refreshes).
+
+function trUpdateDayPLBanner() {
+    var banner = document.getElementById('trDayPLBanner');
+    if (!banner) return;
+
+    var portfolioPL = window._trPortfolioDayPL;   // null if no live data yet
+    var fnoPL       = window._trFnoDayPnl;         // undefined if F&O not rendered yet
+
+    // Don't show banner until at least one source has data
+    if (portfolioPL == null && fnoPL == null) {
+        banner.innerHTML = '';
+        return;
+    }
+
+    var pPL = (portfolioPL != null) ? portfolioPL : 0;
+    var fPL = (fnoPL != null) ? fnoPL : 0;
+    var sPL = pPL - fPL;   // Stocks = Portfolio total minus F&O portion
+    var tPL = sPL + fPL;   // Total  = Stocks + F&O
+
+    function plHtml(val) {
+        if (val == null) return '<span style="color:#a0aec0;">-</span>';
+        var cls = val > 0 ? 'color:#16a34a' : val < 0 ? 'color:#dc2626' : 'color:#4a5568';
+        return '<span style="' + cls + ';">' + formatAmount(val) + '</span>';
+    }
+
+    banner.innerHTML =
+        '<div class="tr-pl-card">' +
+            '<div class="tr-pl-label">Stocks</div>' +
+            '<div class="tr-pl-value">' + plHtml(sPL) + '</div>' +
+        '</div>' +
+        '<div class="tr-pl-sep"></div>' +
+        '<div class="tr-pl-card">' +
+            '<div class="tr-pl-label">F&amp;O</div>' +
+            '<div class="tr-pl-value">' + plHtml(fPL) + '</div>' +
+        '</div>' +
+        '<div class="tr-pl-sep"></div>' +
+        '<div class="tr-pl-card">' +
+            '<div class="tr-pl-label">Total</div>' +
+            '<div class="tr-pl-value">' + plHtml(tPL) + '</div>' +
+        '</div>';
+}
+
+// ============================================================================
 // INITIALIZATION
 // ============================================================================
 

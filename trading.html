@@ -36,6 +36,32 @@
 }
 .trading-header-bar .btn-add-txn:hover { background: #5a67d8; }
 
+/* Day's P&L banner in header */
+#trDayPLBanner .tr-pl-card {
+    text-align: center;
+    line-height: 1.3;
+}
+#trDayPLBanner .tr-pl-label {
+    font-size: 10px;
+    color: #718096;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+#trDayPLBanner .tr-pl-value {
+    font-size: 13px;
+    font-weight: 700;
+}
+#trDayPLBanner .tr-pl-pct {
+    font-size: 10px;
+    font-weight: 500;
+}
+#trDayPLBanner .tr-pl-sep {
+    width: 1px;
+    height: 28px;
+    background: #e2e8f0;
+}
+
 /* Tabs */
 .trading-tabs {
     flex-shrink: 0;
@@ -777,6 +803,7 @@
             <h2 style="margin: 0; font-size: 15px; color: #2d3748;">Trading</h2>
             <span id="tr-unit-desc" style="font-size: 10px; color: #a0aec0; display: block;"></span>
         </div>
+        <div id="trDayPLBanner" style="display:flex;gap:16px;align-items:center;font-size:12px;"></div>
         <div style="display: flex; align-items: center; gap: 8px;">
             <button class="btn-toggle-zero" id="trToggleZeroBtn" title="Show/hide zero holdings" style="padding: 4px 8px; font-size: 11px;">👁 Zero</button>
             <div style="position: relative; display: inline-block;">

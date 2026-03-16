@@ -579,11 +579,17 @@ function trFnoRender() {
     window._trFnoLastPositions = positions;  // Store for snapshot
     if (!positions || positions.length === 0) {
         tbody.innerHTML = '<tr><td colspan="' + trFnoColCount + '" style="text-align:center;padding:40px;color:#9ca3af;">No F&O positions found</td></tr>';
+        window._trFnoDayPnl = 0;
+        window._trFnoExposure = 0;
+        if (typeof trUpdateDayPLBanner === 'function') trUpdateDayPLBanner();
         return;
     }
 
     var html = trFnoFlatView ? trFnoRenderFlat(positions) : trFnoRenderGrouped(positions);
     tbody.innerHTML = html;
+
+    // Update banner with latest F&O Day's P&L
+    if (typeof trUpdateDayPLBanner === 'function') trUpdateDayPLBanner();
 
     // Wire click handlers for expand/collapse (grouped view only)
     if (!trFnoFlatView) {
@@ -680,6 +686,10 @@ function trFnoRenderGrouped(positions) {
         pageTotUnrealised += p.totalUnrealisedPnl;
         pageTotNet += p.totalRealisedPnl + p.totalUnrealisedPnl;
     });
+
+    // Store Day's P&L for banner (read by trUpdateDayPLBanner in trading.js)
+    window._trFnoDayPnl = pageTotDayPnl;
+    window._trFnoExposure = pageTotExposure;
 
     // TOTAL row at the top (sticky below header)
     var html = trFnoBuildTotalRow(pageTotExposure, pageTotDayPnl, pageTotRealised, pageTotUnrealised, pageTotNet);
@@ -817,6 +827,10 @@ function trFnoRenderFlat(positions) {
         }
     });
     pageTotNet = pageTotRealised + pageTotUnrealised;
+
+    // Store Day's P&L for banner (read by trUpdateDayPLBanner in trading.js)
+    window._trFnoDayPnl = pageTotDayPnl;
+    window._trFnoExposure = pageTotExposure;
 
     // TOTAL row at the top (sticky below header)
     var html = trFnoBuildTotalRow(pageTotExposure, pageTotDayPnl, pageTotRealised, pageTotUnrealised, pageTotNet);

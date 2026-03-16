@@ -608,6 +608,9 @@ function renderPortfolio() {
         list.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#9ca3af;">No holdings to display</td></tr>';
         document.getElementById('portfolio-summary').innerHTML = '';
         updateSortIndicators();
+        window._trPortfolioDayPL = 0;
+        window._trPortfolioDayPLPct = 0;
+        if (typeof trUpdateDayPLBanner === 'function') trUpdateDayPLBanner();
         return;
     }
 
@@ -832,6 +835,11 @@ function renderPortfolio() {
     list.innerHTML = totalRow + rows;
     updateSortIndicators();
     renderSummaryCards(totalInvested, totalValue, totalPL, totalPLPercent, holdings.length);
+
+    // Store Day's P&L for banner (read by trUpdateDayPLBanner in trading.js)
+    window._trPortfolioDayPL = totalDayPL;
+    window._trPortfolioDayPLPct = totalDayPLPct;
+    if (typeof trUpdateDayPLBanner === 'function') trUpdateDayPLBanner();
 }
 
 
