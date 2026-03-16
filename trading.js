@@ -59,19 +59,18 @@ function trUpdateDayPLBanner() {
     var banner = document.getElementById('trDayPLBanner');
     if (!banner) return;
 
-    var portfolioPL = window._trPortfolioDayPL;   // null if no live data yet
-    var fnoPL       = window._trFnoDayPnl;         // undefined if F&O not rendered yet
+    var stocksPL = window._trStocksDayPL;   // null if no live data yet (from trRenderPortfolio)
+    var fnoPL    = window._trFnoDayPnl;      // undefined if F&O not rendered yet
 
     // Don't show banner until at least one source has data
-    if (portfolioPL == null && fnoPL == null) {
+    if (stocksPL == null && fnoPL == null) {
         banner.innerHTML = '';
         return;
     }
 
-    var pPL = (portfolioPL != null) ? portfolioPL : 0;
+    var sPL = (stocksPL != null) ? stocksPL : 0;
     var fPL = (fnoPL != null) ? fnoPL : 0;
-    var sPL = pPL - fPL;   // Stocks = Portfolio total minus F&O portion
-    var tPL = sPL + fPL;   // Total  = Stocks + F&O
+    var tPL = sPL + fPL;
 
     function plHtml(val) {
         if (val == null) return '<span style="color:#a0aec0;">-</span>';
@@ -842,13 +841,13 @@ function trCalcHoldings() {
         });
     }
 
-    // View Mode filter
+    // View Mode filter — use security_type (not exchange, which is always 'NSE' for NFO)
     if (trViewMode === 'holdings') {
-        // Exclude F&O transactions (NFO exchange)
-        filtered = filtered.filter(function(t) { return t.exchange !== 'NFO'; });
+        // Exclude F&O transactions
+        filtered = filtered.filter(function(t) { return t.security_type !== 'NFO'; });
     } else if (trViewMode === 'fno') {
         // Only F&O transactions
-        filtered = filtered.filter(function(t) { return t.exchange === 'NFO'; });
+        filtered = filtered.filter(function(t) { return t.security_type === 'NFO'; });
     }
 
     // Group by short_symbol (underlying) — combines equity + F&O
@@ -920,6 +919,15 @@ function trCalcHoldings() {
         // Open options exclusion is built into wmsCalcAvgCost (Rule E.12)
         var calc = wmsCalcAvgCost(g.txns);
         if (!trShowZeroHoldings && calc.netQuantity === 0) return null;
+
+        // Compute non-NFO net quantity (for Stocks Day's P&L banner)
+        var stockQty = 0;
+        g.txns.forEach(function(t) {
+            if (t.security_type !== 'NFO' && !wmsIsQtyExcluded(t.transaction_type)) {
+                stockQty += t.quantity;
+            }
+        });
+
         // Resolve ISIN from securities master (needed for PE- fallback pricing)
         var _secMaster = g.securityId && wmsRefData.securitiesCmMap[g.securityId];
         var rec = {
@@ -931,6 +939,7 @@ function trCalcHoldings() {
             isin: _secMaster ? _secMaster.isin : null,
             exchange: g.exchange,
             quantity: calc.netQuantity,
+            stockQty: stockQty,
             totalCost: calc.totalCost,
             avgCost: calc.avgCost,
             tags: Object.keys(g.tags),
@@ -1012,6 +1021,8 @@ function trRenderPortfolio() {
         var summaryEl = document.getElementById('tr-portfolio-summary');
         if (summaryEl) summaryEl.innerHTML = '';
         trUpdateSortIndicators();
+        window._trStocksDayPL = 0;
+        trUpdateDayPLBanner();
         return;
     }
 
@@ -1143,11 +1154,19 @@ function trRenderPortfolio() {
     }).join('');
 
     // Total row
-    var totalDayPL = (Object.keys(wmsLivePrices).length > 0 || Object.keys(trLiveData).length > 0)
+    var hasLive = Object.keys(wmsLivePrices).length > 0 || Object.keys(trLiveData).length > 0;
+    var totalDayPL = hasLive
         ? holdings.reduce(function(sum, h) { var m = trGetLiveData(h); return sum + (m ? h.quantity * m.ch : 0); }, 0)
         : null;
     var totalDayPLPct = (totalDayPL !== null && totalInvested !== 0)
         ? (totalDayPL / Math.abs(totalInvested)) * 100 : null;
+
+    // Stocks-only Day's P&L for banner (uses stockQty which excludes NFO trades)
+    var stocksDayPL = hasLive
+        ? holdings.reduce(function(sum, h) { var m = trGetLiveData(h); return sum + (m ? h.stockQty * m.ch : 0); }, 0)
+        : null;
+    window._trStocksDayPL = stocksDayPL;
+    if (typeof trUpdateDayPLBanner === 'function') trUpdateDayPLBanner();
 
     var totalDayPLHtml = totalDayPL !== null
         ? '<div class="number-main ' + getAmountClass(totalDayPL) + '">' + formatAmount(totalDayPL) + '</div>' +
@@ -1281,11 +1300,11 @@ function trBuildInvestorDetail(h, price, md) {
             return wmsMatchTagsFilter(t.tags, trSelectedTagNames, trTagFilterLogic);
         });
     }
-    // View Mode filter
+    // View Mode filter — use security_type (not exchange)
     if (trViewMode === 'holdings') {
-        symbolTxns = symbolTxns.filter(function(t) { return t.exchange !== 'NFO'; });
+        symbolTxns = symbolTxns.filter(function(t) { return t.security_type !== 'NFO'; });
     } else if (trViewMode === 'fno') {
-        symbolTxns = symbolTxns.filter(function(t) { return t.exchange === 'NFO'; });
+        symbolTxns = symbolTxns.filter(function(t) { return t.security_type === 'NFO'; });
     }
 
     // Group transactions by investor, then use wmsCalcAvgCost per investor
