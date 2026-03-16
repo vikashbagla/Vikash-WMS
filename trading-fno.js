@@ -1055,6 +1055,11 @@ function trFnoBuildExpiryFilter(expiryLabels) {
         trFnoExpiryFilter = matched.length > 0 ? matched : [];
     }
 
+    // Compute current expiry label for "Deselect All" fallback
+    var _monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var _now = new Date();
+    var _curExpiryLabel = _monthNames[_now.getMonth()] + ' ' + String(_now.getFullYear()).slice(-2);
+
     // Determine if all are currently selected
     var allSelected = (trFnoExpiryFilter.length === 0);
     var html = '<button class="trM-cf-btn" id="trFnoExpiryToggle">Expiry ▾</button>' +
@@ -1088,10 +1093,17 @@ function trFnoBuildExpiryFilter(expiryLabels) {
         var cbs = dropdown.querySelectorAll('input[type="checkbox"]');
         var allChecked = true;
         cbs.forEach(function(c) { if (!c.checked) allChecked = false; });
-        var newState = !allChecked;
-        cbs.forEach(function(c) { c.checked = newState; });
-        // [] = all selected (no filter), ['__none__'] = none selected (hide all)
-        trFnoExpiryFilter = newState ? [] : ['__none__'];
+        if (!allChecked) {
+            // Select All
+            cbs.forEach(function(c) { c.checked = true; });
+            trFnoExpiryFilter = [];
+        } else {
+            // Deselect All → keep only current expiry month
+            cbs.forEach(function(c) {
+                c.checked = (c.value === _curExpiryLabel);
+            });
+            trFnoExpiryFilter = expiryLabels.indexOf(_curExpiryLabel) >= 0 ? [_curExpiryLabel] : [];
+        }
         updateSelectAllLabel();
         trFnoRender();
     });
@@ -1105,7 +1117,12 @@ function trFnoBuildExpiryFilter(expiryLabels) {
             if (checked.length === expiryLabels.length) {
                 trFnoExpiryFilter = []; // all selected = no filter
             } else if (checked.length === 0) {
-                trFnoExpiryFilter = ['__none__']; // none selected = hide all
+                // None selected → fallback to current expiry
+                trFnoExpiryFilter = expiryLabels.indexOf(_curExpiryLabel) >= 0 ? [_curExpiryLabel] : [];
+                // Re-check the current expiry checkbox
+                dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(c) {
+                    if (c.value === _curExpiryLabel) c.checked = true;
+                });
             } else {
                 trFnoExpiryFilter = checked;
             }
