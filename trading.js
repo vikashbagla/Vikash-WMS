@@ -1072,6 +1072,9 @@ function trCalcHoldings() {
 
         // Resolve ISIN from securities master (needed for PE- fallback pricing)
         var _secMaster = g.securityId && wmsRefData.securitiesCmMap[g.securityId];
+        // For zero-qty holdings, totalCost is residual realized P&L — display as 0 invested
+        var displayTotalCost = calc.netQuantity === 0 ? 0 : calc.totalCost;
+        var displayAvgCost = calc.netQuantity === 0 ? 0 : calc.avgCost;
         var rec = {
             key: key,
             symbol: g.symbol,
@@ -1082,8 +1085,8 @@ function trCalcHoldings() {
             exchange: g.exchange,
             quantity: calc.netQuantity,
             stockQty: stockQty,
-            totalCost: calc.totalCost,
-            avgCost: calc.avgCost,
+            totalCost: displayTotalCost,
+            avgCost: displayAvgCost,
             tags: Object.keys(g.tags),
             latestPrice: g.latestPrice
         };
@@ -1479,8 +1482,9 @@ function trBuildInvestorDetail(h, price, md) {
         .map(function(g) {
             var calc = wmsCalcAvgCost(g.txns);
             g.quantity = calc.netQuantity;
-            g.totalCost = calc.totalCost;
-            g.avgCost = calc.avgCost;
+            // Zero-qty: totalCost is residual realized P&L — display as 0
+            g.totalCost = calc.netQuantity === 0 ? 0 : calc.totalCost;
+            g.avgCost = calc.netQuantity === 0 ? 0 : calc.avgCost;
             return g;
         })
         .filter(function(g) { return g.txns.length > 0; })
@@ -1853,8 +1857,9 @@ function trRenderTxnSummary(txns) {
     // Calculate summary — open options exclusion is built into wmsCalcAvgCost (Rule E.12)
     var calc = wmsCalcAvgCost(txns);
     var netQty = calc.netQuantity;
-    var totalCost = calc.totalCost;
-    var avgCost = calc.avgCost;
+    // Zero-qty: totalCost is residual realized P&L — display as 0
+    var totalCost = netQty === 0 ? 0 : calc.totalCost;
+    var avgCost = netQty === 0 ? 0 : calc.avgCost;
 
     // Current price
     var shortSymbol = trCurrentTxnModalKey;
