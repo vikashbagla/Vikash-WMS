@@ -95,6 +95,15 @@ function trUpdateDayPLBanner() {
         if (val == null) return '';
         return '<span style="' + plColor(val) + ';">' + formatPercent(val) + '</span>';
     }
+    // Strip decimal portion from formatAmount output for Portfolio block
+    function fmtNoDec(val) {
+        var s = formatAmount(val);
+        return s.replace(/\.\d{2}/, '');
+    }
+    function plHtmlNoDec(val) {
+        if (val == null) return '<span style="color:#a0aec0;">-</span>';
+        return '<span style="' + plColor(val) + ';">' + fmtNoDec(val) + '</span>';
+    }
 
     function card(label, pl, pct) {
         return '<div class="tr-pl-card">' +
@@ -117,7 +126,7 @@ function trUpdateDayPLBanner() {
             '</div>' +
         '</div>';
 
-    // --- Block 2: Total (from Portfolio default view) ---
+    // --- Block 2: Portfolio (from default view) — no decimals ---
     var currentValue = portfolioInvested + (portfolioTotalPL || 0);
     var totalBlock =
         '<div class="tr-pl-block">' +
@@ -125,14 +134,18 @@ function trUpdateDayPLBanner() {
             '<div class="tr-pl-block-cards">' +
                 '<div class="tr-pl-card">' +
                     '<div class="tr-pl-label">Invested</div>' +
-                    '<div class="tr-pl-value" style="color:#4a5568;">' + formatAmount(portfolioInvested) + '</div>' +
+                    '<div class="tr-pl-value" style="color:#4a5568;">' + fmtNoDec(portfolioInvested) + '</div>' +
                 '</div>' +
                 '<div class="tr-pl-sep"></div>' +
-                card('Total P&amp;L', portfolioTotalPL, portfolioTotalPLPct) +
+                '<div class="tr-pl-card">' +
+                    '<div class="tr-pl-label">Total P&amp;L</div>' +
+                    '<div class="tr-pl-value">' + plHtmlNoDec(portfolioTotalPL) + '</div>' +
+                    '<div class="tr-pl-pct">' + pctHtml(portfolioTotalPLPct) + '</div>' +
+                '</div>' +
                 '<div class="tr-pl-sep"></div>' +
                 '<div class="tr-pl-card">' +
                     '<div class="tr-pl-label">Current Value</div>' +
-                    '<div class="tr-pl-value" style="color:#4a5568;">' + formatAmount(currentValue) + '</div>' +
+                    '<div class="tr-pl-value" style="color:#4a5568;">' + fmtNoDec(currentValue) + '</div>' +
                 '</div>' +
             '</div>' +
         '</div>';
