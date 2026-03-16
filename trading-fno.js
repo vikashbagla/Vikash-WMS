@@ -1211,6 +1211,8 @@ async function trFnoFetchAndRefresh(forceRefresh) {
     if (symList.length > 0 && typeof wmsFetchFnoContractPrices === 'function') {
         await wmsFetchFnoContractPrices(symList, forceRefresh);
         trFnoRender(); // Re-render with updated contract prices
+        // Update Fyers refresh timestamp
+        if (typeof trUpdatePriceStatus === 'function') trUpdatePriceStatus('live');
     }
 }
 
