@@ -63,6 +63,9 @@ function trUpdateDayPLBanner() {
     var fnoPL    = window._trFnoDayPnl;      // undefined if F&O not computed yet
     var stocksInv = window._trStocksInvested || 0;
     var fnoExp   = window._trFnoExposure || 0;
+    var portfolioInvested = window._trPortfolioInvested || 0;
+    var portfolioTotalPL = window._trPortfolioTotalPL;
+    var portfolioTotalPLPct = window._trPortfolioTotalPLPct;
 
     // Don't show banner until at least one source has data
     if (stocksPL == null && fnoPL == null) {
@@ -72,13 +75,13 @@ function trUpdateDayPLBanner() {
 
     var sPL = (stocksPL != null) ? stocksPL : 0;
     var fPL = (fnoPL != null) ? fnoPL : 0;
-    var tPL = sPL + fPL;
+    var dayTotal = sPL + fPL;
 
-    // Percentages: Day P&L / base amount
+    // Day P&L percentages
     var sPct = (stocksInv !== 0) ? (sPL / Math.abs(stocksInv)) * 100 : null;
     var fPct = (fnoExp !== 0) ? (fPL / Math.abs(fnoExp)) * 100 : null;
-    var totalBase = stocksInv + fnoExp;
-    var tPct = (totalBase !== 0) ? (tPL / Math.abs(totalBase)) * 100 : null;
+    var dayBase = stocksInv + fnoExp;
+    var dayTotalPct = (dayBase !== 0) ? (dayTotal / Math.abs(dayBase)) * 100 : null;
 
     function plColor(val) {
         if (val == null) return 'color:#a0aec0';
@@ -101,21 +104,128 @@ function trUpdateDayPLBanner() {
         '</div>';
     }
 
-    // Total exposure = stocks invested + F&O exposure
-    var totalExp = stocksInv + fnoExp;
-    var expHtml = '<div class="tr-pl-card">' +
-        '<div class="tr-pl-label">Exposure</div>' +
-        '<div class="tr-pl-value" style="color:#4a5568;">' + formatAmount(totalExp) + '</div>' +
-    '</div>';
+    // --- Block 1: Day's P&L ---
+    var dayBlock =
+        '<div class="tr-pl-block">' +
+            '<div class="tr-pl-block-label">Day\'s P&amp;L</div>' +
+            '<div class="tr-pl-block-cards">' +
+                card('Stocks', sPL, sPct) +
+                '<div class="tr-pl-sep"></div>' +
+                card('F&amp;O', fPL, fPct) +
+                '<div class="tr-pl-sep"></div>' +
+                card('Total', dayTotal, dayTotalPct) +
+            '</div>' +
+        '</div>';
 
-    banner.innerHTML =
-        card('Stocks', sPL, sPct) +
-        '<div class="tr-pl-sep"></div>' +
-        card('F&amp;O', fPL, fPct) +
-        '<div class="tr-pl-sep"></div>' +
-        card('Total', tPL, tPct) +
-        '<div class="tr-pl-sep"></div>' +
-        expHtml;
+    // --- Block 2: Total (from Portfolio default view) ---
+    var totalBlock =
+        '<div class="tr-pl-block">' +
+            '<div class="tr-pl-block-label">Portfolio</div>' +
+            '<div class="tr-pl-block-cards">' +
+                '<div class="tr-pl-card">' +
+                    '<div class="tr-pl-label">Invested</div>' +
+                    '<div class="tr-pl-value" style="color:#4a5568;">' + formatAmount(portfolioInvested) + '</div>' +
+                '</div>' +
+                '<div class="tr-pl-sep"></div>' +
+                card('Total P&amp;L', portfolioTotalPL, portfolioTotalPLPct) +
+            '</div>' +
+        '</div>';
+
+    banner.innerHTML = dayBlock + '<div class="tr-pl-block-sep"></div>' + totalBlock;
+}
+
+// ============================================================================
+// BANNER: Background F&O Day's P&L + Exposure (no F&O module dependency)
+// Fetches contract prices and computes open position Day's P&L using
+// LIFO matching — same logic as trFnoCalcPositions but no UI side effects.
+// Lives in trading.js (not trading-fno.js) so it's available at init.
+// ============================================================================
+
+async function trFnoBannerRefresh(forceRefresh) {
+    // Get NFO/MCX transactions (inline trFnoGetTxns logic since that's in the lazy-loaded module)
+    var txns = trTransactions.filter(function(t) {
+        return t.security_type === 'NFO' || t.security_type === 'MCX';
+    });
+    if (trSelectedInvestorIds.length > 0) {
+        txns = txns.filter(function(t) { return trSelectedInvestorIds.indexOf(t.investor_id) >= 0; });
+    }
+    if (trSelectedTraderIds.length > 0) {
+        txns = txns.filter(function(t) { return t.trader_id && trSelectedTraderIds.indexOf(t.trader_id) >= 0; });
+    }
+    if (trSelectedBrokerIds.length > 0) {
+        txns = txns.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });
+    }
+    if (trSelectedTagNames.length > 0) {
+        txns = txns.filter(function(t) {
+            return wmsMatchTagsFilter(t.tags, trSelectedTagNames, trTagFilterLogic);
+        });
+    }
+
+    // Fetch contract prices
+    var symbols = {};
+    txns.forEach(function(t) {
+        if (t.symbol && t.symbol !== t.short_symbol) {
+            var sym = t.symbol.replace(/^[A-Z]+:/, '');
+            symbols[sym] = true;
+        }
+    });
+    var symList = Object.keys(symbols);
+    if (symList.length > 0 && typeof wmsFetchFnoContractPrices === 'function') {
+        await wmsFetchFnoContractPrices(symList, forceRefresh);
+    }
+
+    // Compute open position totals using LIFO matching
+    var trades = txns.filter(function(t) { return t.transaction_type === 'BUY' || t.transaction_type === 'SELL'; });
+    var totDayPnl = 0, totExposure = 0;
+
+    var byGroup = {};
+    trades.forEach(function(t) {
+        var key = (t.investor_id || '') + '|' + (t.trader_id || '') + '|' + (t.broker_id || '') + '|' + (t.symbol || '');
+        if (!byGroup[key]) byGroup[key] = { buys: [], sells: [] };
+        var entry = { date: t.transaction_date, qty: Math.abs(t.quantity || 0), netAmount: Math.abs(t.net_amount || 0), remaining: Math.abs(t.quantity || 0), txn: t };
+        if (t.transaction_type === 'BUY') byGroup[key].buys.push(entry);
+        else byGroup[key].sells.push(entry);
+    });
+
+    Object.keys(byGroup).forEach(function(key) {
+        var g = byGroup[key];
+        g.buys.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
+        g.sells.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
+        var firstBuyDate = g.buys.length > 0 ? new Date(g.buys[0].date) : new Date('9999-12-31');
+        var firstSellDate = g.sells.length > 0 ? new Date(g.sells[0].date) : new Date('9999-12-31');
+        var isShort = firstSellDate < firstBuyDate;
+        var openers = isShort ? g.sells : g.buys;
+        var closers = isShort ? g.buys : g.sells;
+        var openerOrder = openers.slice().reverse(); // LIFO
+
+        closers.forEach(function(closer) {
+            var rem = closer.remaining;
+            for (var i = 0; i < openerOrder.length && rem > 0; i++) {
+                var o = openerOrder[i];
+                if (o.remaining <= 0) continue;
+                var matchQty = Math.min(rem, o.remaining);
+                o.remaining -= matchQty;
+                rem -= matchQty;
+            }
+            closer.remaining = rem;
+        });
+
+        openerOrder.forEach(function(opener) {
+            if (opener.remaining <= 0) return;
+            var ppu = opener.qty > 0 ? opener.netAmount / opener.qty : 0;
+            totExposure += opener.remaining * ppu;
+            var contractSym = (opener.txn.symbol || '').replace(/^[A-Z]+:/, '');
+            var cache = wmsLivePrices[contractSym];
+            var ch = cache ? (cache.ch || 0) : 0;
+            if (ch !== 0) {
+                totDayPnl += isShort ? (-opener.remaining * ch) : (opener.remaining * ch);
+            }
+        });
+    });
+
+    window._trFnoDayPnl = totDayPnl;
+    window._trFnoExposure = totExposure;
+    trUpdateDayPLBanner();
 }
 
 // ============================================================================
@@ -1056,6 +1166,8 @@ function trRenderPortfolio() {
         window._trStocksDayPL = 0;
         window._trStocksInvested = 0;
         window._trPortfolioInvested = 0;
+        window._trPortfolioTotalPL = 0;
+        window._trPortfolioTotalPLPct = 0;
         trUpdateDayPLBanner();
         return;
     }
@@ -1205,6 +1317,8 @@ function trRenderPortfolio() {
     window._trStocksDayPL = stocksDayPL;
     window._trStocksInvested = stocksInvested;
     window._trPortfolioInvested = totalInvested;
+    window._trPortfolioTotalPL = totalPL;
+    window._trPortfolioTotalPLPct = totalPLPct;
     if (typeof trUpdateDayPLBanner === 'function') trUpdateDayPLBanner();
 
     var totalDayPLHtml = totalDayPL !== null
