@@ -997,7 +997,7 @@ async function atSelectOptionsContract(rowId, fyersSymbol, parsed, displayLabel)
             option_type: parsed.optionType || null,
             lot_size: lotSize,
             is_active: true,
-            broker_tokens: { fyers: { symbol: fyersSymbol, nse_symbol: fyersSymbol } }
+            broker_tokens: {}
         };
         try {
             var createResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
