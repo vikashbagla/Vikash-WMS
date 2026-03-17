@@ -874,7 +874,7 @@
                 </div>
                 <button class="tr-vta-btn" id="tr-update-view-btn" title="Update current view with active filters" disabled>↻ Update</button>
                 <button class="tr-vta-btn" id="tr-save-new-btn" title="Save as new view">+ Save New</button>
-                <button class="tr-vta-btn" id="tr-filters-toggle" title="Toggle filters" style="font-size:10px;">▼</button>
+                <button class="tr-vta-btn" id="tr-filters-toggle" title="Toggle filters" style="font-size:10px;">▲</button>
                 <div class="tr-save-prompt" id="tr-save-prompt">
                     <input type="text" id="tr-save-prompt-name" placeholder="View name...">
                     <button class="tr-vta-btn" id="tr-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">✓</button>
@@ -884,7 +884,7 @@
         </div>
 
         <!-- Filters — View Mode + 4 filter columns -->
-        <div id="trPortfolioFilters" style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
+        <div id="trPortfolioFilters" style="flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
             <!-- View Mode Toggle (stacked 2-row layout) -->
             <div class="tr-view-mode-group" style="margin-top:12px; flex-direction:column; border:none; border-radius:0; overflow:visible; gap:3px; width:80px;">
                 <button class="tr-view-mode-btn" data-mode="holdings" style="border:1px solid #e2e8f0; border-radius:4px; width:100%;">Holdings</button>
@@ -968,7 +968,7 @@
                 </div>
                 <button class="tr-vta-btn" id="tr-fno-update-view-btn" title="Update current view with active filters" disabled>&#8635; Update</button>
                 <button class="tr-vta-btn" id="tr-fno-save-new-btn" title="Save as new view">+ Save New</button>
-                <button class="tr-vta-btn" id="tr-fno-filters-toggle" title="Toggle filters" style="font-size:10px;">▼</button>
+                <button class="tr-vta-btn" id="tr-fno-filters-toggle" title="Toggle filters" style="font-size:10px;">▲</button>
                 <div class="tr-save-prompt" id="tr-fno-save-prompt">
                     <input type="text" id="tr-fno-save-prompt-name" placeholder="View name...">
                     <button class="tr-vta-btn" id="tr-fno-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">&#10003;</button>
@@ -977,7 +977,7 @@
             </div>
         </div>
         <!-- F&O shared filters bar (investor/trader/broker/tag) — populated by JS -->
-        <div id="trFnoSharedFilters" style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
+        <div id="trFnoSharedFilters" style="flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
             <div class="filters-grid" style="flex:1; grid-template-columns: repeat(4, 1fr);">
                 <div id="tr-fno-filter-investor"></div>
                 <div id="tr-fno-filter-trader"></div>
