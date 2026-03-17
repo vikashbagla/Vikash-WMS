@@ -28,31 +28,26 @@ var trWlReorderModal = null;   // wmsModal controller for reorder dialog
 
 async function trWlInit() {
     if (trWlInitialized) {
-        // Already initialized — just refresh prices and re-render
-        await trWlFetchPrices();
+        // Already initialized — re-render with cached prices (standard timer keeps them fresh)
         trWlRender();
-        if (wmsIsMarketHours()) {
-            trWlStartAutoRefresh();
-        } else {
-            trWlUpdatePriceStatus('market-closed');
-        }
         return;
     }
     trWlInitialized = true;
     trWlSetupEventHandlers();
     await trWlLoad();
+    // First load: use trWlFetchPrices for full symbol resolution (Stage 2+3)
+    // This handles broker_tokens, BSE fallback, Yahoo fallback etc.
     await trWlFetchPrices();
+    // Sync resolved prices into wmsLivePrices so standard refresh can use them
+    trWlSyncAllToSharedCache();
     trWlRender();
-    if (wmsIsMarketHours()) {
-        trWlStartAutoRefresh();
-    } else {
-        trWlUpdatePriceStatus('market-closed');
-    }
+    // Rebuild master symbol list now that watchlist _fyersSymbol values are resolved
+    if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
 }
 
 function trWlDestroy() {
     // Called when switching away from watchlist tab
-    trWlStopAutoRefresh();
+    // No-op: standard refresh timer handles everything now
 }
 
 // ============================================================================
@@ -501,7 +496,7 @@ function trWlSyncToSharedCache() {
             if (!item._fyersSymbol || !item.short_symbol) return;
             // Only sync securities_db equity items (not options_dynamic)
             if (item.security_source !== 'securities_db') return;
-            var price = trWlPrices[item._fyersSymbol];
+            var price = wmsLivePrices[item._fyersSymbol] || wmsLivePrices[item.short_symbol];
             if (!price || price.lp <= 0) return;
             var sym = item.short_symbol;
             // Don't overwrite if shared cache already has a positive price
@@ -515,6 +510,37 @@ function trWlSyncToSharedCache() {
         });
     });
     if (count > 0) console.log('Watchlist: Synced', count, 'prices to shared cache');
+}
+
+/**
+ * trWlSyncAllToSharedCache — copy ALL watchlist prices into wmsLivePrices.
+ * Stores under both fyersKey AND short_symbol/bare symbol so all consumers
+ * (portfolio, F&O, watchlist) can find prices regardless of key format.
+ */
+function trWlSyncAllToSharedCache() {
+    if (typeof wmsLivePrices === 'undefined') return;
+    var count = 0;
+    trWlWatchlists.forEach(function(wl) {
+        wl.items.forEach(function(item) {
+            if (!item._fyersSymbol) return;
+            var price = trWlPrices[item._fyersSymbol];
+            if (!price || price.lp <= 0) return;
+            var priceData = {
+                lp: price.lp, ch: price.ch, chp: price.chp,
+                high: price.high, low: price.low,
+                resolvedSymbol: item._fyersSymbol
+            };
+            // Store under fyersKey (for watchlist reads)
+            wmsLivePrices[item._fyersSymbol] = priceData;
+            // Store under short_symbol (for portfolio/F&O reads)
+            if (item.short_symbol) wmsLivePrices[item.short_symbol] = priceData;
+            // Store under bare symbol for NFO (strip exchange prefix)
+            var bare = item._fyersSymbol.replace(/^[A-Z]+:/, '');
+            if (bare !== item._fyersSymbol) wmsLivePrices[bare] = priceData;
+            count++;
+        });
+    });
+    if (count > 0) console.log('Watchlist: Synced', count, 'prices to wmsLivePrices');
 }
 
 // ── REMOVED: trWlResolveUnpricedItems + trWlYahooFallback ──
@@ -797,33 +823,12 @@ function trWlUpdatePriceStatus(status) {
 // AUTO-REFRESH TIMER
 // ============================================================================
 
-function trWlStartAutoRefresh() {
-    trWlStopAutoRefresh(); // Clear any existing
-    trWlRefreshTimer = setInterval(async function() {
-        // Only refresh if page is visible and watchlist tab is active
-        if (document.hidden) return;
-        var wlTab = document.getElementById('tr-watchlist');
-        if (!wlTab || !wlTab.classList.contains('active')) return;
-
-        // Check market hours — stop auto-refresh if market is closed
-        if (!wmsIsMarketHours()) {
-            trWlStopAutoRefresh();
-            trWlUpdatePriceStatus('market-closed');
-            return;
-        }
-
-        await trWlFetchPrices();
-        // Update prices in-place instead of full re-render (preserves scroll position)
-        trWlUpdatePricesInPlace();
-    }, trWlRefreshInterval);
-}
-
-function trWlStopAutoRefresh() {
-    if (trWlRefreshTimer) {
-        clearInterval(trWlRefreshTimer);
-        trWlRefreshTimer = null;
-    }
-}
+// ============================================================================
+// WATCHLIST AUTO-REFRESH — REMOVED (replaced by wmsStandardRefresh)
+// Legacy functions kept as no-ops so any stray callers don't throw.
+// ============================================================================
+function trWlStartAutoRefresh() { /* no-op: replaced by standard refresh */ }
+function trWlStopAutoRefresh() { /* no-op: replaced by standard refresh */ }
 
 // ============================================================================
 // IN-PLACE PRICE UPDATE (no DOM rebuild — preserves scroll position)
@@ -847,7 +852,7 @@ function trWlUpdatePricesInPlace() {
         }
         if (!item) return;
 
-        var price = trWlPrices[item._fyersSymbol];
+        var price = wmsLivePrices[item._fyersSymbol] || wmsLivePrices[item.short_symbol];
         var cmp = price ? price.lp : null;
         var ch = price ? price.ch : null;
         var chp = price ? price.chp : null;
@@ -1025,7 +1030,7 @@ function trWlRender() {
 }
 
 function trWlRenderSecurityRow(item) {
-    var price = trWlPrices[item._fyersSymbol];
+    var price = wmsLivePrices[item._fyersSymbol] || wmsLivePrices[item.short_symbol];
     var cmp = price ? price.lp : null;
     var ch = price ? price.ch : null;
     var chp = price ? price.chp : null;
@@ -1814,6 +1819,12 @@ async function trWlAddItem(security) {
                         low: v.low_price || null
                     };
                     trWlPrices[v.symbol] = priceData;
+                    // Also write to shared cache under all key formats
+                    wmsLivePrices[v.symbol] = priceData;
+                    wmsLivePrices[newItem._fyersSymbol] = priceData;
+                    if (newItem.short_symbol) wmsLivePrices[newItem.short_symbol] = priceData;
+                    var bare = (v.symbol || '').replace(/^[A-Z]+:/, '');
+                    if (bare) wmsLivePrices[bare] = priceData;
                     // Also store under the requested symbol in case Fyers returns a different canonical form
                     if (v.symbol !== newItem._fyersSymbol) {
                         console.warn('Watchlist: Fyers returned different symbol! Stored:', v.symbol, 'Requested:', newItem._fyersSymbol);
@@ -1849,6 +1860,8 @@ async function trWlAddItem(security) {
             addedRow.parentNode.replaceChild(newRow, addedRow);
         }
 
+        // Rebuild master symbol list (new symbol added)
+        if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
         // Update the card in background (re-render the specific watchlist card)
         trWlRender();
     } else {
@@ -2016,6 +2029,7 @@ async function trWlDeleteItem(itemId, wlId) {
         if (wl) {
             wl.items = wl.items.filter(function(item) { return item.id !== itemId; });
         }
+        if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
         trWlRender();
     } else {
         showAlert('Failed to remove security', 'error');
@@ -2039,8 +2053,8 @@ function trWlGetSortedItems(wl) {
         });
     } else if (ss.field === 'chp') {
         sorted.sort(function(a, b) {
-            var aPrice = trWlPrices[a._fyersSymbol];
-            var bPrice = trWlPrices[b._fyersSymbol];
+            var aPrice = wmsLivePrices[a._fyersSymbol] || wmsLivePrices[a.short_symbol];
+            var bPrice = wmsLivePrices[b._fyersSymbol] || wmsLivePrices[b.short_symbol];
             var aChp = aPrice ? aPrice.chp : -9999;
             var bChp = bPrice ? bPrice.chp : -9999;
             return aChp - bChp;
@@ -2466,7 +2480,7 @@ function trWlUpdateAlertsInPlace() {
         var hasAbove = item.alert_above != null;
         var hasBelow = item.alert_below != null;
 
-        var price = trWlPrices[item._fyersSymbol];
+        var price = wmsLivePrices[item._fyersSymbol] || wmsLivePrices[item.short_symbol];
         var cmp = price ? price.lp : null;
         var state = trWlGetAlertState(item, cmp);
 
@@ -2527,7 +2541,7 @@ function trWlOpenAlertPopover(row, editDir) {
     }
     if (!item) return;
 
-    var price = trWlPrices[item._fyersSymbol];
+    var price = wmsLivePrices[item._fyersSymbol] || wmsLivePrices[item.short_symbol];
     var cmp = price ? price.lp : null;
 
     // Prefill values

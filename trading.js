@@ -346,17 +346,13 @@ async function initTrading() {
         return;
     }
 
-    await trFetchLivePrices();
     trUpdateUnitLabels();
-    trRenderPortfolio();
-    trStartPortfolioAutoRefresh();
 
-    // Background F&O banner refresh (fetch contract prices + compute totals)
-    if (typeof trFnoBannerRefresh === 'function' && window.fyersToken) {
-        trFnoBannerRefresh();  // fire-and-forget, non-blocking
-    }
+    // Build master symbol list and do initial price fetch + render
+    if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+    await wmsStandardRefresh(false); // first load: non-forced (triggers Stage 2+3 for unresolved)
 
-    // Load saved views
+    // Load saved views (may update default view filters → banner recompute)
     await trLoadViews();
 
     // Re-init sub-modules if already loaded (pills need data that may not have been ready)
@@ -364,9 +360,13 @@ async function initTrading() {
         window.trTxInit();
     }
     if (typeof trFnoRender === 'function' && trFnoLoaded) {
-        // Reset pill filter refs so trFnoInitFilters() rebuilds them with populated data
         if (typeof trFnoResetFilters === 'function') trFnoResetFilters();
         trFnoRender();
+    }
+
+    // Start the single standard refresh timer (runs always, regardless of active tab)
+    if (wmsIsMarketHours() && window.fyersToken) {
+        wmsStartRefreshTimer();
     }
 
     showLoading(false);
@@ -641,13 +641,6 @@ function trSwitchTab(tabId) {
     if (prevTab && prevTab.id === 'tr-watchlist' && window.trWlDestroy) {
         window.trWlDestroy();
     }
-    // Stop auto-refresh for tabs being left
-    if (prevTab && prevTab.id === 'tr-fno-positions' && typeof trFnoStopAutoRefresh === 'function') {
-        trFnoStopAutoRefresh();
-    }
-    if (prevTab && prevTab.id === 'tr-portfolio' && typeof wmsStopAutoRefresh === 'function') {
-        wmsStopAutoRefresh('portfolio');
-    }
 
     document.querySelectorAll('.trading-tab-btn').forEach(function(b) { b.classList.remove('active'); });
     document.querySelectorAll('.trading-tab-content').forEach(function(c) { c.classList.remove('active'); });
@@ -659,25 +652,19 @@ function trSwitchTab(tabId) {
 
     localStorage.setItem('wms_trading_tab', tabId);
 
-    // Load watchlist sub-module on demand
+    // Load sub-modules on demand
     if (tabId === 'tr-watchlist') {
         trLoadWatchlistModule();
     }
-
-    // Load transactions sub-module on demand
     if (tabId === 'tr-transactions') {
         trLoadTransactionsModule();
     }
-
-    // Load F&O positions sub-module on demand
     if (tabId === 'tr-fno-positions') {
         trLoadFnoModule();
     }
 
-    // Restart auto-refresh for the tab being entered
-    if (tabId === 'tr-portfolio') {
-        trStartPortfolioAutoRefresh();
-    }
+    // Standard refresh: re-render the newly active tab with cached prices
+    if (typeof wmsRefreshRender === 'function') wmsRefreshRender();
 }
 
 async function trLoadWatchlistModule() {
@@ -771,27 +758,14 @@ async function trRefresh() {
         return;
     }
 
-    // Detect active tab and re-render it (not just Portfolio)
-    var activeTab = document.querySelector('.trading-tab-content.active');
-    var activeId = activeTab ? activeTab.id : '';
+    // Rebuild symbol list (new transactions may have appeared) and force-refresh all prices
+    if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+    await wmsStandardRefresh(true);
 
-    if (activeId === 'tr-fno-positions') {
-        // F&O: reset price-fetched flag so prices are re-fetched for any new symbols
-        if (typeof trFnoResetFilters === 'function') trFnoResetFilters();
-        trFnoContractPricesFetched = false;
-        if (typeof trFnoRender === 'function') trFnoRender();
-    } else if (activeId === 'tr-transactions') {
-        if (typeof trTxRender === 'function') trTxRender();
-    } else if (activeId === 'tr-watchlist') {
-        if (typeof trWlFetchPrices === 'function') {
-            await trWlFetchPrices();
-            if (typeof trWlUpdatePricesInPlace === 'function') trWlUpdatePricesInPlace();
-            if (wmsIsMarketHours() && typeof trWlStartAutoRefresh === 'function') trWlStartAutoRefresh();
-        }
-    } else {
-        // Default: Portfolio
-        await trFetchLivePrices();
-        trRenderPortfolio();
+    // Transactions tab also needs explicit re-render (not price-driven)
+    var activeTab = document.querySelector('.trading-tab-content.active');
+    if (activeTab && activeTab.id === 'tr-transactions' && typeof trTxRender === 'function') {
+        trTxRender();
     }
 
     showLoading(false);
@@ -895,32 +869,10 @@ function trUpdatePriceStatus(status) {
 }
 
 // ============================================================================
-// PORTFOLIO AUTO-REFRESH (Rule D.12.11)
-// Uses shared wmsStartAutoRefresh from wms-shared.js
+// PORTFOLIO AUTO-REFRESH — REMOVED (replaced by wmsStandardRefresh)
+// Legacy function kept as no-op so any stray callers don't throw.
 // ============================================================================
-
-function trStartPortfolioAutoRefresh() {
-    if (typeof wmsStartAutoRefresh !== 'function') return;
-    wmsStartAutoRefresh('portfolio', {
-        interval: 10000,
-        fetchFn: function(force) {
-            return trFetchLivePrices(force);
-        },
-        renderFn: function() {
-            trRenderPortfolio(); // Also calls trComputeBannerStats() internally
-            // Standard banner refresh: both stocks + F&O banners on every cycle
-            if (typeof trFnoBannerRefreshFromDefault === 'function') trFnoBannerRefreshFromDefault();
-            trUpdatePriceStatus('live');
-        },
-        isActiveFn: function() {
-            var tab = document.getElementById('tr-portfolio');
-            return tab && tab.classList.contains('active');
-        },
-        onMarketClose: function() {
-            trUpdatePriceStatus('last-txn');
-        }
-    });
-}
+function trStartPortfolioAutoRefresh() { /* no-op: replaced by standard refresh */ }
 
 // ============================================================================
 // UNIT LABELS
@@ -2591,6 +2543,7 @@ async function trDeleteTransaction(txnId) {
         trTransactions = trTransactions.filter(function(t) { return t.id !== txnId; });
         showAlert('Transaction deleted', 'success', 2000);
         if (trCurrentTxnModalKey) trTxnRefreshCurrentView();
+        if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
         trRenderPortfolio();
     } else {
         showAlert('Failed to delete: HTTP ' + resp.status, 'error');

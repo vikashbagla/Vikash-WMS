@@ -1282,11 +1282,34 @@ function wmsUpdateNfoBrokerToken(securityId, fyersSymbol) {
 // ============================================================================
 // SHARED AUTO-REFRESH (Rule D.12.11)
 // Centralised market-hours check and per-tab auto-refresh timer management.
-// Any tab can register with wmsStartAutoRefresh(id, opts) and prices will
-// be re-fetched at the given interval while the market is open.
+// STANDARD REFRESH SYSTEM
+// Single refresh cycle for the entire app. Fetches prices for ALL symbols
+// (transactions + watchlist), then renders the active page + banners.
+//
+// Triggers:
+//   - 10s timer (market hours)
+//   - Tab/page change
+//   - Window/tab focus (visibility change)
+//   - Modal close
+//   - Manual refresh button
+//   - Transaction add/edit/delete
+//   - Watchlist add/remove
+//
+// Architecture:
+//   wmsBuildRefreshSymbols() → builds master symbol list
+//   wmsStandardRefresh()    → fetches prices + renders active page
+//   wmsStartRefreshTimer()  → starts 10s timer
 // ============================================================================
 
-var wmsAutoRefreshTimers = {};  // id → intervalId
+var wmsRefreshSymbols = [];    // [{ fyersKey, cacheKey }, ...]
+var wmsRefreshTimer = null;    // single setInterval ID
+var wmsRefreshInterval = 10000; // 10 seconds
+var wmsRefreshFirstDone = false; // first-load flag for Stage 2+3 resolution
+
+// Legacy aliases — kept so existing callers don't break during migration
+var wmsAutoRefreshTimers = {};
+function wmsStartAutoRefresh(id, opts) { /* no-op: replaced by standard refresh */ }
+function wmsStopAutoRefresh(id) { /* no-op: replaced by standard refresh */ }
 
 /**
  * wmsIsMarketHours — returns true during Indian market hours.
@@ -1303,45 +1326,219 @@ function wmsIsMarketHours() {
 }
 
 /**
- * wmsStartAutoRefresh — start periodic price refresh for a tab.
- * @param {string} id        — unique identifier (e.g. 'portfolio', 'fno', 'watchlist')
- * @param {Object} opts
- *   @param {number}   [opts.interval=10000] — ms between refreshes
- *   @param {Function} opts.fetchFn          — async fn(forceRefresh) to fetch prices
- *   @param {Function} [opts.renderFn]       — called after fetch to re-render
- *   @param {Function} [opts.isActiveFn]     — return false to skip this cycle
- *   @param {Function} [opts.onMarketClose]  — called when market is detected closed
+ * wmsBuildRefreshSymbols — build master list of unique symbols to fetch.
+ * Sources: (a) all transaction symbols, (b) all watchlist symbols.
+ * Call this whenever transactions or watchlist items change.
  */
-function wmsStartAutoRefresh(id, opts) {
-    wmsStopAutoRefresh(id);
-    var interval = opts.interval || 10000;
-    wmsAutoRefreshTimers[id] = setInterval(async function() {
-        if (document.hidden) return;
-        if (!wmsIsMarketHours()) {
-            wmsStopAutoRefresh(id);
-            if (opts.onMarketClose) opts.onMarketClose();
-            return;
-        }
-        if (opts.isActiveFn && !opts.isActiveFn()) return;
-        await opts.fetchFn(true);
-        if (opts.renderFn) opts.renderFn();
-    }, interval);
+function wmsBuildRefreshSymbols() {
+    var seen = {};
+    var list = [];
+
+    // 1. Equity symbols from transactions
+    if (typeof trTransactions !== 'undefined' && trTransactions) {
+        trTransactions.forEach(function(t) {
+            if (t.security_type === 'NFO' || t.security_type === 'MCX') return;
+            var ss = t.short_symbol;
+            if (!ss || seen[ss]) return;
+            seen[ss] = true;
+            var fKey = null;
+            var dbRec = (typeof wmsRefData !== 'undefined' && wmsRefData.securitiesCmMap)
+                ? wmsRefData.securitiesCmMap[t.security_id] : null;
+            if (dbRec && dbRec.broker_tokens && dbRec.broker_tokens.fyers) {
+                fKey = dbRec.broker_tokens.fyers.nse_symbol || dbRec.broker_tokens.fyers.bse_symbol;
+            }
+            if (!fKey) fKey = 'NSE:' + ss + '-EQ';
+            list.push({ fyersKey: fKey, cacheKey: ss });
+        });
+    }
+
+    // 2. F&O symbols from transactions
+    if (typeof trTransactions !== 'undefined' && trTransactions) {
+        trTransactions.forEach(function(t) {
+            if (t.security_type !== 'NFO' && t.security_type !== 'MCX') return;
+            if (!t.symbol || t.symbol === t.short_symbol) return;
+            var bare = t.symbol.replace(/^[A-Z]+:/, '');
+            if (seen[bare]) return;
+            seen[bare] = true;
+            var fKey = t.symbol.indexOf(':') >= 0 ? t.symbol : 'NSE:' + bare;
+            list.push({ fyersKey: fKey, cacheKey: bare });
+        });
+    }
+
+    // 3. Watchlist symbols (may include securities not in transactions)
+    if (typeof trWlWatchlists !== 'undefined' && trWlWatchlists) {
+        trWlWatchlists.forEach(function(wl) {
+            wl.items.forEach(function(item) {
+                if (!item._fyersSymbol) return;
+                // Derive cacheKey: for equity use short_symbol, for NFO strip prefix
+                var cacheKey = item.short_symbol;
+                if (item.security_source === 'securities_nfo' || item.security_source === 'options_dynamic') {
+                    cacheKey = item._fyersSymbol.replace(/^[A-Z]+:/, '');
+                }
+                if (!cacheKey || seen[cacheKey]) return;
+                seen[cacheKey] = true;
+                list.push({ fyersKey: item._fyersSymbol, cacheKey: cacheKey });
+            });
+        });
+    }
+
+    wmsRefreshSymbols = list;
+    console.log('wmsBuildRefreshSymbols:', list.length, 'unique symbols');
 }
 
 /**
- * wmsStopAutoRefresh — stop the timer for a given tab.
+ * wmsStandardRefresh — the ONE refresh function called by ALL triggers.
+ * 1. Fetches prices for all symbols in wmsRefreshSymbols
+ * 2. Renders the active page + updates banners
+ *
+ * @param {boolean} [forceRefresh=false] — true = refetch all; false = only uncached
  */
-function wmsStopAutoRefresh(id) {
-    if (wmsAutoRefreshTimers[id]) {
-        clearInterval(wmsAutoRefreshTimers[id]);
-        delete wmsAutoRefreshTimers[id];
+async function wmsStandardRefresh(forceRefresh) {
+    if (!window.fyersToken || !window.fyersCall) return;
+    if (wmsRefreshSymbols.length === 0) return;
+
+    // 1. Determine which symbols need fetching
+    var toFetch = forceRefresh
+        ? wmsRefreshSymbols.slice()
+        : wmsRefreshSymbols.filter(function(s) {
+            return !wmsLivePrices[s.cacheKey] || wmsLivePrices[s.cacheKey].lp <= 0;
+        });
+
+    // 2. Batch fetch from Fyers (chunks of 50)
+    if (toFetch.length > 0) {
+        for (var i = 0; i < toFetch.length; i += 50) {
+            var chunk = toFetch.slice(i, i + 50);
+            var fyersKeys = chunk.map(function(s) { return s.fyersKey; });
+            try {
+                var data = await window.fyersCall({ action: 'quotes', symbols: fyersKeys });
+                if (data && data.d) {
+                    data.d.forEach(function(item) {
+                        if (!item.v) return;
+                        var priceData = {
+                            lp: item.v.lp || 0,
+                            ch: item.v.ch || 0,
+                            chp: item.v.chp || 0,
+                            high: item.v.high_price || null,
+                            low: item.v.low_price || null,
+                            resolvedSymbol: item.v.symbol
+                        };
+                        // Store under all relevant keys so every consumer finds it
+                        if (item.v.symbol) wmsLivePrices[item.v.symbol] = priceData;
+                        if (item.v.short_name) wmsLivePrices[item.v.short_name] = priceData;
+                        // Map back to our requested cacheKey + fyersKey
+                        chunk.forEach(function(s) {
+                            var retBase = (item.v.symbol || '').replace(/^[A-Z]+:/, '');
+                            var reqBase = s.fyersKey.replace(/^[A-Z]+:/, '');
+                            if (retBase === reqBase || item.v.short_name === s.cacheKey) {
+                                wmsLivePrices[s.cacheKey] = priceData;
+                                wmsLivePrices[s.fyersKey] = priceData;
+                            }
+                        });
+                    });
+                }
+            } catch (err) {
+                console.warn('wmsStandardRefresh: batch error:', err.message);
+            }
+            if (i + 50 < toFetch.length) {
+                await new Promise(function(r) { setTimeout(r, 200); });
+            }
+        }
+    }
+
+    // 3. First-load only: run Stage 2+3 resolution for unresolved equity symbols
+    if (!wmsRefreshFirstDone && typeof wmsFetchEquityPrices === 'function') {
+        var unresolvedEquity = [];
+        wmsRefreshSymbols.forEach(function(s) {
+            // Only equity (has -EQ suffix in fyersKey)
+            if (s.fyersKey.indexOf('-EQ') < 0) return;
+            var cached = wmsLivePrices[s.cacheKey];
+            if (cached && cached.lp > 0) return;
+            unresolvedEquity.push({ shortSymbol: s.cacheKey, securityId: null });
+        });
+        if (unresolvedEquity.length > 0) {
+            console.log('wmsStandardRefresh: Stage 2+3 for', unresolvedEquity.length, 'unresolved equity');
+            await wmsFetchEquityPrices(unresolvedEquity);
+        }
+        wmsRefreshFirstDone = true;
+    }
+
+    // 4. Render active page + update banners
+    wmsRefreshRender();
+}
+
+/**
+ * wmsRefreshRender — update the UI after prices are fetched.
+ * Detects which module/tab is active and renders accordingly.
+ */
+function wmsRefreshRender() {
+    // Check if Trading module is active (portfolio tab element exists in DOM)
+    var isTradingActive = !!document.getElementById('tr-portfolio');
+
+    if (isTradingActive) {
+        var activeTab = document.querySelector('.trading-tab-content.active');
+        var activeId = activeTab ? activeTab.id : '';
+
+        if (activeId === 'tr-portfolio') {
+            // trRenderPortfolio internally calls trComputeBannerStats
+            if (typeof trRenderPortfolio === 'function') trRenderPortfolio();
+        } else {
+            // Not on portfolio — still compute stocks banner from cached prices
+            if (typeof trComputeBannerStats === 'function') trComputeBannerStats();
+            // Render active F&O or Watchlist tab
+            if (activeId === 'tr-fno-positions' && typeof trFnoRender === 'function') {
+                trFnoRender();
+            } else if (activeId === 'tr-watchlist' && typeof trWlUpdatePricesInPlace === 'function') {
+                trWlUpdatePricesInPlace();
+            }
+        }
+
+        // Always refresh F&O banner (reads from wmsLivePrices cache — fast)
+        if (typeof trFnoBannerRefreshFromDefault === 'function') {
+            trFnoBannerRefreshFromDefault();
+        }
+
+        // Update price status indicator
+        if (typeof trUpdatePriceStatus === 'function') trUpdatePriceStatus('live');
+    }
+    // Non-trading modules: prices fetched in background, no rendering needed
+}
+
+/**
+ * wmsStartRefreshTimer — start the single 10s auto-refresh timer.
+ * Runs always (not tab-dependent). Stops if market closes.
+ */
+function wmsStartRefreshTimer() {
+    wmsStopRefreshTimer();
+    wmsRefreshTimer = setInterval(async function() {
+        if (document.hidden) return;
+        if (!wmsIsMarketHours()) {
+            wmsStopRefreshTimer();
+            if (typeof trUpdatePriceStatus === 'function') trUpdatePriceStatus('last-txn');
+            return;
+        }
+        await wmsStandardRefresh(true); // force = true for timer cycles
+    }, wmsRefreshInterval);
+}
+
+/**
+ * wmsStopRefreshTimer — stop the 10s timer.
+ */
+function wmsStopRefreshTimer() {
+    if (wmsRefreshTimer) {
+        clearInterval(wmsRefreshTimer);
+        wmsRefreshTimer = null;
     }
 }
 
-// Pause all auto-refresh when tab is hidden, resume when visible
+// Resume refresh when page becomes visible again
 document.addEventListener('visibilitychange', function() {
-    // Note: each tab's fetchFn already checks document.hidden,
-    // but we also let individual modules hook into this via their own listeners.
+    if (!document.hidden) {
+        // Page became visible — do an immediate refresh + restart timer
+        if (wmsIsMarketHours() && window.fyersToken) {
+            wmsStandardRefresh(true);
+            wmsStartRefreshTimer();
+        }
+    }
 });
 
 // ============================================================================

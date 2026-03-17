@@ -632,15 +632,12 @@ function trFnoRender() {
         });
     });
 
-    // Async: fetch F&O contract prices on first render, then start auto-refresh
+    // On first F&O render, rebuild symbol list (may include new F&O contracts)
+    // and trigger a refresh. Subsequent refreshes handled by standard timer.
     if (!trFnoContractPricesFetched && window.fyersToken) {
         trFnoContractPricesFetched = true;
-        trFnoFetchAndRefresh().then(function() {
-            trFnoStartAutoRefresh();
-        });
-    } else if (trFnoContractPricesFetched) {
-        // Re-entering the tab — restart auto-refresh
-        trFnoStartAutoRefresh();
+        if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+        if (typeof wmsStandardRefresh === 'function') wmsStandardRefresh(true);
     }
 }
 
@@ -1186,50 +1183,13 @@ function trFnoBuildExpiryFilter(expiryLabels) {
 // F&O CONTRACT PRICES: Async fetch for open position CMP
 // ============================================================================
 
-async function trFnoFetchAndRefresh(forceRefresh) {
-    var txns = trFnoGetTxns();
-    var symbols = {};
-    txns.forEach(function(t) {
-        // Collect full F&O symbols (different from short_symbol)
-        // Strip exchange prefix (e.g. "NSE:") — wmsFetchFnoContractPrices adds it
-        if (t.symbol && t.symbol !== t.short_symbol) {
-            var sym = t.symbol.replace(/^[A-Z]+:/, '');
-            symbols[sym] = true;
-        }
-    });
-    var symList = Object.keys(symbols);
-    if (symList.length > 0 && typeof wmsFetchFnoContractPrices === 'function') {
-        await wmsFetchFnoContractPrices(symList, forceRefresh);
-        trFnoRender(); // Re-render with updated contract prices
-    }
-    // Standard banner refresh: fetch stock prices + compute both banners
-    // Same pattern as portfolio auto-refresh so banners stay in sync on any tab
-    if (typeof trFetchLivePrices === 'function') await trFetchLivePrices(forceRefresh);
-    if (typeof trComputeBannerStats === 'function') trComputeBannerStats();
-    if (typeof trFnoBannerRefreshFromDefault === 'function') trFnoBannerRefreshFromDefault();
-    if (typeof trUpdatePriceStatus === 'function') trUpdatePriceStatus('live');
-}
-
 // ============================================================================
-// AUTO-REFRESH: Uses shared wmsStartAutoRefresh (Rule D.12.11)
+// F&O AUTO-REFRESH — REMOVED (replaced by wmsStandardRefresh)
+// Legacy functions kept as no-ops so any stray callers don't throw.
 // ============================================================================
-
-function trFnoStartAutoRefresh() {
-    if (typeof wmsStartAutoRefresh !== 'function') return;
-    wmsStartAutoRefresh('fno', {
-        interval: 10000,
-        fetchFn: function(force) { return trFnoFetchAndRefresh(force); },
-        renderFn: null, // trFnoFetchAndRefresh already calls trFnoRender
-        isActiveFn: function() {
-            var tab = document.getElementById('tr-fno-positions');
-            return tab && tab.classList.contains('active');
-        }
-    });
-}
-
-function trFnoStopAutoRefresh() {
-    if (typeof wmsStopAutoRefresh === 'function') wmsStopAutoRefresh('fno');
-}
+function trFnoFetchAndRefresh() { /* no-op: replaced by standard refresh */ }
+function trFnoStartAutoRefresh() { /* no-op: replaced by standard refresh */ }
+function trFnoStopAutoRefresh() { /* no-op: replaced by standard refresh */ }
 
 // ============================================================================
 // SNAPSHOT: Build table image from data for WhatsApp sharing
