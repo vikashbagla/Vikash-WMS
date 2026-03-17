@@ -221,17 +221,14 @@ function trComputeBannerStats() {
         totalInvested += calc.totalCost;
         totalValue += currentValue;
 
-        // Stocks Day's P&L (exclude NFO from stockQty)
+        // Stocks Day's P&L: sum non-NFO, non-excluded qty directly (matches trCalcHoldings approach)
         if (hasLive && cache && cache.ch) {
-            var stockQty = calc.netQuantity;
-            // Subtract NFO quantity from total for stockQty
-            var nfoQty = 0;
+            var stockQty = 0;
             g.txns.forEach(function(t) {
-                if (t.security_type === 'NFO') {
-                    nfoQty += (t.transaction_type === 'BUY' ? (t.quantity || 0) : -(t.quantity || 0));
+                if (t.security_type !== 'NFO' && !wmsIsQtyExcluded(t.transaction_type)) {
+                    stockQty += t.quantity;
                 }
             });
-            stockQty = stockQty - nfoQty;
             if (stockQty !== 0) {
                 stocksDayPL += stockQty * cache.ch;
                 stocksInvested += calc.totalCost;
