@@ -753,6 +753,28 @@ function wmsCalcAvgCost(transactions) {
 //   options contracts are removed. Closed options (net qty = 0) are kept.
 //   Does NOT mutate the input array or transaction objects.
 // ============================================================================
+// DAY'S P&L CALCULATION FOR F&O OPEN POSITIONS
+// For same-day trades: Day's P&L = qty × (CMP − trade price)
+// For older trades:    Day's P&L = qty × ch (today's price change)
+// isShort flips the sign. Returns 0 if no price data.
+// ============================================================================
+
+function wmsCalcFnoDayPnl(qty, isShort, tradeDate, tradePrice, priceCache) {
+    if (!priceCache || qty <= 0) return 0;
+    var todayStr = new Date().toISOString().slice(0, 10);
+    var cmp = priceCache.lp || 0;
+    if (tradeDate === todayStr && cmp > 0 && tradePrice > 0) {
+        // Same-day trade: P&L relative to trade price
+        return isShort ? qty * (tradePrice - cmp) : qty * (cmp - tradePrice);
+    }
+    var ch = priceCache.ch || 0;
+    if (ch !== 0) {
+        return isShort ? (-qty * ch) : (qty * ch);
+    }
+    return 0;
+}
+
+// ============================================================================
 
 function wmsIsOptionContract(symbol, shortSymbol) {
     if (!symbol || !shortSymbol) return false;

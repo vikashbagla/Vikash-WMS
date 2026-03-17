@@ -322,10 +322,7 @@ async function trFnoBannerRefreshFromDefault(forceRefresh) {
             totExposure += opener.remaining * ppu;
             var contractSym = (opener.txn.symbol || '').replace(/^[A-Z]+:/, '');
             var cache = wmsLivePrices[contractSym];
-            var ch = cache ? (cache.ch || 0) : 0;
-            if (ch !== 0) {
-                totDayPnl += isShort ? (-opener.remaining * ch) : (opener.remaining * ch);
-            }
+            totDayPnl += wmsCalcFnoDayPnl(opener.remaining, isShort, opener.date, ppu, cache);
         });
     });
 

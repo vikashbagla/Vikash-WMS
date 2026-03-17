@@ -578,9 +578,9 @@
 /* F&O Table column widths */
 /* F&O Table: 12-column layout — P&L cols (8-12) equal width */
 #trFnoTable { table-layout: fixed; width: 100%; }
-#trFnoThead th:nth-child(1)  { width: 12%; }  /* Underlying */
+#trFnoThead th:nth-child(1)  { width: 11%; }  /* Underlying */
 #trFnoThead th:nth-child(2)  { width: 10%; }  /* Contract */
-#trFnoThead th:nth-child(3)  { width: 5%; }   /* Qty */
+#trFnoThead th:nth-child(3)  { width: 6%; }   /* Qty */
 #trFnoThead th:nth-child(4)  { width: 7%; }   /* Buy Date */
 #trFnoThead th:nth-child(5)  { width: 6%; }   /* Buy Price */
 #trFnoThead th:nth-child(6)  { width: 7%; }   /* Sell Date */
@@ -590,7 +590,7 @@
 #trFnoThead th:nth-child(10) { width: 9%; }   /* Realised P&L */
 #trFnoThead th:nth-child(11) { width: 9%; }   /* Unrealised P&L */
 #trFnoThead th:nth-child(12) { width: 9%; }   /* Net P&L */
-/* 12+10+5+7+6+7+6+9×5 = 98%; remaining 2% absorbs padding/borders */
+/* 11+10+6+7+6+7+6+9×5 = 98%; remaining 2% absorbs padding/borders */
 #trFnoTable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #trFnoTable td:first-child { overflow: visible; white-space: nowrap; }
 #trFnoTable thead th { position: sticky; top: 0; background: #f7fafc; z-index: 2; white-space: nowrap; font-size: 10px; padding: 6px 4px; }

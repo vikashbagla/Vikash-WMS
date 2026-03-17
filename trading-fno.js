@@ -455,11 +455,11 @@ function trFnoCalcPositions() {
                     var openValue = row.qty * cmp;
                     row.unrealisedPnl = row.isShort ? (openCost - openValue) : (openValue - openCost);
                 }
-                // Day's P&L = qty × today's price change (ch)
-                var ch = contractCache ? (contractCache.ch || 0) : 0;
-                if (ch !== 0) {
-                    row.dayPnl = row.isShort ? (-row.qty * ch) : (row.qty * ch);
-                }
+                // Day's P&L via shared function (same-day: CMP - trade price; else: qty × ch)
+                var tradeDate = row.isShort ? row.sellDate : row.buyDate;
+                var tradePrice = row.isShort ? row.sellAvg : row.buyAvg;
+                var dp = wmsCalcFnoDayPnl(row.qty, row.isShort, tradeDate, tradePrice, contractCache);
+                if (dp !== 0) row.dayPnl = dp;
                 matchedRows.push(row);
             });
 

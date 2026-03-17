@@ -110,7 +110,7 @@ const getUnitDescription = () => {
 // Rule: zero quantities display as '-' (consistent with formatAmount)
 const formatQuantity = (value) => {
     if (value === null || value === undefined || isNaN(value) || value === 0) return '-';
-    return Math.round(value).toLocaleString('en-IN');
+    return Math.round(value).toLocaleString('en-US');
 };
 
 // Format lots (1 decimal)
