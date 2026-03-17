@@ -416,7 +416,7 @@ async function hplSaveTransaction() {
 
     var txn = {
         investor_id: hplSelectedInvestor.id,
-        trader_id: hplSelectedTrader ? hplSelectedTrader.id : null,
+        trader_id: hplSelectedTrader ? hplSelectedTrader.id : hplSelectedInvestor.id,
         broker_id: hplSelectedBroker ? hplSelectedBroker.id : null,
         security_id: sec.id,
         security_type: sec.security_type || 'EQUITY',
