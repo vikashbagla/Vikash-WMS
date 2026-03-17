@@ -283,7 +283,10 @@ async function trWlLoadBrokerTokens() {
                 if (nfoRec && nfoRec.broker_tokens && nfoRec.broker_tokens.fyers) {
                     item._fyersSymbol = nfoRec.broker_tokens.fyers.symbol || nfoRec.broker_tokens.fyers.nse_symbol;
                 } else if (nfoRec) {
-                    item._fyersSymbol = nfoRec.symbol;
+                    // Fallback: derive Fyers symbol from DB symbol + exchange prefix
+                    var sym = nfoRec.symbol || '';
+                    var exch = (nfoRec.exchange || 'NSE').toUpperCase();
+                    item._fyersSymbol = sym.indexOf(':') >= 0 ? sym : exch + ':' + sym;
                 }
             } else {
                 var dbRec = dbTokenMap[item.security_id];
