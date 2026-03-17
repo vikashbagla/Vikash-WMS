@@ -1571,9 +1571,18 @@ async function trFnoLoadViews() {
     trFnoRenderMoreDropdown();
     trFnoUpdateViewButtons();
 
+    // Store default F&O view filters for banner computation
+    var defaultView = trFnoViews.find(function(v) { return v.is_default; });
+    if (defaultView) {
+        trDefaultFnoViewFilters = defaultView.filters || {};
+        // Re-compute F&O banner with correct default filters
+        if (typeof trFnoBannerRefreshFromDefault === 'function' && window.fyersToken) {
+            trFnoBannerRefreshFromDefault();
+        }
+    }
+
     // Auto-apply default view on first load
     if (!trFnoActiveViewId) {
-        var defaultView = trFnoViews.find(function(v) { return v.is_default; });
         if (defaultView) {
             trFnoApplyView(defaultView.id);
         }
@@ -2029,6 +2038,13 @@ async function trFnoSetDefaultView(viewId) {
         if (v) { v.is_default = true; v.show_in_tabs = true; }
     } catch (err) {
         console.warn('Failed to set default:', err.message);
+    }
+
+    // Update cached default F&O view filters and recompute banner
+    var newDefault = trFnoViews.find(function(v) { return v.id === viewId; });
+    if (newDefault) {
+        trDefaultFnoViewFilters = newDefault.filters || {};
+        if (typeof trFnoBannerRefreshFromDefault === 'function') trFnoBannerRefreshFromDefault();
     }
 
     trFnoRenderViewTabs();

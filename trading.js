@@ -27,6 +27,8 @@ var trExpandedKey = null;
 var trShowZeroHoldings = false;
 var trPortfolioViews = [];         // Saved views from DB
 var trActiveViewId = null;         // Currently active saved view
+var trDefaultViewFilters = null;   // Filters from the default Portfolio view (for banner)
+var trDefaultFnoViewFilters = null; // Filters from the default F&O view (for banner)
 var trCompanySearchText = '';      // Inline company search filter
 var trLivePrices = {};
 var trLiveData = {};
@@ -161,24 +163,109 @@ function trUpdateDayPLBanner() {
 // ============================================================================
 
 async function trFnoBannerRefresh(forceRefresh) {
-    // Get NFO/MCX transactions (inline trFnoGetTxns logic since that's in the lazy-loaded module)
+    // Delegate to default-view-based banner computation
+    return trFnoBannerRefreshFromDefault(forceRefresh);
+}
+
+// ============================================================================
+// BANNER: Compute stats from DEFAULT view filters (not active view)
+// Called on init, refresh, and live price updates. Decoupled from active view.
+// ============================================================================
+
+function trComputeBannerStats() {
+    // Use default Portfolio view filters (or empty = all data if no default)
+    var f = trDefaultViewFilters || {};
+    var invIds = f.investorIds || [];
+    var trdIds = f.traderIds || [];
+    var brkIds = f.brokerIds || [];
+    var tagNames = f.tagNames || [];
+    var tagLogic = f.tagLogic || 'OR';
+    var viewMode = f.viewMode || 'default';
+
+    // Filter transactions using default view filters
+    var filtered = trTransactions.filter(function(t) { return !t.dont_display; });
+    if (invIds.length > 0) filtered = filtered.filter(function(t) { return invIds.indexOf(t.investor_id) >= 0; });
+    if (trdIds.length > 0) filtered = filtered.filter(function(t) { return t.trader_id && trdIds.indexOf(t.trader_id) >= 0; });
+    if (brkIds.length > 0) filtered = filtered.filter(function(t) { return t.broker_id && brkIds.indexOf(t.broker_id) >= 0; });
+    if (tagNames.length > 0) filtered = filtered.filter(function(t) { return wmsMatchTagsFilter(t.tags, tagNames, tagLogic); });
+
+    // View mode filter
+    if (viewMode === 'holdings') {
+        filtered = filtered.filter(function(t) { return t.security_type !== 'NFO'; });
+    } else if (viewMode === 'fno') {
+        filtered = filtered.filter(function(t) { return t.security_type === 'NFO'; });
+    }
+
+    // Group by short_symbol and calculate holdings (lightweight version of trCalcHoldings)
+    var groups = {};
+    filtered.forEach(function(txn) {
+        var key = txn.short_symbol || txn.symbol;
+        if (!key) return;
+        if (!groups[key]) groups[key] = { txns: [], shortSymbol: key };
+        groups[key].txns.push(txn);
+    });
+
+    var totalInvested = 0, totalValue = 0, stocksDayPL = 0, stocksInvested = 0;
+    var hasLive = Object.keys(wmsLivePrices).length > 0;
+
+    Object.keys(groups).forEach(function(key) {
+        var g = groups[key];
+        var calc = wmsCalcAvgCost(g.txns);
+        if (calc.netQuantity === 0) return;
+
+        // Get live price
+        var sym = g.shortSymbol;
+        var cache = wmsLivePrices[sym];
+        var price = cache ? (cache.lp || calc.avgCost) : calc.avgCost;
+        var currentValue = calc.netQuantity * price;
+        totalInvested += calc.totalCost;
+        totalValue += currentValue;
+
+        // Stocks Day's P&L (exclude NFO from stockQty)
+        if (hasLive && cache && cache.ch) {
+            var stockQty = calc.netQuantity;
+            // Subtract NFO quantity from total for stockQty
+            var nfoQty = 0;
+            g.txns.forEach(function(t) {
+                if (t.security_type === 'NFO') {
+                    nfoQty += (t.transaction_type === 'BUY' ? (t.quantity || 0) : -(t.quantity || 0));
+                }
+            });
+            stockQty = stockQty - nfoQty;
+            if (stockQty !== 0) {
+                stocksDayPL += stockQty * cache.ch;
+                stocksInvested += calc.totalCost;
+            }
+        }
+    });
+
+    var totalPL = totalValue - totalInvested;
+    var totalPLPct = totalInvested !== 0 ? (totalPL / Math.abs(totalInvested)) * 100 : 0;
+
+    window._trStocksDayPL = hasLive ? stocksDayPL : null;
+    window._trStocksInvested = stocksInvested;
+    window._trPortfolioInvested = totalInvested;
+    window._trPortfolioTotalPL = totalPL;
+    window._trPortfolioTotalPLPct = totalPLPct;
+    trUpdateDayPLBanner();
+}
+
+// Compute F&O banner stats from default F&O view filters
+async function trFnoBannerRefreshFromDefault(forceRefresh) {
+    var f = trDefaultFnoViewFilters || {};
+    var invIds = f.investorIds || [];
+    var trdIds = f.traderIds || [];
+    var brkIds = f.brokerIds || [];
+    var tagNames = f.tagNames || [];
+    var tagLogic = f.tagLogic || 'OR';
+
     var txns = trTransactions.filter(function(t) {
         return t.security_type === 'NFO' || t.security_type === 'MCX';
     });
-    if (trSelectedInvestorIds.length > 0) {
-        txns = txns.filter(function(t) { return trSelectedInvestorIds.indexOf(t.investor_id) >= 0; });
-    }
-    if (trSelectedTraderIds.length > 0) {
-        txns = txns.filter(function(t) { return t.trader_id && trSelectedTraderIds.indexOf(t.trader_id) >= 0; });
-    }
-    if (trSelectedBrokerIds.length > 0) {
-        txns = txns.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });
-    }
-    if (trSelectedTagNames.length > 0) {
-        txns = txns.filter(function(t) {
-            return wmsMatchTagsFilter(t.tags, trSelectedTagNames, trTagFilterLogic);
-        });
-    }
+    if (invIds.length > 0) txns = txns.filter(function(t) { return invIds.indexOf(t.investor_id) >= 0; });
+    if (trdIds.length > 0) txns = txns.filter(function(t) { return t.trader_id && trdIds.indexOf(t.trader_id) >= 0; });
+    if (brkIds.length > 0) txns = txns.filter(function(t) { return t.broker_id && brkIds.indexOf(t.broker_id) >= 0; });
+    if (tagNames.length > 0) txns = txns.filter(function(t) { return wmsMatchTagsFilter(t.tags, tagNames, tagLogic); });
 
     // Fetch contract prices
     var symbols = {};
@@ -1185,12 +1272,6 @@ function trRenderPortfolio() {
         var summaryEl = document.getElementById('tr-portfolio-summary');
         if (summaryEl) summaryEl.innerHTML = '';
         trUpdateSortIndicators();
-        window._trStocksDayPL = 0;
-        window._trStocksInvested = 0;
-        window._trPortfolioInvested = 0;
-        window._trPortfolioTotalPL = 0;
-        window._trPortfolioTotalPLPct = 0;
-        trUpdateDayPLBanner();
         return;
     }
 
@@ -1329,19 +1410,9 @@ function trRenderPortfolio() {
     var totalDayPLPct = (totalDayPL !== null && totalInvested !== 0)
         ? (totalDayPL / Math.abs(totalInvested)) * 100 : null;
 
-    // Stocks-only Day's P&L for banner (uses stockQty which excludes NFO trades)
-    var stocksDayPL = hasLive
-        ? holdings.reduce(function(sum, h) { var m = trGetLiveData(h); return sum + (m ? h.stockQty * m.ch : 0); }, 0)
-        : null;
-    // Stocks-only invested for % calc (sum of totalCost for holdings with stockQty > 0)
-    var stocksInvested = 0;
-    holdings.forEach(function(h) { if (h.stockQty !== 0) stocksInvested += h.totalCost; });
-    window._trStocksDayPL = stocksDayPL;
-    window._trStocksInvested = stocksInvested;
-    window._trPortfolioInvested = totalInvested;
-    window._trPortfolioTotalPL = totalPL;
-    window._trPortfolioTotalPLPct = totalPLPct;
-    if (typeof trUpdateDayPLBanner === 'function') trUpdateDayPLBanner();
+    // Banner stats are now computed from default view filters via trComputeBannerStats()
+    // (not from the active view). Refresh banner in case live prices updated.
+    if (typeof trComputeBannerStats === 'function') trComputeBannerStats();
 
     var totalDayPLHtml = totalDayPL !== null
         ? '<div class="number-main ' + getAmountClass(totalDayPL) + '">' + formatAmount(totalDayPL) + '</div>' +
@@ -3073,13 +3144,21 @@ async function trLoadViews() {
     trRenderMoreDropdown();
     trUpdateViewButtons();
 
+    // Store default view filters for banner computation
+    var defaultView = trPortfolioViews.find(function(v) { return v.is_default; });
+    if (defaultView) {
+        trDefaultViewFilters = defaultView.filters || {};
+    }
+
     // Auto-apply default view on first load (if no view active yet)
     if (!trActiveViewId) {
-        var defaultView = trPortfolioViews.find(function(v) { return v.is_default; });
         if (defaultView) {
             trApplyView(defaultView.id);
         }
     }
+
+    // Recompute banner from default view filters
+    trComputeBannerStats();
 }
 
 // ---- VIEW TABS ----
@@ -3544,7 +3623,14 @@ async function trUpdateCurrentView() {
         if (resp.ok) {
             // Update local state
             var v = trPortfolioViews.find(function(v) { return v.id === trActiveViewId; });
-            if (v) v.filters = filters;
+            if (v) {
+                v.filters = filters;
+                // If this is the default view, refresh banner with new filters
+                if (v.is_default) {
+                    trDefaultViewFilters = filters;
+                    trComputeBannerStats();
+                }
+            }
             showAlert('View updated', 'success', 2000);
         } else {
             showAlert('Failed to update view', 'error');
@@ -3620,6 +3706,13 @@ async function trSetDefaultView(viewId) {
         if (v) { v.is_default = true; v.show_in_tabs = true; }
     } catch (err) {
         console.warn('Failed to set default:', err.message);
+    }
+
+    // Update cached default view filters and recompute banner
+    var newDefault = trPortfolioViews.find(function(v) { return v.id === viewId; });
+    if (newDefault) {
+        trDefaultViewFilters = newDefault.filters || {};
+        trComputeBannerStats();
     }
 
     trRenderViewTabs();
