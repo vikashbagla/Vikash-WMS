@@ -2989,6 +2989,12 @@ async function importExcelToDatabase() {
                         if (entry) {
                             entry.rows.forEach(function(r) { r.security_id = ins.id; });
                             console.log('NFO inserted: ' + ins.symbol + ' → ' + ins.id);
+                            // Persist Fyers broker_token (background, non-blocking)
+                            var exchPrefix = (ins.exchange || 'NSE').toUpperCase();
+                            var fSym = ins.symbol.indexOf(':') >= 0 ? ins.symbol : exchPrefix + ':' + ins.symbol;
+                            if (typeof wmsUpdateNfoBrokerToken === 'function') {
+                                wmsUpdateNfoBrokerToken(ins.id, fSym);
+                            }
                         }
                     });
                     // Refresh local NFO cache

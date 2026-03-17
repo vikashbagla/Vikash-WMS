@@ -1233,6 +1233,52 @@ function wmsUpdateBrokerToken(securityId, fyersSymbol) {
     }).catch(function(err) { console.warn('wmsUpdateBrokerToken:', err.message); });
 }
 
+// Resolve and persist Fyers broker_tokens for an NFO security.
+// Calls the Fyers quotes API to validate the symbol and get the canonical response,
+// then PATCHes broker_tokens into securities_nfo — same pattern as wmsUpdateBrokerToken
+// for securities_db. Runs in the background (fire-and-forget).
+// fyersSymbol: the Fyers-format symbol (e.g. NSE:MANAPPURAM26MAR255CE or bare MANAPPURAM26MAR255CE)
+function wmsUpdateNfoBrokerToken(securityId, fyersSymbol) {
+    if (!securityId || !fyersSymbol) return;
+    if (!window.fyersToken || !window.fyersCall) return;
+
+    // Ensure exchange prefix for Fyers API call
+    var apiSymbol = fyersSymbol.indexOf(':') >= 0 ? fyersSymbol : 'NSE:' + fyersSymbol;
+
+    // 1. Call Fyers quotes API to validate and get canonical symbol
+    window.fyersCall({ action: 'quotes', symbols: [apiSymbol] }).then(function(data) {
+        if (!data || !data.d || data.d.length === 0) return;
+        var v = data.d[0].v;
+        if (!v || !v.symbol) return;
+
+        var resolvedSymbol = v.symbol;  // Canonical Fyers symbol from API response
+        console.log('wmsUpdateNfoBrokerToken: resolved', apiSymbol, '→', resolvedSymbol);
+
+        // 2. Read current broker_tokens from DB
+        return fetch(SUPABASE_URL + '/rest/v1/securities_nfo?id=eq.' + securityId + '&select=broker_tokens', {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        }).then(function(resp) { return resp.json(); }).then(function(rows) {
+            if (!rows || rows.length === 0) return;
+            var bt = rows[0].broker_tokens || {};
+            // Only update if fyers tokens are not already set
+            if (bt.fyers && bt.fyers.symbol) return;
+            bt.fyers = { symbol: resolvedSymbol };
+            if (resolvedSymbol.indexOf('NSE:') === 0) bt.fyers.nse_symbol = resolvedSymbol;
+            else if (resolvedSymbol.indexOf('BSE:') === 0) bt.fyers.bse_symbol = resolvedSymbol;
+
+            // 3. PATCH back to DB
+            return fetch(SUPABASE_URL + '/rest/v1/securities_nfo?id=eq.' + securityId, {
+                method: 'PATCH',
+                headers: {
+                    'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                    'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+                },
+                body: JSON.stringify({ broker_tokens: bt })
+            });
+        });
+    }).catch(function(err) { console.warn('wmsUpdateNfoBrokerToken:', err.message); });
+}
+
 // ============================================================================
 // SHARED AUTO-REFRESH (Rule D.12.11)
 // Centralised market-hours check and per-tab auto-refresh timer management.

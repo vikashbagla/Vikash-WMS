@@ -1015,6 +1015,10 @@ async function atSelectOptionsContract(rowId, fyersSymbol, parsed, displayLabel)
                 if (created && created.length > 0) {
                     secId = created[0].id;
                     console.log('NFO security created: ' + bareSym + ' → ' + secId);
+                    // Persist Fyers broker_token via quotes API (background, non-blocking)
+                    if (secId && fyersSymbol && typeof wmsUpdateNfoBrokerToken === 'function') {
+                        wmsUpdateNfoBrokerToken(secId, fyersSymbol);
+                    }
                     // Refresh local NFO cache in background
                     if (typeof wmsLoadSecuritiesNfo === 'function') wmsLoadSecuritiesNfo();
                 }
