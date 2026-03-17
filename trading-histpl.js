@@ -14,6 +14,9 @@ var hplDdCtrlTrader = null;
 var hplDdCtrlBroker = null;
 var hplDdCtrlSecurity = null;
 
+var hplTags = [];               // current tag list for this entry
+var hplTagCtrl = null;          // wmsTagInput controller
+
 // Date state (used by rhInitDateWidget('hpl'))
 var hplDateState = { day: 1, month: 0, year: 2026 };
 var hplDateActiveSeg = null;
@@ -147,6 +150,17 @@ function initHistPlModule() {
         hplCheckSaveEnabled();
     });
 
+    // ── Tag input ──
+    var tagInput = document.getElementById('hplTagInput');
+    var tagPills = document.getElementById('hplTagPills');
+    var tagDd = document.getElementById('hplTagDd');
+    hplTags = [];
+    hplTagCtrl = wmsTagInput(tagInput, tagPills, tagDd, {
+        tags: hplTags,
+        existingTags: (wmsRefData && wmsRefData.tags) || [],
+        onChange: function() { /* no validation change needed for tags */ }
+    });
+
     // ESC handler
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
@@ -181,6 +195,10 @@ function openHistPlModal() {
     document.getElementById('hplBrokerDd').innerHTML = '';
     document.getElementById('hplAmountInput').value = '';
     document.getElementById('hplAmountInput').dataset.rawValue = '';
+    document.getElementById('hplTagInput').value = '';
+    document.getElementById('hplTagPills').innerHTML = '';
+    document.getElementById('hplTagDd').innerHTML = '';
+    hplTags.length = 0;  // clear by ref (wmsTagInput holds same array)
     document.getElementById('hplSaveBtn').disabled = true;
 
     if (hplDdCtrlSecurity) hplDdCtrlSecurity.close();
@@ -442,7 +460,7 @@ async function hplSaveTransaction() {
         margin_blocked: 0,
         broker_contract_note_no: null,
         broker_trade_id: null,
-        tags: ['blank'],
+        tags: (hplTags && hplTags.length > 0) ? hplTags.slice() : ['blank'],
         notes: '[Historical P&L: ' + (amount >= 0 ? 'Profit' : 'Loss') + ' ' + wmsFmtAmt(amount) + ' for ' + shortSym + ']',
         is_locked: false,
         ignore_for_avg_cost: false,
