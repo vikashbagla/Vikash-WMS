@@ -960,23 +960,81 @@ async function atSelectOptionsContract(rowId, fyersSymbol, parsed, displayLabel)
         '&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,lot_size,broker_tokens,expiry_date&limit=1';
     var nfoResp = await fetch(nfoCheck, { headers: headers }).then(function(r) { return r.ok ? r.json() : []; }).catch(function() { return []; });
     var lotSize = 1;
-    var secId = fyersSymbol; // default: use Fyers symbol as ID
+    var secId = null;
     if (nfoResp.length > 0) {
         var nfo = nfoResp[0];
         lotSize = nfo.lot_size || 1;
         secId = nfo.id;
     } else {
-        // Estimate lot size from underlying's NFO records
+        // Security not in DB — estimate lot size, then create it
         var lotCheck = SUPABASE_URL + '/rest/v1/securities_nfo?underlying_symbol=eq.' + encodeURIComponent(parsed.underlying) +
             '&select=lot_size&limit=1';
         var lotResp = await fetch(lotCheck, { headers: headers }).then(function(r) { return r.ok ? r.json() : []; }).catch(function() { return []; });
         if (lotResp.length > 0) lotSize = lotResp[0].lot_size || 1;
+
+        // Build NFO record and insert into securities_nfo
+        var bareSym = fyersSymbol.split(':')[1] || fyersSymbol;
+        var instrType = parsed.optionType ? 'OPTIONS' : 'FUTURES';
+        var instrName = displayLabel || (parsed.underlying + ' ' +
+            (parsed.strike ? parsed.strike + ' ' + parsed.optionType : 'FUT'));
+        // Parse expiry date from the Fyers symbol (e.g. MANAPPURAM26MAR255CE → 26MAR → 2026-03-28)
+        var expiryDate = null;
+        var MONTHS_SHORT = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+        var symExpMatch = bareSym.match(/(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)/);
+        if (symExpMatch) {
+            var yr = 2000 + parseInt(symExpMatch[1]);
+            var monIdx = MONTHS_SHORT.indexOf(symExpMatch[2]);
+            expiryDate = yr + '-' + String(monIdx + 1).padStart(2, '0') + '-28';
+        }
+        var nfoRecord = {
+            symbol: bareSym,
+            instrument_name: instrName,
+            exchange: fyersSymbol.split(':')[0] || 'NSE',
+            instrument_type: instrType,
+            underlying_symbol: parsed.underlying,
+            expiry_date: expiryDate,
+            strike_price: parsed.strike || null,
+            option_type: parsed.optionType || null,
+            lot_size: lotSize,
+            is_active: true,
+            broker_tokens: {}
+        };
+        try {
+            var createResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
+                method: 'POST',
+                headers: {
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=representation'
+                },
+                body: JSON.stringify(nfoRecord)
+            });
+            if (createResp.ok) {
+                var created = await createResp.json();
+                if (created && created.length > 0) {
+                    secId = created[0].id;
+                    console.log('NFO security created: ' + bareSym + ' → ' + secId);
+                    // Refresh local NFO cache in background
+                    if (typeof wmsLoadSecuritiesNfo === 'function') wmsLoadSecuritiesNfo();
+                }
+            } else {
+                var errBody = await createResp.json().catch(function() { return {}; });
+                console.error('NFO security create failed:', errBody);
+                showAlert('Could not register NFO security: ' + (errBody.message || 'DB error'), 'error', 5000);
+                return;
+            }
+        } catch (createErr) {
+            console.error('NFO security create error:', createErr);
+            showAlert('Could not register NFO security: ' + createErr.message, 'error', 5000);
+            return;
+        }
     }
     selectAddTxnSecurity(rowId, {
         security_id: secId,
         symbol: fyersSymbol.split(':')[1] || fyersSymbol,
-        short_symbol: displayLabel,
-        company_name: parsed.underlying + ' Option',
+        short_symbol: parsed.underlying,
+        company_name: displayLabel || (parsed.underlying + ' Option'),
         security_type: 'NFO',
         asset_class: 'OPTIONS',
         exchange: fyersSymbol.split(':')[0] || 'NSE',
