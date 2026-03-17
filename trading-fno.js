@@ -1201,11 +1201,13 @@ async function trFnoFetchAndRefresh(forceRefresh) {
     if (symList.length > 0 && typeof wmsFetchFnoContractPrices === 'function') {
         await wmsFetchFnoContractPrices(symList, forceRefresh);
         trFnoRender(); // Re-render with updated contract prices
-        // Also refresh F&O banner (uses its own default-view filters + cached prices)
-        if (typeof trFnoBannerRefreshFromDefault === 'function') trFnoBannerRefreshFromDefault();
-        // Update Fyers refresh timestamp
-        if (typeof trUpdatePriceStatus === 'function') trUpdatePriceStatus('live');
     }
+    // Standard banner refresh: fetch stock prices + compute both banners
+    // Same pattern as portfolio auto-refresh so banners stay in sync on any tab
+    if (typeof trFetchLivePrices === 'function') await trFetchLivePrices(forceRefresh);
+    if (typeof trComputeBannerStats === 'function') trComputeBannerStats();
+    if (typeof trFnoBannerRefreshFromDefault === 'function') trFnoBannerRefreshFromDefault();
+    if (typeof trUpdatePriceStatus === 'function') trUpdatePriceStatus('live');
 }
 
 // ============================================================================

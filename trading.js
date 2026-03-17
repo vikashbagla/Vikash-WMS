@@ -904,13 +904,12 @@ function trStartPortfolioAutoRefresh() {
     wmsStartAutoRefresh('portfolio', {
         interval: 10000,
         fetchFn: function(force) {
-            // Also refresh F&O contract prices for banner (piggybacked on portfolio refresh)
-            if (typeof trFnoBannerRefresh === 'function') trFnoBannerRefresh(force);
             return trFetchLivePrices(force);
         },
         renderFn: function() {
-            trRenderPortfolio();
-            var now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+            trRenderPortfolio(); // Also calls trComputeBannerStats() internally
+            // Standard banner refresh: both stocks + F&O banners on every cycle
+            if (typeof trFnoBannerRefreshFromDefault === 'function') trFnoBannerRefreshFromDefault();
             trUpdatePriceStatus('live');
         },
         isActiveFn: function() {
