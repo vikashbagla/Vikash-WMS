@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Import Transactions - WMS</title>
     <style id="transaction-import-styles">
-        .import-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+        .import-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
 
         .section { background: white; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
         .section-title { font-size: 13px; font-weight: 600; color: #2d3748; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
@@ -196,7 +196,6 @@
         @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
         .hidden { display: none; }
         /* FYERS IMPORT BOX */
-        .fy-box { background: white; border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
         .fy-status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 20px; }
         .fy-status.connected { background: #f0fdf4; color: #059669; border: 1px solid #bbf7d0; }
         .fy-status.disconnected { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
@@ -219,7 +218,8 @@
         .il-status-partial { color: #d97706; font-weight: 600; }
         .il-status-failed { color: #dc2626; font-weight: 600; }
 
-        @media (max-width: 768px) { .import-grid { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(3, 1fr) !important; } }
+        @media (max-width: 900px) { .import-grid { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 600px) { .import-grid { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(3, 1fr) !important; } }
     </style>
 </head>
 <body>
@@ -272,21 +272,29 @@
             <button class="btn" id="cnChooseFileBtn" disabled style="margin-top:8px;">Choose File</button>
             <div id="cnParseStatus" class="cn-status" style="margin-top:6px;"></div>
         </div>
-    </div>
 
-    <!-- ===== FYERS IMPORT BOX (full width, below grid) ===== -->
-    <div class="fy-box" id="fyBox">
-        <div class="fy-header">
-            <div class="section-title" style="margin-bottom:0;"><span class="icon">🔗</span> Fyers Import</div>
-            <div class="fy-status disconnected" id="fyStatus">
-                <span id="fyStatusDot">🔴</span> <span id="fyStatusText">Not Connected</span>
+        <!-- ===== FYERS IMPORT BOX ===== -->
+        <div class="section" id="fyBox">
+            <div class="fy-header">
+                <div class="section-title" style="margin-bottom:0;"><span class="icon">🔗</span> Fyers Import</div>
+                <div class="fy-status disconnected" id="fyStatus">
+                    <span id="fyStatusDot">🔴</span> <span id="fyStatusText">Not Connected</span>
+                </div>
             </div>
+            <div class="cn-selector" style="margin-bottom:6px;">
+                <div class="field">
+                    <label>Investor</label>
+                    <select id="fyInvestorSelect">
+                        <option value="">-- Select Investor --</option>
+                    </select>
+                </div>
+            </div>
+            <div class="fy-body">
+                <button class="btn" id="fyFetchBtn" disabled onclick="fyFetchTrades()">Fetch Today's Trades</button>
+                <span id="fyFetchStatus" class="cn-status" style="margin:0;"></span>
+            </div>
+            <div class="fy-info" id="fyInfo">Connect Fyers in the Settings tab to enable import.</div>
         </div>
-        <div class="fy-body">
-            <button class="btn" id="fyFetchBtn" disabled onclick="fyFetchTrades()">Fetch Today's Trades</button>
-            <span id="fyFetchStatus" class="cn-status" style="margin:0;"></span>
-        </div>
-        <div class="fy-info" id="fyInfo">Connect Fyers in the Settings tab to enable import.</div>
     </div>
 
     <!-- ===== FYERS PREVIEW (full width, below Fyers box) ===== -->

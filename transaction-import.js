@@ -3203,11 +3203,38 @@ var fyBrokerName = '';       // Display name
 // ============================================================================
 
 function fyInit() {
-    // Look up Veins investor
-    var inv = wmsRefData.investors.find(function(i) { return i.short_name === 'Veins'; });
-    if (inv) {
-        fyInvestorId = inv.id;
-        fyInvestorName = inv.short_name;
+    // Populate investor dropdown
+    var select = document.getElementById('fyInvestorSelect');
+    if (select) {
+        select.innerHTML = '<option value="">-- Select Investor --</option>';
+        wmsRefData.investors.forEach(function(inv) {
+            var opt = document.createElement('option');
+            opt.value = inv.id;
+            opt.textContent = inv.short_name || inv.name;
+            select.appendChild(opt);
+        });
+
+        // Default to Veins if exists
+        var veins = wmsRefData.investors.find(function(i) { return i.short_name === 'Veins'; });
+        if (veins) {
+            select.value = veins.id;
+            fyInvestorId = veins.id;
+            fyInvestorName = veins.short_name;
+        }
+
+        // Listen for changes
+        select.addEventListener('change', function() {
+            var selectedId = select.value;
+            if (selectedId) {
+                var inv = wmsRefData.investors.find(function(i) { return i.id === selectedId; });
+                fyInvestorId = selectedId;
+                fyInvestorName = inv ? (inv.short_name || inv.name) : '';
+            } else {
+                fyInvestorId = null;
+                fyInvestorName = '';
+            }
+            fyUpdateStatus();
+        });
     }
 
     // Look up Fyers broker (check code and name)
@@ -3223,14 +3250,11 @@ function fyInit() {
     // Update connection status
     fyUpdateStatus();
 
-    // If investor or broker not found, show error and disable
-    if (!fyInvestorId || !fyBrokerId) {
+    // If broker not found, show error
+    if (!fyBrokerId) {
         var infoEl = document.getElementById('fyInfo');
         if (infoEl) {
-            var missing = [];
-            if (!fyInvestorId) missing.push('Investor "Veins"');
-            if (!fyBrokerId) missing.push('Broker "Fyers"');
-            infoEl.textContent = missing.join(' and ') + ' not found in database. Fyers import disabled.';
+            infoEl.textContent = 'Broker "Fyers" not found in database. Fyers import disabled.';
             infoEl.style.color = '#dc2626';
         }
     }
@@ -3377,8 +3401,7 @@ async function fyProcessTrades(tradeBook) {
     // Set trade date to today
     fyTradeDate = new Date().toISOString().split('T')[0];
 
-    // Filter: only segment 10 (CM/Equity) for now — skip commodity (segment 20)
-    // segment 11 = F&O — also included
+    // Filter: segment 10 (CM/Equity) and segment 11 (F&O) — skip commodity (segment 20)
     var validTrades = tradeBook.filter(function(t) {
         return t.segment === 10 || t.segment === 11;
     });
@@ -3387,14 +3410,15 @@ async function fyProcessTrades(tradeBook) {
 
     // Parse symbol: strip exchange prefix (e.g., "NSE:RELIANCE-EQ" → "RELIANCE")
     // side: 1 = BUY, -1 = SELL
-    // Group by symbol + side (same as CN processAndGroupTrades)
+    // Group by rawSymbol + side (use raw Fyers symbol as key to avoid collision between equity and F&O)
     var groups = {};
     validTrades.forEach(function(t) {
         var rawSymbol = t.symbol || '';
-        // Strip exchange prefix: "NSE:RELIANCE-EQ" → "RELIANCE-EQ"
+        // Strip exchange prefix: "NSE:RELIANCE-EQ" → "RELIANCE-EQ", "NSE:SHRIRAMFIN26APRFUT" → "SHRIRAMFIN26APRFUT"
         var symPart = rawSymbol.indexOf(':') >= 0 ? rawSymbol.split(':')[1] : rawSymbol;
-        // Strip -EQ suffix: "RELIANCE-EQ" → "RELIANCE"
-        var cleanSymbol = symPart.replace(/-EQ$/i, '').trim().toUpperCase();
+        // For equity (segment 10): strip -EQ suffix → "RELIANCE"
+        // For F&O (segment 11): keep full symbol → "SHRIRAMFIN26APRFUT"
+        var cleanSymbol = t.segment === 10 ? symPart.replace(/-EQ$/i, '').trim().toUpperCase() : symPart.trim().toUpperCase();
         var side = t.side === 1 ? 'BUY' : 'SELL';
         var key = cleanSymbol + '|' + side;
 
@@ -3422,22 +3446,43 @@ async function fyProcessTrades(tradeBook) {
 
     var keys = Object.keys(groups);
 
-    // Collect unique symbols for batch lookup
-    var uniqueSymbols = [];
+    // Separate equity and NFO symbols for different lookup paths
+    var equitySymbols = [];
+    var nfoGroups = [];
     keys.forEach(function(k) {
-        var sym = groups[k].symbol;
-        if (uniqueSymbols.indexOf(sym) === -1) uniqueSymbols.push(sym);
+        var g = groups[k];
+        if (g.segment === 10) {
+            if (equitySymbols.indexOf(g.symbol) === -1) equitySymbols.push(g.symbol);
+        } else {
+            nfoGroups.push(g);
+        }
     });
 
-    // Local batch lookup from in-memory securitiesCm (zero API calls)
-    var secMap = batchMatchSecurities(uniqueSymbols);
+    // Equity: local batch lookup from in-memory securitiesCm (zero API calls)
+    var secMap = batchMatchSecurities(equitySymbols);
+
+    // NFO: use matchSymbolMultiStage for each unique symbol (searches securitiesNfo with auto-insert)
+    var nfoSecMap = {};
+    nfoGroups.forEach(function(g) {
+        if (nfoSecMap[g.symbol]) return; // already matched
+        var result = matchSymbolMultiStage(g.symbol, 'NFO', secMap);
+        if (result.status === 'confirmed' && result.match) {
+            nfoSecMap[g.symbol] = result.match;
+        } else if (result.status === 'flagged' && result.matches && result.matches.length > 0) {
+            // Ambiguous — take first match
+            nfoSecMap[g.symbol] = result.matches[0];
+            console.warn('Fyers NFO: ambiguous match for ' + g.symbol + ', using first: ' + result.matches[0].symbol);
+        }
+        // else: not found — will become error row
+    });
 
     for (var k = 0; k < keys.length; k++) {
         var g = groups[keys[k]];
         var avgPrice = g.totalQty > 0 ? g.totalValue / g.totalQty : 0;
         var grossAmount = g.totalValue;
 
-        var secMatch = secMap[g.symbol] || null;
+        // Look up in appropriate map based on segment
+        var secMatch = g.segment === 10 ? (secMap[g.symbol] || null) : (nfoSecMap[g.symbol] || null);
         if (!secMatch) {
             fyErrorRows.push({
                 description: g.rawSymbol + ' (' + g.side + ', qty: ' + g.totalQty + ')',
@@ -3446,16 +3491,20 @@ async function fyProcessTrades(tradeBook) {
             continue;
         }
 
+        var isNfo = g.segment === 11;
+        var secType = isNfo ? 'NFO' : (secMatch.security_type || 'EQUITY');
+        var lotSize = secMatch.lot_size || 1;
+
         var row = {
             security_id: secMatch.id,
-            security_type: secMatch.security_type || 'EQUITY',
+            security_type: secType,
             symbol: secMatch.symbol,
             short_symbol: secMatch.short_symbol || g.symbol,
             company_name: secMatch.company_name || g.symbol,
             exchange: secMatch.exchange || 'NSE',
             transaction_type: g.side,
             quantity: g.side === 'SELL' ? -g.totalQty : g.totalQty,
-            lots: 0,
+            lots: isNfo && lotSize > 0 ? Math.round(g.totalQty / lotSize) : 0,
             price: Math.round(avgPrice * 100) / 100,
             gross_amount: Math.round(grossAmount * 100) / 100,
             brokerage: 0,
@@ -3464,10 +3513,12 @@ async function fyProcessTrades(tradeBook) {
             gst: 0,
             total_charges: 0,
             net_amount: 0,
-            _db_security_type: secMatch.security_type || 'EQUITY',
-            _db_asset_class: secMatch.asset_class || '',
+            _db_security_type: secType,
+            _db_asset_class: secMatch.asset_class || (isNfo ? 'FUTURES' : ''),
             _orderNumbers: g.orderNumbers,   // For broker_trade_id
-            _tradeCount: g.trades.length      // For info display
+            _tradeCount: g.trades.length,     // For info display
+            _pendingNfoInsert: secMatch._pendingNfoInsert || false,
+            _nfoRecord: secMatch._nfoRecord || null
         };
 
         // Auto-calculate charges (no charge data from Fyers API — calculate fresh)
@@ -3736,8 +3787,55 @@ window.fyImportToDatabase = async function() {
     var updateErrors = [];
     var insertCount = 0;
     var updateCount = 0;
+    var allFyRows = fyNewRows.concat(fyUpdateRows);
 
     try {
+        // Step 0: Insert pending NFO securities (same pattern as Excel import)
+        var pendingNfoRows = allFyRows.filter(function(r) { return r._pendingNfoInsert && r._nfoRecord; });
+        if (pendingNfoRows.length > 0) {
+            tiLoading(true, 'Registering ' + pendingNfoRows.length + ' new NFO securities...');
+            var nfoBySymbol = {};
+            pendingNfoRows.forEach(function(r) {
+                if (!nfoBySymbol[r._nfoRecord.symbol]) {
+                    nfoBySymbol[r._nfoRecord.symbol] = { record: r._nfoRecord, rows: [r] };
+                } else {
+                    nfoBySymbol[r._nfoRecord.symbol].rows.push(r);
+                }
+            });
+            var nfoBatch = Object.keys(nfoBySymbol).map(function(sym) { return nfoBySymbol[sym].record; });
+            try {
+                var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
+                    method: 'POST',
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+                    body: JSON.stringify(nfoBatch)
+                });
+                if (nfoResp.ok) {
+                    var insertedNfos = await nfoResp.json();
+                    insertedNfos.forEach(function(ins) {
+                        var entry = nfoBySymbol[ins.symbol];
+                        if (entry) {
+                            entry.rows.forEach(function(r) { r.security_id = ins.id; });
+                            console.log('Fyers NFO inserted: ' + ins.symbol + ' → ' + ins.id);
+                        }
+                    });
+                    if (typeof wmsLoadSecuritiesNfo === 'function') await wmsLoadSecuritiesNfo();
+                } else {
+                    var nfoErr = await nfoResp.json();
+                    insertErrors.push('NFO batch insert: ' + (nfoErr.message || nfoErr.details || 'HTTP ' + nfoResp.status));
+                }
+            } catch (nfoE) {
+                insertErrors.push('NFO batch insert: ' + nfoE.message);
+            }
+            // Remove rows where NFO insert failed
+            var nfoFailed = allFyRows.filter(function(r) { return r._pendingNfoInsert && !r.security_id; });
+            if (nfoFailed.length > 0) {
+                insertErrors.push(nfoFailed.length + ' NFO rows skipped (security insert failed)');
+                fyNewRows = fyNewRows.filter(function(r) { return !r._pendingNfoInsert || r.security_id; });
+                fyUpdateRows = fyUpdateRows.filter(function(r) { return !r._pendingNfoInsert || r.security_id; });
+            }
+            tiLoading(true, 'Importing Fyers trades...');
+        }
+
         // INSERT new rows
         for (var i = 0; i < fyNewRows.length; i++) {
             var r = fyNewRows[i];
