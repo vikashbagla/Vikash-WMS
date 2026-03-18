@@ -16,7 +16,8 @@ var brokerObjMap = {};         // Synced from wmsRefData.brokerObjMap
 var ibaRatesMap = {};          // Synced from wmsRefData.ibaRatesMap
 var regulatoryCharges = [];    // Synced from wmsRefData.regCharges
 
-// Excel import state
+// Shared import preview state (used by both Excel and Fyers via one modal)
+var _currentImportSource = 'EXCEL';  // 'EXCEL' | 'FYERS' — tracks which source opened the modal
 var excelConfirmedRows = [];   // Ready to import (symbol resolved, charges calculated)
 var excelFlaggedRows = [];     // Need user review (symbol ambiguous, not found, errors)
 var excelErrorRows = [];       // Rejected in Stage A (missing required fields — cannot show in preview)
@@ -32,6 +33,13 @@ var cnSelectedAccount = null;  // Currently selected account object
 var cnTradeDate = null;        // Trade date from parsed CN (YYYY-MM-DD)
 var cnCnNumber = null;         // Contract note number from parsed CN
 var existingTags = [];         // Distinct tags from transactions table for pill suggestions
+
+function setImportSource(source) {
+    _currentImportSource = source;
+    var titles = { 'EXCEL': '📊 Excel Import Preview', 'FYERS': '🔗 Fyers Tradebook Preview' };
+    var el = document.getElementById('importPreviewTitle');
+    if (el) el.textContent = titles[source] || titles['EXCEL'];
+}
 
 // ============================================================================
 // Initialization
@@ -92,23 +100,6 @@ function initTransactionImport() {
                     window.closeChargesPopover();
                 } else if (excelOverlay.classList.contains('active')) {
                     window.cancelImport();
-                }
-            }
-        });
-    }
-
-    // Fyers preview modal — ESC key and overlay click to close
-    var fyOverlay = document.getElementById('fyPreviewOverlay');
-    if (fyOverlay) {
-        fyOverlay.addEventListener('click', function(e) {
-            if (e.target === fyOverlay) window.cancelFyImport();
-        });
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape' && fyOverlay.classList.contains('active')) {
-                // Only close Fyers modal if Excel modal is NOT open (Excel handler takes priority)
-                var excelOv = document.getElementById('excelPreviewOverlay');
-                if (!excelOv || !excelOv.classList.contains('active')) {
-                    window.cancelFyImport();
                 }
             }
         });
@@ -2144,7 +2135,8 @@ async function processTransactions(rawData, worksheet) {
     // Store all parsed transactions for reference
     parsedTransactions = allGoodRows;
 
-    // Show preview
+    // Show preview (set source before display so title/routing are correct)
+    setImportSource('EXCEL');
     displayExcelPreview();
 }
 
@@ -3004,17 +2996,33 @@ async function importExcelToDatabase() {
     });
 }
 
-window.importToDatabase = function() { importExcelToDatabase(); };
+window.importToDatabase = function() {
+    if (_currentImportSource === 'FYERS') {
+        fyImportToDatabase();
+    } else {
+        importExcelToDatabase();
+    }
+};
 window.recalcExcelRow = recalcExcelRow;
 window.cancelImport = function() {
-    parsedTransactions = [];
-    excelConfirmedRows = [];
-    excelFlaggedRows = [];
-    excelErrorRows = [];
     document.getElementById('excelPreviewOverlay').classList.remove('active');
-    document.getElementById('fileInput').value = '';
+    // Source-specific state reset
+    if (_currentImportSource === 'FYERS') {
+        fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fyErrorRows = [];
+        fyTradeDate = null;
+        var fyStatus = document.getElementById('fyFetchStatus');
+        if (fyStatus) fyStatus.textContent = '';
+    } else {
+        parsedTransactions = [];
+        var fileInput = document.getElementById('fileInput');
+        if (fileInput) fileInput.value = '';
+    }
+    // Shared state reset
+    excelConfirmedRows = []; excelFlaggedRows = []; excelErrorRows = [];
+    _sortHandlersAttached = false;
     tiAlert('info', 'Import cancelled.');
 };
+window.cancelFyImport = window.cancelImport;  // alias for any remaining references
 
 // ============================================================================
 // UI Helpers
@@ -3609,6 +3617,48 @@ async function fyCheckDuplicates(rows) {
         }
     });
 
+    // Add Excel-compatible fields so Fyers rows work in the shared preview modal
+    var allFyRows = fyNewRows.concat(fyUpdateRows);
+    allFyRows.forEach(function(r) {
+        r.investor_id = fyInvestorId;
+        r.investor_name = fyInvestorName;
+        r.trader_id = fyInvestorId;       // Rule A.2.2: trader defaults to investor
+        r.trader_name = fyInvestorName;
+        r.broker_id = fyBrokerId;
+        r.broker_name = fyBrokerName;
+        r.transaction_date = fyTradeDate;
+        r.isUpdate = (r._action === 'UPDATE');
+        r.matchStatus = 'confirmed';
+        r.trader_charges = 0;
+        r.tds = null;
+        r._netOverride = false;
+    });
+
+    // Map error rows to review-compatible format for shared display
+    fyErrorRows.forEach(function(err) {
+        err.matchStatus = 'review';
+        err._stageAError = false;   // symbol issue, not validation error
+        err.matchError = err.error;
+        err.investor_id = fyInvestorId;
+        err.investor_name = fyInvestorName;
+        err.trader_id = fyInvestorId;
+        err.trader_name = fyInvestorName;
+        err.broker_id = fyBrokerId;
+        err.broker_name = fyBrokerName;
+        err.transaction_date = fyTradeDate;
+        err.symbol = err.description;
+        err.short_symbol = err.description;
+        err.transaction_type = '';
+        err.quantity = 0;
+        err.price = 0;
+        err.gross_amount = 0;
+        err.total_charges = 0;
+        err.trader_charges = 0;
+        err.net_amount = 0;
+        err.tags = ['blank'];
+        err.isUpdate = false;
+    });
+
     console.log('Fyers duplicates: ' + fyNewRows.length + ' new, ' + fyUpdateRows.length + ' updates');
 }
 
@@ -3651,137 +3701,18 @@ function fyBuildTransactionRecord(row) {
 }
 
 // ============================================================================
-// Display Fyers Preview
+// Display Fyers Preview — loads data into shared modal, calls shared display
 // ============================================================================
 
 function fyDisplayPreview() {
-    // Stats
-    document.getElementById('fyStatTotal').textContent = fyNewRows.length + fyUpdateRows.length;
-    document.getElementById('fyStatNew').textContent = fyNewRows.length;
-    document.getElementById('fyStatUpdate').textContent = fyUpdateRows.length;
-    document.getElementById('fyStatError').textContent = fyErrorRows.length;
-
-    // Info banner
-    var bannerDate = document.getElementById('fyBannerDate');
-    var bannerInv = document.getElementById('fyBannerInvestor');
-    var bannerBrk = document.getElementById('fyBannerBroker');
-    if (bannerDate) bannerDate.textContent = fyTradeDate ? formatDate(fyTradeDate) : '—';
-    if (bannerInv) bannerInv.textContent = fyInvestorName || '—';
-    if (bannerBrk) bannerBrk.textContent = fyBrokerName || '—';
-
-    // Sort: BUY first, then SELL
-    function sortBuyFirst(arr) {
-        return arr.slice().sort(function(a, b) {
-            if (a.transaction_type === b.transaction_type) return 0;
-            return a.transaction_type === 'BUY' ? -1 : 1;
-        });
-    }
-    var sortedNew = sortBuyFirst(fyNewRows);
-    var sortedUpdate = sortBuyFirst(fyUpdateRows);
-
-    // New rows table
-    var newTbody = document.getElementById('fyNewTableBody');
-    newTbody.innerHTML = '';
-    if (sortedNew.length > 0) {
-        document.getElementById('fyNewSection').style.display = '';
-        sortedNew.forEach(function(r, i) { newTbody.appendChild(fyCreatePreviewRow(r, i + 1, 'NEW')); });
-        newTbody.appendChild(fyCreateTotalsRow(sortedNew, 'NEW'));
-    } else {
-        document.getElementById('fyNewSection').style.display = 'none';
-    }
-
-    // Update rows table
-    var updateTbody = document.getElementById('fyUpdateTableBody');
-    updateTbody.innerHTML = '';
-    if (sortedUpdate.length > 0) {
-        document.getElementById('fyUpdateSection').style.display = '';
-        sortedUpdate.forEach(function(r, i) { updateTbody.appendChild(fyCreatePreviewRow(r, i + 1, 'UPDATE')); });
-        updateTbody.appendChild(fyCreateTotalsRow(sortedUpdate, 'UPDATE'));
-    } else {
-        document.getElementById('fyUpdateSection').style.display = 'none';
-    }
-
-    // Error rows
-    var errorTbody = document.getElementById('fyErrorTableBody');
-    errorTbody.innerHTML = '';
-    if (fyErrorRows.length > 0) {
-        document.getElementById('fyErrorSection').style.display = '';
-        fyErrorRows.forEach(function(e, i) {
-            var tr = document.createElement('tr');
-            tr.innerHTML = '<td>' + (i+1) + '</td><td>' + wmsEsc(e.description) + '</td><td style="color:#dc2626;">' + wmsEsc(e.error) + '</td>';
-            errorTbody.appendChild(tr);
-        });
-    } else {
-        document.getElementById('fyErrorSection').style.display = 'none';
-    }
-
-    // Show preview section
-    document.getElementById('fyImportBtn').disabled = false;
-    document.getElementById('fyPreviewOverlay').classList.add('active');
-}
-
-function fyCreatePreviewRow(r, idx, action) {
-    var tr = document.createElement('tr');
-    var typeClass = r.transaction_type === 'BUY' ? 'type-buy' : 'type-sell';
-    var tagsValue = Array.isArray(r.tags) ? r.tags.filter(function(t) { return !!t; }).join(', ') : (r.tags || '');
-    var tagInputId = 'fyTag_' + action + '_' + (idx - 1);
-
-    tr.innerHTML = '<td>' + idx + '</td>' +
-        '<td class="' + typeClass + '">' + r.transaction_type + '</td>' +
-        '<td title="' + wmsEsc(r.symbol) + '">' + wmsEsc(r.short_symbol) + '</td>' +
-        '<td style="text-align:right;">' + formatCnQty(r.quantity) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(r.price) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(r.gross_amount) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(r.brokerage) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(r.stt) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(r.other_charges) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(r.gst) + '</td>' +
-        '<td style="text-align:right;font-weight:600;">' + formatCnAmount(r.transaction_type === 'SELL' ? -Math.abs(r.net_amount) : Math.abs(r.net_amount)) + '</td>' +
-        '<td style="width:140px;max-width:140px;position:relative;">' +
-            '<div class="cn-tag-selected" id="' + tagInputId + '_pills" style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:3px;max-width:140px;"></div>' +
-            '<input type="text" id="' + tagInputId + '" value="" autocomplete="off" placeholder="tags..." style="width:100%;max-width:140px;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;box-sizing:border-box;">' +
-            '<div class="cn-tag-dropdown" id="' + tagInputId + '_dd" style="display:none;position:absolute;z-index:100;left:0;right:0;max-height:120px;overflow-y:auto;background:#fff;border:1px solid #cbd5e0;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.12);margin-top:2px;"></div>' +
-        '</td>';
-
-    // Wire up tag autocomplete after DOM render
-    setTimeout(function() { initTagAutocomplete(tagInputId, tagsValue); }, 0);
-
-    return tr;
-}
-
-function fyCreateTotalsRow(rows, sectionId) {
-    var totQty = 0, totGross = 0, totBrokerage = 0, totStt = 0, totOther = 0, totGst = 0, totNet = 0;
-    rows.forEach(function(r) {
-        totQty += Math.abs(r.quantity);
-        totGross += Math.abs(r.gross_amount);
-        totBrokerage += r.brokerage;
-        totStt += r.stt;
-        totOther += r.other_charges;
-        totGst += r.gst;
-        if (r.transaction_type === 'SELL') {
-            totNet -= Math.abs(r.net_amount);
-        } else {
-            totNet += Math.abs(r.net_amount);
-        }
-    });
-    var tr = document.createElement('tr');
-    tr.id = 'fyTotals_' + (sectionId || 'all');
-    tr.style.fontWeight = '700';
-    tr.style.borderTop = '2px solid #4a5568';
-    tr.style.background = '#f7fafc';
-    tr.innerHTML = '<td></td>' +
-        '<td></td>' +
-        '<td style="text-align:right;">Total</td>' +
-        '<td style="text-align:right;">' + formatCnQty(totQty) + '</td>' +
-        '<td></td>' +
-        '<td style="text-align:right;">' + formatCnAmount(totGross) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(totBrokerage) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(totStt) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(totOther) + '</td>' +
-        '<td style="text-align:right;">' + formatCnAmount(totGst) + '</td>' +
-        '<td style="text-align:right;font-weight:700;">' + formatCnAmount(totNet) + '</td>' +
-        '<td></td>';
-    return tr;
+    setImportSource('FYERS');
+    // Load Fyers data into the shared state arrays used by displayExcelPreview()
+    excelConfirmedRows = fyNewRows.concat(fyUpdateRows);
+    excelFlaggedRows = fyErrorRows.slice();
+    excelErrorRows = [];
+    excelActiveFilter = 'all';
+    // Use the shared preview modal (same as Excel)
+    displayExcelPreview();
 }
 
 // ============================================================================
@@ -3789,18 +3720,21 @@ function fyCreateTotalsRow(rows, sectionId) {
 // ============================================================================
 
 window.fyImportToDatabase = async function() {
-    // Read tags from autocomplete pill selections
-    fyNewRows.forEach(function(r, i) {
-        var input = document.getElementById('fyTag_NEW_' + i);
-        if (input) {
+    // Read tags from shared modal (excelTag_ IDs, allRows index = confirmed concat flagged)
+    var allRows = excelConfirmedRows.concat(excelFlaggedRows);
+    fyNewRows.forEach(function(r) {
+        var idx = allRows.indexOf(r);
+        var input = document.getElementById('excelTag_' + idx);
+        if (input && input.dataset.tags !== undefined) {
             var val = (input.dataset.tags || '').trim();
             var parsed = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [];
             r.tags = parsed.length > 0 ? parsed : ['blank'];
         }
     });
-    fyUpdateRows.forEach(function(r, i) {
-        var input = document.getElementById('fyTag_UPDATE_' + i);
-        if (input) {
+    fyUpdateRows.forEach(function(r) {
+        var idx = allRows.indexOf(r);
+        var input = document.getElementById('excelTag_' + idx);
+        if (input && input.dataset.tags !== undefined) {
             var val = (input.dataset.tags || '').trim();
             var parsed = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [];
             r.tags = parsed.length > 0 ? parsed : ['blank'];
@@ -3813,26 +3747,20 @@ window.fyImportToDatabase = async function() {
         updateRows: fyUpdateRows,
         errorRows: fyErrorRows,
         buildRecord: fyBuildTransactionRecord,
-        overlayId: 'fyPreviewOverlay',
-        importBtnId: 'fyImportBtn',
+        overlayId: 'excelPreviewOverlay',
+        importBtnId: 'importBtn',
         investorId: fyInvestorId,
         brokerId: fyBrokerId,
         tradeDate: fyTradeDate,
         onReset: function() {
             fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fyErrorRows = [];
             fyTradeDate = null;
-            document.getElementById('fyFetchStatus').textContent = '';
+            var fyStatus = document.getElementById('fyFetchStatus');
+            if (fyStatus) fyStatus.textContent = '';
+            excelConfirmedRows = []; excelFlaggedRows = []; excelErrorRows = [];
+            _sortHandlersAttached = false;
         }
     });
-};
-
-window.cancelFyImport = function() {
-    if (confirm('Cancel Fyers import and start over?')) {
-        document.getElementById('fyPreviewOverlay').classList.remove('active');
-        document.getElementById('fyFetchStatus').textContent = '';
-        fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fyErrorRows = [];
-        fyTradeDate = null;
-    }
 };
 
 
