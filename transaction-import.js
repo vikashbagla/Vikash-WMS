@@ -2935,12 +2935,8 @@ function buildExcelTransactionRecord(row) {
     return rec;
 }
 
-// Import confirmed rows to database (rule C.2.2: batch ≤10, retry)
-// Review rows are excluded — only confirmed, checked rows are imported
-var _importInProgress = false;
+// Import confirmed rows to database — Excel-specific prep, then shared performImport()
 async function importExcelToDatabase() {
-    if (_importInProgress) { tiAlert('warning', 'Import already in progress...'); return; }
-
     // Only consider confirmed rows (review rows are never imported)
     var allRows = excelConfirmedRows.slice();
     if (allRows.length === 0) { tiAlert('error', 'No confirmed transactions to import'); return; }
@@ -2967,16 +2963,15 @@ async function importExcelToDatabase() {
     allRows = allRows.filter(function(r) { return r.security_id && r.quantity !== 0; });
     if (allRows.length === 0) { tiAlert('error', 'No valid rows to import (all skipped due to missing security_id or zero quantity)'); return; }
 
-    // Values are already in data objects (edited via dblclick inline edit) — recalc net unless user-entered
+    // Recalc net unless user-entered (dblclick inline edit)
     allRows.forEach(function(r) {
-        if (r._netOverride) return; // User entered net_amount — preserve it
+        if (r._netOverride) return;
         if (r.transaction_type === 'BUY') r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
         else if (r.transaction_type === 'SELL') r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
         else if (isIncomeType(r.transaction_type)) r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
     });
 
-    // Read tags from autocomplete pill inputs (data-tags attr), blank → ['blank']
-    // Tag inputs use fullList index (excelTag_{index}), not the filtered allRows index
+    // Read tags from autocomplete pill inputs (fullList index, not filtered index)
     allRows.forEach(function(r) {
         var tagIdx = fullList.indexOf(r);
         var input = document.getElementById('excelTag_' + tagIdx);
@@ -2990,167 +2985,23 @@ async function importExcelToDatabase() {
     var newRows = allRows.filter(function(r) { return !r.isUpdate; });
     var updateRows = allRows.filter(function(r) { return r.isUpdate; });
 
-    if (!confirm('Import ' + newRows.length + ' new + ' + updateRows.length + ' updates to database?')) return;
-
-    _importInProgress = true;
-    tiLoading(true, 'Importing transactions...');
-    document.getElementById('importBtn').disabled = true;
-    document.getElementById('importBtn').textContent = 'Importing...';
-
-    var insertCount = 0, updateCount = 0;
-    var importErrors = [];
-
-    try {
-        // ── Step 0: Insert pending NFO securities (deferred from preview) ──
-        var pendingNfoRows = allRows.filter(function(r) { return r._pendingNfoInsert && r._nfoRecord; });
-        if (pendingNfoRows.length > 0) {
-            tiLoading(true, 'Registering ' + pendingNfoRows.length + ' new NFO securities...');
-            // Deduplicate by symbol (same NFO contract may appear in multiple rows)
-            var nfoBySymbol = {};
-            pendingNfoRows.forEach(function(r) {
-                if (!nfoBySymbol[r._nfoRecord.symbol]) {
-                    nfoBySymbol[r._nfoRecord.symbol] = { record: r._nfoRecord, rows: [r] };
-                } else {
-                    nfoBySymbol[r._nfoRecord.symbol].rows.push(r);
-                }
-            });
-
-            var nfoSymbols = Object.keys(nfoBySymbol);
-            // Batch insert all pending NFO records in one POST
-            var nfoBatch = nfoSymbols.map(function(sym) { return nfoBySymbol[sym].record; });
-            try {
-                var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
-                    method: 'POST',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-                    body: JSON.stringify(nfoBatch)
-                });
-                if (nfoResp.ok) {
-                    var insertedNfos = await nfoResp.json();
-                    // Map inserted IDs back to the rows
-                    insertedNfos.forEach(function(ins) {
-                        var entry = nfoBySymbol[ins.symbol];
-                        if (entry) {
-                            entry.rows.forEach(function(r) { r.security_id = ins.id; });
-                            console.log('NFO inserted: ' + ins.symbol + ' → ' + ins.id);
-                            // Persist Fyers broker_token (background, non-blocking)
-                            var exchPrefix = (ins.exchange || 'NSE').toUpperCase();
-                            var fSym = ins.symbol.indexOf(':') >= 0 ? ins.symbol : exchPrefix + ':' + ins.symbol;
-                            if (typeof wmsUpdateNfoBrokerToken === 'function') {
-                                wmsUpdateNfoBrokerToken(ins.id, fSym);
-                            }
-                        }
-                    });
-                    // Refresh local NFO cache
-                    await wmsLoadSecuritiesNfo();
-                } else {
-                    var nfoErr = await nfoResp.json();
-                    importErrors.push('NFO batch insert: ' + (nfoErr.message || nfoErr.details || 'HTTP ' + nfoResp.status));
-                    console.error('NFO batch insert failed:', nfoErr);
-                }
-            } catch (nfoE) {
-                importErrors.push('NFO batch insert: ' + nfoE.message);
-                console.error('NFO batch insert error:', nfoE);
-            }
-
-            // Remove rows where NFO insert failed (security_id still null)
-            var nfoFailedRows = allRows.filter(function(r) { return r._pendingNfoInsert && !r.security_id; });
-            if (nfoFailedRows.length > 0) {
-                console.warn('Skipping ' + nfoFailedRows.length + ' rows: NFO security insert failed');
-                importErrors.push(nfoFailedRows.length + ' NFO rows skipped (security insert failed): ' + nfoFailedRows.map(function(r) { return r.symbol; }).join(', '));
-                allRows = allRows.filter(function(r) { return !r._pendingNfoInsert || r.security_id; });
-                newRows = allRows.filter(function(r) { return !r.isUpdate; });
-                updateRows = allRows.filter(function(r) { return r.isUpdate; });
-            }
+    await performImport({
+        source: 'EXCEL',
+        newRows: newRows,
+        updateRows: updateRows,
+        errorRows: skippedRows,
+        buildRecord: buildExcelTransactionRecord,
+        overlayId: 'excelPreviewOverlay',
+        importBtnId: 'importBtn',
+        onReset: function() {
+            parsedTransactions = [];
+            excelConfirmedRows = [];
+            excelFlaggedRows = [];
+            excelErrorRows = [];
+            _sortHandlersAttached = false;
+            document.getElementById('fileInput').value = '';
         }
-
-        // INSERT new rows in batches of 10 (rule C.2.2)
-        var insertRecords = newRows.map(buildExcelTransactionRecord);
-        for (var i = 0; i < insertRecords.length; i += 10) {
-            var batch = insertRecords.slice(i, i + 10);
-            try {
-                var resp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions', {
-                    method: 'POST',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-                    body: JSON.stringify(batch)
-                }, 3);
-                if (!resp.ok) {
-                    var errBody = await resp.json();
-                    importErrors.push('Insert batch ' + Math.floor(i / 10) + ': ' + (errBody.message || errBody.details || 'HTTP ' + resp.status));
-                } else {
-                    insertCount += batch.length;
-                }
-            } catch (e) {
-                importErrors.push('Insert batch ' + Math.floor(i / 10) + ': ' + e.message + ' (after 3 retries)');
-            }
-        }
-
-        // UPDATE existing rows via PATCH (rule A.2.2: use .update().eq(), not upsert)
-        for (var j = 0; j < updateRows.length; j++) {
-            var ur = updateRows[j];
-            var rec = buildExcelTransactionRecord(ur);
-            try {
-                var uresp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
-                    method: 'PATCH',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-                    body: JSON.stringify(rec)
-                }, 3);
-                if (!uresp.ok) {
-                    var uErrBody = await uresp.json();
-                    importErrors.push('Update ' + ur.symbol + ': ' + (uErrBody.message || 'HTTP ' + uresp.status));
-                } else {
-                    updateCount++;
-                }
-            } catch (e) {
-                importErrors.push('Update ' + ur.symbol + ': ' + e.message + ' (after 3 retries)');
-            }
-            // Rate limit pause every 10 updates
-            if (j > 0 && j % 10 === 0) await new Promise(function(r) { setTimeout(r, 200); });
-        }
-
-        // Write import log (collect investor/broker from first row if available)
-        var _exFirstRow = allRows.length > 0 ? allRows[0] : null;
-        await tiWriteImportLog('EXCEL', {
-            transaction_date: _exFirstRow ? _exFirstRow.transaction_date : null,
-            investor_id: _exFirstRow ? _exFirstRow.investor_id : null,
-            broker_id: _exFirstRow ? _exFirstRow.broker_id : null,
-            total_rows: allRows.length,
-            new_rows: insertCount,
-            updated_rows: updateCount,
-            error_rows: importErrors.length + skippedRows.length,
-            status: importErrors.length > 0 ? 'PARTIAL' : 'SUCCESS',
-            details: {
-                symbols: allRows.map(function(r) { return r.short_symbol || r.symbol; }).filter(function(v, i, a) { return a.indexOf(v) === i; }),
-                errors: importErrors,
-                skipped: skippedRows.map(function(r) { return r.symbol; })
-            }
-        });
-
-        tiLoading(false);
-
-        // Always close modal and reset after import attempt
-        document.getElementById('excelPreviewOverlay').classList.remove('active');
-        parsedTransactions = [];
-        excelConfirmedRows = [];
-        excelFlaggedRows = [];
-        excelErrorRows = [];
-        _sortHandlersAttached = false;
-        document.getElementById('fileInput').value = '';
-
-        if (importErrors.length > 0) {
-            tiAlert('warning', 'Imported ' + insertCount + ' new + ' + updateCount + ' updated.\n\n' + importErrors.length + ' errors:\n' + importErrors.slice(0, 10).join('\n'));
-        } else {
-            tiAlert('success', 'Successfully imported ' + insertCount + ' new + ' + updateCount + ' updated transactions!');
-        }
-
-        // Reload import log display
-        tiLoadImportLog();
-    } catch (error) {
-        tiLoading(false);
-        tiAlert('error', 'Import failed: ' + error.message);
-    }
-    _importInProgress = false;
-    document.getElementById('importBtn').disabled = false;
-    document.getElementById('importBtn').textContent = 'Import to Database';
+    });
 }
 
 window.importToDatabase = function() { importExcelToDatabase(); };
@@ -3198,6 +3049,173 @@ function tiLoading(show, text) {
 // Expose globals for onclick handlers in HTML
 // (importToDatabase, recalcExcelRow, cancelImport already set above)
 // (importCnToDatabase, cancelCnImport already set via window.xxx = async function() above)
+
+
+// ============================================================================
+// SHARED IMPORT ENGINE — used by Excel, Fyers (and future sources)
+// ============================================================================
+// cfg: { source, newRows, updateRows, errorRows, buildRecord, overlayId,
+//        importBtnId, investorId, brokerId, tradeDate, onReset }
+
+var _importInProgress = false;
+
+async function performImport(cfg) {
+    if (_importInProgress) { tiAlert('warning', 'Import already in progress...'); return; }
+
+    var totalRows = cfg.newRows.length + cfg.updateRows.length;
+    if (totalRows === 0) { tiAlert('error', 'No transactions to import.'); return; }
+
+    if (!confirm('Import ' + cfg.newRows.length + ' new + ' + cfg.updateRows.length + ' updates = ' + totalRows + ' transactions from ' + cfg.source + '?')) return;
+
+    _importInProgress = true;
+    tiLoading(true, 'Importing ' + cfg.source + ' transactions...');
+    var btn = document.getElementById(cfg.importBtnId);
+    if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
+
+    var insertCount = 0, updateCount = 0;
+    var importErrors = [];
+    var allRows = cfg.newRows.concat(cfg.updateRows);
+
+    try {
+        // ── Step 0: Insert pending NFO securities ──
+        var pendingNfoRows = allRows.filter(function(r) { return r._pendingNfoInsert && r._nfoRecord; });
+        if (pendingNfoRows.length > 0) {
+            tiLoading(true, 'Registering ' + pendingNfoRows.length + ' new NFO securities...');
+            var nfoBySymbol = {};
+            pendingNfoRows.forEach(function(r) {
+                if (!nfoBySymbol[r._nfoRecord.symbol]) {
+                    nfoBySymbol[r._nfoRecord.symbol] = { record: r._nfoRecord, rows: [r] };
+                } else {
+                    nfoBySymbol[r._nfoRecord.symbol].rows.push(r);
+                }
+            });
+            var nfoBatch = Object.keys(nfoBySymbol).map(function(sym) { return nfoBySymbol[sym].record; });
+            try {
+                var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
+                    method: 'POST',
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+                    body: JSON.stringify(nfoBatch)
+                });
+                if (nfoResp.ok) {
+                    var insertedNfos = await nfoResp.json();
+                    insertedNfos.forEach(function(ins) {
+                        var entry = nfoBySymbol[ins.symbol];
+                        if (entry) {
+                            entry.rows.forEach(function(r) { r.security_id = ins.id; });
+                            console.log('NFO inserted: ' + ins.symbol + ' → ' + ins.id);
+                            var exchPrefix = (ins.exchange || 'NSE').toUpperCase();
+                            var fSym = ins.symbol.indexOf(':') >= 0 ? ins.symbol : exchPrefix + ':' + ins.symbol;
+                            if (typeof wmsUpdateNfoBrokerToken === 'function') {
+                                wmsUpdateNfoBrokerToken(ins.id, fSym);
+                            }
+                        }
+                    });
+                    if (typeof wmsLoadSecuritiesNfo === 'function') await wmsLoadSecuritiesNfo();
+                } else {
+                    var nfoErr = await nfoResp.json();
+                    importErrors.push('NFO batch insert: ' + (nfoErr.message || nfoErr.details || 'HTTP ' + nfoResp.status));
+                    console.error('NFO batch insert failed:', nfoErr);
+                }
+            } catch (nfoE) {
+                importErrors.push('NFO batch insert: ' + nfoE.message);
+                console.error('NFO batch insert error:', nfoE);
+            }
+
+            // Remove rows where NFO insert failed (security_id still null)
+            var nfoFailedRows = allRows.filter(function(r) { return r._pendingNfoInsert && !r.security_id; });
+            if (nfoFailedRows.length > 0) {
+                console.warn('Skipping ' + nfoFailedRows.length + ' rows: NFO security insert failed');
+                importErrors.push(nfoFailedRows.length + ' NFO rows skipped (security insert failed): ' + nfoFailedRows.map(function(r) { return r.symbol; }).join(', '));
+                cfg.newRows = cfg.newRows.filter(function(r) { return !r._pendingNfoInsert || r.security_id; });
+                cfg.updateRows = cfg.updateRows.filter(function(r) { return !r._pendingNfoInsert || r.security_id; });
+            }
+            tiLoading(true, 'Importing ' + cfg.source + ' transactions...');
+        }
+
+        // ── INSERT new rows in batches of 10 (rule C.2.2) ──
+        var insertRecords = cfg.newRows.map(cfg.buildRecord);
+        for (var i = 0; i < insertRecords.length; i += 10) {
+            var batch = insertRecords.slice(i, i + 10);
+            try {
+                var resp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions', {
+                    method: 'POST',
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+                    body: JSON.stringify(batch)
+                }, 3);
+                if (!resp.ok) {
+                    var errBody = await resp.json();
+                    importErrors.push('Insert batch ' + Math.floor(i / 10) + ': ' + (errBody.message || errBody.details || 'HTTP ' + resp.status));
+                } else {
+                    insertCount += batch.length;
+                }
+            } catch (e) {
+                importErrors.push('Insert batch ' + Math.floor(i / 10) + ': ' + e.message + ' (after 3 retries)');
+            }
+        }
+
+        // ── UPDATE existing rows via PATCH (rule A.2.2) ──
+        for (var j = 0; j < cfg.updateRows.length; j++) {
+            var ur = cfg.updateRows[j];
+            var rec = cfg.buildRecord(ur);
+            delete rec.created_at;
+            try {
+                var uresp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
+                    method: 'PATCH',
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+                    body: JSON.stringify(rec)
+                }, 3);
+                if (!uresp.ok) {
+                    var uErrBody = await uresp.json();
+                    importErrors.push('Update ' + (ur.short_symbol || ur.symbol) + ': ' + (uErrBody.message || 'HTTP ' + uresp.status));
+                } else {
+                    updateCount++;
+                }
+            } catch (e) {
+                importErrors.push('Update ' + (ur.short_symbol || ur.symbol) + ': ' + e.message + ' (after 3 retries)');
+            }
+            // Rate limit pause every 10 updates
+            if (j > 0 && j % 10 === 0) await new Promise(function(r) { setTimeout(r, 200); });
+        }
+
+        // ── Write import log ──
+        var errorRowCount = (cfg.errorRows ? cfg.errorRows.length : 0);
+        await tiWriteImportLog(cfg.source, {
+            transaction_date: cfg.tradeDate || (allRows.length > 0 ? allRows[0].transaction_date : null),
+            investor_id: cfg.investorId || (allRows.length > 0 ? allRows[0].investor_id : null),
+            broker_id: cfg.brokerId || (allRows.length > 0 ? allRows[0].broker_id : null),
+            total_rows: totalRows,
+            new_rows: insertCount,
+            updated_rows: updateCount,
+            error_rows: importErrors.length + errorRowCount,
+            status: importErrors.length > 0 ? 'PARTIAL' : 'SUCCESS',
+            details: {
+                symbols: allRows.map(function(r) { return r.short_symbol || r.symbol; }).filter(function(v, i, a) { return a.indexOf(v) === i; }),
+                errors: importErrors,
+                skipped: cfg.errorRows ? cfg.errorRows.map(function(e) { return e.description || e.symbol || ''; }) : []
+            }
+        });
+
+        tiLoading(false);
+
+        // Close modal & reset source-specific state
+        document.getElementById(cfg.overlayId).classList.remove('active');
+        if (typeof cfg.onReset === 'function') cfg.onReset();
+
+        if (importErrors.length > 0) {
+            tiAlert('warning', 'Imported ' + insertCount + ' new + ' + updateCount + ' updated.\n\n' + importErrors.length + ' errors:\n' + importErrors.slice(0, 10).join('\n'));
+        } else {
+            tiAlert('success', 'Successfully imported ' + insertCount + ' new + ' + updateCount + ' updated transactions!');
+        }
+
+        tiLoadImportLog();
+
+    } catch (error) {
+        tiLoading(false);
+        tiAlert('error', 'Import failed: ' + error.message);
+    }
+    _importInProgress = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Import to Database'; }
+}
 
 
 // ============================================================================
@@ -3767,19 +3785,11 @@ function fyCreateTotalsRow(rows, sectionId) {
 }
 
 // ============================================================================
-// Import Fyers Trades to Database
+// Import Fyers Trades to Database — Fyers-specific prep, then shared performImport()
 // ============================================================================
 
 window.fyImportToDatabase = async function() {
-    var totalRows = fyNewRows.length + fyUpdateRows.length;
-    if (totalRows === 0) {
-        tiAlert('error', 'No transactions to import.');
-        return;
-    }
-
-    if (!confirm('Import ' + fyNewRows.length + ' new + ' + fyUpdateRows.length + ' updates = ' + totalRows + ' transactions from Fyers?')) return;
-
-    // Read tags from autocomplete pill selections (same pattern as CN import)
+    // Read tags from autocomplete pill selections
     fyNewRows.forEach(function(r, i) {
         var input = document.getElementById('fyTag_NEW_' + i);
         if (input) {
@@ -3797,145 +3807,23 @@ window.fyImportToDatabase = async function() {
         }
     });
 
-    tiLoading(true, 'Importing Fyers trades...');
-    document.getElementById('fyImportBtn').disabled = true;
-
-    var insertErrors = [];
-    var updateErrors = [];
-    var insertCount = 0;
-    var updateCount = 0;
-    var allFyRows = fyNewRows.concat(fyUpdateRows);
-
-    try {
-        // Step 0: Insert pending NFO securities (same pattern as Excel import)
-        var pendingNfoRows = allFyRows.filter(function(r) { return r._pendingNfoInsert && r._nfoRecord; });
-        if (pendingNfoRows.length > 0) {
-            tiLoading(true, 'Registering ' + pendingNfoRows.length + ' new NFO securities...');
-            var nfoBySymbol = {};
-            pendingNfoRows.forEach(function(r) {
-                if (!nfoBySymbol[r._nfoRecord.symbol]) {
-                    nfoBySymbol[r._nfoRecord.symbol] = { record: r._nfoRecord, rows: [r] };
-                } else {
-                    nfoBySymbol[r._nfoRecord.symbol].rows.push(r);
-                }
-            });
-            var nfoBatch = Object.keys(nfoBySymbol).map(function(sym) { return nfoBySymbol[sym].record; });
-            try {
-                var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
-                    method: 'POST',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-                    body: JSON.stringify(nfoBatch)
-                });
-                if (nfoResp.ok) {
-                    var insertedNfos = await nfoResp.json();
-                    insertedNfos.forEach(function(ins) {
-                        var entry = nfoBySymbol[ins.symbol];
-                        if (entry) {
-                            entry.rows.forEach(function(r) { r.security_id = ins.id; });
-                            console.log('Fyers NFO inserted: ' + ins.symbol + ' → ' + ins.id);
-                        }
-                    });
-                    if (typeof wmsLoadSecuritiesNfo === 'function') await wmsLoadSecuritiesNfo();
-                } else {
-                    var nfoErr = await nfoResp.json();
-                    insertErrors.push('NFO batch insert: ' + (nfoErr.message || nfoErr.details || 'HTTP ' + nfoResp.status));
-                }
-            } catch (nfoE) {
-                insertErrors.push('NFO batch insert: ' + nfoE.message);
-            }
-            // Remove rows where NFO insert failed
-            var nfoFailed = allFyRows.filter(function(r) { return r._pendingNfoInsert && !r.security_id; });
-            if (nfoFailed.length > 0) {
-                insertErrors.push(nfoFailed.length + ' NFO rows skipped (security insert failed)');
-                fyNewRows = fyNewRows.filter(function(r) { return !r._pendingNfoInsert || r.security_id; });
-                fyUpdateRows = fyUpdateRows.filter(function(r) { return !r._pendingNfoInsert || r.security_id; });
-            }
-            tiLoading(true, 'Importing Fyers trades...');
-        }
-
-        // INSERT new rows
-        for (var i = 0; i < fyNewRows.length; i++) {
-            var r = fyNewRows[i];
-            var data = fyBuildTransactionRecord(r);
-            try {
-                var resp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions', {
-                    method: 'POST',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-                    body: JSON.stringify(data)
-                }, 3);
-                var result = await resp.json();
-                if (!resp.ok) {
-                    insertErrors.push(r.short_symbol + ' (' + r.transaction_type + '): ' + (result.message || result.details || 'HTTP ' + resp.status));
-                } else {
-                    insertCount++;
-                }
-            } catch (e) {
-                insertErrors.push(r.short_symbol + ': ' + e.message + ' (after 3 retries)');
-            }
-        }
-
-        // UPDATE existing rows
-        for (var j = 0; j < fyUpdateRows.length; j++) {
-            var ur = fyUpdateRows[j];
-            var udata = fyBuildTransactionRecord(ur);
-            delete udata.created_at;
-            try {
-                var uresp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
-                    method: 'PATCH',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-                    body: JSON.stringify(udata)
-                }, 3);
-                var uresult = await uresp.json();
-                if (!uresp.ok) {
-                    updateErrors.push(ur.short_symbol + ' (' + ur.transaction_type + '): ' + (uresult.message || uresult.details || 'HTTP ' + uresp.status));
-                } else {
-                    updateCount++;
-                }
-            } catch (e) {
-                updateErrors.push(ur.short_symbol + ': ' + e.message + ' (after 3 retries)');
-            }
-        }
-
-        // Write import log
-        await tiWriteImportLog('FYERS', {
-            transaction_date: fyTradeDate,
-            investor_id: fyInvestorId,
-            broker_id: fyBrokerId,
-            total_rows: totalRows,
-            new_rows: insertCount,
-            updated_rows: updateCount,
-            error_rows: insertErrors.length + updateErrors.length + fyErrorRows.length,
-            status: (insertErrors.length + updateErrors.length) > 0 ? 'PARTIAL' : 'SUCCESS',
-            details: {
-                symbols: fyParsedRows.map(function(r) { return r.short_symbol; }),
-                errors: insertErrors.concat(updateErrors),
-                skipped: fyErrorRows.map(function(e) { return e.description; })
-            }
-        });
-
-        tiLoading(false);
-
-        // Show results
-        var allErrors = insertErrors.concat(updateErrors);
-        if (allErrors.length > 0) {
-            tiAlert('warning', 'Imported ' + insertCount + ' new, updated ' + updateCount + '.\n\nErrors (' + allErrors.length + '):\n' + allErrors.join('\n'));
-            document.getElementById('fyImportBtn').disabled = false;
-        } else {
-            tiAlert('success', 'Successfully imported ' + insertCount + ' new and updated ' + updateCount + ' Fyers transactions!');
-            document.getElementById('fyImportBtn').disabled = false;
-            document.getElementById('fyPreviewOverlay').classList.remove('active');
+    await performImport({
+        source: 'FYERS',
+        newRows: fyNewRows,
+        updateRows: fyUpdateRows,
+        errorRows: fyErrorRows,
+        buildRecord: fyBuildTransactionRecord,
+        overlayId: 'fyPreviewOverlay',
+        importBtnId: 'fyImportBtn',
+        investorId: fyInvestorId,
+        brokerId: fyBrokerId,
+        tradeDate: fyTradeDate,
+        onReset: function() {
             fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fyErrorRows = [];
+            fyTradeDate = null;
+            document.getElementById('fyFetchStatus').textContent = '';
         }
-
-        // Reload import log display
-        tiLoadImportLog();
-
-    } catch (e) {
-        console.error('Fyers import error:', e);
-        tiLoading(false);
-        tiAlert('error', 'Import failed: ' + e.message);
-        document.getElementById('fyImportBtn').disabled = false;
-    }
+    });
 };
 
 window.cancelFyImport = function() {
