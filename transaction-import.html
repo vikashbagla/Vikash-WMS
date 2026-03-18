@@ -195,6 +195,30 @@
         .spinner { border: 4px solid #f0f4f8; border-top: 4px solid #667eea; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 12px auto; }
         @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
         .hidden { display: none; }
+        /* FYERS IMPORT BOX */
+        .fy-box { background: white; border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+        .fy-status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 20px; }
+        .fy-status.connected { background: #f0fdf4; color: #059669; border: 1px solid #bbf7d0; }
+        .fy-status.disconnected { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+        .fy-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .fy-body { display: flex; align-items: center; gap: 12px; }
+        .fy-info { font-size: 11px; color: #718096; margin-top: 6px; }
+
+        /* IMPORT LOG */
+        .import-log-section { background: white; border-radius: 8px; padding: 14px 16px; margin-top: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+        .import-log-section .section-title { font-size: 13px; font-weight: 600; color: #2d3748; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+        .import-log-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        .import-log-table th { background: #f7fafc; padding: 5px 8px; text-align: left; font-size: 10px; font-weight: 600; color: #718096; text-transform: uppercase; border-bottom: 1px solid #e2e8f0; }
+        .import-log-table td { padding: 5px 8px; border-bottom: 1px solid #f0f4f8; color: #4a5568; }
+        .import-log-table tr:hover { background: #f9fafb; }
+        .il-type { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
+        .il-type-fyers { background: #ede9fe; color: #7c3aed; }
+        .il-type-cn { background: #dbeafe; color: #2563eb; }
+        .il-type-excel { background: #d1fae5; color: #059669; }
+        .il-status-success { color: #059669; font-weight: 600; }
+        .il-status-partial { color: #d97706; font-weight: 600; }
+        .il-status-failed { color: #dc2626; font-weight: 600; }
+
         @media (max-width: 768px) { .import-grid { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(3, 1fr) !important; } }
     </style>
 </head>
@@ -247,6 +271,66 @@
             </div>
             <button class="btn" id="cnChooseFileBtn" disabled style="margin-top:8px;">Choose File</button>
             <div id="cnParseStatus" class="cn-status" style="margin-top:6px;"></div>
+        </div>
+    </div>
+
+    <!-- ===== FYERS IMPORT BOX (full width, below grid) ===== -->
+    <div class="fy-box" id="fyBox">
+        <div class="fy-header">
+            <div class="section-title" style="margin-bottom:0;"><span class="icon">🔗</span> Fyers Import</div>
+            <div class="fy-status disconnected" id="fyStatus">
+                <span id="fyStatusDot">🔴</span> <span id="fyStatusText">Not Connected</span>
+            </div>
+        </div>
+        <div class="fy-body">
+            <button class="btn" id="fyFetchBtn" disabled onclick="fyFetchTrades()">Fetch Today's Trades</button>
+            <span id="fyFetchStatus" class="cn-status" style="margin:0;"></span>
+        </div>
+        <div class="fy-info" id="fyInfo">Connect Fyers in the Settings tab to enable import.</div>
+    </div>
+
+    <!-- ===== FYERS PREVIEW (full width, below Fyers box) ===== -->
+    <div class="section preview-section" id="fyPreviewSection">
+        <div class="section-title">Fyers Tradebook Preview</div>
+
+        <!-- Info Banner -->
+        <div id="fyInfoBanner" style="display:flex; gap:24px; padding:8px 14px; margin-bottom:10px; background:#f5f3ff; border:1px solid #ddd6fe; border-radius:6px; font-size:12px; color:#2d3748; align-items:center; flex-wrap:wrap;">
+            <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Trade Date:</span> <span id="fyBannerDate" style="font-weight:600;">—</span></div>
+            <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Investor:</span> <span id="fyBannerInvestor" style="font-weight:600;">—</span></div>
+            <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Broker:</span> <span id="fyBannerBroker" style="font-weight:600;">—</span></div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card"><div class="stat-label">Total Rows</div><div class="stat-value" id="fyStatTotal">0</div></div>
+            <div class="stat-card" style="border-left-color:#059669;"><div class="stat-label">New</div><div class="stat-value" id="fyStatNew" style="color:#059669;">0</div></div>
+            <div class="stat-card" style="border-left-color:#ed8936;"><div class="stat-label">Updates</div><div class="stat-value" id="fyStatUpdate" style="color:#ed8936;">0</div></div>
+            <div class="stat-card" style="border-left-color:#dc2626;"><div class="stat-label">Errors</div><div class="stat-value" id="fyStatError" style="color:#dc2626;">0</div></div>
+        </div>
+
+        <div id="fyNewSection" style="display:none;">
+            <div class="cn-table-label new-rows">New Transactions (will be inserted)</div>
+            <div class="table-wrapper"><table><thead><tr>
+                <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
+            </tr></thead><tbody id="fyNewTableBody"></tbody></table></div>
+        </div>
+
+        <div id="fyUpdateSection" style="display:none;">
+            <div class="cn-table-label update-rows">Existing Transactions (will be updated)</div>
+            <div class="table-wrapper"><table><thead><tr>
+                <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
+            </tr></thead><tbody id="fyUpdateTableBody"></tbody></table></div>
+        </div>
+
+        <div id="fyErrorSection" style="display:none;">
+            <div class="cn-table-label error-rows">Errors (will be skipped)</div>
+            <div class="table-wrapper"><table><thead><tr>
+                <th>#</th><th>Symbol/Description</th><th>Error</th>
+            </tr></thead><tbody id="fyErrorTableBody"></tbody></table></div>
+        </div>
+
+        <div class="action-buttons">
+            <button class="btn btn-danger" onclick="cancelFyImport()">Cancel</button>
+            <button class="btn btn-success" id="fyImportBtn" onclick="fyImportToDatabase()">Import to Database</button>
         </div>
     </div>
 
@@ -349,6 +433,21 @@
         <div class="action-buttons">
             <button class="btn btn-danger" onclick="cancelCnImport()">Cancel</button>
             <button class="btn btn-success" id="cnImportBtn" onclick="importCnToDatabase()">Import to Database</button>
+        </div>
+    </div>
+
+    <!-- ===== IMPORT LOG (always visible at bottom) ===== -->
+    <div class="import-log-section" id="importLogSection">
+        <div class="section-title"><span class="icon">📋</span> Import History</div>
+        <div class="table-wrapper">
+            <table class="import-log-table">
+                <thead><tr>
+                    <th>Date</th><th>Type</th><th>Investor</th><th>Broker</th><th>Trade Date</th><th style="text-align:right;">New</th><th style="text-align:right;">Updated</th><th style="text-align:right;">Errors</th><th>Status</th>
+                </tr></thead>
+                <tbody id="importLogBody">
+                    <tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:16px;">Loading import history...</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
 

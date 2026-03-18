@@ -43,8 +43,9 @@ var _refDataReady = false; // True once loadReferenceData() has completed at lea
 function initTransactionImport() {
     if (_tiInitDone) {
         // Already initialized — just reload reference data (don't re-register listeners)
-        loadReferenceData();
+        loadReferenceData().then(function() { fyInit(); });
         loadCnAccounts();
+        tiLoadImportLog();
         return;
     }
     _tiInitDone = true;
@@ -96,9 +97,13 @@ function initTransactionImport() {
         });
     }
 
-    loadReferenceData();
+    loadReferenceData().then(function() {
+        // After ref data is synced, init Fyers (needs investors/brokers)
+        fyInit();
+    });
     loadCnAccounts();
     loadExistingTags();
+    tiLoadImportLog();
 }
 
 document.addEventListener('DOMContentLoaded', initTransactionImport);
@@ -1587,6 +1592,24 @@ window.importCnToDatabase = async function() {
             }
         }
 
+        // Write import log
+        await tiWriteImportLog('CN', {
+            transaction_date: cnTradeDate,
+            investor_id: cnSelectedAccount ? cnSelectedAccount.investor_id : null,
+            broker_id: cnSelectedAccount ? cnSelectedAccount.broker_id : null,
+            total_rows: totalRows,
+            new_rows: insertCount,
+            updated_rows: updateCount,
+            error_rows: insertErrors.length + updateErrors.length + cnErrorRows.length,
+            status: (insertErrors.length + updateErrors.length) > 0 ? 'PARTIAL' : 'SUCCESS',
+            details: {
+                cn_number: cnCnNumber,
+                symbols: cnParsedRows.map(function(r) { return r.short_symbol; }),
+                errors: insertErrors.concat(updateErrors),
+                skipped: cnErrorRows.map(function(e) { return e.description; })
+            }
+        });
+
         tiLoading(false);
 
         // Show results
@@ -1614,6 +1637,9 @@ window.importCnToDatabase = async function() {
             var cnFileInput = document.getElementById('cnFileInput');
             if (cnFileInput) cnFileInput.value = '';
         }
+
+        // Reload import log display
+        tiLoadImportLog();
 
     } catch (e) {
         console.error('Import error:', e);
@@ -3064,6 +3090,24 @@ async function importExcelToDatabase() {
             if (j > 0 && j % 10 === 0) await new Promise(function(r) { setTimeout(r, 200); });
         }
 
+        // Write import log (collect investor/broker from first row if available)
+        var _exFirstRow = allRows.length > 0 ? allRows[0] : null;
+        await tiWriteImportLog('EXCEL', {
+            transaction_date: _exFirstRow ? _exFirstRow.transaction_date : null,
+            investor_id: _exFirstRow ? _exFirstRow.investor_id : null,
+            broker_id: _exFirstRow ? _exFirstRow.broker_id : null,
+            total_rows: allRows.length,
+            new_rows: insertCount,
+            updated_rows: updateCount,
+            error_rows: importErrors.length + skippedRows.length,
+            status: importErrors.length > 0 ? 'PARTIAL' : 'SUCCESS',
+            details: {
+                symbols: allRows.map(function(r) { return r.short_symbol || r.symbol; }).filter(function(v, i, a) { return a.indexOf(v) === i; }),
+                errors: importErrors,
+                skipped: skippedRows.map(function(r) { return r.symbol; })
+            }
+        });
+
         tiLoading(false);
 
         // Always close modal and reset after import attempt
@@ -3080,6 +3124,9 @@ async function importExcelToDatabase() {
         } else {
             tiAlert('success', 'Successfully imported ' + insertCount + ' new + ' + updateCount + ' updated transactions!');
         }
+
+        // Reload import log display
+        tiLoadImportLog();
     } catch (error) {
         tiLoading(false);
         tiAlert('error', 'Import failed: ' + error.message);
@@ -3134,3 +3181,734 @@ function tiLoading(show, text) {
 // Expose globals for onclick handlers in HTML
 // (importToDatabase, recalcExcelRow, cancelImport already set above)
 // (importCnToDatabase, cancelCnImport already set via window.xxx = async function() above)
+
+
+// ============================================================================
+// FYERS TRADEBOOK IMPORT
+// ============================================================================
+
+// Fyers import state (var per Rule A.1.2)
+var fyParsedRows = [];      // After grouping trades
+var fyNewRows = [];          // Will be inserted
+var fyUpdateRows = [];       // Will update existing
+var fyErrorRows = [];        // Could not match security
+var fyTradeDate = null;      // Today's date (YYYY-MM-DD)
+var fyInvestorId = null;     // "Veins" investor ID
+var fyBrokerId = null;       // Fyers broker ID
+var fyInvestorName = '';     // Display name
+var fyBrokerName = '';       // Display name
+
+// ============================================================================
+// Fyers Init — detect investor/broker, check token status
+// ============================================================================
+
+function fyInit() {
+    // Look up Veins investor
+    var inv = wmsRefData.investors.find(function(i) { return i.short_name === 'Veins'; });
+    if (inv) {
+        fyInvestorId = inv.id;
+        fyInvestorName = inv.short_name;
+    }
+
+    // Look up Fyers broker (check code and name)
+    var brk = wmsRefData.brokers.find(function(b) {
+        return (b.broker_code && b.broker_code.toUpperCase() === 'FYERS') ||
+               (b.name && b.name.toLowerCase().indexOf('fyers') >= 0);
+    });
+    if (brk) {
+        fyBrokerId = brk.id;
+        fyBrokerName = brk.name || brk.broker_code;
+    }
+
+    // Update connection status
+    fyUpdateStatus();
+
+    // If investor or broker not found, show error and disable
+    if (!fyInvestorId || !fyBrokerId) {
+        var infoEl = document.getElementById('fyInfo');
+        if (infoEl) {
+            var missing = [];
+            if (!fyInvestorId) missing.push('Investor "Veins"');
+            if (!fyBrokerId) missing.push('Broker "Fyers"');
+            infoEl.textContent = missing.join(' and ') + ' not found in database. Fyers import disabled.';
+            infoEl.style.color = '#dc2626';
+        }
+    }
+}
+
+function fyUpdateStatus() {
+    var statusEl = document.getElementById('fyStatus');
+    var dotEl = document.getElementById('fyStatusDot');
+    var textEl = document.getElementById('fyStatusText');
+    var fetchBtn = document.getElementById('fyFetchBtn');
+    var infoEl = document.getElementById('fyInfo');
+    if (!statusEl) return;
+
+    // Check Fyers token from localStorage
+    var token = null;
+    try {
+        var stored = localStorage.getItem('fyers_token');
+        if (stored) {
+            var parsed = JSON.parse(stored);
+            // Token is valid only for today
+            var today = new Date().toISOString().split('T')[0];
+            if (parsed.date === today && parsed.token) {
+                token = parsed.token;
+            }
+        }
+    } catch (e) { /* ignore parse errors */ }
+
+    if (token && fyInvestorId && fyBrokerId) {
+        statusEl.className = 'fy-status connected';
+        dotEl.textContent = '🟢';
+        textEl.textContent = 'Connected';
+        fetchBtn.disabled = false;
+        infoEl.textContent = 'Fetch today\'s executed trades from Fyers. Charges will be auto-calculated.';
+        infoEl.style.color = '#718096';
+    } else {
+        statusEl.className = 'fy-status disconnected';
+        dotEl.textContent = '🔴';
+        textEl.textContent = 'Not Connected';
+        fetchBtn.disabled = true;
+        if (fyInvestorId && fyBrokerId) {
+            infoEl.textContent = 'Connect Fyers in the Settings tab to enable import.';
+            infoEl.style.color = '#718096';
+        }
+    }
+}
+
+// ============================================================================
+// Fetch Trades from Fyers API
+// ============================================================================
+
+window.fyFetchTrades = async function() {
+    var fetchBtn = document.getElementById('fyFetchBtn');
+    var statusEl = document.getElementById('fyFetchStatus');
+
+    // Validate prerequisites
+    if (!fyInvestorId || !fyBrokerId) {
+        tiAlert('error', 'Fyers investor/broker not configured. Check Settings.');
+        return;
+    }
+
+    // Check token
+    var token = null;
+    try {
+        var stored = localStorage.getItem('fyers_token');
+        if (stored) {
+            var parsed = JSON.parse(stored);
+            var today = new Date().toISOString().split('T')[0];
+            if (parsed.date === today && parsed.token) {
+                token = parsed.token;
+            }
+        }
+    } catch (e) { /* */ }
+
+    if (!token) {
+        tiAlert('error', 'Fyers token expired or not available. Please reconnect in Settings.');
+        fyUpdateStatus();
+        return;
+    }
+
+    fetchBtn.disabled = true;
+    statusEl.textContent = 'Fetching trades...';
+    statusEl.className = 'cn-status';
+    tiLoading(true, 'Fetching Fyers tradebook...');
+
+    try {
+        // Call Edge Function via window.fyersCall (defined in app.html)
+        if (typeof window.fyersCall !== 'function') {
+            throw new Error('window.fyersCall not available. Reload the app.');
+        }
+
+        var response = await window.fyersCall({ action: 'tradebook', accessToken: token });
+
+        if (!response || response.error) {
+            var errMsg = response ? response.error : 'No response from Fyers API';
+            if (response && response.tokenExpired) {
+                errMsg = 'Fyers token expired. Please reconnect in Settings.';
+                fyUpdateStatus();
+            }
+            throw new Error(errMsg);
+        }
+
+        // Fyers tradebook response: { s: 'ok', tradeBook: [...] }
+        if (response.s !== 'ok' || !response.tradeBook) {
+            throw new Error('Fyers API returned unexpected response: ' + (response.message || JSON.stringify(response).substring(0, 200)));
+        }
+
+        var tradeBook = response.tradeBook;
+        if (!tradeBook || tradeBook.length === 0) {
+            statusEl.textContent = 'No trades found for today.';
+            statusEl.className = 'cn-status';
+            tiLoading(false);
+            fetchBtn.disabled = false;
+            tiAlert('info', 'No executed trades found in Fyers for today.');
+            return;
+        }
+
+        statusEl.textContent = 'Processing ' + tradeBook.length + ' trade(s)...';
+
+        // Process, group, calculate charges, check duplicates
+        await fyProcessTrades(tradeBook);
+
+        tiLoading(false);
+        fetchBtn.disabled = false;
+        statusEl.textContent = '';
+
+        // Display preview
+        fyDisplayPreview();
+
+    } catch (e) {
+        console.error('Fyers fetch error:', e);
+        tiLoading(false);
+        fetchBtn.disabled = false;
+        statusEl.textContent = 'Error: ' + e.message;
+        statusEl.className = 'cn-status error';
+        tiAlert('error', 'Fyers import failed: ' + e.message);
+    }
+};
+
+// ============================================================================
+// Process & Group Fyers Trades
+// ============================================================================
+
+async function fyProcessTrades(tradeBook) {
+    // Set trade date to today
+    fyTradeDate = new Date().toISOString().split('T')[0];
+
+    // Filter: only segment 10 (CM/Equity) for now — skip commodity (segment 20)
+    // segment 11 = F&O — also included
+    var validTrades = tradeBook.filter(function(t) {
+        return t.segment === 10 || t.segment === 11;
+    });
+    var skipped = tradeBook.length - validTrades.length;
+    if (skipped > 0) console.log('Fyers: Skipped ' + skipped + ' trade(s) with unsupported segment');
+
+    // Parse symbol: strip exchange prefix (e.g., "NSE:RELIANCE-EQ" → "RELIANCE")
+    // side: 1 = BUY, -1 = SELL
+    // Group by symbol + side (same as CN processAndGroupTrades)
+    var groups = {};
+    validTrades.forEach(function(t) {
+        var rawSymbol = t.symbol || '';
+        // Strip exchange prefix: "NSE:RELIANCE-EQ" → "RELIANCE-EQ"
+        var symPart = rawSymbol.indexOf(':') >= 0 ? rawSymbol.split(':')[1] : rawSymbol;
+        // Strip -EQ suffix: "RELIANCE-EQ" → "RELIANCE"
+        var cleanSymbol = symPart.replace(/-EQ$/i, '').trim().toUpperCase();
+        var side = t.side === 1 ? 'BUY' : 'SELL';
+        var key = cleanSymbol + '|' + side;
+
+        if (!groups[key]) {
+            groups[key] = {
+                symbol: cleanSymbol,
+                rawSymbol: rawSymbol,
+                side: side,
+                segment: t.segment,
+                totalQty: 0,
+                totalValue: 0,
+                orderNumbers: [],
+                trades: []
+            };
+        }
+        groups[key].totalQty += t.tradedQty || 0;
+        groups[key].totalValue += (t.tradedQty || 0) * (t.tradePrice || 0);
+        if (t.orderNumber) groups[key].orderNumbers.push(t.orderNumber);
+        groups[key].trades.push(t);
+    });
+
+    // Match securities from local wmsRefData
+    fyParsedRows = [];
+    fyErrorRows = [];
+
+    var keys = Object.keys(groups);
+
+    // Collect unique symbols for batch lookup
+    var uniqueSymbols = [];
+    keys.forEach(function(k) {
+        var sym = groups[k].symbol;
+        if (uniqueSymbols.indexOf(sym) === -1) uniqueSymbols.push(sym);
+    });
+
+    // Local batch lookup from in-memory securitiesCm (zero API calls)
+    var secMap = batchMatchSecurities(uniqueSymbols);
+
+    for (var k = 0; k < keys.length; k++) {
+        var g = groups[keys[k]];
+        var avgPrice = g.totalQty > 0 ? g.totalValue / g.totalQty : 0;
+        var grossAmount = g.totalValue;
+
+        var secMatch = secMap[g.symbol] || null;
+        if (!secMatch) {
+            fyErrorRows.push({
+                description: g.rawSymbol + ' (' + g.side + ', qty: ' + g.totalQty + ')',
+                error: 'Security not found in database: ' + g.symbol
+            });
+            continue;
+        }
+
+        var row = {
+            security_id: secMatch.id,
+            security_type: secMatch.security_type || 'EQUITY',
+            symbol: secMatch.symbol,
+            short_symbol: secMatch.short_symbol || g.symbol,
+            company_name: secMatch.company_name || g.symbol,
+            exchange: secMatch.exchange || 'NSE',
+            transaction_type: g.side,
+            quantity: g.side === 'SELL' ? -g.totalQty : g.totalQty,
+            lots: 0,
+            price: Math.round(avgPrice * 100) / 100,
+            gross_amount: Math.round(grossAmount * 100) / 100,
+            brokerage: 0,
+            stt: 0,
+            other_charges: 0,
+            gst: 0,
+            total_charges: 0,
+            net_amount: 0,
+            _db_security_type: secMatch.security_type || 'EQUITY',
+            _db_asset_class: secMatch.asset_class || '',
+            _orderNumbers: g.orderNumbers,   // For broker_trade_id
+            _tradeCount: g.trades.length      // For info display
+        };
+
+        // Auto-calculate charges (no charge data from Fyers API — calculate fresh)
+        wmsAutoCalcCharges(row, {
+            ibaRatesMap: ibaRatesMap,
+            regCharges: regulatoryCharges,
+            investorId: fyInvestorId,
+            brokerId: fyBrokerId,
+            preserveExisting: false,  // Calculate everything fresh
+            debug: false
+        });
+
+        fyParsedRows.push(row);
+    }
+
+    console.log('Fyers: ' + fyParsedRows.length + ' grouped rows, ' + fyErrorRows.length + ' errors');
+
+    // Check duplicates against existing transactions
+    await fyCheckDuplicates(fyParsedRows);
+}
+
+// ============================================================================
+// Duplicate Check
+// ============================================================================
+
+async function fyCheckDuplicates(rows) {
+    if (rows.length === 0) { fyNewRows = []; fyUpdateRows = []; return; }
+
+    // Query existing transactions for this investor + broker + date
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + fyInvestorId + '&broker_id=eq.' + fyBrokerId + '&transaction_date=eq.' + fyTradeDate + '&select=id,symbol,transaction_type,quantity,price,gross_amount,tags', {
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+    });
+    var existing = await resp.json();
+
+    fyNewRows = [];
+    fyUpdateRows = [];
+
+    rows.forEach(function(r) {
+        // Match: same symbol + same transaction_type (same as CN checkDuplicates)
+        var match = existing.find(function(e) {
+            return e.symbol === r.symbol && e.transaction_type === r.transaction_type;
+        });
+
+        if (match) {
+            r._existingId = match.id;
+            r._action = 'UPDATE';
+            r.tags = match.tags || [];  // Preserve existing tags
+            fyUpdateRows.push(r);
+        } else {
+            r.tags = [];  // Empty tags for new rows
+            r._action = 'NEW';
+            fyNewRows.push(r);
+        }
+    });
+
+    console.log('Fyers duplicates: ' + fyNewRows.length + ' new, ' + fyUpdateRows.length + ' updates');
+}
+
+// ============================================================================
+// Build Transaction Record (same pattern as CN buildTransactionRecord)
+// ============================================================================
+
+function fyBuildTransactionRecord(row) {
+    return {
+        investor_id: fyInvestorId,
+        broker_id: fyBrokerId,
+        security_id: row.security_id,
+        security_type: row.security_type || 'EQUITY',
+        symbol: row.symbol,
+        short_symbol: row.short_symbol,
+        company_name: row.company_name,
+        exchange: row.exchange,
+        product: null,
+        transaction_type: row.transaction_type,
+        transaction_date: fyTradeDate,
+        quantity: row.quantity,
+        lots: row.lots,
+        price: roundMoney(row.price),
+        gross_amount: roundMoney(row.gross_amount),
+        brokerage: roundMoney(row.brokerage),
+        stt: roundMoney(row.stt),
+        other_charges: roundMoney(row.other_charges),
+        gst: roundMoney(row.gst),
+        tds: null,
+        total_charges: roundMoney(row.total_charges),
+        net_amount: roundMoney(row.net_amount),
+        margin_blocked: 0,
+        broker_contract_note_no: null,   // CN hasn't arrived yet
+        broker_trade_id: row._orderNumbers ? row._orderNumbers.join(',') : null,
+        tags: (row.tags && row.tags.length > 0) ? row.tags : ['blank'],
+        notes: 'Imported from Fyers Tradebook',
+        ignore_for_avg_cost: false,
+        dont_display: false
+    };
+}
+
+// ============================================================================
+// Display Fyers Preview
+// ============================================================================
+
+function fyDisplayPreview() {
+    // Stats
+    document.getElementById('fyStatTotal').textContent = fyNewRows.length + fyUpdateRows.length;
+    document.getElementById('fyStatNew').textContent = fyNewRows.length;
+    document.getElementById('fyStatUpdate').textContent = fyUpdateRows.length;
+    document.getElementById('fyStatError').textContent = fyErrorRows.length;
+
+    // Info banner
+    var bannerDate = document.getElementById('fyBannerDate');
+    var bannerInv = document.getElementById('fyBannerInvestor');
+    var bannerBrk = document.getElementById('fyBannerBroker');
+    if (bannerDate) bannerDate.textContent = fyTradeDate ? formatDate(fyTradeDate) : '—';
+    if (bannerInv) bannerInv.textContent = fyInvestorName || '—';
+    if (bannerBrk) bannerBrk.textContent = fyBrokerName || '—';
+
+    // Sort: BUY first, then SELL
+    function sortBuyFirst(arr) {
+        return arr.slice().sort(function(a, b) {
+            if (a.transaction_type === b.transaction_type) return 0;
+            return a.transaction_type === 'BUY' ? -1 : 1;
+        });
+    }
+    var sortedNew = sortBuyFirst(fyNewRows);
+    var sortedUpdate = sortBuyFirst(fyUpdateRows);
+
+    // New rows table
+    var newTbody = document.getElementById('fyNewTableBody');
+    newTbody.innerHTML = '';
+    if (sortedNew.length > 0) {
+        document.getElementById('fyNewSection').style.display = '';
+        sortedNew.forEach(function(r, i) { newTbody.appendChild(fyCreatePreviewRow(r, i + 1, 'NEW')); });
+        newTbody.appendChild(fyCreateTotalsRow(sortedNew, 'NEW'));
+    } else {
+        document.getElementById('fyNewSection').style.display = 'none';
+    }
+
+    // Update rows table
+    var updateTbody = document.getElementById('fyUpdateTableBody');
+    updateTbody.innerHTML = '';
+    if (sortedUpdate.length > 0) {
+        document.getElementById('fyUpdateSection').style.display = '';
+        sortedUpdate.forEach(function(r, i) { updateTbody.appendChild(fyCreatePreviewRow(r, i + 1, 'UPDATE')); });
+        updateTbody.appendChild(fyCreateTotalsRow(sortedUpdate, 'UPDATE'));
+    } else {
+        document.getElementById('fyUpdateSection').style.display = 'none';
+    }
+
+    // Error rows
+    var errorTbody = document.getElementById('fyErrorTableBody');
+    errorTbody.innerHTML = '';
+    if (fyErrorRows.length > 0) {
+        document.getElementById('fyErrorSection').style.display = '';
+        fyErrorRows.forEach(function(e, i) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + (i+1) + '</td><td>' + wmsEsc(e.description) + '</td><td style="color:#dc2626;">' + wmsEsc(e.error) + '</td>';
+            errorTbody.appendChild(tr);
+        });
+    } else {
+        document.getElementById('fyErrorSection').style.display = 'none';
+    }
+
+    // Show preview section
+    document.getElementById('fyImportBtn').disabled = false;
+    document.getElementById('fyPreviewSection').classList.add('active');
+}
+
+function fyCreatePreviewRow(r, idx, action) {
+    var tr = document.createElement('tr');
+    var typeClass = r.transaction_type === 'BUY' ? 'type-buy' : 'type-sell';
+    var tagsValue = Array.isArray(r.tags) ? r.tags.filter(function(t) { return !!t; }).join(', ') : (r.tags || '');
+    var tagInputId = 'fyTag_' + action + '_' + (idx - 1);
+
+    tr.innerHTML = '<td>' + idx + '</td>' +
+        '<td class="' + typeClass + '">' + r.transaction_type + '</td>' +
+        '<td title="' + wmsEsc(r.symbol) + '">' + wmsEsc(r.short_symbol) + '</td>' +
+        '<td style="text-align:right;">' + formatCnQty(r.quantity) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.price) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.gross_amount) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.brokerage) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.stt) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.other_charges) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(r.gst) + '</td>' +
+        '<td style="text-align:right;font-weight:600;">' + formatCnAmount(r.transaction_type === 'SELL' ? -Math.abs(r.net_amount) : Math.abs(r.net_amount)) + '</td>' +
+        '<td style="width:140px;max-width:140px;position:relative;">' +
+            '<div class="cn-tag-selected" id="' + tagInputId + '_pills" style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:3px;max-width:140px;"></div>' +
+            '<input type="text" id="' + tagInputId + '" value="" autocomplete="off" placeholder="tags..." style="width:100%;max-width:140px;padding:3px 6px;border:1px solid #cbd5e0;border-radius:4px;font-size:11px;box-sizing:border-box;">' +
+            '<div class="cn-tag-dropdown" id="' + tagInputId + '_dd" style="display:none;position:absolute;z-index:100;left:0;right:0;max-height:120px;overflow-y:auto;background:#fff;border:1px solid #cbd5e0;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.12);margin-top:2px;"></div>' +
+        '</td>';
+
+    // Wire up tag autocomplete after DOM render
+    setTimeout(function() { initTagAutocomplete(tagInputId, tagsValue); }, 0);
+
+    return tr;
+}
+
+function fyCreateTotalsRow(rows, sectionId) {
+    var totQty = 0, totGross = 0, totBrokerage = 0, totStt = 0, totOther = 0, totGst = 0, totNet = 0;
+    rows.forEach(function(r) {
+        totQty += Math.abs(r.quantity);
+        totGross += Math.abs(r.gross_amount);
+        totBrokerage += r.brokerage;
+        totStt += r.stt;
+        totOther += r.other_charges;
+        totGst += r.gst;
+        if (r.transaction_type === 'SELL') {
+            totNet -= Math.abs(r.net_amount);
+        } else {
+            totNet += Math.abs(r.net_amount);
+        }
+    });
+    var tr = document.createElement('tr');
+    tr.id = 'fyTotals_' + (sectionId || 'all');
+    tr.style.fontWeight = '700';
+    tr.style.borderTop = '2px solid #4a5568';
+    tr.style.background = '#f7fafc';
+    tr.innerHTML = '<td></td>' +
+        '<td></td>' +
+        '<td style="text-align:right;">Total</td>' +
+        '<td style="text-align:right;">' + formatCnQty(totQty) + '</td>' +
+        '<td></td>' +
+        '<td style="text-align:right;">' + formatCnAmount(totGross) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(totBrokerage) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(totStt) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(totOther) + '</td>' +
+        '<td style="text-align:right;">' + formatCnAmount(totGst) + '</td>' +
+        '<td style="text-align:right;font-weight:700;">' + formatCnAmount(totNet) + '</td>' +
+        '<td></td>';
+    return tr;
+}
+
+// ============================================================================
+// Import Fyers Trades to Database
+// ============================================================================
+
+window.fyImportToDatabase = async function() {
+    var totalRows = fyNewRows.length + fyUpdateRows.length;
+    if (totalRows === 0) {
+        tiAlert('error', 'No transactions to import.');
+        return;
+    }
+
+    if (!confirm('Import ' + fyNewRows.length + ' new + ' + fyUpdateRows.length + ' updates = ' + totalRows + ' transactions from Fyers?')) return;
+
+    // Read tags from autocomplete pill selections (same pattern as CN import)
+    fyNewRows.forEach(function(r, i) {
+        var input = document.getElementById('fyTag_NEW_' + i);
+        if (input) {
+            var val = (input.dataset.tags || '').trim();
+            var parsed = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [];
+            r.tags = parsed.length > 0 ? parsed : ['blank'];
+        }
+    });
+    fyUpdateRows.forEach(function(r, i) {
+        var input = document.getElementById('fyTag_UPDATE_' + i);
+        if (input) {
+            var val = (input.dataset.tags || '').trim();
+            var parsed = val ? val.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [];
+            r.tags = parsed.length > 0 ? parsed : ['blank'];
+        }
+    });
+
+    tiLoading(true, 'Importing Fyers trades...');
+    document.getElementById('fyImportBtn').disabled = true;
+
+    var insertErrors = [];
+    var updateErrors = [];
+    var insertCount = 0;
+    var updateCount = 0;
+
+    try {
+        // INSERT new rows
+        for (var i = 0; i < fyNewRows.length; i++) {
+            var r = fyNewRows[i];
+            var data = fyBuildTransactionRecord(r);
+            try {
+                var resp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions', {
+                    method: 'POST',
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+                    body: JSON.stringify(data)
+                }, 3);
+                var result = await resp.json();
+                if (!resp.ok) {
+                    insertErrors.push(r.short_symbol + ' (' + r.transaction_type + '): ' + (result.message || result.details || 'HTTP ' + resp.status));
+                } else {
+                    insertCount++;
+                }
+            } catch (e) {
+                insertErrors.push(r.short_symbol + ': ' + e.message + ' (after 3 retries)');
+            }
+        }
+
+        // UPDATE existing rows
+        for (var j = 0; j < fyUpdateRows.length; j++) {
+            var ur = fyUpdateRows[j];
+            var udata = fyBuildTransactionRecord(ur);
+            delete udata.created_at;
+            try {
+                var uresp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
+                    method: 'PATCH',
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+                    body: JSON.stringify(udata)
+                }, 3);
+                var uresult = await uresp.json();
+                if (!uresp.ok) {
+                    updateErrors.push(ur.short_symbol + ' (' + ur.transaction_type + '): ' + (uresult.message || uresult.details || 'HTTP ' + uresp.status));
+                } else {
+                    updateCount++;
+                }
+            } catch (e) {
+                updateErrors.push(ur.short_symbol + ': ' + e.message + ' (after 3 retries)');
+            }
+        }
+
+        // Write import log
+        await tiWriteImportLog('FYERS', {
+            transaction_date: fyTradeDate,
+            investor_id: fyInvestorId,
+            broker_id: fyBrokerId,
+            total_rows: totalRows,
+            new_rows: insertCount,
+            updated_rows: updateCount,
+            error_rows: insertErrors.length + updateErrors.length + fyErrorRows.length,
+            status: (insertErrors.length + updateErrors.length) > 0 ? 'PARTIAL' : 'SUCCESS',
+            details: {
+                symbols: fyParsedRows.map(function(r) { return r.short_symbol; }),
+                errors: insertErrors.concat(updateErrors),
+                skipped: fyErrorRows.map(function(e) { return e.description; })
+            }
+        });
+
+        tiLoading(false);
+
+        // Show results
+        var allErrors = insertErrors.concat(updateErrors);
+        if (allErrors.length > 0) {
+            tiAlert('warning', 'Imported ' + insertCount + ' new, updated ' + updateCount + '.\n\nErrors (' + allErrors.length + '):\n' + allErrors.join('\n'));
+            document.getElementById('fyImportBtn').disabled = false;
+        } else {
+            tiAlert('success', 'Successfully imported ' + insertCount + ' new and updated ' + updateCount + ' Fyers transactions!');
+            document.getElementById('fyImportBtn').disabled = false;
+            document.getElementById('fyPreviewSection').classList.remove('active');
+            fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fyErrorRows = [];
+        }
+
+        // Reload import log display
+        tiLoadImportLog();
+
+    } catch (e) {
+        console.error('Fyers import error:', e);
+        tiLoading(false);
+        tiAlert('error', 'Import failed: ' + e.message);
+        document.getElementById('fyImportBtn').disabled = false;
+    }
+};
+
+window.cancelFyImport = function() {
+    if (confirm('Cancel Fyers import and start over?')) {
+        document.getElementById('fyPreviewSection').classList.remove('active');
+        document.getElementById('fyFetchStatus').textContent = '';
+        fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fyErrorRows = [];
+        fyTradeDate = null;
+    }
+};
+
+
+// ============================================================================
+// IMPORT LOG — Unified across all import types
+// ============================================================================
+
+async function tiLoadImportLog() {
+    var tbody = document.getElementById('importLogBody');
+    if (!tbody) return;
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/import_log?order=created_at.desc&limit=20&select=*,investors(short_name),brokers(name)', {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        });
+
+        if (!resp.ok) {
+            // Table might not exist yet — show graceful message
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:16px;">Import log not available. Run the migration to create the import_log table.</td></tr>';
+            return;
+        }
+
+        var logs = await resp.json();
+
+        if (!logs || logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:16px;">No imports recorded yet.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = '';
+        logs.forEach(function(log) {
+            var tr = document.createElement('tr');
+            var typeClass = 'il-type il-type-' + (log.import_type || '').toLowerCase();
+            var statusClass = 'il-status-' + (log.status || 'success').toLowerCase();
+            var importDate = log.created_at ? new Date(log.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+            var tradeDate = log.transaction_date ? formatDate(log.transaction_date) : '—';
+            var invName = log.investors ? log.investors.short_name : '—';
+            var brkName = log.brokers ? log.brokers.name : '—';
+
+            tr.innerHTML = '<td>' + importDate + '</td>' +
+                '<td><span class="' + typeClass + '">' + (log.import_type || '?') + '</span></td>' +
+                '<td>' + wmsEsc(invName) + '</td>' +
+                '<td>' + wmsEsc(brkName) + '</td>' +
+                '<td>' + tradeDate + '</td>' +
+                '<td style="text-align:right;color:#059669;font-weight:600;">' + (log.new_rows || 0) + '</td>' +
+                '<td style="text-align:right;color:#ed8936;font-weight:600;">' + (log.updated_rows || 0) + '</td>' +
+                '<td style="text-align:right;color:#dc2626;font-weight:600;">' + (log.error_rows || 0) + '</td>' +
+                '<td class="' + statusClass + '">' + (log.status || '—') + '</td>';
+            tbody.appendChild(tr);
+        });
+
+    } catch (e) {
+        console.error('Error loading import log:', e);
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:16px;">Error loading import log.</td></tr>';
+    }
+}
+
+async function tiWriteImportLog(importType, data) {
+    try {
+        var logRecord = {
+            import_type: importType,
+            transaction_date: data.transaction_date || null,
+            investor_id: data.investor_id || null,
+            broker_id: data.broker_id || null,
+            total_rows: data.total_rows || 0,
+            new_rows: data.new_rows || 0,
+            updated_rows: data.updated_rows || 0,
+            error_rows: data.error_rows || 0,
+            status: data.status || 'SUCCESS',
+            details: data.details || null
+        };
+
+        await fetch(SUPABASE_URL + '/rest/v1/import_log', {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify(logRecord)
+        });
+    } catch (e) {
+        console.error('Error writing import log:', e);
+        // Non-fatal — don't block the import
+    }
+}
