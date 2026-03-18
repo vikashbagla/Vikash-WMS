@@ -97,6 +97,23 @@ function initTransactionImport() {
         });
     }
 
+    // Fyers preview modal — ESC key and overlay click to close
+    var fyOverlay = document.getElementById('fyPreviewOverlay');
+    if (fyOverlay) {
+        fyOverlay.addEventListener('click', function(e) {
+            if (e.target === fyOverlay) window.cancelFyImport();
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && fyOverlay.classList.contains('active')) {
+                // Only close Fyers modal if Excel modal is NOT open (Excel handler takes priority)
+                var excelOv = document.getElementById('excelPreviewOverlay');
+                if (!excelOv || !excelOv.classList.contains('active')) {
+                    window.cancelFyImport();
+                }
+            }
+        });
+    }
+
     loadReferenceData().then(function() {
         // After ref data is synced, init Fyers (needs investors/brokers)
         fyInit();
@@ -3682,7 +3699,7 @@ function fyDisplayPreview() {
 
     // Show preview section
     document.getElementById('fyImportBtn').disabled = false;
-    document.getElementById('fyPreviewSection').classList.add('active');
+    document.getElementById('fyPreviewOverlay').classList.add('active');
 }
 
 function fyCreatePreviewRow(r, idx, action) {
@@ -3906,7 +3923,7 @@ window.fyImportToDatabase = async function() {
         } else {
             tiAlert('success', 'Successfully imported ' + insertCount + ' new and updated ' + updateCount + ' Fyers transactions!');
             document.getElementById('fyImportBtn').disabled = false;
-            document.getElementById('fyPreviewSection').classList.remove('active');
+            document.getElementById('fyPreviewOverlay').classList.remove('active');
             fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fyErrorRows = [];
         }
 
@@ -3923,7 +3940,7 @@ window.fyImportToDatabase = async function() {
 
 window.cancelFyImport = function() {
     if (confirm('Cancel Fyers import and start over?')) {
-        document.getElementById('fyPreviewSection').classList.remove('active');
+        document.getElementById('fyPreviewOverlay').classList.remove('active');
         document.getElementById('fyFetchStatus').textContent = '';
         fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fyErrorRows = [];
         fyTradeDate = null;

@@ -297,48 +297,66 @@
         </div>
     </div>
 
-    <!-- ===== FYERS PREVIEW (full width, below Fyers box) ===== -->
-    <div class="section preview-section" id="fyPreviewSection">
-        <div class="section-title">Fyers Tradebook Preview</div>
+    <!-- ===== FYERS PREVIEW MODAL (same pattern as Excel preview) ===== -->
+    <div class="excel-preview-overlay" id="fyPreviewOverlay">
+        <div class="excel-preview-card">
+            <div class="excel-preview-header">
+                <h3>🔗 Fyers Tradebook Preview</h3>
+                <button class="btn-close-modal" onclick="cancelFyImport()" title="Close">✕</button>
+            </div>
+            <div class="excel-preview-body">
+                <!-- Sticky summary bar -->
+                <div class="excel-summary-bar" id="fySummaryBar">
+                    <div class="excel-summary-card esc-all active" style="background:#f5f3ff;color:#7c3aed;">
+                        <div class="esc-count" id="fyStatTotal">0</div>
+                        <div class="esc-label">Total</div>
+                    </div>
+                    <div class="excel-summary-card esc-confirmed">
+                        <div class="esc-count" id="fyStatNew">0</div>
+                        <div class="esc-label">New</div>
+                    </div>
+                    <div class="excel-summary-card" style="background:#fffbeb;color:#d97706;">
+                        <div class="esc-count" id="fyStatUpdate">0</div>
+                        <div class="esc-label">Updates</div>
+                    </div>
+                    <div class="excel-summary-card" style="background:#fef2f2;color:#dc2626;">
+                        <div class="esc-count" id="fyStatError">0</div>
+                        <div class="esc-label">Errors</div>
+                    </div>
+                </div>
 
-        <!-- Info Banner -->
-        <div id="fyInfoBanner" style="display:flex; gap:24px; padding:8px 14px; margin-bottom:10px; background:#f5f3ff; border:1px solid #ddd6fe; border-radius:6px; font-size:12px; color:#2d3748; align-items:center; flex-wrap:wrap;">
-            <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Trade Date:</span> <span id="fyBannerDate" style="font-weight:600;">—</span></div>
-            <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Investor:</span> <span id="fyBannerInvestor" style="font-weight:600;">—</span></div>
-            <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Broker:</span> <span id="fyBannerBroker" style="font-weight:600;">—</span></div>
-        </div>
+                <!-- Info Banner -->
+                <div id="fyInfoBanner" style="display:flex; gap:24px; padding:8px 14px; margin:8px 0; background:#f5f3ff; border:1px solid #ddd6fe; border-radius:6px; font-size:12px; color:#2d3748; align-items:center; flex-wrap:wrap;">
+                    <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Trade Date:</span> <span id="fyBannerDate" style="font-weight:600;">—</span></div>
+                    <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Investor:</span> <span id="fyBannerInvestor" style="font-weight:600;">—</span></div>
+                    <div><span style="font-weight:600; color:#718096; font-size:10px; text-transform:uppercase; margin-right:4px;">Broker:</span> <span id="fyBannerBroker" style="font-weight:600;">—</span></div>
+                </div>
 
-        <div class="stats">
-            <div class="stat-card"><div class="stat-label">Total Rows</div><div class="stat-value" id="fyStatTotal">0</div></div>
-            <div class="stat-card" style="border-left-color:#059669;"><div class="stat-label">New</div><div class="stat-value" id="fyStatNew" style="color:#059669;">0</div></div>
-            <div class="stat-card" style="border-left-color:#ed8936;"><div class="stat-label">Updates</div><div class="stat-value" id="fyStatUpdate" style="color:#ed8936;">0</div></div>
-            <div class="stat-card" style="border-left-color:#dc2626;"><div class="stat-label">Errors</div><div class="stat-value" id="fyStatError" style="color:#dc2626;">0</div></div>
-        </div>
+                <div id="fyNewSection" style="display:none;">
+                    <div class="cn-table-label new-rows">New Transactions (will be inserted)</div>
+                    <div class="table-wrapper"><table><thead><tr>
+                        <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
+                    </tr></thead><tbody id="fyNewTableBody"></tbody></table></div>
+                </div>
 
-        <div id="fyNewSection" style="display:none;">
-            <div class="cn-table-label new-rows">New Transactions (will be inserted)</div>
-            <div class="table-wrapper"><table><thead><tr>
-                <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
-            </tr></thead><tbody id="fyNewTableBody"></tbody></table></div>
-        </div>
+                <div id="fyUpdateSection" style="display:none;">
+                    <div class="cn-table-label update-rows">Existing Transactions (will be updated)</div>
+                    <div class="table-wrapper"><table><thead><tr>
+                        <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
+                    </tr></thead><tbody id="fyUpdateTableBody"></tbody></table></div>
+                </div>
 
-        <div id="fyUpdateSection" style="display:none;">
-            <div class="cn-table-label update-rows">Existing Transactions (will be updated)</div>
-            <div class="table-wrapper"><table><thead><tr>
-                <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
-            </tr></thead><tbody id="fyUpdateTableBody"></tbody></table></div>
-        </div>
-
-        <div id="fyErrorSection" style="display:none;">
-            <div class="cn-table-label error-rows">Errors (will be skipped)</div>
-            <div class="table-wrapper"><table><thead><tr>
-                <th>#</th><th>Symbol/Description</th><th>Error</th>
-            </tr></thead><tbody id="fyErrorTableBody"></tbody></table></div>
-        </div>
-
-        <div class="action-buttons">
-            <button class="btn btn-danger" onclick="cancelFyImport()">Cancel</button>
-            <button class="btn btn-success" id="fyImportBtn" onclick="fyImportToDatabase()">Import to Database</button>
+                <div id="fyErrorSection" style="display:none;">
+                    <div class="cn-table-label error-rows">Errors (will be skipped)</div>
+                    <div class="table-wrapper"><table><thead><tr>
+                        <th>#</th><th>Symbol/Description</th><th>Error</th>
+                    </tr></thead><tbody id="fyErrorTableBody"></tbody></table></div>
+                </div>
+            </div>
+            <div class="excel-preview-footer">
+                <button class="btn btn-danger" onclick="cancelFyImport()">Cancel</button>
+                <button class="btn btn-success" id="fyImportBtn" onclick="fyImportToDatabase()">Import to Database</button>
+            </div>
         </div>
     </div>
 
