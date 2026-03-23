@@ -1204,7 +1204,7 @@ function atAutoPopulateTags(rowId, row) {
     var matchingTags = {};
     for (var i = 0; i < txns.length; i++) {
         var t = txns[i];
-        if (t.investor_id === investorId && (t.trader_id || t.investor_id) === traderId && t.symbol === symbol) {
+        if (t.investor_id === investorId && (t.trader_id || t.investor_id) === traderId && (t.symbol || '').replace(/^[A-Z]+:/, '') === (symbol || '').replace(/^[A-Z]+:/, '')) {
             if (Array.isArray(t.tags)) {
                 t.tags.forEach(function(tag) {
                     var trimmed = tag.trim().toLowerCase();
@@ -1235,7 +1235,7 @@ function atShowBalanceQtyTooltip(rowId, row) {
     for (var i = 0; i < txns.length; i++) {
         var t = txns[i];
         if (t.investor_id === investorId && t.broker_id === brokerId &&
-            (t.trader_id || t.investor_id) === traderId && t.symbol === symbol &&
+            (t.trader_id || t.investor_id) === traderId && (t.symbol || '').replace(/^[A-Z]+:/, '') === (symbol || '').replace(/^[A-Z]+:/, '') &&
             !t.dont_display) {
             filtered.push(t);
         }
@@ -1657,7 +1657,7 @@ async function importAddTxnToDb() {
                 var txnType = row.quantity >= 0 ? 'BUY' : 'SELL';
                 for (var e = 0; e < existingTxns.length; e++) {
                     var ex = existingTxns[e];
-                    if (ex.symbol === row.symbol && ex.transaction_type === txnType) {
+                    if ((ex.symbol || '').replace(/^[A-Z]+:/, '') === (row.symbol || '').replace(/^[A-Z]+:/, '') && ex.transaction_type === txnType) {
                         dupes.push({
                             rowNum: idx + 1,
                             symbol: row.symbol,

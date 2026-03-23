@@ -800,14 +800,15 @@ function matchSymbolMultiStage(symbol, securityType, batchMap) {
 
         if (nfoMatches.length === 1) {
             var nfo = nfoMatches[0];
+            var nfoBare = (nfo.symbol || '').replace(/^[A-Z]+:/, '');
             return { status: 'confirmed', match: {
-                id: nfo.id, symbol: nfo.symbol, short_symbol: nfo.underlying_symbol || nfo.symbol,
-                company_name: nfo.instrument_name || nfo.symbol, security_type: 'NFO',
+                id: nfo.id, symbol: nfoBare, short_symbol: nfo.underlying_symbol || nfoBare,
+                company_name: nfo.instrument_name || nfoBare, security_type: 'NFO',
                 asset_class: nfo.instrument_type || null, exchange: nfo.exchange || 'NSE', lot_size: nfo.lot_size || 1
             }, matches: nfoMatches };
         } else if (nfoMatches.length > 1) {
             return { status: 'flagged', match: null, matches: nfoMatches.map(function(n) {
-                return { id: n.id, symbol: n.symbol, short_symbol: n.underlying_symbol, company_name: n.instrument_name, security_type: 'NFO', exchange: n.exchange };
+                return { id: n.id, symbol: (n.symbol || '').replace(/^[A-Z]+:/, ''), short_symbol: n.underlying_symbol, company_name: n.instrument_name, security_type: 'NFO', exchange: n.exchange };
             }) };
         }
 
@@ -1098,9 +1099,10 @@ async function checkDuplicates(rows, tradeDate) {
     cnUpdateRows = [];
 
     rows.forEach(function(r) {
-        // Match: same symbol + same transaction_type
+        // Match: same symbol + same transaction_type (strip exchange prefix for consistent comparison)
+        var rBare = (r.symbol || '').replace(/^[A-Z]+:/, '');
         var match = existing.find(function(e) {
-            return e.symbol === r.symbol && e.transaction_type === r.transaction_type;
+            return (e.symbol || '').replace(/^[A-Z]+:/, '') === rBare && e.transaction_type === r.transaction_type;
         });
 
         if (match) {
@@ -3541,7 +3543,7 @@ async function fyProcessTrades(tradeBook) {
         var row = {
             security_id: secMatch.id,
             security_type: secType,
-            symbol: secMatch.symbol,
+            symbol: (secMatch.symbol || '').replace(/^[A-Z]+:/, ''),
             short_symbol: secMatch.short_symbol || g.symbol,
             company_name: secMatch.company_name || g.symbol,
             exchange: secMatch.exchange || 'NSE',
@@ -3600,9 +3602,10 @@ async function fyCheckDuplicates(rows) {
     fyUpdateRows = [];
 
     rows.forEach(function(r) {
-        // Match: same symbol + same transaction_type (same as CN checkDuplicates)
+        // Match: same symbol + same transaction_type (strip exchange prefix for consistent comparison)
+        var rBare = (r.symbol || '').replace(/^[A-Z]+:/, '');
         var match = existing.find(function(e) {
-            return e.symbol === r.symbol && e.transaction_type === r.transaction_type;
+            return (e.symbol || '').replace(/^[A-Z]+:/, '') === rBare && e.transaction_type === r.transaction_type;
         });
 
         if (match) {

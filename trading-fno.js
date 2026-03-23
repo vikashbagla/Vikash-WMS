@@ -344,7 +344,7 @@ function trFnoCalcPositions() {
             var invId = t.investor_id || '';
             var trdId = t.trader_id || '';
             var brkId = t.broker_id || '';
-            var fullSym = t.symbol || t.short_symbol || '';
+            var fullSym = (t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
             var key = invId + '|' + trdId + '|' + brkId + '|' + fullSym;
             if (!groups[key]) {
                 groups[key] = {
