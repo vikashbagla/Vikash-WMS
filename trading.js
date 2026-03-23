@@ -97,10 +97,15 @@ function trUpdateDayPLBanner() {
         if (val == null) return '';
         return '<span style="' + plColor(val) + ';">' + formatPercent(val) + '</span>';
     }
-    // Strip decimal portion from formatAmount output for Portfolio block
+    // Strip decimal portion for Portfolio block (use raw string, then wrap with tooltip)
     function fmtNoDec(val) {
-        var s = formatAmount(val);
-        return s.replace(/\.\d{2}/, '');
+        var raw = formatAmountRaw(val);
+        if (raw === '-') return '-';
+        var display = raw.replace(/\.\d{2}/, '');
+        var absVal = Math.abs(val);
+        var full = absVal.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        if (val < 0) full = '(' + full + ')';
+        return '<span title="\u20B9 ' + full + '">' + display + '</span>';
     }
     function plHtmlNoDec(val) {
         if (val == null) return '<span style="color:#a0aec0;">-</span>';

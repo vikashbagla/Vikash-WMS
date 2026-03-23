@@ -72,19 +72,27 @@ const formatPrice = (value, applyUnit = false) => {
     }
 };
 
-// Format amount with display unit and negative handling (NO ₹ SYMBOL)
-// Rule: zero amounts display as '-' (immediate visual indicator of no value)
-const formatAmount = (value) => {
+// Core amount formatter (returns plain string, no HTML)
+// Used by fmtNoDec and formatAmount
+var formatAmountRaw = function(value) {
     if (value === null || value === undefined || isNaN(value) || value === 0) return '-';
-    
-    const unit = getDisplayUnit();
-    const config = getUnitConfig(unit);
-    const convertedValue = Math.abs(value) / config.divisor;
-    
-    if (value < 0) {
-        return '(' + formatWithCommas(convertedValue, config.comma) + ')';
-    }
+    var unit = getDisplayUnit();
+    var config = getUnitConfig(unit);
+    var convertedValue = Math.abs(value) / config.divisor;
+    if (value < 0) return '(' + formatWithCommas(convertedValue, config.comma) + ')';
     return formatWithCommas(convertedValue, config.comma);
+};
+
+// Format amount with display unit, negative handling, and full-amount tooltip
+// Rule: zero amounts display as '-' (immediate visual indicator of no value)
+// Returns HTML <span> with title showing unscaled ₹ amount on hover
+const formatAmount = (value) => {
+    var display = formatAmountRaw(value);
+    if (display === '-') return '-';
+    var absVal = Math.abs(value);
+    var full = absVal.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (value < 0) full = '(' + full + ')';
+    return '<span title="\u20B9 ' + full + '">' + display + '</span>';
 };
 
 // Get unit label for column headers
