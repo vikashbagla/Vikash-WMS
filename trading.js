@@ -340,6 +340,29 @@ async function trFnoBannerRefreshFromDefault(forceRefresh) {
 }
 
 // ============================================================================
+// EARLY LOAD: F&O Default View Filters (before F&O module is loaded)
+// Ensures the banner uses correct filters from the start, not all-unfiltered.
+// ============================================================================
+
+async function trLoadFnoDefaultFilters() {
+    if (trDefaultFnoViewFilters) return; // Already loaded (e.g. F&O module ran first)
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?module=eq.trading_fno&is_default=eq.true&select=filters&limit=1', {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        });
+        if (resp.ok) {
+            var rows = await resp.json();
+            if (rows.length > 0) {
+                trDefaultFnoViewFilters = rows[0].filters || {};
+                console.log('trLoadFnoDefaultFilters: loaded default F&O view filters');
+            }
+        }
+    } catch (err) {
+        console.warn('trLoadFnoDefaultFilters: failed:', err.message);
+    }
+}
+
+// ============================================================================
 // INITIALIZATION
 // ============================================================================
 
@@ -358,6 +381,10 @@ async function initTrading() {
     }
 
     trUpdateUnitLabels();
+
+    // Load F&O default view filters early — must be set BEFORE first wmsRefreshRender()
+    // so banner uses correct filters, not all-unfiltered
+    await trLoadFnoDefaultFilters();
 
     // Build master symbol list and do initial price fetch + render
     if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
