@@ -210,7 +210,41 @@
     <script>
         const APP_ID = '88XL3K3R7R-100';
         const REDIRECT = 'https://vikashbagla.github.io/Vikash-WMS/fyers-oauth.html';
+        const SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
         let token = '';
+
+        // Save token to broker_api_tokens via Supabase REST
+        async function saveTokenToDB(accessToken, tokenDate) {
+            // First find Fyers broker_id
+            const bRes = await fetch(
+                `${SUPABASE_URL}/rest/v1/brokers?or=(cn_parser_template.eq.fyers,broker_code.eq.FYERS)&select=id&limit=1`,
+                { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` } }
+            );
+            const brokers = await bRes.json();
+            if (!brokers || brokers.length === 0) {
+                console.warn('Fyers broker not found in DB — skipping DB token save');
+                return;
+            }
+            await fetch(`${SUPABASE_URL}/rest/v1/broker_api_tokens`, {
+                method: 'POST',
+                headers: {
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'resolution=merge-duplicates'
+                },
+                body: JSON.stringify({
+                    broker_id: brokers[0].id,
+                    access_token: accessToken,
+                    token_date: tokenDate,
+                    generated_at: new Date().toISOString(),
+                    generation_method: 'manual',
+                    updated_at: new Date().toISOString()
+                })
+            });
+            console.log('✅ Token also saved to broker_api_tokens DB');
+        }
 
         window.addEventListener('DOMContentLoaded', () => {
             const params = new URLSearchParams(window.location.search);
@@ -262,14 +296,17 @@
                 // v3 returns access_token directly
                 if (data.access_token) {
                     token = data.access_token;
-                    
+
                     // Save token with today's date to localStorage
                     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
                     localStorage.setItem('fyers_token', JSON.stringify({
                         token: token,
                         date: today
                     }));
-                    
+
+                    // Also save to broker_api_tokens DB (so edge functions can use it)
+                    saveTokenToDB(token, today).catch(e => console.warn('DB token save failed (non-blocking):', e));
+
                     document.getElementById('step2').style.display = 'none';
                     document.getElementById('step3').style.display = 'block';
                     document.getElementById('token-display').textContent = token;

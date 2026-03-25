@@ -133,20 +133,60 @@
         return await response.json();
     };
 
-    // Check Fyers token on app load - redirect to OAuth if needed
-    function checkFyersAuth() {
-        const token = getFyersToken();
-        if (token) {
-            window.fyersToken = token;
-            console.log('✅ Fyers token valid for today');
-            document.getElementById('fyers-status').innerHTML = '🟢 Fyers';
-            document.getElementById('fyers-status').style.color = '#059669';
-        } else {
-            window.fyersToken = null;
-            document.getElementById('fyers-status').innerHTML =
-                '🔴 <a href="fyers-oauth.html" style="color:#dc2626;font-weight:600;">Fyers</a>';
-            console.log('⚠️ Fyers token missing or expired');
+    // Check for today's token in broker_api_tokens DB (auto-login)
+    async function checkFyersDbToken() {
+        try {
+            const today = new Date().toISOString().split('T')[0];
+            const res = await fetch(
+                `${window.SUPABASE_URL}/rest/v1/broker_api_tokens?token_date=eq.${today}&select=access_token,generation_method,generated_at,last_error&limit=1`,
+                {
+                    headers: {
+                        'apikey': window.SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${window.SUPABASE_ANON_KEY}`
+                    }
+                }
+            );
+            if (!res.ok) return null;
+            const rows = await res.json();
+            if (rows && rows.length > 0 && rows[0].access_token) return rows[0];
+        } catch (e) {
+            console.warn('DB token check failed:', e);
         }
+        return null;
+    }
+
+    // Check Fyers token on app load
+    // Priority: localStorage (manual OAuth) → DB (auto-login) → not connected
+    async function checkFyersAuth() {
+        const statusEl = document.getElementById('fyers-status');
+
+        // 1. Check localStorage first (manual OAuth)
+        const localToken = getFyersToken();
+        if (localToken) {
+            window.fyersToken = localToken;
+            console.log('✅ Fyers token valid for today (localStorage)');
+            statusEl.innerHTML = '🟢 Fyers';
+            statusEl.style.color = '#059669';
+            return;
+        }
+
+        // 2. Check DB for auto-login token
+        const dbRow = await checkFyersDbToken();
+        if (dbRow && dbRow.access_token) {
+            // Auto-login token exists — edge function will use it automatically
+            window.fyersToken = 'db';  // truthy flag; actual token used server-side
+            const method = dbRow.generation_method === 'auto' ? 'auto-login' : 'manual';
+            console.log(`✅ Fyers token valid for today (DB, ${method})`);
+            statusEl.innerHTML = '🟢 Fyers <span style="font-size:9px;color:#6b7280;">(auto)</span>';
+            statusEl.style.color = '#059669';
+            return;
+        }
+
+        // 3. No token available
+        window.fyersToken = null;
+        statusEl.innerHTML =
+            '🔴 <a href="fyers-oauth.html" style="color:#dc2626;font-weight:600;">Fyers</a>';
+        console.log('⚠️ Fyers token missing or expired');
     }
 
     // ============================================================
