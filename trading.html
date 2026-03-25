@@ -841,7 +841,10 @@
     .trading-header-bar { flex-direction: column; align-items: stretch; }
     .trading-header-bar .btn-add-txn { align-self: flex-end; }
 
-    /* Day P&L: smaller text */
+    /* Day P&L banner: hide Portfolio block (Invested/Total P&L/Current Value), center Day's P&L */
+    #trDayPLBanner { justify-content: center; }
+    #trDayPLBanner > .tr-pl-block-sep { display: none; }
+    #trDayPLBanner > .tr-pl-block:last-child { display: none; }
     #trDayPLBanner .tr-pl-value { font-size: 12px; }
     #trDayPLBanner .tr-pl-label { font-size: 9px; }
 

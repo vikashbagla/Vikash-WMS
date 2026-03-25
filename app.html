@@ -259,7 +259,8 @@
     // ---- Fetch and display NIFTY, BANKNIFTY, SENSEX, GOLD prices ----
     async function fetchIndexPrices() {
         try {
-            var token = getFyersToken();
+            // Check localStorage token OR DB token (auto-login sets window.fyersToken = 'db')
+            var token = getFyersToken() || window.fyersToken;
             if (!token) return;
 
             // Resolve gold symbol (cached after first success)
