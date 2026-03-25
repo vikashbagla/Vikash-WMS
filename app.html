@@ -133,12 +133,12 @@
         return await response.json();
     };
 
-    // Check for today's token in broker_api_tokens DB (auto-login)
+    // Check for today's token in investor_broker_accounts (auto-login)
     async function checkFyersDbToken() {
         try {
             const today = new Date().toISOString().split('T')[0];
             const res = await fetch(
-                `${window.SUPABASE_URL}/rest/v1/broker_api_tokens?token_date=eq.${today}&select=access_token,generation_method,generated_at,last_error&limit=1`,
+                `${window.SUPABASE_URL}/rest/v1/investor_broker_accounts?api_token_date=eq.${today}&api_access_token=not.is.null&select=api_access_token,api_token_method,api_token_generated_at,api_last_error&limit=1`,
                 {
                     headers: {
                         'apikey': window.SUPABASE_ANON_KEY,
@@ -148,7 +148,7 @@
             );
             if (!res.ok) return null;
             const rows = await res.json();
-            if (rows && rows.length > 0 && rows[0].access_token) return rows[0];
+            if (rows && rows.length > 0 && rows[0].api_access_token) return rows[0];
         } catch (e) {
             console.warn('DB token check failed:', e);
         }
@@ -172,10 +172,10 @@
 
         // 2. Check DB for auto-login token
         const dbRow = await checkFyersDbToken();
-        if (dbRow && dbRow.access_token) {
+        if (dbRow && dbRow.api_access_token) {
             // Auto-login token exists — edge function will use it automatically
             window.fyersToken = 'db';  // truthy flag; actual token used server-side
-            const method = dbRow.generation_method === 'auto' ? 'auto-login' : 'manual';
+            const method = dbRow.api_token_method === 'auto' ? 'auto-login' : 'manual';
             console.log(`✅ Fyers token valid for today (DB, ${method})`);
             statusEl.innerHTML = '🟢 Fyers <span style="font-size:9px;color:#6b7280;">(auto)</span>';
             statusEl.style.color = '#059669';

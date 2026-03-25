@@ -214,9 +214,10 @@
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
         let token = '';
 
-        // Save token to broker_api_tokens via Supabase REST
+        // Save token to investor_broker_accounts via Supabase REST
+        // Updates ALL Fyers IBA rows (all investors sharing this broker) with today's token
         async function saveTokenToDB(accessToken, tokenDate) {
-            // First find Fyers broker_id
+            // Find all Fyers IBA rows (broker with cn_parser_template = fyers)
             const bRes = await fetch(
                 `${SUPABASE_URL}/rest/v1/brokers?or=(cn_parser_template.eq.fyers,broker_code.eq.FYERS)&select=id&limit=1`,
                 { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` } }
@@ -226,24 +227,23 @@
                 console.warn('Fyers broker not found in DB — skipping DB token save');
                 return;
             }
-            await fetch(`${SUPABASE_URL}/rest/v1/broker_api_tokens`, {
-                method: 'POST',
+            // PATCH all IBA rows for this broker
+            await fetch(`${SUPABASE_URL}/rest/v1/investor_broker_accounts?broker_id=eq.${brokers[0].id}`, {
+                method: 'PATCH',
                 headers: {
                     'apikey': SUPABASE_ANON_KEY,
                     'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                     'Content-Type': 'application/json',
-                    'Prefer': 'resolution=merge-duplicates'
+                    'Prefer': 'return=minimal'
                 },
                 body: JSON.stringify({
-                    broker_id: brokers[0].id,
-                    access_token: accessToken,
-                    token_date: tokenDate,
-                    generated_at: new Date().toISOString(),
-                    generation_method: 'manual',
-                    updated_at: new Date().toISOString()
+                    api_access_token: accessToken,
+                    api_token_date: tokenDate,
+                    api_token_generated_at: new Date().toISOString(),
+                    api_token_method: 'manual'
                 })
             });
-            console.log('✅ Token also saved to broker_api_tokens DB');
+            console.log('✅ Token also saved to investor_broker_accounts');
         }
 
         window.addEventListener('DOMContentLoaded', () => {
