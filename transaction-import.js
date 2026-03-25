@@ -928,6 +928,35 @@ function matchSymbolMultiStage(symbol, securityType, batchMap) {
             }
         }
 
+        // 3c: If still no matches, try prefix word matching — handles truncated DB names
+        // e.g. "Garuda Construction and Engineering" vs DB "GARUDA CONSTRUCT N ENG L"
+        // Each DB word (3+ chars) must be a prefix of some input word, or vice versa
+        if (compMatches.length === 0) {
+            var searchTokens3c = _importTokenize(searchNorm);
+            if (searchTokens3c.length >= 2) {
+                compMatches = cmAll.filter(function(r) {
+                    if (securityType && securityType !== 'NFO' && r.security_type !== securityType) return false;
+                    if (!r.company_name) return false;
+                    var dbTokens = _importTokenize(_importNormCompanyName(r.company_name));
+                    if (dbTokens.length === 0) return false;
+                    // Every DB token must prefix-match at least one input token (or vice versa)
+                    var dbMatch = dbTokens.every(function(dt) {
+                        return searchTokens3c.some(function(st) {
+                            return st.indexOf(dt) === 0 || dt.indexOf(st) === 0;
+                        });
+                    });
+                    // And at least half the input tokens must prefix-match a DB token (prevents overly broad matches)
+                    if (!dbMatch) return false;
+                    var inputMatchCount = searchTokens3c.filter(function(st) {
+                        return dbTokens.some(function(dt) {
+                            return st.indexOf(dt) === 0 || dt.indexOf(st) === 0;
+                        });
+                    }).length;
+                    return inputMatchCount >= Math.ceil(searchTokens3c.length / 2);
+                });
+            }
+        }
+
         compMatches = compMatches.slice(0, 10);
 
         if (compMatches.length === 1) {
