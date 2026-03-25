@@ -1,6 +1,108 @@
 <head>
 <style>
-/* Bonus Modal — reuses rights-* classes for consistency, adds bonus-specific styles */
+/* Shared overlay/modal styles (self-contained so bonus works without rights module loaded) */
+.rights-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.4);
+    z-index: 1200;
+    align-items: center;
+    justify-content: center;
+}
+.rights-overlay.show { display: flex; }
+.rights-modal {
+    background: #fff; border-radius: 10px;
+    max-width: 560px; width: 95%; max-height: 90vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+.rights-header {
+    padding: 12px 16px; border-bottom: 1px solid #e2e8f0;
+    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+}
+.rights-header h3 { margin: 0; font-size: 14px; font-weight: 600; color: #2d3748; }
+.rights-body { padding: 12px 16px; overflow-y: auto; flex: 1; }
+.rights-footer {
+    padding: 10px 16px; border-top: 1px solid #e2e8f0;
+    display: flex; justify-content: flex-end; gap: 8px; flex-shrink: 0;
+}
+.rights-fields-row {
+    display: flex; gap: 14px; margin-bottom: 12px; align-items: flex-start;
+}
+.rights-field { display: flex; flex-direction: column; position: relative; }
+.rights-field label {
+    font-size: 10px; font-weight: 600; color: #718096;
+    text-transform: uppercase; margin-bottom: 3px; letter-spacing: 0.3px;
+}
+.rights-field input[type="text"] {
+    padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 4px;
+    font-size: 12px; color: #2d3748; outline: none;
+    height: 28px; box-sizing: border-box;
+}
+.rights-field input:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+/* Segmented date widget */
+.rhDate-wrap {
+    display: flex; align-items: center;
+    padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 4px;
+    cursor: text; user-select: none; font-size: 12px; color: #2d3748;
+    height: 28px; box-sizing: border-box;
+}
+.rhDate-wrap:focus-within { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+.rhDate-seg { padding: 1px 2px; border-radius: 2px; cursor: pointer; }
+.rhDate-seg.active { background: #667eea; color: #fff; }
+.rhDate-sep { margin: 0 1px; color: #a0aec0; }
+.rhDate-cal-btn { background: none; border: none; cursor: pointer; font-size: 11px; margin-left: 4px; padding: 0; line-height: 1; }
+.rhDate-cal-picker { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+/* Search dropdown */
+.rights-search-dd {
+    position: absolute; top: 100%; left: 0; right: 0;
+    background: white; border: 1px solid #e2e8f0; border-radius: 4px;
+    z-index: 100; display: none; max-height: 200px; overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.rights-search-dd.show { display: block; }
+.rights-search-dd .wms-dd-item {
+    padding: 6px 10px; cursor: pointer; font-size: 12px; border-bottom: 1px solid #f0f4f8;
+}
+.rights-search-dd .wms-dd-item:hover,
+.rights-search-dd .wms-dd-item.wms-dd-highlight { background: #eef2ff; }
+.rights-search-dd .wms-dd-item strong { color: #2d3748; }
+/* Holdings table */
+.rights-table {
+    width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 10px;
+    table-layout: fixed; min-width: 0;
+}
+.rights-table th {
+    background: #f7fafc; padding: 6px 8px; text-align: left;
+    font-size: 10px; font-weight: 600; color: #4a5568;
+    text-transform: uppercase; border-bottom: 2px solid #e2e8f0;
+    white-space: nowrap; overflow: hidden;
+}
+.rights-table th.r { text-align: right; }
+.rights-table td {
+    padding: 6px 8px; border-bottom: 1px solid #f0f4f8; vertical-align: middle;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rights-table td.r { text-align: right; }
+.rights-table tr:hover td { background: #f9fafb; }
+.rights-table input[type="number"] {
+    padding: 4px 6px; border: 1px solid #e2e8f0; border-radius: 4px;
+    font-size: 11px; width: 100%; text-align: right; box-sizing: border-box;
+    -moz-appearance: textfield;
+}
+.rights-table input[type="number"]::-webkit-outer-spin-button,
+.rights-table input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0;
+}
+.rights-table input:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+.rights-empty { padding: 20px; text-align: center; color: #a0aec0; font-size: 12px; }
+.rights-selected-badge {
+    display: inline-block; background: #eef2ff; color: #667eea; padding: 3px 8px;
+    border-radius: 4px; font-size: 11px; font-weight: 500; margin-top: 4px;
+}
+
+/* Bonus-specific styles */
 .bonus-ratio-wrap {
     display: flex; align-items: center; gap: 4px;
 }
