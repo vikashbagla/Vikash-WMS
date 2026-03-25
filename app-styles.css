@@ -674,51 +674,68 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
     .nav-btn { font-size:11px; padding:5px 10px; }
     .summary-cards { grid-template-columns:1fr; }
 
-    /* === REIMAGINED MOBILE HEADER === */
-    .app-header { border-bottom-width: 1px; }
+    /* === MOBILE HEADER: 2 dedicated rows via flex-wrap === */
+    /* Row 1: logo + user-section side by side
+       Row 2: ticker strip full-width below (via order + 100% width) */
+    .app-header { border-bottom: none; }  /* border moves to ticker strip */
 
-    /* Row 1: WMS + ₹'000 (left) | Fyers + Refresh + Logout (right) */
     .header-content {
-        padding: 4px 10px;
-        flex-direction: row;
-        justify-content: space-between;
+        padding: 0;
+        flex-wrap: wrap;          /* allow wrapping into 2 rows */
         align-items: center;
-        gap: 4px;
     }
-    .logo-section { gap: 6px; }
-    .logo-section h1 { font-size: 16px; }
 
-    /* Show the ₹'000 unit badge next to logo */
+    /* Row 1 left: WMS + ₹'000 */
+    .logo-section {
+        order: 1;
+        flex: 1;
+        gap: 8px;
+        padding: 6px 12px;
+        align-items: center;
+    }
+    .logo-section h1 { font-size: 18px; }
     .mobile-unit-badge { display: inline-block !important; }
 
-    /* User section: compact row */
-    .user-section { gap: 6px; }
+    /* Row 1 right: Fyers + Refresh + Logout */
+    .user-section {
+        order: 2;
+        gap: 8px;
+        padding: 6px 12px;
+    }
     .user-email { display: none; }
     .fyers-indicator { margin-right: 0; min-width: auto; }
     #fyers-status { font-size: 10px !important; }
     #fyers-refresh-time { display: none !important; }
-    .btn-refresh-app { padding: 2px 6px; font-size: 12px; }
-    .btn-logout { padding: 2px 5px; font-size: 12px; }
+    .btn-refresh-app {
+        padding: 4px 6px; font-size: 13px;
+        border: 1px solid #e2e8f0; border-radius: 6px;
+    }
+    .btn-logout {
+        padding: 4px 6px; font-size: 13px;
+        border: 1px solid #e2e8f0; border-radius: 6px;
+    }
 
-    /* Row 2: Index ticker — constrained, smaller text, no overflow */
+    /* Row 2: Index ticker — forced to new line via 100% width */
     .index-ticker {
+        order: 3;
+        width: 100%;             /* forces wrap to new line */
         display: flex;
-        justify-content: space-between;
-        gap: 0;
-        width: 100%;
-        overflow: hidden; /* prevent horizontal blowout */
+        border-top: 1px solid #f0f4f8;
+        border-bottom: 2px solid #667eea;
     }
     .index-item {
-        flex: 1 1 0;
-        padding: 2px 4px;
-        min-width: 0; /* allow shrinking */
-        border-right: 1px solid #edf2f7;
+        flex: 1;
+        text-align: center;
+        padding: 4px 2px;
+        min-width: 0;
+        border-right: 1px solid #f0f4f8;
+        line-height: 1.2;
     }
     .index-item:last-child { border-right: none; }
-    .index-name { font-size: 8px; letter-spacing: 0; }
-    .index-price { font-size: 10px; }
-    .index-change { font-size: 8px; }
     .index-top { gap: 3px; justify-content: center; }
+    .index-name { font-size: 8px; font-weight: 600; letter-spacing: 0.3px; }
+    .index-price { font-size: 11px; }
+    .index-change { font-size: 8px; }
 
     /* Main content */
     .main-content { padding: 2px 4px 68px; }

@@ -848,13 +848,17 @@
     /* Hide "Trading" title and "all amounts in ₹ '000" (moved to app header) */
     .trading-header-bar > div:first-child { display: none; }
 
-    /* Day P&L banner: hide Portfolio block, center Day's P&L */
-    #trDayPLBanner { justify-content: center; gap: 12px; }
+    /* Day P&L banner: hide Portfolio block, compact sizing to match rest of screen */
+    #trDayPLBanner { justify-content: center; gap: 8px; }
     #trDayPLBanner > .tr-pl-block-sep { display: none; }
     #trDayPLBanner > .tr-pl-block:last-child { display: none; }
-    #trDayPLBanner .tr-pl-value { font-size: 13px; }
-    #trDayPLBanner .tr-pl-label { font-size: 9px; }
-    #trDayPLBanner .tr-pl-pct { font-size: 10px; }
+    #trDayPLBanner .tr-pl-block-label { font-size: 8px; margin-bottom: 0; }
+    #trDayPLBanner .tr-pl-block-cards { gap: 4px; }
+    #trDayPLBanner .tr-pl-value { font-size: 11px; }
+    #trDayPLBanner .tr-pl-label { font-size: 8px; }
+    #trDayPLBanner .tr-pl-pct { font-size: 8px; }
+    #trDayPLBanner .tr-pl-card { padding: 2px 6px; }
+    #trDayPLBanner .tr-pl-sep { margin: 0 2px; }
 
     /* Action buttons: compact single row */
     .trading-header-bar > div:last-child {
