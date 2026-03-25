@@ -783,6 +783,22 @@ function batchMatchSecurities(symbols) {
     return secMap;
 }
 
+// Normalize company name for fuzzy matching:
+// - lowercase, strip suffixes (Ltd/Limited/Pvt/Private/Inc/Corp/NV), normalize &↔and, collapse whitespace
+function _importNormCompanyName(name) {
+    return name.toLowerCase()
+        .replace(/\b(limited|ltd|pvt|private|inc|incorporated|corp|corporation|n\.?v\.?|plc)\b\.?/gi, '')
+        .replace(/&/g, ' and ')
+        .replace(/[^a-z0-9 ]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// Tokenize into significant words (3+ chars) for token matching
+function _importTokenize(normalizedStr) {
+    return normalizedStr.split(' ').filter(function(w) { return w.length >= 3; });
+}
+
 // Multi-stage symbol matching for a single row (rule F.1.6)
 // Fully local: searches wmsRefData.securitiesNfo + securitiesCm in memory (zero API calls).
 // NFO auto-insert is deferred to import time — new NFO symbols get _pendingNfoInsert flag.
@@ -885,14 +901,34 @@ function matchSymbolMultiStage(symbol, securityType, batchMap) {
         return { status: 'confirmed', match: match, matches: [match] };
     }
 
-    // Stage 3: Contains match on company_name from local securitiesCm (rule F.1.6 step 2)
+    // Stage 3: Fuzzy company_name matching from local securitiesCm (rule F.1.6 step 2)
+    // Supports: bidirectional contains, &/and normalization, suffix stripping (Ltd/Limited/Pvt etc.)
     if (wmsRefData.securitiesCmReady) {
         var cmAll = wmsRefData.securitiesCm;
-        var searchLower = symUpper.toLowerCase();
+        var searchNorm = _importNormCompanyName(symbol);
+
+        // 3a: Bidirectional contains — input in DB name OR DB name in input (after normalization)
         var compMatches = cmAll.filter(function(r) {
             if (securityType && securityType !== 'NFO' && r.security_type !== securityType) return false;
-            return r.company_name && r.company_name.toLowerCase().indexOf(searchLower) >= 0;
-        }).slice(0, 10);
+            if (!r.company_name) return false;
+            var dbNorm = _importNormCompanyName(r.company_name);
+            return dbNorm.indexOf(searchNorm) >= 0 || searchNorm.indexOf(dbNorm) >= 0;
+        });
+
+        // 3b: If no matches, try token matching — all significant words from input must appear in DB name
+        if (compMatches.length === 0) {
+            var searchTokens = _importTokenize(searchNorm);
+            if (searchTokens.length >= 2) {
+                compMatches = cmAll.filter(function(r) {
+                    if (securityType && securityType !== 'NFO' && r.security_type !== securityType) return false;
+                    if (!r.company_name) return false;
+                    var dbNorm = _importNormCompanyName(r.company_name);
+                    return searchTokens.every(function(tok) { return dbNorm.indexOf(tok) >= 0; });
+                });
+            }
+        }
+
+        compMatches = compMatches.slice(0, 10);
 
         if (compMatches.length === 1) {
             var cm = compMatches[0];
