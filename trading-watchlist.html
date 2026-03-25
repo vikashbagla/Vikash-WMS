@@ -783,6 +783,87 @@
     color: #a0aec0;
     padding: 0 16px 6px;
 }
+
+/* ================================================================
+   RESPONSIVE: Tablet (iPad portrait)
+   ================================================================ */
+@media (max-width:768px) {
+    /* Switch from CSS columns (masonry) to 2-col grid */
+    .wl-grid {
+        columns: unset;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+    .wl-card { break-inside: unset; margin-bottom: 0; }
+
+    /* Compact header */
+    .wl-header { flex-wrap: wrap; gap: 6px; }
+    .wl-header-right { flex-wrap: wrap; }
+
+    /* Touch-friendly buttons */
+    .btn-new-watchlist { padding: 7px 16px; font-size: 13px; }
+    .btn-wl-refresh { padding: 7px 12px; }
+
+    /* Larger tap targets for security rows */
+    .wl-security-row { padding: 7px 10px 5px; }
+    .wl-sec-symbol .wl-sym-main { font-size: 13px; }
+    .wl-sec-price .wl-price-main { font-size: 13px; }
+    .wl-sec-change .wl-change-main { font-size: 12px; }
+
+    /* Modals: wider on tablet */
+    .wl-add-dialog { max-width: 90vw; }
+}
+
+/* ================================================================
+   RESPONSIVE: Phone (iPhone / small Android)
+   ================================================================ */
+@media (max-width:480px) {
+    /* Single column — full width cards */
+    .wl-grid {
+        columns: unset;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+    .wl-card { break-inside: unset; margin-bottom: 0; }
+
+    /* Header: stack vertically */
+    .wl-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+    .wl-header-right { width: 100%; justify-content: space-between; }
+
+    /* Larger touch targets for phone */
+    .wl-security-row { padding: 8px 10px 4px; }
+    .wl-sec-symbol .wl-sym-main { font-size: 13px; }
+    .wl-sec-price .wl-price-main { font-size: 13px; }
+    .wl-sec-change .wl-change-main { font-size: 12px; }
+
+    /* Card actions: bigger tap zones */
+    .wl-card-actions button { padding: 4px 8px; font-size: 14px; }
+
+    /* Sort pills: slightly bigger */
+    .btn-wl-sort { padding: 2px 8px; font-size: 10px; }
+
+    /* Full-width modals from bottom (sheet-style) */
+    .wl-add-overlay { align-items: flex-end; padding: 0; }
+    .wl-add-dialog {
+        max-width: 100%;
+        max-height: 85vh;
+        border-radius: 16px 16px 0 0;
+    }
+    .wl-reorder-overlay { align-items: flex-end; padding: 0; }
+    .wl-reorder-dialog {
+        max-width: 100%;
+        max-height: 80vh;
+        border-radius: 16px 16px 0 0;
+    }
+
+    /* Collapsed chips: full width scroll */
+    .wl-collapsed-bar { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
+
+    /* Hide debug link on phone */
+    .btn-wl-debug { display: none; }
+}
 </style>
 
 <div class="wl-container" id="trWlContainer">

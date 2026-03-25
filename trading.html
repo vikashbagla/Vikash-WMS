@@ -817,6 +817,37 @@
     line-height: 1;
 }
 .btn-close-modal:hover { background: #edf2f7; color: #4a5568; }
+
+/* ================================================================
+   RESPONSIVE: Tablet
+   ================================================================ */
+@media (max-width:768px) {
+    /* Hide trading tabs — bottom nav handles navigation */
+    .trading-tabs { display: none; }
+
+    /* Compact trading header */
+    .trading-header-bar { padding: 6px 0; flex-wrap: wrap; gap: 6px; }
+
+    /* Day P&L: scroll horizontally if needed */
+    #trDayPLBanner { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    #trDayPLBanner .tr-pl-block-cards { flex-wrap: nowrap; }
+}
+
+/* ================================================================
+   RESPONSIVE: Phone
+   ================================================================ */
+@media (max-width:480px) {
+    /* Stack header: P&L on top, actions below */
+    .trading-header-bar { flex-direction: column; align-items: stretch; }
+    .trading-header-bar .btn-add-txn { align-self: flex-end; }
+
+    /* Day P&L: smaller text */
+    #trDayPLBanner .tr-pl-value { font-size: 12px; }
+    #trDayPLBanner .tr-pl-label { font-size: 9px; }
+
+    /* View tabs: scrollable */
+    .tr-view-tabs-bar { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
 </style>
 </head>
 <body>

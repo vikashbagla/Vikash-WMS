@@ -649,26 +649,88 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
 .wms-di-cal-btn:hover { opacity: 1; }
 .wms-di-cal-hidden { position: absolute; opacity: 0; width: 0; height: 0; border: 0; padding: 0; pointer-events: none; }
 
-/* RESPONSIVE */
+/* ================================================================
+   RESPONSIVE
+   ================================================================ */
 @media (max-width:1024px) {
     .filters-grid { grid-template-columns:1fr; }
     .summary-cards { grid-template-columns:repeat(2,1fr); }
 }
+
+/* ---- Tablet (iPad portrait and smaller) ---- */
 @media (max-width:768px) {
     body { overflow:auto; height:auto; }
     .header-content { flex-direction:column; gap:6px; }
-    .index-ticker { gap:2px; flex-wrap:wrap; justify-content:center; }
+    .index-ticker { gap:2px; flex-wrap:nowrap; justify-content:center; overflow-x:auto; -webkit-overflow-scrolling:touch; }
     .index-item { padding: 1px 6px; }
-    .main-content { height:auto; padding:8px; }
+    .main-content { height:auto; padding:8px; padding-bottom: 68px; /* room for bottom nav */ }
     .content-container { overflow:visible; }
     .table-container { max-height:60vh; }
     .filters-grid { grid-template-columns:1fr; }
     .summary-cards { grid-template-columns:1fr 1fr; }
-    .top-nav { top:auto; }
+    .top-nav { display:none; } /* Hide top nav — bottom nav replaces it */
 }
+
+/* ---- Phone (iPhone / small Android) ---- */
 @media (max-width:480px) {
     .logo-section h1 { font-size:18px; }
     .tagline { display:none; }
     .nav-btn { font-size:11px; padding:5px 10px; }
     .summary-cards { grid-template-columns:1fr; }
+
+    /* Compact header for phone */
+    .header-content { padding: 4px 12px; }
+    .user-section { gap: 8px; }
+    .user-email { display:none; } /* Hide email, just show initials in future */
+    .fyers-indicator { margin-right:4px; }
+    .index-ticker { justify-content:flex-start; }
+
+    /* Main content touches edges */
+    .main-content { padding: 4px 4px 68px; }
+    .content-container { border-radius:4px; padding:6px 6px; }
+}
+
+/* ================================================================
+   BOTTOM NAV BAR (PWA-style, visible on tablet & phone)
+   ================================================================ */
+.wms-bottom-nav {
+    display: none; /* hidden on desktop */
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: #fff;
+    border-top: 1px solid #e2e8f0;
+    z-index: 1001;
+    padding: 4px 0 max(env(safe-area-inset-bottom, 8px), 8px); /* iPhone safe area */
+    justify-content: space-around;
+    align-items: center;
+    box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
+}
+
+@media (max-width:768px) {
+    .wms-bottom-nav { display:flex; }
+}
+
+.bnav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    font-size: 10px;
+    color: #718096;
+    cursor: pointer;
+    padding: 2px 8px;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    border: none;
+    background: none;
+}
+.bnav-item.active { color: #667eea; }
+.bnav-item .bnav-icon { font-size: 20px; line-height: 1.2; }
+.bnav-item .bnav-label { font-weight: 500; }
+
+/* iPad: slightly larger labels */
+@media (min-width:481px) and (max-width:768px) {
+    .bnav-item .bnav-label { font-size: 11px; }
+    .bnav-item .bnav-icon { font-size: 22px; }
+    .wms-bottom-nav { padding: 6px 0 10px; }
 }

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#667eea"/>
+  <text x="256" y="300" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="200" font-weight="700" fill="white">W</text>
+  <text x="256" y="400" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="80" font-weight="500" fill="rgba(255,255,255,0.8)">WMS</text>
+</svg>

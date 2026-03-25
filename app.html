@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>WMS - Wealth Management System</title>
+
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#667eea">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="WMS">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -78,6 +86,30 @@
     <main class="main-content">
         <div id="content-container" class="content-container"></div>
     </main>
+
+    <!-- Bottom Nav Bar (visible on tablet & phone via CSS media query) -->
+    <nav class="wms-bottom-nav" id="wmsBottomNav">
+        <button class="bnav-item" data-module="trading" data-subtab="tr-portfolio">
+            <span class="bnav-icon">📊</span>
+            <span class="bnav-label">Portfolio</span>
+        </button>
+        <button class="bnav-item" data-module="trading" data-subtab="tr-watchlist">
+            <span class="bnav-icon">👁</span>
+            <span class="bnav-label">Watchlist</span>
+        </button>
+        <button class="bnav-item" data-module="trading" data-subtab="tr-fno-positions">
+            <span class="bnav-icon">📈</span>
+            <span class="bnav-label">F&O</span>
+        </button>
+        <button class="bnav-item" data-module="trading" data-subtab="tr-transactions">
+            <span class="bnav-icon">📋</span>
+            <span class="bnav-label">Txns</span>
+        </button>
+        <button class="bnav-item" data-module="master-data">
+            <span class="bnav-icon">⚙️</span>
+            <span class="bnav-label">Settings</span>
+        </button>
+    </nav>
 
     <script>
     // Global configuration - ONLY DECLARED ONCE
@@ -351,9 +383,14 @@
         if (currentModule === moduleName) return;
         currentModule = moduleName;
         localStorage.setItem('wms_last_module', moduleName);  // Remember current module
-        
+
+        // Sync top nav (desktop)
         document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-        document.querySelector(`[data-module="${moduleName}"]`).classList.add('active');
+        const topBtn = document.querySelector(`.nav-btn[data-module="${moduleName}"]`);
+        if (topBtn) topBtn.classList.add('active');
+
+        // Sync bottom nav (mobile/tablet)
+        if (typeof updateBottomNavActive === 'function') updateBottomNavActive(moduleName);
         
         const container = document.getElementById('content-container');
         container.innerHTML = '<div class="loading-module">Loading...</div>';
@@ -433,10 +470,42 @@
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
             btn.addEventListener('click', () => loadModule(btn.dataset.module));
         });
+
+        // Bottom nav bar — click handler
+        document.querySelectorAll('#wmsBottomNav .bnav-item').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const mod = btn.dataset.module;
+                const subtab = btn.dataset.subtab || '';
+
+                // Highlight active bottom nav item
+                document.querySelectorAll('#wmsBottomNav .bnav-item').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                // Load the module (trading or master-data)
+                await loadModule(mod);
+
+                // If there's a sub-tab (Portfolio, Watchlist, F&O, Txns), switch to it
+                if (subtab && typeof trSwitchTab === 'function') {
+                    trSwitchTab(subtab);
+                }
+            });
+        });
+
         // Load last active module or default to portfolio
         const lastModule = localStorage.getItem('wms_last_module') || 'portfolio';
         loadModule(lastModule);
+
+        // Set initial bottom nav active state
+        updateBottomNavActive(lastModule);
     });
+
+    // Keep bottom nav active state in sync
+    function updateBottomNavActive(moduleName) {
+        document.querySelectorAll('#wmsBottomNav .bnav-item').forEach(b => {
+            b.classList.remove('active');
+            if (b.dataset.module === moduleName) b.classList.add('active');
+        });
+    }
     </script>
     
     <script>
