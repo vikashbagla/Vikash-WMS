@@ -837,16 +837,44 @@
    RESPONSIVE: Phone
    ================================================================ */
 @media (max-width:480px) {
-    /* Stack header: P&L on top, actions below */
-    .trading-header-bar { flex-direction: column; align-items: stretch; }
-    .trading-header-bar .btn-add-txn { align-self: flex-end; }
+    /* --- Trading header: remove title row, compact layout --- */
+    .trading-header-bar {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 4px 0;
+        gap: 4px;
+    }
 
-    /* Day P&L banner: hide Portfolio block (Invested/Total P&L/Current Value), center Day's P&L */
-    #trDayPLBanner { justify-content: center; }
+    /* Hide "Trading" title and "all amounts in ₹ '000" (moved to app header) */
+    .trading-header-bar > div:first-child { display: none; }
+
+    /* Day P&L banner: hide Portfolio block, center Day's P&L */
+    #trDayPLBanner { justify-content: center; gap: 12px; }
     #trDayPLBanner > .tr-pl-block-sep { display: none; }
     #trDayPLBanner > .tr-pl-block:last-child { display: none; }
-    #trDayPLBanner .tr-pl-value { font-size: 12px; }
+    #trDayPLBanner .tr-pl-value { font-size: 13px; }
     #trDayPLBanner .tr-pl-label { font-size: 9px; }
+    #trDayPLBanner .tr-pl-pct { font-size: 10px; }
+
+    /* Action buttons: compact single row */
+    .trading-header-bar > div:last-child {
+        display: flex;
+        justify-content: flex-end;
+        gap: 6px;
+        padding: 0 2px;
+    }
+    .trading-header-bar .btn-toggle-zero {
+        font-size: 10px !important;
+        padding: 3px 6px !important;
+    }
+    .trading-header-bar .btn-others {
+        font-size: 10px;
+        padding: 3px 6px;
+    }
+    .trading-header-bar .btn-add-txn {
+        font-size: 11px;
+        padding: 4px 10px;
+    }
 
     /* View tabs: scrollable */
     .tr-view-tabs-bar { overflow-x: auto; -webkit-overflow-scrolling: touch; }

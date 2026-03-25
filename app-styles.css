@@ -660,34 +660,69 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
 /* ---- Tablet (iPad portrait and smaller) ---- */
 @media (max-width:768px) {
     body { overflow:auto; height:auto; }
-    .header-content { flex-direction:column; gap:6px; }
-    .index-ticker { gap:2px; flex-wrap:nowrap; justify-content:center; overflow-x:auto; -webkit-overflow-scrolling:touch; }
-    .index-item { padding: 1px 6px; }
-    .main-content { height:auto; padding:8px; padding-bottom: 68px; /* room for bottom nav */ }
+    .main-content { height:auto; padding:8px; padding-bottom: 68px; }
     .content-container { overflow:visible; }
     .table-container { max-height:60vh; }
     .filters-grid { grid-template-columns:1fr; }
     .summary-cards { grid-template-columns:1fr 1fr; }
-    .top-nav { display:none; } /* Hide top nav — bottom nav replaces it */
+    .top-nav { display:none; }
 }
 
 /* ---- Phone (iPhone / small Android) ---- */
 @media (max-width:480px) {
-    .logo-section h1 { font-size:18px; }
     .tagline { display:none; }
     .nav-btn { font-size:11px; padding:5px 10px; }
     .summary-cards { grid-template-columns:1fr; }
 
-    /* Compact header for phone */
-    .header-content { padding: 4px 12px; }
-    .user-section { gap: 8px; }
-    .user-email { display:none; } /* Hide email, just show initials in future */
-    .fyers-indicator { margin-right:4px; }
-    .index-ticker { justify-content:flex-start; }
+    /* === REIMAGINED MOBILE HEADER === */
+    .app-header { border-bottom-width: 1px; }
 
-    /* Main content touches edges */
-    .main-content { padding: 4px 4px 68px; }
-    .content-container { border-radius:4px; padding:6px 6px; }
+    /* Row 1: WMS + ₹'000 (left) | Fyers + Refresh + Logout (right) */
+    .header-content {
+        padding: 4px 10px;
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+        gap: 4px;
+    }
+    .logo-section { gap: 6px; }
+    .logo-section h1 { font-size: 16px; }
+
+    /* Show the ₹'000 unit badge next to logo */
+    .mobile-unit-badge { display: inline-block !important; }
+
+    /* User section: compact row */
+    .user-section { gap: 6px; }
+    .user-email { display: none; }
+    .fyers-indicator { margin-right: 0; min-width: auto; }
+    #fyers-status { font-size: 10px !important; }
+    #fyers-refresh-time { display: none !important; }
+    .btn-refresh-app { padding: 2px 6px; font-size: 12px; }
+    .btn-logout { padding: 2px 5px; font-size: 12px; }
+
+    /* Row 2: Index ticker — constrained, smaller text, no overflow */
+    .index-ticker {
+        display: flex;
+        justify-content: space-between;
+        gap: 0;
+        width: 100%;
+        overflow: hidden; /* prevent horizontal blowout */
+    }
+    .index-item {
+        flex: 1 1 0;
+        padding: 2px 4px;
+        min-width: 0; /* allow shrinking */
+        border-right: 1px solid #edf2f7;
+    }
+    .index-item:last-child { border-right: none; }
+    .index-name { font-size: 8px; letter-spacing: 0; }
+    .index-price { font-size: 10px; }
+    .index-change { font-size: 8px; }
+    .index-top { gap: 3px; justify-content: center; }
+
+    /* Main content */
+    .main-content { padding: 2px 4px 68px; }
+    .content-container { border-radius: 4px; padding: 4px 4px; }
 }
 
 /* ================================================================
