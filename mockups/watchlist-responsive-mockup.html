@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WMS Watchlist — Responsive Mockups (iPad + iPhone)</title>
+<style>
+/* ================================================================
+   MOCKUP SHELL
+   ================================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    padding: 20px;
+}
+.mockup-header { text-align: center; margin-bottom: 16px; }
+.mockup-header h1 { font-size: 20px; color: #fff; margin-bottom: 4px; }
+.mockup-header p { font-size: 13px; color: #8888aa; }
+
+/* Toggle row */
+.toggle-row {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+.toggle-row button {
+    padding: 7px 16px;
+    border: 1px solid #444;
+    background: #2a2a40;
+    color: #aaa;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.toggle-row button.active { background: #667eea; color: #fff; border-color: #667eea; }
+.toggle-row button:hover:not(.active) { background: #333355; border-color: #667eea; color: #ccc; }
+
+/* Screen selector */
+.screen-toggle {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 20px;
+}
+.screen-toggle button {
+    padding: 5px 14px;
+    border: 1px solid #555;
+    background: #22223a;
+    color: #999;
+    border-radius: 5px;
+    font-size: 11px;
+    cursor: pointer;
+}
+.screen-toggle button.active { background: #4a5568; color: #fff; border-color: #718096; }
+.screen-toggle button:hover:not(.active) { background: #2d2d48; color: #ccc; }
+
+/* Device frames */
+.device-frame {
+    margin: 0 auto;
+    border-radius: 32px;
+    border: 3px solid #555;
+    background: #000;
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    transition: width 0.3s, height 0.3s;
+}
+.device-frame.ipad-portrait { width: 820px; height: 1100px; }
+.device-frame.ipad-landscape { width: 1100px; height: 820px; }
+.device-frame.iphone { width: 393px; height: 852px; }
+
+.device-screen {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    background: #f5f7fa;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ================================================================
+   iOS STATUS BAR
+   ================================================================ */
+.ios-status-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 20px 3px; font-size: 12px; font-weight: 600;
+    color: #2d3748; background: #fff; flex-shrink: 0;
+}
+
+/* ================================================================
+   WMS HEADER
+   ================================================================ */
+.wms-header {
+    background: #fff; border-bottom: 2px solid #667eea;
+    padding: 6px 14px; display: flex; justify-content: space-between;
+    align-items: center; flex-shrink: 0;
+}
+.wms-header .logo { font-size: 18px; font-weight: 700; color: #667eea; }
+.wms-header .logo-tag { font-size: 11px; color: #718096; font-weight: 400; margin-left: 6px; }
+.fyers-status { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #059669; font-weight: 500; }
+.fyers-dot { width: 6px; height: 6px; border-radius: 50%; background: #059669; }
+
+/* iPhone: compact header */
+.iphone .wms-header .logo-tag { display: none; }
+.iphone .wms-header { padding: 6px 12px; }
+
+/* ================================================================
+   INDEX TICKER STRIP — center aligned, with GOLD
+   ================================================================ */
+.index-strip {
+    display: flex; justify-content: center; gap: 0;
+    background: #fff; border-bottom: 1px solid #e2e8f0;
+    overflow-x: auto; flex-shrink: 0; padding: 4px 10px;
+    -webkit-overflow-scrolling: touch;
+}
+.idx-item {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 2px 12px; border-right: 1px solid #edf2f7;
+    white-space: nowrap; min-width: fit-content;
+}
+.idx-item:last-child { border-right: none; }
+.idx-name { font-size: 9px; font-weight: 600; color: #718096; text-transform: uppercase; }
+.idx-price { font-size: 11px; font-weight: 700; color: #2d3748; }
+.idx-chg { font-size: 9px; font-weight: 500; }
+.idx-chg.pos { color: #059669; }
+.idx-chg.neg { color: #dc2626; }
+
+/* ================================================================
+   DAY P&L BANNER
+   ================================================================ */
+.day-pl-banner {
+    display: flex; justify-content: center; gap: 14px;
+    padding: 6px 10px; background: #fff; border-bottom: 1px solid #e2e8f0;
+    flex-shrink: 0; overflow-x: auto;
+}
+.pl-block { text-align: center; white-space: nowrap; }
+.pl-block .pl-label { font-size: 9px; color: #718096; text-transform: uppercase; letter-spacing: 0.3px; font-weight: 500; }
+.pl-block .pl-val { font-size: 12px; font-weight: 700; }
+.pl-sep { width: 1px; background: #e2e8f0; align-self: stretch; }
+.iphone .day-pl-banner { gap: 10px; padding: 5px 8px; }
+.iphone .pl-block .pl-val { font-size: 11px; }
+
+/* ================================================================
+   WATCHLIST CONTENT
+   ================================================================ */
+.wl-content { flex: 1; overflow-y: auto; padding: 8px; -webkit-overflow-scrolling: touch; min-height: 0; }
+
+/* Watchlist top bar */
+.wl-top-bar { display: flex; justify-content: space-between; align-items: center; padding: 4px 4px 8px; }
+.wl-top-left { display: flex; align-items: center; gap: 8px; }
+.wl-lbl { font-size: 11px; color: #718096; }
+.wl-top-right { display: flex; align-items: center; gap: 6px; }
+
+/* Buttons */
+.btn-sm { padding: 5px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; border: none; }
+.btn-primary { background: #667eea; color: #fff; }
+.btn-outline { background: none; border: 1px solid #e2e8f0; color: #718096; font-weight: 500; }
+.btn-danger-sm { background: none; border: 1px solid #fca5a5; color: #dc2626; padding: 4px 10px; border-radius: 5px; font-size: 11px; cursor: pointer; font-weight: 500; }
+
+/* ================================================================
+   RESPONSIVE GRID
+   ================================================================ */
+.wl-grid-responsive { display: grid; gap: 10px; }
+.ipad-portrait .wl-grid-responsive { grid-template-columns: 1fr 1fr; }
+.ipad-landscape .wl-grid-responsive { grid-template-columns: 1fr 1fr 1fr; }
+.iphone .wl-grid-responsive { grid-template-columns: 1fr; }
+
+/* ================================================================
+   WATCHLIST CARD
+   ================================================================ */
+.wl-card {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+    overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.wl-card-hdr {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; background: #f8fafc; border-bottom: 1px solid #e2e8f0;
+}
+.card-title { font-size: 13px; font-weight: 600; color: #2d3748; display: flex; align-items: center; gap: 6px; }
+.card-title .arrow { font-size: 10px; color: #a0aec0; }
+.card-title .count { font-size: 10px; font-weight: 400; color: #a0aec0; }
+.card-actions { display: flex; gap: 4px; align-items: center; }
+.card-actions button { background: none; border: none; font-size: 12px; color: #718096; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+.card-actions button:hover { background: #edf2f7; }
+.card-actions .btn-add-sec { color: #667eea; font-size: 14px; }
+.sort-pills { display: flex; gap: 2px; margin-right: 4px; }
+.sort-pill { font-size: 9px; padding: 1px 6px; border: 1px solid #e2e8f0; border-radius: 3px; color: #a0aec0; background: none; cursor: pointer; }
+.sort-pill.active { background: #eef2ff; border-color: #667eea; color: #667eea; font-weight: 600; }
+
+/* ================================================================
+   SECURITY ROW
+   ================================================================ */
+.sec-row { padding: 5px 10px 2px; border-bottom: 1px solid #f0f4f8; }
+.sec-row:last-child { border-bottom: none; }
+.sec-row:active { background: #f7fafc; }
+
+.sec-row-top { display: flex; align-items: center; gap: 6px; }
+
+.sec-sym { flex: 1; min-width: 0; }
+.sec-sym .sym-main { font-size: 12px; font-weight: 600; color: #2d3748; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sec-sym .sym-sub { font-size: 9px; color: #a0aec0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Price column — alert dot is positioned inside this */
+.sec-price { text-align: right; flex: 0 0 auto; min-width: 70px; position: relative; padding-left: 12px; }
+.sec-price .price-val { font-size: 12px; font-weight: 500; color: #2d3748; }
+
+/* Alert dot — left edge of price column */
+.alert-dot {
+    position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    width: 6px; height: 6px; border-radius: 50%; cursor: pointer;
+}
+.alert-dot.set { background: #1a202c; }
+.alert-dot.near { background: #9333ea; animation: blink 1.2s infinite; }
+.alert-dot.triggered-up { background: #059669; animation: blink 1.2s infinite; }
+.alert-dot.triggered-dn { background: #dc2626; animation: blink 1.2s infinite; }
+.alert-dot.none { background: transparent; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+.sec-chg { text-align: right; flex: 0 0 auto; min-width: 72px; }
+.sec-chg .chg-val { font-size: 11px; font-weight: 500; }
+.sec-chg .chg-pct { font-size: 9px; }
+
+/* H/L Day slider — below the price+change columns */
+.sec-row-slider {
+    display: flex; align-items: center; gap: 4px;
+    margin: 2px 0 3px auto;
+    width: 160px;
+    font-size: 9px; color: #a0aec0;
+}
+.slider-lo, .slider-hi { flex: 0 0 auto; font-size: 8px; color: #a0aec0; }
+.slider-track {
+    flex: 1; height: 3px; background: #e2e8f0; border-radius: 2px;
+    position: relative;
+}
+.slider-fill {
+    position: absolute; top: 0; height: 100%; border-radius: 2px;
+    background: linear-gradient(90deg, #dc2626 0%, #059669 100%);
+}
+.slider-dot {
+    position: absolute; top: 50%; transform: translate(-50%, -50%);
+    width: 7px; height: 7px; border-radius: 50%; background: #2d3748;
+    border: 1.5px solid #fff; box-shadow: 0 0 2px rgba(0,0,0,0.3);
+}
+
+/* iPhone: larger touch targets */
+.iphone .sec-row { padding: 7px 10px 3px; }
+.iphone .sec-sym .sym-main { font-size: 13px; }
+.iphone .sec-price .price-val { font-size: 13px; }
+.iphone .sec-chg .chg-val { font-size: 12px; }
+
+/* ================================================================
+   COLLAPSED CHIPS
+   ================================================================ */
+.collapsed-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px; }
+.collapsed-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
+    font-size: 12px; color: #4a5568; cursor: pointer;
+}
+.collapsed-chip:hover { background: #edf2f7; border-color: #cbd5e0; }
+.chip-name { font-weight: 600; color: #2d3748; }
+.chip-count { font-size: 10px; color: #a0aec0; }
+
+/* ================================================================
+   BOTTOM NAV — all devices (PWA style)
+   ================================================================ */
+.bottom-nav {
+    display: flex; justify-content: space-around; align-items: center;
+    background: #fff; border-top: 1px solid #e2e8f0;
+    flex-shrink: 0;
+}
+/* iPad: slightly more padding */
+.ipad-portrait .bottom-nav,
+.ipad-landscape .bottom-nav { padding: 6px 0 8px; }
+/* iPhone: extra padding for home indicator area */
+.iphone .bottom-nav { padding: 4px 0 2px; }
+
+.bnav-item {
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    font-size: 10px; color: #718096; cursor: pointer; padding: 2px 8px;
+}
+.bnav-item.active { color: #667eea; }
+.bnav-item .bnav-icon { font-size: 18px; }
+.bnav-item .bnav-label { font-weight: 500; }
+
+/* iPad: larger bottom nav labels */
+.ipad-portrait .bnav-item .bnav-label,
+.ipad-landscape .bnav-item .bnav-label { font-size: 11px; }
+
+/* Hide top trading tabs on ALL devices — bottom nav replaces them */
+.trading-tabs { display: none; }
+
+/* Home indicator (iPhone) */
+.home-indicator { display: none; padding: 4px 0; background: #fff; flex-shrink: 0; }
+.iphone .home-indicator { display: block; }
+.home-indicator-bar { width: 134px; height: 5px; background: #2d3748; border-radius: 3px; margin: 0 auto; }
+
+/* ================================================================
+   OVERLAY / MODAL (for sub-pages)
+   ================================================================ */
+.modal-overlay {
+    display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4); z-index: 100;
+    justify-content: center; align-items: flex-start; padding: 60px 16px;
+}
+.modal-overlay.show { display: flex; }
+.modal-dialog {
+    background: #fff; border-radius: 10px; width: 100%; max-width: 440px;
+    max-height: 65vh; display: flex; flex-direction: column;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.15); overflow: hidden;
+}
+.modal-hdr {
+    padding: 12px 16px; border-bottom: 1px solid #e2e8f0;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.modal-hdr h3 { font-size: 14px; color: #2d3748; margin: 0; }
+.modal-close {
+    width: 28px; height: 28px; border: none; background: #f7fafc;
+    border-radius: 5px; cursor: pointer; font-size: 14px; color: #718096;
+    display: flex; align-items: center; justify-content: center;
+}
+.modal-close:hover { background: #e2e8f0; color: #4a5568; }
+.modal-body { flex: 1; overflow-y: auto; padding: 12px 16px; }
+.modal-footer {
+    padding: 10px 16px; border-top: 1px solid #e2e8f0;
+    display: flex; justify-content: flex-end; gap: 8px;
+}
+
+/* iPhone: modals slide up from bottom */
+.iphone .modal-overlay { align-items: flex-end; padding: 0; }
+.iphone .modal-dialog {
+    border-radius: 16px 16px 0 0; max-width: 100%; max-height: 80vh;
+}
+
+/* ================================================================
+   ADD SECURITY MODAL
+   ================================================================ */
+.add-search-input {
+    width: 100%; padding: 8px 12px; border: 1.5px solid #e2e8f0;
+    border-radius: 6px; font-size: 13px; outline: none; box-sizing: border-box;
+    margin-bottom: 8px;
+}
+.add-search-input:focus { border-color: #667eea; }
+.search-result {
+    display: flex; align-items: center; padding: 8px 0; gap: 8px;
+    border-bottom: 1px solid #f7fafc; cursor: pointer;
+}
+.search-result:hover { background: #f0f4ff; margin: 0 -16px; padding: 8px 16px; }
+.sr-sym { font-size: 12px; font-weight: 600; color: #2d3748; min-width: 80px; }
+.sr-name { font-size: 11px; color: #718096; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-tag { font-size: 9px; padding: 1px 6px; border-radius: 3px; background: #edf2f7; color: #718096; }
+.sr-tag.exchange { background: #e6fffa; color: #319795; }
+.sr-added { font-size: 10px; color: #059669; font-weight: 500; }
+
+/* ================================================================
+   ALERT EDIT POPOVER
+   ================================================================ */
+.alert-popover {
+    display: none; position: absolute; z-index: 200;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 10px 12px;
+    width: 220px;
+}
+.alert-popover.show { display: block; }
+.alert-popover-title { font-size: 11px; font-weight: 600; color: #2d3748; margin-bottom: 8px; }
+.alert-input-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.alert-input-row label { font-size: 10px; color: #718096; min-width: 40px; }
+.alert-input-row input {
+    width: 80px; padding: 4px 6px; border: 1px solid #e2e8f0; border-radius: 4px;
+    font-size: 12px; text-align: right; outline: none;
+}
+.alert-input-row input:focus { border-color: #667eea; }
+.alert-dir { font-size: 9px; color: #718096; }
+.alert-actions { display: flex; gap: 6px; margin-top: 8px; }
+.btn-alert-save { background: #667eea; color: #fff; border: none; border-radius: 4px; padding: 4px 12px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.btn-alert-clear { background: none; border: 1px solid #fca5a5; color: #dc2626; border-radius: 4px; padding: 4px 10px; font-size: 11px; cursor: pointer; }
+
+/* ================================================================
+   CARD CONTEXT MENU (rename / delete watchlist)
+   ================================================================ */
+.card-menu {
+    display: none; position: absolute; right: 8px; top: 32px; z-index: 150;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); min-width: 150px; padding: 4px 0;
+}
+.card-menu.show { display: block; }
+.card-menu-item {
+    display: block; width: 100%; text-align: left; padding: 8px 14px;
+    border: none; background: none; font-size: 12px; color: #4a5568; cursor: pointer;
+}
+.card-menu-item:hover { background: #f7fafc; }
+.card-menu-item.danger { color: #dc2626; }
+.card-menu-item.danger:hover { background: #fef2f2; }
+
+/* ================================================================
+   COLORS
+   ================================================================ */
+.text-green { color: #059669; }
+.text-red { color: #dc2626; }
+
+/* ================================================================
+   SUB-PAGE INDICATOR (tab at top of modal for context)
+   ================================================================ */
+.modal-breadcrumb { font-size: 10px; color: #a0aec0; padding: 0 16px 4px; border-bottom: 1px solid #f0f4f8; }
+</style>
+</head>
+<body>
+
+<div class="mockup-header">
+    <h1>WMS Watchlist — Responsive Mockups</h1>
+    <p>iPad Mini (portrait & landscape) and iPhone 15 Pro</p>
+</div>
+
+<!-- Device toggle -->
+<div class="toggle-row" id="deviceToggle">
+    <button class="active" onclick="showDevice('ipad-portrait')">iPad Portrait</button>
+    <button onclick="showDevice('ipad-landscape')">iPad Landscape</button>
+    <button onclick="showDevice('iphone')">iPhone</button>
+</div>
+
+<!-- Screen / sub-page toggle -->
+<div class="screen-toggle" id="screenToggle">
+    <button class="active" onclick="showScreen('main')">Main Watchlist</button>
+    <button onclick="showScreen('add-security')">Add Security</button>
+    <button onclick="showScreen('edit-alert')">Edit Alert</button>
+    <button onclick="showScreen('card-menu')">Watchlist Menu</button>
+    <button onclick="showScreen('new-watchlist')">New Watchlist</button>
+</div>
+
+<!-- ================================================================
+     DEVICE FRAME
+     ================================================================ -->
+<div class="device-frame ipad-portrait" id="deviceFrame">
+<div class="device-screen ipad-portrait" id="deviceScreen" style="position:relative;">
+
+    <!-- iOS Status Bar -->
+    <div class="ios-status-bar">
+        <span style="font-weight:700">9:41</span>
+        <span></span>
+        <span style="font-size:11px">📶 WiFi 🔋</span>
+    </div>
+
+    <!-- WMS Header -->
+    <div class="wms-header">
+        <div style="display:flex;align-items:baseline;gap:8px;">
+            <div class="logo">WMS <span class="logo-tag">Wealth Manager</span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+            <div class="fyers-status"><div class="fyers-dot"></div> Fyers Live</div>
+            <span style="font-size:11px;color:#4a5568;">VB</span>
+        </div>
+    </div>
+
+    <!-- Index Ticker Strip (center-aligned, with GOLD) -->
+    <div class="index-strip">
+        <div class="idx-item">
+            <div class="idx-name">NIFTY 50</div>
+            <div class="idx-price">23,165.70</div>
+            <div class="idx-chg pos">+142.30 (+0.62%)</div>
+        </div>
+        <div class="idx-item">
+            <div class="idx-name">SENSEX</div>
+            <div class="idx-price">76,348.12</div>
+            <div class="idx-chg pos">+410.55 (+0.54%)</div>
+        </div>
+        <div class="idx-item">
+            <div class="idx-name">NIFTY BANK</div>
+            <div class="idx-price">48,920.45</div>
+            <div class="idx-chg neg">-89.30 (-0.18%)</div>
+        </div>
+        <div class="idx-item">
+            <div class="idx-name">INDIA VIX</div>
+            <div class="idx-price">14.32</div>
+            <div class="idx-chg neg">-0.45 (-3.04%)</div>
+        </div>
+        <div class="idx-item">
+            <div class="idx-name">GOLD</div>
+            <div class="idx-price">87,240</div>
+            <div class="idx-chg pos">+680 (+0.79%)</div>
+        </div>
+    </div>
+
+    <!-- Day P&L Banner -->
+    <div class="day-pl-banner">
+        <div class="pl-block"><div class="pl-label">Equities</div><div class="pl-val text-green">+12,450</div></div>
+        <div class="pl-sep"></div>
+        <div class="pl-block"><div class="pl-label">F&O</div><div class="pl-val text-red">-3,200</div></div>
+        <div class="pl-sep"></div>
+        <div class="pl-block"><div class="pl-label">Total Day P&L</div><div class="pl-val text-green">+9,250 (+0.42%)</div></div>
+    </div>
+
+    <!-- WATCHLIST CONTENT -->
+    <div class="wl-content">
+        <!-- Top bar -->
+        <div class="wl-top-bar">
+            <div class="wl-top-left"><span class="wl-lbl">4 watchlists · 22 securities</span></div>
+            <div class="wl-top-right">
+                <button class="btn-sm btn-primary" onclick="showScreen('new-watchlist')">+ New Watchlist</button>
+                <button class="btn-sm btn-outline">↕ Reorder</button>
+            </div>
+        </div>
+
+        <!-- Collapsed chips -->
+        <div class="collapsed-bar">
+            <div class="collapsed-chip">
+                <span class="chip-name">MF Tracking</span>
+                <span class="chip-count">3</span>
+                <span style="font-size:10px;color:#a0aec0">▸</span>
+            </div>
+        </div>
+
+        <!-- GRID -->
+        <div class="wl-grid-responsive">
+
+            <!-- Card 1: Core Portfolio -->
+            <div class="wl-card" style="position:relative;">
+                <div class="wl-card-hdr">
+                    <div class="card-title"><span class="arrow">▾</span> Core Portfolio <span class="count">(6)</span></div>
+                    <div class="card-actions">
+                        <div class="sort-pills"><button class="sort-pill active">A-Z</button><button class="sort-pill">%</button></div>
+                        <button class="btn-add-sec" onclick="showScreen('add-security')">+</button>
+                        <button onclick="showScreen('card-menu')">⋯</button>
+                    </div>
+                </div>
+                <!-- Card context menu (shown via toggle) -->
+                <div class="card-menu" id="cardMenu1">
+                    <button class="card-menu-item">✏️ Rename Watchlist</button>
+                    <button class="card-menu-item">📋 Duplicate</button>
+                    <button class="card-menu-item danger">🗑 Delete Watchlist</button>
+                </div>
+                <div>
+                    <!-- HDFCBANK -->
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">HDFCBANK</div><div class="sym-sub">HDFC Bank Ltd</div></div>
+                            <div class="sec-price"><div class="alert-dot set" onclick="showScreen('edit-alert')"></div><div class="price-val">1,642.30</div></div>
+                            <div class="sec-chg"><div class="chg-val text-green">+18.45</div><div class="chg-pct text-green">(+1.14%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">1,618</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:72%;"></div></div>
+                            <span class="slider-hi">1,651</span>
+                        </div>
+                    </div>
+                    <!-- INFY -->
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">INFY</div><div class="sym-sub">Infosys Ltd</div></div>
+                            <div class="sec-price"><div class="alert-dot near" onclick="showScreen('edit-alert')"></div><div class="price-val">1,485.60</div></div>
+                            <div class="sec-chg"><div class="chg-val text-green">+22.10</div><div class="chg-pct text-green">(+1.51%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">1,460</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:85%;"></div></div>
+                            <span class="slider-hi">1,490</span>
+                        </div>
+                    </div>
+                    <!-- RELIANCE -->
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">RELIANCE</div><div class="sym-sub">Reliance Industries</div></div>
+                            <div class="sec-price"><div class="alert-dot none"></div><div class="price-val">2,834.75</div></div>
+                            <div class="sec-chg"><div class="chg-val text-red">-12.30</div><div class="chg-pct text-red">(-0.43%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">2,820</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:38%;"></div></div>
+                            <span class="slider-hi">2,858</span>
+                        </div>
+                    </div>
+                    <!-- TCS -->
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">TCS</div><div class="sym-sub">Tata Consultancy</div></div>
+                            <div class="sec-price"><div class="alert-dot triggered-up" onclick="showScreen('edit-alert')"></div><div class="price-val">3,612.40</div></div>
+                            <div class="sec-chg"><div class="chg-val text-green">+45.80</div><div class="chg-pct text-green">(+1.28%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">3,560</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:90%;"></div></div>
+                            <span class="slider-hi">3,618</span>
+                        </div>
+                    </div>
+                    <!-- ITC -->
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">ITC</div><div class="sym-sub">ITC Ltd</div></div>
+                            <div class="sec-price"><div class="alert-dot none"></div><div class="price-val">438.20</div></div>
+                            <div class="sec-chg"><div class="chg-val text-green">+3.65</div><div class="chg-pct text-green">(+0.84%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">433</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:65%;"></div></div>
+                            <span class="slider-hi">441</span>
+                        </div>
+                    </div>
+                    <!-- BAJFINANCE -->
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">BAJFINANCE</div><div class="sym-sub">Bajaj Finance Ltd</div></div>
+                            <div class="sec-price"><div class="alert-dot triggered-dn" onclick="showScreen('edit-alert')"></div><div class="price-val">6,845.00</div></div>
+                            <div class="sec-chg"><div class="chg-val text-red">-78.50</div><div class="chg-pct text-red">(-1.13%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">6,830</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:22%;"></div></div>
+                            <span class="slider-hi">6,898</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 2: F&O Watch -->
+            <div class="wl-card">
+                <div class="wl-card-hdr">
+                    <div class="card-title"><span class="arrow">▾</span> F&O Watch <span class="count">(4)</span></div>
+                    <div class="card-actions">
+                        <div class="sort-pills"><button class="sort-pill">A-Z</button><button class="sort-pill active">%</button></div>
+                        <button class="btn-add-sec">+</button>
+                        <button>⋯</button>
+                    </div>
+                </div>
+                <div>
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">NIFTY 25000 CE</div><div class="sym-sub">27-MAR-2026 · NSE</div></div>
+                            <div class="sec-price"><div class="alert-dot near"></div><div class="price-val">245.30</div></div>
+                            <div class="sec-chg"><div class="chg-val text-green">+32.15</div><div class="chg-pct text-green">(+15.1%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">198</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:78%;"></div></div>
+                            <span class="slider-hi">258</span>
+                        </div>
+                    </div>
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">NIFTY 22500 PE</div><div class="sym-sub">27-MAR-2026 · NSE</div></div>
+                            <div class="sec-price"><div class="alert-dot none"></div><div class="price-val">18.40</div></div>
+                            <div class="sec-chg"><div class="chg-val text-red">-12.70</div><div class="chg-pct text-red">(-40.8%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">14</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:30%;"></div></div>
+                            <span class="slider-hi">28</span>
+                        </div>
+                    </div>
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">BANKNIFTY 49000 CE</div><div class="sym-sub">26-MAR-2026 · NSE</div></div>
+                            <div class="sec-price"><div class="alert-dot set"></div><div class="price-val">312.80</div></div>
+                            <div class="sec-chg"><div class="chg-val text-green">+18.90</div><div class="chg-pct text-green">(+6.43%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">280</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:68%;"></div></div>
+                            <span class="slider-hi">328</span>
+                        </div>
+                    </div>
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">TATAMOTORS FUT</div><div class="sym-sub">27-MAR-2026 · NSE</div></div>
+                            <div class="sec-price"><div class="alert-dot none"></div><div class="price-val">682.50</div></div>
+                            <div class="sec-chg"><div class="chg-val text-green">+8.30</div><div class="chg-pct text-green">(+1.23%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">670</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:62%;"></div></div>
+                            <span class="slider-hi">690</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 3: Momentum Picks -->
+            <div class="wl-card">
+                <div class="wl-card-hdr">
+                    <div class="card-title"><span class="arrow">▾</span> Momentum Picks <span class="count">(4)</span></div>
+                    <div class="card-actions">
+                        <div class="sort-pills"><button class="sort-pill active">A-Z</button><button class="sort-pill">%</button></div>
+                        <button class="btn-add-sec">+</button>
+                        <button>⋯</button>
+                    </div>
+                </div>
+                <div>
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">ADANIENT</div><div class="sym-sub">Adani Enterprises</div></div>
+                            <div class="sec-price"><div class="alert-dot none"></div><div class="price-val">2,342.10</div></div>
+                            <div class="sec-chg"><div class="chg-val text-green">+56.80</div><div class="chg-pct text-green">(+2.49%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">2,285</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:82%;"></div></div>
+                            <span class="slider-hi">2,355</span>
+                        </div>
+                    </div>
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">COALINDIA</div><div class="sym-sub">Coal India Ltd</div></div>
+                            <div class="sec-price"><div class="alert-dot set"></div><div class="price-val">412.85</div></div>
+                            <div class="sec-chg"><div class="chg-val text-green">+6.90</div><div class="chg-pct text-green">(+1.70%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">405</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:75%;"></div></div>
+                            <span class="slider-hi">416</span>
+                        </div>
+                    </div>
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">TRENT</div><div class="sym-sub">Trent Ltd</div></div>
+                            <div class="sec-price"><div class="alert-dot none"></div><div class="price-val">5,234.60</div></div>
+                            <div class="sec-chg"><div class="chg-val text-green">+112.30</div><div class="chg-pct text-green">(+2.19%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">5,110</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:88%;"></div></div>
+                            <span class="slider-hi">5,252</span>
+                        </div>
+                    </div>
+                    <div class="sec-row">
+                        <div class="sec-row-top">
+                            <div class="sec-sym"><div class="sym-main">ZOMATO</div><div class="sym-sub">Zomato Ltd</div></div>
+                            <div class="sec-price"><div class="alert-dot none"></div><div class="price-val">218.75</div></div>
+                            <div class="sec-chg"><div class="chg-val text-red">-3.80</div><div class="chg-pct text-red">(-1.71%)</div></div>
+                        </div>
+                        <div class="sec-row-slider">
+                            <span class="slider-lo">215</span>
+                            <div class="slider-track"><div class="slider-fill" style="left:0;width:100%;"></div><div class="slider-dot" style="left:25%;"></div></div>
+                            <span class="slider-hi">224</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /wl-grid-responsive -->
+    </div><!-- /wl-content -->
+
+    <!-- ============================================================
+         BOTTOM NAV (all devices)
+         ============================================================ -->
+    <div class="bottom-nav">
+        <div class="bnav-item"><span class="bnav-icon">📊</span><span class="bnav-label">Portfolio</span></div>
+        <div class="bnav-item active"><span class="bnav-icon">👁</span><span class="bnav-label">Watchlist</span></div>
+        <div class="bnav-item"><span class="bnav-icon">📈</span><span class="bnav-label">P&L</span></div>
+        <div class="bnav-item"><span class="bnav-icon">💰</span><span class="bnav-label">Dividend</span></div>
+        <div class="bnav-item"><span class="bnav-icon">⚙️</span><span class="bnav-label">Settings</span></div>
+    </div>
+
+    <!-- Home indicator (iPhone only) -->
+    <div class="home-indicator"><div class="home-indicator-bar"></div></div>
+
+    <!-- ============================================================
+         MODAL: ADD SECURITY
+         ============================================================ -->
+    <div class="modal-overlay" id="modalAddSecurity">
+        <div class="modal-dialog">
+            <div class="modal-hdr">
+                <h3>Add to Core Portfolio</h3>
+                <button class="modal-close" onclick="showScreen('main')">✕</button>
+            </div>
+            <div class="modal-body" style="padding-top:10px;">
+                <input class="add-search-input" type="text" value="TATA" placeholder="Search symbol, company, or options..." autofocus>
+                <div class="search-result">
+                    <span class="sr-sym">TATAMOTORS</span>
+                    <span class="sr-name">Tata Motors Ltd</span>
+                    <span class="sr-tag">EQ</span>
+                    <span class="sr-tag exchange">NSE</span>
+                </div>
+                <div class="search-result">
+                    <span class="sr-sym">TATAPOWER</span>
+                    <span class="sr-name">Tata Power Co Ltd</span>
+                    <span class="sr-tag">EQ</span>
+                    <span class="sr-tag exchange">NSE</span>
+                </div>
+                <div class="search-result" style="opacity:0.5;">
+                    <span class="sr-sym">TATASTEEL</span>
+                    <span class="sr-name">Tata Steel Ltd</span>
+                    <span class="sr-tag">EQ</span>
+                    <span class="sr-tag exchange">NSE</span>
+                    <span class="sr-added">✓ Added</span>
+                </div>
+                <div class="search-result">
+                    <span class="sr-sym">TATACHEM</span>
+                    <span class="sr-name">Tata Chemicals Ltd</span>
+                    <span class="sr-tag">EQ</span>
+                    <span class="sr-tag exchange">NSE</span>
+                </div>
+                <div class="search-result">
+                    <span class="sr-sym">TATACOMM</span>
+                    <span class="sr-name">Tata Communications</span>
+                    <span class="sr-tag">EQ</span>
+                    <span class="sr-tag exchange">NSE</span>
+                </div>
+                <div class="search-result">
+                    <span class="sr-sym">TATAELXSI</span>
+                    <span class="sr-name">Tata Elxsi Ltd</span>
+                    <span class="sr-tag">EQ</span>
+                    <span class="sr-tag exchange">NSE</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-sm btn-outline" onclick="showScreen('main')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         MODAL: EDIT ALERT (shown as popover on desktop, modal on iPhone)
+         ============================================================ -->
+    <div class="modal-overlay" id="modalEditAlert">
+        <div class="modal-dialog" style="max-width:300px;">
+            <div class="modal-hdr">
+                <h3>INFY — Price Alert</h3>
+                <button class="modal-close" onclick="showScreen('main')">✕</button>
+            </div>
+            <div class="modal-body">
+                <div style="font-size:11px;color:#718096;margin-bottom:10px;">Current price: <strong style="color:#2d3748;">1,485.60</strong></div>
+                <div class="alert-input-row">
+                    <label>Above ▲</label>
+                    <input type="text" value="1,500.00" placeholder="Price">
+                    <span class="alert-dir text-green">+0.97%</span>
+                </div>
+                <div class="alert-input-row">
+                    <label>Below ▼</label>
+                    <input type="text" value="1,450.00" placeholder="Price">
+                    <span class="alert-dir text-red">-2.40%</span>
+                </div>
+                <div class="alert-actions">
+                    <button class="btn-alert-save" onclick="showScreen('main')">Save</button>
+                    <button class="btn-alert-clear" onclick="showScreen('main')">Clear Alert</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         MODAL: NEW WATCHLIST
+         ============================================================ -->
+    <div class="modal-overlay" id="modalNewWatchlist">
+        <div class="modal-dialog" style="max-width:360px;">
+            <div class="modal-hdr">
+                <h3>New Watchlist</h3>
+                <button class="modal-close" onclick="showScreen('main')">✕</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:11px;color:#718096;display:block;margin-bottom:4px;">Watchlist Name</label>
+                    <input class="add-search-input" type="text" value="" placeholder="e.g. Breakout Candidates" style="margin-bottom:0;">
+                </div>
+                <div style="font-size:11px;color:#a0aec0;">You can add securities after creating the watchlist.</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-sm btn-outline" onclick="showScreen('main')">Cancel</button>
+                <button class="btn-sm btn-primary" onclick="showScreen('main')">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         MODAL: CARD MENU (overlay for rename/delete watchlist)
+         ============================================================ -->
+    <div class="modal-overlay" id="modalCardMenu">
+        <div class="modal-dialog" style="max-width:280px;">
+            <div class="modal-hdr">
+                <h3>Core Portfolio</h3>
+                <button class="modal-close" onclick="showScreen('main')">✕</button>
+            </div>
+            <div class="modal-body" style="padding:4px 0;">
+                <button class="card-menu-item" style="display:flex;align-items:center;gap:8px;padding:12px 16px;width:100%;font-size:13px;">✏️ Rename Watchlist</button>
+                <button class="card-menu-item" style="display:flex;align-items:center;gap:8px;padding:12px 16px;width:100%;font-size:13px;">📋 Duplicate Watchlist</button>
+                <button class="card-menu-item" style="display:flex;align-items:center;gap:8px;padding:12px 16px;width:100%;font-size:13px;">↕️ Reorder Items</button>
+                <div style="border-top:1px solid #f0f4f8;margin:4px 0;"></div>
+                <button class="card-menu-item danger" style="display:flex;align-items:center;gap:8px;padding:12px 16px;width:100%;font-size:13px;">🗑 Delete Watchlist</button>
+            </div>
+        </div>
+    </div>
+
+</div><!-- /device-screen -->
+</div><!-- /device-frame -->
+
+<script>
+// Device switching
+function showDevice(mode) {
+    const frame = document.getElementById('deviceFrame');
+    const screen = document.getElementById('deviceScreen');
+    frame.className = 'device-frame ' + mode;
+    screen.className = 'device-screen ' + mode;
+    document.querySelectorAll('#deviceToggle button').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    // Reset to main screen
+    showScreen('main');
+}
+
+// Screen / sub-page switching
+function showScreen(screen) {
+    // Hide all modals
+    document.getElementById('modalAddSecurity').classList.remove('show');
+    document.getElementById('modalEditAlert').classList.remove('show');
+    document.getElementById('modalNewWatchlist').classList.remove('show');
+    document.getElementById('modalCardMenu').classList.remove('show');
+
+    // Show the requested modal
+    if (screen === 'add-security') document.getElementById('modalAddSecurity').classList.add('show');
+    if (screen === 'edit-alert') document.getElementById('modalEditAlert').classList.add('show');
+    if (screen === 'new-watchlist') document.getElementById('modalNewWatchlist').classList.add('show');
+    if (screen === 'card-menu') document.getElementById('modalCardMenu').classList.add('show');
+
+    // Update screen toggle buttons
+    document.querySelectorAll('#screenToggle button').forEach(b => b.classList.remove('active'));
+    const idx = { 'main': 0, 'add-security': 1, 'edit-alert': 2, 'card-menu': 3, 'new-watchlist': 4 }[screen];
+    if (idx !== undefined) document.querySelectorAll('#screenToggle button')[idx].classList.add('active');
+}
+</script>
+
+</body>
+</html>
