@@ -2086,6 +2086,7 @@ async function processTransactions(rawData, worksheet) {
 
         if (matchResult.status === 'confirmed' && matchResult.match) {
             vr.security_id = matchResult.match.id;
+            vr.symbol = matchResult.match.short_symbol || matchResult.match.symbol;
             vr.short_symbol = matchResult.match.short_symbol;
             vr.company_name = matchResult.match.company_name;
             vr.exchange = matchResult.match.exchange;
@@ -2112,6 +2113,7 @@ async function processTransactions(rawData, worksheet) {
             if (matchResult.matches.length > 0) {
                 var first = matchResult.matches[0];
                 vr.security_id = first.id;
+                vr.symbol = first.short_symbol || first.symbol;
                 vr.short_symbol = first.short_symbol || first.symbol;
                 vr.company_name = first.company_name;
                 vr.exchange = first.exchange;
@@ -2557,6 +2559,7 @@ function openReviewPopover(rowIdx) {
             var optIdx = parseInt(optEl.dataset.optionIdx);
             var match = row.matchOptions[optIdx];
             row.security_id = match.id;
+            row.symbol = match.short_symbol || match.symbol;
             row.short_symbol = match.short_symbol || match.symbol;
             row.company_name = match.company_name;
             row.exchange = match.exchange;
