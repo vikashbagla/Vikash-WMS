@@ -931,6 +931,7 @@ function matchSymbolMultiStage(symbol, securityType, batchMap) {
         // 3c: If still no matches, try prefix word matching — handles truncated DB names
         // e.g. "Garuda Construction and Engineering" vs DB "GARUDA CONSTRUCT N ENG L"
         // Each DB word (3+ chars) must be a prefix of some input word, or vice versa
+        // Always flags for user confirmation (never auto-confirms — too fuzzy)
         if (compMatches.length === 0) {
             var searchTokens3c = _importTokenize(searchNorm);
             if (searchTokens3c.length >= 2) {
@@ -954,6 +955,13 @@ function matchSymbolMultiStage(symbol, securityType, batchMap) {
                     }).length;
                     return inputMatchCount >= Math.ceil(searchTokens3c.length / 2);
                 });
+            }
+            // 3c always flags — prefix matching is fuzzy, user must confirm
+            if (compMatches.length > 0) {
+                var prefixCandidates = compMatches.slice(0, 10).map(function(r) {
+                    return { id: r.id, symbol: r.nse_symbol || r.bse_symbol || r.symbol, short_symbol: r.nse_symbol || r.bse_symbol || r.symbol, company_name: r.company_name, security_type: r.security_type, exchange: r.nse_symbol ? 'NSE' : 'BSE' };
+                });
+                return { status: 'flagged', match: prefixCandidates[0], matches: prefixCandidates, error: 'Fuzzy match on "' + symbol + '" — please confirm' };
             }
         }
 
