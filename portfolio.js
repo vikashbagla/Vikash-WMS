@@ -501,7 +501,8 @@ function calculateHoldings() {
                 totalCost: 0,
                 tags: new Set(),
                 latestPrice: 0,
-                latestDate: null
+                latestDate: null,
+                _txns: []    // raw transactions for Day P&L calculation
             };
         }
         
@@ -509,6 +510,7 @@ function calculateHoldings() {
             holdings[key].quantity += txn.quantity;
         }
         holdings[key].totalCost += txn.netAmount;
+        holdings[key]._txns.push(txn);
         
         if (txn.tags) {
             txn.tags.forEach(tag => holdings[key].tags.add(tag));
@@ -532,7 +534,8 @@ function calculateHoldings() {
             avgCost: h.quantity !== 0
                 ? (h.totalCost !== 0 ? h.totalCost / h.quantity : h.latestPrice)
                 : 0,
-            tags: Array.from(h.tags)
+            tags: Array.from(h.tags),
+            _txns: h._txns    // preserve for Day P&L
         }));
 }
 
@@ -652,8 +655,8 @@ function renderPortfolio() {
                     valA = mdA ? mdA.chp : 0;
                     valB = mdB ? mdB.chp : 0;
                 } else {
-                    valA = mdA ? a.quantity * mdA.ch : 0;
-                    valB = mdB ? b.quantity * mdB.ch : 0;
+                    valA = a._txns ? (wmsCalcStockDayPL(a._txns, mdA) || 0) : 0;
+                    valB = b._txns ? (wmsCalcStockDayPL(b._txns, mdB) || 0) : 0;
                 }
                 break;
             case 'value':
@@ -677,7 +680,7 @@ function renderPortfolio() {
         const plPercent    = invested !== 0 ? (pl / Math.abs(invested)) * 100 : 0;
         const invPct       = totalInvested !== 0 ? (invested / totalInvested) * 100 : 0;
         const valPct       = totalValue    !== 0 ? (currentValue / totalValue) * 100 : 0;
-        const dayPL        = md ? h.quantity * md.ch : null;
+        const dayPL        = h._txns ? wmsCalcStockDayPL(h._txns, md) : (md ? h.quantity * md.ch : null);
         const dayChp       = md ? md.chp : null;  // % change for the day
 
         // CMP slider — 52-week range from securities_db (synced via Yahoo Finance)
@@ -746,13 +749,15 @@ function renderPortfolio() {
                     var investor = investors.find(function(inv) { return inv.id === txn.investorId; });
                     investorGroups[txn.investorId] = {
                         name: investor ? investor.name : 'Unknown',
-                        quantity: 0, totalCost: 0, tags: new Set()
+                        quantity: 0, totalCost: 0, tags: new Set(),
+                        _txns: []    // for Day P&L
                     };
                 }
                 if (!wmsIsQtyExcluded(txn.type)) {
                     investorGroups[txn.investorId].quantity += txn.quantity;
                 }
                 investorGroups[txn.investorId].totalCost += txn.netAmount;
+                investorGroups[txn.investorId]._txns.push(txn);
                 if (txn.tags) txn.tags.forEach(function(tag) { investorGroups[txn.investorId].tags.add(tag); });
             });
 
@@ -760,7 +765,7 @@ function renderPortfolio() {
                 .filter(function(inv) { return inv.quantity !== 0; })
                 .map(function(inv) {
                     var invAvgCost  = inv.quantity !== 0 ? (inv.totalCost !== 0 ? inv.totalCost / inv.quantity : h.latestPrice) : 0;
-                    var invDayPL    = md ? inv.quantity * md.ch : null;
+                    var invDayPL    = inv._txns ? wmsCalcStockDayPL(inv._txns, md) : (md ? inv.quantity * md.ch : null);
                     var invDayChp   = md ? md.chp : null;
                     var invValue    = inv.quantity * price;
                     var invInvested = inv.quantity * invAvgCost;
@@ -803,7 +808,7 @@ function renderPortfolio() {
 
     // Total row
     var totalDayPL = Object.keys(liveData).length > 0
-        ? holdings.reduce(function(sum, h) { var m = getLiveData(h); return sum + (m ? h.quantity * m.ch : 0); }, 0)
+        ? holdings.reduce(function(sum, h) { var m = getLiveData(h); return sum + (h._txns ? (wmsCalcStockDayPL(h._txns, m) || 0) : (m ? h.quantity * m.ch : 0)); }, 0)
         : null;
     var totalDayPLPct = (totalDayPL !== null && totalInvested !== 0)
         ? (totalDayPL / Math.abs(totalInvested)) * 100

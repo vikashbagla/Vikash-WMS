@@ -395,6 +395,7 @@ function trFnoCalcPositions() {
             var matchedRows = [];
 
             // Match closers against openers
+            var todayStr = new Date().toISOString().slice(0, 10);
             closers.forEach(function(closer) {
                 var closerRemaining = closer.remaining;
                 var closerPpu = closer.qty > 0 ? closer.netAmount / closer.qty : 0;
@@ -417,13 +418,21 @@ function trFnoCalcPositions() {
                     } else {
                         buyTxnId = opener.txn.id; sellTxnId = closer.txn.id;
                     }
-                    matchedRows.push({
+                    var mRow = {
                         type: 'matched', isShort: isShort, qty: matchQty,
                         buyDate: buyDate, buyAvg: buyAvg, buyAmount: buyAmount,
                         sellDate: sellDate, sellAvg: sellAvg, sellAmount: sellAmount,
                         pnl: sellAmount - buyAmount,
                         buyTxnId: buyTxnId, sellTxnId: sellTxnId
-                    });
+                    };
+                    // Day P&L for positions closed today
+                    if (closer.date === todayStr) {
+                        var contractSym = (opener.txn.symbol || '').replace(/^[A-Z]+:/, '');
+                        var contractCache = wmsLivePrices[contractSym];
+                        var dp = wmsCalcFnoClosedTodayPnl(matchQty, isShort, opener.date, openerPpu, closerPpu, contractCache, todayStr);
+                        if (dp !== 0) mRow.dayPnl = dp;
+                    }
+                    matchedRows.push(mRow);
                     opener.remaining -= matchQty;
                     closerRemaining -= matchQty;
                 }
@@ -479,6 +488,7 @@ function trFnoCalcPositions() {
                 if (r.type === 'matched') {
                     totalQty += r.qty; totalBuyAmt += r.buyAmount;
                     totalSellAmt += r.sellAmount; totalPnl += r.pnl;
+                    if (r.dayPnl !== undefined) dayPnl += r.dayPnl;  // closed-today Day P&L
                 }
                 if (r.type === 'open') {
                     openQty += r.qty;
@@ -855,6 +865,7 @@ function trFnoRenderFlat(positions) {
         }
         if (r.type === 'matched') {
             pageTotRealised += r.pnl;
+            if (r.dayPnl !== undefined) pageTotDayPnl += r.dayPnl;  // closed-today Day P&L
         }
     });
     pageTotNet = pageTotRealised + pageTotUnrealised;
@@ -894,7 +905,7 @@ function trFnoRenderFlat(positions) {
         }
 
         // P&L columns
-        var dayPnl = (r.type === 'open' && r.dayPnl !== undefined) ? r.dayPnl : 0;
+        var dayPnl = (r.dayPnl !== undefined) ? r.dayPnl : 0;
         var realisedPnl = (r.type === 'matched') ? r.pnl : 0;
         var unrealisedPnl = (r.type === 'open' && r.unrealisedPnl !== undefined) ? r.unrealisedPnl : 0;
         var netPnl = realisedPnl + unrealisedPnl;
@@ -906,7 +917,7 @@ function trFnoRenderFlat(positions) {
         var nClass = netPnl === 0 ? '' : (netPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
 
         // formatAmount returns '-' for zero values (centralized rule)
-        var dayPnlHtml = (r.type === 'open') ? '<span class="' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
+        var dayPnlHtml = (r.dayPnl !== undefined || r.type === 'open') ? '<span class="' + dClass + '">' + formatAmount(dayPnl) + '</span>' : '-';
         var realisedHtml = (r.type === 'matched') ? '<span class="' + rClass + '">' + formatAmount(realisedPnl) + '</span>' : '-';
         var unrealisedHtml = (r.type === 'open') ? '<span class="' + uClass + '">' + formatAmount(unrealisedPnl) + '</span>' : '-';
         var netHtml = '<span class="' + nClass + '">' + formatAmount(netPnl) + '</span>';

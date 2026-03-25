@@ -753,6 +753,104 @@ function wmsCalcAvgCost(transactions) {
 //   options contracts are removed. Closed options (net qty = 0) are kept.
 //   Does NOT mutate the input array or transaction objects.
 // ============================================================================
+// DAY'S P&L CALCULATION — STOCKS
+// Handles all four scenarios correctly:
+//   1. Old shares still held:       qty × ch  (movement from prev close)
+//   2. Bought today, still held:    qty × (CMP − buyPrice)
+//   3. Old shares sold today:       qty × (sellPrice − prevClose)
+//   4. Intraday (buy+sell today):   qty × (sellPrice − buyPrice)
+// Sells consume old holdings first (FIFO), then today's buys (FIFO).
+// txns: raw transaction array for ONE symbol (may include NFO/income — filtered internally)
+//       Supports both snake_case (trading.js) and camelCase (portfolio.js) field names.
+// priceCache: { lp, ch } from wmsLivePrices
+// todayStr: optional 'YYYY-MM-DD' string (computed if omitted)
+// Returns: number (Day P&L) or null if no live data
+// ============================================================================
+
+function wmsCalcStockDayPL(txns, priceCache, todayStr) {
+    if (!priceCache || !priceCache.lp) return null;
+    if (!todayStr) todayStr = new Date().toISOString().slice(0, 10);
+    var cmp = priceCache.lp;
+    var ch  = priceCache.ch || 0;
+    var prevClose = cmp - ch;
+
+    // Separate transactions: old (before today) net qty, today buys, today sells
+    var oldNetQty = 0;
+    var todayBuys  = [];   // { qty, price }
+    var todaySells = [];   // { qty, price }
+
+    for (var i = 0; i < txns.length; i++) {
+        var t = txns[i];
+        var tType = t.transaction_type || t.type || '';
+        if (wmsIsQtyExcluded(tType)) continue;
+        if (t.security_type === 'NFO') continue;
+
+        var tDate = t.transaction_date || t.date || '';
+        var absQty = Math.abs(t.quantity || 0);
+        if (absQty === 0) continue;
+        var price = t.price || 0;
+
+        if (tType === 'BUY') {
+            if (tDate === todayStr) {
+                todayBuys.push({ qty: absQty, price: price });
+            } else {
+                oldNetQty += absQty;
+            }
+        } else if (tType === 'SELL') {
+            if (tDate === todayStr) {
+                todaySells.push({ qty: absQty, price: price });
+            } else {
+                oldNetQty -= absQty;
+            }
+        }
+    }
+
+    // Fast path: no today trades → simple oldNetQty × ch
+    if (todayBuys.length === 0 && todaySells.length === 0) {
+        return oldNetQty * ch;
+    }
+
+    var dayPL = 0;
+    var remainingOld = Math.max(oldNetQty, 0);
+
+    // Process today's sells: FIFO — consume old holdings first, then today's buys
+    for (var s = 0; s < todaySells.length; s++) {
+        var sell = todaySells[s];
+        var rem = sell.qty;
+        var sp  = sell.price;
+
+        // Scenario 3: old shares sold today → sellPrice − prevClose
+        if (remainingOld > 0 && rem > 0) {
+            var fromOld = Math.min(rem, remainingOld);
+            dayPL += fromOld * (sp - prevClose);
+            remainingOld -= fromOld;
+            rem -= fromOld;
+        }
+
+        // Scenario 4: intraday — bought and sold today → sellPrice − buyPrice
+        for (var b = 0; b < todayBuys.length && rem > 0; b++) {
+            if (todayBuys[b].qty <= 0) continue;
+            var match = Math.min(rem, todayBuys[b].qty);
+            dayPL += match * (sp - todayBuys[b].price);
+            todayBuys[b].qty -= match;
+            rem -= match;
+        }
+    }
+
+    // Scenario 1: old shares still held → qty × ch
+    dayPL += remainingOld * ch;
+
+    // Scenario 2: today's buys still held → CMP − buyPrice
+    for (var tb = 0; tb < todayBuys.length; tb++) {
+        if (todayBuys[tb].qty > 0) {
+            dayPL += todayBuys[tb].qty * (cmp - todayBuys[tb].price);
+        }
+    }
+
+    return dayPL;
+}
+
+// ============================================================================
 // DAY'S P&L CALCULATION FOR F&O OPEN POSITIONS
 // For same-day trades: Day's P&L = qty × (CMP − trade price)
 // For older trades:    Day's P&L = qty × ch (today's price change)
@@ -772,6 +870,34 @@ function wmsCalcFnoDayPnl(qty, isShort, tradeDate, tradePrice, priceCache) {
         return isShort ? (-qty * ch) : (qty * ch);
     }
     return 0;
+}
+
+// ============================================================================
+// DAY'S P&L FOR F&O CLOSED-TODAY POSITIONS
+// Called during LIFO matching when a closer's date is today.
+// openerDate, openerPpu: the opening trade's date and per-unit price
+// closerPpu: the closing trade's per-unit price
+// priceCache: { lp, ch } for prevClose derivation
+// isShort: true if short position (opener = sell, closer = buy)
+// Returns: Day P&L contribution for the matched qty
+// ============================================================================
+
+function wmsCalcFnoClosedTodayPnl(matchQty, isShort, openerDate, openerPpu, closerPpu, priceCache, todayStr) {
+    if (!priceCache || matchQty <= 0) return 0;
+    if (!todayStr) todayStr = new Date().toISOString().slice(0, 10);
+    var prevClose = (priceCache.lp || 0) - (priceCache.ch || 0);
+
+    if (openerDate === todayStr) {
+        // Intraday: opened and closed today → realized P&L IS the Day P&L
+        // Long: qty × (sellPrice − buyPrice) = qty × (closerPpu − openerPpu)
+        // Short: qty × (sellPrice − buyPrice) = qty × (openerPpu − closerPpu)
+        return isShort ? matchQty * (openerPpu - closerPpu) : matchQty * (closerPpu - openerPpu);
+    } else {
+        // Old position closed today → movement from prevClose to close price
+        // Long: qty × (sellPrice − prevClose) = qty × (closerPpu − prevClose)
+        // Short: qty × (prevClose − buyPrice) = qty × (prevClose − closerPpu)
+        return isShort ? matchQty * (prevClose - closerPpu) : matchQty * (closerPpu - prevClose);
+    }
 }
 
 // ============================================================================
