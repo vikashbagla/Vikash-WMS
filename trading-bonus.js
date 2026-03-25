@@ -260,7 +260,8 @@ function bonusSearchSymbol(input, dd) {
                 '</div>';
         }).join('');
     }
-    bonusDdCtrl.open();
+    bonusDdCtrl.show();
+    bonusDdCtrl.resetIdx();
 }
 
 // ============================================================================
