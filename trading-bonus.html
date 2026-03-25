@@ -1,0 +1,77 @@
+<head>
+<style>
+/* Bonus Modal — reuses rights-* classes for consistency, adds bonus-specific styles */
+.bonus-ratio-wrap {
+    display: flex; align-items: center; gap: 4px;
+}
+.bonus-ratio-wrap input[type="number"] {
+    width: 50px; padding: 4px 6px; border: 1px solid #e2e8f0; border-radius: 4px;
+    font-size: 11px; text-align: center; box-sizing: border-box;
+    -moz-appearance: textfield;
+}
+.bonus-ratio-wrap input[type="number"]::-webkit-outer-spin-button,
+.bonus-ratio-wrap input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0;
+}
+.bonus-ratio-wrap input:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+.bonus-ratio-sep { font-size: 11px; color: #718096; font-weight: 600; }
+.bonus-calc-qty { color: #667eea; font-weight: 600; font-size: 11px; }
+.bonus-ratio-row { display: flex; gap: 14px; align-items: flex-end; margin-bottom: 10px; }
+.bonus-ratio-field label { font-size: 10px; font-weight: 600; color: #718096; text-transform: uppercase; margin-bottom: 3px; letter-spacing: 0.3px; display: block; }
+</style>
+</head>
+
+<body>
+<!-- Bonus Issue Modal -->
+<div id="bonusOverlay" class="rights-overlay">
+    <div class="rights-modal">
+        <div class="rights-header">
+            <h3>Bonus Issue</h3>
+            <button class="btn-close-modal" id="bonusCloseBtn" title="Close">&#10005;</button>
+        </div>
+        <div class="rights-body">
+            <div class="rights-fields-row">
+                <div class="rights-field">
+                    <label>Record Date</label>
+                    <div class="rhDate-wrap" id="bonusDateWrap" tabindex="0">
+                        <span class="rhDate-seg" data-seg="dd" id="bonusDateDd">25</span>
+                        <span class="rhDate-sep">-</span>
+                        <span class="rhDate-seg" data-seg="mmm" id="bonusDateMmm">Mar</span>
+                        <span class="rhDate-sep">-</span>
+                        <span class="rhDate-seg" data-seg="yyyy" id="bonusDateYyyy">2026</span>
+                        <button type="button" class="rhDate-cal-btn" id="bonusDateCalBtn" title="Pick date">&#x1F4C5;</button>
+                        <input type="date" id="bonusDateCalPicker" class="rhDate-cal-picker">
+                    </div>
+                </div>
+                <div class="rights-field" style="flex: 1;">
+                    <label>Symbol</label>
+                    <input type="text" id="bonusSymbolInput" placeholder="Search security..." autocomplete="off">
+                    <div class="rights-search-dd" id="bonusSymbolDd"></div>
+                    <div id="bonusSymbolBadge"></div>
+                </div>
+            </div>
+            <!-- Bonus Ratio -->
+            <div class="bonus-ratio-row" id="bonusRatioRow" style="display:none;">
+                <div class="bonus-ratio-field">
+                    <label>Bonus Ratio</label>
+                    <div class="bonus-ratio-wrap">
+                        <input type="number" id="bonusRatioNew" min="1" step="1" value="1" placeholder="new">
+                        <span class="bonus-ratio-sep">:</span>
+                        <input type="number" id="bonusRatioExisting" min="1" step="1" value="1" placeholder="existing">
+                        <span style="font-size:10px;color:#a0aec0;margin-left:4px;">(new : existing)</span>
+                    </div>
+                </div>
+                <button class="btn-secondary" id="bonusApplyRatioBtn" style="font-size:11px;padding:4px 10px;height:28px;">Apply</button>
+            </div>
+            <!-- Holdings table -->
+            <div id="bonusTableWrap">
+                <div class="rights-empty">Select a date and symbol to view holdings</div>
+            </div>
+        </div>
+        <div class="rights-footer">
+            <button class="btn-secondary" id="bonusCancelBtn">Cancel</button>
+            <button class="btn-primary" id="bonusSaveBtn" disabled>Save Bonus Transactions</button>
+        </div>
+    </div>
+</div>
+</body>

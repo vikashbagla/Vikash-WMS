@@ -473,6 +473,8 @@ function trSetupEventHandlers() {
                 trLoadIncomeModule(function() { openIncomeModal(txnType); });
             } else if (txnType === 'HISTORICAL_PL') {
                 trLoadHistPlModule(function() { openHistPlModal(); });
+            } else if (txnType === 'BONUS') {
+                trLoadBonusModule(function() { openBonusModal(); });
             } else {
                 alert('Transaction type "' + txnType + '" — form coming soon.');
             }
@@ -2964,6 +2966,71 @@ async function trLoadRightsModule(callback) {
         showAlert('Failed to load Rights module: ' + err.message, 'error');
         trRightsLoading = false;
         trRightsCallbacks = [];
+    }
+}
+
+// ============================================================================
+// BONUS MODULE (loaded on demand — same pattern as Rights)
+// ============================================================================
+
+var trBonusLoaded = false;
+var trBonusLoading = false;
+var trBonusCallbacks = [];
+
+async function trLoadBonusModule(callback) {
+    if (trBonusLoaded) {
+        if (typeof callback === 'function') callback();
+        return;
+    }
+    if (trBonusLoading) {
+        if (typeof callback === 'function') trBonusCallbacks.push(callback);
+        return;
+    }
+    trBonusLoading = true;
+    if (typeof callback === 'function') trBonusCallbacks.push(callback);
+
+    try {
+        // Load HTML
+        var htmlResp = await fetch('trading-bonus.html?t=' + Date.now());
+        if (!htmlResp.ok) throw new Error('Failed to load trading-bonus.html');
+        var htmlText = await htmlResp.text();
+
+        // Extract <style> and inject to <head>
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(htmlText, 'text/html');
+        var styles = doc.querySelectorAll('style');
+        styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+
+        // Inject body content (modal overlay) into a container div
+        var container = document.createElement('div');
+        container.id = 'tr-bonus-container';
+        container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
+        document.body.appendChild(container);
+
+        // Load JS
+        var oldScript = document.querySelector('script[src*="trading-bonus.js"]');
+        if (oldScript) oldScript.remove();
+        await new Promise(function(resolve, reject) {
+            var script = document.createElement('script');
+            script.src = 'trading-bonus.js?t=' + Date.now();
+            script.onload = resolve;
+            script.onerror = function() { reject(new Error('Failed to load trading-bonus.js')); };
+            document.body.appendChild(script);
+        });
+
+        trBonusLoaded = true;
+
+        // Small delay for init to complete, then fire all queued callbacks
+        setTimeout(function() {
+            if (typeof initBonusModule === 'function') initBonusModule();
+            trBonusCallbacks.forEach(function(cb) { cb(); });
+            trBonusCallbacks = [];
+        }, 100);
+    } catch (err) {
+        console.error('Trading: Failed to load bonus module:', err);
+        showAlert('Failed to load Bonus module: ' + err.message, 'error');
+        trBonusLoading = false;
+        trBonusCallbacks = [];
     }
 }
 
