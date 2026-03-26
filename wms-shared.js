@@ -767,9 +767,10 @@ function wmsCalcAvgCost(transactions) {
 // Returns: number (Day P&L) or null if no live data
 // ============================================================================
 
-function wmsCalcStockDayPL(txns, priceCache, todayStr) {
+function wmsCalcStockDayPL(txns, priceCache, todayStr, opts) {
     if (!priceCache || !priceCache.lp) return null;
     if (!todayStr) todayStr = new Date().toISOString().slice(0, 10);
+    var includeNfo = opts && opts.includeNfo;
     var cmp = priceCache.lp;
     var ch  = priceCache.ch || 0;
     var prevClose = cmp - ch;
@@ -783,7 +784,7 @@ function wmsCalcStockDayPL(txns, priceCache, todayStr) {
         var t = txns[i];
         var tType = t.transaction_type || t.type || '';
         if (wmsIsQtyExcluded(tType)) continue;
-        if (t.security_type === 'NFO') continue;
+        if (t.security_type === 'NFO' && !includeNfo) continue;
 
         var tDate = t.transaction_date || t.date || '';
         var absQty = Math.abs(t.quantity || 0);

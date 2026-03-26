@@ -655,8 +655,8 @@ function renderPortfolio() {
                     valA = mdA ? mdA.chp : 0;
                     valB = mdB ? mdB.chp : 0;
                 } else {
-                    valA = a._txns ? (wmsCalcStockDayPL(a._txns, mdA) || 0) : 0;
-                    valB = b._txns ? (wmsCalcStockDayPL(b._txns, mdB) || 0) : 0;
+                    valA = a._txns ? (wmsCalcStockDayPL(a._txns, mdA, null, {includeNfo:true}) || 0) : 0;
+                    valB = b._txns ? (wmsCalcStockDayPL(b._txns, mdB, null, {includeNfo:true}) || 0) : 0;
                 }
                 break;
             case 'value':
@@ -680,7 +680,7 @@ function renderPortfolio() {
         const plPercent    = invested !== 0 ? (pl / Math.abs(invested)) * 100 : 0;
         const invPct       = totalInvested !== 0 ? (invested / totalInvested) * 100 : 0;
         const valPct       = totalValue    !== 0 ? (currentValue / totalValue) * 100 : 0;
-        const dayPL        = h._txns ? wmsCalcStockDayPL(h._txns, md) : (md ? h.quantity * md.ch : null);
+        const dayPL        = h._txns ? wmsCalcStockDayPL(h._txns, md, null, {includeNfo:true}) : (md ? h.quantity * md.ch : null);
         const dayChp       = md ? md.chp : null;  // % change for the day
 
         // CMP slider — 52-week range from securities_db (synced via Yahoo Finance)
@@ -765,7 +765,7 @@ function renderPortfolio() {
                 .filter(function(inv) { return inv.quantity !== 0; })
                 .map(function(inv) {
                     var invAvgCost  = inv.quantity !== 0 ? (inv.totalCost !== 0 ? inv.totalCost / inv.quantity : h.latestPrice) : 0;
-                    var invDayPL    = inv._txns ? wmsCalcStockDayPL(inv._txns, md) : (md ? inv.quantity * md.ch : null);
+                    var invDayPL    = inv._txns ? wmsCalcStockDayPL(inv._txns, md, null, {includeNfo:true}) : (md ? inv.quantity * md.ch : null);
                     var invDayChp   = md ? md.chp : null;
                     var invValue    = inv.quantity * price;
                     var invInvested = inv.quantity * invAvgCost;
@@ -808,7 +808,7 @@ function renderPortfolio() {
 
     // Total row
     var totalDayPL = Object.keys(liveData).length > 0
-        ? holdings.reduce(function(sum, h) { var m = getLiveData(h); return sum + (h._txns ? (wmsCalcStockDayPL(h._txns, m) || 0) : (m ? h.quantity * m.ch : 0)); }, 0)
+        ? holdings.reduce(function(sum, h) { var m = getLiveData(h); return sum + (h._txns ? (wmsCalcStockDayPL(h._txns, m, null, {includeNfo:true}) || 0) : (m ? h.quantity * m.ch : 0)); }, 0)
         : null;
     var totalDayPLPct = (totalDayPL !== null && totalInvested !== 0)
         ? (totalDayPL / Math.abs(totalInvested)) * 100

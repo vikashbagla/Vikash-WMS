@@ -1296,8 +1296,8 @@ function trRenderPortfolio() {
                 if (trSortByPct) {
                     valA = mdA ? mdA.chp : 0; valB = mdB ? mdB.chp : 0;
                 } else {
-                    valA = a._txns ? (wmsCalcStockDayPL(a._txns, mdA) || 0) : 0;
-                    valB = b._txns ? (wmsCalcStockDayPL(b._txns, mdB) || 0) : 0;
+                    valA = a._txns ? (wmsCalcStockDayPL(a._txns, mdA, null, {includeNfo:true}) || 0) : 0;
+                    valB = b._txns ? (wmsCalcStockDayPL(b._txns, mdB, null, {includeNfo:true}) || 0) : 0;
                 }
                 break;
             case 'value':
@@ -1319,7 +1319,7 @@ function trRenderPortfolio() {
         var plPct = invested !== 0 ? (pl / Math.abs(invested)) * 100 : 0;
         var invPct = totalInvested !== 0 ? (invested / Math.abs(totalInvested)) * 100 : 0;
         var valPct = totalValue !== 0 ? (currentValue / Math.abs(totalValue)) * 100 : 0;
-        var dayPL = h._txns ? wmsCalcStockDayPL(h._txns, md) : (md ? h.quantity * md.ch : null);
+        var dayPL = h._txns ? wmsCalcStockDayPL(h._txns, md, null, {includeNfo:true}) : (md ? h.quantity * md.ch : null);
         var dayChp = md ? md.chp : null;
 
         // CMP slider: use 52-week high/low from securities_db (not day H/L)
@@ -1392,7 +1392,7 @@ function trRenderPortfolio() {
     // Total row
     var hasLive = Object.keys(wmsLivePrices).length > 0 || Object.keys(trLiveData).length > 0;
     var totalDayPL = hasLive
-        ? holdings.reduce(function(sum, h) { var m = trGetLiveData(h); return sum + (h._txns ? (wmsCalcStockDayPL(h._txns, m) || 0) : (m ? h.quantity * m.ch : 0)); }, 0)
+        ? holdings.reduce(function(sum, h) { var m = trGetLiveData(h); return sum + (h._txns ? (wmsCalcStockDayPL(h._txns, m, null, {includeNfo:true}) || 0) : (m ? h.quantity * m.ch : 0)); }, 0)
         : null;
     var totalDayPLPct = (totalDayPL !== null && totalInvested !== 0)
         ? (totalDayPL / Math.abs(totalInvested)) * 100 : null;
@@ -1571,7 +1571,7 @@ function trBuildInvestorDetail(h, price, md) {
             var val = g.quantity * price;
             var pl = val - inv;
             var plPct = inv !== 0 ? (pl / Math.abs(inv)) * 100 : 0;
-            var dayPL = g.txns ? wmsCalcStockDayPL(g.txns, md) : (md ? g.quantity * md.ch : null);
+            var dayPL = g.txns ? wmsCalcStockDayPL(g.txns, md, null, {includeNfo:true}) : (md ? g.quantity * md.ch : null);
             var dayChp = md ? md.chp : null;
 
             var qtyHtml = g.quantity < 0
