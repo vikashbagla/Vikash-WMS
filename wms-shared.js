@@ -1485,10 +1485,18 @@ function wmsBuildRefreshSymbols() {
             if (t.security_type !== 'NFO' && t.security_type !== 'MCX') return;
             if (!t.symbol || t.symbol === t.short_symbol) return;
             var bare = t.symbol.replace(/^[A-Z]+:/, '');
-            if (seen[bare]) return;
-            seen[bare] = true;
-            var fKey = t.symbol.indexOf(':') >= 0 ? t.symbol : 'NSE:' + bare;
-            list.push({ fyersKey: fKey, cacheKey: bare });
+            if (!seen[bare]) {
+                seen[bare] = true;
+                var fKey = t.symbol.indexOf(':') >= 0 ? t.symbol : 'NSE:' + bare;
+                list.push({ fyersKey: fKey, cacheKey: bare });
+            }
+            // Also add the underlying equity symbol so portfolio rows can look up
+            // by shortSymbol (e.g., 'SHRIRAMFIN') even for F&O-only positions
+            var underlying = t.short_symbol;
+            if (underlying && !seen[underlying]) {
+                seen[underlying] = true;
+                list.push({ fyersKey: 'NSE:' + underlying + '-EQ', cacheKey: underlying });
+            }
         });
     }
 
