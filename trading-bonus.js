@@ -237,29 +237,31 @@ function bonusDateOnChange() {
 // ============================================================================
 
 function bonusSearchSymbol(input, dd) {
-    var query = input.value.trim();
-    if (query.length < 1) { if (bonusDdCtrl) bonusDdCtrl.close(); return; }
-    if (!wmsRefData.securitiesCmReady) return;
+    var q = input.value.trim();
+    if (q.length < 1) { bonusDdCtrl.close(); dd._bonusResults = []; return; }
 
-    var results = wmsRefData.securitiesCm.filter(function(s) {
-        // Exclude non-equity types (no bonus on NFO, RIGHTS, etc.)
-        if (s.security_type === 'RIGHTS' || s.security_type === 'NFO') return false;
-        var text = ((s.nse_symbol || '') + ' ' + (s.company_name || '') + ' ' + (s.bse_symbol || '')).toLowerCase();
-        return text.indexOf(query.toLowerCase()) >= 0;
-    }).slice(0, 15);
+    // Rule A.4.2: always use wmsSearchSecurities — never direct DB queries
+    var results = wmsSearchSecurities(q);
+
+    // Filter out RIGHTS and NFO — bonus only applies to equity-like securities
+    results = results.filter(function(s) {
+        return s.security_type !== 'RIGHTS' && s.security_type !== 'NFO';
+    });
 
     dd._bonusResults = results;
-
+    dd.innerHTML = '';
     if (results.length === 0) {
-        dd.innerHTML = '<div class="wms-dd-item" style="color:#a0aec0;cursor:default;">No matches</div>';
-    } else {
-        dd.innerHTML = results.map(function(r, i) {
-            return '<div class="wms-dd-item" data-idx="' + i + '">' +
-                '<strong>' + (r.nse_symbol || r.bse_symbol || r.symbol) + '</strong>' +
-                '<span style="color:#718096;margin-left:6px;font-size:10px;">' + (r.company_name || '') + '</span>' +
-                '</div>';
-        }).join('');
+        dd.innerHTML = '<div style="padding:8px;color:#a0aec0;font-size:11px;">No securities found</div>';
+        bonusDdCtrl.show();
+        return;
     }
+    results.forEach(function(sec, idx) {
+        var div = document.createElement('div');
+        div.className = 'wms-dd-item';
+        div.dataset.idx = idx;
+        div.innerHTML = '<strong>' + (sec.nse_symbol || sec.symbol) + '</strong> — ' + sec.company_name;
+        dd.appendChild(div);
+    });
     bonusDdCtrl.show();
     bonusDdCtrl.resetIdx();
 }
