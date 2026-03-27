@@ -3897,7 +3897,7 @@ function wmsCalcHoldingsAsOfDate(shortSymbol, targetDate, transactions) {
 
     var groups = {};
     filtered.forEach(function(t) {
-        var key = (t.investor_id || '') + '|' + (t.trader_id || '') + '|' + (t.broker_id || '');
+        var key = (t.investor_id || '') + '|' + (t.trader_id || t.investor_id || '') + '|' + (t.broker_id || '');
         if (!groups[key]) {
             groups[key] = {
                 investor_id: t.investor_id,

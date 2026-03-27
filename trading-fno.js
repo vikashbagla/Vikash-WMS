@@ -342,7 +342,7 @@ function trFnoCalcPositions() {
         var groups = {};
         symbolTrades.forEach(function(t) {
             var invId = t.investor_id || '';
-            var trdId = t.trader_id || '';
+            var trdId = t.trader_id || t.investor_id || '';  // normalize: empty trader = investor
             var brkId = t.broker_id || '';
             var fullSym = (t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
             var key = invId + '|' + trdId + '|' + brkId + '|' + fullSym;

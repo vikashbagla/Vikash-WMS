@@ -284,7 +284,7 @@ async function trFnoBannerRefreshFromDefault(forceRefresh) {
 
     var byGroup = {};
     trades.forEach(function(t) {
-        var key = (t.investor_id || '') + '|' + (t.trader_id || '') + '|' + (t.broker_id || '') + '|' + (t.symbol || '').replace(/^[A-Z]+:/, '');
+        var key = (t.investor_id || '') + '|' + (t.trader_id || t.investor_id || '') + '|' + (t.broker_id || '') + '|' + (t.symbol || '').replace(/^[A-Z]+:/, '');
         if (!byGroup[key]) byGroup[key] = { buys: [], sells: [] };
         var entry = { date: t.transaction_date, qty: Math.abs(t.quantity || 0), netAmount: Math.abs(t.net_amount || 0), remaining: Math.abs(t.quantity || 0), txn: t };
         if (t.transaction_type === 'BUY') byGroup[key].buys.push(entry);
@@ -2044,7 +2044,7 @@ function trRenderTxnMatchingView() {
     var groups = {};
     trades.forEach(function(t) {
         var invId = t.investor_id || '';
-        var trdId = t.trader_id || '';
+        var trdId = t.trader_id || t.investor_id || '';  // normalize: empty trader = investor
         var brkId = t.broker_id || '';
         var fullSym = t.symbol || t.short_symbol || '';
         var key = invId + '|' + trdId + '|' + brkId + '|' + fullSym;
