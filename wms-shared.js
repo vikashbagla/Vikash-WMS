@@ -786,6 +786,12 @@ function wmsCalcStockDayPL(txns, priceCache, todayStr, opts) {
         if (wmsIsQtyExcluded(tType)) continue;
         if (t.security_type === 'NFO' && !includeNfo) continue;
 
+        // Options (CE/PE) trade at completely different prices than the underlying —
+        // never include them in stock Day P&L (they'd use equity prevClose on option prices)
+        var _sym = t.symbol || '';
+        var _shortSym = t.short_symbol || t.shortSymbol || _sym;
+        if (wmsIsOptionContract(_sym, _shortSym)) continue;
+
         var tDate = t.transaction_date || t.date || '';
         var absQty = Math.abs(t.quantity || 0);
         if (absQty === 0) continue;
