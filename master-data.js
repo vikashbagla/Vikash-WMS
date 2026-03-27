@@ -3514,6 +3514,7 @@ function closePeSecurityModal() {
 var _mergeSourceId = null;
 var _mergeTargetId = null;
 var _mergeSourceTxnCount = 0;
+var _mergeDateCtrl = null;  // wmsDateInput controller for merge date
 
 function _mergeModalEscHandler(e) {
     if (e.key === 'Escape') closeMergeSecurityModal();
@@ -3552,7 +3553,7 @@ async function openMergeSecurityModal() {
     document.getElementById('mergeSearchResults').innerHTML = '';
     document.getElementById('mergeSelectedTarget').style.display = 'none';
     document.getElementById('mergeDateRow').style.display = 'none';
-    document.getElementById('mergeDateInput').value = '';
+    if (_mergeDateCtrl) { _mergeDateCtrl.destroy(); _mergeDateCtrl = null; }
     document.getElementById('mergeConfirmSummary').style.display = 'none';
     document.getElementById('btnMergeConfirm').style.display = 'none';
 
@@ -3612,10 +3613,11 @@ function _mergeSelectTarget(targetId) {
         '<div style="color:#065f46;margin-top:2px;">ISIN: ' + wmsEsc(target.isin || '') + ' · Type: ' + wmsEsc(target.security_type || '') + '</div>';
     document.getElementById('mergeSelectedTarget').style.display = 'block';
 
-    // Show merge date input (default to today)
+    // Show merge date input (default to today) — uses wmsDateInput per Rule D.5.4
     document.getElementById('mergeDateRow').style.display = 'block';
-    if (!document.getElementById('mergeDateInput').value) {
-        document.getElementById('mergeDateInput').value = new Date().toISOString().slice(0, 10);
+    if (!_mergeDateCtrl) {
+        _mergeDateCtrl = wmsDateInput(document.getElementById('mergeDateContainer'), {});
+        _mergeDateCtrl.setValue(new Date());
     }
 
     // Show confirm summary
@@ -3655,7 +3657,7 @@ async function executeMergeSecurity() {
         var targetExchange = target.nse_symbol ? 'NSE' : (target.bse_symbol ? 'BSE' : 'NSE');
         var targetSecurityType = target.security_type || 'EQUITY';
         // Merge date: user-entered or default to today
-        var mergeDateStr = document.getElementById('mergeDateInput').value || new Date().toISOString().slice(0, 10);
+        var mergeDateStr = (_mergeDateCtrl ? _mergeDateCtrl.getValue() : null) || new Date().toISOString().slice(0, 10);
         var mergeDateDisplay = new Date(mergeDateStr + 'T00:00:00').toLocaleDateString('en-IN');
         // Merge note for traceability — appended to notes field (tags are never modified programmatically)
         var mergeNote = '[MERGED from ' + (source.isin || 'PE-' + source.symbol) + ' (' + (source.company_name || source.symbol) + ') on ' + mergeDateDisplay + ']';
