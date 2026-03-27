@@ -2754,9 +2754,18 @@ async function trSaveEdit() {
 
     var traderVal = document.getElementById('trEditTrader').value;
 
+    // Qty & Price — SELL txns display absolute values but DB stores negative qty
+    var isSell = txn.transaction_type === 'SELL';
+    var editedQty = trEditParse(document.getElementById('trEditQty'));
+    var editedPrice = trEditParse(document.getElementById('trEditPrice'));
+    // Restore negative sign for SELL quantities (user sees positive, DB stores negative)
+    if (isSell && editedQty > 0) editedQty = -editedQty;
+
     // Save editable fields — values saved directly to DB as entered
     var body = {
         trader_id: traderVal || null,
+        quantity: editedQty,
+        price: editedPrice,
         gross_amount: trEditParse(document.getElementById('trEditGross')),
         brokerage: trEditParse(document.getElementById('trEditBrokerage')),
         stt: trEditParse(document.getElementById('trEditStt')),
