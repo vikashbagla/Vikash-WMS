@@ -220,6 +220,23 @@ const showAlert = (message, type = 'info', duration = 3000) => {
     }
 };
 
+// 52-week price slider (shared across Portfolio & Reports)
+// current = current price, low/high = 52-week bounds, lo/hi = formatted label strings
+function buildSlider(current, low, high, lo, hi) {
+    if (!low || !high || high <= low) return '';
+    var pct      = Math.min(100, Math.max(0, ((current - low) / (high - low)) * 100));
+    var dotColor = pct >= 50 ? '#059669' : '#dc2626';
+    return '<div class="price-slider">' +
+               '<div class="price-slider-track">' +
+                   '<div class="price-slider-dot" style="left:' + pct.toFixed(1) + '%;background:' + dotColor + ';"></div>' +
+               '</div>' +
+               '<div class="slider-tooltip">' +
+                   '<span>' + lo + '</span>' +
+                   '<span>' + hi + '</span>' +
+               '</div>' +
+           '</div>';
+}
+
 // Export functions for use in other modules
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {

@@ -74,13 +74,10 @@
 
     <nav class="top-nav">
         <div class="nav-content">
-            <button class="nav-btn active" data-module="portfolio">📊 Portfolio</button>
-            <button class="nav-btn" data-module="master-data">🗂️ Master Database</button>
-            <button class="nav-btn" data-module="import-transactions">📥 Import Transactions</button>
             <button class="nav-btn" data-module="trading">📈 Trading</button>
-            <button class="nav-btn disabled" data-module="add-transaction">➕ Add Transaction</button>
-            <button class="nav-btn disabled" data-module="other-transactions">📋 Other Transactions</button>
-            <button class="nav-btn disabled" data-module="analytics">📊 Analytics</button>
+            <button class="nav-btn active" data-module="reports">📊 Reports</button>
+            <button class="nav-btn" data-module="import-transactions">📥 Import Transactions</button>
+            <button class="nav-btn" data-module="master-data">🗂️ Master Database</button>
         </div>
     </nav>
 
@@ -399,10 +396,11 @@
         
         try {
             var _cb = '?t=' + Date.now(); // cache bust for HTML modules
-            if (moduleName === 'portfolio') {
-                const resp = await fetch('portfolio.html' + _cb);
-                container.innerHTML = await resp.text();
-                if (typeof initPortfolio === 'function') await initPortfolio();
+            if (moduleName === 'reports') {
+                const html = await (await fetch('reports.html' + _cb)).text();
+                injectModule(html, container);
+                await loadScript('reports.js');
+                if (typeof initReports === 'function') await initReports();
 
             } else if (moduleName === 'master-data') {
                 const html = await (await fetch('master-data.html' + _cb)).text();
@@ -494,7 +492,8 @@
         });
 
         // Load last active module or default to portfolio
-        const lastModule = localStorage.getItem('wms_last_module') || 'portfolio';
+        var lastModule = localStorage.getItem('wms_last_module') || 'reports';
+        if (lastModule === 'portfolio') lastModule = 'reports'; // migrate old preference
         loadModule(lastModule);
 
         // Set initial bottom nav active state
@@ -516,7 +515,6 @@
     document.getElementById('app-styles-link').href = `app-styles.css?v=${_v}`;
     document.write(`<script src="utils.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-shared.js?v=${_v}"><\/script>`);
-    document.write(`<script src="portfolio.js?v=${_v}"><\/script>`);
     </script>
 </body>
 </html>
