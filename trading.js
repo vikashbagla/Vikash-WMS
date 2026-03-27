@@ -1244,6 +1244,15 @@ function trBuildSlider(current, low, high, lo, hi) {
 // PORTFOLIO RENDERING
 // ============================================================================
 
+// Unified refresh — call after any transaction mutation (edit, delete, split).
+// Refreshes all active views so the user sees updated data without a page reload.
+function trRefreshAllViews() {
+    trRenderPortfolio();
+    if (trCurrentTxnModalKey) trTxnRefreshCurrentView();
+    if (typeof trTxRender === 'function') trTxRender();
+    if (typeof trFnoRender === 'function') trFnoRender();
+}
+
 function trRenderPortfolio() {
     var list = document.getElementById('tr-portfolio-list');
     if (!list) return;
@@ -2556,8 +2565,7 @@ async function trToggleTxnFlag(txnId, flagName) {
     if (resp.ok) {
         txn[flagName] = newValue;
         showAlert(flagName.replace(/_/g, ' ') + ' ' + (newValue ? 'enabled' : 'disabled'), 'success', 2000);
-        if (trCurrentTxnModalKey) trTxnRefreshCurrentView();
-        trRenderPortfolio();
+        trRefreshAllViews();
     } else {
         showAlert('Failed to update: HTTP ' + resp.status, 'error');
     }
@@ -2589,9 +2597,8 @@ async function trDeleteTransaction(txnId) {
     if (resp.ok) {
         trTransactions = trTransactions.filter(function(t) { return t.id !== txnId; });
         showAlert('Transaction deleted', 'success', 2000);
-        if (trCurrentTxnModalKey) trTxnRefreshCurrentView();
         if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
-        trRenderPortfolio();
+        trRefreshAllViews();
     } else {
         showAlert('Failed to delete: HTTP ' + resp.status, 'error');
     }
@@ -2810,8 +2817,7 @@ async function trSaveEdit() {
         Object.keys(body).forEach(function(k) { txn[k] = body[k]; });
         showAlert('Transaction saved', 'success', 2000);
         trCloseEditModal();
-        if (trCurrentTxnModalKey) trTxnRefreshCurrentView();
-        trRenderPortfolio();
+        trRefreshAllViews();
     } else {
         var errText = await resp.text();
         showAlert('Failed to save: ' + errText, 'error');
@@ -3057,8 +3063,7 @@ async function trExecuteSplit() {
 
         showAlert('Transaction split successfully', 'success', 2500);
         trCloseEditModal();
-        if (trCurrentTxnModalKey) trTxnRefreshCurrentView();
-        trRenderPortfolio();
+        trRefreshAllViews();
     } catch (err) {
         statusEl.textContent = 'Error: ' + err.message;
         statusEl.style.color = '#dc2626';
