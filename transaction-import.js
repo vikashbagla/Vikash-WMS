@@ -1635,7 +1635,8 @@ window.importCnToDatabase = async function() {
         // INSERT new rows
         for (var i = 0; i < cnNewRows.length; i++) {
             var r = cnNewRows[i];
-            var data = buildTransactionRecord(r);
+            var cnCtx = { source: 'CN', investorId: cnSelectedAccount.investor_id, brokerId: cnSelectedAccount.broker_id, tradeDate: cnTradeDate, cnNumber: cnCnNumber };
+            var data = buildTransactionRecord(r, cnCtx);
             try {
                 var resp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions', {
                     method: 'POST',
@@ -1656,7 +1657,8 @@ window.importCnToDatabase = async function() {
         // UPDATE existing rows
         for (var j = 0; j < cnUpdateRows.length; j++) {
             var ur = cnUpdateRows[j];
-            var udata = buildTransactionRecord(ur);
+            var cnCtxU = { source: 'CN', investorId: cnSelectedAccount.investor_id, brokerId: cnSelectedAccount.broker_id, tradeDate: cnTradeDate, cnNumber: cnCnNumber };
+            var udata = buildTransactionRecord(ur, cnCtxU);
             delete udata.created_at; // Don't update created_at
             try {
                 var uresp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
@@ -1734,36 +1736,63 @@ window.importCnToDatabase = async function() {
 
 function roundMoney(v) { return wmsRoundMoney(v); }
 
-function buildTransactionRecord(row) {
+// ============================================================================
+// Unified buildTransactionRecord — single shared builder for CN, Excel, Fyers
+// ctx = { source: 'CN'|'EXCEL'|'FYERS', investorId, brokerId, tradeDate, cnNumber }
+// If ctx is omitted or fields are missing, falls back to row values (Excel path).
+// ============================================================================
+function buildTransactionRecord(row, ctx) {
+    ctx = ctx || {};
+    var investorId = ctx.investorId || row.investor_id;
+    var brokerId   = ctx.brokerId !== undefined ? ctx.brokerId : (row.broker_id || null);
+    var tradeDate  = ctx.tradeDate || row.transaction_date;
+
+    // Notes: source-specific default, else row value
+    var notes;
+    if (ctx.source === 'CN')         notes = 'Imported from CN #' + (ctx.cnNumber || '');
+    else if (ctx.source === 'FYERS') notes = 'Imported from Fyers Tradebook';
+    else                             notes = row.notes || null;
+
+    // broker_contract_note_no — only CN has it
+    var cnNo = (ctx.source === 'CN') ? (ctx.cnNumber || null) : null;
+
+    // broker_trade_id — only Fyers has order numbers
+    var tradeId = null;
+    if (ctx.source === 'FYERS' && row._orderNumbers) {
+        tradeId = row._orderNumbers.join(',');
+    }
+
     return {
-        investor_id: cnSelectedAccount.investor_id,
-        broker_id: cnSelectedAccount.broker_id,
-        trader_id: row.trader_id || cnSelectedAccount.investor_id,
-        security_id: row.security_id,  // From processAndGroupTrades() security matching
+        investor_id: investorId,
+        broker_id: brokerId,
+        trader_id: row.trader_id || investorId,
+        security_id: row.security_id,
         security_type: row.security_type || 'EQUITY',
         symbol: row.symbol,
-        short_symbol: row.short_symbol,
-        company_name: row.company_name,
-        exchange: row.exchange,
+        short_symbol: row.short_symbol || row.symbol,
+        company_name: row.company_name || row.symbol,
+        exchange: row.exchange || 'NSE',
         product: null,
         transaction_type: row.transaction_type,
-        transaction_date: cnTradeDate,
+        transaction_date: tradeDate,
         quantity: row.quantity,
-        lots: row.lots,
+        lots: row.lots || 0,
         price: roundMoney(row.price),
         gross_amount: roundMoney(row.gross_amount),
-        brokerage: roundMoney(row.brokerage),
-        stt: roundMoney(row.stt),
-        other_charges: roundMoney(row.other_charges),
-        gst: roundMoney(row.gst),
-        tds: null,
-        total_charges: roundMoney(row.total_charges),
-        net_amount: roundMoney(row.net_amount),
+        brokerage: roundMoney(row.brokerage || 0),
+        stt: roundMoney(row.stt || 0),
+        other_charges: roundMoney(row.other_charges || 0),
+        gst: roundMoney(row.gst || 0),
+        tds: row.tds ? roundMoney(row.tds) : null,
+        total_charges: roundMoney(row.total_charges || 0),
+        trader_charges: roundMoney(row.trader_charges || 0),
+        net_amount: roundMoney(row.net_amount || 0),
         margin_blocked: 0,
-        broker_contract_note_no: cnCnNumber,
-        broker_trade_id: null,
+        broker_contract_note_no: cnNo,
+        broker_trade_id: tradeId,
         tags: (row.tags && row.tags.length > 0) ? row.tags : ['blank'],
-        notes: 'Imported from CN #' + cnCnNumber,
+        notes: notes,
+        is_locked: false,
         ignore_for_avg_cost: false,
         dont_display: false
     };
@@ -2968,42 +2997,9 @@ function recalcExcelRow(index) {
 }
 
 // Build Supabase-ready transaction record from Excel row (rules F.3.1–F.3.5)
+// Delegates to unified buildTransactionRecord(); row already has investor_id, broker_id, etc.
 function buildExcelTransactionRecord(row) {
-    var rec = {
-        investor_id: row.investor_id,
-        trader_id: row.trader_id || row.investor_id,
-        broker_id: row.broker_id || null,
-        security_id: row.security_id,
-        security_type: row.security_type || 'EQUITY',
-        symbol: row.symbol,
-        short_symbol: row.short_symbol || row.symbol,
-        company_name: row.company_name || row.symbol,
-        exchange: row.exchange || 'NSE',
-        product: null,
-        transaction_type: row.transaction_type,
-        transaction_date: row.transaction_date,
-        quantity: row.quantity,
-        lots: row.lots || 0,
-        price: roundMoney(row.price),
-        gross_amount: roundMoney(row.gross_amount),
-        brokerage: roundMoney(row.brokerage || 0),
-        stt: roundMoney(row.stt || 0),
-        other_charges: roundMoney(row.other_charges || 0),
-        gst: roundMoney(row.gst || 0),
-        tds: row.tds ? roundMoney(row.tds) : null,
-        total_charges: roundMoney(row.total_charges || 0),
-        trader_charges: roundMoney(row.trader_charges || 0),
-        net_amount: roundMoney(row.net_amount || 0),
-        margin_blocked: 0,
-        broker_contract_note_no: null,
-        broker_trade_id: null,
-        tags: row.tags && row.tags.length > 0 ? row.tags : ['blank'],
-        notes: row.notes || null,
-        is_locked: false,
-        ignore_for_avg_cost: false,
-        dont_display: false
-    };
-    return rec;
+    return buildTransactionRecord(row, { source: 'EXCEL' });
 }
 
 // Import confirmed rows to database — Excel-specific prep, then shared performImport()
@@ -3749,43 +3745,9 @@ async function fyCheckDuplicates(rows) {
     console.log('Fyers duplicates: ' + fyNewRows.length + ' new, ' + fyUpdateRows.length + ' updates');
 }
 
-// ============================================================================
-// Build Transaction Record (same pattern as CN buildTransactionRecord)
-// ============================================================================
-
+// Build Transaction Record — Fyers wrapper around unified buildTransactionRecord()
 function fyBuildTransactionRecord(row) {
-    return {
-        investor_id: fyInvestorId,
-        broker_id: fyBrokerId,
-        trader_id: row.trader_id || fyInvestorId,
-        security_id: row.security_id,
-        security_type: row.security_type || 'EQUITY',
-        symbol: row.symbol,
-        short_symbol: row.short_symbol,
-        company_name: row.company_name,
-        exchange: row.exchange,
-        product: null,
-        transaction_type: row.transaction_type,
-        transaction_date: fyTradeDate,
-        quantity: row.quantity,
-        lots: row.lots,
-        price: roundMoney(row.price),
-        gross_amount: roundMoney(row.gross_amount),
-        brokerage: roundMoney(row.brokerage),
-        stt: roundMoney(row.stt),
-        other_charges: roundMoney(row.other_charges),
-        gst: roundMoney(row.gst),
-        tds: null,
-        total_charges: roundMoney(row.total_charges),
-        net_amount: roundMoney(row.net_amount),
-        margin_blocked: 0,
-        broker_contract_note_no: null,   // CN hasn't arrived yet
-        broker_trade_id: row._orderNumbers ? row._orderNumbers.join(',') : null,
-        tags: (row.tags && row.tags.length > 0) ? row.tags : ['blank'],
-        notes: 'Imported from Fyers Tradebook',
-        ignore_for_avg_cost: false,
-        dont_display: false
-    };
+    return buildTransactionRecord(row, { source: 'FYERS', investorId: fyInvestorId, brokerId: fyBrokerId, tradeDate: fyTradeDate });
 }
 
 // ============================================================================
