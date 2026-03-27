@@ -4,13 +4,14 @@
    WATCHLIST SUB-MODULE STYLES
    ================================================================ */
 
-/* Container — must be flex column to fill parent and allow grid to scroll */
+/* Container — flex column, scrolls vertically so grid columns don't overflow horizontally */
 .wl-container {
     display: flex;
     flex-direction: column;
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 
 /* Watchlist header bar */
@@ -74,13 +75,12 @@
 }
 .btn-wl-debug:hover { background: #f7fafc; border-color: #667eea; color: #667eea; }
 
-/* Masonry-style column layout — cards size to content, stack tightly */
+/* Masonry-style column layout — cards size to content, stack tightly.
+   No height constraint here; parent .wl-container scrolls vertically,
+   so CSS columns balance within available width instead of overflowing horizontally. */
 .wl-grid {
     columns: 360px auto;
     column-gap: 12px;
-    overflow-y: auto;
-    flex: 1;
-    min-height: 0;
     padding: 2px;
 }
 
