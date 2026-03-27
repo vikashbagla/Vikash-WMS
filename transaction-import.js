@@ -3389,7 +3389,7 @@ function fyUpdateStatus() {
     var infoEl = document.getElementById('fyInfo');
     if (!statusEl) return;
 
-    // Check Fyers token from localStorage
+    // Check Fyers token — localStorage (manual OAuth) OR window.fyersToken (DB auto-login)
     var token = null;
     try {
         var stored = localStorage.getItem('fyers_token');
@@ -3402,6 +3402,10 @@ function fyUpdateStatus() {
             }
         }
     } catch (e) { /* ignore parse errors */ }
+    // Also check window.fyersToken set by app.html checkFyersAuth() (covers DB auto-login)
+    if (!token && window.fyersToken) {
+        token = window.fyersToken;
+    }
 
     if (token && fyInvestorId && fyBrokerId) {
         statusEl.className = 'fy-status connected';
@@ -3436,7 +3440,7 @@ window.fyFetchTrades = async function() {
         return;
     }
 
-    // Check token
+    // Check token — localStorage (manual OAuth) OR window.fyersToken (DB auto-login)
     var token = null;
     try {
         var stored = localStorage.getItem('fyers_token');
@@ -3448,6 +3452,9 @@ window.fyFetchTrades = async function() {
             }
         }
     } catch (e) { /* */ }
+    if (!token && window.fyersToken) {
+        token = window.fyersToken;
+    }
 
     if (!token) {
         tiAlert('error', 'Fyers token expired or not available. Please reconnect in Settings.');
