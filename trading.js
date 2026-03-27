@@ -190,7 +190,7 @@ function trComputeBannerStats() {
     // Filter transactions using default view filters
     var filtered = trTransactions.filter(function(t) { return !t.dont_display; });
     if (invIds.length > 0) filtered = filtered.filter(function(t) { return invIds.indexOf(t.investor_id) >= 0; });
-    if (trdIds.length > 0) filtered = filtered.filter(function(t) { return t.trader_id && trdIds.indexOf(t.trader_id) >= 0; });
+    if (trdIds.length > 0) filtered = filtered.filter(function(t) { var tid = t.trader_id || t.investor_id; return tid && trdIds.indexOf(tid) >= 0; });
     if (brkIds.length > 0) filtered = filtered.filter(function(t) { return t.broker_id && brkIds.indexOf(t.broker_id) >= 0; });
     if (tagNames.length > 0) filtered = filtered.filter(function(t) { return wmsMatchTagsFilter(t.tags, tagNames, tagLogic); });
 
@@ -260,7 +260,7 @@ async function trFnoBannerRefreshFromDefault(forceRefresh) {
         return t.security_type === 'NFO' || t.security_type === 'MCX';
     });
     if (invIds.length > 0) txns = txns.filter(function(t) { return invIds.indexOf(t.investor_id) >= 0; });
-    if (trdIds.length > 0) txns = txns.filter(function(t) { return t.trader_id && trdIds.indexOf(t.trader_id) >= 0; });
+    if (trdIds.length > 0) txns = txns.filter(function(t) { var tid = t.trader_id || t.investor_id; return tid && trdIds.indexOf(tid) >= 0; });
     if (brkIds.length > 0) txns = txns.filter(function(t) { return t.broker_id && brkIds.indexOf(t.broker_id) >= 0; });
     if (tagNames.length > 0) txns = txns.filter(function(t) { return wmsMatchTagsFilter(t.tags, tagNames, tagLogic); });
 
@@ -1068,7 +1068,7 @@ function trCalcHoldings() {
         filtered = filtered.filter(function(t) { return trSelectedInvestorIds.indexOf(t.investor_id) >= 0; });
     }
     if (trSelectedTraderIds.length > 0) {
-        filtered = filtered.filter(function(t) { return t.trader_id && trSelectedTraderIds.indexOf(t.trader_id) >= 0; });
+        filtered = filtered.filter(function(t) { var tid = t.trader_id || t.investor_id; return tid && trSelectedTraderIds.indexOf(tid) >= 0; });
     }
     if (trSelectedBrokerIds.length > 0) {
         filtered = filtered.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });
@@ -1537,7 +1537,7 @@ function trBuildInvestorDetail(h, price, md) {
         symbolTxns = symbolTxns.filter(function(t) { return trSelectedInvestorIds.indexOf(t.investor_id) >= 0; });
     }
     if (trSelectedTraderIds.length > 0) {
-        symbolTxns = symbolTxns.filter(function(t) { return t.trader_id && trSelectedTraderIds.indexOf(t.trader_id) >= 0; });
+        symbolTxns = symbolTxns.filter(function(t) { var tid = t.trader_id || t.investor_id; return tid && trSelectedTraderIds.indexOf(tid) >= 0; });
     }
     if (trSelectedBrokerIds.length > 0) {
         symbolTxns = symbolTxns.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });
@@ -1732,7 +1732,7 @@ function trGetTxnModalTxns() {
         txns = txns.filter(function(t) { return trSelectedInvestorIds.indexOf(t.investor_id) >= 0; });
     }
     if (trSelectedTraderIds.length > 0) {
-        txns = txns.filter(function(t) { return t.trader_id && trSelectedTraderIds.indexOf(t.trader_id) >= 0; });
+        txns = txns.filter(function(t) { var tid = t.trader_id || t.investor_id; return tid && trSelectedTraderIds.indexOf(tid) >= 0; });
     }
     if (trSelectedBrokerIds.length > 0) {
         txns = txns.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });

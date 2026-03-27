@@ -717,7 +717,7 @@ function trTxGetFilteredTransactions() {
     // Filter: traders (use String() for safe comparison)
     if (trTxSelectedTraderIds.length > 0) {
         filtered = filtered.filter(function(t) {
-            return t.trader_id && trTxSelectedTraderIds.indexOf(String(t.trader_id)) >= 0;
+            var tid = t.trader_id || t.investor_id; return tid && trTxSelectedTraderIds.indexOf(String(tid)) >= 0;
         });
     }
 
