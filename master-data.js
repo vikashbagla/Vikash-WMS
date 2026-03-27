@@ -3551,6 +3551,8 @@ async function openMergeSecurityModal() {
     document.getElementById('mergeSearchResults').style.display = 'none';
     document.getElementById('mergeSearchResults').innerHTML = '';
     document.getElementById('mergeSelectedTarget').style.display = 'none';
+    document.getElementById('mergeDateRow').style.display = 'none';
+    document.getElementById('mergeDateInput').value = '';
     document.getElementById('mergeConfirmSummary').style.display = 'none';
     document.getElementById('btnMergeConfirm').style.display = 'none';
 
@@ -3610,6 +3612,12 @@ function _mergeSelectTarget(targetId) {
         '<div style="color:#065f46;margin-top:2px;">ISIN: ' + wmsEsc(target.isin || '') + ' · Type: ' + wmsEsc(target.security_type || '') + '</div>';
     document.getElementById('mergeSelectedTarget').style.display = 'block';
 
+    // Show merge date input (default to today)
+    document.getElementById('mergeDateRow').style.display = 'block';
+    if (!document.getElementById('mergeDateInput').value) {
+        document.getElementById('mergeDateInput').value = new Date().toISOString().slice(0, 10);
+    }
+
     // Show confirm summary
     var source = wmsRefData.securitiesCmMap[_mergeSourceId];
     document.getElementById('mergeConfirmSummary').innerHTML =
@@ -3646,8 +3654,11 @@ async function executeMergeSecurity() {
         var targetCompanyName = target.company_name;
         var targetExchange = target.nse_symbol ? 'NSE' : (target.bse_symbol ? 'BSE' : 'NSE');
         var targetSecurityType = target.security_type || 'EQUITY';
+        // Merge date: user-entered or default to today
+        var mergeDateStr = document.getElementById('mergeDateInput').value || new Date().toISOString().slice(0, 10);
+        var mergeDateDisplay = new Date(mergeDateStr + 'T00:00:00').toLocaleDateString('en-IN');
         // Merge note for traceability — appended to notes field (tags are never modified programmatically)
-        var mergeNote = '[MERGED from ' + (source.isin || 'PE-' + source.symbol) + ' (' + (source.company_name || source.symbol) + ') on ' + new Date().toLocaleDateString('en-IN') + ']';
+        var mergeNote = '[MERGED from ' + (source.isin || 'PE-' + source.symbol) + ' (' + (source.company_name || source.symbol) + ') on ' + mergeDateDisplay + ']';
 
         // 3. Update each transaction — change security fields + append merge note
         var successCount = 0;
@@ -3685,7 +3696,7 @@ async function executeMergeSecurity() {
             headers: headers,
             body: JSON.stringify({
                 merged_into_id: _mergeTargetId,
-                merged_at: new Date().toISOString(),
+                merged_at: mergeDateStr + 'T00:00:00.000Z',
                 is_active: false
             })
         });
