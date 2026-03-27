@@ -1738,6 +1738,7 @@ function buildTransactionRecord(row) {
     return {
         investor_id: cnSelectedAccount.investor_id,
         broker_id: cnSelectedAccount.broker_id,
+        trader_id: row.trader_id || cnSelectedAccount.investor_id,
         security_id: row.security_id,  // From processAndGroupTrades() security matching
         security_type: row.security_type || 'EQUITY',
         symbol: row.symbol,
@@ -3756,6 +3757,7 @@ function fyBuildTransactionRecord(row) {
     return {
         investor_id: fyInvestorId,
         broker_id: fyBrokerId,
+        trader_id: row.trader_id || fyInvestorId,
         security_id: row.security_id,
         security_type: row.security_type || 'EQUITY',
         symbol: row.symbol,
