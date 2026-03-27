@@ -1347,10 +1347,35 @@
                     <label class="flag-label"><input type="checkbox" id="trEditIgnoreAvg"> Ignore for Avg Cost</label>
                 </div>
             </div>
+
+            <hr class="edit-section-divider">
+
+            <!-- SECTION: Split Transaction (collapsible) -->
+            <div class="edit-section" id="trSplitSection" style="display:none;">
+                <div class="edit-section-label" style="color:#7c3aed;">Split Transaction</div>
+                <div style="font-size:11px;color:#718096;margin-bottom:8px;">
+                    Enter the quantity to split off into a new transaction. Charges will be allocated proportionally.
+                </div>
+                <div class="edit-row cols-3">
+                    <div class="form-group">
+                        <label>Split Qty (absolute)</label>
+                        <input type="text" id="trSplitQty" class="amt-field" placeholder="e.g. 50">
+                    </div>
+                    <div class="form-group">
+                        <label>Assign Trader</label>
+                        <select id="trSplitTrader"></select>
+                    </div>
+                    <div class="form-group" style="justify-content:flex-end;">
+                        <button class="btn-primary" id="trSplitConfirmBtn" style="background:#7c3aed;border-color:#7c3aed;padding:5px 14px;font-size:11px;">Confirm Split</button>
+                    </div>
+                </div>
+                <div id="trSplitStatus" style="font-size:11px;margin-top:4px;"></div>
+            </div>
         </div>
         <div class="edit-modal-footer">
             <button class="btn-danger" id="trEditDeleteBtn">Delete</button>
             <div class="edit-modal-footer-right">
+                <button class="btn-secondary" id="trSplitBtn" style="background:#f5f3ff;color:#7c3aed;border-color:#c4b5fd;">Split</button>
                 <button class="btn-secondary" id="trEditCancelBtn">Cancel</button>
                 <button class="btn-primary" id="trEditSaveBtn">Save Changes</button>
             </div>

@@ -642,6 +642,10 @@ function trSetupEventHandlers() {
         if (e.target === this) trCloseEditModal();
     });
 
+    // Split transaction — toggle panel and confirm
+    document.getElementById('trSplitBtn').addEventListener('click', trToggleSplitPanel);
+    document.getElementById('trSplitConfirmBtn').addEventListener('click', trExecuteSplit);
+
     // Edit modal — recalculate trader_charges when trader changes
     document.getElementById('trEditTrader').addEventListener('change', trRecalcTraderCharges);
 
@@ -2701,12 +2705,18 @@ function trOpenEditModal(txnId) {
     var lockWarn = document.getElementById('trEditLockWarning');
     lockWarn.style.display = txn.is_locked ? '' : 'none';
 
+    // Reset split panel
+    document.getElementById('trSplitSection').style.display = 'none';
+    document.getElementById('trSplitQty').value = '';
+    document.getElementById('trSplitStatus').textContent = '';
+
     // Disable editable fields and Save button if locked
     var isLocked = !!txn.is_locked;
     var editableFields = document.querySelectorAll('#trEditForm .editable-field, #trEditForm select.editable-field, #trEditForm input[type="checkbox"]:not(#trEditLocked)');
     editableFields.forEach(function(f) { f.disabled = isLocked; });
     document.getElementById('trEditSaveBtn').disabled = isLocked;
     document.getElementById('trEditDeleteBtn').disabled = isLocked;
+    document.getElementById('trSplitBtn').disabled = isLocked;
     document.getElementById('trEditModalTitle').textContent = isLocked ? 'View Transaction (Locked)' : 'Edit Transaction';
 
     document.getElementById('trEditModal').classList.add('show');
@@ -2803,6 +2813,182 @@ async function trSaveEdit() {
     } else {
         var errText = await resp.text();
         showAlert('Failed to save: ' + errText, 'error');
+    }
+}
+
+// ============================================================================
+// SPLIT TRANSACTION
+// ============================================================================
+
+function trToggleSplitPanel() {
+    var section = document.getElementById('trSplitSection');
+    var isVisible = section.style.display !== 'none';
+    if (isVisible) {
+        section.style.display = 'none';
+        return;
+    }
+    // Populate trader dropdown
+    var txn = trTransactions.find(function(t) { return t.id === trEditingTxnId; });
+    if (!txn) return;
+    var sel = document.getElementById('trSplitTrader');
+    sel.innerHTML = '<option value="">(Same as Investor)</option>' +
+        trInvestors.map(function(inv) {
+            var label = inv.short_name || inv.name;
+            return '<option value="' + inv.id + '">' + label + '</option>';
+        }).join('');
+    document.getElementById('trSplitQty').value = '';
+    document.getElementById('trSplitStatus').textContent = '';
+    section.style.display = '';
+    document.getElementById('trSplitQty').focus();
+}
+
+async function trExecuteSplit() {
+    if (!trEditingTxnId) return;
+    var txn = trTransactions.find(function(t) { return t.id === trEditingTxnId; });
+    if (!txn) return;
+
+    var statusEl = document.getElementById('trSplitStatus');
+    statusEl.textContent = '';
+    statusEl.style.color = '';
+
+    // Parse split qty (user enters absolute value)
+    var splitQtyAbs = parseFloat((document.getElementById('trSplitQty').value || '0').replace(/,/g, ''));
+    if (!splitQtyAbs || splitQtyAbs <= 0) {
+        statusEl.textContent = 'Enter a valid quantity to split off.';
+        statusEl.style.color = '#dc2626';
+        return;
+    }
+
+    // Original qty (absolute for comparison)
+    var isSell = txn.transaction_type === 'SELL';
+    var origQtyAbs = Math.abs(txn.quantity || 0);
+
+    if (splitQtyAbs >= origQtyAbs) {
+        statusEl.textContent = 'Split qty must be less than original qty (' + trEditFmtInt(origQtyAbs) + ').';
+        statusEl.style.color = '#dc2626';
+        return;
+    }
+
+    // Ratio for proportional charge allocation
+    var ratio = splitQtyAbs / origQtyAbs;
+    var remainRatio = 1 - ratio;
+
+    // Trader for the new split-off row
+    var splitTraderVal = document.getElementById('trSplitTrader').value || null;
+
+    // Build the new transaction (copy all fields from original, adjust amounts)
+    var splitQty = isSell ? -splitQtyAbs : splitQtyAbs;
+    var remainQty = isSell ? -(origQtyAbs - splitQtyAbs) : (origQtyAbs - splitQtyAbs);
+
+    // Helper to round to 2 decimals
+    function r2(v) { return Math.round((v || 0) * 100) / 100; }
+
+    var newTxn = {
+        investor_id: txn.investor_id,
+        broker_id: txn.broker_id,
+        trader_id: splitTraderVal,
+        security_id: txn.security_id,
+        security_type: txn.security_type,
+        symbol: txn.symbol,
+        short_symbol: txn.short_symbol,
+        company_name: txn.company_name,
+        asset_class: txn.asset_class,
+        exchange: txn.exchange,
+        product: txn.product,
+        transaction_type: txn.transaction_type,
+        transaction_date: txn.transaction_date,
+        quantity: splitQty,
+        lots: r2((txn.lots || 0) * ratio),
+        price: txn.price,
+        gross_amount: r2((txn.gross_amount || 0) * ratio),
+        brokerage: r2((txn.brokerage || 0) * ratio),
+        stt: r2((txn.stt || 0) * ratio),
+        other_charges: r2((txn.other_charges || 0) * ratio),
+        gst: r2((txn.gst || 0) * ratio),
+        tds: r2((txn.tds || 0) * ratio),
+        total_charges: r2((txn.total_charges || 0) * ratio),
+        net_amount: r2((txn.net_amount || 0) * ratio),
+        trader_charges: r2((txn.trader_charges || 0) * ratio),
+        margin_blocked: r2((txn.margin_blocked || 0) * ratio),
+        broker_contract_note_no: txn.broker_contract_note_no,
+        broker_trade_id: null,
+        tags: (txn.tags || []).slice(),
+        notes: '[SPLIT from txn ' + txn.id + '] ' + (txn.notes || ''),
+        ignore_for_avg_cost: txn.ignore_for_avg_cost || false,
+        dont_display: txn.dont_display || false
+    };
+
+    // Remaining amounts for the original transaction
+    var origUpdate = {
+        quantity: remainQty,
+        lots: r2((txn.lots || 0) * remainRatio),
+        gross_amount: r2((txn.gross_amount || 0) * remainRatio),
+        brokerage: r2((txn.brokerage || 0) * remainRatio),
+        stt: r2((txn.stt || 0) * remainRatio),
+        other_charges: r2((txn.other_charges || 0) * remainRatio),
+        gst: r2((txn.gst || 0) * remainRatio),
+        tds: r2((txn.tds || 0) * remainRatio),
+        total_charges: r2((txn.total_charges || 0) * remainRatio),
+        net_amount: r2((txn.net_amount || 0) * remainRatio),
+        trader_charges: r2((txn.trader_charges || 0) * remainRatio),
+        margin_blocked: r2((txn.margin_blocked || 0) * remainRatio)
+    };
+
+    // Confirm
+    var splitLabel = trEditFmtInt(splitQtyAbs) + ' out of ' + trEditFmtInt(origQtyAbs);
+    if (!confirm('Split ' + splitLabel + ' into a new transaction?')) return;
+
+    statusEl.textContent = 'Splitting...';
+    statusEl.style.color = '#718096';
+    document.getElementById('trSplitConfirmBtn').disabled = true;
+
+    try {
+        // 1. Insert the new split-off transaction
+        var insertResp = await fetch(SUPABASE_URL + '/rest/v1/transactions', {
+            method: 'POST',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            },
+            body: JSON.stringify(newTxn)
+        });
+        if (!insertResp.ok) {
+            var errText = await insertResp.text();
+            throw new Error('Insert failed: ' + errText);
+        }
+        var insertedRows = await insertResp.json();
+        var insertedTxn = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows;
+
+        // 2. Update the original transaction (reduce qty & charges)
+        var patchResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txn.id, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify(origUpdate)
+        });
+        if (!patchResp.ok) {
+            var errText2 = await patchResp.text();
+            throw new Error('Update original failed: ' + errText2);
+        }
+
+        // 3. Update local state
+        Object.keys(origUpdate).forEach(function(k) { txn[k] = origUpdate[k]; });
+        trTransactions.push(insertedTxn);
+
+        showAlert('Transaction split successfully', 'success', 2500);
+        trCloseEditModal();
+        if (trCurrentTxnModalKey) trTxnRefreshCurrentView();
+        trRenderPortfolio();
+    } catch (err) {
+        statusEl.textContent = 'Error: ' + err.message;
+        statusEl.style.color = '#dc2626';
+        document.getElementById('trSplitConfirmBtn').disabled = false;
     }
 }
 
