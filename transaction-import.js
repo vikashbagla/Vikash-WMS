@@ -1068,8 +1068,8 @@ function allocateCharges(rows, segCharges) {
 
         r.total_charges = Math.round((r.brokerage + r.stt + r.gst + r.other_charges) * 100) / 100;
 
-        // net_amount = gross_amount + total_charges (charges always add for buys, subtract from sells)
-        if (r.transaction_type === 'BUY') {
+        // net_amount = gross_amount + total_charges (charges always add for buys/outflows, subtract from sells)
+        if (wmsIsBuyLikeType(r.transaction_type)) {
             r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
         } else {
             r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
@@ -1134,7 +1134,7 @@ function allocateCharges(rows, segCharges) {
             }
             r.other_charges = Math.round((r.other_charges + share) * 100) / 100;
             r.total_charges = Math.round((r.brokerage + r.stt + r.gst + r.other_charges) * 100) / 100;
-            if (r.transaction_type === 'BUY') {
+            if (wmsIsBuyLikeType(r.transaction_type)) {
                 r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
             } else {
                 r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
@@ -1376,7 +1376,7 @@ function initCnChargeEditing() {
 
             // Recalculate total_charges and net_amount
             row.total_charges = Math.round((row.brokerage + row.stt + row.gst + row.other_charges) * 100) / 100;
-            if (row.transaction_type === 'BUY') {
+            if (wmsIsBuyLikeType(row.transaction_type)) {
                 row.net_amount = Math.round((row.gross_amount + row.total_charges) * 100) / 100;
             } else {
                 row.net_amount = Math.round((row.gross_amount - row.total_charges) * 100) / 100;
@@ -2983,7 +2983,7 @@ function recalcExcelRow(index) {
     if (!row) return;
 
     // Recalculate net_amount (rule F.2.2)
-    if (row.transaction_type === 'BUY') {
+    if (wmsIsBuyLikeType(row.transaction_type)) {
         row.net_amount = Math.round((row.gross_amount + row.total_charges) * 100) / 100;
     } else if (row.transaction_type === 'SELL') {
         row.net_amount = Math.round((row.gross_amount - row.total_charges) * 100) / 100;
@@ -3033,7 +3033,7 @@ async function importExcelToDatabase() {
     // Recalc net unless user-entered (dblclick inline edit)
     allRows.forEach(function(r) {
         if (r._netOverride) return;
-        if (r.transaction_type === 'BUY') r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
+        if (wmsIsBuyLikeType(r.transaction_type)) r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
         else if (r.transaction_type === 'SELL') r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
         else if (isIncomeType(r.transaction_type)) r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
     });

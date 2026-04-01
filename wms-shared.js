@@ -516,6 +516,19 @@ function wmsIsIncomeType(txnType) {
 }
 
 // ============================================================================
+// BUY-LIKE TYPE CHECK (Rule G.3.2)
+// ============================================================================
+// Transaction types where charges ADD to gross to produce net_amount (cash outflow).
+// BUY: purchasing securities on market
+// RIGHTS_PAYMENT: paying for rights shares (same economics as BUY)
+// All other non-income types default to SELL-like (charges subtract from gross).
+
+var WMS_BUY_LIKE_TYPES = ['BUY', 'RIGHTS_PAYMENT'];
+function wmsIsBuyLikeType(txnType) {
+    return WMS_BUY_LIKE_TYPES.indexOf(txnType) >= 0;
+}
+
+// ============================================================================
 // TAG HELPERS — Case-insensitive tag handling (Rule D.5.5)
 // ============================================================================
 
@@ -570,7 +583,8 @@ function wmsMatchTagsFilter(txnTags, selectedTags, logic) {
 // (avg cost, matching trades, summary cards, display) automatically use the
 // trader-perspective amount.
 //
-// For non-BUY/SELL types (DIVIDEND, INTEREST, etc.), net_amount is unchanged.
+// Applies to BUY, SELL, and RIGHTS_PAYMENT (all cost-bearing trade types).
+// For non-trade types (DIVIDEND, INTEREST, etc.), net_amount is unchanged.
 // Original net_amount is preserved as _origNetAmount for future use (e.g. Portfolio).
 //
 // Call once after loading transactions from DB — before any calculations or display.
@@ -588,11 +602,11 @@ function wmsSanitizeTransactions(transactions) {
         if (traderId && traderId !== investorId) {
             var txnType = txn.transaction_type || '';
 
-            if (txnType === 'BUY' || txnType === 'SELL') {
+            if (txnType === 'BUY' || txnType === 'SELL' || txnType === 'RIGHTS_PAYMENT') {
                 // Trader's cost = gross ± trader_charges
                 var gross = Math.abs(txn.gross_amount || 0);
                 var traderCh = Math.abs(txn.trader_charges || 0);
-                if (txnType === 'BUY') {
+                if (wmsIsBuyLikeType(txnType)) {
                     txn.net_amount = wmsRoundMoney(gross + traderCh);
                 } else {
                     txn.net_amount = wmsRoundMoney(gross - traderCh);
@@ -1983,7 +1997,7 @@ function wmsAutoCalcCharges(row, opts) {
 
     // Step 8: Net amount (Rule G.2.8)
     if (!row._netOverride) {
-        if (txnType === 'BUY') {
+        if (wmsIsBuyLikeType(txnType)) {
             row.net_amount = wmsRoundMoney(gross + row.total_charges);
         } else {
             row.net_amount = wmsRoundMoney(gross - row.total_charges);
