@@ -7,6 +7,8 @@
 var bonusSelectedSecurity = null;   // {id, symbol, company_name, ...} from wmsRefData
 var bonusHoldings = [];             // [{investor_id, trader_id, broker_id, netQuantity, ...}]
 var bonusDdCtrl = null;             // wmsDropdown controller for symbol search
+var bonusTags = [];                 // current tag list for this form
+var bonusTagCtrl = null;            // wmsTagInput controller
 var bonusDateState = { day: 1, month: 0, year: 2026 };
 var bonusDateActiveSeg = null;
 var bonusDateTypeBuf = '';
@@ -63,6 +65,16 @@ function initBonusModule() {
     });
     symInput.addEventListener('input', function() {
         bonusSearchSymbol(symInput, symDd);
+    });
+    // Mouse click support on symbol dropdown
+    symDd.addEventListener('mousedown', function(e) {
+        var item = e.target.closest('.wms-dd-item');
+        if (!item) return;
+        e.preventDefault();
+        var idx = parseInt(item.dataset.idx);
+        var results = symDd._bonusResults || [];
+        if (results[idx]) bonusSelectSymbol(results[idx]);
+        bonusDdCtrl.close();
     });
 
     // ESC handler
@@ -281,6 +293,15 @@ function openBonusModal() {
     document.getElementById('bonusRatioExisting').value = '1';
     document.getElementById('bonusTableWrap').innerHTML = '<div class="rights-empty">Select a date and symbol to view holdings</div>';
     document.getElementById('bonusSaveBtn').disabled = true;
+
+    // Reset tags
+    if (bonusTagCtrl) { bonusTagCtrl.destroy(); bonusTagCtrl = null; }
+    bonusTags = [];
+    document.getElementById('bonusTagWrap').style.display = 'none';
+    document.getElementById('bonusTagInput').value = '';
+    document.getElementById('bonusTagPills').innerHTML = '';
+    document.getElementById('bonusTagDd').innerHTML = '';
+
     document.getElementById('bonusOverlay').classList.add('show');
     setTimeout(function() { document.getElementById('bonusSymbolInput').focus(); }, 100);
 }
@@ -337,6 +358,50 @@ function bonusPopulateHoldings() {
     html += '</tbody></table>';
     document.getElementById('bonusTableWrap').innerHTML = html;
     document.getElementById('bonusSaveBtn').disabled = false;
+
+    // Initialize tag input with auto-populated tags
+    bonusInitTags();
+}
+
+// ============================================================================
+// TAG INPUT — auto-populate from existing transactions for same symbol
+// ============================================================================
+
+function bonusInitTags() {
+    if (bonusTagCtrl) { bonusTagCtrl.destroy(); bonusTagCtrl = null; }
+    bonusTags = [];
+
+    if (bonusSelectedSecurity) {
+        var shortSym = bonusSelectedSecurity.nse_symbol || bonusSelectedSecurity.symbol;
+        var txns = (typeof trTransactions !== 'undefined') ? trTransactions : [];
+        var matchingTags = {};
+        for (var i = 0; i < txns.length; i++) {
+            var t = txns[i];
+            var tSym = (t.short_symbol || t.symbol || '').replace(/^[A-Z]+:/, '');
+            if (tSym === shortSym && Array.isArray(t.tags)) {
+                t.tags.forEach(function(tag) {
+                    var trimmed = (tag || '').trim();
+                    if (trimmed && trimmed !== 'blank') matchingTags[trimmed.toLowerCase()] = trimmed;
+                });
+            }
+        }
+        Object.values(matchingTags).forEach(function(t) { bonusTags.push(t); });
+    }
+
+    var tagInput = document.getElementById('bonusTagInput');
+    var tagPills = document.getElementById('bonusTagPills');
+    var tagDd = document.getElementById('bonusTagDd');
+    tagInput.value = '';
+    tagPills.innerHTML = '';
+    tagDd.innerHTML = '';
+
+    bonusTagCtrl = wmsTagInput(tagInput, tagPills, tagDd, {
+        tags: bonusTags,
+        existingTags: (wmsRefData && wmsRefData.tags) || [],
+        onChange: function() {}
+    });
+
+    document.getElementById('bonusTagWrap').style.display = '';
 }
 
 // ============================================================================
@@ -427,7 +492,7 @@ async function bonusSaveTransactions() {
                 margin_blocked: 0,
                 broker_contract_note_no: null,
                 broker_trade_id: null,
-                tags: ['blank'],
+                tags: (bonusTags && bonusTags.length > 0) ? bonusTags.slice() : ['blank'],
                 notes: '[Bonus' + (ratioStr ? ' ' + ratioStr : '') + ' for ' + shortSym + ' on ' + dateStr + ']',
                 is_locked: false,
                 ignore_for_avg_cost: false,

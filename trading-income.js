@@ -9,6 +9,8 @@ var incSelectedType = null;         // 'DIVIDEND' | 'INTEREST' | 'OTHER_INCOME' 
 var incSelectedSecurity = null;     // {id, symbol, company_name, ...} from wmsRefData
 var incHoldings = [];               // [{investor_id, trader_id, broker_id, netQuantity, ...}]
 var incDdCtrl = null;               // wmsDropdown controller for security search
+var incTags = [];                   // current tag list for this form
+var incTagCtrl = null;              // wmsTagInput controller
 
 // Date state (used by rhInitDateWidget('inc'))
 var incDateState = { day: 1, month: 0, year: 2026 };
@@ -109,6 +111,14 @@ function openIncomeModal(txnType) {
     if (incDdCtrl) incDdCtrl.close();
     document.getElementById('incTableWrap').innerHTML = '<div class="rights-empty">Select a date and security to view holdings</div>';
     document.getElementById('incSaveBtn').disabled = true;
+
+    // Reset tags
+    if (incTagCtrl) { incTagCtrl.destroy(); incTagCtrl = null; }
+    incTags = [];
+    document.getElementById('incTagWrap').style.display = 'none';
+    document.getElementById('incTagInput').value = '';
+    document.getElementById('incTagPills').innerHTML = '';
+    document.getElementById('incTagDd').innerHTML = '';
 
     // Set date to today
     rhDateSetFromDate('inc', new Date());
@@ -219,6 +229,9 @@ function incPopulateHoldings() {
     html += '</tbody></table>';
     document.getElementById('incTableWrap').innerHTML = html;
     document.getElementById('incSaveBtn').disabled = false;
+
+    // Initialize tag input with auto-populated tags from existing transactions
+    incInitTags();
 
     // Bind focus/blur/input handlers
     holdings.forEach(function(h, idx) {
@@ -347,6 +360,50 @@ function incFindMatchingDup(existingDups, holding) {
 }
 
 // ============================================================================
+// TAG INPUT — auto-populate from existing transactions for same symbol
+// ============================================================================
+
+function incInitTags() {
+    if (incTagCtrl) { incTagCtrl.destroy(); incTagCtrl = null; }
+    incTags = [];
+
+    // Gather tags from existing transactions matching this security + any investor
+    if (incSelectedSecurity) {
+        var shortSym = incSelectedSecurity.nse_symbol || incSelectedSecurity.symbol;
+        var txns = (typeof trTransactions !== 'undefined') ? trTransactions : [];
+        var matchingTags = {};
+        for (var i = 0; i < txns.length; i++) {
+            var t = txns[i];
+            var tSym = (t.short_symbol || t.symbol || '').replace(/^[A-Z]+:/, '');
+            if (tSym === shortSym && Array.isArray(t.tags)) {
+                t.tags.forEach(function(tag) {
+                    var trimmed = (tag || '').trim();
+                    if (trimmed && trimmed !== 'blank') matchingTags[trimmed.toLowerCase()] = trimmed;
+                });
+            }
+        }
+        var tagList = Object.values(matchingTags);
+        tagList.forEach(function(t) { incTags.push(t); });
+    }
+
+    // Setup wmsTagInput
+    var tagInput = document.getElementById('incTagInput');
+    var tagPills = document.getElementById('incTagPills');
+    var tagDd = document.getElementById('incTagDd');
+    tagInput.value = '';
+    tagPills.innerHTML = '';
+    tagDd.innerHTML = '';
+
+    incTagCtrl = wmsTagInput(tagInput, tagPills, tagDd, {
+        tags: incTags,
+        existingTags: (wmsRefData && wmsRefData.tags) || [],
+        onChange: function() {}
+    });
+
+    document.getElementById('incTagWrap').style.display = '';
+}
+
+// ============================================================================
 // SAVE TRANSACTIONS
 // ============================================================================
 
@@ -409,7 +466,7 @@ async function incSaveTransactions() {
             margin_blocked: 0,
             broker_contract_note_no: null,
             broker_trade_id: null,
-            tags: ['blank'],
+            tags: (incTags && incTags.length > 0) ? incTags.slice() : ['blank'],
             notes: '[' + (INC_TYPE_LABELS[incSelectedType] || incSelectedType) + ' for ' + h.netQuantity + ' units of ' + sym + ' @ ' + price + ']',
             is_locked: false,
             ignore_for_avg_cost: false,

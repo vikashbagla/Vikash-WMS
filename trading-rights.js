@@ -7,6 +7,8 @@
 var rhEntSelectedSecurity = null;   // {id, symbol, company_name, ...} from wmsRefData
 var rhEntHoldings = [];             // [{investor_id, trader_id, broker_id, netQuantity, ...}]
 var rhEntDdCtrl = null;             // wmsDropdown controller for entitlement symbol search
+var rhEntTags = [];                 // current tag list for entitlement form
+var rhEntTagCtrl = null;            // wmsTagInput controller for entitlement
 var rhEntDateState = { day: 1, month: 0, year: 2026 };
 var rhEntDateActiveSeg = null;
 var rhEntDateTypeBuf = '';
@@ -16,6 +18,8 @@ var rhEntCurrentStep = 1;           // 1 = holdings table, 2 = review RE securit
 var rhPaySelectedSecurity = null;   // RE- security object
 var rhPayHoldings = [];
 var rhPayDdCtrl = null;             // wmsDropdown controller for payment security search
+var rhPayTags = [];                 // current tag list for payment form
+var rhPayTagCtrl = null;            // wmsTagInput controller for payment
 var rhPayDateState = { day: 1, month: 0, year: 2026 };
 var rhPayDateActiveSeg = null;
 var rhPayDateTypeBuf = '';
@@ -85,6 +89,16 @@ function initRightsModule() {
     entInput.addEventListener('input', function() {
         rhSearchSymbol(entInput, entDd, rhEntDdCtrl, false);
     });
+    // Mouse click support on entitlement symbol dropdown
+    entDd.addEventListener('mousedown', function(e) {
+        var item = e.target.closest('.wms-dd-item');
+        if (!item) return;
+        e.preventDefault();
+        var idx = parseInt(item.dataset.idx);
+        var results = entDd._rhResults || [];
+        if (results[idx]) rhEntSelectSymbol(results[idx]);
+        rhEntDdCtrl.close();
+    });
 
     // --- Payment modal ---
     var payCloseBtn  = freshClone('rhPayCloseBtn');
@@ -119,6 +133,16 @@ function initRightsModule() {
     });
     payInput.addEventListener('input', function() {
         rhSearchSymbol(payInput, payDd, rhPayDdCtrl, false);
+    });
+    // Mouse click support on payment security dropdown
+    payDd.addEventListener('mousedown', function(e) {
+        var item = e.target.closest('.wms-dd-item');
+        if (!item) return;
+        e.preventDefault();
+        var idx = parseInt(item.dataset.idx);
+        var results = payDd._rhResults || [];
+        if (results[idx]) rhPaySelectSecurity(results[idx]);
+        rhPayDdCtrl.close();
     });
 
     // ESC handler (only one needed — checks which modal is visible)
@@ -423,6 +447,14 @@ function openRightsEntitlementModal() {
     document.getElementById('rhEntStep2').classList.remove('show');
     document.getElementById('rhEntConfirmBtn').textContent = 'Confirm & Review';
     document.getElementById('rhEntCancelBtn').textContent = 'Cancel';
+    // Reset tags
+    if (rhEntTagCtrl) { rhEntTagCtrl.destroy(); rhEntTagCtrl = null; }
+    rhEntTags = [];
+    document.getElementById('rhEntTagWrap').style.display = 'none';
+    document.getElementById('rhEntTagInput').value = '';
+    document.getElementById('rhEntTagPills').innerHTML = '';
+    document.getElementById('rhEntTagDd').innerHTML = '';
+
     document.getElementById('rightsEntitlementOverlay').classList.add('show');
     setTimeout(function() { document.getElementById('rhEntSymbolInput').focus(); }, 100);
 }
@@ -477,6 +509,9 @@ function rhEntPopulateHoldings() {
     html += '</tbody></table>';
     document.getElementById('rhEntTableWrap').innerHTML = html;
     document.getElementById('rhEntConfirmBtn').disabled = false;
+
+    // Initialize tag input with auto-populated tags
+    rhEntInitTags();
 }
 
 // ============================================================================
@@ -540,6 +575,84 @@ function rhEntBackToStep1() {
     document.getElementById('rhEntConfirmBtn').textContent = 'Confirm & Review';
     document.getElementById('rhEntCancelBtn').textContent = 'Cancel';
     rhEntCurrentStep = 1;
+}
+
+// ============================================================================
+// TAG INPUT — auto-populate from existing transactions for same symbol
+// ============================================================================
+
+function rhEntInitTags() {
+    if (rhEntTagCtrl) { rhEntTagCtrl.destroy(); rhEntTagCtrl = null; }
+    rhEntTags = [];
+
+    if (rhEntSelectedSecurity) {
+        var shortSym = rhEntSelectedSecurity.nse_symbol || rhEntSelectedSecurity.symbol;
+        var txns = (typeof trTransactions !== 'undefined') ? trTransactions : [];
+        var matchingTags = {};
+        for (var i = 0; i < txns.length; i++) {
+            var t = txns[i];
+            var tSym = (t.short_symbol || t.symbol || '').replace(/^[A-Z]+:/, '');
+            if (tSym === shortSym && Array.isArray(t.tags)) {
+                t.tags.forEach(function(tag) {
+                    var trimmed = (tag || '').trim();
+                    if (trimmed && trimmed !== 'blank') matchingTags[trimmed.toLowerCase()] = trimmed;
+                });
+            }
+        }
+        Object.values(matchingTags).forEach(function(t) { rhEntTags.push(t); });
+    }
+
+    var tagInput = document.getElementById('rhEntTagInput');
+    var tagPills = document.getElementById('rhEntTagPills');
+    var tagDd = document.getElementById('rhEntTagDd');
+    tagInput.value = '';
+    tagPills.innerHTML = '';
+    tagDd.innerHTML = '';
+
+    rhEntTagCtrl = wmsTagInput(tagInput, tagPills, tagDd, {
+        tags: rhEntTags,
+        existingTags: (wmsRefData && wmsRefData.tags) || [],
+        onChange: function() {}
+    });
+
+    document.getElementById('rhEntTagWrap').style.display = '';
+}
+
+function rhPayInitTags() {
+    if (rhPayTagCtrl) { rhPayTagCtrl.destroy(); rhPayTagCtrl = null; }
+    rhPayTags = [];
+
+    if (rhPaySelectedSecurity) {
+        var shortSym = rhPaySelectedSecurity.nse_symbol || rhPaySelectedSecurity.symbol;
+        var txns = (typeof trTransactions !== 'undefined') ? trTransactions : [];
+        var matchingTags = {};
+        for (var i = 0; i < txns.length; i++) {
+            var t = txns[i];
+            var tSym = (t.short_symbol || t.symbol || '').replace(/^[A-Z]+:/, '');
+            if (tSym === shortSym && Array.isArray(t.tags)) {
+                t.tags.forEach(function(tag) {
+                    var trimmed = (tag || '').trim();
+                    if (trimmed && trimmed !== 'blank') matchingTags[trimmed.toLowerCase()] = trimmed;
+                });
+            }
+        }
+        Object.values(matchingTags).forEach(function(t) { rhPayTags.push(t); });
+    }
+
+    var tagInput = document.getElementById('rhPayTagInput');
+    var tagPills = document.getElementById('rhPayTagPills');
+    var tagDd = document.getElementById('rhPayTagDd');
+    tagInput.value = '';
+    tagPills.innerHTML = '';
+    tagDd.innerHTML = '';
+
+    rhPayTagCtrl = wmsTagInput(tagInput, tagPills, tagDd, {
+        tags: rhPayTags,
+        existingTags: (wmsRefData && wmsRefData.tags) || [],
+        onChange: function() {}
+    });
+
+    document.getElementById('rhPayTagWrap').style.display = '';
 }
 
 // ============================================================================
@@ -631,7 +744,7 @@ async function rhEntSave() {
                 margin_blocked: 0,
                 broker_contract_note_no: null,
                 broker_trade_id: null,
-                tags: ['blank'],
+                tags: (rhEntTags && rhEntTags.length > 0) ? rhEntTags.slice() : ['blank'],
                 notes: '[Rights Entitlement from ' + (sec.nse_symbol || sec.symbol) + ' on ' + dateStr + ']',
                 is_locked: false,
                 ignore_for_avg_cost: false,
@@ -668,6 +781,14 @@ function openRightsPaymentModal() {
     document.getElementById('rhPaySecurityBadge').innerHTML = '';
     document.getElementById('rhPayTableWrap').innerHTML = '<div class="rights-empty">Select a date and security to view holdings</div>';
     document.getElementById('rhPaySaveBtn').disabled = true;
+    // Reset tags
+    if (rhPayTagCtrl) { rhPayTagCtrl.destroy(); rhPayTagCtrl = null; }
+    rhPayTags = [];
+    document.getElementById('rhPayTagWrap').style.display = 'none';
+    document.getElementById('rhPayTagInput').value = '';
+    document.getElementById('rhPayTagPills').innerHTML = '';
+    document.getElementById('rhPayTagDd').innerHTML = '';
+
     document.getElementById('rightsPaymentOverlay').classList.add('show');
     setTimeout(function() { document.getElementById('rhPaySecurityInput').focus(); }, 100);
 }
@@ -745,6 +866,9 @@ function rhPayPopulateHoldings() {
             el.addEventListener('input', function() { rhPayUpdateTotal(idx); });
         });
     });
+
+    // Initialize tag input with auto-populated tags
+    rhPayInitTags();
 }
 
 function rhPayUpdateTotal(idx) {
@@ -810,7 +934,7 @@ async function rhPaySaveTransactions() {
             margin_blocked: 0,
             broker_contract_note_no: null,
             broker_trade_id: null,
-            tags: ['blank'],
+            tags: (rhPayTags && rhPayTags.length > 0) ? rhPayTags.slice() : ['blank'],
             notes: '[Rights Payment for ' + h.netQuantity + ' units of ' + sym + ' @ ' + price + ']',
             is_locked: false,
             ignore_for_avg_cost: false,

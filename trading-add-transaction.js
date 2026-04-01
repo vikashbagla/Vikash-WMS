@@ -218,6 +218,18 @@ function setupAddTxnInvBrkSearch() {
         atInvBrkDdCtrl.resetIdx();
     });
 
+    // Mouse click support on dropdown items
+    dd.addEventListener('mousedown', function(e) {
+        var item = e.target.closest('.wms-dd-item');
+        if (!item) return;
+        e.preventDefault();
+        var idx = parseInt(item.dataset.idx);
+        if (idx >= 0 && idx < atInvBrkDdItems.length) {
+            selectAddTxnInvBrk(atInvBrkDdItems[idx]);
+        }
+        atInvBrkDdCtrl.close();
+    });
+
     input.addEventListener('focus', function() {
         if (atSelectedInvestor) return;
         // Show all pairs on focus
@@ -745,6 +757,23 @@ function attachAddTxnRowHandlers(rowId) {
             return;
         }
         symSearchTimer = setTimeout(function() { searchAddTxnSymbol(rowId, q); }, 300);
+    });
+
+    // Mouse click support on symbol dropdown items
+    dd.addEventListener('mousedown', function(e) {
+        var item = e.target.closest('.wms-dd-item');
+        if (!item) return;
+        e.preventDefault();
+        var idx = parseInt(item.dataset.idx);
+        if (idx >= 0 && atSymDdItems[rowId] && idx < atSymDdItems[rowId].length) {
+            var sec = atSymDdItems[rowId][idx];
+            if (sec._fyersSymbol) {
+                atSelectOptionsContract(rowId, sec._fyersSymbol, sec._parsed, sec._displayLabel);
+            } else {
+                selectAddTxnSecurity(rowId, sec);
+            }
+        }
+        atSymDdCtrls[rowId].close();
     });
 
     // --- Lots change ---

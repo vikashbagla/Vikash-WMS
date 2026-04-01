@@ -110,6 +110,18 @@ function trWlSetupEventHandlers() {
         }
     });
 
+    // Mouse click support on search results
+    addResultsEl.addEventListener('mousedown', function(e) {
+        var item = e.target.closest('.wl-add-result-item:not(.added)');
+        if (!item) return;
+        e.preventDefault();
+        var idx = parseInt(item.dataset.idx);
+        var cached = trWlSearchCache[idx];
+        if (!cached) return;
+        trWlAddItem(cached);
+        if (trWlSearchDdCtrl) trWlSearchDdCtrl.resetIdx();
+    });
+
     // Add dialog — search input with debounced search
     searchInput.addEventListener('input', function() {
         clearTimeout(searchTimer);

@@ -126,6 +126,33 @@
     margin-top: 10px; padding: 8px 10px; background: #f7fafc;
     border-radius: 4px; font-size: 11px; color: #4a5568;
 }
+
+/* Tag input */
+.corp-tag-pills {
+    display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px;
+}
+.corp-tag-pills .wms-pill {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;
+    border: 1px solid #bee3f8; background: #bee3f8; color: #2b6cb0; cursor: default;
+}
+.corp-tag-pills .wms-pill-remove {
+    font-size: 12px; font-weight: 700; margin-left: 1px; cursor: pointer;
+}
+.corp-tag-dd {
+    display: none; position: absolute; top: 100%; left: 0; right: 0;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 20;
+    padding: 6px; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow-y: auto;
+}
+.corp-tag-dd.show { display: flex; }
+.corp-tag-dd .wms-dd-item {
+    display: inline-block; padding: 2px 8px; font-size: 10px;
+    background: #edf2f7; border-radius: 10px; color: #4a5568;
+    cursor: pointer; white-space: nowrap;
+}
+.corp-tag-dd .wms-dd-item:hover,
+.corp-tag-dd .wms-dd-item.wms-dd-highlight { background: #cbd5e0; }
 </style>
 </head>
 
@@ -162,6 +189,15 @@
             <div id="rhEntStep1">
                 <div id="rhEntTableWrap">
                     <div class="rights-empty">Select a date and symbol to view holdings</div>
+                </div>
+                <!-- Tags -->
+                <div id="rhEntTagWrap" style="display:none; margin-top:8px;">
+                    <div class="rights-field" style="position:relative;">
+                        <label>Tags <span style="font-weight:400;color:#a0aec0;">(auto-applied from existing transactions)</span></label>
+                        <input type="text" id="rhEntTagInput" placeholder="Type to add tags..." autocomplete="off">
+                        <div class="corp-tag-pills" id="rhEntTagPills"></div>
+                        <div class="corp-tag-dd" id="rhEntTagDd"></div>
+                    </div>
                 </div>
             </div>
             <!-- Step 2: Review RE security -->
@@ -226,6 +262,15 @@
             </div>
             <div id="rhPayTableWrap">
                 <div class="rights-empty">Select a date and security to view holdings</div>
+            </div>
+            <!-- Tags -->
+            <div id="rhPayTagWrap" style="display:none; margin-top:8px;">
+                <div class="rights-field" style="position:relative;">
+                    <label>Tags <span style="font-weight:400;color:#a0aec0;">(auto-applied from existing transactions)</span></label>
+                    <input type="text" id="rhPayTagInput" placeholder="Type to add tags..." autocomplete="off">
+                    <div class="corp-tag-pills" id="rhPayTagPills"></div>
+                    <div class="corp-tag-dd" id="rhPayTagDd"></div>
+                </div>
             </div>
         </div>
         <div class="rights-footer">

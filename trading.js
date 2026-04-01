@@ -650,6 +650,10 @@ function trSetupEventHandlers() {
     // Edit modal — recalculate trader_charges when trader changes
     document.getElementById('trEditTrader').addEventListener('change', trRecalcTraderCharges);
 
+    // Edit modal — recalculate amounts when qty or price changes
+    document.getElementById('trEditQty').addEventListener('input', trRecalcEditAmounts);
+    document.getElementById('trEditPrice').addEventListener('input', trRecalcEditAmounts);
+
     // Close action menus on outside click
     document.addEventListener('click', function(e) {
         if (trOpenActionMenu && !e.target.closest('.action-cell')) {
@@ -2734,6 +2738,69 @@ function trCloseEditModal() {
     document.getElementById('trEditModal').classList.remove('show');
     trEditingTxnId = null;
     _trSplitData = null;
+}
+
+// Recalculate gross, charges, and net when qty or price changes in edit modal
+function trRecalcEditAmounts() {
+    if (!trEditingTxnId) return;
+    var txn = trTransactions.find(function(t) { return t.id === trEditingTxnId; });
+    if (!txn) return;
+
+    var qty = trEditParse(document.getElementById('trEditQty'));
+    var price = trEditParse(document.getElementById('trEditPrice'));
+    var gross = wmsRoundMoney(Math.abs(qty) * price);
+
+    document.getElementById('trEditGross').value = trEditFmt(gross);
+
+    // Build a temporary row object for charge calculation
+    var isSell = txn.transaction_type === 'SELL';
+    var tempRow = {
+        quantity: isSell ? -qty : qty,
+        price: price,
+        gross_amount: gross,
+        transaction_type: txn.transaction_type,
+        security_type: txn.security_type,
+        asset_class: txn.asset_class,
+        exchange: txn.exchange,
+        product: txn.product,
+        lots: parseFloat(txn.lots) || 0,
+        lot_size: txn.lot_size || 1,
+        brokerage: 0,
+        stt: 0,
+        other_charges: 0,
+        gst: 0,
+        tds: 0,
+        total_charges: 0,
+        trader_charges: 0,
+        net_amount: 0,
+        _exchange_charges: 0,
+        _sebi_charges: 0,
+        _stamp_duty: 0,
+        _ipft: 0
+    };
+
+    // Calculate charges using the canonical function
+    if (typeof wmsAutoCalcCharges === 'function' && wmsRefData) {
+        wmsAutoCalcCharges(tempRow, {
+            ibaRatesMap: wmsRefData.ibaRatesMap,
+            regCharges: wmsRefData.regCharges,
+            investorId: txn.investor_id,
+            brokerId: txn.broker_id,
+            preserveExisting: false,
+            debug: false
+        });
+    }
+
+    // Update all charge fields
+    document.getElementById('trEditBrokerage').value = trEditFmt(tempRow.brokerage);
+    document.getElementById('trEditStt').value = trEditFmt(tempRow.stt);
+    document.getElementById('trEditOther').value = trEditFmt(tempRow.other_charges);
+    document.getElementById('trEditGst').value = trEditFmt(tempRow.gst);
+    document.getElementById('trEditTotalCharges').value = trEditFmt(tempRow.total_charges);
+    document.getElementById('trEditNetAmount').value = trEditFmt(tempRow.net_amount);
+
+    // Also recalculate trader charges
+    trRecalcTraderCharges();
 }
 
 // Recalculate trader_charges when trader dropdown changes
