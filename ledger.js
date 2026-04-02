@@ -348,12 +348,20 @@ function lgRenderViewTabs() {
                 finished = true;
                 var newName = input.value.trim();
                 if (newName && newName !== view.name) {
-                    view.name = newName;
-                    fetch(SUPABASE_URL + '/rest/v1/ledger_views?id=eq.' + viewId, {
-                        method: 'PATCH',
-                        headers: lgHeaders(),
-                        body: JSON.stringify({ name: newName })
-                    }).catch(function(err) { console.warn('Failed to rename view:', err.message); });
+                    // Duplicate name check
+                    var duplicate = lgViews.some(function(v) {
+                        return v.id !== viewId && v.name.toLowerCase() === newName.toLowerCase();
+                    });
+                    if (duplicate) {
+                        showAlert('A view named "' + newName + '" already exists', 'error', 3000);
+                    } else {
+                        view.name = newName;
+                        fetch(SUPABASE_URL + '/rest/v1/ledger_views?id=eq.' + viewId, {
+                            method: 'PATCH',
+                            headers: lgHeaders(),
+                            body: JSON.stringify({ name: newName })
+                        }).catch(function(err) { console.warn('Failed to rename view:', err.message); });
+                    }
                 }
                 lgRenderViewTabs();
                 lgRenderMoreDropdown();
