@@ -21,6 +21,7 @@
         </div>
         <button class="tr-vta-btn" id="lgUpdateViewBtn" title="Update current view with active filters" disabled>↻ Update</button>
         <button class="tr-vta-btn" id="lgSaveNewBtn" title="Save as new view">+ Save New</button>
+        <button class="tr-vta-btn" id="lgFiltersToggle" title="Toggle filters" style="font-size:10px;">▲</button>
         <div class="tr-save-prompt" id="lgSavePrompt">
           <input type="text" id="lgSavePromptName" placeholder="View name...">
           <button class="tr-vta-btn" id="lgSavePromptOk" style="background:#667eea;color:#fff;border-color:#667eea;">✓</button>
@@ -30,92 +31,75 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- 2. FILTER BAR                                                -->
+    <!-- 2. FILTER BAR (hidden by default, toggled via ▲/▼ button)   -->
     <!-- ============================================================ -->
-    <div id="lgFiltersBar" style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0; flex-wrap:wrap;">
-      <!-- Investor pills -->
-      <div id="lgFilterInvestor"></div>
-      <!-- Trader pills -->
-      <div id="lgFilterTrader"></div>
-      <!-- Broker pills -->
-      <div id="lgFilterBroker"></div>
-      <!-- Tags -->
-      <div id="lgFilterTags"></div>
-      <!-- FY dropdown -->
-      <div style="display:flex; align-items:center; gap:4px;">
-        <label style="font-size:10px; font-weight:600; color:#4a5568; white-space:nowrap;">FY:</label>
-        <select id="lgFySelect" style="padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; background:#fff; color:#2d3748;">
-          <option>FY 2026-27</option>
-          <option selected>FY 2025-26</option>
-          <option>FY 2024-25</option>
-        </select>
+    <div id="lgFiltersBar" style="flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
+      <!-- Date filter — uses shared wmsDateFilter() component (same as Transactions page) -->
+      <div style="margin-top:12px; display:flex; flex-direction:column; gap:3px; width:auto; min-width:160px;">
+        <div id="lgDateFilter" style="display:inline-flex;"></div>
       </div>
-      <!-- Date range -->
-      <div style="display:flex; align-items:center; gap:4px;">
-        <label style="font-size:10px; font-weight:600; color:#4a5568; white-space:nowrap;">From:</label>
-        <input type="date" id="lgDateFrom" style="padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; width:140px;">
+      <!-- 4-column filter grid (same as Portfolio) -->
+      <div class="filters-grid" style="flex:1; grid-template-columns: repeat(4, 1fr);">
+        <div id="lgFilterInvestor"></div>
+        <div id="lgFilterTrader"></div>
+        <div id="lgFilterBroker"></div>
+        <div id="lgFilterTags"></div>
       </div>
-      <div style="display:flex; align-items:center; gap:4px;">
-        <label style="font-size:10px; font-weight:600; color:#4a5568; white-space:nowrap;">To:</label>
-        <input type="date" id="lgDateTo" style="padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; width:140px;">
-      </div>
-      <!-- Clear All link -->
-      <a id="lgClearAllLink" href="#" style="font-size:10px; color:#667eea; text-decoration:none; margin-left:auto;">Clear All</a>
     </div>
 
     <!-- ============================================================ -->
     <!-- 3. ENTRIES SECTION (Main Table)                              -->
     <!-- ============================================================ -->
     <div class="table-container" style="flex:1; min-height:0; overflow:auto;">
-      <table id="lgTable" style="width:100%; border-collapse:collapse; font-size:11px;">
+      <table id="lgTable">
         <thead id="lgHead">
-          <tr style="background:#f7fafc; position:sticky; top:0; height:34px;">
-            <th style="text-align:left; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:80px;">Date</th>
-            <th style="text-align:left; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:120px;">Scrip</th>
-            <th style="text-align:left; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:80px;">Product</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:70px;">Qty</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:80px;">Price</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:80px;">Net</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:100px;">Amount</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:100px;">Balance</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:100px;">FO Margin Adj</th>
+          <tr>
+            <th style="width:80px;">Date</th>
+            <th style="width:120px;">Scrip</th>
+            <th style="width:80px;">Product</th>
+            <th class="text-right" style="width:70px;">Qty</th>
+            <th class="text-right" style="width:80px;">Price</th>
+            <th class="text-right" style="width:80px;">Net</th>
+            <th class="text-right" style="width:100px;">Amount</th>
+            <th class="text-right" style="width:100px;">Balance</th>
+            <th class="text-right" style="width:100px;">FO Margin Adj</th>
           </tr>
         </thead>
         <tbody id="lgBody">
           <!-- Inline new entry row at top -->
-          <tr id="lgNewEntryRow" style="background:#f9fafb; border-bottom:1px solid #e2e8f0;">
-            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;">
-              <input type="date" id="lgNewDate" style="width:100%; padding:2px 4px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; box-sizing:border-box;">
+          <tr id="lgNewEntryRow" class="total-row" style="background:#f9fafb;">
+            <td>
+              <input type="date" id="lgNewDate" style="width:100%; box-sizing:border-box;">
             </td>
-            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;">
-              <input type="text" id="lgNewReference" placeholder="Ref / Note..." style="width:100%; padding:2px 4px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; box-sizing:border-box;">
+            <td>
+              <input type="text" id="lgNewReference" placeholder="Ref / Note..." style="width:100%; box-sizing:border-box;">
             </td>
-            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;">
-              <select id="lgNewType" style="width:100%; padding:2px 4px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; box-sizing:border-box;">
+            <td>
+              <select id="lgNewType" style="width:100%; box-sizing:border-box;">
                 <option value="CASH_RECEIVED">Cash In</option>
                 <option value="CASH_PAID">Cash Out</option>
                 <option value="ADJUSTMENT">Adjustment</option>
                 <option value="OPENING_BALANCE">Opening Balance</option>
               </select>
             </td>
-            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;"></td>
-            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;"></td>
-            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;"></td>
-            <td style="padding:4px 6px; border-right:1px solid #e2e8f0; text-align:right;">
-              <input type="number" id="lgNewAmount" placeholder="0.00" step="0.01" style="width:100%; padding:2px 4px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; box-sizing:border-box; text-align:right;">
+            <td></td>
+            <td></td>
+            <td></td>
+            <td class="text-right">
+              <input type="number" id="lgNewAmount" placeholder="0.00" step="0.01" style="width:100%; box-sizing:border-box; text-align:right;">
             </td>
-            <td style="padding:4px 6px; border-right:1px solid #e2e8f0; text-align:right;"></td>
-            <td style="padding:4px 6px; text-align:center;">
-              <button id="lgAddEntryBtn" style="padding:3px 10px; font-size:10px; background:#059669; color:#fff; border:1px solid #059669; border-radius:3px; cursor:pointer;">Add</button>
+            <td class="text-right"></td>
+            <td style="text-align:center;">
+              <button id="lgAddEntryBtn" class="tr-vta-btn" style="background:#059669;color:#fff;border-color:#059669;">Add</button>
             </td>
           </tr>
 
           <!-- Data rows will be inserted here -->
-          <tr style="background:#f7fafc; font-weight:600; border-top:2px solid #cbd5e0;">
-            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px; color:#4a5568;">TOTALS:</td>
-            <td id="lgTotalAmount" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
-            <td id="lgTotalBalance" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
-            <td id="lgTotalMargin" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
+          <tr class="total-row" style="border-top:2px solid #cbd5e0;">
+            <td colspan="6" class="text-right" style="font-weight:600;">TOTALS:</td>
+            <td id="lgTotalAmount" class="text-right" style="font-weight:600;"></td>
+            <td id="lgTotalBalance" class="text-right" style="font-weight:600;"></td>
+            <td id="lgTotalMargin" class="text-right" style="font-weight:600;"></td>
           </tr>
         </tbody>
       </table>
@@ -126,43 +110,43 @@
     <!-- ============================================================ -->
     <div id="lgSummarySection" style="flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#fafbfc; overflow:auto; max-height:40%;">
       <div style="font-size:11px; font-weight:600; color:#2d3748; margin-bottom:6px;">Current Balance Summary</div>
-      <table style="width:100%; border-collapse:collapse; font-size:11px;">
+      <table>
         <thead>
-          <tr style="background:#f0f4f8;">
-            <th style="text-align:left; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">Scrip</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">Product</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">Qty</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">Avg Cost</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">CMP</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">MTM</th>
-            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">Value</th>
+          <tr>
+            <th>Scrip</th>
+            <th class="text-right">Product</th>
+            <th class="text-right">Qty</th>
+            <th class="text-right">Avg Cost</th>
+            <th class="text-right">CMP</th>
+            <th class="text-right">MTM</th>
+            <th class="text-right">Value</th>
           </tr>
         </thead>
         <tbody id="lgSummaryBody">
-          <tr style="background:#fff;">
-            <td colspan="7" style="text-align:center; padding:20px; color:#9ca3af; font-size:11px;">Loading holdings...</td>
+          <tr>
+            <td colspan="7" style="text-align:center; padding:20px; color:#9ca3af;">Loading holdings...</td>
           </tr>
         </tbody>
         <tfoot>
-          <tr style="background:#f0f4f8; font-weight:600; border-top:2px solid #cbd5e0;">
-            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px;">Holdings Value:</td>
-            <td id="lgHoldingsValue" style="padding:4px 6px; text-align:right; font-size:10px; color:#059669;"></td>
+          <tr class="total-row" style="border-top:2px solid #cbd5e0;">
+            <td colspan="6" class="text-right" style="font-weight:600;">Holdings Value:</td>
+            <td id="lgHoldingsValue" class="text-right" style="font-weight:600; color:#059669;"></td>
           </tr>
-          <tr style="background:#f0f4f8;">
-            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px;">MTM of F&O:</td>
-            <td id="lgMtmFno" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
+          <tr class="total-row">
+            <td colspan="6" class="text-right">MTM of F&O:</td>
+            <td id="lgMtmFno" class="text-right"></td>
           </tr>
-          <tr style="background:#f0f4f8;">
-            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px;">Outstanding:</td>
-            <td id="lgOutstanding" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
+          <tr class="total-row">
+            <td colspan="6" class="text-right">Outstanding:</td>
+            <td id="lgOutstanding" class="text-right"></td>
           </tr>
-          <tr style="background:#f0f4f8;">
-            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px;">Potential Tax:</td>
-            <td id="lgPotentialTax" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
+          <tr class="total-row">
+            <td colspan="6" class="text-right">Potential Tax:</td>
+            <td id="lgPotentialTax" class="text-right"></td>
           </tr>
-          <tr style="background:#f0f4f8; font-weight:600; border-top:1px solid #cbd5e0;">
-            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px;">Net Receivable/(Payable):</td>
-            <td id="lgNetValue" style="padding:4px 6px; text-align:right; font-size:10px; font-weight:600; color:#2d3748;"></td>
+          <tr class="total-row" style="border-top:1px solid #cbd5e0;">
+            <td colspan="6" class="text-right" style="font-weight:600;">Net Receivable/(Payable):</td>
+            <td id="lgNetValue" class="text-right" style="font-weight:600;"></td>
           </tr>
         </tfoot>
       </table>
@@ -172,8 +156,8 @@
     <!-- 5. FOOTER BAR (Export buttons)                               -->
     <!-- ============================================================ -->
     <div id="lgFooter" style="flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#f7fafc; display:flex; gap:8px; justify-content:flex-end;">
-      <button id="lgExportPdfBtn" style="padding:4px 12px; font-size:11px; background:#fff; color:#2d3748; border:1px solid #cbd5e0; border-radius:4px; cursor:pointer;">📄 Export PDF</button>
-      <button id="lgExportExcelBtn" style="padding:4px 12px; font-size:11px; background:#fff; color:#2d3748; border:1px solid #cbd5e0; border-radius:4px; cursor:pointer;">📊 Export Excel</button>
+      <button id="lgExportPdfBtn" class="tr-vta-btn">Export PDF</button>
+      <button id="lgExportExcelBtn" class="tr-vta-btn">Export Excel</button>
     </div>
 
   </div>
@@ -188,14 +172,14 @@
   </div>
   <div style="padding:12px;">
     <!-- Period breakdown table -->
-    <table style="width:100%; border-collapse:collapse; font-size:10px; margin-bottom:12px;">
+    <table style="font-size:10px; margin-bottom:12px;">
       <thead>
-        <tr style="background:#f0f4f8;">
-          <th style="text-align:left; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Period</th>
-          <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Balance</th>
-          <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Days</th>
-          <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Rate %</th>
-          <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Interest</th>
+        <tr>
+          <th>Period</th>
+          <th class="text-right">Balance</th>
+          <th class="text-right">Days</th>
+          <th class="text-right">Rate %</th>
+          <th class="text-right">Interest</th>
         </tr>
       </thead>
       <tbody id="lgInterestDetailBody">
@@ -209,8 +193,8 @@
     </div>
     <!-- Post button -->
     <div style="display:flex; gap:6px;">
-      <button id="lgInterestPostBtn" style="flex:1; padding:6px 12px; font-size:11px; background:#059669; color:#fff; border:1px solid #059669; border-radius:4px; cursor:pointer; font-weight:600;">Post Interest</button>
-      <button id="lgInterestDetailCancelBtn" style="flex:1; padding:6px 12px; font-size:11px; background:#fff; color:#2d3748; border:1px solid #cbd5e0; border-radius:4px; cursor:pointer;">Cancel</button>
+      <button id="lgInterestPostBtn" class="tr-vta-btn" style="flex:1; background:#059669;color:#fff;border-color:#059669; font-weight:600;">Post Interest</button>
+      <button id="lgInterestDetailCancelBtn" class="tr-vta-btn" style="flex:1;">Cancel</button>
     </div>
   </div>
 </div>
@@ -245,12 +229,12 @@
       </div>
       <!-- Preview table -->
       <div style="margin-bottom:12px; border:1px solid #e2e8f0; border-radius:3px; overflow:auto;">
-        <table style="width:100%; border-collapse:collapse; font-size:10px;">
+        <table style="font-size:10px;">
           <thead>
-            <tr style="background:#f0f4f8;">
-              <th style="text-align:left; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Period</th>
-              <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Balance</th>
-              <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Interest</th>
+            <tr>
+              <th>Period</th>
+              <th class="text-right">Balance</th>
+              <th class="text-right">Interest</th>
             </tr>
           </thead>
           <tbody id="lgBookPreviewBody">
@@ -265,8 +249,8 @@
       </div>
       <!-- Buttons -->
       <div style="display:flex; gap:6px;">
-        <button id="lgBookConfirmBtn" style="flex:1; padding:6px 12px; font-size:11px; background:#059669; color:#fff; border:1px solid #059669; border-radius:4px; cursor:pointer; font-weight:600;">Confirm & Post</button>
-        <button id="lgBookCancelBtn" style="flex:1; padding:6px 12px; font-size:11px; background:#fff; color:#2d3748; border:1px solid #cbd5e0; border-radius:4px; cursor:pointer;">Cancel</button>
+        <button id="lgBookConfirmBtn" class="tr-vta-btn" style="flex:1; background:#059669;color:#fff;border-color:#059669; font-weight:600;">Confirm & Post</button>
+        <button id="lgBookCancelBtn" class="tr-vta-btn" style="flex:1;">Cancel</button>
       </div>
     </div>
   </div>

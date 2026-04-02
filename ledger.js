@@ -24,8 +24,8 @@ var lgSelectedBrokerIds = [];
 var lgSelectedTagNames = [];
 var lgTagFilterLogic = 'OR';
 
-// Date/FY filters
-var lgFyYear = null;  // e.g., 2025 for FY 2025-26
+// Date filter (shared wmsDateFilter component)
+var lgDateFilterInstance = null;
 var lgDateFrom = '';
 var lgDateTo = '';
 
@@ -111,52 +111,38 @@ function lgInit() {
         });
     }
 
-    // Populate FY dropdown
-    lgPopulateFyDropdown();
-
-    // Bind date inputs
-    var dateFromEl = document.getElementById('lgDateFrom');
-    var dateToEl = document.getElementById('lgDateTo');
-    if (dateFromEl) {
-        dateFromEl.addEventListener('change', function() {
-            lgDateFrom = this.value;
-            lgRefresh();
-        });
-    }
-    if (dateToEl) {
-        dateToEl.addEventListener('change', function() {
-            lgDateTo = this.value;
-            lgRefresh();
-        });
-    }
-
-    // FY dropdown change
-    var fySelect = document.getElementById('lgFySelect');
-    if (fySelect) {
-        fySelect.addEventListener('change', function() {
-            var val = this.value;
-            var match = val.match(/(\d{4})/);
-            if (match) {
-                lgFyYear = parseInt(match[1]);
+    // Date filter — initialize shared wmsDateFilter component (same as Transactions page)
+    var dateContainer = document.getElementById('lgDateFilter');
+    if (dateContainer) {
+        var fyStartMonth = 4;
+        if (window.wmsRefData && wmsRefData.userPrefs && wmsRefData.userPrefs.fy_start_month) {
+            fyStartMonth = wmsRefData.userPrefs.fy_start_month;
+        }
+        lgDateFilterInstance = wmsDateFilter(dateContainer, {
+            default: 'all',
+            fyStartMonth: fyStartMonth,
+            transactions: trTransactions,
+            onChange: function(from, to) {
+                lgDateFrom = from || '';
+                lgDateTo = to || '';
                 lgRefresh();
             }
         });
+        if (lgDateFilterInstance) {
+            var range = lgDateFilterInstance.getRange();
+            lgDateFrom = range.from || '';
+            lgDateTo = range.to || '';
+        }
     }
 
-    // Clear All link
-    var clearLink = document.getElementById('lgClearAllLink');
-    if (clearLink) {
-        clearLink.addEventListener('click', function(e) {
-            e.preventDefault();
-            lgSelectedInvestorIds = [];
-            lgSelectedTraderIds = [];
-            lgSelectedBrokerIds = [];
-            lgSelectedTagNames = [];
-            if (lgInvPillFilter) lgInvPillFilter.setSelected([]);
-            if (lgTrdPillFilter) lgTrdPillFilter.setSelected([]);
-            if (lgBrkPillFilter) lgBrkPillFilter.setSelected([]);
-            if (lgTagPillFilter) lgTagPillFilter.setSelected([]);
-            lgRefresh();
+    // Filters toggle button (same pattern as Portfolio)
+    var filtersToggle = document.getElementById('lgFiltersToggle');
+    if (filtersToggle) {
+        filtersToggle.addEventListener('click', function() {
+            var filtersDiv = document.getElementById('lgFiltersBar');
+            var isHidden = filtersDiv.style.display === 'none';
+            filtersDiv.style.display = isHidden ? 'flex' : 'none';
+            this.textContent = isHidden ? '\u25BC' : '\u25B2';
         });
     }
 
@@ -631,22 +617,9 @@ function lgGetCurrentFilters() {
 // ============================================================================
 
 async function lgRefresh() {
-    // Determine FY bounds
-    var fyBounds = null;
-    if (lgFyYear) {
-        var refDate = new Date(lgFyYear, 3, 1);  // Use April 1st of the FY year
-        var inv = wmsRefData.investorObjMap[lgSelectedInvestorIds[0]] || {};
-        var fyStartMonth = (inv.financial_year_start || 4);
-        var fyStart = new Date(lgFyYear, fyStartMonth - 1, 1);
-        var fyEnd = new Date(lgFyYear + 1, fyStartMonth - 1, 0);
-        fyBounds = {
-            start: fyStart.toISOString().slice(0, 10),
-            end: fyEnd.toISOString().slice(0, 10)
-        };
-    }
-
-    var dateFrom = lgDateFrom || (fyBounds ? fyBounds.start : '2000-01-01');
-    var dateTo = lgDateTo || (fyBounds ? fyBounds.end : '2099-12-31');
+    // Use date range from wmsDateFilter component
+    var dateFrom = lgDateFrom || '2000-01-01';
+    var dateTo = lgDateTo || '2099-12-31';
 
     // Fetch ledger entries filtered by date range
     var query = 'entry_date.gte.' + dateFrom + '&entry_date.lte.' + dateTo;
@@ -797,23 +770,19 @@ function lgRenderEntries(rows) {
             }
         }
 
-        var amountStyle = 'text-align:right;';
-        if (row.amount < 0) amountStyle += ' color:#dc2626;';
-        else if (row.amount > 0) amountStyle += ' color:#059669;';
+        var amountColor = row.amount < 0 ? ' style="color:#dc2626;"' : row.amount > 0 ? ' style="color:#059669;"' : '';
+        var balanceColor = row._runningBalance < 0 ? ' style="color:#dc2626;"' : '';
 
-        var balanceStyle = 'text-align:right;';
-        if (row._runningBalance < 0) balanceStyle += ' color:#dc2626;';
-
-        html += '<tr style="border-bottom:1px solid #e2e8f0;">' +
-            '<td style="padding:4px 6px;">' + date + '</td>' +
-            '<td style="padding:4px 6px;">' + scrip + (editDelete ? ' ' + editDelete : '') + '</td>' +
-            '<td style="padding:4px 6px;">' + product + '</td>' +
-            '<td style="text-align:right; padding:4px 6px;">' + qty + '</td>' +
-            '<td style="text-align:right; padding:4px 6px;">' + price + '</td>' +
-            '<td style="text-align:right; padding:4px 6px;">' + net + '</td>' +
-            '<td style="' + amountStyle + ' padding:4px 6px;">' + amount + '</td>' +
-            '<td style="' + balanceStyle + ' padding:4px 6px;">' + balance + '</td>' +
-            '<td style="text-align:right; padding:4px 6px;">' + marginAdj + '</td>' +
+        html += '<tr>' +
+            '<td>' + date + '</td>' +
+            '<td>' + scrip + (editDelete ? ' ' + editDelete : '') + '</td>' +
+            '<td>' + product + '</td>' +
+            '<td class="text-right">' + qty + '</td>' +
+            '<td class="text-right">' + price + '</td>' +
+            '<td class="text-right">' + net + '</td>' +
+            '<td class="text-right"' + amountColor + '>' + amount + '</td>' +
+            '<td class="text-right"' + balanceColor + '>' + balance + '</td>' +
+            '<td class="text-right">' + marginAdj + '</td>' +
             '</tr>';
 
         totalAmount += row.amount;
@@ -876,16 +845,16 @@ function lgRenderSummary() {
         totalValue += h.totalValue;
 
         var mtm = h.totalValue - h.totalCost;
-        var mtmStyle = mtm < 0 ? 'color:#dc2626;' : mtm > 0 ? 'color:#059669;' : '';
+        var mtmColor = mtm < 0 ? ' style="color:#dc2626;"' : mtm > 0 ? ' style="color:#059669;"' : '';
 
         return '<tr>' +
-            '<td style="padding:3px 6px;">' + wmsEsc(sym) + '</td>' +
-            '<td style="text-align:right; padding:3px 6px;">' + wmsEsc(h.product) + '</td>' +
-            '<td style="text-align:right; padding:3px 6px;">' + String(Math.round(h.qty)) + '</td>' +
-            '<td style="text-align:right; padding:3px 6px;">' + wmsFmtAmt(h.avgCost) + '</td>' +
-            '<td style="text-align:right; padding:3px 6px;">' + wmsFmtAmt(h.cmp) + '</td>' +
-            '<td style="text-align:right; padding:3px 6px; ' + mtmStyle + '">' + wmsFmtAmt(mtm) + '</td>' +
-            '<td style="text-align:right; padding:3px 6px;">' + wmsFmtAmt(h.totalValue) + '</td>' +
+            '<td>' + wmsEsc(sym) + '</td>' +
+            '<td class="text-right">' + wmsEsc(h.product) + '</td>' +
+            '<td class="text-right">' + String(Math.round(h.qty)) + '</td>' +
+            '<td class="text-right">' + wmsFmtAmt(h.avgCost) + '</td>' +
+            '<td class="text-right">' + wmsFmtAmt(h.cmp) + '</td>' +
+            '<td class="text-right"' + mtmColor + '>' + wmsFmtAmt(mtm) + '</td>' +
+            '<td class="text-right">' + wmsFmtAmt(h.totalValue) + '</td>' +
             '</tr>';
     }).filter(function(s) { return s.length > 0; }).join('');
 
@@ -916,13 +885,10 @@ function lgRenderSummary() {
     if (potentialTaxEl) potentialTaxEl.textContent = wmsFmtAmt(potentialTax);
 
     var netValue = totalValue - Math.abs(lastBalance) - potentialTax;
-    var netValueStyle = 'text-align:right; font-size:10px; font-weight:600;';
-    if (netValue < 0) netValueStyle += ' color:#dc2626;';
-    else if (netValue > 0) netValueStyle += ' color:#059669;';
 
     if (netValueEl) {
         netValueEl.textContent = wmsFmtAmt(netValue);
-        netValueEl.style.cssText = netValueStyle;
+        netValueEl.style.color = netValue < 0 ? '#dc2626' : netValue > 0 ? '#059669' : '';
     }
 }
 
@@ -1087,45 +1053,6 @@ function lgExportPdf() {
 
 function lgExportExcel() {
     showAlert('Excel export coming soon', 'info', 3000);
-}
-
-// ============================================================================
-// FY DROPDOWN
-// ============================================================================
-
-function lgPopulateFyDropdown() {
-    var select = document.getElementById('lgFySelect');
-    if (!select) return;
-
-    var now = new Date();
-    var currentYear = now.getFullYear();
-    var currentMonth = now.getMonth() + 1;
-
-    // Get investor's FY start month (default April)
-    var fyStartMonth = 4;
-    if (lgSelectedInvestorIds.length > 0) {
-        var inv = wmsRefData.investorObjMap[lgSelectedInvestorIds[0]];
-        if (inv && inv.financial_year_start) {
-            fyStartMonth = inv.financial_year_start;
-        }
-    }
-
-    // Determine current FY
-    var currentFyYear = currentMonth >= fyStartMonth ? currentYear : currentYear - 1;
-
-    var options = [];
-    for (var i = -2; i <= 2; i++) {
-        var fyYear = currentFyYear + i;
-        var label = 'FY ' + fyYear + '-' + String(fyYear + 1).slice(-2);
-        options.push({ label: label, value: fyYear });
-    }
-
-    select.innerHTML = options.map(function(opt) {
-        var selected = opt.value === currentFyYear ? ' selected' : '';
-        return '<option value="' + opt.label + '"' + selected + '>' + opt.label + '</option>';
-    }).join('');
-
-    lgFyYear = currentFyYear;
 }
 
 // ============================================================================
