@@ -468,29 +468,29 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
                 <div class="brokerage-section">
                     <span class="brokerage-label">Equity - Delivery</span>
                     <div class="form-row">
-                        <div class="form-group"><label>%</label><input type="number" step="0.01" class="eq-del-pct" data-index="${index}" value="${rates.equity?.delivery?.pct !== undefined ? rates.equity.delivery.pct : ''}"></div>
-                        <div class="form-group"><label>Max ₹</label><input type="number" step="0.01" class="eq-del-max" data-index="${index}" value="${rates.equity?.delivery?.max !== undefined ? rates.equity.delivery.max : ''}"></div>
+                        <div class="form-group"><label>Rate (0.005 = 0.5%)</label><input type="number" step="0.0001" class="eq-del-pct" data-index="${index}" value="${rates.equity?.delivery?.pct !== undefined ? rates.equity.delivery.pct : ''}" placeholder="e.g., 0.005"></div>
+                        <div class="form-group"><label>Max ₹ (0 = no cap)</label><input type="number" step="0.01" class="eq-del-max" data-index="${index}" value="${rates.equity?.delivery?.max !== undefined ? rates.equity.delivery.max : ''}"></div>
                     </div>
                 </div>
                 <div class="brokerage-section">
                     <span class="brokerage-label">Equity - Intraday</span>
                     <div class="form-row">
-                        <div class="form-group"><label>%</label><input type="number" step="0.01" class="eq-intra-pct" data-index="${index}" value="${rates.equity?.intraday?.pct !== undefined ? rates.equity.intraday.pct : ''}"></div>
-                        <div class="form-group"><label>Max ₹</label><input type="number" step="0.01" class="eq-intra-max" data-index="${index}" value="${rates.equity?.intraday?.max !== undefined ? rates.equity.intraday.max : ''}"></div>
+                        <div class="form-group"><label>Rate (0.03 = 3%)</label><input type="number" step="0.0001" class="eq-intra-pct" data-index="${index}" value="${rates.equity?.intraday?.pct !== undefined ? rates.equity.intraday.pct : ''}" placeholder="e.g., 0.03"></div>
+                        <div class="form-group"><label>Max ₹ (0 = no cap)</label><input type="number" step="0.01" class="eq-intra-max" data-index="${index}" value="${rates.equity?.intraday?.max !== undefined ? rates.equity.intraday.max : ''}"></div>
                     </div>
                 </div>
                 <div class="brokerage-section">
                     <span class="brokerage-label">Futures</span>
                     <div class="form-row">
-                        <div class="form-group"><label>%</label><input type="number" step="0.01" class="fut-pct" data-index="${index}" value="${rates.derivatives?.futures?.pct !== undefined ? rates.derivatives.futures.pct : ''}"></div>
-                        <div class="form-group"><label>Max ₹</label><input type="number" step="0.01" class="fut-max" data-index="${index}" value="${rates.derivatives?.futures?.max !== undefined ? rates.derivatives.futures.max : ''}"></div>
+                        <div class="form-group"><label>Rate (0.03 = 3%)</label><input type="number" step="0.0001" class="fut-pct" data-index="${index}" value="${rates.derivatives?.futures?.pct !== undefined ? rates.derivatives.futures.pct : ''}" placeholder="e.g., 0.03"></div>
+                        <div class="form-group"><label>Max ₹ (0 = no cap)</label><input type="number" step="0.01" class="fut-max" data-index="${index}" value="${rates.derivatives?.futures?.max !== undefined ? rates.derivatives.futures.max : ''}"></div>
                     </div>
                 </div>
                 <div class="brokerage-section">
                     <span class="brokerage-label">Options</span>
                     <div class="form-row">
-                        <div class="form-group"><label>Flat ₹</label><input type="number" step="0.01" class="opt-flat" data-index="${index}" value="${rates.derivatives?.options?.flat !== undefined ? rates.derivatives.options.flat : ''}"></div>
-                        <div class="form-group"><label>Max ₹</label><input type="number" step="0.01" class="opt-max" data-index="${index}" value="${rates.derivatives?.options?.max !== undefined ? rates.derivatives.options.max : ''}"></div>
+                        <div class="form-group"><label>Flat ₹ per lot</label><input type="number" step="0.01" class="opt-flat" data-index="${index}" value="${rates.derivatives?.options?.flat !== undefined ? rates.derivatives.options.flat : ''}" placeholder="e.g., 20"></div>
+                        <div class="form-group"><label>Max ₹ (0 = no cap)</label><input type="number" step="0.01" class="opt-max" data-index="${index}" value="${rates.derivatives?.options?.max !== undefined ? rates.derivatives.options.max : ''}"></div>
                     </div>
                 </div>
             </div>
@@ -500,7 +500,7 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
                 </div>
                 <div class="brokerage-section">
                     <div class="form-row">
-                        <div class="form-group"><label>Interest Rate % (p.a.)</label><input type="number" step="0.01" class="iba-interest-rate" data-index="${index}" value="${ibaInterestRate}" placeholder="e.g., 18"></div>
+                        <div class="form-group"><label>Interest Rate % p.a. (18 = 18%)</label><input type="number" step="0.01" class="iba-interest-rate" data-index="${index}" value="${ibaInterestRate}" placeholder="e.g., 18"></div>
                         <div class="form-group"><label>Interest Frequency</label>
                             <select class="iba-interest-freq" data-index="${index}">
                                 <option value="" ${!ibaIntFreq ? 'selected' : ''}>Default (Weekly Friday)</option>
@@ -514,7 +514,7 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
                 </div>
                 <div class="brokerage-section">
                     <div class="form-row">
-                        <div class="form-group"><label>Margin Rate %</label><input type="number" step="0.01" class="iba-margin-rate" data-index="${index}" value="${ibaMarginRate}" placeholder="e.g., 10"></div>
+                        <div class="form-group"><label>Margin Rate % (10 = 10%)</label><input type="number" step="0.01" class="iba-margin-rate" data-index="${index}" value="${ibaMarginRate}" placeholder="e.g., 10"></div>
                     </div>
                 </div>
             </div>
