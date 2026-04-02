@@ -16,7 +16,7 @@ The Ledger Engine tracks all money movement for each investor: manual cash entri
 | `CASH_PAID` | **Debit** (−) | Money paid back to investor |
 | `INTEREST_BOOKED` | **Credit** (+) | Interest charged to investor (added to their liability) |
 | `ADJUSTMENT` | **Either** | Manual correction — sign as entered (positive = credit, negative = debit) |
-| `TRADE` | **Either** | From transactions table — `net_amount` used directly (buy = negative/debit, sell = positive/credit) |
+| `TRADE` | **Either** | From transactions table — sign derived from `transaction_type`: BUY & RIGHTS_PAYMENT = debit (−), SELL/DIVIDEND/OTHER_INCOME/CAPITAL_REDUCTION = credit (+), HISTORICAL_PL = sign as stored |
 
 ---
 
@@ -31,7 +31,9 @@ For each row:
   if CASH_RECEIVED or INTEREST_BOOKED → balance += |amount|
   if CASH_PAID                        → balance -= |amount|
   if ADJUSTMENT                       → balance += amount (sign preserved)
-  if TRADE                            → balance += net_amount (as-is from DB)
+  if TRADE (BUY, RIGHTS_PAYMENT)      → balance -= |net_amount|  (debit — money out)
+  if TRADE (SELL, DIVIDEND, etc.)     → balance += net_amount   (credit — money in)
+  if TRADE (HISTORICAL_PL)            → balance += net_amount   (sign as stored in DB)
 ```
 
 **Running balance** is cumulative: each row's balance = previous row's balance + this row's signed amount.

@@ -4167,15 +4167,22 @@ function wmsBuildLedger(ledgerEntries, transactions) {
         });
     });
 
-    // Trades
+    // Trades — apply sign based on transaction_type:
+    //   BUY, RIGHTS_PAYMENT → debit (negate, money out)
+    //   SELL, DIVIDEND, OTHER_INCOME, CAPITAL_REDUCTION → credit (keep positive, money in)
+    //   BONUS, RIGHTS_ENTITLEMENT → no cash impact (net_amount is 0)
+    //   HISTORICAL_PL → sign as stored in DB
+    var _debitTypes = { 'BUY': true, 'RIGHTS_PAYMENT': true };
     (transactions || []).forEach(function(t) {
+        var amt = parseFloat(t.net_amount) || 0;
+        if (_debitTypes[t.transaction_type]) amt = -Math.abs(amt);
         combined.push({
             _rowType: 'trade',
             _source: t,
             date: t.transaction_date,
             sortKey: t.transaction_date + '|1|' + (t.created_at || ''),
             entryType: 'TRADE',
-            signedAmount: parseFloat(t.net_amount) || 0,
+            signedAmount: amt,
             investorId: t.investor_id,
             traderId: t.trader_id,
             brokerId: t.broker_id,

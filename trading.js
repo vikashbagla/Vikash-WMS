@@ -4359,7 +4359,8 @@ async function trRefreshLedger() {
     }
 
     var typeFilter = (document.getElementById('trLedgerEntryTypeFilter') || {}).value || '';
-    var daysBack = parseInt((document.getElementById('trLedgerDateRange') || {}).value) || 90;
+    var daysVal = (document.getElementById('trLedgerDateRange') || {}).value;
+    var daysBack = daysVal !== undefined && daysVal !== '' ? parseInt(daysVal) : 90;
 
     var dateTo = new Date();
     var dateFrom = daysBack > 0 ? new Date(Date.now() - daysBack * 86400000) : new Date('2000-01-01');
