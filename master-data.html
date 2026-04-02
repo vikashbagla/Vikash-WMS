@@ -552,7 +552,28 @@
                             </div>
                         </div>
                     </div>
-                    
+
+                    <div class="form-section">
+                        <div class="form-section-title">Ledger Settings (Consolidated)</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Interest Rate % (p.a.)</label>
+                                <input type="number" step="0.01" id="investorInterestRate" placeholder="e.g., 18">
+                            </div>
+                            <div class="form-group">
+                                <label>Interest Frequency</label>
+                                <select id="investorInterestFreq">
+                                    <option value="">Default (Weekly Friday)</option>
+                                    <option value="weekly_friday">Weekly Friday</option>
+                                    <option value="daily_monthly_compound">Daily + Monthly Compound</option>
+                                    <option value="monthly">Monthly</option>
+                                    <option value="quarterly">Quarterly</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p style="font-size:10px;color:#888;margin:2px 0 0 0;">Used for consolidated trader ledger (across all brokers). Per-broker rates override this.</p>
+                    </div>
+
                     <div class="form-section">
                         <div class="form-section-title">Broker Accounts</div>
                         <div id="brokerAccountsList"></div>

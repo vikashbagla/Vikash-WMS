@@ -360,6 +360,8 @@ async function openAddInvestorModal() {
     document.getElementById('investorForm').reset();
     document.getElementById('investorStatus').value = 'true';
     document.getElementById('investorAccountType').value = '';
+    document.getElementById('investorInterestRate').value = '';
+    document.getElementById('investorInterestFreq').value = '';
     document.getElementById('brokerAccountsList').innerHTML = '';
     brokerAccountCounter = 0;
     document.getElementById('investorModal').classList.add('show');
@@ -380,27 +382,41 @@ async function editInvestor(id) {
     document.getElementById('investorPan').value = investor.pan || '';
     document.getElementById('investorPhone').value = investor.phone || '';
     document.getElementById('investorStatus').value = investor.is_active ? 'true' : 'false';
-    
+    document.getElementById('investorInterestRate').value = investor.interest_rate || '';
+    var invTerms = investor.interest_terms;
+    document.getElementById('investorInterestFreq').value = (invTerms && invTerms.frequency) ? invTerms.frequency : '';
+
     const accounts = await DB.getBrokerAccounts(id);
     document.getElementById('brokerAccountsList').innerHTML = '';
     brokerAccountCounter = 0;
     for (const acc of accounts) {
-        await addBrokerAccount(acc.broker_id, acc.account_number, acc.brokerage_rates, acc.charges_inclusive);
+        await addBrokerAccount(acc.broker_id, acc.account_number, acc.brokerage_rates, acc.charges_inclusive, acc);
     }
     
     document.getElementById('investorModal').classList.add('show');
 }
 
-async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', existingRates = null, chargesInclusive = false) {
+async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', existingRates = null, chargesInclusive = false, existingAcc = null) {
     const brokers = await DB.getBrokers();
     const index = brokerAccountCounter++;
-    
+
     const selectedBroker = selectedBrokerId ? brokers.find(b => b.id === selectedBrokerId) : null;
     const rates = existingRates || (selectedBroker ? selectedBroker.default_brokerage_rates : {
         equity: { delivery: { pct: 0, max: 20 }, intraday: { pct: 0.03, max: 20 } },
         derivatives: { futures: { pct: 0.03, max: 20 }, options: { flat: 20, max: 0 } }
     });
-    
+
+    // Extract ledger fields from existing account (if editing)
+    var ibaInterestRate = (existingAcc && existingAcc.interest_rate) ? existingAcc.interest_rate : '';
+    var ibaMarginRate = (existingAcc && existingAcc.margin_rate) ? existingAcc.margin_rate : '';
+    var ibaInterestTerms = (existingAcc && existingAcc.interest_terms) ? existingAcc.interest_terms : null;
+    var ibaIntFreq = (ibaInterestTerms && ibaInterestTerms.frequency) ? ibaInterestTerms.frequency : '';
+    var ibaIntCompound = (ibaInterestTerms && ibaInterestTerms.compound) ? true : false;
+    // If interest_terms has a rate, use that; otherwise fall back to interest_rate column
+    if (ibaInterestTerms && ibaInterestTerms.rate !== undefined && ibaInterestTerms.rate !== null) {
+        ibaInterestRate = ibaInterestTerms.rate;
+    }
+
     const html = `
         <div class="broker-account-item" id="broker-account-${index}">
             <div class="broker-account-header">
@@ -457,10 +473,39 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
                     </div>
                 </div>
             </div>
+            <div class="brokerage-grid" style="margin-top:8px;border-top:1px solid #eee;padding-top:8px;">
+                <div class="form-group" style="grid-column:1/-1;">
+                    <span class="brokerage-label" style="font-weight:600;">Ledger Settings</span>
+                </div>
+                <div class="brokerage-section">
+                    <div class="form-row">
+                        <div class="form-group"><label>Interest Rate % (p.a.)</label><input type="number" step="0.01" class="iba-interest-rate" data-index="${index}" value="${ibaInterestRate}" placeholder="e.g., 18"></div>
+                        <div class="form-group"><label>Interest Frequency</label>
+                            <select class="iba-interest-freq" data-index="${index}">
+                                <option value="" ${!ibaIntFreq ? 'selected' : ''}>Default (Weekly Friday)</option>
+                                <option value="weekly_friday" ${ibaIntFreq === 'weekly_friday' ? 'selected' : ''}>Weekly Friday</option>
+                                <option value="daily_monthly_compound" ${ibaIntFreq === 'daily_monthly_compound' ? 'selected' : ''}>Daily + Monthly Compound</option>
+                                <option value="monthly" ${ibaIntFreq === 'monthly' ? 'selected' : ''}>Monthly</option>
+                                <option value="quarterly" ${ibaIntFreq === 'quarterly' ? 'selected' : ''}>Quarterly</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="brokerage-section">
+                    <div class="form-row">
+                        <div class="form-group"><label>Margin Rate %</label><input type="number" step="0.01" class="iba-margin-rate" data-index="${index}" value="${ibaMarginRate}" placeholder="e.g., 10"></div>
+                    </div>
+                </div>
+            </div>
         </div>
     `;
-    
+
     document.getElementById('brokerAccountsList').insertAdjacentHTML('beforeend', html);
+    // Store existing acc data for preserving fields not in the form (cn_password, api_* etc.)
+    if (existingAcc) {
+        var el = document.getElementById('broker-account-' + index);
+        if (el) el._existingAcc = existingAcc;
+    }
 }
 
 async function loadBrokerDefaults(index) {
@@ -490,6 +535,12 @@ function removeBrokerAccount(index) {
 }
 
 async function saveInvestor() {
+    var invIntRate = parseFloat(document.getElementById('investorInterestRate').value) || 0;
+    var invIntFreq = document.getElementById('investorInterestFreq').value || '';
+    var invInterestTerms = null;
+    if (invIntRate > 0) {
+        invInterestTerms = { rate: invIntRate, frequency: invIntFreq || 'weekly_friday', compound: (invIntFreq === 'daily_monthly_compound') };
+    }
     const data = {
         name: document.getElementById('investorName').value.trim(),
         short_name: document.getElementById('investorShortName').value.trim() || null,
@@ -497,7 +548,9 @@ async function saveInvestor() {
         email: document.getElementById('investorEmail').value.trim() || null,
         pan: document.getElementById('investorPan').value.trim().toUpperCase() || null,
         phone: document.getElementById('investorPhone').value.trim() || null,
-        is_active: document.getElementById('investorStatus').value === 'true'
+        is_active: document.getElementById('investorStatus').value === 'true',
+        interest_rate: invIntRate,
+        interest_terms: invInterestTerms
     };
 
     if (!data.name) {
@@ -512,11 +565,22 @@ async function saveInvestor() {
 
     const brokerSelects = document.querySelectorAll('.broker-select');
     const brokerAccounts = [];
-    
+
     brokerSelects.forEach((select) => {
         if (select.value) {
             const i = select.getAttribute('data-index');
-            brokerAccounts.push({
+            var ibaIntRate = parseFloat(document.querySelector(`.iba-interest-rate[data-index="${i}"]`).value) || 0;
+            var ibaIntFreq = document.querySelector(`.iba-interest-freq[data-index="${i}"]`).value || '';
+            var ibaMarginRate = parseFloat(document.querySelector(`.iba-margin-rate[data-index="${i}"]`).value) || 0;
+            var ibaInterestTerms = null;
+            if (ibaIntRate > 0) {
+                ibaInterestTerms = { rate: ibaIntRate, frequency: ibaIntFreq || 'weekly_friday', compound: (ibaIntFreq === 'daily_monthly_compound') };
+            }
+            // Preserve fields not in the form (cn_password, api_* columns) from existing record
+            var existingAcc = null;
+            var itemEl = document.getElementById('broker-account-' + i);
+            if (itemEl && itemEl._existingAcc) existingAcc = itemEl._existingAcc;
+            var accObj = {
                 broker_id: select.value,
                 account_number: document.querySelector(`.account-number[data-index="${i}"]`).value.trim() || null,
                 brokerage_rates: {
@@ -542,8 +606,23 @@ async function saveInvestor() {
                     }
                 },
                 charges_inclusive: document.querySelector(`.charges-inclusive[data-index="${i}"]`).value === 'true',
-                is_custom_rates: true
-            });
+                is_custom_rates: true,
+                interest_rate: ibaIntRate,
+                interest_terms: ibaInterestTerms,
+                margin_rate: ibaMarginRate
+            };
+            // Preserve columns not shown in form from existing record
+            if (existingAcc) {
+                if (existingAcc.cn_password) accObj.cn_password = existingAcc.cn_password;
+                if (existingAcc.api_access_token) accObj.api_access_token = existingAcc.api_access_token;
+                if (existingAcc.api_token_date) accObj.api_token_date = existingAcc.api_token_date;
+                if (existingAcc.api_token_generated_at) accObj.api_token_generated_at = existingAcc.api_token_generated_at;
+                if (existingAcc.api_token_method) accObj.api_token_method = existingAcc.api_token_method;
+                if (existingAcc.api_auto_login) accObj.api_auto_login = existingAcc.api_auto_login;
+                if (existingAcc.api_last_error) accObj.api_last_error = existingAcc.api_last_error;
+                if (existingAcc.api_last_error_at) accObj.api_last_error_at = existingAcc.api_last_error_at;
+            }
+            brokerAccounts.push(accObj);
         }
     });
 
