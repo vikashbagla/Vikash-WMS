@@ -1,0 +1,279 @@
+<!-- ============================================================ -->
+<!-- LEDGER MODULE - Lazy-loaded into #tr-ledger when activated  -->
+<!-- ============================================================ -->
+
+<div id="tr-ledger" class="trading-tab-content">
+  <div id="lgContainer" style="display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden;">
+
+    <!-- ============================================================ -->
+    <!-- 1. VIEW TABS BAR                                             -->
+    <!-- ============================================================ -->
+    <div class="tr-view-tabs-bar" style="flex-shrink:0;">
+      <div class="tr-view-tabs-container" id="lgViewTabs"></div>
+      <div class="tr-view-tabs-actions">
+        <button class="tr-vta-btn" id="lgNewViewBtn" title="New blank view">+</button>
+        <div style="position:relative;">
+          <button class="tr-vta-btn" id="lgMoreBtn" title="All views">▾ More</button>
+          <div class="tr-more-dropdown" id="lgMoreDropdown" style="display:none;">
+            <div id="lgMoreList"></div>
+          </div>
+        </div>
+        <button class="tr-vta-btn" id="lgUpdateViewBtn" title="Update current view with active filters" disabled>↻ Update</button>
+        <button class="tr-vta-btn" id="lgSaveNewBtn" title="Save as new view">+ Save New</button>
+        <div class="tr-save-prompt" id="lgSavePrompt">
+          <input type="text" id="lgSavePromptName" placeholder="View name...">
+          <button class="tr-vta-btn" id="lgSavePromptOk" style="background:#667eea;color:#fff;border-color:#667eea;">✓</button>
+          <button class="tr-vta-btn" id="lgSavePromptCancel">✕</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- 2. FILTER BAR                                                -->
+    <!-- ============================================================ -->
+    <div id="lgFiltersBar" style="flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0; flex-wrap:wrap;">
+      <!-- Investor pills -->
+      <div id="lgFilterInvestor"></div>
+      <!-- Trader pills -->
+      <div id="lgFilterTrader"></div>
+      <!-- Broker pills -->
+      <div id="lgFilterBroker"></div>
+      <!-- Tags -->
+      <div id="lgFilterTags"></div>
+      <!-- FY dropdown -->
+      <div style="display:flex; align-items:center; gap:4px;">
+        <label style="font-size:10px; font-weight:600; color:#4a5568; white-space:nowrap;">FY:</label>
+        <select id="lgFySelect" style="padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; background:#fff; color:#2d3748;">
+          <option>FY 2026-27</option>
+          <option selected>FY 2025-26</option>
+          <option>FY 2024-25</option>
+        </select>
+      </div>
+      <!-- Date range -->
+      <div style="display:flex; align-items:center; gap:4px;">
+        <label style="font-size:10px; font-weight:600; color:#4a5568; white-space:nowrap;">From:</label>
+        <input type="date" id="lgDateFrom" style="padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; width:140px;">
+      </div>
+      <div style="display:flex; align-items:center; gap:4px;">
+        <label style="font-size:10px; font-weight:600; color:#4a5568; white-space:nowrap;">To:</label>
+        <input type="date" id="lgDateTo" style="padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; width:140px;">
+      </div>
+      <!-- Clear All link -->
+      <a id="lgClearAllLink" href="#" style="font-size:10px; color:#667eea; text-decoration:none; margin-left:auto;">Clear All</a>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- 3. ENTRIES SECTION (Main Table)                              -->
+    <!-- ============================================================ -->
+    <div class="table-container" style="flex:1; min-height:0; overflow:auto;">
+      <table id="lgTable" style="width:100%; border-collapse:collapse; font-size:11px;">
+        <thead id="lgHead">
+          <tr style="background:#f7fafc; position:sticky; top:0; height:34px;">
+            <th style="text-align:left; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:80px;">Date</th>
+            <th style="text-align:left; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:120px;">Scrip</th>
+            <th style="text-align:left; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:80px;">Product</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:70px;">Qty</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:80px;">Price</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:80px;">Net</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:100px;">Amount</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:100px;">Balance</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#718096; text-transform:uppercase; padding:4px 6px; border-bottom:1px solid #e2e8f0; letter-spacing:0.3px; width:100px;">FO Margin Adj</th>
+          </tr>
+        </thead>
+        <tbody id="lgBody">
+          <!-- Inline new entry row at top -->
+          <tr id="lgNewEntryRow" style="background:#f9fafb; border-bottom:1px solid #e2e8f0;">
+            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;">
+              <input type="date" id="lgNewDate" style="width:100%; padding:2px 4px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; box-sizing:border-box;">
+            </td>
+            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;">
+              <input type="text" id="lgNewReference" placeholder="Ref / Note..." style="width:100%; padding:2px 4px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; box-sizing:border-box;">
+            </td>
+            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;">
+              <select id="lgNewType" style="width:100%; padding:2px 4px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; box-sizing:border-box;">
+                <option value="CASH_RECEIVED">Cash In</option>
+                <option value="CASH_PAID">Cash Out</option>
+                <option value="ADJUSTMENT">Adjustment</option>
+                <option value="OPENING_BALANCE">Opening Balance</option>
+              </select>
+            </td>
+            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;"></td>
+            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;"></td>
+            <td style="padding:4px 6px; border-right:1px solid #e2e8f0;"></td>
+            <td style="padding:4px 6px; border-right:1px solid #e2e8f0; text-align:right;">
+              <input type="number" id="lgNewAmount" placeholder="0.00" step="0.01" style="width:100%; padding:2px 4px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; box-sizing:border-box; text-align:right;">
+            </td>
+            <td style="padding:4px 6px; border-right:1px solid #e2e8f0; text-align:right;"></td>
+            <td style="padding:4px 6px; text-align:center;">
+              <button id="lgAddEntryBtn" style="padding:3px 10px; font-size:10px; background:#059669; color:#fff; border:1px solid #059669; border-radius:3px; cursor:pointer;">Add</button>
+            </td>
+          </tr>
+
+          <!-- Data rows will be inserted here -->
+          <tr style="background:#f7fafc; font-weight:600; border-top:2px solid #cbd5e0;">
+            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px; color:#4a5568;">TOTALS:</td>
+            <td id="lgTotalAmount" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
+            <td id="lgTotalBalance" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
+            <td id="lgTotalMargin" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- 4. CURRENT BALANCE SECTION                                   -->
+    <!-- ============================================================ -->
+    <div id="lgSummarySection" style="flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#fafbfc; overflow:auto; max-height:40%;">
+      <div style="font-size:11px; font-weight:600; color:#2d3748; margin-bottom:6px;">Current Balance Summary</div>
+      <table style="width:100%; border-collapse:collapse; font-size:11px;">
+        <thead>
+          <tr style="background:#f0f4f8;">
+            <th style="text-align:left; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">Scrip</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">Product</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">Qty</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">Avg Cost</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">CMP</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">MTM</th>
+            <th style="text-align:right; font-size:10px; font-weight:600; color:#4a5568; padding:3px 6px; border-bottom:1px solid #e2e8f0;">Value</th>
+          </tr>
+        </thead>
+        <tbody id="lgSummaryBody">
+          <tr style="background:#fff;">
+            <td colspan="7" style="text-align:center; padding:20px; color:#9ca3af; font-size:11px;">Loading holdings...</td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr style="background:#f0f4f8; font-weight:600; border-top:2px solid #cbd5e0;">
+            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px;">Holdings Value:</td>
+            <td id="lgHoldingsValue" style="padding:4px 6px; text-align:right; font-size:10px; color:#059669;"></td>
+          </tr>
+          <tr style="background:#f0f4f8;">
+            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px;">MTM of F&O:</td>
+            <td id="lgMtmFno" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
+          </tr>
+          <tr style="background:#f0f4f8;">
+            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px;">Outstanding:</td>
+            <td id="lgOutstanding" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
+          </tr>
+          <tr style="background:#f0f4f8;">
+            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px;">Potential Tax:</td>
+            <td id="lgPotentialTax" style="padding:4px 6px; text-align:right; font-size:10px; color:#2d3748;"></td>
+          </tr>
+          <tr style="background:#f0f4f8; font-weight:600; border-top:1px solid #cbd5e0;">
+            <td colspan="6" style="padding:4px 6px; text-align:right; font-size:10px;">Net Receivable/(Payable):</td>
+            <td id="lgNetValue" style="padding:4px 6px; text-align:right; font-size:10px; font-weight:600; color:#2d3748;"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- 5. FOOTER BAR (Export buttons)                               -->
+    <!-- ============================================================ -->
+    <div id="lgFooter" style="flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#f7fafc; display:flex; gap:8px; justify-content:flex-end;">
+      <button id="lgExportPdfBtn" style="padding:4px 12px; font-size:11px; background:#fff; color:#2d3748; border:1px solid #cbd5e0; border-radius:4px; cursor:pointer;">📄 Export PDF</button>
+      <button id="lgExportExcelBtn" style="padding:4px 12px; font-size:11px; background:#fff; color:#2d3748; border:1px solid #cbd5e0; border-radius:4px; cursor:pointer;">📊 Export Excel</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 6. INTEREST DETAIL PANEL (Hidden by default)                -->
+<!-- ============================================================ -->
+<div id="lgInterestDetail" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; border:1px solid #cbd5e0; border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.15); z-index:100; padding:0; width:500px; max-height:80vh; overflow:auto;">
+  <div style="background:#f7fafc; padding:8px 12px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+    <div style="font-size:12px; font-weight:600; color:#2d3748;">Interest Detail</div>
+    <button id="lgInterestDetailClose" style="background:none; border:none; font-size:16px; cursor:pointer; color:#9ca3af;">×</button>
+  </div>
+  <div style="padding:12px;">
+    <!-- Period breakdown table -->
+    <table style="width:100%; border-collapse:collapse; font-size:10px; margin-bottom:12px;">
+      <thead>
+        <tr style="background:#f0f4f8;">
+          <th style="text-align:left; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Period</th>
+          <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Balance</th>
+          <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Days</th>
+          <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Rate %</th>
+          <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Interest</th>
+        </tr>
+      </thead>
+      <tbody id="lgInterestDetailBody">
+        <tr><td colspan="5" style="text-align:center; padding:20px; color:#9ca3af;">Loading...</td></tr>
+      </tbody>
+    </table>
+    <!-- Editable total -->
+    <div style="padding:8px; background:#fafbfc; border:1px solid #e2e8f0; border-radius:3px; margin-bottom:12px;">
+      <label style="display:block; font-size:10px; font-weight:600; color:#4a5568; margin-bottom:4px;">Total Interest (Editable)</label>
+      <input type="number" id="lgInterestTotalEdit" step="0.01" style="width:100%; padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; box-sizing:border-box;">
+    </div>
+    <!-- Post button -->
+    <div style="display:flex; gap:6px;">
+      <button id="lgInterestPostBtn" style="flex:1; padding:6px 12px; font-size:11px; background:#059669; color:#fff; border:1px solid #059669; border-radius:4px; cursor:pointer; font-weight:600;">Post Interest</button>
+      <button id="lgInterestDetailCancelBtn" style="flex:1; padding:6px 12px; font-size:11px; background:#fff; color:#2d3748; border:1px solid #cbd5e0; border-radius:4px; cursor:pointer;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 7. BOOK INTEREST MODAL (Hidden by default)                  -->
+<!-- ============================================================ -->
+<div id="lgBookInterestModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:200; display:flex; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.15); padding:0; width:600px; max-height:80vh; overflow:auto;">
+    <div style="background:#f7fafc; padding:12px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+      <div style="font-size:12px; font-weight:600; color:#2d3748;">Book Interest</div>
+      <button id="lgBookInterestClose" style="background:none; border:none; font-size:16px; cursor:pointer; color:#9ca3af;">×</button>
+    </div>
+    <div style="padding:12px;">
+      <!-- Investor select -->
+      <div style="margin-bottom:12px;">
+        <label style="display:block; font-size:10px; font-weight:600; color:#4a5568; margin-bottom:4px;">Investor</label>
+        <select id="lgBookInvestorSelect" style="width:100%; padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px;">
+          <option>Select investor...</option>
+        </select>
+      </div>
+      <!-- From/To dates -->
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <div style="flex:1;">
+          <label style="display:block; font-size:10px; font-weight:600; color:#4a5568; margin-bottom:4px;">From</label>
+          <input type="date" id="lgBookFromDate" style="width:100%; padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px;">
+        </div>
+        <div style="flex:1;">
+          <label style="display:block; font-size:10px; font-weight:600; color:#4a5568; margin-bottom:4px;">To</label>
+          <input type="date" id="lgBookToDate" style="width:100%; padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px;">
+        </div>
+      </div>
+      <!-- Preview table -->
+      <div style="margin-bottom:12px; border:1px solid #e2e8f0; border-radius:3px; overflow:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:10px;">
+          <thead>
+            <tr style="background:#f0f4f8;">
+              <th style="text-align:left; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Period</th>
+              <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Balance</th>
+              <th style="text-align:right; padding:3px 6px; border-bottom:1px solid #e2e8f0; font-weight:600; color:#4a5568;">Interest</th>
+            </tr>
+          </thead>
+          <tbody id="lgBookPreviewBody">
+            <tr><td colspan="3" style="text-align:center; padding:20px; color:#9ca3af;">Select investor and dates to preview</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- Total interest -->
+      <div style="padding:8px; background:#fafbfc; border:1px solid #e2e8f0; border-radius:3px; margin-bottom:12px;">
+        <div style="font-size:10px; font-weight:600; color:#4a5568; margin-bottom:4px;">Total Interest to Book</div>
+        <div id="lgBookTotalInterest" style="font-size:14px; font-weight:600; color:#059669;">0.00</div>
+      </div>
+      <!-- Buttons -->
+      <div style="display:flex; gap:6px;">
+        <button id="lgBookConfirmBtn" style="flex:1; padding:6px 12px; font-size:11px; background:#059669; color:#fff; border:1px solid #059669; border-radius:4px; cursor:pointer; font-weight:600;">Confirm & Post</button>
+        <button id="lgBookCancelBtn" style="flex:1; padding:6px 12px; font-size:11px; background:#fff; color:#2d3748; border:1px solid #cbd5e0; border-radius:4px; cursor:pointer;">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Note: This HTML is loaded via fetch + innerHTML injection.
+// All JS logic is in ledger.js (loaded separately).
+// Do NOT include script tags here — they will be executed before ledger.js is loaded.
+</script>

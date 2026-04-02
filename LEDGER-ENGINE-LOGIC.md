@@ -1,62 +1,126 @@
 # WMS Ledger Engine — Logic & Calculations
 
-**Version:** 1.0 | **Date:** 02-Apr-2026
+**Version:** 2.0 | **Date:** 02-Apr-2026 | **Status:** Revised spec (v1 → v2 rewrite)
 
 ---
 
 ## 1. Overview
 
-The Ledger Engine tracks all money movement for each investor: manual cash entries, trade net amounts, interest bookings, and adjustments. It computes a running balance and uses that balance to calculate interest.
+The Ledger Engine tracks all money movement for each investor–trader–broker combination: opening balances, cash entries, trade amounts, F&O margin adjustments, and interest postings. It runs on a **financial year (FY) basis** per investor and supports **saved ledger views** (named filter combinations).
 
-### Entry Types
+### Architecture
+
+- **Separate module:** `ledger.html` + `ledger.js` (lazy-loaded when Ledger tab is activated, same pattern as F&O)
+- **Shared engine functions:** `wms-shared.js` (calculations, period generation)
+- **Saved views:** `ledger_views` table in Supabase (same pattern as `portfolio_views`)
+- **Prefix:** All ledger module variables/functions use `lg` prefix
+
+### Entry Types (DB: `ledger_entries.entry_type`)
 
 | Type | Direction | Description |
 |------|-----------|-------------|
+| `OPENING_BALANCE` | **Either** | Starting balance for the FY. Positive = credit, Negative = debit |
 | `CASH_RECEIVED` | **Credit** (+) | Money received from investor into the trading pool |
 | `CASH_PAID` | **Debit** (−) | Money paid back to investor |
 | `INTEREST_BOOKED` | **Credit** (+) | Interest charged to investor (added to their liability) |
-| `ADJUSTMENT` | **Either** | Manual correction — sign as entered (positive = credit, negative = debit) |
-| `TRADE` | **Either** | From transactions table — sign derived from `transaction_type`: BUY & RIGHTS_PAYMENT = debit (−), SELL/DIVIDEND/OTHER_INCOME/CAPITAL_REDUCTION = credit (+), HISTORICAL_PL = sign as stored |
+| `ADJUSTMENT` | **Either** | Manual correction — sign as entered |
+
+### Virtual Row Types (computed, not stored in DB)
+
+| Type | Direction | Description |
+|------|-----------|-------------|
+| `TRADE` | **Either** | From `transactions` table — BUY/RIGHTS_PAYMENT = debit, SELL/DIVIDEND/etc. = credit |
+| `MARGIN` | **Either** | F&O margin blocked/released — computed from NFO trades |
 
 ---
 
-## 2. Running Balance Calculation
+## 2. Financial Year & Dates
 
-The combined ledger merges `ledger_entries` rows and `transactions` rows, sorted by date ascending. On the same date, ledger entries sort before trades.
+### FY Boundaries
 
-### Sign Convention
+- Each investor has `financial_year_start` (1-12) in the `investors` table. Default: 4 (April = Indian FY)
+- FY runs from 1st of that month to last day of (month-1) next year
+  - Example: `financial_year_start = 4` → FY 2025-26 = 01-Apr-2025 to 31-Mar-2026
 
-```
-For each row:
-  if CASH_RECEIVED or INTEREST_BOOKED → balance += |amount|
-  if CASH_PAID                        → balance -= |amount|
-  if ADJUSTMENT                       → balance += amount (sign preserved)
-  if TRADE (BUY, RIGHTS_PAYMENT)      → balance -= |net_amount|  (debit — money out)
-  if TRADE (SELL, DIVIDEND, etc.)     → balance += net_amount   (credit — money in)
-  if TRADE (HISTORICAL_PL)            → balance += net_amount   (sign as stored in DB)
-```
+### Opening Balance
 
-**Running balance** is cumulative: each row's balance = previous row's balance + this row's signed amount.
+- First entry in a ledger for any FY is an `OPENING_BALANCE`
+- Represents the closing balance of the previous FY
+- For the very first FY, opening balance = 0 (or manually set by user)
+- Opening balance is a regular `ledger_entries` row with `entry_type = 'OPENING_BALANCE'`
 
-### Example
+### Date Filters
 
-| # | Date | Type | Amount (DB) | Signed | Running Balance |
-|---|------|------|-------------|--------|-----------------|
-| 1 | 01-Jan | CASH_RECEIVED | 10,00,000 | +10,00,000 | **10,00,000** |
-| 2 | 05-Jan | TRADE (BUY) | −2,50,000 | −2,50,000 | **7,50,000** |
-| 3 | 10-Jan | TRADE (SELL) | +3,00,000 | +3,00,000 | **10,50,000** |
-| 4 | 15-Jan | CASH_PAID | 1,00,000 | −1,00,000 | **9,50,000** |
-| 5 | 31-Jan | INTEREST_BOOKED | 15,000 | +15,000 | **9,65,000** |
-
-**Interpretation:** A positive running balance means the investor has a net credit position (money is owed by the trader/system to the investor). A negative balance means the investor owes money.
+- **FY selector:** Dropdown to pick financial year (e.g., "FY 2025-26", "FY 2024-25")
+- **From/To dates:** Within the selected FY, further narrow the date range
+- Default view: Current FY, full date range
 
 ---
 
-## 3. Interest Calculation
+## 3. Running Balance Calculation
 
-Interest is calculated on the **running ledger balance** over a specified date range.
+The combined ledger merges `ledger_entries` rows and `transactions` rows (filtered by the saved view's investor/trader/broker/tag filters), sorted by date ascending. On the same date, ledger entries sort before trades; within trades, sort by `created_at`.
 
-### 3.1 Interest Terms (from DB)
+### Sign Convention for Trades
+
+The DB stores `net_amount` as positive for most transaction types. Sign is derived from `transaction_type`:
+
+| Transaction Type | Direction | Rule |
+|-----------------|-----------|------|
+| BUY | Debit (−) | `balance -= |net_amount|` (money going out to buy) |
+| RIGHTS_PAYMENT | Debit (−) | `balance -= |net_amount|` |
+| SELL | Credit (+) | `balance += net_amount` (money coming in) |
+| DIVIDEND | Credit (+) | `balance += net_amount` |
+| OTHER_INCOME | Credit (+) | `balance += net_amount` |
+| CAPITAL_REDUCTION | Credit (+) | `balance += net_amount` |
+| HISTORICAL_PL | Either | `balance += net_amount` (sign as stored in DB) |
+| BONUS | None | net_amount = 0, no cash impact |
+| RIGHTS_ENTITLEMENT | None | net_amount = 0, no cash impact |
+
+### Amount Used (Investor = Trader vs. Investor ≠ Trader)
+
+- If `investor_id === trader_id`: use `net_amount` (includes all charges from investor's perspective)
+- If `investor_id !== trader_id`: use `gross_amount + trader_charges` (the trader pays gross + their share of charges, not the investor's charges)
+
+---
+
+## 4. F&O Margin
+
+### When Margin Applies
+
+Margin is tracked for **NFO** trades (product field contains 'F&O', 'FNO', or 'NFO' — check case-insensitively). Check `security_type` as well if product is null — NFO securities have distinctive symbols.
+
+### Margin Calculation
+
+- **If investor = trader:** `margin = |net_amount| × (margin_rate / 100)`
+- **If investor ≠ trader:** `margin = |gross_amount| × (trader_charges_rate)` — derived from the IBA margin_rate
+
+### Margin Impact on Balance
+
+- **Opening a position (BUY of futures, SELL of options):** Margin is ADDED to the balance (it's money blocked, considered as used capital)
+- **FO Margin Adj column** in the ledger: Shows the margin adjustment separately (visible in the Excel sample)
+- The margin amount is added to the running balance for interest calculation purposes
+
+### FIFO Square-Off of Margin
+
+When an F&O position is squared off:
+1. Match the closing trade to the oldest open position for the same contract (FIFO)
+2. The margin for the original position is **zeroed out** (not recalculated with new amounts)
+3. The **net P&L** from the square-off (sell amount − buy amount for longs, or buy amount − sell amount for shorts) impacts the running balance
+4. New margin is only computed if a new position is opened (e.g., rollover)
+
+### Margin Column in Ledger
+
+The ledger table has a dedicated "FO Margin Adj" column showing:
+- Positive value when margin is newly blocked
+- Negative value when margin is released (square-off)
+- The cumulative margin adds to the "effective balance" used for interest calculation
+
+---
+
+## 5. Interest Calculation
+
+### 5.1 Interest Terms
 
 Stored as JSONB `interest_terms` on both `investors` and `investor_broker_accounts`:
 
@@ -68,214 +132,242 @@ Stored as JSONB `interest_terms` on both `investors` and `investor_broker_accoun
 }
 ```
 
-- **rate**: Annual interest rate as a percentage (18.0 = 18% p.a.)
-- **frequency**: How often interest periods are calculated
-- **compound**: If true, interest from prior periods is added to principal for subsequent periods
+**Resolution priority:** IBA-level (if set with rate > 0) > investor-level.
 
-**Resolution priority:** Broker-account level `interest_terms` (if set with rate > 0) takes precedence over investor-level `interest_terms`.
+### 5.2 Key Rule: Interest Cannot Be Negative
 
-### 3.2 Frequencies
+Interest is always ≥ 0. If the balance is such that the investor is owed money (i.e., trader owes the investor), interest is NOT earned by the investor. Interest only accrues when the investor owes money to the trader/system (negative balance from the investor's credit perspective = positive outstanding).
 
-| Frequency | Period Length | Description |
-|-----------|-------------|-------------|
-| `weekly_friday` | ~7 days | Each period runs from one date to the next Friday-aligned boundary |
-| `monthly` | Calendar month | Period = 1st (or from-date) to last day of each month |
-| `daily_monthly_compound` | Calendar month | Same as monthly, but `compound: true` adds prior interest to principal |
-| `quarterly` | Calendar quarter | Period = start of quarter to end of quarter (Q1=Jan-Mar, Q2=Apr-Jun, etc.) |
+### 5.3 `weekly_friday` Frequency
 
-### 3.3 Weighted-Average Daily Balance
+1. **Interest is calculated on the closing balance on the Friday of that week**
+   - NOT weighted average — use the actual closing balance as of end-of-day Friday
+2. **Interest is posted on Saturday** and increases the running balance from Saturday onwards
+3. Formula: `interest = max(0, |closing_balance_friday|) × (rate / 100) × (7 / 365)`
+   - If closing balance on Friday is such that investor has a credit (money owed TO them), interest = 0
+4. The posted interest entry has `entry_date = Saturday (Friday + 1)`
 
-For each interest period, we compute the **weighted-average daily balance** rather than using the closing balance. This gives a fairer picture when the balance changes during the period.
+### 5.4 `daily_monthly_compound` Frequency
 
-**Algorithm:**
+1. **Interest is calculated on the daily closing balance** (adjusted only for trades and cash entries that day)
+   - For each day: `daily_interest = max(0, |balance|) × (rate / 100) × (1 / 365)`
+   - Only accrue interest on days where the balance indicates the investor owes money
+2. **Aggregate interest for the month is posted on the 1st of the next month**
+   - This INCREASES the balance → automatically compounds (next month's daily balances include prior interest)
+3. The posted interest entry has `entry_date = 1st of next month`
 
-```
-Given: sorted ledger rows with _runningBalance, period [fromDate, toDate]
+### 5.5 `monthly` Frequency
 
-1. Find carry-forward balance = _runningBalance of the last row BEFORE fromDate
-   (if no prior rows, carry-forward = 0)
+1. Interest calculated on closing balance at month-end
+2. `interest = max(0, |closing_balance|) × (rate / 100) × (days_in_month / 365)`
+3. Posted on the 1st of next month
 
-2. Walk through rows within [fromDate, toDate]:
-   - For each row, count the days the PREVIOUS balance was held
-   - Multiply: days × previousBalance → add to weightedSum
-   - Update the "current balance" to this row's _runningBalance
+### 5.6 `quarterly` Frequency
 
-3. After the last row, count remaining days to toDate at the final balance
-   - Multiply: remainingDays × lastBalance → add to weightedSum
+1. Interest calculated on closing balance at quarter-end
+2. Posted on 1st of next quarter
+3. Quarters align to FY (if FY starts Apr: Q1=Apr-Jun, Q2=Jul-Sep, Q3=Oct-Dec, Q4=Jan-Mar)
 
-4. Average = weightedSum ÷ totalDaysInPeriod
-```
+### 5.7 Interest Detail & Posting Workflow
 
-**Example:** Period = 01-Jan to 31-Jan (31 days)
+When the user **double-clicks an interest amount** in the ledger table:
+1. A detail panel expands showing the calculation since the last interest posting:
+   - For `weekly_friday`: the closing balance on that Friday, rate, days, calculated interest
+   - For `daily_monthly_compound`: daily balances, daily interest amounts, total for the month
+2. The user can **edit the final interest amount** if needed (override the calculated value)
+3. Clicking "Post" creates an `INTEREST_BOOKED` entry in `ledger_entries`
+4. Once posted, the entry is permanent and won't be recalculated (edit/delete available for corrections)
 
-| Date Range | Days | Balance | Weighted |
-|------------|------|---------|----------|
-| 01-Jan to 04-Jan | 4 | 10,00,000 | 40,00,000 |
-| 05-Jan to 09-Jan | 5 | 7,50,000 | 37,50,000 |
-| 10-Jan to 14-Jan | 5 | 10,50,000 | 52,50,000 |
-| 15-Jan to 31-Jan | 17 | 9,50,000 | 1,61,50,000 |
-| **Total** | **31** | | **2,91,50,000** |
+### 5.8 Interest Preview
 
-Weighted Average Balance = 2,91,50,000 ÷ 31 = **9,40,322.58**
-
-### 3.4 Simple Interest Formula
-
-For each period:
-
-```
-Interest = |Average Balance| × (Rate / 100) × (Days / 365)
-```
-
-Using the example above with Rate = 18% p.a., Period = 31 days:
-
-```
-Interest = 9,40,322.58 × (18 / 100) × (31 / 365)
-         = 9,40,322.58 × 0.18 × 0.08493
-         = 14,371.84
-```
-
-### 3.5 Compound Interest (daily_monthly_compound)
-
-When `compound: true`, the interest calculated for each period is added to the principal for the next period's calculation:
-
-```
-Period 1: avgBalance = computed from ledger
-          interest₁ = avgBalance × rate × days₁/365
-
-Period 2: avgBalance = computed from ledger + interest₁
-          interest₂ = (avgBalance + interest₁) × rate × days₂/365
-
-Period 3: avgBalance = computed from ledger + interest₁ + interest₂
-          ...and so on
-```
-
-The compounded amount accumulates across periods. The total interest booked is the sum of all period interests.
-
-### 3.6 Interest Booking
-
-When the user clicks "Book Interest":
-
-1. A single `INTEREST_BOOKED` entry is created in `ledger_entries`
-2. `amount` = total interest across all periods
-3. `entry_date` = the "To Date" of the interest period
-4. `reference` = "Interest YYYY-MM-DD to YYYY-MM-DD"
-5. This entry then becomes part of the running balance going forward
-
-**Important:** Interest is booked as a **credit** (positive), meaning it increases the investor's balance. This represents interest owed to/by the investor depending on business context.
+Before posting, the "Book Interest" action shows a preview:
+- Period breakdown with balance, days, rate, interest per period
+- Total interest amount
+- User can modify and then confirm posting
 
 ---
 
-## 4. Margin Calculation
+## 6. Saved Ledger Views
 
-Margin is auto-calculated for F&O (Futures & Options) trades.
+### Concept
 
-### Formula
+Each "ledger" is a **saved view** — a named set of filters that determines which transactions appear. Same pattern as `portfolio_views` in the Trading module.
 
+### `ledger_views` Table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | UUID PK | |
+| name | TEXT NOT NULL | User-given name (e.g., "T2 Ledger", "T1 - CS Broker") |
+| filters | JSONB | `{investorIds, traderIds, brokerIds, tagNames, tagLogic}` |
+| sort_order | INT | Display order in tabs |
+| is_default | BOOLEAN | Auto-applies on Ledger tab load |
+| show_in_tabs | BOOLEAN | Whether visible as a tab |
+| created_at | TIMESTAMPTZ | |
+
+### Filter Structure
+
+```json
+{
+  "investorIds": ["uuid1"],
+  "traderIds": ["uuid2"],
+  "brokerIds": [],
+  "tagNames": [],
+  "tagLogic": "OR"
+}
 ```
-margin_blocked = |net_amount| × (margin_rate / 100)
-```
 
-Where:
-- `net_amount` = the trade's net amount from the transaction (after brokerage/charges)
-- `margin_rate` = configured on `investor_broker_accounts.margin_rate` (stored as percentage, e.g., 10 = 10%)
+### Expected Ledgers (from user)
 
-### Example
+- Investor: T0; Trader: T0; Brokers: All; Tags: All
+- Investor: Any; Trader: T1; Brokers: All; Tags: All
+- Investor: Any; Trader: T2; Brokers: All; Tags: All
+- Investor: Any; Trader: T3; Brokers: All; Tags: All
+- Investor: T0; Trader: T0; Brokers: CS (specific broker); Tags: All
+- Investor: Any; Trader: Any; Brokers: TG (specific broker); Tags: All
 
-- Trade net_amount = −2,50,000 (F&O buy)
-- margin_rate = 10 (i.e., 10%)
-- margin_blocked = |−2,50,000| × (10 / 100) = **25,000**
+### UI: View Tabs
 
-### When It's Applied
-
-- Only for trades where `product = 'F&O'` or `product = 'FNO'`
-- Auto-calculated in the transaction edit modal when charges are recalculated
-- The `margin_blocked` field is saved on the transaction record
-- Margin is NOT a separate ledger entry — it's a field on the trade itself
+Same tab bar pattern as Portfolio views (D.10 in WMS-LESSONS.md):
+- Default view locked left with ★
+- Non-default tabs with ✕ close on hover
+- "Update" / "+ Save New" / "More ▼" action buttons
+- Single-click to apply, double-click to rename
 
 ---
 
-## 5. Ledger View (UI)
+## 7. Ledger UI Layout
 
-### Columns
+### 7.1 Overall Structure
 
-| Column | Source | Description |
-|--------|--------|-------------|
-| Date | `entry_date` / `transaction_date` | Display format: DD-Mon-YY |
-| Type | Badge | Color-coded: Cash In (green), Cash Out (red), Interest (purple), Adjust (amber), Trade (blue) |
-| Investor | `investor_id` → name lookup | From wmsRefData |
-| Broker | `broker_id` → name lookup | From wmsRefData |
-| Debit | Negative amounts | Red, shown only when signedAmount < 0 |
-| Credit | Positive amounts | Green, shown only when signedAmount > 0 |
-| Balance | Running balance | Bold, red if negative |
-| Reference/Notes | Combined | Reference + notes from the entry |
-| Actions | Edit/Delete | Only for manual ledger entries (not trades) |
+```
+┌─────────────────────────────────────────────────────────┐
+│  View Tabs: [★ T2 Ledger] [T1 Ledger] [+] [More ▼]    │
+├─────────────────────────────────────────────────────────┤
+│  Filters: [Investor pills] [Trader pills] [Broker pills]│
+│           [Tags] [FY: 2025-26 ▼] [From] [To]           │
+├─────────────────────────────────────────────────────────┤
+│  ENTRIES SECTION                                         │
+│  ┌─────────────────────────────────────────────────────┐│
+│  │ Date | Scrip | Product | Qty | Price | Net | Amount ││
+│  │      |       |         |     |       |     | Balance││
+│  │      |       |         |     |       | FO Margin Adj││
+│  │ (inline editable for new entries)                   ││
+│  └─────────────────────────────────────────────────────┘│
+├─────────────────────────────────────────────────────────┤
+│  CURRENT BALANCE SECTION                                 │
+│  ┌─────────────────────────────────────────────────────┐│
+│  │ Summary:                                            ││
+│  │   Holdings Value (Stocks: CMP × Qty)                ││
+│  │ + MTM of F&O positions                              ││
+│  │ − Outstanding liabilities (net of FO Margin)        ││
+│  │ − Potential Tax (profit × tax_rate)                 ││
+│  │ = Net Receivable / (Payable)                        ││
+│  └─────────────────────────────────────────────────────┘│
+├─────────────────────────────────────────────────────────┤
+│  [Export PDF] [Export Excel]                             │
+└─────────────────────────────────────────────────────────┘
+```
 
-### Summary Footer
+### 7.2 Entries Table Columns (matching Excel sample)
 
-- **Total Debit**: Sum of all absolute debit amounts
-- **Total Credit**: Sum of all credit amounts
-- **Net Balance**: Credit − Debit
-- **Entries**: Total row count
+| Column | Description |
+|--------|-------------|
+| Date | Transaction/entry date |
+| Scrip | Company/stock name, or "Opening Balance", "Interest", "Cash" |
+| Product | EQ, NFO, Op Ce/Pe, or blank |
+| Qty | Quantity (signed: negative for sells) |
+| Price | Price per unit |
+| Net | Net price per unit (after charges) |
+| Amount | Net amount for the row (signed) |
+| Balance | Running balance |
+| FO Margin Adj | Margin adjustment for NFO trades |
 
-### Filters
+### 7.3 Inline Entry
 
-- **Investor**: Dropdown (required — must select to view ledger)
-- **Entry Type**: All Types, Cash Received, Cash Paid, Interest Booked, Adjustment, Trades Only
-- **Date Range**: Last 30 Days, Last 90 Days (default), Last Year, All Time
+- New entries are added directly in the table (no separate modal)
+- An empty row at the bottom (or top) with input fields for each column
+- On pressing Enter or Tab out of last field → entry is saved and table re-sorts by date
+- Entry types: Cash (in/out), Adjustment, Opening Balance — determined by what's entered
+
+### 7.4 Current Balance Section
+
+Computed from holdings + F&O positions at current date:
+
+```
+Holdings Value = Σ (CMP × Qty) for all stocks held
+MTM of F&O    = Σ (CMP − Avg Cost) × Qty for open F&O positions
+Outstanding   = Running balance from ledger (net of FO margin)
+Potential Tax = Total Profit for FY × tax_rate (from investor/IBA config)
+Net Value     = Holdings Value + MTM − Outstanding − Potential Tax
+```
+
+### 7.5 Tax Rate
+
+A new field `tax_rate` (NUMERIC, percentage) to be added to either `investors` or `investor_broker_accounts` table. Used for the "Potential Tax" calculation in the Current Balance section.
 
 ---
 
-## 6. Data Flow Diagram
+## 8. Export
 
-```
-┌─────────────────┐     ┌───────────────────┐
-│  ledger_entries  │     │   transactions    │
-│  (manual CRUD)   │     │  (from imports)   │
-└────────┬────────┘     └────────┬──────────┘
-         │                       │
-         └───────┬───────────────┘
-                 │
-          wmsBuildLedger()
-          (sort by date, compute
-           signed amounts)
-                 │
-                 ▼
-         ┌───────────────┐
-         │ Combined Array │ ← each row has: date, entryType,
-         │ with running   │   signedAmount, _runningBalance,
-         │ balance        │   _rowType ('ledger' | 'trade')
-         └───────┬───────┘
-                 │
-        ┌────────┼────────┐
-        ▼        ▼        ▼
-   Ledger Tab  Interest  Margin
-   (display)   Calc      Calc
-               │         │
-               ▼         ▼
-         wmsAvgBalance   wmsCalcMarginBlocked
-         → periods       → margin_blocked
-         → interest        on transaction
-         → INTEREST_BOOKED
-           entry
-```
+### PDF Export
+- Format matching the Excel sample layout
+- Include: ledger entries, summary section, opening balances
+- Suitable for sharing with traders/clients
+
+### Excel Export
+- Full data export matching the T2 Ledger Sample.xlsx format
+- All columns, formulas where applicable
+- Separate sections: Entries, Summary, Opening Balances
 
 ---
 
-## 7. Key Functions Reference
+## 9. Key Functions Reference
 
 | Function | File | Purpose |
 |----------|------|---------|
-| `wmsBuildLedger(entries, txns)` | wms-shared.js | Merge & sort entries + trades, compute running balance |
-| `wmsAvgBalance(ledger, from, to)` | wms-shared.js | Weighted-average daily balance for a date range |
-| `wmsCalcSimpleInterest(principal, rate, days)` | wms-shared.js | `principal × (rate/100) × (days/365)` |
-| `wmsInterestPeriods(from, to, freq)` | wms-shared.js | Generate period boundaries for a frequency |
-| `wmsCalcInterestPreview(ledger, terms, from, to)` | wms-shared.js | Full interest calc with period breakdown |
-| `wmsGetInterestTerms(investorId, brokerId)` | wms-shared.js | Resolve interest terms (IBA > investor priority) |
+| `wmsBuildLedger(entries, txns, opts)` | wms-shared.js | Merge & sort entries + trades, compute running balance + margin |
+| `wmsCalcClosingBalance(ledger, date)` | wms-shared.js | Get closing balance on a specific date |
+| `wmsCalcInterestWeeklyFriday(ledger, terms, from, to)` | wms-shared.js | Weekly friday interest calc |
+| `wmsCalcInterestDailyMonthly(ledger, terms, from, to)` | wms-shared.js | Daily/monthly compound interest calc |
+| `wmsCalcMarginFIFO(txns)` | wms-shared.js | FIFO margin tracking for F&O positions |
+| `wmsGetInterestTerms(investorId, brokerId)` | wms-shared.js | Resolve interest terms (IBA > investor) |
 | `wmsGetMarginRate(investorId, brokerId)` | wms-shared.js | Get margin_rate from IBA |
-| `wmsCalcMarginBlocked(netAmount, marginRate)` | wms-shared.js | `|netAmount| × (marginRate / 100)` |
-| `wmsDaysBetween(d1, d2)` | wms-shared.js | Inclusive day count between two dates |
-| `trRefreshLedger()` | trading.js | Fetch entries + filter trades, build & render ledger |
-| `trRenderLedger(rows)` | trading.js | Render the HTML table with debit/credit/balance |
-| `trCalcInterestPreview()` | trading.js | UI handler: fetch data, calc preview, render table |
-| `trConfirmBookInterest()` | trading.js | Save INTEREST_BOOKED entry to DB |
-| `trRecalcMargin()` | trading.js | Auto-calc margin_blocked in transaction edit modal |
+| `lgInit()` | ledger.js | Initialize ledger module (one-time) |
+| `lgLoadViews()` | ledger.js | Load saved ledger views from DB |
+| `lgApplyView(viewId)` | ledger.js | Apply a saved view's filters |
+| `lgRefresh()` | ledger.js | Fetch data and render ledger |
+| `lgRenderEntries(rows)` | ledger.js | Render the entries table |
+| `lgRenderSummary()` | ledger.js | Render current balance section |
+| `lgShowInterestDetail(entryId)` | ledger.js | Show interest calculation detail on dbl-click |
+| `lgPostInterest(data)` | ledger.js | Post interest entry to DB |
+| `lgExportPdf()` | ledger.js | Generate PDF export |
+| `lgExportExcel()` | ledger.js | Generate Excel export |
+
+---
+
+## 10. DB Changes Required (Migration 33)
+
+```sql
+-- New entry type for opening balance
+-- (entry_type is TEXT, no enum constraint — just add 'OPENING_BALANCE' in app code)
+
+-- Ledger views table (same pattern as portfolio_views)
+CREATE TABLE IF NOT EXISTS ledger_views (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    name TEXT NOT NULL,
+    filters JSONB NOT NULL DEFAULT '{}',
+    sort_order INT DEFAULT 0,
+    is_default BOOLEAN DEFAULT false,
+    show_in_tabs BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE ledger_views ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_all" ON ledger_views FOR ALL USING (true) WITH CHECK (true);
+
+-- Tax rate on investors (percentage, e.g., 12.5)
+ALTER TABLE investors ADD COLUMN IF NOT EXISTS tax_rate NUMERIC(5,2) DEFAULT 0;
+
+-- Tax rate override on IBA (per broker account)
+ALTER TABLE investor_broker_accounts ADD COLUMN IF NOT EXISTS tax_rate NUMERIC(5,2) DEFAULT 0;
+```

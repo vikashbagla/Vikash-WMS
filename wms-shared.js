@@ -4014,7 +4014,11 @@ function wmsFmtAmt(value) {
 
 /**
  * Get interest terms for an investor, optionally overridden by broker-account level.
- * Priority: IBA interest_terms (if brokerId provided) > investor interest_terms > null
+ * Priority: IBA interest_terms (if brokerId provided and rate > 0) > investor interest_terms > null
+ *
+ * @param {string} investorId
+ * @param {string} brokerId (optional)
+ * @returns {object|null} {rate, frequency, compound} or null if not configured
  */
 function wmsGetInterestTerms(investorId, brokerId) {
     if (brokerId) {
@@ -4128,37 +4132,86 @@ function wmsDaysBetween(d1, d2) {
 }
 
 /**
- * Build a combined, date-sorted ledger from manual entries + trade transactions.
- * Each row gets _runningBalance computed cumulatively.
+ * Build a combined, date-sorted ledger from manual entries + filtered trade transactions.
+ * Implements v2 spec: filters transactions by view opts, uses correct amount rules, supports OPENING_BALANCE.
  *
- * Amount sign convention for running balance:
- *   CASH_RECEIVED / INTEREST_BOOKED: + (money in from investor)
- *   CASH_PAID: − (money out to investor)
- *   ADJUSTMENT: sign of amount (positive = credit, negative = debit)
- *   TRADE: net_amount as-is (buy = negative outflow, sell = positive inflow)
- *
- * @param {Array} ledgerEntries - rows from ledger_entries table
- * @param {Array} transactions  - rows from transactions table (optional, can be [])
- * @returns {Array} combined rows sorted by date, each with _runningBalance, _rowType ('ledger'|'trade')
+ * @param {Array}  ledgerEntries - rows from ledger_entries table
+ * @param {Array}  transactions  - rows from transactions table (will be filtered by opts)
+ * @param {object} opts          - {investorIds, traderIds, brokerIds, tagNames, tagLogic}
+ *                                 if omitted/empty, returns just ledgerEntries with running balance
+ * @returns {Array} combined rows sorted by date, each with:
+ *   - _rowType: 'ledger' or 'trade'
+ *   - _source: original object
+ *   - date: date string (YYYY-MM-DD)
+ *   - entryType: entry_type or 'TRADE'
+ *   - amount: signed amount (used for running balance)
+ *   - _runningBalance: cumulative balance after this row
+ *   - (other fields: investorId, traderId, brokerId, reference, notes, symbol, transactionType, etc.)
  */
-function wmsBuildLedger(ledgerEntries, transactions) {
+function wmsBuildLedger(ledgerEntries, transactions, opts) {
     var combined = [];
+    opts = opts || {};
 
-    // Ledger entries
+    // Helper: check if a value is in an array (case-insensitive for IDs, case-sensitive for tags)
+    var _inArray = function(val, arr, caseInsensitive) {
+        if (!arr || arr.length === 0) return true; // empty filter = include all
+        for (var i = 0; i < arr.length; i++) {
+            if (caseInsensitive && typeof val === 'string' && typeof arr[i] === 'string') {
+                if (val.toLowerCase() === arr[i].toLowerCase()) return true;
+            } else if (val === arr[i]) return true;
+        }
+        return false;
+    };
+
+    // Helper: check if transaction matches filters (investorIds, traderIds, brokerIds, tagNames)
+    var _txnMatchesFilters = function(t) {
+        if (!_inArray(t.investor_id, opts.investorIds)) return false;
+        if (!_inArray(t.trader_id, opts.traderIds)) return false;
+        if (!_inArray(t.broker_id, opts.brokerIds)) return false;
+        // For tags: if tagNames is empty, include all. Otherwise, check tag match with tagLogic.
+        if (opts.tagNames && opts.tagNames.length > 0) {
+            var txnTags = t.tags || [];
+            var hasTag = false;
+            for (var i = 0; i < opts.tagNames.length; i++) {
+                if (txnTags.indexOf(opts.tagNames[i]) !== -1) {
+                    hasTag = true;
+                    break;
+                }
+            }
+            // tagLogic: 'OR' = any match is OK, 'AND' = all must match (simplified to at least one match for OR)
+            if (!hasTag) return false;
+        }
+        return true;
+    };
+
+    // Helper: check if transaction is an NFO trade (contains 'F&O', 'FNO', or 'NFO' in product or security_type)
+    var _isNFO = function(t) {
+        var product = (t.product || '').toUpperCase();
+        var secType = (t.security_type || '').toUpperCase();
+        return /F&O|FNO|NFO/.test(product) || /F&O|FNO|NFO/.test(secType);
+    };
+
+    // Add ledger entries
     (ledgerEntries || []).forEach(function(e) {
         var signedAmt = parseFloat(e.amount) || 0;
-        // CASH_PAID is outflow: negate
-        if (e.entry_type === 'CASH_PAID') signedAmt = -Math.abs(signedAmt);
-        // CASH_RECEIVED & INTEREST_BOOKED are inflow: keep positive
-        else if (e.entry_type === 'CASH_RECEIVED' || e.entry_type === 'INTEREST_BOOKED') signedAmt = Math.abs(signedAmt);
-        // ADJUSTMENT: use sign as entered
+        // OPENING_BALANCE: sign as stored
+        // CASH_PAID: negate (outflow)
+        // CASH_RECEIVED, INTEREST_BOOKED: keep positive (inflow)
+        // ADJUSTMENT: sign as stored
+        if (e.entry_type === 'CASH_PAID') {
+            signedAmt = -Math.abs(signedAmt);
+        } else if (e.entry_type === 'CASH_RECEIVED' || e.entry_type === 'INTEREST_BOOKED') {
+            signedAmt = Math.abs(signedAmt);
+        }
+        // else OPENING_BALANCE, ADJUSTMENT: use sign as-is
+
         combined.push({
             _rowType: 'ledger',
             _source: e,
             date: e.entry_date,
             sortKey: e.entry_date + '|0|' + (e.created_at || ''),
             entryType: e.entry_type,
-            signedAmount: signedAmt,
+            amount: signedAmt,
             investorId: e.investor_id,
             traderId: e.trader_id,
             brokerId: e.broker_id,
@@ -4167,37 +4220,63 @@ function wmsBuildLedger(ledgerEntries, transactions) {
         });
     });
 
-    // Trades — apply sign based on transaction_type:
-    //   BUY, RIGHTS_PAYMENT → debit (negate, money out)
-    //   SELL, DIVIDEND, OTHER_INCOME, CAPITAL_REDUCTION → credit (keep positive, money in)
-    //   BONUS, RIGHTS_ENTITLEMENT → no cash impact (net_amount is 0)
-    //   HISTORICAL_PL → sign as stored in DB
+    // Add filtered transactions
     var _debitTypes = { 'BUY': true, 'RIGHTS_PAYMENT': true };
+    var _creditTypes = { 'SELL': true, 'DIVIDEND': true, 'OTHER_INCOME': true, 'CAPITAL_REDUCTION': true };
+
     (transactions || []).forEach(function(t) {
-        var amt = parseFloat(t.net_amount) || 0;
-        if (_debitTypes[t.transaction_type]) amt = -Math.abs(amt);
+        // Apply filters
+        if (!_txnMatchesFilters(t)) return;
+
+        // Determine amount: investor_id === trader_id → use net_amount; else → gross_amount + trader_charges
+        var amt;
+        if (t.investor_id === t.trader_id) {
+            amt = parseFloat(t.net_amount) || 0;
+        } else {
+            var gross = parseFloat(t.gross_amount) || 0;
+            var traderCharges = parseFloat(t.trader_charges) || 0;
+            amt = gross + traderCharges;
+        }
+
+        // Apply sign based on transaction_type
+        if (_debitTypes[t.transaction_type]) {
+            amt = -Math.abs(amt);
+        } else if (_creditTypes[t.transaction_type]) {
+            amt = Math.abs(amt);
+        }
+        // else: BONUS, RIGHTS_ENTITLEMENT → amt stays 0
+        //       HISTORICAL_PL → use sign as stored in amt
+
         combined.push({
             _rowType: 'trade',
             _source: t,
             date: t.transaction_date,
             sortKey: t.transaction_date + '|1|' + (t.created_at || ''),
             entryType: 'TRADE',
-            signedAmount: amt,
+            amount: amt,
             investorId: t.investor_id,
             traderId: t.trader_id,
             brokerId: t.broker_id,
             reference: t.broker_contract_note_no || '',
-            notes: (t.short_symbol || t.symbol || '') + ' ' + (t.transaction_type || '')
+            notes: (t.short_symbol || t.symbol || '') + ' ' + (t.transaction_type || ''),
+            symbol: t.short_symbol || t.symbol || '',
+            transactionType: t.transaction_type,
+            quantity: t.quantity || 0,
+            price: t.price || 0,
+            isNFO: _isNFO(t),
+            netAmount: parseFloat(t.net_amount) || 0,
+            grossAmount: parseFloat(t.gross_amount) || 0,
+            traderCharges: parseFloat(t.trader_charges) || 0
         });
     });
 
     // Sort by date, then ledger before trade on same date, then created_at
     combined.sort(function(a, b) { return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0; });
 
-    // Running balance
+    // Compute running balance
     var bal = 0;
     combined.forEach(function(row) {
-        bal += row.signedAmount;
+        bal += row.amount;
         row._runningBalance = wmsRoundMoney(bal);
     });
 
@@ -4205,83 +4284,293 @@ function wmsBuildLedger(ledgerEntries, transactions) {
 }
 
 /**
- * Calculate weighted-average daily balance for a date range from a sorted ledger.
- * Used by interest calculation to get the principal for each period.
+ * Get closing balance on a specific date.
+ * Returns the _runningBalance of the last ledger row on or before that date.
+ * If no rows found on/before the date, returns 0.
  *
  * @param {Array}  ledger   - sorted output of wmsBuildLedger (with _runningBalance)
- * @param {Date}   from     - period start (inclusive)
- * @param {Date}   to       - period end (inclusive)
- * @returns {number} weighted average balance
+ * @param {string} dateStr  - YYYY-MM-DD
+ * @returns {number} closing balance on that date
  */
-function wmsAvgBalance(ledger, from, to) {
-    var fromStr = from.toISOString().slice(0, 10);
-    var toStr = to.toISOString().slice(0, 10);
-    var totalDays = wmsDaysBetween(from, to);
-    if (totalDays <= 0) return 0;
-
-    // Find the balance just before `from` (carry-forward)
-    var prevBal = 0;
+function wmsCalcClosingBalance(ledger, dateStr) {
+    var closingBal = 0;
     for (var i = 0; i < ledger.length; i++) {
-        if (ledger[i].date >= fromStr) break;
-        prevBal = ledger[i]._runningBalance;
+        if (ledger[i].date <= dateStr) {
+            closingBal = ledger[i]._runningBalance;
+        } else {
+            break;
+        }
     }
-
-    // Walk through entries in [from..to] computing day-weighted balance
-    var weightedSum = 0;
-    var lastBal = prevBal;
-    var lastDate = new Date(from);
-
-    for (var j = 0; j < ledger.length; j++) {
-        if (ledger[j].date < fromStr) continue;
-        if (ledger[j].date > toStr) break;
-        var entryDate = new Date(ledger[j].date);
-        // Days at previous balance
-        var days = wmsDaysBetween(lastDate, entryDate) - 1; // don't double-count entry date
-        if (days > 0) weightedSum += lastBal * days;
-        lastBal = ledger[j]._runningBalance;
-        lastDate = new Date(entryDate);
-    }
-    // Remaining days at last balance
-    var remaining = wmsDaysBetween(lastDate, to);
-    if (remaining > 0) weightedSum += lastBal * remaining;
-
-    return wmsRoundMoney(weightedSum / totalDays);
+    return closingBal;
 }
 
 /**
- * Calculate interest preview for an investor over a date range.
- * Returns array of { period: string, avgBalance: number, days: number, rate: number, interest: number }
+ * Calculate interest using weekly_friday frequency.
+ * For each Friday in range: get closing balance, calculate interest, post on Saturday.
  *
- * @param {Array}  ledger        - sorted output of wmsBuildLedger
- * @param {object} interestTerms - {rate, frequency, compound}
- * @param {string} fromStr       - YYYY-MM-DD
- * @param {string} toStr         - YYYY-MM-DD
+ * @param {Array}  ledger      - sorted output of wmsBuildLedger
+ * @param {object} terms       - {rate, frequency, compound}
+ * @param {string} fromStr     - YYYY-MM-DD
+ * @param {string} toStr       - YYYY-MM-DD
+ * @returns {Array} of {period, closingBalance, days, rate, interest, postDate}
  */
-function wmsCalcInterestPreview(ledger, interestTerms, fromStr, toStr) {
-    if (!interestTerms || !interestTerms.rate) return [];
-    var rate = interestTerms.rate;
-    var freq = interestTerms.frequency || 'monthly';
-    var compound = !!interestTerms.compound;
-
-    var periods = wmsInterestPeriods(fromStr, toStr, freq);
+function wmsCalcInterestWeeklyFriday(ledger, terms, fromStr, toStr) {
+    if (!terms || !terms.rate) return [];
+    var rate = terms.rate;
     var results = [];
-    var compoundedPrincipal = 0; // for daily_monthly_compound
 
-    periods.forEach(function(p) {
-        var avgBal = wmsAvgBalance(ledger, p.start, p.end);
-        if (compound) avgBal += compoundedPrincipal;
-        var days = wmsDaysBetween(p.start, p.end);
-        var interest = wmsCalcSimpleInterest(avgBal, rate, days);
-        if (compound) compoundedPrincipal += interest;
+    // Find all Fridays in the range
+    var from = new Date(fromStr);
+    var to = new Date(toStr);
+    var cur = new Date(from);
+
+    // Walk to first Friday >= from
+    var dayOfWeek = cur.getDay(); // 0=Sun, 5=Fri
+    var daysToFri = (5 - dayOfWeek + 7) % 7;
+    if (daysToFri === 0 && cur.getTime() === from.getTime()) {
+        // Already on Friday
+    } else if (daysToFri === 0) {
+        daysToFri = 7;
+    }
+    cur.setDate(cur.getDate() + daysToFri);
+
+    // Process each Friday
+    while (cur <= to) {
+        var fridayStr = cur.toISOString().slice(0, 10);
+        var closingBal = wmsCalcClosingBalance(ledger, fridayStr);
+        var interest = wmsRoundMoney(Math.max(0, closingBal) * (rate / 100) * (7 / 365));
+
+        // Post date is Saturday (Friday + 1)
+        var postDate = new Date(cur);
+        postDate.setDate(postDate.getDate() + 1);
+        var postDateStr = postDate.toISOString().slice(0, 10);
+
+        // Period label: Fri DD-Mon to Fri DD-Mon (previous Monday to this Friday)
+        var prevMonday = new Date(cur);
+        prevMonday.setDate(prevMonday.getDate() - 4); // 4 days back from Friday
+        var periodLabel = prevMonday.toLocaleDateString('en-IN', {day:'2-digit',month:'short'}) + ' to ' +
+                         cur.toLocaleDateString('en-IN', {day:'2-digit',month:'short'});
+
         results.push({
-            period: p.label,
-            startDate: p.start.toISOString().slice(0,10),
-            endDate: p.end.toISOString().slice(0,10),
-            avgBalance: avgBal,
-            days: days,
+            period: periodLabel,
+            closingBalance: closingBal,
+            days: 7,
             rate: rate,
-            interest: interest
+            interest: interest,
+            postDate: postDateStr
         });
-    });
+
+        // Move to next Friday
+        cur.setDate(cur.getDate() + 7);
+    }
+
     return results;
+}
+
+/**
+ * Calculate interest using daily_monthly_compound frequency.
+ * For each day, compute daily interest; aggregate by month; post on 1st of next month.
+ *
+ * @param {Array}  ledger      - sorted output of wmsBuildLedger
+ * @param {object} terms       - {rate, frequency, compound}
+ * @param {string} fromStr     - YYYY-MM-DD
+ * @param {string} toStr       - YYYY-MM-DD
+ * @returns {Array} of {period, totalDailyInterest, avgBalance, days, rate, interest, postDate}
+ */
+function wmsCalcInterestDailyMonthly(ledger, terms, fromStr, toStr) {
+    if (!terms || !terms.rate) return [];
+    var rate = terms.rate;
+    var results = [];
+
+    var from = new Date(fromStr);
+    var to = new Date(toStr);
+
+    // Group days by month
+    var cur = new Date(from.getFullYear(), from.getMonth(), 1);
+    while (cur <= to) {
+        var monthStart = cur < from ? new Date(from) : new Date(cur);
+        var monthEnd = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
+        if (monthEnd > to) monthEnd = new Date(to);
+
+        // Calculate daily interest for each day in this month
+        var totalInterest = 0;
+        var sumBalances = 0;
+        var dayCount = 0;
+
+        var day = new Date(monthStart);
+        while (day <= monthEnd) {
+            var dayStr = day.toISOString().slice(0, 10);
+            var dayClosingBal = wmsCalcClosingBalance(ledger, dayStr);
+            var dailyInt = wmsRoundMoney(Math.max(0, dayClosingBal) * (rate / 100) * (1 / 365));
+            totalInterest = wmsRoundMoney(totalInterest + dailyInt);
+            sumBalances += dayClosingBal;
+            dayCount++;
+            day.setDate(day.getDate() + 1);
+        }
+
+        var avgBal = dayCount > 0 ? wmsRoundMoney(sumBalances / dayCount) : 0;
+        var postDate = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+        var postDateStr = postDate.toISOString().slice(0, 10);
+
+        var periodLabel = monthStart.toLocaleDateString('en-IN', {month:'short', year:'numeric'});
+
+        results.push({
+            period: periodLabel,
+            totalDailyInterest: totalInterest,
+            avgBalance: avgBal,
+            days: dayCount,
+            rate: rate,
+            interest: totalInterest,
+            postDate: postDateStr
+        });
+
+        cur.setMonth(cur.getMonth() + 1);
+    }
+
+    return results;
+}
+
+/**
+ * Calculate F&O margin using FIFO matching of open/close positions.
+ * For each NFO transaction, track open positions by contract (symbol + expiry).
+ * When a closing trade is detected (opposite direction), FIFO-match to oldest open position.
+ *
+ * @param {Array} transactions - sorted by date, NFO transactions only
+ * @returns {Array} of {date, symbol, marginAdj, runningMargin}
+ *          marginAdj = positive when margin blocked, negative when released
+ *          runningMargin = cumulative margin after this adjustment
+ */
+function wmsCalcMarginFIFO(transactions) {
+    var results = [];
+    var positions = {}; // {contractKey} -> [{date, qty, price, marginRate, amount}]
+    var runningMargin = 0;
+
+    (transactions || []).forEach(function(t) {
+        // Skip if not NFO
+        var product = (t.product || '').toUpperCase();
+        var secType = (t.security_type || '').toUpperCase();
+        if (!/F&O|FNO|NFO/.test(product) && !/F&O|FNO|NFO/.test(secType)) return;
+
+        var contractKey = (t.symbol || t.short_symbol || '') + '|' + (t.expiry || '');
+        var qty = parseFloat(t.quantity) || 0;
+        var isShort = qty < 0; // negative qty = short position
+
+        // Determine amount (investor = trader → net_amount, else gross + trader_charges)
+        var amt;
+        if (t.investor_id === t.trader_id) {
+            amt = parseFloat(t.net_amount) || 0;
+        } else {
+            amt = (parseFloat(t.gross_amount) || 0) + (parseFloat(t.trader_charges) || 0);
+        }
+
+        // Get margin rate
+        var marginRate = wmsGetMarginRate(t.investor_id, t.broker_id);
+        if (!marginRate || marginRate === 0) return; // No margin for this investor-broker combo
+
+        // For investor ≠ trader, margin is based on trader's portion
+        var marginAmt = wmsCalcMarginBlocked(Math.abs(amt), marginRate);
+
+        if (!positions[contractKey]) {
+            positions[contractKey] = [];
+        }
+
+        // Check if this is a closing trade (opposite direction to existing positions)
+        var existingQty = 0;
+        for (var i = 0; i < positions[contractKey].length; i++) {
+            existingQty += positions[contractKey][i].qty;
+        }
+
+        var isClosing = (existingQty > 0 && qty < 0) || (existingQty < 0 && qty > 0);
+
+        if (isClosing) {
+            // FIFO square-off: release margin from oldest position(s)
+            var qtyToClose = Math.abs(qty);
+            var totalMarginReleased = 0;
+
+            while (qtyToClose > 0 && positions[contractKey].length > 0) {
+                var oldestPos = positions[contractKey][0];
+                var closeQty = Math.min(qtyToClose, Math.abs(oldestPos.qty));
+                totalMarginReleased += oldestPos.marginAmount;
+
+                if (closeQty === Math.abs(oldestPos.qty)) {
+                    // Fully closed position
+                    positions[contractKey].shift();
+                } else {
+                    // Partially closed position
+                    oldestPos.qty -= (qty < 0 ? closeQty : -closeQty);
+                    oldestPos.marginAmount = wmsCalcMarginBlocked(Math.abs(oldestPos.qty * (oldestPos.price || 1)), marginRate);
+                }
+                qtyToClose -= closeQty;
+            }
+
+            // Release margin (negative adjustment)
+            runningMargin = wmsRoundMoney(runningMargin - totalMarginReleased);
+            results.push({
+                date: t.transaction_date,
+                symbol: contractKey.split('|')[0],
+                marginAdj: -totalMarginReleased,
+                runningMargin: runningMargin
+            });
+        } else {
+            // Opening new position: block margin
+            positions[contractKey].push({
+                date: t.transaction_date,
+                qty: qty,
+                price: parseFloat(t.price) || 0,
+                marginRate: marginRate,
+                marginAmount: marginAmt
+            });
+            runningMargin = wmsRoundMoney(runningMargin + marginAmt);
+            results.push({
+                date: t.transaction_date,
+                symbol: contractKey.split('|')[0],
+                marginAdj: marginAmt,
+                runningMargin: runningMargin
+            });
+        }
+    });
+
+    return results;
+}
+
+/**
+ * Get financial year boundaries for an investor on a given date.
+ * FY runs from (financial_year_start month, day 1) to (month-1 next year, last day)
+ *
+ * @param {string} investorId
+ * @param {string} forDate    - YYYY-MM-DD (optional; defaults to today)
+ * @returns {object} {fyStart, fyEnd, fyLabel}
+ *                   fyStart: YYYY-MM-DD (1st of FY start month)
+ *                   fyEnd: YYYY-MM-DD (last day of previous month, next year)
+ *                   fyLabel: FY YYYY-YY (e.g., "FY 2025-26")
+ */
+function wmsGetFyBounds(investorId, forDate) {
+    var inv = wmsRefData.investorObjMap[investorId];
+    var fyStartMonth = (inv && inv.financial_year_start) ? inv.financial_year_start : 4; // Default April
+    fyStartMonth = Math.max(1, Math.min(12, fyStartMonth)); // Clamp to 1-12
+
+    var refDate = forDate ? new Date(forDate) : new Date();
+    var refYear = refDate.getFullYear();
+    var refMonth = refDate.getMonth() + 1; // 1-12
+
+    // Determine which FY the refDate falls into
+    var fyYear;
+    if (refMonth >= fyStartMonth) {
+        fyYear = refYear;
+    } else {
+        fyYear = refYear - 1;
+    }
+
+    var fyStart = new Date(fyYear, fyStartMonth - 1, 1);
+    var fyEnd = new Date(fyYear + 1, fyStartMonth - 1, 0); // Last day of previous month in next year
+
+    var fyStartStr = fyStart.toISOString().slice(0, 10);
+    var fyEndStr = fyEnd.toISOString().slice(0, 10);
+    var fyLabel = 'FY ' + fyYear + '-' + String(fyYear + 1).slice(-2);
+
+    return {
+        fyStart: fyStartStr,
+        fyEnd: fyEndStr,
+        fyLabel: fyLabel
+    };
 }
