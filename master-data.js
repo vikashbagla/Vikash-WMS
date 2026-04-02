@@ -388,6 +388,8 @@ async function openAddInvestorModal() {
     document.getElementById('investorAccountType').value = '';
     document.getElementById('investorInterestRate').value = '';
     document.getElementById('investorInterestFreq').value = '';
+    // Setup display formatting for investor-level interest rate
+    mdSetupRateInput(document.getElementById('investorInterestRate'), 'percent');
     document.getElementById('brokerAccountsList').innerHTML = '';
     brokerAccountCounter = 0;
     document.getElementById('investorModal').classList.add('show');
@@ -411,6 +413,8 @@ async function editInvestor(id) {
     var invTerms = investor.interest_terms;
     document.getElementById('investorInterestRate').value = (invTerms && invTerms.rate) ? invTerms.rate : '';
     document.getElementById('investorInterestFreq').value = (invTerms && invTerms.frequency) ? invTerms.frequency : '';
+    // Setup display formatting for investor-level interest rate
+    mdSetupRateInput(document.getElementById('investorInterestRate'), 'percent');
 
     const accounts = await DB.getBrokerAccounts(id);
     document.getElementById('brokerAccountsList').innerHTML = '';
@@ -418,8 +422,102 @@ async function editInvestor(id) {
     for (const acc of accounts) {
         await addBrokerAccount(acc.broker_id, acc.account_number, acc.brokerage_rates, acc.charges_inclusive, acc);
     }
-    
+
     document.getElementById('investorModal').classList.add('show');
+}
+
+// Rate input display formatting: shows "0.5%" on blur, raw "0.005" on focus
+// mode: 'decimal' = stored as decimal proportion (0.005 = 0.5%), 'percent' = stored as % (18 = 18%)
+function mdSetupRateInput(input, mode) {
+    // Avoid stacking duplicate listeners
+    if (input._rateFormatted) {
+        // Just re-format the current value for display
+        var cur = input.value.replace(/%/g, '').trim();
+        if (cur && !isNaN(parseFloat(cur))) {
+            input._rawValue = cur;
+            var n = parseFloat(cur);
+            if (mode === 'decimal') {
+                input.value = parseFloat((n * 100).toPrecision(10)) + '%';
+            } else {
+                input.value = parseFloat(n.toPrecision(10)) + '%';
+            }
+        }
+        return;
+    }
+    input._rateFormatted = true;
+    function formatForDisplay(raw) {
+        var num = parseFloat(raw);
+        if (isNaN(num) || num === 0) return '';
+        if (mode === 'decimal') {
+            // 0.005 → "0.5%", 0.03 → "3%", 0.00075 → "0.075%"
+            var pct = num * 100;
+            // Remove trailing zeros: 0.500 → 0.5, 3.000 → 3
+            return parseFloat(pct.toPrecision(10)) + '%';
+        } else {
+            // 18 → "18%", 10.5 → "10.5%"
+            return parseFloat(num.toPrecision(10)) + '%';
+        }
+    }
+    function rawValue(display) {
+        if (!display) return '';
+        // Strip % and any whitespace
+        var s = String(display).replace(/%/g, '').trim();
+        if (mode === 'decimal') {
+            // User sees "0.5%" but we store 0.005 — the raw value IS the decimal, not the display %
+            // So on focus we just strip the % format and show the raw decimal
+        }
+        return s;
+    }
+    input.addEventListener('focus', function() {
+        // On focus: show raw editable value
+        var val = input.value.replace(/%/g, '').trim();
+        if (mode === 'decimal') {
+            // Display currently shows "0.5%", we need to convert back to 0.005
+            var num = parseFloat(val);
+            if (!isNaN(num) && num !== 0) {
+                input.value = num / 100;
+            } else {
+                input.value = input._rawValue || '';
+            }
+        } else {
+            // Display shows "18%", raw is "18"
+            input.value = val;
+        }
+        input.select();
+    });
+    input.addEventListener('blur', function() {
+        var val = input.value.replace(/%/g, '').trim();
+        var num = parseFloat(val);
+        if (isNaN(num) || val === '') {
+            input._rawValue = '';
+            input.value = '';
+            return;
+        }
+        input._rawValue = val;
+        input.value = formatForDisplay(val);
+    });
+    // Initial display format if value exists
+    var initVal = input.value.replace(/%/g, '').trim();
+    if (initVal && !isNaN(parseFloat(initVal))) {
+        input._rawValue = initVal;
+        input.value = formatForDisplay(initVal);
+    }
+}
+
+// Apply rate formatting to all rate inputs in a broker account card
+function mdFormatBrokerRates(index) {
+    // Brokerage rates: decimal proportion (0.005 = 0.5%)
+    var decimalInputs = ['.eq-del-pct', '.eq-intra-pct', '.fut-pct'];
+    decimalInputs.forEach(function(cls) {
+        var el = document.querySelector(cls + '[data-index="' + index + '"]');
+        if (el) mdSetupRateInput(el, 'decimal');
+    });
+    // Interest & margin: plain percentage (18 = 18%)
+    var pctInputs = ['.iba-interest-rate', '.iba-margin-rate'];
+    pctInputs.forEach(function(cls) {
+        var el = document.querySelector(cls + '[data-index="' + index + '"]');
+        if (el) mdSetupRateInput(el, 'percent');
+    });
 }
 
 async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', existingRates = null, chargesInclusive = false, existingAcc = null) {
@@ -468,21 +566,21 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
                 <div class="brokerage-section">
                     <span class="brokerage-label">Equity - Delivery</span>
                     <div class="form-row">
-                        <div class="form-group"><label>Rate (0.005 = 0.5%)</label><input type="number" step="0.0001" class="eq-del-pct" data-index="${index}" value="${rates.equity?.delivery?.pct !== undefined ? rates.equity.delivery.pct : ''}" placeholder="e.g., 0.005"></div>
+                        <div class="form-group"><label>Rate</label><input type="text" inputmode="decimal" class="eq-del-pct" data-index="${index}" value="${rates.equity?.delivery?.pct !== undefined ? rates.equity.delivery.pct : ''}" placeholder="e.g., 0.005 = 0.5%"></div>
                         <div class="form-group"><label>Max ₹ (0 = no cap)</label><input type="number" step="0.01" class="eq-del-max" data-index="${index}" value="${rates.equity?.delivery?.max !== undefined ? rates.equity.delivery.max : ''}"></div>
                     </div>
                 </div>
                 <div class="brokerage-section">
                     <span class="brokerage-label">Equity - Intraday</span>
                     <div class="form-row">
-                        <div class="form-group"><label>Rate (0.03 = 3%)</label><input type="number" step="0.0001" class="eq-intra-pct" data-index="${index}" value="${rates.equity?.intraday?.pct !== undefined ? rates.equity.intraday.pct : ''}" placeholder="e.g., 0.03"></div>
+                        <div class="form-group"><label>Rate</label><input type="text" inputmode="decimal" class="eq-intra-pct" data-index="${index}" value="${rates.equity?.intraday?.pct !== undefined ? rates.equity.intraday.pct : ''}" placeholder="e.g., 0.03 = 3%"></div>
                         <div class="form-group"><label>Max ₹ (0 = no cap)</label><input type="number" step="0.01" class="eq-intra-max" data-index="${index}" value="${rates.equity?.intraday?.max !== undefined ? rates.equity.intraday.max : ''}"></div>
                     </div>
                 </div>
                 <div class="brokerage-section">
                     <span class="brokerage-label">Futures</span>
                     <div class="form-row">
-                        <div class="form-group"><label>Rate (0.03 = 3%)</label><input type="number" step="0.0001" class="fut-pct" data-index="${index}" value="${rates.derivatives?.futures?.pct !== undefined ? rates.derivatives.futures.pct : ''}" placeholder="e.g., 0.03"></div>
+                        <div class="form-group"><label>Rate</label><input type="text" inputmode="decimal" class="fut-pct" data-index="${index}" value="${rates.derivatives?.futures?.pct !== undefined ? rates.derivatives.futures.pct : ''}" placeholder="e.g., 0.03 = 3%"></div>
                         <div class="form-group"><label>Max ₹ (0 = no cap)</label><input type="number" step="0.01" class="fut-max" data-index="${index}" value="${rates.derivatives?.futures?.max !== undefined ? rates.derivatives.futures.max : ''}"></div>
                     </div>
                 </div>
@@ -500,7 +598,7 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
                 </div>
                 <div class="brokerage-section">
                     <div class="form-row">
-                        <div class="form-group"><label>Interest Rate % p.a. (18 = 18%)</label><input type="number" step="0.01" class="iba-interest-rate" data-index="${index}" value="${ibaInterestRate}" placeholder="e.g., 18"></div>
+                        <div class="form-group"><label>Interest Rate p.a.</label><input type="text" inputmode="decimal" class="iba-interest-rate" data-index="${index}" value="${ibaInterestRate}" placeholder="e.g., 18 = 18%"></div>
                         <div class="form-group"><label>Interest Frequency</label>
                             <select class="iba-interest-freq" data-index="${index}">
                                 <option value="" ${!ibaIntFreq ? 'selected' : ''}>Default (Weekly Friday)</option>
@@ -514,7 +612,7 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
                 </div>
                 <div class="brokerage-section">
                     <div class="form-row">
-                        <div class="form-group"><label>Margin Rate % (10 = 10%)</label><input type="number" step="0.01" class="iba-margin-rate" data-index="${index}" value="${ibaMarginRate}" placeholder="e.g., 10"></div>
+                        <div class="form-group"><label>Margin Rate</label><input type="text" inputmode="decimal" class="iba-margin-rate" data-index="${index}" value="${ibaMarginRate}" placeholder="e.g., 10 = 10%"></div>
                     </div>
                 </div>
             </div>
@@ -527,6 +625,8 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
         var el = document.getElementById('broker-account-' + index);
         if (el) el._existingAcc = existingAcc;
     }
+    // Apply rate display formatting (shows "0.5%" on blur, raw value on focus)
+    mdFormatBrokerRates(index);
 }
 
 async function loadBrokerDefaults(index) {
@@ -548,6 +648,8 @@ async function loadBrokerDefaults(index) {
     document.querySelector(`.opt-flat[data-index="${index}"]`).value = rates.derivatives?.options?.flat ?? '';
     document.querySelector(`.opt-max[data-index="${index}"]`).value = rates.derivatives?.options?.max ?? '';
     document.querySelector(`.charges-inclusive[data-index="${index}"]`).value = broker.default_charges_inclusive ? 'true' : 'false';
+    // Re-apply rate display formatting after loading defaults
+    mdFormatBrokerRates(index);
 }
 
 function removeBrokerAccount(index) {
@@ -555,8 +657,15 @@ function removeBrokerAccount(index) {
     if (element) element.remove();
 }
 
+// Helper: read numeric value from a rate input, stripping any "%" display suffix
+function mdReadRate(el) {
+    if (!el) return 0;
+    var raw = el._rawValue !== undefined && el._rawValue !== '' ? el._rawValue : el.value;
+    return parseFloat(String(raw).replace(/%/g, '').trim()) || 0;
+}
+
 async function saveInvestor() {
-    var invIntRate = parseFloat(document.getElementById('investorInterestRate').value) || 0;
+    var invIntRate = mdReadRate(document.getElementById('investorInterestRate'));
     var invIntFreq = document.getElementById('investorInterestFreq').value || '';
     var invInterestTerms = null;
     if (invIntRate > 0) {
@@ -589,9 +698,9 @@ async function saveInvestor() {
     brokerSelects.forEach((select) => {
         if (select.value) {
             const i = select.getAttribute('data-index');
-            var ibaIntRate = parseFloat(document.querySelector(`.iba-interest-rate[data-index="${i}"]`).value) || 0;
+            var ibaIntRate = mdReadRate(document.querySelector(`.iba-interest-rate[data-index="${i}"]`));
             var ibaIntFreq = document.querySelector(`.iba-interest-freq[data-index="${i}"]`).value || '';
-            var ibaMarginRate = parseFloat(document.querySelector(`.iba-margin-rate[data-index="${i}"]`).value) || 0;
+            var ibaMarginRate = mdReadRate(document.querySelector(`.iba-margin-rate[data-index="${i}"]`));
             var ibaInterestTerms = null;
             if (ibaIntRate > 0) {
                 ibaInterestTerms = { rate: ibaIntRate, frequency: ibaIntFreq || 'weekly_friday', compound: (ibaIntFreq === 'daily_monthly_compound') };
@@ -606,17 +715,17 @@ async function saveInvestor() {
                 brokerage_rates: {
                     equity: {
                         delivery: {
-                            pct: parseFloat(document.querySelector(`.eq-del-pct[data-index="${i}"]`).value),
+                            pct: mdReadRate(document.querySelector(`.eq-del-pct[data-index="${i}"]`)),
                             max: parseFloat(document.querySelector(`.eq-del-max[data-index="${i}"]`).value)
                         },
                         intraday: {
-                            pct: parseFloat(document.querySelector(`.eq-intra-pct[data-index="${i}"]`).value),
+                            pct: mdReadRate(document.querySelector(`.eq-intra-pct[data-index="${i}"]`)),
                             max: parseFloat(document.querySelector(`.eq-intra-max[data-index="${i}"]`).value)
                         }
                     },
                     derivatives: {
                         futures: {
-                            pct: parseFloat(document.querySelector(`.fut-pct[data-index="${i}"]`).value),
+                            pct: mdReadRate(document.querySelector(`.fut-pct[data-index="${i}"]`)),
                             max: parseFloat(document.querySelector(`.fut-max[data-index="${i}"]`).value)
                         },
                         options: {
