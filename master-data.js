@@ -143,24 +143,50 @@ var DB = {
     },
     
     async saveBrokerAccounts(investorId, accounts) {
-        // Delete existing accounts
-        await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts?investor_id=eq.${investorId}`, {
-            method: 'DELETE',
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
-        });
-        
-        // Insert new accounts
-        if (accounts.length > 0) {
-            const accountsData = accounts.map(acc => ({ investor_id: investorId, ...acc, is_active: true }));
-            await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts`, {
-                method: 'POST',
-                headers: { 
-                    'apikey': this.supabaseKey, 
-                    'Authorization': `Bearer ${this.supabaseKey}`, 
-                    'Content-Type': 'application/json' 
-                },
-                body: JSON.stringify(accountsData)
-            });
+        // Safe upsert: update existing, insert new, delete removed
+        // First get current accounts to know which exist
+        var existing = await this.getBrokerAccounts(investorId);
+        var existingByBroker = {};
+        existing.forEach(function(a) { existingByBroker[a.broker_id] = a; });
+
+        var newBrokerIds = {};
+        for (var i = 0; i < accounts.length; i++) {
+            var acc = accounts[i];
+            newBrokerIds[acc.broker_id] = true;
+            var payload = Object.assign({}, acc, { investor_id: investorId, is_active: true });
+
+            if (existingByBroker[acc.broker_id]) {
+                // PATCH existing record
+                var existingId = existingByBroker[acc.broker_id].id;
+                await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts?id=eq.${existingId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+            } else {
+                // POST new record
+                await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts`, {
+                    method: 'POST',
+                    headers: {
+                        'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+            }
+        }
+
+        // Delete accounts that were removed from the form
+        for (var j = 0; j < existing.length; j++) {
+            if (!newBrokerIds[existing[j].broker_id]) {
+                await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts?id=eq.${existing[j].id}`, {
+                    method: 'DELETE',
+                    headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+                });
+            }
         }
         return Promise.resolve(true);
     },
