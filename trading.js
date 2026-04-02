@@ -4288,6 +4288,12 @@ async function trLoadLedgerModule() {
             return;
         }
     }
+    // Ensure reference data is loaded before initializing ledger filters
+    if (!wmsRefData.ready) await wmsLoadRefData();
+    if (!trInvestors || trInvestors.length === 0) {
+        trInvestors = wmsRefData.investors || [];
+        trBrokers  = wmsRefData.brokers  || [];
+    }
     if (typeof lgInit === 'function') { lgInit(); lgRefresh(); }
 }
 
