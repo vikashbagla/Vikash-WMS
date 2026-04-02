@@ -241,6 +241,53 @@ var DB = {
             throw new Error(data.message || data.details || ('HTTP ' + response.status));
         }
         return data;
+    },
+
+    // ==================== LEDGER ENTRIES ====================
+
+    async getLedgerEntries(filters) {
+        // filters: { investorId, traderId, brokerId, entryType, dateFrom, dateTo }
+        var q = 'select=*&order=entry_date.asc,created_at.asc';
+        if (filters.investorId) q += '&investor_id=eq.' + filters.investorId;
+        if (filters.traderId) q += '&trader_id=eq.' + filters.traderId;
+        if (filters.brokerId) q += '&broker_id=eq.' + filters.brokerId;
+        if (filters.entryType) q += '&entry_type=eq.' + filters.entryType;
+        if (filters.dateFrom) q += '&entry_date=gte.' + filters.dateFrom;
+        if (filters.dateTo) q += '&entry_date=lte.' + filters.dateTo;
+        const response = await fetch(`${this.supabaseUrl}/rest/v1/ledger_entries?${q}`, {
+            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+        });
+        return await response.json();
+    },
+
+    async addLedgerEntry(data) {
+        const response = await fetch(`${this.supabaseUrl}/rest/v1/ledger_entries`, {
+            method: 'POST',
+            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+            body: JSON.stringify(data)
+        });
+        var result = await response.json();
+        if (!response.ok) throw new Error(result.message || result.details || ('HTTP ' + response.status));
+        return result[0];
+    },
+
+    async updateLedgerEntry(id, data) {
+        const response = await fetch(`${this.supabaseUrl}/rest/v1/ledger_entries?id=eq.${id}`, {
+            method: 'PATCH',
+            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+            body: JSON.stringify(data)
+        });
+        var result = await response.json();
+        if (!response.ok) throw new Error(result.message || result.details || ('HTTP ' + response.status));
+        return result[0];
+    },
+
+    async deleteLedgerEntry(id) {
+        const response = await fetch(`${this.supabaseUrl}/rest/v1/ledger_entries?id=eq.${id}`, {
+            method: 'DELETE',
+            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+        });
+        return response.ok;
     }
 };
 

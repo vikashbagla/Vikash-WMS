@@ -711,6 +711,10 @@ function trSwitchTab(tabId) {
     if (tabId === 'tr-fno-positions') {
         trLoadFnoModule();
     }
+    if (tabId === 'tr-ledger') {
+        trInitLedger();
+        trRefreshLedger();
+    }
 
     // Standard refresh: re-render the newly active tab with cached prices
     if (typeof wmsRefreshRender === 'function') wmsRefreshRender();
@@ -2801,6 +2805,26 @@ function trRecalcEditAmounts() {
 
     // Also recalculate trader charges
     trRecalcTraderCharges();
+
+    // Auto-calc margin for F&O trades
+    trRecalcMargin();
+}
+
+// Recalculate margin_blocked for F&O trades using margin_rate from IBA
+function trRecalcMargin() {
+    if (!trEditingTxnId) return;
+    var txn = trTransactions.find(function(t) { return t.id === trEditingTxnId; });
+    if (!txn) return;
+    // Only apply margin for F&O (product check)
+    var product = txn.product || '';
+    if (product !== 'F&O' && product !== 'FNO') {
+        // Not F&O — leave margin as-is (could be manually set)
+        return;
+    }
+    var netAmount = trEditParse(document.getElementById('trEditNetAmount'));
+    var marginRate = wmsGetMarginRate(txn.investor_id, txn.broker_id);
+    var margin = wmsCalcMarginBlocked(netAmount, marginRate);
+    document.getElementById('trEditMargin').value = trEditFmt(margin);
 }
 
 // Recalculate trader_charges when trader dropdown changes
@@ -4233,6 +4257,444 @@ async function trLoadFnoModule() {
     }
     if (typeof trFnoRender === 'function') trFnoRender();
 }
+
+// ============================================================================
+// LEDGER TAB
+// ============================================================================
+
+var trLedgerInvestorId = null;
+var trLedgerEntries = [];       // rows from ledger_entries
+var trLedgerCombined = [];      // output of wmsBuildLedger
+var trLedgerInited = false;
+var trCashEditingId = null;     // null = new entry, uuid = editing
+
+// Ledger Supabase helpers (direct REST — DB object may not be loaded)
+var trLedgerHeaders = function() {
+    return { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' };
+};
+async function trLedgerPost(payload) {
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries', { method: 'POST', headers: trLedgerHeaders(), body: JSON.stringify(payload) });
+    if (!resp.ok) { var e = await resp.json(); throw new Error(e.message || e.details || 'HTTP ' + resp.status); }
+    return (await resp.json())[0];
+}
+async function trLedgerPatch(id, payload) {
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + id, { method: 'PATCH', headers: trLedgerHeaders(), body: JSON.stringify(payload) });
+    if (!resp.ok) { var e = await resp.json(); throw new Error(e.message || e.details || 'HTTP ' + resp.status); }
+    return (await resp.json())[0];
+}
+async function trLedgerDelete(id) {
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + id, { method: 'DELETE', headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
+    if (!resp.ok) throw new Error('Delete failed: HTTP ' + resp.status);
+}
+async function trLedgerFetch(q) {
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?' + q, { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
+    return resp.ok ? await resp.json() : [];
+}
+
+function trInitLedger() {
+    if (trLedgerInited) return;
+    trLedgerInited = true;
+
+    // Populate investor dropdown
+    var container = document.getElementById('tr-ledger-filter-investor');
+    if (container) {
+        var sel = document.createElement('select');
+        sel.id = 'trLedgerInvestor';
+        sel.style.cssText = 'width:100%;padding:4px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;';
+        sel.innerHTML = '<option value="">-- Select Investor --</option>';
+        trInvestors.forEach(function(inv) {
+            sel.innerHTML += '<option value="' + inv.id + '">' + wmsEsc(inv.short_name || inv.name) + '</option>';
+        });
+        container.innerHTML = '';
+        container.appendChild(sel);
+        sel.addEventListener('change', function() {
+            trLedgerInvestorId = sel.value || null;
+            trRefreshLedger();
+        });
+    }
+
+    // Filter listeners
+    var typeFilter = document.getElementById('trLedgerEntryTypeFilter');
+    var dateFilter = document.getElementById('trLedgerDateRange');
+    if (typeFilter) typeFilter.addEventListener('change', trRefreshLedger);
+    if (dateFilter) dateFilter.addEventListener('change', trRefreshLedger);
+
+    // Button listeners
+    var addBtn = document.getElementById('trLedgerAddEntry');
+    if (addBtn) addBtn.addEventListener('click', trOpenCashEntryModal);
+    var bookBtn = document.getElementById('trLedgerBookInterest');
+    if (bookBtn) bookBtn.addEventListener('click', trOpenBookInterestModal);
+    var saveBtn = document.getElementById('trCashEntrySaveBtn');
+    if (saveBtn) saveBtn.addEventListener('click', trSaveCashEntry);
+    var calcBtn = document.getElementById('trInterestCalcBtn');
+    if (calcBtn) calcBtn.addEventListener('click', trCalcInterestPreview);
+    var confirmBtn = document.getElementById('trBookInterestConfirmBtn');
+    if (confirmBtn) confirmBtn.addEventListener('click', trConfirmBookInterest);
+}
+
+async function trRefreshLedger() {
+    if (!trLedgerInvestorId) {
+        document.getElementById('trLedgerBody').innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#9ca3af;">Select an investor to view ledger</td></tr>';
+        trUpdateLedgerSummary(0, 0, 0, 0);
+        return;
+    }
+
+    var typeFilter = (document.getElementById('trLedgerEntryTypeFilter') || {}).value || '';
+    var daysBack = parseInt((document.getElementById('trLedgerDateRange') || {}).value) || 90;
+
+    var dateTo = new Date();
+    var dateFrom = daysBack > 0 ? new Date(Date.now() - daysBack * 86400000) : new Date('2000-01-01');
+    var fromStr = dateFrom.toISOString().slice(0, 10);
+    var toStr = dateTo.toISOString().slice(0, 10);
+
+    // Fetch ledger entries via direct Supabase REST call
+    try {
+        var q = 'select=*&order=entry_date.asc,created_at.asc&investor_id=eq.' + trLedgerInvestorId;
+        q += '&entry_date=gte.' + fromStr + '&entry_date=lte.' + toStr;
+        if (typeFilter && typeFilter !== 'TRADE') q += '&entry_type=eq.' + typeFilter;
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?' + q, {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        });
+        trLedgerEntries = resp.ok ? await resp.json() : [];
+    } catch (err) {
+        console.error('Ledger: failed to load entries', err);
+        trLedgerEntries = [];
+    }
+
+    // Filter transactions to this investor + date range
+    var txns = (typeFilter === '' || typeFilter === 'TRADE') ? trTransactions.filter(function(t) {
+        return t.investor_id === trLedgerInvestorId && t.transaction_date >= fromStr && t.transaction_date <= toStr;
+    }) : [];
+
+    // If type filter is a ledger type, don't show trades
+    if (typeFilter && typeFilter !== 'TRADE' && typeFilter !== '') txns = [];
+
+    // Build combined ledger
+    trLedgerCombined = wmsBuildLedger(trLedgerEntries, txns);
+    trRenderLedger(trLedgerCombined);
+}
+
+function trRenderLedger(rows) {
+    var tbody = document.getElementById('trLedgerBody');
+    if (!tbody) return;
+
+    if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#9ca3af;">No entries found</td></tr>';
+        trUpdateLedgerSummary(0, 0, 0, 0);
+        return;
+    }
+
+    var html = '';
+    var totalDebit = 0, totalCredit = 0;
+
+    rows.forEach(function(row) {
+        var debit = row.signedAmount < 0 ? Math.abs(row.signedAmount) : 0;
+        var credit = row.signedAmount > 0 ? row.signedAmount : 0;
+        totalDebit += debit;
+        totalCredit += credit;
+
+        // Type badge colors
+        var typeBadge = '';
+        var typeColors = {
+            'CASH_RECEIVED': 'background:#dcfce7;color:#166534;',
+            'CASH_PAID': 'background:#fee2e2;color:#991b1b;',
+            'INTEREST_BOOKED': 'background:#f5f3ff;color:#7c3aed;',
+            'ADJUSTMENT': 'background:#fef3c7;color:#92400e;',
+            'TRADE': 'background:#eff6ff;color:#1e40af;'
+        };
+        var typeLabels = {
+            'CASH_RECEIVED': 'Cash In',
+            'CASH_PAID': 'Cash Out',
+            'INTEREST_BOOKED': 'Interest',
+            'ADJUSTMENT': 'Adjust',
+            'TRADE': 'Trade'
+        };
+        var badgeStyle = typeColors[row.entryType] || 'background:#f1f5f9;color:#475569;';
+        typeBadge = '<span style="' + badgeStyle + 'padding:2px 6px;border-radius:3px;font-size:10px;font-weight:600;">' + (typeLabels[row.entryType] || row.entryType) + '</span>';
+
+        // Investor & broker names
+        var invName = row.investorId ? (wmsRefData.investorObjMap[row.investorId] || {}).short_name || (wmsRefData.investorObjMap[row.investorId] || {}).name || '' : '';
+        var brkName = row.brokerId ? (wmsRefData.brokerObjMap[row.brokerId] || {}).name || '' : '';
+
+        // Reference + notes combined
+        var refNotes = '';
+        if (row.reference) refNotes += wmsEsc(row.reference);
+        if (row.notes) refNotes += (refNotes ? ' — ' : '') + wmsEsc(row.notes);
+        if (!refNotes) refNotes = '<span style="color:#ccc;">—</span>';
+
+        // Actions (edit/delete only for ledger entries)
+        var actions = '';
+        if (row._rowType === 'ledger') {
+            actions = '<button style="border:none;background:none;cursor:pointer;font-size:12px;padding:2px 4px;" onclick="trEditLedgerEntry(\'' + row._source.id + '\')" title="Edit">&#9998;</button>' +
+                      '<button style="border:none;background:none;cursor:pointer;font-size:12px;padding:2px 4px;color:#dc2626;" onclick="trDeleteLedgerEntry(\'' + row._source.id + '\')" title="Delete">&#10005;</button>';
+        }
+
+        html += '<tr style="border-bottom:1px solid #f0f4f8;">' +
+            '<td style="padding:5px 8px;white-space:nowrap;">' + formatDate(row.date) + '</td>' +
+            '<td style="padding:5px 8px;">' + typeBadge + '</td>' +
+            '<td style="padding:5px 8px;font-size:10px;">' + wmsEsc(invName) + '</td>' +
+            '<td style="padding:5px 8px;font-size:10px;">' + wmsEsc(brkName) + '</td>' +
+            '<td style="padding:5px 8px;text-align:right;color:#dc2626;">' + (debit > 0 ? wmsFmtAmt(debit) : '') + '</td>' +
+            '<td style="padding:5px 8px;text-align:right;color:#16a34a;">' + (credit > 0 ? wmsFmtAmt(credit) : '') + '</td>' +
+            '<td style="padding:5px 8px;text-align:right;font-weight:600;' + (row._runningBalance < 0 ? 'color:#dc2626;' : '') + '">' + wmsFmtAmt(row._runningBalance) + '</td>' +
+            '<td style="padding:5px 8px;font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + refNotes + '</td>' +
+            '<td style="padding:5px 8px;text-align:center;">' + actions + '</td>' +
+            '</tr>';
+    });
+
+    tbody.innerHTML = html;
+    trUpdateLedgerSummary(totalDebit, totalCredit, totalCredit - totalDebit, rows.length);
+}
+
+function trUpdateLedgerSummary(debit, credit, net, count) {
+    var el;
+    el = document.getElementById('trLedgerTotalDebit'); if (el) el.textContent = wmsFmtAmt(debit);
+    el = document.getElementById('trLedgerTotalCredit'); if (el) el.textContent = wmsFmtAmt(credit);
+    el = document.getElementById('trLedgerNetBalance'); if (el) { el.textContent = wmsFmtAmt(net); el.style.color = net < 0 ? '#dc2626' : '#16a34a'; }
+    el = document.getElementById('trLedgerCount'); if (el) el.textContent = count;
+}
+
+// ============================================================================
+// CASH ENTRY MODAL
+// ============================================================================
+
+function trOpenCashEntryModal(editEntry) {
+    trCashEditingId = null;
+    document.getElementById('trCashEntryTitle').textContent = 'Add Ledger Entry';
+
+    // Populate dropdowns
+    var invSel = document.getElementById('trCashInvestor');
+    var traderSel = document.getElementById('trCashTrader');
+    var brokerSel = document.getElementById('trCashBroker');
+
+    invSel.innerHTML = '<option value="">-- Select Investor --</option>';
+    traderSel.innerHTML = '<option value="">-- None --</option>';
+    brokerSel.innerHTML = '<option value="">-- None (Consolidated) --</option>';
+
+    trInvestors.forEach(function(inv) {
+        var label = wmsEsc(inv.short_name || inv.name);
+        invSel.innerHTML += '<option value="' + inv.id + '">' + label + '</option>';
+        traderSel.innerHTML += '<option value="' + inv.id + '">' + label + '</option>';
+    });
+    trBrokers.forEach(function(brk) {
+        brokerSel.innerHTML += '<option value="' + brk.id + '">' + wmsEsc(brk.name) + '</option>';
+    });
+
+    // Defaults
+    if (trLedgerInvestorId) invSel.value = trLedgerInvestorId;
+    document.getElementById('trCashDate').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('trCashAmount').value = '';
+    document.getElementById('trCashReference').value = '';
+    document.getElementById('trCashNotes').value = '';
+    document.querySelector('input[name="trCashType"][value="CASH_RECEIVED"]').checked = true;
+
+    // If editing
+    if (editEntry && editEntry.id) {
+        trCashEditingId = editEntry.id;
+        document.getElementById('trCashEntryTitle').textContent = 'Edit Ledger Entry';
+        var typeRadio = document.querySelector('input[name="trCashType"][value="' + editEntry.entry_type + '"]');
+        if (typeRadio) typeRadio.checked = true;
+        invSel.value = editEntry.investor_id || '';
+        traderSel.value = editEntry.trader_id || '';
+        brokerSel.value = editEntry.broker_id || '';
+        document.getElementById('trCashDate').value = editEntry.entry_date || '';
+        document.getElementById('trCashAmount').value = Math.abs(parseFloat(editEntry.amount)) || '';
+        document.getElementById('trCashReference').value = editEntry.reference || '';
+        document.getElementById('trCashNotes').value = editEntry.notes || '';
+    }
+
+    document.getElementById('trCashEntryModal').classList.add('show');
+}
+
+async function trSaveCashEntry() {
+    var entryType = (document.querySelector('input[name="trCashType"]:checked') || {}).value;
+    var investorId = document.getElementById('trCashInvestor').value;
+    var traderId = document.getElementById('trCashTrader').value || null;
+    var brokerId = document.getElementById('trCashBroker').value || null;
+    var entryDate = document.getElementById('trCashDate').value;
+    var amount = parseFloat(document.getElementById('trCashAmount').value);
+    var reference = document.getElementById('trCashReference').value.trim() || null;
+    var notes = document.getElementById('trCashNotes').value.trim() || null;
+
+    if (!investorId) { alert('Please select an investor'); return; }
+    if (!entryDate) { alert('Please select a date'); return; }
+    if (!amount || amount <= 0) { alert('Please enter a valid amount (positive number)'); return; }
+    if (!entryType) { alert('Please select entry type'); return; }
+
+    var payload = {
+        entry_type: entryType,
+        investor_id: investorId,
+        trader_id: traderId,
+        broker_id: brokerId,
+        entry_date: entryDate,
+        amount: amount,
+        reference: reference,
+        notes: notes,
+        tags: ['blank']
+    };
+
+    try {
+        if (trCashEditingId) {
+            await trLedgerPatch(trCashEditingId, payload);
+        } else {
+            await trLedgerPost(payload);
+        }
+        document.getElementById('trCashEntryModal').classList.remove('show');
+        trRefreshLedger();
+    } catch (err) {
+        alert('Failed to save entry: ' + (err.message || err));
+    }
+}
+
+function trEditLedgerEntry(entryId) {
+    var entry = trLedgerEntries.find(function(e) { return e.id === entryId; });
+    if (!entry) { alert('Entry not found'); return; }
+    trOpenCashEntryModal(entry);
+}
+
+async function trDeleteLedgerEntry(entryId) {
+    if (!confirm('Delete this ledger entry?')) return;
+    try {
+        await trLedgerDelete(entryId);
+        trRefreshLedger();
+    } catch (err) {
+        alert('Failed to delete: ' + (err.message || err));
+    }
+}
+
+// ============================================================================
+// BOOK INTEREST MODAL
+// ============================================================================
+
+function trOpenBookInterestModal() {
+    // Populate investor
+    var invSel = document.getElementById('trInterestInvestor');
+    invSel.innerHTML = '<option value="">-- Select Investor --</option>';
+    trInvestors.forEach(function(inv) {
+        invSel.innerHTML += '<option value="' + inv.id + '">' + wmsEsc(inv.short_name || inv.name) + '</option>';
+    });
+    if (trLedgerInvestorId) invSel.value = trLedgerInvestorId;
+
+    // Default dates: last 30 days
+    var to = new Date();
+    var from = new Date(Date.now() - 30 * 86400000);
+    document.getElementById('trInterestFromDate').value = from.toISOString().slice(0, 10);
+    document.getElementById('trInterestToDate').value = to.toISOString().slice(0, 10);
+
+    // Clear preview
+    document.getElementById('trInterestPreviewBody').innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#9ca3af;">Click "Calculate Preview" to see interest breakdown</td></tr>';
+    document.getElementById('trInterestTotal').textContent = '0.00';
+    document.getElementById('trBookInterestConfirmBtn').disabled = true;
+
+    // Show terms info
+    trShowInterestTerms();
+    invSel.addEventListener('change', trShowInterestTerms);
+
+    document.getElementById('trBookInterestModal').classList.add('show');
+}
+
+function trShowInterestTerms() {
+    var invId = document.getElementById('trInterestInvestor').value;
+    var infoEl = document.getElementById('trInterestTermsInfo');
+    if (!invId) { infoEl.textContent = ''; return; }
+
+    var terms = wmsGetInterestTerms(invId);
+    if (!terms) {
+        infoEl.innerHTML = '<span style="color:#dc2626;">No interest terms configured for this investor</span>';
+    } else {
+        infoEl.innerHTML = 'Rate: <strong>' + terms.rate + '% p.a.</strong> | Frequency: <strong>' + terms.frequency + '</strong> | Compound: <strong>' + (terms.compound ? 'Yes' : 'No') + '</strong>';
+    }
+}
+
+async function trCalcInterestPreview() {
+    var invId = document.getElementById('trInterestInvestor').value;
+    var fromStr = document.getElementById('trInterestFromDate').value;
+    var toStr = document.getElementById('trInterestToDate').value;
+
+    if (!invId) { alert('Please select an investor'); return; }
+    if (!fromStr || !toStr) { alert('Please select date range'); return; }
+
+    var terms = wmsGetInterestTerms(invId);
+    if (!terms) { alert('No interest terms configured for this investor. Set them in Master Data.'); return; }
+
+    // Fetch ALL ledger entries (no date filter — need full history for running balance)
+    var allEntries = [];
+    try {
+        allEntries = await trLedgerFetch('select=*&order=entry_date.asc,created_at.asc&investor_id=eq.' + invId);
+    } catch (err) { console.error(err); }
+
+    // Filter transactions for this investor
+    var txns = trTransactions.filter(function(t) { return t.investor_id === invId; });
+
+    // Build full ledger
+    var fullLedger = wmsBuildLedger(allEntries, txns);
+
+    // Calculate interest preview
+    var preview = wmsCalcInterestPreview(fullLedger, terms, fromStr, toStr);
+
+    // Render
+    var tbody = document.getElementById('trInterestPreviewBody');
+    var totalInterest = 0;
+
+    if (preview.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#9ca3af;">No periods found in this range</td></tr>';
+    } else {
+        var html = '';
+        preview.forEach(function(p) {
+            totalInterest += p.interest;
+            html += '<tr>' +
+                '<td style="padding:6px 8px;">' + wmsEsc(p.period) + '</td>' +
+                '<td style="padding:6px 8px;text-align:right;">' + wmsFmtAmt(p.avgBalance) + '</td>' +
+                '<td style="padding:6px 8px;text-align:right;">' + p.days + '</td>' +
+                '<td style="padding:6px 8px;text-align:right;">' + p.rate.toFixed(2) + '%</td>' +
+                '<td style="padding:6px 8px;text-align:right;font-weight:600;">' + wmsFmtAmt(p.interest) + '</td>' +
+                '</tr>';
+        });
+        // Total row
+        html += '<tr style="background:#f5f3ff;font-weight:700;">' +
+            '<td style="padding:6px 8px;" colspan="4">TOTAL</td>' +
+            '<td style="padding:6px 8px;text-align:right;">' + wmsFmtAmt(totalInterest) + '</td>' +
+            '</tr>';
+        tbody.innerHTML = html;
+    }
+
+    document.getElementById('trInterestTotal').textContent = wmsFmtAmt(totalInterest);
+    document.getElementById('trInterestTotal')._totalInterest = totalInterest;
+    document.getElementById('trBookInterestConfirmBtn').disabled = (totalInterest <= 0);
+}
+
+async function trConfirmBookInterest() {
+    var invId = document.getElementById('trInterestInvestor').value;
+    var totalEl = document.getElementById('trInterestTotal');
+    var totalInterest = totalEl._totalInterest || 0;
+    var fromStr = document.getElementById('trInterestFromDate').value;
+    var toStr = document.getElementById('trInterestToDate').value;
+
+    if (totalInterest <= 0 || !invId) return;
+    if (!confirm('Book interest of ' + wmsFmtAmt(totalInterest) + ' for period ' + fromStr + ' to ' + toStr + '?')) return;
+
+    try {
+        await trLedgerPost({
+            entry_type: 'INTEREST_BOOKED',
+            investor_id: invId,
+            trader_id: null,
+            broker_id: null,
+            entry_date: toStr,
+            amount: totalInterest,
+            reference: 'Interest ' + fromStr + ' to ' + toStr,
+            notes: 'Auto-calculated. Rate: ' + (wmsGetInterestTerms(invId) || {}).rate + '% p.a.',
+            tags: ['interest']
+        });
+        document.getElementById('trBookInterestModal').classList.remove('show');
+        trRefreshLedger();
+    } catch (err) {
+        alert('Failed to book interest: ' + (err.message || err));
+    }
+}
+
+// Expose ledger functions globally for inline handlers
+window.trEditLedgerEntry = trEditLedgerEntry;
+window.trDeleteLedgerEntry = trDeleteLedgerEntry;
 
 // ============================================================================
 // WINDOW EXPORTS
