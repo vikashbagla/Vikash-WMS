@@ -650,10 +650,10 @@ async function lgDeleteView(viewId) {
 
 function lgGetCurrentFilters() {
     return {
-        investorIds: lgSelectedInvestorIds,
-        traderIds: lgSelectedTraderIds,
-        brokerIds: lgSelectedBrokerIds,
-        tagNames: lgSelectedTagNames,
+        investorIds: lgSelectedInvestorIds.slice(),
+        traderIds: lgSelectedTraderIds.slice(),
+        brokerIds: lgSelectedBrokerIds.slice(),
+        tagNames: lgSelectedTagNames.slice(),
         tagLogic: lgTagFilterLogic
     };
 }
