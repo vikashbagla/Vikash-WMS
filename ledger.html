@@ -1,9 +1,10 @@
 <!-- ============================================================ -->
 <!-- LEDGER MODULE - Lazy-loaded into #tr-ledger when activated  -->
+<!-- This content is injected via innerHTML into #tr-ledger.     -->
+<!-- Do NOT wrap in another #tr-ledger div.                      -->
 <!-- ============================================================ -->
 
-<div id="tr-ledger" class="trading-tab-content">
-  <div id="lgContainer" style="display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden;">
+<div id="lgContainer" style="display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden;">
 
     <!-- ============================================================ -->
     <!-- 1. VIEW TABS BAR                                             -->
@@ -176,7 +177,6 @@
     </div>
 
   </div>
-</div>
 
 <!-- ============================================================ -->
 <!-- 6. INTEREST DETAIL PANEL (Hidden by default)                -->
@@ -218,7 +218,7 @@
 <!-- ============================================================ -->
 <!-- 7. BOOK INTEREST MODAL (Hidden by default)                  -->
 <!-- ============================================================ -->
-<div id="lgBookInterestModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:200; display:flex; align-items:center; justify-content:center;">
+<div id="lgBookInterestModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:200; align-items:center; justify-content:center;">
   <div style="background:#fff; border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.15); padding:0; width:600px; max-height:80vh; overflow:auto;">
     <div style="background:#f7fafc; padding:12px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
       <div style="font-size:12px; font-weight:600; color:#2d3748;">Book Interest</div>
@@ -272,8 +272,4 @@
   </div>
 </div>
 
-<script>
-// Note: This HTML is loaded via fetch + innerHTML injection.
-// All JS logic is in ledger.js (loaded separately).
-// Do NOT include script tags here — they will be executed before ledger.js is loaded.
-</script>
+<!-- Note: All JS logic is in ledger.js (loaded separately via script element). -->
