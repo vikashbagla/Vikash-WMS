@@ -53,61 +53,52 @@ function lgInit() {
     if (lgInited) return;
     lgInited = true;
 
-    // Create pill filters
+    // Create pill filters (same pattern as Portfolio — pass selectedIds array reference)
     var invContainer = document.getElementById('lgFilterInvestor');
     if (invContainer && trInvestors) {
+        var invItems = trInvestors.map(function(inv) { return { id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') }; });
         lgInvPillFilter = wmsPillSearch(invContainer, {
-            items: trInvestors.map(function(inv) {
-                return { id: inv.id, label: inv.name };
-            }),
-            label: 'Investor',
-            onChange: function(selected) {
-                lgSelectedInvestorIds = selected;
-                lgRefresh();
-            }
+            label: 'Filter by Investor',
+            placeholder: 'Type to search investors...',
+            items: invItems,
+            selectedIds: lgSelectedInvestorIds,
+            onChange: function() { lgRefresh(); }
         });
     }
 
     var trdContainer = document.getElementById('lgFilterTrader');
     if (trdContainer && trInvestors) {
-        // Traders = Investors
+        var trdItems = trInvestors.map(function(inv) { return { id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') }; });
         lgTrdPillFilter = wmsPillSearch(trdContainer, {
-            items: trInvestors.map(function(inv) {
-                return { id: inv.id, label: inv.name };
-            }),
-            label: 'Trader',
-            onChange: function(selected) {
-                lgSelectedTraderIds = selected;
-                lgRefresh();
-            }
+            label: 'Filter by Trader',
+            placeholder: 'Type to search traders...',
+            items: trdItems,
+            selectedIds: lgSelectedTraderIds,
+            onChange: function() { lgRefresh(); }
         });
     }
 
     var brkContainer = document.getElementById('lgFilterBroker');
     if (brkContainer && trBrokers) {
+        var brkItems = trBrokers.map(function(brk) { return { id: brk.id, label: brk.broker_code || brk.name, searchText: (brk.name || '') + ' ' + (brk.broker_code || '') }; });
         lgBrkPillFilter = wmsPillSearch(brkContainer, {
-            items: trBrokers.map(function(brk) {
-                return { id: brk.id, label: brk.name };
-            }),
-            label: 'Broker',
-            onChange: function(selected) {
-                lgSelectedBrokerIds = selected;
-                lgRefresh();
-            }
+            label: 'Filter by Broker',
+            placeholder: 'Type to search brokers...',
+            items: brkItems,
+            selectedIds: lgSelectedBrokerIds,
+            onChange: function() { lgRefresh(); }
         });
     }
 
     var tagContainer = document.getElementById('lgFilterTags');
     if (tagContainer) {
+        var tagItems = (wmsRefData.allTags || []).map(function(tag) { return { id: tag, label: tag }; });
         lgTagPillFilter = wmsPillSearch(tagContainer, {
-            items: (wmsRefData.allTags || []).map(function(tag) {
-                return { id: tag, label: tag };
-            }),
-            label: 'Tags',
-            onChange: function(selected) {
-                lgSelectedTagNames = selected;
-                lgRefresh();
-            }
+            label: 'Filter by Tag',
+            placeholder: 'Type to search tags...',
+            items: tagItems,
+            selectedIds: lgSelectedTagNames,
+            onChange: function() { lgRefresh(); }
         });
     }
 
@@ -247,7 +238,7 @@ function lgInit() {
 async function lgLoadViews() {
     try {
         var resp = await fetch(
-            SUPABASE_URL + '/rest/v1/ledger_views?select=*&order=sort_order.asc,created_at.asc',
+            SUPABASE_URL + '/rest/v1/portfolio_views?module=eq.ledger&select=id,name,filters,sort_order,is_default,show_in_tabs&order=sort_order.asc,created_at.asc',
             {
                 headers: lgHeaders()
             }
@@ -356,7 +347,7 @@ function lgRenderViewTabs() {
                         showAlert('A view named "' + newName + '" already exists', 'error', 3000);
                     } else {
                         view.name = newName;
-                        fetch(SUPABASE_URL + '/rest/v1/ledger_views?id=eq.' + viewId, {
+                        fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
                             method: 'PATCH',
                             headers: lgHeaders(),
                             body: JSON.stringify({ name: newName })
@@ -435,23 +426,45 @@ function lgApplyView(viewId) {
     if (!view) return;
 
     lgActiveViewId = viewId;
-    var filters = view.filters || {};
+    var f = view.filters || {};
 
-    lgSelectedInvestorIds = filters.investorIds || [];
-    lgSelectedTraderIds = filters.traderIds || [];
-    lgSelectedBrokerIds = filters.brokerIds || [];
-    lgSelectedTagNames = filters.tagNames || [];
-    lgTagFilterLogic = filters.tagLogic || 'OR';
+    // Mutate arrays in-place (same references passed to wmsPillSearch)
+    lgSelectedInvestorIds.length = 0;
+    Array.prototype.push.apply(lgSelectedInvestorIds, f.investorIds || []);
+    lgSelectedTraderIds.length = 0;
+    Array.prototype.push.apply(lgSelectedTraderIds, f.traderIds || []);
+    lgSelectedBrokerIds.length = 0;
+    Array.prototype.push.apply(lgSelectedBrokerIds, f.brokerIds || []);
+    lgSelectedTagNames.length = 0;
+    Array.prototype.push.apply(lgSelectedTagNames, f.tagNames || []);
+    lgTagFilterLogic = f.tagLogic || 'OR';
 
-    if (lgInvPillFilter) lgInvPillFilter.setSelected(lgSelectedInvestorIds);
-    if (lgTrdPillFilter) lgTrdPillFilter.setSelected(lgSelectedTraderIds);
-    if (lgBrkPillFilter) lgBrkPillFilter.setSelected(lgSelectedBrokerIds);
-    if (lgTagPillFilter) lgTagPillFilter.setSelected(lgSelectedTagNames);
+    // Update filter UI (same pattern as Portfolio trApplyView)
+    ['investor', 'trader', 'broker', 'tag'].forEach(function(type) {
+        lgSyncPillStates(type);
+        lgRenderSelectedTags(type);
+    });
 
     lgRenderViewTabs();
     lgRenderMoreDropdown();
     lgUpdateViewButtons();
     lgRefresh();
+}
+
+// Delegates to pill filter controller syncStates (same as Portfolio trSyncPillStates)
+function lgSyncPillStates(type) {
+    if (type === 'investor' && lgInvPillFilter) lgInvPillFilter.syncStates();
+    else if (type === 'trader' && lgTrdPillFilter) lgTrdPillFilter.syncStates();
+    else if (type === 'broker' && lgBrkPillFilter) lgBrkPillFilter.syncStates();
+    else if ((type === 'tag' || !type) && lgTagPillFilter) lgTagPillFilter.syncStates();
+}
+
+// Delegates to pill filter controller renderSelectedTags (same as Portfolio trRenderSelectedTags)
+function lgRenderSelectedTags(type) {
+    if (type === 'investor' && lgInvPillFilter) lgInvPillFilter.renderSelectedTags();
+    else if (type === 'trader' && lgTrdPillFilter) lgTrdPillFilter.renderSelectedTags();
+    else if (type === 'broker' && lgBrkPillFilter) lgBrkPillFilter.renderSelectedTags();
+    else if ((type === 'tag' || !type) && lgTagPillFilter) lgTagPillFilter.renderSelectedTags();
 }
 
 async function lgSaveCurrentView(name) {
@@ -463,7 +476,7 @@ async function lgSaveCurrentView(name) {
     }
     var filters = lgGetCurrentFilters();
     try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_views', {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
             method: 'POST',
             headers: lgHeaders(),
             body: JSON.stringify({
@@ -471,7 +484,8 @@ async function lgSaveCurrentView(name) {
                 filters: filters,
                 sort_order: (lgViews.length || 0) + 1,
                 is_default: false,
-                show_in_tabs: true
+                show_in_tabs: true,
+                module: 'ledger'
             })
         });
         if (resp.ok) {
@@ -495,7 +509,7 @@ async function lgUpdateCurrentView() {
 
     var filters = lgGetCurrentFilters();
     try {
-        await fetch(SUPABASE_URL + '/rest/v1/ledger_views?id=eq.' + lgActiveViewId, {
+        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + lgActiveViewId, {
             method: 'PATCH',
             headers: lgHeaders(),
             body: JSON.stringify({ filters: filters })
@@ -513,7 +527,7 @@ async function lgSetDefaultView(viewId) {
         // Clear previous default
         var prevDefault = lgViews.find(function(v) { return v.is_default; });
         if (prevDefault) {
-            await fetch(SUPABASE_URL + '/rest/v1/ledger_views?id=eq.' + prevDefault.id, {
+            await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + prevDefault.id, {
                 method: 'PATCH',
                 headers: lgHeaders(),
                 body: JSON.stringify({ is_default: false })
@@ -522,7 +536,7 @@ async function lgSetDefaultView(viewId) {
         }
 
         // Set new default
-        await fetch(SUPABASE_URL + '/rest/v1/ledger_views?id=eq.' + viewId, {
+        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'PATCH',
             headers: lgHeaders(),
             body: JSON.stringify({ is_default: true })
@@ -539,7 +553,7 @@ async function lgSetDefaultView(viewId) {
 
 async function lgCloseViewTab(viewId) {
     try {
-        await fetch(SUPABASE_URL + '/rest/v1/ledger_views?id=eq.' + viewId, {
+        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'PATCH',
             headers: lgHeaders(),
             body: JSON.stringify({ show_in_tabs: false })
@@ -567,7 +581,7 @@ async function lgCloseViewTab(viewId) {
 
 async function lgShowViewTab(viewId) {
     try {
-        await fetch(SUPABASE_URL + '/rest/v1/ledger_views?id=eq.' + viewId, {
+        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'PATCH',
             headers: lgHeaders(),
             body: JSON.stringify({ show_in_tabs: true })
@@ -587,7 +601,7 @@ async function lgDeleteView(viewId) {
     if (!confirm('Delete this view?')) return;
 
     try {
-        await fetch(SUPABASE_URL + '/rest/v1/ledger_views?id=eq.' + viewId, {
+        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'DELETE',
             headers: lgHeaders()
         });
