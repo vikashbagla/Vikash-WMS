@@ -4286,6 +4286,20 @@ async function trLedgerDelete(id) {
     var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + id, { method: 'DELETE', headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
     if (!resp.ok) throw new Error('Delete failed: HTTP ' + resp.status);
 }
+// Safely populate a <select> element (avoids innerHTML += which breaks in some browsers)
+function trPopulateSelect(sel, placeholder, items) {
+    sel.innerHTML = '';
+    var def = document.createElement('option');
+    def.value = ''; def.textContent = placeholder;
+    sel.appendChild(def);
+    items.forEach(function(item) {
+        var opt = document.createElement('option');
+        opt.value = item.v;
+        opt.textContent = item.t;
+        sel.appendChild(opt);
+    });
+}
+
 async function trLedgerFetch(q) {
     var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?' + q, { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } });
     return resp.ok ? await resp.json() : [];
@@ -4301,9 +4315,14 @@ function trInitLedger() {
         var sel = document.createElement('select');
         sel.id = 'trLedgerInvestor';
         sel.style.cssText = 'width:100%;padding:4px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;';
-        sel.innerHTML = '<option value="">-- Select Investor --</option>';
+        var defOpt = document.createElement('option');
+        defOpt.value = ''; defOpt.textContent = '-- Select Investor --';
+        sel.appendChild(defOpt);
         trInvestors.forEach(function(inv) {
-            sel.innerHTML += '<option value="' + inv.id + '">' + wmsEsc(inv.short_name || inv.name) + '</option>';
+            var opt = document.createElement('option');
+            opt.value = inv.id;
+            opt.textContent = inv.short_name || inv.name;
+            sel.appendChild(opt);
         });
         container.innerHTML = '';
         container.appendChild(sel);
@@ -4467,18 +4486,9 @@ function trOpenCashEntryModal(editEntry) {
     var traderSel = document.getElementById('trCashTrader');
     var brokerSel = document.getElementById('trCashBroker');
 
-    invSel.innerHTML = '<option value="">-- Select Investor --</option>';
-    traderSel.innerHTML = '<option value="">-- None --</option>';
-    brokerSel.innerHTML = '<option value="">-- None (Consolidated) --</option>';
-
-    trInvestors.forEach(function(inv) {
-        var label = wmsEsc(inv.short_name || inv.name);
-        invSel.innerHTML += '<option value="' + inv.id + '">' + label + '</option>';
-        traderSel.innerHTML += '<option value="' + inv.id + '">' + label + '</option>';
-    });
-    trBrokers.forEach(function(brk) {
-        brokerSel.innerHTML += '<option value="' + brk.id + '">' + wmsEsc(brk.name) + '</option>';
-    });
+    trPopulateSelect(invSel, '-- Select Investor --', trInvestors.map(function(inv) { return { v: inv.id, t: inv.short_name || inv.name }; }));
+    trPopulateSelect(traderSel, '-- None --', trInvestors.map(function(inv) { return { v: inv.id, t: inv.short_name || inv.name }; }));
+    trPopulateSelect(brokerSel, '-- None (Consolidated) --', trBrokers.map(function(brk) { return { v: brk.id, t: brk.name }; }));
 
     // Defaults
     if (trLedgerInvestorId) invSel.value = trLedgerInvestorId;
@@ -4569,10 +4579,7 @@ async function trDeleteLedgerEntry(entryId) {
 function trOpenBookInterestModal() {
     // Populate investor
     var invSel = document.getElementById('trInterestInvestor');
-    invSel.innerHTML = '<option value="">-- Select Investor --</option>';
-    trInvestors.forEach(function(inv) {
-        invSel.innerHTML += '<option value="' + inv.id + '">' + wmsEsc(inv.short_name || inv.name) + '</option>';
-    });
+    trPopulateSelect(invSel, '-- Select Investor --', trInvestors.map(function(inv) { return { v: inv.id, t: inv.short_name || inv.name }; }));
     if (trLedgerInvestorId) invSel.value = trLedgerInvestorId;
 
     // Default dates: last 30 days
