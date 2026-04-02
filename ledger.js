@@ -54,37 +54,35 @@ function lgInit() {
     lgInited = true;
 
     // Create pill filters (same pattern as Portfolio — pass selectedIds array reference)
+    // Items start empty; lgRefreshPillItems() populates them with current data.
     var invContainer = document.getElementById('lgFilterInvestor');
-    if (invContainer && trInvestors) {
-        var invItems = trInvestors.map(function(inv) { return { id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') }; });
+    if (invContainer) {
         lgInvPillFilter = wmsPillSearch(invContainer, {
             label: 'Filter by Investor',
             placeholder: 'Type to search investors...',
-            items: invItems,
+            items: [],
             selectedIds: lgSelectedInvestorIds,
             onChange: function() { lgRefresh(); }
         });
     }
 
     var trdContainer = document.getElementById('lgFilterTrader');
-    if (trdContainer && trInvestors) {
-        var trdItems = trInvestors.map(function(inv) { return { id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') }; });
+    if (trdContainer) {
         lgTrdPillFilter = wmsPillSearch(trdContainer, {
             label: 'Filter by Trader',
             placeholder: 'Type to search traders...',
-            items: trdItems,
+            items: [],
             selectedIds: lgSelectedTraderIds,
             onChange: function() { lgRefresh(); }
         });
     }
 
     var brkContainer = document.getElementById('lgFilterBroker');
-    if (brkContainer && trBrokers) {
-        var brkItems = trBrokers.map(function(brk) { return { id: brk.id, label: brk.broker_code || brk.name, searchText: (brk.name || '') + ' ' + (brk.broker_code || '') }; });
+    if (brkContainer) {
         lgBrkPillFilter = wmsPillSearch(brkContainer, {
             label: 'Filter by Broker',
             placeholder: 'Type to search brokers...',
-            items: brkItems,
+            items: [],
             selectedIds: lgSelectedBrokerIds,
             onChange: function() { lgRefresh(); }
         });
@@ -92,15 +90,17 @@ function lgInit() {
 
     var tagContainer = document.getElementById('lgFilterTags');
     if (tagContainer) {
-        var tagItems = (wmsRefData.allTags || []).map(function(tag) { return { id: tag, label: tag }; });
         lgTagPillFilter = wmsPillSearch(tagContainer, {
             label: 'Filter by Tag',
             placeholder: 'Type to search tags...',
-            items: tagItems,
+            items: [],
             selectedIds: lgSelectedTagNames,
             onChange: function() { lgRefresh(); }
         });
     }
+
+    // Populate pill items with current data
+    lgRefreshPillItems();
 
     // Date filter — initialize shared wmsDateFilter component (same as Transactions page)
     var dateContainer = document.getElementById('lgDateFilter');
@@ -451,6 +451,30 @@ function lgApplyView(viewId) {
     lgRefresh();
 }
 
+// Refresh pill filter items with current reference data (handles async data loading)
+function lgRefreshPillItems() {
+    if (lgInvPillFilter && trInvestors && trInvestors.length > 0) {
+        lgInvPillFilter.setItems(trInvestors.map(function(inv) {
+            return { id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') };
+        }));
+    }
+    if (lgTrdPillFilter && trInvestors && trInvestors.length > 0) {
+        lgTrdPillFilter.setItems(trInvestors.map(function(inv) {
+            return { id: inv.id, label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') };
+        }));
+    }
+    if (lgBrkPillFilter && trBrokers && trBrokers.length > 0) {
+        lgBrkPillFilter.setItems(trBrokers.map(function(brk) {
+            return { id: brk.id, label: brk.broker_code || brk.name, searchText: (brk.name || '') + ' ' + (brk.broker_code || '') };
+        }));
+    }
+    if (lgTagPillFilter && wmsRefData.allTags && wmsRefData.allTags.length > 0) {
+        lgTagPillFilter.setItems(wmsRefData.allTags.map(function(tag) {
+            return { id: tag, label: tag };
+        }));
+    }
+}
+
 // Delegates to pill filter controller syncStates (same as Portfolio trSyncPillStates)
 function lgSyncPillStates(type) {
     if (type === 'investor' && lgInvPillFilter) lgInvPillFilter.syncStates();
@@ -639,6 +663,9 @@ function lgGetCurrentFilters() {
 // ============================================================================
 
 async function lgRefresh() {
+    // Ensure pill items are populated with latest data (handles async load race)
+    lgRefreshPillItems();
+
     // Use date range from wmsDateFilter component
     var dateFrom = lgDateFrom || '2000-01-01';
     var dateTo = lgDateTo || '2099-12-31';
@@ -1096,6 +1123,7 @@ function lgHeaders() {
 
 window.lgInit = lgInit;
 window.lgRefresh = lgRefresh;
+window.lgRefreshPillItems = lgRefreshPillItems;
 window.lgEditEntry = lgEditEntry;
 window.lgDeleteEntry = lgDeleteEntry;
 window.lgShowInterestDetail = lgShowInterestDetail;
