@@ -461,6 +461,12 @@ function lgApplyView(viewId) {
 }
 
 async function lgSaveCurrentView(name) {
+    // Duplicate name check
+    var exists = lgViews.some(function(v) { return v.name.toLowerCase() === name.toLowerCase(); });
+    if (exists) {
+        showAlert('A view named "' + name + '" already exists', 'error', 3000);
+        return;
+    }
     var filters = lgGetCurrentFilters();
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_views', {
