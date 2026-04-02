@@ -382,8 +382,8 @@ async function editInvestor(id) {
     document.getElementById('investorPan').value = investor.pan || '';
     document.getElementById('investorPhone').value = investor.phone || '';
     document.getElementById('investorStatus').value = investor.is_active ? 'true' : 'false';
-    document.getElementById('investorInterestRate').value = investor.interest_rate || '';
     var invTerms = investor.interest_terms;
+    document.getElementById('investorInterestRate').value = (invTerms && invTerms.rate) ? invTerms.rate : '';
     document.getElementById('investorInterestFreq').value = (invTerms && invTerms.frequency) ? invTerms.frequency : '';
 
     const accounts = await DB.getBrokerAccounts(id);
@@ -407,15 +407,10 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
     });
 
     // Extract ledger fields from existing account (if editing)
-    var ibaInterestRate = (existingAcc && existingAcc.interest_rate) ? existingAcc.interest_rate : '';
-    var ibaMarginRate = (existingAcc && existingAcc.margin_rate) ? existingAcc.margin_rate : '';
     var ibaInterestTerms = (existingAcc && existingAcc.interest_terms) ? existingAcc.interest_terms : null;
+    var ibaInterestRate = (ibaInterestTerms && ibaInterestTerms.rate) ? ibaInterestTerms.rate : '';
     var ibaIntFreq = (ibaInterestTerms && ibaInterestTerms.frequency) ? ibaInterestTerms.frequency : '';
-    var ibaIntCompound = (ibaInterestTerms && ibaInterestTerms.compound) ? true : false;
-    // If interest_terms has a rate, use that; otherwise fall back to interest_rate column
-    if (ibaInterestTerms && ibaInterestTerms.rate !== undefined && ibaInterestTerms.rate !== null) {
-        ibaInterestRate = ibaInterestTerms.rate;
-    }
+    var ibaMarginRate = (existingAcc && existingAcc.margin_rate) ? existingAcc.margin_rate : '';
 
     const html = `
         <div class="broker-account-item" id="broker-account-${index}">
@@ -549,7 +544,6 @@ async function saveInvestor() {
         pan: document.getElementById('investorPan').value.trim().toUpperCase() || null,
         phone: document.getElementById('investorPhone').value.trim() || null,
         is_active: document.getElementById('investorStatus').value === 'true',
-        interest_rate: invIntRate,
         interest_terms: invInterestTerms
     };
 
@@ -607,7 +601,6 @@ async function saveInvestor() {
                 },
                 charges_inclusive: document.querySelector(`.charges-inclusive[data-index="${i}"]`).value === 'true',
                 is_custom_rates: true,
-                interest_rate: ibaIntRate,
                 interest_terms: ibaInterestTerms,
                 margin_rate: ibaMarginRate
             };
