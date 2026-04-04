@@ -31,13 +31,15 @@ function wmsHeaders(extra) {
 
 /**
  * Build headers for Supabase Edge Function calls.
- * Edge functions use SERVICE_ROLE_KEY internally and must always be called
- * with the anon key (authenticated JWTs are rejected by the gateway).
+ * Edge functions use SERVICE_ROLE_KEY internally; gateway needs anon key.
+ * The user's JWT is passed as x-user-token for auth verification inside
+ * the edge function (prevents anonymous callers from invoking functions).
  * @param {Object} [extra] — additional headers to merge
  * @returns {Object} headers object ready for fetch()
  */
 function wmsEdgeHeaders(extra) {
     var h = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+    if (_wmsAuthToken) { h['x-user-token'] = _wmsAuthToken; }
     if (extra) { for (var k in extra) h[k] = extra[k]; }
     return h;
 }
