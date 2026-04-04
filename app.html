@@ -343,6 +343,20 @@
                 avatar_url: user.user_metadata && user.user_metadata.avatar_url
             };
 
+            // Load preferences from the users table and merge into currentUser
+            try {
+                var prefRes = await fetch(
+                    window.SUPABASE_URL + '/rest/v1/users?id=eq.' + user.id + '&select=preferences',
+                    { headers: wmsHeaders() }
+                );
+                var prefRows = await prefRes.json();
+                if (prefRows && prefRows[0] && prefRows[0].preferences) {
+                    window.currentUser.preferences = prefRows[0].preferences;
+                }
+            } catch (prefErr) {
+                console.warn('Could not load user preferences:', prefErr);
+            }
+
             // Also keep wms_user in localStorage for backward compatibility
             localStorage.setItem('wms_user', JSON.stringify(window.currentUser));
 
