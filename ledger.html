@@ -4,7 +4,59 @@
 <!-- Do NOT wrap in another #tr-ledger div.                      -->
 <!-- ============================================================ -->
 
-<div id="lgContainer" style="display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden;">
+<head>
+<style>
+/* ============================================================ */
+/* LEDGER MODULE — Scoped styles (lg- prefix)                   */
+/* ============================================================ */
+
+/* Layout */
+#lgContainer { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+#lgFiltersBar { flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0; }
+#lgSummarySection { flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#fafbfc; overflow:auto; max-height:40%; }
+#lgFooter { flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#f7fafc; display:flex; gap:8px; justify-content:flex-end; }
+
+/* Date filter wrapper */
+.lg-date-wrap { margin-top:12px; display:flex; flex-direction:column; gap:3px; width:auto; min-width:160px; }
+
+/* Filters grid */
+.lg-filters-grid { flex:1; grid-template-columns: repeat(4, 1fr); }
+
+/* Table — override table-container column widths for ledger layout */
+#lgTable { table-layout:fixed; width:100%; min-width:860px; }
+#lgTable th, #lgTable td { overflow:hidden; text-overflow:ellipsis; }
+#lgTable th { width:auto; } /* reset inherited widths from portfolio table-container */
+
+/* Sortable headers */
+#lgTable th.lg-sortable { cursor:pointer; user-select:none; }
+#lgTable th.lg-sortable:hover { color:#667eea; }
+
+/* New entry row */
+#lgNewEntryRow td { vertical-align:middle; }
+#lgNewEntryRow .wms-input-compact { width:100%; box-sizing:border-box; }
+#lgNewEntryRow select.wms-input-compact { padding:3px 4px; }
+
+/* Edit/delete action links */
+.lg-actions { font-size:10px; white-space:nowrap; }
+.lg-actions a { color:#718096; text-decoration:none; margin-left:4px; }
+.lg-actions a:hover { color:#667eea; }
+.lg-actions a.lg-del:hover { color:#dc2626; }
+
+/* Summary section label */
+.lg-summary-label { font-size:11px; font-weight:600; color:#2d3748; margin-bottom:6px; }
+
+/* Summary table — reuse data-table styles */
+#lgSummarySection table { table-layout:auto; width:100%; }
+
+/* Delete confirmation inline */
+.lg-confirm-bar { display:inline-flex; align-items:center; gap:4px; margin-left:6px; font-size:10px; }
+.lg-confirm-bar button { font-size:10px; padding:1px 6px; border-radius:3px; border:1px solid #e2e8f0; cursor:pointer; background:#fff; }
+.lg-confirm-bar .lg-confirm-yes { color:#dc2626; border-color:#dc2626; }
+.lg-confirm-bar .lg-confirm-yes:hover { background:#fef2f2; }
+</style>
+</head>
+
+<div id="lgContainer">
 
     <!-- ============================================================ -->
     <!-- 1. VIEW TABS BAR                                             -->
@@ -23,8 +75,8 @@
         <button class="tr-vta-btn" id="lgSaveNewBtn" title="Save as new view">+ Save New</button>
         <button class="tr-vta-btn" id="lgFiltersToggle" title="Toggle filters" style="font-size:10px;">▲</button>
         <div class="tr-save-prompt" id="lgSavePrompt">
-          <input type="text" id="lgSavePromptName" placeholder="View name...">
-          <button class="tr-vta-btn" id="lgSavePromptOk" style="background:#667eea;color:#fff;border-color:#667eea;">✓</button>
+          <input type="text" id="lgSavePromptName" placeholder="View name..." class="wms-input-compact">
+          <button class="tr-vta-btn wms-btn-primary" id="lgSavePromptOk">✓</button>
           <button class="tr-vta-btn" id="lgSavePromptCancel">✕</button>
         </div>
       </div>
@@ -33,13 +85,13 @@
     <!-- ============================================================ -->
     <!-- 2. FILTER BAR (hidden by default, toggled via ▲/▼ button)   -->
     <!-- ============================================================ -->
-    <div id="lgFiltersBar" style="flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0;">
-      <!-- Date filter — uses shared wmsDateFilter() component (same as Transactions page) -->
-      <div style="margin-top:12px; display:flex; flex-direction:column; gap:3px; width:auto; min-width:160px;">
-        <div id="lgDateFilter" style="display:flex; flex-wrap:wrap; gap:4px;"></div>
+    <div id="lgFiltersBar">
+      <!-- Date filter — uses shared wmsDateFilter() component -->
+      <div class="lg-date-wrap">
+        <div id="lgDateFilter"></div>
       </div>
       <!-- 4-column filter grid (same as Portfolio) -->
-      <div class="filters-grid" style="flex:1; grid-template-columns: repeat(4, 1fr);">
+      <div class="filters-grid lg-filters-grid">
         <div id="lgFilterInvestor"></div>
         <div id="lgFilterTrader"></div>
         <div id="lgFilterBroker"></div>
@@ -54,14 +106,14 @@
       <table id="lgTable">
         <thead id="lgHead">
           <tr>
-            <th style="width:80px;">Date</th>
+            <th class="lg-sortable" data-sort="date" style="width:80px;">Date <span class="sort-indicator"></span></th>
             <th style="width:120px;">Scrip</th>
             <th style="width:80px;">Product</th>
-            <th class="text-right" style="width:70px;">Qty</th>
+            <th class="text-right lg-sortable" data-sort="qty" style="width:70px;">Qty <span class="sort-indicator"></span></th>
             <th class="text-right" style="width:80px;">Price</th>
             <th class="text-right" style="width:80px;">Net</th>
-            <th class="text-right" style="width:100px;">Amount</th>
-            <th class="text-right" style="width:100px;">Balance</th>
+            <th class="text-right lg-sortable" data-sort="amount" style="width:100px;">Amount <span class="sort-indicator" id="lgAmtUnit"></span></th>
+            <th class="text-right lg-sortable" data-sort="balance" style="width:100px;">Balance <span class="sort-indicator" id="lgBalUnit"></span></th>
             <th class="text-right" style="width:100px;">FO Margin Adj</th>
           </tr>
         </thead>
@@ -69,13 +121,13 @@
           <!-- Inline new entry row at top -->
           <tr id="lgNewEntryRow" class="total-row" style="background:#f9fafb;">
             <td>
-              <input type="date" id="lgNewDate" style="width:100%; box-sizing:border-box;">
+              <div id="lgNewDateContainer"></div>
             </td>
             <td>
-              <input type="text" id="lgNewReference" placeholder="Ref / Note..." style="width:100%; box-sizing:border-box;">
+              <input type="text" id="lgNewReference" placeholder="Ref / Note..." class="wms-input-compact">
             </td>
             <td>
-              <select id="lgNewType" style="width:100%; box-sizing:border-box;">
+              <select id="lgNewType" class="wms-input-compact">
                 <option value="CASH_RECEIVED">Cash In</option>
                 <option value="CASH_PAID">Cash Out</option>
                 <option value="ADJUSTMENT">Adjustment</option>
@@ -86,30 +138,32 @@
             <td></td>
             <td></td>
             <td class="text-right">
-              <input type="number" id="lgNewAmount" placeholder="0.00" step="0.01" style="width:100%; box-sizing:border-box; text-align:right;">
+              <input type="number" id="lgNewAmount" placeholder="0.00" step="0.01" class="wms-input-compact wms-input-number">
             </td>
             <td class="text-right"></td>
-            <td style="text-align:center;">
-              <button id="lgAddEntryBtn" class="tr-vta-btn" style="background:#059669;color:#fff;border-color:#059669;">Add</button>
+            <td class="text-right">
+              <button id="lgAddEntryBtn" class="wms-btn wms-btn-primary" style="font-size:11px; padding:3px 10px;">Add</button>
             </td>
           </tr>
 
-          <!-- Data rows will be inserted here -->
+          <!-- Data rows inserted by JS -->
+        </tbody>
+        <tfoot>
           <tr class="total-row" style="border-top:2px solid #cbd5e0;">
             <td colspan="6" class="text-right" style="font-weight:600;">TOTALS:</td>
             <td id="lgTotalAmount" class="text-right" style="font-weight:600;"></td>
             <td id="lgTotalBalance" class="text-right" style="font-weight:600;"></td>
             <td id="lgTotalMargin" class="text-right" style="font-weight:600;"></td>
           </tr>
-        </tbody>
+        </tfoot>
       </table>
     </div>
 
     <!-- ============================================================ -->
     <!-- 4. CURRENT BALANCE SECTION                                   -->
     <!-- ============================================================ -->
-    <div id="lgSummarySection" style="flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#fafbfc; overflow:auto; max-height:40%;">
-      <div style="font-size:11px; font-weight:600; color:#2d3748; margin-bottom:6px;">Current Balance Summary</div>
+    <div id="lgSummarySection">
+      <div class="lg-summary-label">Current Balance Summary</div>
       <table>
         <thead>
           <tr>
@@ -124,13 +178,13 @@
         </thead>
         <tbody id="lgSummaryBody">
           <tr>
-            <td colspan="7" style="text-align:center; padding:20px; color:#9ca3af;">Loading holdings...</td>
+            <td colspan="7" class="text-center" style="padding:20px; color:#9ca3af;">Loading holdings...</td>
           </tr>
         </tbody>
         <tfoot>
           <tr class="total-row" style="border-top:2px solid #cbd5e0;">
             <td colspan="6" class="text-right" style="font-weight:600;">Holdings Value:</td>
-            <td id="lgHoldingsValue" class="text-right" style="font-weight:600; color:#059669;"></td>
+            <td id="lgHoldingsValue" class="text-right" style="font-weight:600;"></td>
           </tr>
           <tr class="total-row">
             <td colspan="6" class="text-right">MTM of F&O:</td>
@@ -155,7 +209,7 @@
     <!-- ============================================================ -->
     <!-- 5. FOOTER BAR (Export buttons)                               -->
     <!-- ============================================================ -->
-    <div id="lgFooter" style="flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#f7fafc; display:flex; gap:8px; justify-content:flex-end;">
+    <div id="lgFooter">
       <button id="lgExportPdfBtn" class="tr-vta-btn">Export PDF</button>
       <button id="lgExportExcelBtn" class="tr-vta-btn">Export Excel</button>
     </div>
@@ -163,73 +217,74 @@
   </div>
 
 <!-- ============================================================ -->
-<!-- 6. INTEREST DETAIL PANEL (Hidden by default)                -->
+<!-- 6. INTEREST DETAIL MODAL                                     -->
 <!-- ============================================================ -->
-<div id="lgInterestDetail" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; border:1px solid #cbd5e0; border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.15); z-index:100; padding:0; width:500px; max-height:80vh; overflow:auto;">
-  <div style="background:#f7fafc; padding:8px 12px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
-    <div style="font-size:12px; font-weight:600; color:#2d3748;">Interest Detail</div>
-    <button id="lgInterestDetailClose" style="background:none; border:none; font-size:16px; cursor:pointer; color:#9ca3af;">×</button>
-  </div>
-  <div style="padding:12px;">
-    <!-- Period breakdown table -->
-    <table style="font-size:10px; margin-bottom:12px;">
-      <thead>
-        <tr>
-          <th>Period</th>
-          <th class="text-right">Balance</th>
-          <th class="text-right">Days</th>
-          <th class="text-right">Rate %</th>
-          <th class="text-right">Interest</th>
-        </tr>
-      </thead>
-      <tbody id="lgInterestDetailBody">
-        <tr><td colspan="5" style="text-align:center; padding:20px; color:#9ca3af;">Loading...</td></tr>
-      </tbody>
-    </table>
-    <!-- Editable total -->
-    <div style="padding:8px; background:#fafbfc; border:1px solid #e2e8f0; border-radius:3px; margin-bottom:12px;">
-      <label style="display:block; font-size:10px; font-weight:600; color:#4a5568; margin-bottom:4px;">Total Interest (Editable)</label>
-      <input type="number" id="lgInterestTotalEdit" step="0.01" style="width:100%; padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px; box-sizing:border-box;">
+<div id="lgInterestDetail" class="wms-modal-overlay">
+  <div class="wms-modal-dialog" style="width:500px;">
+    <div class="wms-modal-header">
+      <h3>Interest Detail</h3>
+      <button class="wms-btn-close" id="lgInterestDetailClose">✕</button>
     </div>
-    <!-- Post button -->
-    <div style="display:flex; gap:6px;">
-      <button id="lgInterestPostBtn" class="tr-vta-btn" style="flex:1; background:#059669;color:#fff;border-color:#059669; font-weight:600;">Post Interest</button>
-      <button id="lgInterestDetailCancelBtn" class="tr-vta-btn" style="flex:1;">Cancel</button>
+    <div style="padding:12px; overflow-y:auto; max-height:60vh;">
+      <!-- Period breakdown table -->
+      <table style="margin-bottom:12px;">
+        <thead>
+          <tr>
+            <th>Period</th>
+            <th class="text-right">Balance</th>
+            <th class="text-right">Days</th>
+            <th class="text-right">Rate %</th>
+            <th class="text-right">Interest</th>
+          </tr>
+        </thead>
+        <tbody id="lgInterestDetailBody">
+          <tr><td colspan="5" class="text-center" style="padding:20px; color:#9ca3af;">Loading...</td></tr>
+        </tbody>
+      </table>
+      <!-- Editable total -->
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="edit-section-label">Total Interest (Editable)</label>
+        <input type="number" id="lgInterestTotalEdit" step="0.01" class="wms-input-compact wms-input-number" style="width:100%;">
+      </div>
+    </div>
+    <div class="wms-modal-footer">
+      <button id="lgInterestDetailCancelBtn" class="wms-btn wms-btn-secondary">Cancel</button>
+      <button id="lgInterestPostBtn" class="wms-btn wms-btn-primary">Post Interest</button>
     </div>
   </div>
 </div>
 
 <!-- ============================================================ -->
-<!-- 7. BOOK INTEREST MODAL (Hidden by default)                  -->
+<!-- 7. BOOK INTEREST MODAL                                       -->
 <!-- ============================================================ -->
-<div id="lgBookInterestModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:200; align-items:center; justify-content:center;">
-  <div style="background:#fff; border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.15); padding:0; width:600px; max-height:80vh; overflow:auto;">
-    <div style="background:#f7fafc; padding:12px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
-      <div style="font-size:12px; font-weight:600; color:#2d3748;">Book Interest</div>
-      <button id="lgBookInterestClose" style="background:none; border:none; font-size:16px; cursor:pointer; color:#9ca3af;">×</button>
+<div id="lgBookInterestModal" class="wms-modal-overlay">
+  <div class="wms-modal-dialog" style="width:600px;">
+    <div class="wms-modal-header">
+      <h3>Book Interest</h3>
+      <button class="wms-btn-close" id="lgBookInterestClose">✕</button>
     </div>
-    <div style="padding:12px;">
+    <div style="padding:12px; overflow-y:auto; max-height:60vh;">
       <!-- Investor select -->
-      <div style="margin-bottom:12px;">
-        <label style="display:block; font-size:10px; font-weight:600; color:#4a5568; margin-bottom:4px;">Investor</label>
-        <select id="lgBookInvestorSelect" style="width:100%; padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px;">
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="edit-section-label">Investor</label>
+        <select id="lgBookInvestorSelect" class="wms-input-compact" style="width:100%;">
           <option>Select investor...</option>
         </select>
       </div>
       <!-- From/To dates -->
       <div style="display:flex; gap:8px; margin-bottom:12px;">
-        <div style="flex:1;">
-          <label style="display:block; font-size:10px; font-weight:600; color:#4a5568; margin-bottom:4px;">From</label>
-          <input type="date" id="lgBookFromDate" style="width:100%; padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px;">
+        <div class="form-group" style="flex:1;">
+          <label class="edit-section-label">From</label>
+          <div id="lgBookFromDateContainer"></div>
         </div>
-        <div style="flex:1;">
-          <label style="display:block; font-size:10px; font-weight:600; color:#4a5568; margin-bottom:4px;">To</label>
-          <input type="date" id="lgBookToDate" style="width:100%; padding:4px 6px; font-size:11px; border:1px solid #e2e8f0; border-radius:3px;">
+        <div class="form-group" style="flex:1;">
+          <label class="edit-section-label">To</label>
+          <div id="lgBookToDateContainer"></div>
         </div>
       </div>
       <!-- Preview table -->
       <div style="margin-bottom:12px; border:1px solid #e2e8f0; border-radius:3px; overflow:auto;">
-        <table style="font-size:10px;">
+        <table>
           <thead>
             <tr>
               <th>Period</th>
@@ -238,20 +293,19 @@
             </tr>
           </thead>
           <tbody id="lgBookPreviewBody">
-            <tr><td colspan="3" style="text-align:center; padding:20px; color:#9ca3af;">Select investor and dates to preview</td></tr>
+            <tr><td colspan="3" class="text-center" style="padding:20px; color:#9ca3af;">Select investor and dates to preview</td></tr>
           </tbody>
         </table>
       </div>
       <!-- Total interest -->
-      <div style="padding:8px; background:#fafbfc; border:1px solid #e2e8f0; border-radius:3px; margin-bottom:12px;">
-        <div style="font-size:10px; font-weight:600; color:#4a5568; margin-bottom:4px;">Total Interest to Book</div>
-        <div id="lgBookTotalInterest" style="font-size:14px; font-weight:600; color:#059669;">0.00</div>
+      <div class="form-group" style="margin-bottom:12px; padding:8px; background:#fafbfc; border:1px solid #e2e8f0; border-radius:3px;">
+        <label class="edit-section-label">Total Interest to Book</label>
+        <div id="lgBookTotalInterest" style="font-size:14px; font-weight:600;" class="positive">0.00</div>
       </div>
-      <!-- Buttons -->
-      <div style="display:flex; gap:6px;">
-        <button id="lgBookConfirmBtn" class="tr-vta-btn" style="flex:1; background:#059669;color:#fff;border-color:#059669; font-weight:600;">Confirm & Post</button>
-        <button id="lgBookCancelBtn" class="tr-vta-btn" style="flex:1;">Cancel</button>
-      </div>
+    </div>
+    <div class="wms-modal-footer">
+      <button id="lgBookCancelBtn" class="wms-btn wms-btn-secondary">Cancel</button>
+      <button id="lgBookConfirmBtn" class="wms-btn wms-btn-primary">Confirm & Post</button>
     </div>
   </div>
 </div>

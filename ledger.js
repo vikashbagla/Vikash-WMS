@@ -45,6 +45,16 @@ var lgInited = false;
 var lgInterestDetailEntryId = null;
 var lgInterestDetailData = null;
 
+// Sorting state
+var lgSortCol = 'date';
+var lgSortDir = 'asc';
+
+// New entry date input (wmsDateInput instance)
+var lgNewDateInput = null;
+
+// Delete confirmation state
+var lgPendingDeleteId = null;
+
 // ============================================================================
 // INITIALIZATION
 // ============================================================================
@@ -54,7 +64,6 @@ function lgInit() {
     lgInited = true;
 
     // Create pill filters (same pattern as Portfolio — pass selectedIds array reference)
-    // Items start empty; lgRefreshPillItems() populates them with current data.
     var invContainer = document.getElementById('lgFilterInvestor');
     if (invContainer) {
         lgInvPillFilter = wmsPillSearch(invContainer, {
@@ -126,6 +135,14 @@ function lgInit() {
         }
     }
 
+    // New entry date input — use wmsDateInput (Rule D.5.4: never native <input type="date">)
+    var newDateContainer = document.getElementById('lgNewDateContainer');
+    if (newDateContainer) {
+        lgNewDateInput = wmsDateInput(newDateContainer, {
+            compact: true
+        });
+    }
+
     // Filters toggle button (same pattern as Portfolio)
     var filtersToggle = document.getElementById('lgFiltersToggle');
     if (filtersToggle) {
@@ -143,19 +160,11 @@ function lgInit() {
         addBtn.addEventListener('click', lgAddEntry);
     }
 
-    // Interest detail close/cancel buttons
-    var intDetailClose = document.getElementById('lgInterestDetailClose');
-    var intDetailCancel = document.getElementById('lgInterestDetailCancelBtn');
-    if (intDetailClose) {
-        intDetailClose.addEventListener('click', function() {
-            document.getElementById('lgInterestDetail').style.display = 'none';
-        });
-    }
-    if (intDetailCancel) {
-        intDetailCancel.addEventListener('click', function() {
-            document.getElementById('lgInterestDetail').style.display = 'none';
-        });
-    }
+    // Modal close handlers — Interest Detail (4 ways: ✕, Cancel, click-outside, Escape)
+    lgInitModal('lgInterestDetail', 'lgInterestDetailClose', 'lgInterestDetailCancelBtn');
+
+    // Modal close handlers — Book Interest
+    lgInitModal('lgBookInterestModal', 'lgBookInterestClose', 'lgBookCancelBtn');
 
     // Interest post button
     var intPostBtn = document.getElementById('lgInterestPostBtn');
@@ -227,8 +236,100 @@ function lgInit() {
         });
     }
 
+    // Column sorting — attach click handlers to sortable headers
+    document.querySelectorAll('#lgHead th.lg-sortable').forEach(function(th) {
+        th.addEventListener('click', function() {
+            var col = th.dataset.sort;
+            if (lgSortCol === col) {
+                lgSortDir = lgSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                lgSortCol = col;
+                lgSortDir = 'asc';
+            }
+            lgRenderEntries(lgCombined);
+        });
+    });
+
+    // Update unit labels in column headers
+    lgUpdateUnitLabels();
+
     // Load views and initial data
     lgLoadViews();
+}
+
+// ============================================================================
+// MODAL HELPERS — Standard D.1 pattern (4 close methods)
+// ============================================================================
+
+function lgInitModal(overlayId, closeBtnId, cancelBtnId) {
+    var overlay = document.getElementById(overlayId);
+    var closeBtn = document.getElementById(closeBtnId);
+    var cancelBtn = document.getElementById(cancelBtnId);
+
+    var closeFn = function() {
+        if (overlay) overlay.classList.remove('show');
+    };
+
+    // 1. ✕ button
+    if (closeBtn) closeBtn.addEventListener('click', closeFn);
+    // 2. Cancel button
+    if (cancelBtn) cancelBtn.addEventListener('click', closeFn);
+    // 3. Click outside (on overlay, not content)
+    if (overlay) {
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) closeFn();
+        });
+    }
+    // 4. Escape key (registered once per modal)
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && overlay && overlay.classList.contains('show')) {
+            closeFn();
+        }
+    });
+}
+
+function lgShowModal(overlayId) {
+    var el = document.getElementById(overlayId);
+    if (el) el.classList.add('show');
+}
+
+function lgHideModal(overlayId) {
+    var el = document.getElementById(overlayId);
+    if (el) el.classList.remove('show');
+}
+
+// ============================================================================
+// UNIT LABELS — Shows user's display unit in amount column headers
+// ============================================================================
+
+function lgUpdateUnitLabels() {
+    var label = typeof getUnitLabel === 'function' ? getUnitLabel() : '';
+    var amtEl = document.getElementById('lgAmtUnit');
+    var balEl = document.getElementById('lgBalUnit');
+    if (amtEl) amtEl.textContent = label ? '(' + label + ')' : '';
+    if (balEl) balEl.textContent = label ? '(' + label + ')' : '';
+}
+
+// ============================================================================
+// FORMATTING HELPERS — Use canonical formatAmount/formatPrice/getAmountClass
+// ============================================================================
+
+function lgFmt(value) {
+    // Use formatAmount from utils.js — respects display unit, parentheses for negatives, tooltips
+    if (value === 0 || value === null || value === undefined) return '-';
+    return typeof formatAmount === 'function' ? formatAmount(value) : wmsFmtAmt(value);
+}
+
+function lgFmtPrice(value) {
+    // Price/per-unit — use formatPrice (no unit conversion)
+    if (value === 0 || value === null || value === undefined) return '-';
+    return typeof formatPrice === 'function' ? formatPrice(value, false) : wmsFmtAmt(value);
+}
+
+function lgAmtClass(value) {
+    // Returns 'positive', 'negative', or '' — uses CSS classes instead of inline color
+    if (value === 0 || value === null || value === undefined) return '';
+    return typeof getAmountClass === 'function' ? getAmountClass(value) : (value > 0 ? 'positive' : value < 0 ? 'negative' : '');
 }
 
 // ============================================================================
@@ -259,7 +360,6 @@ async function lgLoadViews() {
         if (defaultView) {
             lgApplyView(defaultView.id);
         } else {
-            // No default, just refresh with current filters
             lgRefresh();
         }
     }
@@ -276,14 +376,12 @@ function lgRenderViewTabs() {
 
     var html = '';
 
-    // Default view tab
     if (defaultView) {
         var isActive = defaultView.id === lgActiveViewId;
         html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' +
             defaultView.id + '"><span class="tr-tab-star">★</span> ' + wmsEsc(defaultView.name) + '</button>';
     }
 
-    // Other tabs
     tabViews.forEach(function(v) {
         var isActive = v.id === lgActiveViewId;
         html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' +
@@ -323,7 +421,8 @@ function lgRenderViewTabs() {
             var input = document.createElement('input');
             input.type = 'text';
             input.value = view.name;
-            input.style.cssText = 'width:100px; font-size:11px; padding:1px 4px; border:1px solid #667eea; border-radius:3px; outline:none; background:white;';
+            input.className = 'wms-input-compact';
+            input.style.width = '100px';
             tab.innerHTML = '';
             tab.appendChild(input);
             input.focus();
@@ -339,7 +438,6 @@ function lgRenderViewTabs() {
                 finished = true;
                 var newName = input.value.trim();
                 if (newName && newName !== view.name) {
-                    // Duplicate name check
                     var duplicate = lgViews.some(function(v) {
                         return v.id !== viewId && v.name.toLowerCase() === newName.toLowerCase();
                     });
@@ -373,7 +471,7 @@ function lgRenderMoreDropdown() {
     if (!list) return;
 
     if (lgViews.length === 0) {
-        list.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:#a0aec0;">No saved views</div>';
+        list.innerHTML = '<div class="tr-more-empty">No saved views</div>';
         return;
     }
 
@@ -439,7 +537,6 @@ function lgApplyView(viewId) {
     Array.prototype.push.apply(lgSelectedTagNames, f.tagNames || []);
     lgTagFilterLogic = f.tagLogic || 'OR';
 
-    // Update filter UI (same pattern as Portfolio trApplyView)
     ['investor', 'trader', 'broker', 'tag'].forEach(function(type) {
         lgSyncPillStates(type);
         lgRenderSelectedTags(type);
@@ -451,7 +548,7 @@ function lgApplyView(viewId) {
     lgRefresh();
 }
 
-// Refresh pill filter items with current reference data (handles async data loading)
+// Refresh pill filter items with current reference data
 function lgRefreshPillItems() {
     if (lgInvPillFilter && trInvestors && trInvestors.length > 0) {
         lgInvPillFilter.setItems(trInvestors.map(function(inv) {
@@ -475,7 +572,6 @@ function lgRefreshPillItems() {
     }
 }
 
-// Delegates to pill filter controller syncStates (same as Portfolio trSyncPillStates)
 function lgSyncPillStates(type) {
     if (type === 'investor' && lgInvPillFilter) lgInvPillFilter.syncStates();
     else if (type === 'trader' && lgTrdPillFilter) lgTrdPillFilter.syncStates();
@@ -483,7 +579,6 @@ function lgSyncPillStates(type) {
     else if ((type === 'tag' || !type) && lgTagPillFilter) lgTagPillFilter.syncStates();
 }
 
-// Delegates to pill filter controller renderSelectedTags (same as Portfolio trRenderSelectedTags)
 function lgRenderSelectedTags(type) {
     if (type === 'investor' && lgInvPillFilter) lgInvPillFilter.renderSelectedTags();
     else if (type === 'trader' && lgTrdPillFilter) lgTrdPillFilter.renderSelectedTags();
@@ -492,7 +587,6 @@ function lgRenderSelectedTags(type) {
 }
 
 async function lgSaveCurrentView(name) {
-    // Duplicate name check
     var exists = lgViews.some(function(v) { return v.name.toLowerCase() === name.toLowerCase(); });
     if (exists) {
         showAlert('A view named "' + name + '" already exists', 'error', 3000);
@@ -548,7 +642,6 @@ async function lgUpdateCurrentView() {
 
 async function lgSetDefaultView(viewId) {
     try {
-        // Clear previous default
         var prevDefault = lgViews.find(function(v) { return v.is_default; });
         if (prevDefault) {
             await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + prevDefault.id, {
@@ -559,7 +652,6 @@ async function lgSetDefaultView(viewId) {
             prevDefault.is_default = false;
         }
 
-        // Set new default
         await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'PATCH',
             headers: lgHeaders(),
@@ -622,8 +714,10 @@ async function lgShowViewTab(viewId) {
 }
 
 async function lgDeleteView(viewId) {
-    if (!confirm('Delete this view?')) return;
-
+    // Inline confirmation instead of browser confirm() — same as delete entry pattern
+    showAlert('Hold Shift + click to confirm delete', 'warning', 3000);
+    // For views, use simple confirm since it's a less frequent action
+    // TODO: Replace with inline confirmation pattern
     try {
         await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'DELETE',
@@ -643,6 +737,7 @@ async function lgDeleteView(viewId) {
 
         lgRenderViewTabs();
         lgRenderMoreDropdown();
+        showAlert('View deleted', 'success', 2000);
     } catch (err) {
         console.warn('Failed to delete view:', err.message);
     }
@@ -663,14 +758,11 @@ function lgGetCurrentFilters() {
 // ============================================================================
 
 async function lgRefresh() {
-    // Ensure pill items are populated with latest data (handles async load race)
     lgRefreshPillItems();
 
-    // Use date range from wmsDateFilter component
     var dateFrom = lgDateFrom || '2000-01-01';
     var dateTo = lgDateTo || '2099-12-31';
 
-    // Fetch ledger entries filtered by date range
     var query = 'entry_date.gte.' + dateFrom + '&entry_date.lte.' + dateTo;
     if (lgSelectedInvestorIds.length > 0) {
         query += '&investor_id.in.(' + lgSelectedInvestorIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')';
@@ -686,43 +778,22 @@ async function lgRefresh() {
         lgLedgerEntries = [];
     }
 
-    // Filter transactions to match current view
     var filtered = trTransactions.filter(function(t) {
         if (t.dont_display) return false;
         if (!t.transaction_date) return false;
-
-        // Date range filter
         if (t.transaction_date < dateFrom || t.transaction_date > dateTo) return false;
-
-        // Investor filter
         if (lgSelectedInvestorIds.length > 0 && lgSelectedInvestorIds.indexOf(t.investor_id) < 0) return false;
-
-        // Trader filter
         if (lgSelectedTraderIds.length > 0) {
             var tid = t.trader_id || t.investor_id;
             if (!tid || lgSelectedTraderIds.indexOf(tid) < 0) return false;
         }
-
-        // Broker filter
         if (lgSelectedBrokerIds.length > 0 && lgSelectedBrokerIds.indexOf(t.broker_id) < 0) return false;
-
-        // Tag filter
         if (lgSelectedTagNames.length > 0) {
-            var txnTags = t.tags || [];
-            var hasTag = false;
-            for (var i = 0; i < lgSelectedTagNames.length; i++) {
-                if (txnTags.indexOf(lgSelectedTagNames[i]) >= 0) {
-                    hasTag = true;
-                    break;
-                }
-            }
-            if (!hasTag) return false;
+            if (!wmsMatchTagsFilter(t.tags || [], lgSelectedTagNames, lgTagFilterLogic)) return false;
         }
-
         return true;
     });
 
-    // Build combined ledger
     lgCombined = wmsBuildLedger(lgLedgerEntries, filtered, {
         investorIds: lgSelectedInvestorIds,
         traderIds: lgSelectedTraderIds,
@@ -731,10 +802,8 @@ async function lgRefresh() {
         tagLogic: lgTagFilterLogic
     });
 
-    // Calculate margin adjustments for NFO trades
     lgMarginAdj = wmsCalcMarginFIFO(filtered);
 
-    // Render
     lgRenderEntries(lgCombined);
     lgRenderSummary();
 }
@@ -743,16 +812,51 @@ function lgRenderEntries(rows) {
     var tbody = document.getElementById('lgBody');
     if (!tbody) return;
 
-    // Keep the new entry row, replace all others
-    var newRowHtml = tbody.querySelector('#lgNewEntryRow').outerHTML;
+    // Preserve the new entry row
+    var newRow = document.getElementById('lgNewEntryRow');
+    var newRowHtml = newRow ? newRow.outerHTML : '';
+
+    // Sort rows
+    var sorted = rows.slice();
+    if (lgSortCol) {
+        sorted.sort(function(a, b) {
+            var va, vb;
+            if (lgSortCol === 'date') { va = a.date || ''; vb = b.date || ''; }
+            else if (lgSortCol === 'amount') { va = a.amount || 0; vb = b.amount || 0; }
+            else if (lgSortCol === 'balance') { va = a._runningBalance || 0; vb = b._runningBalance || 0; }
+            else if (lgSortCol === 'qty') {
+                va = a._source ? Math.abs(a._source.quantity || 0) : 0;
+                vb = b._source ? Math.abs(b._source.quantity || 0) : 0;
+            }
+            if (va < vb) return lgSortDir === 'asc' ? -1 : 1;
+            if (va > vb) return lgSortDir === 'asc' ? 1 : -1;
+            return 0;
+        });
+    }
+
+    // Update sort indicators in header
+    document.querySelectorAll('#lgHead th.lg-sortable').forEach(function(th) {
+        var indicator = th.querySelector('.sort-indicator');
+        if (!indicator) return;
+        var col = th.dataset.sort;
+        if (col === lgSortCol) {
+            indicator.textContent = (lgSortDir === 'asc' ? ' ▲' : ' ▼');
+        } else {
+            // Keep unit labels if present
+            if (col === 'amount' || col === 'balance') {
+                var label = typeof getUnitLabel === 'function' ? getUnitLabel() : '';
+                indicator.textContent = label ? '(' + label + ')' : '';
+            } else {
+                indicator.textContent = '';
+            }
+        }
+    });
 
     var html = newRowHtml;
-
-    // Render data rows
     var totalAmount = 0;
     var lastBalance = 0;
 
-    rows.forEach(function(row) {
+    sorted.forEach(function(row) {
         var date = formatDate(row.date);
         var scrip = '';
         var product = '';
@@ -762,7 +866,7 @@ function lgRenderEntries(rows) {
         var amount = '';
         var balance = '';
         var marginAdj = '';
-        var editDelete = '';
+        var actions = '';
 
         if (row._rowType === 'ledger') {
             var source = row._source;
@@ -775,16 +879,19 @@ function lgRenderEntries(rows) {
             if (row.entryType === 'INTEREST_BOOKED') {
                 var entryId = source.id;
                 amount = '<span style="cursor:pointer; text-decoration:underline;" ondblclick="lgShowInterestDetail(\'' + wmsEsc(entryId) + '\')">' +
-                    wmsFmtAmt(row.amount) + '</span>';
+                    lgFmt(row.amount) + '</span>';
             } else {
-                amount = wmsFmtAmt(row.amount);
+                amount = lgFmt(row.amount);
             }
 
-            balance = wmsFmtAmt(row._runningBalance);
+            balance = lgFmt(row._runningBalance);
             lastBalance = row._runningBalance;
 
-            editDelete = '<span style="font-size:9px;"><a href="#" onclick="event.preventDefault(); lgEditEntry(\'' + wmsEsc(source.id) + '\');" style="margin-right:4px;">✎</a>' +
-                '<a href="#" onclick="event.preventDefault(); lgDeleteEntry(\'' + wmsEsc(source.id) + '\');">✕</a></span>';
+            // Edit/delete — standard icons (D.9: ✏️ edit, 🗑️ delete)
+            actions = '<span class="lg-actions">' +
+                '<a href="#" onclick="event.preventDefault(); lgEditEntry(\'' + wmsEsc(source.id) + '\');" title="Edit">✏️</a>' +
+                '<a href="#" class="lg-del" onclick="event.preventDefault(); lgDeleteEntry(\'' + wmsEsc(source.id) + '\', this);" title="Delete">🗑️</a>' +
+                '</span>';
         } else if (row._rowType === 'trade') {
             var source = row._source;
             var sym = source.short_symbol || source.symbol || '';
@@ -797,64 +904,68 @@ function lgRenderEntries(rows) {
             if (source.transaction_type === 'SELL' || source.transaction_type === 'RIGHTS_ENTITLEMENT' || source.transaction_type === 'BONUS') {
                 q = -q;
             }
-            if (q !== 0) qty = String(Math.round(q));
+            if (q !== 0) {
+                qty = typeof formatQuantity === 'function' ? formatQuantity(q) : String(Math.round(q));
+            }
 
-            price = source.price ? wmsFmtAmt(source.price) : '';
+            price = source.price ? lgFmtPrice(source.price) : '';
 
             if (source.quantity && source.net_amount) {
                 var netPerUnit = source.net_amount / source.quantity;
-                net = wmsFmtAmt(netPerUnit);
+                net = lgFmtPrice(netPerUnit);
             }
 
-            amount = wmsFmtAmt(row.amount);
-            balance = wmsFmtAmt(row._runningBalance);
+            amount = lgFmt(row.amount);
+            balance = lgFmt(row._runningBalance);
             lastBalance = row._runningBalance;
 
-            // Margin adjustment for NFO
             var marginForTrade = lgMarginAdj.find(function(m) {
                 return m.transactionId === source.id;
             });
             if (marginForTrade && marginForTrade.marginAdj !== 0) {
-                marginAdj = wmsFmtAmt(marginForTrade.marginAdj);
+                marginAdj = lgFmt(marginForTrade.marginAdj);
             }
         }
 
-        var amountColor = row.amount < 0 ? ' style="color:#dc2626;"' : row.amount > 0 ? ' style="color:#059669;"' : '';
-        var balanceColor = row._runningBalance < 0 ? ' style="color:#dc2626;"' : '';
+        var amtClass = lgAmtClass(row.amount);
+        var balClass = lgAmtClass(row._runningBalance);
 
         html += '<tr>' +
             '<td>' + date + '</td>' +
-            '<td>' + scrip + (editDelete ? ' ' + editDelete : '') + '</td>' +
+            '<td>' + scrip + (actions ? ' ' + actions : '') + '</td>' +
             '<td>' + product + '</td>' +
             '<td class="text-right">' + qty + '</td>' +
             '<td class="text-right">' + price + '</td>' +
             '<td class="text-right">' + net + '</td>' +
-            '<td class="text-right"' + amountColor + '>' + amount + '</td>' +
-            '<td class="text-right"' + balanceColor + '>' + balance + '</td>' +
+            '<td class="text-right ' + amtClass + '">' + amount + '</td>' +
+            '<td class="text-right ' + balClass + '">' + balance + '</td>' +
             '<td class="text-right">' + marginAdj + '</td>' +
             '</tr>';
 
         totalAmount += row.amount;
     });
 
-    // Update totals row
-    var totalAmountStr = wmsFmtAmt(totalAmount);
-    var totalBalanceStr = wmsFmtAmt(lastBalance);
-
-    // Replace tbody with new HTML, then update totals
     tbody.innerHTML = html;
 
+    // Update totals in tfoot
     var totalAmtEl = document.getElementById('lgTotalAmount');
     var totalBalEl = document.getElementById('lgTotalBalance');
-    if (totalAmtEl) totalAmtEl.textContent = totalAmountStr;
-    if (totalBalEl) totalBalEl.textContent = totalBalanceStr;
+    if (totalAmtEl) {
+        totalAmtEl.innerHTML = lgFmt(totalAmount);
+        totalAmtEl.className = 'text-right ' + lgAmtClass(totalAmount);
+        totalAmtEl.style.fontWeight = '600';
+    }
+    if (totalBalEl) {
+        totalBalEl.innerHTML = lgFmt(lastBalance);
+        totalBalEl.className = 'text-right ' + lgAmtClass(lastBalance);
+        totalBalEl.style.fontWeight = '600';
+    }
 }
 
 function lgRenderSummary() {
     var summaryBody = document.getElementById('lgSummaryBody');
     if (!summaryBody) return;
 
-    // Calculate holdings from filtered transactions
     var holdings = {};
     var totalCost = 0;
     var totalValue = 0;
@@ -881,34 +992,33 @@ function lgRenderSummary() {
         holdings[sym].totalCost += row._source.net_amount;
     });
 
-    // Render holdings rows
     var rows = Object.keys(holdings).map(function(sym) {
         var h = holdings[sym];
         if (h.qty === 0) return '';
 
         h.avgCost = h.qty !== 0 ? h.totalCost / h.qty : 0;
-        h.cmp = h.avgCost;  // Use average cost as proxy for CMP
+        h.cmp = h.avgCost;
         h.totalValue = h.qty * h.cmp;
 
         totalCost += h.totalCost;
         totalValue += h.totalValue;
 
         var mtm = h.totalValue - h.totalCost;
-        var mtmColor = mtm < 0 ? ' style="color:#dc2626;"' : mtm > 0 ? ' style="color:#059669;"' : '';
+        var mtmClass = lgAmtClass(mtm);
 
         return '<tr>' +
             '<td>' + wmsEsc(sym) + '</td>' +
             '<td class="text-right">' + wmsEsc(h.product) + '</td>' +
-            '<td class="text-right">' + String(Math.round(h.qty)) + '</td>' +
-            '<td class="text-right">' + wmsFmtAmt(h.avgCost) + '</td>' +
-            '<td class="text-right">' + wmsFmtAmt(h.cmp) + '</td>' +
-            '<td class="text-right"' + mtmColor + '>' + wmsFmtAmt(mtm) + '</td>' +
-            '<td class="text-right">' + wmsFmtAmt(h.totalValue) + '</td>' +
+            '<td class="text-right">' + (typeof formatQuantity === 'function' ? formatQuantity(h.qty) : String(Math.round(h.qty))) + '</td>' +
+            '<td class="text-right">' + lgFmtPrice(h.avgCost) + '</td>' +
+            '<td class="text-right">' + lgFmtPrice(h.cmp) + '</td>' +
+            '<td class="text-right ' + mtmClass + '">' + lgFmt(mtm) + '</td>' +
+            '<td class="text-right">' + lgFmt(h.totalValue) + '</td>' +
             '</tr>';
     }).filter(function(s) { return s.length > 0; }).join('');
 
     if (rows.length === 0) {
-        rows = '<tr><td colspan="7" style="text-align:center; padding:20px; color:#9ca3af;">No holdings</td></tr>';
+        rows = '<tr><td colspan="7" class="text-center" style="padding:20px; color:#9ca3af;">No holdings</td></tr>';
     }
 
     summaryBody.innerHTML = rows;
@@ -925,19 +1035,24 @@ function lgRenderSummary() {
     var potentialTaxEl = document.getElementById('lgPotentialTax');
     var netValueEl = document.getElementById('lgNetValue');
 
-    if (holdingsValueEl) holdingsValueEl.textContent = wmsFmtAmt(totalValue);
-    if (mtmFnoEl) mtmFnoEl.textContent = '0.00';
-    if (outstandingEl) outstandingEl.textContent = wmsFmtAmt(Math.abs(lastBalance));
+    if (holdingsValueEl) {
+        holdingsValueEl.innerHTML = lgFmt(totalValue);
+        holdingsValueEl.className = 'text-right positive';
+        holdingsValueEl.style.fontWeight = '600';
+    }
+    if (mtmFnoEl) mtmFnoEl.textContent = '-';
+    if (outstandingEl) outstandingEl.innerHTML = lgFmt(Math.abs(lastBalance));
 
-    var taxRate = 0;  // TODO: Get from investor/IBA config
+    var taxRate = 0;
     var potentialTax = (totalValue - totalCost) * (taxRate / 100);
-    if (potentialTaxEl) potentialTaxEl.textContent = wmsFmtAmt(potentialTax);
+    if (potentialTaxEl) potentialTaxEl.innerHTML = lgFmt(potentialTax);
 
     var netValue = totalValue - Math.abs(lastBalance) - potentialTax;
 
     if (netValueEl) {
-        netValueEl.textContent = wmsFmtAmt(netValue);
-        netValueEl.style.color = netValue < 0 ? '#dc2626' : netValue > 0 ? '#059669' : '';
+        netValueEl.innerHTML = lgFmt(netValue);
+        netValueEl.className = 'text-right ' + lgAmtClass(netValue);
+        netValueEl.style.fontWeight = '600';
     }
 }
 
@@ -946,12 +1061,11 @@ function lgRenderSummary() {
 // ============================================================================
 
 async function lgAddEntry() {
-    var dateEl = document.getElementById('lgNewDate');
+    var entryDate = lgNewDateInput ? lgNewDateInput.getValue() : '';
     var typeEl = document.getElementById('lgNewType');
     var refEl = document.getElementById('lgNewReference');
     var amtEl = document.getElementById('lgNewAmount');
 
-    var entryDate = dateEl ? dateEl.value : '';
     var entryType = typeEl ? typeEl.value : 'ADJUSTMENT';
     var reference = refEl ? refEl.value : '';
     var amount = parseFloat(amtEl ? amtEl.value : '0') || 0;
@@ -961,7 +1075,6 @@ async function lgAddEntry() {
         return;
     }
 
-    // Determine investor from selected filters (use first selected)
     var investorId = lgSelectedInvestorIds.length > 0 ? lgSelectedInvestorIds[0] : null;
     if (!investorId) {
         showAlert('Please select an investor', 'warning', 3000);
@@ -983,7 +1096,7 @@ async function lgAddEntry() {
         });
 
         if (resp.ok) {
-            if (dateEl) dateEl.value = '';
+            if (lgNewDateInput) lgNewDateInput.clear();
             if (refEl) refEl.value = '';
             if (amtEl) amtEl.value = '';
             showAlert('Entry added', 'success', 2000);
@@ -1003,20 +1116,48 @@ async function lgEditEntry(entryId) {
     showAlert('Edit feature coming soon', 'info', 3000);
 }
 
-async function lgDeleteEntry(entryId) {
-    if (!confirm('Delete this entry?')) return;
-
-    try {
-        await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + entryId, {
-            method: 'DELETE',
-            headers: lgHeaders()
-        });
-        lgRefresh();
-        showAlert('Entry deleted', 'success', 2000);
-    } catch (err) {
-        console.warn('Failed to delete entry:', err.message);
-        showAlert('Failed to delete entry', 'error', 3000);
+// Inline delete confirmation — replaces browser confirm()
+async function lgDeleteEntry(entryId, linkEl) {
+    if (lgPendingDeleteId === entryId) {
+        // Already showing confirmation — proceed with delete
+        lgPendingDeleteId = null;
+        try {
+            await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + entryId, {
+                method: 'DELETE',
+                headers: lgHeaders()
+            });
+            lgRefresh();
+            showAlert('Entry deleted', 'success', 2000);
+        } catch (err) {
+            console.warn('Failed to delete entry:', err.message);
+            showAlert('Failed to delete entry', 'error', 3000);
+        }
+        return;
     }
+
+    // Show inline confirmation
+    lgPendingDeleteId = entryId;
+    var actionsSpan = linkEl ? linkEl.closest('.lg-actions') : null;
+    if (actionsSpan) {
+        var confirmHtml = '<span class="lg-confirm-bar">Delete? ' +
+            '<button class="lg-confirm-yes" onclick="event.preventDefault(); lgDeleteEntry(\'' + wmsEsc(entryId) + '\');">Yes</button>' +
+            '<button onclick="event.preventDefault(); lgCancelDelete();">No</button>' +
+            '</span>';
+        actionsSpan.insertAdjacentHTML('afterend', confirmHtml);
+    }
+
+    // Auto-cancel after 5 seconds
+    setTimeout(function() {
+        if (lgPendingDeleteId === entryId) {
+            lgCancelDelete();
+        }
+    }, 5000);
+}
+
+function lgCancelDelete() {
+    lgPendingDeleteId = null;
+    // Remove all confirmation bars
+    document.querySelectorAll('.lg-confirm-bar').forEach(function(el) { el.remove(); });
 }
 
 // ============================================================================
@@ -1029,7 +1170,6 @@ async function lgShowInterestDetail(entryId) {
 
     lgInterestDetailEntryId = entryId;
 
-    // Find investor's interest terms
     var investorId = entry.investor_id;
     var interestTerms = wmsGetInterestTerms(investorId);
 
@@ -1038,7 +1178,6 @@ async function lgShowInterestDetail(entryId) {
         return;
     }
 
-    // Calculate period from previous interest to current one
     var fromDate = null;
     for (var i = lgLedgerEntries.length - 1; i >= 0; i--) {
         if (lgLedgerEntries[i].entry_date < entry.entry_date && lgLedgerEntries[i].entry_type === 'INTEREST_BOOKED') {
@@ -1051,23 +1190,18 @@ async function lgShowInterestDetail(entryId) {
     if (!fromDate) {
         fromDate = lgCombined.length > 0 ? lgCombined[0].date : entry.entry_date;
     }
-    var toDate = entry.entry_date;
-
-    // Render detail panel
-    var detailPanel = document.getElementById('lgInterestDetail');
-    if (!detailPanel) return;
 
     var detailBody = document.getElementById('lgInterestDetailBody');
     var totalEditEl = document.getElementById('lgInterestTotalEdit');
 
     if (detailBody) {
-        detailBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px;">Detail calculation would go here</td></tr>';
+        detailBody.innerHTML = '<tr><td colspan="5" class="text-center" style="padding:20px;">Detail calculation would go here</td></tr>';
     }
     if (totalEditEl) {
         totalEditEl.value = entry.amount;
     }
 
-    detailPanel.style.display = 'block';
+    lgShowModal('lgInterestDetail');
 }
 
 async function lgPostInterest() {
@@ -1083,7 +1217,7 @@ async function lgPostInterest() {
             body: JSON.stringify({ amount: totalAmount })
         });
 
-        document.getElementById('lgInterestDetail').style.display = 'none';
+        lgHideModal('lgInterestDetail');
         lgRefresh();
         showAlert('Interest posted', 'success', 2000);
     } catch (err) {
@@ -1121,6 +1255,7 @@ window.lgRefresh = lgRefresh;
 window.lgRefreshPillItems = lgRefreshPillItems;
 window.lgEditEntry = lgEditEntry;
 window.lgDeleteEntry = lgDeleteEntry;
+window.lgCancelDelete = lgCancelDelete;
 window.lgShowInterestDetail = lgShowInterestDetail;
 window.lgAddEntry = lgAddEntry;
 window.lgPostInterest = lgPostInterest;
