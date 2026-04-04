@@ -372,12 +372,7 @@ async function trTxBulkHide() {
     if (ids.length === 0) return;
     if (!confirm('Hide ' + ids.length + ' transaction(s) from display?')) return;
 
-    var headers = {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
-    };
+    var headers = wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'});
 
     var failed = 0;
     for (var i = 0; i < ids.length; i++) {
@@ -421,12 +416,7 @@ async function trTxBulkIgnoreAvg() {
 
     if (!confirm(label + ' for ' + ids.length + ' transaction(s)?')) return;
 
-    var headers = {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
-    };
+    var headers = wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'});
 
     var failed = 0;
     for (var i = 0; i < ids.length; i++) {
@@ -476,11 +466,7 @@ async function trTxBulkDelete() {
     // Block UI during bulk delete
     showLoading(true, 'Deleting ' + ids.length + ' transaction(s)...');
 
-    var headers = {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-        'Prefer': 'return=minimal'
-    };
+    var headers = wmsHeaders({'Prefer': 'return=minimal'});
 
     var failed = 0;
     for (var i = 0; i < ids.length; i++) {
@@ -561,12 +547,7 @@ async function trTxApplyBulkTags() {
     trTxCloseTagPopup();
     showLoading(true, 'Updating tags on ' + ids.length + ' transaction(s)...');
 
-    var headers = {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
-    };
+    var headers = wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'});
 
     var failed = 0;
     for (var i = 0; i < ids.length; i++) {
@@ -1039,12 +1020,7 @@ async function trTxToggleFlag(txnId, flagName) {
 
     var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txnId, {
         method: 'PATCH',
-        headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-        },
+        headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
         body: JSON.stringify(body)
     });
 
@@ -1075,11 +1051,7 @@ async function trTxDeleteTransaction(txnId) {
     showLoading(true, 'Deleting transaction...');
     var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txnId, {
         method: 'DELETE',
-        headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Prefer': 'return=minimal'
-        }
+        headers: wmsHeaders({'Prefer': 'return=minimal'})
     });
 
     showLoading(false);

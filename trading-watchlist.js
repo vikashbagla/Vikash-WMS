@@ -192,7 +192,7 @@ async function trWlLoad() {
 
     // Load watchlists
     var wlResp = await fetch(SUPABASE_URL + '/rest/v1/watchlists?user_id=eq.' + userId + '&order=sort_order,created_at', {
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        headers: wmsHeaders()
     });
     var watchlists = wlResp.ok ? await wlResp.json() : [];
 
@@ -201,7 +201,7 @@ async function trWlLoad() {
     var items = [];
     if (wlIds.length > 0) {
         var itemResp = await fetch(SUPABASE_URL + '/rest/v1/watchlist_items?watchlist_id=in.(' + wlIds.join(',') + ')&order=sort_order,created_at', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            headers: wmsHeaders()
         });
         items = itemResp.ok ? await itemResp.json() : [];
     }
@@ -749,10 +749,7 @@ async function trWlYahooFallback_LEGACY() {
     try {
         var resp = await fetch(SUPABASE_URL + '/functions/v1/yahoo-finance', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json'}),
             body: JSON.stringify({ symbols: yahooSymbols })
         });
         if (!resp.ok) {
@@ -1265,12 +1262,7 @@ async function trWlCreateWatchlist() {
 
     var resp = await fetch(SUPABASE_URL + '/rest/v1/watchlists', {
         method: 'POST',
-        headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
-        },
+        headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
         body: JSON.stringify({ user_id: userId, name: name, sort_order: sortOrder })
     });
 
@@ -1299,11 +1291,7 @@ async function trWlDeleteWatchlist(wlId) {
 
     var resp = await fetch(SUPABASE_URL + '/rest/v1/watchlists?id=eq.' + wlId, {
         method: 'DELETE',
-        headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Prefer': 'return=minimal'
-        }
+        headers: wmsHeaders({'Prefer': 'return=minimal'})
     });
 
     if (resp.ok) {
@@ -1351,12 +1339,7 @@ function trWlStartRename(wlId) {
 async function trWlRenameWatchlist(wlId, newName) {
     var resp = await fetch(SUPABASE_URL + '/rest/v1/watchlists?id=eq.' + wlId, {
         method: 'PATCH',
-        headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-        },
+        headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
         body: JSON.stringify({ name: newName })
     });
 
@@ -1379,12 +1362,7 @@ async function trWlToggleCollapse(wlId) {
     // Persist collapse state
     fetch(SUPABASE_URL + '/rest/v1/watchlists?id=eq.' + wlId, {
         method: 'PATCH',
-        headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-        },
+        headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
         body: JSON.stringify({ is_collapsed: wl.is_collapsed })
     });
 }
@@ -1791,12 +1769,7 @@ async function trWlAddItem(security) {
 
     var resp = await fetch(SUPABASE_URL + '/rest/v1/watchlist_items', {
         method: 'POST',
-        headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
-        },
+        headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
         body: JSON.stringify(body)
     });
 
@@ -1981,7 +1954,7 @@ async function trWlUpdateSecurityBrokerTokens(securityId, fyersSymbol) {
     try {
         // First fetch current record to preserve existing broker_tokens
         var getResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + securityId + '&select=broker_tokens,nse_symbol,bse_symbol', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            headers: wmsHeaders()
         });
         if (!getResp.ok) return;
         var rows = await getResp.json();
@@ -2002,12 +1975,7 @@ async function trWlUpdateSecurityBrokerTokens(securityId, fyersSymbol) {
         // (Supabase returns 200 with empty array if RLS blocks the update)
         var patchResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + securityId, {
             method: 'PATCH',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=representation'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify({ broker_tokens: bt })
         });
 
@@ -2029,11 +1997,7 @@ async function trWlUpdateSecurityBrokerTokens(securityId, fyersSymbol) {
 async function trWlDeleteItem(itemId, wlId) {
     var resp = await fetch(SUPABASE_URL + '/rest/v1/watchlist_items?id=eq.' + itemId, {
         method: 'DELETE',
-        headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Prefer': 'return=minimal'
-        }
+        headers: wmsHeaders({'Prefer': 'return=minimal'})
     });
 
     if (resp.ok) {
@@ -2191,12 +2155,7 @@ async function trWlSaveItemOrder(wl) {
         item.sort_order = idx;
         return fetch(SUPABASE_URL + '/rest/v1/watchlist_items?id=eq.' + item.id, {
             method: 'PATCH',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=minimal'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
             body: JSON.stringify({ sort_order: idx })
         });
     });
@@ -2329,12 +2288,7 @@ async function trWlSaveReorder() {
     var promises = trWlReorderList.map(function(wl, idx) {
         return fetch(SUPABASE_URL + '/rest/v1/watchlists?id=eq.' + wl.id, {
             method: 'PATCH',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=minimal'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
             body: JSON.stringify({ sort_order: idx })
         });
     });
@@ -2639,12 +2593,7 @@ function trWlCloseAlertPopover() {
 async function trWlSaveAlert(item, alertAbove, alertBelow) {
     var resp = await fetch(SUPABASE_URL + '/rest/v1/watchlist_items?id=eq.' + item.id, {
         method: 'PATCH',
-        headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-        },
+        headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
         body: JSON.stringify({ alert_above: alertAbove, alert_below: alertBelow })
     });
 

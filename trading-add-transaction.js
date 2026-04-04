@@ -984,7 +984,7 @@ async function atSelectOptionsContract(rowId, fyersSymbol, parsed, displayLabel)
     var row = atRows.find(function(r) { return r.rowId === rowId; });
     if (!row) return;
     // Try to find this in securities_nfo first (may have been added via watchlist)
-    var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+    var headers = wmsHeaders();
     var nfoCheck = SUPABASE_URL + '/rest/v1/securities_nfo?symbol=eq.' + encodeURIComponent(fyersSymbol.split(':')[1] || fyersSymbol) +
         '&select=id,symbol,underlying_symbol,instrument_name,exchange,instrument_type,lot_size,broker_tokens,expiry_date&limit=1';
     var nfoResp = await fetch(nfoCheck, { headers: headers }).then(function(r) { return r.ok ? r.json() : []; }).catch(function() { return []; });
@@ -1031,12 +1031,7 @@ async function atSelectOptionsContract(rowId, fyersSymbol, parsed, displayLabel)
         try {
             var createResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
                 method: 'POST',
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                    'Content-Type': 'application/json',
-                    'Prefer': 'return=representation'
-                },
+                headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
                 body: JSON.stringify(nfoRecord)
             });
             if (createResp.ok) {
@@ -1672,7 +1667,7 @@ async function importAddTxnToDb() {
     var txnDate = document.getElementById('addTxnDate').value;
     var investorId = atSelectedInvestor.id;
     var brokerId = atSelectedBroker.id;
-    var dupHeaders = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+    var dupHeaders = wmsHeaders();
 
     try {
         var dupFilter = 'investor_id=eq.' + investorId + '&broker_id=eq.' + brokerId + '&transaction_date=eq.' + txnDate;
@@ -1761,12 +1756,7 @@ async function importAddTxnToDb() {
             };
         });
 
-        var headers = {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-        };
+        var headers = wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'});
 
         // Batch insert (max 10 per batch)
         for (var i = 0; i < records.length; i += 10) {

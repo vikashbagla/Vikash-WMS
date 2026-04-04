@@ -9,6 +9,27 @@
 // ============================================================================
 
 // ============================================================================
+// AUTH HEADERS — Single source of truth for all Supabase REST API calls.
+// Phase 1A: returns anon key (identical to current behavior).
+// Phase 1B: will return session JWT after Google OAuth login.
+// ============================================================================
+
+/** Auth token — set after OAuth login, null = fall back to anon key */
+var _wmsAuthToken = null;
+
+/**
+ * Build Supabase REST headers with the current auth token.
+ * @param {Object} [extra] — additional headers to merge (e.g. Content-Type, Prefer)
+ * @returns {Object} headers object ready for fetch()
+ */
+function wmsHeaders(extra) {
+    var token = _wmsAuthToken || SUPABASE_ANON_KEY;
+    var h = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token };
+    if (extra) { for (var k in extra) h[k] = extra[k]; }
+    return h;
+}
+
+// ============================================================================
 // CONSTANTS
 // ============================================================================
 
@@ -129,7 +150,7 @@ var wmsRefData = {
  * After master data edits (investors, brokers, IBA, reg charges), call this again.
  */
 async function wmsLoadRefData() {
-    var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+    var headers = wmsHeaders();
     try {
         var resp;
 
@@ -1322,10 +1343,7 @@ async function wmsFetchEquityPrices(items, forceRefresh) {
             try {
                 var resp = await fetch(SUPABASE_URL + '/functions/v1/yahoo-finance', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
-                    },
+                    headers: wmsHeaders({'Content-Type': 'application/json'}),
                     body: JSON.stringify({ symbols: yahooSymbols })
                 });
                 if (resp.ok) {
@@ -1365,7 +1383,7 @@ async function wmsFetchEquityPrices(items, forceRefresh) {
 function wmsUpdateBrokerToken(securityId, fyersSymbol) {
     if (!securityId || !fyersSymbol) return;
     fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + securityId + '&select=broker_tokens', {
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        headers: wmsHeaders()
     }).then(function(resp) { return resp.json(); }).then(function(rows) {
         if (!rows || rows.length === 0) return;
         var bt = rows[0].broker_tokens || {};
@@ -1374,10 +1392,7 @@ function wmsUpdateBrokerToken(securityId, fyersSymbol) {
         else if (fyersSymbol.indexOf('BSE:') === 0) bt.fyers.bse_symbol = fyersSymbol;
         return fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + securityId, {
             method: 'PATCH',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json', 'Prefer': 'return=minimal'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
             body: JSON.stringify({ broker_tokens: bt })
         });
     }).catch(function(err) { console.warn('wmsUpdateBrokerToken:', err.message); });
@@ -1406,7 +1421,7 @@ function wmsUpdateNfoBrokerToken(securityId, fyersSymbol) {
 
         // 2. Read current broker_tokens from DB
         return fetch(SUPABASE_URL + '/rest/v1/securities_nfo?id=eq.' + securityId + '&select=broker_tokens', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            headers: wmsHeaders()
         }).then(function(resp) { return resp.json(); }).then(function(rows) {
             if (!rows || rows.length === 0) return;
             var bt = rows[0].broker_tokens || {};
@@ -1419,10 +1434,7 @@ function wmsUpdateNfoBrokerToken(securityId, fyersSymbol) {
             // 3. PATCH back to DB
             return fetch(SUPABASE_URL + '/rest/v1/securities_nfo?id=eq.' + securityId, {
                 method: 'PATCH',
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                    'Content-Type': 'application/json', 'Prefer': 'return=minimal'
-                },
+                headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
                 body: JSON.stringify({ broker_tokens: bt })
             });
         });
@@ -3975,12 +3987,7 @@ function wmsCalcHoldingsAsOfDate(shortSymbol, targetDate, transactions) {
 // ============================================================================
 
 async function wmsBatchCreateTransactions(txns) {
-    var headers = {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
-    };
+    var headers = wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'});
     for (var i = 0; i < txns.length; i += 10) {
         var batch = txns.slice(i, i + 10);
         var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions', {

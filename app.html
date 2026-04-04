@@ -154,10 +154,7 @@
 
         const response = await fetch(`${window.SUPABASE_URL}/functions/v1/fyers-market-data`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${window.SUPABASE_ANON_KEY}`
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json'}),
             body: JSON.stringify({ ...payload, accessToken: fyersToken })
         });
         return await response.json();
@@ -169,12 +166,7 @@
             const today = new Date().toISOString().split('T')[0];
             const res = await fetch(
                 `${window.SUPABASE_URL}/rest/v1/investor_broker_accounts?api_token_date=eq.${today}&api_access_token=not.is.null&select=api_access_token,api_token_method,api_token_generated_at,api_last_error&limit=1`,
-                {
-                    headers: {
-                        'apikey': window.SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${window.SUPABASE_ANON_KEY}`
-                    }
-                }
+                { headers: wmsHeaders() }
             );
             if (!res.ok) return null;
             const rows = await res.json();

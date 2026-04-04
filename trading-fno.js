@@ -1525,7 +1525,7 @@ function trFnoRenderSelectedTags() {
 async function trFnoLoadViews() {
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?module=eq.trading_fno&select=id,name,filters,sort_order,is_default,show_in_tabs&order=sort_order.asc,created_at.asc', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            headers: wmsHeaders()
         });
         trFnoViews = resp.ok ? await resp.json() : [];
     } catch (err) {
@@ -1636,12 +1636,7 @@ function trFnoRenderViewTabs() {
                     view.name = newName;
                     fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
                         method: 'PATCH',
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                            'Content-Type': 'application/json',
-                            'Prefer': 'return=minimal'
-                        },
+                        headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
                         body: JSON.stringify({ name: newName })
                     }).catch(function(err) { console.warn('Failed to rename view:', err.message); });
                 }
@@ -1665,12 +1660,7 @@ async function trFnoCloseViewTab(viewId) {
     try {
         await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'PATCH',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=minimal'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
             body: JSON.stringify({ show_in_tabs: false })
         });
     } catch (err) {
@@ -1763,12 +1753,7 @@ function trFnoApplyView(viewId) {
         view.show_in_tabs = true;
         fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'PATCH',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=minimal'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
             body: JSON.stringify({ show_in_tabs: true })
         }).catch(function(err) { console.warn('Failed to show tab:', err.message); });
     }
@@ -1844,12 +1829,7 @@ async function trFnoSaveCurrentView(name) {
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
             method: 'POST',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=representation'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify({ name: name, filters: filters, sort_order: sortOrder, is_default: isFirst, show_in_tabs: true, module: 'trading_fno' })
         });
         if (resp.ok) {
@@ -1885,12 +1865,7 @@ async function trFnoCreateBlankView() {
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
             method: 'POST',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=representation'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify({ name: name, filters: blankFilters, sort_order: sortOrder, is_default: false, show_in_tabs: true, module: 'trading_fno' })
         });
         if (resp.ok) {
@@ -1917,12 +1892,7 @@ async function trFnoUpdateCurrentView() {
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + trFnoActiveViewId, {
             method: 'PATCH',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=minimal'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
             body: JSON.stringify({ filters: filters })
         });
         if (resp.ok) {
@@ -1945,11 +1915,7 @@ async function trFnoDeleteView(viewId) {
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'DELETE',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Prefer': 'return=minimal'
-            }
+            headers: wmsHeaders({'Prefer': 'return=minimal'})
         });
         if (resp.ok) {
             trFnoViews = trFnoViews.filter(function(v) { return v.id !== viewId; });
@@ -1974,12 +1940,7 @@ async function trFnoSetDefaultView(viewId) {
         try {
             await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + oldDefault.id, {
                 method: 'PATCH',
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                    'Content-Type': 'application/json',
-                    'Prefer': 'return=minimal'
-                },
+                headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
                 body: JSON.stringify({ is_default: false })
             });
             oldDefault.is_default = false;
@@ -1991,12 +1952,7 @@ async function trFnoSetDefaultView(viewId) {
     try {
         await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'PATCH',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=minimal'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
             body: JSON.stringify({ is_default: true, show_in_tabs: true })
         });
         var v = trFnoViews.find(function(v) { return v.id === viewId; });
@@ -2023,12 +1979,7 @@ async function trFnoShowViewTab(viewId) {
     try {
         await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'PATCH',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=minimal'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
             body: JSON.stringify({ show_in_tabs: true })
         });
     } catch (err) {

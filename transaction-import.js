@@ -149,7 +149,7 @@ async function loadCnAccounts() {
     try {
         // Load investor_broker_accounts joined with investor short_name and broker cn_parser_template
         var resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=id,investor_id,broker_id,cn_password,investors(short_name),brokers(name,broker_code,cn_parser_template)&is_active=eq.true', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            headers: wmsHeaders()
         });
         var accounts = await resp.json();
         cnAccounts = [];
@@ -203,7 +203,7 @@ async function loadCnAccounts() {
 async function loadExistingTags() {
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?select=tags&tags=not.is.null&limit=5000', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            headers: wmsHeaders()
         });
         if (!resp.ok) return;
         var rows = await resp.json();
@@ -569,7 +569,7 @@ async function saveCnPassword(accountId, password) {
     try {
         await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?id=eq.' + accountId, {
             method: 'PATCH',
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+            headers: wmsHeaders({'Content-Type': 'application/json'}),
             body: JSON.stringify({ cn_password: password })
         });
     } catch (e) {
@@ -1164,7 +1164,7 @@ async function checkDuplicates(rows, tradeDate) {
     var brokerId = cnSelectedAccount.broker_id;
 
     var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + investorId + '&broker_id=eq.' + brokerId + '&transaction_date=eq.' + tradeDate + '&select=id,symbol,transaction_type,quantity,price,gross_amount,tags', {
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        headers: wmsHeaders()
     });
     var existing = await resp.json();
 
@@ -1640,7 +1640,7 @@ window.importCnToDatabase = async function() {
             try {
                 var resp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions', {
                     method: 'POST',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+                    headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
                     body: JSON.stringify(data)
                 }, 3);
                 var result = await resp.json();
@@ -1663,7 +1663,7 @@ window.importCnToDatabase = async function() {
             try {
                 var uresp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
                     method: 'PATCH',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+                    headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
                     body: JSON.stringify(udata)
                 }, 3);
                 var uresult = await uresp.json();
@@ -2210,7 +2210,7 @@ async function processTransactions(rawData, worksheet) {
                 '&investor_id=in.(' + uniqueInvestorIds.join(',') + ')' +
                 '&transaction_date=in.(' + uniqueDates.join(',') + ')';
             var dupResp = await fetch(dupUrl, {
-                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+                headers: wmsHeaders()
             });
             var existingTxns = await dupResp.json();
 
@@ -3176,7 +3176,7 @@ async function performImport(cfg) {
             try {
                 var nfoResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
                     method: 'POST',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+                    headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
                     body: JSON.stringify(nfoBatch)
                 });
                 if (nfoResp.ok) {
@@ -3222,7 +3222,7 @@ async function performImport(cfg) {
             try {
                 var resp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions', {
                     method: 'POST',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+                    headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
                     body: JSON.stringify(batch)
                 }, 3);
                 if (!resp.ok) {
@@ -3244,7 +3244,7 @@ async function performImport(cfg) {
             try {
                 var uresp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
                     method: 'PATCH',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+                    headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
                     body: JSON.stringify(rec)
                 }, 3);
                 if (!uresp.ok) {
@@ -3674,7 +3674,7 @@ async function fyCheckDuplicates(rows) {
 
     // Query existing transactions for this investor + broker + date
     var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + fyInvestorId + '&broker_id=eq.' + fyBrokerId + '&transaction_date=eq.' + fyTradeDate + '&select=id,symbol,transaction_type,quantity,price,gross_amount,tags', {
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        headers: wmsHeaders()
     });
     var existing = await resp.json();
 
@@ -3824,7 +3824,7 @@ async function tiLoadImportLog() {
 
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/import_log?order=created_at.desc&limit=20&select=*,investors(short_name),brokers(name)', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            headers: wmsHeaders()
         });
 
         if (!resp.ok) {
@@ -3885,7 +3885,7 @@ async function tiWriteImportLog(importType, data) {
 
         await fetch(SUPABASE_URL + '/rest/v1/import_log', {
             method: 'POST',
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+            headers: wmsHeaders({'Content-Type': 'application/json'}),
             body: JSON.stringify(logRecord)
         });
     } catch (e) {

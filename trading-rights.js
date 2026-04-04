@@ -671,16 +671,11 @@ async function rhEntSave() {
     document.getElementById('rhEntConfirmBtn').textContent = 'Saving...';
 
     try {
-        var headers = {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
-        };
+        var headers = wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'});
 
         // Check if RE security already exists
         var checkResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?isin=eq.' + encodeURIComponent(isin) + '&select=id', {
-            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+            headers: wmsHeaders()
         });
         var existing = await checkResp.json();
         var newSecId;

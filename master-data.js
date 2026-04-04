@@ -40,7 +40,7 @@ var DB = {
     
     async getInvestors() {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/investors?select=*&order=name.asc`, {
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+            headers: wmsHeaders()
         });
         return await response.json();
     },
@@ -48,12 +48,7 @@ var DB = {
     async addInvestor(data) {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/investors`, {
             method: 'POST',
-            headers: { 
-                'apikey': this.supabaseKey, 
-                'Authorization': `Bearer ${this.supabaseKey}`, 
-                'Content-Type': 'application/json', 
-                'Prefer': 'return=representation' 
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify(data)
         });
         const result = await response.json();
@@ -63,12 +58,7 @@ var DB = {
     async updateInvestor(id, data) {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/investors?id=eq.${id}`, {
             method: 'PATCH',
-            headers: { 
-                'apikey': this.supabaseKey, 
-                'Authorization': `Bearer ${this.supabaseKey}`, 
-                'Content-Type': 'application/json', 
-                'Prefer': 'return=representation' 
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify(data)
         });
         const result = await response.json();
@@ -78,14 +68,14 @@ var DB = {
     async deleteInvestor(id) {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/investors?id=eq.${id}`, {
             method: 'DELETE',
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+            headers: wmsHeaders()
         });
         return response.ok;
     },
     
     async getBrokers() {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/brokers?select=*&order=name.asc`, {
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+            headers: wmsHeaders()
         });
         return await response.json();
     },
@@ -93,12 +83,7 @@ var DB = {
     async addBroker(data) {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/brokers`, {
             method: 'POST',
-            headers: { 
-                'apikey': this.supabaseKey, 
-                'Authorization': `Bearer ${this.supabaseKey}`, 
-                'Content-Type': 'application/json', 
-                'Prefer': 'return=representation' 
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify(data)
         });
         const result = await response.json();
@@ -108,12 +93,7 @@ var DB = {
     async updateBroker(id, data) {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/brokers?id=eq.${id}`, {
             method: 'PATCH',
-            headers: { 
-                'apikey': this.supabaseKey, 
-                'Authorization': `Bearer ${this.supabaseKey}`, 
-                'Content-Type': 'application/json', 
-                'Prefer': 'return=representation' 
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify(data)
         });
         const result = await response.json();
@@ -123,21 +103,21 @@ var DB = {
     async deleteBroker(id) {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/brokers?id=eq.${id}`, {
             method: 'DELETE',
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+            headers: wmsHeaders()
         });
         return response.ok;
     },
     
     async getBrokerAccounts(investorId) {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts?investor_id=eq.${investorId}&select=*`, {
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+            headers: wmsHeaders()
         });
         return await response.json();
     },
     
     async getAllBrokerAccounts() {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts?select=*`, {
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+            headers: wmsHeaders()
         });
         return await response.json();
     },
@@ -160,20 +140,14 @@ var DB = {
                 var existingId = existingByBroker[acc.broker_id].id;
                 await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts?id=eq.${existingId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: wmsHeaders({'Content-Type': 'application/json'}),
                     body: JSON.stringify(payload)
                 });
             } else {
                 // POST new record
                 await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts`, {
                     method: 'POST',
-                    headers: {
-                        'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: wmsHeaders({'Content-Type': 'application/json'}),
                     body: JSON.stringify(payload)
                 });
             }
@@ -184,7 +158,7 @@ var DB = {
             if (!newBrokerIds[existing[j].broker_id]) {
                 await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts?id=eq.${existing[j].id}`, {
                     method: 'DELETE',
-                    headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+                    headers: wmsHeaders()
                 });
             }
         }
@@ -193,7 +167,7 @@ var DB = {
     
     async getUser() {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/users?select=*&limit=1`, {
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+            headers: wmsHeaders()
         });
         const users = await response.json();
         return users[0] || null;
@@ -204,11 +178,7 @@ var DB = {
         if (user) {
             await fetch(`${this.supabaseUrl}/rest/v1/users?id=eq.${user.id}`, {
                 method: 'PATCH',
-                headers: {
-                    'apikey': this.supabaseKey,
-                    'Authorization': `Bearer ${this.supabaseKey}`,
-                    'Content-Type': 'application/json'
-                },
+                headers: wmsHeaders({'Content-Type': 'application/json'}),
                 body: JSON.stringify({ preferences })
             });
         }
@@ -216,7 +186,7 @@ var DB = {
 
     async getChargesConfig() {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/regulatory_charges_config?effective_to=is.null&order=exchange.asc,charge_type.asc,transaction_category.asc,transaction_type.asc`, {
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+            headers: wmsHeaders()
         });
         return await response.json();
     },
@@ -224,7 +194,7 @@ var DB = {
     async expireChargeRow(id, effectiveTo) {
         await fetch(`${this.supabaseUrl}/rest/v1/regulatory_charges_config?id=eq.${id}`, {
             method: 'PATCH',
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`, 'Content-Type': 'application/json' },
+            headers: wmsHeaders({'Content-Type': 'application/json'}),
             body: JSON.stringify({ effective_to: effectiveTo })
         });
     },
@@ -232,7 +202,7 @@ var DB = {
     async insertChargeRows(rows) {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/regulatory_charges_config`, {
             method: 'POST',
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify(rows)
         });
         var data = await response.json();
@@ -255,7 +225,7 @@ var DB = {
         if (filters.dateFrom) q += '&entry_date=gte.' + filters.dateFrom;
         if (filters.dateTo) q += '&entry_date=lte.' + filters.dateTo;
         const response = await fetch(`${this.supabaseUrl}/rest/v1/ledger_entries?${q}`, {
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+            headers: wmsHeaders()
         });
         return await response.json();
     },
@@ -263,7 +233,7 @@ var DB = {
     async addLedgerEntry(data) {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/ledger_entries`, {
             method: 'POST',
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify(data)
         });
         var result = await response.json();
@@ -274,7 +244,7 @@ var DB = {
     async updateLedgerEntry(id, data) {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/ledger_entries?id=eq.${id}`, {
             method: 'PATCH',
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify(data)
         });
         var result = await response.json();
@@ -285,7 +255,7 @@ var DB = {
     async deleteLedgerEntry(id) {
         const response = await fetch(`${this.supabaseUrl}/rest/v1/ledger_entries?id=eq.${id}`, {
             method: 'DELETE',
-            headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` }
+            headers: wmsHeaders()
         });
         return response.ok;
     }
@@ -834,7 +804,7 @@ async function confirmDeleteInvestor(id) {
                 // Also delete broker accounts
                 await fetch(`${SUPABASE_URL}/rest/v1/investor_broker_accounts?investor_id=eq.${id}`, {
                     method: 'DELETE',
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+                    headers: wmsHeaders()
                 });
                 loadInvestors();
             }
@@ -1701,10 +1671,7 @@ function deriveYahooSymbol(rec) {
 async function callYahooFinance(yahooSymbols) {
     var resp = await fetch(SUPABASE_URL + '/functions/v1/yahoo-finance', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
-        },
+        headers: wmsHeaders({'Content-Type': 'application/json'}),
         body: JSON.stringify({ symbols: yahooSymbols })
     });
     if (!resp.ok) throw new Error('Yahoo Finance edge function returned ' + resp.status);
@@ -3657,12 +3624,7 @@ async function savePeSecurity() {
     };
 
     try {
-        var headers = {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
-        };
+        var headers = wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'});
 
         if (editingPeSecurityId) {
             // Update existing PE security
@@ -3678,7 +3640,7 @@ async function savePeSecurity() {
         } else {
             // Check if PE-SYMBOL ISIN already exists
             var checkResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?isin=eq.' + encodeURIComponent(isin) + '&select=id', {
-                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+                headers: wmsHeaders()
             });
             var existing = await checkResp.json();
             if (existing && existing.length > 0) {
@@ -3723,7 +3685,7 @@ async function deletePeSecurity() {
 
     try {
         // Block delete if any transactions reference this security
-        var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+        var headers = wmsHeaders();
         var countResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?security_id=eq.' + editingPeSecurityId + '&select=id', { headers: headers });
         var txnRows = await countResp.json();
         var txnCount = Array.isArray(txnRows) ? txnRows.length : 0;
@@ -3789,7 +3751,7 @@ async function openMergeSecurityModal() {
 
     // Fetch transaction count for source
     try {
-        var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+        var headers = wmsHeaders();
         var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?security_id=eq.' + _mergeSourceId + '&select=id', { headers: headers });
         var txns = await resp.json();
         _mergeSourceTxnCount = Array.isArray(txns) ? txns.length : 0;
@@ -3896,8 +3858,8 @@ async function executeMergeSecurity() {
     btn.disabled = true;
 
     try {
-        var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' };
-        var headersRead = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+        var headers = wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'});
+        var headersRead = wmsHeaders();
 
         // 1. Fetch all transactions for source security
         var txnResp = await fetch(SUPABASE_URL + '/rest/v1/transactions?security_id=eq.' + _mergeSourceId + '&select=id,notes', { headers: headersRead });
@@ -3990,8 +3952,8 @@ async function reverseMergeSecurity() {
     if (!confirm('Reverse merge of "' + sec.symbol + '"?\n\nThis will:\n• Move transactions back from ' + targetName + ' to ' + sec.symbol + '\n• Restore this security as active\n• Remove merge notes from transactions\n\nProceed?')) return;
 
     try {
-        var headers = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' };
-        var headersRead = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+        var headers = wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'});
+        var headersRead = wmsHeaders();
 
         // 1. Find transactions that were merged — search notes containing the merge marker
         // Use PostgREST `like` for substring match since user may have added their own notes
@@ -4281,12 +4243,7 @@ async function _secSaveInlineEdit(secId, field, value, cell) {
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + secId, {
             method: 'PATCH',
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=representation'
-            },
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify(patch)
         });
         if (!resp.ok) throw new Error(await resp.text());

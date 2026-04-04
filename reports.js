@@ -281,10 +281,7 @@ async function rptLoadData() {
     var resp = await fetchWithTimeout(
         SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,tags,dont_display&dont_display=eq.false&transaction_type=in.(BUY,SELL)&order=transaction_date.asc',
         {
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
-            }
+            headers: wmsHeaders()
         }
     );
     if (!resp.ok) throw new Error('DB error: ' + resp.status + ' — ' + (await resp.text()));
