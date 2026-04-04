@@ -375,326 +375,78 @@
                 </ul>
             </div>
 
-            <div class="landing-right">
-                <form class="login-form" id="loginForm">
-                    <h3>Welcome Back</h3>
-                    
-                    <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; margin-bottom: 16px; border-radius: 4px;">
-                        <p style="font-size: 12px; color: #92400e; margin: 0;">
-                            <strong>Note:</strong> Login will work after deploying to GitHub Pages. 
-                            Demo user: <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="cfb9a6a4aebca78faab7aea2bfa3aae1aca0a2">[email&#160;protected]</a>
-                        </p>
-                    </div>
-                    
-                    <div class="error-message" id="errorMessage"></div>
+            <div class="landing-right" style="display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                <h3 style="font-size: 24px; color: #2d3748; margin-bottom: 30px;">Welcome</h3>
 
-                    <div class="form-group">
-                        <label for="email">Email Address</label>
-                        <input 
-                            type="email" 
-                            id="email" 
-                            placeholder="Enter your email"
-                            required
-                        >
-                    </div>
+                <div class="error-message" id="errorMessage"></div>
 
-                    <div class="form-group">
-                        <label for="password">Password</label>
-                        <input 
-                            type="password" 
-                            id="password" 
-                            placeholder="Enter your password"
-                            required
-                        >
-                    </div>
+                <button type="button" id="googleLoginBtn" style="
+                    display: flex; align-items: center; gap: 12px;
+                    background: white; color: #3c4043; border: 2px solid #dadce0;
+                    border-radius: 8px; padding: 14px 28px; font-size: 16px;
+                    font-weight: 500; cursor: pointer; transition: all 0.2s;
+                    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+                ">
+                    <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+                    Sign in with Google
+                </button>
 
-                    <button type="submit" class="btn-login" id="loginBtn">
-                        Sign In
-                    </button>
-
-                    <div style="text-align: center; margin-top: 16px;">
-                        <p style="color: #718096; font-size: 14px;">
-                            Don't have an account? 
-                            <a href="javascript:void(0)" onclick="showSignup()" style="color: #667eea; text-decoration: none; font-weight: 600;">Sign Up</a>
-                        </p>
-                    </div>
-                </form>
-
-                <!-- Sign Up Form (Hidden initially) -->
-                <form class="login-form" id="signupForm" style="display: none;">
-                    <h3>Create Account</h3>
-                    
-                    <div class="error-message" id="signupErrorMessage"></div>
-
-                    <div class="form-group">
-                        <label for="signupName">Full Name *</label>
-                        <input 
-                            type="text" 
-                            id="signupName" 
-                            placeholder="Enter your full name"
-                            required
-                        >
-                    </div>
-
-                    <div class="form-group">
-                        <label for="signupEmail">Email Address *</label>
-                        <input 
-                            type="email" 
-                            id="signupEmail" 
-                            placeholder="Enter your email"
-                            required
-                        >
-                    </div>
-
-                    <div class="form-group">
-                        <label for="signupPassword">Password *</label>
-                        <input 
-                            type="password" 
-                            id="signupPassword" 
-                            placeholder="Create a password (min 6 characters)"
-                            required
-                            minlength="6"
-                        >
-                    </div>
-
-                    <div class="form-group">
-                        <label for="signupPasswordConfirm">Confirm Password *</label>
-                        <input 
-                            type="password" 
-                            id="signupPasswordConfirm" 
-                            placeholder="Confirm your password"
-                            required
-                            minlength="6"
-                        >
-                    </div>
-
-                    <button type="submit" class="btn-login" id="signupBtn">
-                        Create Account
-                    </button>
-
-                    <div style="text-align: center; margin-top: 16px;">
-                        <p style="color: #718096; font-size: 14px;">
-                            Already have an account? 
-                            <a href="javascript:void(0)" onclick="showLogin()" style="color: #667eea; text-decoration: none; font-weight: 600;">Sign In</a>
-                        </p>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Main App (Hidden initially) -->
-    <div class="app-container" id="appContainer">
-        <div class="app-header">
-            <h1>WMS Dashboard</h1>
-            <div class="user-info">
-                <span id="userName">Welcome, User</span>
-                <button class="btn-logout" onclick="logout()">Logout</button>
-            </div>
-        </div>
-
-        <div class="app-content">
-            <h2 style="margin-bottom: 30px; color: #2d3748;">Choose a Module</h2>
-            
-            <div class="modules-grid">
-                <div class="module-card" onclick="openModule('master-data')">
-                    <h3>
-                        <div class="module-icon">⚙️</div>
-                        Master Data & Preferences
-                    </h3>
-                    <p>Manage investors, brokers, accounts, and system preferences. Configure brokerage rates and user settings.</p>
-                    <span class="status-badge">Ready</span>
-                </div>
-
-                <div class="module-card" onclick="openModule('transactions')">
-                    <h3>
-                        <div class="module-icon">💰</div>
-                        Transactions
-                    </h3>
-                    <p>Record trades, corporate actions, and income events with automated cost calculations and reconciliation.</p>
-                    <span class="status-badge coming-soon">Coming Soon</span>
-                </div>
-
-                <div class="module-card" onclick="openModule('portfolio')">
-                    <h3>
-                        <div class="module-icon">📊</div>
-                        Portfolio & Reports
-                    </h3>
-                    <p>View current holdings, P&L analysis, allocation charts, performance metrics, and generate comprehensive reports.</p>
-                    <span class="status-badge coming-soon">Coming Soon</span>
+                <div id="loginSpinner" style="display: none; margin-top: 20px;">
+                    <span class="spinner"></span>
+                    <span style="color: #718096; font-size: 14px; margin-left: 8px;">Signing in...</span>
                 </div>
             </div>
         </div>
     </div>
 
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
         // Supabase configuration
         const SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
 
-        let currentUser = null;
+        var supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-        // Check if user is already logged in on page load
-        document.addEventListener('DOMContentLoaded', () => {
-            const savedUser = localStorage.getItem('wms_user');
-            if (savedUser) {
-                // User already logged in, redirect to app
-                console.log('User already logged in, redirecting to app.html');
-                window.location.href = 'app.html';
-            }
-        });
-
-        // Login form handler
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const email = document.getElementById('email').value.trim();
-            const password = document.getElementById('password').value;
-            const loginBtn = document.getElementById('loginBtn');
-            const errorMessage = document.getElementById('errorMessage');
-
-            // Show loading state
-            loginBtn.disabled = true;
-            loginBtn.innerHTML = 'Signing in<span class="spinner"></span>';
-            errorMessage.classList.remove('show');
-
+        // Check if user already has a session on page load
+        document.addEventListener('DOMContentLoaded', async function() {
             try {
-                // Query users table
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=*`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
-                });
-
-                const users = await response.json();
-
-                if (users && users.length > 0) {
-                    const user = users[0];
-                    
-                    // Check password
-                    if (user.password && user.password === password) {
-                        currentUser = user;
-                        
-                        // Save to localStorage
-                        localStorage.setItem('wms_user', JSON.stringify(user));
-                        
-                        console.log('Login successful, redirecting to app.html');
-                        // Redirect to app
-                        window.location.href = 'app.html';
-                    } else {
-                        throw new Error('Invalid password');
-                    }
-                } else {
-                    throw new Error('User not found');
-                }
-            } catch (error) {
-                console.error('Login error:', error);
-                errorMessage.textContent = 'Invalid email or password. Please try again.';
-                errorMessage.classList.add('show');
-                
-                loginBtn.disabled = false;
-                loginBtn.innerHTML = 'Sign In';
-            }
-        });
-
-        // Signup form handler
-        document.getElementById('signupForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const name = document.getElementById('signupName').value.trim();
-            const email = document.getElementById('signupEmail').value.trim();
-            const password = document.getElementById('signupPassword').value;
-            const passwordConfirm = document.getElementById('signupPasswordConfirm').value;
-            const signupBtn = document.getElementById('signupBtn');
-            const errorMessage = document.getElementById('signupErrorMessage');
-
-            // Validate passwords match
-            if (password !== passwordConfirm) {
-                errorMessage.textContent = 'Passwords do not match';
-                errorMessage.classList.add('show');
-                return;
-            }
-
-            // Show loading state
-            signupBtn.disabled = true;
-            signupBtn.innerHTML = 'Creating account<span class="spinner"></span>';
-            errorMessage.classList.remove('show');
-
-            try {
-                // Check if user already exists
-                const checkResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
-                });
-
-                const existingUsers = await checkResponse.json();
-                
-                if (existingUsers && existingUsers.length > 0) {
-                    throw new Error('An account with this email already exists');
-                }
-
-                // Create new user
-                const createResponse = await fetch(`${SUPABASE_URL}/rest/v1/users`, {
-                    method: 'POST',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=representation'
-                    },
-                    body: JSON.stringify({
-                        name: name,
-                        email: email,
-                        password: password,
-                        is_active: true
-                    })
-                });
-
-                if (!createResponse.ok) {
-                    const errorData = await createResponse.json();
-                    throw new Error(errorData.message || 'Failed to create account');
-                }
-
-                const newUsers = await createResponse.json();
-                
-                if (newUsers && newUsers.length > 0) {
-                    currentUser = newUsers[0];
-                    
-                    // Save to localStorage
-                    localStorage.setItem('wms_user', JSON.stringify(currentUser));
-                    
-                    console.log('Signup successful, redirecting to app.html');
-                    // Redirect to app
+                var result = await supabaseClient.auth.getSession();
+                if (result.data.session) {
+                    // Already logged in — redirect to app
                     window.location.href = 'app.html';
-                } else {
-                    throw new Error('Account created but could not log in');
+                    return;
                 }
-            } catch (error) {
-                console.error('Signup error:', error);
-                errorMessage.textContent = error.message || 'Failed to create account. Please try again.';
-                errorMessage.classList.add('show');
-                
-                signupBtn.disabled = false;
-                signupBtn.innerHTML = 'Create Account';
+            } catch(e) {
+                console.warn('Session check failed:', e);
             }
+
+            // No session — show login button
+            document.getElementById('googleLoginBtn').addEventListener('click', async function() {
+                var btn = this;
+                var errorEl = document.getElementById('errorMessage');
+                btn.disabled = true;
+                document.getElementById('loginSpinner').style.display = 'flex';
+                errorEl.classList.remove('show');
+
+                try {
+                    var result = await supabaseClient.auth.signInWithOAuth({
+                        provider: 'google',
+                        options: {
+                            redirectTo: 'https://vikashbagla.github.io/Vikash-WMS/app.html'
+                        }
+                    });
+                    if (result.error) throw result.error;
+                    // Browser will redirect to Google — nothing more to do here
+                } catch(err) {
+                    console.error('Google login error:', err);
+                    errorEl.textContent = 'Login failed: ' + (err.message || 'Unknown error');
+                    errorEl.classList.add('show');
+                    btn.disabled = false;
+                    document.getElementById('loginSpinner').style.display = 'none';
+                }
+            });
         });
-
-        // Show signup form
-        function showSignup() {
-            document.getElementById('loginForm').style.display = 'none';
-            document.getElementById('signupForm').style.display = 'flex';
-            document.getElementById('signupErrorMessage').classList.remove('show');
-        }
-
-        // Show login form
-        function showLogin() {
-            document.getElementById('signupForm').style.display = 'none';
-            document.getElementById('loginForm').style.display = 'flex';
-            document.getElementById('errorMessage').classList.remove('show');
-        }
     </script>
 </body>
 </html>

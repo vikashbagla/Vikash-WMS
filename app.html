@@ -313,30 +313,65 @@
     }
 
     // ============================================================
-    // AUTH
+    // AUTH — Google OAuth via Supabase Auth
     // ============================================================
-    function checkAuth() {
-        const savedUser = localStorage.getItem('wms_user');
-        if (!savedUser) {
-            window.location.href = 'index.html';
-            return false;
-        }
-        
+
+    /**
+     * Check for an active Supabase Auth session.
+     * If found: sets _wmsAuthToken for all REST calls, sets currentUser, returns true.
+     * If not found: redirects to index.html login page.
+     */
+    async function checkAuth() {
         try {
-            window.currentUser = JSON.parse(savedUser);
-            const name = window.currentUser.display_name || window.currentUser.name || window.currentUser.username || window.currentUser.email || 'User';
+            var result = await window.supabaseClient.auth.getSession();
+            var session = result.data.session;
+            if (!session) {
+                window.location.href = 'index.html';
+                return false;
+            }
+
+            // Set the auth token for all REST API calls (Phase 1A helper)
+            _wmsAuthToken = session.access_token;
+
+            // Set currentUser from the auth session
+            var user = session.user;
+            window.currentUser = {
+                id: user.id,
+                email: user.email,
+                display_name: (user.user_metadata && user.user_metadata.full_name) || user.email,
+                avatar_url: user.user_metadata && user.user_metadata.avatar_url
+            };
+
+            // Also keep wms_user in localStorage for backward compatibility
+            localStorage.setItem('wms_user', JSON.stringify(window.currentUser));
+
+            var name = window.currentUser.display_name || window.currentUser.email || 'User';
             document.getElementById('user-email').textContent = name;
+
+            // Listen for token refresh — keep _wmsAuthToken in sync
+            window.supabaseClient.auth.onAuthStateChange(function(event, newSession) {
+                if (event === 'TOKEN_REFRESHED' && newSession) {
+                    _wmsAuthToken = newSession.access_token;
+                } else if (event === 'SIGNED_OUT') {
+                    _wmsAuthToken = null;
+                    localStorage.removeItem('wms_user');
+                    window.location.href = 'index.html';
+                }
+            });
+
             return true;
         } catch (e) {
-            localStorage.removeItem('wms_user');
+            console.error('Auth check failed:', e);
             window.location.href = 'index.html';
             return false;
         }
     }
 
-    // Logout
-    function logout() {
+    // Logout — uses Supabase Auth signOut
+    async function logout() {
         if (confirm('Logout?')) {
+            await window.supabaseClient.auth.signOut();
+            _wmsAuthToken = null;
             localStorage.removeItem('wms_user');
             window.location.href = 'index.html';
         }
@@ -424,7 +459,9 @@
 
     // Init
     document.addEventListener('DOMContentLoaded', async () => {
-        if (!checkAuth()) return;
+        // checkAuth is now async — must await before loading data
+        var authOk = await checkAuth();
+        if (!authOk) return;
         checkFyersAuth();
 
         // Show startup loader while master data loads
