@@ -1671,7 +1671,7 @@ function deriveYahooSymbol(rec) {
 async function callYahooFinance(yahooSymbols) {
     var resp = await fetch(SUPABASE_URL + '/functions/v1/yahoo-finance', {
         method: 'POST',
-        headers: wmsHeaders({'Content-Type': 'application/json'}),
+        headers: wmsEdgeHeaders({'Content-Type': 'application/json'}),
         body: JSON.stringify({ symbols: yahooSymbols })
     });
     if (!resp.ok) throw new Error('Yahoo Finance edge function returned ' + resp.status);

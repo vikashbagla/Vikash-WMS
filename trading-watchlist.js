@@ -749,7 +749,7 @@ async function trWlYahooFallback_LEGACY() {
     try {
         var resp = await fetch(SUPABASE_URL + '/functions/v1/yahoo-finance', {
             method: 'POST',
-            headers: wmsHeaders({'Content-Type': 'application/json'}),
+            headers: wmsEdgeHeaders({'Content-Type': 'application/json'}),
             body: JSON.stringify({ symbols: yahooSymbols })
         });
         if (!resp.ok) {

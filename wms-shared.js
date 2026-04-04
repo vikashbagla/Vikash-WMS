@@ -29,6 +29,19 @@ function wmsHeaders(extra) {
     return h;
 }
 
+/**
+ * Build headers for Supabase Edge Function calls.
+ * Edge functions use SERVICE_ROLE_KEY internally and must always be called
+ * with the anon key (authenticated JWTs are rejected by the gateway).
+ * @param {Object} [extra] — additional headers to merge
+ * @returns {Object} headers object ready for fetch()
+ */
+function wmsEdgeHeaders(extra) {
+    var h = { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY };
+    if (extra) { for (var k in extra) h[k] = extra[k]; }
+    return h;
+}
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -1343,7 +1356,7 @@ async function wmsFetchEquityPrices(items, forceRefresh) {
             try {
                 var resp = await fetch(SUPABASE_URL + '/functions/v1/yahoo-finance', {
                     method: 'POST',
-                    headers: wmsHeaders({'Content-Type': 'application/json'}),
+                    headers: wmsEdgeHeaders({'Content-Type': 'application/json'}),
                     body: JSON.stringify({ symbols: yahooSymbols })
                 });
                 if (resp.ok) {

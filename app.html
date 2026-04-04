@@ -152,9 +152,10 @@
             } catch(e) {}
         }
 
+        // Edge functions use SERVICE_ROLE_KEY internally; always auth with anon key
         const response = await fetch(`${window.SUPABASE_URL}/functions/v1/fyers-market-data`, {
             method: 'POST',
-            headers: wmsHeaders({'Content-Type': 'application/json'}),
+            headers: wmsEdgeHeaders({'Content-Type': 'application/json'}),
             body: JSON.stringify({ ...payload, accessToken: fyersToken })
         });
         return await response.json();
