@@ -12,24 +12,62 @@
 
 /* Layout */
 #lgContainer { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
-#lgFiltersBar { flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 8px; border-bottom:1px solid #e2e8f0; }
-#lgSummarySection { flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#fafbfc; overflow:auto; max-height:40%; }
+#lgFiltersBar { flex-shrink:0; display:none; flex-direction:column; gap:4px; padding:6px 8px; border-bottom:1px solid #e2e8f0; }
+
+/* Filter rows */
+.lg-filters-row1 { display:flex; align-items:flex-start; gap:8px; }
+.lg-filters-row2 { display:flex; align-items:flex-start; gap:8px; }
+
+/* Date filter wrapper — sits in row 1 */
+.lg-date-wrap { display:flex; flex-direction:column; gap:3px; width:auto; min-width:160px; }
+
+/* Filters grid — sits in row 2 */
+.lg-filters-grid { flex:1; display:grid; grid-template-columns: repeat(4, 1fr); gap:4px; }
+
+/* Section headers — clickable toggle */
+.lg-section-header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:6px 10px; background:#f7fafc; border-top:1px solid #e2e8f0;
+    cursor:pointer; user-select:none; flex-shrink:0;
+}
+.lg-section-header:hover { background:#edf2f7; }
+.lg-section-header h4 {
+    margin:0; font-size:11px; font-weight:600; color:#2d3748;
+    text-transform:uppercase; letter-spacing:0.5px;
+}
+.lg-section-header .lg-section-toggle {
+    font-size:10px; color:#718096; transition:transform 0.15s;
+}
+.lg-section-header.lg-collapsed .lg-section-toggle { transform:rotate(-90deg); }
+
+/* Sections */
+#lgTransactionsSection { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+#lgTransactionsSection.lg-section-hidden { display:none; }
+#lgSummarySection { flex-shrink:0; padding:8px; overflow:auto; max-height:40%; }
+#lgSummarySection.lg-section-hidden { display:none; }
+
 #lgFooter { flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#f7fafc; display:flex; gap:8px; justify-content:flex-end; }
 
-/* Date filter wrapper */
-.lg-date-wrap { margin-top:12px; display:flex; flex-direction:column; gap:3px; width:auto; min-width:160px; }
-
-/* Filters grid */
-.lg-filters-grid { flex:1; grid-template-columns: repeat(4, 1fr); }
-
 /* Table — override table-container column widths for ledger layout */
-#lgTable { table-layout:fixed; width:100%; min-width:860px; }
-#lgTable th, #lgTable td { overflow:hidden; text-overflow:ellipsis; }
-#lgTable th { width:auto; } /* reset inherited widths from portfolio table-container */
+#lgTable { table-layout:fixed; width:100%; min-width:780px; }
+#lgTable th, #lgTable td { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#lgTable th { width:auto; }
 
 /* Sortable headers */
 #lgTable th.lg-sortable { cursor:pointer; user-select:none; }
 #lgTable th.lg-sortable:hover { color:#667eea; }
+
+/* Opening balance row */
+#lgOpeningBalRow td { vertical-align:middle; font-weight:600; background:#fefce8; }
+#lgOpeningBalRow .lg-ob-amount {
+    cursor:pointer; text-decoration:underline dotted;
+}
+#lgOpeningBalRow .lg-ob-amount:hover { color:#667eea; }
+.lg-ob-edit { display:inline-flex; align-items:center; gap:4px; }
+.lg-ob-edit input { width:100px; }
+.lg-ob-edit button { font-size:10px; padding:1px 6px; border-radius:3px; border:1px solid #e2e8f0; cursor:pointer; background:#fff; }
+.lg-ob-edit .lg-ob-save { color:#059669; border-color:#059669; }
+.lg-ob-edit .lg-ob-cancel { color:#718096; }
 
 /* New entry row */
 #lgNewEntryRow td { vertical-align:middle; }
@@ -53,6 +91,14 @@
 .lg-confirm-bar button { font-size:10px; padding:1px 6px; border-radius:3px; border:1px solid #e2e8f0; cursor:pointer; background:#fff; }
 .lg-confirm-bar .lg-confirm-yes { color:#dc2626; border-color:#dc2626; }
 .lg-confirm-bar .lg-confirm-yes:hover { background:#fef2f2; }
+
+/* Transaction type badges */
+.lg-type { font-size:10px; font-weight:600; padding:1px 5px; border-radius:3px; white-space:nowrap; }
+.lg-type-buy { color:#059669; background:#ecfdf5; }
+.lg-type-sell { color:#dc2626; background:#fef2f2; }
+.lg-type-income { color:#d97706; background:#fffbeb; }
+.lg-type-cash { color:#667eea; background:#eef2ff; }
+.lg-type-other { color:#718096; background:#f7fafc; }
 </style>
 </head>
 
@@ -84,91 +130,115 @@
 
     <!-- ============================================================ -->
     <!-- 2. FILTER BAR (hidden by default, toggled via ▲/▼ button)   -->
+    <!--    Row 1: Date filter (Period + FY)                         -->
+    <!--    Row 2: Pill filters (Investor/Trader/Broker/Tags)        -->
     <!-- ============================================================ -->
     <div id="lgFiltersBar">
-      <!-- Date filter — uses shared wmsDateFilter() component -->
-      <div class="lg-date-wrap">
-        <div id="lgDateFilter"></div>
+      <!-- Row 1: Date filter -->
+      <div class="lg-filters-row1">
+        <div class="lg-date-wrap">
+          <div id="lgDateFilter"></div>
+        </div>
       </div>
-      <!-- 4-column filter grid (same as Portfolio) -->
-      <div class="filters-grid lg-filters-grid">
-        <div id="lgFilterInvestor"></div>
-        <div id="lgFilterTrader"></div>
-        <div id="lgFilterBroker"></div>
-        <div id="lgFilterTags"></div>
+      <!-- Row 2: Pill filters -->
+      <div class="lg-filters-row2">
+        <div class="lg-filters-grid">
+          <div id="lgFilterInvestor"></div>
+          <div id="lgFilterTrader"></div>
+          <div id="lgFilterBroker"></div>
+          <div id="lgFilterTags"></div>
+        </div>
       </div>
     </div>
 
     <!-- ============================================================ -->
-    <!-- 3. ENTRIES SECTION (Main Table)                              -->
+    <!-- 3. TRANSACTIONS SECTION (clickable header + table)          -->
     <!-- ============================================================ -->
-    <div class="table-container" style="flex:1; min-height:0; overflow:auto;">
-      <table id="lgTable">
-        <thead id="lgHead">
-          <tr>
-            <th class="lg-sortable" data-sort="date" style="width:80px;">Date <span class="sort-indicator"></span></th>
-            <th style="width:120px;">Scrip</th>
-            <th style="width:80px;">Product</th>
-            <th class="text-right lg-sortable" data-sort="qty" style="width:70px;">Qty <span class="sort-indicator"></span></th>
-            <th class="text-right" style="width:80px;">Price</th>
-            <th class="text-right" style="width:80px;">Net</th>
-            <th class="text-right lg-sortable" data-sort="amount" style="width:100px;">Amount <span class="sort-indicator" id="lgAmtUnit"></span></th>
-            <th class="text-right lg-sortable" data-sort="balance" style="width:100px;">Balance <span class="sort-indicator" id="lgBalUnit"></span></th>
-            <th class="text-right" style="width:100px;">FO Margin Adj</th>
-          </tr>
-        </thead>
-        <tbody id="lgBody">
-          <!-- Inline new entry row at top -->
-          <tr id="lgNewEntryRow" class="total-row" style="background:#f9fafb;">
-            <td>
-              <div id="lgNewDateContainer"></div>
-            </td>
-            <td>
-              <input type="text" id="lgNewReference" placeholder="Ref / Note..." class="wms-input-compact">
-            </td>
-            <td>
-              <select id="lgNewType" class="wms-input-compact">
-                <option value="CASH_RECEIVED">Cash In</option>
-                <option value="CASH_PAID">Cash Out</option>
-                <option value="ADJUSTMENT">Adjustment</option>
-                <option value="OPENING_BALANCE">Opening Balance</option>
-              </select>
-            </td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td class="text-right">
-              <input type="number" id="lgNewAmount" placeholder="0.00" step="0.01" class="wms-input-compact wms-input-number">
-            </td>
-            <td class="text-right"></td>
-            <td class="text-right">
-              <button id="lgAddEntryBtn" class="wms-btn wms-btn-primary" style="font-size:11px; padding:3px 10px;">Add</button>
-            </td>
-          </tr>
+    <div class="lg-section-header" id="lgTransactionsHeader">
+      <h4>Running Transactions</h4>
+      <span class="lg-section-toggle">▼</span>
+    </div>
+    <div id="lgTransactionsSection">
+      <div class="table-container" style="flex:1; min-height:0; overflow:auto;">
+        <table id="lgTable">
+          <thead id="lgHead">
+            <tr>
+              <th class="lg-sortable" data-sort="date" style="width:80px;">Date <span class="sort-indicator"></span></th>
+              <th style="width:180px;">Symbol</th>
+              <th style="width:80px;">Type</th>
+              <th class="text-right lg-sortable" data-sort="qty" style="width:70px;">Qty <span class="sort-indicator"></span></th>
+              <th class="text-right" style="width:80px;">Price</th>
+              <th class="text-right" style="width:80px;">Net</th>
+              <th class="text-right lg-sortable" data-sort="amount" style="width:100px;">Amount <span class="sort-indicator" id="lgAmtUnit"></span></th>
+              <th class="text-right lg-sortable" data-sort="balance" style="width:100px;">Balance <span class="sort-indicator" id="lgBalUnit"></span></th>
+            </tr>
+          </thead>
+          <tbody id="lgBody">
+            <!-- Opening balance row (always first) -->
+            <tr id="lgOpeningBalRow" class="total-row">
+              <td id="lgObDate"></td>
+              <td style="font-weight:600;">Opening Balance</td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td class="text-right" id="lgObAmount"></td>
+              <td class="text-right" id="lgObBalance"></td>
+            </tr>
 
-          <!-- Data rows inserted by JS -->
-        </tbody>
-        <tfoot>
-          <tr class="total-row" style="border-top:2px solid #cbd5e0;">
-            <td colspan="6" class="text-right" style="font-weight:600;">TOTALS:</td>
-            <td id="lgTotalAmount" class="text-right" style="font-weight:600;"></td>
-            <td id="lgTotalBalance" class="text-right" style="font-weight:600;"></td>
-            <td id="lgTotalMargin" class="text-right" style="font-weight:600;"></td>
-          </tr>
-        </tfoot>
-      </table>
+            <!-- Inline new entry row -->
+            <tr id="lgNewEntryRow" class="total-row" style="background:#f9fafb;">
+              <td>
+                <div id="lgNewDateContainer"></div>
+              </td>
+              <td>
+                <input type="text" id="lgNewReference" placeholder="Ref / Note..." class="wms-input-compact">
+              </td>
+              <td>
+                <select id="lgNewType" class="wms-input-compact">
+                  <option value="CASH_RECEIVED">Cash In</option>
+                  <option value="CASH_PAID">Cash Out</option>
+                  <option value="ADJUSTMENT">Adjustment</option>
+                  <option value="OPENING_BALANCE">Opening Balance</option>
+                </select>
+              </td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td class="text-right">
+                <input type="number" id="lgNewAmount" placeholder="0.00" step="0.01" class="wms-input-compact wms-input-number">
+              </td>
+              <td class="text-right">
+                <button id="lgAddEntryBtn" class="wms-btn wms-btn-primary" style="font-size:11px; padding:3px 10px;">Add</button>
+              </td>
+            </tr>
+
+            <!-- Data rows inserted by JS -->
+          </tbody>
+          <tfoot>
+            <tr class="total-row" style="border-top:2px solid #cbd5e0;">
+              <td colspan="6" class="text-right" style="font-weight:600;">TOTALS:</td>
+              <td id="lgTotalAmount" class="text-right" style="font-weight:600;"></td>
+              <td id="lgTotalBalance" class="text-right" style="font-weight:600;"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
     </div>
 
     <!-- ============================================================ -->
-    <!-- 4. CURRENT BALANCE SECTION                                   -->
+    <!-- 4. SUMMARY SECTION (clickable header + summary table)       -->
     <!-- ============================================================ -->
+    <div class="lg-section-header" id="lgSummaryHeader">
+      <h4>Output Summary</h4>
+      <span class="lg-section-toggle">▼</span>
+    </div>
     <div id="lgSummarySection">
-      <div class="lg-summary-label">Current Balance Summary</div>
       <table>
         <thead>
           <tr>
-            <th>Scrip</th>
-            <th class="text-right">Product</th>
+            <th>Symbol</th>
+            <th class="text-right">Type</th>
             <th class="text-right">Qty</th>
             <th class="text-right">Avg Cost</th>
             <th class="text-right">CMP</th>

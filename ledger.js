@@ -15,7 +15,6 @@ var lgActiveViewId = null;
 // Data
 var lgLedgerEntries = [];
 var lgCombined = [];
-var lgMarginAdj = [];
 
 // Filters
 var lgSelectedInvestorIds = [];
@@ -54,6 +53,55 @@ var lgNewDateInput = null;
 
 // Delete confirmation state
 var lgPendingDeleteId = null;
+
+// Section toggle state (true = visible)
+var lgTransactionsVisible = true;
+var lgSummaryVisible = true;
+
+// Opening balance editing state
+var lgObEditing = false;
+
+// ============================================================================
+// TRANSACTION TYPE FRIENDLY LABELS
+// ============================================================================
+
+var LG_TYPE_LABELS = {
+    'BUY': 'Buy',
+    'SELL': 'Sell',
+    'DIVIDEND': 'Dividend',
+    'INTEREST': 'Interest',
+    'OTHER_INCOME': 'Other Income',
+    'CAPITAL_REDUCTION': 'Capital Reduction',
+    'RIGHTS_ENTITLEMENT': 'Rights',
+    'RIGHTS_PAYMENT': 'Rights Pay',
+    'BONUS': 'Bonus',
+    'SPLIT': 'Split',
+    'HISTORICAL_PL': 'Historical P&L',
+    'CASH_RECEIVED': 'Cash In',
+    'CASH_PAID': 'Cash Out',
+    'OPENING_BALANCE': 'Opening Bal',
+    'ADJUSTMENT': 'Adjustment',
+    'INTEREST_BOOKED': 'Interest'
+};
+
+var LG_TYPE_CSS = {
+    'BUY': 'lg-type-buy',
+    'SELL': 'lg-type-sell',
+    'DIVIDEND': 'lg-type-income',
+    'INTEREST': 'lg-type-income',
+    'OTHER_INCOME': 'lg-type-income',
+    'CAPITAL_REDUCTION': 'lg-type-income',
+    'RIGHTS_ENTITLEMENT': 'lg-type-other',
+    'RIGHTS_PAYMENT': 'lg-type-buy',
+    'BONUS': 'lg-type-other',
+    'SPLIT': 'lg-type-other',
+    'HISTORICAL_PL': 'lg-type-other',
+    'CASH_RECEIVED': 'lg-type-cash',
+    'CASH_PAID': 'lg-type-sell',
+    'OPENING_BALANCE': 'lg-type-cash',
+    'ADJUSTMENT': 'lg-type-other',
+    'INTEREST_BOOKED': 'lg-type-income'
+};
 
 // ============================================================================
 // INITIALIZATION
@@ -111,7 +159,8 @@ function lgInit() {
     // Populate pill items with current data
     lgRefreshPillItems();
 
-    // Date filter — initialize shared wmsDateFilter component (same as Transactions page)
+    // Date filter — initialize shared wmsDateFilter component
+    // Default to current FY
     var dateContainer = document.getElementById('lgDateFilter');
     if (dateContainer) {
         var fyStartMonth = 4;
@@ -119,7 +168,7 @@ function lgInit() {
             fyStartMonth = wmsRefData.userPrefs.fy_start_month;
         }
         lgDateFilterInstance = wmsDateFilter(dateContainer, {
-            default: 'all',
+            default: 'currentFY',
             fyStartMonth: fyStartMonth,
             transactions: trTransactions,
             onChange: function(from, to) {
@@ -151,6 +200,32 @@ function lgInit() {
             var isHidden = filtersDiv.style.display === 'none';
             filtersDiv.style.display = isHidden ? 'flex' : 'none';
             this.textContent = isHidden ? '\u25BC' : '\u25B2';
+        });
+    }
+
+    // Section header toggle — Transactions
+    var txnHeader = document.getElementById('lgTransactionsHeader');
+    if (txnHeader) {
+        txnHeader.addEventListener('click', function() {
+            lgTransactionsVisible = !lgTransactionsVisible;
+            var section = document.getElementById('lgTransactionsSection');
+            if (section) {
+                section.classList.toggle('lg-section-hidden', !lgTransactionsVisible);
+            }
+            txnHeader.classList.toggle('lg-collapsed', !lgTransactionsVisible);
+        });
+    }
+
+    // Section header toggle — Summary
+    var sumHeader = document.getElementById('lgSummaryHeader');
+    if (sumHeader) {
+        sumHeader.addEventListener('click', function() {
+            lgSummaryVisible = !lgSummaryVisible;
+            var section = document.getElementById('lgSummarySection');
+            if (section) {
+                section.classList.toggle('lg-section-hidden', !lgSummaryVisible);
+            }
+            sumHeader.classList.toggle('lg-collapsed', !lgSummaryVisible);
         });
     }
 
@@ -194,10 +269,6 @@ function lgInit() {
         });
     }
 
-    if (updateBtn) {
-        updateBtn.addEventListener('click', lgUpdateCurrentView);
-    }
-
     if (saveNewBtn) {
         saveNewBtn.addEventListener('click', function() {
             var prompt = document.getElementById('lgSavePrompt');
@@ -234,6 +305,10 @@ function lgInit() {
                 dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
             }
         });
+    }
+
+    if (updateBtn) {
+        updateBtn.addEventListener('click', lgUpdateCurrentView);
     }
 
     // Column sorting — attach click handlers to sortable headers
@@ -315,21 +390,57 @@ function lgUpdateUnitLabels() {
 // ============================================================================
 
 function lgFmt(value) {
-    // Use formatAmount from utils.js — respects display unit, parentheses for negatives, tooltips
     if (value === 0 || value === null || value === undefined) return '-';
     return typeof formatAmount === 'function' ? formatAmount(value) : wmsFmtAmt(value);
 }
 
 function lgFmtPrice(value) {
-    // Price/per-unit — use formatPrice (no unit conversion)
     if (value === 0 || value === null || value === undefined) return '-';
     return typeof formatPrice === 'function' ? formatPrice(value, false) : wmsFmtAmt(value);
 }
 
 function lgAmtClass(value) {
-    // Returns 'positive', 'negative', or '' — uses CSS classes instead of inline color
     if (value === 0 || value === null || value === undefined) return '';
     return typeof getAmountClass === 'function' ? getAmountClass(value) : (value > 0 ? 'positive' : value < 0 ? 'negative' : '');
+}
+
+// ============================================================================
+// SYMBOL DISPLAY — Full decoded NFO description
+// ============================================================================
+
+function lgFormatSymbol(row) {
+    if (row._rowType !== 'trade') return '';
+    var source = row._source;
+    var sym = source.short_symbol || source.symbol || '';
+
+    // For NFO, show decoded contract: e.g. "MANAPPURAM Mar 26 Fut"
+    if (source.security_type === 'NFO' || (source.product && /NFO|F&O|FNO/i.test(source.product))) {
+        var contract = typeof wmsFormatContract === 'function' ? wmsFormatContract(source) : '';
+        if (contract && contract !== 'Equity' && contract !== 'NFO') {
+            return wmsEsc(sym) + ' <span style="color:#718096; font-size:10px;">' + wmsEsc(contract) + '</span>';
+        }
+    }
+    return wmsEsc(sym);
+}
+
+// ============================================================================
+// TRANSACTION TYPE DISPLAY — Friendly labels with colored badges
+// ============================================================================
+
+function lgFormatType(row) {
+    var type = '';
+    var cssClass = 'lg-type-other';
+
+    if (row._rowType === 'ledger') {
+        type = row.entryType || '';
+    } else if (row._rowType === 'trade') {
+        type = row._source.transaction_type || '';
+    }
+
+    var label = LG_TYPE_LABELS[type] || type.replace(/_/g, ' ');
+    cssClass = LG_TYPE_CSS[type] || 'lg-type-other';
+
+    return '<span class="lg-type ' + cssClass + '">' + wmsEsc(label) + '</span>';
 }
 
 // ============================================================================
@@ -714,10 +825,7 @@ async function lgShowViewTab(viewId) {
 }
 
 async function lgDeleteView(viewId) {
-    // Inline confirmation instead of browser confirm() — same as delete entry pattern
     showAlert('Hold Shift + click to confirm delete', 'warning', 3000);
-    // For views, use simple confirm since it's a less frequent action
-    // TODO: Replace with inline confirmation pattern
     try {
         await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
             method: 'DELETE',
@@ -802,8 +910,6 @@ async function lgRefresh() {
         tagLogic: lgTagFilterLogic
     });
 
-    lgMarginAdj = wmsCalcMarginFIFO(filtered);
-
     lgRenderEntries(lgCombined);
     lgRenderSummary();
 }
@@ -812,9 +918,11 @@ function lgRenderEntries(rows) {
     var tbody = document.getElementById('lgBody');
     if (!tbody) return;
 
-    // Preserve the new entry row
+    // Preserve the new entry row and opening balance row
     var newRow = document.getElementById('lgNewEntryRow');
     var newRowHtml = newRow ? newRow.outerHTML : '';
+    var obRow = document.getElementById('lgOpeningBalRow');
+    var obRowHtml = obRow ? obRow.outerHTML : '';
 
     // Sort rows
     var sorted = rows.slice();
@@ -842,7 +950,6 @@ function lgRenderEntries(rows) {
         if (col === lgSortCol) {
             indicator.textContent = (lgSortDir === 'asc' ? ' ▲' : ' ▼');
         } else {
-            // Keep unit labels if present
             if (col === 'amount' || col === 'balance') {
                 var label = typeof getUnitLabel === 'function' ? getUnitLabel() : '';
                 indicator.textContent = label ? '(' + label + ')' : '';
@@ -852,29 +959,31 @@ function lgRenderEntries(rows) {
         }
     });
 
-    var html = newRowHtml;
+    // Render opening balance row
+    var openingBal = lgFindOpeningBalance();
+    lgRenderOpeningBalance(openingBal);
+
+    var html = obRowHtml + newRowHtml;
     var totalAmount = 0;
-    var lastBalance = 0;
+    var lastBalance = openingBal.amount || 0; // Start with opening balance
 
     sorted.forEach(function(row) {
+        // Skip OPENING_BALANCE ledger entries from the main rows (shown in special row)
+        if (row._rowType === 'ledger' && row.entryType === 'OPENING_BALANCE') return;
+
         var date = formatDate(row.date);
-        var scrip = '';
-        var product = '';
+        var symbol = '';
+        var typeHtml = '';
         var qty = '';
         var price = '';
         var net = '';
         var amount = '';
         var balance = '';
-        var marginAdj = '';
         var actions = '';
 
         if (row._rowType === 'ledger') {
             var source = row._source;
-            scrip = wmsEsc(row.entryType === 'OPENING_BALANCE' ? 'Opening Balance' :
-                          row.entryType === 'CASH_RECEIVED' ? 'Cash In' :
-                          row.entryType === 'CASH_PAID' ? 'Cash Out' :
-                          row.entryType === 'INTEREST_BOOKED' ? 'Interest' :
-                          'Adjustment');
+            typeHtml = lgFormatType(row);
 
             if (row.entryType === 'INTEREST_BOOKED') {
                 var entryId = source.id;
@@ -882,6 +991,11 @@ function lgRenderEntries(rows) {
                     lgFmt(row.amount) + '</span>';
             } else {
                 amount = lgFmt(row.amount);
+            }
+
+            // Show reference as symbol for ledger entries
+            if (source.reference) {
+                symbol = wmsEsc(source.reference);
             }
 
             balance = lgFmt(row._runningBalance);
@@ -894,11 +1008,8 @@ function lgRenderEntries(rows) {
                 '</span>';
         } else if (row._rowType === 'trade') {
             var source = row._source;
-            var sym = source.short_symbol || source.symbol || '';
-            scrip = wmsEsc(sym);
-
-            var prod = source.product || (source.security_type === 'NFO' ? 'NFO' : 'EQ');
-            product = wmsEsc(prod);
+            symbol = lgFormatSymbol(row);
+            typeHtml = lgFormatType(row);
 
             var q = Math.abs(source.quantity || 0);
             if (source.transaction_type === 'SELL' || source.transaction_type === 'RIGHTS_ENTITLEMENT' || source.transaction_type === 'BONUS') {
@@ -918,13 +1029,6 @@ function lgRenderEntries(rows) {
             amount = lgFmt(row.amount);
             balance = lgFmt(row._runningBalance);
             lastBalance = row._runningBalance;
-
-            var marginForTrade = lgMarginAdj.find(function(m) {
-                return m.transactionId === source.id;
-            });
-            if (marginForTrade && marginForTrade.marginAdj !== 0) {
-                marginAdj = lgFmt(marginForTrade.marginAdj);
-            }
         }
 
         var amtClass = lgAmtClass(row.amount);
@@ -932,20 +1036,22 @@ function lgRenderEntries(rows) {
 
         html += '<tr>' +
             '<td>' + date + '</td>' +
-            '<td>' + scrip + (actions ? ' ' + actions : '') + '</td>' +
-            '<td>' + product + '</td>' +
+            '<td>' + symbol + (actions ? ' ' + actions : '') + '</td>' +
+            '<td>' + typeHtml + '</td>' +
             '<td class="text-right">' + qty + '</td>' +
             '<td class="text-right">' + price + '</td>' +
             '<td class="text-right">' + net + '</td>' +
             '<td class="text-right ' + amtClass + '">' + amount + '</td>' +
             '<td class="text-right ' + balClass + '">' + balance + '</td>' +
-            '<td class="text-right">' + marginAdj + '</td>' +
             '</tr>';
 
         totalAmount += row.amount;
     });
 
     tbody.innerHTML = html;
+
+    // Re-attach opening balance click handler
+    lgAttachObClickHandler();
 
     // Update totals in tfoot
     var totalAmtEl = document.getElementById('lgTotalAmount');
@@ -961,6 +1067,146 @@ function lgRenderEntries(rows) {
         totalBalEl.style.fontWeight = '600';
     }
 }
+
+// ============================================================================
+// OPENING BALANCE — Editable row at top of transactions table
+// ============================================================================
+
+function lgFindOpeningBalance() {
+    // Find OPENING_BALANCE ledger entry for the active investor filter
+    var ob = lgLedgerEntries.find(function(e) {
+        return e.entry_type === 'OPENING_BALANCE';
+    });
+    if (ob) {
+        return { id: ob.id, date: ob.entry_date, amount: parseFloat(ob.amount) || 0, exists: true };
+    }
+    // Also check in lgCombined for opening balance rows
+    var obRow = lgCombined.find(function(r) {
+        return r._rowType === 'ledger' && r.entryType === 'OPENING_BALANCE';
+    });
+    if (obRow) {
+        return { id: obRow._source.id, date: obRow.date, amount: obRow.amount, exists: true };
+    }
+    return { id: null, date: '', amount: 0, exists: false };
+}
+
+function lgRenderOpeningBalance(ob) {
+    var dateEl = document.getElementById('lgObDate');
+    var amountEl = document.getElementById('lgObAmount');
+    var balanceEl = document.getElementById('lgObBalance');
+
+    if (dateEl) {
+        dateEl.textContent = ob.date ? (typeof formatDate === 'function' ? formatDate(ob.date) : ob.date) : '';
+    }
+    if (amountEl) {
+        if (lgObEditing) return; // Don't overwrite while editing
+        var amtHtml = ob.exists ?
+            '<span class="lg-ob-amount" title="Double-click to edit">' + lgFmt(ob.amount) + '</span>' :
+            '<span class="lg-ob-amount" style="color:#9ca3af;" title="Double-click to set opening balance">Set...</span>';
+        amountEl.innerHTML = amtHtml;
+        amountEl.className = 'text-right ' + lgAmtClass(ob.amount);
+    }
+    if (balanceEl) {
+        balanceEl.innerHTML = lgFmt(ob.amount);
+        balanceEl.className = 'text-right ' + lgAmtClass(ob.amount);
+    }
+}
+
+function lgAttachObClickHandler() {
+    var amountEl = document.getElementById('lgObAmount');
+    if (!amountEl) return;
+    var obSpan = amountEl.querySelector('.lg-ob-amount');
+    if (obSpan) {
+        obSpan.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+            lgStartObEdit();
+        });
+    }
+}
+
+function lgStartObEdit() {
+    lgObEditing = true;
+    var amountEl = document.getElementById('lgObAmount');
+    if (!amountEl) return;
+
+    var ob = lgFindOpeningBalance();
+    var currentVal = ob.amount || 0;
+
+    amountEl.innerHTML = '<span class="lg-ob-edit">' +
+        '<input type="number" step="0.01" value="' + currentVal + '" class="wms-input-compact wms-input-number" id="lgObEditInput">' +
+        '<button class="lg-ob-save" onclick="lgSaveOpeningBalance()">✓</button>' +
+        '<button class="lg-ob-cancel" onclick="lgCancelObEdit()">✕</button>' +
+        '</span>';
+
+    var input = document.getElementById('lgObEditInput');
+    if (input) {
+        input.focus();
+        input.select();
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); lgSaveOpeningBalance(); }
+            if (e.key === 'Escape') { e.preventDefault(); lgCancelObEdit(); }
+        });
+    }
+}
+
+function lgCancelObEdit() {
+    lgObEditing = false;
+    var ob = lgFindOpeningBalance();
+    lgRenderOpeningBalance(ob);
+    lgAttachObClickHandler();
+}
+
+async function lgSaveOpeningBalance() {
+    var input = document.getElementById('lgObEditInput');
+    if (!input) return;
+    var newAmount = parseFloat(input.value) || 0;
+
+    var ob = lgFindOpeningBalance();
+    var investorId = lgSelectedInvestorIds.length > 0 ? lgSelectedInvestorIds[0] : null;
+
+    if (!investorId) {
+        showAlert('Please select an investor filter first', 'warning', 3000);
+        lgCancelObEdit();
+        return;
+    }
+
+    try {
+        if (ob.exists && ob.id) {
+            // Update existing opening balance
+            await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + ob.id, {
+                method: 'PATCH',
+                headers: lgHeaders(),
+                body: JSON.stringify({ amount: newAmount })
+            });
+        } else {
+            // Create new opening balance entry
+            var entryDate = lgDateFrom || new Date().toISOString().slice(0, 10);
+            await fetch(SUPABASE_URL + '/rest/v1/ledger_entries', {
+                method: 'POST',
+                headers: lgHeaders(),
+                body: JSON.stringify({
+                    investor_id: investorId,
+                    entry_date: entryDate,
+                    entry_type: 'OPENING_BALANCE',
+                    amount: newAmount,
+                    reference: 'Opening Balance',
+                    notes: ''
+                })
+            });
+        }
+        lgObEditing = false;
+        showAlert('Opening balance saved', 'success', 2000);
+        lgRefresh();
+    } catch (err) {
+        console.warn('Failed to save opening balance:', err.message);
+        showAlert('Failed to save opening balance', 'error', 3000);
+        lgCancelObEdit();
+    }
+}
+
+// ============================================================================
+// SUMMARY RENDERING
+// ============================================================================
 
 function lgRenderSummary() {
     var summaryBody = document.getElementById('lgSummaryBody');
@@ -979,11 +1225,13 @@ function lgRenderSummary() {
             holdings[sym] = {
                 symbol: sym,
                 product: row._source.product || (row._source.security_type === 'NFO' ? 'NFO' : 'EQ'),
+                securityType: row._source.security_type || '',
                 qty: 0,
                 totalCost: 0,
                 totalValue: 0,
                 avgCost: 0,
-                cmp: 0
+                cmp: 0,
+                _source: row._source
             };
         }
 
@@ -1006,9 +1254,12 @@ function lgRenderSummary() {
         var mtm = h.totalValue - h.totalCost;
         var mtmClass = lgAmtClass(mtm);
 
+        // Type label
+        var typeLabel = h.securityType === 'NFO' ? 'NFO' : 'EQ';
+
         return '<tr>' +
             '<td>' + wmsEsc(sym) + '</td>' +
-            '<td class="text-right">' + wmsEsc(h.product) + '</td>' +
+            '<td class="text-right">' + wmsEsc(typeLabel) + '</td>' +
             '<td class="text-right">' + (typeof formatQuantity === 'function' ? formatQuantity(h.qty) : String(Math.round(h.qty))) + '</td>' +
             '<td class="text-right">' + lgFmtPrice(h.avgCost) + '</td>' +
             '<td class="text-right">' + lgFmtPrice(h.cmp) + '</td>' +
@@ -1119,7 +1370,6 @@ async function lgEditEntry(entryId) {
 // Inline delete confirmation — replaces browser confirm()
 async function lgDeleteEntry(entryId, linkEl) {
     if (lgPendingDeleteId === entryId) {
-        // Already showing confirmation — proceed with delete
         lgPendingDeleteId = null;
         try {
             await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + entryId, {
@@ -1135,7 +1385,6 @@ async function lgDeleteEntry(entryId, linkEl) {
         return;
     }
 
-    // Show inline confirmation
     lgPendingDeleteId = entryId;
     var actionsSpan = linkEl ? linkEl.closest('.lg-actions') : null;
     if (actionsSpan) {
@@ -1146,7 +1395,6 @@ async function lgDeleteEntry(entryId, linkEl) {
         actionsSpan.insertAdjacentHTML('afterend', confirmHtml);
     }
 
-    // Auto-cancel after 5 seconds
     setTimeout(function() {
         if (lgPendingDeleteId === entryId) {
             lgCancelDelete();
@@ -1156,7 +1404,6 @@ async function lgDeleteEntry(entryId, linkEl) {
 
 function lgCancelDelete() {
     lgPendingDeleteId = null;
-    // Remove all confirmation bars
     document.querySelectorAll('.lg-confirm-bar').forEach(function(el) { el.remove(); });
 }
 
@@ -1197,6 +1444,7 @@ async function lgShowInterestDetail(entryId) {
     if (detailBody) {
         detailBody.innerHTML = '<tr><td colspan="5" class="text-center" style="padding:20px;">Detail calculation would go here</td></tr>';
     }
+
     if (totalEditEl) {
         totalEditEl.value = entry.amount;
     }
@@ -1261,3 +1509,5 @@ window.lgAddEntry = lgAddEntry;
 window.lgPostInterest = lgPostInterest;
 window.lgApplyView = lgApplyView;
 window.lgLoadViews = lgLoadViews;
+window.lgSaveOpeningBalance = lgSaveOpeningBalance;
+window.lgCancelObEdit = lgCancelObEdit;
