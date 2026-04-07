@@ -1207,32 +1207,48 @@ function lgRenderSummary() {
     var summaryBody = document.getElementById('lgSummaryBody');
     if (!summaryBody) return;
 
+    // Summary uses ALL transactions (ignoring date filter) but respects
+    // investor/trader/broker/tag filters to show current portfolio holdings
+    var allFiltered = trTransactions.filter(function(t) {
+        if (t.dont_display) return false;
+        if (!t.transaction_date) return false;
+        if (lgSelectedInvestorIds.length > 0 && lgSelectedInvestorIds.indexOf(t.investor_id) < 0) return false;
+        if (lgSelectedTraderIds.length > 0) {
+            var tid = t.trader_id || t.investor_id;
+            if (!tid || lgSelectedTraderIds.indexOf(tid) < 0) return false;
+        }
+        if (lgSelectedBrokerIds.length > 0 && lgSelectedBrokerIds.indexOf(t.broker_id) < 0) return false;
+        if (lgSelectedTagNames.length > 0) {
+            if (!wmsMatchTagsFilter(t.tags || [], lgSelectedTagNames, lgTagFilterLogic)) return false;
+        }
+        return true;
+    });
+
     var holdings = {};
     var totalCost = 0;
     var totalValue = 0;
 
-    lgCombined.forEach(function(row) {
-        if (row._rowType !== 'trade') return;
-        var sym = row.symbol;
+    allFiltered.forEach(function(t) {
+        var sym = t.symbol;
         if (!sym) return;
 
         if (!holdings[sym]) {
             holdings[sym] = {
                 symbol: sym,
-                product: row._source.product || (row._source.security_type === 'NFO' ? 'NFO' : 'EQ'),
-                securityType: row._source.security_type || '',
+                product: t.product || (t.security_type === 'NFO' ? 'NFO' : 'EQ'),
+                securityType: t.security_type || '',
                 qty: 0,
                 totalCost: 0,
                 totalValue: 0,
                 avgCost: 0,
                 cmp: 0,
-                _source: row._source
+                _source: t
             };
         }
 
-        var qty = row._source.transaction_type === 'SELL' ? -Math.abs(row._source.quantity) : Math.abs(row._source.quantity);
+        var qty = t.transaction_type === 'SELL' ? -Math.abs(t.quantity) : Math.abs(t.quantity);
         holdings[sym].qty += qty;
-        holdings[sym].totalCost += row._source.net_amount;
+        holdings[sym].totalCost += t.net_amount;
     });
 
     var rows = Object.keys(holdings).map(function(sym) {
@@ -1269,11 +1285,8 @@ function lgRenderSummary() {
 
     summaryBody.innerHTML = rows;
 
-    // Update summary totals
-    var lastBalance = 0;
-    if (lgCombined.length > 0) {
-        lastBalance = lgCombined[lgCombined.length - 1]._runningBalance;
-    }
+    // Update summary totals — outstanding = total cost of current holdings
+    var outstanding = totalCost;
 
     var holdingsValueEl = document.getElementById('lgHoldingsValue');
     var mtmFnoEl = document.getElementById('lgMtmFno');
@@ -1287,13 +1300,13 @@ function lgRenderSummary() {
         holdingsValueEl.style.fontWeight = '600';
     }
     if (mtmFnoEl) mtmFnoEl.textContent = '-';
-    if (outstandingEl) outstandingEl.innerHTML = lgFmt(Math.abs(lastBalance));
+    if (outstandingEl) outstandingEl.innerHTML = lgFmt(Math.abs(outstanding));
 
     var taxRate = 0;
     var potentialTax = (totalValue - totalCost) * (taxRate / 100);
     if (potentialTaxEl) potentialTaxEl.innerHTML = lgFmt(potentialTax);
 
-    var netValue = totalValue - Math.abs(lastBalance) - potentialTax;
+    var netValue = totalValue - Math.abs(outstanding) - potentialTax;
 
     if (netValueEl) {
         netValueEl.innerHTML = lgFmt(netValue);
