@@ -1224,58 +1224,95 @@ function lgRenderSummary() {
         return true;
     });
 
-    var holdings = {};
-    var totalCost = 0;
-    var totalValue = 0;
+    // Sort by date for FIFO processing
+    var sorted = allFiltered.slice().sort(function(a, b) {
+        return (a.transaction_date || '').localeCompare(b.transaction_date || '');
+    });
 
-    allFiltered.forEach(function(t) {
+    // FIFO engine — maintain buy lots per symbol, consume oldest first on sell
+    var lots = {};   // symbol → [ { qty, costPerUnit } ]
+    var holdingMeta = {};  // symbol → { securityType, _source }
+
+    sorted.forEach(function(t) {
         var sym = t.symbol;
         if (!sym) return;
+        if (t.transaction_type !== 'BUY' && t.transaction_type !== 'SELL') return;
 
-        if (!holdings[sym]) {
-            holdings[sym] = {
-                symbol: sym,
-                product: t.product || (t.security_type === 'NFO' ? 'NFO' : 'EQ'),
+        if (!lots[sym]) lots[sym] = [];
+        if (!holdingMeta[sym]) {
+            holdingMeta[sym] = {
                 securityType: t.security_type || '',
-                qty: 0,
-                totalCost: 0,
-                totalValue: 0,
-                avgCost: 0,
-                cmp: 0,
                 _source: t
             };
         }
 
-        var qty = t.transaction_type === 'SELL' ? -Math.abs(t.quantity) : Math.abs(t.quantity);
-        holdings[sym].qty += qty;
-        holdings[sym].totalCost += t.net_amount;
+        if (t.transaction_type === 'BUY') {
+            var costPer = t.quantity !== 0 ? t.net_amount / Math.abs(t.quantity) : t.price;
+            lots[sym].push({ qty: Math.abs(t.quantity), costPerUnit: costPer });
+        } else {
+            // SELL — consume oldest lots first (FIFO)
+            var remaining = Math.abs(t.quantity);
+            while (remaining > 0 && lots[sym].length > 0) {
+                var lot = lots[sym][0];
+                var match = Math.min(remaining, lot.qty);
+                lot.qty -= match;
+                remaining -= match;
+                if (lot.qty <= 0) lots[sym].shift();
+            }
+        }
     });
 
-    var rows = Object.keys(holdings).map(function(sym) {
-        var h = holdings[sym];
-        if (h.qty === 0) return '';
+    // Build holdings from remaining lots
+    var totalCost = 0;
+    var totalValue = 0;
 
-        h.avgCost = h.qty !== 0 ? h.totalCost / h.qty : 0;
-        h.cmp = h.avgCost;
-        h.totalValue = h.qty * h.cmp;
+    var rows = Object.keys(lots).map(function(sym) {
+        var lotArr = lots[sym];
+        if (!lotArr || lotArr.length === 0) return '';
 
-        totalCost += h.totalCost;
-        totalValue += h.totalValue;
+        var qty = 0, cost = 0;
+        for (var i = 0; i < lotArr.length; i++) {
+            qty += lotArr[i].qty;
+            cost += lotArr[i].qty * lotArr[i].costPerUnit;
+        }
+        if (qty === 0) return '';
 
-        var mtm = h.totalValue - h.totalCost;
+        var fifoCost = cost / qty;
+        var meta = holdingMeta[sym] || {};
+        var cmp = fifoCost;  // CMP placeholder — no live price in ledger context
+        var value = qty * cmp;
+
+        totalCost += cost;
+        totalValue += value;
+
+        var mtm = value - cost;
         var mtmClass = lgAmtClass(mtm);
 
         // Type label
-        var typeLabel = h.securityType === 'NFO' ? 'NFO' : 'EQ';
+        var typeLabel = (meta.securityType === 'NFO') ? 'NFO' : 'EQ';
+
+        // Symbol display — decode NFO symbols via wmsFormatContract
+        var symHtml;
+        var shortSym = (meta._source && meta._source.short_symbol) ? meta._source.short_symbol : sym;
+        if (meta._source && meta.securityType === 'NFO' && typeof wmsFormatContract === 'function') {
+            var contract = wmsFormatContract(meta._source);
+            if (contract && contract !== 'Equity' && contract !== 'NFO') {
+                symHtml = wmsEsc(shortSym) + ' <span style="color:#718096; font-size:10px;">' + wmsEsc(contract) + '</span>';
+            } else {
+                symHtml = wmsEsc(shortSym);
+            }
+        } else {
+            symHtml = wmsEsc(shortSym);
+        }
 
         return '<tr>' +
-            '<td>' + wmsEsc(sym) + '</td>' +
+            '<td>' + symHtml + '</td>' +
             '<td class="text-right">' + wmsEsc(typeLabel) + '</td>' +
-            '<td class="text-right">' + (typeof formatQuantity === 'function' ? formatQuantity(h.qty) : String(Math.round(h.qty))) + '</td>' +
-            '<td class="text-right">' + lgFmtPrice(h.avgCost) + '</td>' +
-            '<td class="text-right">' + lgFmtPrice(h.cmp) + '</td>' +
+            '<td class="text-right">' + (typeof formatQuantity === 'function' ? formatQuantity(qty) : String(Math.round(qty))) + '</td>' +
+            '<td class="text-right">' + lgFmtPrice(fifoCost) + '</td>' +
+            '<td class="text-right">' + lgFmtPrice(cmp) + '</td>' +
             '<td class="text-right ' + mtmClass + '">' + lgFmt(mtm) + '</td>' +
-            '<td class="text-right">' + lgFmt(h.totalValue) + '</td>' +
+            '<td class="text-right">' + lgFmt(value) + '</td>' +
             '</tr>';
     }).filter(function(s) { return s.length > 0; }).join('');
 
