@@ -4185,7 +4185,7 @@ async function trLoadFnoModule() {
 }
 
 // ============================================================================
-// LEDGER TAB (lazy-loaded from ledger.html + ledger.js)
+// LEDGER TAB (lazy-loaded from trading-ledger.html + trading-ledger.js)
 // ============================================================================
 
 var trLedgerLoaded = false;
@@ -4195,16 +4195,16 @@ async function trLoadLedgerModule() {
             var container = document.getElementById('tr-ledger');
             if (!container) return;
             // Fetch HTML
-            var resp = await fetch('ledger.html?t=' + Date.now());
+            var resp = await fetch('trading-ledger.html?t=' + Date.now());
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             var html = await resp.text();
             container.innerHTML = html;
             // Load JS
             await new Promise(function(resolve, reject) {
                 var script = document.createElement('script');
-                script.src = 'ledger.js?t=' + Date.now();
+                script.src = 'trading-ledger.js?t=' + Date.now();
                 script.onload = resolve;
-                script.onerror = function() { reject(new Error('Failed to load ledger.js')); };
+                script.onerror = function() { reject(new Error('Failed to load trading-ledger.js')); };
                 document.body.appendChild(script);
             });
             trLedgerLoaded = true;
@@ -4224,7 +4224,7 @@ async function trLoadLedgerModule() {
     if (typeof lgInit === 'function') { lgInit(); lgRefresh(); }
 }
 
-// (Old ledger code removed — now lazy-loaded from ledger.js)
+// (Old ledger code removed — now lazy-loaded from trading-ledger.js)
 
 // ============================================================================
 // WINDOW EXPORTS

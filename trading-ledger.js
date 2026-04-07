@@ -1229,56 +1229,29 @@ function lgRenderSummary() {
         return (a.transaction_date || '').localeCompare(b.transaction_date || '');
     });
 
-    // FIFO engine — maintain buy lots per symbol, consume oldest first on sell
-    var lots = {};   // symbol → [ { qty, costPerUnit } ]
-    var holdingMeta = {};  // symbol → { securityType, _source }
+    // Use shared FIFO engine (wms-shared.js)
+    var fifo = wmsCalcFifoCost(sorted);
+    var holdingsMap = fifo.holdings;
 
-    sorted.forEach(function(t) {
-        var sym = t.symbol;
-        if (!sym) return;
-        if (t.transaction_type !== 'BUY' && t.transaction_type !== 'SELL') return;
+    // Build source lookup for NFO symbol decoding (keyed same as engine: symbol+'-'+exchange)
+    var sourceLookup = {};
+    for (var si = 0; si < sorted.length; si++) {
+        var st = sorted[si];
+        var sKey = (st.symbol || '') + '-' + (st.exchange || '');
+        if (!sourceLookup[sKey]) sourceLookup[sKey] = st;
+    }
 
-        if (!lots[sym]) lots[sym] = [];
-        if (!holdingMeta[sym]) {
-            holdingMeta[sym] = {
-                securityType: t.security_type || '',
-                _source: t
-            };
-        }
-
-        if (t.transaction_type === 'BUY') {
-            var costPer = t.quantity !== 0 ? t.net_amount / Math.abs(t.quantity) : t.price;
-            lots[sym].push({ qty: Math.abs(t.quantity), costPerUnit: costPer });
-        } else {
-            // SELL — consume oldest lots first (FIFO)
-            var remaining = Math.abs(t.quantity);
-            while (remaining > 0 && lots[sym].length > 0) {
-                var lot = lots[sym][0];
-                var match = Math.min(remaining, lot.qty);
-                lot.qty -= match;
-                remaining -= match;
-                if (lot.qty <= 0) lots[sym].shift();
-            }
-        }
-    });
-
-    // Build holdings from remaining lots
+    // Build holdings table rows
     var totalCost = 0;
     var totalValue = 0;
 
-    var rows = Object.keys(lots).map(function(sym) {
-        var lotArr = lots[sym];
-        if (!lotArr || lotArr.length === 0) return '';
+    var rows = Object.keys(holdingsMap).map(function(key) {
+        var h = holdingsMap[key];
+        if (h.quantity === 0) return '';
 
-        var qty = 0, cost = 0;
-        for (var i = 0; i < lotArr.length; i++) {
-            qty += lotArr[i].qty;
-            cost += lotArr[i].qty * lotArr[i].costPerUnit;
-        }
-        if (qty === 0) return '';
-
-        var fifoCost = cost / qty;
-        var meta = holdingMeta[sym] || {};
+        var qty = h.quantity;
+        var cost = h.totalCost;
+        var fifoCost = h.avgCost;
         var cmp = fifoCost;  // CMP placeholder — no live price in ledger context
         var value = qty * cmp;
 
@@ -1289,13 +1262,14 @@ function lgRenderSummary() {
         var mtmClass = lgAmtClass(mtm);
 
         // Type label
-        var typeLabel = (meta.securityType === 'NFO') ? 'NFO' : 'EQ';
+        var typeLabel = (h.securityType === 'NFO') ? 'NFO' : 'EQ';
 
         // Symbol display — decode NFO symbols via wmsFormatContract
         var symHtml;
-        var shortSym = (meta._source && meta._source.short_symbol) ? meta._source.short_symbol : sym;
-        if (meta._source && meta.securityType === 'NFO' && typeof wmsFormatContract === 'function') {
-            var contract = wmsFormatContract(meta._source);
+        var shortSym = h.shortSymbol || h.symbol;
+        var srcTxn = sourceLookup[key];
+        if (srcTxn && h.securityType === 'NFO' && typeof wmsFormatContract === 'function') {
+            var contract = wmsFormatContract(srcTxn);
             if (contract && contract !== 'Equity' && contract !== 'NFO') {
                 symHtml = wmsEsc(shortSym) + ' <span style="color:#718096; font-size:10px;">' + wmsEsc(contract) + '</span>';
             } else {

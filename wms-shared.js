@@ -1004,61 +1004,203 @@ function wmsExcludeOpenOptions(txns) {
 }
 
 // ============================================================================
-// FIFO COST CALCULATION (Spec A2)
-// Matches sells against buys in chronological order (FIFO). Partially matched
-// buys retain remaining qty at original per-unit cost. Average cost is then
-// sum(remaining cost) / sum(remaining qty) — only considering unsquared buys.
-// Income transactions are ignored (they don't participate in FIFO matching).
+// UNIFIED COST ENGINE — FIFO & LIFO (Spec A2)
+//
+// Single source of truth for lot-based cost calculation across all modules.
+// Accepts raw DB-format transactions (snake_case fields). Automatically groups
+// by symbol+exchange. Returns holdings (with open lots) and realized gains.
+//
+// Public API:
+//   wmsCalcFifoCost(transactions)  → { holdings, gains }
+//   wmsCalcLifoCost(transactions)  → { holdings, gains }
+//
+// holdings: { 'SYMBOL-EXCHANGE': { symbol, shortSymbol, companyName, exchange,
+//             securityType, quantity, totalCost, avgCost, lots, tags } }
+// gains:   [ { symbol, shortSymbol, companyName, exchange, securityType,
+//             buyDate, sellDate, qty, buyPrice, buyCostPerUnit, sellPrice,
+//             sellProceedsPerUnit, buyCost, sellProceeds, gain, holdingDays,
+//             investorId, brokerId } ]
+//
+// Income types (DIVIDEND, INTEREST, etc.) are excluded automatically.
+// Transactions MUST be sorted by date ascending before calling.
 // ============================================================================
 
-function wmsCalcFifoCost(transactions) {
-    var buys = [];
-    var totalSellQty = 0;
+function _wmsCostEngine(transactions, method) {
+    var lots = {};    // key → [ { date, qty, price, costPerUnit, investorId, brokerId, tags, securityType } ]
+    var gains = [];   // realized gain events
+    var meta = {};    // key → { symbol, shortSymbol, companyName, exchange, securityType }
 
     for (var i = 0; i < transactions.length; i++) {
-        var txn = transactions[i];
-        if (WMS_INCOME_TYPES.indexOf(txn.transaction_type) >= 0) continue;
+        var t = transactions[i];
+        // Support both snake_case (raw DB) and camelCase (normalized)
+        var txnType = t.transaction_type || t.type || '';
+        if (wmsIsQtyExcluded(txnType)) continue;
+        if (txnType !== 'BUY' && txnType !== 'SELL') continue;
 
-        if (txn.transaction_type === 'BUY') {
-            buys.push({
-                date: txn.transaction_date,
-                qty: Math.abs(txn.quantity),
-                netAmount: txn.net_amount || 0,
-                remaining: Math.abs(txn.quantity)
+        var sym = t.symbol || '';
+        var exch = t.exchange || '';
+        var key = sym + '-' + exch;
+        var txnDate = t.transaction_date || t.date || '';
+        var txnQty = Math.abs(t.quantity || 0);
+        var txnPrice = t.price || 0;
+        var txnNetAmount = (t.net_amount !== undefined ? t.net_amount : t.netAmount) || 0;
+        var txnInvestorId = (t.investor_id !== undefined ? t.investor_id : t.investorId) || '';
+        var txnBrokerId = (t.broker_id !== undefined ? t.broker_id : t.brokerId) || '';
+        var txnTags = t.tags || [];
+        var txnSecType = (t.security_type !== undefined ? t.security_type : t.securityType) || 'EQUITY';
+        var txnShortSymbol = (t.short_symbol !== undefined ? t.short_symbol : t.shortSymbol) || sym;
+        var txnCompanyName = (t.company_name !== undefined ? t.company_name : t.companyName) || '';
+
+        if (!lots[key]) lots[key] = [];
+        if (!meta[key]) {
+            meta[key] = {
+                symbol: sym,
+                shortSymbol: txnShortSymbol,
+                companyName: txnCompanyName,
+                exchange: exch,
+                securityType: txnSecType
+            };
+        }
+
+        if (txnType === 'BUY') {
+            var costPerUnit = txnQty !== 0 ? txnNetAmount / txnQty : txnPrice;
+            lots[key].push({
+                date: txnDate,
+                qty: txnQty,
+                price: txnPrice,
+                costPerUnit: costPerUnit,
+                investorId: txnInvestorId,
+                brokerId: txnBrokerId,
+                tags: txnTags,
+                securityType: txnSecType
             });
-        } else {
-            totalSellQty += Math.abs(txn.quantity);
+        } else if (txnType === 'SELL') {
+            var remainingSellQty = txnQty;
+            var sellPricePerUnit = txnQty !== 0 ? txnNetAmount / txnQty : txnPrice;
+            var sellDate = txnDate;
+
+            // Determine lot consumption order: FIFO = front-to-back, LIFO = back-to-front
+            if (method === 'lifo') {
+                // LIFO — consume newest lots first (from end of array)
+                while (remainingSellQty > 0 && lots[key].length > 0) {
+                    var lotL = lots[key][lots[key].length - 1];
+                    var matchQtyL = Math.min(remainingSellQty, lotL.qty);
+
+                    var buyCostL = matchQtyL * lotL.costPerUnit;
+                    var sellProceedsL = matchQtyL * sellPricePerUnit;
+                    var gainL = sellProceedsL - buyCostL;
+                    var buyDateL = new Date(lotL.date);
+                    var sellDL = new Date(sellDate);
+                    var holdDaysL = Math.floor((sellDL - buyDateL) / (1000 * 60 * 60 * 24));
+
+                    gains.push({
+                        symbol: sym, shortSymbol: meta[key].shortSymbol,
+                        companyName: meta[key].companyName, exchange: exch,
+                        securityType: txnSecType || lotL.securityType,
+                        buyDate: lotL.date, sellDate: sellDate, qty: matchQtyL,
+                        buyPrice: lotL.price, buyCostPerUnit: lotL.costPerUnit,
+                        sellPrice: txnPrice, sellProceedsPerUnit: sellPricePerUnit,
+                        buyCost: buyCostL, sellProceeds: sellProceedsL,
+                        gain: gainL, holdingDays: holdDaysL,
+                        investorId: txnInvestorId, brokerId: txnBrokerId
+                    });
+
+                    lotL.qty -= matchQtyL;
+                    remainingSellQty -= matchQtyL;
+                    if (lotL.qty <= 0) lots[key].pop();
+                }
+            } else {
+                // FIFO — consume oldest lots first (from front of array)
+                while (remainingSellQty > 0 && lots[key].length > 0) {
+                    var lot = lots[key][0];
+                    var matchQty = Math.min(remainingSellQty, lot.qty);
+
+                    var buyCost = matchQty * lot.costPerUnit;
+                    var sellProceeds = matchQty * sellPricePerUnit;
+                    var gain = sellProceeds - buyCost;
+                    var buyDateF = new Date(lot.date);
+                    var sellDF = new Date(sellDate);
+                    var holdDays = Math.floor((sellDF - buyDateF) / (1000 * 60 * 60 * 24));
+
+                    gains.push({
+                        symbol: sym, shortSymbol: meta[key].shortSymbol,
+                        companyName: meta[key].companyName, exchange: exch,
+                        securityType: txnSecType || lot.securityType,
+                        buyDate: lot.date, sellDate: sellDate, qty: matchQty,
+                        buyPrice: lot.price, buyCostPerUnit: lot.costPerUnit,
+                        sellPrice: txnPrice, sellProceedsPerUnit: sellPricePerUnit,
+                        buyCost: buyCost, sellProceeds: sellProceeds,
+                        gain: gain, holdingDays: holdDays,
+                        investorId: txnInvestorId, brokerId: txnBrokerId
+                    });
+
+                    lot.qty -= matchQty;
+                    remainingSellQty -= matchQty;
+                    if (lot.qty <= 0) lots[key].shift();
+                }
+            }
+
+            // If remainingSellQty > 0 → short sell — treat as negative lot
+            if (remainingSellQty > 0) {
+                lots[key].push({
+                    date: sellDate,
+                    qty: -remainingSellQty,
+                    price: txnPrice,
+                    costPerUnit: sellPricePerUnit,
+                    investorId: txnInvestorId,
+                    brokerId: txnBrokerId,
+                    tags: txnTags,
+                    securityType: txnSecType
+                });
+            }
         }
     }
 
-    // Sort buys chronologically (FIFO = earliest first)
-    buys.sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); });
+    // Build holdings from remaining lots
+    var holdings = {};
+    var keys = Object.keys(lots);
+    for (var k = 0; k < keys.length; k++) {
+        var hKey = keys[k];
+        var lotArr = lots[hKey];
+        if (lotArr.length === 0) continue;
 
-    // Consume sells against earliest buys
-    var sellRemaining = totalSellQty;
-    for (var j = 0; j < buys.length && sellRemaining > 0; j++) {
-        var matchQty = Math.min(sellRemaining, buys[j].remaining);
-        buys[j].remaining -= matchQty;
-        sellRemaining -= matchQty;
+        var totalQty = 0;
+        var totalCost = 0;
+        var tagsSet = {};
+
+        for (var j = 0; j < lotArr.length; j++) {
+            var lt = lotArr[j];
+            totalQty += lt.qty;
+            totalCost += lt.qty * lt.costPerUnit;
+            if (lt.tags) {
+                for (var ti = 0; ti < lt.tags.length; ti++) tagsSet[lt.tags[ti]] = true;
+            }
+        }
+
+        var m = meta[hKey] || {};
+        holdings[hKey] = {
+            symbol: m.symbol || '',
+            shortSymbol: m.shortSymbol || '',
+            companyName: m.companyName || '',
+            exchange: m.exchange || '',
+            securityType: m.securityType || 'EQUITY',
+            quantity: totalQty,
+            totalCost: totalCost,
+            avgCost: totalQty !== 0 ? totalCost / totalQty : 0,
+            lots: lotArr,
+            tags: Object.keys(tagsSet)
+        };
     }
 
-    // Sum cost of unsquared (remaining) buy portions
-    var remainingCost = 0;
-    var remainingQty = 0;
-    for (var k = 0; k < buys.length; k++) {
-        if (buys[k].remaining <= 0) continue;
-        var ppu = buys[k].qty > 0 ? buys[k].netAmount / buys[k].qty : 0;
-        remainingCost += buys[k].remaining * ppu;
-        remainingQty += buys[k].remaining;
-    }
+    return { holdings: holdings, gains: gains };
+}
 
-    var fifoCost = remainingQty > 0 ? remainingCost / remainingQty : 0;
+function wmsCalcFifoCost(transactions) {
+    return _wmsCostEngine(transactions, 'fifo');
+}
 
-    return {
-        avgCost: wmsRoundMoney(fifoCost),
-        netQuantity: remainingQty,
-        totalCost: wmsRoundMoney(remainingCost)
-    };
+function wmsCalcLifoCost(transactions) {
+    return _wmsCostEngine(transactions, 'lifo');
 }
 
 // ============================================================================

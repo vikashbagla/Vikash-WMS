@@ -57,171 +57,37 @@ function rptGetAssetClass(securityType) {
 }
 
 // ============================================================================
-// FIFO ENGINE
-// Processes sorted BUY/SELL transactions → returns { holdings[], gains[] }
-//   holdings: open lots with individual cost and acquisition date
-//   gains:    realized gain events with buy/sell dates, amounts, holding period
+// FIFO ENGINE WRAPPER
+// Calls the shared wmsCalcFifoCost engine (wms-shared.js) and enriches
+// holdings with reports-specific fields: assetClass, fifoCost, latestPrice, _txns.
 // ============================================================================
 
 function rptFifoEngine(txns) {
-    // txns must be sorted by date ascending
-    var lots = {};   // key → [ { date, qty, price, netPerUnit, investorId, brokerId, tags } ]
-    var gains = [];  // realized gain events
+    // The shared engine accepts both snake_case and camelCase fields
+    var result = wmsCalcFifoCost(txns);
+    var holdings = result.holdings;
 
-    for (var i = 0; i < txns.length; i++) {
-        var t = txns[i];
-        if (wmsIsQtyExcluded(t.type)) continue;
-
-        var key = t.symbol + '-' + t.exchange;
-        if (!lots[key]) lots[key] = [];
-
-        if (t.type === 'BUY') {
-            var costPerUnit = t.quantity !== 0 ? t.netAmount / t.quantity : t.price;
-            lots[key].push({
-                date: t.date,
-                qty: t.quantity,
-                price: t.price,
-                costPerUnit: costPerUnit,
-                investorId: t.investorId,
-                brokerId: t.brokerId,
-                tags: t.tags || [],
-                securityType: t.securityType
-            });
-        } else if (t.type === 'SELL') {
-            var remainingSellQty = Math.abs(t.quantity); // quantity is negative for SELL in DB
-            var sellPricePerUnit = remainingSellQty !== 0 ? t.netAmount / remainingSellQty : t.price;
-            var sellDate = t.date;
-
-            // Consume lots FIFO
-            while (remainingSellQty > 0 && lots[key].length > 0) {
-                var lot = lots[key][0];
-                var matchQty = Math.min(remainingSellQty, lot.qty);
-
-                var buyCost = matchQty * lot.costPerUnit;
-                var sellProceeds = matchQty * sellPricePerUnit;
-                var gain = sellProceeds - buyCost;
-
-                // Holding period in days
-                var buyDate = new Date(lot.date);
-                var sellD = new Date(sellDate);
-                var holdingDays = Math.floor((sellD - buyDate) / (1000 * 60 * 60 * 24));
-
-                gains.push({
-                    symbol: t.symbol,
-                    shortSymbol: t.shortSymbol,
-                    companyName: t.companyName,
-                    exchange: t.exchange,
-                    securityType: t.securityType || lot.securityType,
-                    buyDate: lot.date,
-                    sellDate: sellDate,
-                    qty: matchQty,
-                    buyPrice: lot.price,
-                    buyCostPerUnit: lot.costPerUnit,
-                    sellPrice: t.price,
-                    sellProceedsPerUnit: sellPricePerUnit,
-                    buyCost: buyCost,
-                    sellProceeds: sellProceeds,
-                    gain: gain,
-                    holdingDays: holdingDays,
-                    investorId: t.investorId,
-                    brokerId: t.brokerId
-                });
-
-                lot.qty -= matchQty;
-                remainingSellQty -= matchQty;
-                if (lot.qty <= 0) lots[key].shift();
-            }
-            // If remainingSellQty > 0 it means short sell — treat as new negative lot
-            if (remainingSellQty > 0) {
-                lots[key].push({
-                    date: sellDate,
-                    qty: -remainingSellQty,
-                    price: t.price,
-                    costPerUnit: sellPricePerUnit,
-                    investorId: t.investorId,
-                    brokerId: t.brokerId,
-                    tags: t.tags || [],
-                    securityType: t.securityType
-                });
-            }
-        }
-    }
-
-    // Build holdings summary from remaining lots
-    var holdings = {};
-    var keys = Object.keys(lots);
+    // Enrich holdings with reports-specific properties
+    var keys = Object.keys(holdings);
     for (var k = 0; k < keys.length; k++) {
-        var sym = keys[k];
-        var lotArr = lots[sym];
-        if (lotArr.length === 0) continue;
-
-        var totalQty = 0;
-        var totalCost = 0;
-        var tagsSet = {};
-        var latestPrice = 0;
-        var latestDate = null;
-        var secType = null;
-        var symParts = sym.split('-');
-        var symbolName = '', shortSym = '', compName = '', exchName = '';
-
-        for (var j = 0; j < lotArr.length; j++) {
-            var lt = lotArr[j];
-            totalQty += lt.qty;
-            totalCost += lt.qty * lt.costPerUnit;
-            if (lt.tags) {
-                for (var ti = 0; ti < lt.tags.length; ti++) tagsSet[lt.tags[ti]] = true;
-            }
-            if (!secType && lt.securityType) secType = lt.securityType;
-        }
-
-        // We need the original txn info for symbol/company etc — find from rptTransactions
-        for (var m = 0; m < rptTransactions.length; m++) {
-            var tt = rptTransactions[m];
-            if (tt.symbol + '-' + tt.exchange === sym) {
-                symbolName = tt.symbol;
-                shortSym = tt.shortSymbol;
-                compName = tt.companyName;
-                exchName = tt.exchange;
-                if (!secType) secType = tt.securityType;
-                latestPrice = tt.price;
-                latestDate = tt.date;
-                break;
-            }
-        }
-        // Get latest price from last txn for this symbol
-        for (var m2 = rptTransactions.length - 1; m2 >= 0; m2--) {
-            if (rptTransactions[m2].symbol + '-' + rptTransactions[m2].exchange === sym) {
-                latestPrice = rptTransactions[m2].price;
-                latestDate = rptTransactions[m2].date;
-                break;
-            }
-        }
-
-        holdings[sym] = {
-            symbol: symbolName,
-            shortSymbol: shortSym,
-            companyName: compName,
-            exchange: exchName,
-            securityType: secType,
-            assetClass: rptGetAssetClass(secType),
-            quantity: totalQty,
-            totalCost: totalCost,
-            fifoCost: totalQty !== 0 ? totalCost / totalQty : 0,
-            tags: Object.keys(tagsSet),
-            latestPrice: latestPrice,
-            lots: lotArr,
-            _txns: []
-        };
+        var h = holdings[keys[k]];
+        h.assetClass = rptGetAssetClass(h.securityType);
+        h.fifoCost = h.avgCost;
+        h.latestPrice = 0;
+        h._txns = [];
     }
 
-    // Attach raw txns for Day P&L calculation
+    // Attach latestPrice (from last txn for each symbol) and _txns
     for (var n = 0; n < rptTransactions.length; n++) {
         var tx = rptTransactions[n];
-        var hKey = tx.symbol + '-' + tx.exchange;
-        if (holdings[hKey]) holdings[hKey]._txns.push(tx);
+        var hKey = (tx.symbol || '') + '-' + (tx.exchange || '');
+        if (holdings[hKey]) {
+            holdings[hKey]._txns.push(tx);
+            holdings[hKey].latestPrice = tx.price;
+        }
     }
 
-    return { holdings: holdings, gains: gains };
+    return { holdings: holdings, gains: result.gains };
 }
 
 // ============================================================================

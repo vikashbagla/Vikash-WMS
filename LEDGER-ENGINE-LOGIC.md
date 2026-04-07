@@ -10,7 +10,7 @@ The Ledger Engine tracks all money movement for each investor–trader–broker 
 
 ### Architecture
 
-- **Separate module:** `ledger.html` + `ledger.js` (lazy-loaded when Ledger tab is activated, same pattern as F&O)
+- **Separate module:** `trading-ledger.html` + `trading-ledger.js` (lazy-loaded when Ledger tab is activated, same pattern as F&O)
 - **Shared engine functions:** `wms-shared.js` (calculations, period generation)
 - **Saved views:** `ledger_views` table in Supabase (same pattern as `portfolio_views`)
 - **Prefix:** All ledger module variables/functions use `lg` prefix
@@ -333,16 +333,16 @@ A new field `tax_rate` (NUMERIC, percentage) to be added to either `investors` o
 | `wmsCalcMarginFIFO(txns)` | wms-shared.js | FIFO margin tracking for F&O positions |
 | `wmsGetInterestTerms(investorId, brokerId)` | wms-shared.js | Resolve interest terms (IBA > investor) |
 | `wmsGetMarginRate(investorId, brokerId)` | wms-shared.js | Get margin_rate from IBA |
-| `lgInit()` | ledger.js | Initialize ledger module (one-time) |
-| `lgLoadViews()` | ledger.js | Load saved ledger views from DB |
-| `lgApplyView(viewId)` | ledger.js | Apply a saved view's filters |
-| `lgRefresh()` | ledger.js | Fetch data and render ledger |
-| `lgRenderEntries(rows)` | ledger.js | Render the entries table |
-| `lgRenderSummary()` | ledger.js | Render current balance section |
-| `lgShowInterestDetail(entryId)` | ledger.js | Show interest calculation detail on dbl-click |
-| `lgPostInterest(data)` | ledger.js | Post interest entry to DB |
-| `lgExportPdf()` | ledger.js | Generate PDF export |
-| `lgExportExcel()` | ledger.js | Generate Excel export |
+| `lgInit()` | trading-ledger.js | Initialize ledger module (one-time) |
+| `lgLoadViews()` | trading-ledger.js | Load saved ledger views from DB |
+| `lgApplyView(viewId)` | trading-ledger.js | Apply a saved view's filters |
+| `lgRefresh()` | trading-ledger.js | Fetch data and render ledger |
+| `lgRenderEntries(rows)` | trading-ledger.js | Render the entries table |
+| `lgRenderSummary()` | trading-ledger.js | Render current balance section |
+| `lgShowInterestDetail(entryId)` | trading-ledger.js | Show interest calculation detail on dbl-click |
+| `lgPostInterest(data)` | trading-ledger.js | Post interest entry to DB |
+| `lgExportPdf()` | trading-ledger.js | Generate PDF export |
+| `lgExportExcel()` | trading-ledger.js | Generate Excel export |
 
 ---
 
