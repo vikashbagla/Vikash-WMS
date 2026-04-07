@@ -21,6 +21,7 @@ var trWlFirstFetchDone = false; // Skip resolution/Yahoo on auto-refresh cycles
 var trWlSearchDdCtrl = null;   // wmsDropdown controller for search autocomplete
 var trWlAddModal = null;       // wmsModal controller for add-security dialog
 var trWlReorderModal = null;   // wmsModal controller for reorder dialog
+var trWlSliderMode = 'day';    // 'day' (daily H/L from Fyers) or '52wk' (52-week H/L from securities_db)
 
 // ============================================================================
 // INITIALIZATION
@@ -70,6 +71,19 @@ function trWlSetupEventHandlers() {
         if (e.key === 'Enter') trWlCreateWatchlist();
         if (e.key === 'Escape') trWlCancelNewWatchlist();
     });
+
+    // H/L slider toggle (Day vs 52wk)
+    var hlToggle = document.getElementById('trWlHlToggle');
+    if (hlToggle) {
+        hlToggle.addEventListener('click', function(e) {
+            var btn = e.target.closest('.wl-hl-btn');
+            if (!btn || btn.classList.contains('active')) return;
+            hlToggle.querySelectorAll('.wl-hl-btn').forEach(function(b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            trWlSliderMode = btn.dataset.mode;
+            trWlRender();
+        });
+    }
 
     // Add dialog — initialize modal and dropdown with wms-shared.js
     var searchInput = document.getElementById('trWlAddSearch');
@@ -865,8 +879,9 @@ function trWlUpdatePricesInPlace() {
         var cmp = price ? price.lp : null;
         var ch = price ? price.ch : null;
         var chp = price ? price.chp : null;
-        var high = price ? price.high : null;
-        var low = price ? price.low : null;
+        var hlRange = trWlGetSliderRange(item, price);
+        var high = hlRange.high;
+        var low = hlRange.low;
 
         // Update price
         var priceEl = row.querySelector('.wl-price-main');
@@ -1038,13 +1053,30 @@ function trWlRender() {
     trWlAttachCardListeners();
 }
 
+// Resolve H/L range for slider based on current mode (day vs 52wk)
+function trWlGetSliderRange(item, price) {
+    if (trWlSliderMode === '52wk') {
+        // 52-week H/L from securities_db (only for securities_db items)
+        if (item.security_source === 'securities_db' && item.security_id && wmsRefData.securitiesCmMap) {
+            var sec = wmsRefData.securitiesCmMap[item.security_id];
+            if (sec && sec.week_52_high && sec.week_52_low) {
+                return { high: Number(sec.week_52_high), low: Number(sec.week_52_low) };
+            }
+        }
+        return { high: null, low: null };
+    }
+    // Default: day H/L from Fyers live prices
+    return { high: price ? price.high : null, low: price ? price.low : null };
+}
+
 function trWlRenderSecurityRow(item) {
     var price = wmsLivePrices[item._fyersSymbol] || wmsLivePrices[item.short_symbol];
     var cmp = price ? price.lp : null;
     var ch = price ? price.ch : null;
     var chp = price ? price.chp : null;
-    var high = price ? price.high : null;
-    var low = price ? price.low : null;
+    var hlRange = trWlGetSliderRange(item, price);
+    var high = hlRange.high;
+    var low = hlRange.low;
 
     // Display symbol — for NFO/Options, prefer _displaySymbol
     var rawDisplaySym = item._displaySymbol || item.short_symbol;

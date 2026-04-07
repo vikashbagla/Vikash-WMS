@@ -37,6 +37,29 @@
     align-items: center;
     gap: 8px;
 }
+/* Day H/L vs 52wk H/L toggle */
+.wl-hl-toggle {
+    display: inline-flex;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    overflow: hidden;
+}
+.wl-hl-btn {
+    background: #fff;
+    border: none;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #718096;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.wl-hl-btn:not(:last-child) { border-right: 1px solid #e2e8f0; }
+.wl-hl-btn:hover { background: #f7fafc; }
+.wl-hl-btn.active {
+    background: #667eea;
+    color: #fff;
+}
 .btn-new-watchlist {
     background: #667eea;
     color: #fff;
@@ -878,6 +901,10 @@
                 <input type="text" class="wl-new-input" id="trWlNewName" placeholder="Watchlist name..." maxlength="40">
                 <button class="btn-wl-save-new" id="trWlNewSave">Create</button>
                 <button class="btn-wl-cancel-new" id="trWlNewCancel">Cancel</button>
+            </div>
+            <div class="wl-hl-toggle" id="trWlHlToggle">
+                <button class="wl-hl-btn active" data-mode="day">Day H/L</button>
+                <button class="wl-hl-btn" data-mode="52wk">52wk H/L</button>
             </div>
             <button class="btn-new-watchlist" id="trWlNewBtn">+ New Watchlist</button>
             <button class="btn-wl-refresh" id="trWlReorderBtn" title="Reorder watchlists">↕ Reorder</button>
