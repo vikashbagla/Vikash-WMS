@@ -1054,10 +1054,14 @@ function trWlRender() {
 }
 
 // Resolve H/L range for slider based on current mode (day vs 52wk)
+// NFO/options items always use day H/L (no 52wk data exists for derivatives)
 function trWlGetSliderRange(item, price) {
+    var dayHL = { high: price ? price.high : null, low: price ? price.low : null };
     if (trWlSliderMode === '52wk') {
-        // 52-week H/L from securities_db (only for securities_db items)
-        if (item.security_source === 'securities_db' && item.security_id && wmsRefData.securitiesCmMap) {
+        // NFO/options: fall back to day H/L (52wk not available for derivatives)
+        if (item.security_source !== 'securities_db') return dayHL;
+        // 52-week H/L from securities_db
+        if (item.security_id && wmsRefData.securitiesCmMap) {
             var sec = wmsRefData.securitiesCmMap[item.security_id];
             if (sec && sec.week_52_high && sec.week_52_low) {
                 return { high: Number(sec.week_52_high), low: Number(sec.week_52_low) };
@@ -1065,8 +1069,7 @@ function trWlGetSliderRange(item, price) {
         }
         return { high: null, low: null };
     }
-    // Default: day H/L from Fyers live prices
-    return { high: price ? price.high : null, low: price ? price.low : null };
+    return dayHL;
 }
 
 function trWlRenderSecurityRow(item) {
