@@ -54,9 +54,8 @@ var lgNewDateInput = null;
 // Delete confirmation state
 var lgPendingDeleteId = null;
 
-// Section toggle state (true = visible)
-var lgTransactionsVisible = true;
-var lgSummaryVisible = true;
+// Active page tab ('transactions' or 'summary')
+var lgActivePage = 'transactions';
 
 // Opening balance editing state
 var lgObEditing = false;
@@ -203,29 +202,25 @@ function lgInit() {
         });
     }
 
-    // Section header toggle — Transactions
-    var txnHeader = document.getElementById('lgTransactionsHeader');
-    if (txnHeader) {
-        txnHeader.addEventListener('click', function() {
-            lgTransactionsVisible = !lgTransactionsVisible;
-            var section = document.getElementById('lgTransactionsSection');
-            if (section) {
-                section.classList.toggle('lg-section-hidden', !lgTransactionsVisible);
+    // Page tab switching — Running Transactions / Output Summary
+    var pageTabs = document.getElementById('lgPageTabs');
+    if (pageTabs) {
+        pageTabs.addEventListener('click', function(e) {
+            var btn = e.target.closest('.lg-page-tab');
+            if (!btn) return;
+            var page = btn.getAttribute('data-page');
+            if (page === lgActivePage) return;
+            lgActivePage = page;
+            // Update tab active states
+            var tabs = pageTabs.querySelectorAll('.lg-page-tab');
+            for (var i = 0; i < tabs.length; i++) {
+                tabs[i].classList.toggle('active', tabs[i].getAttribute('data-page') === page);
             }
-            txnHeader.classList.toggle('lg-collapsed', !lgTransactionsVisible);
-        });
-    }
-
-    // Section header toggle — Summary
-    var sumHeader = document.getElementById('lgSummaryHeader');
-    if (sumHeader) {
-        sumHeader.addEventListener('click', function() {
-            lgSummaryVisible = !lgSummaryVisible;
-            var section = document.getElementById('lgSummarySection');
-            if (section) {
-                section.classList.toggle('lg-section-hidden', !lgSummaryVisible);
-            }
-            sumHeader.classList.toggle('lg-collapsed', !lgSummaryVisible);
+            // Show/hide sections
+            var txnSection = document.getElementById('lgTransactionsSection');
+            var sumSection = document.getElementById('lgSummarySection');
+            if (txnSection) txnSection.classList.toggle('lg-page-hidden', page !== 'transactions');
+            if (sumSection) sumSection.classList.toggle('lg-page-hidden', page !== 'summary');
         });
     }
 

@@ -24,27 +24,26 @@
 /* Filters grid — sits in row 2 */
 .lg-filters-grid { flex:1; display:grid; grid-template-columns: repeat(4, 1fr); gap:4px; }
 
-/* Section headers — clickable toggle */
-.lg-section-header {
-    display:flex; align-items:center; justify-content:space-between;
-    padding:6px 10px; background:#f7fafc; border-top:1px solid #e2e8f0;
-    cursor:pointer; user-select:none; flex-shrink:0;
+/* Page tabs — Running Transactions vs Output Summary */
+.lg-page-tabs {
+    flex-shrink:0; display:flex; gap:0;
+    border-bottom:2px solid #e2e8f0; padding:0 8px;
 }
-.lg-section-header:hover { background:#edf2f7; }
-.lg-section-header h4 {
-    margin:0; font-size:11px; font-weight:600; color:#2d3748;
-    text-transform:uppercase; letter-spacing:0.5px;
+.lg-page-tab {
+    background:none; border:none;
+    border-bottom:2px solid transparent; margin-bottom:-2px;
+    padding:6px 18px; font-size:12px; font-weight:600;
+    color:#718096; cursor:pointer; transition:all 0.15s;
+    text-transform:uppercase; letter-spacing:0.3px;
 }
-.lg-section-header .lg-section-toggle {
-    font-size:10px; color:#718096; transition:transform 0.15s;
-}
-.lg-section-header.lg-collapsed .lg-section-toggle { transform:rotate(-90deg); }
+.lg-page-tab:hover { color:#4a5568; }
+.lg-page-tab.active { color:#667eea; border-bottom-color:#667eea; }
 
-/* Sections */
+/* Sections — tab content pages */
 #lgTransactionsSection { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
-#lgTransactionsSection.lg-section-hidden { display:none; }
-#lgSummarySection { flex-shrink:0; padding:8px; overflow:auto; max-height:40%; }
-#lgSummarySection.lg-section-hidden { display:none; }
+#lgTransactionsSection.lg-page-hidden { display:none; }
+#lgSummarySection { display:flex; flex-direction:column; flex:1; min-height:0; overflow:auto; padding:8px; }
+#lgSummarySection.lg-page-hidden { display:none; }
 
 #lgFooter { flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#f7fafc; display:flex; gap:8px; justify-content:flex-end; }
 
@@ -152,12 +151,16 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- 3. TRANSACTIONS SECTION (clickable header + table)          -->
+    <!-- 3. PAGE TABS — Running Transactions / Output Summary        -->
     <!-- ============================================================ -->
-    <div class="lg-section-header" id="lgTransactionsHeader">
-      <h4>Running Transactions</h4>
-      <span class="lg-section-toggle">▼</span>
+    <div class="lg-page-tabs" id="lgPageTabs">
+      <button class="lg-page-tab active" data-page="transactions">Running Transactions</button>
+      <button class="lg-page-tab" data-page="summary">Output Summary</button>
     </div>
+
+    <!-- ============================================================ -->
+    <!-- 4. TRANSACTIONS PAGE                                        -->
+    <!-- ============================================================ -->
     <div id="lgTransactionsSection">
       <div class="table-container" style="flex:1; min-height:0; overflow:auto;">
         <table id="lgTable">
@@ -227,13 +230,9 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- 4. SUMMARY SECTION (clickable header + summary table)       -->
+    <!-- 5. SUMMARY PAGE                                             -->
     <!-- ============================================================ -->
-    <div class="lg-section-header" id="lgSummaryHeader">
-      <h4>Output Summary</h4>
-      <span class="lg-section-toggle">▼</span>
-    </div>
-    <div id="lgSummarySection">
+    <div id="lgSummarySection" class="lg-page-hidden">
       <table>
         <thead>
           <tr>
@@ -277,7 +276,7 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- 5. FOOTER BAR (Export buttons)                               -->
+    <!-- 6. FOOTER BAR (Export buttons)                               -->
     <!-- ============================================================ -->
     <div id="lgFooter">
       <button id="lgExportPdfBtn" class="tr-vta-btn">Export PDF</button>
