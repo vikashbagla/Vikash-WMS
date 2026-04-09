@@ -1713,7 +1713,9 @@ async function lgAddEntry() {
         });
 
         if (resp.ok) {
-            if (lgNewDateInput) lgNewDateInput.clear();
+            // Note: wmsDateInput exposes setValue/getValue/destroy — no clear().
+            // Keep the date as-is (the user typically adds several entries on the
+            // same date, so this is the more useful default).
             if (refEl) refEl.value = '';
             if (amtEl) amtEl.value = '';
             showAlert('Entry added', 'success', 2000);
