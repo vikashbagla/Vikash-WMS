@@ -43,6 +43,7 @@ var lgInited = false;
 // Interest detail temp state
 var lgInterestDetailEntryId = null;
 var lgInterestDetailData = null;
+var lgInterestTotalCtrl = null;
 
 // Sorting state
 var lgSortCol = 'date';
@@ -251,6 +252,15 @@ function lgInit() {
     var intPostBtn = document.getElementById('lgInterestPostBtn');
     if (intPostBtn) {
         intPostBtn.addEventListener('click', lgPostInterest);
+    }
+
+    // Wire global comma-formatted amount input to interest modal Total Interest field
+    var lgIntTotalEl = document.getElementById('lgInterestTotalEdit');
+    if (lgIntTotalEl && typeof wmsAttachAmountInput === 'function') {
+        lgInterestTotalCtrl = wmsAttachAmountInput(lgIntTotalEl, {
+            allowNegative: false,
+            decimals: 0
+        });
     }
 
     // Export buttons
@@ -948,18 +958,25 @@ async function lgRefresh() {
     } else if (lgSelectedTraderIds.length > 0) {
         entityIds = lgSelectedTraderIds.slice();
     }
-    var allQuery = '';
-    if (entityIds.length > 0) {
-        allQuery += 'investor_id.in.(' + entityIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')';
-    }
+    var brokerOnly = (lgSelectedInvestorIds.length === 0 && lgSelectedTraderIds.length === 0 && lgSelectedBrokerIds.length > 0);
 
-    try {
-        var url = SUPABASE_URL + '/rest/v1/ledger_entries?select=*' + (allQuery ? '&' + allQuery : '') + '&order=entry_date.asc';
-        var resp = await fetch(url, { headers: lgHeaders() });
-        lgLedgerEntries = resp.ok ? await resp.json() : [];
-    } catch (err) {
-        console.warn('Failed to fetch ledger entries:', err.message);
+    if (brokerOnly) {
+        // Broker-only view doesn't draw on investor ledger entries — those track
+        // investor cash with the firm, not broker P&L. Skip the fetch entirely.
         lgLedgerEntries = [];
+    } else {
+        var allQuery = '';
+        if (entityIds.length > 0) {
+            allQuery += 'investor_id.in.(' + entityIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')';
+        }
+        try {
+            var url = SUPABASE_URL + '/rest/v1/ledger_entries?select=*' + (allQuery ? '&' + allQuery : '') + '&order=entry_date.asc';
+            var resp = await fetch(url, { headers: lgHeaders() });
+            lgLedgerEntries = resp.ok ? await resp.json() : [];
+        } catch (err) {
+            console.warn('Failed to fetch ledger entries:', err.message);
+            lgLedgerEntries = [];
+        }
     }
 
     // Filter transactions by non-date filters (investor/trader/broker/tags) — NO date filter yet.
@@ -978,13 +995,34 @@ async function lgRefresh() {
         return true;
     });
 
+    // Resolve perspective from the active filter combination:
+    //   - investor / trader (alone, or combined with broker) → 'trader' if only
+    //     trader filters are present, else 'investor'
+    //   - broker only (no investor/trader) → 'broker'
+    // Per spec: any combination including investor/trader uses investor/trader
+    // signage; only when broker is the *sole* filter do we switch to broker view.
+    var hasInv = lgSelectedInvestorIds.length > 0;
+    var hasTrd = lgSelectedTraderIds.length > 0;
+    var hasBrk = lgSelectedBrokerIds.length > 0;
+    var lgPerspective;
+    if (hasInv) {
+        lgPerspective = 'investor';
+    } else if (hasTrd) {
+        lgPerspective = 'trader';
+    } else if (hasBrk) {
+        lgPerspective = 'broker';
+    } else {
+        lgPerspective = 'investor';
+    }
+
     // Build full-history ledger — running balance computed across ALL time.
     var fullCombined = wmsBuildLedger(lgLedgerEntries, txnFiltered, {
         investorIds: lgSelectedInvestorIds,
         traderIds: lgSelectedTraderIds,
         brokerIds: lgSelectedBrokerIds,
         tagNames: lgSelectedTagNames,
-        tagLogic: lgTagFilterLogic
+        tagLogic: lgTagFilterLogic,
+        perspective: lgPerspective
     });
 
     // ------------------------------------------------------------------
@@ -1337,6 +1375,20 @@ function lgRenderOpeningBalance(ob) {
     if (balanceEl) {
         balanceEl.innerHTML = lgFmt(ob.amount);
         balanceEl.className = 'text-right ' + lgAmtClass(ob.amount);
+    }
+    var descEl = document.getElementById('lgObDescription');
+    if (descEl) {
+        var amt = ob.amount || 0;
+        var label = '';
+        // Investor-receivable view: +ve balance = investor/trader/broker owes the firm
+        if (amt > 0) {
+            label = '\u2192 amount owed to the firm';
+        } else if (amt < 0) {
+            label = '\u2190 amount owed by the firm';
+        } else {
+            label = 'no outstanding balance';
+        }
+        descEl.textContent = label;
     }
 }
 
@@ -1839,6 +1891,7 @@ function lgPopulateInterestDetail(calc, currentAmount) {
 
     if (detailBody) {
         if (calc) {
+            var roundedInterest = Math.round(calc.interest);
             var baseLine = '';
             if (calc.marginBalance) {
                 baseLine = '<tr>' +
@@ -1846,7 +1899,7 @@ function lgPopulateInterestDetail(calc, currentAmount) {
                     '<td class="text-right">' + lgFmt(calc.closingBalance) + ' + ' + lgFmt(calc.marginBalance) + ' <span style="color:#718096; font-size:10px;">(F&amp;O margin)</span> = ' + lgFmt(calc.baseBalance || (calc.closingBalance + calc.marginBalance)) + '</td>' +
                     '<td class="text-right">' + calc.days + '</td>' +
                     '<td class="text-right">' + calc.rate + '%</td>' +
-                    '<td class="text-right">' + lgFmt(calc.interest) + '</td>' +
+                    '<td class="text-right">' + lgFmt(roundedInterest) + '</td>' +
                 '</tr>';
             } else {
                 baseLine = '<tr>' +
@@ -1854,10 +1907,10 @@ function lgPopulateInterestDetail(calc, currentAmount) {
                     '<td class="text-right">' + lgFmt(calc.closingBalance) + '</td>' +
                     '<td class="text-right">' + calc.days + '</td>' +
                     '<td class="text-right">' + calc.rate + '%</td>' +
-                    '<td class="text-right">' + lgFmt(calc.interest) + '</td>' +
+                    '<td class="text-right">' + lgFmt(roundedInterest) + '</td>' +
                 '</tr>';
             }
-            var formulaNote = '<tr><td colspan="5" style="font-size:10px; color:#718096; padding-top:6px;">Formula: max(0, balance + F&amp;O margin) × rate% × (1/52)</td></tr>';
+            var formulaNote = '<tr><td colspan="5" style="font-size:10px; color:#718096; padding-top:6px;">Formula: max(0, balance + F&amp;O margin) × ' + calc.rate + '% × (1/52)</td></tr>';
             detailBody.innerHTML = baseLine + formulaNote;
         } else {
             detailBody.innerHTML = '<tr><td colspan="5" class="text-center" style="padding:20px; color:#9ca3af;">No calculation data available</td></tr>';
@@ -1865,7 +1918,12 @@ function lgPopulateInterestDetail(calc, currentAmount) {
     }
 
     if (totalEditEl) {
-        totalEditEl.value = currentAmount != null ? currentAmount : (calc ? calc.interest : 0);
+        var amtVal = currentAmount != null ? currentAmount : (calc ? Math.round(calc.interest) : 0);
+        if (lgInterestTotalCtrl && typeof lgInterestTotalCtrl.setValue === 'function') {
+            lgInterestTotalCtrl.setValue(amtVal);
+        } else {
+            totalEditEl.value = amtVal;
+        }
     }
 }
 
@@ -1941,8 +1999,10 @@ async function lgCommitPendingInterest(pendingKey) {
     var totalEl = document.getElementById('lgInterestTotalEdit');
     var amount = pending.amount;
     if (lgPendingModalKey === pendingKey && totalEl) {
-        var v = parseFloat(totalEl.value);
-        if (!isNaN(v)) amount = v;
+        var v = (lgInterestTotalCtrl && typeof lgInterestTotalCtrl.getValue === 'function')
+            ? lgInterestTotalCtrl.getValue()
+            : parseFloat(totalEl.value);
+        if (v != null && !isNaN(v)) amount = v;
     }
 
     if (amount <= 0) {
@@ -1986,7 +2046,13 @@ async function lgPostInterest() {
     if (!lgInterestDetailEntryId) return;
 
     var totalEl = document.getElementById('lgInterestTotalEdit');
-    var totalAmount = parseFloat(totalEl ? totalEl.value : '0') || 0;
+    var totalAmount = 0;
+    if (lgInterestTotalCtrl && typeof lgInterestTotalCtrl.getValue === 'function') {
+        var ctrlVal = lgInterestTotalCtrl.getValue();
+        totalAmount = (ctrlVal != null && !isNaN(ctrlVal)) ? ctrlVal : 0;
+    } else {
+        totalAmount = parseFloat(totalEl ? totalEl.value : '0') || 0;
+    }
 
     try {
         await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + lgInterestDetailEntryId, {

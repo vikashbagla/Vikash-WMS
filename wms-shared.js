@@ -3912,6 +3912,127 @@ var wmsDateInput = function(containerEl, opts) {
 };
 
 /* ────────────────────────────────────────────────────────────────────────────
+   wmsAttachAmountInput(input, opts)
+
+   Turns a plain <input> into a comma-formatted amount input that matches
+   the rest of the WMS UI:
+     • on blur     → reformatted with Indian/International commas (per the
+                     user's selected display unit)
+     • on focus    → strips commas so the user can edit/select cleanly
+     • Enter key   → fires opts.onCommit (if provided), then blur-formats
+     • returns a controller with getValue() / setValue() / destroy()
+
+   Values are stored and exposed as raw rupee numbers (no unit division).
+   ──────────────────────────────────────────────────────────────────────── */
+var wmsAttachAmountInput = function(input, opts) {
+    if (!input) return null;
+    opts = opts || {};
+    var allowNegative = opts.allowNegative !== false;
+    var decimals = (typeof opts.decimals === 'number') ? opts.decimals : 2;
+
+    // Make sure the underlying field accepts arbitrary text + commas.
+    if (input.type !== 'text') input.type = 'text';
+    input.setAttribute('inputmode', allowNegative ? 'decimal' : 'decimal');
+    input.autocomplete = 'off';
+
+    var pickStyle = function() {
+        try {
+            var unit = (typeof getDisplayUnit === 'function') ? getDisplayUnit() : 'lakhs';
+            var cfg = (typeof getUnitConfig === 'function') ? getUnitConfig(unit) : { comma: 'indian' };
+            return cfg.comma || 'indian';
+        } catch (e) { return 'indian'; }
+    };
+
+    var fmt = function(num) {
+        if (num === null || num === undefined || isNaN(num)) return '';
+        var sign = num < 0 ? '-' : '';
+        var abs = Math.abs(num);
+        var fixed = abs.toFixed(decimals);
+        var parts = fixed.split('.');
+        var intPart = parts[0];
+        var decPart = parts[1];
+        var style = pickStyle();
+        var grouped;
+        if (style === 'indian') {
+            var lastThree = intPart.length > 3 ? intPart.substring(intPart.length - 3) : intPart;
+            var rest = intPart.length > 3 ? intPart.substring(0, intPart.length - 3) : '';
+            if (rest) {
+                grouped = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + lastThree;
+            } else {
+                grouped = lastThree;
+            }
+        } else {
+            grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+        return sign + grouped + (decimals > 0 ? '.' + decPart : '');
+    };
+
+    var parse = function(str) {
+        if (str === null || str === undefined) return NaN;
+        var s = String(str).replace(/,/g, '').trim();
+        if (s === '' || s === '-') return NaN;
+        var n = parseFloat(s);
+        return isNaN(n) ? NaN : n;
+    };
+
+    var doBlur = function() {
+        var n = parse(input.value);
+        if (isNaN(n)) {
+            input.value = '';
+        } else {
+            input.value = fmt(n);
+        }
+    };
+    var doFocus = function() {
+        var n = parse(input.value);
+        if (!isNaN(n)) {
+            input.value = (decimals > 0) ? n.toString() : String(Math.round(n));
+            // Select all so the user can immediately overwrite
+            try { input.select(); } catch (_) {}
+        }
+    };
+    var doKey = function(e) {
+        if (e.key === 'Enter') {
+            doBlur();
+            if (typeof opts.onCommit === 'function') opts.onCommit(parse(input.value));
+        }
+    };
+    // Strip anything that isn't a digit, comma, dot, or leading minus while typing
+    var doInput = function() {
+        var v = input.value;
+        var cleaned = v.replace(/[^\d.,\-]/g, '');
+        if (cleaned !== v) input.value = cleaned;
+    };
+
+    input.addEventListener('blur', doBlur);
+    input.addEventListener('focus', doFocus);
+    input.addEventListener('keydown', doKey);
+    input.addEventListener('input', doInput);
+
+    return {
+        getValue: function() {
+            var n = parse(input.value);
+            return isNaN(n) ? null : n;
+        },
+        setValue: function(n) {
+            if (n === null || n === undefined || isNaN(n)) {
+                input.value = '';
+            } else {
+                input.value = (document.activeElement === input)
+                    ? ((decimals > 0) ? n.toString() : String(Math.round(n)))
+                    : fmt(n);
+            }
+        },
+        destroy: function() {
+            input.removeEventListener('blur', doBlur);
+            input.removeEventListener('focus', doFocus);
+            input.removeEventListener('keydown', doKey);
+            input.removeEventListener('input', doInput);
+        }
+    };
+};
+
+/* ────────────────────────────────────────────────────────────────────────────
  * wmsDateFilter(containerEl, opts)
  * Date range filter with 3 controls:
  *   1) Period dropdown — Last 7 days, 30 days, 90 days, ALL
@@ -4548,18 +4669,30 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
     var _debitTypes = { 'BUY': true, 'RIGHTS_PAYMENT': true };
     var _creditTypes = { 'SELL': true, 'DIVIDEND': true, 'OTHER_INCOME': true, 'CAPITAL_REDUCTION': true };
 
+    // Perspective controls how the per-transaction amount is computed AND
+    // (optionally) how it is signed. Three views are supported:
+    //
+    //   'investor' → uses net_amount (what the investor actually settled)
+    //   'trader'   → uses gross_amount + trader_charges
+    //                  (gross trade + the trader's spread/commission)
+    //   'broker'   → uses net_amount (what the broker invoiced)
+    //
+    // Default: investor.
+    var perspective = opts.perspective || 'investor';
+
     (transactions || []).forEach(function(t) {
         // Apply filters
         if (!_txnMatchesFilters(t)) return;
 
-        // Determine amount: investor_id === trader_id → use net_amount; else → gross_amount + trader_charges
+        // Determine amount per perspective
         var amt;
-        if (t.investor_id === t.trader_id) {
-            amt = parseFloat(t.net_amount) || 0;
-        } else {
+        if (perspective === 'trader') {
             var gross = parseFloat(t.gross_amount) || 0;
             var traderCharges = parseFloat(t.trader_charges) || 0;
             amt = gross + traderCharges;
+        } else {
+            // 'investor' and 'broker' both use net_amount
+            amt = parseFloat(t.net_amount) || 0;
         }
 
         // Apply sign based on transaction_type (investor-receivable convention)
