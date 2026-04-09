@@ -4489,8 +4489,22 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
         return /F&O|FNO|NFO/.test(product) || /F&O|FNO|NFO/.test(secType);
     };
 
-    // Add ledger entries
+    // Helper: check if a ledger entry matches investor/trader filters.
+    // Ledger entries have investor_id (and trader_id == investor_id in this
+    // system's UUID namespace), so a trader filter resolves against investor_id
+    // when no explicit trader_id is stored on the entry.
+    var _entryMatchesFilters = function(e) {
+        if (!_inArray(e.investor_id, opts.investorIds)) return false;
+        if (opts.traderIds && opts.traderIds.length > 0) {
+            var tid = e.trader_id || e.investor_id;
+            if (!_inArray(tid, opts.traderIds)) return false;
+        }
+        return true;
+    };
+
+    // Add ledger entries (apply same investor/trader filters as transactions)
     (ledgerEntries || []).forEach(function(e) {
+        if (!_entryMatchesFilters(e)) return;
         var signedAmt = parseFloat(e.amount) || 0;
         // OPENING_BALANCE: sign as stored
         // CASH_PAID: negate (outflow)

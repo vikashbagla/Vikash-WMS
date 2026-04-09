@@ -917,15 +917,25 @@ async function lgRefresh() {
     var dateFrom = lgDateFrom || '2000-01-01';
     var dateTo = lgDateTo || '2099-12-31';
 
-    // Pull ALL ledger entries respecting non-date filters (investor).
+    // Pull ALL ledger entries respecting non-date filters (investor OR trader).
     // Running balance must be correct from history; we slice the display to
     // [dateFrom, dateTo] only AFTER computing the running balance, so that a
     // mid-FY filter (e.g. 01-Jul onwards) shows the correct carry-forward
     // opening balance as of 30-Jun. OPENING_BALANCE ledger entries are treated
     // as pre-period state (rolled into carry-forward, not displayed as rows).
-    var allQuery = '';
+    //
+    // Trader filters resolve against investor_id (trader_id == investor_id in
+    // the same UUID namespace). wmsBuildLedger applies the same filter again
+    // defensively, so loading a superset here is safe.
+    var entityIds = [];
     if (lgSelectedInvestorIds.length > 0) {
-        allQuery += 'investor_id.in.(' + lgSelectedInvestorIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')';
+        entityIds = lgSelectedInvestorIds.slice();
+    } else if (lgSelectedTraderIds.length > 0) {
+        entityIds = lgSelectedTraderIds.slice();
+    }
+    var allQuery = '';
+    if (entityIds.length > 0) {
+        allQuery += 'investor_id.in.(' + entityIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')';
     }
 
     try {
@@ -1044,13 +1054,15 @@ async function lgRefresh() {
     }
 
     // Derive carry-forward balance: everything strictly before dateFrom PLUS
-    // any OPENING_BALANCE entry dated exactly on dateFrom (treated as pre-period).
+    // any OPENING_BALANCE entry (always treated as pre-period state regardless
+    // of date — by definition an opening balance is the period's starting cash,
+    // never a regular row in the body of the ledger).
     var carry = 0;
     var displayed = [];
     for (var i = 0; i < fullCombined.length; i++) {
         var r = fullCombined[i];
-        var isPreOpening = (r._rowType === 'ledger' && r.entryType === 'OPENING_BALANCE' && r.date <= dateFrom);
-        if (r.date < dateFrom || isPreOpening) {
+        var isOpeningBalance = (r._rowType === 'ledger' && r.entryType === 'OPENING_BALANCE');
+        if (r.date < dateFrom || isOpeningBalance) {
             carry = r._runningBalance;
         } else if (r.date >= dateFrom && r.date <= dateTo) {
             displayed.push(r);
