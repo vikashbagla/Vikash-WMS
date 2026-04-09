@@ -1070,11 +1070,15 @@ function lgRenderEntries(rows) {
     var tbody = document.getElementById('lgBody');
     if (!tbody) return;
 
-    // Preserve the new entry row and opening balance row
+    // Preserve the new entry row and opening balance row as LIVE DOM nodes,
+    // not as HTML strings — re-inserting their outerHTML would replace them
+    // with fresh nodes and orphan the wmsDateInput controller bound to the
+    // original DOM (event listeners would be lost). See bug: ledger add-row
+    // date field stops responding to clicks/keys after first refresh.
     var newRow = document.getElementById('lgNewEntryRow');
-    var newRowHtml = newRow ? newRow.outerHTML : '';
     var obRow = document.getElementById('lgOpeningBalRow');
-    var obRowHtml = obRow ? obRow.outerHTML : '';
+    if (newRow && newRow.parentNode === tbody) tbody.removeChild(newRow);
+    if (obRow && obRow.parentNode === tbody) tbody.removeChild(obRow);
 
     // Sort rows
     var sorted = rows.slice();
@@ -1115,7 +1119,7 @@ function lgRenderEntries(rows) {
     var openingBal = lgFindOpeningBalance();
     lgRenderOpeningBalance(openingBal);
 
-    var html = obRowHtml + newRowHtml;
+    var html = '';
     var totalAmount = 0;
     var lastBalance = openingBal.amount || 0; // Start with opening balance (carry-forward)
 
@@ -1215,7 +1219,12 @@ function lgRenderEntries(rows) {
         totalAmount += row.amount;
     });
 
-    tbody.innerHTML = html;
+    // Wipe dynamic rows; re-insert preserved nodes (DOM-identity intact, so
+    // wmsDateInput controller still has live event listeners) then dynamic html.
+    tbody.innerHTML = '';
+    if (obRow) tbody.appendChild(obRow);
+    if (newRow) tbody.appendChild(newRow);
+    if (html) tbody.insertAdjacentHTML('beforeend', html);
 
     // Re-attach opening balance click handler
     lgAttachObClickHandler();
