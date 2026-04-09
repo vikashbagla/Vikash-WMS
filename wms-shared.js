@@ -1618,7 +1618,122 @@ function wmsUpdateNfoBrokerToken(securityId, fyersSymbol) {
 //   wmsBuildRefreshSymbols() → builds master symbol list
 //   wmsStandardRefresh()    → fetches prices + renders active page
 //   wmsStartRefreshTimer()  → starts 10s timer
+//
+// Multi-Tab Sync (BroadcastChannel):
+//   wmsTabSyncInit()  → probe for existing leader, elect if none
+//   Leader tab:  runs wmsStandardRefresh() + broadcasts wmsLivePrices
+//   Follower tab: receives prices from leader, calls wmsRefreshRender()
+//   If leader closes or times out (15s), follower promotes itself
 // ============================================================================
+
+// ── Tab Sync: Leader Election + Price Sharing ───────────────────────────
+var wmsTabId = 'tab-' + Math.random().toString(36).substr(2, 8);
+var wmsTabIsLeader = false;
+var wmsTabChannel = null;
+var _wmsLeaderHbTimer = null;     // leader sends heartbeat every 5s
+var _wmsLeaderTimeout = null;     // follower: timeout to detect dead leader
+var _wmsTabSyncReady = false;     // true once role (leader/follower) is decided
+
+/**
+ * wmsTabSyncInit — call once on script load.
+ * Sends a probe; if a leader responds within 2s we stay follower,
+ * otherwise we promote ourselves to leader.
+ */
+function wmsTabSyncInit() {
+    if (typeof BroadcastChannel === 'undefined') {
+        wmsTabIsLeader = true;
+        _wmsTabSyncReady = true;
+        return; // no support — always leader
+    }
+
+    wmsTabChannel = new BroadcastChannel('wms-tab-sync');
+    wmsTabChannel.onmessage = _wmsTabOnMessage;
+
+    // Ask if a leader exists
+    wmsTabChannel.postMessage({ type: 'probe', tabId: wmsTabId });
+
+    // If no heartbeat in 2s → become leader
+    setTimeout(function() {
+        if (!_wmsTabSyncReady) _wmsPromoteToLeader();
+    }, 2000);
+
+    // On tab close: resign leadership so a follower can take over
+    window.addEventListener('beforeunload', function() {
+        if (wmsTabIsLeader && wmsTabChannel) {
+            wmsTabChannel.postMessage({ type: 'resign', tabId: wmsTabId });
+        }
+        if (_wmsLeaderHbTimer) clearInterval(_wmsLeaderHbTimer);
+    });
+}
+
+function _wmsTabOnMessage(e) {
+    var msg = e.data;
+    if (!msg || msg.tabId === wmsTabId) return; // ignore own messages
+
+    if (msg.type === 'heartbeat') {
+        // Another tab is already leader
+        if (!_wmsTabSyncReady) {
+            wmsTabIsLeader = false;
+            _wmsTabSyncReady = true;
+            wmsStopRefreshTimer(); // follower does not run its own timer
+            console.log('wmsTabSync: [' + wmsTabId + '] → FOLLOWER (leader: ' + msg.tabId + ')');
+        }
+        _wmsResetLeaderTimeout();
+    }
+
+    if (msg.type === 'prices' && !wmsTabIsLeader) {
+        // Follower: ingest prices from leader
+        var p = msg.prices;
+        if (p) {
+            for (var k in p) wmsLivePrices[k] = p[k];
+            wmsRefreshRender();
+        }
+    }
+
+    if (msg.type === 'probe' && wmsTabIsLeader) {
+        // New tab asking if leader exists → respond with heartbeat + cached prices
+        wmsTabChannel.postMessage({ type: 'heartbeat', tabId: wmsTabId });
+        if (Object.keys(wmsLivePrices).length > 0) {
+            wmsTabChannel.postMessage({ type: 'prices', prices: wmsLivePrices, tabId: wmsTabId });
+        }
+    }
+
+    if (msg.type === 'resign') {
+        // Leader closed → promote ourselves
+        console.log('wmsTabSync: leader resigned → promoting self');
+        _wmsPromoteToLeader();
+    }
+}
+
+function _wmsPromoteToLeader() {
+    wmsTabIsLeader = true;
+    _wmsTabSyncReady = true;
+    if (_wmsLeaderTimeout) { clearTimeout(_wmsLeaderTimeout); _wmsLeaderTimeout = null; }
+    console.log('wmsTabSync: [' + wmsTabId + '] → LEADER');
+
+    // Start heartbeat so followers know we're alive
+    if (_wmsLeaderHbTimer) clearInterval(_wmsLeaderHbTimer);
+    _wmsLeaderHbTimer = setInterval(function() {
+        if (wmsTabChannel) wmsTabChannel.postMessage({ type: 'heartbeat', tabId: wmsTabId });
+    }, 5000);
+    if (wmsTabChannel) wmsTabChannel.postMessage({ type: 'heartbeat', tabId: wmsTabId });
+
+    // Start refresh timer if market is open
+    if (wmsIsMarketHours() && window.fyersToken) {
+        wmsStartRefreshTimer();
+    }
+}
+
+function _wmsResetLeaderTimeout() {
+    if (_wmsLeaderTimeout) clearTimeout(_wmsLeaderTimeout);
+    _wmsLeaderTimeout = setTimeout(function() {
+        console.log('wmsTabSync: leader heartbeat timeout → promoting self');
+        _wmsPromoteToLeader();
+    }, 15000);
+}
+
+// Initialize tab sync immediately
+wmsTabSyncInit();
 
 var wmsRefreshSymbols = [];    // [{ fyersKey, cacheKey }, ...]
 var wmsRefreshTimer = null;    // single setInterval ID
@@ -1724,6 +1839,11 @@ async function wmsStandardRefresh(forceRefresh) {
     if (!window.fyersToken || !window.fyersCall) return;
     if (wmsRefreshSymbols.length === 0) return;
 
+    // Tab Sync note: follower protection is structural, not checked here.
+    // - The 10s refresh timer only runs on the leader (wmsStartRefreshTimer guards it)
+    // - The visibilitychange handler only refreshes on the leader
+    // - Manual refreshes (e.g. after transaction edit) work on both tabs normally
+
     // 1. Determine which symbols need fetching
     var toFetch = forceRefresh
         ? wmsRefreshSymbols.slice()
@@ -1789,7 +1909,14 @@ async function wmsStandardRefresh(forceRefresh) {
         wmsRefreshFirstDone = true;
     }
 
-    // 4. Render active page + update banners
+    // 4. Broadcast prices to follower tabs
+    if (wmsTabIsLeader && wmsTabChannel) {
+        try {
+            wmsTabChannel.postMessage({ type: 'prices', prices: wmsLivePrices, tabId: wmsTabId });
+        } catch (err) { /* ignore serialization errors on large payloads */ }
+    }
+
+    // 5. Render active page + update banners
     wmsRefreshRender();
 }
 
@@ -1835,6 +1962,8 @@ function wmsRefreshRender() {
  * Runs always (not tab-dependent). Stops if market closes.
  */
 function wmsStartRefreshTimer() {
+    // Only the leader tab runs the API refresh timer
+    if (_wmsTabSyncReady && !wmsTabIsLeader) return;
     wmsStopRefreshTimer();
     wmsRefreshTimer = setInterval(async function() {
         if (document.hidden) return;
@@ -1860,10 +1989,15 @@ function wmsStopRefreshTimer() {
 // Resume refresh when page becomes visible again
 document.addEventListener('visibilitychange', function() {
     if (!document.hidden) {
-        // Page became visible — do an immediate refresh + restart timer
+        // Page became visible — leader does an immediate refresh + restarts timer;
+        // follower just renders from cache (leader will broadcast shortly)
         if (wmsIsMarketHours() && window.fyersToken) {
-            wmsStandardRefresh(true);
-            wmsStartRefreshTimer();
+            if (wmsTabIsLeader) {
+                wmsStandardRefresh(true);
+                wmsStartRefreshTimer();
+            } else {
+                wmsRefreshRender();
+            }
         }
     }
 });

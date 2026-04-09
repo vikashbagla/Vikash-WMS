@@ -183,7 +183,12 @@ function trWlSetupEventHandlers() {
             // Resume only if watchlist tab is active
             var wlTab = document.getElementById('tr-watchlist');
             if (wlTab && wlTab.classList.contains('active')) {
-                trWlFetchPrices().then(function() { trWlUpdatePricesInPlace(); });
+                // Leader fetches fresh prices; follower just renders from cache
+                if (typeof wmsTabIsLeader !== 'undefined' && !wmsTabIsLeader) {
+                    trWlUpdatePricesInPlace();
+                } else {
+                    trWlFetchPrices().then(function() { trWlUpdatePricesInPlace(); });
+                }
                 if (wmsIsMarketHours()) {
                     trWlStartAutoRefresh();
                 } else {
