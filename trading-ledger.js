@@ -1064,6 +1064,7 @@ async function lgRefresh() {
 
     lgRenderEntries(lgCombined);
     lgRenderSummary();
+    lgUpdateAddRowAvailability();
 }
 
 function lgRenderEntries(rows) {
@@ -1633,6 +1634,49 @@ function lgRenderSummary() {
 // LEDGER ENTRY MANAGEMENT
 // ============================================================================
 
+/**
+ * Resolve the single effective investor for the add-entry row.
+ * Add row is for ONE investor only — supports the case where the user has
+ * filtered by trader (T3) where trader_id and investor_id share the same UUID
+ * namespace, so a sole trader filter resolves to that same investor.
+ *
+ * Returns investor id, or null if 0 or >1 entities are selected.
+ */
+function lgGetEffectiveInvestorId() {
+    if (lgSelectedInvestorIds.length === 1) return lgSelectedInvestorIds[0];
+    if (lgSelectedInvestorIds.length === 0 && lgSelectedTraderIds.length === 1) {
+        // Trader IDs share the investor UUID namespace; verify it maps to a real investor
+        var tid = lgSelectedTraderIds[0];
+        if (wmsRefData.investorObjMap && wmsRefData.investorObjMap[tid]) return tid;
+    }
+    return null;
+}
+
+/**
+ * Enable/disable the add-entry row based on whether a single effective
+ * investor can be resolved from the current filters.
+ */
+function lgUpdateAddRowAvailability() {
+    var newRow = document.getElementById('lgNewEntryRow');
+    if (!newRow) return;
+    var effective = lgGetEffectiveInvestorId();
+    var enabled = !!effective;
+
+    var fields = ['lgNewReference', 'lgNewType', 'lgNewAmount', 'lgAddEntryBtn'];
+    fields.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.disabled = !enabled;
+    });
+    // Date input
+    var dateWrap = document.querySelector('#lgNewDateContainer .wms-di-wrap');
+    if (dateWrap) {
+        dateWrap.style.opacity = enabled ? '1' : '0.45';
+        dateWrap.style.pointerEvents = enabled ? 'auto' : 'none';
+    }
+    newRow.style.opacity = enabled ? '1' : '0.6';
+    newRow.title = enabled ? '' : 'Select exactly one investor (or trader) to add entries';
+}
+
 async function lgAddEntry() {
     var entryDate = lgNewDateInput ? lgNewDateInput.getValue() : '';
     var typeEl = document.getElementById('lgNewType');
@@ -1648,9 +1692,9 @@ async function lgAddEntry() {
         return;
     }
 
-    var investorId = lgSelectedInvestorIds.length > 0 ? lgSelectedInvestorIds[0] : null;
+    var investorId = lgGetEffectiveInvestorId();
     if (!investorId) {
-        showAlert('Please select an investor', 'warning', 3000);
+        showAlert('Select exactly one investor (or trader) to add entries', 'warning', 3000);
         return;
     }
 
