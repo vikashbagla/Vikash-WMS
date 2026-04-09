@@ -1718,10 +1718,23 @@ async function lgAddEntry() {
             if (amtEl) amtEl.value = '';
             showAlert('Entry added', 'success', 2000);
             lgRefresh();
+        } else {
+            // Surface the actual server error so failures aren't silent
+            var errText = '';
+            try { errText = await resp.text(); } catch (_) {}
+            var errMsg = 'Failed to add entry (HTTP ' + resp.status + ')';
+            try {
+                var parsed = JSON.parse(errText);
+                if (parsed && parsed.message) errMsg += ': ' + parsed.message;
+            } catch (_) {
+                if (errText) errMsg += ': ' + errText.slice(0, 200);
+            }
+            console.warn('lgAddEntry failed:', resp.status, errText);
+            showAlert(errMsg, 'error', 6000);
         }
     } catch (err) {
         console.warn('Failed to add entry:', err.message);
-        showAlert('Failed to add entry', 'error', 3000);
+        showAlert('Failed to add entry: ' + err.message, 'error', 5000);
     }
 }
 
