@@ -1569,15 +1569,14 @@ function lgRenderSummary() {
 
     // ------------------------------------------------------------
     // Summary cards
-    //   Carry-forward balance (end of ledger) = current cash balance.
-    //   Outstanding = |cash balance (negative means investor owes)| + NFO margin.
+    //   The ledger uses the investor-receivable convention:
+    //     +ve cash balance  → investor owes the firm
+    //     -ve cash balance  → firm owes the investor (credit)
+    //   Outstanding (what the investor currently owes us) =
+    //     max(0, cash balance)  +  open NFO margin
     // ------------------------------------------------------------
-    // Current cash balance: use last running balance of full combined list (already
-    // computed in lgRefresh via lgCombinedFullBal — fall back to carry-forward).
     var cashBalance = (typeof lgCurrentCashBalance === 'number') ? lgCurrentCashBalance : (lgCarryForwardBalance || 0);
-    // Negative cash balance means investor owes us (receivable). Outstanding is shown as
-    // positive magnitude of what's owed. If cash balance is positive, investor has credit.
-    var outstanding = Math.max(0, -cashBalance) + currentNfoMargin;
+    var outstanding = Math.max(0, cashBalance) + currentNfoMargin;
 
     // Current FY bounds — fixed Apr-Mar cadence per user instruction
     var today = new Date();

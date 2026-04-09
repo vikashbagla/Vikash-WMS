@@ -4502,18 +4502,24 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
         return true;
     };
 
-    // Add ledger entries (apply same investor/trader filters as transactions)
+    // Add ledger entries (apply same investor/trader filters as transactions).
+    //
+    // SIGN CONVENTION — investor receivable view:
+    //   The ledger represents the investor's account FROM THE FIRM'S POINT OF
+    //   VIEW. A positive balance means the investor owes the firm money.
+    //
+    //   OPENING_BALANCE   : sign as stored (positive = investor owes at start)
+    //   CASH_PAID         : +ve (firm pays out → investor's debt grows)
+    //   CASH_RECEIVED     : -ve (investor pays back → debt shrinks)
+    //   INTEREST_BOOKED   : +ve (firm charges interest → debt grows)
+    //   ADJUSTMENT        : sign as stored
     (ledgerEntries || []).forEach(function(e) {
         if (!_entryMatchesFilters(e)) return;
         var signedAmt = parseFloat(e.amount) || 0;
-        // OPENING_BALANCE: sign as stored
-        // CASH_PAID: negate (outflow)
-        // CASH_RECEIVED, INTEREST_BOOKED: keep positive (inflow)
-        // ADJUSTMENT: sign as stored
-        if (e.entry_type === 'CASH_PAID') {
-            signedAmt = -Math.abs(signedAmt);
-        } else if (e.entry_type === 'CASH_RECEIVED' || e.entry_type === 'INTEREST_BOOKED') {
+        if (e.entry_type === 'CASH_PAID' || e.entry_type === 'INTEREST_BOOKED') {
             signedAmt = Math.abs(signedAmt);
+        } else if (e.entry_type === 'CASH_RECEIVED') {
+            signedAmt = -Math.abs(signedAmt);
         }
         // else OPENING_BALANCE, ADJUSTMENT: use sign as-is
 
@@ -4532,7 +4538,13 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
         });
     });
 
-    // Add filtered transactions
+    // Add filtered transactions.
+    //
+    // SIGN CONVENTION (investor receivable view):
+    //   BUY / RIGHTS_PAYMENT  : +ve (firm fronts cash → investor owes more)
+    //   SELL / DIVIDEND /
+    //   OTHER_INCOME /
+    //   CAPITAL_REDUCTION     : -ve (cash inflow reduces what investor owes)
     var _debitTypes = { 'BUY': true, 'RIGHTS_PAYMENT': true };
     var _creditTypes = { 'SELL': true, 'DIVIDEND': true, 'OTHER_INCOME': true, 'CAPITAL_REDUCTION': true };
 
@@ -4550,11 +4562,11 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
             amt = gross + traderCharges;
         }
 
-        // Apply sign based on transaction_type
+        // Apply sign based on transaction_type (investor-receivable convention)
         if (_debitTypes[t.transaction_type]) {
-            amt = -Math.abs(amt);
-        } else if (_creditTypes[t.transaction_type]) {
             amt = Math.abs(amt);
+        } else if (_creditTypes[t.transaction_type]) {
+            amt = -Math.abs(amt);
         }
         // else: BONUS, RIGHTS_ENTITLEMENT → amt stays 0
         //       HISTORICAL_PL → use sign as stored in amt
