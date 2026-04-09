@@ -4669,13 +4669,23 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
     var _debitTypes = { 'BUY': true, 'RIGHTS_PAYMENT': true };
     var _creditTypes = { 'SELL': true, 'DIVIDEND': true, 'OTHER_INCOME': true, 'CAPITAL_REDUCTION': true };
 
-    // Perspective controls how the per-transaction amount is computed AND
-    // (optionally) how it is signed. Three views are supported:
+    // Perspective controls how the per-transaction amount is computed.
+    // See LEDGER-ENGINE-LOGIC.md (Amount Used). Three views are supported:
     //
-    //   'investor' → uses net_amount (what the investor actually settled)
-    //   'trader'   → uses gross_amount + trader_charges
-    //                  (gross trade + the trader's spread/commission)
-    //   'broker'   → uses net_amount (what the broker invoiced)
+    //   'investor' → net_amount
+    //                The investor's actual settlement with the broker, i.e.
+    //                gross ± total_charges (brokerage, STT, GST, etc.).
+    //
+    //   'trader'   → gross_amount + trader_charges
+    //                The investor trades on behalf of the trader. The investor
+    //                charges the trader a separately-agreed amount stored in
+    //                trader_charges (NOT the broker/exchange charges). So the
+    //                trader's settlement with the investor is always gross +
+    //                trader_charges, regardless of buy/sell direction. The
+    //                BUY/SELL sign is applied below in the standard step.
+    //
+    //   'broker'   → net_amount
+    //                What the broker invoiced (same field as investor view).
     //
     // Default: investor.
     var perspective = opts.perspective || 'investor';
