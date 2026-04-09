@@ -62,7 +62,14 @@ var lgObEditing = false;
 
 // Carry-forward (computed running balance as of dateFrom - 1) — drives the opening balance row
 var lgCarryForwardBalance = 0;
+var lgCurrentCashBalance = 0; // End-of-history running balance (for summary)
 var lgCarryForwardDate = '';
+
+// Pending (not yet posted) weekly interest rows — generated each refresh
+var lgPendingInterestRows = [];
+
+// Key of the pending row currently open in the interest detail modal (for commit)
+var lgPendingModalKey = null;
 
 // ============================================================================
 // TRANSACTION TYPE FRIENDLY LABELS
@@ -310,11 +317,23 @@ function lgInit() {
         updateBtn.addEventListener('click', lgUpdateCurrentView);
     }
 
-    // Delegated row click → open shared trading edit modal (same as Portfolio/Transactions)
+    // Delegated row/cell click handler:
+    //   trade row          → open shared trading edit modal (same as Portfolio/Transactions)
+    //   interest amount    → open interest detail modal (posted or pending)
     var lgBodyEl = document.getElementById('lgBody');
     if (lgBodyEl) {
         lgBodyEl.addEventListener('click', function(e) {
-            // Ignore clicks on interactive children (buttons, links, inputs, inline delete confirm bar)
+            // Interest amount span (posted or pending) → open detail modal
+            var intAmt = e.target.closest('.lg-int-amt');
+            if (intAmt) {
+                var tr2 = intAmt.closest('tr');
+                if (tr2 && tr2.classList.contains('lg-row-pending')) {
+                    lgShowPendingInterestDetail(tr2.getAttribute('data-pending-key'));
+                }
+                // Posted-row click already has inline onclick → lgShowInterestDetail
+                return;
+            }
+            // Ignore clicks on interactive children (buttons, links, inputs, etc.)
             if (e.target.closest('button, a, input, select, .lg-actions, .lg-confirm-bar, .lg-ob-edit')) return;
             var tr = e.target.closest('tr.lg-row-trade');
             if (!tr) return;
@@ -943,6 +962,87 @@ async function lgRefresh() {
         tagLogic: lgTagFilterLogic
     });
 
+    // ------------------------------------------------------------------
+    // PENDING INTEREST ROWS — generate Saturdays between last-posted and today
+    // for weekly_friday terms, including F&O margin in the Friday base.
+    // These rows are injected into fullCombined so running balance flows naturally
+    // but are marked _isPending so they render with a Commit button and are not
+    // in the database yet.
+    // ------------------------------------------------------------------
+    lgPendingInterestRows = [];
+    if (lgSelectedInvestorIds.length === 1) {
+        var invId = lgSelectedInvestorIds[0];
+        var terms = wmsGetInterestTerms(invId);
+        if (terms && terms.frequency === 'weekly_friday' && terms.rate > 0) {
+            // Last posted Saturday = max entry_date of INTEREST_BOOKED for this investor
+            var lastPosted = null;
+            for (var li = 0; li < lgLedgerEntries.length; li++) {
+                var le = lgLedgerEntries[li];
+                if (le.entry_type === 'INTEREST_BOOKED' && le.investor_id === invId) {
+                    if (!lastPosted || le.entry_date > lastPosted) lastPosted = le.entry_date;
+                }
+            }
+            // Start window = (last posted + 1 day) OR the earliest activity date OR FY start
+            var genFrom;
+            if (lastPosted) {
+                var lpDate = new Date(lastPosted);
+                lpDate.setDate(lpDate.getDate() + 1);
+                genFrom = lpDate.toISOString().slice(0, 10);
+            } else {
+                // Use the earliest row date; if nothing, use today
+                genFrom = fullCombined.length > 0 ? fullCombined[0].date : new Date().toISOString().slice(0, 10);
+            }
+            var today = new Date().toISOString().slice(0, 10);
+            if (genFrom <= today) {
+                // Compute margin events from NFO transactions (full history)
+                var nfoTxns = txnFiltered.filter(function(t) {
+                    var p = (t.product || '').toUpperCase();
+                    var s = (t.security_type || '').toUpperCase();
+                    return /F&O|FNO|NFO/.test(p) || /F&O|FNO|NFO/.test(s);
+                }).sort(function(a, b) {
+                    return (a.transaction_date || '').localeCompare(b.transaction_date || '');
+                });
+                var marginEvents = wmsCalcMarginFIFO(nfoTxns);
+
+                var periods = wmsCalcInterestWeeklyFriday(fullCombined, terms, genFrom, today, marginEvents);
+                // Skip zero-interest rows entirely (user §8.3)
+                for (var pi = 0; pi < periods.length; pi++) {
+                    var p = periods[pi];
+                    if (p.interest <= 0) continue;
+
+                    // Build a synthetic "pending" row
+                    var pendingRow = {
+                        _rowType: 'pending_interest',
+                        _isPending: true,
+                        _pendingKey: 'pi_' + p.postDate,
+                        _calc: p,
+                        date: p.postDate,
+                        sortKey: p.postDate + '|0|_pending_' + p.postDate,
+                        entryType: 'INTEREST_BOOKED',
+                        amount: p.interest,
+                        investorId: invId,
+                        reference: 'Weekly interest ' + p.period,
+                        notes: ''
+                    };
+                    fullCombined.push(pendingRow);
+                    lgPendingInterestRows.push(pendingRow);
+                }
+
+                // Re-sort and recompute running balance so pending rows flow into it
+                if (lgPendingInterestRows.length > 0) {
+                    fullCombined.sort(function(a, b) {
+                        return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0;
+                    });
+                    var bal = 0;
+                    for (var fi = 0; fi < fullCombined.length; fi++) {
+                        bal += fullCombined[fi].amount;
+                        fullCombined[fi]._runningBalance = wmsRoundMoney(bal);
+                    }
+                }
+            }
+        }
+    }
+
     // Derive carry-forward balance: everything strictly before dateFrom PLUS
     // any OPENING_BALANCE entry dated exactly on dateFrom (treated as pre-period).
     var carry = 0;
@@ -959,6 +1059,8 @@ async function lgRefresh() {
     lgCarryForwardBalance = carry;
     lgCarryForwardDate = dateFrom;
     lgCombined = displayed;
+    // Current cash balance = last running balance across full history (used by Summary)
+    lgCurrentCashBalance = fullCombined.length > 0 ? fullCombined[fullCombined.length - 1]._runningBalance : 0;
 
     lgRenderEntries(lgCombined);
     lgRenderSummary();
@@ -1028,13 +1130,23 @@ function lgRenderEntries(rows) {
         var balance = '';
         var actions = '';
 
-        if (row._rowType === 'ledger') {
+        if (row._rowType === 'pending_interest') {
+            // Synthetic, unposted weekly interest row
+            typeHtml = '<span class="lg-type lg-type-income">Interest (pending)</span>';
+            symbol = wmsEsc(row.reference || '');
+            amount = '<span class="lg-int-amt" title="Click to view calculation / edit">' + lgFmt(row.amount) + '</span>';
+            balance = lgFmt(row._runningBalance);
+            lastBalance = row._runningBalance;
+            actions = '<span class="lg-actions">' +
+                '<a href="#" class="lg-commit-int" onclick="event.preventDefault(); lgCommitPendingInterest(\'' + wmsEsc(row._pendingKey) + '\');" title="Commit this interest row">✓ Commit</a>' +
+                '</span>';
+        } else if (row._rowType === 'ledger') {
             var source = row._source;
             typeHtml = lgFormatType(row);
 
             if (row.entryType === 'INTEREST_BOOKED') {
                 var entryId = source.id;
-                amount = '<span style="cursor:pointer; text-decoration:underline;" ondblclick="lgShowInterestDetail(\'' + wmsEsc(entryId) + '\')">' +
+                amount = '<span class="lg-int-amt" onclick="event.preventDefault(); lgShowInterestDetail(\'' + wmsEsc(entryId) + '\');" title="Click to view calculation / edit">' +
                     lgFmt(row.amount) + '</span>';
             } else {
                 amount = lgFmt(row.amount);
@@ -1085,6 +1197,8 @@ function lgRenderEntries(rows) {
         var trAttrs = '';
         if (row._rowType === 'trade' && row._source && row._source.id) {
             trAttrs = ' class="lg-row-trade" data-txn-id="' + wmsEsc(row._source.id) + '"';
+        } else if (row._rowType === 'pending_interest') {
+            trAttrs = ' class="lg-row-pending" data-pending-key="' + wmsEsc(row._pendingKey) + '"';
         }
 
         html += '<tr' + trAttrs + '>' +
@@ -1272,6 +1386,9 @@ async function lgSaveOpeningBalance() {
 // SUMMARY RENDERING
 // ============================================================================
 
+// Tax rate on booked gains — TODO: make configurable via DB / investor table
+var LG_TAX_RATE_PCT = 12.5;
+
 function lgRenderSummary() {
     var summaryBody = document.getElementById('lgSummaryBody');
     if (!summaryBody) return;
@@ -1301,6 +1418,7 @@ function lgRenderSummary() {
     // Use shared FIFO engine (wms-shared.js)
     var fifo = wmsCalcFifoCost(sorted);
     var holdingsMap = fifo.holdings;
+    var allGains = fifo.gains || [];
 
     // Build source lookup for NFO symbol decoding (keyed same as engine: symbol+'-'+exchange)
     var sourceLookup = {};
@@ -1310,34 +1428,59 @@ function lgRenderSummary() {
         if (!sourceLookup[sKey]) sourceLookup[sKey] = st;
     }
 
-    // Build holdings table rows
-    var totalCost = 0;
-    var totalValue = 0;
+    // Compute NFO running margin (final value = current open margin)
+    var nfoTxnsForMargin = sorted.filter(function(t) {
+        var p = (t.product || '').toUpperCase();
+        var s = (t.security_type || '').toUpperCase();
+        return /F&O|FNO|NFO/.test(p) || /F&O|FNO|NFO/.test(s);
+    });
+    var marginEvents = wmsCalcMarginFIFO(nfoTxnsForMargin);
+    var currentNfoMargin = marginEvents.length > 0 ? marginEvents[marginEvents.length - 1].runningMargin : 0;
 
-    var rows = Object.keys(holdingsMap).map(function(key) {
+    // ------------------------------------------------------------
+    // Build holdings table rows — split EQ vs NFO
+    //   EQ:  Value = Qty × CMP, MTM = Value − Cost
+    //   NFO: Value = 0, MTM only (from live price vs trade price)
+    // ------------------------------------------------------------
+    var totalEqCost = 0;
+    var totalEqValue = 0;
+    var totalEqMtm = 0;
+    var totalNfoMtm = 0;
+
+    var rowsHtml = Object.keys(holdingsMap).map(function(key) {
         var h = holdingsMap[key];
         if (h.quantity === 0) return '';
 
         var qty = h.quantity;
         var cost = h.totalCost;
-        var fifoCost = h.avgCost;
-        var cmp = fifoCost;  // CMP placeholder — no live price in ledger context
-        var value = qty * cmp;
+        var avgCost = h.avgCost;
+        var isNfo = (h.securityType === 'NFO');
 
-        totalCost += cost;
-        totalValue += value;
-
-        var mtm = value - cost;
-        var mtmClass = lgAmtClass(mtm);
-
-        // Type label
-        var typeLabel = (h.securityType === 'NFO') ? 'NFO' : 'EQ';
-
-        // Symbol display — decode NFO symbols via wmsFormatContract
-        var symHtml;
+        // CMP from shared live price cache
         var shortSym = h.shortSymbol || h.symbol;
+        var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[shortSym] : null;
+        var cmp = (priceEntry && priceEntry.lp > 0) ? priceEntry.lp : avgCost;
+
+        var value, mtm;
+        if (isNfo) {
+            value = 0; // Per spec: NFO Value = 0, MTM only
+            mtm = (cmp - avgCost) * qty;
+            totalNfoMtm += mtm;
+        } else {
+            value = qty * cmp;
+            mtm = value - cost;
+            totalEqCost += cost;
+            totalEqValue += value;
+            totalEqMtm += mtm;
+        }
+
+        var mtmClass = lgAmtClass(mtm);
+        var typeLabel = isNfo ? 'NFO' : 'EQ';
+
+        // Symbol display — decode NFO contracts via shared formatter
+        var symHtml;
         var srcTxn = sourceLookup[key];
-        if (srcTxn && h.securityType === 'NFO' && typeof wmsFormatContract === 'function') {
+        if (srcTxn && isNfo && typeof wmsFormatContract === 'function') {
             var contract = wmsFormatContract(srcTxn);
             if (contract && contract !== 'Equity' && contract !== 'NFO') {
                 symHtml = wmsEsc(shortSym) + ' <span style="color:#718096; font-size:10px;">' + wmsEsc(contract) + '</span>';
@@ -1350,48 +1493,130 @@ function lgRenderSummary() {
 
         return '<tr>' +
             '<td>' + symHtml + '</td>' +
-            '<td class="text-right">' + wmsEsc(typeLabel) + '</td>' +
+            '<td class="text-right">' + typeLabel + '</td>' +
             '<td class="text-right">' + (typeof formatQuantity === 'function' ? formatQuantity(qty) : String(Math.round(qty))) + '</td>' +
-            '<td class="text-right">' + lgFmtPrice(fifoCost) + '</td>' +
+            '<td class="text-right">' + lgFmtPrice(avgCost) + '</td>' +
             '<td class="text-right">' + lgFmtPrice(cmp) + '</td>' +
             '<td class="text-right ' + mtmClass + '">' + lgFmt(mtm) + '</td>' +
             '<td class="text-right">' + lgFmt(value) + '</td>' +
             '</tr>';
     }).filter(function(s) { return s.length > 0; }).join('');
 
-    if (rows.length === 0) {
-        rows = '<tr><td colspan="7" class="text-center" style="padding:20px; color:#9ca3af;">No holdings</td></tr>';
+    if (!rowsHtml) {
+        rowsHtml = '<tr><td colspan="7" class="text-center" style="padding:20px; color:#9ca3af;">No holdings</td></tr>';
+    }
+    summaryBody.innerHTML = rowsHtml;
+
+    // Table footer totals
+    var totalMtm = totalEqMtm + totalNfoMtm;
+    var mtmTotalEl = document.getElementById('lgSummaryMtmTotal');
+    var valTotalEl = document.getElementById('lgSummaryValueTotal');
+    if (mtmTotalEl) {
+        mtmTotalEl.innerHTML = lgFmt(totalMtm);
+        mtmTotalEl.className = 'text-right ' + lgAmtClass(totalMtm);
+    }
+    if (valTotalEl) valTotalEl.innerHTML = lgFmt(totalEqValue);
+
+    // ------------------------------------------------------------
+    // Summary cards
+    //   Carry-forward balance (end of ledger) = current cash balance.
+    //   Outstanding = |cash balance (negative means investor owes)| + NFO margin.
+    // ------------------------------------------------------------
+    // Current cash balance: use last running balance of full combined list (already
+    // computed in lgRefresh via lgCombinedFullBal — fall back to carry-forward).
+    var cashBalance = (typeof lgCurrentCashBalance === 'number') ? lgCurrentCashBalance : (lgCarryForwardBalance || 0);
+    // Negative cash balance means investor owes us (receivable). Outstanding is shown as
+    // positive magnitude of what's owed. If cash balance is positive, investor has credit.
+    var outstanding = Math.max(0, -cashBalance) + currentNfoMargin;
+
+    // Current FY bounds — fixed Apr-Mar cadence per user instruction
+    var today = new Date();
+    var curY = today.getFullYear();
+    var curM = today.getMonth() + 1;
+    var fyStartYear = (curM >= 4) ? curY : curY - 1;
+    var fyStartStr = fyStartYear + '-04-01';
+    var fyEndStr = (fyStartYear + 1) + '-03-31';
+    var fyLabel = '(FY ' + fyStartYear + '-' + String(fyStartYear + 1).slice(-2) + ')';
+
+    // Booked P&L for current FY — sum of gains with sellDate within FY
+    var fyGains = allGains.filter(function(g) {
+        return g.sellDate && g.sellDate >= fyStartStr && g.sellDate <= fyEndStr;
+    });
+    var totalBookedGain = 0;
+    fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
+
+    var potentialTax = Math.max(0, totalBookedGain) * (LG_TAX_RATE_PCT / 100);
+
+    // Net receivable = holdings value + MTM − outstanding − potential tax
+    // Holdings value is EQ only (NFO is 0). MTM already embedded in EQ value via CMP,
+    // so for NFO we add totalNfoMtm separately.
+    var netReceivable = totalEqValue + totalNfoMtm - outstanding - potentialTax;
+    var balNoMtm = totalEqCost + 0 - outstanding; // EQ at cost, NFO 0, minus outstanding
+    var pctOutstanding = outstanding > 0 ? ((totalEqValue + totalNfoMtm) / outstanding) * 100 : 0;
+
+    function setCard(id, val, useAmtClass) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = lgFmt(val);
+        if (useAmtClass) el.className = 'lg-summary-card-value ' + lgAmtClass(val);
+    }
+    setCard('lgCardHoldingsValue', totalEqValue, false);
+    setCard('lgCardOutstanding', outstanding, false);
+    setCard('lgCardPotentialTax', potentialTax, false);
+    setCard('lgCardNetReceivable', netReceivable, true);
+    setCard('lgCardBalNoMtm', balNoMtm, true);
+    var pctEl = document.getElementById('lgCardPctOutstanding');
+    if (pctEl) pctEl.textContent = outstanding > 0 ? pctOutstanding.toFixed(1) + '%' : '-';
+
+    // ------------------------------------------------------------
+    // Booked P&L collapsible — grouped by symbol, FY only
+    // ------------------------------------------------------------
+    var fyLabelEl = document.getElementById('lgBookedFyLabel');
+    if (fyLabelEl) fyLabelEl.textContent = fyLabel;
+    var bookedTotalEl = document.getElementById('lgBookedTotal');
+    if (bookedTotalEl) {
+        bookedTotalEl.innerHTML = lgFmt(totalBookedGain);
+        bookedTotalEl.className = 'lg-booked-total ' + lgAmtClass(totalBookedGain);
     }
 
-    summaryBody.innerHTML = rows;
-
-    // Update summary totals — outstanding = total cost of current holdings
-    var outstanding = totalCost;
-
-    var holdingsValueEl = document.getElementById('lgHoldingsValue');
-    var mtmFnoEl = document.getElementById('lgMtmFno');
-    var outstandingEl = document.getElementById('lgOutstanding');
-    var potentialTaxEl = document.getElementById('lgPotentialTax');
-    var netValueEl = document.getElementById('lgNetValue');
-
-    if (holdingsValueEl) {
-        holdingsValueEl.innerHTML = lgFmt(totalValue);
-        holdingsValueEl.className = 'text-right positive';
-        holdingsValueEl.style.fontWeight = '600';
+    var bookedRowsEl = document.getElementById('lgBookedBodyRows');
+    if (bookedRowsEl) {
+        if (fyGains.length === 0) {
+            bookedRowsEl.innerHTML = '<tr><td colspan="4" class="text-center" style="padding:12px; color:#9ca3af;">No booked P&L in ' + fyLabel + '</td></tr>';
+        } else {
+            // Group by symbol+securityType
+            var bySym = {};
+            fyGains.forEach(function(g) {
+                var k = (g.shortSymbol || g.symbol) + '|' + (g.securityType || 'EQ');
+                if (!bySym[k]) bySym[k] = { shortSymbol: g.shortSymbol || g.symbol, securityType: g.securityType || 'EQ', qty: 0, gain: 0 };
+                bySym[k].qty += g.qty || 0;
+                bySym[k].gain += g.gain || 0;
+            });
+            var bookedHtml = Object.keys(bySym).sort().map(function(k) {
+                var b = bySym[k];
+                var cls = lgAmtClass(b.gain);
+                var typeL = (b.securityType === 'NFO') ? 'NFO' : 'EQ';
+                return '<tr>' +
+                    '<td>' + wmsEsc(b.shortSymbol) + '</td>' +
+                    '<td class="text-right">' + typeL + '</td>' +
+                    '<td class="text-right">' + (typeof formatQuantity === 'function' ? formatQuantity(b.qty) : String(Math.round(b.qty))) + '</td>' +
+                    '<td class="text-right ' + cls + '">' + lgFmt(b.gain) + '</td>' +
+                    '</tr>';
+            }).join('');
+            bookedRowsEl.innerHTML = bookedHtml;
+        }
     }
-    if (mtmFnoEl) mtmFnoEl.textContent = '-';
-    if (outstandingEl) outstandingEl.innerHTML = lgFmt(Math.abs(outstanding));
 
-    var taxRate = 0;
-    var potentialTax = (totalValue - totalCost) * (taxRate / 100);
-    if (potentialTaxEl) potentialTaxEl.innerHTML = lgFmt(potentialTax);
-
-    var netValue = totalValue - Math.abs(outstanding) - potentialTax;
-
-    if (netValueEl) {
-        netValueEl.innerHTML = lgFmt(netValue);
-        netValueEl.className = 'text-right ' + lgAmtClass(netValue);
-        netValueEl.style.fontWeight = '600';
+    // Wire collapse toggle (idempotent — guarded via dataset flag)
+    var bookedHdr = document.getElementById('lgBookedHeader');
+    var bookedSec = document.getElementById('lgBookedSection');
+    if (bookedHdr && bookedSec && !bookedHdr.dataset.lgWired) {
+        bookedHdr.dataset.lgWired = '1';
+        bookedHdr.addEventListener('click', function() {
+            bookedSec.classList.toggle('lg-booked-collapsed');
+        });
+        // Start collapsed
+        bookedSec.classList.add('lg-booked-collapsed');
     }
 }
 
@@ -1499,11 +1724,51 @@ function lgCancelDelete() {
 // INTEREST CALCULATION & POSTING
 // ============================================================================
 
+// Render the interest detail modal with the calculation breakdown.
+// Works for both posted rows (entry in DB) and pending rows (_calc in memory).
+function lgPopulateInterestDetail(calc, currentAmount) {
+    var detailBody = document.getElementById('lgInterestDetailBody');
+    var totalEditEl = document.getElementById('lgInterestTotalEdit');
+
+    if (detailBody) {
+        if (calc) {
+            var baseLine = '';
+            if (calc.marginBalance) {
+                baseLine = '<tr>' +
+                    '<td>' + wmsEsc(calc.period) + '</td>' +
+                    '<td class="text-right">' + lgFmt(calc.closingBalance) + ' + ' + lgFmt(calc.marginBalance) + ' <span style="color:#718096; font-size:10px;">(F&amp;O margin)</span> = ' + lgFmt(calc.baseBalance || (calc.closingBalance + calc.marginBalance)) + '</td>' +
+                    '<td class="text-right">' + calc.days + '</td>' +
+                    '<td class="text-right">' + calc.rate + '%</td>' +
+                    '<td class="text-right">' + lgFmt(calc.interest) + '</td>' +
+                '</tr>';
+            } else {
+                baseLine = '<tr>' +
+                    '<td>' + wmsEsc(calc.period) + '</td>' +
+                    '<td class="text-right">' + lgFmt(calc.closingBalance) + '</td>' +
+                    '<td class="text-right">' + calc.days + '</td>' +
+                    '<td class="text-right">' + calc.rate + '%</td>' +
+                    '<td class="text-right">' + lgFmt(calc.interest) + '</td>' +
+                '</tr>';
+            }
+            var formulaNote = '<tr><td colspan="5" style="font-size:10px; color:#718096; padding-top:6px;">Formula: max(0, balance + F&amp;O margin) × rate% × (1/52)</td></tr>';
+            detailBody.innerHTML = baseLine + formulaNote;
+        } else {
+            detailBody.innerHTML = '<tr><td colspan="5" class="text-center" style="padding:20px; color:#9ca3af;">No calculation data available</td></tr>';
+        }
+    }
+
+    if (totalEditEl) {
+        totalEditEl.value = currentAmount != null ? currentAmount : (calc ? calc.interest : 0);
+    }
+}
+
+// Open interest detail modal for a POSTED interest entry (already in DB).
 async function lgShowInterestDetail(entryId) {
     var entry = lgLedgerEntries.find(function(e) { return e.id === entryId; });
     if (!entry || entry.entry_type !== 'INTEREST_BOOKED') return;
 
     lgInterestDetailEntryId = entryId;
+    lgPendingModalKey = null;
 
     var investorId = entry.investor_id;
     var interestTerms = wmsGetInterestTerms(investorId);
@@ -1513,34 +1778,104 @@ async function lgShowInterestDetail(entryId) {
         return;
     }
 
-    var fromDate = null;
-    for (var i = lgLedgerEntries.length - 1; i >= 0; i--) {
-        if (lgLedgerEntries[i].entry_date < entry.entry_date && lgLedgerEntries[i].entry_type === 'INTEREST_BOOKED') {
-            fromDate = new Date(lgLedgerEntries[i].entry_date);
-            fromDate.setDate(fromDate.getDate() + 1);
-            fromDate = fromDate.toISOString().slice(0, 10);
-            break;
-        }
-    }
-    if (!fromDate) {
-        fromDate = lgCombined.length > 0 ? lgCombined[0].date : entry.entry_date;
+    // Recompute the calculation for this row by finding the Friday before entry_date
+    // and running the same weekly engine for a single period.
+    var calc = null;
+    try {
+        var postDate = new Date(entry.entry_date);
+        var friday = new Date(postDate);
+        friday.setDate(friday.getDate() - 1);
+        var fromStr = friday.toISOString().slice(0, 10);
+        var toStr = fromStr;
+
+        // Build ledger excluding this entry itself (so the running balance matches
+        // what it was just before this interest row was posted)
+        var txnFiltered = trTransactions.filter(function(t) {
+            return !t.dont_display && t.investor_id === investorId;
+        });
+        var entriesExSelf = lgLedgerEntries.filter(function(e) { return e.id !== entryId; });
+        var full = wmsBuildLedger(entriesExSelf, txnFiltered, { investorIds: [investorId] });
+
+        var nfoTxns = txnFiltered.filter(function(t) {
+            var p = (t.product || '').toUpperCase();
+            var s = (t.security_type || '').toUpperCase();
+            return /F&O|FNO|NFO/.test(p) || /F&O|FNO|NFO/.test(s);
+        }).sort(function(a, b) { return (a.transaction_date || '').localeCompare(b.transaction_date || ''); });
+        var marginEvents = wmsCalcMarginFIFO(nfoTxns);
+
+        var periods = wmsCalcInterestWeeklyFriday(full, interestTerms, fromStr, toStr, marginEvents);
+        calc = periods.length > 0 ? periods[0] : null;
+    } catch (err) {
+        console.warn('Failed to recompute interest detail:', err.message);
     }
 
-    var detailBody = document.getElementById('lgInterestDetailBody');
-    var totalEditEl = document.getElementById('lgInterestTotalEdit');
-
-    if (detailBody) {
-        detailBody.innerHTML = '<tr><td colspan="5" class="text-center" style="padding:20px;">Detail calculation would go here</td></tr>';
-    }
-
-    if (totalEditEl) {
-        totalEditEl.value = entry.amount;
-    }
-
+    lgPopulateInterestDetail(calc, entry.amount);
     lgShowModal('lgInterestDetail');
 }
 
+// Open interest detail modal for a PENDING (not yet posted) interest row.
+function lgShowPendingInterestDetail(pendingKey) {
+    var pending = lgPendingInterestRows.find(function(r) { return r._pendingKey === pendingKey; });
+    if (!pending) return;
+
+    lgInterestDetailEntryId = null;
+    lgPendingModalKey = pendingKey;
+
+    lgPopulateInterestDetail(pending._calc, pending.amount);
+    lgShowModal('lgInterestDetail');
+}
+
+// Commit a pending interest row: insert to ledger_entries with the current (possibly edited) amount.
+async function lgCommitPendingInterest(pendingKey) {
+    var pending = lgPendingInterestRows.find(function(r) { return r._pendingKey === pendingKey; });
+    if (!pending) return;
+
+    // If the user opened the modal first, honour whatever they typed there.
+    var totalEl = document.getElementById('lgInterestTotalEdit');
+    var amount = pending.amount;
+    if (lgPendingModalKey === pendingKey && totalEl) {
+        var v = parseFloat(totalEl.value);
+        if (!isNaN(v)) amount = v;
+    }
+
+    if (amount <= 0) {
+        showAlert('Interest must be greater than 0', 'warning', 3000);
+        return;
+    }
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries', {
+            method: 'POST',
+            headers: lgHeaders(),
+            body: JSON.stringify({
+                investor_id: pending.investorId,
+                entry_date: pending.date,
+                entry_type: 'INTEREST_BOOKED',
+                amount: amount,
+                reference: pending.reference,
+                notes: JSON.stringify(pending._calc || {})
+            })
+        });
+        if (resp.ok) {
+            lgHideModal('lgInterestDetail');
+            showAlert('Interest committed', 'success', 2000);
+            lgRefresh();
+        } else {
+            showAlert('Failed to commit interest', 'error', 3000);
+        }
+    } catch (err) {
+        console.warn('Failed to commit interest:', err.message);
+        showAlert('Failed to commit interest', 'error', 3000);
+    }
+}
+
+// Post / update interest: works for either posted (PATCH existing entry) or pending (POST new).
 async function lgPostInterest() {
+    if (lgPendingModalKey) {
+        // Modal was opened for a pending row → route to commit path
+        await lgCommitPendingInterest(lgPendingModalKey);
+        return;
+    }
     if (!lgInterestDetailEntryId) return;
 
     var totalEl = document.getElementById('lgInterestTotalEdit');
@@ -1555,7 +1890,7 @@ async function lgPostInterest() {
 
         lgHideModal('lgInterestDetail');
         lgRefresh();
-        showAlert('Interest posted', 'success', 2000);
+        showAlert('Interest updated', 'success', 2000);
     } catch (err) {
         console.warn('Failed to post interest:', err.message);
         showAlert('Failed to post interest', 'error', 3000);
@@ -1593,6 +1928,8 @@ window.lgEditEntry = lgEditEntry;
 window.lgDeleteEntry = lgDeleteEntry;
 window.lgCancelDelete = lgCancelDelete;
 window.lgShowInterestDetail = lgShowInterestDetail;
+window.lgShowPendingInterestDetail = lgShowPendingInterestDetail;
+window.lgCommitPendingInterest = lgCommitPendingInterest;
 window.lgAddEntry = lgAddEntry;
 window.lgPostInterest = lgPostInterest;
 window.lgApplyView = lgApplyView;

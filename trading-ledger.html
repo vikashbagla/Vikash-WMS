@@ -77,7 +77,27 @@
 .lg-actions a.lg-del:hover { color:#dc2626; }
 
 /* Summary section label */
-.lg-summary-label { font-size:11px; font-weight:600; color:#2d3748; margin-bottom:6px; }
+.lg-summary-label { font-size:11px; font-weight:600; color:#2d3748; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.3px; }
+
+/* Summary cards grid */
+.lg-summary-cards { display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; margin:12px 0; }
+.lg-summary-card { padding:10px 12px; border:1px solid #e2e8f0; border-radius:4px; background:#fff; }
+.lg-summary-card-label { font-size:10px; color:#718096; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:4px; }
+.lg-summary-card-value { font-size:14px; font-weight:600; color:#2d3748; }
+.lg-summary-card-highlight { background:#eef2ff; border-color:#c7d2fe; }
+.lg-summary-card-highlight .lg-summary-card-value { color:#4338ca; }
+
+/* Booked P&L collapsible */
+.lg-booked-section { margin-top:12px; border:1px solid #e2e8f0; border-radius:4px; background:#fff; }
+.lg-booked-header { display:flex; align-items:center; gap:6px; padding:8px 12px; cursor:pointer; user-select:none; background:#f7fafc; border-bottom:1px solid #e2e8f0; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.3px; color:#2d3748; }
+.lg-booked-header:hover { background:#edf2f7; }
+.lg-booked-caret { display:inline-block; transition:transform 0.15s; width:10px; text-align:center; }
+.lg-booked-section.lg-booked-collapsed .lg-booked-caret { transform:rotate(-90deg); }
+.lg-booked-section.lg-booked-collapsed .lg-booked-body { display:none; }
+.lg-booked-section.lg-booked-collapsed .lg-booked-header { border-bottom:none; }
+.lg-booked-total { margin-left:auto; font-weight:700; }
+.lg-booked-body { padding:8px; }
+.lg-booked-body table { width:100%; }
 
 /* Summary table — reuse data-table styles */
 #lgSummarySection table { table-layout:auto; width:100%; }
@@ -91,6 +111,14 @@
 /* Clickable trade row → opens shared edit modal (like Portfolio / Transactions) */
 #lgTable tr.lg-row-trade { cursor:pointer; }
 #lgTable tr.lg-row-trade:hover td { background:#f7fafc; }
+
+/* Pending (not yet committed) weekly interest row */
+#lgTable tr.lg-row-pending td { background:#fffbeb; border-top:1px dashed #fbbf24; border-bottom:1px dashed #fbbf24; }
+#lgTable tr.lg-row-pending:hover td { background:#fef3c7; }
+.lg-int-amt { cursor:pointer; text-decoration:underline dotted; }
+.lg-int-amt:hover { color:#667eea; }
+.lg-actions a.lg-commit-int { color:#059669; font-weight:600; }
+.lg-actions a.lg-commit-int:hover { color:#065f46; }
 
 /* Transaction type badges */
 .lg-type { font-size:10px; font-weight:600; padding:1px 5px; border-radius:3px; white-space:nowrap; }
@@ -227,46 +255,87 @@
     <!-- 5. SUMMARY PAGE                                             -->
     <!-- ============================================================ -->
     <div id="lgSummarySection" class="lg-page-hidden">
-      <table>
-        <thead>
-          <tr>
-            <th>Symbol</th>
-            <th class="text-right">Type</th>
-            <th class="text-right">Qty</th>
-            <th class="text-right">Avg Cost</th>
-            <th class="text-right">CMP</th>
-            <th class="text-right">MTM</th>
-            <th class="text-right">Value</th>
-          </tr>
-        </thead>
-        <tbody id="lgSummaryBody">
-          <tr>
-            <td colspan="7" class="text-center" style="padding:20px; color:#9ca3af;">Loading holdings...</td>
-          </tr>
-        </tbody>
-        <tfoot>
-          <tr class="total-row" style="border-top:2px solid #cbd5e0;">
-            <td colspan="6" class="text-right" style="font-weight:600;">Holdings Value:</td>
-            <td id="lgHoldingsValue" class="text-right" style="font-weight:600;"></td>
-          </tr>
-          <tr class="total-row">
-            <td colspan="6" class="text-right">MTM of F&O:</td>
-            <td id="lgMtmFno" class="text-right"></td>
-          </tr>
-          <tr class="total-row">
-            <td colspan="6" class="text-right">Outstanding:</td>
-            <td id="lgOutstanding" class="text-right"></td>
-          </tr>
-          <tr class="total-row">
-            <td colspan="6" class="text-right">Potential Tax:</td>
-            <td id="lgPotentialTax" class="text-right"></td>
-          </tr>
-          <tr class="total-row" style="border-top:1px solid #cbd5e0;">
-            <td colspan="6" class="text-right" style="font-weight:600;">Net Receivable/(Payable):</td>
-            <td id="lgNetValue" class="text-right" style="font-weight:600;"></td>
-          </tr>
-        </tfoot>
-      </table>
+      <!-- Open Holdings table (EQ + NFO) -->
+      <div class="lg-summary-label">Open Positions</div>
+      <div class="table-container" style="margin-bottom:12px;">
+        <table id="lgSummaryHoldingsTable">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Type</th>
+              <th class="text-right">Qty</th>
+              <th class="text-right">Avg Cost</th>
+              <th class="text-right">CMP</th>
+              <th class="text-right">MTM</th>
+              <th class="text-right">Value</th>
+            </tr>
+          </thead>
+          <tbody id="lgSummaryBody">
+            <tr>
+              <td colspan="7" class="text-center" style="padding:20px; color:#9ca3af;">Loading holdings...</td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr class="total-row" style="border-top:2px solid #cbd5e0;">
+              <td colspan="5" class="text-right" style="font-weight:600;">Total:</td>
+              <td id="lgSummaryMtmTotal" class="text-right" style="font-weight:600;"></td>
+              <td id="lgSummaryValueTotal" class="text-right" style="font-weight:600;"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <!-- Summary Cards: Total Receivable, Net of MTM, % of o/s -->
+      <div class="lg-summary-cards">
+        <div class="lg-summary-card">
+          <div class="lg-summary-card-label">Total Value of Holdings</div>
+          <div class="lg-summary-card-value" id="lgCardHoldingsValue">-</div>
+        </div>
+        <div class="lg-summary-card">
+          <div class="lg-summary-card-label">Less: Outstanding (incl. F&amp;O margin)</div>
+          <div class="lg-summary-card-value" id="lgCardOutstanding">-</div>
+        </div>
+        <div class="lg-summary-card">
+          <div class="lg-summary-card-label">Less: Potential Tax (12.5%)</div>
+          <div class="lg-summary-card-value" id="lgCardPotentialTax">-</div>
+        </div>
+        <div class="lg-summary-card lg-summary-card-highlight">
+          <div class="lg-summary-card-label">Net Receivable / (Payable)</div>
+          <div class="lg-summary-card-value" id="lgCardNetReceivable">-</div>
+        </div>
+        <div class="lg-summary-card">
+          <div class="lg-summary-card-label">Balance without MTM</div>
+          <div class="lg-summary-card-value" id="lgCardBalNoMtm">-</div>
+        </div>
+        <div class="lg-summary-card">
+          <div class="lg-summary-card-label">% of Outstanding</div>
+          <div class="lg-summary-card-value" id="lgCardPctOutstanding">-</div>
+        </div>
+      </div>
+
+      <!-- Booked P&L collapsible (current FY) -->
+      <div class="lg-booked-section" id="lgBookedSection">
+        <div class="lg-booked-header" id="lgBookedHeader">
+          <span class="lg-booked-caret">▼</span>
+          <span>Booked P&amp;L <span id="lgBookedFyLabel" style="color:#718096; font-size:10px;"></span></span>
+          <span class="lg-booked-total" id="lgBookedTotal"></span>
+        </div>
+        <div class="lg-booked-body" id="lgBookedBody">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Type</th>
+                <th class="text-right">Qty Closed</th>
+                <th class="text-right">Realised P&amp;L</th>
+              </tr>
+            </thead>
+            <tbody id="lgBookedBodyRows">
+              <tr><td colspan="4" class="text-center" style="padding:12px; color:#9ca3af;">No booked P&L</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <!-- ============================================================ -->

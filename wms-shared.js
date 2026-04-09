@@ -4612,7 +4612,7 @@ function wmsCalcClosingBalance(ledger, dateStr) {
  * @param {string} toStr       - YYYY-MM-DD
  * @returns {Array} of {period, closingBalance, days, rate, interest, postDate}
  */
-function wmsCalcInterestWeeklyFriday(ledger, terms, fromStr, toStr) {
+function wmsCalcInterestWeeklyFriday(ledger, terms, fromStr, toStr, marginEvents) {
     if (!terms || !terms.rate) return [];
     var rate = terms.rate;
     var results = [];
@@ -4636,26 +4636,33 @@ function wmsCalcInterestWeeklyFriday(ledger, terms, fromStr, toStr) {
     while (cur <= to) {
         var fridayStr = cur.toISOString().slice(0, 10);
         var closingBal = wmsCalcClosingBalance(ledger, fridayStr);
-        var interest = wmsRoundMoney(Math.max(0, closingBal) * (rate / 100) * (7 / 365));
+        // Include any outstanding F&O margin at Friday EOD in the interest base
+        var marginAtFri = marginEvents ? wmsGetMarginRunningAt(marginEvents, fridayStr) : 0;
+        var base = closingBal + marginAtFri;
+        // Weekly: rate × (1/52), floored at zero
+        var interest = wmsRoundMoney(Math.max(0, base) * (rate / 100) * (1 / 52));
 
         // Post date is Saturday (Friday + 1)
         var postDate = new Date(cur);
         postDate.setDate(postDate.getDate() + 1);
         var postDateStr = postDate.toISOString().slice(0, 10);
 
-        // Period label: Fri DD-Mon to Fri DD-Mon (previous Monday to this Friday)
-        var prevMonday = new Date(cur);
-        prevMonday.setDate(prevMonday.getDate() - 4); // 4 days back from Friday
-        var periodLabel = prevMonday.toLocaleDateString('en-IN', {day:'2-digit',month:'short'}) + ' to ' +
+        // Period label: previous Saturday to this Friday (weekly window)
+        var prevSat = new Date(cur);
+        prevSat.setDate(prevSat.getDate() - 6);
+        var periodLabel = prevSat.toLocaleDateString('en-IN', {day:'2-digit',month:'short'}) + ' to ' +
                          cur.toLocaleDateString('en-IN', {day:'2-digit',month:'short'});
 
         results.push({
             period: periodLabel,
             closingBalance: closingBal,
+            marginBalance: marginAtFri,
+            baseBalance: base,
             days: 7,
             rate: rate,
             interest: interest,
-            postDate: postDateStr
+            postDate: postDateStr,
+            fridayDate: fridayStr
         });
 
         // Move to next Friday
@@ -4663,6 +4670,28 @@ function wmsCalcInterestWeeklyFriday(ledger, terms, fromStr, toStr) {
     }
 
     return results;
+}
+
+/**
+ * Get running F&O margin as of a given date (inclusive).
+ * Walks through margin events (output of wmsCalcMarginFIFO) in date order
+ * and returns the last runningMargin value at/before dateStr.
+ *
+ * @param {Array} events - output of wmsCalcMarginFIFO
+ * @param {string} dateStr - YYYY-MM-DD
+ * @returns {number} running margin blocked as of dateStr
+ */
+function wmsGetMarginRunningAt(events, dateStr) {
+    if (!events || events.length === 0) return 0;
+    var running = 0;
+    for (var i = 0; i < events.length; i++) {
+        if (events[i].date <= dateStr) {
+            running = events[i].runningMargin;
+        } else {
+            break;
+        }
+    }
+    return running;
 }
 
 /**
