@@ -188,7 +188,7 @@
         <table id="lgTable">
           <thead id="lgHead">
             <tr>
-              <th class="lg-sortable" data-sort="date" style="width:80px;">Date <span class="sort-indicator"></span></th>
+              <th class="text-right lg-sortable" data-sort="date" style="width:110px;">Date <span class="sort-indicator"></span></th>
               <th style="width:180px;">Symbol</th>
               <th style="width:80px;">Type</th>
               <th class="text-right lg-sortable" data-sort="qty" style="width:70px;">Qty <span class="sort-indicator"></span></th>
@@ -199,19 +199,7 @@
             </tr>
           </thead>
           <tbody id="lgBody">
-            <!-- Opening balance row (always first) -->
-            <tr id="lgOpeningBalRow" class="total-row">
-              <td id="lgObDate"></td>
-              <td style="font-weight:600;">Opening Balance</td>
-              <td></td>
-              <td></td>
-              <td></td>
-              <td></td>
-              <td class="text-right" id="lgObAmount"></td>
-              <td class="text-right" id="lgObBalance"></td>
-            </tr>
-
-            <!-- Inline new entry row -->
+            <!-- Inline new entry row (first - the input area) -->
             <tr id="lgNewEntryRow" class="total-row" style="background:#f9fafb;">
               <td>
                 <div id="lgNewDateContainer"></div>
@@ -236,6 +224,20 @@
               <td class="text-right">
                 <button id="lgAddEntryBtn" class="wms-btn wms-btn-primary" style="font-size:11px; padding:3px 10px;">Add</button>
               </td>
+            </tr>
+
+            <!-- Opening balance row (sits just above the data rows so it forms
+                 a continuous block with the transactions, separated from the
+                 input row above) -->
+            <tr id="lgOpeningBalRow" class="total-row">
+              <td class="text-right" id="lgObDate"></td>
+              <td style="font-weight:600;">Opening Balance</td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td class="text-right" id="lgObAmount"></td>
+              <td class="text-right" id="lgObBalance"></td>
             </tr>
 
             <!-- Data rows inserted by JS -->

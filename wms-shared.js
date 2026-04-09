@@ -4585,10 +4585,18 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
     // Sort by date, then ledger before trade on same date, then created_at
     combined.sort(function(a, b) { return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0; });
 
-    // Compute running balance
+    // Compute running balance.
+    // OPENING_BALANCE entries RESET the running balance to their stored amount
+    // (they represent the entire starting cash position, not a delta). All
+    // earlier history is discarded at that point. Subsequent rows continue
+    // from the new base.
     var bal = 0;
     combined.forEach(function(row) {
-        bal += row.amount;
+        if (row._rowType === 'ledger' && row.entryType === 'OPENING_BALANCE') {
+            bal = row.amount;
+        } else {
+            bal += row.amount;
+        }
         row._runningBalance = wmsRoundMoney(bal);
     });
 

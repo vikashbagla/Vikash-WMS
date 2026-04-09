@@ -437,6 +437,21 @@ function lgAmtClass(value) {
     return typeof getAmountClass === 'function' ? getAmountClass(value) : (value > 0 ? 'positive' : value < 0 ? 'negative' : '');
 }
 
+// Ledger-only date format: "Wed, 09-Apr-26"
+// (we don't touch the global formatDate to avoid changing the rest of the app)
+function lgFmtDate(dateStr) {
+    if (!dateStr) return '';
+    var d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var dayName = days[d.getDay()];
+    var dd = String(d.getDate()).padStart(2, '0');
+    var mon = months[d.getMonth()];
+    var yy = String(d.getFullYear()).slice(-2);
+    return dayName + ', ' + dd + '-' + mon + '-' + yy;
+}
+
 // ============================================================================
 // SYMBOL DISPLAY — Full decoded NFO description
 // ============================================================================
@@ -980,8 +995,11 @@ async function lgRefresh() {
     // in the database yet.
     // ------------------------------------------------------------------
     lgPendingInterestRows = [];
-    if (lgSelectedInvestorIds.length === 1) {
-        var invId = lgSelectedInvestorIds[0];
+    // Resolve to a single effective investor ID — works for either investor
+    // filter (length 1) or trader-only filter (length 1, trader_id == investor_id).
+    var effInvId = lgGetEffectiveInvestorId();
+    if (effInvId) {
+        var invId = effInvId;
         var terms = wmsGetInterestTerms(invId);
         if (terms && terms.frequency === 'weekly_friday' && terms.rate > 0) {
             // Last posted Saturday = max entry_date of INTEREST_BOOKED for this investor
@@ -1038,15 +1056,21 @@ async function lgRefresh() {
                     lgPendingInterestRows.push(pendingRow);
                 }
 
-                // Re-sort and recompute running balance so pending rows flow into it
+                // Re-sort and recompute running balance so pending rows flow into it.
+                // (Mirrors wmsBuildLedger's reset-on-OPENING_BALANCE semantic.)
                 if (lgPendingInterestRows.length > 0) {
                     fullCombined.sort(function(a, b) {
                         return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0;
                     });
                     var bal = 0;
                     for (var fi = 0; fi < fullCombined.length; fi++) {
-                        bal += fullCombined[fi].amount;
-                        fullCombined[fi]._runningBalance = wmsRoundMoney(bal);
+                        var fr = fullCombined[fi];
+                        if (fr._rowType === 'ledger' && fr.entryType === 'OPENING_BALANCE') {
+                            bal = fr.amount;
+                        } else {
+                            bal += fr.amount;
+                        }
+                        fr._runningBalance = wmsRoundMoney(bal);
                     }
                 }
             }
@@ -1139,7 +1163,7 @@ function lgRenderEntries(rows) {
     var lastBalance = openingBal.amount || 0; // Start with opening balance (carry-forward)
 
     sorted.forEach(function(row) {
-        var date = formatDate(row.date);
+        var date = lgFmtDate(row.date);
         var symbol = '';
         var typeHtml = '';
         var qty = '';
@@ -1221,7 +1245,7 @@ function lgRenderEntries(rows) {
         }
 
         html += '<tr' + trAttrs + '>' +
-            '<td>' + date + '</td>' +
+            '<td class="text-right">' + date + '</td>' +
             '<td>' + symbol + (actions ? ' ' + actions : '') + '</td>' +
             '<td>' + typeHtml + '</td>' +
             '<td class="text-right">' + qty + '</td>' +
@@ -1237,8 +1261,8 @@ function lgRenderEntries(rows) {
     // Wipe dynamic rows; re-insert preserved nodes (DOM-identity intact, so
     // wmsDateInput controller still has live event listeners) then dynamic html.
     tbody.innerHTML = '';
-    if (obRow) tbody.appendChild(obRow);
     if (newRow) tbody.appendChild(newRow);
+    if (obRow) tbody.appendChild(obRow);
     if (html) tbody.insertAdjacentHTML('beforeend', html);
 
     // Now that obRow is back in the DOM, render the opening balance values
@@ -1290,7 +1314,7 @@ function lgRenderOpeningBalance(ob) {
     var balanceEl = document.getElementById('lgObBalance');
 
     if (dateEl) {
-        dateEl.textContent = ob.date ? (typeof formatDate === 'function' ? formatDate(ob.date) : ob.date) : '';
+        dateEl.textContent = ob.date ? lgFmtDate(ob.date) : '';
     }
     if (amountEl) {
         if (lgObEditing) return; // Don't overwrite while editing
