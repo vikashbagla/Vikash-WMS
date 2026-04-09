@@ -60,6 +60,10 @@ var lgActivePage = 'transactions';
 // Opening balance editing state
 var lgObEditing = false;
 
+// Carry-forward (computed running balance as of dateFrom - 1) — drives the opening balance row
+var lgCarryForwardBalance = 0;
+var lgCarryForwardDate = '';
+
 // ============================================================================
 // TRANSACTION TYPE FRIENDLY LABELS
 // ============================================================================
@@ -306,6 +310,21 @@ function lgInit() {
         updateBtn.addEventListener('click', lgUpdateCurrentView);
     }
 
+    // Delegated row click → open shared trading edit modal (same as Portfolio/Transactions)
+    var lgBodyEl = document.getElementById('lgBody');
+    if (lgBodyEl) {
+        lgBodyEl.addEventListener('click', function(e) {
+            // Ignore clicks on interactive children (buttons, links, inputs, inline delete confirm bar)
+            if (e.target.closest('button, a, input, select, .lg-actions, .lg-confirm-bar, .lg-ob-edit')) return;
+            var tr = e.target.closest('tr.lg-row-trade');
+            if (!tr) return;
+            var txnId = tr.getAttribute('data-txn-id');
+            if (txnId && typeof trOpenEditModal === 'function') {
+                trOpenEditModal(txnId);
+            }
+        });
+    }
+
     // Column sorting — attach click handlers to sortable headers
     document.querySelectorAll('#lgHead th.lg-sortable').forEach(function(th) {
         th.addEventListener('click', function() {
@@ -408,14 +427,27 @@ function lgFormatSymbol(row) {
     var source = row._source;
     var sym = source.short_symbol || source.symbol || '';
 
-    // For NFO, show decoded contract: e.g. "MANAPPURAM Mar 26 Fut"
+    // Build tooltip: full symbol + company name + exchange (watchlist pattern)
+    var tipParts = [];
+    if (source.symbol && source.symbol !== sym) tipParts.push(source.symbol);
+    if (source.company_name) tipParts.push(source.company_name);
+    if (source.exchange) tipParts.push(source.exchange);
+    var tooltip = tipParts.length > 0 ? (sym + ' — ' + tipParts.join(' · ')) : sym;
+
+    var inner;
+    // For NFO, show decoded contract: e.g. "MANAPPURAM 30 Mar 26 Fut"
     if (source.security_type === 'NFO' || (source.product && /NFO|F&O|FNO/i.test(source.product))) {
         var contract = typeof wmsFormatContract === 'function' ? wmsFormatContract(source) : '';
         if (contract && contract !== 'Equity' && contract !== 'NFO') {
-            return wmsEsc(sym) + ' <span style="color:#718096; font-size:10px;">' + wmsEsc(contract) + '</span>';
+            inner = wmsEsc(sym) + ' <span style="color:#718096; font-size:10px;">' + wmsEsc(contract) + '</span>';
+        } else {
+            inner = wmsEsc(sym);
         }
+    } else {
+        inner = wmsEsc(sym);
     }
-    return wmsEsc(sym);
+
+    return '<span title="' + wmsEsc(tooltip) + '">' + inner + '</span>';
 }
 
 // ============================================================================
@@ -866,25 +898,30 @@ async function lgRefresh() {
     var dateFrom = lgDateFrom || '2000-01-01';
     var dateTo = lgDateTo || '2099-12-31';
 
-    var query = 'entry_date.gte.' + dateFrom + '&entry_date.lte.' + dateTo;
+    // Pull ALL ledger entries respecting non-date filters (investor).
+    // Running balance must be correct from history; we slice the display to
+    // [dateFrom, dateTo] only AFTER computing the running balance, so that a
+    // mid-FY filter (e.g. 01-Jul onwards) shows the correct carry-forward
+    // opening balance as of 30-Jun. OPENING_BALANCE ledger entries are treated
+    // as pre-period state (rolled into carry-forward, not displayed as rows).
+    var allQuery = '';
     if (lgSelectedInvestorIds.length > 0) {
-        query += '&investor_id.in.(' + lgSelectedInvestorIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')';
+        allQuery += 'investor_id.in.(' + lgSelectedInvestorIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')';
     }
 
     try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?select=*&' + query + '&order=entry_date.asc', {
-            headers: lgHeaders()
-        });
+        var url = SUPABASE_URL + '/rest/v1/ledger_entries?select=*' + (allQuery ? '&' + allQuery : '') + '&order=entry_date.asc';
+        var resp = await fetch(url, { headers: lgHeaders() });
         lgLedgerEntries = resp.ok ? await resp.json() : [];
     } catch (err) {
         console.warn('Failed to fetch ledger entries:', err.message);
         lgLedgerEntries = [];
     }
 
-    var filtered = trTransactions.filter(function(t) {
+    // Filter transactions by non-date filters (investor/trader/broker/tags) — NO date filter yet.
+    var txnFiltered = trTransactions.filter(function(t) {
         if (t.dont_display) return false;
         if (!t.transaction_date) return false;
-        if (t.transaction_date < dateFrom || t.transaction_date > dateTo) return false;
         if (lgSelectedInvestorIds.length > 0 && lgSelectedInvestorIds.indexOf(t.investor_id) < 0) return false;
         if (lgSelectedTraderIds.length > 0) {
             var tid = t.trader_id || t.investor_id;
@@ -897,13 +934,31 @@ async function lgRefresh() {
         return true;
     });
 
-    lgCombined = wmsBuildLedger(lgLedgerEntries, filtered, {
+    // Build full-history ledger — running balance computed across ALL time.
+    var fullCombined = wmsBuildLedger(lgLedgerEntries, txnFiltered, {
         investorIds: lgSelectedInvestorIds,
         traderIds: lgSelectedTraderIds,
         brokerIds: lgSelectedBrokerIds,
         tagNames: lgSelectedTagNames,
         tagLogic: lgTagFilterLogic
     });
+
+    // Derive carry-forward balance: everything strictly before dateFrom PLUS
+    // any OPENING_BALANCE entry dated exactly on dateFrom (treated as pre-period).
+    var carry = 0;
+    var displayed = [];
+    for (var i = 0; i < fullCombined.length; i++) {
+        var r = fullCombined[i];
+        var isPreOpening = (r._rowType === 'ledger' && r.entryType === 'OPENING_BALANCE' && r.date <= dateFrom);
+        if (r.date < dateFrom || isPreOpening) {
+            carry = r._runningBalance;
+        } else if (r.date >= dateFrom && r.date <= dateTo) {
+            displayed.push(r);
+        }
+    }
+    lgCarryForwardBalance = carry;
+    lgCarryForwardDate = dateFrom;
+    lgCombined = displayed;
 
     lgRenderEntries(lgCombined);
     lgRenderSummary();
@@ -960,12 +1015,9 @@ function lgRenderEntries(rows) {
 
     var html = obRowHtml + newRowHtml;
     var totalAmount = 0;
-    var lastBalance = openingBal.amount || 0; // Start with opening balance
+    var lastBalance = openingBal.amount || 0; // Start with opening balance (carry-forward)
 
     sorted.forEach(function(row) {
-        // Skip OPENING_BALANCE ledger entries from the main rows (shown in special row)
-        if (row._rowType === 'ledger' && row.entryType === 'OPENING_BALANCE') return;
-
         var date = formatDate(row.date);
         var symbol = '';
         var typeHtml = '';
@@ -1029,7 +1081,13 @@ function lgRenderEntries(rows) {
         var amtClass = lgAmtClass(row.amount);
         var balClass = lgAmtClass(row._runningBalance);
 
-        html += '<tr>' +
+        // Trade rows are clickable → open shared trading edit modal
+        var trAttrs = '';
+        if (row._rowType === 'trade' && row._source && row._source.id) {
+            trAttrs = ' class="lg-row-trade" data-txn-id="' + wmsEsc(row._source.id) + '"';
+        }
+
+        html += '<tr' + trAttrs + '>' +
             '<td>' + date + '</td>' +
             '<td>' + symbol + (actions ? ' ' + actions : '') + '</td>' +
             '<td>' + typeHtml + '</td>' +
@@ -1068,21 +1126,22 @@ function lgRenderEntries(rows) {
 // ============================================================================
 
 function lgFindOpeningBalance() {
-    // Find OPENING_BALANCE ledger entry for the active investor filter
-    var ob = lgLedgerEntries.find(function(e) {
+    // Opening balance row now always shows the computed carry-forward as of dateFrom.
+    // We still surface the stored OPENING_BALANCE entry (if any) so the inline
+    // edit UI can update it — but the DISPLAYED amount is always the carry-forward.
+    var stored = lgLedgerEntries.find(function(e) {
         return e.entry_type === 'OPENING_BALANCE';
     });
-    if (ob) {
-        return { id: ob.id, date: ob.entry_date, amount: parseFloat(ob.amount) || 0, exists: true };
-    }
-    // Also check in lgCombined for opening balance rows
-    var obRow = lgCombined.find(function(r) {
-        return r._rowType === 'ledger' && r.entryType === 'OPENING_BALANCE';
-    });
-    if (obRow) {
-        return { id: obRow._source.id, date: obRow.date, amount: obRow.amount, exists: true };
-    }
-    return { id: null, date: '', amount: 0, exists: false };
+    return {
+        id: stored ? stored.id : null,
+        // Display date = the "as of" date, which is the period start
+        date: lgCarryForwardDate || (stored ? stored.entry_date : ''),
+        amount: lgCarryForwardBalance,
+        storedAmount: stored ? (parseFloat(stored.amount) || 0) : 0,
+        storedDate: stored ? stored.entry_date : '',
+        isCarryForward: !!(stored && stored.entry_date < lgCarryForwardDate),
+        exists: !!stored
+    };
 }
 
 function lgRenderOpeningBalance(ob) {
@@ -1095,9 +1154,19 @@ function lgRenderOpeningBalance(ob) {
     }
     if (amountEl) {
         if (lgObEditing) return; // Don't overwrite while editing
-        var amtHtml = ob.exists ?
-            '<span class="lg-ob-amount" title="Double-click to edit">' + lgFmt(ob.amount) + '</span>' :
-            '<span class="lg-ob-amount" style="color:#9ca3af;" title="Double-click to set opening balance">Set...</span>';
+        // Editable only when the displayed date equals the stored OPENING_BALANCE's
+        // entry_date — i.e. we're viewing the actual FY-start opening.
+        // For any later window (mid-FY filter), the value is a computed carry-forward
+        // and must not be editable.
+        var isEditable = !ob.isCarryForward && (!ob.exists || ob.storedDate === ob.date);
+        var amtHtml;
+        if (isEditable) {
+            amtHtml = ob.exists ?
+                '<span class="lg-ob-amount" title="Double-click to edit">' + lgFmt(ob.amount) + '</span>' :
+                '<span class="lg-ob-amount" style="color:#9ca3af;" title="Double-click to set opening balance">Set...</span>';
+        } else {
+            amtHtml = '<span title="Carry-forward running balance as of ' + wmsEsc(ob.date) + ' (not editable)">' + lgFmt(ob.amount) + '</span>';
+        }
         amountEl.innerHTML = amtHtml;
         amountEl.className = 'text-right ' + lgAmtClass(ob.amount);
     }
