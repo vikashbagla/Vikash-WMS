@@ -1128,9 +1128,11 @@ function lgRenderEntries(rows) {
         }
     });
 
-    // Render opening balance row
+    // Compute opening balance up front (used to seed running balance below).
+    // The actual lgRenderOpeningBalance() call MUST happen AFTER obRow is
+    // re-attached to the DOM — otherwise getElementById('lgObDate') etc.
+    // can't find the (currently detached) child elements.
     var openingBal = lgFindOpeningBalance();
-    lgRenderOpeningBalance(openingBal);
 
     var html = '';
     var totalAmount = 0;
@@ -1239,7 +1241,9 @@ function lgRenderEntries(rows) {
     if (newRow) tbody.appendChild(newRow);
     if (html) tbody.insertAdjacentHTML('beforeend', html);
 
-    // Re-attach opening balance click handler
+    // Now that obRow is back in the DOM, render the opening balance values
+    // and re-attach the click handler.
+    lgRenderOpeningBalance(openingBal);
     lgAttachObClickHandler();
 
     // Update totals in tfoot
