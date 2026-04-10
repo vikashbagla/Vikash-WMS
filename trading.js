@@ -1,7 +1,7 @@
 // ============================================================================
 // WMS TRADING MODULE
 // ============================================================================
-// Uses 'tr' prefix to avoid naming conflicts with portfolio.js and utils.js.
+// Uses 'tr' prefix to avoid naming conflicts with utils.js.
 // All module-level state uses var (project convention — avoids TDZ on reload).
 
 // INCOME_TYPES now canonical in wms-shared.js as WMS_INCOME_TYPES
@@ -949,7 +949,7 @@ function trToggleZeroHoldings() {
 }
 
 // ============================================================================
-// FILTERS (same pattern as portfolio.js, with short_name / broker_code labels)
+// FILTERS (short_name / broker_code labels)
 // ============================================================================
 
 function trInitFilterPills() {

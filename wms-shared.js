@@ -659,7 +659,7 @@ function wmsSanitizeTransactions(transactions) {
 
 // ============================================================================
 // AVERAGE COST CALCULATION (Spec A1)
-// Single source of truth — used by portfolio.js, trading.js, and any future module.
+// Single source of truth — used by trading.js and any future module.
 //
 // PREREQUISITE: transactions must be sanitized via wmsSanitizeTransactions() first.
 //   When investor ≠ trader (investor's account used by trader), net_amount is
@@ -738,7 +738,7 @@ function wmsCalcAvgCost(transactions) {
 
         txnType = txn.transaction_type || txn.type || '';
         isIncome = WMS_INCOME_TYPES.indexOf(txnType) >= 0;
-        // Support both snake_case (trading.js) and camelCase (portfolio.js)
+        // Support both snake_case and camelCase field names (defensive)
         var netAmt = txn.net_amount !== undefined ? txn.net_amount : (txn.netAmount || 0);
 
         if (isIncome) {
@@ -814,7 +814,7 @@ function wmsCalcAvgCost(transactions) {
 //   4. Intraday (buy+sell today):   qty × (sellPrice − buyPrice)
 // Sells consume old holdings first (FIFO), then today's buys (FIFO).
 // txns: raw transaction array for ONE symbol (may include NFO/income — filtered internally)
-//       Supports both snake_case (trading.js) and camelCase (portfolio.js) field names.
+//       Supports both snake_case and camelCase field names (defensive).
 // priceCache: { lp, ch } from wmsLivePrices
 // todayStr: optional 'YYYY-MM-DD' string (computed if omitted)
 // Returns: number (Day P&L) or null if no live data
