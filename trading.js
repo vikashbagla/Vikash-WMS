@@ -2832,8 +2832,12 @@ function trRecalcTraderCharges() {
 
     if (traderId !== investorId && wmsRefData && wmsRefData.ibaRatesMap) {
         var gross = Math.abs(parseFloat(txn.gross_amount) || 0);
+        // Rule G.2.9a — force trader_charges to use the same inclusive flag
+        // as the investor's brokerage/total_charges so the two formulas can't
+        // diverge on the same transaction.
+        var inclusive = wmsIsChargesInclusive(wmsRefData.ibaRatesMap, investorId, brokerId);
         var traderCharges = wmsGetBrokerage(wmsRefData.ibaRatesMap, traderId, brokerId, gross,
-            txn.security_type, txn.asset_class, txn.price, txn.quantity, txn.lots);
+            txn.security_type, txn.asset_class, txn.price, txn.quantity, txn.lots, inclusive);
         document.getElementById('trEditTraderCharges').value = trEditFmt(traderCharges);
     } else {
         document.getElementById('trEditTraderCharges').value = trEditFmt(0);
@@ -2940,8 +2944,13 @@ var _trSplitData = null;
 function _trCalcSplitTraderCharges(txn, traderId, splitGross, splitQty, splitLots) {
     if (!traderId || traderId === txn.investor_id) return 0;
     if (!wmsRefData || !wmsRefData.ibaRatesMap) return 0;
+    // Rule G.2.9a — force trader_charges to use the same inclusive flag
+    // as the investor's brokerage/total_charges so split-row trader charges
+    // match the parent transaction's formula.
+    var inclusive = wmsIsChargesInclusive(wmsRefData.ibaRatesMap, txn.investor_id, txn.broker_id);
     return wmsGetBrokerage(wmsRefData.ibaRatesMap, traderId, txn.broker_id,
-        Math.abs(splitGross), txn.security_type, txn.asset_class, txn.price, splitQty, splitLots) || 0;
+        Math.abs(splitGross), txn.security_type, txn.asset_class, txn.price, splitQty, splitLots,
+        inclusive) || 0;
 }
 
 function trPreviewSplit() {
@@ -2986,7 +2995,13 @@ function trPreviewSplit() {
     var remainGst = r2((txn.gst || 0) * remainRatio);
     var remainTds = r2((txn.tds || 0) * remainRatio);
     var remainTotalCharges = r2(remainBrokerage + remainStt + remainOther + remainGst);
-    var remainNet = r2(remainGross + remainTotalCharges);
+    // Rule G.2.8 — BUY/buy-like: gross + charges; SELL: gross - charges.
+    // Bug fix: previously the split function unconditionally added charges
+    // for both legs, producing net = gross + charges on SELL splits (4
+    // historical rows observed in late-March 2026 on Fyers NATIONALUM NFO SELLs).
+    var remainNet = wmsIsBuyLikeType(txn.transaction_type)
+        ? r2(remainGross + remainTotalCharges)
+        : r2(remainGross - remainTotalCharges);
     // Recalculate trader charges for the remaining row using original trader
     var origTraderId = txn.trader_id || txn.investor_id;
     var remainTraderCharges = _trCalcSplitTraderCharges(txn, origTraderId, remainGross, remainQty, remainLots);
@@ -3001,7 +3016,9 @@ function trPreviewSplit() {
     var splitGst = r2((txn.gst || 0) * ratio);
     var splitTds = r2((txn.tds || 0) * ratio);
     var splitTotalCharges = r2(splitBrokerage + splitStt + splitOther + splitGst);
-    var splitNet = r2(splitGross + splitTotalCharges);
+    var splitNet = wmsIsBuyLikeType(txn.transaction_type)
+        ? r2(splitGross + splitTotalCharges)
+        : r2(splitGross - splitTotalCharges);
     // Recalculate trader charges for the split-off row using selected trader
     var splitTraderId = splitTraderVal || txn.investor_id;
     var splitTraderCharges = _trCalcSplitTraderCharges(txn, splitTraderId, splitGross, splitQty, splitLots);

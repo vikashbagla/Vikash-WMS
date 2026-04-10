@@ -2056,11 +2056,18 @@ function wmsIsChargesInclusive(ibaRatesMap, investorId, brokerId) {
  * @param {number} lots         Number of lots (for options flat rate)
  * @returns {number} Brokerage amount rounded to 2 decimal places
  */
-function wmsGetBrokerage(ibaRatesMap, investorId, brokerId, grossAmount, securityType, assetClass, price, quantity, lots) {
+function wmsGetBrokerage(ibaRatesMap, investorId, brokerId, grossAmount, securityType, assetClass, price, quantity, lots, inclusiveOverride) {
     if (!brokerId) return 0;
     var ibaEntry = ibaRatesMap[investorId + '|' + brokerId];
     if (!ibaEntry) return 0;
     var rates = ibaEntry.rates;
+    // Rule G.2.9a — when an explicit inclusive flag is supplied by the caller
+    // (e.g. trader_charges must use the SAME formula as total_charges so they
+    // can't diverge on the same transaction), honour it instead of reading
+    // the per-IBA flag. Passing undefined preserves legacy behaviour.
+    var useInclusive = (inclusiveOverride === undefined)
+        ? ibaEntry.charges_inclusive
+        : inclusiveOverride;
 
     // Navigate the rates JSONB: equity.delivery for EQUITY/ETF, derivatives.futures/options for NFO
     var segment = null;
@@ -2091,7 +2098,7 @@ function wmsGetBrokerage(ibaRatesMap, investorId, brokerId, grossAmount, securit
     // When charges_inclusive: brokerage = ROUNDUP(price * pct, 2) * abs(qty)
     // Otherwise: brokerage = round(gross * pct, 2)
     var calc;
-    if (ibaEntry.charges_inclusive && price && quantity) {
+    if (useInclusive && price && quantity) {
         var perShare = Math.ceil(price * pct * 100) / 100;  // ROUNDUP to 2 decimal places
         calc = perShare * Math.abs(quantity);
     } else {
@@ -2331,8 +2338,13 @@ function wmsAutoCalcCharges(row, opts) {
     if (shouldCalcTrader) {
         var traderId = row.trader_id || investorId;
         if (traderId !== investorId) {
+            // Rule G.2.9a — force trader_charges to use the same inclusive
+            // formula as total_charges so the two can't diverge on the same
+            // transaction (fixes TG-style per-share-ceil vs gross×pct bug
+            // where total_charges and trader_charges used different rounding).
             row.trader_charges = wmsGetBrokerage(ibaRatesMap, traderId, brokerId, gross,
-                row.security_type, row.asset_class, row.price, row.quantity, row.lots);
+                row.security_type, row.asset_class, row.price, row.quantity, row.lots,
+                inclusive);
         } else {
             row.trader_charges = 0;
         }
