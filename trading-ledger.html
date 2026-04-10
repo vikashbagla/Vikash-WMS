@@ -98,6 +98,7 @@
 .lg-booked-total { margin-left:auto; font-weight:700; }
 .lg-booked-body { padding:8px; }
 .lg-booked-body table { width:100%; }
+#lgSummaryHoldingsTable th.lg-col-type, #lgSummaryHoldingsTable td.lg-col-type { width:40px; padding-left:4px; padding-right:4px; text-align:center; }
 
 /* Summary table — reuse data-table styles */
 #lgSummarySection table { table-layout:auto; width:100%; }
@@ -254,34 +255,36 @@
     <!-- 5. SUMMARY PAGE                                             -->
     <!-- ============================================================ -->
     <div id="lgSummarySection" class="lg-page-hidden">
-      <!-- Open Holdings table (EQ + NFO) -->
-      <div class="lg-summary-label">Open Positions</div>
-      <div class="table-container" style="margin-bottom:12px;">
-        <table id="lgSummaryHoldingsTable">
-          <thead>
-            <tr>
-              <th>Symbol</th>
-              <th>Type</th>
-              <th class="text-right">Qty</th>
-              <th class="text-right">Avg Cost</th>
-              <th class="text-right">CMP</th>
-              <th class="text-right">MTM</th>
-              <th class="text-right">Value</th>
-            </tr>
-          </thead>
-          <tbody id="lgSummaryBody">
-            <tr>
-              <td colspan="7" class="text-center" style="padding:20px; color:#9ca3af;">Loading holdings...</td>
-            </tr>
-          </tbody>
-          <tfoot>
-            <tr class="total-row" style="border-top:2px solid #cbd5e0;">
-              <td colspan="5" class="text-right" style="font-weight:600;">Total:</td>
-              <td id="lgSummaryMtmTotal" class="text-right" style="font-weight:600;"></td>
-              <td id="lgSummaryValueTotal" class="text-right" style="font-weight:600;"></td>
-            </tr>
-          </tfoot>
-        </table>
+      <!-- Open Holdings table (EQ + NFO) — collapsible like Booked P&L -->
+      <div class="lg-booked-section" id="lgOpenPosSection" style="margin-top:0; margin-bottom:12px;">
+        <div class="lg-booked-header" id="lgOpenPosHeader">
+          <span class="lg-booked-caret">▼</span>
+          <span>Open Positions</span>
+          <span class="lg-booked-total" style="margin-left:auto; display:flex; gap:18px; font-weight:600;">
+            <span>MTM: <span id="lgSummaryMtmTotal"></span></span>
+            <span>Value: <span id="lgSummaryValueTotal"></span></span>
+          </span>
+        </div>
+        <div class="lg-booked-body">
+          <table id="lgSummaryHoldingsTable">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th class="lg-col-type text-center">Type</th>
+                <th class="text-right">Qty</th>
+                <th class="text-right">Avg Cost</th>
+                <th class="text-right">CMP</th>
+                <th class="text-right">MTM</th>
+                <th class="text-right">Value</th>
+              </tr>
+            </thead>
+            <tbody id="lgSummaryBody">
+              <tr>
+                <td colspan="7" class="text-center" style="padding:20px; color:#9ca3af;">Loading holdings...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <!-- Summary Cards: Total Receivable, Net of MTM, % of o/s -->

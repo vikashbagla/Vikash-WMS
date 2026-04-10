@@ -661,7 +661,8 @@ function lgRenderMoreDropdown() {
         var isActive = v.id === lgActiveViewId;
         var isDefault = v.is_default;
         var inTabs = v.show_in_tabs !== false;
-        return '<div class="tr-more-item' + (isActive ? ' active' : '') + '" data-view-id="' + v.id + '" data-view-idx="' + idx + '">' +
+        return '<div class="tr-more-item' + (isActive ? ' active' : '') + '" draggable="true" data-view-id="' + v.id + '" data-view-idx="' + idx + '">' +
+            '<span class="tr-more-drag-handle" title="Drag to reorder">\u2630</span>' +
             (isActive ? '<span style="color:#667eea;font-size:11px;">✓</span> ' : '<span style="width:16px;display:inline-block;"></span> ') +
             '<span class="tr-more-name">' + wmsEsc(v.name) + '</span>' +
             (isDefault ? '<span class="tr-more-badge">★ Default</span>' : '') +
@@ -675,7 +676,7 @@ function lgRenderMoreDropdown() {
 
     list.querySelectorAll('.tr-more-item').forEach(function(item) {
         item.addEventListener('click', function(e) {
-            if (e.target.closest('.tr-more-action-btn')) return;
+            if (e.target.closest('.tr-more-action-btn') || e.target.closest('.tr-more-drag-handle')) return;
             lgApplyView(item.dataset.viewId);
             document.getElementById('lgMoreDropdown').style.display = 'none';
         });
@@ -692,6 +693,14 @@ function lgRenderMoreDropdown() {
             else if (action === 'delete') lgDeleteView(id);
         });
     });
+
+    // Drag-to-reorder (shared helper from trading.js)
+    if (typeof trMoreAttachDragHandlers === 'function') {
+        trMoreAttachDragHandlers(list, lgViews, function() {
+            lgRenderViewTabs();
+            lgRenderMoreDropdown();
+        });
+    }
 }
 
 function lgUpdateViewButtons() {
@@ -1215,7 +1224,7 @@ function lgRenderEntries(rows) {
             // Synthetic, unposted weekly interest row
             typeHtml = '<span class="lg-type lg-type-income">Interest (pending)</span>';
             symbol = wmsEsc(row.reference || '');
-            amount = '<span class="lg-int-amt" title="Click to view calculation / edit">' + lgFmt(row.amount) + '</span>';
+            amount = '<span class="lg-int-amt" title="Click to view calculation / edit">' + lgFmt(Math.round(row.amount)) + '</span>';
             balance = lgFmt(row._runningBalance);
             lastBalance = row._runningBalance;
             actions = '<span class="lg-actions">' +
@@ -1228,7 +1237,7 @@ function lgRenderEntries(rows) {
             if (row.entryType === 'INTEREST_BOOKED') {
                 var entryId = source.id;
                 amount = '<span class="lg-int-amt" onclick="event.preventDefault(); lgShowInterestDetail(\'' + wmsEsc(entryId) + '\');" title="Click to view calculation / edit">' +
-                    lgFmt(row.amount) + '</span>';
+                    lgFmt(Math.round(row.amount)) + '</span>';
             } else {
                 amount = lgFmt(row.amount);
             }
@@ -1519,15 +1528,47 @@ function lgRenderSummary() {
         return (a.transaction_date || '').localeCompare(b.transaction_date || '');
     });
 
+    // Rewrite transactions so the FIFO engine keys by short_symbol rather than
+    // the full symbol — this mirrors the Trading Portfolio (trCalcHoldings)
+    // behaviour where SURJIND and SURJIND-PP (rights partly-paid) combine into
+    // one row. Exchange is normalised to 'NSE' for equity so BSE/NSE legs merge.
+    var rewritten = sorted.map(function(t) {
+        var copy = {};
+        for (var kk in t) { if (Object.prototype.hasOwnProperty.call(t, kk)) copy[kk] = t[kk]; }
+        var shortSym = t.short_symbol || t.symbol || '';
+        copy.symbol = shortSym;
+        if ((t.security_type || '') !== 'NFO') {
+            copy.exchange = 'NSE';
+        }
+        return copy;
+    });
+
     // Use shared FIFO engine (wms-shared.js)
-    var fifo = wmsCalcFifoCost(sorted);
+    var fifo = wmsCalcFifoCost(rewritten);
     var holdingsMap = fifo.holdings;
     var allGains = fifo.gains || [];
 
-    // Build source lookup for NFO symbol decoding (keyed same as engine: symbol+'-'+exchange)
+    // Post-adjust for RIGHTS_PAYMENT — the FIFO engine only processes BUY/SELL,
+    // so it skips rights payments entirely. Mirror wmsCalcAvgCost (E.12) by
+    // adding the rights payment net_amount to the matching holding's totalCost
+    // (qty unchanged, since RIGHTS_ENTITLEMENT already added the shares).
+    for (var rpI = 0; rpI < rewritten.length; rpI++) {
+        var rpT = rewritten[rpI];
+        if ((rpT.transaction_type || '') !== 'RIGHTS_PAYMENT') continue;
+        if (rpT.ignore_for_avg_cost) continue;
+        var rpKey = (rpT.symbol || '') + '-' + (rpT.exchange || '');
+        var rpH = holdingsMap[rpKey];
+        if (!rpH) continue;
+        var rpAmt = rpT.display_net_amount !== undefined ? rpT.display_net_amount
+                    : (rpT.net_amount !== undefined ? rpT.net_amount : 0);
+        rpH.totalCost += rpAmt;
+        if (rpH.quantity !== 0) rpH.avgCost = rpH.totalCost / rpH.quantity;
+    }
+
+    // Build source lookup for NFO symbol decoding (keyed same as engine: short_symbol+'-'+exchange)
     var sourceLookup = {};
-    for (var si = 0; si < sorted.length; si++) {
-        var st = sorted[si];
+    for (var si = 0; si < rewritten.length; si++) {
+        var st = rewritten[si];
         var sKey = (st.symbol || '') + '-' + (st.exchange || '');
         if (!sourceLookup[sKey]) sourceLookup[sKey] = st;
     }
@@ -1551,7 +1592,17 @@ function lgRenderSummary() {
     var totalEqMtm = 0;
     var totalNfoMtm = 0;
 
-    var rowsHtml = Object.keys(holdingsMap).map(function(key) {
+    // Sort holdings by symbol (case-insensitive)
+    var sortedKeys = Object.keys(holdingsMap).sort(function(a, b) {
+        var ha = holdingsMap[a], hb = holdingsMap[b];
+        var sa = (ha.shortSymbol || ha.symbol || '').toLowerCase();
+        var sb = (hb.shortSymbol || hb.symbol || '').toLowerCase();
+        if (sa < sb) return -1;
+        if (sa > sb) return 1;
+        return 0;
+    });
+
+    var rowsHtml = sortedKeys.map(function(key) {
         var h = holdingsMap[key];
         if (h.quantity === 0) return '';
 
@@ -1597,7 +1648,7 @@ function lgRenderSummary() {
 
         return '<tr>' +
             '<td>' + symHtml + '</td>' +
-            '<td class="text-right">' + typeLabel + '</td>' +
+            '<td class="lg-col-type">' + typeLabel + '</td>' +
             '<td class="text-right">' + (typeof formatQuantity === 'function' ? formatQuantity(qty) : String(Math.round(qty))) + '</td>' +
             '<td class="text-right">' + lgFmtPrice(avgCost) + '</td>' +
             '<td class="text-right">' + lgFmtPrice(cmp) + '</td>' +
@@ -1708,6 +1759,16 @@ function lgRenderSummary() {
             }).join('');
             bookedRowsEl.innerHTML = bookedHtml;
         }
+    }
+
+    // Wire Open Positions collapse toggle (idempotent)
+    var openHdr = document.getElementById('lgOpenPosHeader');
+    var openSec = document.getElementById('lgOpenPosSection');
+    if (openHdr && openSec && !openHdr.dataset.lgWired) {
+        openHdr.dataset.lgWired = '1';
+        openHdr.addEventListener('click', function() {
+            openSec.classList.toggle('lg-booked-collapsed');
+        });
     }
 
     // Wire collapse toggle (idempotent — guarded via dataset flag)
