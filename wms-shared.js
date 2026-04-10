@@ -611,48 +611,57 @@ function wmsMatchTagsFilter(txnTags, selectedTags, logic) {
 }
 
 // ============================================================================
-// TRANSACTION SANITIZATION (Rule E.14)
+// DISPLAY NET AMOUNT (Rule E.14)
 // ============================================================================
 // When investor ≠ trader, the investor's account is used by the trader
-// (the trader is the beneficiary). The trader's actual cost is
-// gross_amount ± trader_charges — NOT the market-facing net_amount stored
-// in the DB (which reflects the investor's brokerage charges).
+// (the trader is the beneficiary). The trader's cost is gross ± trader_charges —
+// NOT the market-facing net_amount in the DB (which reflects the broker's
+// total_charges billed to the investor).
 //
-// This function adjusts net_amount in-place so all downstream consumers
-// (avg cost, matching trades, summary cards, display) automatically use the
-// trader-perspective amount.
+// `display_net_amount` is a PURELY IN-MEMORY field, computed on DB load and
+// after any in-place edit. It represents the amount to show in trading views,
+// average-cost calculations, and investor-perspective ledgers. It is NEVER
+// persisted to the database — the DB column remains `net_amount` (broker
+// truth). Edit modals and the broker-perspective ledger continue to read
+// `net_amount` directly so users see and edit the DB value.
 //
-// Applies to BUY, SELL, and RIGHTS_PAYMENT (all cost-bearing trade types).
-// For non-trade types (DIVIDEND, INTEREST, etc.), net_amount is unchanged.
-// Original net_amount is preserved as _origNetAmount for future use (e.g. Portfolio).
+// wmsComputeDisplayNetAmount(txn) — returns the display value for one row:
+//   • investor = trader, or no trader:  display = net_amount (DB value)
+//   • non-trade types (DIVIDEND etc.):  display = net_amount (DB value)
+//   • BUY / RIGHTS_PAYMENT (buy-like):  display = gross + trader_charges
+//   • SELL:                             display = gross − trader_charges
 //
-// Call once after loading transactions from DB — before any calculations or display.
+// wmsSanitizeTransactions(transactions) — populates display_net_amount on
+//   every row. Call once after loading transactions from DB, and again on
+//   any in-memory mutation (edit save, split) before rendering.
 // ============================================================================
 
+function wmsComputeDisplayNetAmount(txn) {
+    if (!txn) return 0;
+    var investorId = txn.investor_id || '';
+    var traderId = txn.trader_id || investorId;
+    var dbNet = parseFloat(txn.net_amount) || 0;
+
+    // Same-entity or no trader → DB value
+    if (!traderId || traderId === investorId) return dbNet;
+
+    var txnType = txn.transaction_type || '';
+    if (txnType !== 'BUY' && txnType !== 'SELL' && txnType !== 'RIGHTS_PAYMENT') {
+        return dbNet;
+    }
+
+    var gross = Math.abs(parseFloat(txn.gross_amount) || 0);
+    var traderCh = Math.abs(parseFloat(txn.trader_charges) || 0);
+    if (wmsIsBuyLikeType(txnType)) {
+        return wmsRoundMoney(gross + traderCh);
+    }
+    return wmsRoundMoney(gross - traderCh);
+}
+
 function wmsSanitizeTransactions(transactions) {
+    if (!transactions) return transactions;
     for (var i = 0; i < transactions.length; i++) {
-        var txn = transactions[i];
-        var investorId = txn.investor_id || '';
-        var traderId = txn.trader_id || investorId;
-
-        // Preserve original DB net_amount
-        txn._origNetAmount = txn.net_amount;
-
-        if (traderId && traderId !== investorId) {
-            var txnType = txn.transaction_type || '';
-
-            if (txnType === 'BUY' || txnType === 'SELL' || txnType === 'RIGHTS_PAYMENT') {
-                // Trader's cost = gross ± trader_charges
-                var gross = Math.abs(txn.gross_amount || 0);
-                var traderCh = Math.abs(txn.trader_charges || 0);
-                if (wmsIsBuyLikeType(txnType)) {
-                    txn.net_amount = wmsRoundMoney(gross + traderCh);
-                } else {
-                    txn.net_amount = wmsRoundMoney(gross - traderCh);
-                }
-            }
-            // All other types (DIVIDEND, INTEREST, etc.): net_amount unchanged
-        }
+        transactions[i].display_net_amount = wmsComputeDisplayNetAmount(transactions[i]);
     }
     return transactions;
 }
@@ -703,7 +712,9 @@ function wmsCalcAvgCost(transactions) {
         if (isIncome) continue;
 
         if (!optionData[sym]) optionData[sym] = { netQty: 0, netCost: 0 };
-        var netAmt = txn.net_amount !== undefined ? txn.net_amount : (txn.netAmount || 0);
+        // Prefer display_net_amount (trader-perspective); fall back to net_amount for unsanitized input
+        var netAmt = txn.display_net_amount !== undefined ? txn.display_net_amount
+                   : (txn.net_amount !== undefined ? txn.net_amount : (txn.netAmount || 0));
         optionData[sym].netQty += (txn.quantity || 0);
         if (txnType === 'BUY') {
             optionData[sym].netCost += netAmt;
@@ -738,8 +749,9 @@ function wmsCalcAvgCost(transactions) {
 
         txnType = txn.transaction_type || txn.type || '';
         isIncome = WMS_INCOME_TYPES.indexOf(txnType) >= 0;
-        // Support both snake_case and camelCase field names (defensive)
-        var netAmt = txn.net_amount !== undefined ? txn.net_amount : (txn.netAmount || 0);
+        // Prefer display_net_amount (trader-perspective); fall back to net_amount / camelCase for unsanitized input
+        var netAmt = txn.display_net_amount !== undefined ? txn.display_net_amount
+                   : (txn.net_amount !== undefined ? txn.net_amount : (txn.netAmount || 0));
 
         if (isIncome) {
             if (!txn.ignore_for_avg_cost) {
@@ -1043,7 +1055,9 @@ function _wmsCostEngine(transactions, method) {
         var txnDate = t.transaction_date || t.date || '';
         var txnQty = Math.abs(t.quantity || 0);
         var txnPrice = t.price || 0;
-        var txnNetAmount = (t.net_amount !== undefined ? t.net_amount : t.netAmount) || 0;
+        // Prefer display_net_amount (trader-perspective) so FIFO P&L is computed against the trader's cost basis
+        var txnNetAmount = (t.display_net_amount !== undefined ? t.display_net_amount
+                            : (t.net_amount !== undefined ? t.net_amount : t.netAmount)) || 0;
         var txnInvestorId = (t.investor_id !== undefined ? t.investor_id : t.investorId) || '';
         var txnBrokerId = (t.broker_id !== undefined ? t.broker_id : t.brokerId) || '';
         var txnTags = t.tags || [];
@@ -4672,20 +4686,22 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
     // Perspective controls how the per-transaction amount is computed.
     // See LEDGER-ENGINE-LOGIC.md (Amount Used). Three views are supported:
     //
-    //   'investor' → net_amount
-    //                The investor's actual settlement with the broker, i.e.
-    //                gross ± total_charges (brokerage, STT, GST, etc.).
+    //   'investor' → display_net_amount
+    //                The investor's receivable from the trader. When
+    //                investor == trader, this equals net_amount (broker
+    //                invoice). When investor ≠ trader, this equals
+    //                gross ± trader_charges (the agreed fee the trader pays
+    //                the investor, NOT the broker/exchange charges).
     //
-    //   'trader'   → gross_amount + trader_charges
-    //                The investor trades on behalf of the trader. The investor
-    //                charges the trader a separately-agreed amount stored in
-    //                trader_charges (NOT the broker/exchange charges). So the
-    //                trader's settlement with the investor is always gross +
-    //                trader_charges, regardless of buy/sell direction. The
-    //                BUY/SELL sign is applied below in the standard step.
+    //   'trader'   → display_net_amount
+    //                The trader's cost basis — same magnitude as investor
+    //                perspective because the investor's receivable from the
+    //                trader is by definition equal to the trader's cost.
+    //                Sign differs by transaction_type (applied below).
     //
     //   'broker'   → net_amount
-    //                What the broker invoiced (same field as investor view).
+    //                What the broker invoiced. Uses DB truth directly,
+    //                independent of trader_charges.
     //
     // Default: investor.
     var perspective = opts.perspective || 'investor';
@@ -4696,13 +4712,16 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
 
         // Determine amount per perspective
         var amt;
-        if (perspective === 'trader') {
-            var gross = parseFloat(t.gross_amount) || 0;
-            var traderCharges = parseFloat(t.trader_charges) || 0;
-            amt = gross + traderCharges;
-        } else {
-            // 'investor' and 'broker' both use net_amount
+        if (perspective === 'broker') {
+            // Broker perspective: raw DB net_amount (broker invoice)
             amt = parseFloat(t.net_amount) || 0;
+        } else {
+            // Investor and trader perspectives share display_net_amount
+            // (two sides of the same trader↔investor settlement).
+            // Fallback to net_amount if sanitize wasn't run yet.
+            amt = t.display_net_amount !== undefined
+                ? (parseFloat(t.display_net_amount) || 0)
+                : (parseFloat(t.net_amount) || 0);
         }
 
         // Apply sign based on transaction_type (investor-receivable convention)
@@ -4731,7 +4750,9 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
             quantity: t.quantity || 0,
             price: t.price || 0,
             isNFO: _isNFO(t),
-            netAmount: parseFloat(t.net_amount) || 0,
+            // netAmount on the ledger row reflects the perspective-correct absolute value
+            // (unsigned) so downstream display (e.g. price-per-unit) stays consistent.
+            netAmount: Math.abs(amt),
             grossAmount: parseFloat(t.gross_amount) || 0,
             traderCharges: parseFloat(t.trader_charges) || 0
         });
@@ -4959,13 +4980,11 @@ function wmsCalcMarginFIFO(transactions) {
         var qty = parseFloat(t.quantity) || 0;
         var isShort = qty < 0; // negative qty = short position
 
-        // Determine amount (investor = trader → net_amount, else gross + trader_charges)
-        var amt;
-        if (t.investor_id === t.trader_id) {
-            amt = parseFloat(t.net_amount) || 0;
-        } else {
-            amt = (parseFloat(t.gross_amount) || 0) + (parseFloat(t.trader_charges) || 0);
-        }
+        // Margin is computed against the trader's cost basis — use display_net_amount,
+        // which collapses to net_amount when investor == trader.
+        var amt = t.display_net_amount !== undefined
+            ? (parseFloat(t.display_net_amount) || 0)
+            : (parseFloat(t.net_amount) || 0);
 
         // Get margin rate
         var marginRate = wmsGetMarginRate(t.investor_id, t.broker_id);

@@ -286,7 +286,8 @@ async function trFnoBannerRefreshFromDefault(forceRefresh) {
     trades.forEach(function(t) {
         var key = (t.investor_id || '') + '|' + (t.trader_id || t.investor_id || '') + '|' + (t.broker_id || '') + '|' + (t.symbol || '').replace(/^[A-Z]+:/, '');
         if (!byGroup[key]) byGroup[key] = { buys: [], sells: [] };
-        var entry = { date: t.transaction_date, qty: Math.abs(t.quantity || 0), netAmount: Math.abs(t.net_amount || 0), remaining: Math.abs(t.quantity || 0), txn: t };
+        var _displayNet = t.display_net_amount !== undefined ? t.display_net_amount : (t.net_amount || 0);
+        var entry = { date: t.transaction_date, qty: Math.abs(t.quantity || 0), netAmount: Math.abs(_displayNet), remaining: Math.abs(t.quantity || 0), txn: t };
         if (t.transaction_type === 'BUY') byGroup[key].buys.push(entry);
         else byGroup[key].sells.push(entry);
     });
@@ -1826,7 +1827,8 @@ function trRenderTxnTable(txns) {
             var isIncome = INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
             var typeClass = (txn.transaction_type === 'BUY' || txn.transaction_type === 'RIGHTS_ENTITLEMENT') ? 'positive' : (txn.transaction_type === 'SELL' ? 'negative' : (txn.transaction_type === 'RIGHTS_PAYMENT' ? 'neutral' : ''));
             var qty = txn.quantity || 0;
-            var val = txn.net_amount || txn.gross_amount || 0;
+            var _dispNet = txn.display_net_amount !== undefined ? txn.display_net_amount : txn.net_amount;
+            var val = _dispNet || txn.gross_amount || 0;
             var displayPrice = (qty !== 0) ? Math.abs(val / qty) : 0;
             var runQty = runningQtyMap[txn.id] || 0;
 
@@ -2067,10 +2069,11 @@ function trRenderTxnMatchingView() {
                 sells: []
             };
         }
+        var _dispNet2 = t.display_net_amount !== undefined ? t.display_net_amount : (t.net_amount || 0);
         var entry = {
             date: t.transaction_date,
             qty: Math.abs(t.quantity || 0),
-            netAmount: Math.abs(t.net_amount || 0),
+            netAmount: Math.abs(_dispNet2),
             remaining: Math.abs(t.quantity || 0),
             txn: t
         };
@@ -2891,6 +2894,8 @@ async function trSaveEdit() {
 
     if (resp.ok) {
         Object.keys(body).forEach(function(k) { txn[k] = body[k]; });
+        // Recompute display_net_amount so the trading list reflects the new DB truth
+        txn.display_net_amount = wmsComputeDisplayNetAmount(txn);
         showAlert('Transaction saved', 'success', 2000);
         trCloseEditModal();
         trRefreshAllViews();
@@ -3124,6 +3129,8 @@ async function trExecuteSplit() {
 
         // 3. Update local state
         Object.keys(_trSplitData.origUpdate).forEach(function(k) { txn[k] = _trSplitData.origUpdate[k]; });
+        txn.display_net_amount = wmsComputeDisplayNetAmount(txn);
+        if (insertedTxn) insertedTxn.display_net_amount = wmsComputeDisplayNetAmount(insertedTxn);
         trTransactions.push(insertedTxn);
         _trSplitData = null;
 

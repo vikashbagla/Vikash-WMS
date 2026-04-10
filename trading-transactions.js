@@ -800,7 +800,8 @@ function trTxRenderList(filtered) {
         var isSell = txn.transaction_type === 'SELL';
         var isIncome = INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
         var qty = Math.abs(txn.quantity || 0);
-        var netAmt = txn.net_amount || 0;
+        // List shows the trader-perspective value (display_net_amount), not the raw DB net_amount.
+        var netAmt = txn.display_net_amount !== undefined ? txn.display_net_amount : (txn.net_amount || 0);
         var tradedPrice = txn.price || 0;
         var netPrice = qty !== 0 ? Math.abs(netAmt / qty) : 0;
 
@@ -1110,10 +1111,11 @@ function trTxRenderMatchingTrades(filtered) {
                 sells: []
             };
         }
+        var _dispNet3 = t.display_net_amount !== undefined ? t.display_net_amount : (t.net_amount || 0);
         var entry = {
             date: t.transaction_date,
             qty: Math.abs(t.quantity || 0),
-            netAmount: Math.abs(t.net_amount || 0),
+            netAmount: Math.abs(_dispNet3),
             remaining: Math.abs(t.quantity || 0),
             displaySymbol: t.symbol || t.short_symbol || '',
             investorId: t.investor_id,

@@ -1261,8 +1261,10 @@ function lgRenderEntries(rows) {
 
             price = source.price ? lgFmtPrice(source.price) : '';
 
-            if (source.quantity && source.net_amount) {
-                var netPerUnit = source.net_amount / source.quantity;
+            // Use row.netAmount (perspective-correct, already magnitude) and row.quantity
+            // so the per-unit price matches the amount column for investor/trader/broker views.
+            if (row.quantity && row.netAmount) {
+                var netPerUnit = row.netAmount / Math.abs(row.quantity);
                 net = lgFmtPrice(netPerUnit);
             }
 

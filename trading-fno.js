@@ -353,9 +353,10 @@ function trFnoCalcPositions() {
                     contractLabel: wmsFormatContract(t), buys: [], sells: []
                 };
             }
+            var _dispNetF = t.display_net_amount !== undefined ? t.display_net_amount : (t.net_amount || 0);
             var entry = {
                 date: t.transaction_date, qty: Math.abs(t.quantity || 0),
-                netAmount: Math.abs(t.net_amount || 0), remaining: Math.abs(t.quantity || 0), txn: t
+                netAmount: Math.abs(_dispNetF), remaining: Math.abs(t.quantity || 0), txn: t
             };
             if (t.transaction_type === 'BUY') groups[key].buys.push(entry);
             else groups[key].sells.push(entry);
