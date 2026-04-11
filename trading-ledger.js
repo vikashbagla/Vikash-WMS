@@ -1479,10 +1479,13 @@ async function lgSaveOpeningBalance() {
     var newAmount = parseFloat(input.value) || 0;
 
     var ob = lgFindOpeningBalance();
-    var investorId = lgSelectedInvestorIds.length > 0 ? lgSelectedInvestorIds[0] : null;
+    // Use the shared effective-investor resolver so a sole trader filter
+    // (T2/T3 views) resolves to the underlying investor, mirroring the
+    // add-entry row behaviour.
+    var investorId = lgGetEffectiveInvestorId();
 
     if (!investorId) {
-        showAlert('Please select an investor filter first', 'warning', 3000);
+        showAlert('Select exactly one investor (or trader) to edit the opening balance', 'warning', 3000);
         lgCancelObEdit();
         return;
     }
