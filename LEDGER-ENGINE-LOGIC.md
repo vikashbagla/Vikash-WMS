@@ -140,12 +140,20 @@ Interest is always ≥ 0. If the balance is such that the investor is owed money
 
 ### 5.3 `weekly_friday` Frequency
 
-1. **Interest is calculated on the closing balance on the Friday of that week**
-   - NOT weighted average — use the actual closing balance as of end-of-day Friday
-2. **Interest is posted on Saturday** and increases the running balance from Saturday onwards
-3. Formula: `interest = max(0, |closing_balance_friday|) × (rate / 100) × (7 / 365)`
-   - If closing balance on Friday is such that investor has a credit (money owed TO them), interest = 0
-4. The posted interest entry has `entry_date = Saturday (Friday + 1)`
+1. **Interest is calculated on the Friday closing balance PLUS the open NFO margin at that point in the week.** Margin is treated as part of the investor's liability for interest purposes (it's capital blocked against open F&O positions, equivalent to a borrowing), so:
+   ```
+   base = max(0, cash_balance_friday) + nfo_margin_at_friday
+   interest = base × (rate / 100) × (1 / 52)
+   ```
+   The weekly divisor is `1/52` (not `7/365`) so 52 weeks produce exactly one annual rate's worth of interest, per the user's spec.
+2. **Interest is posted on Saturday** and increases the running balance from Saturday onwards.
+3. The posted entry has `entry_date = Saturday (Friday + 1)`.
+4. **Interest Detail modal** (double-click on any interest row) renders the composition explicitly as three stacked rows:
+   - Balance (cash closing balance)
+   - F&O Margin
+   - Total (= Balance + Margin) × rate × 1/52 = Interest
+   so the user can follow the derivation end-to-end. The total is editable for manual override.
+5. **Filter parity:** the modal must honour the same investor / trader / broker / tag filters as the main ledger view (via `lgGetEffectiveInvestorId` and `lgSelectedTraderIds`). For trader-only views, the ledger is rebuilt with `perspective: 'trader'` so intra-week trades booked under the parent investor still affect the closing balance.
 
 ### 5.4 `daily_monthly_compound` Frequency
 
@@ -292,15 +300,42 @@ Same tab bar pattern as Portfolio views (D.10 in WMS-LESSONS.md):
 
 ### 7.4 Current Balance Section
 
-Computed from holdings + F&O positions at current date:
+Computed from holdings + F&O positions at current date. Canonical as of
+2026-04-11 (see `lgRenderSummary` in `trading-ledger.js`).
 
 ```
-Holdings Value = Σ (CMP × Qty) for all stocks held
-MTM of F&O    = Σ (CMP − Avg Cost) × Qty for open F&O positions
-Outstanding   = Running balance from ledger (net of FO margin)
-Potential Tax = Total Profit for FY × tax_rate (from investor/IBA config)
-Net Value     = Holdings Value + MTM − Outstanding − Potential Tax
+# --- Pillars ---
+Total EQ Cost    = Σ (avg cost × qty) for open equity rows
+Total EQ Value   = Σ (CMP × qty)     for open equity rows
+Total EQ MTM     = Total EQ Value − Total EQ Cost
+Total NFO MTM    = Σ (CMP − avg cost) × qty for open F&O contracts
+Total Current MTM= Total EQ MTM + Total NFO MTM
+
+Holdings Value   = Total EQ Value + Total NFO MTM
+                   (NFO row "Value" = MTM, so NFO gains fold into Holdings Value)
+
+Cash Balance     = max(0, running ledger balance)  — investor-receivable sign
+NFO Margin       = Σ margin blocked on open F&O contracts (wmsCalcMarginFIFO)
+Outstanding      = Cash Balance + NFO Margin        — shown on the Outstanding card
+                   with "Bal X + Margin Y" breakdown beneath the headline
+
+Booked P&L (FY)  = Σ realised gains with sellDate in current FY
+Potential Tax    = max(0, Booked P&L) × LG_TAX_RATE_PCT / 100
+                   (floored at zero — losses don't produce negative tax)
+
+# --- Summary cards (in display order) ---
+Net Receivable   = Holdings Value − Cash Balance − Potential Tax
+                   (the Outstanding used here is NET OF NFO margin — margin is
+                    collateral, not cash owed, so only the Cash Balance pillar
+                    is subtracted)
+
+Balance w/o MTM  = Net Receivable − Total Current MTM
+                   "What would Net Receivable look like if every open position
+                    closed at cost?" — this is the canonical formula used on
+                    every ledger view.
 ```
+
+**Visual note.** The card strip reads `Holdings Value − Outstanding − Tax = Net Receivable` for readability, but the Outstanding displayed there is the full figure (cash + margin). The actual arithmetic uses cash-only — the NFO margin is netted out inside the Net Receivable equation, per the "net of FO margin" spec. The breakdown subtitle under the Outstanding card makes the composition explicit.
 
 ### 7.5 Tax Rate
 
@@ -330,7 +365,7 @@ A new field `tax_rate` (NUMERIC, percentage) to be added to either `investors` o
 | `wmsCalcClosingBalance(ledger, date)` | wms-shared.js | Get closing balance on a specific date |
 | `wmsCalcInterestWeeklyFriday(ledger, terms, from, to)` | wms-shared.js | Weekly friday interest calc |
 | `wmsCalcInterestDailyMonthly(ledger, terms, from, to)` | wms-shared.js | Daily/monthly compound interest calc |
-| `wmsCalcMarginFIFO(txns)` | wms-shared.js | FIFO margin tracking for F&O positions |
+| `wmsCalcMarginFIFO(txns)` | wms-shared.js | FIFO margin tracking for F&O positions. Uses **trader_id**'s `wmsGetMarginRate` when `trader_id ≠ investor_id` (falls back to investor rate). Partial closes release margin **pro-rata** on the oldest lot — no longer leaks the full lot's margin on a partial close (bug fixed 2026-04-11). |
 | `wmsGetInterestTerms(investorId, brokerId)` | wms-shared.js | Resolve interest terms (IBA > investor) |
 | `wmsGetMarginRate(investorId, brokerId)` | wms-shared.js | Get margin_rate from IBA |
 | `lgInit()` | trading-ledger.js | Initialize ledger module (one-time) |
