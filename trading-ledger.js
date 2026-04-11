@@ -1574,13 +1574,19 @@ function lgRenderSummary() {
     var allGains = fifo.gains || [];
 
     // Build source lookup for NFO symbol decoding — match the engine's key
-    // scheme: EQ keys by short_symbol, NFO keys by full symbol.
+    // scheme: EQ keys by short_symbol, NFO keys by full symbol with any
+    // exchange prefix (e.g. "NSE:") stripped. wmsCalcFifoCost keys NFO rows
+    // this way, so sourceLookup must match or decoding falls through to the
+    // bare short_symbol and the contract detail is lost.
     var sourceLookup = {};
     for (var si = 0; si < sorted.length; si++) {
         var st = sorted[si];
-        var sKey = (st.security_type === 'NFO')
-            ? (st.symbol || '')
-            : (st.short_symbol || st.symbol || '');
+        var sKey;
+        if (st.security_type === 'NFO') {
+            sKey = (st.symbol || '').replace(/^[A-Z]+:/, '');
+        } else {
+            sKey = st.short_symbol || st.symbol || '';
+        }
         if (!sourceLookup[sKey]) sourceLookup[sKey] = st;
     }
 
@@ -1595,8 +1601,13 @@ function lgRenderSummary() {
 
     // ------------------------------------------------------------
     // Build holdings table rows — split EQ vs NFO
-    //   EQ:  Value = Qty × CMP, MTM = Value − Cost
-    //   NFO: Value = 0, MTM only (from live price vs trade price)
+    //   EQ:  Value = Qty × CMP,  MTM = Value − Cost
+    //   NFO: Value = MTM (open P&L from live price vs trade price).
+    //        NFO has no notional "value" on the books — the position lives
+    //        against blocked margin — so we surface the MTM in the Value
+    //        column. This lets Open Positions footer totals match the
+    //        summary card total (totalEqValue + totalNfoMtm) and makes
+    //        the row visibly contribute to today's effective balance.
     // ------------------------------------------------------------
     var totalEqCost = 0;
     var totalEqValue = 0;
@@ -1629,8 +1640,8 @@ function lgRenderSummary() {
 
         var value, mtm;
         if (isNfo) {
-            value = 0; // Per spec: NFO Value = 0, MTM only
             mtm = (cmp - avgCost) * qty;
+            value = mtm;           // NFO Value column reflects open P&L
             totalNfoMtm += mtm;
         } else {
             value = qty * cmp;
@@ -1673,15 +1684,17 @@ function lgRenderSummary() {
     }
     summaryBody.innerHTML = rowsHtml;
 
-    // Table footer totals
+    // Table footer totals — Value footer matches the summary card
+    // (EQ value + NFO MTM) so the two surfaces always reconcile.
     var totalMtm = totalEqMtm + totalNfoMtm;
+    var totalValue = totalEqValue + totalNfoMtm;
     var mtmTotalEl = document.getElementById('lgSummaryMtmTotal');
     var valTotalEl = document.getElementById('lgSummaryValueTotal');
     if (mtmTotalEl) {
         mtmTotalEl.innerHTML = lgFmt(totalMtm);
         mtmTotalEl.className = 'text-right ' + lgAmtClass(totalMtm);
     }
-    if (valTotalEl) valTotalEl.innerHTML = lgFmt(totalEqValue);
+    if (valTotalEl) valTotalEl.innerHTML = lgFmt(totalValue);
 
     // ------------------------------------------------------------
     // Summary cards
@@ -1690,21 +1703,24 @@ function lgRenderSummary() {
     //     -ve cash balance  → firm owes the investor (credit)
     //   Outstanding (what the investor currently owes us) =
     //     max(0, cash balance)  +  open NFO margin
+    //   The Outstanding card surfaces the "Balance + Margin = Total"
+    //   breakdown directly beneath the headline figure so the two
+    //   components are always visible.
     // ------------------------------------------------------------
     var cashBalance = (typeof lgCurrentCashBalance === 'number') ? lgCurrentCashBalance : (lgCarryForwardBalance || 0);
-    var outstanding = Math.max(0, cashBalance) + currentNfoMargin;
+    var clampedCashBal = Math.max(0, cashBalance);
+    var outstanding = clampedCashBal + currentNfoMargin;
 
     // Transactions block header now shows: "NFO Margin + Balance = Total Balance"
     // Total matches the Outstanding summary card. "Balance" is the cash ledger
     // balance clamped to >= 0 (same formula used for Outstanding above).
     var txnBalEl = document.getElementById('lgTransactionsBalance');
     if (txnBalEl) {
-        var clampedCash = Math.max(0, cashBalance);
         txnBalEl.innerHTML =
             '<span style="color:#718096; font-weight:500;">NFO Margin</span> ' +
             lgFmt(currentNfoMargin) +
             ' <span style="color:#718096; font-weight:500;">+ Balance</span> ' +
-            lgFmt(clampedCash) +
+            lgFmt(clampedCashBal) +
             ' <span style="color:#718096; font-weight:500;">=</span> ' +
             lgFmt(outstanding);
     }
@@ -1727,12 +1743,13 @@ function lgRenderSummary() {
 
     var potentialTax = Math.max(0, totalBookedGain) * (LG_TAX_RATE_PCT / 100);
 
-    // Net receivable = holdings value + MTM − outstanding − potential tax
-    // Holdings value is EQ only (NFO is 0). MTM already embedded in EQ value via CMP,
-    // so for NFO we add totalNfoMtm separately.
-    var netReceivable = totalEqValue + totalNfoMtm - outstanding - potentialTax;
-    var balNoMtm = totalEqCost + 0 - outstanding; // EQ at cost, NFO 0, minus outstanding
-    // Subscript on Balance w/o MTM card: balNoMtm as a fraction of outstanding
+    // Net Receivable = total holdings value (EQ + NFO MTM) − Outstanding − Tax
+    // Because Outstanding already bundles the NFO margin, subtracting it here
+    // effectively nets the margin out of the receivable — matching the spec
+    // "Net Receivable / (Payable) will be net of NFO Margin".
+    var totalHoldingsValue = totalEqValue + totalNfoMtm;
+    var netReceivable = totalHoldingsValue - outstanding - potentialTax;
+    var balNoMtm = totalEqCost - outstanding; // EQ at cost minus outstanding
     var pctBalOverOutstanding = outstanding !== 0 ? (balNoMtm / outstanding) * 100 : 0;
 
     function setCard(id, val, useAmtClass) {
@@ -1741,9 +1758,15 @@ function lgRenderSummary() {
         el.innerHTML = lgFmt(val);
         if (useAmtClass) el.className = 'lg-summary-card-value ' + lgAmtClass(val);
     }
-    // Total Value of Holdings now includes NFO MTM so equation [Value − Outstanding − Tax = Net] balances
-    setCard('lgCardHoldingsValue', totalEqValue + totalNfoMtm, false);
+    setCard('lgCardHoldingsValue', totalHoldingsValue, false);
     setCard('lgCardOutstanding', outstanding, false);
+    // Outstanding breakdown subtitle: "Bal X + Margin Y"
+    var outBreakEl = document.getElementById('lgCardOutstandingBreakdown');
+    if (outBreakEl) {
+        outBreakEl.innerHTML =
+            'Bal ' + lgFmt(clampedCashBal) +
+            ' + Margin ' + lgFmt(currentNfoMargin);
+    }
     setCard('lgCardPotentialTax', potentialTax, false);
     setCard('lgCardNetReceivable', netReceivable, true);
     // Balance w/o MTM lives inside an inner span so we can append a subscript ratio
