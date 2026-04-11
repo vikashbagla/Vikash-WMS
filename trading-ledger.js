@@ -2109,12 +2109,36 @@ async function lgShowInterestDetail(entryId) {
         var toStr = fromStr;
 
         // Build ledger excluding this entry itself (so the running balance matches
-        // what it was just before this interest row was posted)
+        // what it was just before this interest row was posted).
+        //
+        // IMPORTANT: match the txn filter to whatever the visible ledger uses.
+        // Filtering purely by investor_id here would drop trades booked under a
+        // parent investor but attributed to a trader (e.g. T3 trades held under
+        // the T0 account), leaving intra-week balance movements out of the
+        // Friday-EOD closing balance shown in the modal.
+        var effInvId = (typeof lgGetEffectiveInvestorId === 'function') ? lgGetEffectiveInvestorId() : null;
+        var traderMode = (typeof lgSelectedTraderIds !== 'undefined') && lgSelectedTraderIds.length > 0;
         var txnFiltered = trTransactions.filter(function(t) {
-            return !t.dont_display && t.investor_id === investorId;
+            if (t.dont_display) return false;
+            if (!t.transaction_date) return false;
+            if (traderMode) {
+                var tid = t.trader_id || t.investor_id;
+                if (!tid || lgSelectedTraderIds.indexOf(tid) < 0) return false;
+            } else {
+                if (t.investor_id !== investorId) return false;
+            }
+            if (typeof lgSelectedBrokerIds !== 'undefined' && lgSelectedBrokerIds.length > 0 &&
+                lgSelectedBrokerIds.indexOf(t.broker_id) < 0) return false;
+            if (typeof lgSelectedTagNames !== 'undefined' && lgSelectedTagNames.length > 0) {
+                if (!wmsMatchTagsFilter(t.tags || [], lgSelectedTagNames, lgTagFilterLogic)) return false;
+            }
+            return true;
         });
         var entriesExSelf = lgLedgerEntries.filter(function(e) { return e.id !== entryId; });
-        var full = wmsBuildLedger(entriesExSelf, txnFiltered, { investorIds: [investorId] });
+        var buildOpts = traderMode
+            ? { traderIds: lgSelectedTraderIds.slice(), perspective: 'trader' }
+            : { investorIds: [investorId], perspective: 'investor' };
+        var full = wmsBuildLedger(entriesExSelf, txnFiltered, buildOpts);
 
         var nfoTxns = txnFiltered.filter(function(t) {
             var p = (t.product || '').toUpperCase();
