@@ -1687,13 +1687,20 @@ function lgRenderSummary() {
         el.innerHTML = lgFmt(val);
         if (useAmtClass) el.className = 'lg-summary-card-value ' + lgAmtClass(val);
     }
-    setCard('lgCardHoldingsValue', totalEqValue, false);
+    // Total Value of Holdings now includes NFO MTM so equation [Value − Outstanding − Tax = Net] balances
+    setCard('lgCardHoldingsValue', totalEqValue + totalNfoMtm, false);
     setCard('lgCardOutstanding', outstanding, false);
     setCard('lgCardPotentialTax', potentialTax, false);
     setCard('lgCardNetReceivable', netReceivable, true);
-    setCard('lgCardBalNoMtm', balNoMtm, true);
-    var pctEl = document.getElementById('lgCardPctOutstanding');
-    if (pctEl) pctEl.textContent = outstanding > 0 ? pctOutstanding.toFixed(1) + '%' : '-';
+    // Balance w/o MTM lives inside an inner span so we can append a subscript ratio
+    var balEl = document.getElementById('lgCardBalNoMtm');
+    if (balEl) {
+        balEl.innerHTML = lgFmt(balNoMtm);
+        var balParent = balEl.parentNode;
+        if (balParent) balParent.className = 'lg-summary-card-value ' + lgAmtClass(balNoMtm);
+    }
+    var balSubEl = document.getElementById('lgCardBalNoMtmSub');
+    if (balSubEl) balSubEl.textContent = outstanding > 0 ? '(' + pctOutstanding.toFixed(1) + '%)' : '';
 
     // ------------------------------------------------------------
     // Booked P&L collapsible — grouped by symbol, FY only
