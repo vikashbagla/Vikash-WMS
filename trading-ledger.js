@@ -1794,8 +1794,10 @@ function lgRenderSummary() {
     }
 
     // Wire individual holding rows → open the shared Transactions modal for
-    // that symbol (same as Portfolio page behaviour). Delegated on the
-    // tbody so it survives every re-render (idempotent via dataset flag).
+    // that symbol, scoped to the Ledger's current filter selection (same as
+    // Portfolio's row-click behaviour but honouring the ledger view). The
+    // override is installed on window.trTxnModalFilterOverride and is
+    // cleared automatically by trCloseTxnModal.
     var holdingsBody = document.getElementById('lgSummaryBody');
     if (holdingsBody && !holdingsBody.dataset.lgWired) {
         holdingsBody.dataset.lgWired = '1';
@@ -1804,6 +1806,13 @@ function lgRenderSummary() {
             if (!tr) return;
             var key = tr.getAttribute('data-key');
             if (key && typeof trOpenTxnModal === 'function') {
+                window.trTxnModalFilterOverride = {
+                    investorIds: lgSelectedInvestorIds.slice(),
+                    traderIds:   lgSelectedTraderIds.slice(),
+                    brokerIds:   lgSelectedBrokerIds.slice(),
+                    tagNames:    lgSelectedTagNames.slice(),
+                    tagLogic:    lgTagFilterLogic || 'OR'
+                };
                 trOpenTxnModal(key, null);
             }
         });

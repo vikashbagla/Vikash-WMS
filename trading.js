@@ -1726,19 +1726,27 @@ function trGetTxnModalTxns() {
     if (trCurrentTxnInvestorId) {
         txns = txns.filter(function(t) { return t.investor_id === trCurrentTxnInvestorId; });
     }
-    // Apply active view filters (same as trCalcHoldings / trBuildInvestorDetail)
-    if (trSelectedInvestorIds.length > 0) {
-        txns = txns.filter(function(t) { return trSelectedInvestorIds.indexOf(t.investor_id) >= 0; });
+    // Apply active view filters (same as trCalcHoldings / trBuildInvestorDetail).
+    // If an external override is set (e.g. the Ledger module opening the
+    // modal from its own view scope), use those arrays instead of Portfolio's.
+    var _ov = window.trTxnModalFilterOverride || null;
+    var _invSel = _ov ? (_ov.investorIds || []) : trSelectedInvestorIds;
+    var _trdSel = _ov ? (_ov.traderIds   || []) : trSelectedTraderIds;
+    var _brkSel = _ov ? (_ov.brokerIds   || []) : trSelectedBrokerIds;
+    var _tagSel = _ov ? (_ov.tagNames    || []) : trSelectedTagNames;
+    var _tagLogic = _ov ? (_ov.tagLogic  || 'OR') : trTagFilterLogic;
+    if (_invSel.length > 0) {
+        txns = txns.filter(function(t) { return _invSel.indexOf(t.investor_id) >= 0; });
     }
-    if (trSelectedTraderIds.length > 0) {
-        txns = txns.filter(function(t) { var tid = t.trader_id || t.investor_id; return tid && trSelectedTraderIds.indexOf(tid) >= 0; });
+    if (_trdSel.length > 0) {
+        txns = txns.filter(function(t) { var tid = t.trader_id || t.investor_id; return tid && _trdSel.indexOf(tid) >= 0; });
     }
-    if (trSelectedBrokerIds.length > 0) {
-        txns = txns.filter(function(t) { return t.broker_id && trSelectedBrokerIds.indexOf(t.broker_id) >= 0; });
+    if (_brkSel.length > 0) {
+        txns = txns.filter(function(t) { return t.broker_id && _brkSel.indexOf(t.broker_id) >= 0; });
     }
-    if (trSelectedTagNames.length > 0) {
+    if (_tagSel.length > 0) {
         txns = txns.filter(function(t) {
-            return wmsMatchTagsFilter(t.tags, trSelectedTagNames, trTagFilterLogic);
+            return wmsMatchTagsFilter(t.tags, _tagSel, _tagLogic);
         });
     }
     // Apply days filter
@@ -1987,6 +1995,9 @@ function trCloseTxnModal() {
     trTxnDaysFilter = 0;
     trTxnMatchMethod = 'lifo';
     trTxnContractFilter = [];
+    // Clear any cross-module filter override installed by another module
+    // (e.g. the Ledger opening the modal in its own view scope).
+    window.trTxnModalFilterOverride = null;
 }
 
 // ============================================================================
