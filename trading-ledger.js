@@ -56,7 +56,8 @@ var lgNewDateInput = null;
 var lgPendingDeleteId = null;
 
 // Active page tab ('transactions' or 'summary')
-var lgActivePage = 'transactions';
+// (lgActivePage removed: Transactions / Summary tabs merged into a single
+//  scrollable page where each block is independently collapsible)
 
 // Opening balance editing state
 var lgObEditing = false;
@@ -214,25 +215,28 @@ function lgInit() {
         });
     }
 
-    // Page tab switching — Running Transactions / Output Summary
-    var pageTabs = document.getElementById('lgPageTabs');
-    if (pageTabs) {
-        pageTabs.addEventListener('click', function(e) {
-            var btn = e.target.closest('.lg-page-tab');
-            if (!btn) return;
-            var page = btn.getAttribute('data-page');
-            if (page === lgActivePage) return;
-            lgActivePage = page;
-            // Update tab active states
-            var tabs = pageTabs.querySelectorAll('.lg-page-tab');
-            for (var i = 0; i < tabs.length; i++) {
-                tabs[i].classList.toggle('active', tabs[i].getAttribute('data-page') === page);
+    // Transactions block collapsible (idempotent)
+    var txnHdr = document.getElementById('lgTransactionsHeader');
+    var txnBlk = document.getElementById('lgTransactionsBlock');
+    if (txnHdr && txnBlk && !txnHdr.dataset.lgWired) {
+        txnHdr.dataset.lgWired = '1';
+        txnHdr.addEventListener('click', function() {
+            txnBlk.classList.toggle('lg-booked-collapsed');
+        });
+    }
+
+    // Export dropdown toggle
+    var exportBtn = document.getElementById('lgExportBtn');
+    var exportDd = document.getElementById('lgExportDropdown');
+    if (exportBtn && exportDd) {
+        exportBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            exportDd.classList.toggle('show');
+        });
+        document.addEventListener('click', function(e) {
+            if (!exportBtn.contains(e.target) && !exportDd.contains(e.target)) {
+                exportDd.classList.remove('show');
             }
-            // Show/hide sections
-            var txnSection = document.getElementById('lgTransactionsSection');
-            var sumSection = document.getElementById('lgSummarySection');
-            if (txnSection) txnSection.classList.toggle('lg-page-hidden', page !== 'transactions');
-            if (sumSection) sumSection.classList.toggle('lg-page-hidden', page !== 'summary');
         });
     }
 
@@ -373,6 +377,28 @@ function lgInit() {
 
     // Load views and initial data
     lgLoadViews();
+
+    // Live prices: register the Ledger's symbols with the shared refresh
+    // protocol and trigger an immediate fetch so the Open Positions table
+    // and Summary cards see CMP instead of falling back to avgCost.
+    // Mirrors what trading.js does on Portfolio init.
+    try {
+        if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+        if (typeof wmsStandardRefresh === 'function') {
+            wmsStandardRefresh(false).then(function() {
+                if (typeof lgRenderSummary === 'function') lgRenderSummary();
+            }).catch(function(err) {
+                console.warn('Ledger: initial price fetch failed:', err && err.message);
+            });
+        }
+        if (typeof wmsStartRefreshTimer === 'function' &&
+            typeof wmsIsMarketHours === 'function' && wmsIsMarketHours() &&
+            window.fyersToken) {
+            wmsStartRefreshTimer();
+        }
+    } catch (err) {
+        console.warn('Ledger: price fetch wiring failed:', err && err.message);
+    }
 }
 
 // ============================================================================
@@ -1148,6 +1174,10 @@ async function lgRefresh() {
     lgRenderEntries(lgCombined);
     lgRenderSummary();
     lgUpdateAddRowAvailability();
+
+    // Update Transactions block header with row count
+    var txnCountEl = document.getElementById('lgTransactionsCount');
+    if (txnCountEl) txnCountEl.textContent = displayed.length + ' row' + (displayed.length === 1 ? '' : 's');
 }
 
 function lgRenderEntries(rows) {
@@ -1679,7 +1709,8 @@ function lgRenderSummary() {
     // so for NFO we add totalNfoMtm separately.
     var netReceivable = totalEqValue + totalNfoMtm - outstanding - potentialTax;
     var balNoMtm = totalEqCost + 0 - outstanding; // EQ at cost, NFO 0, minus outstanding
-    var pctOutstanding = outstanding > 0 ? ((totalEqValue + totalNfoMtm) / outstanding) * 100 : 0;
+    // Subscript on Balance w/o MTM card: balNoMtm as a fraction of outstanding
+    var pctBalOverOutstanding = outstanding !== 0 ? (balNoMtm / outstanding) * 100 : 0;
 
     function setCard(id, val, useAmtClass) {
         var el = document.getElementById(id);
@@ -1700,7 +1731,7 @@ function lgRenderSummary() {
         if (balParent) balParent.className = 'lg-summary-card-value ' + lgAmtClass(balNoMtm);
     }
     var balSubEl = document.getElementById('lgCardBalNoMtmSub');
-    if (balSubEl) balSubEl.textContent = outstanding > 0 ? '(' + pctOutstanding.toFixed(1) + '%)' : '';
+    if (balSubEl) balSubEl.textContent = outstanding !== 0 ? '(' + pctBalOverOutstanding.toFixed(1) + '%)' : '';
 
     // ------------------------------------------------------------
     // Booked P&L collapsible — grouped by symbol, FY only

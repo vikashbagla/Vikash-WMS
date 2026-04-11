@@ -21,28 +21,27 @@
 /* Filters grid — pill filters */
 .lg-filters-grid { flex:1; display:grid; grid-template-columns: repeat(4, 1fr); gap:4px; }
 
-/* Page tabs — Running Transactions vs Output Summary */
-.lg-page-tabs {
-    flex-shrink:0; display:flex; gap:0;
-    border-bottom:2px solid #e2e8f0; padding:0 8px;
-}
-.lg-page-tab {
-    background:none; border:none;
-    border-bottom:2px solid transparent; margin-bottom:-2px;
-    padding:6px 18px; font-size:12px; font-weight:600;
-    color:#718096; cursor:pointer; transition:all 0.15s;
-    text-transform:uppercase; letter-spacing:0.3px;
-}
-.lg-page-tab:hover { color:#4a5568; }
-.lg-page-tab.active { color:#667eea; border-bottom-color:#667eea; }
+/* Unified scroll container — all four blocks live in one scrollable column */
+#lgUnifiedScroll { flex:1; min-height:0; overflow:auto; padding:8px; display:flex; flex-direction:column; gap:8px; }
 
-/* Sections — tab content pages */
-#lgTransactionsSection { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
-#lgTransactionsSection.lg-page-hidden { display:none; }
-#lgSummarySection { display:flex; flex-direction:column; flex:1; min-height:0; overflow:auto; padding:8px; }
-#lgSummarySection.lg-page-hidden { display:none; }
+/* Transactions block uses the same collapsible chrome as Booked / Open Positions */
+#lgTransactionsBlock .lg-booked-body { padding:0; max-height:none; }
 
-#lgFooter { flex-shrink:0; padding:8px; border-top:1px solid #e2e8f0; background:#f7fafc; display:flex; gap:8px; justify-content:flex-end; }
+/* Date-filter inline divider + export dropdown chrome */
+.lg-tabs-divider { width:1px; align-self:stretch; background:#cbd5e0; margin:0 4px; }
+.lg-export-wrap { position:relative; }
+.lg-export-dropdown {
+    position:absolute; top:100%; right:0; margin-top:2px;
+    background:#fff; border:1px solid #cbd5e0; border-radius:4px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.08); z-index:50; min-width:120px;
+    display:none;
+}
+.lg-export-dropdown.show { display:block; }
+.lg-export-dropdown button {
+    display:block; width:100%; text-align:left; background:none; border:none;
+    padding:6px 12px; font-size:11px; cursor:pointer; color:#2d3748;
+}
+.lg-export-dropdown button:hover { background:#f7fafc; color:#667eea; }
 
 /* Table — override table-container column widths for ledger layout */
 #lgTable { table-layout:fixed; width:100%; min-width:780px; }
@@ -79,8 +78,8 @@
 /* Summary section label */
 .lg-summary-label { font-size:11px; font-weight:600; color:#2d3748; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.3px; }
 
-/* Summary cards — sticky to viewport bottom so they stay visible regardless of table collapse state */
-.lg-summary-cards { position:sticky; bottom:8px; z-index:5; margin:12px 0 0; padding:10px; background:#f7fafc; border:1px solid #e2e8f0; border-radius:6px; box-shadow:0 -2px 8px rgba(0,0,0,0.04); }
+/* Summary cards — sticky to bottom of the unified scroll container so they stay visible regardless of which blocks are expanded */
+.lg-summary-cards { position:sticky; bottom:0; z-index:5; margin-top:auto; padding:10px; background:#f7fafc; border:1px solid #e2e8f0; border-radius:6px; box-shadow:0 -2px 8px rgba(0,0,0,0.06); }
 .lg-summary-row { display:flex; align-items:stretch; gap:6px; }
 .lg-summary-row + .lg-summary-row { margin-top:8px; justify-content:flex-end; }
 .lg-summary-card { flex:1 1 0; padding:10px 12px; border:1px solid #e2e8f0; border-radius:4px; background:#fff; min-width:0; }
@@ -90,7 +89,10 @@
 .lg-summary-card-highlight { background:#eef2ff; border-color:#c7d2fe; }
 .lg-summary-card-highlight .lg-summary-card-value { color:#4338ca; }
 .lg-summary-op { display:flex; align-items:center; justify-content:center; flex:0 0 18px; font-size:18px; font-weight:700; color:#4a5568; }
-.lg-summary-row + .lg-summary-row .lg-summary-card { flex:0 0 calc(25% - 4px); }
+/* Row 2 single card matches the Net Receivable card width on row 1
+   (row 1 = 4 cards + 3 operators × 18px wide + 3 gaps × 6px wide between operator and card pairs)
+   Card width = (100% − 3×18px − 6×6px) / 4 = (100% − 90px) / 4 */
+.lg-summary-row + .lg-summary-row .lg-summary-card { flex:0 0 calc((100% - 90px) / 4); }
 
 /* Booked P&L collapsible */
 .lg-booked-section { margin-top:12px; border:1px solid #e2e8f0; border-radius:4px; background:#fff; }
@@ -154,6 +156,15 @@
         </div>
         <button class="tr-vta-btn" id="lgUpdateViewBtn" title="Update current view with active filters" disabled>↻ Update</button>
         <button class="tr-vta-btn" id="lgSaveNewBtn" title="Save as new view">+ Save New</button>
+        <span class="lg-tabs-divider"></span>
+        <div class="lg-export-wrap">
+          <button class="tr-vta-btn" id="lgExportBtn" title="Export ledger">⇩ Export ▾</button>
+          <div class="lg-export-dropdown" id="lgExportDropdown">
+            <button id="lgExportPdfBtn" type="button">Export PDF</button>
+            <button id="lgExportExcelBtn" type="button">Export Excel</button>
+          </div>
+        </div>
+        <span class="lg-tabs-divider"></span>
         <button class="tr-vta-btn" id="lgFiltersToggle" title="Toggle filters" style="font-size:10px;">▲</button>
         <div class="tr-save-prompt" id="lgSavePrompt">
           <input type="text" id="lgSavePromptName" placeholder="View name..." class="wms-input-compact">
@@ -179,18 +190,19 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- 3. PAGE TABS — Running Transactions / Output Summary        -->
+    <!-- 3. UNIFIED SCROLL — all four blocks (Transactions, Booked,   -->
+    <!--    Open Positions, Summary cards) on a single page          -->
     <!-- ============================================================ -->
-    <div class="lg-page-tabs" id="lgPageTabs">
-      <button class="lg-page-tab active" data-page="transactions">Transactions</button>
-      <button class="lg-page-tab" data-page="summary">Summary</button>
-    </div>
+    <div id="lgUnifiedScroll">
 
-    <!-- ============================================================ -->
-    <!-- 4. TRANSACTIONS PAGE                                        -->
-    <!-- ============================================================ -->
-    <div id="lgTransactionsSection">
-      <div class="table-container" style="flex:1; min-height:0; overflow:auto;">
+      <!-- 3a. Transactions block (collapsible) -->
+      <div class="lg-booked-section" id="lgTransactionsBlock">
+        <div class="lg-booked-header" id="lgTransactionsHeader">
+          <span class="lg-booked-caret">▼</span>
+          <span>Transactions</span>
+          <span class="lg-booked-total" id="lgTransactionsCount" style="margin-left:auto; font-weight:600;"></span>
+        </div>
+        <div class="lg-booked-body">
         <table id="lgTable">
           <thead id="lgHead">
             <tr>
@@ -253,14 +265,10 @@
             </tr>
           </tfoot>
         </table>
+        </div>
       </div>
-    </div>
 
-    <!-- ============================================================ -->
-    <!-- 5. SUMMARY PAGE                                             -->
-    <!-- ============================================================ -->
-    <div id="lgSummarySection" class="lg-page-hidden">
-      <!-- 1. Booked P&L collapsible (current FY) -->
+      <!-- 3b. Booked P&L (collapsible) -->
       <div class="lg-booked-section" id="lgBookedSection" style="margin-top:0;">
         <div class="lg-booked-header" id="lgBookedHeader">
           <span class="lg-booked-caret">▼</span>
@@ -348,15 +356,8 @@
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- ============================================================ -->
-    <!-- 6. FOOTER BAR (Export buttons)                               -->
-    <!-- ============================================================ -->
-    <div id="lgFooter">
-      <button id="lgExportPdfBtn" class="tr-vta-btn">Export PDF</button>
-      <button id="lgExportExcelBtn" class="tr-vta-btn">Export Excel</button>
-    </div>
+    </div><!-- /#lgUnifiedScroll -->
 
   </div>
 
