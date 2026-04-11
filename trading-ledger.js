@@ -1645,7 +1645,7 @@ function lgRenderSummary() {
             symHtml = wmsEsc(shortSym);
         }
 
-        return '<tr>' +
+        return '<tr class="lg-holding-row" data-key="' + wmsEsc(shortSym) + '" style="cursor:pointer;">' +
             '<td>' + symHtml + '</td>' +
             '<td class="lg-col-type">' + typeLabel + '</td>' +
             '<td class="text-right">' + (typeof formatQuantity === 'function' ? formatQuantity(qty) : String(Math.round(qty))) + '</td>' +
@@ -1783,23 +1783,28 @@ function lgRenderSummary() {
         }
     }
 
-    // Wire Open Positions header → opens the shared Transactions modal in
-    // Matching view (same as Portfolio page). The user asked for this: a
-    // single click on the Open Positions header should surface the full
-    // transactions / matching breakdown behind the positions.
+    // Wire Open Positions header → toggles collapse (original behaviour).
     var openHdr = document.getElementById('lgOpenPosHeader');
     var openSec = document.getElementById('lgOpenPosSection');
     if (openHdr && openSec && !openHdr.dataset.lgWired) {
         openHdr.dataset.lgWired = '1';
-        openHdr.style.cursor = 'pointer';
-        openHdr.addEventListener('click', function(e) {
-            // Allow the caret (first child) to still toggle collapse
-            if (e.target && e.target.classList && e.target.classList.contains('lg-booked-caret')) {
-                openSec.classList.toggle('lg-booked-collapsed');
-                return;
-            }
-            if (typeof trOpenTxnModal === 'function') {
-                trOpenTxnModal('__ALL__', null);
+        openHdr.addEventListener('click', function() {
+            openSec.classList.toggle('lg-booked-collapsed');
+        });
+    }
+
+    // Wire individual holding rows → open the shared Transactions modal for
+    // that symbol (same as Portfolio page behaviour). Delegated on the
+    // tbody so it survives every re-render (idempotent via dataset flag).
+    var holdingsBody = document.getElementById('lgSummaryBody');
+    if (holdingsBody && !holdingsBody.dataset.lgWired) {
+        holdingsBody.dataset.lgWired = '1';
+        holdingsBody.addEventListener('click', function(e) {
+            var tr = e.target.closest('tr.lg-holding-row');
+            if (!tr) return;
+            var key = tr.getAttribute('data-key');
+            if (key && typeof trOpenTxnModal === 'function') {
+                trOpenTxnModal(key, null);
             }
         });
     }
