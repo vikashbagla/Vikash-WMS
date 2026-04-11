@@ -1368,8 +1368,17 @@ function lgFindOpeningBalance() {
     // Opening balance row now always shows the computed carry-forward as of dateFrom.
     // We still surface the stored OPENING_BALANCE entry (if any) so the inline
     // edit UI can update it — but the DISPLAYED amount is always the carry-forward.
+    //
+    // CRITICAL: scope the lookup to the currently-effective investor. Without
+    // this, a multi-investor ledger returns the *first* OPENING_BALANCE row
+    // in the array regardless of which view is active, and the inline edit
+    // then PATCHes the wrong investor's row (observed bug: editing on
+    // stmt_T2 silently overwrote T3's opening balance).
+    var effInvId = (typeof lgGetEffectiveInvestorId === 'function') ? lgGetEffectiveInvestorId() : null;
     var stored = lgLedgerEntries.find(function(e) {
-        return e.entry_type === 'OPENING_BALANCE';
+        if (e.entry_type !== 'OPENING_BALANCE') return false;
+        if (effInvId && e.investor_id !== effInvId) return false;
+        return true;
     });
     return {
         id: stored ? stored.id : null,
