@@ -21,8 +21,12 @@
 /* Filters grid — pill filters */
 .lg-filters-grid { flex:1; display:grid; grid-template-columns: repeat(4, 1fr); gap:4px; }
 
-/* Unified scroll container — all four blocks live in one scrollable column */
-#lgUnifiedScroll { flex:1; min-height:0; overflow:auto; padding:8px; display:flex; flex-direction:column; gap:8px; }
+/* Unified scroll container — all four blocks live in one scrollable column.
+   Each direct child .lg-booked-section carries its own top margin (see below),
+   so the flex gap is 0 to avoid adding a second, uneven vertical offset. */
+#lgUnifiedScroll { flex:1; min-height:0; overflow:auto; padding:8px; display:flex; flex-direction:column; gap:0; }
+/* First section in the scroll column should sit flush at the top */
+#lgUnifiedScroll > .lg-booked-section:first-child { margin-top:0; }
 
 /* Transactions block uses the same collapsible chrome as Booked / Open Positions */
 #lgTransactionsBlock .lg-booked-body { padding:0; max-height:none; }
@@ -156,6 +160,7 @@
         </div>
         <button class="tr-vta-btn" id="lgUpdateViewBtn" title="Update current view with active filters" disabled>↻ Update</button>
         <button class="tr-vta-btn" id="lgSaveNewBtn" title="Save as new view">+ Save New</button>
+        <button class="tr-vta-btn" id="lgFiltersToggle" title="Toggle filters" style="font-size:10px;">▲</button>
         <span class="lg-tabs-divider"></span>
         <div class="lg-export-wrap">
           <button class="tr-vta-btn" id="lgExportBtn" title="Export ledger">⇩ Export ▾</button>
@@ -164,8 +169,6 @@
             <button id="lgExportExcelBtn" type="button">Export Excel</button>
           </div>
         </div>
-        <span class="lg-tabs-divider"></span>
-        <button class="tr-vta-btn" id="lgFiltersToggle" title="Toggle filters" style="font-size:10px;">▲</button>
         <div class="tr-save-prompt" id="lgSavePrompt">
           <input type="text" id="lgSavePromptName" placeholder="View name..." class="wms-input-compact">
           <button class="tr-vta-btn wms-btn-primary" id="lgSavePromptOk">✓</button>
@@ -200,7 +203,7 @@
         <div class="lg-booked-header" id="lgTransactionsHeader">
           <span class="lg-booked-caret">▼</span>
           <span>Transactions</span>
-          <span class="lg-booked-total" id="lgTransactionsCount" style="margin-left:auto; font-weight:600;"></span>
+          <span class="lg-booked-total" id="lgTransactionsBalance" style="margin-left:auto; font-weight:600;"></span>
         </div>
         <div class="lg-booked-body">
         <table id="lgTable">
@@ -269,7 +272,7 @@
       </div>
 
       <!-- 3b. Booked P&L (collapsible) -->
-      <div class="lg-booked-section" id="lgBookedSection" style="margin-top:0;">
+      <div class="lg-booked-section" id="lgBookedSection">
         <div class="lg-booked-header" id="lgBookedHeader">
           <span class="lg-booked-caret">▼</span>
           <span>Booked P&amp;L <span id="lgBookedFyLabel" style="color:#718096; font-size:10px;"></span></span>
@@ -293,7 +296,7 @@
       </div>
 
       <!-- 2. Open Holdings table (EQ + NFO) — collapsible -->
-      <div class="lg-booked-section" id="lgOpenPosSection" style="margin-bottom:12px;">
+      <div class="lg-booked-section" id="lgOpenPosSection">
         <div class="lg-booked-header" id="lgOpenPosHeader">
           <span class="lg-booked-caret">▼</span>
           <span>Open Positions</span>

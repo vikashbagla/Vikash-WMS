@@ -1174,10 +1174,6 @@ async function lgRefresh() {
     lgRenderEntries(lgCombined);
     lgRenderSummary();
     lgUpdateAddRowAvailability();
-
-    // Update Transactions block header with row count
-    var txnCountEl = document.getElementById('lgTransactionsCount');
-    if (txnCountEl) txnCountEl.textContent = displayed.length + ' row' + (displayed.length === 1 ? '' : 's');
 }
 
 function lgRenderEntries(rows) {
@@ -1686,6 +1682,21 @@ function lgRenderSummary() {
     var cashBalance = (typeof lgCurrentCashBalance === 'number') ? lgCurrentCashBalance : (lgCarryForwardBalance || 0);
     var outstanding = Math.max(0, cashBalance) + currentNfoMargin;
 
+    // Transactions block header now shows: "NFO Margin + Balance = Total Balance"
+    // Total matches the Outstanding summary card. "Balance" is the cash ledger
+    // balance clamped to >= 0 (same formula used for Outstanding above).
+    var txnBalEl = document.getElementById('lgTransactionsBalance');
+    if (txnBalEl) {
+        var clampedCash = Math.max(0, cashBalance);
+        txnBalEl.innerHTML =
+            '<span style="color:#718096; font-weight:500;">NFO Margin</span> ' +
+            lgFmt(currentNfoMargin) +
+            ' <span style="color:#718096; font-weight:500;">+ Balance</span> ' +
+            lgFmt(clampedCash) +
+            ' <span style="color:#718096; font-weight:500;">=</span> ' +
+            lgFmt(outstanding);
+    }
+
     // Current FY bounds — fixed Apr-Mar cadence per user instruction
     var today = new Date();
     var curY = today.getFullYear();
@@ -1772,13 +1783,24 @@ function lgRenderSummary() {
         }
     }
 
-    // Wire Open Positions collapse toggle (idempotent)
+    // Wire Open Positions header → opens the shared Transactions modal in
+    // Matching view (same as Portfolio page). The user asked for this: a
+    // single click on the Open Positions header should surface the full
+    // transactions / matching breakdown behind the positions.
     var openHdr = document.getElementById('lgOpenPosHeader');
     var openSec = document.getElementById('lgOpenPosSection');
     if (openHdr && openSec && !openHdr.dataset.lgWired) {
         openHdr.dataset.lgWired = '1';
-        openHdr.addEventListener('click', function() {
-            openSec.classList.toggle('lg-booked-collapsed');
+        openHdr.style.cursor = 'pointer';
+        openHdr.addEventListener('click', function(e) {
+            // Allow the caret (first child) to still toggle collapse
+            if (e.target && e.target.classList && e.target.classList.contains('lg-booked-caret')) {
+                openSec.classList.toggle('lg-booked-collapsed');
+                return;
+            }
+            if (typeof trOpenTxnModal === 'function') {
+                trOpenTxnModal('__ALL__', null);
+            }
         });
     }
 

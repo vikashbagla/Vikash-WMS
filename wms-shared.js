@@ -2129,11 +2129,16 @@ function wmsRefreshRender() {
         } else {
             // Not on portfolio — still compute stocks banner from cached prices
             if (typeof trComputeBannerStats === 'function') trComputeBannerStats();
-            // Render active F&O or Watchlist tab
+            // Render active F&O, Watchlist, or Ledger tab
             if (activeId === 'tr-fno-positions' && typeof trFnoRender === 'function') {
                 trFnoRender();
             } else if (activeId === 'tr-watchlist' && typeof trWlUpdatePricesInPlace === 'function') {
                 trWlUpdatePricesInPlace();
+            } else if (activeId === 'tr-ledger' && typeof lgRenderSummary === 'function') {
+                // Re-render Open Positions table + Summary cards so CMP reflects
+                // the freshly-fetched wmsLivePrices. Only runs if lgInit has
+                // already completed (guarded by typeof check).
+                try { lgRenderSummary(); } catch (err) { console.warn('Ledger render failed:', err); }
             }
         }
 
