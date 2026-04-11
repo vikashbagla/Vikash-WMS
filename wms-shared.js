@@ -697,15 +697,20 @@ function wmsCalcAvgCost(transactions) {
     // ----------------------------------------------------------------
 
     var i, txn, sym, shortSym, txnType, isIncome;
+    // Normalize NFO contract symbols by stripping any exchange prefix (e.g. "NSE:")
+    // so that the same contract with/without prefix buckets together. This mirrors
+    // the fix applied to _engineKey and prevents open/closed mis-classification
+    // when a symbol appears with inconsistent prefixing across txns.
+    var _normSym = function (s) { return (s || '').replace(/^[A-Z]+:/, ''); };
 
     // Step 0: identify option contracts, compute net qty AND net cost
-    var optionData = {};  // fullSymbol → { netQty, netCost }
+    var optionData = {};  // fullSymbol (normalized) → { netQty, netCost }
 
     for (i = 0; i < transactions.length; i++) {
         txn = transactions[i];
-        sym = txn.symbol || '';
+        sym = _normSym(txn.symbol || '');
         shortSym = txn.short_symbol || txn.shortSymbol || txn.symbol || '';
-        if (!wmsIsOptionContract(sym, shortSym)) continue;
+        if (!wmsIsOptionContract(txn.symbol || '', shortSym)) continue;
         if (txn.ignore_for_avg_cost) continue;
         txnType = txn.transaction_type || txn.type || '';
         isIncome = WMS_INCOME_TYPES.indexOf(txnType) >= 0;
@@ -742,7 +747,7 @@ function wmsCalcAvgCost(transactions) {
 
     for (i = 0; i < transactions.length; i++) {
         txn = transactions[i];
-        sym = txn.symbol || '';
+        sym = _normSym(txn.symbol || '');
 
         // Skip all option transactions — handled via includeSymbols above
         if (ignoreSymbols[sym] || includeSymbols[sym] !== undefined) continue;
@@ -1085,11 +1090,17 @@ function _wmsCostEngine(transactions, method) {
     // logic does NOT live here. See WMS-LESSONS §J.5.D.
     // ------------------------------------------------------------------
     // Helper: resolve grouping key. EQ → short_symbol, NFO → full symbol.
+    // Exchange prefix (e.g. "NSE:") is stripped for NFO because the same
+    // contract can carry inconsistent prefixes across txns (some "NSE:XYZFUT",
+    // some "XYZFUT") and all inline callers already normalise this way.
+    // Without the strip, the engine would produce two phantom holdings that
+    // share the same underlying contract. See WMS-LESSONS §J.5.H.
     // ------------------------------------------------------------------
     function _engineKey(txn) {
         var secType = (txn.security_type !== undefined ? txn.security_type : txn.securityType) || 'EQUITY';
         if (secType === 'NFO') {
-            return txn.symbol || txn.short_symbol || txn.shortSymbol || '';
+            var nfoSym = txn.symbol || txn.short_symbol || txn.shortSymbol || '';
+            return nfoSym.replace(/^[A-Z]+:/, '');
         }
         return (txn.short_symbol !== undefined ? txn.short_symbol : txn.shortSymbol) || txn.symbol || '';
     }
@@ -1177,7 +1188,8 @@ function _wmsCostEngine(transactions, method) {
                     sellPrice: sLot.price, sellProceedsPerUnit: sLot.costPerUnit,
                     buyCost: coverCost, sellProceeds: openCost,
                     gain: coverGain, holdingDays: 0,
-                    investorId: txnInvestorId, brokerId: txnBrokerId
+                    investorId: txnInvestorId, brokerId: txnBrokerId,
+                    buyTxnId: t.id, sellTxnId: sLot.txnId
                 });
                 sLot.qty += coverQty; // qty was negative, move toward 0
                 remainingBuyQty -= coverQty;
@@ -1189,7 +1201,7 @@ function _wmsCostEngine(transactions, method) {
                 lots[key].push({
                     date: txnDate, qty: remainingBuyQty, price: txnPrice, costPerUnit: costPerUnit,
                     investorId: txnInvestorId, brokerId: txnBrokerId, tags: txnTags,
-                    securityType: txnSecType
+                    securityType: txnSecType, txnId: t.id
                 });
             }
             continue;
@@ -1226,7 +1238,8 @@ function _wmsCostEngine(transactions, method) {
                     sellPrice: txnPrice, sellProceedsPerUnit: sellPricePerUnit,
                     buyCost: buyCost, sellProceeds: sellProceeds,
                     gain: gainAmt, holdingDays: holdDays,
-                    investorId: txnInvestorId, brokerId: txnBrokerId
+                    investorId: txnInvestorId, brokerId: txnBrokerId,
+                    buyTxnId: lot.txnId, sellTxnId: t.id
                 });
 
                 lot.qty -= matchQty;
@@ -1242,7 +1255,7 @@ function _wmsCostEngine(transactions, method) {
                     date: sellDate, qty: -remainingSellQty, price: txnPrice,
                     costPerUnit: sellPricePerUnit,
                     investorId: txnInvestorId, brokerId: txnBrokerId, tags: txnTags,
-                    securityType: txnSecType
+                    securityType: txnSecType, txnId: t.id
                 });
             }
             continue;
@@ -1253,7 +1266,7 @@ function _wmsCostEngine(transactions, method) {
             lots[key].push({
                 date: txnDate, qty: txnQty, price: 0, costPerUnit: 0,
                 investorId: txnInvestorId, brokerId: txnBrokerId, tags: txnTags,
-                securityType: txnSecType
+                securityType: txnSecType, txnId: t.id
             });
             continue;
         }

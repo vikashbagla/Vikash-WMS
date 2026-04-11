@@ -300,6 +300,12 @@ function trFnoGetTxns() {
 // ============================================================================
 
 function trFnoCalcPositions() {
+    // MIGRATED (2026-04-11) to the shared FIFO/LIFO cost engine in wms-shared.js.
+    // Previously used an inline per-contract matching loop; now delegates to
+    // `wmsCalcFifoCost` / `wmsCalcLifoCost` per (investor|trader|broker|contract)
+    // slice and consumes `gains[]` for matched rows and `holdings[].lots` for
+    // open rows. Live-diff vs the old inline engine: zero delta across
+    // fifo/lifo × all/open × filtered/unfiltered. See WMS-LESSONS §J.5.H.
     var txns = trFnoGetTxns();
     var trades = txns.filter(function(t) {
         return t.transaction_type === 'BUY' || t.transaction_type === 'SELL';
@@ -334,11 +340,14 @@ function trFnoCalcPositions() {
 
     // Process each underlying symbol
     var symbolResults = [];
+    var todayStr = new Date().toISOString().slice(0, 10);
+    var matchMethod = trFnoMatchMethod === 'lifo' ? 'lifo' : 'fifo';
 
     Object.keys(bySymbol).sort().forEach(function(underlying) {
         var symbolTrades = bySymbol[underlying];
 
         // Second level: group by inv + trader + broker + full symbol (contract)
+        // The engine is invoked once per group on the group's full txn slice.
         var groups = {};
         symbolTrades.forEach(function(t) {
             var invId = t.investor_id || '';
@@ -350,16 +359,10 @@ function trFnoCalcPositions() {
                 groups[key] = {
                     investorId: t.investor_id, traderId: t.trader_id, brokerId: t.broker_id,
                     fullSymbol: fullSym, shortSymbol: t.short_symbol || t.symbol || '',
-                    contractLabel: wmsFormatContract(t), buys: [], sells: []
+                    contractLabel: wmsFormatContract(t), txns: []
                 };
             }
-            var _dispNetF = t.display_net_amount !== undefined ? t.display_net_amount : (t.net_amount || 0);
-            var entry = {
-                date: t.transaction_date, qty: Math.abs(t.quantity || 0),
-                netAmount: Math.abs(_dispNetF), remaining: Math.abs(t.quantity || 0), txn: t
-            };
-            if (t.transaction_type === 'BUY') groups[key].buys.push(entry);
-            else groups[key].sells.push(entry);
+            groups[key].txns.push(t);
         });
 
         var contractGroups = [];
@@ -378,102 +381,91 @@ function trFnoCalcPositions() {
             // Apply expiry filter (null = not yet initialized, treat as no filter)
             if (trFnoExpiryFilter && trFnoExpiryFilter.length > 0 && trFnoExpiryFilter.indexOf(contractExpiry) < 0) return;
 
-            // Sort chronologically
-            g.buys.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
-            g.sells.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
-
-            // Detect short position
-            var firstBuyDate = g.buys.length > 0 ? new Date(g.buys[0].date) : new Date('9999-12-31');
-            var firstSellDate = g.sells.length > 0 ? new Date(g.sells[0].date) : new Date('9999-12-31');
-            var isShort = firstSellDate < firstBuyDate;
-
-            var buys = g.buys.map(function(b) { return { date: b.date, qty: b.qty, netAmount: b.netAmount, remaining: b.qty, txn: b.txn }; });
-            var sells = g.sells.map(function(s) { return { date: s.date, qty: s.qty, netAmount: s.netAmount, remaining: s.qty, txn: s.txn }; });
-
-            var openers = isShort ? sells : buys;
-            var closers = isShort ? buys : sells;
-            var openerOrder = trFnoMatchMethod === 'lifo' ? openers.slice().reverse() : openers.slice();
-            var matchedRows = [];
-
-            // Match closers against openers
-            var todayStr = new Date().toISOString().slice(0, 10);
-            closers.forEach(function(closer) {
-                var closerRemaining = closer.remaining;
-                var closerPpu = closer.qty > 0 ? closer.netAmount / closer.qty : 0;
-                for (var oi = 0; oi < openerOrder.length && closerRemaining > 0; oi++) {
-                    var opener = openerOrder[oi];
-                    if (opener.remaining <= 0) continue;
-                    var matchQty = Math.min(closerRemaining, opener.remaining);
-                    var openerPpu = opener.qty > 0 ? opener.netAmount / opener.qty : 0;
-                    var buyDate, buyAvg, buyAmount, sellDate, sellAvg, sellAmount;
-                    if (isShort) {
-                        sellDate = opener.date; sellAvg = openerPpu; sellAmount = matchQty * openerPpu;
-                        buyDate = closer.date; buyAvg = closerPpu; buyAmount = matchQty * closerPpu;
-                    } else {
-                        buyDate = opener.date; buyAvg = openerPpu; buyAmount = matchQty * openerPpu;
-                        sellDate = closer.date; sellAvg = closerPpu; sellAmount = matchQty * closerPpu;
-                    }
-                    var buyTxnId, sellTxnId;
-                    if (isShort) {
-                        sellTxnId = opener.txn.id; buyTxnId = closer.txn.id;
-                    } else {
-                        buyTxnId = opener.txn.id; sellTxnId = closer.txn.id;
-                    }
-                    var mRow = {
-                        type: 'matched', isShort: isShort, qty: matchQty,
-                        buyDate: buyDate, buyAvg: buyAvg, buyAmount: buyAmount,
-                        sellDate: sellDate, sellAvg: sellAvg, sellAmount: sellAmount,
-                        pnl: sellAmount - buyAmount,
-                        buyTxnId: buyTxnId, sellTxnId: sellTxnId
-                    };
-                    // Day P&L for positions closed today
-                    if (closer.date === todayStr) {
-                        var contractSym = (opener.txn.symbol || '').replace(/^[A-Z]+:/, '');
-                        var contractCache = wmsLivePrices[contractSym];
-                        var dp = wmsCalcFnoClosedTodayPnl(matchQty, isShort, opener.date, openerPpu, closerPpu, contractCache, todayStr);
-                        if (dp !== 0) mRow.dayPnl = dp;
-                    }
-                    matchedRows.push(mRow);
-                    opener.remaining -= matchQty;
-                    closerRemaining -= matchQty;
-                }
-                closer.remaining = closerRemaining;
+            // Sort chronologically (stable tiebreak by txn id)
+            var sorted = g.txns.slice().sort(function(a, b) {
+                var da = a.transaction_date || '', db = b.transaction_date || '';
+                if (da !== db) return da < db ? -1 : 1;
+                return (a.id || 0) - (b.id || 0);
             });
 
-            // Open positions (unmatched openers)
-            openerOrder.forEach(function(opener) {
-                if (opener.remaining <= 0) return;
-                var ppu = opener.qty > 0 ? opener.netAmount / opener.qty : 0;
-                var row = { type: 'open', isShort: isShort, qty: opener.remaining, pnl: 0 };
-                if (isShort) {
-                    row.buyDate = null; row.buyAvg = 0; row.buyAmount = 0;
-                    row.sellDate = opener.date; row.sellAvg = ppu; row.sellAmount = opener.remaining * ppu;
-                    row.sellTxnId = opener.txn.id;
-                } else {
-                    row.buyDate = opener.date; row.buyAvg = ppu; row.buyAmount = opener.remaining * ppu;
-                    row.sellDate = null; row.sellAvg = 0; row.sellAmount = 0;
-                    row.buyTxnId = opener.txn.id;
+            // Delegate to shared engine — it walks txns, matches lots per
+            // FIFO/LIFO, records gains[] (matched) and holdings[].lots (open).
+            var result = matchMethod === 'lifo' ? wmsCalcLifoCost(sorted) : wmsCalcFifoCost(sorted);
+
+            // Contract-level CMP (wmsLivePrices keyed by bare symbol).
+            var contractCache = wmsLivePrices[g.fullSymbol];
+            var cmp = contractCache ? contractCache.lp : 0;
+
+            var matchedRows = [];
+
+            // Matched rows come from gains[]. Short-cover gains have buyDate > sellDate.
+            result.gains.forEach(function(gain) {
+                var rowIsShort = gain.sellDate < gain.buyDate;
+                var mRow = {
+                    type: 'matched', isShort: rowIsShort, qty: gain.qty,
+                    buyDate: gain.buyDate, buyAvg: gain.buyCostPerUnit, buyAmount: gain.buyCost,
+                    sellDate: gain.sellDate, sellAvg: gain.sellProceedsPerUnit, sellAmount: gain.sellProceeds,
+                    pnl: gain.gain,
+                    buyTxnId: gain.buyTxnId, sellTxnId: gain.sellTxnId
+                };
+                // Day P&L for positions closed today (closer = buy for short, sell for long)
+                var closerDate = rowIsShort ? gain.buyDate : gain.sellDate;
+                if (closerDate === todayStr) {
+                    var openerDate = rowIsShort ? gain.sellDate : gain.buyDate;
+                    var openerPpu  = rowIsShort ? gain.sellProceedsPerUnit : gain.buyCostPerUnit;
+                    var closerPpu  = rowIsShort ? gain.buyCostPerUnit : gain.sellProceedsPerUnit;
+                    var dp = wmsCalcFnoClosedTodayPnl(gain.qty, rowIsShort, openerDate, openerPpu, closerPpu, contractCache, todayStr);
+                    if (dp !== 0) mRow.dayPnl = dp;
                 }
-                // Unrealised P&L using contract-specific CMP (not equity CMP)
-                // Strip exchange prefix (e.g. "NSE:") — wmsLivePrices keyed by bare symbol
-                var contractSym = (opener.txn.symbol || '').replace(/^[A-Z]+:/, '');
-                var contractCache = wmsLivePrices[contractSym];
-                var cmp = contractCache ? contractCache.lp : 0;
-                if (cmp > 0) {
-                    row.cmp = cmp;
-                    var openCost = row.isShort ? row.sellAmount : row.buyAmount;
-                    var openValue = row.qty * cmp;
-                    row.unrealisedPnl = row.isShort ? (openCost - openValue) : (openValue - openCost);
-                }
-                // Day's P&L via shared function (same-day: CMP - trade price; else: qty × ch)
-                var tradeDate = row.isShort ? row.sellDate : row.buyDate;
-                var tradePrice = row.isShort ? row.sellAvg : row.buyAvg;
-                var dp = wmsCalcFnoDayPnl(row.qty, row.isShort, tradeDate, tradePrice, contractCache);
-                if (dp !== 0) row.dayPnl = dp;
-                matchedRows.push(row);
+                matchedRows.push(mRow);
+            });
+
+            // Open rows come from holdings[].lots. Engine invariant: within a
+            // single contract slice, all surviving lots have the same sign
+            // (all long or all short) because BUY-covers-short consumes shorts
+            // before pushing long, and SELL-consumes-long before pushing short.
+            Object.keys(result.holdings).forEach(function(hk) {
+                var h = result.holdings[hk];
+                h.lots.forEach(function(lot) {
+                    if (!lot.qty) return;
+                    var lotIsShort = lot.qty < 0;
+                    var absQty = Math.abs(lot.qty);
+                    var ppu = lot.costPerUnit;
+                    var row = { type: 'open', isShort: lotIsShort, qty: absQty, pnl: 0 };
+                    if (lotIsShort) {
+                        row.buyDate = null; row.buyAvg = 0; row.buyAmount = 0;
+                        row.sellDate = lot.date; row.sellAvg = ppu; row.sellAmount = absQty * ppu;
+                        row.sellTxnId = lot.txnId;
+                    } else {
+                        row.buyDate = lot.date; row.buyAvg = ppu; row.buyAmount = absQty * ppu;
+                        row.sellDate = null; row.sellAvg = 0; row.sellAmount = 0;
+                        row.buyTxnId = lot.txnId;
+                    }
+                    if (cmp > 0) {
+                        row.cmp = cmp;
+                        var openCostR = lotIsShort ? row.sellAmount : row.buyAmount;
+                        var openValue = absQty * cmp;
+                        row.unrealisedPnl = lotIsShort ? (openCostR - openValue) : (openValue - openCostR);
+                    }
+                    var tradeDate  = lotIsShort ? row.sellDate : row.buyDate;
+                    var tradePrice = lotIsShort ? row.sellAvg  : row.buyAvg;
+                    var dpO = wmsCalcFnoDayPnl(absQty, lotIsShort, tradeDate, tradePrice, contractCache);
+                    if (dpO !== 0) row.dayPnl = dpO;
+                    matchedRows.push(row);
+                });
             });
 
             if (matchedRows.length === 0) return;
+
+            // Group isShort: use an open lot's direction if any; otherwise fall
+            // back to the first matched row (fully-closed group).
+            var isShort = false;
+            var openRow = null;
+            for (var ri = 0; ri < matchedRows.length; ri++) {
+                if (matchedRows[ri].type === 'open') { openRow = matchedRows[ri]; break; }
+            }
+            if (openRow) isShort = openRow.isShort;
+            else if (matchedRows.length > 0) isShort = matchedRows[0].isShort;
 
             // Sort: buy date for long, sell date for short
             matchedRows.sort(function(a, b) {

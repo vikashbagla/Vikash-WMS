@@ -1094,39 +1094,53 @@ function trTxRenderMatchingTrades(filtered) {
     var tbody = document.getElementById('trTx-matching-list');
     if (!tbody) return;
 
-    // Exclude income types — only BUY and SELL
-    var trades = filtered.filter(function(t) {
-        return t.transaction_type === 'BUY' || t.transaction_type === 'SELL';
-    });
+    // ----------------------------------------------------------------------
+    // J.5.H migration (2026-04-11): delegate FIFO/LIFO matching to the shared
+    // wmsCalcFifoCost / wmsCalcLifoCost engines. Behaviour changes accepted
+    // by the user:
+    //   Cat 1: corporate actions (BONUS / RIGHTS_ENTITLEMENT / RIGHTS_PAYMENT
+    //          / CAPITAL_REDUCTION / HISTORICAL_PL) flow through the engine.
+    //   Cat 2: NFO keys by full contract symbol (prefix-stripped), EQ keys
+    //          by short_symbol — identical to the engine's _engineKey.
+    //   Cat 3: LIFO re-attribution (closers matched against most-recent
+    //          openers) is the engine's native behaviour.
+    // Unmatched closers no longer exist as a row type — the engine turns
+    // them into short-open lots, which render as "Short Open" rows.
+    // ----------------------------------------------------------------------
 
-    // Group by short_symbol ONLY (not investor)
+    // Build txn-id lookup so we can recover displaySymbol / investor / broker
+    // from engine output (gains carry buyTxnId/sellTxnId, lots carry txnId).
+    var txnById = {};
+    filtered.forEach(function(t) { if (t.id !== undefined) txnById[t.id] = t; });
+
+    // Grouping key: EQ → short_symbol; NFO → full symbol (exchange stripped).
+    // This mirrors _engineKey in wms-shared.js so the UI groups match the
+    // engine's internal bucketing exactly.
+    function _txGroupKey(t) {
+        var secType = t.security_type || 'EQUITY';
+        if (secType === 'NFO') {
+            var nfoSym = t.symbol || t.short_symbol || '';
+            return nfoSym.replace(/^[A-Z]+:/, '');
+        }
+        return t.short_symbol || t.symbol || '';
+    }
+
+    // Group txns (pass full slice — engine filters BUY/SELL/corporate itself)
     var groups = {};
-    trades.forEach(function(t) {
-        var key = t.short_symbol || t.symbol || '';
+    filtered.forEach(function(t) {
+        var key = _txGroupKey(t);
+        if (!key) return;
         if (!groups[key]) {
             groups[key] = {
-                symbol: t.short_symbol || t.symbol || '',
+                key: key,
+                symbol: key,  // display: for EQ = ticker, for NFO = full contract
                 companyName: t.company_name || '',
-                buys: [],
-                sells: []
+                securityType: t.security_type || 'EQUITY',
+                txns: []
             };
         }
-        var _dispNet3 = t.display_net_amount !== undefined ? t.display_net_amount : (t.net_amount || 0);
-        var entry = {
-            date: t.transaction_date,
-            qty: Math.abs(t.quantity || 0),
-            netAmount: Math.abs(_dispNet3),
-            remaining: Math.abs(t.quantity || 0),
-            displaySymbol: t.symbol || t.short_symbol || '',
-            investorId: t.investor_id,
-            brokerId: t.broker_id,
-            txn: t
-        };
-        if (t.transaction_type === 'BUY') {
-            groups[key].buys.push(entry);
-        } else {
-            groups[key].sells.push(entry);
-        }
+        if (!groups[key].companyName && t.company_name) groups[key].companyName = t.company_name;
+        groups[key].txns.push(t);
     });
 
     // Build groupResults
@@ -1136,108 +1150,85 @@ function trTxRenderMatchingTrades(filtered) {
     Object.keys(groups).sort().forEach(function(key) {
         var g = groups[key];
 
-        g.buys.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
-        g.sells.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
-
-        var firstBuyDate = g.buys.length > 0 ? new Date(g.buys[0].date) : new Date('9999-12-31');
-        var firstSellDate = g.sells.length > 0 ? new Date(g.sells[0].date) : new Date('9999-12-31');
-        var isShort = firstSellDate < firstBuyDate;
-
-        var buys = g.buys.map(function(b) {
-            return { date: b.date, qty: b.qty, netAmount: b.netAmount, remaining: b.qty, displaySymbol: b.displaySymbol, investorId: b.investorId, brokerId: b.brokerId, txn: b.txn };
-        });
-        var sells = g.sells.map(function(s) {
-            return { date: s.date, qty: s.qty, netAmount: s.netAmount, remaining: s.qty, displaySymbol: s.displaySymbol, investorId: s.investorId, brokerId: s.brokerId, txn: s.txn };
+        // Sort chronologically, id as tie-breaker (matches engine's expectation)
+        var sorted = g.txns.slice().sort(function(a, b) {
+            var da = a.transaction_date || '', db = b.transaction_date || '';
+            if (da !== db) return da < db ? -1 : 1;
+            return (a.id || 0) - (b.id || 0);
         });
 
-        var openers = isShort ? sells : buys;
-        var closers = isShort ? buys : sells;
-        var openerOrder = trTxMatchMethod === 'lifo' ? openers.slice().reverse() : openers.slice();
+        var result = trTxMatchMethod === 'lifo' ? wmsCalcLifoCost(sorted) : wmsCalcFifoCost(sorted);
+
+        // The engine may produce 0 or 1 holdings for this slice — find it.
+        var holdingKeys = Object.keys(result.holdings || {});
+        var holding = holdingKeys.length > 0 ? result.holdings[holdingKeys[0]] : null;
+        var openLots = holding && holding.lots ? holding.lots : [];
 
         var matchedRows = [];
 
-        closers.forEach(function(closer) {
-            var closerRemaining = closer.remaining;
-            var closerPpu = closer.qty > 0 ? closer.netAmount / closer.qty : 0;
+        // Realised matches → matched rows
+        (result.gains || []).forEach(function(gain) {
+            var rowIsShort = (gain.sellDate || '') < (gain.buyDate || '');
+            // Opener metadata: for long matches = buy txn; for short matches = sell txn
+            var openerTxn = rowIsShort
+                ? (txnById[gain.sellTxnId] || null)
+                : (txnById[gain.buyTxnId] || null);
+            var closerTxn = rowIsShort
+                ? (txnById[gain.buyTxnId] || null)
+                : (txnById[gain.sellTxnId] || null);
+            var displaySymbol = (openerTxn && openerTxn.symbol) || (closerTxn && closerTxn.symbol) || g.symbol;
+            var invId = openerTxn ? openerTxn.investor_id : null;
+            var brkId = openerTxn ? openerTxn.broker_id : null;
 
-            for (var oi = 0; oi < openerOrder.length && closerRemaining > 0; oi++) {
-                var opener = openerOrder[oi];
-                if (opener.remaining <= 0) continue;
-                var matchQty = Math.min(closerRemaining, opener.remaining);
-                var openerPpu = opener.qty > 0 ? opener.netAmount / opener.qty : 0;
-
-                var buyDate, buyAvg, buyAmount, sellDate, sellAvg, sellAmount, displaySymbol, invId, brkId;
-                if (isShort) {
-                    sellDate = opener.date; sellAvg = openerPpu; sellAmount = matchQty * openerPpu;
-                    buyDate = closer.date; buyAvg = closerPpu; buyAmount = matchQty * closerPpu;
-                    displaySymbol = opener.displaySymbol || closer.displaySymbol;
-                    invId = opener.investorId; brkId = opener.brokerId;
-                } else {
-                    buyDate = opener.date; buyAvg = openerPpu; buyAmount = matchQty * openerPpu;
-                    sellDate = closer.date; sellAvg = closerPpu; sellAmount = matchQty * closerPpu;
-                    displaySymbol = opener.displaySymbol || closer.displaySymbol;
-                    invId = opener.investorId; brkId = opener.brokerId;
-                }
-
-                matchedRows.push({
-                    type: 'matched', isShort: isShort,
-                    displaySymbol: displaySymbol, investorId: invId, brokerId: brkId,
-                    qty: matchQty, buyDate: buyDate, buyAvg: buyAvg, buyAmount: buyAmount,
-                    sellDate: sellDate, sellAvg: sellAvg, sellAmount: sellAmount,
-                    pnl: sellAmount - buyAmount
-                });
-                opener.remaining -= matchQty;
-                closerRemaining -= matchQty;
-            }
-            closer.remaining = closerRemaining;
+            matchedRows.push({
+                type: 'matched', isShort: rowIsShort,
+                displaySymbol: displaySymbol, investorId: invId, brokerId: brkId,
+                qty: gain.qty,
+                buyDate: gain.buyDate, buyAvg: gain.buyCostPerUnit, buyAmount: gain.buyCost,
+                sellDate: gain.sellDate, sellAvg: gain.sellProceedsPerUnit, sellAmount: gain.sellProceeds,
+                pnl: gain.gain
+            });
         });
 
-        // Open positions
-        openerOrder.forEach(function(opener) {
-            if (opener.remaining <= 0) return;
-            var ppu = opener.qty > 0 ? opener.netAmount / opener.qty : 0;
+        // Surviving lots → open rows (long lot = Open; negative lot = Short Open)
+        openLots.forEach(function(lot) {
+            if (!lot.qty) return;
+            var lotIsShort = lot.qty < 0;
+            var absQty = Math.abs(lot.qty);
+            var ppu = lot.costPerUnit || 0;
+            var lotTxn = lot.txnId !== undefined ? txnById[lot.txnId] : null;
             var row = {
-                type: 'open', isShort: isShort,
-                displaySymbol: opener.displaySymbol, investorId: opener.investorId, brokerId: opener.brokerId,
-                qty: opener.remaining, pnl: 0
+                type: 'open', isShort: lotIsShort,
+                displaySymbol: (lotTxn && lotTxn.symbol) || g.symbol,
+                investorId: lotTxn ? lotTxn.investor_id : null,
+                brokerId: lotTxn ? lotTxn.broker_id : null,
+                qty: absQty, pnl: 0
             };
-            if (isShort) {
+            if (lotIsShort) {
                 row.buyDate = null; row.buyAvg = 0; row.buyAmount = 0;
-                row.sellDate = opener.date; row.sellAvg = ppu; row.sellAmount = opener.remaining * ppu;
+                row.sellDate = lot.date; row.sellAvg = ppu; row.sellAmount = absQty * ppu;
             } else {
-                row.buyDate = opener.date; row.buyAvg = ppu; row.buyAmount = opener.remaining * ppu;
+                row.buyDate = lot.date; row.buyAvg = ppu; row.buyAmount = absQty * ppu;
                 row.sellDate = null; row.sellAvg = 0; row.sellAmount = 0;
-            }
-            matchedRows.push(row);
-        });
-
-        // Unmatched closers
-        closers.forEach(function(closer) {
-            if (closer.remaining <= 0) return;
-            var ppu = closer.qty > 0 ? closer.netAmount / closer.qty : 0;
-            var row = {
-                type: 'unmatched-closer', isShort: isShort,
-                displaySymbol: closer.displaySymbol, investorId: closer.investorId, brokerId: closer.brokerId,
-                qty: closer.remaining
-            };
-            if (isShort) {
-                row.buyDate = closer.date; row.buyAvg = ppu; row.buyAmount = closer.remaining * ppu;
-                row.sellDate = null; row.sellAvg = 0; row.sellAmount = 0;
-                row.pnl = -(closer.remaining * ppu);
-            } else {
-                row.buyDate = null; row.buyAvg = 0; row.buyAmount = 0;
-                row.sellDate = closer.date; row.sellAvg = ppu; row.sellAmount = closer.remaining * ppu;
-                row.pnl = closer.remaining * ppu;
             }
             matchedRows.push(row);
         });
 
         if (matchedRows.length === 0) return;
 
+        // Group isShort label: derived from first open lot direction; if no
+        // open lots, fall back to first matched row.
+        var groupIsShort = false;
+        if (openLots.length > 0) {
+            groupIsShort = openLots[0].qty < 0;
+        } else if (matchedRows.length > 0) {
+            groupIsShort = matchedRows[0].isShort;
+        }
+
         // Sort by opening date
         matchedRows.sort(function(a, b) {
-            var dateA = isShort ? (a.sellDate || '9999') : (a.buyDate || '9999');
-            var dateB = isShort ? (b.sellDate || '9999') : (b.buyDate || '9999');
+            var dateA = a.isShort ? (a.sellDate || '9999') : (a.buyDate || '9999');
+            var dateB = b.isShort ? (b.sellDate || '9999') : (b.buyDate || '9999');
             return new Date(dateA) - new Date(dateB);
         });
 
@@ -1251,7 +1242,7 @@ function trTxRenderMatchingTrades(filtered) {
         });
 
         groupResults.push({
-            symbol: g.symbol, companyName: g.companyName, isShort: isShort,
+            symbol: g.symbol, companyName: g.companyName, isShort: groupIsShort,
             rows: matchedRows, totalQty: totalQty,
             totalBuyAmt: totalBuyAmt, totalSellAmt: totalSellAmt, totalPnl: totalPnl
         });
@@ -1299,7 +1290,6 @@ function trTxRenderMatchingTrades(filtered) {
             globalRowIdx++;
 
             var isOpen = row.type === 'open';
-            var isUnmatched = row.type === 'unmatched-closer';
             var rowClass = 'trTx-match-detail-row collapsed-row';
             if (isOpen) rowClass += ' trTx-match-open';
 
@@ -1316,8 +1306,6 @@ function trTxRenderMatchingTrades(filtered) {
             var pnlHtml = '';
             if (isOpen) {
                 pnlHtml = '<span style="color:#718096;">' + (row.isShort ? 'Short Open' : 'Open') + '</span>';
-            } else if (isUnmatched) {
-                pnlHtml = '<span style="color:#718096;">Unmatched</span>';
             } else {
                 var pnlClass = row.pnl >= 0 ? 'trTx-pnl-positive' : 'trTx-pnl-negative';
                 pnlHtml = row.pnl < 0
