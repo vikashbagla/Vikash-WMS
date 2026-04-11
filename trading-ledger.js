@@ -1744,11 +1744,14 @@ function lgRenderSummary() {
     var potentialTax = Math.max(0, totalBookedGain) * (LG_TAX_RATE_PCT / 100);
 
     // Net Receivable = total holdings value (EQ + NFO MTM) − Outstanding − Tax
-    // Because Outstanding already bundles the NFO margin, subtracting it here
-    // effectively nets the margin out of the receivable — matching the spec
-    // "Net Receivable / (Payable) will be net of NFO Margin".
+    // BUT the Outstanding used in this equation MUST exclude the NFO margin:
+    // margin is collateral the investor has parked against open F&O positions,
+    // not cash owed to the firm. Stripping it here is the "net of NFO margin"
+    // the spec calls for. The Outstanding card below still shows the full
+    // Balance + Margin so the composition stays visible.
     var totalHoldingsValue = totalEqValue + totalNfoMtm;
-    var netReceivable = totalHoldingsValue - outstanding - potentialTax;
+    var outstandingExMargin = clampedCashBal;                          // cash balance only
+    var netReceivable = totalHoldingsValue - outstandingExMargin - potentialTax;
     var balNoMtm = totalEqCost - outstanding; // EQ at cost minus outstanding
     var pctBalOverOutstanding = outstanding !== 0 ? (balNoMtm / outstanding) * 100 : 0;
 
@@ -1759,13 +1762,15 @@ function lgRenderSummary() {
         if (useAmtClass) el.className = 'lg-summary-card-value ' + lgAmtClass(val);
     }
     setCard('lgCardHoldingsValue', totalHoldingsValue, false);
-    setCard('lgCardOutstanding', outstanding, false);
-    // Outstanding breakdown subtitle: "Bal X + Margin Y"
+    // Outstanding card shows the cash-only figure as the big number (this is
+    // what the Net Receivable equation subtracts), with "+ Margin Z = Total"
+    // beneath it so the full composition stays visible.
+    setCard('lgCardOutstanding', outstandingExMargin, false);
     var outBreakEl = document.getElementById('lgCardOutstandingBreakdown');
     if (outBreakEl) {
         outBreakEl.innerHTML =
-            'Bal ' + lgFmt(clampedCashBal) +
-            ' + Margin ' + lgFmt(currentNfoMargin);
+            '+ Margin ' + lgFmt(currentNfoMargin) +
+            ' = ' + lgFmt(outstanding);
     }
     setCard('lgCardPotentialTax', potentialTax, false);
     setCard('lgCardNetReceivable', netReceivable, true);
