@@ -1743,16 +1743,19 @@ function lgRenderSummary() {
 
     var potentialTax = Math.max(0, totalBookedGain) * (LG_TAX_RATE_PCT / 100);
 
-    // Net Receivable = total holdings value (EQ + NFO MTM) − Outstanding − Tax
-    // BUT the Outstanding used in this equation MUST exclude the NFO margin:
-    // margin is collateral the investor has parked against open F&O positions,
-    // not cash owed to the firm. Stripping it here is the "net of NFO margin"
-    // the spec calls for. The Outstanding card below still shows the full
-    // Balance + Margin so the composition stays visible.
+    // Net Receivable = total holdings value (EQ + NFO MTM) − Cash Balance − Tax.
+    // Cash Balance (not full Outstanding) is subtracted so that NFO margin —
+    // which is collateral, not cash owed — is netted out of the receivable
+    // per the "net of NFO margin" spec.
     var totalHoldingsValue = totalEqValue + totalNfoMtm;
-    var outstandingExMargin = clampedCashBal;                          // cash balance only
-    var netReceivable = totalHoldingsValue - outstandingExMargin - potentialTax;
-    var balNoMtm = totalEqCost - outstanding; // EQ at cost minus outstanding
+    var netReceivable = totalHoldingsValue - clampedCashBal - potentialTax;
+
+    // Balance w/o MTM = Net Receivable − Current MTM.
+    // "What would Net Receivable look like if every open position closed at
+    // cost?" Current MTM is the total unrealised P&L across EQ + NFO. This is
+    // the canonical formula used on every ledger.
+    var totalCurrentMtm = totalEqMtm + totalNfoMtm;
+    var balNoMtm = netReceivable - totalCurrentMtm;
     var pctBalOverOutstanding = outstanding !== 0 ? (balNoMtm / outstanding) * 100 : 0;
 
     function setCard(id, val, useAmtClass) {
@@ -1762,15 +1765,14 @@ function lgRenderSummary() {
         if (useAmtClass) el.className = 'lg-summary-card-value ' + lgAmtClass(val);
     }
     setCard('lgCardHoldingsValue', totalHoldingsValue, false);
-    // Outstanding card shows the cash-only figure as the big number (this is
-    // what the Net Receivable equation subtracts), with "+ Margin Z = Total"
-    // beneath it so the full composition stays visible.
-    setCard('lgCardOutstanding', outstandingExMargin, false);
+    // Outstanding card shows the TOTAL (cash + margin) as the headline, with
+    // "Bal X + Margin Y" beneath it so the split stays visible.
+    setCard('lgCardOutstanding', outstanding, false);
     var outBreakEl = document.getElementById('lgCardOutstandingBreakdown');
     if (outBreakEl) {
         outBreakEl.innerHTML =
-            '+ Margin ' + lgFmt(currentNfoMargin) +
-            ' = ' + lgFmt(outstanding);
+            'Bal ' + lgFmt(clampedCashBal) +
+            ' + Margin ' + lgFmt(currentNfoMargin);
     }
     setCard('lgCardPotentialTax', potentialTax, false);
     setCard('lgCardNetReceivable', netReceivable, true);
