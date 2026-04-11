@@ -2008,34 +2008,67 @@ function lgCancelDelete() {
 // Render the interest detail modal with the calculation breakdown.
 // Works for both posted rows (entry in DB) and pending rows (_calc in memory).
 function lgPopulateInterestDetail(calc, currentAmount) {
-    var detailBody = document.getElementById('lgInterestDetailBody');
+    var detailBody = document.getElementById('lgInterestDetailBreakdown');
     var totalEditEl = document.getElementById('lgInterestTotalEdit');
 
     if (detailBody) {
         if (calc) {
             var roundedInterest = Math.round(calc.interest);
-            var baseLine = '';
-            if (calc.marginBalance) {
-                baseLine = '<tr>' +
-                    '<td>' + wmsEsc(calc.period) + '</td>' +
-                    '<td class="text-right">' + lgFmt(calc.closingBalance) + ' + ' + lgFmt(calc.marginBalance) + ' <span style="color:#718096; font-size:10px;">(F&amp;O margin)</span> = ' + lgFmt(calc.baseBalance || (calc.closingBalance + calc.marginBalance)) + '</td>' +
-                    '<td class="text-right">' + calc.days + '</td>' +
-                    '<td class="text-right">' + calc.rate + '%</td>' +
-                    '<td class="text-right">' + lgFmt(roundedInterest) + '</td>' +
-                '</tr>';
-            } else {
-                baseLine = '<tr>' +
-                    '<td>' + wmsEsc(calc.period) + '</td>' +
-                    '<td class="text-right">' + lgFmt(calc.closingBalance) + '</td>' +
-                    '<td class="text-right">' + calc.days + '</td>' +
-                    '<td class="text-right">' + calc.rate + '%</td>' +
-                    '<td class="text-right">' + lgFmt(roundedInterest) + '</td>' +
-                '</tr>';
-            }
-            var formulaNote = '<tr><td colspan="5" style="font-size:10px; color:#718096; padding-top:6px;">Formula: max(0, balance + F&amp;O margin) × ' + calc.rate + '% × (1/52)</td></tr>';
-            detailBody.innerHTML = baseLine + formulaNote;
+            var cash = calc.closingBalance || 0;
+            var margin = calc.marginBalance || 0;
+            var base = calc.baseBalance != null ? calc.baseBalance : (cash + margin);
+            var clampedBase = Math.max(0, base);
+
+            var rowStyle =
+                'display:flex; justify-content:space-between; padding:8px 12px; ' +
+                'font-size:13px;';
+            var labelStyle = 'color:#4a5568;';
+            var valueStyle = 'font-variant-numeric:tabular-nums; color:#1a202c;';
+
+            var periodHeader =
+                '<div style="padding:8px 12px; background:#f7fafc; border-radius:6px 6px 0 0; ' +
+                'font-size:11px; text-transform:uppercase; letter-spacing:0.5px; ' +
+                'color:#718096; font-weight:600;">Period</div>' +
+                '<div style="' + rowStyle + ' border-bottom:1px solid #e2e8f0;">' +
+                    '<span style="' + labelStyle + '">' + wmsEsc(calc.period) + '</span>' +
+                '</div>';
+
+            var balanceRow =
+                '<div style="' + rowStyle + '">' +
+                    '<span style="' + labelStyle + '">Balance</span>' +
+                    '<span style="' + valueStyle + '">' + lgFmt(cash) + '</span>' +
+                '</div>';
+
+            var marginRow =
+                '<div style="' + rowStyle + '">' +
+                    '<span style="' + labelStyle + '">F&amp;O Margin</span>' +
+                    '<span style="' + valueStyle + '">' + lgFmt(margin) + '</span>' +
+                '</div>';
+
+            var totalRow =
+                '<div style="' + rowStyle + ' border-top:1px solid #e2e8f0; background:#f7fafc; font-weight:600;">' +
+                    '<span style="color:#1a202c;">Total Base</span>' +
+                    '<span style="' + valueStyle + ' font-weight:700;">' + lgFmt(clampedBase) + '</span>' +
+                '</div>';
+
+            var rateRow =
+                '<div style="' + rowStyle + '">' +
+                    '<span style="' + labelStyle + '">× Rate (' + calc.rate + '% p.a.) × (1/52)</span>' +
+                    '<span style="' + valueStyle + '"></span>' +
+                '</div>';
+
+            var interestRow =
+                '<div style="' + rowStyle + ' border-top:1px solid #e2e8f0; background:#edf2f7; font-weight:700; font-size:14px;">' +
+                    '<span style="color:#1a202c;">Interest</span>' +
+                    '<span style="' + valueStyle + ' color:#2d3748; font-weight:700;">' + lgFmt(roundedInterest) + '</span>' +
+                '</div>';
+
+            detailBody.innerHTML =
+                '<div style="border:1px solid #e2e8f0; border-radius:6px; overflow:hidden;">' +
+                    periodHeader + balanceRow + marginRow + totalRow + rateRow + interestRow +
+                '</div>';
         } else {
-            detailBody.innerHTML = '<tr><td colspan="5" class="text-center" style="padding:20px; color:#9ca3af;">No calculation data available</td></tr>';
+            detailBody.innerHTML = '<div class="text-center" style="padding:20px; color:#9ca3af;">No calculation data available</div>';
         }
     }
 

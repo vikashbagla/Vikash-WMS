@@ -5180,8 +5180,17 @@ function wmsCalcMarginFIFO(transactions) {
             ? (parseFloat(t.display_net_amount) || 0)
             : (parseFloat(t.net_amount) || 0);
 
-        // Get margin rate
-        var marginRate = wmsGetMarginRate(t.investor_id, t.broker_id);
+        // Get margin rate.
+        // When trader_id differs from investor_id (trader-only books), the trade sits in
+        // the trader's namespace and must use the trader's IBA rate, not the parent
+        // investor's. Fall back to the investor's rate only when the trader's isn't set.
+        var marginRate = 0;
+        if (t.trader_id && t.trader_id !== t.investor_id) {
+            marginRate = wmsGetMarginRate(t.trader_id, t.broker_id);
+        }
+        if (!marginRate) {
+            marginRate = wmsGetMarginRate(t.investor_id, t.broker_id);
+        }
         if (!marginRate || marginRate === 0) return; // No margin for this investor-broker combo
 
         // For investor ≠ trader, margin is based on trader's portion
@@ -5206,16 +5215,22 @@ function wmsCalcMarginFIFO(transactions) {
 
             while (qtyToClose > 0 && positions[contractKey].length > 0) {
                 var oldestPos = positions[contractKey][0];
-                var closeQty = Math.min(qtyToClose, Math.abs(oldestPos.qty));
-                totalMarginReleased += oldestPos.marginAmount;
+                var oldestAbsQty = Math.abs(oldestPos.qty);
+                var closeQty = Math.min(qtyToClose, oldestAbsQty);
 
-                if (closeQty === Math.abs(oldestPos.qty)) {
-                    // Fully closed position
+                if (closeQty >= oldestAbsQty) {
+                    // Fully closed lot: release its entire remaining margin
+                    totalMarginReleased += oldestPos.marginAmount;
                     positions[contractKey].shift();
                 } else {
-                    // Partially closed position
+                    // Partial close: release the pro-rata slice of this lot's
+                    // margin, then retain the remainder on the shrunken lot.
+                    var releasedSlice = wmsRoundMoney(
+                        oldestPos.marginAmount * (closeQty / oldestAbsQty)
+                    );
+                    totalMarginReleased += releasedSlice;
                     oldestPos.qty -= (qty < 0 ? closeQty : -closeQty);
-                    oldestPos.marginAmount = wmsCalcMarginBlocked(Math.abs(oldestPos.qty * (oldestPos.price || 1)), marginRate);
+                    oldestPos.marginAmount = wmsRoundMoney(oldestPos.marginAmount - releasedSlice);
                 }
                 qtyToClose -= closeQty;
             }
