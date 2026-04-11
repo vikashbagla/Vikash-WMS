@@ -1038,169 +1038,333 @@ function wmsExcludeOpenOptions(txns) {
 // ============================================================================
 
 function _wmsCostEngine(transactions, method) {
-    var lots = {};    // key → [ { date, qty, price, costPerUnit, investorId, brokerId, tags, securityType } ]
-    var gains = [];   // realized gain events
-    var meta = {};    // key → { symbol, shortSymbol, companyName, exchange, securityType }
+    // ------------------------------------------------------------------
+    // FIFO/LIFO cost engine. Mirrors wmsCalcAvgCost for qty and for non-
+    // sell cost adjustments (income, rights payment, historical P&L,
+    // options). The ONE difference: SELLs do NOT reduce the holding's
+    // totalCost — they are matched against open lots (FIFO or LIFO) and
+    // produce realized gain entries. Remaining lot cost is the holding's
+    // cost basis.
+    //
+    // Grouping key (J.2 updated):
+    //   • NFO (futures / options contracts): key = full symbol
+    //     → ICICIBANK25APRFUT, ICICIBANK25APR1300CE stay as separate rows
+    //   • Everything else (EQUITY): key = short_symbol || symbol
+    //     → NSE:ICICIBANK and BSE:ICICIBANK merge into ICICIBANK
+    //     → SURJIND and SURJIND-PP stay separate (different short_symbols)
+    //
+    // Qty rules (must match wmsCalcAvgCost):
+    //   BUY                 → +quantity,  push lot with costPerUnit = net/qty
+    //   SELL                → +quantity (negative), consume lots (FIFO/LIFO),
+    //                         record gain entry; short sells push a negative lot
+    //   RIGHTS_ENTITLEMENT  → +quantity,  push zero-cost lot
+    //   BONUS               → +quantity,  push zero-cost lot
+    //   RIGHTS_PAYMENT      → no qty,     adjustments += net_amount
+    //   DIVIDEND / INTEREST
+    //    / OTHER_INCOME
+    //    / CAPITAL_REDUCTION → no qty,    adjustments -= |net_amount|
+    //   HISTORICAL_PL       → no qty,     adjustments -= net_amount (signed)
+    //   ignore_for_avg_cost → skip entirely (cost AND qty)
+    //
+    // Final: holding.totalCost = sum(lot.qty × lot.costPerUnit) + adjustments
+    // ------------------------------------------------------------------
 
+    var lots = {};         // key → [ { date, qty, costPerUnit, ... } ]
+    var adjustments = {};  // key → number (non-BUY/SELL cost flow)
+    var gains = [];        // realized gain events (SELL matches)
+    var meta = {};         // key → { symbol, shortSymbol, companyName, exchange, securityType }
+
+    // ------------------------------------------------------------------
+    // Theme D (clarified 2026-04-11): F&O contracts ARE processed by
+    // FIFO/LIFO, but each contract is its own independent position with
+    // its own lots and cost basis — they do NOT fold into the underlying
+    // EQ row. This is enforced by `_engineKey` which keys NFO by full
+    // symbol (RELIANCE300CE, ICICIBANK25APRFUT) while EQ keys by
+    // short_symbol (RELIANCE, ICICIBANK). The avg-cost engine handles
+    // the merge-into-underlying behaviour separately via E.12 — that
+    // logic does NOT live here. See WMS-LESSONS §J.5.D.
+    // ------------------------------------------------------------------
+    // Helper: resolve grouping key. EQ → short_symbol, NFO → full symbol.
+    // ------------------------------------------------------------------
+    function _engineKey(txn) {
+        var secType = (txn.security_type !== undefined ? txn.security_type : txn.securityType) || 'EQUITY';
+        if (secType === 'NFO') {
+            return txn.symbol || txn.short_symbol || txn.shortSymbol || '';
+        }
+        return (txn.short_symbol !== undefined ? txn.short_symbol : txn.shortSymbol) || txn.symbol || '';
+    }
+
+    // ------------------------------------------------------------------
+    // STEP 1 — Walk all transactions in input order (caller sorts by date)
+    // ------------------------------------------------------------------
     for (var i = 0; i < transactions.length; i++) {
         var t = transactions[i];
-        // Support both snake_case (raw DB) and camelCase (normalized)
         var txnType = t.transaction_type || t.type || '';
-        if (wmsIsQtyExcluded(txnType)) continue;
-        if (txnType !== 'BUY' && txnType !== 'SELL') continue;
+        if (!txnType) continue;
+        // Theme B: ignore_for_avg_cost only affects the avg-cost engine.
+        // FIFO/LIFO process IGN BUY/SELL trades as normal — they still move
+        // qty and cost, they just don't pollute weighted-avg cost basis.
+        // (Income / HISTORICAL_PL hit their own skips below regardless.)
 
         var sym = t.symbol || '';
+        var short = (t.short_symbol !== undefined ? t.short_symbol : t.shortSymbol) || sym;
+
+        // Theme D (clarified): F&O does NOT fold into the underlying EQ row,
+        // but each futures / options contract IS its own independent position
+        // with its own lots and FIFO/LIFO cost basis. The grouping key
+        // (`_engineKey`) already keys NFO by full symbol, so each contract
+        // becomes its own holdings row. Avg-cost still folds via E.12 in the
+        // separate `wmsCalcAvgCost` engine — this engine just runs every NFO
+        // txn through the normal BUY/SELL handling below.
+
+        var key = _engineKey(t);
+        if (!key) continue;
         var exch = t.exchange || '';
-        var key = sym + '-' + exch;
         var txnDate = t.transaction_date || t.date || '';
         var txnQty = Math.abs(t.quantity || 0);
         var txnPrice = t.price || 0;
-        // Prefer display_net_amount (trader-perspective) so FIFO P&L is computed against the trader's cost basis
         var txnNetAmount = (t.display_net_amount !== undefined ? t.display_net_amount
                             : (t.net_amount !== undefined ? t.net_amount : t.netAmount)) || 0;
         var txnInvestorId = (t.investor_id !== undefined ? t.investor_id : t.investorId) || '';
         var txnBrokerId = (t.broker_id !== undefined ? t.broker_id : t.brokerId) || '';
         var txnTags = t.tags || [];
         var txnSecType = (t.security_type !== undefined ? t.security_type : t.securityType) || 'EQUITY';
-        var txnShortSymbol = (t.short_symbol !== undefined ? t.short_symbol : t.shortSymbol) || sym;
         var txnCompanyName = (t.company_name !== undefined ? t.company_name : t.companyName) || '';
 
         if (!lots[key]) lots[key] = [];
+        if (!adjustments[key]) adjustments[key] = adjustments[key] || 0;
         if (!meta[key]) {
             meta[key] = {
                 symbol: sym,
-                shortSymbol: txnShortSymbol,
+                shortSymbol: short,
                 companyName: txnCompanyName,
                 exchange: exch,
                 securityType: txnSecType
             };
+        } else {
+            // Keep first-seen metadata but upgrade company name if missing.
+            if (!meta[key].companyName && txnCompanyName) meta[key].companyName = txnCompanyName;
         }
 
+        // ---------- BUY ----------
         if (txnType === 'BUY') {
             var costPerUnit = txnQty !== 0 ? txnNetAmount / txnQty : txnPrice;
-            lots[key].push({
-                date: txnDate,
-                qty: txnQty,
-                price: txnPrice,
-                costPerUnit: costPerUnit,
-                investorId: txnInvestorId,
-                brokerId: txnBrokerId,
-                tags: txnTags,
-                securityType: txnSecType
-            });
-        } else if (txnType === 'SELL') {
+            // Theme E: a BUY against an existing short position is a COVER.
+            // Walk the short lots in FIFO/LIFO order and close them; record
+            // realised gain for each match. The cover gain lives only in
+            // `gains[]` — it never folds into the lot cost basis. Any
+            // remaining BUY qty after all shorts are closed becomes a fresh
+            // long lot at the original buy price (clean cost, no fold-in).
+            var remainingBuyQty = txnQty;
+            var buyPricePerUnit = costPerUnit;
+            var consumeFromEndBuy = (method === 'lifo');
+            while (remainingBuyQty > 0 && lots[key].length > 0) {
+                var sLotIdx = consumeFromEndBuy ? (lots[key].length - 1) : 0;
+                var sLot = lots[key][sLotIdx];
+                if (sLot.qty >= 0) break; // not a short lot
+                var coverQty = Math.min(remainingBuyQty, -sLot.qty);
+                // sLot.costPerUnit was set at SELL time as |sellPrice|, so
+                // openCost = qty × costPerUnit is the original short proceeds.
+                var openCost  = coverQty * sLot.costPerUnit;
+                var coverCost = coverQty * buyPricePerUnit;
+                var coverGain = openCost - coverCost; // +ve = profit on short
+                gains.push({
+                    symbol: sym, shortSymbol: meta[key].shortSymbol,
+                    companyName: meta[key].companyName, exchange: exch,
+                    securityType: txnSecType || sLot.securityType,
+                    buyDate: txnDate, sellDate: sLot.date, qty: coverQty,
+                    buyPrice: txnPrice, buyCostPerUnit: buyPricePerUnit,
+                    sellPrice: sLot.price, sellProceedsPerUnit: sLot.costPerUnit,
+                    buyCost: coverCost, sellProceeds: openCost,
+                    gain: coverGain, holdingDays: 0,
+                    investorId: txnInvestorId, brokerId: txnBrokerId
+                });
+                sLot.qty += coverQty; // qty was negative, move toward 0
+                remainingBuyQty -= coverQty;
+                if (sLot.qty >= 0) {
+                    if (consumeFromEndBuy) lots[key].pop(); else lots[key].shift();
+                }
+            }
+            if (remainingBuyQty > 0) {
+                lots[key].push({
+                    date: txnDate, qty: remainingBuyQty, price: txnPrice, costPerUnit: costPerUnit,
+                    investorId: txnInvestorId, brokerId: txnBrokerId, tags: txnTags,
+                    securityType: txnSecType
+                });
+            }
+            continue;
+        }
+
+        // ---------- SELL ----------
+        if (txnType === 'SELL') {
             var remainingSellQty = txnQty;
             var sellPricePerUnit = txnQty !== 0 ? txnNetAmount / txnQty : txnPrice;
             var sellDate = txnDate;
 
-            // Determine lot consumption order: FIFO = front-to-back, LIFO = back-to-front
-            if (method === 'lifo') {
-                // LIFO — consume newest lots first (from end of array)
-                while (remainingSellQty > 0 && lots[key].length > 0) {
-                    var lotL = lots[key][lots[key].length - 1];
-                    var matchQtyL = Math.min(remainingSellQty, lotL.qty);
+            var consumeFromEnd = (method === 'lifo');
+            while (remainingSellQty > 0 && lots[key].length > 0) {
+                var lotIdx = consumeFromEnd ? (lots[key].length - 1) : 0;
+                var lot = lots[key][lotIdx];
+                // Don't try to consume negative (short) lots with a SELL
+                if (lot.qty <= 0) break;
+                var matchQty = Math.min(remainingSellQty, lot.qty);
 
-                    var buyCostL = matchQtyL * lotL.costPerUnit;
-                    var sellProceedsL = matchQtyL * sellPricePerUnit;
-                    var gainL = sellProceedsL - buyCostL;
-                    var buyDateL = new Date(lotL.date);
-                    var sellDL = new Date(sellDate);
-                    var holdDaysL = Math.floor((sellDL - buyDateL) / (1000 * 60 * 60 * 24));
-
-                    gains.push({
-                        symbol: sym, shortSymbol: meta[key].shortSymbol,
-                        companyName: meta[key].companyName, exchange: exch,
-                        securityType: txnSecType || lotL.securityType,
-                        buyDate: lotL.date, sellDate: sellDate, qty: matchQtyL,
-                        buyPrice: lotL.price, buyCostPerUnit: lotL.costPerUnit,
-                        sellPrice: txnPrice, sellProceedsPerUnit: sellPricePerUnit,
-                        buyCost: buyCostL, sellProceeds: sellProceedsL,
-                        gain: gainL, holdingDays: holdDaysL,
-                        investorId: txnInvestorId, brokerId: txnBrokerId
-                    });
-
-                    lotL.qty -= matchQtyL;
-                    remainingSellQty -= matchQtyL;
-                    if (lotL.qty <= 0) lots[key].pop();
+                var buyCost = matchQty * lot.costPerUnit;
+                var sellProceeds = matchQty * sellPricePerUnit;
+                var gainAmt = sellProceeds - buyCost;
+                var holdDays = 0;
+                if (lot.date && sellDate) {
+                    holdDays = Math.floor((new Date(sellDate) - new Date(lot.date)) / 86400000);
                 }
-            } else {
-                // FIFO — consume oldest lots first (from front of array)
-                while (remainingSellQty > 0 && lots[key].length > 0) {
-                    var lot = lots[key][0];
-                    var matchQty = Math.min(remainingSellQty, lot.qty);
 
-                    var buyCost = matchQty * lot.costPerUnit;
-                    var sellProceeds = matchQty * sellPricePerUnit;
-                    var gain = sellProceeds - buyCost;
-                    var buyDateF = new Date(lot.date);
-                    var sellDF = new Date(sellDate);
-                    var holdDays = Math.floor((sellDF - buyDateF) / (1000 * 60 * 60 * 24));
+                gains.push({
+                    symbol: sym, shortSymbol: meta[key].shortSymbol,
+                    companyName: meta[key].companyName, exchange: exch,
+                    securityType: txnSecType || lot.securityType,
+                    buyDate: lot.date, sellDate: sellDate, qty: matchQty,
+                    buyPrice: lot.price, buyCostPerUnit: lot.costPerUnit,
+                    sellPrice: txnPrice, sellProceedsPerUnit: sellPricePerUnit,
+                    buyCost: buyCost, sellProceeds: sellProceeds,
+                    gain: gainAmt, holdingDays: holdDays,
+                    investorId: txnInvestorId, brokerId: txnBrokerId
+                });
 
-                    gains.push({
-                        symbol: sym, shortSymbol: meta[key].shortSymbol,
-                        companyName: meta[key].companyName, exchange: exch,
-                        securityType: txnSecType || lot.securityType,
-                        buyDate: lot.date, sellDate: sellDate, qty: matchQty,
-                        buyPrice: lot.price, buyCostPerUnit: lot.costPerUnit,
-                        sellPrice: txnPrice, sellProceedsPerUnit: sellPricePerUnit,
-                        buyCost: buyCost, sellProceeds: sellProceeds,
-                        gain: gain, holdingDays: holdDays,
-                        investorId: txnInvestorId, brokerId: txnBrokerId
-                    });
-
-                    lot.qty -= matchQty;
-                    remainingSellQty -= matchQty;
-                    if (lot.qty <= 0) lots[key].shift();
+                lot.qty -= matchQty;
+                remainingSellQty -= matchQty;
+                if (lot.qty <= 0) {
+                    if (consumeFromEnd) lots[key].pop(); else lots[key].shift();
                 }
             }
 
-            // If remainingSellQty > 0 → short sell — treat as negative lot
+            // Unmatched sell qty → short position, push a negative lot
             if (remainingSellQty > 0) {
                 lots[key].push({
-                    date: sellDate,
-                    qty: -remainingSellQty,
-                    price: txnPrice,
+                    date: sellDate, qty: -remainingSellQty, price: txnPrice,
                     costPerUnit: sellPricePerUnit,
-                    investorId: txnInvestorId,
-                    brokerId: txnBrokerId,
-                    tags: txnTags,
+                    investorId: txnInvestorId, brokerId: txnBrokerId, tags: txnTags,
                     securityType: txnSecType
                 });
             }
+            continue;
         }
+
+        // ---------- RIGHTS_ENTITLEMENT / BONUS (zero-cost lot that adds qty)
+        if (txnType === 'RIGHTS_ENTITLEMENT' || txnType === 'BONUS') {
+            lots[key].push({
+                date: txnDate, qty: txnQty, price: 0, costPerUnit: 0,
+                investorId: txnInvestorId, brokerId: txnBrokerId, tags: txnTags,
+                securityType: txnSecType
+            });
+            continue;
+        }
+
+        // ---------- RIGHTS_PAYMENT (Theme F)
+        // Walk lots[key] newest-to-oldest looking for zero-cost rights/bonus
+        // lots and attach the payment directly to them by raising their
+        // costPerUnit. If multiple zero-cost candidates exist (e.g. two
+        // rounds of rights), split the payment proportionally to qty so a
+        // later partial sell consumes the right basis. Falls back to the
+        // legacy `adjustments[]` flow if no zero-cost lot is available.
+        if (txnType === 'RIGHTS_PAYMENT') {
+            var rpLots = lots[key] || [];
+            var rpCandidates = [];
+            for (var rci = rpLots.length - 1; rci >= 0; rci--) {
+                var rcLot = rpLots[rci];
+                if (rcLot.qty > 0 && rcLot.costPerUnit === 0) rpCandidates.push(rcLot);
+            }
+            if (rpCandidates.length === 0) {
+                adjustments[key] = (adjustments[key] || 0) + txnNetAmount;
+                continue;
+            }
+            var rpTotalQty = 0;
+            for (var rcj = 0; rcj < rpCandidates.length; rcj++) rpTotalQty += rpCandidates[rcj].qty;
+            if (rpTotalQty <= 0) {
+                adjustments[key] = (adjustments[key] || 0) + txnNetAmount;
+                continue;
+            }
+            for (var rck = 0; rck < rpCandidates.length; rck++) {
+                var rcc = rpCandidates[rck];
+                var share = txnNetAmount * (rcc.qty / rpTotalQty);
+                rcc.costPerUnit = (rcc.costPerUnit * rcc.qty + share) / rcc.qty;
+            }
+            continue;
+        }
+
+        // ---------- DIVIDEND / INTEREST / OTHER_INCOME → SKIP (Theme A)
+        // Periodic income is part of the avg-cost return calculation only.
+        // FIFO/LIFO realises gain/loss on actual lot disposal, so income
+        // here would double-count. CAPITAL_REDUCTION is genuine return of
+        // capital, so it still flows through as a cost reduction.
+        if (txnType === 'DIVIDEND' || txnType === 'INTEREST' || txnType === 'OTHER_INCOME') {
+            continue;
+        }
+        if (WMS_INCOME_TYPES.indexOf(txnType) >= 0) {  // CAPITAL_REDUCTION lands here
+            adjustments[key] = (adjustments[key] || 0) - Math.abs(txnNetAmount);
+            continue;
+        }
+
+        // ---------- HISTORICAL_PL → SKIP (Theme C)
+        // Historical realised P&L was computed under avg-cost rules and
+        // would inject phantom basis under FIFO/LIFO. The avg engine still
+        // honours it; FIFO/LIFO ignores it entirely.
+        if (txnType === 'HISTORICAL_PL') {
+            continue;
+        }
+
+        // Anything else is ignored (e.g. unknown types).
     }
 
-    // Build holdings from remaining lots
+    // ------------------------------------------------------------------
+    // STEP 2 — Build holdings from remaining lots + adjustments
+    // ------------------------------------------------------------------
     var holdings = {};
-    var keys = Object.keys(lots);
-    for (var k = 0; k < keys.length; k++) {
-        var hKey = keys[k];
-        var lotArr = lots[hKey];
-        if (lotArr.length === 0) continue;
+    var allKeys = {};
+    var lotKeys = Object.keys(lots);
+    for (var lk = 0; lk < lotKeys.length; lk++) allKeys[lotKeys[lk]] = true;
+    var adjKeys = Object.keys(adjustments);
+    for (var ak = 0; ak < adjKeys.length; ak++) allKeys[adjKeys[ak]] = true;
 
+    var finalKeys = Object.keys(allKeys);
+    for (var kk = 0; kk < finalKeys.length; kk++) {
+        var hKey = finalKeys[kk];
+        var lotArr = lots[hKey] || [];
         var totalQty = 0;
-        var totalCost = 0;
+        var lotCost = 0;
         var tagsSet = {};
-
         for (var j = 0; j < lotArr.length; j++) {
             var lt = lotArr[j];
             totalQty += lt.qty;
-            totalCost += lt.qty * lt.costPerUnit;
+            lotCost += lt.qty * lt.costPerUnit;
             if (lt.tags) {
                 for (var ti = 0; ti < lt.tags.length; ti++) tagsSet[lt.tags[ti]] = true;
             }
         }
+        var totalCost = lotCost + (adjustments[hKey] || 0);
+
+        // Avg cost rule mirrors wmsCalcAvgCost (I.3.4):
+        //   long  (qty>0) → totalCost>0 ? totalCost/qty : 0
+        //   short (qty<0) → |totalCost/qty|
+        //   flat  (qty=0) → 0
+        var avgCost = 0;
+        if (totalQty > 0) {
+            avgCost = totalCost > 0 ? totalCost / totalQty : 0;
+        } else if (totalQty < 0) {
+            avgCost = Math.abs(totalCost / totalQty);
+        }
+
+        // Skip empty rows entirely (no lots, no cost residual)
+        if (lotArr.length === 0 && !adjustments[hKey]) continue;
 
         var m = meta[hKey] || {};
         holdings[hKey] = {
             symbol: m.symbol || '',
-            shortSymbol: m.shortSymbol || '',
+            shortSymbol: m.shortSymbol || hKey,
             companyName: m.companyName || '',
             exchange: m.exchange || '',
             securityType: m.securityType || 'EQUITY',
             quantity: totalQty,
-            totalCost: totalCost,
-            avgCost: totalQty !== 0 ? totalCost / totalQty : 0,
+            totalCost: wmsRoundMoney(totalCost),
+            avgCost: wmsRoundMoney(avgCost),
             lots: lotArr,
             tags: Object.keys(tagsSet)
         };

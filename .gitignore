@@ -1,1 +1,4 @@
 .DS_Store
+
+# Cost-engine harness regen artefact (rebuild via tests/build-cost-engine-xlsx.py)
+tests/cost-engine-results.json

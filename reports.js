@@ -77,10 +77,13 @@ function rptFifoEngine(txns) {
         h._txns = [];
     }
 
-    // Attach latestPrice (from last txn for each symbol) and _txns
+    // Attach latestPrice (from last txn for each symbol) and _txns.
+    // Engine grouping (J.2 updated): EQ → short_symbol, NFO → full symbol.
     for (var n = 0; n < rptTransactions.length; n++) {
         var tx = rptTransactions[n];
-        var hKey = (tx.symbol || '') + '-' + (tx.exchange || '');
+        var hKey = (tx.securityType === 'NFO')
+            ? (tx.symbol || '')
+            : (tx.shortSymbol || tx.symbol || '');
         if (holdings[hKey]) {
             holdings[hKey]._txns.push(tx);
             holdings[hKey].latestPrice = tx.price;

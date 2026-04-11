@@ -1528,48 +1528,21 @@ function lgRenderSummary() {
         return (a.transaction_date || '').localeCompare(b.transaction_date || '');
     });
 
-    // Rewrite transactions so the FIFO engine keys by short_symbol rather than
-    // the full symbol — this mirrors the Trading Portfolio (trCalcHoldings)
-    // behaviour where SURJIND and SURJIND-PP (rights partly-paid) combine into
-    // one row. Exchange is normalised to 'NSE' for equity so BSE/NSE legs merge.
-    var rewritten = sorted.map(function(t) {
-        var copy = {};
-        for (var kk in t) { if (Object.prototype.hasOwnProperty.call(t, kk)) copy[kk] = t[kk]; }
-        var shortSym = t.short_symbol || t.symbol || '';
-        copy.symbol = shortSym;
-        if ((t.security_type || '') !== 'NFO') {
-            copy.exchange = 'NSE';
-        }
-        return copy;
-    });
-
-    // Use shared FIFO engine (wms-shared.js)
-    var fifo = wmsCalcFifoCost(rewritten);
+    // Use shared FIFO engine (wms-shared.js) — it now handles rights/bonus/
+    // income/historical_pl natively and groups EQ across exchanges while
+    // keeping NFO contracts distinct.
+    var fifo = wmsCalcFifoCost(sorted);
     var holdingsMap = fifo.holdings;
     var allGains = fifo.gains || [];
 
-    // Post-adjust for RIGHTS_PAYMENT — the FIFO engine only processes BUY/SELL,
-    // so it skips rights payments entirely. Mirror wmsCalcAvgCost (E.12) by
-    // adding the rights payment net_amount to the matching holding's totalCost
-    // (qty unchanged, since RIGHTS_ENTITLEMENT already added the shares).
-    for (var rpI = 0; rpI < rewritten.length; rpI++) {
-        var rpT = rewritten[rpI];
-        if ((rpT.transaction_type || '') !== 'RIGHTS_PAYMENT') continue;
-        if (rpT.ignore_for_avg_cost) continue;
-        var rpKey = (rpT.symbol || '') + '-' + (rpT.exchange || '');
-        var rpH = holdingsMap[rpKey];
-        if (!rpH) continue;
-        var rpAmt = rpT.display_net_amount !== undefined ? rpT.display_net_amount
-                    : (rpT.net_amount !== undefined ? rpT.net_amount : 0);
-        rpH.totalCost += rpAmt;
-        if (rpH.quantity !== 0) rpH.avgCost = rpH.totalCost / rpH.quantity;
-    }
-
-    // Build source lookup for NFO symbol decoding (keyed same as engine: short_symbol+'-'+exchange)
+    // Build source lookup for NFO symbol decoding — match the engine's key
+    // scheme: EQ keys by short_symbol, NFO keys by full symbol.
     var sourceLookup = {};
-    for (var si = 0; si < rewritten.length; si++) {
-        var st = rewritten[si];
-        var sKey = (st.symbol || '') + '-' + (st.exchange || '');
+    for (var si = 0; si < sorted.length; si++) {
+        var st = sorted[si];
+        var sKey = (st.security_type === 'NFO')
+            ? (st.symbol || '')
+            : (st.short_symbol || st.symbol || '');
         if (!sourceLookup[sKey]) sourceLookup[sKey] = st;
     }
 
