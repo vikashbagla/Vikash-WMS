@@ -93,7 +93,8 @@ var LG_TYPE_LABELS = {
     'CASH_PAID': 'Cash Out',
     'OPENING_BALANCE': 'Opening Bal',
     'ADJUSTMENT': 'Adjustment',
-    'INTEREST_BOOKED': 'Interest'
+    'INTEREST_BOOKED': 'Interest',
+    'NFO_PNL': 'F&O P&L'
 };
 
 var LG_TYPE_CSS = {
@@ -112,7 +113,8 @@ var LG_TYPE_CSS = {
     'CASH_PAID': 'lg-type-sell',
     'OPENING_BALANCE': 'lg-type-cash',
     'ADJUSTMENT': 'lg-type-other',
-    'INTEREST_BOOKED': 'lg-type-income'
+    'INTEREST_BOOKED': 'lg-type-income',
+    'NFO_PNL': 'lg-type-income'
 };
 
 // ============================================================================
@@ -493,7 +495,7 @@ function lgFmtDate(dateStr) {
 // ============================================================================
 
 function lgFormatSymbol(row) {
-    if (row._rowType !== 'trade') return '';
+    if (row._rowType !== 'trade' && row._rowType !== 'nfo_pnl') return '';
     var source = row._source;
     var sym = source.short_symbol || source.symbol || '';
 
@@ -530,6 +532,8 @@ function lgFormatType(row) {
 
     if (row._rowType === 'ledger') {
         type = row.entryType || '';
+    } else if (row._rowType === 'nfo_pnl') {
+        type = 'NFO_PNL';
     } else if (row._rowType === 'trade') {
         type = row._source.transaction_type || '';
     }
@@ -1281,6 +1285,14 @@ function lgRenderEntries(rows) {
                 '<a href="#" onclick="event.preventDefault(); lgEditEntry(\'' + wmsEsc(source.id) + '\');" title="Edit">✏️</a>' +
                 '<a href="#" class="lg-del" onclick="event.preventDefault(); lgDeleteEntry(\'' + wmsEsc(source.id) + '\', this);" title="Delete">🗑️</a>' +
                 '</span>';
+        } else if (row._rowType === 'nfo_pnl') {
+            // Synthetic realised P&L row from F&O cover (FIFO matched)
+            symbol = lgFormatSymbol(row);
+            typeHtml = lgFormatType(row);
+            qty = row.quantity ? (typeof formatQuantity === 'function' ? formatQuantity(row.quantity) : String(Math.round(row.quantity))) : '';
+            amount = lgFmt(row.amount);
+            balance = lgFmt(row._runningBalance);
+            lastBalance = row._runningBalance;
         } else if (row._rowType === 'trade') {
             var source = row._source;
             symbol = lgFormatSymbol(row);
@@ -1313,11 +1325,21 @@ function lgRenderEntries(rows) {
 
         // Trade rows are clickable → open shared trading edit modal
         var trAttrs = '';
-        if (row._rowType === 'trade' && row._source && row._source.id) {
+        if (row._rowType === 'nfo_pnl') {
+            trAttrs = ' class="lg-row-nfo-pnl"';
+        } else if (row._rowType === 'trade' && row.isNFO) {
+            // NFO trade rows are informational (no cash impact) — muted style
+            trAttrs = ' class="lg-row-trade lg-row-nfo" data-txn-id="' + wmsEsc((row._source && row._source.id) || '') + '"';
+        } else if (row._rowType === 'trade' && row._source && row._source.id) {
             trAttrs = ' class="lg-row-trade" data-txn-id="' + wmsEsc(row._source.id) + '"';
         } else if (row._rowType === 'pending_interest') {
             trAttrs = ' class="lg-row-pending" data-pending-key="' + wmsEsc(row._pendingKey) + '"';
         }
+
+        // NFO trade rows: show amount but muted (no cash impact); balance is unchanged
+        var isNfoTrade = (row._rowType === 'trade' && row.isNFO);
+        var displayAmt = isNfoTrade ? ('<span style="opacity:0.45">' + amount + '</span>') : amount;
+        var displayBal = isNfoTrade ? ('<span style="opacity:0.45">' + balance + '</span>') : balance;
 
         html += '<tr' + trAttrs + '>' +
             '<td class="text-right">' + date + '</td>' +
@@ -1326,11 +1348,14 @@ function lgRenderEntries(rows) {
             '<td class="text-right">' + qty + '</td>' +
             '<td class="text-right">' + price + '</td>' +
             '<td class="text-right">' + net + '</td>' +
-            '<td class="text-right ' + amtClass + '">' + amount + '</td>' +
-            '<td class="text-right ' + balClass + '">' + balance + '</td>' +
+            '<td class="text-right ' + amtClass + '">' + displayAmt + '</td>' +
+            '<td class="text-right ' + balClass + '">' + displayBal + '</td>' +
             '</tr>';
 
-        totalAmount += row.amount;
+        // Only accumulate cash-impact rows in the total
+        if (row._nfoCashImpact !== false) {
+            totalAmount += row.amount;
+        }
     });
 
     // Wipe dynamic rows; re-insert preserved nodes (DOM-identity intact, so

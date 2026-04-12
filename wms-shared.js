@@ -4927,6 +4927,7 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
         // else: BONUS, RIGHTS_ENTITLEMENT → amt stays 0
         //       HISTORICAL_PL → use sign as stored in amt
 
+        var isNfo = _isNFO(t);
         combined.push({
             _rowType: 'trade',
             _source: t,
@@ -4943,7 +4944,12 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
             transactionType: t.transaction_type,
             quantity: t.quantity || 0,
             price: t.price || 0,
-            isNFO: _isNFO(t),
+            isNFO: isNfo,
+            // NFO trades appear as line items but do NOT affect the running
+            // cash balance — futures/options are not cash transactions (only
+            // margin is blocked). The realised P&L on cover is posted
+            // separately via synthetic NFO_PNL rows below.
+            _nfoCashImpact: !isNfo,
             // netAmount on the ledger row reflects the perspective-correct absolute value
             // (unsigned) so downstream display (e.g. price-per-unit) stays consistent.
             netAmount: Math.abs(amt),
@@ -4952,7 +4958,124 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
         });
     });
 
-    // Sort by date, then ledger before trade on same date, then created_at
+    // -----------------------------------------------------------------
+    // NFO REALISED P&L — FIFO matching within each contract.
+    //
+    // F&O trades post as informational line items (no cash impact). When
+    // a covering trade (SELL against prior BUY, or BUY against prior
+    // short SELL) occurs, the realised P&L is computed on a FIFO basis
+    // and a synthetic NFO_PNL row is inserted at the cover date. This
+    // row DOES hit the running balance.
+    //
+    // Sign convention (investor-receivable):
+    //   investor / trader perspective:
+    //     profit → credit (reduces balance — investor owes less)
+    //     loss   → debit  (increases balance — investor owes more)
+    //   broker perspective (broker is a vendor):
+    //     profit → debit  (increases balance — firm owes broker more)
+    //     loss   → credit (reduces balance — firm owes broker less)
+    // -----------------------------------------------------------------
+    var nfoRows = combined.filter(function(r) { return r.isNFO && r._rowType === 'trade'; });
+    if (nfoRows.length > 0) {
+        // Group by bare symbol (strip exchange prefix for consistent keying)
+        var nfoBySymbol = {};
+        nfoRows.forEach(function(r) {
+            var bare = (r._source.symbol || r.symbol || '').replace(/^[A-Z]+:/, '');
+            if (!nfoBySymbol[bare]) nfoBySymbol[bare] = [];
+            nfoBySymbol[bare].push(r);
+        });
+
+        var nfoPnlRows = [];
+        var symbolKeys = Object.keys(nfoBySymbol);
+        for (var si = 0; si < symbolKeys.length; si++) {
+            var sym = symbolKeys[si];
+            var rows = nfoBySymbol[sym];
+            // Sort by date, then created_at for same-date ordering
+            rows.sort(function(a, b) {
+                return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0;
+            });
+
+            // FIFO lots: each BUY creates a lot, each SELL consumes oldest lots.
+            // Lots track: qty remaining, cost-per-unit (perspective-correct).
+            var lots = [];
+            for (var ri = 0; ri < rows.length; ri++) {
+                var row = rows[ri];
+                var qty = Math.abs(row.quantity);
+                if (qty === 0) continue;
+                var perUnit = qty > 0 ? (row.netAmount / qty) : 0;
+
+                if (row.transactionType === 'BUY') {
+                    // Open a new lot
+                    lots.push({ qty: qty, costPerUnit: perUnit });
+                } else if (row.transactionType === 'SELL') {
+                    // Cover against oldest lots (FIFO)
+                    var sellPerUnit = perUnit;
+                    var remainToSell = qty;
+                    var totalBuyCost = 0;
+                    var totalSellProceeds = 0;
+
+                    while (remainToSell > 0 && lots.length > 0) {
+                        var lot = lots[0];
+                        var matched = Math.min(remainToSell, lot.qty);
+                        totalBuyCost += matched * lot.costPerUnit;
+                        totalSellProceeds += matched * sellPerUnit;
+                        lot.qty -= matched;
+                        remainToSell -= matched;
+                        if (lot.qty <= 0) lots.shift();
+                    }
+
+                    // Realised P&L = sell proceeds − buy cost (FIFO matched)
+                    var realisedPnl = wmsRoundMoney(totalSellProceeds - totalBuyCost);
+                    if (realisedPnl === 0) continue; // no P&L to post
+
+                    // Sign for running balance:
+                    //   Investor/trader: profit (positive realisedPnl) → credit (negative amount)
+                    //                    loss (negative realisedPnl) → debit (positive amount)
+                    //   Broker: flipped — profit → debit, loss → credit
+                    var pnlAmount;
+                    if (perspective === 'broker') {
+                        pnlAmount = realisedPnl;   // profit = +ve = debit (firm owes broker)
+                    } else {
+                        pnlAmount = -realisedPnl;   // profit = +ve → -ve = credit (investor owes less)
+                    }
+
+                    nfoPnlRows.push({
+                        _rowType: 'nfo_pnl',
+                        _source: row._source,
+                        _nfoCashImpact: true,
+                        date: row.date,
+                        // Sort after the SELL trade on the same date so the
+                        // P&L line appears right below the covering trade.
+                        sortKey: row.sortKey.replace('|1|', '|2|'),
+                        entryType: 'NFO_PNL',
+                        amount: pnlAmount,
+                        investorId: row.investorId,
+                        traderId: row.traderId,
+                        brokerId: row.brokerId,
+                        reference: '',
+                        notes: sym + ' F&O P&L',
+                        symbol: sym,
+                        transactionType: 'NFO_PNL',
+                        quantity: qty - remainToSell, // qty actually matched
+                        price: 0,
+                        isNFO: true,
+                        netAmount: Math.abs(realisedPnl),
+                        grossAmount: 0,
+                        traderCharges: 0,
+                        _realisedPnl: realisedPnl // unsigned: +ve = profit, -ve = loss
+                    });
+                }
+            }
+        }
+
+        // Merge P&L rows into combined
+        for (var pi = 0; pi < nfoPnlRows.length; pi++) {
+            combined.push(nfoPnlRows[pi]);
+        }
+    }
+
+    // Sort by date, then ledger before trade on same date, then created_at.
+    // NFO_PNL rows sort after their covering SELL (sortKey uses |2| vs |1|).
     combined.sort(function(a, b) { return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0; });
 
     // Compute running balance.
@@ -4960,13 +5083,18 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
     // (they represent the entire starting cash position, not a delta). All
     // earlier history is discarded at that point. Subsequent rows continue
     // from the new base.
+    //
+    // NFO trade rows (_nfoCashImpact === false) appear in the ledger but
+    // do NOT change the running balance — they are informational line items.
+    // Only NFO_PNL rows (realised P&L on cover) hit the balance.
     var bal = 0;
     combined.forEach(function(row) {
         if (row._rowType === 'ledger' && row.entryType === 'OPENING_BALANCE') {
             bal = row.amount;
-        } else {
+        } else if (row._nfoCashImpact !== false) {
             bal += row.amount;
         }
+        // else: NFO trade row — balance unchanged
         row._runningBalance = wmsRoundMoney(bal);
     });
 
