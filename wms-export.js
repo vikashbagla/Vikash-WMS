@@ -115,6 +115,7 @@ var WMS_EXPORT_HEADER_FILL = 'F7FAFC';
 var WMS_EXPORT_TOTAL_FILL  = 'F0F4F8';
 var WMS_EXPORT_SECTION_FILL = 'EEF2FF';
 var WMS_EXPORT_RED = 'DC2626';
+var WMS_EXPORT_BLUE = '0000FF';   // Hardcoded input values — industry standard
 var WMS_EXPORT_BLACK = '2D3748';
 var WMS_EXPORT_GREY = '718096';
 var WMS_EXPORT_BORDER_COLOR = 'E2E8F0';
@@ -154,11 +155,24 @@ function _wmsExStyleCell(cell, resolved, isHeader, isTotal, isSectionTitle) {
     };
     if (isHeader || isTotal || isSectionTitle || resolved.bold) font.bold = true;
 
-    // Negative number → red font (only for data cells)
-    if (!isHeader && !isSectionTitle && cell.value !== null && cell.value !== undefined) {
-        var numVal = (typeof cell.value === 'number') ? cell.value : NaN;
+    // Determine if this is a formula cell (ExcelJS stores formula as cell.value.formula)
+    var isFormula = (cell.value !== null && typeof cell.value === 'object' && cell.value.formula);
+
+    // Data cells: blue text for hardcoded inputs, black for formulas.
+    // Negative values → red (overrides blue/black).
+    if (!isHeader && !isSectionTitle && !isTotal) {
+        var numVal;
+        if (isFormula) {
+            numVal = (typeof cell.value.result === 'number') ? cell.value.result : NaN;
+        } else {
+            numVal = (typeof cell.value === 'number') ? cell.value : NaN;
+        }
+
         if (!isNaN(numVal) && numVal < 0) {
             font.color = { argb: WMS_EXPORT_RED };
+        } else if (!isFormula && cell.value !== null && cell.value !== undefined && cell.value !== '') {
+            // Hardcoded input value → blue text (industry standard)
+            font.color = { argb: WMS_EXPORT_BLUE };
         }
     }
     cell.font = font;
@@ -350,12 +364,13 @@ function wmsExportExcel(config) {
 
                 case 'title':
                     var titleRow = ws.getRow(curRow);
+                    // Apply section title fill across all columns (no merge — keeps navigation easy)
                     var titleCell = titleRow.getCell(1);
                     titleCell.value = sec.text || '';
                     _wmsExStyleCell(titleCell, { align: 'left', bold: true, excelFmt: '@' }, false, false, true);
-                    // Merge across all columns
-                    if (colCount > 1) {
-                        ws.mergeCells(curRow, 1, curRow, colCount);
+                    for (var tci = 1; tci < colCount; tci++) {
+                        var emptyCell = titleRow.getCell(tci + 1);
+                        emptyCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: WMS_EXPORT_SECTION_FILL } };
                     }
                     titleRow.height = 20;
                     curRow++;
@@ -411,10 +426,8 @@ function wmsExportExcel(config) {
                             _wmsExStyleCell(eCell, { align: ePreset.align, excelFmt: ePreset.excelFmt, bold: sr.bold || false }, false, false, false);
                         }
 
-                        // Merge label across columns if needed
-                        if (sr.labelSpan && sr.labelSpan > 1) {
-                            ws.mergeCells(curRow, 1, curRow, sr.labelSpan);
-                        }
+                        // labelSpan is ignored — no column merging (makes navigation hard).
+                        // The label simply sits in column 1 and the value in the last column.
 
                         curRow++;
                     }

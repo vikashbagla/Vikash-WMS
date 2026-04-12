@@ -2749,10 +2749,10 @@ function lgExportExcel() {
         result: d.potentialTax
     };
 
-    // pct of outstanding
-    var sumPctFormula = d.outstanding !== 0
-        ? { formula: hcVal + sumBalNoMtmRow + '/' + hcVal + sumOutstRow, result: d.pctBalOverOutstanding }
-        : d.pctBalOverOutstanding;
+    // pct of outstanding (uses cash balance, same denominator as Outstanding row)
+    var sumPctFormula = d.outstandingBal !== 0
+        ? { formula: hcVal + sumBalNoMtmRow + '/' + hcVal + sumOutstRow, result: d.outstandingBal !== 0 ? (d.balNoMtm / d.outstandingBal) : 0 }
+        : 0;
 
     var sections = [
         // ── Transactions ──
@@ -2772,13 +2772,16 @@ function lgExportExcel() {
         { type: 'blank' },
 
         // ── Summary Cards ──
+        // Outstanding in export = cash balance only (not balance + margin).
+        // Net Receivable = Holdings − Cash Balance − Tax. This matches the
+        // on-screen card formula which also uses clampedCashBal, not the
+        // full outstanding (margin is collateral, not cash owed).
         { type: 'summary', rows: [
-            { label: 'Total Value of Holdings', value: sumHoldingsVal, labelSpan: 5 },
-            { label: 'Less: Outstanding (Bal + Margin)', value: d.outstanding, labelSpan: 5,
-                extraCol: 5, extraValue: 'Bal ' + Math.round(d.outstandingBal).toLocaleString() + ' + Margin ' + Math.round(d.outstandingMargin).toLocaleString(), extraFormat: 'text' },
-            { label: 'Less: Potential Tax (' + LG_TAX_RATE_PCT + '%)', value: sumTaxFormula, labelSpan: 5 },
-            { label: 'Net Receivable / (Payable)', value: sumNetRecFormula, bold: true, labelSpan: 5 },
-            { label: 'Balance without MTM', value: sumBalNoMtmFormula, bold: true, labelSpan: 5,
+            { label: 'Total Value of Holdings', value: sumHoldingsVal },
+            { label: 'Less: Outstanding', value: d.outstandingBal },
+            { label: 'Less: Potential Tax (' + LG_TAX_RATE_PCT + '%)', value: sumTaxFormula },
+            { label: 'Net Receivable / (Payable)', value: sumNetRecFormula, bold: true },
+            { label: 'Balance without MTM', value: sumBalNoMtmFormula, bold: true,
                 extraCol: 6, extraValue: sumPctFormula, extraFormat: 'pct' }
         ]},
         { type: 'blank' },
