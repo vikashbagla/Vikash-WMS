@@ -1327,8 +1327,8 @@ function lgRenderEntries(rows) {
         var trAttrs = '';
         if (row._rowType === 'nfo_pnl') {
             trAttrs = ' class="lg-row-nfo-pnl"';
-        } else if (row._rowType === 'trade' && row.isNFO) {
-            // NFO trade rows are informational (no cash impact) — muted style
+        } else if (row._rowType === 'trade' && row.isNFO && !row._isOption) {
+            // Futures trade rows are informational (no cash impact) — muted style
             trAttrs = ' class="lg-row-trade lg-row-nfo" data-txn-id="' + wmsEsc((row._source && row._source.id) || '') + '"';
         } else if (row._rowType === 'trade' && row._source && row._source.id) {
             trAttrs = ' class="lg-row-trade" data-txn-id="' + wmsEsc(row._source.id) + '"';
@@ -1336,10 +1336,11 @@ function lgRenderEntries(rows) {
             trAttrs = ' class="lg-row-pending" data-pending-key="' + wmsEsc(row._pendingKey) + '"';
         }
 
-        // NFO trade rows: show amount but muted (no cash impact); balance is unchanged
-        var isNfoTrade = (row._rowType === 'trade' && row.isNFO);
-        var displayAmt = isNfoTrade ? ('<span style="opacity:0.45">' + amount + '</span>') : amount;
-        var displayBal = isNfoTrade ? ('<span style="opacity:0.45">' + balance + '</span>') : balance;
+        // Futures trade rows: muted (no cash impact, balance unchanged).
+        // Option trade rows: normal (premium is cash, balance changes).
+        var isFuturesTrade = (row._rowType === 'trade' && row.isNFO && !row._isOption);
+        var displayAmt = isFuturesTrade ? ('<span style="opacity:0.45">' + amount + '</span>') : amount;
+        var displayBal = isFuturesTrade ? ('<span style="opacity:0.45">' + balance + '</span>') : balance;
 
         html += '<tr' + trAttrs + '>' +
             '<td class="text-right">' + date + '</td>' +

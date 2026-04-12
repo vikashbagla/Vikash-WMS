@@ -4818,6 +4818,14 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
         return /F&O|FNO|NFO/.test(product) || /F&O|FNO|NFO/.test(secType);
     };
 
+    // Helper: check if an NFO transaction is an option contract (CE/PE suffix).
+    // Options have cash impact (premium is real cash), unlike futures where the
+    // notional is not a cash flow.
+    var _isOption = function(t) {
+        var sym = t.symbol || '';
+        return /(?:CE|PE)$/i.test(sym);
+    };
+
     // Helper: check if a ledger entry matches investor/trader filters.
     // Ledger entries have investor_id (and trader_id == investor_id in this
     // system's UUID namespace), so a trader filter resolves against investor_id
@@ -4928,6 +4936,7 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
         //       HISTORICAL_PL → use sign as stored in amt
 
         var isNfo = _isNFO(t);
+        var isOpt = isNfo && _isOption(t);
         combined.push({
             _rowType: 'trade',
             _source: t,
@@ -4945,11 +4954,12 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
             quantity: t.quantity || 0,
             price: t.price || 0,
             isNFO: isNfo,
-            // NFO trades appear as line items but do NOT affect the running
-            // cash balance — futures/options are not cash transactions (only
-            // margin is blocked). The realised P&L on cover is posted
-            // separately via synthetic NFO_PNL rows below.
-            _nfoCashImpact: !isNfo,
+            _isOption: isOpt,
+            // Options: premium IS cash — BUY = debit (paid), SELL = credit
+            // (received). P&L falls out of the net of both premiums naturally.
+            // Futures: NOT cash — only margin is blocked; realised P&L posts
+            // via synthetic NFO_PNL rows on cover (see FIFO matching below).
+            _nfoCashImpact: isOpt ? true : !isNfo,
             // netAmount on the ledger row reflects the perspective-correct absolute value
             // (unsigned) so downstream display (e.g. price-per-unit) stays consistent.
             netAmount: Math.abs(amt),
@@ -4975,7 +4985,9 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
     //     profit → debit  (increases balance — firm owes broker more)
     //     loss   → credit (reduces balance — firm owes broker less)
     // -----------------------------------------------------------------
-    var nfoRows = combined.filter(function(r) { return r.isNFO && r._rowType === 'trade'; });
+    // Only futures need P&L rows — option premiums are already cash items
+    // (both legs hit the balance), so their net IS the realised P&L.
+    var nfoRows = combined.filter(function(r) { return r.isNFO && !r._isOption && r._rowType === 'trade'; });
     if (nfoRows.length > 0) {
         // Group by bare symbol (strip exchange prefix for consistent keying)
         var nfoBySymbol = {};
@@ -5302,6 +5314,21 @@ function wmsCalcMarginFIFO(transactions) {
         var qty = parseFloat(t.quantity) || 0;
         var isShort = qty < 0; // negative qty = short position
 
+        // Detect option contracts (CE/PE suffix)
+        var sym = t.symbol || '';
+        var isOption = /(?:CE|PE)$/i.test(sym);
+
+        // Option BUY that opens a new position: no margin needed (buyer pays
+        // premium, no collateral). But if this BUY is closing an existing short
+        // option position, it DOES need to flow through to release margin.
+        if (isOption && !isShort) {
+            var existingPos = positions[contractKey] || [];
+            var existingPosQty = 0;
+            for (var ei = 0; ei < existingPos.length; ei++) existingPosQty += existingPos[ei].qty;
+            if (existingPosQty >= 0) return; // No short position to close → skip
+            // else: there IS a short position → fall through to closing logic
+        }
+
         // Margin is computed against the trader's cost basis — use display_net_amount,
         // which collapses to net_amount when investor == trader.
         var amt = t.display_net_amount !== undefined
@@ -5321,8 +5348,29 @@ function wmsCalcMarginFIFO(transactions) {
         }
         if (!marginRate || marginRate === 0) return; // No margin for this investor-broker combo
 
-        // For investor ≠ trader, margin is based on trader's portion
-        var marginAmt = wmsCalcMarginBlocked(Math.abs(amt), marginRate);
+        // Margin amount:
+        //   Futures: margin% × |display_net_amount| (contract value basis)
+        //   Option SELL (writing): margin% × qty × strike_price
+        //     Strike comes from securities_nfo cache; falls back to trade price if unavailable.
+        var marginAmt;
+        if (isOption) {
+            // Option SELL — margin on notional (qty × strike)
+            var strikePrice = 0;
+            var nfoRec = t.security_id ? (wmsRefData.securitiesNfoMap || {})[t.security_id] : null;
+            if (nfoRec && nfoRec.strike_price) {
+                strikePrice = parseFloat(nfoRec.strike_price) || 0;
+            }
+            if (!strikePrice) {
+                // Fallback: parse strike from symbol (e.g., MANAPPURAM26MAR255CE → 255)
+                var m = sym.match(/(\d+(?:\.\d+)?)\s*(?:CE|PE)$/i);
+                if (m) strikePrice = parseFloat(m[1]) || 0;
+            }
+            var notional = Math.abs(qty) * strikePrice;
+            marginAmt = wmsCalcMarginBlocked(notional, marginRate);
+        } else {
+            // Futures — existing logic: margin% × |display_net_amount|
+            marginAmt = wmsCalcMarginBlocked(Math.abs(amt), marginRate);
+        }
 
         if (!positions[contractKey]) {
             positions[contractKey] = [];
