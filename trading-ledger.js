@@ -2597,17 +2597,169 @@ function lgExportExcel() {
         return;
     }
 
-    // Opening balance as a data row
+    // Column letters for formula references (0-based: A=Date, B=Symbol, ... H=Balance)
+    // Txn cols: A=Date, B=Symbol, C=Type, D=Qty, E=Price, F=Net, G=Amount, H=Balance
+    var C = wmsExColLetter; // shorthand
+    var cAmt = C(6);  // G = Amount
+    var cBal = C(7);  // H = Balance
+    var cQty = C(3);  // D = Qty
+    var cNet = C(5);  // F = Net
+
+    // ── Row tracking ──
+    // Row 1 = header, Row 2 = opening balance, Row 3.. = data
+    var headerRow = 1;
+    var obExcelRow = 2;
+    var firstDataRow = 3;
+    var lastDataRow = firstDataRow + d.txnRows.length - 1;
+    var totalExcelRow = lastDataRow + 1;
+
+    // ── Opening Balance row with formula for Balance ──
     var obRow = [d.openingBal.date, 'Opening Balance', '', null, null, null, null, d.openingBal.amount];
     obRow._bold = true;
     obRow._fill = 'FEFCE8';
+
+    // ── Transaction rows: inject formulas for Amount & Balance ──
+    var txnRowsWithFormulas = d.txnRows.map(function(row, idx) {
+        var r = firstDataRow + idx; // Excel row number
+        var newRow = row.slice(); // shallow copy
+
+        // Amount (col G): if there's qty AND net, use formula =D*F, else keep value
+        if (row[3] !== null && row[5] !== null && row[3] !== 0) {
+            newRow[6] = { formula: cQty + r + '*' + cNet + r, result: row[6] || 0 };
+        }
+
+        // Balance (col H): running sum = OB + SUM(Amount from first data row to this row)
+        newRow[7] = {
+            formula: cBal + obExcelRow + '+SUM(' + cAmt + firstDataRow + ':' + cAmt + r + ')',
+            result: row[7] || 0
+        };
+
+        // Carry over row-level flags
+        if (row._bold) newRow._bold = true;
+        if (row._fill) newRow._fill = row._fill;
+        return newRow;
+    });
+
+    // ── Totals row: formulas ──
+    var totalAmtFormula = {
+        formula: 'SUM(' + cAmt + firstDataRow + ':' + cAmt + lastDataRow + ')',
+        result: d.totalAmount
+    };
+    var totalBalFormula = {
+        formula: cBal + lastDataRow,
+        result: d.lastBalance
+    };
+
+    // ── Holdings section ──
+    // Starts after: totalRow + 1 blank + pageBreak + title + header
+    // Row tracking: totalExcelRow, +1 blank, +0 pageBreak, +1 title, +1 header, then data
+    var holdTitleRow = totalExcelRow + 2; // blank + title (pageBreak doesn't consume a row)
+    var holdHeaderRow = holdTitleRow + 1;
+    var holdFirstData = holdHeaderRow + 1;
+    var holdLastData = holdFirstData + d.holdingRows.length - 1;
+    var holdTotalRow = holdLastData + 1;
+
+    // Holdings cols: A=Symbol, B=Type, C=Qty, D=AvgCost, E=CMP, F=MTM, G=Value
+    var hcQty  = C(2); // C
+    var hcAvg  = C(3); // D
+    var hcCmp  = C(4); // E
+    var hcMtm  = C(5); // F
+    var hcVal  = C(6); // G
+
+    var holdRowsWithFormulas = d.holdingRows.map(function(row, idx) {
+        var r = holdFirstData + idx;
+        var newRow = row.slice();
+        var isNfo = (row[1] === 'NFO');
+
+        // MTM (col F) = (CMP - AvgCost) * Qty
+        newRow[5] = {
+            formula: '(' + hcCmp + r + '-' + hcAvg + r + ')*' + hcQty + r,
+            result: row[5] || 0
+        };
+
+        // Value (col G): EQ = Qty*CMP, NFO = MTM
+        if (isNfo) {
+            newRow[6] = { formula: hcMtm + r, result: row[6] || 0 };
+        } else {
+            newRow[6] = { formula: hcQty + r + '*' + hcCmp + r, result: row[6] || 0 };
+        }
+
+        return newRow;
+    });
+
+    var holdTotalMtm = {
+        formula: 'SUM(' + hcMtm + holdFirstData + ':' + hcMtm + holdLastData + ')',
+        result: d.totalMtm
+    };
+    var holdTotalVal = {
+        formula: 'SUM(' + hcVal + holdFirstData + ':' + hcVal + holdLastData + ')',
+        result: d.totalValue
+    };
+
+    // ── Summary section (after holdings total + 1 blank) ──
+    var sumStartRow = holdTotalRow + 2; // +1 blank + first summary row
+    // Summary rows: holdingsValue, outstanding, tax, netReceivable, balNoMtm
+    var sumHoldingsRow  = sumStartRow;
+    var sumOutstRow     = sumStartRow + 1;
+    var sumTaxRow       = sumStartRow + 2;
+    var sumNetRecRow    = sumStartRow + 3;
+    var sumBalNoMtmRow  = sumStartRow + 4;
+
+    // Holdings Value = same as holdings total value cell
+    var sumHoldingsVal = {
+        formula: hcVal + holdTotalRow,
+        result: d.holdingsValue
+    };
+    // Tax = MAX(0, bookedGain) * rate — we'll link to booked total later
+    // For now, Outstanding is hardcoded (it's cash balance + margin, computed values)
+    // Potential Tax: linked after we know booked P&L total row
+    // Net Receivable = Holdings - Outstanding - Tax
+    var sumNetRecFormula = {
+        formula: hcVal + sumHoldingsRow + '-' + hcVal + sumOutstRow + '-' + hcVal + sumTaxRow,
+        result: d.netReceivable
+    };
+    // Balance w/o MTM = Net Receivable - Total MTM
+    var sumBalNoMtmFormula = {
+        formula: hcVal + sumNetRecRow + '-' + hcMtm + holdTotalRow,
+        result: d.balNoMtm
+    };
+
+    // ── Booked P&L section ──
+    // After summary: +1 blank, then: columns switch, title, header, data, total
+    var bookedTitleRow = sumBalNoMtmRow + 2;
+    var bookedHeaderRow = bookedTitleRow + 1;
+    var bookedFirstData = bookedHeaderRow + 1;
+    var bookedLastData = bookedFirstData + d.bookedRows.length - 1;
+    var bookedTotalRow = bookedLastData + 1;
+
+    // Booked cols: A=Symbol, B=Type, C=Qty, D=Gain
+    var bcGain = C(3); // D
+
+    var bookedTotalFormula = d.bookedRows.length > 0
+        ? { formula: 'SUM(' + bcGain + bookedFirstData + ':' + bcGain + bookedLastData + ')', result: d.totalBookedGain }
+        : d.totalBookedGain;
+
+    // Now we can build the tax formula referencing booked total
+    // Tax = MAX(0, bookedTotal) * rate
+    // But the booked total is in a different column layout (col D).
+    // After 'columns' switch, the engine resets column defs but NOT column letters.
+    // The booked total sits in column D of the booked section.
+    var sumTaxFormula = {
+        formula: 'MAX(0,' + bcGain + bookedTotalRow + ')*' + (LG_TAX_RATE_PCT / 100),
+        result: d.potentialTax
+    };
+
+    // pct of outstanding
+    var sumPctFormula = d.outstanding !== 0
+        ? { formula: hcVal + sumBalNoMtmRow + '/' + hcVal + sumOutstRow, result: d.pctBalOverOutstanding }
+        : d.pctBalOverOutstanding;
 
     var sections = [
         // ── Transactions ──
         { type: 'header' },
         { type: 'data', rows: [obRow] },
-        { type: 'data', rows: d.txnRows },
-        { type: 'total', values: [null, null, null, null, null, 'TOTALS:', d.totalAmount, d.lastBalance] },
+        { type: 'data', rows: txnRowsWithFormulas },
+        { type: 'total', values: [null, null, null, null, null, 'TOTALS:', totalAmtFormula, totalBalFormula] },
         { type: 'blank' },
         { type: 'pageBreak' },
 
@@ -2615,19 +2767,19 @@ function lgExportExcel() {
         { type: 'columns', columns: LG_EXPORT_HOLD_COLS },
         { type: 'title', text: 'Open Positions' },
         { type: 'header' },
-        { type: 'data', rows: d.holdingRows },
-        { type: 'total', values: [null, null, null, null, null, d.totalMtm, d.totalValue] },
+        { type: 'data', rows: holdRowsWithFormulas },
+        { type: 'total', values: [null, null, null, null, null, holdTotalMtm, holdTotalVal] },
         { type: 'blank' },
 
         // ── Summary Cards ──
         { type: 'summary', rows: [
-            { label: 'Total Value of Holdings', value: d.holdingsValue, labelSpan: 5 },
-            { label: 'Less: Outstanding', value: d.outstanding, labelSpan: 5,
+            { label: 'Total Value of Holdings', value: sumHoldingsVal, labelSpan: 5 },
+            { label: 'Less: Outstanding (Bal + Margin)', value: d.outstanding, labelSpan: 5,
                 extraCol: 5, extraValue: 'Bal ' + Math.round(d.outstandingBal).toLocaleString() + ' + Margin ' + Math.round(d.outstandingMargin).toLocaleString(), extraFormat: 'text' },
-            { label: 'Less: Potential Tax (' + LG_TAX_RATE_PCT + '%)', value: d.potentialTax, labelSpan: 5 },
-            { label: 'Net Receivable / (Payable)', value: d.netReceivable, bold: true, labelSpan: 5 },
-            { label: 'Balance without MTM', value: d.balNoMtm, bold: true, labelSpan: 5,
-                extraCol: 6, extraValue: d.pctBalOverOutstanding, extraFormat: 'pct' }
+            { label: 'Less: Potential Tax (' + LG_TAX_RATE_PCT + '%)', value: sumTaxFormula, labelSpan: 5 },
+            { label: 'Net Receivable / (Payable)', value: sumNetRecFormula, bold: true, labelSpan: 5 },
+            { label: 'Balance without MTM', value: sumBalNoMtmFormula, bold: true, labelSpan: 5,
+                extraCol: 6, extraValue: sumPctFormula, extraFormat: 'pct' }
         ]},
         { type: 'blank' },
 
@@ -2636,7 +2788,7 @@ function lgExportExcel() {
         { type: 'title', text: 'Booked P&L ' + d.fyLabel },
         { type: 'header' },
         { type: 'data', rows: d.bookedRows },
-        { type: 'total', values: [null, null, null, d.totalBookedGain] }
+        { type: 'total', values: [null, null, null, bookedTotalFormula] }
     ];
 
     var filename = wmsExportFilename('Statement', d.viewName, d.dateLabel, 'xlsx');
@@ -2644,7 +2796,7 @@ function lgExportExcel() {
     wmsExportExcel({
         filename: filename,
         sheets: [{
-            name: d.viewName.slice(0, 31), // Excel sheet name max 31 chars
+            name: d.viewName.slice(0, 31),
             columns: LG_EXPORT_TXN_COLS,
             sections: sections,
             freezeRow: 1,

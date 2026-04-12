@@ -195,6 +195,46 @@ function _wmsExStyleCell(cell, resolved, isHeader, isTotal, isSectionTitle) {
 }
 
 // ============================================================================
+// 4b. HELPER — set cell value (handles plain values, formulas, dates)
+// ============================================================================
+// A value can be:
+//   - A plain scalar (string, number, null)
+//   - A Date object
+//   - A formula object: { formula: 'SUM(A1:A10)', result: 123 }
+//     ExcelJS stores the formula string and the cached result so the file
+//     opens correctly in Excel without requiring a manual recalc.
+// ============================================================================
+
+function _wmsExSetCellValue(cell, val, colType) {
+    if (val === undefined) val = null;
+    if (val !== null && typeof val === 'object' && val.formula) {
+        // Formula object — ExcelJS uses { formula, result } directly on cell.value
+        cell.value = { formula: val.formula, result: val.result };
+        return;
+    }
+    // Dates: convert string → JS Date for Excel
+    if (colType === 'date' && val && !(val instanceof Date)) {
+        var parsed = new Date(val);
+        if (!isNaN(parsed.getTime())) { cell.value = parsed; return; }
+    }
+    cell.value = val;
+}
+
+// ============================================================================
+// 4c. HELPER — Excel column letter from 0-based index (0→A, 1→B, 25→Z, 26→AA)
+// ============================================================================
+
+function wmsExColLetter(idx) {
+    var s = '';
+    var n = idx;
+    while (n >= 0) {
+        s = String.fromCharCode(65 + (n % 26)) + s;
+        n = Math.floor(n / 26) - 1;
+    }
+    return s;
+}
+
+// ============================================================================
 // 5. wmsExportExcel(config)
 // ============================================================================
 //
@@ -265,26 +305,24 @@ function wmsExportExcel(config) {
                     for (var ri = 0; ri < dataRows.length; ri++) {
                         var row = dataRows[ri];
                         var xlRow = ws.getRow(curRow);
-                        // Check for row-level options
                         var rowBold = (row._bold === true);
                         var rowFill = row._fill || null;
                         for (var ci2 = 0; ci2 < activeCols.length; ci2++) {
                             var dCell = xlRow.getCell(ci2 + 1);
-                            var val = row[ci2];
-                            if (val === undefined) val = null;
-
-                            // Dates: convert string → JS Date for Excel
-                            if (activeCols[ci2].type === 'date' && val && !(val instanceof Date)) {
-                                var parsed = new Date(val);
-                                if (!isNaN(parsed.getTime())) val = parsed;
-                            }
-                            dCell.value = val;
+                            _wmsExSetCellValue(dCell, row[ci2], activeCols[ci2].type);
 
                             var resolvedForRow = activeCols[ci2];
                             if (rowBold) {
                                 resolvedForRow = Object.assign({}, resolvedForRow, { bold: true });
                             }
                             _wmsExStyleCell(dCell, resolvedForRow, false, false, false);
+                            // For formulas, red-coloring must use the cached result
+                            if (row[ci2] && typeof row[ci2] === 'object' && row[ci2].formula) {
+                                var fResult = row[ci2].result;
+                                if (typeof fResult === 'number' && fResult < 0) {
+                                    dCell.font = Object.assign({}, dCell.font, { color: { argb: WMS_EXPORT_RED } });
+                                }
+                            }
                             if (rowFill) {
                                 dCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowFill } };
                             }
@@ -298,10 +336,14 @@ function wmsExportExcel(config) {
                     var totVals = sec.values || [];
                     for (var ti = 0; ti < activeCols.length; ti++) {
                         var tCell = totRow.getCell(ti + 1);
-                        var tVal = totVals[ti];
-                        if (tVal === undefined) tVal = null;
-                        tCell.value = tVal;
+                        _wmsExSetCellValue(tCell, totVals[ti], activeCols[ti].type);
                         _wmsExStyleCell(tCell, activeCols[ti], false, true, false);
+                        if (totVals[ti] && typeof totVals[ti] === 'object' && totVals[ti].formula) {
+                            var tResult = totVals[ti].result;
+                            if (typeof tResult === 'number' && tResult < 0) {
+                                tCell.font = Object.assign({}, tCell.font, { color: { argb: WMS_EXPORT_RED } });
+                            }
+                        }
                     }
                     curRow++;
                     break;
@@ -350,7 +392,7 @@ function wmsExportExcel(config) {
                         // Value in last column (or specified column)
                         var valColIdx = sr.valueCol || colCount;
                         var valCell = sRow.getCell(valColIdx);
-                        valCell.value = sr.value;
+                        _wmsExSetCellValue(valCell, sr.value, null);
                         var valFmt = sr.format || (typeof sr.value === 'number' ? 'amount' : 'text');
                         var valPreset = WMS_EXPORT_PRESETS[valFmt] || WMS_EXPORT_PRESETS.text;
                         var valResolved = {
@@ -363,7 +405,7 @@ function wmsExportExcel(config) {
                         // Optional: extra value in a different column
                         if (sr.extraCol && sr.extraValue !== undefined) {
                             var eCell = sRow.getCell(sr.extraCol);
-                            eCell.value = sr.extraValue;
+                            _wmsExSetCellValue(eCell, sr.extraValue, null);
                             var eFmt = sr.extraFormat || 'amount';
                             var ePreset = WMS_EXPORT_PRESETS[eFmt] || WMS_EXPORT_PRESETS.text;
                             _wmsExStyleCell(eCell, { align: ePreset.align, excelFmt: ePreset.excelFmt, bold: sr.bold || false }, false, false, false);
@@ -741,3 +783,4 @@ window.WMS_EXPORT_PRESETS    = WMS_EXPORT_PRESETS;
 window.wmsExportExcel        = wmsExportExcel;
 window.wmsExportPdf          = wmsExportPdf;
 window.wmsExportFilename     = wmsExportFilename;
+window.wmsExColLetter        = wmsExColLetter;
