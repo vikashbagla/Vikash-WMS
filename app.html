@@ -14,6 +14,8 @@
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script>if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
     <link rel="stylesheet" id="app-styles-link" href="app-styles.css">
@@ -559,6 +561,7 @@
     document.getElementById('app-styles-link').href = `app-styles.css?v=${_v}`;
     document.write(`<script src="utils.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-shared.js?v=${_v}"><\/script>`);
+    document.write(`<script src="wms-export.js?v=${_v}"><\/script>`);
     </script>
 </body>
 </html>

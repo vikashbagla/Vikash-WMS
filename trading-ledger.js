@@ -2309,12 +2309,412 @@ async function lgPostInterest() {
 // EXPORT
 // ============================================================================
 
-function lgExportPdf() {
-    showAlert('PDF export coming soon', 'info', 3000);
+// ── Shared data-gathering for both export formats ─────────────────
+// Returns a plain object with everything needed to build the export config.
+// This mirrors the data that lgRenderEntries + lgRenderSummary compute,
+// but pulled into a simple data structure instead of DOM html.
+
+function lgGatherExportData() {
+    // 1. Active view name & date range
+    var activeView = lgViews.find(function(v) { return v.id === lgActiveViewId; });
+    var viewName = activeView ? activeView.name : 'Statement';
+
+    // Determine FY label from date range
+    var dateLabel = '';
+    if (lgDateFrom) {
+        var yr = parseInt(lgDateFrom.slice(0, 4), 10);
+        var mo = parseInt(lgDateFrom.slice(5, 7), 10);
+        var fyStart = (mo >= 4) ? yr : yr - 1;
+        dateLabel = 'FY' + String(fyStart).slice(-2) + String(fyStart + 1).slice(-2);
+    }
+    if (!dateLabel) dateLabel = new Date().toISOString().slice(0, 10);
+
+    // 2. Opening balance
+    var ob = lgFindOpeningBalance();
+    var openingBalDate = ob.date || '';
+    var openingBalAmt = ob.amount || 0;
+
+    // 3. Transaction rows (same order as on screen)
+    var sorted = lgCombined.slice();
+    if (lgSortCol) {
+        sorted.sort(function(a, b) {
+            var va, vb;
+            if (lgSortCol === 'date') { va = a.date || ''; vb = b.date || ''; }
+            else if (lgSortCol === 'amount') { va = a.amount || 0; vb = b.amount || 0; }
+            else if (lgSortCol === 'balance') { va = a._runningBalance || 0; vb = b._runningBalance || 0; }
+            else if (lgSortCol === 'qty') {
+                va = a._source ? Math.abs(a._source.quantity || 0) : 0;
+                vb = b._source ? Math.abs(b._source.quantity || 0) : 0;
+            }
+            if (va < vb) return lgSortDir === 'asc' ? -1 : 1;
+            if (va > vb) return lgSortDir === 'asc' ? 1 : -1;
+            return 0;
+        });
+    }
+
+    var txnRows = [];
+    var totalAmount = 0;
+    var lastBalance = openingBalAmt;
+
+    sorted.forEach(function(row) {
+        var date = row.date || '';
+        var symbol = '';
+        var typeLabel = '';
+        var qty = null;
+        var price = null;
+        var net = null;
+        var amount = row.amount || 0;
+        var balance = row._runningBalance || 0;
+
+        if (row._rowType === 'pending_interest') {
+            typeLabel = 'Interest';
+            symbol = row.reference || 'Interest';
+            amount = Math.round(row.amount || 0);
+        } else if (row._rowType === 'ledger') {
+            var et = row.entryType || '';
+            typeLabel = LG_TYPE_LABELS[et] || et.replace(/_/g, ' ');
+            symbol = (row._source && row._source.reference) || '';
+            amount = row.amount || 0;
+        } else if (row._rowType === 'nfo_pnl') {
+            typeLabel = "F&O P&L";
+            symbol = _lgExportSymbol(row);
+            qty = row.quantity || null;
+            amount = row.amount || 0;
+        } else if (row._rowType === 'trade') {
+            var src = row._source;
+            typeLabel = LG_TYPE_LABELS[src.transaction_type] || (src.transaction_type || '').replace(/_/g, ' ');
+            symbol = _lgExportSymbol(row);
+            var q = Math.abs(src.quantity || 0);
+            if (src.transaction_type === 'SELL' || src.transaction_type === 'RIGHTS_ENTITLEMENT' || src.transaction_type === 'BONUS') q = -q;
+            qty = q !== 0 ? q : null;
+            price = src.price || null;
+            if (row.quantity && row.netAmount) {
+                net = row.netAmount / Math.abs(row.quantity);
+            }
+        }
+
+        if (row._nfoCashImpact !== false) totalAmount += row.amount;
+        lastBalance = balance;
+
+        txnRows.push([date, symbol, typeLabel, qty, price, net, amount, balance]);
+    });
+
+    // 4. Holdings (recompute from filtered transactions — same as lgRenderSummary)
+    var allFiltered = trTransactions.filter(function(t) {
+        if (t.dont_display) return false;
+        if (!t.transaction_date) return false;
+        if (lgSelectedInvestorIds.length > 0 && lgSelectedInvestorIds.indexOf(t.investor_id) < 0) return false;
+        if (lgSelectedTraderIds.length > 0) {
+            var tid = t.trader_id || t.investor_id;
+            if (!tid || lgSelectedTraderIds.indexOf(tid) < 0) return false;
+        }
+        if (lgSelectedBrokerIds.length > 0 && lgSelectedBrokerIds.indexOf(t.broker_id) < 0) return false;
+        if (lgSelectedTagNames.length > 0) {
+            if (!wmsMatchTagsFilter(t.tags || [], lgSelectedTagNames, lgTagFilterLogic)) return false;
+        }
+        return true;
+    });
+    var sortedAll = allFiltered.slice().sort(function(a, b) {
+        return (a.transaction_date || '').localeCompare(b.transaction_date || '');
+    });
+    var fifo = wmsCalcFifoCost(sortedAll);
+    var holdingsMap = fifo.holdings;
+    var allGains = fifo.gains || [];
+
+    // Source lookup for NFO symbol decoding
+    var sourceLookup = {};
+    for (var si = 0; si < sortedAll.length; si++) {
+        var st = sortedAll[si];
+        var sKey = (st.security_type === 'NFO') ? (st.symbol || '').replace(/^[A-Z]+:/, '') : (st.short_symbol || st.symbol || '');
+        if (!sourceLookup[sKey]) sourceLookup[sKey] = st;
+    }
+
+    // NFO margin
+    var nfoTxns = sortedAll.filter(function(t) {
+        var p = (t.product || '').toUpperCase();
+        var s = (t.security_type || '').toUpperCase();
+        return /F&O|FNO|NFO/.test(p) || /F&O|FNO|NFO/.test(s);
+    });
+    var marginEvents = wmsCalcMarginFIFO(nfoTxns);
+    var currentNfoMargin = marginEvents.length > 0 ? marginEvents[marginEvents.length - 1].runningMargin : 0;
+
+    // Build holdings rows
+    var totalEqCost = 0, totalEqValue = 0, totalEqMtm = 0, totalNfoMtm = 0;
+    var holdingSortedKeys = Object.keys(holdingsMap).sort(function(a, b) {
+        var sa = (holdingsMap[a].shortSymbol || holdingsMap[a].symbol || '').toLowerCase();
+        var sb = (holdingsMap[b].shortSymbol || holdingsMap[b].symbol || '').toLowerCase();
+        return sa < sb ? -1 : sa > sb ? 1 : 0;
+    });
+
+    var holdingRows = [];
+    holdingSortedKeys.forEach(function(key) {
+        var h = holdingsMap[key];
+        if (h.quantity === 0) return;
+        var qty2 = h.quantity;
+        var avgCost = h.avgCost;
+        var isNfo = (h.securityType === 'NFO');
+        var shortSym = h.shortSymbol || h.symbol;
+
+        // Decode NFO symbol
+        var displaySym = shortSym;
+        var srcTxn = sourceLookup[key];
+        if (srcTxn && isNfo && typeof wmsFormatContract === 'function') {
+            var contract = wmsFormatContract(srcTxn);
+            if (contract && contract !== 'Equity' && contract !== 'NFO') {
+                displaySym = shortSym + ' ' + contract;
+            }
+        }
+
+        var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[shortSym] : null;
+        var cmp = (priceEntry && priceEntry.lp > 0) ? priceEntry.lp : avgCost;
+        var value, mtm;
+        if (isNfo) {
+            mtm = (cmp - avgCost) * qty2;
+            value = mtm;
+            totalNfoMtm += mtm;
+        } else {
+            value = qty2 * cmp;
+            mtm = value - h.totalCost;
+            totalEqCost += h.totalCost;
+            totalEqValue += value;
+            totalEqMtm += mtm;
+        }
+
+        holdingRows.push([displaySym, isNfo ? 'NFO' : 'EQ', qty2, avgCost, cmp, mtm, value]);
+    });
+
+    // 5. Summary card values (same formulas as lgRenderSummary)
+    var cashBalance = (typeof lgCurrentCashBalance === 'number') ? lgCurrentCashBalance : (lgCarryForwardBalance || 0);
+    var clampedCashBal = Math.max(0, cashBalance);
+    var outstanding = clampedCashBal + currentNfoMargin;
+    var totalHoldingsValue = totalEqValue + totalNfoMtm;
+
+    // FY bounds for booked P&L
+    var today = new Date();
+    var curY = today.getFullYear();
+    var curM = today.getMonth() + 1;
+    var fyStartYear = (curM >= 4) ? curY : curY - 1;
+    var fyStartStr = fyStartYear + '-04-01';
+    var fyEndStr = (fyStartYear + 1) + '-03-31';
+    var fyLabel = 'FY ' + fyStartYear + '-' + String(fyStartYear + 1).slice(-2);
+
+    var fyGains = allGains.filter(function(g) {
+        return g.sellDate && g.sellDate >= fyStartStr && g.sellDate <= fyEndStr;
+    });
+    var totalBookedGain = 0;
+    fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
+    var potentialTax = Math.max(0, totalBookedGain) * (LG_TAX_RATE_PCT / 100);
+    var netReceivable = totalHoldingsValue - clampedCashBal - potentialTax;
+    var totalCurrentMtm = totalEqMtm + totalNfoMtm;
+    var balNoMtm = netReceivable - totalCurrentMtm;
+    var pctBalOverOutstanding = outstanding !== 0 ? (balNoMtm / outstanding) : 0;
+
+    // Booked P&L rows (grouped by symbol)
+    var bySym = {};
+    fyGains.forEach(function(g) {
+        var k = (g.shortSymbol || g.symbol) + '|' + (g.securityType || 'EQ');
+        if (!bySym[k]) bySym[k] = { shortSymbol: g.shortSymbol || g.symbol, securityType: g.securityType || 'EQ', qty: 0, gain: 0 };
+        bySym[k].qty += g.qty || 0;
+        bySym[k].gain += g.gain || 0;
+    });
+    var bookedRows = Object.keys(bySym).sort().map(function(k) {
+        var b = bySym[k];
+        return [b.shortSymbol, b.securityType === 'NFO' ? 'NFO' : 'EQ', b.qty, b.gain];
+    });
+
+    return {
+        viewName: viewName,
+        dateLabel: dateLabel,
+        fyLabel: fyLabel,
+        openingBal: { date: openingBalDate, amount: openingBalAmt },
+        txnRows: txnRows,
+        totalAmount: totalAmount,
+        lastBalance: lastBalance,
+        holdingRows: holdingRows,
+        totalMtm: totalEqMtm + totalNfoMtm,
+        totalValue: totalEqValue + totalNfoMtm,
+        holdingsValue: totalHoldingsValue,
+        outstanding: outstanding,
+        outstandingBal: clampedCashBal,
+        outstandingMargin: currentNfoMargin,
+        potentialTax: potentialTax,
+        netReceivable: netReceivable,
+        balNoMtm: balNoMtm,
+        pctBalOverOutstanding: pctBalOverOutstanding,
+        bookedRows: bookedRows,
+        totalBookedGain: totalBookedGain
+    };
 }
 
+// Plain-text symbol for export (strips HTML from lgFormatSymbol)
+function _lgExportSymbol(row) {
+    if (row._rowType !== 'trade' && row._rowType !== 'nfo_pnl') return '';
+    var source = row._source;
+    var sym = source.short_symbol || source.symbol || '';
+    if (source.security_type === 'NFO' || (source.product && /NFO|F&O|FNO/i.test(source.product))) {
+        var contract = typeof wmsFormatContract === 'function' ? wmsFormatContract(source) : '';
+        if (contract && contract !== 'Equity' && contract !== 'NFO') return sym + ' ' + contract;
+    }
+    return sym;
+}
+
+// ── Column definitions (shared between Excel & PDF) ───────────────
+
+var LG_EXPORT_TXN_COLS = [
+    { header: 'Date',    type: 'date',   format: 'ddd, dd-mmm-yy', width: 14 },
+    { header: 'Symbol',  type: 'text',   width: 20 },
+    { header: 'Type',    type: 'type',   width: 10 },
+    { header: 'Qty',     type: 'qty',    width: 9 },
+    { header: 'Price',   type: 'price',  width: 10 },
+    { header: 'Net',     type: 'price',  width: 10 },
+    { header: 'Amount',  type: 'amount', width: 12 },
+    { header: 'Balance', type: 'amount', width: 12 }
+];
+
+var LG_EXPORT_HOLD_COLS = [
+    { header: 'Symbol',   type: 'text',   width: 20 },
+    { header: 'Type',     type: 'type',   width: 6 },
+    { header: 'Qty',      type: 'qty',    width: 9 },
+    { header: 'Avg Cost', type: 'price',  width: 10 },
+    { header: 'CMP',      type: 'price',  width: 10 },
+    { header: 'MTM',      type: 'amount', width: 12 },
+    { header: 'Value',    type: 'amount', width: 12 }
+];
+
+var LG_EXPORT_BOOKED_COLS = [
+    { header: 'Symbol',       type: 'text',   width: 20 },
+    { header: 'Type',         type: 'type',   width: 6 },
+    { header: 'Qty Closed',   type: 'qty',    width: 10 },
+    { header: 'Realised P&L', type: 'amount', width: 12 }
+];
+
+// ── Excel Export ──────────────────────────────────────────────────
+
 function lgExportExcel() {
-    showAlert('Excel export coming soon', 'info', 3000);
+    var d = lgGatherExportData();
+    if (!d.txnRows.length && !d.holdingRows.length) {
+        showAlert('No data to export', 'info', 2000);
+        return;
+    }
+
+    // Opening balance as a data row
+    var obRow = [d.openingBal.date, 'Opening Balance', '', null, null, null, null, d.openingBal.amount];
+    obRow._bold = true;
+    obRow._fill = 'FEFCE8';
+
+    var sections = [
+        // ── Transactions ──
+        { type: 'header' },
+        { type: 'data', rows: [obRow] },
+        { type: 'data', rows: d.txnRows },
+        { type: 'total', values: [null, null, null, null, null, 'TOTALS:', d.totalAmount, d.lastBalance] },
+        { type: 'blank' },
+        { type: 'pageBreak' },
+
+        // ── Open Positions ──
+        { type: 'columns', columns: LG_EXPORT_HOLD_COLS },
+        { type: 'title', text: 'Open Positions' },
+        { type: 'header' },
+        { type: 'data', rows: d.holdingRows },
+        { type: 'total', values: [null, null, null, null, null, d.totalMtm, d.totalValue] },
+        { type: 'blank' },
+
+        // ── Summary Cards ──
+        { type: 'summary', rows: [
+            { label: 'Total Value of Holdings', value: d.holdingsValue, labelSpan: 5 },
+            { label: 'Less: Outstanding', value: d.outstanding, labelSpan: 5,
+                extraCol: 5, extraValue: 'Bal ' + Math.round(d.outstandingBal).toLocaleString() + ' + Margin ' + Math.round(d.outstandingMargin).toLocaleString(), extraFormat: 'text' },
+            { label: 'Less: Potential Tax (' + LG_TAX_RATE_PCT + '%)', value: d.potentialTax, labelSpan: 5 },
+            { label: 'Net Receivable / (Payable)', value: d.netReceivable, bold: true, labelSpan: 5 },
+            { label: 'Balance without MTM', value: d.balNoMtm, bold: true, labelSpan: 5,
+                extraCol: 6, extraValue: d.pctBalOverOutstanding, extraFormat: 'pct' }
+        ]},
+        { type: 'blank' },
+
+        // ── Booked P&L ──
+        { type: 'columns', columns: LG_EXPORT_BOOKED_COLS },
+        { type: 'title', text: 'Booked P&L ' + d.fyLabel },
+        { type: 'header' },
+        { type: 'data', rows: d.bookedRows },
+        { type: 'total', values: [null, null, null, d.totalBookedGain] }
+    ];
+
+    var filename = wmsExportFilename('Statement', d.viewName, d.dateLabel, 'xlsx');
+
+    wmsExportExcel({
+        filename: filename,
+        sheets: [{
+            name: d.viewName.slice(0, 31), // Excel sheet name max 31 chars
+            columns: LG_EXPORT_TXN_COLS,
+            sections: sections,
+            freezeRow: 1,
+            printSetup: {
+                orientation: 'portrait',
+                paperSize: 9,
+                fitToPage: true,
+                margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5 }
+            }
+        }]
+    });
+}
+
+// ── PDF Export ─────────────────────────────────────────────────────
+
+function lgExportPdf() {
+    var d = lgGatherExportData();
+    if (!d.txnRows.length && !d.holdingRows.length) {
+        showAlert('No data to export', 'info', 2000);
+        return;
+    }
+
+    // Opening balance row
+    var obRow = [d.openingBal.date, 'Opening Balance', '', null, null, null, null, d.openingBal.amount];
+
+    var filename = wmsExportFilename('Statement', d.viewName, d.dateLabel, 'pdf');
+
+    var pages = [
+        // Page 1: Transactions
+        {
+            columns: LG_EXPORT_TXN_COLS,
+            sections: [
+                { type: 'header' },
+                { type: 'data', rows: [obRow] },
+                { type: 'data', rows: d.txnRows },
+                { type: 'total', values: [null, null, null, null, null, 'TOTALS:', d.totalAmount, d.lastBalance] }
+            ]
+        },
+        // Page 2: Holdings + Summary + Booked P&L
+        {
+            columns: LG_EXPORT_HOLD_COLS,
+            sections: [
+                { type: 'title', text: 'Open Positions' },
+                { type: 'header' },
+                { type: 'data', rows: d.holdingRows },
+                { type: 'total', values: [null, null, null, null, null, d.totalMtm, d.totalValue] },
+                { type: 'blank' },
+                { type: 'summary', rows: [
+                    { label: 'Total Value of Holdings', value: d.holdingsValue },
+                    { label: 'Less: Outstanding', value: d.outstanding },
+                    { label: 'Less: Potential Tax (' + LG_TAX_RATE_PCT + '%)', value: d.potentialTax },
+                    { label: 'Net Receivable / (Payable)', value: d.netReceivable, bold: true },
+                    { label: 'Balance without MTM', value: d.balNoMtm, bold: true }
+                ]},
+                { type: 'blank' },
+                { type: 'title', text: 'Booked P&L ' + d.fyLabel },
+                { type: 'summary', rows: d.bookedRows.map(function(br) {
+                    return { label: br[0] + ' (' + br[1] + ') — Qty ' + (br[2] || 0), value: br[3], bold: false };
+                }).concat([
+                    { label: 'Total Booked P&L', value: d.totalBookedGain, bold: true }
+                ])}
+            ]
+        }
+    ];
+
+    wmsExportPdf({
+        filename: filename,
+        title: 'Statement — ' + d.viewName + ' — ' + d.dateLabel,
+        pages: pages
+    });
 }
 
 // ============================================================================
