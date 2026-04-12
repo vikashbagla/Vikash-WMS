@@ -1,5 +1,5 @@
 // ============================================================================
-// WMS LEDGER MODULE
+// WMS STATEMENTS MODULE
 // ============================================================================
 // Uses 'lg' prefix for all module-level state and functions.
 // All variables use 'var' (project convention A.1.2).
@@ -380,7 +380,7 @@ function lgInit() {
     // Load views and initial data
     lgLoadViews();
 
-    // Live prices: register the Ledger's symbols with the shared refresh
+    // Live prices: register the Statements module's symbols with the shared refresh
     // protocol and trigger an immediate fetch so the Open Positions table
     // and Summary cards see CMP instead of falling back to avgCost.
     // Mirrors what trading.js does on Portfolio init.
@@ -390,7 +390,7 @@ function lgInit() {
             wmsStandardRefresh(false).then(function() {
                 if (typeof lgRenderSummary === 'function') lgRenderSummary();
             }).catch(function(err) {
-                console.warn('Ledger: initial price fetch failed:', err && err.message);
+                console.warn('Statements: initial price fetch failed:', err && err.message);
             });
         }
         if (typeof wmsStartRefreshTimer === 'function' &&
@@ -399,7 +399,7 @@ function lgInit() {
             wmsStartRefreshTimer();
         }
     } catch (err) {
-        console.warn('Ledger: price fetch wiring failed:', err && err.message);
+        console.warn('Statements: price fetch wiring failed:', err && err.message);
     }
 }
 
@@ -558,7 +558,7 @@ async function lgLoadViews() {
         );
         lgViews = resp.ok ? await resp.json() : [];
     } catch (err) {
-        console.warn('Ledger: Failed to load views:', err.message);
+        console.warn('Statements: Failed to load views:', err.message);
         lgViews = [];
     }
 
@@ -1862,7 +1862,7 @@ function lgRenderSummary() {
     }
 
     // Wire individual holding rows → open the shared Transactions modal for
-    // that symbol, scoped to the Ledger's current filter selection (same as
+    // that symbol, scoped to the Statements module's current filter selection (same as
     // Portfolio's row-click behaviour but honouring the ledger view). The
     // override is installed on window.trTxnModalFilterOverride and is
     // cleared automatically by trCloseTxnModal.

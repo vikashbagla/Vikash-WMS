@@ -7,4 +7,4 @@
 2. `WMS-SCHEMA.md` — DB tables, migrations, investor vs trader audit.
 3. `WMS-LESSONS.md` — rules, patterns, settled decisions (hierarchical A.1.1 format).
 
-Module-level canonical docs (e.g. the Ledger engine formulas) live inside `WMS-CONTEXT.md` under the relevant sub-module section — no separate per-module `.md` files.
+Module-level canonical docs (e.g. the Statements engine formulas) live inside `WMS-CONTEXT.md` under the relevant sub-module section — no separate per-module `.md` files.

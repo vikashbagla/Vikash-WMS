@@ -611,7 +611,7 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
             </div>
             <div class="brokerage-grid" style="margin-top:8px;border-top:1px solid #eee;padding-top:8px;">
                 <div class="form-group" style="grid-column:1/-1;">
-                    <span class="brokerage-label" style="font-weight:600;">Ledger Settings</span>
+                    <span class="brokerage-label" style="font-weight:600;">Statement Settings</span>
                 </div>
                 <div class="brokerage-section">
                     <div class="form-row">

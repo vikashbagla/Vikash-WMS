@@ -1727,7 +1727,7 @@ function trGetTxnModalTxns() {
         txns = txns.filter(function(t) { return t.investor_id === trCurrentTxnInvestorId; });
     }
     // Apply active view filters (same as trCalcHoldings / trBuildInvestorDetail).
-    // If an external override is set (e.g. the Ledger module opening the
+    // If an external override is set (e.g. the Statements module opening the
     // modal from its own view scope), use those arrays instead of Portfolio's.
     var _ov = window.trTxnModalFilterOverride || null;
     var _invSel = _ov ? (_ov.investorIds || []) : trSelectedInvestorIds;
@@ -1996,7 +1996,7 @@ function trCloseTxnModal() {
     trTxnMatchMethod = 'lifo';
     trTxnContractFilter = [];
     // Clear any cross-module filter override installed by another module
-    // (e.g. the Ledger opening the modal in its own view scope).
+    // (e.g. the Statements module opening the modal in its own view scope).
     window.trTxnModalFilterOverride = null;
 }
 
@@ -4172,7 +4172,7 @@ async function trLoadFnoModule() {
 }
 
 // ============================================================================
-// LEDGER TAB (lazy-loaded from trading-ledger.html + trading-ledger.js)
+// STATEMENTS TAB (lazy-loaded from trading-ledger.html + trading-ledger.js)
 // ============================================================================
 
 var trLedgerLoaded = false;
@@ -4196,13 +4196,13 @@ async function trLoadLedgerModule() {
             });
             trLedgerLoaded = true;
         } catch (err) {
-            console.error('Trading: Failed to load Ledger module:', err);
+            console.error('Trading: Failed to load Statements module:', err);
             var c = document.getElementById('tr-ledger');
-            if (c) c.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626;">Failed to load Ledger module: ' + err.message + '</div>';
+            if (c) c.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626;">Failed to load Statements module: ' + err.message + '</div>';
             return;
         }
     }
-    // Ensure reference data is loaded before initializing ledger filters
+    // Ensure reference data is loaded before initializing statements filters
     if (!wmsRefData.ready) await wmsLoadRefData();
     if (!trInvestors || trInvestors.length === 0) {
         trInvestors = wmsRefData.investors || [];
@@ -4211,7 +4211,7 @@ async function trLoadLedgerModule() {
     if (typeof lgInit === 'function') { lgInit(); lgRefresh(); }
 }
 
-// (Old ledger code removed — now lazy-loaded from trading-ledger.js)
+// (Old statements code removed — now lazy-loaded from trading-ledger.js)
 
 // ============================================================================
 // WINDOW EXPORTS

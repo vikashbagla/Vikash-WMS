@@ -1,5 +1,5 @@
 <!-- ============================================================ -->
-<!-- LEDGER MODULE - Lazy-loaded into #tr-ledger when activated  -->
+<!-- STATEMENTS MODULE - Lazy-loaded into #tr-ledger when activated -->
 <!-- This content is injected via innerHTML into #tr-ledger.     -->
 <!-- Do NOT wrap in another #tr-ledger div.                      -->
 <!-- ============================================================ -->
@@ -7,7 +7,7 @@
 <head>
 <style>
 /* ============================================================ */
-/* LEDGER MODULE — Scoped styles (lg- prefix)                   */
+/* STATEMENTS MODULE — Scoped styles (lg- prefix)                */
 /* ============================================================ */
 
 /* Layout */
@@ -47,7 +47,7 @@
 }
 .lg-export-dropdown button:hover { background:#f7fafc; color:#667eea; }
 
-/* Table — override table-container column widths for ledger layout */
+/* Table — override table-container column widths for statements layout */
 #lgTable { table-layout:fixed; width:100%; min-width:780px; }
 #lgTable th, #lgTable td { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #lgTable th { width:auto; }
@@ -82,7 +82,8 @@
 /* Summary section label */
 .lg-summary-label { font-size:11px; font-weight:600; color:#2d3748; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.3px; }
 
-/* Summary cards — sticky to bottom of the unified scroll container so they stay visible regardless of which blocks are expanded */
+/* Summary cards — sticky to bottom of the unified scroll container so they stay visible regardless of which blocks are expanded.
+   The spacer div (#lgStickySpacerDiv) below the last content section ensures content can scroll fully clear of the overlay. */
 .lg-summary-cards { position:sticky; bottom:0; z-index:5; margin-top:auto; padding:10px; background:#f7fafc; border:1px solid #e2e8f0; border-radius:6px; box-shadow:0 -2px 8px rgba(0,0,0,0.06); }
 .lg-summary-row { display:flex; align-items:stretch; gap:6px; }
 .lg-summary-row + .lg-summary-row { margin-top:8px; justify-content:flex-end; }
@@ -163,7 +164,7 @@
         <button class="tr-vta-btn" id="lgFiltersToggle" title="Toggle filters" style="font-size:10px;">▲</button>
         <span class="lg-tabs-divider"></span>
         <div class="lg-export-wrap">
-          <button class="tr-vta-btn" id="lgExportBtn" title="Export ledger">⇩ Export ▾</button>
+          <button class="tr-vta-btn" id="lgExportBtn" title="Export statement">⇩ Export ▾</button>
           <div class="lg-export-dropdown" id="lgExportDropdown">
             <button id="lgExportPdfBtn" type="button">Export PDF</button>
             <button id="lgExportExcelBtn" type="button">Export Excel</button>
@@ -326,6 +327,9 @@
           </table>
         </div>
       </div>
+
+      <!-- Spacer: ensures content above can scroll clear of the sticky summary cards -->
+      <div id="lgStickySpacerDiv" style="flex:0 0 120px;"></div>
 
       <!-- 3. Summary Cards — sticky to viewport bottom -->
       <div class="lg-summary-cards">
