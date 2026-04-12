@@ -5318,14 +5318,29 @@ function wmsCalcMarginFIFO(transactions) {
         var sym = t.symbol || '';
         var isOption = /(?:CE|PE)$/i.test(sym);
 
-        // Option BUY that opens a new position: no margin needed (buyer pays
-        // premium, no collateral). But if this BUY is closing an existing short
-        // option position, it DOES need to flow through to release margin.
+        // Option BUY that opens a new long position: no margin needed (buyer pays
+        // premium upfront, no collateral). But we MUST still register the position
+        // in the FIFO tracker so that a subsequent SELL is recognised as closing
+        // (not as a fresh short that blocks margin).
+        // If this BUY is closing an existing short option position, it flows
+        // through to the normal closing logic to release margin.
         if (isOption && !isShort) {
-            var existingPos = positions[contractKey] || [];
+            if (!positions[contractKey]) positions[contractKey] = [];
+            var existingPos = positions[contractKey];
             var existingPosQty = 0;
             for (var ei = 0; ei < existingPos.length; ei++) existingPosQty += existingPos[ei].qty;
-            if (existingPosQty >= 0) return; // No short position to close → skip
+            if (existingPosQty >= 0) {
+                // No short position — this is opening/adding to a long. Register
+                // the lot with zero margin so SELLs can close it via FIFO.
+                positions[contractKey].push({
+                    date: t.transaction_date,
+                    qty: qty,
+                    price: parseFloat(t.price) || 0,
+                    marginRate: 0,
+                    marginAmount: 0
+                });
+                return; // No margin event emitted
+            }
             // else: there IS a short position → fall through to closing logic
         }
 
