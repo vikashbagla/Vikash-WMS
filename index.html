@@ -433,7 +433,7 @@
                     var result = await supabaseClient.auth.signInWithOAuth({
                         provider: 'google',
                         options: {
-                            redirectTo: 'https://vikashbagla.github.io/Vikash-WMS/app.html'
+                            redirectTo: new URL('app.html', window.location.href).href
                         }
                     });
                     if (result.error) throw result.error;
