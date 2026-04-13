@@ -8,9 +8,58 @@
 // STATE VARIABLES
 // ============================================================================
 
-// Views
-var lgViews = [];
-var lgActiveViewId = null;
+// ---- Statements View Manager (wmsViewManager instance) ----
+var lgVM = wmsViewManager({
+    module: 'ledger',
+    label: 'Statements',
+    ids: {
+        viewTabs: 'lgViewTabs',
+        moreList: 'lgMoreList',
+        moreDropdown: 'lgMoreDropdown',
+        updateBtn: 'lgUpdateViewBtn'
+    },
+    autoDefaultFirst: false,
+    getPills: function() {
+        return [
+            { pill: lgInvPillFilter, type: 'investor' },
+            { pill: lgTrdPillFilter, type: 'trader' },
+            { pill: lgBrkPillFilter, type: 'broker' },
+            { pill: lgTagPillFilter, type: 'tag' }
+        ];
+    },
+    getFilters: function() {
+        return {
+            investorIds: lgSelectedInvestorIds.slice(),
+            traderIds: lgSelectedTraderIds.slice(),
+            brokerIds: lgSelectedBrokerIds.slice(),
+            tagNames: lgSelectedTagNames.slice(),
+            tagLogic: lgTagFilterLogic
+        };
+    },
+    applyFilters: function(f) {
+        // Mutate arrays in-place (B.2.3 — pill controllers hold references)
+        lgSelectedInvestorIds.length = 0;
+        Array.prototype.push.apply(lgSelectedInvestorIds, f.investorIds || []);
+        lgSelectedTraderIds.length = 0;
+        Array.prototype.push.apply(lgSelectedTraderIds, f.traderIds || []);
+        lgSelectedBrokerIds.length = 0;
+        Array.prototype.push.apply(lgSelectedBrokerIds, f.brokerIds || []);
+        lgSelectedTagNames.length = 0;
+        Array.prototype.push.apply(lgSelectedTagNames, f.tagNames || []);
+        lgTagFilterLogic = f.tagLogic || 'OR';
+
+        // Sync pill UI
+        ['investor', 'trader', 'broker', 'tag'].forEach(function(type) {
+            lgSyncPillStates(type);
+            lgRenderSelectedTags(type);
+        });
+    },
+    onRefresh: function() { lgRefresh(); },
+    onSaveComplete: function() {
+        var prompt = document.getElementById('lgSavePrompt');
+        if (prompt) prompt.style.display = 'none';
+    }
+});
 
 // Data
 var lgLedgerEntries = [];
@@ -309,7 +358,7 @@ function lgInit() {
         saveOk.addEventListener('click', function() {
             var name = document.getElementById('lgSavePromptName').value.trim();
             if (name) {
-                lgSaveCurrentView(name);
+                lgVM.saveCurrentView(name);
             }
         });
     }
@@ -330,7 +379,7 @@ function lgInit() {
     }
 
     if (updateBtn) {
-        updateBtn.addEventListener('click', lgUpdateCurrentView);
+        updateBtn.addEventListener('click', function() { lgVM.updateCurrentView(); });
     }
 
     // Delegated row/cell click handler:
@@ -378,7 +427,7 @@ function lgInit() {
     lgUpdateUnitLabels();
 
     // Load views and initial data
-    lgLoadViews();
+    lgVM.loadViews();
 
     // Live prices: register the Statements module's symbols with the shared refresh
     // protocol and trigger an immediate fetch so the Open Positions table
@@ -544,230 +593,7 @@ function lgFormatType(row) {
     return '<span class="lg-type ' + cssClass + '">' + wmsEsc(label) + '</span>';
 }
 
-// ============================================================================
-// VIEW MANAGEMENT
-// ============================================================================
-
-async function lgLoadViews() {
-    try {
-        var resp = await fetch(
-            SUPABASE_URL + '/rest/v1/portfolio_views?module=eq.ledger&select=id,name,filters,sort_order,is_default,show_in_tabs&order=sort_order.asc,created_at.asc',
-            {
-                headers: lgHeaders()
-            }
-        );
-        lgViews = resp.ok ? await resp.json() : [];
-    } catch (err) {
-        console.warn('Statements: Failed to load views:', err.message);
-        lgViews = [];
-    }
-
-    lgRenderViewTabs();
-    lgRenderMoreDropdown();
-    lgUpdateViewButtons();
-
-    // Auto-apply default view if no view is active
-    if (!lgActiveViewId) {
-        var defaultView = lgViews.find(function(v) { return v.is_default; });
-        if (defaultView) {
-            lgApplyView(defaultView.id);
-        } else {
-            lgRefresh();
-        }
-    }
-}
-
-function lgRenderViewTabs() {
-    var container = document.getElementById('lgViewTabs');
-    if (!container) return;
-
-    var defaultView = lgViews.find(function(v) { return v.is_default; });
-    var tabViews = lgViews.filter(function(v) {
-        return v.show_in_tabs !== false && !v.is_default;
-    });
-
-    var html = '';
-
-    if (defaultView) {
-        var isActive = defaultView.id === lgActiveViewId;
-        html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' +
-            defaultView.id + '"><span class="tr-tab-star">★</span> ' + wmsEsc(defaultView.name) + '</button>';
-    }
-
-    tabViews.forEach(function(v) {
-        var isActive = v.id === lgActiveViewId;
-        html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' +
-            v.id + '">' + wmsEsc(v.name) +
-            ' <span class="tr-tab-close" data-close-id="' + v.id + '" title="Remove from tabs">✕</span></button>';
-    });
-
-    container.innerHTML = html;
-
-    // Attach handlers
-    container.querySelectorAll('.tr-view-tab').forEach(function(tab) {
-        var clickTimer = null;
-        tab.addEventListener('click', function(e) {
-            if (e.target.classList.contains('tr-tab-close')) {
-                e.stopPropagation();
-                lgCloseViewTab(e.target.dataset.closeId);
-                return;
-            }
-            if (clickTimer) clearTimeout(clickTimer);
-            clickTimer = setTimeout(function() {
-                clickTimer = null;
-                lgApplyView(tab.dataset.viewId);
-            }, 250);
-        });
-
-        tab.addEventListener('dblclick', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
-
-            var viewId = tab.dataset.viewId;
-            var view = lgViews.find(function(v) { return v.id === viewId; });
-            if (!view) return;
-
-            lgActiveViewId = viewId;
-
-            var input = document.createElement('input');
-            input.type = 'text';
-            input.value = view.name;
-            input.className = 'wms-input-compact';
-            input.style.width = '100px';
-            tab.innerHTML = '';
-            tab.appendChild(input);
-            input.focus();
-            input.select();
-
-            ['click', 'mousedown', 'mouseup', 'dblclick', 'keydown', 'keyup', 'keypress'].forEach(function(evt) {
-                input.addEventListener(evt, function(ie) { ie.stopPropagation(); });
-            });
-
-            var finished = false;
-            function finishRename() {
-                if (finished) return;
-                finished = true;
-                var newName = input.value.trim();
-                if (newName && newName !== view.name) {
-                    var duplicate = lgViews.some(function(v) {
-                        return v.id !== viewId && v.name.toLowerCase() === newName.toLowerCase();
-                    });
-                    if (duplicate) {
-                        showAlert('A view named "' + newName + '" already exists', 'error', 3000);
-                    } else {
-                        view.name = newName;
-                        fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-                            method: 'PATCH',
-                            headers: lgHeaders(),
-                            body: JSON.stringify({ name: newName })
-                        }).catch(function(err) { console.warn('Failed to rename view:', err.message); });
-                    }
-                }
-                lgRenderViewTabs();
-                lgRenderMoreDropdown();
-            }
-
-            input.addEventListener('blur', finishRename);
-            input.addEventListener('keydown', function(ke) {
-                ke.stopPropagation();
-                if (ke.key === 'Enter') { ke.preventDefault(); input.blur(); }
-                if (ke.key === 'Escape') { ke.preventDefault(); input.value = view.name; input.blur(); }
-            });
-        });
-    });
-}
-
-function lgRenderMoreDropdown() {
-    var list = document.getElementById('lgMoreList');
-    if (!list) return;
-
-    if (lgViews.length === 0) {
-        list.innerHTML = '<div class="tr-more-empty">No saved views</div>';
-        return;
-    }
-
-    list.innerHTML = lgViews.map(function(v, idx) {
-        var isActive = v.id === lgActiveViewId;
-        var isDefault = v.is_default;
-        var inTabs = v.show_in_tabs !== false;
-        return '<div class="tr-more-item' + (isActive ? ' active' : '') + '" draggable="true" data-view-id="' + v.id + '" data-view-idx="' + idx + '">' +
-            '<span class="tr-more-drag-handle" title="Drag to reorder">\u2630</span>' +
-            (isActive ? '<span style="color:#667eea;font-size:11px;">✓</span> ' : '<span style="width:16px;display:inline-block;"></span> ') +
-            '<span class="tr-more-name">' + wmsEsc(v.name) + '</span>' +
-            (isDefault ? '<span class="tr-more-badge">★ Default</span>' : '') +
-            '<span class="tr-more-actions">' +
-                (!isDefault ? '<button class="tr-more-action-btn" data-action="default" data-id="' + v.id + '">★</button>' : '') +
-                (inTabs && !isDefault ? '<button class="tr-more-action-btn" data-action="hide-tab" data-id="' + v.id + '">□</button>' : '') +
-                (!inTabs ? '<button class="tr-more-action-btn" data-action="show-tab" data-id="' + v.id + '">■</button>' : '') +
-                '<button class="tr-more-action-btn danger" data-action="delete" data-id="' + v.id + '">✕</button>' +
-            '</span></div>';
-    }).join('');
-
-    list.querySelectorAll('.tr-more-item').forEach(function(item) {
-        item.addEventListener('click', function(e) {
-            if (e.target.closest('.tr-more-action-btn') || e.target.closest('.tr-more-drag-handle')) return;
-            lgApplyView(item.dataset.viewId);
-            document.getElementById('lgMoreDropdown').style.display = 'none';
-        });
-    });
-
-    list.querySelectorAll('.tr-more-action-btn').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var action = btn.dataset.action;
-            var id = btn.dataset.id;
-            if (action === 'default') lgSetDefaultView(id);
-            else if (action === 'hide-tab') lgCloseViewTab(id);
-            else if (action === 'show-tab') lgShowViewTab(id);
-            else if (action === 'delete') lgDeleteView(id);
-        });
-    });
-
-    // Drag-to-reorder (shared helper from trading.js)
-    if (typeof trMoreAttachDragHandlers === 'function') {
-        trMoreAttachDragHandlers(list, lgViews, function() {
-            lgRenderViewTabs();
-            lgRenderMoreDropdown();
-        });
-    }
-}
-
-function lgUpdateViewButtons() {
-    var updateBtn = document.getElementById('lgUpdateViewBtn');
-    if (updateBtn) {
-        updateBtn.disabled = !lgActiveViewId;
-    }
-}
-
-function lgApplyView(viewId) {
-    var view = lgViews.find(function(v) { return v.id === viewId; });
-    if (!view) return;
-
-    lgActiveViewId = viewId;
-    var f = view.filters || {};
-
-    // Mutate arrays in-place (same references passed to wmsPillSearch)
-    lgSelectedInvestorIds.length = 0;
-    Array.prototype.push.apply(lgSelectedInvestorIds, f.investorIds || []);
-    lgSelectedTraderIds.length = 0;
-    Array.prototype.push.apply(lgSelectedTraderIds, f.traderIds || []);
-    lgSelectedBrokerIds.length = 0;
-    Array.prototype.push.apply(lgSelectedBrokerIds, f.brokerIds || []);
-    lgSelectedTagNames.length = 0;
-    Array.prototype.push.apply(lgSelectedTagNames, f.tagNames || []);
-    lgTagFilterLogic = f.tagLogic || 'OR';
-
-    ['investor', 'trader', 'broker', 'tag'].forEach(function(type) {
-        lgSyncPillStates(type);
-        lgRenderSelectedTags(type);
-    });
-
-    lgRenderViewTabs();
-    lgRenderMoreDropdown();
-    lgUpdateViewButtons();
-    lgRefresh();
-}
+// SAVED STATEMENT VIEWS — delegated to lgVM (wmsViewManager instance)
 
 // Refresh pill filter items with current reference data
 function lgRefreshPillItems() {
@@ -805,170 +631,6 @@ function lgRenderSelectedTags(type) {
     else if (type === 'trader' && lgTrdPillFilter) lgTrdPillFilter.renderSelectedTags();
     else if (type === 'broker' && lgBrkPillFilter) lgBrkPillFilter.renderSelectedTags();
     else if ((type === 'tag' || !type) && lgTagPillFilter) lgTagPillFilter.renderSelectedTags();
-}
-
-async function lgSaveCurrentView(name) {
-    var exists = lgViews.some(function(v) { return v.name.toLowerCase() === name.toLowerCase(); });
-    if (exists) {
-        showAlert('A view named "' + name + '" already exists', 'error', 3000);
-        return;
-    }
-    var filters = lgGetCurrentFilters();
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
-            method: 'POST',
-            headers: lgHeaders(),
-            body: JSON.stringify({
-                name: name,
-                filters: filters,
-                sort_order: (lgViews.length || 0) + 1,
-                is_default: false,
-                show_in_tabs: true,
-                module: 'ledger'
-            })
-        });
-        if (resp.ok) {
-            var newView = await resp.json();
-            if (Array.isArray(newView)) newView = newView[0];
-            lgViews.push(newView);
-            lgApplyView(newView.id);
-            document.getElementById('lgSavePrompt').style.display = 'none';
-            showAlert('View saved', 'success', 3000);
-        }
-    } catch (err) {
-        console.warn('Failed to save view:', err.message);
-        showAlert('Failed to save view', 'error', 3000);
-    }
-}
-
-async function lgUpdateCurrentView() {
-    if (!lgActiveViewId) return;
-    var view = lgViews.find(function(v) { return v.id === lgActiveViewId; });
-    if (!view) return;
-
-    var filters = lgGetCurrentFilters();
-    try {
-        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + lgActiveViewId, {
-            method: 'PATCH',
-            headers: lgHeaders(),
-            body: JSON.stringify({ filters: filters })
-        });
-        view.filters = filters;
-        showAlert('View updated', 'success', 3000);
-    } catch (err) {
-        console.warn('Failed to update view:', err.message);
-        showAlert('Failed to update view', 'error', 3000);
-    }
-}
-
-async function lgSetDefaultView(viewId) {
-    try {
-        var prevDefault = lgViews.find(function(v) { return v.is_default; });
-        if (prevDefault) {
-            await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + prevDefault.id, {
-                method: 'PATCH',
-                headers: lgHeaders(),
-                body: JSON.stringify({ is_default: false })
-            });
-            prevDefault.is_default = false;
-        }
-
-        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'PATCH',
-            headers: lgHeaders(),
-            body: JSON.stringify({ is_default: true })
-        });
-        var v = lgViews.find(function(v) { return v.id === viewId; });
-        if (v) v.is_default = true;
-
-        lgRenderViewTabs();
-        lgRenderMoreDropdown();
-    } catch (err) {
-        console.warn('Failed to set default view:', err.message);
-    }
-}
-
-async function lgCloseViewTab(viewId) {
-    try {
-        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'PATCH',
-            headers: lgHeaders(),
-            body: JSON.stringify({ show_in_tabs: false })
-        });
-    } catch (err) {
-        console.warn('Failed to close tab:', err.message);
-    }
-
-    var v = lgViews.find(function(v) { return v.id === viewId; });
-    if (v) v.show_in_tabs = false;
-
-    if (lgActiveViewId === viewId) {
-        var defaultView = lgViews.find(function(v) { return v.is_default; });
-        if (defaultView) {
-            lgApplyView(defaultView.id);
-            return;
-        } else {
-            lgActiveViewId = null;
-        }
-    }
-
-    lgRenderViewTabs();
-    lgRenderMoreDropdown();
-}
-
-async function lgShowViewTab(viewId) {
-    try {
-        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'PATCH',
-            headers: lgHeaders(),
-            body: JSON.stringify({ show_in_tabs: true })
-        });
-    } catch (err) {
-        console.warn('Failed to show tab:', err.message);
-    }
-
-    var v = lgViews.find(function(v) { return v.id === viewId; });
-    if (v) v.show_in_tabs = true;
-
-    lgRenderViewTabs();
-    lgRenderMoreDropdown();
-}
-
-async function lgDeleteView(viewId) {
-    showAlert('Hold Shift + click to confirm delete', 'warning', 3000);
-    try {
-        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'DELETE',
-            headers: lgHeaders()
-        });
-        lgViews = lgViews.filter(function(v) { return v.id !== viewId; });
-
-        if (lgActiveViewId === viewId) {
-            var defaultView = lgViews.find(function(v) { return v.is_default; });
-            if (defaultView) {
-                lgApplyView(defaultView.id);
-                return;
-            } else {
-                lgActiveViewId = null;
-            }
-        }
-
-        lgRenderViewTabs();
-        lgRenderMoreDropdown();
-        showAlert('View deleted', 'success', 2000);
-    } catch (err) {
-        console.warn('Failed to delete view:', err.message);
-    }
-}
-
-function lgGetCurrentFilters() {
-    return {
-        investorIds: lgSelectedInvestorIds.slice(),
-        traderIds: lgSelectedTraderIds.slice(),
-        brokerIds: lgSelectedBrokerIds.slice(),
-        tagNames: lgSelectedTagNames.slice(),
-        tagLogic: lgTagFilterLogic
-    };
 }
 
 // ============================================================================
@@ -1010,7 +672,7 @@ async function lgRefresh() {
         }
         try {
             var url = SUPABASE_URL + '/rest/v1/ledger_entries?select=*' + (allQuery ? '&' + allQuery : '') + '&order=entry_date.asc';
-            var resp = await fetch(url, { headers: lgHeaders() });
+            var resp = await fetch(url, { headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}) });
             lgLedgerEntries = resp.ok ? await resp.json() : [];
         } catch (err) {
             console.warn('Failed to fetch ledger entries:', err.message);
@@ -1530,7 +1192,7 @@ async function lgSaveOpeningBalance() {
             // Update existing opening balance
             await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + ob.id, {
                 method: 'PATCH',
-                headers: lgHeaders(),
+                headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
                 body: JSON.stringify({ amount: newAmount })
             });
         } else {
@@ -1538,7 +1200,7 @@ async function lgSaveOpeningBalance() {
             var entryDate = lgDateFrom || new Date().toISOString().slice(0, 10);
             await fetch(SUPABASE_URL + '/rest/v1/ledger_entries', {
                 method: 'POST',
-                headers: lgHeaders(),
+                headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
                 body: JSON.stringify({
                     investor_id: investorId,
                     entry_date: entryDate,
@@ -1563,12 +1225,20 @@ async function lgSaveOpeningBalance() {
 // SUMMARY RENDERING
 // ============================================================================
 
-// Tax rate on booked gains — TODO: make configurable via DB / investor table
-var LG_TAX_RATE_PCT = 12.5;
+// Tax rate on booked gains — resolved from investor/IBA DB fields via wmsGetTaxRate().
+// Falls back to WMS_DEFAULT_TAX_RATE (12.5%) when no investor-specific rate is set.
+function lgGetEffectiveTaxRate() {
+    var invId = (lgSelectedInvestorIds.length === 1) ? lgSelectedInvestorIds[0] : null;
+    var brkId = (lgSelectedBrokerIds.length === 1) ? lgSelectedBrokerIds[0] : null;
+    return wmsGetTaxRate(invId, brkId);
+}
 
 function lgRenderSummary() {
     var summaryBody = document.getElementById('lgSummaryBody');
     if (!summaryBody) return;
+
+    // Resolve effective tax rate from DB (investor/IBA level, fallback to default)
+    var taxRatePct = lgGetEffectiveTaxRate();
 
     // Summary uses ALL transactions (ignoring date filter) but respects
     // investor/trader/broker/tag filters to show current portfolio holdings
@@ -1767,7 +1437,7 @@ function lgRenderSummary() {
     var totalBookedGain = 0;
     fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
 
-    var potentialTax = Math.max(0, totalBookedGain) * (LG_TAX_RATE_PCT / 100);
+    var potentialTax = Math.max(0, totalBookedGain) * (taxRatePct / 100);
 
     // Net Receivable = total holdings value (EQ + NFO MTM) − Cash Balance − Tax.
     // Cash Balance (not full Outstanding) is subtracted so that NFO margin —
@@ -1970,7 +1640,7 @@ async function lgAddEntry() {
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries', {
             method: 'POST',
-            headers: lgHeaders(),
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify({
                 investor_id: investorId,
                 entry_date: entryDate,
@@ -2024,7 +1694,7 @@ async function lgDeleteEntry(entryId, linkEl) {
         try {
             await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + entryId, {
                 method: 'DELETE',
-                headers: lgHeaders()
+                headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'})
             });
             lgRefresh();
             showAlert('Entry deleted', 'success', 2000);
@@ -2248,7 +1918,7 @@ async function lgCommitPendingInterest(pendingKey) {
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries', {
             method: 'POST',
-            headers: lgHeaders(),
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify({
                 investor_id: pending.investorId,
                 entry_date: pending.date,
@@ -2292,7 +1962,7 @@ async function lgPostInterest() {
     try {
         await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + lgInterestDetailEntryId, {
             method: 'PATCH',
-            headers: lgHeaders(),
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify({ amount: totalAmount })
         });
 
@@ -2315,8 +1985,11 @@ async function lgPostInterest() {
 // but pulled into a simple data structure instead of DOM html.
 
 function lgGatherExportData() {
+    // Resolve effective tax rate from DB (same logic as lgRenderSummary)
+    var taxRatePct = lgGetEffectiveTaxRate();
+
     // 1. Active view name & date range
-    var activeView = lgViews.find(function(v) { return v.id === lgActiveViewId; });
+    var activeView = lgVM.views.find(function(v) { return v.id === lgVM.activeViewId; });
     var viewName = activeView ? activeView.name : 'Statement';
 
     // Determine FY label from date range
@@ -2503,7 +2176,7 @@ function lgGatherExportData() {
     });
     var totalBookedGain = 0;
     fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
-    var potentialTax = Math.max(0, totalBookedGain) * (LG_TAX_RATE_PCT / 100);
+    var potentialTax = Math.max(0, totalBookedGain) * (taxRatePct / 100);
     var netReceivable = totalHoldingsValue - clampedCashBal - potentialTax;
     var totalCurrentMtm = totalEqMtm + totalNfoMtm;
     var balNoMtm = netReceivable - totalCurrentMtm;
@@ -2745,7 +2418,7 @@ function lgExportExcel() {
     // After 'columns' switch, the engine resets column defs but NOT column letters.
     // The booked total sits in column D of the booked section.
     var sumTaxFormula = {
-        formula: 'MAX(0,' + bcGain + bookedTotalRow + ')*' + (LG_TAX_RATE_PCT / 100),
+        formula: 'MAX(0,' + bcGain + bookedTotalRow + ')*' + (taxRatePct / 100),
         result: d.potentialTax
     };
 
@@ -2779,7 +2452,7 @@ function lgExportExcel() {
         { type: 'summary', rows: [
             { label: 'Total Value of Holdings', value: sumHoldingsVal },
             { label: 'Less: Outstanding', value: d.outstandingBal },
-            { label: 'Less: Potential Tax (' + LG_TAX_RATE_PCT + '%)', value: sumTaxFormula },
+            { label: 'Less: Potential Tax (' + taxRatePct + '%)', value: sumTaxFormula },
             { label: 'Net Receivable / (Payable)', value: sumNetRecFormula, bold: true },
             { label: 'Balance without MTM', value: sumBalNoMtmFormula, bold: true,
                 extraCol: 6, extraValue: sumPctFormula, extraFormat: 'pct' }
@@ -2850,7 +2523,7 @@ function lgExportPdf() {
                 { type: 'summary', rows: [
                     { label: 'Total Value of Holdings', value: d.holdingsValue },
                     { label: 'Less: Outstanding', value: d.outstanding },
-                    { label: 'Less: Potential Tax (' + LG_TAX_RATE_PCT + '%)', value: d.potentialTax },
+                    { label: 'Less: Potential Tax (' + taxRatePct + '%)', value: d.potentialTax },
                     { label: 'Net Receivable / (Payable)', value: d.netReceivable, bold: true },
                     { label: 'Balance without MTM', value: d.balNoMtm, bold: true }
                 ]},
@@ -2873,14 +2546,6 @@ function lgExportPdf() {
 }
 
 // ============================================================================
-// HELPERS
-// ============================================================================
-
-function lgHeaders() {
-    return wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'});
-}
-
-// ============================================================================
 // WINDOW EXPORTS
 // ============================================================================
 
@@ -2895,7 +2560,7 @@ window.lgShowPendingInterestDetail = lgShowPendingInterestDetail;
 window.lgCommitPendingInterest = lgCommitPendingInterest;
 window.lgAddEntry = lgAddEntry;
 window.lgPostInterest = lgPostInterest;
-window.lgApplyView = lgApplyView;
-window.lgLoadViews = lgLoadViews;
+window.lgApplyView = function(viewId) { lgVM.applyView(viewId); };
+window.lgLoadViews = function() { lgVM.loadViews(); };
 window.lgSaveOpeningBalance = lgSaveOpeningBalance;
 window.lgCancelObEdit = lgCancelObEdit;

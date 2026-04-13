@@ -25,8 +25,6 @@ var trSortDirection = 'asc';
 var trSortByPct = false;
 var trExpandedKey = null;
 var trShowZeroHoldings = false;
-var trPortfolioViews = [];         // Saved views from DB
-var trActiveViewId = null;         // Currently active saved view
 var trDefaultViewFilters = null;   // Filters from the default Portfolio view (for banner)
 var trDefaultFnoViewFilters = null; // Filters from the default F&O view (for banner)
 var trCompanySearchText = '';      // Inline company search filter
@@ -48,7 +46,91 @@ var trTxnDaysFilter = 0;        // 0 = ALL, else # of days
 var trTxnMatchMethod = 'lifo';  // 'fifo' | 'lifo' (default LIFO)
 var trTxnFnoPricesFetched = false;  // reset each modal open
 var trTxnContractFilter = [];   // [] = show all, else array of expiry labels (e.g. "Mar 26") to show
-var trRenamingTab = false;       // flag: true while inline rename input is active (prevents trApplyView from firing)
+// ---- Portfolio View Manager (wmsViewManager instance) ----
+var trPortfolioVM = wmsViewManager({
+    module: 'trading_portfolio',
+    label: 'Portfolio',
+    moduleFilter: 'or=(module.eq.trading_portfolio,module.is.null)',
+    ids: {
+        viewTabs: 'tr-view-tabs',
+        moreList: 'tr-more-list',
+        moreDropdown: 'tr-more-dropdown',
+        updateBtn: 'tr-update-view-btn'
+    },
+    autoDefaultFirst: true,
+    getPills: function() {
+        return [
+            { pill: trInvPillFilter, type: 'investor' },
+            { pill: trTrdPillFilter, type: 'trader' },
+            { pill: trBrkPillFilter, type: 'broker' },
+            { pill: trTagPillFilter, type: 'tag' }
+        ];
+    },
+    getFilters: function() {
+        return {
+            investorIds: trSelectedInvestorIds.slice(),
+            traderIds: trSelectedTraderIds.slice(),
+            brokerIds: trSelectedBrokerIds.slice(),
+            tagNames: trSelectedTagNames.slice(),
+            tagLogic: trTagFilterLogic,
+            viewMode: trViewMode
+        };
+    },
+    applyFilters: function(f) {
+        // Mutate arrays in-place (B.2.3 — pill controllers hold references)
+        trSelectedInvestorIds.length = 0;
+        Array.prototype.push.apply(trSelectedInvestorIds, f.investorIds || []);
+        trSelectedTraderIds.length = 0;
+        Array.prototype.push.apply(trSelectedTraderIds, f.traderIds || []);
+        trSelectedBrokerIds.length = 0;
+        Array.prototype.push.apply(trSelectedBrokerIds, f.brokerIds || []);
+        trSelectedTagNames.length = 0;
+        Array.prototype.push.apply(trSelectedTagNames, f.tagNames || []);
+        trTagFilterLogic = f.tagLogic || 'OR';
+        trViewMode = f.viewMode || 'default';
+
+        // Sync pill UI
+        ['investor', 'trader', 'broker', 'tag'].forEach(function(type) {
+            trSyncPillStates(type);
+            trRenderSelectedTags(type);
+        });
+
+        // Update tag logic radio
+        document.querySelectorAll('input[name="tr-tag-logic"]').forEach(function(r) {
+            r.checked = r.value === trTagFilterLogic;
+        });
+
+        // Update view mode buttons
+        document.querySelectorAll('.tr-view-mode-btn').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.mode === trViewMode);
+        });
+    },
+    onRefresh: function() { trRenderPortfolio(); },
+    onLoadComplete: function(defaultView) {
+        if (defaultView) {
+            trDefaultViewFilters = defaultView.filters || {};
+        }
+        trComputeBannerStats();
+    },
+    onDefaultChanged: function(newDefault) {
+        trDefaultViewFilters = newDefault.filters || {};
+        trComputeBannerStats();
+    },
+    onUpdateComplete: function(view) {
+        if (view.is_default) {
+            trDefaultViewFilters = view.filters;
+            trComputeBannerStats();
+        }
+    },
+    onSaveComplete: function() {
+        var prompt = document.getElementById('tr-save-prompt');
+        if (prompt) prompt.classList.remove('show');
+        var nameInput = document.getElementById('tr-save-prompt-name');
+        if (nameInput) nameInput.value = '';
+        var saveNewBtn = document.getElementById('tr-save-new-btn');
+        if (saveNewBtn) saveNewBtn.style.display = '';
+    }
+});
 
 // ============================================================================
 // DAY'S P&L BANNER (header card)
@@ -383,7 +465,7 @@ async function initTrading() {
     await wmsStandardRefresh(false); // first load: non-forced (triggers Stage 2+3 for unresolved)
 
     // Load saved views (may update default view filters → banner recompute)
-    await trLoadViews();
+    await trPortfolioVM.loadViews();
 
     // Re-init sub-modules if already loaded (pills need data that may not have been ready)
     if (window.trTxInit && trTxLoaded) {
@@ -515,7 +597,7 @@ function trSetupEventHandlers() {
     var updateBtn = document.getElementById('tr-update-view-btn');
     if (updateBtn) {
         updateBtn.addEventListener('click', function() {
-            if (trActiveViewId) trUpdateCurrentView();
+            if (trPortfolioVM.activeViewId) trPortfolioVM.updateCurrentView();
         });
     }
 
@@ -523,7 +605,7 @@ function trSetupEventHandlers() {
     var newViewBtn = document.getElementById('tr-new-view-btn');
     if (newViewBtn) {
         newViewBtn.addEventListener('click', function() {
-            trCreateBlankView();
+            trPortfolioVM.createBlankView();
         });
     }
 
@@ -545,7 +627,7 @@ function trSetupEventHandlers() {
     if (savePromptOk) {
         savePromptOk.addEventListener('click', function() {
             var name = document.getElementById('tr-save-prompt-name').value.trim();
-            if (name) trSaveCurrentView(name);
+            if (name) trPortfolioVM.saveCurrentView(name);
         });
     }
     var savePromptCancel = document.getElementById('tr-save-prompt-cancel');
@@ -562,7 +644,7 @@ function trSetupEventHandlers() {
         savePromptName.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
                 var name = savePromptName.value.trim();
-                if (name) trSaveCurrentView(name);
+                if (name) trPortfolioVM.saveCurrentView(name);
             } else if (e.key === 'Escape') {
                 document.getElementById('tr-save-prompt').classList.remove('show');
                 savePromptName.value = '';
@@ -1648,7 +1730,7 @@ function trOpenTxnModal(companyKey, investorId) {
     var titleExtra = '';
     if (companyKey === '__ALL__') {
         // Portfolio-level: use active view name
-        var activeView = trPortfolioViews.find(function(v) { return v.id === trActiveViewId; });
+        var activeView = trPortfolioVM.views.find(function(v) { return v.id === trPortfolioVM.activeViewId; });
         companyName = 'All Transactions';
         titleExtra = activeView ? ' <span style="font-size:11px;color:#667eea;">(' + wmsEsc(activeView.name) + ')</span>' : '';
     } else {
@@ -3507,574 +3589,8 @@ async function trLoadHistPlModule(callback) {
 }
 
 // ============================================================================
-// SAVED PORTFOLIO VIEWS
+// SAVED PORTFOLIO VIEWS — delegated to trPortfolioVM (wmsViewManager instance)
 // ============================================================================
-
-async function trLoadViews() {
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?or=(module.eq.trading_portfolio,module.is.null)&select=id,name,filters,sort_order,is_default,show_in_tabs&order=sort_order.asc,created_at.asc', {
-            headers: wmsHeaders()
-        });
-        trPortfolioViews = resp.ok ? await resp.json() : [];
-    } catch (err) {
-        console.warn('Trading: Failed to load views:', err.message);
-        trPortfolioViews = [];
-    }
-    trRenderViewTabs();
-    trRenderMoreDropdown();
-    trUpdateViewButtons();
-
-    // Store default view filters for banner computation
-    var defaultView = trPortfolioViews.find(function(v) { return v.is_default; });
-    if (defaultView) {
-        trDefaultViewFilters = defaultView.filters || {};
-    }
-
-    // Auto-apply default view on first load (if no view active yet)
-    if (!trActiveViewId) {
-        if (defaultView) {
-            trApplyView(defaultView.id);
-        }
-    }
-
-    // Recompute banner from default view filters
-    trComputeBannerStats();
-}
-
-// ---- VIEW TABS ----
-
-function trRenderViewTabs() {
-    var container = document.getElementById('tr-view-tabs');
-    if (!container) return;
-
-    // Default view first (locked left), then other tabs
-    var defaultView = trPortfolioViews.find(function(v) { return v.is_default; });
-    var tabViews = trPortfolioViews.filter(function(v) {
-        return v.show_in_tabs !== false && !v.is_default;
-    });
-
-    var html = '';
-
-    // Default view tab (if exists)
-    if (defaultView) {
-        var isActive = defaultView.id === trActiveViewId;
-        html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' + defaultView.id + '">' +
-            '<span class="tr-tab-star">★</span> ' + defaultView.name +
-            '</button>';
-    }
-
-    // Other pinned tabs
-    tabViews.forEach(function(v) {
-        var isActive = v.id === trActiveViewId;
-        html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' + v.id + '">' +
-            v.name +
-            ' <span class="tr-tab-close" data-close-id="' + v.id + '" title="Remove from tabs">✕</span>' +
-            '</button>';
-    });
-
-    container.innerHTML = html;
-
-    // Attach click/dblclick handlers with delay to distinguish them
-    container.querySelectorAll('.tr-view-tab').forEach(function(tab) {
-        var clickTimer = null;
-        tab.addEventListener('click', function(e) {
-            if (e.target.classList.contains('tr-tab-close')) {
-                e.stopPropagation();
-                trCloseViewTab(e.target.dataset.closeId);
-                return;
-            }
-            // Delay single click to allow dblclick to cancel it
-            if (clickTimer) clearTimeout(clickTimer);
-            clickTimer = setTimeout(function() {
-                clickTimer = null;
-                if (trRenamingTab) return;   // don't re-render while rename input is active
-                trApplyView(tab.dataset.viewId);
-            }, 250);
-        });
-        // Double-click to rename
-        tab.addEventListener('dblclick', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            // Cancel the pending single click
-            if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
-            trRenamingTab = true;
-
-            var viewId = tab.dataset.viewId;
-            var view = trPortfolioViews.find(function(v) { return v.id === viewId; });
-            if (!view) return;
-
-            // Make sure this view is active
-            trActiveViewId = viewId;
-
-            // Replace tab content with inline input
-            var input = document.createElement('input');
-            input.type = 'text';
-            input.value = view.name;
-            input.style.cssText = 'width:100px; font-size:11px; padding:1px 4px; border:1px solid #667eea; border-radius:3px; outline:none; background:white;';
-            tab.innerHTML = '';
-            tab.appendChild(input);
-            input.focus();
-            input.select();
-
-            // Isolate input from parent button — prevent ALL events from bubbling
-            // to the tab's click handler (which would trigger trApplyView → re-render → destroy input)
-            ['click', 'mousedown', 'mouseup', 'dblclick', 'keydown', 'keyup', 'keypress'].forEach(function(evt) {
-                input.addEventListener(evt, function(ie) { ie.stopPropagation(); });
-            });
-
-            var finished = false;
-            function finishRename() {
-                if (finished) return;
-                finished = true;
-                trRenamingTab = false;
-                var newName = input.value.trim();
-                if (newName && newName !== view.name) {
-                    view.name = newName;
-                    // Persist to DB
-                    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-                        method: 'PATCH',
-                        headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-                        body: JSON.stringify({ name: newName })
-                    }).catch(function(err) { console.warn('Failed to rename view:', err.message); });
-                }
-                trRenderViewTabs();
-                trRenderMoreDropdown();
-            }
-
-            input.addEventListener('blur', finishRename);
-            input.addEventListener('keydown', function(ke) {
-                ke.stopPropagation();
-                if (ke.key === 'Enter') { ke.preventDefault(); input.blur(); }
-                if (ke.key === 'Escape') { ke.preventDefault(); input.value = view.name; input.blur(); }
-            });
-        });
-    });
-}
-
-async function trCloseViewTab(viewId) {
-    // Set show_in_tabs = false in DB
-    try {
-        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'PATCH',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-            body: JSON.stringify({ show_in_tabs: false })
-        });
-    } catch (err) {
-        console.warn('Failed to update tab state:', err.message);
-    }
-
-    // Update local state
-    var v = trPortfolioViews.find(function(v) { return v.id === viewId; });
-    if (v) v.show_in_tabs = false;
-
-    // If closing the active tab, switch to default view
-    if (trActiveViewId === viewId) {
-        var defaultView = trPortfolioViews.find(function(v) { return v.is_default; });
-        if (defaultView) {
-            trApplyView(defaultView.id);
-            return; // trApplyView already re-renders tabs/more/buttons
-        } else {
-            trActiveViewId = null;
-        }
-    }
-
-    trRenderViewTabs();
-    trRenderMoreDropdown();
-}
-
-// ---- MORE DROPDOWN ----
-
-function trRenderMoreDropdown() {
-    var list = document.getElementById('tr-more-list');
-    if (!list) return;
-
-    if (trPortfolioViews.length === 0) {
-        list.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:#a0aec0;">No saved views</div>';
-        return;
-    }
-
-    list.innerHTML = trPortfolioViews.map(function(v, idx) {
-        var isActive = v.id === trActiveViewId;
-        var isDefault = v.is_default;
-        var inTabs = v.show_in_tabs !== false;
-        return '<div class="tr-more-item' + (isActive ? ' active' : '') + '" draggable="true" data-view-id="' + v.id + '" data-view-idx="' + idx + '">' +
-            '<span class="tr-more-drag-handle" title="Drag to reorder">\u2630</span>' +
-            (isActive ? '<span style="color:#667eea;font-size:11px;">\u2713</span> ' : '<span style="width:16px;display:inline-block;"></span> ') +
-            '<span class="tr-more-name">' + v.name + '</span>' +
-            (isDefault ? '<span class="tr-more-badge">\u2605 Default</span>' : '') +
-            '<span class="tr-more-actions">' +
-                (!isDefault ? '<button class="tr-more-action-btn" data-action="default" data-id="' + v.id + '" title="Set as default">\u2605</button>' : '') +
-                (inTabs && !isDefault ? '<button class="tr-more-action-btn" data-action="hide-tab" data-id="' + v.id + '" title="Remove from tabs">\u229F</button>' : '') +
-                (!inTabs ? '<button class="tr-more-action-btn" data-action="show-tab" data-id="' + v.id + '" title="Show in tabs">\u229E</button>' : '') +
-                '<button class="tr-more-action-btn danger" data-action="delete" data-id="' + v.id + '" title="Delete view">\u2715</button>' +
-            '</span>' +
-        '</div>';
-    }).join('');
-
-    // Click to apply
-    list.querySelectorAll('.tr-more-item').forEach(function(item) {
-        item.addEventListener('click', function(e) {
-            if (e.target.closest('.tr-more-action-btn') || e.target.closest('.tr-more-drag-handle')) return;
-            trApplyView(item.dataset.viewId);
-            document.getElementById('tr-more-dropdown').style.display = 'none';
-        });
-    });
-
-    // Action buttons
-    list.querySelectorAll('.tr-more-action-btn').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var action = btn.dataset.action;
-            var id = btn.dataset.id;
-            if (action === 'default') trSetDefaultView(id);
-            else if (action === 'hide-tab') trCloseViewTab(id);
-            else if (action === 'show-tab') trShowViewTab(id);
-            else if (action === 'delete') trDeleteView(id);
-        });
-    });
-
-    // Drag-to-reorder (same pattern as watchlist)
-    trMoreAttachDragHandlers(list, trPortfolioViews, function() {
-        trRenderViewTabs();
-        trRenderMoreDropdown();
-    });
-}
-
-// ---- DRAG-TO-REORDER VIEWS (shared helper) ----
-
-function trMoreAttachDragHandlers(listEl, viewsArr, onReorder) {
-    var dragIdx = -1;
-
-    listEl.querySelectorAll('.tr-more-item').forEach(function(item) {
-        // Only allow drag when initiated from the handle
-        item.addEventListener('mousedown', function(e) {
-            if (!e.target.closest('.tr-more-drag-handle')) {
-                item.setAttribute('draggable', 'false');
-            } else {
-                item.setAttribute('draggable', 'true');
-            }
-        });
-
-        item.addEventListener('dragstart', function(e) {
-            if (!e.target.closest || e.target.closest('.tr-more-action-btn')) {
-                e.preventDefault();
-                return;
-            }
-            dragIdx = parseInt(item.dataset.viewIdx);
-            item.classList.add('tr-more-dragging');
-            e.dataTransfer.effectAllowed = 'move';
-        });
-
-        item.addEventListener('dragover', function(e) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            // Clear all indicators
-            listEl.querySelectorAll('.tr-more-item').forEach(function(el) {
-                el.classList.remove('tr-more-drag-over-top', 'tr-more-drag-over-bottom');
-            });
-            var rect = item.getBoundingClientRect();
-            var mid = rect.top + rect.height / 2;
-            if (e.clientY < mid) {
-                item.classList.add('tr-more-drag-over-top');
-            } else {
-                item.classList.add('tr-more-drag-over-bottom');
-            }
-        });
-
-        item.addEventListener('dragleave', function() {
-            item.classList.remove('tr-more-drag-over-top', 'tr-more-drag-over-bottom');
-        });
-
-        item.addEventListener('drop', function(e) {
-            e.preventDefault();
-            var targetIdx = parseInt(item.dataset.viewIdx);
-            var rect = item.getBoundingClientRect();
-            var mid = rect.top + rect.height / 2;
-            var insertIdx = e.clientY < mid ? targetIdx : targetIdx + 1;
-            if (dragIdx < 0 || dragIdx === insertIdx || dragIdx + 1 === insertIdx) {
-                // No actual move needed
-                dragIdx = -1;
-                return;
-            }
-
-            // Reorder the array
-            var moved = viewsArr.splice(dragIdx, 1)[0];
-            var newIdx = insertIdx > dragIdx ? insertIdx - 1 : insertIdx;
-            viewsArr.splice(newIdx, 0, moved);
-
-            // Update sort_order for all and persist
-            var headers = wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'});
-            viewsArr.forEach(function(v, i) {
-                if (v.sort_order !== i) {
-                    v.sort_order = i;
-                    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + v.id, {
-                        method: 'PATCH', headers: headers, body: JSON.stringify({ sort_order: i })
-                    }).catch(function(err) { console.warn('Reorder PATCH error:', err.message); });
-                }
-            });
-
-            dragIdx = -1;
-            onReorder();
-        });
-
-        item.addEventListener('dragend', function() {
-            item.classList.remove('tr-more-dragging');
-            listEl.querySelectorAll('.tr-more-item').forEach(function(el) {
-                el.classList.remove('tr-more-drag-over-top', 'tr-more-drag-over-bottom');
-            });
-            dragIdx = -1;
-        });
-    });
-}
-
-// ---- APPLY VIEW ----
-
-function trApplyView(viewId) {
-    var view = trPortfolioViews.find(function(v) { return v.id === viewId; });
-    if (!view) return;
-
-    // Auto-add to tabs if not already showing
-    if (view.show_in_tabs === false || view.show_in_tabs === null) {
-        view.show_in_tabs = true;
-        // Persist to DB
-        fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'PATCH',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-            body: JSON.stringify({ show_in_tabs: true })
-        }).catch(function(err) { console.warn('Failed to show tab:', err.message); });
-    }
-
-    var f = view.filters || {};
-    // Mutate arrays in-place so wmsPillSearch controllers keep valid references
-    trSelectedInvestorIds.length = 0;
-    Array.prototype.push.apply(trSelectedInvestorIds, f.investorIds || []);
-    trSelectedTraderIds.length = 0;
-    Array.prototype.push.apply(trSelectedTraderIds, f.traderIds || []);
-    trSelectedBrokerIds.length = 0;
-    Array.prototype.push.apply(trSelectedBrokerIds, f.brokerIds || []);
-    trSelectedTagNames.length = 0;
-    Array.prototype.push.apply(trSelectedTagNames, f.tagNames || []);
-    trTagFilterLogic = f.tagLogic || 'OR';
-    trViewMode = f.viewMode || 'default';
-    trActiveViewId = viewId;
-
-    // Update filter UI
-    ['investor', 'trader', 'broker', 'tag'].forEach(function(type) {
-        trSyncPillStates(type);
-        trRenderSelectedTags(type);
-    });
-
-    // Update tag logic radio
-    document.querySelectorAll('input[name="tr-tag-logic"]').forEach(function(r) {
-        r.checked = r.value === trTagFilterLogic;
-    });
-
-    // Update view mode buttons
-    document.querySelectorAll('.tr-view-mode-btn').forEach(function(btn) {
-        btn.classList.toggle('active', btn.dataset.mode === trViewMode);
-    });
-
-    trRenderViewTabs();
-    trRenderMoreDropdown();
-    trUpdateViewButtons();
-    trRenderPortfolio();
-}
-
-function trUpdateViewButtons() {
-    var updateBtn = document.getElementById('tr-update-view-btn');
-    if (updateBtn) {
-        updateBtn.disabled = !trActiveViewId;
-    }
-}
-
-// ---- GET / SAVE / UPDATE / DELETE ----
-
-function trGetCurrentFilters() {
-    return {
-        investorIds: trSelectedInvestorIds.slice(),
-        traderIds: trSelectedTraderIds.slice(),
-        brokerIds: trSelectedBrokerIds.slice(),
-        tagNames: trSelectedTagNames.slice(),
-        tagLogic: trTagFilterLogic,
-        viewMode: trViewMode
-    };
-}
-
-async function trCreateBlankView() {
-    var blankFilters = {};
-    var sortOrder = trPortfolioViews.length;
-    var name = 'New View';
-
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
-            method: 'POST',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
-            body: JSON.stringify({ name: name, filters: blankFilters, sort_order: sortOrder, is_default: false, show_in_tabs: true, module: 'trading_portfolio' })
-        });
-        if (resp.ok) {
-            var rows = await resp.json();
-            if (rows.length > 0) {
-                trPortfolioViews.push(rows[0]);
-                trApplyView(rows[0].id);
-                showAlert('New view created — double-click tab to rename', 'success', 3000);
-            }
-        } else {
-            showAlert('Failed to create view', 'error');
-        }
-    } catch (err) {
-        showAlert('Failed to create view: ' + err.message, 'error');
-    }
-}
-
-async function trSaveCurrentView(name) {
-    var filters = trGetCurrentFilters();
-    var sortOrder = trPortfolioViews.length;
-    var isFirst = trPortfolioViews.length === 0; // First view becomes default
-
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
-            method: 'POST',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
-            body: JSON.stringify({ name: name, filters: filters, sort_order: sortOrder, is_default: isFirst, show_in_tabs: true, module: 'trading_portfolio' })
-        });
-        if (resp.ok) {
-            var rows = await resp.json();
-            if (rows.length > 0) {
-                trPortfolioViews.push(rows[0]);
-                trActiveViewId = rows[0].id;
-                trRenderViewTabs();
-                trRenderMoreDropdown();
-                trUpdateViewButtons();
-                showAlert('View "' + name + '" saved', 'success', 2000);
-            }
-        } else {
-            showAlert('Failed to save view', 'error');
-        }
-    } catch (err) {
-        showAlert('Failed to save view: ' + err.message, 'error');
-    }
-
-    // Hide prompt
-    document.getElementById('tr-save-prompt').classList.remove('show');
-    document.getElementById('tr-save-prompt-name').value = '';
-    document.getElementById('tr-save-new-btn').style.display = '';
-}
-
-async function trUpdateCurrentView() {
-    if (!trActiveViewId) return;
-    var filters = trGetCurrentFilters();
-
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + trActiveViewId, {
-            method: 'PATCH',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-            body: JSON.stringify({ filters: filters })
-        });
-        if (resp.ok) {
-            // Update local state
-            var v = trPortfolioViews.find(function(v) { return v.id === trActiveViewId; });
-            if (v) {
-                v.filters = filters;
-                // If this is the default view, refresh banner with new filters
-                if (v.is_default) {
-                    trDefaultViewFilters = filters;
-                    trComputeBannerStats();
-                }
-            }
-            showAlert('View updated', 'success', 2000);
-        } else {
-            showAlert('Failed to update view', 'error');
-        }
-    } catch (err) {
-        showAlert('Failed to update view: ' + err.message, 'error');
-    }
-}
-
-async function trDeleteView(viewId) {
-    if (!confirm('Delete this saved view?')) return;
-
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'DELETE',
-            headers: wmsHeaders({'Prefer': 'return=minimal'})
-        });
-        if (resp.ok) {
-            trPortfolioViews = trPortfolioViews.filter(function(v) { return v.id !== viewId; });
-            if (trActiveViewId === viewId) {
-                trActiveViewId = null;
-            }
-            trRenderViewTabs();
-            trRenderMoreDropdown();
-            trUpdateViewButtons();
-            showAlert('View deleted', 'success', 2000);
-        }
-    } catch (err) {
-        showAlert('Failed to delete view: ' + err.message, 'error');
-    }
-}
-
-// ---- DEFAULT VIEW ----
-
-async function trSetDefaultView(viewId) {
-    // Unset old default
-    var oldDefault = trPortfolioViews.find(function(v) { return v.is_default; });
-    if (oldDefault && oldDefault.id !== viewId) {
-        try {
-            await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + oldDefault.id, {
-                method: 'PATCH',
-                headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-                body: JSON.stringify({ is_default: false })
-            });
-            oldDefault.is_default = false;
-        } catch (err) {
-            console.warn('Failed to unset old default:', err.message);
-        }
-    }
-
-    // Set new default
-    try {
-        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'PATCH',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-            body: JSON.stringify({ is_default: true, show_in_tabs: true })
-        });
-        var v = trPortfolioViews.find(function(v) { return v.id === viewId; });
-        if (v) { v.is_default = true; v.show_in_tabs = true; }
-    } catch (err) {
-        console.warn('Failed to set default:', err.message);
-    }
-
-    // Update cached default view filters and recompute banner
-    var newDefault = trPortfolioViews.find(function(v) { return v.id === viewId; });
-    if (newDefault) {
-        trDefaultViewFilters = newDefault.filters || {};
-        trComputeBannerStats();
-    }
-
-    trRenderViewTabs();
-    trRenderMoreDropdown();
-    showAlert('Default view updated', 'success', 2000);
-}
-
-// ---- SHOW VIEW TAB ----
-
-async function trShowViewTab(viewId) {
-    try {
-        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'PATCH',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-            body: JSON.stringify({ show_in_tabs: true })
-        });
-    } catch (err) {
-        console.warn('Failed to show tab:', err.message);
-    }
-
-    var v = trPortfolioViews.find(function(v) { return v.id === viewId; });
-    if (v) v.show_in_tabs = true;
-
-    trRenderViewTabs();
-    trRenderMoreDropdown();
-}
 
 // ============================================================================
 // COMPANY COLUMN INLINE SEARCH

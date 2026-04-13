@@ -104,7 +104,7 @@ function trFnoInit() {
     var fnoUpdateBtn = document.getElementById('tr-fno-update-view-btn');
     if (fnoUpdateBtn) {
         fnoUpdateBtn.addEventListener('click', function() {
-            if (trFnoActiveViewId) trFnoUpdateCurrentView();
+            if (trFnoVM.activeViewId) trFnoVM.updateCurrentView();
         });
     }
 
@@ -112,7 +112,7 @@ function trFnoInit() {
     var fnoNewViewBtn = document.getElementById('tr-fno-new-view-btn');
     if (fnoNewViewBtn) {
         fnoNewViewBtn.addEventListener('click', function() {
-            trFnoCreateBlankView();
+            trFnoVM.createBlankView();
         });
     }
 
@@ -132,7 +132,7 @@ function trFnoInit() {
     if (fnoSaveOk) {
         fnoSaveOk.addEventListener('click', function() {
             var name = document.getElementById('tr-fno-save-prompt-name').value.trim();
-            if (name) trFnoSaveCurrentView(name);
+            if (name) trFnoVM.saveCurrentView(name);
         });
     }
 
@@ -153,7 +153,7 @@ function trFnoInit() {
             if (e.key === 'Enter') {
                 e.preventDefault();
                 var name = e.target.value.trim();
-                if (name) trFnoSaveCurrentView(name);
+                if (name) trFnoVM.saveCurrentView(name);
             } else if (e.key === 'Escape') {
                 document.getElementById('tr-fno-save-prompt').classList.remove('show');
                 fnoSaveName.value = '';
@@ -171,7 +171,7 @@ function trFnoInit() {
     });
 
     // Load saved views from DB
-    trFnoLoadViews();
+    trFnoVM.loadViews();
 }
 
 // ============================================================================
@@ -1187,13 +1187,6 @@ function trFnoBuildExpiryFilter(expiryLabels) {
 // F&O CONTRACT PRICES: Async fetch for open position CMP
 // ============================================================================
 
-// ============================================================================
-// F&O AUTO-REFRESH — REMOVED (replaced by wmsStandardRefresh)
-// Legacy functions kept as no-ops so any stray callers don't throw.
-// ============================================================================
-function trFnoFetchAndRefresh() { /* no-op: replaced by standard refresh */ }
-function trFnoStartAutoRefresh() { /* no-op: replaced by standard refresh */ }
-function trFnoStopAutoRefresh() { /* no-op: replaced by standard refresh */ }
 
 // ============================================================================
 // SNAPSHOT: Build table image from data for WhatsApp sharing
@@ -1477,511 +1470,114 @@ function trFnoSnapshot() {
 // DB: portfolio_views table with module='trading_fno'
 // ============================================================================
 
-var trFnoViews = [];
-var trFnoActiveViewId = null;
-var trFnoRenamingTab = false;
+// ---- F&O View Manager (wmsViewManager instance) ----
+var trFnoVM = wmsViewManager({
+    module: 'trading_fno',
+    label: 'F&O',
+    ids: {
+        viewTabs: 'tr-fno-view-tabs',
+        moreList: 'tr-fno-more-list',
+        moreDropdown: 'tr-fno-more-dropdown',
+        updateBtn: 'tr-fno-update-view-btn'
+    },
+    autoDefaultFirst: true,
+    getPills: function() {
+        return [
+            { pill: trFnoInvPillFilter, type: 'investor' },
+            { pill: trFnoTrdPillFilter, type: 'trader' },
+            { pill: trFnoBrkPillFilter, type: 'broker' },
+            { pill: trFnoTagPillFilter, type: 'tag' }
+        ];
+    },
+    getFilters: function() {
+        return {
+            investorIds: trSelectedInvestorIds.slice(),
+            traderIds: trSelectedTraderIds.slice(),
+            brokerIds: trSelectedBrokerIds.slice(),
+            tagNames: trSelectedTagNames.slice(),
+            tagLogic: trTagFilterLogic,
+            fnoMode: trFnoMode,
+            matchMethod: trFnoMatchMethod,
+            expiryFilter: trFnoExpiryFilter ? trFnoExpiryFilter.slice() : [],
+            flatView: trFnoFlatView
+        };
+    },
+    applyFilters: function(f) {
+        // Shared filters — mutate in-place (B.2.3 — pill controllers hold references)
+        trSelectedInvestorIds.length = 0;
+        Array.prototype.push.apply(trSelectedInvestorIds, f.investorIds || []);
+        trSelectedTraderIds.length = 0;
+        Array.prototype.push.apply(trSelectedTraderIds, f.traderIds || []);
+        trSelectedBrokerIds.length = 0;
+        Array.prototype.push.apply(trSelectedBrokerIds, f.brokerIds || []);
+        trSelectedTagNames.length = 0;
+        Array.prototype.push.apply(trSelectedTagNames, f.tagNames || []);
+        trTagFilterLogic = f.tagLogic || 'OR';
 
-// ---- GET CURRENT FILTERS (shared + F&O-specific) ----
-
-function trFnoGetCurrentFilters() {
-    return {
-        investorIds: trSelectedInvestorIds.slice(),
-        traderIds: trSelectedTraderIds.slice(),
-        brokerIds: trSelectedBrokerIds.slice(),
-        tagNames: trSelectedTagNames.slice(),
-        tagLogic: trTagFilterLogic,
-        fnoMode: trFnoMode,
-        matchMethod: trFnoMatchMethod,
-        expiryFilter: trFnoExpiryFilter ? trFnoExpiryFilter.slice() : [],
-        flatView: trFnoFlatView
-    };
-}
-
-// ---- SYNC F&O PILL STATES (after view apply) ----
-
-function trFnoSyncPillStates() {
-    if (trFnoInvPillFilter) trFnoInvPillFilter.syncStates();
-    if (trFnoTrdPillFilter) trFnoTrdPillFilter.syncStates();
-    if (trFnoBrkPillFilter) trFnoBrkPillFilter.syncStates();
-    if (trFnoTagPillFilter) trFnoTagPillFilter.syncStates();
-}
-
-function trFnoRenderSelectedTags() {
-    if (trFnoInvPillFilter) trFnoInvPillFilter.renderSelectedTags();
-    if (trFnoTrdPillFilter) trFnoTrdPillFilter.renderSelectedTags();
-    if (trFnoBrkPillFilter) trFnoBrkPillFilter.renderSelectedTags();
-    if (trFnoTagPillFilter) trFnoTagPillFilter.renderSelectedTags();
-}
-
-// ---- LOAD VIEWS FROM DB ----
-
-async function trFnoLoadViews() {
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?module=eq.trading_fno&select=id,name,filters,sort_order,is_default,show_in_tabs&order=sort_order.asc,created_at.asc', {
-            headers: wmsHeaders()
-        });
-        trFnoViews = resp.ok ? await resp.json() : [];
-    } catch (err) {
-        console.warn('F&O: Failed to load views:', err.message);
-        trFnoViews = [];
-    }
-    trFnoRenderViewTabs();
-    trFnoRenderMoreDropdown();
-    trFnoUpdateViewButtons();
-
-    // Store default F&O view filters for banner computation
-    var defaultView = trFnoViews.find(function(v) { return v.is_default; });
-    if (defaultView) {
-        trDefaultFnoViewFilters = defaultView.filters || {};
-        // Re-compute F&O banner with correct default filters
-        if (typeof trFnoBannerRefreshFromDefault === 'function' && window.fyersToken) {
-            trFnoBannerRefreshFromDefault();
+        // F&O-specific state
+        trFnoMode = f.fnoMode || 'open';
+        trFnoMatchMethod = f.matchMethod || 'lifo';
+        if (f.expiryFilter !== undefined) {
+            trFnoExpiryFilter = f.expiryFilter && f.expiryFilter.length > 0 ? f.expiryFilter.slice() : [];
         }
-    }
+        trFnoFlatView = f.flatView || false;
 
-    // Auto-apply default view on first load
-    if (!trFnoActiveViewId) {
+        // Sync pill UI
+        if (trFnoInvPillFilter) trFnoInvPillFilter.syncStates();
+        if (trFnoTrdPillFilter) trFnoTrdPillFilter.syncStates();
+        if (trFnoBrkPillFilter) trFnoBrkPillFilter.syncStates();
+        if (trFnoTagPillFilter) trFnoTagPillFilter.syncStates();
+        if (trFnoInvPillFilter) trFnoInvPillFilter.renderSelectedTags();
+        if (trFnoTrdPillFilter) trFnoTrdPillFilter.renderSelectedTags();
+        if (trFnoBrkPillFilter) trFnoBrkPillFilter.renderSelectedTags();
+        if (trFnoTagPillFilter) trFnoTagPillFilter.renderSelectedTags();
+
+        // Update tag logic radio
+        document.querySelectorAll('input[name="tr-fno-tag-logic"]').forEach(function(r) {
+            r.checked = r.value === trTagFilterLogic;
+        });
+
+        // Update F&O toggle buttons
+        document.querySelectorAll('[data-fno-mode]').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.fnoMode === trFnoMode);
+        });
+        document.querySelectorAll('[data-fno-match]').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.fnoMatch === trFnoMatchMethod);
+        });
+
+        // Update flat view checkbox
+        var flatToggle = document.getElementById('trFnoFlatToggle');
+        if (flatToggle) flatToggle.checked = trFnoFlatView;
+        var tableWrap = document.getElementById('trFnoTableWrap');
+        if (tableWrap) tableWrap.classList.toggle('trFno-flat-mode', trFnoFlatView);
+    },
+    onRefresh: function() { trFnoRender(); },
+    onLoadComplete: function(defaultView) {
         if (defaultView) {
-            trFnoApplyView(defaultView.id);
-        }
-    }
-}
-
-// ---- RENDER VIEW TABS ----
-
-function trFnoRenderViewTabs() {
-    var container = document.getElementById('tr-fno-view-tabs');
-    if (!container) return;
-
-    var defaultView = trFnoViews.find(function(v) { return v.is_default; });
-    var tabViews = trFnoViews.filter(function(v) {
-        return v.show_in_tabs !== false && !v.is_default;
-    });
-
-    var html = '';
-
-    if (defaultView) {
-        var isActive = defaultView.id === trFnoActiveViewId;
-        html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' + defaultView.id + '">' +
-            '<span class="tr-tab-star">\u2605</span> ' + defaultView.name +
-            '</button>';
-    }
-
-    tabViews.forEach(function(v) {
-        var isActive = v.id === trFnoActiveViewId;
-        html += '<button class="tr-view-tab' + (isActive ? ' active' : '') + '" data-view-id="' + v.id + '">' +
-            v.name +
-            ' <span class="tr-tab-close" data-close-id="' + v.id + '" title="Remove from tabs">\u2715</span>' +
-            '</button>';
-    });
-
-    container.innerHTML = html;
-
-    // Attach click/dblclick handlers
-    container.querySelectorAll('.tr-view-tab').forEach(function(tab) {
-        var clickTimer = null;
-        tab.addEventListener('click', function(e) {
-            if (e.target.classList.contains('tr-tab-close')) {
-                e.stopPropagation();
-                trFnoCloseViewTab(e.target.dataset.closeId);
-                return;
+            trDefaultFnoViewFilters = defaultView.filters || {};
+            if (typeof trFnoBannerRefreshFromDefault === 'function' && window.fyersToken) {
+                trFnoBannerRefreshFromDefault();
             }
-            if (clickTimer) clearTimeout(clickTimer);
-            clickTimer = setTimeout(function() {
-                clickTimer = null;
-                if (trFnoRenamingTab) return;
-                trFnoApplyView(tab.dataset.viewId);
-            }, 250);
-        });
-        // Double-click to rename
-        tab.addEventListener('dblclick', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
-            trFnoRenamingTab = true;
-
-            var viewId = tab.dataset.viewId;
-            var view = trFnoViews.find(function(v) { return v.id === viewId; });
-            if (!view) return;
-
-            trFnoActiveViewId = viewId;
-
-            var input = document.createElement('input');
-            input.type = 'text';
-            input.value = view.name;
-            input.style.cssText = 'width:100px; font-size:11px; padding:1px 4px; border:1px solid #667eea; border-radius:3px; outline:none; background:white;';
-            tab.innerHTML = '';
-            tab.appendChild(input);
-            input.focus();
-            input.select();
-
-            ['click', 'mousedown', 'mouseup', 'dblclick', 'keydown', 'keyup', 'keypress'].forEach(function(evt) {
-                input.addEventListener(evt, function(ie) { ie.stopPropagation(); });
-            });
-
-            var finished = false;
-            function finishRename() {
-                if (finished) return;
-                finished = true;
-                trFnoRenamingTab = false;
-                var newName = input.value.trim();
-                if (newName && newName !== view.name) {
-                    view.name = newName;
-                    fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-                        method: 'PATCH',
-                        headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-                        body: JSON.stringify({ name: newName })
-                    }).catch(function(err) { console.warn('Failed to rename view:', err.message); });
-                }
-                trFnoRenderViewTabs();
-                trFnoRenderMoreDropdown();
-            }
-
-            input.addEventListener('blur', finishRename);
-            input.addEventListener('keydown', function(ke) {
-                ke.stopPropagation();
-                if (ke.key === 'Enter') { ke.preventDefault(); input.blur(); }
-                if (ke.key === 'Escape') { ke.preventDefault(); input.value = view.name; input.blur(); }
-            });
-        });
-    });
-}
-
-// ---- CLOSE VIEW TAB ----
-
-async function trFnoCloseViewTab(viewId) {
-    try {
-        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'PATCH',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-            body: JSON.stringify({ show_in_tabs: false })
-        });
-    } catch (err) {
-        console.warn('Failed to update tab state:', err.message);
-    }
-
-    var v = trFnoViews.find(function(v) { return v.id === viewId; });
-    if (v) v.show_in_tabs = false;
-
-    if (trFnoActiveViewId === viewId) {
-        var defaultView = trFnoViews.find(function(v) { return v.is_default; });
-        if (defaultView) {
-            trFnoApplyView(defaultView.id);
-            return;
-        } else {
-            trFnoActiveViewId = null;
         }
-    }
-
-    trFnoRenderViewTabs();
-    trFnoRenderMoreDropdown();
-}
-
-// ---- MORE DROPDOWN ----
-
-function trFnoRenderMoreDropdown() {
-    var list = document.getElementById('tr-fno-more-list');
-    if (!list) return;
-
-    if (trFnoViews.length === 0) {
-        list.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:#a0aec0;">No saved views</div>';
-        return;
-    }
-
-    list.innerHTML = trFnoViews.map(function(v, idx) {
-        var isActive = v.id === trFnoActiveViewId;
-        var isDefault = v.is_default;
-        var inTabs = v.show_in_tabs !== false;
-        return '<div class="tr-more-item' + (isActive ? ' active' : '') + '" draggable="true" data-view-id="' + v.id + '" data-view-idx="' + idx + '">' +
-            '<span class="tr-more-drag-handle" title="Drag to reorder">\u2630</span>' +
-            (isActive ? '<span style="color:#667eea;font-size:11px;">\u2713</span> ' : '<span style="width:16px;display:inline-block;"></span> ') +
-            '<span class="tr-more-name">' + v.name + '</span>' +
-            (isDefault ? '<span class="tr-more-badge">\u2605 Default</span>' : '') +
-            '<span class="tr-more-actions">' +
-                (!isDefault ? '<button class="tr-more-action-btn" data-action="default" data-id="' + v.id + '" title="Set as default">\u2605</button>' : '') +
-                (inTabs && !isDefault ? '<button class="tr-more-action-btn" data-action="hide-tab" data-id="' + v.id + '" title="Remove from tabs">\u229F</button>' : '') +
-                (!inTabs ? '<button class="tr-more-action-btn" data-action="show-tab" data-id="' + v.id + '" title="Show in tabs">\u229E</button>' : '') +
-                '<button class="tr-more-action-btn danger" data-action="delete" data-id="' + v.id + '" title="Delete view">\u2715</button>' +
-            '</span>' +
-        '</div>';
-    }).join('');
-
-    // Click to apply
-    list.querySelectorAll('.tr-more-item').forEach(function(item) {
-        item.addEventListener('click', function(e) {
-            if (e.target.closest('.tr-more-action-btn') || e.target.closest('.tr-more-drag-handle')) return;
-            trFnoApplyView(item.dataset.viewId);
-            document.getElementById('tr-fno-more-dropdown').style.display = 'none';
-        });
-    });
-
-    // Action buttons
-    list.querySelectorAll('.tr-more-action-btn').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var action = btn.dataset.action;
-            var id = btn.dataset.id;
-            if (action === 'default') trFnoSetDefaultView(id);
-            else if (action === 'hide-tab') trFnoCloseViewTab(id);
-            else if (action === 'show-tab') trFnoShowViewTab(id);
-            else if (action === 'delete') trFnoDeleteView(id);
-        });
-    });
-
-    // Drag-to-reorder (uses shared helper from trading.js)
-    trMoreAttachDragHandlers(list, trFnoViews, function() {
-        trFnoRenderViewTabs();
-        trFnoRenderMoreDropdown();
-    });
-}
-
-// ---- APPLY VIEW ----
-
-function trFnoApplyView(viewId) {
-    var view = trFnoViews.find(function(v) { return v.id === viewId; });
-    if (!view) return;
-
-    // Auto-add to tabs if not already showing
-    if (view.show_in_tabs === false || view.show_in_tabs === null) {
-        view.show_in_tabs = true;
-        fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'PATCH',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-            body: JSON.stringify({ show_in_tabs: true })
-        }).catch(function(err) { console.warn('Failed to show tab:', err.message); });
-    }
-
-    var f = view.filters || {};
-
-    // Shared filters — mutate in-place to preserve pill controller references
-    trSelectedInvestorIds.length = 0;
-    Array.prototype.push.apply(trSelectedInvestorIds, f.investorIds || []);
-    trSelectedTraderIds.length = 0;
-    Array.prototype.push.apply(trSelectedTraderIds, f.traderIds || []);
-    trSelectedBrokerIds.length = 0;
-    Array.prototype.push.apply(trSelectedBrokerIds, f.brokerIds || []);
-    trSelectedTagNames.length = 0;
-    Array.prototype.push.apply(trSelectedTagNames, f.tagNames || []);
-    trTagFilterLogic = f.tagLogic || 'OR';
-
-    // F&O-specific state
-    trFnoMode = f.fnoMode || 'open';
-    trFnoMatchMethod = f.matchMethod || 'lifo';
-    if (f.expiryFilter !== undefined) {
-        trFnoExpiryFilter = f.expiryFilter && f.expiryFilter.length > 0 ? f.expiryFilter.slice() : [];
-    }
-    trFnoFlatView = f.flatView || false;
-
-    trFnoActiveViewId = viewId;
-
-    // Update F&O pill filter UI
-    trFnoSyncPillStates();
-    trFnoRenderSelectedTags();
-
-    // Update tag logic radio
-    document.querySelectorAll('input[name="tr-fno-tag-logic"]').forEach(function(r) {
-        r.checked = r.value === trTagFilterLogic;
-    });
-
-    // Update F&O toggle buttons
-    document.querySelectorAll('[data-fno-mode]').forEach(function(btn) {
-        btn.classList.toggle('active', btn.dataset.fnoMode === trFnoMode);
-    });
-    document.querySelectorAll('[data-fno-match]').forEach(function(btn) {
-        btn.classList.toggle('active', btn.dataset.fnoMatch === trFnoMatchMethod);
-    });
-
-    // Update flat view checkbox
-    var flatToggle = document.getElementById('trFnoFlatToggle');
-    if (flatToggle) flatToggle.checked = trFnoFlatView;
-    var tableWrap = document.getElementById('trFnoTableWrap');
-    if (tableWrap) tableWrap.classList.toggle('trFno-flat-mode', trFnoFlatView);
-
-    trFnoRenderViewTabs();
-    trFnoRenderMoreDropdown();
-    trFnoUpdateViewButtons();
-    trFnoRender();
-}
-
-// ---- UPDATE VIEW BUTTONS ----
-
-function trFnoUpdateViewButtons() {
-    var updateBtn = document.getElementById('tr-fno-update-view-btn');
-    if (updateBtn) {
-        updateBtn.disabled = !trFnoActiveViewId;
-    }
-}
-
-// ---- SAVE CURRENT VIEW ----
-
-async function trFnoSaveCurrentView(name) {
-    var filters = trFnoGetCurrentFilters();
-    var sortOrder = trFnoViews.length;
-    var isFirst = trFnoViews.length === 0;
-
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
-            method: 'POST',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
-            body: JSON.stringify({ name: name, filters: filters, sort_order: sortOrder, is_default: isFirst, show_in_tabs: true, module: 'trading_fno' })
-        });
-        if (resp.ok) {
-            var rows = await resp.json();
-            if (rows.length > 0) {
-                trFnoViews.push(rows[0]);
-                trFnoActiveViewId = rows[0].id;
-                trFnoRenderViewTabs();
-                trFnoRenderMoreDropdown();
-                trFnoUpdateViewButtons();
-                showAlert('View "' + name + '" saved', 'success', 2000);
-            }
-        } else {
-            showAlert('Failed to save view', 'error');
-        }
-    } catch (err) {
-        showAlert('Failed to save view: ' + err.message, 'error');
-    }
-
-    // Hide prompt
-    document.getElementById('tr-fno-save-prompt').classList.remove('show');
-    document.getElementById('tr-fno-save-prompt-name').value = '';
-    document.getElementById('tr-fno-save-new-btn').style.display = '';
-}
-
-// ---- CREATE BLANK VIEW ----
-
-async function trFnoCreateBlankView() {
-    var blankFilters = {};
-    var sortOrder = trFnoViews.length;
-    var name = 'New View';
-
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
-            method: 'POST',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
-            body: JSON.stringify({ name: name, filters: blankFilters, sort_order: sortOrder, is_default: false, show_in_tabs: true, module: 'trading_fno' })
-        });
-        if (resp.ok) {
-            var rows = await resp.json();
-            if (rows.length > 0) {
-                trFnoViews.push(rows[0]);
-                trFnoApplyView(rows[0].id);
-                showAlert('New view created \u2014 double-click tab to rename', 'success', 3000);
-            }
-        } else {
-            showAlert('Failed to create view', 'error');
-        }
-    } catch (err) {
-        showAlert('Failed to create view: ' + err.message, 'error');
-    }
-}
-
-// ---- UPDATE CURRENT VIEW ----
-
-async function trFnoUpdateCurrentView() {
-    if (!trFnoActiveViewId) return;
-    var filters = trFnoGetCurrentFilters();
-
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + trFnoActiveViewId, {
-            method: 'PATCH',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-            body: JSON.stringify({ filters: filters })
-        });
-        if (resp.ok) {
-            var v = trFnoViews.find(function(v) { return v.id === trFnoActiveViewId; });
-            if (v) v.filters = filters;
-            showAlert('View updated', 'success', 2000);
-        } else {
-            showAlert('Failed to update view', 'error');
-        }
-    } catch (err) {
-        showAlert('Failed to update view: ' + err.message, 'error');
-    }
-}
-
-// ---- DELETE VIEW ----
-
-async function trFnoDeleteView(viewId) {
-    if (!confirm('Delete this saved view?')) return;
-
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'DELETE',
-            headers: wmsHeaders({'Prefer': 'return=minimal'})
-        });
-        if (resp.ok) {
-            trFnoViews = trFnoViews.filter(function(v) { return v.id !== viewId; });
-            if (trFnoActiveViewId === viewId) {
-                trFnoActiveViewId = null;
-            }
-            trFnoRenderViewTabs();
-            trFnoRenderMoreDropdown();
-            trFnoUpdateViewButtons();
-            showAlert('View deleted', 'success', 2000);
-        }
-    } catch (err) {
-        showAlert('Failed to delete view: ' + err.message, 'error');
-    }
-}
-
-// ---- SET DEFAULT VIEW ----
-
-async function trFnoSetDefaultView(viewId) {
-    var oldDefault = trFnoViews.find(function(v) { return v.is_default; });
-    if (oldDefault && oldDefault.id !== viewId) {
-        try {
-            await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + oldDefault.id, {
-                method: 'PATCH',
-                headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-                body: JSON.stringify({ is_default: false })
-            });
-            oldDefault.is_default = false;
-        } catch (err) {
-            console.warn('Failed to unset old default:', err.message);
-        }
-    }
-
-    try {
-        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'PATCH',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-            body: JSON.stringify({ is_default: true, show_in_tabs: true })
-        });
-        var v = trFnoViews.find(function(v) { return v.id === viewId; });
-        if (v) { v.is_default = true; v.show_in_tabs = true; }
-    } catch (err) {
-        console.warn('Failed to set default:', err.message);
-    }
-
-    // Update cached default F&O view filters and recompute banner
-    var newDefault = trFnoViews.find(function(v) { return v.id === viewId; });
-    if (newDefault) {
+    },
+    onDefaultChanged: function(newDefault) {
         trDefaultFnoViewFilters = newDefault.filters || {};
         if (typeof trFnoBannerRefreshFromDefault === 'function') trFnoBannerRefreshFromDefault();
+    },
+    onUpdateComplete: function(view) {
+        if (view.is_default) {
+            trDefaultFnoViewFilters = view.filters;
+            if (typeof trFnoBannerRefreshFromDefault === 'function') trFnoBannerRefreshFromDefault();
+        }
+    },
+    onSaveComplete: function() {
+        var prompt = document.getElementById('tr-fno-save-prompt');
+        if (prompt) prompt.classList.remove('show');
+        var nameInput = document.getElementById('tr-fno-save-prompt-name');
+        if (nameInput) nameInput.value = '';
+        var saveNewBtn = document.getElementById('tr-fno-save-new-btn');
+        if (saveNewBtn) saveNewBtn.style.display = '';
     }
+});
 
-    trFnoRenderViewTabs();
-    trFnoRenderMoreDropdown();
-    showAlert('Default view updated', 'success', 2000);
-}
-
-// ---- SHOW VIEW TAB ----
-
-async function trFnoShowViewTab(viewId) {
-    try {
-        await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
-            method: 'PATCH',
-            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-            body: JSON.stringify({ show_in_tabs: true })
-        });
-    } catch (err) {
-        console.warn('Failed to show tab:', err.message);
-    }
-
-    var v = trFnoViews.find(function(v) { return v.id === viewId; });
-    if (v) v.show_in_tabs = true;
-
-    trFnoRenderViewTabs();
-    trFnoRenderMoreDropdown();
-}
+// SAVED F&O VIEWS — delegated to trFnoVM (wmsViewManager instance)

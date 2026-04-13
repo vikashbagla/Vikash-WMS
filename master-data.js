@@ -405,8 +405,10 @@ async function openAddInvestorModal() {
     document.getElementById('investorAccountType').value = '';
     document.getElementById('investorInterestRate').value = '';
     document.getElementById('investorInterestFreq').value = '';
-    // Setup display formatting for investor-level interest rate
+    document.getElementById('investorTaxRate').value = '';
+    // Setup display formatting for investor-level interest rate + tax rate
     mdSetupRateInput(document.getElementById('investorInterestRate'), 'percent');
+    mdSetupRateInput(document.getElementById('investorTaxRate'), 'percent');
     document.getElementById('brokerAccountsList').innerHTML = '';
     brokerAccountCounter = 0;
     document.getElementById('investorModal').classList.add('show');
@@ -430,8 +432,10 @@ async function editInvestor(id) {
     var invTerms = investor.interest_terms;
     document.getElementById('investorInterestRate').value = (invTerms && invTerms.rate) ? invTerms.rate : '';
     document.getElementById('investorInterestFreq').value = (invTerms && invTerms.frequency) ? invTerms.frequency : '';
-    // Setup display formatting for investor-level interest rate
+    document.getElementById('investorTaxRate').value = (investor.tax_rate && parseFloat(investor.tax_rate) > 0) ? investor.tax_rate : '';
+    // Setup display formatting for investor-level interest rate + tax rate
     mdSetupRateInput(document.getElementById('investorInterestRate'), 'percent');
+    mdSetupRateInput(document.getElementById('investorTaxRate'), 'percent');
 
     const accounts = await DB.getBrokerAccounts(id);
     document.getElementById('brokerAccountsList').innerHTML = '';
@@ -530,7 +534,7 @@ function mdFormatBrokerRates(index) {
         if (el) mdSetupRateInput(el, 'decimal');
     });
     // Interest & margin: plain percentage (18 = 18%)
-    var pctInputs = ['.iba-interest-rate', '.iba-margin-rate'];
+    var pctInputs = ['.iba-interest-rate', '.iba-margin-rate', '.iba-tax-rate'];
     pctInputs.forEach(function(cls) {
         var el = document.querySelector(cls + '[data-index="' + index + '"]');
         if (el) mdSetupRateInput(el, 'percent');
@@ -552,6 +556,7 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
     var ibaInterestRate = (ibaInterestTerms && ibaInterestTerms.rate) ? ibaInterestTerms.rate : '';
     var ibaIntFreq = (ibaInterestTerms && ibaInterestTerms.frequency) ? ibaInterestTerms.frequency : '';
     var ibaMarginRate = (existingAcc && existingAcc.margin_rate) ? existingAcc.margin_rate : '';
+    var ibaTaxRate = (existingAcc && existingAcc.tax_rate) ? existingAcc.tax_rate : '';
 
     const html = `
         <div class="broker-account-item" id="broker-account-${index}">
@@ -630,6 +635,7 @@ async function addBrokerAccount(selectedBrokerId = '', accountNumber = '', exist
                 <div class="brokerage-section">
                     <div class="form-row">
                         <div class="form-group"><label>Margin Rate</label><input type="text" inputmode="decimal" class="iba-margin-rate" data-index="${index}" value="${ibaMarginRate}" placeholder="e.g., 10 = 10%"></div>
+                        <div class="form-group"><label>Tax Rate on Gains</label><input type="text" inputmode="decimal" class="iba-tax-rate" data-index="${index}" value="${ibaTaxRate}" placeholder="e.g., 12.5 = 12.5%"></div>
                     </div>
                 </div>
             </div>
@@ -696,7 +702,8 @@ async function saveInvestor() {
         pan: document.getElementById('investorPan').value.trim().toUpperCase() || null,
         phone: document.getElementById('investorPhone').value.trim() || null,
         is_active: document.getElementById('investorStatus').value === 'true',
-        interest_terms: invInterestTerms
+        interest_terms: invInterestTerms,
+        tax_rate: mdReadRate(document.getElementById('investorTaxRate'))
     };
 
     if (!data.name) {
@@ -718,6 +725,7 @@ async function saveInvestor() {
             var ibaIntRate = mdReadRate(document.querySelector(`.iba-interest-rate[data-index="${i}"]`));
             var ibaIntFreq = document.querySelector(`.iba-interest-freq[data-index="${i}"]`).value || '';
             var ibaMarginRate = mdReadRate(document.querySelector(`.iba-margin-rate[data-index="${i}"]`));
+            var ibaTaxRate = mdReadRate(document.querySelector(`.iba-tax-rate[data-index="${i}"]`));
             var ibaInterestTerms = null;
             if (ibaIntRate > 0) {
                 ibaInterestTerms = { rate: ibaIntRate, frequency: ibaIntFreq || 'weekly_friday', compound: (ibaIntFreq === 'daily_monthly_compound') };
@@ -754,7 +762,8 @@ async function saveInvestor() {
                 charges_inclusive: document.querySelector(`.charges-inclusive[data-index="${i}"]`).value === 'true',
                 is_custom_rates: true,
                 interest_terms: ibaInterestTerms,
-                margin_rate: ibaMarginRate
+                margin_rate: ibaMarginRate,
+                tax_rate: ibaTaxRate
             };
             // Preserve columns not shown in form from existing record
             if (existingAcc) {

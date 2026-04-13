@@ -51,7 +51,7 @@ function wmsEdgeHeaders(extra) {
 var WMS_MONTHS_SHORT = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 var WMS_WEEKLY_EXPIRY_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
 var WMS_INCOME_TYPES = ['DIVIDEND', 'INTEREST', 'OTHER_INCOME', 'CAPITAL_REDUCTION'];
-var WMS_TDS_DEFAULT_RATE = 0.10; // 10% TDS — TODO: move to DB config table (see G.8.1)
+var WMS_TDS_DEFAULT_RATE = 0.10; // 10% TDS — TODO: move to DB config table (see G.8.1). Income tax rate already moved to DB (wmsGetTaxRate).
 
 // Transaction types whose quantity does NOT count toward holdings/balance.
 // Income types carry a quantity for display but don't change holdings.
@@ -170,7 +170,7 @@ async function wmsLoadRefData() {
         var resp;
 
         // 1. Investors
-        resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start,interest_terms&is_active=eq.true', { headers: headers });
+        resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start,interest_terms,tax_rate&is_active=eq.true', { headers: headers });
         var investors = await resp.json();
         wmsRefData.investors = investors;
         wmsRefData.investorObjMap = {};
@@ -194,17 +194,18 @@ async function wmsLoadRefData() {
         });
 
         // 3. IBA rates (investor_broker_accounts with brokerage_rates + charges_inclusive + ledger fields)
-        resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=investor_id,broker_id,brokerage_rates,charges_inclusive,interest_terms,margin_rate&is_active=eq.true', { headers: headers });
+        resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=investor_id,broker_id,brokerage_rates,charges_inclusive,interest_terms,margin_rate,tax_rate&is_active=eq.true', { headers: headers });
         var ibAccounts = await resp.json();
         wmsRefData.ibaRatesMap = {};
         ibAccounts.forEach(function(iba) {
             var key = iba.investor_id + '|' + iba.broker_id;
-            if (iba.brokerage_rates || iba.interest_terms || iba.margin_rate) {
+            if (iba.brokerage_rates || iba.interest_terms || iba.margin_rate || iba.tax_rate) {
                 wmsRefData.ibaRatesMap[key] = {
                     rates: iba.brokerage_rates,
                     charges_inclusive: !!iba.charges_inclusive,
                     interest_terms: iba.interest_terms || null,
-                    margin_rate: parseFloat(iba.margin_rate) || 0
+                    margin_rate: parseFloat(iba.margin_rate) || 0,
+                    tax_rate: parseFloat(iba.tax_rate) || 0
                 };
             }
         });
@@ -4669,6 +4670,29 @@ function wmsGetMarginRate(investorId, brokerId) {
 }
 
 /**
+ * Get effective tax rate % for an investor (optionally per-broker).
+ * Priority: IBA tax_rate (if > 0) → investor tax_rate (if > 0) → system default (12.5%).
+ * Returns a number like 12.5 (meaning 12.5%).
+ */
+var WMS_DEFAULT_TAX_RATE = 12.5;
+
+function wmsGetTaxRate(investorId, brokerId) {
+    // Check IBA-level override first
+    if (investorId && brokerId) {
+        var ibaKey = investorId + '|' + brokerId;
+        var iba = wmsRefData.ibaRatesMap[ibaKey];
+        if (iba && iba.tax_rate > 0) return iba.tax_rate;
+    }
+    // Fall back to investor-level
+    if (investorId) {
+        var inv = wmsRefData.investorObjMap[investorId];
+        if (inv && parseFloat(inv.tax_rate) > 0) return parseFloat(inv.tax_rate);
+    }
+    // System default
+    return WMS_DEFAULT_TAX_RATE;
+}
+
+/**
  * Calculate margin blocked for a single F&O trade.
  * margin_blocked = |net_amount| * (margin_rate / 100)
  */
@@ -5496,4 +5520,634 @@ function wmsGetFyBounds(investorId, forDate) {
         fyEnd: fyEndStr,
         fyLabel: fyLabel
     };
+}
+
+// ============================================================================
+// VIEW MANAGER — Shared view tabs, More dropdown, save/update/delete/default.
+// Replaces ~1500 lines of near-identical code across Portfolio, F&O, Statements.
+// Each module creates one instance via wmsViewManager(cfg).
+// See WMS-LESSONS.md Section D.10 for UI rules.
+// Rule A.1.2: all declarations use var.
+// ============================================================================
+
+/**
+ * Factory: creates a view manager instance for one module.
+ *
+ * @param {Object} cfg
+ * @param {string}   cfg.module          — DB module value ('trading_portfolio', 'trading_fno', 'ledger')
+ * @param {string}   cfg.label           — Display name for console log ('Portfolio', 'F&O', 'Statements')
+ * @param {string}   [cfg.moduleFilter]  — Custom PostgREST filter (default: 'module=eq.' + module)
+ * @param {Object}   cfg.ids             — DOM element IDs: { viewTabs, moreList, moreDropdown, updateBtn }
+ * @param {Function} cfg.getPills        — () => [{pill, type}] — current pill controller refs
+ * @param {Function} cfg.getFilters      — () => {investorIds, ...} — snapshot of current filters
+ * @param {Function} cfg.applyFilters    — (filtersObj) — restore filter state from a view, sync pills
+ * @param {Function} cfg.onRefresh       — () — module's render/refresh after view applied
+ * @param {Function} [cfg.onLoadComplete]    — (defaultView|null) — after views loaded from DB
+ * @param {Function} [cfg.onDefaultChanged]  — (newDefaultView) — after default view changed
+ * @param {Function} [cfg.onUpdateComplete]  — (view) — after view updated
+ * @param {Function} [cfg.onSaveComplete]    — () — after save to hide prompt/reset UI
+ * @param {boolean}  [cfg.autoDefaultFirst]  — first saved view auto-becomes default (default: false)
+ * @returns {Object} vm — { views, activeViewId, loadViews, applyView, ... }
+ */
+function wmsViewManager(cfg) {
+    // --- Public state (read/write by module code) ---
+    var vm = {};
+    vm.views = [];
+    vm.activeViewId = null;
+
+    // --- Internal state ---
+    var _renamingTab = false;
+    var _moduleFilter = cfg.moduleFilter || ('module=eq.' + cfg.module);
+
+    // --- Header helpers ---
+    function _hdrs() { return wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}); }
+    function _hdrsMin() { return wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}); }
+
+    // ----------------------------------------------------------------
+    // LOAD VIEWS
+    // ----------------------------------------------------------------
+    vm.loadViews = async function loadViews() {
+        try {
+            var resp = await fetch(
+                SUPABASE_URL + '/rest/v1/portfolio_views?' + _moduleFilter +
+                '&select=id,name,filters,sort_order,is_default,show_in_tabs&order=sort_order.asc,created_at.asc',
+                { headers: wmsHeaders() }
+            );
+            var data = resp.ok ? await resp.json() : [];
+            vm.views.length = 0;
+            Array.prototype.push.apply(vm.views, data);
+        } catch (err) {
+            console.warn(cfg.label + ': Failed to load views:', err.message);
+            vm.views.length = 0;
+        }
+
+        vm.renderViewTabs();
+        vm.renderMoreDropdown();
+        vm.updateViewButtons();
+
+        var defaultView = vm.views.find(function(v) { return v.is_default; });
+
+        // Module-specific post-load hook (banner refresh, etc.)
+        if (cfg.onLoadComplete) cfg.onLoadComplete(defaultView || null);
+
+        // Auto-apply default view on first load
+        if (!vm.activeViewId) {
+            if (defaultView) {
+                vm.applyView(defaultView.id);
+            } else if (cfg.onRefresh) {
+                cfg.onRefresh();
+            }
+        }
+    };
+
+    // ----------------------------------------------------------------
+    // RENDER VIEW TABS
+    // ----------------------------------------------------------------
+    vm.renderViewTabs = function renderViewTabs() {
+        var container = document.getElementById(cfg.ids.viewTabs);
+        if (!container) return;
+
+        var defaultView = vm.views.find(function(v) { return v.is_default; });
+        var tabViews = vm.views.filter(function(v) {
+            return v.show_in_tabs !== false && !v.is_default;
+        });
+
+        var html = '';
+
+        // Default view tab — locked left, no close button, star prefix
+        if (defaultView) {
+            var isActive = defaultView.id === vm.activeViewId;
+            html += '<button class="tr-view-tab' + (isActive ? ' active' : '') +
+                '" data-view-id="' + defaultView.id + '">' +
+                '<span class="tr-tab-star">\u2605</span> ' + wmsEsc(defaultView.name) +
+                '</button>';
+        }
+
+        // Other pinned tabs — with close button
+        tabViews.forEach(function(v) {
+            var isActive = v.id === vm.activeViewId;
+            html += '<button class="tr-view-tab' + (isActive ? ' active' : '') +
+                '" data-view-id="' + v.id + '">' + wmsEsc(v.name) +
+                ' <span class="tr-tab-close" data-close-id="' + v.id +
+                '" title="Remove from tabs">\u2715</span></button>';
+        });
+
+        container.innerHTML = html;
+
+        // Attach click / dblclick handlers (A.1.1 delay pattern)
+        container.querySelectorAll('.tr-view-tab').forEach(function(tab) {
+            var clickTimer = null;
+
+            tab.addEventListener('click', function(e) {
+                if (e.target.classList.contains('tr-tab-close')) {
+                    e.stopPropagation();
+                    vm.closeViewTab(e.target.dataset.closeId);
+                    return;
+                }
+                if (clickTimer) clearTimeout(clickTimer);
+                clickTimer = setTimeout(function() {
+                    clickTimer = null;
+                    if (_renamingTab) return;  // B4: guard against apply during rename
+                    vm.applyView(tab.dataset.viewId);
+                }, 250);
+            });
+
+            // Double-click to inline rename
+            tab.addEventListener('dblclick', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+                _renamingTab = true;
+
+                var viewId = tab.dataset.viewId;
+                var view = vm.views.find(function(v) { return v.id === viewId; });
+                if (!view) { _renamingTab = false; return; }
+
+                vm.activeViewId = viewId;
+
+                // Replace tab content with inline input
+                var input = document.createElement('input');
+                input.type = 'text';
+                input.value = view.name;
+                input.className = 'wms-input-compact';
+                input.style.width = '100px';
+                tab.innerHTML = '';
+                tab.appendChild(input);
+                input.focus();
+                input.select();
+
+                // Isolate input events from parent button
+                ['click', 'mousedown', 'mouseup', 'dblclick', 'keydown', 'keyup', 'keypress'].forEach(function(evt) {
+                    input.addEventListener(evt, function(ie) { ie.stopPropagation(); });
+                });
+
+                var finished = false;
+                function finishRename() {
+                    if (finished) return;
+                    finished = true;
+                    _renamingTab = false;
+                    var newName = input.value.trim();
+                    if (newName && newName !== view.name) {
+                        // B2: duplicate name check on rename
+                        var duplicate = vm.views.some(function(v) {
+                            return v.id !== viewId && v.name.toLowerCase() === newName.toLowerCase();
+                        });
+                        if (duplicate) {
+                            showAlert('A view named "' + newName + '" already exists', 'error', 3000);
+                        } else {
+                            view.name = newName;
+                            fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+                                method: 'PATCH', headers: _hdrsMin(),
+                                body: JSON.stringify({ name: newName })
+                            }).catch(function(err) { console.warn('Failed to rename view:', err.message); });
+                        }
+                    }
+                    vm.renderViewTabs();
+                    vm.renderMoreDropdown();
+                }
+
+                input.addEventListener('blur', finishRename);
+                input.addEventListener('keydown', function(ke) {
+                    ke.stopPropagation();
+                    if (ke.key === 'Enter') { ke.preventDefault(); input.blur(); }
+                    if (ke.key === 'Escape') { ke.preventDefault(); input.value = view.name; input.blur(); }
+                });
+            });
+        });
+    };
+
+    // ----------------------------------------------------------------
+    // RENDER MORE DROPDOWN
+    // ----------------------------------------------------------------
+    vm.renderMoreDropdown = function renderMoreDropdown() {
+        var list = document.getElementById(cfg.ids.moreList);
+        if (!list) return;
+
+        if (vm.views.length === 0) {
+            list.innerHTML = '<div class="tr-more-empty">No saved views</div>';
+            return;
+        }
+
+        list.innerHTML = vm.views.map(function(v, idx) {
+            var isActive = v.id === vm.activeViewId;
+            var isDefault = v.is_default;
+            var inTabs = v.show_in_tabs !== false;
+            return '<div class="tr-more-item' + (isActive ? ' active' : '') +
+                '" draggable="true" data-view-id="' + v.id + '" data-view-idx="' + idx + '">' +
+                '<span class="tr-more-drag-handle" title="Drag to reorder">\u2630</span>' +
+                (isActive ? '<span style="color:#667eea;font-size:11px;">\u2713</span> ' :
+                    '<span style="width:16px;display:inline-block;"></span> ') +
+                '<span class="tr-more-name">' + wmsEsc(v.name) + '</span>' +
+                (isDefault ? '<span class="tr-more-badge">\u2605 Default</span>' : '') +
+                '<span class="tr-more-actions">' +
+                    (!isDefault ? '<button class="tr-more-action-btn" data-action="default" data-id="' +
+                        v.id + '" title="Set as default">\u2605</button>' : '') +
+                    (inTabs && !isDefault ? '<button class="tr-more-action-btn" data-action="hide-tab" data-id="' +
+                        v.id + '" title="Remove from tabs">\u229F</button>' : '') +
+                    (!inTabs ? '<button class="tr-more-action-btn" data-action="show-tab" data-id="' +
+                        v.id + '" title="Show in tabs">\u229E</button>' : '') +
+                    '<button class="tr-more-action-btn danger" data-action="delete" data-id="' +
+                        v.id + '" title="Delete view">\u2715</button>' +
+                '</span></div>';
+        }).join('');
+
+        // Click to apply
+        list.querySelectorAll('.tr-more-item').forEach(function(item) {
+            item.addEventListener('click', function(e) {
+                if (e.target.closest('.tr-more-action-btn') || e.target.closest('.tr-more-drag-handle')) return;
+                vm.applyView(item.dataset.viewId);
+                var dd = document.getElementById(cfg.ids.moreDropdown);
+                if (dd) dd.style.display = 'none';
+            });
+        });
+
+        // Action buttons
+        list.querySelectorAll('.tr-more-action-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var action = btn.dataset.action;
+                var id = btn.dataset.id;
+                if (action === 'default') vm.setDefaultView(id);
+                else if (action === 'hide-tab') vm.closeViewTab(id);
+                else if (action === 'show-tab') vm.showViewTab(id);
+                else if (action === 'delete') vm.deleteView(id);
+            });
+        });
+
+        // Drag-to-reorder
+        _attachDragHandlers(list);
+    };
+
+    // ----------------------------------------------------------------
+    // UPDATE VIEW BUTTONS (enable/disable Update button)
+    // ----------------------------------------------------------------
+    vm.updateViewButtons = function updateViewButtons() {
+        var updateBtn = document.getElementById(cfg.ids.updateBtn);
+        if (updateBtn) {
+            updateBtn.disabled = !vm.activeViewId;
+        }
+    };
+
+    // ----------------------------------------------------------------
+    // APPLY VIEW
+    // ----------------------------------------------------------------
+    vm.applyView = function applyView(viewId) {
+        var view = vm.views.find(function(v) { return v.id === viewId; });
+        if (!view) return;
+
+        // B5/D.10.7: auto-add to tabs if not showing
+        if (view.show_in_tabs === false || view.show_in_tabs === null) {
+            view.show_in_tabs = true;
+            fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+                method: 'PATCH', headers: _hdrsMin(),
+                body: JSON.stringify({ show_in_tabs: true })
+            }).catch(function(err) { console.warn('Failed to show tab:', err.message); });
+        }
+
+        vm.activeViewId = viewId;
+
+        // Delegate filter restoration to module
+        var f = view.filters || {};
+        cfg.applyFilters(f);
+
+        vm.renderViewTabs();
+        vm.renderMoreDropdown();
+        vm.updateViewButtons();
+        cfg.onRefresh();
+    };
+
+    // ----------------------------------------------------------------
+    // SAVE CURRENT VIEW
+    // ----------------------------------------------------------------
+    vm.saveCurrentView = async function saveCurrentView(name) {
+        // B9: duplicate name check
+        var exists = vm.views.some(function(v) { return v.name.toLowerCase() === name.toLowerCase(); });
+        if (exists) {
+            showAlert('A view named "' + name + '" already exists', 'error', 3000);
+            return;
+        }
+
+        var filters = cfg.getFilters();
+        var sortOrder = vm.views.length;
+        var isFirst = cfg.autoDefaultFirst && vm.views.length === 0;
+
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
+                method: 'POST', headers: _hdrs(),
+                body: JSON.stringify({
+                    name: name,
+                    filters: filters,
+                    sort_order: sortOrder,
+                    is_default: isFirst,
+                    show_in_tabs: true,
+                    module: cfg.module
+                })
+            });
+            if (resp.ok) {
+                var rows = await resp.json();
+                var newView = Array.isArray(rows) ? rows[0] : rows;
+                if (newView) {
+                    vm.views.push(newView);
+                    // B10: full applyView for consistency
+                    vm.applyView(newView.id);
+                    showAlert('View "' + name + '" saved', 'success', 2000);
+                }
+            } else {
+                showAlert('Failed to save view', 'error', 3000);
+            }
+        } catch (err) {
+            showAlert('Failed to save view: ' + err.message, 'error', 3000);
+        }
+
+        // Module handles prompt hide
+        if (cfg.onSaveComplete) cfg.onSaveComplete();
+    };
+
+    // ----------------------------------------------------------------
+    // CREATE BLANK VIEW
+    // ----------------------------------------------------------------
+    vm.createBlankView = async function createBlankView() {
+        var sortOrder = vm.views.length;
+        var name = 'New View';
+
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
+                method: 'POST', headers: _hdrs(),
+                body: JSON.stringify({
+                    name: name,
+                    filters: {},
+                    sort_order: sortOrder,
+                    is_default: false,
+                    show_in_tabs: true,
+                    module: cfg.module
+                })
+            });
+            if (resp.ok) {
+                var rows = await resp.json();
+                var newView = Array.isArray(rows) ? rows[0] : rows;
+                if (newView) {
+                    vm.views.push(newView);
+                    vm.applyView(newView.id);
+                    showAlert('New view created \u2014 double-click tab to rename', 'success', 3000);
+                }
+            } else {
+                showAlert('Failed to create view', 'error', 3000);
+            }
+        } catch (err) {
+            showAlert('Failed to create view: ' + err.message, 'error', 3000);
+        }
+    };
+
+    // ----------------------------------------------------------------
+    // UPDATE CURRENT VIEW
+    // ----------------------------------------------------------------
+    vm.updateCurrentView = async function updateCurrentView() {
+        if (!vm.activeViewId) return;
+        var filters = cfg.getFilters();
+
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + vm.activeViewId, {
+                method: 'PATCH', headers: _hdrsMin(),
+                body: JSON.stringify({ filters: filters })
+            });
+            if (resp.ok) {
+                var v = vm.views.find(function(v) { return v.id === vm.activeViewId; });
+                if (v) v.filters = filters;
+                showAlert('View updated', 'success', 2000);
+                // Module-specific post-update hook (banner refresh, etc.)
+                if (cfg.onUpdateComplete && v) cfg.onUpdateComplete(v);
+            } else {
+                showAlert('Failed to update view', 'error', 3000);
+            }
+        } catch (err) {
+            showAlert('Failed to update view: ' + err.message, 'error', 3000);
+        }
+    };
+
+    // ----------------------------------------------------------------
+    // DELETE VIEW (B6: confirm dialog)
+    // ----------------------------------------------------------------
+    vm.deleteView = async function deleteView(viewId) {
+        if (!confirm('Delete this saved view?')) return;
+
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+                method: 'DELETE',
+                headers: wmsHeaders({'Prefer': 'return=minimal'})
+            });
+            if (resp.ok) {
+                // Remove from array in-place
+                for (var i = vm.views.length - 1; i >= 0; i--) {
+                    if (vm.views[i].id === viewId) { vm.views.splice(i, 1); break; }
+                }
+
+                // B7: fall back to default when deleting active view
+                if (vm.activeViewId === viewId) {
+                    var defaultView = vm.views.find(function(v) { return v.is_default; });
+                    if (defaultView) {
+                        vm.applyView(defaultView.id);
+                        showAlert('View deleted', 'success', 2000);
+                        return;
+                    } else {
+                        vm.activeViewId = null;
+                    }
+                }
+
+                vm.renderViewTabs();
+                vm.renderMoreDropdown();
+                vm.updateViewButtons();
+                showAlert('View deleted', 'success', 2000);
+            }
+        } catch (err) {
+            showAlert('Failed to delete view: ' + err.message, 'error', 3000);
+        }
+    };
+
+    // ----------------------------------------------------------------
+    // SET DEFAULT VIEW (B12: also sets show_in_tabs)
+    // ----------------------------------------------------------------
+    vm.setDefaultView = async function setDefaultView(viewId) {
+        var oldDefault = vm.views.find(function(v) { return v.is_default; });
+        if (oldDefault && oldDefault.id !== viewId) {
+            try {
+                await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + oldDefault.id, {
+                    method: 'PATCH', headers: _hdrsMin(),
+                    body: JSON.stringify({ is_default: false })
+                });
+                oldDefault.is_default = false;
+            } catch (err) {
+                console.warn('Failed to unset old default:', err.message);
+            }
+        }
+
+        try {
+            await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+                method: 'PATCH', headers: _hdrsMin(),
+                body: JSON.stringify({ is_default: true, show_in_tabs: true })
+            });
+            var v = vm.views.find(function(v) { return v.id === viewId; });
+            if (v) { v.is_default = true; v.show_in_tabs = true; }
+        } catch (err) {
+            console.warn('Failed to set default:', err.message);
+        }
+
+        // Module-specific hook (banner refresh, etc.)
+        var newDefault = vm.views.find(function(v) { return v.id === viewId; });
+        if (cfg.onDefaultChanged && newDefault) cfg.onDefaultChanged(newDefault);
+
+        vm.renderViewTabs();
+        vm.renderMoreDropdown();
+        showAlert('Default view updated', 'success', 2000);
+    };
+
+    // ----------------------------------------------------------------
+    // CLOSE VIEW TAB
+    // ----------------------------------------------------------------
+    vm.closeViewTab = async function closeViewTab(viewId) {
+        try {
+            await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+                method: 'PATCH', headers: _hdrsMin(),
+                body: JSON.stringify({ show_in_tabs: false })
+            });
+        } catch (err) {
+            console.warn('Failed to close tab:', err.message);
+        }
+
+        var v = vm.views.find(function(v) { return v.id === viewId; });
+        if (v) v.show_in_tabs = false;
+
+        if (vm.activeViewId === viewId) {
+            var defaultView = vm.views.find(function(v) { return v.is_default; });
+            if (defaultView) {
+                vm.applyView(defaultView.id);
+                return; // applyView already re-renders
+            } else {
+                vm.activeViewId = null;
+            }
+        }
+
+        vm.renderViewTabs();
+        vm.renderMoreDropdown();
+    };
+
+    // ----------------------------------------------------------------
+    // SHOW VIEW TAB
+    // ----------------------------------------------------------------
+    vm.showViewTab = async function showViewTab(viewId) {
+        try {
+            await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {
+                method: 'PATCH', headers: _hdrsMin(),
+                body: JSON.stringify({ show_in_tabs: true })
+            });
+        } catch (err) {
+            console.warn('Failed to show tab:', err.message);
+        }
+
+        var v = vm.views.find(function(v) { return v.id === viewId; });
+        if (v) v.show_in_tabs = true;
+
+        vm.renderViewTabs();
+        vm.renderMoreDropdown();
+    };
+
+    // ----------------------------------------------------------------
+    // DRAG-TO-REORDER (internal helper)
+    // ----------------------------------------------------------------
+    function _attachDragHandlers(listEl) {
+        var dragIdx = -1;
+
+        listEl.querySelectorAll('.tr-more-item').forEach(function(item) {
+            // Only drag from handle
+            item.addEventListener('mousedown', function(e) {
+                item.setAttribute('draggable', e.target.closest('.tr-more-drag-handle') ? 'true' : 'false');
+            });
+
+            item.addEventListener('dragstart', function(e) {
+                if (!e.target.closest || e.target.closest('.tr-more-action-btn')) {
+                    e.preventDefault();
+                    return;
+                }
+                dragIdx = parseInt(item.dataset.viewIdx);
+                item.classList.add('tr-more-dragging');
+                e.dataTransfer.effectAllowed = 'move';
+            });
+
+            item.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                listEl.querySelectorAll('.tr-more-item').forEach(function(el) {
+                    el.classList.remove('tr-more-drag-over-top', 'tr-more-drag-over-bottom');
+                });
+                var rect = item.getBoundingClientRect();
+                var mid = rect.top + rect.height / 2;
+                if (e.clientY < mid) {
+                    item.classList.add('tr-more-drag-over-top');
+                } else {
+                    item.classList.add('tr-more-drag-over-bottom');
+                }
+            });
+
+            item.addEventListener('dragleave', function() {
+                item.classList.remove('tr-more-drag-over-top', 'tr-more-drag-over-bottom');
+            });
+
+            item.addEventListener('drop', function(e) {
+                e.preventDefault();
+                var targetIdx = parseInt(item.dataset.viewIdx);
+                var rect = item.getBoundingClientRect();
+                var mid = rect.top + rect.height / 2;
+                var insertIdx = e.clientY < mid ? targetIdx : targetIdx + 1;
+                if (dragIdx < 0 || dragIdx === insertIdx || dragIdx + 1 === insertIdx) {
+                    dragIdx = -1;
+                    return;
+                }
+
+                var moved = vm.views.splice(dragIdx, 1)[0];
+                var newIdx = insertIdx > dragIdx ? insertIdx - 1 : insertIdx;
+                vm.views.splice(newIdx, 0, moved);
+
+                // Persist sort_order
+                var headers = _hdrsMin();
+                vm.views.forEach(function(v, i) {
+                    if (v.sort_order !== i) {
+                        v.sort_order = i;
+                        fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + v.id, {
+                            method: 'PATCH', headers: headers,
+                            body: JSON.stringify({ sort_order: i })
+                        }).catch(function(err) { console.warn('Reorder PATCH error:', err.message); });
+                    }
+                });
+
+                dragIdx = -1;
+                vm.renderViewTabs();
+                vm.renderMoreDropdown();
+            });
+
+            item.addEventListener('dragend', function() {
+                item.classList.remove('tr-more-dragging');
+                listEl.querySelectorAll('.tr-more-item').forEach(function(el) {
+                    el.classList.remove('tr-more-drag-over-top', 'tr-more-drag-over-bottom');
+                });
+                dragIdx = -1;
+            });
+        });
+    }
+
+    // ----------------------------------------------------------------
+    // PUBLIC API
+    // ----------------------------------------------------------------
+    vm.loadViews = vm.loadViews;
+    vm.renderViewTabs = vm.renderViewTabs;
+    vm.renderMoreDropdown = vm.renderMoreDropdown;
+    vm.updateViewButtons = vm.updateViewButtons;
+    vm.applyView = vm.applyView;
+    vm.saveCurrentView = vm.saveCurrentView;
+    vm.createBlankView = vm.createBlankView;
+    vm.updateCurrentView = vm.updateCurrentView;
+    vm.deleteView = vm.deleteView;
+    vm.setDefaultView = vm.setDefaultView;
+    vm.closeViewTab = vm.closeViewTab;
+    vm.showViewTab = vm.showViewTab;
+
+    return vm;
 }
