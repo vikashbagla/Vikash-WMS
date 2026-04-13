@@ -961,7 +961,7 @@ function lgRenderEntries(rows) {
             typeHtml = lgFormatType(row);
 
             var q = Math.abs(source.quantity || 0);
-            if (source.transaction_type === 'SELL' || source.transaction_type === 'RIGHTS_ENTITLEMENT' || source.transaction_type === 'BONUS') {
+            if (source.transaction_type === 'SELL' || source.transaction_type === 'RIGHTS_ENTITLEMENT' || source.transaction_type === 'BONUS' || source.transaction_type === 'SPLIT') {
                 q = -q;
             }
             if (q !== 0) {
@@ -2062,7 +2062,7 @@ function lgGatherExportData() {
             typeLabel = LG_TYPE_LABELS[src.transaction_type] || (src.transaction_type || '').replace(/_/g, ' ');
             symbol = _lgExportSymbol(row);
             var q = Math.abs(src.quantity || 0);
-            if (src.transaction_type === 'SELL' || src.transaction_type === 'RIGHTS_ENTITLEMENT' || src.transaction_type === 'BONUS') q = -q;
+            if (src.transaction_type === 'SELL' || src.transaction_type === 'RIGHTS_ENTITLEMENT' || src.transaction_type === 'BONUS' || src.transaction_type === 'SPLIT') q = -q;
             qty = q !== 0 ? q : null;
             price = src.price || null;
             if (row.quantity && row.netAmount) {

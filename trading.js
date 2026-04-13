@@ -549,6 +549,8 @@ function trSetupEventHandlers() {
                 trLoadHistPlModule(function() { openHistPlModal(); });
             } else if (txnType === 'BONUS') {
                 trLoadBonusModule(function() { openBonusModal(); });
+            } else if (txnType === 'SPLIT') {
+                trLoadSplitModule(function() { openSplitModal(); });
             } else {
                 alert('Transaction type "' + txnType + '" — form coming soon.');
             }
@@ -1922,7 +1924,7 @@ function trRenderTxnTable(txns) {
         tbody.innerHTML = displayTxns.map(function(txn) {
             var invBrk = trInvBrk(txn);
             var isIncome = INCOME_TYPES.indexOf(txn.transaction_type) >= 0;
-            var typeClass = (txn.transaction_type === 'BUY' || txn.transaction_type === 'RIGHTS_ENTITLEMENT') ? 'positive' : (txn.transaction_type === 'SELL' ? 'negative' : (txn.transaction_type === 'RIGHTS_PAYMENT' ? 'neutral' : ''));
+            var typeClass = (txn.transaction_type === 'BUY' || txn.transaction_type === 'RIGHTS_ENTITLEMENT' || txn.transaction_type === 'BONUS' || txn.transaction_type === 'SPLIT') ? 'positive' : (txn.transaction_type === 'SELL' ? 'negative' : (txn.transaction_type === 'RIGHTS_PAYMENT' ? 'neutral' : ''));
             var qty = txn.quantity || 0;
             var _dispNet = txn.display_net_amount !== undefined ? txn.display_net_amount : txn.net_amount;
             var val = _dispNet || txn.gross_amount || 0;
@@ -2163,7 +2165,7 @@ function trRenderTxnMatchingView() {
         // clean.
         var tt = t.transaction_type;
         if (tt !== 'BUY' && tt !== 'SELL' &&
-            tt !== 'BONUS' && tt !== 'RIGHTS_ENTITLEMENT' &&
+            tt !== 'BONUS' && tt !== 'SPLIT' && tt !== 'RIGHTS_ENTITLEMENT' &&
             tt !== 'RIGHTS_PAYMENT' && tt !== 'CAPITAL_REDUCTION' &&
             tt !== 'HISTORICAL_PL') return;
         var invId = t.investor_id || '';
@@ -3456,6 +3458,71 @@ async function trLoadBonusModule(callback) {
         showAlert('Failed to load Bonus module: ' + err.message, 'error');
         trBonusLoading = false;
         trBonusCallbacks = [];
+    }
+}
+
+// ============================================================================
+// SPLIT MODULE (loaded on demand — same pattern as Bonus)
+// ============================================================================
+
+var trSplitLoaded = false;
+var trSplitLoading = false;
+var trSplitCallbacks = [];
+
+async function trLoadSplitModule(callback) {
+    if (trSplitLoaded) {
+        if (typeof callback === 'function') callback();
+        return;
+    }
+    if (trSplitLoading) {
+        if (typeof callback === 'function') trSplitCallbacks.push(callback);
+        return;
+    }
+    trSplitLoading = true;
+    if (typeof callback === 'function') trSplitCallbacks.push(callback);
+
+    try {
+        // Load HTML
+        var htmlResp = await fetch('trading-split.html?t=' + Date.now());
+        if (!htmlResp.ok) throw new Error('Failed to load trading-split.html');
+        var htmlText = await htmlResp.text();
+
+        // Extract <style> and inject to <head>
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(htmlText, 'text/html');
+        var styles = doc.querySelectorAll('style');
+        styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+
+        // Inject body content (modal overlay) into a container div
+        var container = document.createElement('div');
+        container.id = 'tr-split-container';
+        container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
+        document.body.appendChild(container);
+
+        // Load JS
+        var oldScript = document.querySelector('script[src*="trading-split.js"]');
+        if (oldScript) oldScript.remove();
+        await new Promise(function(resolve, reject) {
+            var script = document.createElement('script');
+            script.src = 'trading-split.js?t=' + Date.now();
+            script.onload = resolve;
+            script.onerror = function() { reject(new Error('Failed to load trading-split.js')); };
+            document.body.appendChild(script);
+        });
+
+        trSplitLoaded = true;
+
+        // Small delay for init to complete, then fire all queued callbacks
+        setTimeout(function() {
+            if (typeof initSplitModule === 'function') initSplitModule();
+            trSplitCallbacks.forEach(function(cb) { cb(); });
+            trSplitCallbacks = [];
+        }, 100);
+    } catch (err) {
+        console.error('Trading: Failed to load split module:', err);
+        showAlert('Failed to load Split module: ' + err.message, 'error');
+        trSplitLoading = false;
+        trSplitCallbacks = [];
     }
 }
 

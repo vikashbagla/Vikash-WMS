@@ -1063,6 +1063,7 @@ function _wmsCostEngine(transactions, method) {
     //                         record gain entry; short sells push a negative lot
     //   RIGHTS_ENTITLEMENT  → +quantity,  push zero-cost lot
     //   BONUS               → +quantity,  push zero-cost lot
+    //   SPLIT               → +quantity,  push zero-cost lot (same as BONUS)
     //   RIGHTS_PAYMENT      → no qty,     adjustments += net_amount
     //   DIVIDEND / INTEREST
     //    / OTHER_INCOME
@@ -1260,8 +1261,8 @@ function _wmsCostEngine(transactions, method) {
             continue;
         }
 
-        // ---------- RIGHTS_ENTITLEMENT / BONUS (zero-cost lot that adds qty)
-        if (txnType === 'RIGHTS_ENTITLEMENT' || txnType === 'BONUS') {
+        // ---------- RIGHTS_ENTITLEMENT / BONUS / SPLIT (zero-cost lot that adds qty)
+        if (txnType === 'RIGHTS_ENTITLEMENT' || txnType === 'BONUS' || txnType === 'SPLIT') {
             lots[key].push({
                 date: txnDate, qty: txnQty, price: 0, costPerUnit: 0,
                 investorId: txnInvestorId, brokerId: txnBrokerId, tags: txnTags,
@@ -4969,7 +4970,7 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
         } else if (_creditTypes[t.transaction_type]) {
             amt = -Math.abs(amt);
         }
-        // else: BONUS, RIGHTS_ENTITLEMENT → amt stays 0
+        // else: BONUS, SPLIT, RIGHTS_ENTITLEMENT → amt stays 0
         //       HISTORICAL_PL → use sign as stored in amt
 
         var isNfo = _isNFO(t);

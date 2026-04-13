@@ -1,0 +1,209 @@
+<head>
+<style>
+/* Shared overlay/modal styles (self-contained so split works without rights module loaded) */
+.rights-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.4);
+    z-index: 1200;
+    align-items: center;
+    justify-content: center;
+}
+.rights-overlay.show { display: flex; }
+.rights-modal {
+    background: #fff; border-radius: 10px;
+    max-width: 560px; width: 95%; max-height: 90vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+.rights-header {
+    padding: 12px 16px; border-bottom: 1px solid #e2e8f0;
+    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+}
+.rights-header h3 { margin: 0; font-size: 14px; font-weight: 600; color: #2d3748; }
+.rights-body { padding: 12px 16px; overflow-y: auto; flex: 1; }
+.rights-footer {
+    padding: 10px 16px; border-top: 1px solid #e2e8f0;
+    display: flex; justify-content: flex-end; gap: 8px; flex-shrink: 0;
+}
+.rights-fields-row {
+    display: flex; gap: 14px; margin-bottom: 12px; align-items: flex-start;
+}
+.rights-field { display: flex; flex-direction: column; position: relative; }
+.rights-field label {
+    font-size: 10px; font-weight: 600; color: #718096;
+    text-transform: uppercase; margin-bottom: 3px; letter-spacing: 0.3px;
+}
+.rights-field input[type="text"] {
+    padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 4px;
+    font-size: 12px; color: #2d3748; outline: none;
+    height: 28px; box-sizing: border-box;
+}
+.rights-field input:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+/* Segmented date widget */
+.rhDate-wrap {
+    display: flex; align-items: center;
+    padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 4px;
+    cursor: text; user-select: none; font-size: 12px; color: #2d3748;
+    height: 28px; box-sizing: border-box;
+}
+.rhDate-wrap:focus-within { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+.rhDate-seg { padding: 1px 2px; border-radius: 2px; cursor: pointer; }
+.rhDate-seg.active { background: #667eea; color: #fff; }
+.rhDate-sep { margin: 0 1px; color: #a0aec0; }
+.rhDate-cal-btn { background: none; border: none; cursor: pointer; font-size: 11px; margin-left: 4px; padding: 0; line-height: 1; }
+.rhDate-cal-picker { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+/* Search dropdown */
+.rights-search-dd {
+    position: absolute; top: 100%; left: 0; right: 0;
+    background: white; border: 1px solid #e2e8f0; border-radius: 4px;
+    z-index: 100; display: none; max-height: 200px; overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.rights-search-dd.show { display: block; }
+.rights-search-dd .wms-dd-item {
+    padding: 6px 10px; cursor: pointer; font-size: 12px; border-bottom: 1px solid #f0f4f8;
+}
+.rights-search-dd .wms-dd-item:hover,
+.rights-search-dd .wms-dd-item.wms-dd-highlight { background: #eef2ff; }
+.rights-search-dd .wms-dd-item strong { color: #2d3748; }
+/* Holdings table */
+.rights-table {
+    width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 10px;
+    table-layout: fixed; min-width: 0;
+}
+.rights-table th {
+    background: #f7fafc; padding: 6px 8px; text-align: left;
+    font-size: 10px; font-weight: 600; color: #4a5568;
+    text-transform: uppercase; border-bottom: 2px solid #e2e8f0;
+    white-space: nowrap; overflow: hidden;
+}
+.rights-table th.r { text-align: right; }
+.rights-table td {
+    padding: 6px 8px; border-bottom: 1px solid #f0f4f8; vertical-align: middle;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rights-table td.r { text-align: right; }
+.rights-table tr:hover td { background: #f9fafb; }
+.rights-table input[type="text"] {
+    padding: 4px 6px; border: 1px solid #e2e8f0; border-radius: 4px;
+    font-size: 11px; width: 100%; text-align: right; box-sizing: border-box;
+}
+.rights-table input:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+.rights-empty { padding: 20px; text-align: center; color: #a0aec0; font-size: 12px; }
+.rights-selected-badge {
+    display: inline-block; background: #eef2ff; color: #667eea; padding: 3px 8px;
+    border-radius: 4px; font-size: 11px; font-weight: 500; margin-top: 4px;
+}
+
+/* Split-specific styles */
+.split-ratio-wrap {
+    display: flex; align-items: center; gap: 4px;
+}
+.split-ratio-wrap input[type="number"] {
+    width: 50px; padding: 4px 6px; border: 1px solid #e2e8f0; border-radius: 4px;
+    font-size: 11px; text-align: center; box-sizing: border-box;
+    -moz-appearance: textfield;
+}
+.split-ratio-wrap input[type="number"]::-webkit-outer-spin-button,
+.split-ratio-wrap input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0;
+}
+.split-ratio-wrap input:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+.split-ratio-sep { font-size: 11px; color: #718096; font-weight: 600; }
+.split-ratio-row { display: flex; gap: 14px; align-items: flex-end; margin-bottom: 10px; }
+.split-ratio-field label { font-size: 10px; font-weight: 600; color: #718096; text-transform: uppercase; margin-bottom: 3px; letter-spacing: 0.3px; display: block; }
+
+/* Tag input */
+.corp-tag-pills {
+    display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px;
+}
+.corp-tag-pills .wms-pill {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;
+    border: 1px solid #bee3f8; background: #bee3f8; color: #2b6cb0; cursor: default;
+}
+.corp-tag-pills .wms-pill-remove {
+    font-size: 12px; font-weight: 700; margin-left: 1px; cursor: pointer;
+}
+.corp-tag-dd {
+    display: none; position: absolute; top: 100%; left: 0; right: 0;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 20;
+    padding: 6px; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow-y: auto;
+}
+.corp-tag-dd.show { display: flex; }
+.corp-tag-dd .wms-dd-item {
+    display: inline-block; padding: 2px 8px; font-size: 10px;
+    background: #edf2f7; border-radius: 10px; color: #4a5568;
+    cursor: pointer; white-space: nowrap;
+}
+.corp-tag-dd .wms-dd-item:hover,
+.corp-tag-dd .wms-dd-item.wms-dd-highlight { background: #cbd5e0; }
+</style>
+</head>
+
+<body>
+<!-- Stock Split Modal -->
+<div id="splitOverlay" class="rights-overlay">
+    <div class="rights-modal">
+        <div class="rights-header">
+            <h3>Stock Split</h3>
+            <button class="btn-close-modal" id="splitCloseBtn" title="Close">&#10005;</button>
+        </div>
+        <div class="rights-body">
+            <div class="rights-fields-row">
+                <div class="rights-field">
+                    <label>Record Date</label>
+                    <div class="rhDate-wrap" id="splitDateWrap" tabindex="0">
+                        <span class="rhDate-seg" data-seg="dd" id="splitDateDd">25</span>
+                        <span class="rhDate-sep">-</span>
+                        <span class="rhDate-seg" data-seg="mmm" id="splitDateMmm">Mar</span>
+                        <span class="rhDate-sep">-</span>
+                        <span class="rhDate-seg" data-seg="yyyy" id="splitDateYyyy">2026</span>
+                        <button type="button" class="rhDate-cal-btn" id="splitDateCalBtn" title="Pick date">&#x1F4C5;</button>
+                        <input type="date" id="splitDateCalPicker" class="rhDate-cal-picker">
+                    </div>
+                </div>
+                <div class="rights-field" style="flex: 1;">
+                    <label>Symbol</label>
+                    <input type="text" id="splitSymbolInput" placeholder="Search security..." autocomplete="off">
+                    <div class="rights-search-dd" id="splitSymbolDd"></div>
+                    <div id="splitSymbolBadge"></div>
+                </div>
+            </div>
+            <!-- Split Ratio -->
+            <div class="split-ratio-row" id="splitRatioRow" style="display:none;">
+                <div class="split-ratio-field">
+                    <label>Split Ratio</label>
+                    <div class="split-ratio-wrap">
+                        <span style="font-size:10px;color:#a0aec0;margin-right:2px;">Each 1 share becomes</span>
+                        <input type="number" id="splitRatioTo" min="2" step="1" value="2" placeholder="new">
+                        <span style="font-size:10px;color:#a0aec0;margin-left:2px;">shares</span>
+                    </div>
+                </div>
+                <button class="btn-secondary" id="splitApplyRatioBtn" style="font-size:11px;padding:4px 10px;height:28px;">Apply</button>
+            </div>
+            <!-- Holdings table -->
+            <div id="splitTableWrap">
+                <div class="rights-empty">Select a date and symbol to view holdings</div>
+            </div>
+
+            <!-- Tags -->
+            <div id="splitTagWrap" style="display:none; margin-top:8px;">
+                <div class="rights-field" style="position:relative;">
+                    <label>Tags <span style="font-weight:400;color:#a0aec0;">(auto-applied from existing transactions)</span></label>
+                    <input type="text" id="splitTagInput" placeholder="Type to add tags..." autocomplete="off">
+                    <div class="corp-tag-pills" id="splitTagPills"></div>
+                    <div class="corp-tag-dd" id="splitTagDd"></div>
+                </div>
+            </div>
+        </div>
+        <div class="rights-footer">
+            <button class="btn-secondary" id="splitCancelBtn">Cancel</button>
+            <button class="btn-primary" id="splitSaveBtn" disabled>Save Split Transactions</button>
+        </div>
+    </div>
+</div>
+</body>
