@@ -503,12 +503,24 @@ function rhEntPopulateHoldings() {
         html += '<tr>' +
             '<td>' + h.combinedLabel + '</td>' +
             '<td class="r">' + h.netQuantity.toLocaleString() + '</td>' +
-            '<td class="r"><input type="number" min="0" step="1" data-idx="' + idx + '" class="rh-ent-qty"></td>' +
+            '<td class="r"><input type="text" inputmode="numeric" data-idx="' + idx + '" class="rh-ent-qty" placeholder="0"></td>' +
             '</tr>';
     });
     html += '</tbody></table>';
     document.getElementById('rhEntTableWrap').innerHTML = html;
     document.getElementById('rhEntConfirmBtn').disabled = false;
+
+    // Add focus/blur formatting for rights qty inputs
+    document.querySelectorAll('.rh-ent-qty').forEach(function(el) {
+        el.addEventListener('focus', function() {
+            var raw = parseInt(el.value.replace(/,/g, '')) || 0;
+            el.value = raw || '';
+        });
+        el.addEventListener('blur', function() {
+            var raw = parseInt(el.value.replace(/,/g, '')) || 0;
+            el.value = raw ? raw.toLocaleString('en-IN') : '';
+        });
+    });
 
     // Initialize tag input with auto-populated tags
     rhEntInitTags();
@@ -524,7 +536,7 @@ function rhEntConfirmAndReview() {
     var hasAny = false;
     inputs.forEach(function(inp) {
         var idx = parseInt(inp.dataset.idx);
-        var qty = parseInt(inp.value) || 0;
+        var qty = parseInt((inp.value || '').replace(/,/g, '')) || 0;
         if (rhEntHoldings[idx]) {
             rhEntHoldings[idx].rightsReceived = qty;
             if (qty > 0) hasAny = true;

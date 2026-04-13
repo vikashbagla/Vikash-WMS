@@ -28,6 +28,10 @@ var trTxMatchMethod = 'lifo';     // 'fifo' or 'lifo'
 var trTxShowAll = false;
 var trTxFnoOnly = false;
 
+// Transaction type filter state
+var trTxSelectedTxnTypes = [];
+var trTxTypePillFilter = null;
+
 // Date filter state
 var trTxDateFilterInstance = null;
 var trTxDateRange = { from: null, to: null };
@@ -97,6 +101,26 @@ function trTxInitPills() {
             placeholder: 'Search brokers...',
             items: brkItems,
             selectedIds: trTxSelectedBrokerIds,
+            onChange: trTxRender
+        });
+    }
+
+    // Transaction type pills — static list derived from actual transaction data
+    var typeContainer = document.getElementById('trTx-filter-type');
+    if (typeContainer) {
+        // Build unique types from current transactions
+        var typeSet = {};
+        trTransactions.forEach(function(t) {
+            if (t.transaction_type) typeSet[t.transaction_type] = true;
+        });
+        var typeItems = Object.keys(typeSet).sort().map(function(tt) {
+            return { id: tt, label: tt, searchText: tt };
+        });
+        trTxTypePillFilter = wmsPillSearch(typeContainer, {
+            label: 'Type',
+            placeholder: 'Search types...',
+            items: typeItems,
+            selectedIds: trTxSelectedTxnTypes,
             onChange: trTxRender
         });
     }
@@ -709,6 +733,13 @@ function trTxGetFilteredTransactions() {
         });
     }
 
+    // Filter: transaction type
+    if (trTxSelectedTxnTypes.length > 0) {
+        filtered = filtered.filter(function(t) {
+            return t.transaction_type && trTxSelectedTxnTypes.indexOf(t.transaction_type) >= 0;
+        });
+    }
+
     // Filter: tags — case-insensitive (Rule D.5.5)
     if (trTxSelectedTagNames.length > 0) {
         filtered = filtered.filter(function(t) {
@@ -746,6 +777,15 @@ function trTxRender() {
         if (matchContainer) matchContainer.classList.remove('visible');
         trTxRenderList(filtered);
     }
+}
+
+// ============================================================================
+// DISPLAY HELPERS
+// ============================================================================
+
+// Strip exchange prefix for display — delegates to shared wmsStripExchangePrefix()
+function trTxDisplaySymbol(txn) {
+    return wmsStripExchangePrefix(txn);
 }
 
 // ============================================================================
@@ -868,7 +908,7 @@ function trTxRenderList(filtered) {
             '</td>' +
             '<td>' + formatDate(txn.transaction_date) + '</td>' +
             '<td>' + invBrk + '</td>' +
-            '<td>' + (txn.symbol || txn.short_symbol || '') +
+            '<td>' + trTxDisplaySymbol(txn) +
                 (txn.company_name ? '<br><span style="font-size:10px;color:#9ca3af;">' + txn.company_name + '</span>' : '') +
             '</td>' +
             '<td style="text-align:center;">' +

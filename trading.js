@@ -728,6 +728,22 @@ function trSetupEventHandlers() {
     document.getElementById('trEditQty').addEventListener('input', trRecalcEditAmounts);
     document.getElementById('trEditPrice').addEventListener('input', trRecalcEditAmounts);
 
+    // Edit modal — focus/blur formatting on all amt-field inputs
+    document.querySelectorAll('.edit-modal-body .amt-field').forEach(function(el) {
+        el.addEventListener('focus', function() {
+            var raw = parseFloat((el.value || '0').replace(/,/g, '')) || 0;
+            el.value = raw || '';
+        });
+        el.addEventListener('blur', function() {
+            var raw = parseFloat((el.value || '0').replace(/,/g, '')) || 0;
+            if (el.id === 'trEditQty') {
+                el.value = trEditFmtInt(raw);
+            } else {
+                el.value = trEditFmt(raw);
+            }
+        });
+    });
+
     // Close action menus on outside click
     document.addEventListener('click', function(e) {
         if (trOpenActionMenu && !e.target.closest('.action-cell')) {
@@ -1927,7 +1943,7 @@ function trRenderTxnTable(txns) {
             return '<tr class="' + rowClass + '" data-txn-id="' + txn.id + '">' +
                 '<td>' + formatDate(txn.transaction_date) + '</td>' +
                 '<td>' + invBrk + '</td>' +
-                '<td><span class="' + typeClass + '" style="font-weight:600;">' + txn.transaction_type + '</span> ' + txn.symbol + '</td>' +
+                '<td><span class="' + typeClass + '" style="font-weight:600;">' + txn.transaction_type + '</span> ' + wmsStripExchangePrefix(txn) + '</td>' +
                 '<td class="text-right">' + (qty !== 0 ? formatQuantity(Math.abs(qty)) : '-') + '</td>' +
                 '<td class="text-right">' + (qty !== 0 ? formatPrice(displayPrice, false) : '-') + '</td>' +
                 '<td class="text-right ' + getAmountClass(val) + '">' + formatAmount(val) + '</td>' +

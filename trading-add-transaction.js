@@ -646,7 +646,7 @@ function addAddTxnRow(copyFromId) {
         // Qty
         '<td><input type="text" class="addTxn-qty-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtQty(row.quantity) + '"></td>' +
         // Price
-        '<td><input type="number" class="addTxn-price-input" data-rid="' + rowId + '" step="0.01" value="' + (row.price || '') + '"></td>' +
+        '<td><input type="text" class="addTxn-price-input addTxn-amt-field" data-rid="' + rowId + '" inputmode="decimal" value="' + atFmtPrice(row.price) + '"></td>' +
         // Gross (editable)
         '<td><input type="text" class="addTxn-gross-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.gross_amount) + '"></td>' +
         // Total charges (editable, dblclick for breakdown)
@@ -812,9 +812,19 @@ function attachAddTxnRowHandlers(rowId) {
         recalcAddTxnRow(rowId);
     });
 
+    // --- Price focus/blur formatting ---
+    priceInput.addEventListener('focus', function() {
+        var raw = parseFloat(priceInput.value.replace(/,/g, '')) || 0;
+        priceInput.value = raw || '';
+    });
+    priceInput.addEventListener('blur', function() {
+        var raw = parseFloat(priceInput.value.replace(/,/g, '')) || 0;
+        priceInput.value = atFmtPrice(raw);
+    });
+
     // --- Price change ---
     priceInput.addEventListener('input', function() {
-        row.price = parseFloat(priceInput.value) || 0;
+        row.price = parseFloat(priceInput.value.replace(/,/g, '')) || 0;
         // Price change clears gross/net overrides — auto-calc resumes
         row._grossOverride = false;
         row._netOverride = false;
@@ -1806,6 +1816,14 @@ function atFmtAmt(value) {
     var formatted = abs.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     if (value < 0) return '(' + formatted + ')';
     return formatted;
+}
+
+function atFmtPrice(value) {
+    if (value === null || value === undefined || isNaN(value) || value === 0) return '';
+    var abs = Math.abs(value);
+    // Show up to 2 decimal places, strip trailing zeros
+    var formatted = abs.toFixed(2).replace(/\.?0+$/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return value < 0 ? '-' + formatted : formatted;
 }
 
 // ============================================================================

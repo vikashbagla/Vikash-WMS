@@ -4622,6 +4622,20 @@ async function wmsBatchCreateTransactions(txns) {
 }
 
 // ============================================================================
+// SHARED: Strip exchange prefix for display (NFO symbols only)
+// NFO contracts may have inconsistent "NSE:" prefix; this strips it.
+// EQ symbols pass through unchanged.
+// ============================================================================
+
+function wmsStripExchangePrefix(txn) {
+    var sym = txn.symbol || txn.short_symbol || '';
+    if (txn.security_type === 'NFO') {
+        sym = sym.replace(/^[A-Z]+:/, '');
+    }
+    return sym;
+}
+
+// ============================================================================
 // SHARED: Amount formatting (commas, 2 decimals, parentheses for negatives)
 // Used by: trading-add-transaction.js, trading-income.js, trading-rights.js
 // ============================================================================

@@ -352,12 +352,24 @@ function bonusPopulateHoldings() {
         html += '<tr>' +
             '<td title="' + h.combinedLabel + '">' + h.combinedLabel + '</td>' +
             '<td class="r">' + h.netQuantity.toLocaleString() + '</td>' +
-            '<td class="r"><input type="number" min="0" step="1" data-idx="' + idx + '" class="bonus-qty-input"></td>' +
+            '<td class="r"><input type="text" inputmode="numeric" data-idx="' + idx + '" class="bonus-qty-input" placeholder="0"></td>' +
             '</tr>';
     });
     html += '</tbody></table>';
     document.getElementById('bonusTableWrap').innerHTML = html;
     document.getElementById('bonusSaveBtn').disabled = false;
+
+    // Add focus/blur formatting for bonus qty inputs
+    document.querySelectorAll('.bonus-qty-input').forEach(function(el) {
+        el.addEventListener('focus', function() {
+            var raw = parseInt(el.value.replace(/,/g, '')) || 0;
+            el.value = raw || '';
+        });
+        el.addEventListener('blur', function() {
+            var raw = parseInt(el.value.replace(/,/g, '')) || 0;
+            el.value = raw ? raw.toLocaleString('en-IN') : '';
+        });
+    });
 
     // Initialize tag input with auto-populated tags
     bonusInitTags();
@@ -437,7 +449,7 @@ async function bonusSaveTransactions() {
     var hasAny = false;
     inputs.forEach(function(inp) {
         var idx = parseInt(inp.dataset.idx);
-        var qty = parseInt(inp.value) || 0;
+        var qty = parseInt((inp.value || '').replace(/,/g, '')) || 0;
         if (bonusHoldings[idx]) {
             bonusHoldings[idx].bonusQty = qty;
             if (qty > 0) hasAny = true;
