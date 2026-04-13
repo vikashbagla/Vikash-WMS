@@ -1226,9 +1226,11 @@ async function lgSaveOpeningBalance() {
 // ============================================================================
 
 // Tax rate on booked gains — resolved from investor/IBA DB fields via wmsGetTaxRate().
-// Falls back to WMS_DEFAULT_TAX_RATE (12.5%) when no investor-specific rate is set.
+// Checks investor pill first; if no single investor, falls back to trader pill
+// (traders are also in the investors table and can have their own tax rate).
 function lgGetEffectiveTaxRate() {
     var invId = (lgSelectedInvestorIds.length === 1) ? lgSelectedInvestorIds[0] : null;
+    if (!invId) invId = (lgSelectedTraderIds.length === 1) ? lgSelectedTraderIds[0] : null;
     var brkId = (lgSelectedBrokerIds.length === 1) ? lgSelectedBrokerIds[0] : null;
     return wmsGetTaxRate(invId, brkId);
 }
