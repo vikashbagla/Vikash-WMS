@@ -1471,6 +1471,8 @@ function lgRenderSummary() {
             ' + Margin ' + lgFmt(currentNfoMargin);
     }
     setCard('lgCardPotentialTax', potentialTax, false);
+    var taxLabelEl = document.getElementById('lgCardPotentialTaxLabel');
+    if (taxLabelEl) taxLabelEl.textContent = 'Potential Tax (' + taxRatePct + '%)';
     setCard('lgCardNetReceivable', netReceivable, true);
     // Balance w/o MTM lives inside an inner span so we can append a subscript ratio
     var balEl = document.getElementById('lgCardBalNoMtm');

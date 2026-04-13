@@ -199,15 +199,13 @@ async function wmsLoadRefData() {
         wmsRefData.ibaRatesMap = {};
         ibAccounts.forEach(function(iba) {
             var key = iba.investor_id + '|' + iba.broker_id;
-            if (iba.brokerage_rates || iba.interest_terms || iba.margin_rate || iba.tax_rate) {
-                wmsRefData.ibaRatesMap[key] = {
-                    rates: iba.brokerage_rates,
-                    charges_inclusive: !!iba.charges_inclusive,
-                    interest_terms: iba.interest_terms || null,
-                    margin_rate: parseFloat(iba.margin_rate) || 0,
-                    tax_rate: parseFloat(iba.tax_rate) || 0
-                };
-            }
+            wmsRefData.ibaRatesMap[key] = {
+                rates: iba.brokerage_rates || null,
+                charges_inclusive: !!iba.charges_inclusive,
+                interest_terms: iba.interest_terms || null,
+                margin_rate: parseFloat(iba.margin_rate) || 0,
+                tax_rate: (iba.tax_rate != null) ? parseFloat(iba.tax_rate) : null
+            };
         });
 
         // 4. Regulatory charges (active only — effective_to IS NULL)
@@ -4671,22 +4669,23 @@ function wmsGetMarginRate(investorId, brokerId) {
 
 /**
  * Get effective tax rate % for an investor (optionally per-broker).
- * Priority: IBA tax_rate (if > 0) → investor tax_rate (if > 0) → system default (12.5%).
- * Returns a number like 12.5 (meaning 12.5%).
+ * Priority: IBA tax_rate → investor tax_rate → 0 (no tax).
+ * DB default is 0, not NULL. Returns a number like 12.5 (meaning 12.5%).
  */
-var WMS_DEFAULT_TAX_RATE = 12.5;
+var WMS_DEFAULT_TAX_RATE = 0;
 
 function wmsGetTaxRate(investorId, brokerId) {
     // Check IBA-level override first
     if (investorId && brokerId) {
         var ibaKey = investorId + '|' + brokerId;
         var iba = wmsRefData.ibaRatesMap[ibaKey];
-        if (iba && iba.tax_rate > 0) return iba.tax_rate;
+        if (iba && iba.tax_rate != null) return iba.tax_rate;
     }
     // Fall back to investor-level
     if (investorId) {
         var inv = wmsRefData.investorObjMap[investorId];
-        if (inv && parseFloat(inv.tax_rate) > 0) return parseFloat(inv.tax_rate);
+        var invRate = (inv && inv.tax_rate != null) ? parseFloat(inv.tax_rate) : NaN;
+        if (!isNaN(invRate)) return invRate;
     }
     // System default
     return WMS_DEFAULT_TAX_RATE;
