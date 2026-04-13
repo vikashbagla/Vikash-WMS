@@ -37,6 +37,11 @@
 
     <div id="alert-container" class="alert-container"></div>
 
+    <!-- Dev environment banner — only visible on dev site -->
+    <div id="devBanner" style="display:none; background:#ff6b35; color:#fff; text-align:center; padding:4px 0; font-size:12px; font-weight:600; letter-spacing:0.5px; position:fixed; top:0; left:0; right:0; z-index:99999;">
+        DEV ENVIRONMENT — changes here do NOT affect production data
+    </div>
+
     <header class="app-header">
         <div class="header-content">
             <div class="logo-section">
@@ -115,11 +120,40 @@
     // Global configuration - ONLY DECLARED ONCE
     window.SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
     window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
-    
+
+    // ============================================================
+    // ENVIRONMENT DETECTION
+    // 'dev' when running on Netlify dev site, 'prod' otherwise.
+    // Dev environment routes transactions & ledger_entries queries
+    // to _dev copies of those tables so production data is safe.
+    // Master tables (investors, brokers, securities, etc.) are shared.
+    // ============================================================
+    window.WMS_ENV = (function() {
+        var host = window.location.hostname;
+        if (host.includes('netlify.app') || host.includes('netlify.live')) return 'dev';
+        if (host === 'localhost' || host === '127.0.0.1') return 'dev';
+        return 'prod';
+    })();
+
+    // Fetch interceptor — transparently rewrites table names for dev env.
+    // No module code changes needed; all REST URLs pass through here.
+    if (window.WMS_ENV === 'dev') {
+        (function() {
+            var _origFetch = window.fetch;
+            window.fetch = function(url, opts) {
+                if (typeof url === 'string' && url.indexOf('/rest/v1/') !== -1) {
+                    url = url.replace(/\/rest\/v1\/transactions(?=\?|$)/, '/rest/v1/transactions_dev');
+                    url = url.replace(/\/rest\/v1\/ledger_entries(?=\?|$)/, '/rest/v1/ledger_entries_dev');
+                }
+                return _origFetch.call(this, url, opts);
+            };
+        })();
+    }
+
     // Initialize Supabase
     const { createClient } = supabase;
     window.supabaseClient = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
-    
+
     let currentModule = null;
     window.currentUser = null;
 
@@ -476,6 +510,16 @@
 
     // Init
     document.addEventListener('DOMContentLoaded', async () => {
+        // Show dev banner if running in dev environment
+        if (window.WMS_ENV === 'dev') {
+            var devBanner = document.getElementById('devBanner');
+            if (devBanner) {
+                devBanner.style.display = 'block';
+                document.body.style.paddingTop = '24px';
+            }
+            document.title = 'WMS DEV — Wealth Management System';
+        }
+
         // checkAuth is now async — must await before loading data
         var authOk = await checkAuth();
         if (!authOk) return;
