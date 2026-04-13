@@ -1063,7 +1063,8 @@ function _wmsCostEngine(transactions, method) {
     //                         record gain entry; short sells push a negative lot
     //   RIGHTS_ENTITLEMENT  → +quantity,  push zero-cost lot
     //   BONUS               → +quantity,  push zero-cost lot
-    //   SPLIT               → +quantity,  push zero-cost lot (same as BONUS)
+    //   SPLIT               → redistribute cost: existing lots' qty × ratio,
+    //                         costPerUnit ÷ ratio. Total cost unchanged.
     //   RIGHTS_PAYMENT      → no qty,     adjustments += net_amount
     //   DIVIDEND / INTEREST
     //    / OTHER_INCOME
@@ -1261,13 +1262,55 @@ function _wmsCostEngine(transactions, method) {
             continue;
         }
 
-        // ---------- RIGHTS_ENTITLEMENT / BONUS / SPLIT (zero-cost lot that adds qty)
-        if (txnType === 'RIGHTS_ENTITLEMENT' || txnType === 'BONUS' || txnType === 'SPLIT') {
+        // ---------- RIGHTS_ENTITLEMENT / BONUS (zero-cost lot that adds qty)
+        if (txnType === 'RIGHTS_ENTITLEMENT' || txnType === 'BONUS') {
             lots[key].push({
                 date: txnDate, qty: txnQty, price: 0, costPerUnit: 0,
                 investorId: txnInvestorId, brokerId: txnBrokerId, tags: txnTags,
                 securityType: txnSecType, txnId: t.id
             });
+            continue;
+        }
+
+        // ---------- SPLIT (redistribute cost across existing lots)
+        // Unlike BONUS which pushes a zero-cost lot, SPLIT adjusts ALL
+        // existing lots: each lot's qty is multiplied by the split ratio
+        // and costPerUnit/price are divided by it. Total cost unchanged.
+        //
+        // The split ratio is derived from the transaction:
+        //   additionalQty = txnQty (the new shares credited)
+        //   existingQty   = sum of all current lot quantities for this key
+        //   splitRatio    = (existingQty + additionalQty) / existingQty
+        //
+        // Example: 100 shares, 1:5 split → 400 additional → ratio = 500/100 = 5
+        //   lot {qty:100, cost:200} → {qty:500, cost:40}
+        if (txnType === 'SPLIT') {
+            var splitLots = lots[key] || [];
+            var existingQty = 0;
+            for (var si = 0; si < splitLots.length; si++) {
+                existingQty += splitLots[si].qty;
+            }
+            if (existingQty > 0 && txnQty > 0) {
+                var splitRatio = (existingQty + txnQty) / existingQty;
+                for (var sj = 0; sj < splitLots.length; sj++) {
+                    var sLot = splitLots[sj];
+                    if (sLot.qty > 0) {
+                        sLot.qty = Math.round(sLot.qty * splitRatio);
+                        sLot.costPerUnit = sLot.costPerUnit / splitRatio;
+                        sLot.price = sLot.price / splitRatio;
+                    }
+                    // Note: negative (short) lots are left unchanged — a split
+                    // on a short position is an edge case we don't handle yet.
+                }
+            } else if (txnQty > 0) {
+                // No existing lots (sold everything before split?) — push
+                // zero-cost lot as fallback so qty is still tracked.
+                lots[key].push({
+                    date: txnDate, qty: txnQty, price: 0, costPerUnit: 0,
+                    investorId: txnInvestorId, brokerId: txnBrokerId, tags: txnTags,
+                    securityType: txnSecType, txnId: t.id
+                });
+            }
             continue;
         }
 
