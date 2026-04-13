@@ -597,6 +597,10 @@ var cnLoadedParsers = {};  // Track which parser scripts have been loaded
 // Populate the shared utility functions for broker parsers
 window.CN_UTILS = {
     // Group PDF text items into logical lines by Y coordinate (3px tolerance)
+    // Handles character-spaced PDFs where each glyph is a separate text item:
+    // Uses x-coordinate gaps to decide where word breaks are instead of always
+    // joining with spaces. Characters within a word/number have tiny gaps (<2px),
+    // while actual word breaks have larger gaps (4px+).
     buildLines: function(items) {
         var lineMap = {};
         items.forEach(function(item) {
@@ -608,7 +612,22 @@ window.CN_UTILS = {
         var lines = [];
         Object.keys(lineMap).sort(function(a, b) { return b - a; }).forEach(function(yKey) {
             var lineItems = lineMap[yKey].sort(function(a, b) { return a.x - b.x; });
-            var text = lineItems.map(function(i) { return i.text; }).join(' ').trim();
+
+            // Smart join: use x-coordinate gap to decide spaces vs concatenation
+            var text = '';
+            var lastEnd = null;
+            for (var i = 0; i < lineItems.length; i++) {
+                var item = lineItems[i];
+                if (item.text.trim() === '') continue; // Skip space-only items
+                if (lastEnd !== null) {
+                    var gap = item.x - lastEnd;
+                    if (gap > 2) text += ' ';
+                }
+                text += item.text;
+                lastEnd = item.x + (item.width || 0);
+            }
+            text = text.trim();
+
             if (text.length > 0) {
                 lines.push({ text: text, items: lineItems, y: parseFloat(yKey) });
             }
@@ -1312,12 +1331,20 @@ function displayCnPreview(parseResult) {
 }
 
 function cnChargeInputHtml(row, field, rowKey) {
-    // Editable charge input cell — inline number input that updates the row object
+    // Editable charge input cell — text input with comma formatting (matches app styles)
     var val = row[field] || 0;
     var inputId = 'cnChg_' + rowKey + '_' + field;
-    return '<input type="number" step="0.01" id="' + inputId + '" value="' + val.toFixed(2) + '" ' +
-        'style="width:70px;text-align:right;padding:2px 4px;border:1px solid #e2e8f0;border-radius:3px;font-size:11px;background:#fff;" ' +
+    var displayVal = cnFmtChargeVal(val);
+    return '<input type="text" inputmode="decimal" id="' + inputId + '" value="' + displayVal + '" ' +
+        'style="width:78px;text-align:right;padding:2px 4px;border:1px solid #e2e8f0;border-radius:3px;font-size:11px;background:#fff;" ' +
         'data-row-key="' + rowKey + '" data-field="' + field + '" class="cn-charge-input">';
+}
+
+function cnFmtChargeVal(val) {
+    if (val === null || val === undefined || isNaN(val)) return '0.00';
+    var abs = Math.abs(val);
+    var formatted = abs.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return val < 0 ? '-' + formatted : formatted;
 }
 
 function createCnPreviewRow(r, idx) {
@@ -1357,10 +1384,20 @@ function createCnPreviewRow(r, idx) {
 function initCnChargeEditing() {
     var inputs = document.querySelectorAll('.cn-charge-input');
     inputs.forEach(function(input) {
+        // Focus: show raw number for editing
+        input.addEventListener('focus', function() {
+            var raw = parseFloat(input.value.replace(/,/g, '')) || 0;
+            input.value = raw === 0 ? '' : raw.toFixed(2);
+        });
+        // Blur: reformat with commas
+        input.addEventListener('blur', function() {
+            var raw = parseFloat(input.value.replace(/,/g, '')) || 0;
+            input.value = cnFmtChargeVal(raw);
+        });
         input.addEventListener('change', function() {
             var rowKey = input.dataset.rowKey;
             var field = input.dataset.field;
-            var newVal = parseFloat(input.value) || 0;
+            var newVal = parseFloat(input.value.replace(/,/g, '')) || 0;
 
             // Find the row object
             var parts = rowKey.split('_');
@@ -2628,12 +2665,12 @@ function attachNetAmountEditHandlers() {
             var row = allRows[rowIdx];
             if (!row) return;
             var currentVal = row.net_amount || 0;
-            cell.innerHTML = '<input type="number" step="0.01" value="' + currentVal + '" style="width:75px;font-size:11px;text-align:right;border:1px solid #667eea;border-radius:3px;padding:1px 3px;">';
+            cell.innerHTML = '<input type="text" inputmode="decimal" value="' + cnFmtChargeVal(currentVal) + '" style="width:80px;font-size:11px;text-align:right;border:1px solid #667eea;border-radius:3px;padding:1px 3px;">';
             var inp = cell.querySelector('input');
             inp.focus();
             inp.select();
             function commit() {
-                var newVal = parseFloat(inp.value);
+                var newVal = parseFloat(inp.value.replace(/,/g, ''));
                 if (!isNaN(newVal)) {
                     row.net_amount = Math.round(newVal * 100) / 100;
                     row._netOverride = true;

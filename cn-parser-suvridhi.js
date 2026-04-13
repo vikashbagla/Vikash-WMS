@@ -194,22 +194,21 @@ function parseSuvridhiTradeData(lineText, isin) {
         }
     }
 
-    // Price = WAP before brokerage (first decimal number with fractional part in the line)
-    // The Suvridhi CN line has: Qty, WAP, BrokPerShare, WAPAfterBrok, TotalAfterBrok, NetQty, NetObligation
+    // Price = WAP before brokerage
+    // Suvridhi CN line order: Qty, WAP, BrokPerShare, WAPAfterBrok, TotalAfterBrok, NetQty, NetObligation
+    // WAP is always the number immediately AFTER the first occurrence of qty.
     // We need WAP (before brokerage) because charges are applied separately by allocateCharges().
     var price = 0;
-    for (var d = 0; d < allNums.length - 2; d++) {  // -2 to skip NetQty and NetObligation
-        var v = allNums[d];
-        if (v > 0 && v !== qty && (v % 1 !== 0 || v < 100)) {
-            // First positive number that's not the quantity and has decimals (or is small enough to be a price)
-            price = v;
+    for (var d = 0; d < allNums.length - 2; d++) {
+        if (Math.abs(allNums[d]) === qty && d + 1 < allNums.length - 2) {
+            price = Math.abs(allNums[d + 1]);
             break;
         }
     }
-    // Fallback: find any decimal > 0 before the last 2 numbers
+    // Fallback: first positive number that's not the quantity and has decimals
     if (price === 0) {
         for (var d2 = 0; d2 < allNums.length - 2; d2++) {
-            if (allNums[d2] > 0 && allNums[d2] % 1 !== 0) {
+            if (allNums[d2] > 0 && allNums[d2] !== qty && allNums[d2] % 1 !== 0) {
                 price = allNums[d2];
                 break;
             }
@@ -255,18 +254,22 @@ function parseSuvridhiCharges(allText) {
 
     // Suvridhi charges are in a summary table row:
     // "NCL-Equities [2026012 M] 6,55,059.75 975.00 -656.00 -19.48 -0.66 0.00 0.00 995.14 -179.13 6,54,204.48"
-    // Numbers (via CN_UTILS.extractNumbers):
-    //   [0] = settlement number (2026012) — skip
-    //   [1] = PayIn/PayOut obligation (655059.75)
-    //   [2] = Brokerage (975.00)
-    //   [3] = STT (-656.00)
-    //   [4] = Transaction Charges (-19.48)
-    //   [5] = SEBI Turnover Fees (-0.66)
-    //   [6] = Stamp Duty (0.00)
-    //   [7] = IPFT Charges (0.00)
-    //   [8] = Taxable Value (995.14) — skip
-    //   [9] = GST (-179.13)
-    //   [10] = Net Amount (654204.48) — skip
+    //
+    // extractNumbers only matches numbers with exactly 2 decimal places ([\d,]+\.\d{2}),
+    // so settlement number (no decimal, e.g. "2026012 M") is never extracted.
+    // First number is always PayIn/PayOut obligation.
+    //
+    // After skipping PayIn/PayOut:
+    //   [idx+0] = Brokerage
+    //   [idx+1] = STT
+    //   [idx+2] = Transaction Charges
+    //   [idx+3] = SEBI Turnover Fees
+    //   [idx+4] = Stamp Duty
+    //   [idx+5] = IPFT Charges
+    //   [idx+6] = Taxable Value (skip)
+    //   [idx+7] = GST (single IGST column) -OR- CGST (if CGST+SGST format)
+    //   [idx+8] = SGST (only if CGST+SGST format)
+    //   [last]  = Net Amount (skip)
 
     for (var p = 0; p < allText.length; p++) {
         var lines = CN_UTILS.buildLines(allText[p]);
@@ -275,7 +278,9 @@ function parseSuvridhiCharges(allText) {
             var lineText = lines[li].text;
 
             // Find the NCL-Equities charges data row
-            if (!lineText.match(/^NCL-Equit/i)) continue;
+            // In character-spaced PDFs, "NCL-" and "Equities" may be on separate lines,
+            // so match just "NCL" prefix (the header-only "NCL-Equities" line has < 8 numbers)
+            if (!lineText.match(/^NCL/i)) continue;
 
             var nums = CN_UTILS.extractNumbers(lineText);
             // Must have enough numbers to be the charges row (not just the segment header)
@@ -283,16 +288,13 @@ function parseSuvridhiCharges(allText) {
 
             console.log('Suvridhi charges: ' + nums.length + ' numbers: ' + JSON.stringify(nums));
 
-            // Determine offset: first number might be settlement number (large integer like 2026012)
-            var offset = 0;
-            if (nums[0] > 100000 && Number.isInteger(nums[0])) {
-                offset = 1;  // Skip settlement number
+            // First number is always PayIn/PayOut (settlement number has no decimals → not extracted)
+            // Skip it if it's a large amount; for small CNs it could be < 10000, so also check
+            // if skipping it leaves enough numbers for the charges
+            var idx = 0;
+            if (nums.length >= 9 && Math.abs(nums[0]) > Math.abs(nums[1]) * 2) {
+                idx = 1;  // Skip PayIn/PayOut obligation
             }
-
-            // After offset: PayInOut, Brokerage, STT, TxnCharges, SEBI, StampDuty, IPFT, TaxableValue, GST, NetAmount
-            var idx = offset;
-            // Skip PayIn/PayOut obligation (large amount)
-            if (idx < nums.length && Math.abs(nums[idx]) > 10000) idx++;
 
             if (idx + 7 <= nums.length) {
                 charges.equity.brokerage      = Math.abs(nums[idx]);
@@ -302,7 +304,16 @@ function parseSuvridhiCharges(allText) {
                 charges.equity.stampDuty      = Math.abs(nums[idx + 4]);
                 charges.equity.ipft           = Math.abs(nums[idx + 5]);
                 // nums[idx+6] = taxable value (skip)
-                if (idx + 8 <= nums.length) {
+
+                // Detect CGST+SGST (2 columns) vs single IGST column:
+                // CGST+SGST: remaining after idx has 10 values (brok..ipft + taxable + cgst + sgst + net)
+                // IGST:      remaining after idx has 9 values  (brok..ipft + taxable + igst + net)
+                var remaining = nums.length - idx;
+                if (remaining >= 10 && idx + 9 <= nums.length) {
+                    // CGST + SGST format — sum both
+                    charges.equity.gst = Math.abs(nums[idx + 7]) + Math.abs(nums[idx + 8]);
+                } else if (idx + 8 <= nums.length) {
+                    // Single IGST column
                     charges.equity.gst = Math.abs(nums[idx + 7]);
                 }
             }
