@@ -749,7 +749,7 @@ function rptBuildInvestorDetail(h, price, md) {
             var shortSym = h.shortSymbol || h.symbol;
             var invMenuId = 'rpt-inv-am-' + g.investorId.substring(0, 8) + '-' + shortSym.replace(/[^a-zA-Z0-9]/g, '_');
 
-            return '<tr>' +
+            return '<tr class="rpt-investor-row" data-rpt-group="' + (h.assetClass || 'Other') + '" style="background:#fcfcfd;">' +
                 '<td style="padding:4px 8px 4px 30px;"><span class="investor-name-link" data-key="' + shortSym + '" data-investor-id="' + g.investorId + '">' + g.name + '</span></td>' +
                 '<td class="text-right" style="padding:4px 8px;">' + qtyHtml + '<div class="number-sub">' + formatPrice(avg, false) + '</div></td>' +
                 '<td class="text-right" style="padding:4px 8px;"><div class="number-main">' + formatAmount(inv) + '</div></td>' +
@@ -767,7 +767,7 @@ function rptBuildInvestorDetail(h, price, md) {
             '</tr>';
         }).join('');
 
-    return '<tr class="detail-row" data-rpt-group="' + (h.assetClass || 'Other') + '"><td colspan="9" style="padding:0;"><table class="inner-table" style="width:100%; table-layout:fixed;"><colgroup><col style="width:17%"><col style="width:9%"><col style="width:11%"><col style="width:10%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:9%"><col style="width:40px"></colgroup><tbody>' + investorRows + '</tbody></table></td></tr>';
+    return investorRows;
 }
 
 // One-time: close action menus on outside click
