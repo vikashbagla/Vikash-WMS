@@ -2041,6 +2041,17 @@ function wmsBuildRefreshSymbols() {
         });
     }
 
+    // 2b. Reports module transactions (camelCase, may exist if Reports is active)
+    if (typeof rptTransactions !== 'undefined' && rptTransactions) {
+        rptTransactions.forEach(function(t) {
+            if (t.securityType === 'NFO' || t.securityType === 'MCX') return;
+            var ss = t.shortSymbol;
+            if (!ss || seen[ss]) return;
+            seen[ss] = true;
+            list.push({ fyersKey: 'NSE:' + ss + '-EQ', cacheKey: ss });
+        });
+    }
+
     // 3. Watchlist symbols (may include securities not in transactions)
     if (typeof trWlWatchlists !== 'undefined' && trWlWatchlists) {
         trWlWatchlists.forEach(function(wl) {

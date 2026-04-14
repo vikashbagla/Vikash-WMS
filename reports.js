@@ -176,7 +176,11 @@ async function initReports() {
         return;
     }
 
-    // Live prices — best effort
+    // Live prices — use shared refresh system (populates wmsLivePrices globally)
+    // then fall back to module-level fetch for any symbols it missed
+    if (typeof wmsStandardRefresh === 'function') {
+        await wmsStandardRefresh(false);
+    }
     await rptFetchLivePrices();
 
     rptUpdateUnitLabels();
@@ -199,6 +203,9 @@ async function rptRefresh() {
         showAlert('Failed to refresh data: ' + error.message, 'error');
         showLoading(false);
         return;
+    }
+    if (typeof wmsStandardRefresh === 'function') {
+        await wmsStandardRefresh(true);
     }
     await rptFetchLivePrices();
     rptRenderPortfolio();
@@ -260,18 +267,28 @@ async function rptLoadData() {
 // ============================================================================
 
 function rptGetLiveData(holding) {
+    var sym = holding.shortSymbol || holding.symbol;
+    // Check shared global cache first (populated by wmsStandardRefresh)
+    var cached = wmsLivePrices[sym];
+    if (cached && cached.lp > 0) return cached;
+    // Fallback: module-level cache (old Fyers key format)
     var exch = (holding.exchange || 'NSE').toUpperCase();
     var key = exch === 'NFO'
         ? 'NSE:' + holding.symbol
-        : exch + ':' + (holding.shortSymbol || holding.symbol) + '-EQ';
+        : exch + ':' + sym + '-EQ';
     return rptLiveData[key] || null;
 }
 
 function rptGetPrice(holding) {
+    var sym = holding.shortSymbol || holding.symbol;
+    // Check shared global cache first (populated by wmsStandardRefresh)
+    var cached = wmsLivePrices[sym];
+    if (cached && cached.lp > 0) return cached.lp;
+    // Fallback: module-level cache (old Fyers key format)
     var exch = (holding.exchange || 'NSE').toUpperCase();
     var key = exch === 'NFO'
         ? 'NSE:' + holding.symbol
-        : exch + ':' + (holding.shortSymbol || holding.symbol) + '-EQ';
+        : exch + ':' + sym + '-EQ';
     return rptLivePrices[key] || holding.fifoCost || holding.latestPrice;
 }
 
@@ -750,7 +767,7 @@ function rptBuildInvestorDetail(h, price, md) {
             '</tr>';
         }).join('');
 
-    return '<tr class="detail-row" data-rpt-group="' + (h.assetClass || 'Other') + '"><td colspan="9" style="padding:0;"><table class="inner-table" style="width:100%;"><colgroup><col style="width:17%"><col style="width:9%"><col style="width:11%"><col style="width:10%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:9%"><col style="width:40px"></colgroup><tbody>' + investorRows + '</tbody></table></td></tr>';
+    return '<tr class="detail-row" data-rpt-group="' + (h.assetClass || 'Other') + '"><td colspan="9" style="padding:0;"><table class="inner-table" style="width:100%; table-layout:fixed;"><colgroup><col style="width:17%"><col style="width:9%"><col style="width:11%"><col style="width:10%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:9%"><col style="width:40px"></colgroup><tbody>' + investorRows + '</tbody></table></td></tr>';
 }
 
 // One-time: close action menus on outside click
@@ -939,7 +956,7 @@ function rptRenderPortfolio() {
         });
     }
 
-    var html = '<table style="width:100%; border-collapse:collapse;">' +
+    var html = '<table style="width:100%; border-collapse:collapse; table-layout:fixed;">' +
         '<colgroup><col style="width:17%"><col style="width:9%"><col style="width:11%"><col style="width:10%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:9%"><col style="width:40px"></colgroup>';
 
     // Symbol header content (with search indicator if active)
