@@ -482,6 +482,19 @@ async function initTrading() {
     }
 
     showLoading(false);
+
+    // Cross-module hook: if Reports (or another module) requested a txn modal, open it now
+    if (window.wmsPendingTxnModal) {
+        var pending = window.wmsPendingTxnModal;
+        window.wmsPendingTxnModal = null;
+        // Switch to Portfolio tab first
+        var portfolioTab = document.querySelector('.trading-tab-btn[data-tab="tr-portfolio"]');
+        if (portfolioTab) portfolioTab.click();
+        // Small delay to let render complete, then open modal
+        setTimeout(function() {
+            trOpenTxnModal(pending.key, pending.investorId || null);
+        }, 300);
+    }
 }
 
 // ============================================================================

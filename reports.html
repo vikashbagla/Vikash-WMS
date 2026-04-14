@@ -174,6 +174,35 @@
 }
 .tr-save-prompt input:focus { border-color: #667eea; }
 
+/* Action menu (shared with Trading) */
+.action-cell { position: relative; text-align: center; }
+.btn-action {
+    width: 26px; height: 26px; background: #f7fafc; border: 1px solid #e2e8f0;
+    border-radius: 5px; cursor: pointer; font-size: 12px; line-height: 26px; padding: 0;
+}
+.btn-action:hover { background: #edf2f7; }
+.action-menu {
+    display: none; position: absolute; right: 0; top: 30px;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 100; min-width: 180px; padding: 4px 0;
+}
+.action-menu.show { display: block; }
+.action-menu-item {
+    display: block; width: 100%; text-align: left; padding: 7px 14px;
+    border: none; background: none; font-size: 12px; color: #4a5568;
+    cursor: pointer; white-space: nowrap;
+}
+.action-menu-item:hover { background: #f7fafc; color: #2d3748; }
+.action-menu-item.danger { color: #dc2626; }
+.action-menu-item.danger:hover { background: #fef2f2; }
+.investor-name-link { cursor: pointer; color: #2d3748; }
+.investor-name-link:hover { color: #667eea; }
+
+/* Detail row for investor breakdown */
+.detail-row { background: #fffbeb; }
+.detail-row .inner-table { width: 100%; border-collapse: collapse; }
+.detail-row .inner-table td { padding: 4px 8px; font-size: 12px; border-bottom: 1px solid #fef3c7; }
+
 /* Capital Gains styles */
 .rpt-cg-summary-cards {
     display: flex;

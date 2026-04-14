@@ -508,6 +508,9 @@
         }
     }
 
+    // Expose loadModule globally so other modules can navigate (e.g. Reports → Trading)
+    window.loadModule = loadModule;
+
     // Init
     document.addEventListener('DOMContentLoaded', async () => {
         // Show dev banner if running in dev environment
