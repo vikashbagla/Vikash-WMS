@@ -1926,6 +1926,16 @@ async function processTransactions(rawData, worksheet) {
         var symbol_raw = row['symbol'] ? String(row['symbol']).trim() : null;
         var security_type_raw = row['security_type'] ? String(row['security_type']).trim().toUpperCase() : null;
         var transaction_type_raw = row['transaction_type'] ? String(row['transaction_type']).trim().toUpperCase().replace(/\s+/g, '_') : null;
+        // Normalize aliases from external tools (MProfit, etc.) to WMS-standard types
+        var TYPE_ALIASES = {
+            'DIVIDEND_PAYOUT': 'DIVIDEND', 'DIVIDEND_INCOME': 'DIVIDEND', 'DIV': 'DIVIDEND',
+            'PURCHASE': 'BUY', 'SALE': 'SELL',
+            'CAP_REDUCTION': 'CAPITAL_REDUCTION', 'CAPITAL_REPAYMENT': 'CAPITAL_REDUCTION',
+            'STOCK_SPLIT': 'SPLIT', 'STOCK_BONUS': 'BONUS'
+        };
+        if (transaction_type_raw && TYPE_ALIASES[transaction_type_raw]) {
+            transaction_type_raw = TYPE_ALIASES[transaction_type_raw];
+        }
         var quantity_raw = row['quantity'] !== null && row['quantity'] !== undefined ? parseInt(row['quantity']) : null;
         var price_raw = row['price'] !== null && row['price'] !== undefined ? parseFloat(row['price']) : null;
         var gross_amount_raw = row['gross_amount'] !== null && row['gross_amount'] !== undefined ? parseFloat(row['gross_amount']) : null;
