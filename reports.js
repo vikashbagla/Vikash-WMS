@@ -939,7 +939,8 @@ function rptRenderPortfolio() {
         });
     }
 
-    var html = '<table style="width:100%; border-collapse:collapse;">';
+    var html = '<table style="width:100%; border-collapse:collapse;">' +
+        '<colgroup><col style="width:17%"><col style="width:9%"><col style="width:11%"><col style="width:10%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:9%"><col style="width:40px"></colgroup>';
 
     // Symbol header content (with search indicator if active)
     var symbolHeaderText = 'Symbol ' + (rptSortColumn === 'symbol' ? sortArrow : '');

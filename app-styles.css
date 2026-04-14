@@ -786,3 +786,62 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
     .bnav-item .bnav-icon { font-size: 22px; }
     .wms-bottom-nav { padding: 6px 0 10px; }
 }
+
+/* ============================================================================
+   GLOBAL BUTTON STYLES — used across all modules and shared modals
+   ============================================================================ */
+
+.btn-primary {
+    background: #667eea;
+    color: white;
+    padding: 6px 16px;
+    border: none;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.btn-primary:hover { background: #5a67d8; }
+.btn-primary:disabled { background: #cbd5e0; cursor: not-allowed; }
+
+.btn-secondary {
+    background: #f7fafc;
+    color: #4a5568;
+    padding: 6px 16px;
+    border: 1px solid #e2e8f0;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+}
+.btn-secondary:hover { background: #edf2f7; }
+
+.btn-danger {
+    background: #e53e3e;
+    color: #fff;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    font-weight: 500;
+}
+.btn-danger:hover { background: #c53030; }
+.btn-danger:disabled { background: #cbd5e0; color: #a0aec0; cursor: not-allowed; }
+
+.btn-close-modal {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #718096;
+    padding: 0;
+    line-height: 1;
+}
+.btn-close-modal:hover { background: #edf2f7; color: #4a5568; }

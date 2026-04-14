@@ -178,7 +178,18 @@ function _wmsTxnEnsureDom() {
         '.wms-edit-security-banner .sec-symbol { font-size:15px; font-weight:700; color:#2d3748; }' +
         '.wms-edit-security-banner .sec-company { font-size:12px; color:#718096; }' +
         '.wms-edit-security-banner .sec-type-badge { font-size:9px; font-weight:700; text-transform:uppercase; background:#edf2f7; color:#4a5568; padding:2px 6px; border-radius:3px; }' +
-        // Shared button styles (only if not already defined)
+        // Button styles (btn-primary, btn-secondary, btn-danger, btn-close-modal)
+        // are defined globally in app-styles.css — no duplication needed here.
+        // Action cell (txn rows)
+        '.wms-txn-body .action-cell { position:relative; }' +
+        '.wms-txn-body .btn-action { background:none; border:none; cursor:pointer; font-size:16px; padding:2px 4px; color:#718096; }' +
+        '.wms-txn-body .btn-action:hover { color:#4a5568; }' +
+        '.wms-txn-body .action-menu { display:none; position:absolute; right:0; top:100%; z-index:50; background:#fff; border:1px solid #e2e8f0; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.1); min-width:180px; padding:4px 0; }' +
+        '.wms-txn-body .action-menu.show { display:block; }' +
+        '.wms-txn-body .action-menu-item { display:block; width:100%; background:none; border:none; text-align:left; padding:6px 12px; font-size:12px; cursor:pointer; color:#4a5568; }' +
+        '.wms-txn-body .action-menu-item:hover { background:#f7fafc; }' +
+        '.wms-txn-body .action-menu-item.danger { color:#e53e3e; }' +
+        '.wms-txn-body .action-menu-item.danger:hover { background:#fff5f5; }' +
         '';
     document.head.appendChild(style);
 
