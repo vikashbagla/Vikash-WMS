@@ -621,19 +621,52 @@ function rptCloseAllActionMenus() {
     rptOpenActionMenu = null;
 }
 
-// Navigate to Trading module and open transaction modal for a symbol
-function rptShowTransactions(shortSymbol, investorId) {
-    window.wmsPendingTxnModal = { key: shortSymbol, investorId: investorId || null };
-    // Set filter override so Trading modal applies Reports' active filters
-    window.trTxnModalFilterOverride = {
-        investorIds: rptSelectedInvestorIds.slice(),
-        brokerIds: rptSelectedBrokerIds.slice(),
-        tagNames: rptSelectedTagNames.slice(),
-        tagLogic: rptTagFilterLogic
-    };
-    if (typeof window.loadModule === 'function') {
-        window.loadModule('trading');
+// Open shared transaction modal for a symbol (stays in Reports)
+async function rptShowTransactions(shortSymbol, investorId) {
+    // Fetch ALL transactions for this symbol (full fields for edit modal)
+    var filter = shortSymbol === '__ALL__'
+        ? ''
+        : '&short_symbol=eq.' + encodeURIComponent(shortSymbol);
+    var resp = await fetchWithTimeout(
+        SUPABASE_URL + '/rest/v1/transactions?select=*' + filter + '&order=transaction_date.asc',
+        { headers: wmsHeaders() }
+    );
+    if (!resp.ok) {
+        showAlert('Failed to load transactions', 'error');
+        return;
     }
+    var allTxns = await resp.json();
+
+    // Compute display_net_amount for each txn
+    allTxns.forEach(function(t) {
+        t.display_net_amount = (typeof wmsComputeDisplayNetAmount === 'function')
+            ? wmsComputeDisplayNetAmount(t) : t.net_amount;
+    });
+
+    // Set shared modal context with Reports' data
+    wmsTxnCtx = {
+        transactions: allTxns,
+        investors: rptInvestors,
+        brokers: rptBrokers,
+        getPrice: function(sym) {
+            return rptGetPrice({ shortSymbol: sym, symbol: sym, exchange: 'NSE', latestPrice: 0 });
+        },
+        getLiveData: function(sym) {
+            return rptGetLiveData({ shortSymbol: sym, symbol: sym, exchange: 'NSE' });
+        },
+        afterChange: function() {
+            // Reload Reports data so portfolio reflects edits
+            rptLoadData().then(function() { rptRenderPortfolio(); });
+        },
+        filterOverride: {
+            investorIds: rptSelectedInvestorIds.slice(),
+            traderIds: [],
+            brokerIds: rptSelectedBrokerIds.slice(),
+            tagNames: rptSelectedTagNames.slice(),
+            tagLogic: rptTagFilterLogic
+        }
+    };
+    wmsTxnModalOpen(shortSymbol, investorId || null);
 }
 
 // Build investor-breakdown detail row (replaces lot-level FIFO table)
@@ -717,7 +750,7 @@ function rptBuildInvestorDetail(h, price, md) {
             '</tr>';
         }).join('');
 
-    return '<tr class="detail-row" data-rpt-group="' + (h.assetClass || 'Other') + '"><td colspan="9" style="padding:4px 8px 4px 0;"><table class="inner-table" style="width:100%;"><tbody>' + investorRows + '</tbody></table></td></tr>';
+    return '<tr class="detail-row" data-rpt-group="' + (h.assetClass || 'Other') + '"><td colspan="9" style="padding:0;"><table class="inner-table" style="width:100%;"><colgroup><col style="width:17%"><col style="width:9%"><col style="width:11%"><col style="width:10%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:9%"><col style="width:40px"></colgroup><tbody>' + investorRows + '</tbody></table></td></tr>';
 }
 
 // One-time: close action menus on outside click
