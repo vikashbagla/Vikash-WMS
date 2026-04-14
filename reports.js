@@ -720,10 +720,16 @@ function rptBuildInvestorDetail(h, price, md) {
     return '<tr class="detail-row" data-rpt-group="' + (h.assetClass || 'Other') + '"><td colspan="9" style="padding:4px 8px 4px 0;"><table class="inner-table" style="width:100%;"><tbody>' + investorRows + '</tbody></table></td></tr>';
 }
 
+// One-time: close action menus on outside click
+var rptDocClickBound = false;
+
 // Attach click listeners for expand/collapse, action menus, investor links
 function rptAttachRowListeners() {
-    // Close menus on outside click
-    document.addEventListener('click', function() { rptCloseAllActionMenus(); });
+    // Close menus on outside click — bind only once
+    if (!rptDocClickBound) {
+        document.addEventListener('click', function() { rptCloseAllActionMenus(); });
+        rptDocClickBound = true;
+    }
 
     // Stock-level action buttons
     document.querySelectorAll('.rpt-btn-action[data-menu-id]').forEach(function(btn) {
