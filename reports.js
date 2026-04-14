@@ -31,6 +31,56 @@ var rptInvPillFilter = null;
 var rptBrkPillFilter = null;
 var rptTagPillFilter = null;
 
+// Symbol search (double-click header to filter)
+var rptSymbolSearchText = '';
+
+// ---- Portfolio View Manager (wmsViewManager instance) ----
+var rptPortfolioVM = wmsViewManager({
+    module: 'reports_portfolio',
+    label: 'Rpt Portfolio',
+    ids: {
+        viewTabs: 'rpt-view-tabs',
+        moreList: 'rpt-more-list',
+        moreDropdown: 'rpt-more-dropdown',
+        updateBtn: 'rpt-update-view-btn'
+    },
+    autoDefaultFirst: true,
+    getPills: function() {
+        return [
+            { pill: rptInvPillFilter, type: 'investor' },
+            { pill: rptBrkPillFilter, type: 'broker' },
+            { pill: rptTagPillFilter, type: 'tag' }
+        ];
+    },
+    getFilters: function() {
+        return {
+            investorIds: rptSelectedInvestorIds.slice(),
+            brokerIds: rptSelectedBrokerIds.slice(),
+            tagNames: rptSelectedTagNames.slice(),
+            tagLogic: rptTagFilterLogic
+        };
+    },
+    applyFilters: function(f) {
+        rptSelectedInvestorIds.length = 0;
+        Array.prototype.push.apply(rptSelectedInvestorIds, f.investorIds || []);
+        rptSelectedBrokerIds.length = 0;
+        Array.prototype.push.apply(rptSelectedBrokerIds, f.brokerIds || []);
+        rptSelectedTagNames.length = 0;
+        Array.prototype.push.apply(rptSelectedTagNames, f.tagNames || []);
+        rptTagFilterLogic = f.tagLogic || 'OR';
+
+        // Sync pill UI
+        var pills = [rptInvPillFilter, rptBrkPillFilter, rptTagPillFilter];
+        pills.forEach(function(p) { if (p && p.syncStates) p.syncStates(); });
+
+        // Update tag logic radio
+        document.querySelectorAll('input[name="rpt-tag-logic"]').forEach(function(r) {
+            r.checked = r.value === rptTagFilterLogic;
+        });
+    },
+    onRefresh: function() { rptRenderPortfolio(); }
+});
+
 // Asset-class badge labels
 var RPT_AC_BADGE = {
     'Indian Equity': 'EQ',
@@ -132,9 +182,12 @@ async function initReports() {
     rptUpdateUnitLabels();
     rptSetupTabs();
     rptInitPillFilters();
+    rptInitViewBar();
     rptInitFYSelector();
     rptInitCGFilters();
-    rptRenderPortfolio();
+    await rptPortfolioVM.loadViews();
+    // If no default view applied, render now
+    if (!rptPortfolioVM.activeViewId) rptRenderPortfolio();
     showLoading(false);
 }
 
@@ -371,6 +424,132 @@ function rptInitPillFilters() {
     }
 }
 
+// ============================================================================
+// VIEW BAR — wire buttons for saved views (shared wmsViewManager)
+// ============================================================================
+
+function rptInitViewBar() {
+    // "+" New blank view
+    var newBtn = document.getElementById('rpt-new-view-btn');
+    if (newBtn) {
+        newBtn.addEventListener('click', function() {
+            rptPortfolioVM.activeViewId = null;
+            rptPortfolioVM.renderViewTabs();
+            rptPortfolioVM.updateViewButtons();
+        });
+    }
+
+    // "▾ More" dropdown toggle
+    var moreBtn = document.getElementById('rpt-more-btn');
+    if (moreBtn) {
+        moreBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var dd = document.getElementById('rpt-more-dropdown');
+            dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+        });
+    }
+
+    // "↻ Update" current view
+    var updateBtn = document.getElementById('rpt-update-view-btn');
+    if (updateBtn) {
+        updateBtn.addEventListener('click', function() {
+            rptPortfolioVM.updateCurrentView();
+        });
+    }
+
+    // "+ Save New" / inline prompt
+    var saveNewBtn = document.getElementById('rpt-save-new-btn');
+    var savePrompt = document.getElementById('rpt-save-prompt');
+    var savePromptName = document.getElementById('rpt-save-prompt-name');
+    if (saveNewBtn && savePrompt) {
+        saveNewBtn.addEventListener('click', function() {
+            savePrompt.classList.add('show');
+            saveNewBtn.style.display = 'none';
+            savePromptName.value = '';
+            savePromptName.focus();
+        });
+        document.getElementById('rpt-save-prompt-ok').addEventListener('click', function() {
+            var name = savePromptName.value.trim();
+            if (name) rptPortfolioVM.saveCurrentView(name);
+            savePrompt.classList.remove('show');
+            saveNewBtn.style.display = '';
+        });
+        document.getElementById('rpt-save-prompt-cancel').addEventListener('click', function() {
+            savePrompt.classList.remove('show');
+            saveNewBtn.style.display = '';
+        });
+        savePromptName.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                var name = savePromptName.value.trim();
+                if (name) rptPortfolioVM.saveCurrentView(name);
+                savePrompt.classList.remove('show');
+                saveNewBtn.style.display = '';
+            } else if (e.key === 'Escape') {
+                savePrompt.classList.remove('show');
+                saveNewBtn.style.display = '';
+            }
+        });
+    }
+
+    // "▲" Filters toggle
+    var filtersToggle = document.getElementById('rpt-filters-toggle');
+    var filtersDiv = document.getElementById('rptPortfolioFilters');
+    if (filtersToggle && filtersDiv) {
+        filtersToggle.addEventListener('click', function() {
+            var isHidden = filtersDiv.style.display === 'none';
+            filtersDiv.style.display = isHidden ? '' : 'none';
+            filtersToggle.textContent = isHidden ? '▲' : '▼';
+        });
+    }
+
+    // Close More dropdown on outside click
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('#rpt-more-btn') && !e.target.closest('#rpt-more-dropdown')) {
+            var mdd = document.getElementById('rpt-more-dropdown');
+            if (mdd) mdd.style.display = 'none';
+        }
+    });
+}
+
+// ============================================================================
+// SYMBOL COLUMN INLINE SEARCH (double-click header)
+// ============================================================================
+
+function rptOpenSymbolSearch() {
+    var th = document.getElementById('rpt-th-symbol');
+    if (!th || document.getElementById('rpt-symbol-search-input')) return;
+
+    th.dataset.originalHtml = th.innerHTML;
+    th.innerHTML = '<input type="text" id="rpt-symbol-search-input" placeholder="Search symbol..." ' +
+        'style="width:90%; padding:3px 6px; border:1px solid #667eea; border-radius:4px; font-size:12px; outline:none;">';
+
+    var input = document.getElementById('rpt-symbol-search-input');
+    input.focus();
+    if (rptSymbolSearchText) input.value = rptSymbolSearchText;
+
+    input.addEventListener('input', function() {
+        rptSymbolSearchText = input.value;
+        rptRenderPortfolio();
+    });
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') rptCloseSymbolSearch();
+        else if (e.key === 'Enter') rptCloseSymbolSearch(true);
+        e.stopPropagation();
+    });
+    input.addEventListener('click', function(e) { e.stopPropagation(); });
+}
+
+function rptCloseSymbolSearch(keepFilter) {
+    var th = document.getElementById('rpt-th-symbol');
+    if (!th) return;
+    if (!keepFilter) {
+        rptSymbolSearchText = '';
+        rptRenderPortfolio();
+    }
+    // Restore header — will be rebuilt on next render anyway
+    rptRenderPortfolio();
+}
+
 function rptToggleZero() {
     rptShowZero = !rptShowZero;
     var btn = document.getElementById('rptToggleZeroBtn');
@@ -534,18 +713,33 @@ function rptRenderPortfolio() {
     var sortArrow = rptSortDirection === 'asc' ? '▲' : '▼';
     var sortLabel = (rptSortByPct && (rptSortColumn === 'pl' || rptSortColumn === 'daypl')) ? '%' : '';
 
+    // 8a. Apply symbol search filter
+    if (rptSymbolSearchText) {
+        var searchLower = rptSymbolSearchText.toLowerCase();
+        allHoldings = allHoldings.filter(function(h) {
+            return (h.symbol && h.symbol.toLowerCase().indexOf(searchLower) >= 0) ||
+                   (h.companyName && h.companyName.toLowerCase().indexOf(searchLower) >= 0);
+        });
+    }
+
     var html = '<table style="width:100%; border-collapse:collapse;">';
 
-    // Page-level header (single, not repeated per group)
-    html += '<thead><tr style="border-bottom:2px solid #cbd5e0;">' +
-        '<th class="sortable" onclick="rptSortPortfolio(\'symbol\')" style="width:18%; text-align:left; padding:6px 8px; font-size:11px; color:#718096;">Symbol ' + (rptSortColumn === 'symbol' ? sortArrow : '') + '</th>' +
-        '<th class="text-right" style="width:10%; padding:6px 8px; font-size:11px; color:#718096;">Qty<br><span class="subheader">FIFO Cost</span></th>' +
-        '<th class="text-right sortable" onclick="rptSortPortfolio(\'invested\')" style="width:12%; padding:6px 8px; font-size:11px; color:#718096;">Invested ' + (rptSortColumn === 'invested' ? sortArrow : '') + '</th>' +
-        '<th class="text-right" style="width:10%; padding:6px 8px; font-size:11px; color:#718096;">Price</th>' +
-        '<th class="text-right sortable" onclick="rptSortPortfolio(\'daypl\')" style="width:11%; padding:6px 8px; font-size:11px; color:#718096;">Day P&L ' + (rptSortColumn === 'daypl' ? sortLabel + sortArrow : '') + '</th>' +
-        '<th class="text-right sortable" onclick="rptSortPortfolio(\'pl\')" style="width:12%; padding:6px 8px; font-size:11px; color:#718096;">Gain ' + (rptSortColumn === 'pl' ? sortLabel + sortArrow : '') + '</th>' +
-        '<th class="text-right sortable" onclick="rptSortPortfolio(\'value\')" style="width:12%; padding:6px 8px; font-size:11px; color:#718096;">Value ' + (rptSortColumn === 'value' ? sortArrow : '') + '</th>' +
-        '<th style="width:10%; padding:6px 8px; font-size:11px; color:#718096;">Tags</th>' +
+    // Symbol header content (with search indicator if active)
+    var symbolHeaderText = 'Symbol ' + (rptSortColumn === 'symbol' ? sortArrow : '');
+    if (rptSymbolSearchText) {
+        symbolHeaderText += ' <span style="font-size:10px;color:#667eea;">🔍 ' + rptSymbolSearchText + '</span>';
+    }
+
+    // Page-level header (single, not repeated per group) — DARK background
+    html += '<thead><tr style="background:#e2e8f0; border-bottom:2px solid #cbd5e0;">' +
+        '<th id="rpt-th-symbol" class="sortable" onclick="rptSortPortfolio(\'symbol\')" style="width:18%; text-align:left; padding:6px 8px; font-size:11px; color:#4a5568; cursor:pointer;">' + symbolHeaderText + '</th>' +
+        '<th class="text-right" style="width:10%; padding:6px 8px; font-size:11px; color:#4a5568;">Qty<br><span class="subheader">FIFO Cost</span></th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'invested\')" style="width:12%; padding:6px 8px; font-size:11px; color:#4a5568;">Invested ' + (rptSortColumn === 'invested' ? sortArrow : '') + '</th>' +
+        '<th class="text-right" style="width:10%; padding:6px 8px; font-size:11px; color:#4a5568;">Price</th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'daypl\')" style="width:11%; padding:6px 8px; font-size:11px; color:#4a5568;">Day P&L ' + (rptSortColumn === 'daypl' ? sortLabel + sortArrow : '') + '</th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'pl\')" style="width:12%; padding:6px 8px; font-size:11px; color:#4a5568;">Gain ' + (rptSortColumn === 'pl' ? sortLabel + sortArrow : '') + '</th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'value\')" style="width:12%; padding:6px 8px; font-size:11px; color:#4a5568;">Value ' + (rptSortColumn === 'value' ? sortArrow : '') + '</th>' +
+        '<th style="width:10%; padding:6px 8px; font-size:11px; color:#4a5568;">Tags</th>' +
     '</tr></thead><tbody>';
 
     // Iterate groups
@@ -575,7 +769,7 @@ function rptRenderPortfolio() {
         var badge = RPT_AC_BADGE[acName] || '—';
 
         // Group header row (MProfit style: inline totals in same columns as data)
-        html += '<tr class="rpt-group-header-row" onclick="rptToggleGroup(\'' + acName + '\')" style="background:#f0f4f8; cursor:pointer; border-top:2px solid #cbd5e0;">' +
+        html += '<tr class="rpt-group-header-row" onclick="rptToggleGroup(\'' + acName + '\')" style="background:#f7fafc; cursor:pointer; border-top:1px solid #e2e8f0;">' +
             '<td colspan="2" style="padding:7px 8px; font-size:13px; font-weight:700; color:#2d3748;">' +
                 '<span id="' + chevronId + '" style="display:inline-block;width:16px;font-size:12px;color:#718096;">' + (isCollapsed ? '▸' : '▾') + '</span>' +
                 '<span style="display:inline-block;border:1px solid #a0aec0;border-radius:3px;padding:0 4px;font-size:10px;font-weight:700;color:#4a5568;margin-right:6px;vertical-align:middle;">' + badge + '</span>' +
@@ -697,6 +891,16 @@ function rptRenderPortfolio() {
 
     html += '</tbody></table>';
     body.innerHTML = html;
+
+    // Attach dblclick on Symbol header for inline search
+    var symTh = document.getElementById('rpt-th-symbol');
+    if (symTh) {
+        symTh.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            rptOpenSymbolSearch();
+        });
+    }
 
     // Summary cards (grand totals)
     var grandPL = grandTotalValue - grandTotalInvested;
@@ -1042,6 +1246,8 @@ if (typeof window !== 'undefined') {
     window.rptToggleSymbolDetail = rptToggleSymbolDetail;
     window.rptToggleZero = rptToggleZero;
     window.rptToggleGroup = rptToggleGroup;
+    window.rptOpenSymbolSearch = rptOpenSymbolSearch;
+    window.rptCloseSymbolSearch = rptCloseSymbolSearch;
     window.rptRenderPortfolio = rptRenderPortfolio;
     window.rptRenderCapGains = rptRenderCapGains;
     window.rptCGShowDropdown = rptCGShowDropdown;

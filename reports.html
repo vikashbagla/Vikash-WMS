@@ -81,6 +81,18 @@
     background: #fafbfc;
 }
 
+/* View Tabs Bar (shared with trading module) */
+.rpt-view-tabs-bar {
+    display: flex; align-items: center; gap: 0; padding: 0 8px;
+    background: #f8fafc; border-bottom: 1px solid #e2e8f0; flex-shrink: 0;
+    min-height: 34px; font-size: 12px;
+}
+.rpt-view-tabs-container {
+    display: flex; align-items: center; gap: 0; flex: 1; overflow-x: auto;
+    scrollbar-width: none; -ms-overflow-style: none;
+}
+.rpt-view-tabs-container::-webkit-scrollbar { display: none; }
+
 /* Capital Gains styles */
 .rpt-cg-summary-cards {
     display: flex;
@@ -163,8 +175,9 @@
             <span class="rpt-unit-desc" id="rpt-unit-desc"></span>
         </div>
         <div style="display: flex; align-items: center; gap: 10px;">
-            <span id="rpt-price-status" style="font-size: 12px; color: #718096;"></span>
-            <button class="btn-refresh" onclick="rptRefresh()" title="Refresh data">🔄 Refresh</button>
+            <button class="btn-toggle-zero" id="rptToggleZeroBtn" onclick="rptToggleZero()" title="Show/hide zero quantity holdings">
+                👁 Show Zero
+            </button>
         </div>
     </div>
 
@@ -176,17 +189,34 @@
 
     <!-- Tab: Portfolio Holdings (FIFO, grouped by Asset Class, no F&O) -->
     <div id="rpt-portfolio" class="reports-tab-content active">
+        <!-- View Tabs Bar (shared wmsViewManager) -->
+        <div class="rpt-view-tabs-bar">
+            <div class="rpt-view-tabs-container" id="rpt-view-tabs"></div>
+            <div class="tr-view-tabs-actions">
+                <button class="tr-vta-btn" id="rpt-new-view-btn" title="New blank view">+</button>
+                <div style="position:relative;">
+                    <button class="tr-vta-btn" id="rpt-more-btn" title="All views">▾ More</button>
+                    <div class="tr-more-dropdown" id="rpt-more-dropdown" style="display:none;">
+                        <div id="rpt-more-list"></div>
+                    </div>
+                </div>
+                <button class="tr-vta-btn" id="rpt-update-view-btn" title="Update current view with active filters" disabled>↻ Update</button>
+                <button class="tr-vta-btn" id="rpt-save-new-btn" title="Save as new view">+ Save New</button>
+                <button class="tr-vta-btn" id="rpt-filters-toggle" title="Toggle filters" style="font-size:10px;">▲</button>
+                <div class="tr-save-prompt" id="rpt-save-prompt">
+                    <input type="text" id="rpt-save-prompt-name" placeholder="View name...">
+                    <button class="tr-vta-btn" id="rpt-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">✓</button>
+                    <button class="tr-vta-btn" id="rpt-save-prompt-cancel">✕</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Filters (pill-based, built by wmsPillSearch in reports.js) -->
         <div id="rptPortfolioFilters" style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid #e2e8f0;">
             <div class="filters-grid" style="flex:1; grid-template-columns: repeat(3, 1fr);">
                 <div id="rpt-filter-investor"></div>
                 <div id="rpt-filter-broker"></div>
                 <div id="rpt-filter-tag"></div>
-            </div>
-            <div style="margin-top:12px;">
-                <button class="btn-toggle-zero" id="rptToggleZeroBtn" onclick="rptToggleZero()" title="Show/hide zero quantity holdings">
-                    👁 Show Zero
-                </button>
             </div>
         </div>
 
