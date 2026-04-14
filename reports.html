@@ -66,28 +66,20 @@
 .reports-tab-content { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 .reports-tab-content.active { display: flex; }
 
-/* Asset class group header */
-.rpt-asset-group-header {
-    background: #f0f4f8;
-    padding: 6px 12px;
-    font-size: 13px;
-    font-weight: 700;
-    color: #2d3748;
-    border-top: 2px solid #cbd5e0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    cursor: pointer;
+/* Asset class group header row (inside <table>) */
+.rpt-group-header-row td {
+    border-bottom: 1px solid #cbd5e0;
 }
-.rpt-asset-group-header:first-child { border-top: none; }
-.rpt-asset-group-header .rpt-group-summary {
-    font-size: 11px;
-    font-weight: 500;
-    color: #718096;
-    display: flex;
-    gap: 18px;
+.rpt-group-header-row:hover {
+    background: #e8ecf1 !important;
 }
-.rpt-asset-group-header .rpt-group-summary span { white-space: nowrap; }
+/* Data rows — light separator */
+.rpt-data-row td {
+    border-bottom: 1px solid #f0f4f8;
+}
+.rpt-data-row:hover {
+    background: #fafbfc;
+}
 
 /* Capital Gains styles */
 .rpt-cg-summary-cards {
@@ -184,67 +176,12 @@
 
     <!-- Tab: Portfolio Holdings (FIFO, grouped by Asset Class, no F&O) -->
     <div id="rpt-portfolio" class="reports-tab-content active">
-        <!-- Filters -->
+        <!-- Filters (pill-based, built by wmsPillSearch in reports.js) -->
         <div id="rptPortfolioFilters" style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid #e2e8f0;">
             <div class="filters-grid" style="flex:1; grid-template-columns: repeat(3, 1fr);">
-                <!-- Investor Filter -->
-                <div class="filter-group">
-                    <div class="filter-header">
-                        <label>Filter by Investor</label>
-                        <span class="clear-link" onclick="rptClearFilter('investor')" id="rpt-clear-investors">Clear all</span>
-                    </div>
-                    <div class="filter-search-container">
-                        <input type="text" class="filter-search-input" id="rpt-investor-search"
-                               placeholder="Type to search investors..."
-                               oninput="rptFilterSearch('investor')"
-                               onclick="rptShowDropdown('investor')">
-                        <div class="filter-dropdown" id="rpt-investor-dropdown"></div>
-                    </div>
-                    <div class="filter-selected-tags" id="rpt-selected-investors"></div>
-                </div>
-                <!-- Broker Filter -->
-                <div class="filter-group">
-                    <div class="filter-header">
-                        <label>Filter by Broker</label>
-                        <span class="clear-link" onclick="rptClearFilter('broker')" id="rpt-clear-brokers">Clear all</span>
-                    </div>
-                    <div class="filter-search-container">
-                        <input type="text" class="filter-search-input" id="rpt-broker-search"
-                               placeholder="Type to search brokers..."
-                               oninput="rptFilterSearch('broker')"
-                               onclick="rptShowDropdown('broker')">
-                        <div class="filter-dropdown" id="rpt-broker-dropdown"></div>
-                    </div>
-                    <div class="filter-selected-tags" id="rpt-selected-brokers"></div>
-                </div>
-                <!-- Tag Filter -->
-                <div class="filter-group">
-                    <div class="filter-header">
-                        <label>Filter by Tag</label>
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <div class="tag-match-options">
-                                <span style="font-size: 11px; color: #718096;">Match:</span>
-                                <label class="radio-label">
-                                    <input type="radio" name="rpt-tag-logic" value="OR" checked onchange="rptUpdateTagLogic()">
-                                    <span>Any</span>
-                                </label>
-                                <label class="radio-label">
-                                    <input type="radio" name="rpt-tag-logic" value="AND" onchange="rptUpdateTagLogic()">
-                                    <span>All</span>
-                                </label>
-                            </div>
-                            <span class="clear-link" onclick="rptClearFilter('tag')" id="rpt-clear-tags">Clear all</span>
-                        </div>
-                    </div>
-                    <div class="filter-search-container">
-                        <input type="text" class="filter-search-input" id="rpt-tag-search"
-                               placeholder="Type to search tags..."
-                               oninput="rptFilterSearch('tag')"
-                               onclick="rptShowDropdown('tag')">
-                        <div class="filter-dropdown" id="rpt-tag-dropdown"></div>
-                    </div>
-                    <div class="filter-selected-tags" id="rpt-selected-tags"></div>
-                </div>
+                <div id="rpt-filter-investor"></div>
+                <div id="rpt-filter-broker"></div>
+                <div id="rpt-filter-tag"></div>
             </div>
             <div style="margin-top:12px;">
                 <button class="btn-toggle-zero" id="rptToggleZeroBtn" onclick="rptToggleZero()" title="Show/hide zero quantity holdings">

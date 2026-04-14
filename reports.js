@@ -24,6 +24,24 @@ var rptSortColumn = 'symbol';
 var rptSortDirection = 'asc';
 var rptSortByPct = false;
 var rptExpandedSymbol = null;
+var rptCollapsedGroups = {};  // { 'Indian Equity': true } — collapsed groups
+
+// Pill filter controller refs (wmsPillSearch instances)
+var rptInvPillFilter = null;
+var rptBrkPillFilter = null;
+var rptTagPillFilter = null;
+
+// Asset-class badge labels
+var RPT_AC_BADGE = {
+    'Indian Equity': 'EQ',
+    'ETF': 'ETF',
+    'Mutual Fund': 'MF',
+    'Debt': 'DEBT',
+    'Gold': 'GOLD',
+    'Real Estate': 'REIT',
+    'Infrastructure': 'INVIT',
+    'Other': '—'
+};
 
 // Capital Gains tab filters
 var rptCGSelectedInvestorIds = [];
@@ -113,7 +131,7 @@ async function initReports() {
 
     rptUpdateUnitLabels();
     rptSetupTabs();
-    rptInitFilterDropdowns();
+    rptInitPillFilters();
     rptInitFYSelector();
     rptInitCGFilters();
     rptRenderPortfolio();
@@ -292,98 +310,65 @@ function rptSetupTabs() {
 // FILTER SYSTEM (Portfolio tab)
 // ============================================================================
 
-function rptInitFilterDropdowns() {
-    // Investors
-    var invDd = document.getElementById('rpt-investor-dropdown');
-    if (invDd) {
-        invDd.innerHTML = rptInvestors.map(function(inv) {
-            return '<div class="filter-dropdown-item" data-id="' + inv.id + '" onclick="rptToggleFilter(\'investor\',\'' + inv.id + '\',\'' + (inv.name || '').replace(/'/g, "\\'") + '\')">' + inv.name + '</div>';
-        }).join('');
+function rptInitPillFilters() {
+    // Investor pills
+    var invContainer = document.getElementById('rpt-filter-investor');
+    if (invContainer) {
+        var invItems = rptInvestors.map(function(inv) {
+            return { id: String(inv.id), label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') };
+        });
+        rptInvPillFilter = wmsPillSearch(invContainer, {
+            label: 'Investor',
+            placeholder: 'Search investors...',
+            items: invItems,
+            selectedIds: rptSelectedInvestorIds,
+            onChange: rptRenderPortfolio
+        });
     }
-    // Brokers
-    var brkDd = document.getElementById('rpt-broker-dropdown');
-    if (brkDd) {
-        brkDd.innerHTML = rptBrokers.map(function(brk) {
-            return '<div class="filter-dropdown-item" data-id="' + brk.id + '" onclick="rptToggleFilter(\'broker\',\'' + brk.id + '\',\'' + (brk.name || '').replace(/'/g, "\\'") + '\')">' + brk.name + '</div>';
-        }).join('');
+    // Broker pills
+    var brkContainer = document.getElementById('rpt-filter-broker');
+    if (brkContainer) {
+        var brkItems = rptBrokers.map(function(b) {
+            return { id: String(b.id), label: b.broker_code || b.name, searchText: (b.name || '') + ' ' + (b.broker_code || '') };
+        });
+        rptBrkPillFilter = wmsPillSearch(brkContainer, {
+            label: 'Broker',
+            placeholder: 'Search brokers...',
+            items: brkItems,
+            selectedIds: rptSelectedBrokerIds,
+            onChange: rptRenderPortfolio
+        });
     }
-    // Tags
-    var allTags = {};
-    rptTransactions.forEach(function(t) { if (t.tags) t.tags.forEach(function(tg) { allTags[tg] = true; }); });
-    var tagDd = document.getElementById('rpt-tag-dropdown');
-    if (tagDd) {
-        tagDd.innerHTML = Object.keys(allTags).sort().map(function(tag) {
-            return '<div class="filter-dropdown-item" data-tag="' + tag + '" onclick="rptToggleFilter(\'tag\',\'' + tag + '\')">' + tag + '</div>';
-        }).join('');
+    // Tag pills (with Any/All radio)
+    var tagContainer = document.getElementById('rpt-filter-tag');
+    if (tagContainer) {
+        var allTags = {};
+        rptTransactions.forEach(function(t) { if (t.tags) t.tags.forEach(function(tg) { allTags[tg] = true; }); });
+        var tagItems = Object.keys(allTags).sort().map(function(tag) {
+            return { id: tag, label: tag, searchText: tag };
+        });
+        var tagExtra = document.createElement('div');
+        tagExtra.className = 'tag-match-options';
+        tagExtra.innerHTML =
+            '<span style="font-size:11px;color:#718096;">Match:</span>' +
+            '<label class="radio-label"><input type="radio" name="rpt-tag-logic" value="OR" checked> <span>Any</span></label>' +
+            '<label class="radio-label"><input type="radio" name="rpt-tag-logic" value="AND"> <span>All</span></label>';
+        rptTagPillFilter = wmsPillSearch(tagContainer, {
+            label: 'Tag',
+            placeholder: 'Search tags...',
+            items: tagItems,
+            selectedIds: rptSelectedTagNames,
+            onChange: rptRenderPortfolio,
+            headerExtra: tagExtra
+        });
+        // Listen for tag logic change
+        tagExtra.addEventListener('change', function(e) {
+            if (e.target.name === 'rpt-tag-logic') {
+                rptTagFilterLogic = e.target.value;
+                rptRenderPortfolio();
+            }
+        });
     }
-}
-
-function rptShowDropdown(type) {
-    var types = ['investor', 'broker', 'tag'];
-    types.forEach(function(t) {
-        var dd = document.getElementById('rpt-' + t + '-dropdown');
-        if (dd) dd.classList.toggle('show', t === type);
-    });
-}
-
-function rptFilterSearch(type) {
-    var search = document.getElementById('rpt-' + type + '-search').value.toLowerCase();
-    var items = document.querySelectorAll('#rpt-' + type + '-dropdown .filter-dropdown-item');
-    items.forEach(function(item) {
-        item.style.display = item.textContent.toLowerCase().indexOf(search) >= 0 ? 'block' : 'none';
-    });
-}
-
-function rptToggleFilter(type, id, name) {
-    var arr;
-    if (type === 'investor') arr = rptSelectedInvestorIds;
-    else if (type === 'broker') arr = rptSelectedBrokerIds;
-    else arr = rptSelectedTagNames;
-
-    var idx = arr.indexOf(id);
-    if (idx > -1) arr.splice(idx, 1);
-    else arr.push(id);
-
-    rptUpdateFilterPills(type);
-    rptRenderPortfolio();
-}
-
-function rptUpdateFilterPills(type) {
-    var arr, container, list;
-    if (type === 'investor') {
-        arr = rptSelectedInvestorIds;
-        container = document.getElementById('rpt-selected-investors');
-        list = rptInvestors;
-    } else if (type === 'broker') {
-        arr = rptSelectedBrokerIds;
-        container = document.getElementById('rpt-selected-brokers');
-        list = rptBrokers;
-    } else {
-        container = document.getElementById('rpt-selected-tags');
-        container.innerHTML = rptSelectedTagNames.map(function(tag) {
-            return '<div class="filter-tag-item">' + tag + ' <span class="filter-tag-remove" onclick="rptToggleFilter(\'tag\',\'' + tag + '\')">×</span></div>';
-        }).join('');
-        return;
-    }
-    container.innerHTML = arr.map(function(id) {
-        var item = list.find(function(x) { return x.id === id; });
-        var name = item ? item.name : id;
-        return '<div class="filter-tag-item">' + name + ' <span class="filter-tag-remove" onclick="rptToggleFilter(\'' + type + '\',\'' + id + '\',\'' + (name || '').replace(/'/g, "\\'") + '\')">×</span></div>';
-    }).join('');
-}
-
-function rptClearFilter(type) {
-    if (type === 'investor') rptSelectedInvestorIds = [];
-    else if (type === 'broker') rptSelectedBrokerIds = [];
-    else rptSelectedTagNames = [];
-    rptUpdateFilterPills(type);
-    rptRenderPortfolio();
-}
-
-function rptUpdateTagLogic() {
-    var sel = document.querySelector('input[name="rpt-tag-logic"]:checked');
-    rptTagFilterLogic = sel ? sel.value : 'OR';
-    rptRenderPortfolio();
 }
 
 function rptToggleZero() {
@@ -394,6 +379,17 @@ function rptToggleZero() {
         btn.classList.toggle('active', rptShowZero);
     }
     rptRenderPortfolio();
+}
+
+function rptToggleGroup(acName) {
+    rptCollapsedGroups[acName] = !rptCollapsedGroups[acName];
+    // Toggle visibility of rows belonging to this group
+    var rows = document.querySelectorAll('tr[data-rpt-group="' + acName + '"]');
+    var hidden = rptCollapsedGroups[acName];
+    rows.forEach(function(row) { row.style.display = hidden ? 'none' : ''; });
+    // Update chevron
+    var chevron = document.getElementById('rpt-chevron-' + acName.replace(/\s+/g, '-'));
+    if (chevron) chevron.textContent = hidden ? '▸' : '▾';
 }
 
 // Apply filters to transaction array
@@ -454,7 +450,7 @@ function rptRenderPortfolio() {
 
     // 1. Filter transactions
     var filtered = rptFilterTransactions(rptTransactions);
-    // 2. Exclude F&O and MCX
+    // 2. Exclude F&O and MCX (holdings portfolio only)
     filtered = filtered.filter(function(t) {
         return t.securityType !== 'NFO' && t.securityType !== 'MCX';
     });
@@ -480,7 +476,7 @@ function rptRenderPortfolio() {
         if (!secBySymbol[s.symbol]) secBySymbol[s.symbol] = s;
     });
 
-    // 5. Compute totals
+    // 5. Compute grand totals
     var grandTotalInvested = 0, grandTotalValue = 0;
     allHoldings.forEach(function(h) {
         grandTotalInvested += h.totalCost;
@@ -495,7 +491,7 @@ function rptRenderPortfolio() {
         groups[ac].push(h);
     });
 
-    // 7. Sort within each group
+    // 7. Sort function
     var sortFn = function(a, b) {
         var valA, valB;
         var priceA = rptGetPrice(a), priceB = rptGetPrice(b);
@@ -534,11 +530,25 @@ function rptRenderPortfolio() {
         return rptSortDirection === 'asc' ? valA - valB : valB - valA;
     };
 
-    // 8. Build HTML
-    var html = '';
+    // 8. Build HTML — single table with page-level header
     var sortArrow = rptSortDirection === 'asc' ? '▲' : '▼';
     var sortLabel = (rptSortByPct && (rptSortColumn === 'pl' || rptSortColumn === 'daypl')) ? '%' : '';
 
+    var html = '<table style="width:100%; border-collapse:collapse;">';
+
+    // Page-level header (single, not repeated per group)
+    html += '<thead><tr style="border-bottom:2px solid #cbd5e0;">' +
+        '<th class="sortable" onclick="rptSortPortfolio(\'symbol\')" style="width:18%; text-align:left; padding:6px 8px; font-size:11px; color:#718096;">Symbol ' + (rptSortColumn === 'symbol' ? sortArrow : '') + '</th>' +
+        '<th class="text-right" style="width:10%; padding:6px 8px; font-size:11px; color:#718096;">Qty<br><span class="subheader">FIFO Cost</span></th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'invested\')" style="width:12%; padding:6px 8px; font-size:11px; color:#718096;">Invested ' + (rptSortColumn === 'invested' ? sortArrow : '') + '</th>' +
+        '<th class="text-right" style="width:10%; padding:6px 8px; font-size:11px; color:#718096;">Price</th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'daypl\')" style="width:11%; padding:6px 8px; font-size:11px; color:#718096;">Day P&L ' + (rptSortColumn === 'daypl' ? sortLabel + sortArrow : '') + '</th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'pl\')" style="width:12%; padding:6px 8px; font-size:11px; color:#718096;">Gain ' + (rptSortColumn === 'pl' ? sortLabel + sortArrow : '') + '</th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'value\')" style="width:12%; padding:6px 8px; font-size:11px; color:#718096;">Value ' + (rptSortColumn === 'value' ? sortArrow : '') + '</th>' +
+        '<th style="width:10%; padding:6px 8px; font-size:11px; color:#718096;">Tags</th>' +
+    '</tr></thead><tbody>';
+
+    // Iterate groups
     for (var gi = 0; gi < RPT_ASSET_CLASS_ORDER.length; gi++) {
         var acName = RPT_ASSET_CLASS_ORDER[gi];
         var groupHoldings = groups[acName];
@@ -547,36 +557,45 @@ function rptRenderPortfolio() {
         groupHoldings.sort(sortFn);
 
         // Group totals
-        var grpInvested = 0, grpValue = 0;
+        var grpInvested = 0, grpValue = 0, grpDayPL = 0;
+        var hasDayData = false;
         groupHoldings.forEach(function(h) {
             grpInvested += h.totalCost;
             grpValue += h.quantity * rptGetPrice(h);
+            var md = rptGetLiveData(h);
+            var dp = h._txns ? wmsCalcStockDayPL(h._txns, md, null, {includeNfo: false}) : (md ? h.quantity * md.ch : null);
+            if (dp !== null) { grpDayPL += dp; hasDayData = true; }
         });
         var grpPL = grpValue - grpInvested;
         var grpPLPct = grpInvested !== 0 ? (grpPL / Math.abs(grpInvested)) * 100 : 0;
+        var grpDayPLPct = grpInvested !== 0 ? (grpDayPL / Math.abs(grpInvested)) * 100 : 0;
 
-        // Group header
-        html += '<div class="rpt-asset-group-header">' +
-                    '<span>' + acName + ' (' + groupHoldings.length + ')</span>' +
-                    '<div class="rpt-group-summary">' +
-                        '<span>Invested: ' + formatAmount(grpInvested) + '</span>' +
-                        '<span class="' + getAmountClass(grpPL) + '">P&L: ' + formatAmount(grpPL) + ' (' + formatPercent(grpPLPct) + ')</span>' +
-                        '<span>Value: ' + formatAmount(grpValue) + '</span>' +
-                    '</div>' +
-                '</div>';
+        var isCollapsed = !!rptCollapsedGroups[acName];
+        var chevronId = 'rpt-chevron-' + acName.replace(/\s+/g, '-');
+        var badge = RPT_AC_BADGE[acName] || '—';
 
-        // Table for this group
-        html += '<table style="width:100%; border-collapse:collapse;">';
-        html += '<thead><tr>' +
-            '<th class="sortable" onclick="rptSortPortfolio(\'symbol\')" style="width:18%; text-align:left; padding:4px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Symbol ' + (rptSortColumn === 'symbol' ? sortArrow : '') + '</th>' +
-            '<th class="text-right" style="width:10%; padding:4px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Qty<br><span class="subheader">FIFO Cost</span></th>' +
-            '<th class="text-right sortable" onclick="rptSortPortfolio(\'invested\')" style="width:12%; padding:4px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Investment ' + (rptSortColumn === 'invested' ? sortArrow : '') + '<br><span class="subheader">% of Total</span></th>' +
-            '<th class="text-right" style="width:12%; padding:4px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">CMP (₹)</th>' +
-            '<th class="text-right sortable" onclick="rptSortPortfolio(\'daypl\')" style="width:11%; padding:4px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Day\'s P&L ' + (rptSortColumn === 'daypl' ? sortLabel + sortArrow : '') + '<br><span class="subheader">Day %</span></th>' +
-            '<th class="text-right sortable" onclick="rptSortPortfolio(\'pl\')" style="width:12%; padding:4px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Total P&L ' + (rptSortColumn === 'pl' ? sortLabel + sortArrow : '') + '<br><span class="subheader">P&L %</span></th>' +
-            '<th class="text-right sortable" onclick="rptSortPortfolio(\'value\')" style="width:12%; padding:4px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Current Value ' + (rptSortColumn === 'value' ? sortArrow : '') + '<br><span class="subheader">% of Total</span></th>' +
-            '<th style="width:13%; padding:4px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Tags</th>' +
-            '</tr></thead><tbody>';
+        // Group header row (MProfit style: inline totals in same columns as data)
+        html += '<tr class="rpt-group-header-row" onclick="rptToggleGroup(\'' + acName + '\')" style="background:#f0f4f8; cursor:pointer; border-top:2px solid #cbd5e0;">' +
+            '<td colspan="2" style="padding:7px 8px; font-size:13px; font-weight:700; color:#2d3748;">' +
+                '<span id="' + chevronId + '" style="display:inline-block;width:16px;font-size:12px;color:#718096;">' + (isCollapsed ? '▸' : '▾') + '</span>' +
+                '<span style="display:inline-block;border:1px solid #a0aec0;border-radius:3px;padding:0 4px;font-size:10px;font-weight:700;color:#4a5568;margin-right:6px;vertical-align:middle;">' + badge + '</span>' +
+                acName + ' <span style="font-weight:500;font-size:11px;color:#718096;">(' + groupHoldings.length + ')</span>' +
+            '</td>' +
+            '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' + formatAmount(grpInvested) + '</td>' +
+            '<td class="text-right" style="padding:7px 8px;"></td>' +
+            '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' +
+                (hasDayData ? '<span class="' + getAmountClass(grpDayPL) + '">' + formatAmount(grpDayPL) + '</span><br><span class="number-sub ' + getAmountClass(grpDayPLPct) + '">' + formatPercent(grpDayPLPct) + '</span>' : '') +
+            '</td>' +
+            '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' +
+                '<span class="' + getAmountClass(grpPL) + '">' + formatAmount(grpPL) + '</span><br>' +
+                '<span class="number-sub ' + getAmountClass(grpPLPct) + '">' + formatPercent(grpPLPct) + '</span>' +
+            '</td>' +
+            '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' + formatAmount(grpValue) + '</td>' +
+            '<td style="padding:7px 8px;"></td>' +
+        '</tr>';
+
+        // Data rows for this group
+        var rowDisplay = isCollapsed ? ' style="display:none;"' : '';
 
         for (var hi = 0; hi < groupHoldings.length; hi++) {
             var h = groupHoldings[hi];
@@ -586,8 +605,6 @@ function rptRenderPortfolio() {
             var currentValue = h.quantity * price;
             var pl = currentValue - invested;
             var plPct = invested !== 0 ? (pl / Math.abs(invested)) * 100 : 0;
-            var invPct = grandTotalInvested !== 0 ? (invested / grandTotalInvested) * 100 : 0;
-            var valPct = grandTotalValue !== 0 ? (currentValue / grandTotalValue) * 100 : 0;
             var dayPL = h._txns ? wmsCalcStockDayPL(h._txns, md, null, {includeNfo: false}) : (md ? h.quantity * md.ch : null);
             var dayChp = md ? md.chp : null;
 
@@ -605,15 +622,15 @@ function rptRenderPortfolio() {
 
             var symbolKey = h.symbol + '-' + h.exchange;
             var isExpanded = rptExpandedSymbol === symbolKey;
-            var expClass = isExpanded ? 'expanded-row' : '';
+            var expClass = isExpanded ? ' expanded-row' : '';
 
             var dayPLHtml = dayPL !== null
                 ? '<div class="number-main ' + getAmountClass(dayPL) + '">' + formatAmount(dayPL) + '</div>' +
                   '<div class="number-sub ' + getAmountClass(dayChp) + '">' + formatPercent(dayChp) + '</div>'
-                : '<div class="number-main">-</div>';
+                : '<div class="number-main" style="color:#a0aec0;">-</div>';
 
-            html += '<tr class="' + expClass + '">' +
-                '<td class="symbol-cell" style="padding:6px 8px;">' +
+            html += '<tr data-rpt-group="' + acName + '" class="rpt-data-row' + expClass + '"' + rowDisplay + '>' +
+                '<td class="symbol-cell" style="padding:6px 8px 6px 30px;">' +
                     '<div class="symbol-main symbol-clickable" onclick="rptToggleSymbolDetail(\'' + h.symbol + '\',\'' + h.exchange + '\')">' + h.symbol + '</div>' +
                     '<div class="symbol-sub">' + (h.companyName || '') + '</div>' +
                 '</td>' +
@@ -623,7 +640,6 @@ function rptRenderPortfolio() {
                 '</td>' +
                 '<td class="text-right" style="padding:6px 8px;">' +
                     '<div class="number-main">' + formatAmount(invested) + '</div>' +
-                    '<div class="number-sub">' + invPct.toFixed(2) + '%</div>' +
                 '</td>' +
                 '<td class="text-right" style="padding:6px 8px;">' +
                     '<div class="number-main">' + formatPrice(price, false) + '</div>' +
@@ -636,14 +652,13 @@ function rptRenderPortfolio() {
                 '</td>' +
                 '<td class="text-right" style="padding:6px 8px;">' +
                     '<div class="number-main">' + formatAmount(currentValue) + '</div>' +
-                    '<div class="number-sub">' + valPct.toFixed(2) + '%</div>' +
                 '</td>' +
                 '<td style="padding:6px 8px;">' + h.tags.map(function(t) { return '<span class="tag-badge">' + t + '</span>'; }).join('') + '</td>' +
             '</tr>';
 
             // Expanded: show FIFO lot breakdown
             if (isExpanded && h.lots && h.lots.length > 0) {
-                html += '<tr class="detail-row"><td colspan="8" style="padding:4px 8px;">' +
+                html += '<tr data-rpt-group="' + acName + '" class="detail-row"' + rowDisplay + '><td colspan="8" style="padding:4px 8px 4px 30px;">' +
                     '<table class="inner-table" style="width:100%;"><thead><tr>' +
                     '<th style="text-align:left; font-size:10px; color:#718096;">Buy Date</th>' +
                     '<th class="text-right" style="font-size:10px; color:#718096;">Lot Qty</th>' +
@@ -678,25 +693,12 @@ function rptRenderPortfolio() {
                 html += '</tbody></table></td></tr>';
             }
         }
-
-        // Group total row
-        html += '<tr class="total-row" style="background:#f0f4f8; font-weight:700;">' +
-            '<td style="padding:5px 8px; font-size:12px;">' + acName + ' Total</td>' +
-            '<td class="text-right" style="padding:5px 8px; font-size:12px;">' + groupHoldings.length + ' stocks</td>' +
-            '<td class="text-right" style="padding:5px 8px; font-size:12px;">' + formatAmount(grpInvested) + '</td>' +
-            '<td class="text-right" style="padding:5px 8px;">-</td>' +
-            '<td class="text-right" style="padding:5px 8px;">-</td>' +
-            '<td class="text-right" style="padding:5px 8px;"><span class="' + getAmountClass(grpPL) + '">' + formatAmount(grpPL) + '</span></td>' +
-            '<td class="text-right" style="padding:5px 8px;">' + formatAmount(grpValue) + '</td>' +
-            '<td style="padding:5px 8px;">-</td>' +
-        '</tr>';
-
-        html += '</tbody></table>';
     }
 
+    html += '</tbody></table>';
     body.innerHTML = html;
 
-    // Summary cards
+    // Summary cards (grand totals)
     var grandPL = grandTotalValue - grandTotalInvested;
     var grandPLPct = grandTotalInvested !== 0 ? (grandPL / Math.abs(grandTotalInvested)) * 100 : 0;
     rptRenderSummaryCards(grandTotalInvested, grandTotalValue, grandPL, grandPLPct, allHoldings.length);
@@ -1039,11 +1041,7 @@ if (typeof window !== 'undefined') {
     window.rptSortPortfolio = rptSortPortfolio;
     window.rptToggleSymbolDetail = rptToggleSymbolDetail;
     window.rptToggleZero = rptToggleZero;
-    window.rptShowDropdown = rptShowDropdown;
-    window.rptFilterSearch = rptFilterSearch;
-    window.rptToggleFilter = rptToggleFilter;
-    window.rptClearFilter = rptClearFilter;
-    window.rptUpdateTagLogic = rptUpdateTagLogic;
+    window.rptToggleGroup = rptToggleGroup;
     window.rptRenderPortfolio = rptRenderPortfolio;
     window.rptRenderCapGains = rptRenderCapGains;
     window.rptCGShowDropdown = rptCGShowDropdown;
