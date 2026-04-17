@@ -780,7 +780,7 @@ function rptBuildInvestorDetail(h, price, md) {
             var invMenuId = 'rpt-inv-am-' + g.investorId.substring(0, 8) + '-' + shortSym.replace(/[^a-zA-Z0-9]/g, '_');
 
             return '<tr class="rpt-investor-row" data-rpt-group="' + (h.assetClass || 'Other') + '" style="background:#fcfcfd;">' +
-                '<td style="padding:4px 8px 4px 30px;"><span class="investor-name-link" data-key="' + shortSym + '" data-investor-id="' + g.investorId + '">' + g.name + '</span></td>' +
+                '<td style="padding:4px 8px 4px 42px;"><span class="investor-name-link" data-key="' + shortSym + '" data-investor-id="' + g.investorId + '">' + g.name + '</span></td>' +
                 '<td class="text-right" style="padding:4px 8px;">' + qtyHtml + '<div class="number-sub">' + formatPrice(avg, false) + '</div></td>' +
                 '<td class="text-right" style="padding:4px 8px;"><div class="number-main">' + formatAmount(inv) + '</div></td>' +
                 '<td class="text-right" style="padding:4px 8px;"><div class="number-main">' + formatPrice(price, false) + '</div></td>' +
@@ -998,8 +998,8 @@ function rptRenderPortfolio() {
     // Page-level header (single, not repeated per group) — DARK background
     html += '<thead><tr style="background:#e2e8f0; border-bottom:2px solid #cbd5e0;">' +
         '<th id="rpt-th-symbol" class="sortable" onclick="rptSortPortfolio(\'symbol\')" style="width:17%; text-align:left; padding:6px 8px; font-size:11px; color:#4a5568; cursor:pointer;">' +
-            '<span id="rpt-header-toggle" onclick="event.stopPropagation(); rptToggleAllGroups();" style="display:inline-block;width:16px;font-size:12px;color:#718096;cursor:pointer;" title="Collapse/Expand All">▾</span>' +
-            'Symbol ' + symbolSortArrow + symbolSearchBadge +
+            '<span id="rpt-header-toggle" onclick="event.stopPropagation(); rptToggleAllGroups();" style="display:inline-block;width:16px;font-size:12px;color:#718096;cursor:pointer;vertical-align:middle;" title="Collapse/Expand All">▾</span>' +
+            'Company ' + symbolSortArrow + symbolSearchBadge +
         '</th>' +
         '<th class="text-right" style="width:9%; padding:6px 8px; font-size:11px; color:#4a5568;">Qty<br><span class="subheader">FIFO Cost</span></th>' +
         '<th class="text-right sortable" onclick="rptSortPortfolio(\'invested\')" style="width:11%; padding:6px 8px; font-size:11px; color:#4a5568;">Invested ' + (rptSortColumn === 'invested' ? sortArrow : '') + '</th>' +
@@ -1039,8 +1039,8 @@ function rptRenderPortfolio() {
 
         // Group header row (MProfit style: inline totals in same columns as data)
         html += '<tr class="rpt-group-header-row" onclick="rptToggleGroup(\'' + acName + '\')" style="background:#f7fafc; cursor:pointer; border-top:1px solid #e2e8f0;">' +
-            '<td colspan="2" style="padding:7px 8px 7px 30px; font-size:13px; font-weight:700; color:#2d3748;">' +
-                '<span id="' + chevronId + '" style="display:inline-block;width:16px;font-size:12px;color:#718096;">' + (isCollapsed ? '▸' : '▾') + '</span>' +
+            '<td colspan="2" style="padding:7px 8px; font-size:13px; font-weight:700; color:#2d3748;">' +
+                '<span id="' + chevronId + '" style="display:inline-block;width:16px;font-size:12px;color:#718096;vertical-align:middle;">' + (isCollapsed ? '▸' : '▾') + '</span>' +
                 '<span style="display:inline-block;border:1px solid #a0aec0;border-radius:3px;padding:0 4px;font-size:10px;font-weight:700;color:#4a5568;margin-right:6px;vertical-align:middle;">' + badge + '</span>' +
                 acName + ' <span style="font-weight:500;font-size:11px;color:#718096;">(' + groupHoldings.length + ')</span>' +
             '</td>' +
@@ -1095,7 +1095,7 @@ function rptRenderPortfolio() {
                 : '<div class="number-main" style="color:#a0aec0;">-</div>';
 
             html += '<tr data-rpt-group="' + acName + '" class="rpt-data-row' + expClass + '"' + rowDisplay + '>' +
-                '<td class="company-cell" style="padding:6px 8px 6px 46px;">' +
+                '<td class="company-cell" style="padding:6px 8px 6px 32px;">' +
                     '<div class="company-main" onclick="rptToggleSymbolDetail(\'' + h.symbol + '\',\'' + h.exchange + '\')" title="' + wmsEsc(h.companyName || h.shortSymbol) + '">' + wmsEsc(h.companyName || h.shortSymbol) + '</div>' +
                     '<div class="company-sub">' + wmsEsc(h.shortSymbol || h.symbol) + '</div>' +
                 '</td>' +

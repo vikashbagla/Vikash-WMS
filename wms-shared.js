@@ -2212,7 +2212,12 @@ function wmsRefreshRender() {
         // Update price status indicator
         if (typeof trUpdatePriceStatus === 'function') trUpdatePriceStatus('live');
     }
-    // Non-trading modules: prices fetched in background, no rendering needed
+    // Check if Reports module is active
+    var isReportsActive = !!document.getElementById('rptPortfolioBody');
+    if (isReportsActive && typeof rptRenderPortfolio === 'function') {
+        rptRenderPortfolio();
+        if (typeof rptUpdatePriceStatus === 'function') rptUpdatePriceStatus('live');
+    }
 }
 
 /**
