@@ -18,7 +18,7 @@ Module-level canonical docs (e.g. the Statements engine formulas) live inside `W
 | | Production | Dev |
 |---|---|---|
 | Branch | `main` | `dev` |
-| Site | vikashbagla.github.io/Vikash-WMS/ | vikash-wms.netlify.app |
+| Site | vikashbagla.github.io/Vikash-WMS/ | vikash-wms.pages.dev |
 | Data tables | `transactions`, `ledger_entries` | `transactions_dev`, `ledger_entries_dev` |
 | Master data | Shared (investors, brokers, securities, IBAs, etc.) | Shared (same tables) |
 
@@ -28,7 +28,7 @@ Module-level canonical docs (e.g. the Statements engine formulas) live inside `W
 2. **Code reaches `main` ONLY via a merge from `dev`, and ONLY after the owner explicitly approves.** Ask "Ready to push this to production?" and wait for a clear yes.
 3. **When committing, always verify which branch you are pushing to.** Use `git push origin dev` — never `git push origin main` unless the owner has approved a production deploy in the current conversation.
 4. **If the local repo is on `main` (lock file issues, fresh clone, etc.), push to dev explicitly:** `git push origin main:dev` does NOT work for this — you must push committed changes to `origin dev`. Use a temp clone on the `dev` branch if needed.
-5. **Test on the dev site (vikash-wms.netlify.app) before any merge to main.**
+5. **Test on the dev site (vikash-wms.pages.dev) before any merge to main.**
 6. **Database migrations:** Test on dev tables first. Only run against production tables after owner approval.
 7. **Master data is shared.** Changes to investors, brokers, securities, IBAs, charges, portfolio_views affect BOTH sites. This is by design — but be aware of it.
 
