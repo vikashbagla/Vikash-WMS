@@ -2178,6 +2178,9 @@ async function wmsStandardRefresh(forceRefresh) {
  * Detects which module/tab is active and renders accordingly.
  */
 function wmsRefreshRender() {
+    // Always update the global Fyers refresh time indicator (in app header)
+    wmsUpdateFyersTime();
+
     // Check if Trading module is active (portfolio tab element exists in DOM)
     var isTradingActive = !!document.getElementById('tr-portfolio');
 
@@ -2212,12 +2215,26 @@ function wmsRefreshRender() {
         // Update price status indicator
         if (typeof trUpdatePriceStatus === 'function') trUpdatePriceStatus('live');
     }
+
     // Check if Reports module is active
     var isReportsActive = !!document.getElementById('rptPortfolioBody');
     if (isReportsActive && typeof rptRenderPortfolio === 'function') {
         rptRenderPortfolio();
         if (typeof rptUpdatePriceStatus === 'function') rptUpdatePriceStatus('live');
     }
+}
+
+/**
+ * wmsUpdateFyersTime — update the global fyers-refresh-time in app header.
+ * Called after every successful price fetch, regardless of active module.
+ */
+function wmsUpdateFyersTime() {
+    var el = document.getElementById('fyers-refresh-time');
+    if (!el) return;
+    var now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    el.textContent = now;
+    var marketOpen = typeof wmsIsMarketHours === 'function' && wmsIsMarketHours();
+    el.style.color = marketOpen ? '#059669' : '#dc2626';
 }
 
 /**

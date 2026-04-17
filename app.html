@@ -558,7 +558,12 @@
         startIndexRefresh(); // Start index ticker
         document.getElementById('logoutBtn').addEventListener('click', logout);
         document.getElementById('appRefreshBtn').addEventListener('click', function() {
-            if (typeof trRefresh === 'function') trRefresh();
+            // Refresh whichever module is active
+            if (document.getElementById('rptPortfolioBody') && typeof rptRefresh === 'function') {
+                rptRefresh();
+            } else if (typeof trRefresh === 'function') {
+                trRefresh();
+            }
         });
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
             btn.addEventListener('click', () => loadModule(btn.dataset.module));
