@@ -439,34 +439,39 @@ async function initTrading() {
         return;
     }
 
-    trUpdateUnitLabels();
+    try {
+        trUpdateUnitLabels();
 
-    // Load F&O default view filters early — must be set BEFORE first wmsRefreshRender()
-    // so banner uses correct filters, not all-unfiltered
-    await trLoadFnoDefaultFilters();
+        // Load F&O default view filters early — must be set BEFORE first wmsRefreshRender()
+        // so banner uses correct filters, not all-unfiltered
+        await trLoadFnoDefaultFilters();
 
-    // Build master symbol list and do initial price fetch + render
-    if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
-    await wmsStandardRefresh(false); // first load: non-forced (triggers Stage 2+3 for unresolved)
+        // Build master symbol list and do initial price fetch + render
+        if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+        await wmsStandardRefresh(false); // first load: non-forced (triggers Stage 2+3 for unresolved)
 
-    // Load saved views (may update default view filters → banner recompute)
-    await trPortfolioVM.loadViews();
+        // Load saved views (may update default view filters → banner recompute)
+        await trPortfolioVM.loadViews();
 
-    // Re-init sub-modules if already loaded (pills need data that may not have been ready)
-    if (window.trTxInit && trTxLoaded) {
-        window.trTxInit();
+        // Re-init sub-modules if already loaded (pills need data that may not have been ready)
+        if (window.trTxInit && trTxLoaded) {
+            window.trTxInit();
+        }
+        if (typeof trFnoRender === 'function' && trFnoLoaded) {
+            if (typeof trFnoResetFilters === 'function') trFnoResetFilters();
+            trFnoRender();
+        }
+
+        // Start the single standard refresh timer (runs always, regardless of active tab)
+        if (wmsIsMarketHours() && window.fyersToken) {
+            wmsStartRefreshTimer();
+        }
+    } catch (error) {
+        console.error('Trading: Error during post-load init:', error);
+        showAlert('Trading loaded with errors: ' + error.message, 'warning');
+    } finally {
+        showLoading(false);
     }
-    if (typeof trFnoRender === 'function' && trFnoLoaded) {
-        if (typeof trFnoResetFilters === 'function') trFnoResetFilters();
-        trFnoRender();
-    }
-
-    // Start the single standard refresh timer (runs always, regardless of active tab)
-    if (wmsIsMarketHours() && window.fyersToken) {
-        wmsStartRefreshTimer();
-    }
-
-    showLoading(false);
 }
 
 // ============================================================================
