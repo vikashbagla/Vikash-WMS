@@ -176,8 +176,8 @@ async function initReports() {
         return;
     }
 
-    // Live prices — use shared refresh system (populates wmsLivePrices globally)
-    // then fall back to module-level fetch for any symbols it missed
+    // Live prices — build symbol list then use shared refresh system
+    if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
     if (typeof wmsStandardRefresh === 'function') {
         await wmsStandardRefresh(false);
     }
@@ -204,6 +204,7 @@ async function rptRefresh() {
         showLoading(false);
         return;
     }
+    if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
     if (typeof wmsStandardRefresh === 'function') {
         await wmsStandardRefresh(true);
     }
