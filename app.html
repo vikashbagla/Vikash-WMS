@@ -130,7 +130,7 @@
     // ============================================================
     window.WMS_ENV = (function() {
         var host = window.location.hostname;
-        if (host.includes('netlify.app') || host.includes('netlify.live')) return 'dev';
+        if (host.includes('netlify.app') || host.includes('netlify.live') || host.includes('pages.dev')) return 'dev';
         if (host === 'localhost' || host === '127.0.0.1') return 'dev';
         return 'prod';
     })();
