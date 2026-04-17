@@ -818,10 +818,22 @@ function wmsTxnRenderListSummary(txns) {
     var container = document.getElementById('wmsTxnSummary');
     if (!container) return;
 
-    var calc = wmsCalcAvgCost(txns);
-    var netQty = calc.netQuantity;
-    var totalCost = netQty === 0 ? 0 : calc.totalCost;
-    var avgCost = netQty === 0 ? 0 : calc.avgCost;
+    // Use FIFO cost when called from Reports, avg cost when from Trading
+    var useModule = wmsTxnCtx && wmsTxnCtx.module;
+    var netQty, totalCost, avgCost;
+    if (useModule === 'reports' && typeof wmsCalcFifoCost === 'function') {
+        var fifo = wmsCalcFifoCost(txns);
+        var hKey = Object.keys(fifo.holdings)[0];
+        var fh = hKey ? fifo.holdings[hKey] : null;
+        netQty = fh ? fh.quantity : 0;
+        totalCost = netQty === 0 ? 0 : (fh ? fh.totalCost : 0);
+        avgCost = netQty === 0 ? 0 : (fh ? fh.avgCost : 0);
+    } else {
+        var calc = wmsCalcAvgCost(txns);
+        netQty = calc.netQuantity;
+        totalCost = netQty === 0 ? 0 : calc.totalCost;
+        avgCost = netQty === 0 ? 0 : calc.avgCost;
+    }
 
     var currentPrice = wmsTxnCtx && wmsTxnCtx.getPrice ? wmsTxnCtx.getPrice(wmsTxnModalKey) : 0;
     var currentValue = netQty * currentPrice;
@@ -836,7 +848,7 @@ function wmsTxnRenderListSummary(txns) {
         '<div class="wms-txn-summary-card">' +
             '<div class="summary-label">Invested Amount</div>' +
             '<div class="summary-value">' + formatAmount(totalCost) + '</div>' +
-            '<div class="summary-sub">Avg Cost: ' + formatPrice(avgCost, false) + '</div>' +
+            '<div class="summary-sub">' + (useModule === 'reports' ? 'FIFO Cost: ' : 'Avg Cost: ') + formatPrice(avgCost, false) + '</div>' +
         '</div>' +
         '<div class="wms-txn-summary-card ' + getAmountClass(pl) + '">' +
             '<div class="summary-label">Current Value</div>' +

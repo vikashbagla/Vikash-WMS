@@ -1648,6 +1648,7 @@ function trBuildInvestorDetail(h, price, md) {
 
 function trOpenTxnModal(companyKey, investorId) {
     wmsTxnCtx = {
+        module: 'trading',
         transactions: trTransactions,
         investors: trInvestors,
         brokers: trBrokers,

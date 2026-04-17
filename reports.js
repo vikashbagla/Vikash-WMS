@@ -225,9 +225,10 @@ function rptUpdateUnitLabels() {
 // ============================================================================
 
 async function rptLoadData() {
-    // Load all BUY/SELL transactions (need security_type for asset class + CG classification)
+    // Load BUY/SELL + CAPITAL_REDUCTION transactions
+    // CAPITAL_REDUCTION is needed so FIFO engine can reduce cost basis (return of capital).
     var resp = await fetchWithTimeout(
-        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,tags,dont_display&dont_display=eq.false&transaction_type=in.(BUY,SELL)&order=transaction_date.asc',
+        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,tags,dont_display&dont_display=eq.false&transaction_type=in.(BUY,SELL,CAPITAL_REDUCTION)&order=transaction_date.asc',
         {
             headers: wmsHeaders()
         }
@@ -693,6 +694,7 @@ async function rptShowTransactions(shortSymbol, investorId) {
 
     // Set shared modal context with Reports' data
     wmsTxnCtx = {
+        module: 'reports',
         transactions: allTxns,
         investors: rptInvestors,
         brokers: rptBrokers,
