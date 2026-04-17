@@ -29,6 +29,7 @@ var wmsTxnSortColumn = 'date';
 var wmsTxnSortDirection = 'asc';
 var wmsTxnViewMode = 'list';        // 'list' or 'matching'
 var wmsTxnDaysFilter = 0;
+var wmsTxnTypeFilter = '';       // '' = all, or 'BUY', 'SELL', etc.
 var wmsTxnMatchMethod = 'lifo';
 var wmsTxnContractFilter = [];
 var wmsTxnFnoPricesFetched = false;
@@ -215,6 +216,20 @@ function _wmsTxnEnsureDom() {
                             '<option value="90">90 days</option>' +
                             '<option value="180">6 months</option>' +
                             '<option value="365">1 year</option>' +
+                        '</select>' +
+                        '<select class="wms-txn-days-filter" id="wmsTxnTypeFilter" title="Filter by type">' +
+                            '<option value="">All Types</option>' +
+                            '<option value="BUY">BUY</option>' +
+                            '<option value="SELL">SELL</option>' +
+                            '<option value="DIVIDEND">DIVIDEND</option>' +
+                            '<option value="CAPITAL_REDUCTION">CAPITAL REDUCTION</option>' +
+                            '<option value="OTHER_INCOME">OTHER INCOME</option>' +
+                            '<option value="INTEREST">INTEREST</option>' +
+                            '<option value="BONUS">BONUS</option>' +
+                            '<option value="SPLIT">SPLIT</option>' +
+                            '<option value="RIGHTS_ENTITLEMENT">RIGHTS (ENTITLEMENT)</option>' +
+                            '<option value="RIGHTS_PAYMENT">RIGHTS (PAYMENT)</option>' +
+                            '<option value="HISTORICAL_PL">HISTORICAL P&L</option>' +
                         '</select>' +
                         '<div class="wms-txn-match-method" id="wmsTxnMatchMethodWrap" style="display:none;">' +
                             '<button class="wms-txn-mtog active" data-method="lifo">LIFO</button>' +
@@ -427,6 +442,12 @@ function _wmsTxnAttachStaticListeners() {
         wmsTxnRefreshCurrentView();
     });
 
+    // Type filter
+    document.getElementById('wmsTxnTypeFilter').addEventListener('change', function() {
+        wmsTxnTypeFilter = this.value;
+        wmsTxnRefreshCurrentView();
+    });
+
     // FIFO/LIFO toggle
     document.querySelectorAll('.wms-txn-mtog').forEach(function(btn) {
         btn.addEventListener('click', function() {
@@ -556,6 +577,7 @@ function wmsTxnModalOpen(companyKey, investorId) {
     wmsTxnSortDirection = 'asc';
     wmsTxnViewMode = 'list';
     wmsTxnDaysFilter = 0;
+    wmsTxnTypeFilter = '';
     wmsTxnMatchMethod = 'lifo';
     wmsTxnContractFilter = [];
 
@@ -567,6 +589,7 @@ function wmsTxnModalOpen(companyKey, investorId) {
     // Reset controls UI
     document.querySelectorAll('.wms-txn-vtog').forEach(function(b) { b.classList.toggle('active', b.dataset.view === 'list'); });
     document.getElementById('wmsTxnDaysFilter').value = '0';
+    document.getElementById('wmsTxnTypeFilter').value = '';
     document.querySelectorAll('.wms-txn-mtog').forEach(function(b) { b.classList.toggle('active', b.dataset.method === 'lifo'); });
     document.getElementById('wmsTxnMatchMethodWrap').style.display = 'none';
     document.getElementById('wmsTxnToggleHiddenBtn').style.display = '';
@@ -594,6 +617,7 @@ function wmsTxnModalClose() {
     wmsTxnShowHidden = false;
     wmsTxnViewMode = 'list';
     wmsTxnDaysFilter = 0;
+    wmsTxnTypeFilter = '';
     wmsTxnMatchMethod = 'lifo';
     wmsTxnContractFilter = [];
 }
@@ -641,6 +665,12 @@ function wmsTxnGetModalTxns() {
         cutoff.setDate(cutoff.getDate() - wmsTxnDaysFilter);
         txns = txns.filter(function(t) {
             return new Date(t.transaction_date) >= cutoff;
+        });
+    }
+    // Type filter
+    if (wmsTxnTypeFilter) {
+        txns = txns.filter(function(t) {
+            return (t.transaction_type || t.type || '') === wmsTxnTypeFilter;
         });
     }
     return txns;
