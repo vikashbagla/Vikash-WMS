@@ -2048,7 +2048,15 @@ function wmsBuildRefreshSymbols() {
             var ss = t.shortSymbol;
             if (!ss || seen[ss]) return;
             seen[ss] = true;
-            list.push({ fyersKey: 'NSE:' + ss + '-EQ', cacheKey: ss });
+            // Same broker_tokens lookup as Trading (section 1) — handles REITs, InvITs, BSE stocks
+            var fKey = null;
+            var dbRec = (typeof wmsRefData !== 'undefined' && wmsRefData.securitiesCmMap)
+                ? wmsRefData.securitiesCmMap[t.securityId] : null;
+            if (dbRec && dbRec.broker_tokens && dbRec.broker_tokens.fyers) {
+                fKey = dbRec.broker_tokens.fyers.nse_symbol || dbRec.broker_tokens.fyers.bse_symbol;
+            }
+            if (!fKey) fKey = 'NSE:' + ss + '-EQ';
+            list.push({ fyersKey: fKey, cacheKey: ss });
         });
     }
 
