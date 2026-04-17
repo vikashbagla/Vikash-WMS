@@ -225,10 +225,12 @@ function rptUpdateUnitLabels() {
 // ============================================================================
 
 async function rptLoadData() {
-    // Load BUY/SELL + CAPITAL_REDUCTION transactions
-    // CAPITAL_REDUCTION is needed so FIFO engine can reduce cost basis (return of capital).
+    // Load ALL transaction types — the FIFO engine handles each type correctly:
+    // BUY/SELL (lots), BONUS/SPLIT/RIGHTS (qty & cost adjustments),
+    // CAPITAL_REDUCTION (cost reduction), DIVIDEND/INTEREST/OTHER_INCOME (skipped by FIFO),
+    // HISTORICAL_PL (skipped by FIFO). No query-level filtering needed.
     var resp = await fetchWithTimeout(
-        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,tags,dont_display&dont_display=eq.false&transaction_type=in.(BUY,SELL,CAPITAL_REDUCTION)&order=transaction_date.asc',
+        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,tags,dont_display&dont_display=eq.false&order=transaction_date.asc',
         {
             headers: wmsHeaders()
         }
