@@ -242,6 +242,36 @@ async function wmsLoadRefData() {
 }
 
 // ============================================================================
+// PAGINATED RAW FETCH — bypasses Supabase's 1000-row default limit
+// Use for any raw fetch() call that might return > 1000 rows.
+// ============================================================================
+
+/**
+ * Fetch ALL rows from a Supabase REST URL using raw fetch() with Range headers.
+ * Paginates in batches of 1000 until a partial page is returned.
+ * @param {string} url - Full Supabase REST URL with query params
+ * @param {object} [opts] - Optional fetch options (headers, etc.)
+ * @returns {Promise<Array>} All rows concatenated
+ */
+async function wmsFetchAllRaw(url, opts) {
+    var BATCH = 1000;
+    var all = [], from = 0;
+    var baseHeaders = (opts && opts.headers) ? opts.headers : wmsHeaders();
+    while (true) {
+        var reqHeaders = Object.assign({}, baseHeaders, {
+            'Range': from + '-' + (from + BATCH - 1)
+        });
+        var resp = await fetchWithTimeout(url, { headers: reqHeaders });
+        if (!resp.ok) throw new Error('DB error: ' + resp.status + ' — ' + (await resp.text()));
+        var data = await resp.json();
+        all = all.concat(data);
+        if (data.length < BATCH) break;
+        from += BATCH;
+    }
+    return all;
+}
+
+// ============================================================================
 // SECURITIES MASTER DATA — Paginated loader + client-side search
 // Loaded once at app startup (background), refreshed after CM/F&O Sync.
 // All modules read from wmsRefData.securitiesCm / securitiesNfo.

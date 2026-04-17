@@ -779,11 +779,10 @@ async function trLoadData() {
     var headers = wmsHeaders();
 
     // Load ALL transactions (no transaction_type filter — includes DIVIDEND, etc.)
-    var resp = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,product,transaction_type,transaction_date,quantity,lots,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display&order=transaction_date.asc', {
-        headers: headers
-    });
-    if (!resp.ok) throw new Error('Failed to load transactions: HTTP ' + resp.status);
-    var txnData = await resp.json();
+    // Uses wmsFetchAllRaw() to paginate past Supabase's 1000-row default limit.
+    var txnData = await wmsFetchAllRaw(
+        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,product,transaction_type,transaction_date,quantity,lots,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display&order=transaction_date.asc'
+    );
     console.log('Trading: Loaded ' + txnData.length + ' transactions (all types)');
 
     trTransactions = wmsSanitizeTransactions(txnData);

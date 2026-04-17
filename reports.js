@@ -229,14 +229,10 @@ async function rptLoadData() {
     // BUY/SELL (lots), BONUS/SPLIT/RIGHTS (qty & cost adjustments),
     // CAPITAL_REDUCTION (cost reduction), DIVIDEND/INTEREST/OTHER_INCOME (skipped by FIFO),
     // HISTORICAL_PL (skipped by FIFO). No query-level filtering needed.
-    var resp = await fetchWithTimeout(
-        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,tags,dont_display&dont_display=eq.false&order=transaction_date.asc',
-        {
-            headers: wmsHeaders()
-        }
+    // Uses wmsFetchAllRaw() to paginate past Supabase's 1000-row default limit.
+    var txnData = await wmsFetchAllRaw(
+        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,tags,dont_display&dont_display=eq.false&order=transaction_date.asc'
     );
-    if (!resp.ok) throw new Error('DB error: ' + resp.status + ' — ' + (await resp.text()));
-    var txnData = await resp.json();
 
     console.log('✅ Reports: loaded ' + txnData.length + ' transactions');
 
