@@ -226,7 +226,7 @@ function rptUpdateUnitLabels() {
 async function rptLoadData() {
     // Load all BUY/SELL transactions (need security_type for asset class + CG classification)
     var resp = await fetchWithTimeout(
-        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,tags,dont_display&dont_display=eq.false&transaction_type=in.(BUY,SELL)&order=transaction_date.asc',
+        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,quantity,price,gross_amount,net_amount,tags,dont_display&dont_display=eq.false&transaction_type=in.(BUY,SELL)&order=transaction_date.asc',
         {
             headers: wmsHeaders()
         }
@@ -241,6 +241,7 @@ async function rptLoadData() {
             id: txn.id,
             investorId: txn.investor_id,
             brokerId: txn.broker_id,
+            securityId: txn.security_id,
             symbol: txn.symbol,
             shortSymbol: txn.short_symbol,
             companyName: txn.company_name,
@@ -586,6 +587,35 @@ function rptToggleGroup(acName) {
     // Update chevron
     var chevron = document.getElementById('rpt-chevron-' + acName.replace(/\s+/g, '-'));
     if (chevron) chevron.textContent = hidden ? '▸' : '▾';
+    // Update header toggle icon
+    rptUpdateHeaderToggle();
+}
+
+function rptToggleAllGroups() {
+    // If any group is expanded, collapse all; otherwise expand all
+    var anyExpanded = false;
+    RPT_ASSET_CLASS_ORDER.forEach(function(ac) {
+        if (!rptCollapsedGroups[ac]) anyExpanded = true;
+    });
+    var collapse = anyExpanded;
+    RPT_ASSET_CLASS_ORDER.forEach(function(ac) {
+        rptCollapsedGroups[ac] = collapse;
+        var rows = document.querySelectorAll('tr[data-rpt-group="' + ac + '"]');
+        rows.forEach(function(row) { row.style.display = collapse ? 'none' : ''; });
+        var chevron = document.getElementById('rpt-chevron-' + ac.replace(/\s+/g, '-'));
+        if (chevron) chevron.textContent = collapse ? '▸' : '▾';
+    });
+    rptUpdateHeaderToggle();
+}
+
+function rptUpdateHeaderToggle() {
+    var icon = document.getElementById('rpt-header-toggle');
+    if (!icon) return;
+    var anyExpanded = false;
+    RPT_ASSET_CLASS_ORDER.forEach(function(ac) {
+        if (!rptCollapsedGroups[ac]) anyExpanded = true;
+    });
+    icon.textContent = anyExpanded ? '▾' : '▸';
 }
 
 // Apply filters to transaction array
@@ -960,14 +990,17 @@ function rptRenderPortfolio() {
         '<colgroup><col style="width:17%"><col style="width:9%"><col style="width:11%"><col style="width:10%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:9%"><col style="width:40px"></colgroup>';
 
     // Symbol header content (with search indicator if active)
-    var symbolHeaderText = 'Symbol ' + (rptSortColumn === 'symbol' ? sortArrow : '');
-    if (rptSymbolSearchText) {
-        symbolHeaderText += ' <span style="font-size:10px;color:#667eea;">🔍 ' + rptSymbolSearchText + '</span>';
-    }
+    var symbolSortArrow = rptSortColumn === 'symbol' ? sortArrow : '';
+    var symbolSearchBadge = rptSymbolSearchText
+        ? ' <span style="font-size:10px;color:#667eea;">🔍 ' + rptSymbolSearchText + '</span>'
+        : '';
 
     // Page-level header (single, not repeated per group) — DARK background
     html += '<thead><tr style="background:#e2e8f0; border-bottom:2px solid #cbd5e0;">' +
-        '<th id="rpt-th-symbol" class="sortable" onclick="rptSortPortfolio(\'symbol\')" style="width:17%; text-align:left; padding:6px 8px; font-size:11px; color:#4a5568; cursor:pointer;">' + symbolHeaderText + '</th>' +
+        '<th id="rpt-th-symbol" class="sortable" onclick="rptSortPortfolio(\'symbol\')" style="width:17%; text-align:left; padding:6px 8px; font-size:11px; color:#4a5568; cursor:pointer;">' +
+            '<span id="rpt-header-toggle" onclick="event.stopPropagation(); rptToggleAllGroups();" style="display:inline-block;width:16px;font-size:12px;color:#718096;cursor:pointer;" title="Collapse/Expand All">▾</span>' +
+            'Symbol ' + symbolSortArrow + symbolSearchBadge +
+        '</th>' +
         '<th class="text-right" style="width:9%; padding:6px 8px; font-size:11px; color:#4a5568;">Qty<br><span class="subheader">FIFO Cost</span></th>' +
         '<th class="text-right sortable" onclick="rptSortPortfolio(\'invested\')" style="width:11%; padding:6px 8px; font-size:11px; color:#4a5568;">Invested ' + (rptSortColumn === 'invested' ? sortArrow : '') + '</th>' +
         '<th class="text-right" style="width:10%; padding:6px 8px; font-size:11px; color:#4a5568;">Price</th>' +
@@ -1006,7 +1039,7 @@ function rptRenderPortfolio() {
 
         // Group header row (MProfit style: inline totals in same columns as data)
         html += '<tr class="rpt-group-header-row" onclick="rptToggleGroup(\'' + acName + '\')" style="background:#f7fafc; cursor:pointer; border-top:1px solid #e2e8f0;">' +
-            '<td colspan="2" style="padding:7px 8px; font-size:13px; font-weight:700; color:#2d3748;">' +
+            '<td colspan="2" style="padding:7px 8px 7px 30px; font-size:13px; font-weight:700; color:#2d3748;">' +
                 '<span id="' + chevronId + '" style="display:inline-block;width:16px;font-size:12px;color:#718096;">' + (isCollapsed ? '▸' : '▾') + '</span>' +
                 '<span style="display:inline-block;border:1px solid #a0aec0;border-radius:3px;padding:0 4px;font-size:10px;font-weight:700;color:#4a5568;margin-right:6px;vertical-align:middle;">' + badge + '</span>' +
                 acName + ' <span style="font-weight:500;font-size:11px;color:#718096;">(' + groupHoldings.length + ')</span>' +
@@ -1062,9 +1095,9 @@ function rptRenderPortfolio() {
                 : '<div class="number-main" style="color:#a0aec0;">-</div>';
 
             html += '<tr data-rpt-group="' + acName + '" class="rpt-data-row' + expClass + '"' + rowDisplay + '>' +
-                '<td class="symbol-cell" style="padding:6px 8px 6px 30px;">' +
-                    '<div class="symbol-main symbol-clickable" onclick="rptToggleSymbolDetail(\'' + h.symbol + '\',\'' + h.exchange + '\')">' + h.symbol + '</div>' +
-                    '<div class="symbol-sub">' + (h.companyName || '') + '</div>' +
+                '<td class="company-cell" style="padding:6px 8px 6px 46px;">' +
+                    '<div class="company-main" onclick="rptToggleSymbolDetail(\'' + h.symbol + '\',\'' + h.exchange + '\')" title="' + wmsEsc(h.companyName || h.shortSymbol) + '">' + wmsEsc(h.companyName || h.shortSymbol) + '</div>' +
+                    '<div class="company-sub">' + wmsEsc(h.shortSymbol || h.symbol) + '</div>' +
                 '</td>' +
                 '<td class="text-right" style="padding:6px 8px;">' +
                     qtyHtml +
@@ -1464,6 +1497,7 @@ if (typeof window !== 'undefined') {
     window.rptToggleSymbolDetail = rptToggleSymbolDetail;
     window.rptToggleZero = rptToggleZero;
     window.rptToggleGroup = rptToggleGroup;
+    window.rptToggleAllGroups = rptToggleAllGroups;
     window.rptOpenSymbolSearch = rptOpenSymbolSearch;
     window.rptCloseSymbolSearch = rptCloseSymbolSearch;
     window.rptShowTransactions = rptShowTransactions;

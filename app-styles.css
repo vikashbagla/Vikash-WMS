@@ -342,6 +342,11 @@ tr:hover:not(.total-row) { background:#f9fafb; }
 .symbol-clickable { cursor:pointer; color:#667eea; }
 .symbol-clickable:hover { text-decoration:underline; }
 .symbol-sub { font-size:10px; color:#718096; margin-top:1px; }
+/* Company name primary, symbol secondary (used in Trading + Reports portfolio) */
+.company-cell { max-width: 180px; overflow: hidden; }
+.company-cell .company-main { font-size: 12px; font-weight: 600; color: #2d3748; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.company-cell .company-main:hover { color: #667eea; }
+.company-cell .company-sub { font-size: 10px; color: #a0aec0; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .number-main { font-weight:500; font-size:12px; color:#2d3748; }
 .number-sub  { font-size:10px; color:#718096; margin-top:1px; }
 .positive { color:#059669 !important; }
