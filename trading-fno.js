@@ -3,7 +3,7 @@
 // Dependencies: trading.js globals (trTransactions, trSelectedInvestorIds,
 //   trSelectedTraderIds, trSelectedBrokerIds, trSelectedTagNames,
 //   trTagFilterLogic, trGetPrice, trGetLiveData, trInvName, trBrkCode,
-//   trGetExpiryLabel, wmsFormatContract, wmsEsc, formatAmount, formatPrice,
+//   _wmsTxnGetExpiryLabel, wmsFormatContract, wmsEsc, formatAmount, formatPrice,
 //   formatQuantity, formatDate, formatPercent, getAmountClass, showAlert,
 //   trBuildFilterWidget, trSelectedInvestorIds etc.)
 // ============================================================================
@@ -323,7 +323,7 @@ function trFnoCalcPositions() {
     var allExpiries = {};
     var monthIdx = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11 };
     trades.forEach(function(t) {
-        var expiry = trGetExpiryLabel(wmsFormatContract(t));
+        var expiry = _wmsTxnGetExpiryLabel(wmsFormatContract(t));
         allExpiries[expiry] = true;
     });
     var expiryKeys = Object.keys(allExpiries);
@@ -376,7 +376,7 @@ function trFnoCalcPositions() {
 
         Object.keys(groups).sort().forEach(function(key) {
             var g = groups[key];
-            var contractExpiry = trGetExpiryLabel(g.contractLabel);
+            var contractExpiry = _wmsTxnGetExpiryLabel(g.contractLabel);
 
             // Apply expiry filter (null = not yet initialized, treat as no filter)
             if (trFnoExpiryFilter && trFnoExpiryFilter.length > 0 && trFnoExpiryFilter.indexOf(contractExpiry) < 0) return;
