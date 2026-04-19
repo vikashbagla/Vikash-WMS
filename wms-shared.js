@@ -5462,12 +5462,18 @@ function wmsCalcMarginFIFO(transactions) {
         var secType = (t.security_type || '').toUpperCase();
         if (!/F&O|FNO|NFO/.test(product) && !/F&O|FNO|NFO/.test(secType)) return;
 
-        var contractKey = (t.symbol || t.short_symbol || '') + '|' + (t.expiry || '');
+        // Strip exchange prefix (NSE:, BSE:, etc.) so trades from different
+        // import sources (Fyers tradebook with prefix, CN/Excel without) match
+        // the same contract bucket. Mirrors A.2.13 / E.15.5b for the ledger
+        // futures FIFO engine.
+        var cleanSym = (t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
+        var contractKey = cleanSym + '|' + (t.expiry || '');
         var qty = parseFloat(t.quantity) || 0;
         var isShort = qty < 0; // negative qty = short position
 
-        // Detect option contracts (CE/PE suffix)
-        var sym = t.symbol || '';
+        // Detect option contracts (CE/PE suffix) — use cleaned symbol so the
+        // regex works regardless of import source.
+        var sym = cleanSym;
         var isOption = /(?:CE|PE)$/i.test(sym);
 
         // Option BUY that opens a new long position: no margin needed (buyer pays
