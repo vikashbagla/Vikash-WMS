@@ -5357,6 +5357,110 @@ function wmsCalcInterestWeeklyFriday(ledger, terms, fromStr, toStr, marginEvents
 }
 
 /**
+ * Alternative interest engine — simple daily accrual, posted weekly on Saturday.
+ *
+ * Drop-in alternative to wmsCalcInterestWeeklyFriday. Same signature, same
+ * return shape. The only difference is HOW the week's interest is calculated:
+ *
+ *   Weekly method: base_fri × rate/100 × (1/52)
+ *   Daily method:  Σ (base_d × rate/100 × (1/365))  for d in Sat..Fri window
+ *
+ * Weekly method uses ONLY Friday EOD — it over-charges when balances rose
+ * late in the week and under-charges when they dropped mid-week.
+ * Daily method reflects actual day-by-day exposure, so it is mechanically
+ * fairer when intra-week movements are material (mid-week F&O covers,
+ * large cash inflows on a Tuesday, etc.).
+ *
+ * Both methods post the accumulated week's interest on Saturday (Friday + 1).
+ * Posting cadence and downstream ledger behaviour are identical — the only
+ * change is the arithmetic inside the single weekly entry.
+ *
+ * NOT wired into any UI yet. Keep as dormant reference implementation until
+ * the Statements module exposes a user-selectable interest method. See
+ * WMS-CONTEXT.md TODO ("Daily-accrual interest option for Statements") and
+ * WMS-LESSONS.md E.15.6a.
+ *
+ * @param {Array}  ledger       - sorted output of wmsBuildLedger
+ * @param {object} terms        - {rate, frequency, compound}
+ * @param {string} fromStr      - YYYY-MM-DD (inclusive)
+ * @param {string} toStr        - YYYY-MM-DD (inclusive)
+ * @param {Array}  marginEvents - optional; output of wmsCalcMarginFIFO
+ * @returns {Array} of {period, closingBalance, marginBalance, baseBalance,
+ *                     avgBase, days, rate, interest, postDate, fridayDate, method}
+ */
+function wmsCalcInterestDailyFriday(ledger, terms, fromStr, toStr, marginEvents) {
+    if (!terms || !terms.rate) return [];
+    var rate = terms.rate;
+    var results = [];
+
+    var from = new Date(fromStr);
+    var to = new Date(toStr);
+    var cur = new Date(from);
+
+    // Walk to first Friday >= fromStr (identical to weekly engine)
+    var dayOfWeek = cur.getDay(); // 0=Sun, 5=Fri
+    var daysToFri = (5 - dayOfWeek + 7) % 7;
+    if (daysToFri === 0 && cur.getTime() === from.getTime()) {
+        // Already on Friday
+    } else if (daysToFri === 0) {
+        daysToFri = 7;
+    }
+    cur.setDate(cur.getDate() + daysToFri);
+
+    while (cur <= to) {
+        var fridayStr = cur.toISOString().slice(0, 10);
+
+        // Walk the 7-day Sat..Fri window ending on this Friday
+        var weekInterest = 0;
+        var sumBase = 0;
+        for (var i = 6; i >= 0; i--) {
+            var d = new Date(cur);
+            d.setDate(d.getDate() - i);
+            var dStr = d.toISOString().slice(0, 10);
+            var closingBal_d = wmsCalcClosingBalance(ledger, dStr);
+            var marginAt_d = marginEvents ? wmsGetMarginRunningAt(marginEvents, dStr) : 0;
+            var base_d = Math.max(0, closingBal_d + marginAt_d);
+            sumBase += base_d;
+            weekInterest += base_d * (rate / 100) * (1 / 365);
+        }
+        weekInterest = wmsRoundMoney(weekInterest);
+
+        // For display consistency with the weekly engine, report Friday's EOD
+        // values alongside the daily-sum interest amount.
+        var closingBal = wmsCalcClosingBalance(ledger, fridayStr);
+        var marginAtFri = marginEvents ? wmsGetMarginRunningAt(marginEvents, fridayStr) : 0;
+        var base = closingBal + marginAtFri;
+
+        var postDate = new Date(cur);
+        postDate.setDate(postDate.getDate() + 1);
+        var postDateStr = postDate.toISOString().slice(0, 10);
+
+        var prevSat = new Date(cur);
+        prevSat.setDate(prevSat.getDate() - 6);
+        var periodLabel = prevSat.toLocaleDateString('en-IN', {day:'2-digit',month:'short'}) + ' to ' +
+                         cur.toLocaleDateString('en-IN', {day:'2-digit',month:'short'});
+
+        results.push({
+            period: periodLabel,
+            closingBalance: closingBal,              // Fri EOD (for display parity)
+            marginBalance: marginAtFri,              // Fri EOD margin
+            baseBalance: base,                       // Fri EOD base
+            avgBase: wmsRoundMoney(sumBase / 7),     // time-weighted avg across 7 days
+            days: 7,
+            rate: rate,
+            interest: weekInterest,                  // 7-day daily-sum result
+            postDate: postDateStr,
+            fridayDate: fridayStr,
+            method: 'daily_sum_friday_post'
+        });
+
+        cur.setDate(cur.getDate() + 7);
+    }
+
+    return results;
+}
+
+/**
  * Get running F&O margin as of a given date (inclusive).
  * Walks through margin events (output of wmsCalcMarginFIFO) in date order
  * and returns the last runningMargin value at/before dateStr.
