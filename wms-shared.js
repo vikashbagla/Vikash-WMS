@@ -576,6 +576,271 @@ function wmsRoundMoney(v) {
 }
 
 // ============================================================================
+// FORMULA INPUT — Excel-style "=" calculator for any text/number input
+// ============================================================================
+// USAGE
+//   Call wmsInitFormulaInput() once at app startup (from DOMContentLoaded).
+//   Every <input> in the app then accepts formulas when value starts with "=".
+//   Operators: + − × ÷  ( )  decimal  postfix %  (Core + percent).
+//   BODMAS / standard precedence honoured.
+//
+// TRIGGER
+//   User types "=" as first character. For type=number inputs (which reject
+//   "=" natively), we intercept the keydown and switch input type to "text"
+//   transparently while the user types the formula. On Enter or blur:
+//     * valid formula → replace value with the numeric result, fire input
+//       + change events so downstream recalculations run, restore original
+//       input type
+//     * invalid on Enter → flash red border + title tooltip, keep formula
+//       visible so user can fix
+//     * invalid on blur → silent revert to the value held before formula
+//       mode (they left the field, no point pestering)
+//   Escape while in formula mode → revert to pre-formula value.
+//
+// SAFETY
+//   Parser is recursive-descent — NEVER uses eval(). Accepts only digits,
+//   decimal point, +, −, *, /, (, ), %, and whitespace. Anything else is
+//   rejected with "Unexpected character".
+//
+// @param {string} expr  Expression string (with or without leading =)
+// @returns {{ok: boolean, value?: number, error?: string}}
+// ============================================================================
+function wmsEvalFormula(expr) {
+    if (expr === null || expr === undefined) return { ok: false, error: 'Empty formula' };
+    var s = String(expr).trim();
+    if (s.charAt(0) === '=') s = s.slice(1).trim();
+    if (!s) return { ok: false, error: 'Empty formula' };
+
+    // --- Tokenise ---
+    var tokens = [];
+    var i = 0;
+    while (i < s.length) {
+        var c = s.charAt(i);
+        if (c === ' ' || c === '\t') { i++; continue; }
+        if ((c >= '0' && c <= '9') || c === '.') {
+            var j = i, dotSeen = (c === '.');
+            j++;
+            while (j < s.length) {
+                var cj = s.charAt(j);
+                if (cj >= '0' && cj <= '9') { j++; continue; }
+                if (cj === '.' && !dotSeen) { dotSeen = true; j++; continue; }
+                break;
+            }
+            var num = parseFloat(s.slice(i, j));
+            if (isNaN(num)) return { ok: false, error: 'Invalid number: ' + s.slice(i, j) };
+            tokens.push({ t: 'num', v: num });
+            i = j;
+        } else if ('+-*/()%'.indexOf(c) >= 0) {
+            tokens.push({ t: c });
+            i++;
+        } else {
+            return { ok: false, error: 'Unexpected character: ' + c };
+        }
+    }
+    if (tokens.length === 0) return { ok: false, error: 'Empty formula' };
+
+    // --- Recursive-descent parser ---
+    var pos = 0;
+    function peek() { return tokens[pos]; }
+    function consume() { return tokens[pos++]; }
+
+    function parseExpression() {        // + -
+        var left = parseTerm();
+        if (left.error) return left;
+        while (peek() && (peek().t === '+' || peek().t === '-')) {
+            var op = consume().t;
+            var right = parseTerm();
+            if (right.error) return right;
+            left = { value: (op === '+') ? left.value + right.value : left.value - right.value };
+        }
+        return left;
+    }
+    function parseTerm() {              // * /
+        var left = parseFactor();
+        if (left.error) return left;
+        while (peek() && (peek().t === '*' || peek().t === '/')) {
+            var op = consume().t;
+            var right = parseFactor();
+            if (right.error) return right;
+            if (op === '*') left = { value: left.value * right.value };
+            else {
+                if (right.value === 0) return { error: 'Division by zero' };
+                left = { value: left.value / right.value };
+            }
+        }
+        return left;
+    }
+    function parseFactor() {            // postfix % (applies to whole unary above it)
+        var u = parseUnary();
+        if (u.error) return u;
+        while (peek() && peek().t === '%') { consume(); u = { value: u.value / 100 }; }
+        return u;
+    }
+    function parseUnary() {             // prefix - / +
+        if (peek() && peek().t === '-') { consume(); var n = parseUnary(); if (n.error) return n; return { value: -n.value }; }
+        if (peek() && peek().t === '+') { consume(); return parseUnary(); }
+        return parsePrimary();
+    }
+    function parsePrimary() {           // number or ( expression )
+        var tk = peek();
+        if (!tk) return { error: 'Unexpected end of formula' };
+        if (tk.t === 'num') { consume(); return { value: tk.v }; }
+        if (tk.t === '(') {
+            consume();
+            var e = parseExpression();
+            if (e.error) return e;
+            if (!peek() || peek().t !== ')') return { error: 'Missing closing parenthesis' };
+            consume();
+            return e;
+        }
+        return { error: 'Unexpected token: ' + tk.t };
+    }
+
+    var result = parseExpression();
+    if (result.error) return { ok: false, error: result.error };
+    if (pos !== tokens.length) return { ok: false, error: 'Trailing input after formula' };
+    if (!isFinite(result.value) || isNaN(result.value)) return { ok: false, error: 'Result is not a finite number' };
+    return { ok: true, value: result.value };
+}
+
+// --- Internal state trackers (WeakMaps so no DOM memory leak) ---
+var _wmsFormulaPrev = null;   // input → value before formula mode
+var _wmsFormulaType = null;   // input → original input.type
+
+function _wmsFormulaInit() {
+    if (_wmsFormulaPrev) return;
+    _wmsFormulaPrev = new WeakMap();
+    _wmsFormulaType = new WeakMap();
+}
+
+function _wmsFormulaEnter(el) {
+    _wmsFormulaInit();
+    if (_wmsFormulaPrev.has(el)) return; // already in formula mode
+    _wmsFormulaPrev.set(el, el.value);
+    var t = (el.type || '').toLowerCase();
+    if (t === 'number') {
+        _wmsFormulaType.set(el, 'number');
+        try { el.type = 'text'; } catch (e) { /* some browsers disallow type change — ignore */ }
+    }
+}
+
+function _wmsFormulaRestoreType(el) {
+    if (_wmsFormulaType && _wmsFormulaType.has(el)) {
+        try { el.type = _wmsFormulaType.get(el); } catch (e) {}
+        _wmsFormulaType.delete(el);
+    }
+}
+
+function _wmsFormulaFlashError(el, msg) {
+    var origBorder = el.style.borderColor;
+    var origTitle = el.title;
+    el.style.borderColor = '#e53e3e';
+    el.title = 'Formula error: ' + msg;
+    setTimeout(function() {
+        el.style.borderColor = origBorder;
+        el.title = origTitle;
+    }, 1500);
+}
+
+function _wmsFormulaRevert(el) {
+    if (!_wmsFormulaPrev || !_wmsFormulaPrev.has(el)) return;
+    el.value = _wmsFormulaPrev.get(el);
+    _wmsFormulaPrev.delete(el);
+    _wmsFormulaRestoreType(el);
+}
+
+function _wmsFormulaFinalize(el, loud) {
+    if (!_wmsFormulaPrev || !_wmsFormulaPrev.has(el)) return;
+    var val = el.value;
+    if (!val || val.charAt(0) !== '=') {
+        // User deleted the leading = — exit formula mode silently
+        _wmsFormulaPrev.delete(el);
+        _wmsFormulaRestoreType(el);
+        return;
+    }
+    var r = wmsEvalFormula(val);
+    if (r.ok) {
+        // Write result. If the original field was type=number or has step constraint,
+        // write a plain numeric string. Keep 2dp for non-integer results to match
+        // typical money fields; strip trailing zeros for clean display.
+        var out = (Math.abs(r.value - Math.round(r.value)) < 1e-9)
+            ? String(Math.round(r.value))
+            : String(Math.round(r.value * 100) / 100);
+        el.value = out;
+        _wmsFormulaPrev.delete(el);
+        _wmsFormulaRestoreType(el);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+        if (loud) {
+            _wmsFormulaFlashError(el, r.error);
+            // Keep formula in field so user can correct
+        } else {
+            _wmsFormulaRevert(el);
+        }
+    }
+}
+
+/**
+ * Install the global formula-input handlers. Call once at app startup.
+ * Idempotent — safe to call multiple times.
+ */
+function wmsInitFormulaInput() {
+    if (window._wmsFormulaInstalled) return;
+    window._wmsFormulaInstalled = true;
+    _wmsFormulaInit();
+
+    document.addEventListener('keydown', function(e) {
+        var el = e.target;
+        if (!el || el.tagName !== 'INPUT') return;
+        var t = (el.type || '').toLowerCase();
+        // Only apply to textual / numeric inputs; skip checkbox/radio/file/etc.
+        if (t && t !== 'number' && t !== 'text' && t !== 'search' && t !== 'tel') return;
+
+        // Enter formula mode when "=" is typed and the field is empty or
+        // fully selected (so the user clearly intends to start fresh).
+        if (e.key === '=' && !_wmsFormulaPrev.has(el)) {
+            var isEmpty = !el.value;
+            var fullySelected = false;
+            try {
+                fullySelected = el.value && el.selectionStart === 0 && el.selectionEnd === el.value.length;
+            } catch (_) { /* selectionStart may throw on some number inputs — treat as not selected */ }
+            if (!isEmpty && !fullySelected) {
+                // Mid-string "=" — not a formula, ignore (text inputs will insert it; number inputs will reject it)
+                return;
+            }
+            _wmsFormulaEnter(el);
+            if (t === 'number') {
+                // Switched to text; but the "=" keystroke arrived BEFORE the type switch,
+                // so the browser may have already rejected it. Write it ourselves.
+                e.preventDefault();
+                el.value = '=';
+                // Move caret to end
+                try { el.setSelectionRange(1, 1); } catch (_) {}
+            }
+            return;
+        }
+
+        if (_wmsFormulaPrev.has(el)) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                _wmsFormulaFinalize(el, true);  // loud: show error if invalid
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                _wmsFormulaRevert(el);
+            }
+        }
+    }, false);
+
+    // blur doesn't bubble; listen in capture phase on document
+    document.addEventListener('blur', function(e) {
+        var el = e.target;
+        if (!el || el.tagName !== 'INPUT') return;
+        _wmsFormulaFinalize(el, false);  // quiet: silent revert if invalid
+    }, true);
+}
+
+// ============================================================================
 // INCOME TYPE CHECK (Rule G.3.1)
 // ============================================================================
 

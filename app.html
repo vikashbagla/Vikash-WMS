@@ -513,6 +513,11 @@
 
     // Init
     document.addEventListener('DOMContentLoaded', async () => {
+        // Install Excel-style "=formula" calculator on all text/number inputs.
+        // Idempotent; safe zero-cost addition — only activates when the user
+        // types "=" as the first character. See wms-shared.js wmsEvalFormula.
+        if (typeof wmsInitFormulaInput === 'function') wmsInitFormulaInput();
+
         // Show dev banner if running in dev environment
         if (window.WMS_ENV === 'dev') {
             var devBanner = document.getElementById('devBanner');
