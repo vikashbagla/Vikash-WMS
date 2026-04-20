@@ -48,11 +48,16 @@ CN_PARSERS.fyers = function(pages, numPages) {
         allText.push(sorted);
     });
 
-    // Extract trade date and CN number from first page
+    // Extract trade date and CN number from first page.
+    // NOTE: some Fyers PDFs (e.g. REVISED/SUPPLEMENTARY notes) extract text as
+    // one character per item, so a naive .join(' ') produces "1 5 / 0 4 / 2 0 26"
+    // and the date regex fails. CN_UTILS.buildLines is gap-aware and groups
+    // adjacent character items into proper words based on x-coordinate width.
     var tradeDate = null;
     var cnNumber = null;
 
-    var firstPageText = allText[0].map(function(i) { return i.text; }).join(' ');
+    var firstPageLines = CN_UTILS.buildLines(allText[0]);
+    var firstPageText = firstPageLines.map(function(l) { return l.text; }).join('\n');
 
     // Validate this is a Fyers contract note
     if (!/fyers/i.test(firstPageText)) {
@@ -102,6 +107,23 @@ CN_PARSERS.fyers = function(pages, numPages) {
             // Parse trade row: OrderNo, OrderTime, TradeNo, TradeTime, Security, B/S, Qty, Price, [ForeignPrice], NetRate, NetAmount, [Remark]
             var tradeMatch = parseFyersTradeRow(lines[li].items, currentSegment);
             if (tradeMatch) {
+                // If the description came back empty/short, the PDF likely wrapped the
+                // security description onto adjacent Y-lines (common for long names like
+                // "JAYNECOIND-JAYASWAL NECO INDUSTRIES LTD."). Recover by scanning lines
+                // within ±15 pixels of the trade row's Y for items in the description
+                // column (between the end of TradeTime and the start of B/S).
+                if (!tradeMatch.underlying || tradeMatch.description.length < 3) {
+                    var wrapped = _fyersRecoverWrappedDescription(lines, li);
+                    if (wrapped) {
+                        tradeMatch.description = wrapped;
+                        var info = parseFyersSecurityDescription(wrapped, currentSegment);
+                        tradeMatch.underlying = info.underlying;
+                        tradeMatch.instrumentType = info.instrumentType;
+                        tradeMatch.expiry = info.expiry;
+                        tradeMatch.strikePrice = info.strikePrice;
+                        tradeMatch.optionType = info.optionType;
+                    }
+                }
                 trades.push(tradeMatch);
             }
         }
@@ -171,6 +193,68 @@ function parseFyersTradeRow(items, segment) {
         strikePrice: symbolInfo.strikePrice,
         optionType: symbolInfo.optionType
     };
+}
+
+// Some Fyers CNs wrap a long security description onto two or three visual
+// lines (different Y) while the actual trade row (order no, qty, price, etc.)
+// sits on one Y in the middle. Recover the full description by gathering items
+// from lines within ±15 pixels of the trade row that fall inside the
+// description column — the X range between the end of TradeTime and the start
+// of the B/S marker on the trade row.
+function _fyersRecoverWrappedDescription(lines, tradeLineIdx) {
+    var tradeLine = lines[tradeLineIdx];
+    if (!tradeLine || !tradeLine.items) return null;
+    var items = tradeLine.items.slice().sort(function(a, b) { return a.x - b.x; });
+    // Find TradeTime index (4th non-empty text item — after OrderNo, OrderTime, TradeNo)
+    var nonEmpty = items.filter(function(it) { return it.text.trim().length > 0; });
+    if (nonEmpty.length < 5) return null;
+    var tradeTimeItem = nonEmpty[3];
+    var descColLeft = tradeTimeItem.x + (tradeTimeItem.width || 0) + 2;
+    // Find the B/S marker (first standalone 'B' or 'S' after tradeTime)
+    var bsItem = null;
+    for (var i = 4; i < nonEmpty.length; i++) {
+        var t = nonEmpty[i].text.trim();
+        if (t === 'B' || t === 'S') { bsItem = nonEmpty[i]; break; }
+    }
+    if (!bsItem) return null;
+    var descColRight = bsItem.x - 2;
+    var tradeY = tradeLine.y;
+
+    // Scan lines within ±15 pixels of tradeY, collect items in the desc column
+    var collected = [];
+    for (var j = 0; j < lines.length; j++) {
+        var ln = lines[j];
+        if (Math.abs(ln.y - tradeY) > 15) continue;
+        ln.items.forEach(function(it) {
+            if (!it.text || !it.text.trim()) return;
+            if (it.x >= descColLeft && it.x <= descColRight) collected.push(it);
+        });
+    }
+    if (collected.length === 0) return null;
+
+    // Sort by Y desc (top-to-bottom visually), then X asc within the same Y band
+    collected.sort(function(a, b) {
+        var dy = b.y - a.y;
+        if (Math.abs(dy) > 3) return dy;
+        return a.x - b.x;
+    });
+
+    // Re-assemble using gap-aware join (same logic as CN_UTILS.buildLines)
+    var text = '';
+    var lastY = null, lastEnd = null;
+    for (var k = 0; k < collected.length; k++) {
+        var it = collected[k];
+        if (lastY !== null && Math.abs(it.y - lastY) > 3) {
+            text += ' '; // line wrap → single space
+            lastEnd = null;
+        } else if (lastEnd !== null) {
+            if ((it.x - lastEnd) > 2) text += ' ';
+        }
+        text += it.text;
+        lastY = it.y;
+        lastEnd = it.x + (it.width || 0);
+    }
+    return text.trim();
 }
 
 function parseFyersSecurityDescription(desc, segment) {
