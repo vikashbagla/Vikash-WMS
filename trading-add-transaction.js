@@ -1227,28 +1227,15 @@ function selectAddTxnSecurity(rowId, sec) {
 // ============================================================================
 
 function atAutoPopulateTags(rowId, row) {
-    // Look up tags from existing transactions matching investor + trader + symbol
+    // Look up tags from existing transactions matching investor + trader + symbol.
+    // Uses shared wmsFindMatchingTags so CN Import and Fyers Import inherit
+    // with identical matching semantics (strips exchange prefix, ignores 'blank',
+    // dedupes case-insensitive). See wms-shared.js.
     if (!atSelectedInvestor || !row.security_id) return;
     var investorId = atSelectedInvestor.id;
     var traderId = row.trader_id || investorId;
-    var symbol = row.symbol;
-
-    // Get transactions from trading module (trTransactions is the in-memory cache)
     var txns = (typeof trTransactions !== 'undefined') ? trTransactions : [];
-    var matchingTags = {};
-    for (var i = 0; i < txns.length; i++) {
-        var t = txns[i];
-        if (t.investor_id === investorId && (t.trader_id || t.investor_id) === traderId && (t.symbol || '').replace(/^[A-Z]+:/, '') === (symbol || '').replace(/^[A-Z]+:/, '')) {
-            if (Array.isArray(t.tags)) {
-                t.tags.forEach(function(tag) {
-                    var trimmed = tag.trim().toLowerCase();
-                    if (trimmed) matchingTags[trimmed] = tag.trim();
-                });
-            }
-        }
-    }
-
-    var tagList = Object.values(matchingTags);
+    var tagList = wmsFindMatchingTags(txns, investorId, traderId, row.symbol);
     if (tagList.length > 0 && row.tags.length === 0) {
         // Push into existing array (don't replace — wmsTagInput holds a reference to it)
         tagList.forEach(function(t) { row.tags.push(t); });

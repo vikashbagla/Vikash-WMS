@@ -550,6 +550,11 @@ async function parseCnPdf(file, password) {
         statusEl.textContent = 'Checking for duplicates...';
         await checkDuplicates(processed, parseResult.tradeDate);
 
+        // Auto-populate tags on NEW rows from prior transactions (same logic
+        // as Add Transaction modal — wmsFindMatchingTags by investor + trader
+        // + bare symbol). Silent on failure.
+        await _autoPopulateTagsForNewRows(cnNewRows, cnSelectedAccount && cnSelectedAccount.investor_id);
+
         // Show preview
         displayCnPreview(parseResult);
         tiLoading(false);
@@ -1253,6 +1258,65 @@ function allocateCharges(rows, segCharges) {
         window._cnChargeVerification.reconciled = false;
         window._cnChargeVerification.chargeGap = 0;
     }
+}
+
+// ============================================================================
+// Tag Inheritance for NEW Rows — same behaviour as the Add Transaction modal
+// ============================================================================
+// For each NEW row (no existing DB match), look up prior transactions for the
+// same investor + trader + bare-symbol combo and inherit their tags. Matching
+// logic is shared with Add Transaction via `wmsFindMatchingTags()` in
+// wms-shared.js so both entry paths behave identically.
+//
+// Data source:
+//   • Prefer `trTransactions` (in-memory cache loaded by the Trading module) —
+//     zero round-trips, same behaviour as Add Transaction.
+//   • Fall back to a one-shot DB fetch scoped to this investor + NEW-row
+//     securities when trTransactions isn't loaded yet (common when the user
+//     opens Import Transactions without visiting Trading first).
+//
+// Safe to call from both CN import and Fyers import. Errors swallowed silently
+// so a network hiccup can't block the preview.
+async function _autoPopulateTagsForNewRows(newRows, investorId) {
+    if (!newRows || newRows.length === 0 || !investorId) return;
+
+    var txns = (typeof trTransactions !== 'undefined' && Array.isArray(trTransactions) && trTransactions.length > 0)
+        ? trTransactions
+        : null;
+
+    // If the Trading module's transaction cache isn't populated, pull the
+    // minimum needed — transactions for this investor touching the securities
+    // in the NEW rows — so we can inherit tags the same way.
+    if (!txns) {
+        var secIds = [];
+        newRows.forEach(function(r) {
+            if (r.security_id && secIds.indexOf(r.security_id) === -1) secIds.push(r.security_id);
+        });
+        if (secIds.length === 0) return;
+        try {
+            var url = SUPABASE_URL + '/rest/v1/transactions?' +
+                'investor_id=eq.' + encodeURIComponent(investorId) +
+                '&security_id=in.(' + secIds.map(encodeURIComponent).join(',') + ')' +
+                '&select=investor_id,trader_id,symbol,tags';
+            var resp = await fetch(url, { headers: wmsHeaders() });
+            if (!resp.ok) return;
+            txns = await resp.json();
+        } catch (e) {
+            console.warn('Tag auto-populate fallback fetch failed (non-blocking):', e.message);
+            return;
+        }
+    }
+
+    newRows.forEach(function(r) {
+        var hasReal = r.tags && r.tags.filter(function(t) { return t && t !== 'blank'; }).length > 0;
+        if (hasReal) return;
+        var traderId = r.trader_id || investorId;
+        var tags = wmsFindMatchingTags(txns, investorId, traderId, r.symbol);
+        if (tags.length > 0) {
+            r.tags = tags.slice();
+            r._tagsInheritedFrom = 'prior_txn_same_symbol';
+        }
+    });
 }
 
 // ============================================================================
@@ -3700,6 +3764,11 @@ window.fyFetchTrades = async function() {
 
         // Process, group, calculate charges, check duplicates
         await fyProcessTrades(tradeBook);
+
+        // Auto-populate tags on NEW rows from prior transactions (same logic
+        // as Add Transaction modal — wmsFindMatchingTags by investor + trader
+        // + bare symbol).
+        await _autoPopulateTagsForNewRows(fyNewRows, fyInvestorId);
 
         tiLoading(false);
         fetchBtn.disabled = false;

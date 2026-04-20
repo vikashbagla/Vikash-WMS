@@ -576,6 +576,49 @@ function wmsRoundMoney(v) {
 }
 
 // ============================================================================
+// TAG INHERITANCE (shared across Add Transaction + CN Import + Fyers Import)
+// ============================================================================
+// Given a pool of transactions, find all tags that have previously been used
+// for the same (investor, trader, symbol) combination. Deduped case-insensitive
+// (keeps original casing of the first occurrence). Filters the 'blank' sentinel
+// (A.2.1) so it's never returned as an actual tag.
+//
+// Symbol comparison strips exchange prefix (NSE:, BSE:, ...) per A.2.13 so a
+// Fyers-imported `NSE:INDHOTEL26MARFUT` matches a CN-imported bare
+// `INDHOTEL26MARFUT`. Trader comparison uses `trader_id || investor_id` so
+// legacy rows without an explicit trader still match correctly (Rule A.2.2).
+//
+// @param {Array}  transactions — pool to search (typically trTransactions)
+// @param {string} investorId
+// @param {string} traderId    — falls back to investorId if null/undefined
+// @param {string} symbol
+// @returns {string[]} — list of distinct tags, original casing preserved
+function wmsFindMatchingTags(transactions, investorId, traderId, symbol) {
+    if (!Array.isArray(transactions) || !investorId || !symbol) return [];
+    var bareSymbol = (symbol || '').replace(/^[A-Z]+:/, '');
+    var effTrader = traderId || investorId;
+    var collected = {}; // lowercased → original casing
+    for (var i = 0; i < transactions.length; i++) {
+        var t = transactions[i];
+        if (t.investor_id !== investorId) continue;
+        if ((t.trader_id || t.investor_id) !== effTrader) continue;
+        if ((t.symbol || '').replace(/^[A-Z]+:/, '') !== bareSymbol) continue;
+        if (!Array.isArray(t.tags)) continue;
+        for (var k = 0; k < t.tags.length; k++) {
+            var tag = t.tags[k];
+            if (!tag) continue;
+            var trimmed = String(tag).trim();
+            if (!trimmed || trimmed.toLowerCase() === 'blank') continue;
+            var key = trimmed.toLowerCase();
+            if (!(key in collected)) collected[key] = trimmed;
+        }
+    }
+    var out = [];
+    for (var key2 in collected) { if (Object.prototype.hasOwnProperty.call(collected, key2)) out.push(collected[key2]); }
+    return out;
+}
+
+// ============================================================================
 // FORMULA INPUT — Excel-style "=" calculator for any text/number input
 // ============================================================================
 // USAGE
