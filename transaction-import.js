@@ -640,6 +640,90 @@ window.CN_UTILS = {
         var matches = text.match(/[\d,]+\.\d{2}/g);
         if (!matches) return [];
         return matches.map(function(m) { return parseFloat(m.replace(/,/g, '')); });
+    },
+
+    // ========================================================================
+    // STRUCTURAL PARSING PRIMITIVES
+    // ========================================================================
+    // Broker-agnostic geometric helpers for parsing tabular CN layouts. Used
+    // by cn-parser-fyers.js; cn-parser-suvridhi.js and future parsers can reuse
+    // the same primitives with their own column coordinates / regex patterns.
+    // Separating column-layout semantics (broker-specific) from item-collection
+    // geometry (universal) lets each parser stay small while still being robust
+    // to layout quirks: wrapped descriptions, tight row spacing, char-by-char
+    // PDF extraction, revised / supplementary notes.
+
+    // Scan `lines` and return every line whose text matches `rowIdRegex`,
+    // annotated with its y-coordinate and index. Sorted by visual reading
+    // order (Y descending, i.e. top of page to bottom).
+    findTradeRows: function(lines, rowIdRegex) {
+        var rows = [];
+        for (var i = 0; i < lines.length; i++) {
+            if (rowIdRegex.test(lines[i].text)) {
+                rows.push({ idx: i, y: lines[i].y, line: lines[i] });
+            }
+        }
+        return rows.sort(function(a, b) { return b.y - a.y; });
+    },
+
+    // For a trade row at currentY, compute the Y-range (yLow, yHigh) within
+    // which items "belong" to this row's wrapped content. Bounded to HALFWAY
+    // to each neighbour so scans can never bleed into an adjacent row.
+    // Falls back to currentY ± defaultHalfWin when no neighbour exists on
+    // that side (e.g. first or last trade row on the page).
+    rowYBand: function(currentY, prevY, nextY, defaultHalfWin) {
+        if (defaultHalfWin == null) defaultHalfWin = 15;
+        var yHigh = (prevY != null) ? (prevY + currentY) / 2 : currentY + defaultHalfWin;
+        var yLow  = (nextY != null) ? (nextY + currentY) / 2 : currentY - defaultHalfWin;
+        return { yLow: yLow, yHigh: yHigh };
+    },
+
+    // Collect every text item from `lines` that falls inside the geometric
+    // box (xLeft ≤ item.x ≤ xRight) AND (yLow < line.y < yHigh). Items are
+    // returned sorted by Y descending (top-to-bottom), then X ascending
+    // within the same y-band (3px tolerance).
+    collectItemsInBox: function(lines, xLeft, xRight, yLow, yHigh) {
+        var out = [];
+        for (var i = 0; i < lines.length; i++) {
+            var ln = lines[i];
+            if (ln.y <= yLow || ln.y >= yHigh) continue;
+            for (var j = 0; j < ln.items.length; j++) {
+                var it = ln.items[j];
+                if (!it.text || !it.text.trim()) continue;
+                if (it.x >= xLeft && it.x <= xRight) out.push(it);
+            }
+        }
+        out.sort(function(a, b) {
+            var dy = b.y - a.y;
+            if (Math.abs(dy) > 3) return dy;
+            return a.x - b.x;
+        });
+        return out;
+    },
+
+    // Given an array of text items already in visual reading order, re-assemble
+    // them into a single string using gap-aware joining:
+    //   • items on different Y-bands (|dy| > 3) are joined with a single space
+    //   • items on the same Y-band are joined with a space only if x-gap > 2px
+    //   • items touching or overlapping are concatenated directly
+    // This matches the smart-join logic in buildLines but operates on any
+    // item collection (not just one line).
+    joinItemsGapAware: function(items) {
+        var text = '';
+        var lastY = null, lastEnd = null;
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            if (lastY !== null && Math.abs(it.y - lastY) > 3) {
+                text += ' ';
+                lastEnd = null;
+            } else if (lastEnd !== null && (it.x - lastEnd) > 2) {
+                text += ' ';
+            }
+            text += it.text;
+            lastY = it.y;
+            lastEnd = it.x + (it.width || 0);
+        }
+        return text.trim();
     }
 };
 

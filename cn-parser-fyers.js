@@ -305,89 +305,53 @@ function _fyersBuildColumnMap(lines) {
     };
 }
 
-// Some Fyers CNs wrap a long security description onto two or three visual
-// lines (different Y) while the actual trade row (order no, qty, price, etc.)
-// sits on one Y in the middle. Recover the full description by gathering items
-// in the description column (X range bounded by TradeTime end and B/S start)
-// within a Y band bounded by the nearest trade-row neighbours above and below.
-// This prevents bleeding into an adjacent trade row's wrapped description when
-// trade rows are packed tight (e.g. 12 px apart with descriptions wrapping to
-// ±6 px from each row).
+// Fyers trade-row identifier — line text starts with a 10+ digit order number.
+// Exposed as a constant so CN_UTILS primitives can use it directly.
+var FYERS_TRADE_ROW_ID = /^\d{10,}/;
+
+// Recover the security description for a Fyers trade row, handling the case
+// where the PDF wraps long descriptions onto adjacent Y-lines (common in
+// revised/supplementary notes and tight-packed multi-trade notes). Uses
+// broker-agnostic CN_UTILS primitives:
+//   • findTradeRows — locate all trade rows on the page
+//   • rowYBand      — bound this row's scan to halfway to each neighbour
+//   • collectItemsInBox — gather items in the description column × Y band
+//   • joinItemsGapAware — reassemble them as readable text
+// The broker-specific bit is just the column-identification step at the top.
 function _fyersRecoverWrappedDescription(lines, tradeLineIdx) {
     var tradeLine = lines[tradeLineIdx];
     if (!tradeLine || !tradeLine.items) return null;
-    var items = tradeLine.items.slice().sort(function(a, b) { return a.x - b.x; });
-    // Find TradeTime index (4th non-empty text item — after OrderNo, OrderTime, TradeNo)
-    var nonEmpty = items.filter(function(it) { return it.text.trim().length > 0; });
+    var nonEmpty = tradeLine.items.slice()
+        .filter(function(it) { return it.text && it.text.trim().length > 0; })
+        .sort(function(a, b) { return a.x - b.x; });
     if (nonEmpty.length < 5) return null;
-    var tradeTimeItem = nonEmpty[3];
-    var descColLeft = tradeTimeItem.x + (tradeTimeItem.width || 0) + 2;
-    // Find the B/S marker (first standalone 'B' or 'S' after tradeTime)
+
+    // Column X-boundaries for THIS row: the description column sits between
+    // the right edge of TradeTime (4th item) and the left edge of B/S marker.
+    var tradeTime = nonEmpty[3];
     var bsItem = null;
     for (var i = 4; i < nonEmpty.length; i++) {
         var t = nonEmpty[i].text.trim();
         if (t === 'B' || t === 'S') { bsItem = nonEmpty[i]; break; }
     }
     if (!bsItem) return null;
-    var descColRight = bsItem.x - 2;
-    var tradeY = tradeLine.y;
+    var descLeft  = tradeTime.x + (tradeTime.width || 0) + 2;
+    var descRight = bsItem.x - 2;
 
-    // Compute neighbour-aware Y window. A trade row is detected by its line
-    // text starting with a 10+ digit order number — same signature used by
-    // parseFyersTradeRow. Walk all lines, collect trade-row Y coordinates,
-    // and bound the scan to HALFWAY to each neighbour (so scans at row N
-    // can never bleed into row N±1's description area).
-    var tradeYs = [];
-    for (var tj = 0; tj < lines.length; tj++) {
-        if (/^\d{10,}/.test(lines[tj].text)) tradeYs.push(lines[tj].y);
+    // Neighbour-aware Y band: find this row's trade-row neighbours and bound
+    // the scan to halfway to each so we never bleed into adjacent rows.
+    var allRows = CN_UTILS.findTradeRows(lines, FYERS_TRADE_ROW_ID);
+    var prevY = null, nextY = null;
+    for (var r = 0; r < allRows.length; r++) {
+        var y = allRows[r].y;
+        if (y > tradeLine.y && (prevY === null || y < prevY)) prevY = y;
+        if (y < tradeLine.y && (nextY === null || y > nextY)) nextY = y;
     }
-    var prevY = null; // higher Y (above in reading order)
-    var nextY = null; // lower Y (below in reading order)
-    tradeYs.forEach(function(y) {
-        if (y > tradeY && (prevY === null || y < prevY)) prevY = y;
-        if (y < tradeY && (nextY === null || y > nextY)) nextY = y;
-    });
-    // Default half-window when no neighbour exists (solo trade row)
-    var DEFAULT_HALF = 15;
-    var upperBound = (prevY !== null) ? (prevY + tradeY) / 2 : tradeY + DEFAULT_HALF;
-    var lowerBound = (nextY !== null) ? (nextY + tradeY) / 2 : tradeY - DEFAULT_HALF;
+    var band = CN_UTILS.rowYBand(tradeLine.y, prevY, nextY);
 
-    // Collect items in the desc column whose Y falls strictly between bounds
-    // (the midpoint itself is ambiguous — exclude to avoid double-counting).
-    var collected = [];
-    for (var j = 0; j < lines.length; j++) {
-        var ln = lines[j];
-        if (ln.y <= lowerBound || ln.y >= upperBound) continue;
-        ln.items.forEach(function(it) {
-            if (!it.text || !it.text.trim()) return;
-            if (it.x >= descColLeft && it.x <= descColRight) collected.push(it);
-        });
-    }
-    if (collected.length === 0) return null;
-
-    // Sort by Y desc (top-to-bottom visually), then X asc within the same Y band
-    collected.sort(function(a, b) {
-        var dy = b.y - a.y;
-        if (Math.abs(dy) > 3) return dy;
-        return a.x - b.x;
-    });
-
-    // Re-assemble using gap-aware join (same logic as CN_UTILS.buildLines)
-    var text = '';
-    var lastY = null, lastEnd = null;
-    for (var k = 0; k < collected.length; k++) {
-        var it = collected[k];
-        if (lastY !== null && Math.abs(it.y - lastY) > 3) {
-            text += ' '; // line wrap → single space
-            lastEnd = null;
-        } else if (lastEnd !== null) {
-            if ((it.x - lastEnd) > 2) text += ' ';
-        }
-        text += it.text;
-        lastY = it.y;
-        lastEnd = it.x + (it.width || 0);
-    }
-    return text.trim();
+    var items = CN_UTILS.collectItemsInBox(lines, descLeft, descRight, band.yLow, band.yHigh);
+    if (items.length === 0) return null;
+    return CN_UTILS.joinItemsGapAware(items);
 }
 
 function parseFyersSecurityDescription(desc, segment) {
