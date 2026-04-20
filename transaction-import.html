@@ -201,6 +201,25 @@
         .cn-table-label.update-rows { background: #feebc8; color: #744210; }
         .cn-table-label.error-rows { background: #fed7d7; color: #742a2a; }
 
+        /* Unified CN preview table — one header, section dividers inside tbody */
+        .cn-preview-table thead th { position: sticky; top: 0; z-index: 5; background: #f7fafc; }
+        .cn-section-divider td {
+            font-size: 11px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase;
+            padding: 8px 10px; border-bottom: 1px solid #e2e8f0; border-top: 1px solid #e2e8f0;
+        }
+        .cn-section-divider.new-section td { background: #c6f6d5; color: #22543d; }
+        .cn-section-divider.update-section td { background: #feebc8; color: #744210; }
+        .cn-subtotal-row td {
+            font-weight: 600; background: #f7fafc; border-top: 1px solid #cbd5e0;
+            padding: 6px 8px; font-size: 11px; color: #4a5568;
+        }
+        .cn-subtotal-row td.cn-subtotal-label { font-style: italic; }
+        .cn-grand-total-row td {
+            font-weight: 700; background: #2d3748; color: #ffffff;
+            padding: 8px 10px; font-size: 12px; border-top: 2px solid #1a202c;
+        }
+        .cn-grand-total-row td.cn-grand-label { letter-spacing: 0.3px; text-transform: uppercase; }
+
         .cn-totals { display: flex; gap: 16px; margin-top: 10px; padding: 8px 12px; background: #f7fafc; border-radius: 6px; font-size: 12px; }
         .cn-totals .tot-item { display: flex; gap: 4px; }
         .cn-totals .tot-label { color: #718096; font-weight: 500; }
@@ -392,27 +411,13 @@
         <!-- STT / Charge Verification Alert -->
         <div id="cnChargeAlert" style="display:none; margin:8px 0; padding:10px 14px; border-radius:6px; font-size:12px; line-height:1.5;"></div>
 
-        <div id="cnNewSection" style="display:none;">
-            <div class="cn-table-label new-rows">New Transactions (will be inserted)</div>
-            <div class="table-wrapper"><table><thead><tr>
+        <!-- Unified CN preview table — single header row shared across New + Update
+             sections. Section-divider rows and subtotal rows live inside the same
+             <tbody>. Grand-total row appears when both New and Update have rows. -->
+        <div id="cnPreviewMain" style="display:none;">
+            <div class="table-wrapper"><table class="cn-preview-table"><thead><tr>
                 <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
-            </tr></thead><tbody id="cnNewTableBody"></tbody></table></div>
-        </div>
-
-        <div id="cnUpdateSection" style="display:none;">
-            <div class="cn-table-label update-rows">Existing Transactions (will be updated)</div>
-            <div class="table-wrapper"><table><thead><tr>
-                <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
-            </tr></thead><tbody id="cnUpdateTableBody"></tbody></table></div>
-        </div>
-
-        <!-- Grand total across New + Update — only shown when BOTH sections have rows.
-             When only one of them has rows, its own sub-total IS the grand total already. -->
-        <div id="cnGrandTotalSection" style="display:none;">
-            <div class="cn-table-label" style="background:#2d3748;color:#fff;">Grand Total (New + Update) — match against the contract note</div>
-            <div class="table-wrapper"><table><thead><tr>
-                <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
-            </tr></thead><tbody id="cnGrandTotalTableBody"></tbody></table></div>
+            </tr></thead><tbody id="cnPreviewBody"></tbody></table></div>
         </div>
 
         <div id="cnErrorSection" style="display:none;">

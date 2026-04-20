@@ -1370,37 +1370,49 @@ function displayCnPreview(parseResult) {
     var sortedNew = sortBuyFirst(cnNewRows);
     var sortedUpdate = sortBuyFirst(cnUpdateRows);
 
-    // New rows table
-    var newTbody = document.getElementById('cnNewTableBody');
-    newTbody.innerHTML = '';
-    if (sortedNew.length > 0) {
-        document.getElementById('cnNewSection').style.display = '';
-        sortedNew.forEach(function(r, i) { newTbody.appendChild(createCnPreviewRow(r, i + 1)); });
-        newTbody.appendChild(createCnTotalsRow(sortedNew, 'NEW'));
-    } else {
-        document.getElementById('cnNewSection').style.display = 'none';
-    }
+    // Unified CN preview table — single header, section dividers inside tbody.
+    //   * Only one section (New OR Update only): data rows + one Total row. No
+    //     section divider needed since the user already knows from stats cards.
+    //   * Both sections: [NEW divider] → new rows → [NEW subtotal] →
+    //     [UPDATE divider] → update rows → [UPDATE subtotal] → [GRAND TOTAL]
+    var body = document.getElementById('cnPreviewBody');
+    body.innerHTML = '';
+    var bothSectionsExist = sortedNew.length > 0 && sortedUpdate.length > 0;
 
-    // Update rows table
-    var updateTbody = document.getElementById('cnUpdateTableBody');
-    updateTbody.innerHTML = '';
-    if (sortedUpdate.length > 0) {
-        document.getElementById('cnUpdateSection').style.display = '';
-        sortedUpdate.forEach(function(r, i) { updateTbody.appendChild(createCnPreviewRow(r, i + 1)); });
-        updateTbody.appendChild(createCnTotalsRow(sortedUpdate, 'UPDATE'));
+    if (sortedNew.length === 0 && sortedUpdate.length === 0) {
+        document.getElementById('cnPreviewMain').style.display = 'none';
     } else {
-        document.getElementById('cnUpdateSection').style.display = 'none';
-    }
+        document.getElementById('cnPreviewMain').style.display = '';
 
-    // Grand total (New + Update combined) — only shown when BOTH sections have rows.
-    // When only one section has rows, its own per-section total already is the grand total.
-    var grandTbody = document.getElementById('cnGrandTotalTableBody');
-    grandTbody.innerHTML = '';
-    if (sortedNew.length > 0 && sortedUpdate.length > 0) {
-        document.getElementById('cnGrandTotalSection').style.display = '';
-        grandTbody.appendChild(createCnGrandTotalRow(sortedNew.concat(sortedUpdate)));
-    } else {
-        document.getElementById('cnGrandTotalSection').style.display = 'none';
+        if (sortedNew.length > 0) {
+            if (bothSectionsExist) {
+                body.appendChild(createCnSectionDivider('new', 'New Transactions — will be inserted'));
+            }
+            sortedNew.forEach(function(r, i) { body.appendChild(createCnPreviewRow(r, i + 1)); });
+            if (bothSectionsExist) {
+                body.appendChild(createCnSubtotalRow(sortedNew, 'Subtotal — New'));
+            } else {
+                // Only New section: its Total IS the grand total — use the
+                // standard per-section total style.
+                body.appendChild(createCnTotalsRow(sortedNew, 'NEW'));
+            }
+        }
+
+        if (sortedUpdate.length > 0) {
+            if (bothSectionsExist) {
+                body.appendChild(createCnSectionDivider('update', 'Existing Transactions — will be updated'));
+            }
+            sortedUpdate.forEach(function(r, i) { body.appendChild(createCnPreviewRow(r, i + 1)); });
+            if (bothSectionsExist) {
+                body.appendChild(createCnSubtotalRow(sortedUpdate, 'Subtotal — Update'));
+            } else {
+                body.appendChild(createCnTotalsRow(sortedUpdate, 'UPDATE'));
+            }
+        }
+
+        if (bothSectionsExist) {
+            body.appendChild(createCnGrandTotalRow(sortedNew.concat(sortedUpdate)));
+        }
     }
 
     // Error rows
@@ -1683,23 +1695,47 @@ function createCnTotalsRow(rows, sectionId) {
 }
 
 // Grand total across New + Update — combined totals for matching against the
-// contract note. Mirrors createCnTotalsRow but relabels the row and uses a
-// darker, more prominent styling so users can distinguish it from sub-totals.
+// contract note. Styled via .cn-grand-total-row class (dark background, white
+// text, prominent top border) so it visually dominates the preview table.
 function createCnGrandTotalRow(rows) {
     var tr = createCnTotalsRow(rows, 'GRAND');
-    tr.style.background = '#2d3748';
-    tr.style.color = '#ffffff';
-    tr.style.borderTop = '3px solid #1a202c';
-    tr.style.fontSize = '12px';
-    // The 3rd <td> currently says "Total" — relabel as "GRAND TOTAL"
+    // Swap the base styling applied by createCnTotalsRow with the class-based
+    // grand-total styling defined in transaction-import.html.
+    tr.removeAttribute('style');
+    tr.className = 'cn-grand-total-row';
     var cells = tr.querySelectorAll('td');
-    if (cells && cells[2]) cells[2].textContent = 'GRAND TOTAL';
-    // Net amount cell (index 10) keeps its semantic class; force white color
-    // but preserve the parentheses formatting already applied by formatCnAmount.
-    if (cells && cells[10]) {
-        cells[10].style.color = '#ffffff';
-        // Strip the red/green amount class so the white foreground is visible
-        cells[10].className = '';
+    if (cells && cells[2]) {
+        cells[2].textContent = 'Grand Total';
+        cells[2].className = 'cn-grand-label';
+    }
+    // Strip red/green amount class so white foreground stays visible
+    if (cells && cells[10]) cells[10].className = '';
+    return tr;
+}
+
+// Section divider row — full-width banner separating New and Update sections
+// inside the unified preview table. Only shown when both sections have data.
+function createCnSectionDivider(kind, label) {
+    var tr = document.createElement('tr');
+    tr.className = 'cn-section-divider ' + (kind === 'update' ? 'update-section' : 'new-section');
+    var td = document.createElement('td');
+    td.colSpan = 12;
+    td.textContent = label;
+    tr.appendChild(td);
+    return tr;
+}
+
+// Subtotal row for a section — lighter styling than grand total, used only
+// when both sections (New + Update) are present so users can see per-section
+// figures alongside the combined grand total.
+function createCnSubtotalRow(rows, label) {
+    var tr = createCnTotalsRow(rows, 'SUBTOTAL');
+    tr.removeAttribute('style');
+    tr.className = 'cn-subtotal-row';
+    var cells = tr.querySelectorAll('td');
+    if (cells && cells[2]) {
+        cells[2].textContent = label;
+        cells[2].className = 'cn-subtotal-label';
     }
     return tr;
 }
