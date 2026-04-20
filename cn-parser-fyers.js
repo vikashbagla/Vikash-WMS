@@ -80,10 +80,23 @@ CN_PARSERS.fyers = function(pages, numPages) {
     var trades = [];
     var currentSegment = null; // 'EQUITY' or 'NFO'
 
+    var _columnMapLogged = false; // log once per parse session to aid debugging
     for (var p = 0; p < allText.length; p++) {
         var pageText = allText[p];
         // Build lines from items grouped by Y coordinate
         var lines = CN_UTILS.buildLines(pageText);
+
+        // Phase 2: calibrate column X-ranges from the first trade row on this
+        // page. Dormant — Phase 3 will use the map in parseFyersTradeRow.
+        // Logged once per parse session for verification / debugging.
+        var columnMap = _fyersBuildColumnMap(lines);
+        if (columnMap && !_columnMapLogged) {
+            try {
+                console.log('[Fyers parser] column map (page ' + (p + 1) + '):',
+                    JSON.stringify(columnMap));
+            } catch (_) { /* console may not be available in some contexts */ }
+            _columnMapLogged = true;
+        }
 
         for (var li = 0; li < lines.length; li++) {
             var lineText = lines[li].text;
@@ -192,6 +205,103 @@ function parseFyersTradeRow(items, segment) {
         expiry: symbolInfo.expiry,
         strikePrice: symbolInfo.strikePrice,
         optionType: symbolInfo.optionType
+    };
+}
+
+// Phase 2 — Column boundary calibration (added for structural parser refactor).
+//
+// The Trade Annexure in a Fyers CN is a fixed-column table. Every trade row has
+// items at the same X positions regardless of that row's specific data. Rather
+// than parsing by texts[i] index (which breaks when text items get split or
+// merged differently by the PDF renderer), we calibrate column X-ranges from
+// the FIRST trade row on a page and then reuse those ranges to interpret every
+// subsequent trade row structurally.
+//
+// How we find the first trade row: same signature already used elsewhere — the
+// first line whose text starts with a 10+ digit order number.
+//
+// Column layout (after the header "Order Number | Order Time | Trade No. |
+// Trade Time | Security/Contract Description | Buy/Sell | Quantity | Price |
+// Price (foreign) | Net Rate | Net Amount | Remark"):
+//   left-aligned cols:  orderNo, orderTime, tradeNo, tradeTime, description, remark
+//   right-aligned cols: qty, price, foreignPrice (usually empty), netRate, netAmount
+//   single char col:    bs (B or S)
+//
+// Returns null if no trade row on the page or fewer than 5 non-empty items on
+// the first trade row (insufficient data to calibrate). Phase 3 consumers must
+// fall back to the legacy position-based logic when null is returned.
+function _fyersBuildColumnMap(lines) {
+    // Find first trade row
+    var tradeLine = null;
+    for (var i = 0; i < lines.length; i++) {
+        if (/^\d{10,}/.test(lines[i].text)) { tradeLine = lines[i]; break; }
+    }
+    if (!tradeLine || !tradeLine.items) return null;
+
+    var items = tradeLine.items.slice()
+        .filter(function(it) { return it.text && it.text.trim().length > 0; })
+        .sort(function(a, b) { return a.x - b.x; });
+    if (items.length < 5) return null; // need OrderNo, OrderTime, TradeNo, TradeTime, B/S at minimum
+
+    // Find B/S marker (first standalone 'B' or 'S')
+    var bsIdx = -1;
+    for (var j = 0; j < items.length; j++) {
+        var t = items[j].text.trim();
+        if (t === 'B' || t === 'S') { bsIdx = j; break; }
+    }
+    if (bsIdx < 4) return null; // must have 4 columns before B/S
+
+    var orderNo = items[0];
+    var orderTime = items[1];
+    var tradeNo = items[2];
+    var tradeTime = items[3];
+    var bs = items[bsIdx];
+
+    // Items after B/S. These are right-aligned numerics (qty, price, net_rate,
+    // net_amount) possibly with a foreign_price in between, and an optional
+    // alpha remark at the end. Classify each as numeric or alpha.
+    var afterBs = items.slice(bsIdx + 1).map(function(it) {
+        var txt = it.text.trim();
+        var num = parseFloat(txt);
+        return {
+            x: it.x,
+            width: it.width || 0,
+            text: txt,
+            isNumeric: !isNaN(num) && /^[\d.,\-]+$/.test(txt)
+        };
+    });
+
+    // Description column spans from right-edge of TradeTime (+padding) to
+    // left-edge of B/S (-padding). Works even when the first trade row's
+    // description is wrapped onto adjacent Y-lines (desc column is empty on
+    // the trade row itself) because we compute the range structurally.
+    var descLeft = tradeTime.x + (tradeTime.width || 0) + 2;
+    var descRight = bs.x - 2;
+
+    return {
+        tradeRowY: tradeLine.y,
+        columns: {
+            orderNo:    { left: orderNo.x - 2, right: (orderTime.x - 1) },
+            orderTime:  { left: orderTime.x - 2, right: (tradeNo.x - 1) },
+            tradeNo:    { left: tradeNo.x - 2, right: (tradeTime.x - 1) },
+            tradeTime:  { left: tradeTime.x - 2, right: descLeft - 1 },
+            description:{ left: descLeft, right: descRight },
+            bs:         { left: bs.x - 3, right: bs.x + (bs.width || 3) + 3 }
+        },
+        // Right-aligned numeric columns after B/S. Stored as ordered anchors
+        // (item center X) so Phase 3 can match by nearest-anchor. Includes
+        // foreign_price if present (all numeric), excludes any trailing alpha
+        // remark. The LAST numeric is always Net Amount by convention.
+        afterBsNumerics: afterBs.filter(function(a) { return a.isNumeric; })
+                                 .map(function(a) { return { x: a.x, width: a.width }; }),
+        // Optional remark column — the trailing non-numeric after the numerics.
+        remarkAnchor: (function() {
+            for (var k = afterBs.length - 1; k >= 0; k--) {
+                if (!afterBs[k].isNumeric) return { x: afterBs[k].x, width: afterBs[k].width };
+                break; // numeric before remark — stop
+            }
+            return null;
+        })()
     };
 }
 
