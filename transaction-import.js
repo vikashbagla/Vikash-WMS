@@ -1308,6 +1308,17 @@ function displayCnPreview(parseResult) {
         document.getElementById('cnUpdateSection').style.display = 'none';
     }
 
+    // Grand total (New + Update combined) — only shown when BOTH sections have rows.
+    // When only one section has rows, its own per-section total already is the grand total.
+    var grandTbody = document.getElementById('cnGrandTotalTableBody');
+    grandTbody.innerHTML = '';
+    if (sortedNew.length > 0 && sortedUpdate.length > 0) {
+        document.getElementById('cnGrandTotalSection').style.display = '';
+        grandTbody.appendChild(createCnGrandTotalRow(sortedNew.concat(sortedUpdate)));
+    } else {
+        document.getElementById('cnGrandTotalSection').style.display = 'none';
+    }
+
     // Error rows
     var errorTbody = document.getElementById('cnErrorTableBody');
     errorTbody.innerHTML = '';
@@ -1584,6 +1595,28 @@ function createCnTotalsRow(rows, sectionId) {
         '<td style="text-align:right;">' + formatCnAmount(totGst) + '</td>' +
         '<td style="text-align:right;font-weight:700;" class="' + getAmountClass(totNet) + '" title="' + netLabel + '">' + formatCnAmount(totNet) + '</td>' +
         '<td></td>';
+    return tr;
+}
+
+// Grand total across New + Update — combined totals for matching against the
+// contract note. Mirrors createCnTotalsRow but relabels the row and uses a
+// darker, more prominent styling so users can distinguish it from sub-totals.
+function createCnGrandTotalRow(rows) {
+    var tr = createCnTotalsRow(rows, 'GRAND');
+    tr.style.background = '#2d3748';
+    tr.style.color = '#ffffff';
+    tr.style.borderTop = '3px solid #1a202c';
+    tr.style.fontSize = '12px';
+    // The 3rd <td> currently says "Total" — relabel as "GRAND TOTAL"
+    var cells = tr.querySelectorAll('td');
+    if (cells && cells[2]) cells[2].textContent = 'GRAND TOTAL';
+    // Net amount cell (index 10) keeps its semantic class; force white color
+    // but preserve the parentheses formatting already applied by formatCnAmount.
+    if (cells && cells[10]) {
+        cells[10].style.color = '#ffffff';
+        // Strip the red/green amount class so the white foreground is visible
+        cells[10].className = '';
+    }
     return tr;
 }
 

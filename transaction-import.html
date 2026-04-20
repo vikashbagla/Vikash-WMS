@@ -406,6 +406,15 @@
             </tr></thead><tbody id="cnUpdateTableBody"></tbody></table></div>
         </div>
 
+        <!-- Grand total across New + Update — only shown when BOTH sections have rows.
+             When only one of them has rows, its own sub-total IS the grand total already. -->
+        <div id="cnGrandTotalSection" style="display:none;">
+            <div class="cn-table-label" style="background:#2d3748;color:#fff;">Grand Total (New + Update) — match against the contract note</div>
+            <div class="table-wrapper"><table><thead><tr>
+                <th>#</th><th>Type</th><th>Symbol</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Gross Amt</th><th style="text-align:right;">Brokerage</th><th style="text-align:right;">STT</th><th style="text-align:right;">Other</th><th style="text-align:right;">GST</th><th style="text-align:right;">Net Amt</th><th style="min-width:100px;">Tags</th>
+            </tr></thead><tbody id="cnGrandTotalTableBody"></tbody></table></div>
+        </div>
+
         <div id="cnErrorSection" style="display:none;">
             <div class="cn-table-label error-rows">Errors (will be skipped)</div>
             <div class="table-wrapper"><table><thead><tr>
