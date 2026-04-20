@@ -815,8 +815,8 @@ async function processAndGroupTrades(parseResult) {
             transaction_type: g.buySell,
             quantity: g.buySell === 'SELL' ? -g.totalQty : g.totalQty,
             lots: 0,
-            price: Math.round(avgPrice * 100) / 100,
-            gross_amount: Math.round(g.totalAmount * 100) / 100,
+            price: roundMoney(avgPrice),
+            gross_amount: roundMoney(g.totalAmount),
             brokerage: 0,
             stt: 0,
             other_charges: 0,
@@ -1139,50 +1139,50 @@ function allocateCharges(rows, segCharges) {
 
         // Brokerage: equal split for flat-rate brokers, proportional otherwise
         if (useFlatBrokerage) {
-            r.brokerage = Math.round(segCharges.brokerage / rows.length * 100) / 100;
+            r.brokerage = roundMoney(segCharges.brokerage / rows.length);
         } else {
-            r.brokerage = Math.round(segCharges.brokerage * proportion * 100) / 100;
+            r.brokerage = roundMoney(segCharges.brokerage * proportion);
         }
 
         // STT: only STT-eligible trades (EQUITY only, proportional within eligible trades)
         if (r._sttEligible && sttEligibleGross > 0) {
             var sttProportion = Math.abs(r.gross_amount) / sttEligibleGross;
-            r.stt = Math.round(segCharges.stt * sttProportion * 100) / 100;
+            r.stt = roundMoney(segCharges.stt * sttProportion);
         } else {
             r.stt = 0;
         }
 
         // Exchange charges, SEBI, IPFT: all trades get proportional share
-        var exchShare = Math.round(segCharges.exchangeCharges * proportion * 100) / 100;
-        var sebiShare = Math.round(segCharges.sebiCharges * proportion * 100) / 100;
-        var ipftShare = Math.round(segCharges.ipft * proportion * 100) / 100;
+        var exchShare = roundMoney(segCharges.exchangeCharges * proportion);
+        var sebiShare = roundMoney(segCharges.sebiCharges * proportion);
+        var ipftShare = roundMoney(segCharges.ipft * proportion);
 
         // Stamp duty: only STT-eligible trades (same exemption as STT)
         var stampShare = 0;
         if (r._sttEligible && sttEligibleGross > 0) {
             var stampProportion = Math.abs(r.gross_amount) / sttEligibleGross;
-            stampShare = Math.round(segCharges.stampDuty * stampProportion * 100) / 100;
+            stampShare = roundMoney(segCharges.stampDuty * stampProportion);
         }
 
-        r.other_charges = Math.round((exchShare + sebiShare + stampShare + ipftShare) * 100) / 100;
+        r.other_charges = roundMoney(exchShare + sebiShare + stampShare + ipftShare);
 
         // GST: 18% on (brokerage + exchange + SEBI) — all trades
-        r.gst = Math.round(segCharges.gst * proportion * 100) / 100;
+        r.gst = roundMoney(segCharges.gst * proportion);
 
-        r.total_charges = Math.round((r.brokerage + r.stt + r.gst + r.other_charges) * 100) / 100;
+        r.total_charges = roundMoney(r.brokerage + r.stt + r.gst + r.other_charges);
 
         // net_amount = gross_amount + total_charges (charges always add for buys/outflows, subtract from sells)
         if (wmsIsBuyLikeType(r.transaction_type)) {
-            r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
+            r.net_amount = roundMoney(r.gross_amount + r.total_charges);
         } else {
-            r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
+            r.net_amount = roundMoney(r.gross_amount - r.total_charges);
         }
     });
 
     // STT verification: sum allocated STT vs CN total
     var allocatedStt = 0;
     rows.forEach(function(r) { allocatedStt += r.stt; });
-    allocatedStt = Math.round(allocatedStt * 100) / 100;
+    allocatedStt = roundMoney(allocatedStt);
     var sttDiff = Math.abs(allocatedStt - _cnSttTotal);
 
     // Store verification result on the module-level for display
@@ -1211,15 +1211,15 @@ function allocateCharges(rows, segCharges) {
     // unallocated amount proportionally by gross_amount into other_charges
     // so the import net amount matches the CN exactly.
     // ========================================================================
-    var cnTotalCharges = Math.round(((segCharges.brokerage || 0) + (segCharges.stt || 0) +
+    var cnTotalCharges = roundMoney((segCharges.brokerage || 0) + (segCharges.stt || 0) +
         (segCharges.gst || 0) + (segCharges.exchangeCharges || 0) + (segCharges.sebiCharges || 0) +
-        (segCharges.stampDuty || 0) + (segCharges.ipft || 0)) * 100) / 100;
+        (segCharges.stampDuty || 0) + (segCharges.ipft || 0));
 
     var allocatedTotalCharges = 0;
     rows.forEach(function(r) { allocatedTotalCharges += r.total_charges; });
-    allocatedTotalCharges = Math.round(allocatedTotalCharges * 100) / 100;
+    allocatedTotalCharges = roundMoney(allocatedTotalCharges);
 
-    var chargeGap = Math.round((cnTotalCharges - allocatedTotalCharges) * 100) / 100;
+    var chargeGap = roundMoney(cnTotalCharges - allocatedTotalCharges);
 
     if (Math.abs(chargeGap) > 0.01) {
         console.log('CN charge reconciliation: CN total=' + cnTotalCharges + ', allocated=' + allocatedTotalCharges + ', gap=' + chargeGap + ' — distributing to other_charges');
@@ -1231,16 +1231,16 @@ function allocateCharges(rows, segCharges) {
             var share;
             if (idx === rows.length - 1) {
                 // Last row gets remainder to avoid rounding drift
-                share = Math.round((chargeGap - distributed) * 100) / 100;
+                share = roundMoney(chargeGap - distributed);
             } else {
-                share = Math.round(chargeGap * proportion * 100) / 100;
+                share = roundMoney(chargeGap * proportion);
             }
-            r.other_charges = Math.round((r.other_charges + share) * 100) / 100;
-            r.total_charges = Math.round((r.brokerage + r.stt + r.gst + r.other_charges) * 100) / 100;
+            r.other_charges = roundMoney(r.other_charges + share);
+            r.total_charges = roundMoney(r.brokerage + r.stt + r.gst + r.other_charges);
             if (wmsIsBuyLikeType(r.transaction_type)) {
-                r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
+                r.net_amount = roundMoney(r.gross_amount + r.total_charges);
             } else {
-                r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
+                r.net_amount = roundMoney(r.gross_amount - r.total_charges);
             }
             distributed += share;
         });
@@ -1504,14 +1504,14 @@ function initCnChargeEditing() {
             if (!row) return;
 
             // Update the field
-            row[field] = Math.round(newVal * 100) / 100;
+            row[field] = roundMoney(newVal);
 
             // Recalculate total_charges and net_amount
-            row.total_charges = Math.round((row.brokerage + row.stt + row.gst + row.other_charges) * 100) / 100;
+            row.total_charges = roundMoney(row.brokerage + row.stt + row.gst + row.other_charges);
             if (wmsIsBuyLikeType(row.transaction_type)) {
-                row.net_amount = Math.round((row.gross_amount + row.total_charges) * 100) / 100;
+                row.net_amount = roundMoney(row.gross_amount + row.total_charges);
             } else {
-                row.net_amount = Math.round((row.gross_amount - row.total_charges) * 100) / 100;
+                row.net_amount = roundMoney(row.gross_amount - row.total_charges);
             }
 
             // Update net amount display
@@ -2170,13 +2170,13 @@ async function processTransactions(rawData, worksheet) {
         // Price derivation: if price is blank but amount and qty exist, calculate price = amount / qty
         var price = price_raw || 0;
         if ((!price_raw || price_raw === 0) && gross_amount_raw && quantity !== 0) {
-            price = Math.round(gross_amount_raw / Math.abs(quantity) * 100) / 100;
+            price = roundMoney(gross_amount_raw / Math.abs(quantity));
         }
 
         // Gross amount (rule F.2.1)
         var gross_amount = gross_amount_raw;
         if ((gross_amount === null || isNaN(gross_amount)) && quantity !== 0 && price) {
-            gross_amount = Math.round(Math.abs(quantity) * price * 100) / 100;
+            gross_amount = roundMoney(Math.abs(quantity) * price);
         }
 
         // Tags normalization (rule A.2.1)
@@ -2295,7 +2295,7 @@ async function processTransactions(rawData, worksheet) {
             // Lots: NFO & EQUITY_SME must have non-zero lots; others must be 0
             var needsLots = (vr.security_type === 'NFO' || vr.security_type === 'EQUITY_SME');
             if (needsLots && matchResult.match.lot_size && matchResult.match.lot_size > 1) {
-                vr.lots = Math.round(Math.abs(vr.quantity) / matchResult.match.lot_size * 100) / 100;
+                vr.lots = roundMoney(Math.abs(vr.quantity) / matchResult.match.lot_size);
                 if (vr.transaction_type === 'SELL') vr.lots = -Math.abs(vr.lots);
             } else if (needsLots) {
                 vr.lots = vr.transaction_type === 'SELL' ? -1 : 1;
@@ -2315,7 +2315,7 @@ async function processTransactions(rawData, worksheet) {
                 // NFO & EQUITY_SME: lots must not be 0, calculate from lot_size or default ±1
                 var flagNeedsLots = (vr.security_type === 'NFO' || vr.security_type === 'EQUITY_SME');
                 if (flagNeedsLots && first.lot_size && first.lot_size > 1) {
-                    vr.lots = Math.round(Math.abs(vr.quantity) / first.lot_size * 100) / 100;
+                    vr.lots = roundMoney(Math.abs(vr.quantity) / first.lot_size);
                     if (vr.transaction_type === 'SELL') vr.lots = -Math.abs(vr.lots);
                 } else if (flagNeedsLots) {
                     vr.lots = vr.transaction_type === 'SELL' ? -1 : 1;
@@ -2799,7 +2799,7 @@ function attachNetAmountEditHandlers() {
             function commit() {
                 var newVal = parseFloat(inp.value.replace(/,/g, ''));
                 if (!isNaN(newVal)) {
-                    row.net_amount = Math.round(newVal * 100) / 100;
+                    row.net_amount = roundMoney(newVal);
                     row._netOverride = true;
                 }
                 cell.innerHTML = formatCnAmount(row.net_amount);
@@ -2946,7 +2946,7 @@ function openChargesPopover(rowIdx, field) {
 
 function updateCpTotal(row) {
     // If user has overridden total_charges, show that value with an (override) label
-    var calcTotal = Math.round(((row.brokerage || 0) + (row.stt || 0) + (row.other_charges || 0) + (row.gst || 0)) * 100) / 100;
+    var calcTotal = roundMoney((row.brokerage || 0) + (row.stt || 0) + (row.other_charges || 0) + (row.gst || 0));
     var displayTotal = row.total_charges || calcTotal;
     var totalEl = document.getElementById('cpTotal');
     totalEl.textContent = formatCnAmount(displayTotal);
@@ -3008,12 +3008,12 @@ function commitCpEdit(span, input, rowIdx, field) {
 
     // If editing sub-components of other_charges, recalculate other_charges
     if (field === '_exchange_charges' || field === '_sebi_charges' || field === '_stamp_duty') {
-        row.other_charges = Math.round(((row._exchange_charges || 0) + (row._sebi_charges || 0) + (row._stamp_duty || 0)) * 100) / 100;
+        row.other_charges = roundMoney((row._exchange_charges || 0) + (row._sebi_charges || 0) + (row._stamp_duty || 0));
     }
 
     // Recalculate total_charges from individual charge components (unless user override)
     if (!row._totalOverride) {
-        row.total_charges = Math.round(((row.brokerage || 0) + (row.stt || 0) + (row.other_charges || 0) + (row.gst || 0)) * 100) / 100;
+        row.total_charges = roundMoney((row.brokerage || 0) + (row.stt || 0) + (row.other_charges || 0) + (row.gst || 0));
     }
     updateCpTotal(row);
 
@@ -3148,11 +3148,11 @@ function recalcExcelRow(index) {
 
     // Recalculate net_amount (rule F.2.2)
     if (wmsIsBuyLikeType(row.transaction_type)) {
-        row.net_amount = Math.round((row.gross_amount + row.total_charges) * 100) / 100;
+        row.net_amount = roundMoney(row.gross_amount + row.total_charges);
     } else if (row.transaction_type === 'SELL') {
-        row.net_amount = Math.round((row.gross_amount - row.total_charges) * 100) / 100;
+        row.net_amount = roundMoney(row.gross_amount - row.total_charges);
     } else if (isIncomeType(row.transaction_type)) {
-        row.net_amount = Math.round((row.gross_amount - row.total_charges) * 100) / 100;
+        row.net_amount = roundMoney(row.gross_amount - row.total_charges);
     }
 
     // Update net display
@@ -3197,9 +3197,9 @@ async function importExcelToDatabase() {
     // Recalc net unless user-entered (dblclick inline edit)
     allRows.forEach(function(r) {
         if (r._netOverride) return;
-        if (wmsIsBuyLikeType(r.transaction_type)) r.net_amount = Math.round((r.gross_amount + r.total_charges) * 100) / 100;
-        else if (r.transaction_type === 'SELL') r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
-        else if (isIncomeType(r.transaction_type)) r.net_amount = Math.round((r.gross_amount - r.total_charges) * 100) / 100;
+        if (wmsIsBuyLikeType(r.transaction_type)) r.net_amount = roundMoney(r.gross_amount + r.total_charges);
+        else if (r.transaction_type === 'SELL') r.net_amount = roundMoney(r.gross_amount - r.total_charges);
+        else if (isIncomeType(r.transaction_type)) r.net_amount = roundMoney(r.gross_amount - r.total_charges);
     });
 
     // Read tags from autocomplete pill inputs (fullList index, not filtered index)
@@ -3794,8 +3794,8 @@ async function fyProcessTrades(tradeBook) {
             transaction_type: g.side,
             quantity: g.side === 'SELL' ? -g.totalQty : g.totalQty,
             lots: isNfo && lotSize > 0 ? Math.round(g.totalQty / lotSize) : 0,
-            price: Math.round(avgPrice * 100) / 100,
-            gross_amount: Math.round(grossAmount * 100) / 100,
+            price: roundMoney(avgPrice),
+            gross_amount: roundMoney(grossAmount),
             brokerage: 0,
             stt: 0,
             other_charges: 0,
