@@ -32,7 +32,13 @@ CN_PARSERS.suvridhi = function(pages, numPages) {
         allText.push(sorted);
     });
 
-    var firstPageText = allText[0].map(function(i) { return i.text; }).join(' ');
+    // Use CN_UTILS.buildLines (x-coordinate gap-aware) to build first-page text
+    // so the Trade Date / CN Number regexes match even when the PDF extracts
+    // text one character per item (happens on some revised / supplementary
+    // notes). Naive .join(' ') would insert spaces between every character.
+    var firstPageText = CN_UTILS.buildLines(allText[0])
+        .map(function(l) { return l.text; })
+        .join('\n');
 
     // Validate this is a Suvridhi contract note
     if (!/suvridhi/i.test(firstPageText)) {
