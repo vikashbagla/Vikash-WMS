@@ -198,9 +198,11 @@ function parseFyersTradeRow(items, segment) {
 // Some Fyers CNs wrap a long security description onto two or three visual
 // lines (different Y) while the actual trade row (order no, qty, price, etc.)
 // sits on one Y in the middle. Recover the full description by gathering items
-// from lines within ±15 pixels of the trade row that fall inside the
-// description column — the X range between the end of TradeTime and the start
-// of the B/S marker on the trade row.
+// in the description column (X range bounded by TradeTime end and B/S start)
+// within a Y band bounded by the nearest trade-row neighbours above and below.
+// This prevents bleeding into an adjacent trade row's wrapped description when
+// trade rows are packed tight (e.g. 12 px apart with descriptions wrapping to
+// ±6 px from each row).
 function _fyersRecoverWrappedDescription(lines, tradeLineIdx) {
     var tradeLine = lines[tradeLineIdx];
     if (!tradeLine || !tradeLine.items) return null;
@@ -220,11 +222,32 @@ function _fyersRecoverWrappedDescription(lines, tradeLineIdx) {
     var descColRight = bsItem.x - 2;
     var tradeY = tradeLine.y;
 
-    // Scan lines within ±15 pixels of tradeY, collect items in the desc column
+    // Compute neighbour-aware Y window. A trade row is detected by its line
+    // text starting with a 10+ digit order number — same signature used by
+    // parseFyersTradeRow. Walk all lines, collect trade-row Y coordinates,
+    // and bound the scan to HALFWAY to each neighbour (so scans at row N
+    // can never bleed into row N±1's description area).
+    var tradeYs = [];
+    for (var tj = 0; tj < lines.length; tj++) {
+        if (/^\d{10,}/.test(lines[tj].text)) tradeYs.push(lines[tj].y);
+    }
+    var prevY = null; // higher Y (above in reading order)
+    var nextY = null; // lower Y (below in reading order)
+    tradeYs.forEach(function(y) {
+        if (y > tradeY && (prevY === null || y < prevY)) prevY = y;
+        if (y < tradeY && (nextY === null || y > nextY)) nextY = y;
+    });
+    // Default half-window when no neighbour exists (solo trade row)
+    var DEFAULT_HALF = 15;
+    var upperBound = (prevY !== null) ? (prevY + tradeY) / 2 : tradeY + DEFAULT_HALF;
+    var lowerBound = (nextY !== null) ? (nextY + tradeY) / 2 : tradeY - DEFAULT_HALF;
+
+    // Collect items in the desc column whose Y falls strictly between bounds
+    // (the midpoint itself is ambiguous — exclude to avoid double-counting).
     var collected = [];
     for (var j = 0; j < lines.length; j++) {
         var ln = lines[j];
-        if (Math.abs(ln.y - tradeY) > 15) continue;
+        if (ln.y <= lowerBound || ln.y >= upperBound) continue;
         ln.items.forEach(function(it) {
             if (!it.text || !it.text.trim()) return;
             if (it.x >= descColLeft && it.x <= descColRight) collected.push(it);
