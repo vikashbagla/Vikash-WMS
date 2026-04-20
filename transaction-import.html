@@ -5,6 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Import Transactions - WMS</title>
     <style id="transaction-import-styles">
+        /* Page-level scroll wrapper — fills the flex parent (#content-container)
+           and lets long content (CN preview tables, import log) scroll vertically
+           instead of being clipped. Modals inside use position:fixed and are not
+           affected by the scroll. */
+        .ti-page-scroll {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+            padding-right: 2px; /* tiny gutter so scrollbar doesn't overlap content */
+        }
+
         .import-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
 
         .section { background: white; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
@@ -226,6 +240,12 @@
 
     <div id="alertContainer"></div>
 
+    <!-- Scrollable page wrapper — fills the content-container and lets the CN preview
+         + import log scroll vertically instead of being clipped by the parent's
+         overflow:hidden. Modals (.excel-preview-overlay, .charges-popover-overlay,
+         #loadingIndicator) stay outside this wrapper since they use position:fixed. -->
+    <div class="ti-page-scroll">
+
     <!-- Two boxes side by side, each with upload ready -->
     <div class="import-grid">
 
@@ -413,6 +433,8 @@
             </table>
         </div>
     </div>
+
+    </div><!-- /ti-page-scroll -->
 
     <!-- Loading -->
     <div class="hidden" id="loadingIndicator">
