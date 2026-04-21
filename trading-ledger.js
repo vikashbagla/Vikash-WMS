@@ -796,7 +796,13 @@ async function lgRefresh() {
                 }
 
                 // Re-sort and recompute running balance so pending rows flow into it.
-                // (Mirrors wmsBuildLedger's reset-on-OPENING_BALANCE semantic.)
+                // MUST mirror wmsBuildLedger's balance loop EXACTLY — including the
+                // `_nfoCashImpact !== false` check (Rule E.15.5a: futures trade rows
+                // are line items but do NOT move the cash balance; only NFO_PNL rows
+                // on cover do). Missing that check inflates the displayed balance
+                // with every futures BUY/SELL while the interest engine (which uses
+                // the correct balance from wmsBuildLedger) shows different numbers,
+                // producing an apparent "balance up, interest unchanged" mismatch.
                 if (lgPendingInterestRows.length > 0) {
                     fullCombined.sort(function(a, b) {
                         return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0;
@@ -806,9 +812,10 @@ async function lgRefresh() {
                         var fr = fullCombined[fi];
                         if (fr._rowType === 'ledger' && fr.entryType === 'OPENING_BALANCE') {
                             bal = fr.amount;
-                        } else {
+                        } else if (fr._nfoCashImpact !== false) {
                             bal += fr.amount;
                         }
+                        // else: NFO futures trade row — balance unchanged (E.15.5a)
                         fr._runningBalance = wmsRoundMoney(bal);
                     }
                 }
