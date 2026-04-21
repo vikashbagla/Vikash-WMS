@@ -3804,7 +3804,13 @@ async function fyProcessTrades(tradeBook) {
 
     // Parse symbol: strip exchange prefix (e.g., "NSE:RELIANCE-EQ" → "RELIANCE")
     // side: 1 = BUY, -1 = SELL
-    // Group by rawSymbol + side (use raw Fyers symbol as key to avoid collision between equity and F&O)
+    //
+    // Group by (symbol, side, orderNumber). Fyers tradebook returns one entry
+    // per FILL, and a single order can produce multiple fills — those SHOULD
+    // aggregate into one WMS row (same weighted-avg price, summed qty). But
+    // different orders (even same symbol + side on the same day) are distinct
+    // logical trades and MUST stay as separate rows — otherwise they collide
+    // with each other and with any prior rows from split/edit operations.
     var groups = {};
     validTrades.forEach(function(t) {
         var rawSymbol = t.symbol || '';
@@ -3814,7 +3820,8 @@ async function fyProcessTrades(tradeBook) {
         // For F&O (segment 11): keep full symbol → "SHRIRAMFIN26APRFUT"
         var cleanSymbol = t.segment === 10 ? symPart.replace(/-EQ$/i, '').trim().toUpperCase() : symPart.trim().toUpperCase();
         var side = t.side === 1 ? 'BUY' : 'SELL';
-        var key = cleanSymbol + '|' + side;
+        var orderKey = t.orderNumber || ('NOORD-' + (t.tradeNumber || t.id || Math.random()));
+        var key = cleanSymbol + '|' + side + '|' + orderKey;
 
         if (!groups[key]) {
             groups[key] = {
@@ -3830,7 +3837,9 @@ async function fyProcessTrades(tradeBook) {
         }
         groups[key].totalQty += t.tradedQty || 0;
         groups[key].totalValue += (t.tradedQty || 0) * (t.tradePrice || 0);
-        if (t.orderNumber) groups[key].orderNumbers.push(t.orderNumber);
+        if (t.orderNumber && groups[key].orderNumbers.indexOf(t.orderNumber) === -1) {
+            groups[key].orderNumbers.push(t.orderNumber);
+        }
         groups[key].trades.push(t);
     });
 
@@ -3941,8 +3950,11 @@ async function fyProcessTrades(tradeBook) {
 async function fyCheckDuplicates(rows) {
     if (rows.length === 0) { fyNewRows = []; fyUpdateRows = []; return; }
 
-    // Query existing transactions for this investor + broker + date
-    var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + fyInvestorId + '&broker_id=eq.' + fyBrokerId + '&transaction_date=eq.' + fyTradeDate + '&select=id,symbol,transaction_type,quantity,price,gross_amount,tags', {
+    // Query existing transactions for this investor + broker + date.
+    // Include broker_trade_id so we can match by Fyers order number overlap
+    // rather than just (symbol, type) — the latter collides after split/edit
+    // operations that produce multiple existing rows for the same contract.
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + fyInvestorId + '&broker_id=eq.' + fyBrokerId + '&transaction_date=eq.' + fyTradeDate + '&select=id,symbol,transaction_type,quantity,price,gross_amount,tags,broker_trade_id', {
         headers: wmsHeaders()
     });
     var existing = await resp.json();
@@ -3951,10 +3963,29 @@ async function fyCheckDuplicates(rows) {
     fyUpdateRows = [];
 
     rows.forEach(function(r) {
-        // Match: same symbol + same transaction_type (strip exchange prefix for consistent comparison)
+        // Order-ID matching rule:
+        //   • Group the incoming row's Fyers orderNumber(s) into a Set.
+        //   • A candidate existing row matches only if it has the SAME symbol,
+        //     SAME transaction_type, AND at least one of its stored
+        //     broker_trade_id order numbers appears in the incoming Set.
+        //   • Rows with broker_trade_id = null (manual entries, split-off
+        //     children, CN-imported rows) never match any Fyers import —
+        //     they're immune. This is the correct behaviour: the Fyers
+        //     tradebook should only update its own prior imports, not touch
+        //     rows it didn't create.
+        //   • Different orders (even same symbol + type on the same day) will
+        //     miss all existing rows and classify as NEW.
         var rBare = (r.symbol || '').replace(/^[A-Z]+:/, '');
+        var incomingOrders = new Set(r._orderNumbers || []);
+
         var match = existing.find(function(e) {
-            return (e.symbol || '').replace(/^[A-Z]+:/, '') === rBare && e.transaction_type === r.transaction_type;
+            if ((e.symbol || '').replace(/^[A-Z]+:/, '') !== rBare) return false;
+            if (e.transaction_type !== r.transaction_type) return false;
+            var existingOrders = (e.broker_trade_id || '').split(',')
+                .map(function(s) { return s.trim(); })
+                .filter(Boolean);
+            if (existingOrders.length === 0) return false;
+            return existingOrders.some(function(o) { return incomingOrders.has(o); });
         });
 
         if (match) {
