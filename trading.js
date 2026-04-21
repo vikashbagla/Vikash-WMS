@@ -1645,7 +1645,13 @@ function trBuildInvestorDetail(h, price, md) {
 // TRANSACTIONS MODAL (thin wrappers to shared modal)
 // ============================================================================
 
-function trOpenTxnModal(companyKey, investorId) {
+// Build/refresh wmsTxnCtx with the Trading module's current data. Must be
+// called BEFORE any txn-modal open. The shared modal (`wmsEditModalOpen`,
+// `wmsTxnModalOpen`) silently bails with `if (!wmsTxnCtx) return;` — so
+// forgetting this step = invisible no-op on click. Callable from both the
+// list-modal entry (trOpenTxnModal) and the direct row-click edit entry
+// (trOpenEditModal on the Transactions tab).
+function _trSetTxnCtx() {
     wmsTxnCtx = {
         module: 'trading',
         transactions: trTransactions,
@@ -1672,6 +1678,10 @@ function trOpenTxnModal(companyKey, investorId) {
             tagLogic: trTagFilterLogic
         };
     }
+}
+
+function trOpenTxnModal(companyKey, investorId) {
+    _trSetTxnCtx();
     wmsTxnModalOpen(companyKey, investorId);
 }
 
@@ -1681,6 +1691,9 @@ function trCloseTxnModal() {
 }
 
 function trOpenEditModal(txnId) {
+    // Row-click on Trading → Transactions tab comes here WITHOUT first going
+    // through the list modal, so wmsTxnCtx may be null. Always reset it.
+    _trSetTxnCtx();
     wmsEditModalOpen(txnId);
 }
 
