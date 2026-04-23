@@ -3054,6 +3054,25 @@ function wmsParseOptionsQuery(query) {
     // Must contain CE or PE
     if (upper.indexOf('CE') < 0 && upper.indexOf('PE') < 0) return null;
 
+    // ── Whole-word Fyers monthly format ──
+    // Handles the case where a user pastes the full Fyers symbol, e.g.
+    //   "360ONE26MAY1100CE", "NIFTY26FEB25000PE", "RELIANCE26JUN2500CE".
+    // Pattern: UNDERLYING (letters/digits/&, non-greedy) + YY + MMM + STRIKE + (CE|PE).
+    // Weekly format (YY + MM + DD) still falls through to the tokenized path.
+    var _monthsAlt = WMS_MONTHS_SHORT.join('|');
+    var _singleToken = upper.replace(/\s+/g, '');
+    var _monthlyRe = new RegExp('^([A-Z0-9&]+?)(\\d{2})(' + _monthsAlt + ')(\\d+(?:\\.\\d+)?)(CE|PE)$');
+    var _monthlyMatch = _singleToken.match(_monthlyRe);
+    if (_monthlyMatch) {
+        return {
+            underlying: _monthlyMatch[1],
+            strike: parseFloat(_monthlyMatch[4]),
+            optionType: _monthlyMatch[5],
+            expiryHint: _monthlyMatch[3]
+        };
+    }
+
+    // ── Tokenized path (space-separated) ──
     var parts = upper.replace(/\s+/g, ' ').split(' ');
     var underlying = null;
     var strike = null;
@@ -3067,7 +3086,10 @@ function wmsParseOptionsQuery(query) {
         if (suffixMatch) { strike = parseFloat(suffixMatch[1]); optionType = suffixMatch[2]; continue; }
         if (/^\d+(?:\.\d+)?$/.test(p)) { strike = parseFloat(p); continue; }
         if (WMS_MONTHS_SHORT.indexOf(p) >= 0) { expiryHint = p; continue; }
-        if (!underlying && /^[A-Z&]+$/.test(p)) { underlying = p; }
+        // Underlying may start with / contain digits (e.g. 360ONE, 5PAISA, 63MOONS, 3MINDIA).
+        // Pure-digit tokens are already intercepted by the strike check above, so this
+        // can't accidentally swallow the strike.
+        if (!underlying && /^[A-Z0-9&]+$/.test(p)) { underlying = p; }
     }
 
     if (!underlying || strike === null || !optionType) return null;
