@@ -1939,6 +1939,48 @@ async function trLoadBonusModule(callback) {
 }
 
 // ============================================================================
+// EXPIRY SETTLEMENT MODULE (loaded on demand — JS-only, no separate HTML file;
+//   the module injects its own modal DOM on first open)
+// ============================================================================
+
+var trExpiryLoaded = false;
+var trExpiryLoading = false;
+var trExpiryCallbacks = [];
+
+async function trLoadExpiryModule(callback) {
+    if (trExpiryLoaded) {
+        if (typeof callback === 'function') callback();
+        return;
+    }
+    if (trExpiryLoading) {
+        if (typeof callback === 'function') trExpiryCallbacks.push(callback);
+        return;
+    }
+    trExpiryLoading = true;
+    if (typeof callback === 'function') trExpiryCallbacks.push(callback);
+
+    try {
+        var oldScript = document.querySelector('script[src*="trading-expiry.js"]');
+        if (oldScript) oldScript.remove();
+        await new Promise(function(resolve, reject) {
+            var script = document.createElement('script');
+            script.src = 'trading-expiry.js?t=' + Date.now();
+            script.onload = resolve;
+            script.onerror = function() { reject(new Error('Failed to load trading-expiry.js')); };
+            document.body.appendChild(script);
+        });
+        trExpiryLoaded = true;
+        trExpiryCallbacks.forEach(function(cb) { cb(); });
+        trExpiryCallbacks = [];
+    } catch (err) {
+        console.error('Trading: Failed to load expiry module:', err);
+        showAlert('Failed to load Expiry module: ' + err.message, 'error');
+        trExpiryLoading = false;
+        trExpiryCallbacks = [];
+    }
+}
+
+// ============================================================================
 // SPLIT MODULE (loaded on demand — same pattern as Bonus)
 // ============================================================================
 

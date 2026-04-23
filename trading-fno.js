@@ -88,6 +88,18 @@ function trFnoInit() {
         snapBtn.addEventListener('click', function() { trFnoSnapshot(); });
     }
 
+    // Settle Expired Options button — lazy-loads trading-expiry.js then opens modal
+    var settleBtn = document.getElementById('trFnoSettleExpiredBtn');
+    if (settleBtn) {
+        settleBtn.addEventListener('click', function() {
+            if (typeof trLoadExpiryModule === 'function') {
+                trLoadExpiryModule(function() {
+                    if (typeof trExpOpen === 'function') trExpOpen();
+                });
+            }
+        });
+    }
+
     // ---- View bar event handlers ----
 
     // More dropdown toggle
