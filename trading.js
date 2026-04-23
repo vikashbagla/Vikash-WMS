@@ -783,7 +783,7 @@ async function trLoadData() {
     // Load ALL transactions (no transaction_type filter — includes DIVIDEND, etc.)
     // Uses wmsFetchAllRaw() to paginate past Supabase's 1000-row default limit.
     var txnData = await wmsFetchAllRaw(
-        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,product,transaction_type,transaction_date,quantity,lots,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display&order=transaction_date.asc'
+        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,product,transaction_type,transaction_date,transaction_time,quantity,lots,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display&order=transaction_date.asc,transaction_time.asc.nullsfirst,id.asc'
     );
     console.log('Trading: Loaded ' + txnData.length + ' transactions (all types)');
 

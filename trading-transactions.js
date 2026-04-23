@@ -662,15 +662,24 @@ function trTxMultiSort(a, b) {
     if (dateA.getTime() !== dateB.getTime()) {
         return dateB - dateA;
     }
-    // Secondary: symbol ascending
+    // Secondary: time descending (latest intraday trade on top). NULL time
+    // sorts as '00:00:00' so legacy rows without a saved time fall below
+    // newer rows with one, preserving the "most-recent first" intent.
+    var tA = a.transaction_time || '00:00:00';
+    var tB = b.transaction_time || '00:00:00';
+    if (tA !== tB) return tA < tB ? 1 : -1;
+    // Tertiary: symbol ascending (only engages when time is tied or both null)
     var symA = (a.short_symbol || a.symbol || '').toLowerCase();
     var symB = (b.short_symbol || b.symbol || '').toLowerCase();
     var symCmp = symA.localeCompare(symB);
     if (symCmp !== 0) return symCmp;
-    // Tertiary: investor>trader>broker ascending
+    // Quaternary: investor>trader>broker ascending
     var invA = (trInvName(a.investor_id) + ' ' + trBrkCode(a.broker_id)).toLowerCase();
     var invB = (trInvName(b.investor_id) + ' ' + trBrkCode(b.broker_id)).toLowerCase();
-    return invA.localeCompare(invB);
+    var invCmp = invA.localeCompare(invB);
+    if (invCmp !== 0) return invCmp;
+    // Final tiebreaker: id (insertion order)
+    return (a.id || 0) - (b.id || 0);
 }
 
 // ============================================================================
@@ -813,9 +822,14 @@ function trTxRenderList(filtered) {
                     return trTxSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
                 case 'date':
                 default:
-                    valA = new Date(a.transaction_date);
-                    valB = new Date(b.transaction_date);
-                    return trTxSortDirection === 'asc' ? valA - valB : valB - valA;
+                    // Compare date + time + id as a single lexicographic tuple
+                    // so within-date sort is chronological. NULL time = '00:00:00'.
+                    valA = (a.transaction_date || '') + 'T' + (a.transaction_time || '00:00:00') + '#' + (a.id || 0);
+                    valB = (b.transaction_date || '') + 'T' + (b.transaction_time || '00:00:00') + '#' + (b.id || 0);
+                    if (valA === valB) return 0;
+                    return trTxSortDirection === 'asc'
+                        ? (valA < valB ? -1 : 1)
+                        : (valA < valB ? 1 : -1);
             }
         });
     }
