@@ -1772,6 +1772,14 @@ async function trOpenAddTransaction() {
             var styles = doc.querySelectorAll('style');
             styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
 
+            // Remove any previous container before creating a fresh one.
+            // Without this, a module switch-away + switch-back would stack up
+            // duplicate #tr-add-txn-container divs in the DOM with duplicate
+            // element IDs — getElementById returns the FIRST one, so listeners
+            // end up attached to orphaned DOM. See LESSONS A.1.2a.
+            var oldAtContainer = document.getElementById('tr-add-txn-container');
+            if (oldAtContainer) oldAtContainer.remove();
+
             // Inject body content (modal overlays) into a container div
             var container = document.createElement('div');
             container.id = 'tr-add-txn-container';
@@ -1842,6 +1850,11 @@ async function trLoadRightsModule(callback) {
         var styles = doc.querySelectorAll('style');
         styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
 
+        // Remove old container before creating a fresh one — prevents
+        // duplicate DOM IDs when the module re-loads. See LESSONS A.1.2a.
+        var oldRhContainer = document.getElementById('tr-rights-container');
+        if (oldRhContainer) oldRhContainer.remove();
+
         // Inject body content (modal overlays) into a container div
         var container = document.createElement('div');
         container.id = 'tr-rights-container';
@@ -1906,6 +1919,11 @@ async function trLoadBonusModule(callback) {
         var doc = parser.parseFromString(htmlText, 'text/html');
         var styles = doc.querySelectorAll('style');
         styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+
+        // Remove old container before creating a fresh one — prevents
+        // duplicate DOM IDs on module re-load. See LESSONS A.1.2a.
+        var oldBonusContainer = document.getElementById('tr-bonus-container');
+        if (oldBonusContainer) oldBonusContainer.remove();
 
         // Inject body content (modal overlay) into a container div
         var container = document.createElement('div');
@@ -2014,6 +2032,11 @@ async function trLoadSplitModule(callback) {
         var styles = doc.querySelectorAll('style');
         styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
 
+        // Remove old container before creating a fresh one — prevents
+        // duplicate DOM IDs on module re-load. See LESSONS A.1.2a.
+        var oldSplitContainer = document.getElementById('tr-split-container');
+        if (oldSplitContainer) oldSplitContainer.remove();
+
         // Inject body content (modal overlay) into a container div
         var container = document.createElement('div');
         container.id = 'tr-split-container';
@@ -2091,6 +2114,11 @@ async function trLoadIncomeModule(callback) {
         var styles = doc.querySelectorAll('style');
         styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
 
+        // Remove old container before creating a fresh one — prevents
+        // duplicate DOM IDs on module re-load. See LESSONS A.1.2a.
+        var oldIncContainer = document.getElementById('tr-income-container');
+        if (oldIncContainer) oldIncContainer.remove();
+
         // Inject body content
         var container = document.createElement('div');
         container.id = 'tr-income-container';
@@ -2162,6 +2190,11 @@ async function trLoadHistPlModule(callback) {
         var doc = parser.parseFromString(htmlText, 'text/html');
         var styles = doc.querySelectorAll('style');
         styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+
+        // Remove old container before creating a fresh one — prevents
+        // duplicate DOM IDs on module re-load. See LESSONS A.1.2a.
+        var oldHplContainer = document.getElementById('tr-histpl-container');
+        if (oldHplContainer) oldHplContainer.remove();
 
         var container = document.createElement('div');
         container.id = 'tr-histpl-container';

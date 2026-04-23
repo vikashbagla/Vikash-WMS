@@ -1,5 +1,16 @@
 // ============================================================================
 // trading-add-transaction.js — Add Transaction Modal for Trading Module
+
+// Script-reload reset: this module is lazy-loaded by trading.js and the script
+// tag is re-executed whenever the Trading tab is re-entered after a module
+// switch-away. The `_atModuleInitDone` flag on window survives those reloads,
+// which made initAddTxnModule() bail early on the second load — leaving
+// `atInvBrkDdCtrl` null and the investor/broker dropdown non-functional until
+// a full page refresh. Resetting the flag here ensures initAddTxnModule() runs
+// against the freshly-injected DOM every time the script re-executes.
+// See WMS-LESSONS §A.1.2a (lazy-loaded-module init guards).
+window._atModuleInitDone = false;
+
 // Rule A.1.2: All module-level state uses var (not let/const) to avoid TDZ on reload
 // Rule A.1.3: No function names that collide with utils.js const (showAlert, showLoading)
 // ============================================================================
