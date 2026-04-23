@@ -1410,6 +1410,12 @@ function wmsEditModalOpen(txnId) {
     document.getElementById('wmsSplitSection').style.display = 'none';
     document.getElementById('wmsSplitQty').value = '';
     document.getElementById('wmsSplitStatus').textContent = '';
+    document.getElementById('wmsSplitPreview').style.display = 'none';
+    document.getElementById('wmsSplitPreviewBody').innerHTML = '';
+    // Confirm-split button stays disabled after a successful split until modal reopens,
+    // because wmsExecuteSplit sets it disabled and only re-enables on error. Reset here
+    // so a previously-split-then-closed modal doesn't leak its disabled state.
+    document.getElementById('wmsSplitConfirmBtn').disabled = false;
 
     // Disable if locked
     var isLocked = !!txn.is_locked;

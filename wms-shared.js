@@ -3472,8 +3472,8 @@ function wmsPillSearch(containerEl, opts) {
         else selectedIds.push(id);
         syncStates();
         renderSelectedTags();
-        resetSearch();
-        ddEl.classList.remove('show');
+        // Multi-select: keep dropdown open and preserve search text so user can select
+        // multiple items without reopening. Dropdown closes via outside-click / blur / ESC.
         onChange();
     }
 
@@ -3521,7 +3521,7 @@ function wmsPillSearch(containerEl, opts) {
                 if (idx >= 0) selectedIds.splice(idx, 1);
                 syncStates();
                 renderSelectedTags();
-                resetSearch();
+                // Preserve search text so multi-select flow isn't disrupted when removing a tag.
                 onChange();
             });
         });
@@ -3696,8 +3696,8 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
         else selectedIds.push(id);
         syncStates();
         renderSelectedTags();
-        resetSearch();
-        ddEl.classList.remove('show');
+        // Multi-select: keep dropdown open and preserve search text so user can select
+        // multiple items without reopening. Dropdown closes via outside-click / blur / ESC.
         onChange();
     }
 
@@ -3746,7 +3746,7 @@ function wmsPillFilter(inputEl, ddEl, tagsEl, opts) {
                 if (idx >= 0) selectedIds.splice(idx, 1);
                 syncStates();
                 renderSelectedTags();
-                resetSearch();
+                // Preserve search text so multi-select flow isn't disrupted when removing a tag.
                 onChange();
             });
         });
