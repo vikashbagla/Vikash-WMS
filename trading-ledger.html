@@ -82,9 +82,12 @@
 /* Summary section label */
 .lg-summary-label { font-size:11px; font-weight:600; color:#2d3748; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.3px; }
 
-/* Summary cards — sticky to bottom of the unified scroll container so they stay visible regardless of which blocks are expanded.
-   The spacer div (#lgStickySpacerDiv) below the last content section ensures content can scroll fully clear of the overlay. */
-.lg-summary-cards { position:sticky; bottom:0; z-index:15; margin-top:auto; padding:10px; background:#f7fafc; border:1px solid #e2e8f0; border-radius:6px; box-shadow:0 -2px 8px rgba(0,0,0,0.06); }
+/* Summary cards — anchored at the bottom of the Statements page as a separate
+   flex:0 panel BELOW the scrollable #lgUnifiedScroll. Content scrolls in its
+   own region above; cards are always visible below with a hard boundary (not
+   overlaying). Revised 2026-04-23 — previous `position: sticky` caused content
+   to scroll behind the cards, which was confusing. */
+.lg-summary-cards { flex:0 0 auto; margin:0 8px 8px 8px; padding:10px; background:#f7fafc; border:1px solid #e2e8f0; border-radius:6px; box-shadow:0 -2px 8px rgba(0,0,0,0.06); }
 .lg-summary-row { display:flex; align-items:stretch; gap:6px; }
 .lg-summary-row + .lg-summary-row { margin-top:8px; justify-content:flex-end; }
 .lg-summary-card { flex:1 1 0; padding:10px 12px; border:1px solid #e2e8f0; border-radius:4px; background:#fff; min-width:0; }
@@ -328,44 +331,43 @@
         </div>
       </div>
 
-      <!-- Spacer: ensures content above can scroll clear of the sticky summary cards -->
-      <div id="lgStickySpacerDiv" style="flex:0 0 120px;"></div>
+    </div><!-- /#lgUnifiedScroll -->
 
-      <!-- 3. Summary Cards — sticky to viewport bottom -->
-      <div class="lg-summary-cards">
-        <div class="lg-summary-row">
-          <div class="lg-summary-card">
-            <div class="lg-summary-card-label">Value of Holdings</div>
-            <div class="lg-summary-card-value" id="lgCardHoldingsValue">-</div>
-          </div>
-          <div class="lg-summary-op">−</div>
-          <div class="lg-summary-card">
-            <div class="lg-summary-card-label">Outstanding</div>
-            <div class="lg-summary-card-value" id="lgCardOutstanding">-</div>
-            <div class="lg-card-sub" id="lgCardOutstandingBreakdown" style="display:block; font-size:10px; color:#718096; margin-top:2px; white-space:nowrap;">-</div>
-          </div>
-          <div class="lg-summary-op">−</div>
-          <div class="lg-summary-card">
-            <div class="lg-summary-card-label" id="lgCardPotentialTaxLabel">Potential Tax (0%)</div>
-            <div class="lg-summary-card-value" id="lgCardPotentialTax">-</div>
-          </div>
-          <div class="lg-summary-op">=</div>
-          <div class="lg-summary-card lg-summary-card-highlight">
-            <div class="lg-summary-card-label">Net Receivable / (Payable)</div>
-            <div class="lg-summary-card-value" id="lgCardNetReceivable">-</div>
-          </div>
+    <!-- 3. Summary Cards — anchored at the bottom of #lgContainer as a separate
+         flex:0 panel. Content above scrolls in #lgUnifiedScroll; cards are
+         always visible below with a hard boundary (no overlay). -->
+    <div class="lg-summary-cards">
+      <div class="lg-summary-row">
+        <div class="lg-summary-card">
+          <div class="lg-summary-card-label">Value of Holdings</div>
+          <div class="lg-summary-card-value" id="lgCardHoldingsValue">-</div>
         </div>
-        <div class="lg-summary-row">
-          <div class="lg-summary-card">
-            <div class="lg-summary-card-label">Balance w/o MTM</div>
-            <div class="lg-summary-card-value">
-              <span id="lgCardBalNoMtm">-</span><span class="lg-card-sub" id="lgCardBalNoMtmSub"></span>
-            </div>
+        <div class="lg-summary-op">−</div>
+        <div class="lg-summary-card">
+          <div class="lg-summary-card-label">Outstanding</div>
+          <div class="lg-summary-card-value" id="lgCardOutstanding">-</div>
+          <div class="lg-card-sub" id="lgCardOutstandingBreakdown" style="display:block; font-size:10px; color:#718096; margin-top:2px; white-space:nowrap;">-</div>
+        </div>
+        <div class="lg-summary-op">−</div>
+        <div class="lg-summary-card">
+          <div class="lg-summary-card-label" id="lgCardPotentialTaxLabel">Potential Tax (0%)</div>
+          <div class="lg-summary-card-value" id="lgCardPotentialTax">-</div>
+        </div>
+        <div class="lg-summary-op">=</div>
+        <div class="lg-summary-card lg-summary-card-highlight">
+          <div class="lg-summary-card-label">Net Receivable / (Payable)</div>
+          <div class="lg-summary-card-value" id="lgCardNetReceivable">-</div>
+        </div>
+      </div>
+      <div class="lg-summary-row">
+        <div class="lg-summary-card">
+          <div class="lg-summary-card-label">Balance w/o MTM</div>
+          <div class="lg-summary-card-value">
+            <span id="lgCardBalNoMtm">-</span><span class="lg-card-sub" id="lgCardBalNoMtmSub"></span>
           </div>
         </div>
       </div>
-
-    </div><!-- /#lgUnifiedScroll -->
+    </div><!-- /.lg-summary-cards -->
 
   </div>
 

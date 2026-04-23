@@ -1579,32 +1579,6 @@ function lgRenderSummary() {
         bookedSec.classList.add('lg-booked-collapsed');
     }
 
-    // Size the sticky-cards spacer to match actual cards height so content
-    // scrolls fully clear of the sticky summary cards. Hardcoded 120px left
-    // ~60-80px of content hidden behind the cards; dynamic sizing adapts to
-    // font-size changes, card additions, and responsive reflow.
-    lgSyncStickySpacer();
-}
-
-// Match the sticky-spacer height to the sticky-cards height (+ a small
-// breathing margin) so the last content row isn't permanently hidden behind
-// the overlay. Called on render and on window resize.
-function lgSyncStickySpacer() {
-    var spacer = document.getElementById('lgStickySpacerDiv');
-    var cards  = document.querySelector('.lg-summary-cards');
-    if (!spacer || !cards) return;
-    var h = cards.offsetHeight;
-    if (!h) return;
-    // +12px breathing room so the last row has a gap above the cards.
-    spacer.style.flex = '0 0 ' + (h + 12) + 'px';
-}
-
-// Re-size on window resize (responsive layout may change card height).
-if (typeof window !== 'undefined' && !window._lgStickySpacerWired) {
-    window._lgStickySpacerWired = true;
-    window.addEventListener('resize', function() {
-        if (typeof lgSyncStickySpacer === 'function') lgSyncStickySpacer();
-    });
 }
 
 // ============================================================================
