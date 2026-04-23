@@ -1716,6 +1716,15 @@ async function importAddTxnToDb() {
     showAlert('Importing ' + atRows.length + ' transaction(s)...', 'info', 3000);
 
     try {
+        // Capture wall-clock HH:MM:SS once for the whole save batch — all rows
+        // in a single Save click share the same timestamp. Within the batch,
+        // id (insertion order) remains the chronological tiebreaker.
+        var _atSaveTime = (function() {
+            var d = new Date();
+            return String(d.getHours()).padStart(2,'0') + ':' +
+                   String(d.getMinutes()).padStart(2,'0') + ':' +
+                   String(d.getSeconds()).padStart(2,'0');
+        })();
         var records = atRows.map(function(row) {
             return {
                 investor_id: atSelectedInvestor.id,
@@ -1730,6 +1739,7 @@ async function importAddTxnToDb() {
                 product: null,
                 transaction_type: row.quantity >= 0 ? 'BUY' : 'SELL',
                 transaction_date: document.getElementById('addTxnDate').value,
+                transaction_time: _atSaveTime,
                 quantity: Math.round(row.quantity),
                 lots: row.lots || 0,
                 price: atRound(row.price),

@@ -1881,7 +1881,13 @@ async function lgShowInterestDetail(entryId) {
             var p = (t.product || '').toUpperCase();
             var s = (t.security_type || '').toUpperCase();
             return /F&O|FNO|NFO/.test(p) || /F&O|FNO|NFO/.test(s);
-        }).sort(function(a, b) { return (a.transaction_date || '').localeCompare(b.transaction_date || ''); });
+        }).sort(function(a, b) {
+            var dc = (a.transaction_date || '').localeCompare(b.transaction_date || '');
+            if (dc !== 0) return dc;
+            var tc = (a.transaction_time || '').localeCompare(b.transaction_time || '');
+            if (tc !== 0) return tc;
+            return (a.id || 0) - (b.id || 0);
+        });
         var marginEvents = wmsCalcMarginFIFO(nfoTxns);
 
         var periods = wmsCalcInterestWeeklyFriday(full, interestTerms, fromStr, toStr, marginEvents);

@@ -202,6 +202,10 @@ function _trExpFindExpired() {
         var sorted = g.txns.slice().sort(function(a, b) {
             var da = a.transaction_date || '', db = b.transaction_date || '';
             if (da !== db) return da < db ? -1 : 1;
+            // Chronological tiebreaker: transaction_time (NULL treated as 00:00:00
+            // so older rows without a saved time sort before newer rows with one).
+            var ta = a.transaction_time || '', tb = b.transaction_time || '';
+            if (ta !== tb) return ta < tb ? -1 : 1;
             return (a.id || 0) - (b.id || 0);
         });
         var netQty = 0;

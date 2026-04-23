@@ -2038,6 +2038,12 @@ function buildTransactionRecord(row, ctx) {
         tradeId = row._orderNumbers.join(',');
     }
 
+    // Transaction time: Fyers trades carry the exact fill time on the row
+    // (row.transaction_time). CN parsers will populate it later; Excel imports
+    // leave it null. Undefined → null (so JSON payload serialises cleanly).
+    var txnTime = (row.transaction_time !== undefined && row.transaction_time !== null)
+        ? row.transaction_time : null;
+
     return {
         investor_id: investorId,
         broker_id: brokerId,
@@ -2051,6 +2057,7 @@ function buildTransactionRecord(row, ctx) {
         product: null,
         transaction_type: row.transaction_type,
         transaction_date: tradeDate,
+        transaction_time: txnTime,
         quantity: row.quantity,
         lots: row.lots || 0,
         price: roundMoney(row.price),
@@ -3833,6 +3840,21 @@ async function fyProcessTrades(tradeBook) {
     // different orders (even same symbol + side on the same day) are distinct
     // logical trades and MUST stay as separate rows — otherwise they collide
     // with each other and with any prior rows from split/edit operations.
+    // Extract "HH:MM:SS" from a Fyers tradebook entry. Fyers v3 typically
+    // exposes orderDateTime as "YYYY-MM-DD HH:MM:SS" in IST; we also try
+    // tradeDateTime / orderTime as fallbacks. Returns null if no field
+    // yields a parseable time — the DB will store NULL and the sort helper
+    // treats that as 00:00:00.
+    function _fyExtractTradeTime(t) {
+        var src = t.orderDateTime || t.tradeDateTime || t.orderTime || t.tradedTime || '';
+        if (!src) return null;
+        var s = String(src);
+        // Prefer the HH:MM:SS pattern anywhere in the string.
+        var m = s.match(/(\d{2}):(\d{2}):(\d{2})/);
+        if (m) return m[1] + ':' + m[2] + ':' + m[3];
+        return null;
+    }
+
     var groups = {};
     validTrades.forEach(function(t) {
         var rawSymbol = t.symbol || '';
@@ -3854,7 +3876,10 @@ async function fyProcessTrades(tradeBook) {
                 totalQty: 0,
                 totalValue: 0,
                 orderNumbers: [],
-                trades: []
+                trades: [],
+                // Earliest trade time across all fills of this order — the
+                // "when this order first started executing" timestamp.
+                earliestTime: null
             };
         }
         groups[key].totalQty += t.tradedQty || 0;
@@ -3863,6 +3888,10 @@ async function fyProcessTrades(tradeBook) {
             groups[key].orderNumbers.push(t.orderNumber);
         }
         groups[key].trades.push(t);
+        var tt = _fyExtractTradeTime(t);
+        if (tt && (!groups[key].earliestTime || tt < groups[key].earliestTime)) {
+            groups[key].earliestTime = tt;
+        }
     });
 
     // Match securities from local wmsRefData
@@ -3938,6 +3967,9 @@ async function fyProcessTrades(tradeBook) {
             gst: 0,
             total_charges: 0,
             net_amount: 0,
+            // Fyers trade time (earliest fill time across the order's trades).
+            // Null when none of the common Fyers time fields are present.
+            transaction_time: g.earliestTime,
             _db_security_type: secType,
             _db_asset_class: secMatch.asset_class || (isNfo ? 'FUTURES' : ''),
             _orderNumbers: g.orderNumbers,   // For broker_trade_id

@@ -393,10 +393,12 @@ function trFnoCalcPositions() {
             // Apply expiry filter (null = not yet initialized, treat as no filter)
             if (trFnoExpiryFilter && trFnoExpiryFilter.length > 0 && trFnoExpiryFilter.indexOf(contractExpiry) < 0) return;
 
-            // Sort chronologically (stable tiebreak by txn id)
+            // Sort chronologically: date, then time (null = 00:00:00), then id as tie-breaker
             var sorted = g.txns.slice().sort(function(a, b) {
                 var da = a.transaction_date || '', db = b.transaction_date || '';
                 if (da !== db) return da < db ? -1 : 1;
+                var ta = a.transaction_time || '', tb = b.transaction_time || '';
+                if (ta !== tb) return ta < tb ? -1 : 1;
                 return (a.id || 0) - (b.id || 0);
             });
 

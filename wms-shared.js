@@ -5423,7 +5423,9 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
             _rowType: 'trade',
             _source: t,
             date: t.transaction_date,
-            sortKey: t.transaction_date + '|1|' + (t.created_at || ''),
+            // Include transaction_time in the sort key so intraday trades
+            // sort chronologically. NULL time → '00:00:00' sorts as earliest.
+            sortKey: t.transaction_date + '|1|' + (t.transaction_time || '00:00:00') + '|' + (t.created_at || ''),
             entryType: 'TRADE',
             amount: amt,
             investorId: t.investor_id,

@@ -365,6 +365,8 @@ async function trFnoBannerRefreshFromDefault(forceRefresh) {
         var sorted = g.txns.slice().sort(function(a, b) {
             var da = a.transaction_date || '', db = b.transaction_date || '';
             if (da !== db) return da < db ? -1 : 1;
+            var ta = a.transaction_time || '', tb = b.transaction_time || '';
+            if (ta !== tb) return ta < tb ? -1 : 1;
             return (a.id || 0) - (b.id || 0);
         });
         var result = wmsCalcLifoCost(sorted);

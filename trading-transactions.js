@@ -1190,10 +1190,12 @@ function trTxRenderMatchingTrades(filtered) {
     Object.keys(groups).sort().forEach(function(key) {
         var g = groups[key];
 
-        // Sort chronologically, id as tie-breaker (matches engine's expectation)
+        // Sort chronologically: date, then time (null = 00:00:00), then id as tie-breaker.
         var sorted = g.txns.slice().sort(function(a, b) {
             var da = a.transaction_date || '', db = b.transaction_date || '';
             if (da !== db) return da < db ? -1 : 1;
+            var ta = a.transaction_time || '', tb = b.transaction_time || '';
+            if (ta !== tb) return ta < tb ? -1 : 1;
             return (a.id || 0) - (b.id || 0);
         });
 

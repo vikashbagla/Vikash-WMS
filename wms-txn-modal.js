@@ -313,7 +313,7 @@ function _wmsTxnEnsureDom() {
                     // Trade Details
                     '<div class="wms-edit-section"><div class="wms-edit-section-label">Trade Details</div>' +
                         '<div class="wms-edit-row cols-4">' +
-                            '<div class="form-group"><label>Date</label><input type="text" id="wmsEditDate" disabled style="text-align:right;"></div>' +
+                            '<div class="form-group"><label>Date / Time</label><input type="text" id="wmsEditDate" disabled style="text-align:right;" title="Trade date — time shown after · if captured"></div>' +
                             '<div class="form-group"><label>Type</label><input type="text" id="wmsEditType" disabled></div>' +
                             '<div class="form-group"><label>Exchange</label><input type="text" id="wmsEditExchange" disabled></div>' +
                             '<div class="form-group"><label>Product</label><input type="text" id="wmsEditProduct" disabled></div>' +
@@ -1012,6 +1012,8 @@ function wmsTxnRenderMatchingView() {
         var sorted = g.txns.slice().sort(function(a, b) {
             var da = a.transaction_date || '', db = b.transaction_date || '';
             if (da !== db) return da < db ? -1 : 1;
+            var ta = a.transaction_time || '', tb = b.transaction_time || '';
+            if (ta !== tb) return ta < tb ? -1 : 1;
             return (a.id || 0) - (b.id || 0);
         });
 
@@ -1353,7 +1355,15 @@ function wmsEditModalOpen(txnId) {
         }).join('');
 
     // Trade details
-    document.getElementById('wmsEditDate').value = formatDate(txn.transaction_date);
+    // Date with optional time suffix (HH:MM when present; seconds trimmed).
+    var _dateStr = formatDate(txn.transaction_date);
+    if (txn.transaction_time) {
+        var _t = String(txn.transaction_time);
+        // PostgREST returns TIME as 'HH:MM:SS' or 'HH:MM:SS.ffff'; keep HH:MM only.
+        var _tHm = _t.length >= 5 ? _t.slice(0, 5) : _t;
+        _dateStr += ' · ' + _tHm;
+    }
+    document.getElementById('wmsEditDate').value = _dateStr;
     document.getElementById('wmsEditType').value = txn.transaction_type || '-';
     document.getElementById('wmsEditExchange').value = txn.exchange || '-';
     document.getElementById('wmsEditProduct').value = txn.product || '-';
