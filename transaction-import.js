@@ -325,35 +325,55 @@ function excelDateToISO(dateValue) {
 // e.g. MANAPPURAM26MAR305PE → { underlying: 'MANAPPURAM', expiryStr: '26MAR', strikePrice: 305, optionType: 'PE' }
 // e.g. NIFTY26FEBFUT → { underlying: 'NIFTY', expiryStr: '26FEB', strikePrice: null, optionType: null }
 var NFO_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+// Compute the last Tuesday of a month (NSE's monthly F&O expiry convention for
+// this book — verified against Fyers data 2026-04-23).
+// Returns YYYY-MM-DD. This is an APPROXIMATION used ONLY when a contract isn't
+// already in securities_nfo; NFO Sync overwrites with the authoritative Fyers
+// date (which handles holiday-driven shifts the approximation can't).
+function _parseNfoLastTuesday(year, monthIdx) {
+    var d = new Date(year, monthIdx + 1, 0);            // last day of month
+    while (d.getDay() !== 2) d.setDate(d.getDate() - 1); // 2 = Tuesday
+    return d.getFullYear() + '-' +
+           String(d.getMonth() + 1).padStart(2, '0') + '-' +
+           String(d.getDate()).padStart(2, '0');
+}
+
 function parseNfoSymbol(sym) {
     if (!sym) return null;
     sym = sym.toUpperCase();
+    // Strip any existing exchange prefix for consistent regex matching.
+    // We'll add NSE: back when constructing the canonical output symbol so
+    // new records match Fyers' naming convention (rule A.2.13).
+    var bareSym = sym.replace(/^[A-Z]+:/, '');
 
     // Try options pattern: {UNDERLYING}{YY}{MON}{STRIKE}{CE|PE}
-    var optMatch = sym.match(/^(.+?)(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d+(?:\.\d+)?)(CE|PE)$/);
+    var optMatch = bareSym.match(/^(.+?)(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d+(?:\.\d+)?)(CE|PE)$/);
     if (optMatch) {
         var monIdx = NFO_MONTHS.indexOf(optMatch[3]);
         var yr = 2000 + parseInt(optMatch[2]);
         return {
             underlying: optMatch[1],
             expiryStr: optMatch[2] + optMatch[3],
-            expiryDate: yr + '-' + String(monIdx + 1).padStart(2, '0') + '-28',  // approximate last Thursday
+            expiryDate: _parseNfoLastTuesday(yr, monIdx),
             strikePrice: parseFloat(optMatch[4]),
-            optionType: optMatch[5]
+            optionType: optMatch[5],
+            fullSymbol: 'NSE:' + bareSym
         };
     }
 
     // Try futures pattern: {UNDERLYING}{YY}{MON}FUT
-    var futMatch = sym.match(/^(.+?)(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)FUT$/);
+    var futMatch = bareSym.match(/^(.+?)(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)FUT$/);
     if (futMatch) {
         var monIdx2 = NFO_MONTHS.indexOf(futMatch[3]);
         var yr2 = 2000 + parseInt(futMatch[2]);
         return {
             underlying: futMatch[1],
             expiryStr: futMatch[2] + futMatch[3],
-            expiryDate: yr2 + '-' + String(monIdx2 + 1).padStart(2, '0') + '-28',
+            expiryDate: _parseNfoLastTuesday(yr2, monIdx2),
             strikePrice: null,
-            optionType: null
+            optionType: null,
+            fullSymbol: 'NSE:' + bareSym
         };
     }
 
@@ -954,16 +974,18 @@ function matchSymbolMultiStage(symbol, securityType, batchMap) {
                 var instrType = parsed.optionType ? 'OPTIONS' : 'FUTURES';
                 var instrName = parsed.underlying + ' ' + parsed.expiryStr + (parsed.strikePrice ? ' ' + parsed.strikePrice + ' ' + parsed.optionType : ' FUT');
 
-                // Defer insert to import time — mark with _pendingNfoInsert
+                // Defer insert to import time — mark with _pendingNfoInsert.
+                // Use parsed.fullSymbol (always NSE:-prefixed) so new records match
+                // Fyers' naming convention and can be updated by NFO Sync.
                 return { status: 'confirmed', match: {
-                    id: null, symbol: symUpper, short_symbol: parsed.underlying,
+                    id: null, symbol: parsed.fullSymbol, short_symbol: parsed.underlying,
                     company_name: instrName, security_type: 'NFO',
                     asset_class: instrType, exchange: 'NSE', lot_size: lotSize,
                     strike_price: parsed.strikePrice, option_type: parsed.optionType,
                     expiry_date: parsed.expiryDate,
                     _pendingNfoInsert: true,
                     _nfoRecord: {
-                        symbol: symUpper,
+                        symbol: parsed.fullSymbol,
                         instrument_name: instrName,
                         exchange: 'NSE',
                         instrument_type: instrType,

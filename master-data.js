@@ -2701,29 +2701,52 @@ async function startFOSync() {
 
         const today = new Date(); today.setHours(0,0,0,0);
 
-        // ── 2. Filter FUTURES only (instr_type == 11) ───────────────
+        // ── 2. Parse BOTH futures (XX) AND options (CE/PE) ──────────
+        // Options were historically skipped which meant every option record in
+        // the DB got deactivated every run and expiry_date was never refreshed.
+        // Now we parse all three but restrict CSV "add"s to futures only (the
+        // options universe is enormous; new options are created lazily by CN /
+        // Excel import). For existing options the sync updates expiry, lot size,
+        // is_active, broker_tokens from Fyers' authoritative data.
+        //
+        // NORMALIZATION: we key by the BARE (prefix-stripped) symbol on both
+        // sides. That lets a DB record created before we standardised the
+        // NSE: prefix (bare "360ONE26MAY1100CE") be matched against the current
+        // Fyers row ("NSE:360ONE26MAY1100CE") and be renamed + corrected.
+        function _bareSym(s) { return (s || '').replace(/^[A-Z]+:/, ''); }
+
         function parseRow(cols, exchCode) {
             if (!cols || cols.length < 17) return null;
-            const optType = (cols[16] || '').trim();
-            if (optType !== 'XX') return null;   // futures only (XX = future, CE/PE = options)
-            // instrType: 11=index futures, 13=stock futures, 14=options (already excluded above)
+            const optTypeRaw = (cols[16] || '').trim();
+            let instrumentType, optionType, strike;
+            if (optTypeRaw === 'XX') {
+                instrumentType = 'FUTURES';
+                optionType = null;
+                strike = null;
+            } else if (optTypeRaw === 'CE' || optTypeRaw === 'PE') {
+                instrumentType = 'OPTIONS';
+                optionType = optTypeRaw;
+                const rawStrike = parseFloat(cols[15]);
+                strike = isNaN(rawStrike) ? null : rawStrike;
+            } else {
+                return null; // ignore anything else
+            }
 
             const symbol    = (cols[9]  || '').trim();
             const exEpoch   = parseInt(cols[8]);
             const exDate    = isNaN(exEpoch) ? null
                             : new Date(exEpoch * 1000).toISOString().slice(0, 10);
             const isActive  = exDate ? (new Date(exDate) >= today) : false;
-            const strike    = null;   // futures never have a strike
 
             return {
                 symbol,
                 instrument_name:   (cols[1]  || '').trim(),
                 exchange:          exchCode,
-                instrument_type:   'FUTURES',
+                instrument_type:   instrumentType,
                 underlying_symbol: (cols[13] || '').trim(),
                 expiry_date:       exDate,
-                strike_price:      null,
-                option_type:       null,
+                strike_price:      strike,
+                option_type:       optionType,
                 lot_size:          parseInt(cols[3]) || 1,
                 trading_session:   (cols[6]  || '').trim(),
                 is_active:         isActive,
@@ -2741,14 +2764,16 @@ async function startFOSync() {
             if (r && r.symbol) csvRecords.push(r);
         }
 
-        _foCsvMap = new Map(csvRecords.map(r => [r.symbol, r]));
+        // CSV map keyed by bare (prefix-stripped) symbol so we can match
+        // pre-standardisation DB records that were created without the NSE: prefix.
+        _foCsvMap = new Map(csvRecords.map(r => [_bareSym(r.symbol), r]));
 
         progBar.style.width = '70%';
         progLbl.textContent = 'Loading DB...';
 
         // ── 3. Load existing DB ─────────────────────────────────────
         const existing = await fetchAllRows('securities_nfo', '*');
-        _foDbMap = new Map(existing.map(r => [r.symbol, r]));
+        _foDbMap = new Map(existing.map(r => [_bareSym(r.symbol), r]));
 
         progBar.style.width = '88%';
         progLbl.textContent = 'Computing diff...';
@@ -2758,22 +2783,38 @@ async function startFOSync() {
         _foToUpdate    = [];
         _foToDeactivate = [];
 
-        // New or changed contracts
-        for (const [sym, csv] of _foCsvMap) {
-            const db = _foDbMap.get(sym);
+        // For CSV records: ADD only if FUTURES and not in DB. UPDATE existing
+        // (futures + options) when fields differ.
+        for (const [bareKey, csv] of _foCsvMap) {
+            const db = _foDbMap.get(bareKey);
             if (!db) {
-                _foToAdd.push(csv);
-            } else {
-                const diffs = diffFORecord(db, csv);
-                if (diffs.length) _foToUpdate.push({ symbol: sym, diffs, record: csv });
+                // Options are not added on sync — they're created lazily by
+                // CN/Excel import when a trade arrives. Syncing every option
+                // strike is impractical (tens of thousands per run).
+                if (csv.instrument_type === 'FUTURES') _foToAdd.push(csv);
+                continue;
+            }
+            const diffs = diffFORecord(db, csv);
+            if (diffs.length) {
+                // Carry the existing id through so the upsert updates rather
+                // than duplicates, even when the symbol field itself changed
+                // (bare → NSE:-prefixed).
+                _foToUpdate.push({
+                    symbol: csv.symbol,
+                    diffs,
+                    record: Object.assign({}, csv, { id: db.id })
+                });
             }
         }
 
-        // Contracts in DB but not in CSV → deactivate if still marked active
-        for (const [sym, db] of _foDbMap) {
-            if (!_foCsvMap.has(sym) && db.is_active) {
-                _foToDeactivate.push(db);
-            }
+        // DEACTIVATION POLICY: only deactivate records whose expiry_date has
+        // actually passed. Previously, any DB record not present in the CSV
+        // (e.g., options since they weren't parsed) was flipped to inactive on
+        // every sync, which marked the entire options book as dead.
+        for (const [bareKey, db] of _foDbMap) {
+            if (!db.is_active) continue;
+            const expPassed = db.expiry_date && db.expiry_date < today.toISOString().slice(0,10);
+            if (expPassed) _foToDeactivate.push(db);
         }
 
         progBar.style.width = '100%';
@@ -2810,10 +2851,17 @@ function diffFORecord(db, csv) {
         const bv = b == null ? '' : String(b);
         if (av !== bv) diffs.push({ field, from: av, to: bv });
     };
-    check('instrument_name',   db.instrument_name,   csv.instrument_name);
-    check('underlying_symbol', db.underlying_symbol, csv.underlying_symbol);
+    // `symbol` is included in the diff so pre-standardisation bare-symbol
+    // records (e.g. '360ONE26MAY1100CE') get renamed to Fyers' canonical
+    // prefixed form ('NSE:360ONE26MAY1100CE') on sync.
+    check('symbol',            db.symbol,             csv.symbol);
+    check('instrument_name',   db.instrument_name,    csv.instrument_name);
+    check('instrument_type',   db.instrument_type,    csv.instrument_type);
+    check('underlying_symbol', db.underlying_symbol,  csv.underlying_symbol);
     check('lot_size',          db.lot_size,           csv.lot_size);
     check('expiry_date',       db.expiry_date,        csv.expiry_date);
+    check('strike_price',      db.strike_price,       csv.strike_price);
+    check('option_type',       db.option_type,        csv.option_type);
     check('is_active',         db.is_active,          csv.is_active);
     // broker token: compare fytoken value
     const dbTok  = db.broker_tokens?.fyers?.token  || '';
@@ -2840,30 +2888,43 @@ async function commitFOSync() {
         let done = 0;
         const total = _foToAdd.length + _foToUpdate.length + _foToDeactivate.length;
 
-        // ── Upsert new + updated ───────────────────────────────────
-        const toUpsert = [
-            ..._foToAdd,
-            ..._foToUpdate.map(u => u.record)
-        ];
-        for (let i = 0; i < toUpsert.length; i += BATCH) {
-            const chunk = toUpsert.slice(i, i + BATCH);
+        // ── INSERT truly new records (futures only — no id yet) ────
+        // Plain insert so Postgres auto-assigns the id.
+        for (let i = 0; i < _foToAdd.length; i += BATCH) {
+            const chunk = _foToAdd.slice(i, i + BATCH);
             const { error } = await window.supabaseClient
                 .from('securities_nfo')
-                .upsert(chunk, { onConflict: 'symbol' });
+                .insert(chunk);
             if (error) throw error;
             done += chunk.length;
             progBar.style.width = Math.round(10 + (done / total) * 80) + '%';
-            progLbl.textContent = 'Committed ' + done.toLocaleString('en-IN') + ' of ' + total.toLocaleString('en-IN') + '...';
+            progLbl.textContent = 'Added ' + done.toLocaleString('en-IN') + ' of ' + total.toLocaleString('en-IN') + '...';
+        }
+
+        // ── UPSERT existing updates by id ──────────────────────────
+        // Carries the DB record's id through (set in the diff loop). This
+        // lets us rename the symbol column (bare → NSE:-prefixed) without
+        // creating a duplicate — conflict on id matches the existing row.
+        const toUpdate = _foToUpdate.map(u => u.record);
+        for (let i = 0; i < toUpdate.length; i += BATCH) {
+            const chunk = toUpdate.slice(i, i + BATCH);
+            const { error } = await window.supabaseClient
+                .from('securities_nfo')
+                .upsert(chunk, { onConflict: 'id' });
+            if (error) throw error;
+            done += chunk.length;
+            progBar.style.width = Math.round(10 + (done / total) * 80) + '%';
+            progLbl.textContent = 'Updated ' + done.toLocaleString('en-IN') + ' of ' + total.toLocaleString('en-IN') + '...';
         }
 
         // ── Mark expired contracts inactive ────────────────────────
         for (let i = 0; i < _foToDeactivate.length; i += BATCH) {
             const chunk = _foToDeactivate.slice(i, i + BATCH);
-            const symbols = chunk.map(r => r.symbol);
+            const ids = chunk.map(r => r.id);
             const { error } = await window.supabaseClient
                 .from('securities_nfo')
                 .update({ is_active: false })
-                .in('symbol', symbols);
+                .in('id', ids);
             if (error) throw error;
             done += chunk.length;
             progBar.style.width = Math.round(10 + (done / total) * 80) + '%';
