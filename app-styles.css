@@ -442,6 +442,41 @@ tr:hover:not(.total-row) { background:#f9fafb; }
     padding: 12px; text-align: center; font-size: 11px; color: #a0aec0;
 }
 
+/* --- TAG INPUT WIDGET (wmsTagInput) --- */
+/* Canonical classes — used by ALL tag input instances across the app
+   (bonus, split, rights entitlement+payment, income, historical P&L, edit modal).
+   position: relative on .wms-tag-dd ensures the dropdown flows inline within
+   scrollable modal bodies instead of being clipped (see LESSONS §D.1.6). */
+.wms-tag-pills {
+    display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px;
+}
+.wms-tag-pills .wms-pill {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;
+    border: 1px solid #bee3f8; background: #bee3f8; color: #2b6cb0;
+    cursor: default; white-space: nowrap;
+}
+.wms-tag-pills .wms-pill-remove {
+    font-size: 12px; font-weight: 700; margin-left: 1px; cursor: pointer;
+}
+.wms-tag-dd {
+    display: none; position: relative; left: 0; right: 0;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 20;
+    padding: 6px; flex-wrap: wrap; gap: 4px;
+    max-height: 200px; overflow-y: auto;
+    margin-top: 3px;
+}
+.wms-tag-dd.show { display: flex; }
+.wms-tag-dd .wms-dd-item {
+    display: inline-block; padding: 2px 8px; font-size: 10px;
+    background: #edf2f7; border-radius: 10px; color: #4a5568;
+    cursor: pointer; white-space: nowrap;
+    border-bottom: 0;   /* override the global .wms-dd-item bottom-border */
+}
+.wms-tag-dd .wms-dd-item:hover,
+.wms-tag-dd .wms-dd-item.wms-dd-highlight { background: #cbd5e0; }
+
 /* --- INPUTS --- */
 /* Standard: forms, modals, search bars (from watchlist) */
 .wms-input {

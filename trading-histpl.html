@@ -31,32 +31,8 @@
 }
 .rights-modal.hpl-modal { max-width: 560px; }
 
-/* Tag input for HPL modal */
-.hpl-tag-pills {
-    display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px;
-}
-.hpl-tag-pills .wms-pill {
-    display: inline-flex; align-items: center; gap: 2px;
-    padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;
-    border: 1px solid #bee3f8; background: #bee3f8; color: #2b6cb0; cursor: default;
-}
-.hpl-tag-pills .wms-pill-remove {
-    font-size: 12px; font-weight: 700; margin-left: 1px; cursor: pointer;
-}
-.hpl-tag-dd {
-    display: none; position: absolute; top: 100%; left: 0; right: 0;
-    background: #fff; border: 1px solid #e2e8f0; border-radius: 4px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 20;
-    padding: 6px; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow-y: auto;
-}
-.hpl-tag-dd.show { display: flex; }
-.hpl-tag-dd .wms-dd-item {
-    display: inline-block; padding: 2px 8px; font-size: 10px;
-    background: #edf2f7; border-radius: 10px; color: #4a5568;
-    cursor: pointer; white-space: nowrap;
-}
-.hpl-tag-dd .wms-dd-item:hover,
-.hpl-tag-dd .wms-dd-item.wms-dd-highlight { background: #cbd5e0; }
+/* Tag input styles moved to app-styles.css as canonical .wms-tag-pills / .wms-tag-dd.
+   See LESSONS §D.1.6 (dropdown clipping), §D.5.x (tag input widget). */
 </style>
 </head>
 <body>
@@ -131,8 +107,8 @@
         <div class="rights-field" style="position:relative;">
           <label>Tags <span style="font-weight:400;color:#a0aec0;">(optional)</span></label>
           <input type="text" id="hplTagInput" placeholder="Type to add tags..." autocomplete="off">
-          <div class="hpl-tag-pills" id="hplTagPills"></div>
-          <div class="hpl-tag-dd" id="hplTagDd"></div>
+          <div class="wms-tag-pills" id="hplTagPills"></div>
+          <div class="wms-tag-dd" id="hplTagDd"></div>
         </div>
       </div>
     </div>

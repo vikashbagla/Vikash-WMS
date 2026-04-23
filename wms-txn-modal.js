@@ -348,7 +348,7 @@ function _wmsTxnEnsureDom() {
                     // Tags & Notes
                     '<div class="wms-edit-section"><div class="wms-edit-section-label">Tags & Notes</div>' +
                         '<div class="wms-edit-row cols-2">' +
-                            '<div class="form-group" style="position:relative;"><label>Tags</label><input type="text" id="wmsEditTagsInput" class="editable-field" placeholder="Type tag + Enter or comma..." autocomplete="off"><div class="addTxn-tag-pills" id="wmsEditTagPills" style="margin-top:3px;"></div><div class="addTxn-tag-dd" id="wmsEditTagDd"></div></div>' +
+                            '<div class="form-group" style="position:relative;"><label>Tags</label><input type="text" id="wmsEditTagsInput" class="editable-field" placeholder="Type tag + Enter or comma..." autocomplete="off"><div class="wms-tag-pills" id="wmsEditTagPills" style="margin-top:3px;"></div><div class="wms-tag-dd" id="wmsEditTagDd"></div></div>' +
                             '<div class="form-group"><label>Notes</label><input type="text" id="wmsEditNotes" class="editable-field" placeholder="Optional notes..."></div>' +
                         '</div>' +
                     '</div>' +
