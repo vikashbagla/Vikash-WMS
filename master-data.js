@@ -2718,16 +2718,11 @@ async function startFOSync() {
         function parseRow(cols, exchCode) {
             if (!cols || cols.length < 17) return null;
             const optTypeRaw = (cols[16] || '').trim();
-            let instrumentType, optionType, strike;
+            let instrumentType;
             if (optTypeRaw === 'XX') {
                 instrumentType = 'FUTURES';
-                optionType = null;
-                strike = null;
             } else if (optTypeRaw === 'CE' || optTypeRaw === 'PE') {
                 instrumentType = 'OPTIONS';
-                optionType = optTypeRaw;
-                const rawStrike = parseFloat(cols[15]);
-                strike = isNaN(rawStrike) ? null : rawStrike;
             } else {
                 return null; // ignore anything else
             }
@@ -2738,6 +2733,13 @@ async function startFOSync() {
                             : new Date(exEpoch * 1000).toISOString().slice(0, 10);
             const isActive  = exDate ? (new Date(exDate) >= today) : false;
 
+            // IMPORTANT: we do NOT read strike_price or option_type from the CSV —
+            // these fields were set correctly at record-create time (parseNfoSymbol
+            // derives them from the symbol itself, which Fyers guarantees is
+            // canonical). Reading them from unverified CSV column indices risked
+            // silent data corruption if the column layout differs from what we
+            // assume. By omitting them from the CSV record entirely they stay out
+            // of the diff and the DB value is preserved.
             return {
                 symbol,
                 instrument_name:   (cols[1]  || '').trim(),
@@ -2745,8 +2747,6 @@ async function startFOSync() {
                 instrument_type:   instrumentType,
                 underlying_symbol: (cols[13] || '').trim(),
                 expiry_date:       exDate,
-                strike_price:      strike,
-                option_type:       optionType,
                 lot_size:          parseInt(cols[3]) || 1,
                 trading_session:   (cols[6]  || '').trim(),
                 is_active:         isActive,
@@ -2854,14 +2854,15 @@ function diffFORecord(db, csv) {
     // `symbol` is included in the diff so pre-standardisation bare-symbol
     // records (e.g. '360ONE26MAY1100CE') get renamed to Fyers' canonical
     // prefixed form ('NSE:360ONE26MAY1100CE') on sync.
+    // NOTE: strike_price and option_type are deliberately NOT checked here —
+    // see the comment in parseRow. They stay frozen at the value set by
+    // parseNfoSymbol at record-create time.
     check('symbol',            db.symbol,             csv.symbol);
     check('instrument_name',   db.instrument_name,    csv.instrument_name);
     check('instrument_type',   db.instrument_type,    csv.instrument_type);
     check('underlying_symbol', db.underlying_symbol,  csv.underlying_symbol);
     check('lot_size',          db.lot_size,           csv.lot_size);
     check('expiry_date',       db.expiry_date,        csv.expiry_date);
-    check('strike_price',      db.strike_price,       csv.strike_price);
-    check('option_type',       db.option_type,        csv.option_type);
     check('is_active',         db.is_active,          csv.is_active);
     // broker token: compare fytoken value
     const dbTok  = db.broker_tokens?.fyers?.token  || '';
@@ -2901,20 +2902,27 @@ async function commitFOSync() {
             progLbl.textContent = 'Added ' + done.toLocaleString('en-IN') + ' of ' + total.toLocaleString('en-IN') + '...';
         }
 
-        // ── UPSERT existing updates by id ──────────────────────────
-        // Carries the DB record's id through (set in the diff loop). This
-        // lets us rename the symbol column (bare → NSE:-prefixed) without
-        // creating a duplicate — conflict on id matches the existing row.
-        const toUpdate = _foToUpdate.map(u => u.record);
-        for (let i = 0; i < toUpdate.length; i += BATCH) {
-            const chunk = toUpdate.slice(i, i + BATCH);
+        // ── UPDATE existing records by id ──────────────────────────
+        // Uses plain UPDATE (not UPSERT) to comply with rule A.2.3: upsert
+        // sends all columns and null-fills any key not in the object, which
+        // would wipe strike_price / option_type / trading_session (we
+        // deliberately omit these from the CSV row so they remain frozen at
+        // the record-create value). UPDATE only touches the keys present.
+        for (const item of _foToUpdate) {
+            // Strip the id out of the payload — it's used as the WHERE key.
+            const rec = Object.assign({}, item.record);
+            const recId = rec.id;
+            delete rec.id;
             const { error } = await window.supabaseClient
                 .from('securities_nfo')
-                .upsert(chunk, { onConflict: 'id' });
+                .update(rec)
+                .eq('id', recId);
             if (error) throw error;
-            done += chunk.length;
-            progBar.style.width = Math.round(10 + (done / total) * 80) + '%';
-            progLbl.textContent = 'Updated ' + done.toLocaleString('en-IN') + ' of ' + total.toLocaleString('en-IN') + '...';
+            done++;
+            if (done % 25 === 0 || done === total) {
+                progBar.style.width = Math.round(10 + (done / total) * 80) + '%';
+                progLbl.textContent = 'Updated ' + done.toLocaleString('en-IN') + ' of ' + total.toLocaleString('en-IN') + '...';
+            }
         }
 
         // ── Mark expired contracts inactive ────────────────────────
