@@ -1122,163 +1122,222 @@ function isSTTEligible(row) {
 }
 
 function allocateCharges(rows, segCharges) {
-    // Smart charge allocation:
-    // - Brokerage → equal per-trade if broker uses flat rate (IBA max), else proportional
-    // - Exchange charges, SEBI, IPFT, GST → allocated to ALL trades proportionally
-    // - STT, stamp duty → allocated ONLY to non-debt trades (debt instruments are exempt)
+    // ========================================================================
+    // CN IMPORT CHARGE ALLOCATION — regulatory-first, reconcile to CN.
+    //
+    // Philosophy: the regulatory_charges_config table is the single source of
+    // truth for which trades attract which charges (STT on both legs for
+    // delivery, sell-only for intraday / F&O; stamp duty on buy-only for cash;
+    // SEBI + exchange charges on both legs proportional to turnover; GST at
+    // 18% on brokerage + exchange + SEBI; etc.). Non-equity instruments
+    // (ETF/MF/debt/SGB/REIT/InvIT/NCD) are exempt; EQUITY_SME is NOT exempt.
+    //
+    // Per-trade flow:
+    //   1. Call wmsAutoCalcCharges on every row with preserveExisting:false —
+    //      produces an EXPECTED breakdown that respects every rule above.
+    //   2. Sum expected values per charge type.
+    //   3. For each charge type where expected_total > 0 and CN_total > 0,
+    //      scale each row's expected value by (CN_total / expected_total).
+    //      This preserves the allocation PATTERN (buy-side stamp, sell-side
+    //      intraday STT, SME-same-as-EQ, etc.) while matching the CN's
+    //      authoritative total exactly.
+    //   4. Edge cases: if expected_total = 0 but CN_total > 0, fall back to
+    //      proportional-by-gross split (defensive — means the reg config and
+    //      the CN disagree on whether this charge applies; distribute so the
+    //      import still nets correctly). If CN_total = 0 (charge not levied
+    //      in this CN), wipe all per-trade values for that type.
+    //
+    // Replaces the old proportional-by-gross splitter which could not express
+    // buy-side-only rules and silently mis-allocated stamp duty on mixed
+    // BUY+SELL CNs.  See LESSONS G.8.5a.
+    // ========================================================================
+
+    if (!rows || rows.length === 0) return;
 
     var totalGross = 0;
-    var sttEligibleGross = 0;
-
     rows.forEach(function(r) {
-        var absGross = Math.abs(r.gross_amount);
-        totalGross += absGross;
+        r.gross_amount = Math.abs(r.gross_amount || 0);  // normalize to positive magnitude
+        totalGross += r.gross_amount;
         r._sttEligible = isSTTEligible(r);
-        if (r._sttEligible) {
-            sttEligibleGross += absGross;
-        }
     });
-
     if (totalGross === 0) return;
 
-    // Detect flat-rate brokerage from IBA rates (e.g. Fyers ₹20/trade → max:20)
-    // If broker has a 'max' cap in brokerage_rates, split brokerage equally per trade
-    var useFlatBrokerage = false;
-    if (cnSelectedAccount) {
-        var ibaKey = cnSelectedAccount.investor_id + '|' + cnSelectedAccount.broker_id;
-        var ibaData = ibaRatesMap[ibaKey];
-        if (ibaData && ibaData.rates && ibaData.rates.equity && ibaData.rates.equity.delivery) {
-            var deliveryRates = ibaData.rates.equity.delivery;
-            // If max is set and the total brokerage equals max * numTrades, it's flat-rate
-            if (deliveryRates.max && deliveryRates.max > 0) {
-                useFlatBrokerage = true;
-                console.log('Flat-rate brokerage detected: ₹' + deliveryRates.max + '/trade, splitting equally among ' + rows.length + ' trades');
-            }
+    // Resolve account context for wmsAutoCalcCharges.
+    var investorId = cnSelectedAccount ? cnSelectedAccount.investor_id : null;
+    var brokerId   = cnSelectedAccount ? cnSelectedAccount.broker_id : null;
+    var regCharges = (wmsRefData && wmsRefData.regCharges) || [];
+    var ibaRates   = (typeof ibaRatesMap !== 'undefined' && ibaRatesMap) ||
+                     (wmsRefData && wmsRefData.ibaRatesMap) || {};
+
+    // ------------------------------------------------------------------------
+    // Step 1: per-row expected breakdown from the regulatory schedule.
+    // wmsAutoCalcCharges mutates the row and stamps granular fields
+    // (_exchange_charges, _sebi_charges, _stamp_duty, _ipft) plus the rolled-up
+    // brokerage / stt / other_charges / gst.  preserveExisting:false →
+    // always recompute (discard any stale values on the row).
+    // ------------------------------------------------------------------------
+    rows.forEach(function(r) {
+        // Belt-and-braces: ensure the fields wmsAutoCalcCharges needs are set.
+        if (!r.transaction_type) r.transaction_type = 'BUY';
+        wmsAutoCalcCharges(r, {
+            ibaRatesMap: ibaRates,
+            regCharges: regCharges,
+            investorId: investorId,
+            brokerId: brokerId,
+            preserveExisting: false
+        });
+        // Stash copies for display / debugging — useful when reconciliation
+        // has to nudge a value, so the user can see "expected vs imported".
+        r._expected = {
+            brokerage: r.brokerage || 0,
+            stt: r.stt || 0,
+            exchangeCharges: r._exchange_charges || 0,
+            sebiCharges: r._sebi_charges || 0,
+            stampDuty: r._stamp_duty || 0,
+            ipft: r._ipft || 0,
+            gst: r.gst || 0
+        };
+    });
+
+    // ------------------------------------------------------------------------
+    // Step 2: sum expected totals per charge type.
+    // ------------------------------------------------------------------------
+    var expectedTotal = {
+        brokerage: 0, stt: 0, exchangeCharges: 0, sebiCharges: 0,
+        stampDuty: 0, ipft: 0, gst: 0
+    };
+    rows.forEach(function(r) {
+        var e = r._expected;
+        expectedTotal.brokerage      += e.brokerage;
+        expectedTotal.stt            += e.stt;
+        expectedTotal.exchangeCharges += e.exchangeCharges;
+        expectedTotal.sebiCharges    += e.sebiCharges;
+        expectedTotal.stampDuty      += e.stampDuty;
+        expectedTotal.ipft           += e.ipft;
+        expectedTotal.gst            += e.gst;
+    });
+
+    // ------------------------------------------------------------------------
+    // Step 3: scale expected → CN total for each charge type, with edge-case
+    // fallbacks.  For fields that wmsAutoCalcCharges stored GRANULARLY,
+    // updates the granular field so Step 4 can rebuild other_charges cleanly.
+    // ------------------------------------------------------------------------
+    function reconcileType(cnKey, rowField, expectedKey) {
+        var cnTotal  = (segCharges && segCharges[cnKey]) || 0;
+        var expTotal = expectedTotal[expectedKey];
+
+        // Case A: CN says this charge wasn't levied — zero everything out.
+        if (cnTotal <= 0) {
+            rows.forEach(function(r) { r[rowField] = 0; });
+            return;
         }
+
+        // Case B: regulatory says zero trades attract this but CN says a total
+        // exists.  Defensive fallback — split by gross so totals still match.
+        if (expTotal <= 0) {
+            console.warn('CN charge reconciliation: ' + cnKey + ' — CN reports ' +
+                cnTotal.toFixed(2) + ' but regulatory schedule expected 0; ' +
+                'falling back to proportional-by-gross split.');
+            var assigned = 0;
+            rows.forEach(function(r, idx) {
+                var share = (idx === rows.length - 1)
+                    ? wmsRoundMoney(cnTotal - assigned)
+                    : wmsRoundMoney(cnTotal * (r.gross_amount / totalGross));
+                r[rowField] = share;
+                assigned += share;
+            });
+            return;
+        }
+
+        // Case C (common): scale proportionally to each row's expected share.
+        var scale = cnTotal / expTotal;
+        var assigned = 0;
+        rows.forEach(function(r, idx) {
+            var raw = (r._expected[expectedKey] || 0) * scale;
+            var share = (idx === rows.length - 1)
+                ? wmsRoundMoney(cnTotal - assigned)
+                : wmsRoundMoney(raw);
+            r[rowField] = share;
+            assigned += share;
+        });
     }
 
-    // Store CN totals for verification display
-    var _cnSttTotal = segCharges.stt;
-    var _cnStampTotal = segCharges.stampDuty;
+    reconcileType('brokerage',        'brokerage',          'brokerage');
+    reconcileType('stt',              'stt',                'stt');
+    reconcileType('exchangeCharges',  '_exchange_charges',  'exchangeCharges');
+    reconcileType('sebiCharges',      '_sebi_charges',      'sebiCharges');
+    reconcileType('stampDuty',        '_stamp_duty',        'stampDuty');
+    reconcileType('ipft',             '_ipft',              'ipft');
+    reconcileType('gst',              'gst',                'gst');
 
+    // ------------------------------------------------------------------------
+    // Step 4: rebuild other_charges (display field) from granular components,
+    // then total_charges + net_amount per standard formula.
+    // ------------------------------------------------------------------------
     rows.forEach(function(r) {
-        var proportion = Math.abs(r.gross_amount) / totalGross;
-
-        // Brokerage: equal split for flat-rate brokers, proportional otherwise
-        if (useFlatBrokerage) {
-            r.brokerage = roundMoney(segCharges.brokerage / rows.length);
-        } else {
-            r.brokerage = roundMoney(segCharges.brokerage * proportion);
-        }
-
-        // STT: only STT-eligible trades (EQUITY only, proportional within eligible trades)
-        if (r._sttEligible && sttEligibleGross > 0) {
-            var sttProportion = Math.abs(r.gross_amount) / sttEligibleGross;
-            r.stt = roundMoney(segCharges.stt * sttProportion);
-        } else {
-            r.stt = 0;
-        }
-
-        // Exchange charges, SEBI, IPFT: all trades get proportional share
-        var exchShare = roundMoney(segCharges.exchangeCharges * proportion);
-        var sebiShare = roundMoney(segCharges.sebiCharges * proportion);
-        var ipftShare = roundMoney(segCharges.ipft * proportion);
-
-        // Stamp duty: only STT-eligible trades (same exemption as STT)
-        var stampShare = 0;
-        if (r._sttEligible && sttEligibleGross > 0) {
-            var stampProportion = Math.abs(r.gross_amount) / sttEligibleGross;
-            stampShare = roundMoney(segCharges.stampDuty * stampProportion);
-        }
-
-        r.other_charges = roundMoney(exchShare + sebiShare + stampShare + ipftShare);
-
-        // GST: 18% on (brokerage + exchange + SEBI) — all trades
-        r.gst = roundMoney(segCharges.gst * proportion);
-
-        r.total_charges = roundMoney(r.brokerage + r.stt + r.gst + r.other_charges);
-
-        // net_amount = gross_amount + total_charges (charges always add for buys/outflows, subtract from sells)
+        r.other_charges = wmsRoundMoney(
+            (r._exchange_charges || 0) + (r._sebi_charges || 0) +
+            (r._stamp_duty || 0) + (r._ipft || 0));
+        r.total_charges = wmsRoundMoney(
+            (r.brokerage || 0) + (r.stt || 0) + (r.gst || 0) + (r.other_charges || 0));
         if (wmsIsBuyLikeType(r.transaction_type)) {
-            r.net_amount = roundMoney(r.gross_amount + r.total_charges);
+            r.net_amount = wmsRoundMoney(r.gross_amount + r.total_charges);
         } else {
-            r.net_amount = roundMoney(r.gross_amount - r.total_charges);
+            r.net_amount = wmsRoundMoney(r.gross_amount - r.total_charges);
         }
     });
 
-    // STT verification: sum allocated STT vs CN total
+    // ------------------------------------------------------------------------
+    // Step 5: verification payload — now cross-checks BOTH the CN-read STT
+    // AND the regulatory-expected STT, so silent column-misalignment bugs
+    // (like K120/644 where parser read brokerage as STT) can't pass unnoticed.
+    // ------------------------------------------------------------------------
     var allocatedStt = 0;
-    rows.forEach(function(r) { allocatedStt += r.stt; });
-    allocatedStt = roundMoney(allocatedStt);
-    var sttDiff = Math.abs(allocatedStt - _cnSttTotal);
+    rows.forEach(function(r) { allocatedStt += r.stt || 0; });
+    allocatedStt = wmsRoundMoney(allocatedStt);
+    var cnSttTotal = segCharges.stt || 0;
+    var expectedStt = wmsRoundMoney(expectedTotal.stt);
+    var sttAllocDiff = Math.abs(allocatedStt - cnSttTotal);
+    // Tolerate 1% or ₹5 — whichever is larger — for the expected-vs-CN check.
+    // This covers rounding drift and small per-share brokerage-rate quirks.
+    var sttExpTolerance = Math.max(5, cnSttTotal * 0.01);
+    var sttExpDiff = Math.abs(expectedStt - cnSttTotal);
 
-    // Store verification result on the module-level for display
     window._cnChargeVerification = {
-        cnStt: _cnSttTotal,
+        cnStt: cnSttTotal,
         allocatedStt: allocatedStt,
-        sttMatch: sttDiff < 0.02,  // Allow 2 paise rounding tolerance
-        sttDiff: sttDiff,
-        cnStamp: _cnStampTotal,
-        sttExemptSymbols: rows.filter(function(r) { return !r._sttEligible; }).map(function(r) { return r.short_symbol + ' (' + (r._db_security_type || '?') + ')'; }),
-        sttEligibleSymbols: rows.filter(function(r) { return r._sttEligible; }).map(function(r) { return r.short_symbol; })
+        sttMatch: sttAllocDiff < 0.02,
+        sttDiff: sttAllocDiff,
+        expectedStt: expectedStt,
+        sttExpectedMatch: sttExpDiff <= sttExpTolerance,
+        sttExpectedDiff: wmsRoundMoney(expectedStt - cnSttTotal),
+        cnStamp: segCharges.stampDuty || 0,
+        sttExemptSymbols: rows.filter(function(r) { return !r._sttEligible; })
+            .map(function(r) { return (r.short_symbol || r.symbol) + ' (' + (r._db_security_type || '?') + ')'; }),
+        sttEligibleSymbols: rows.filter(function(r) { return r._sttEligible; })
+            .map(function(r) { return r.short_symbol || r.symbol; }),
+        // Reconciliation is built-in to steps 3-4 — there is no residual gap.
+        reconciled: false,
+        chargeGap: 0,
+        cnTotalCharges: wmsRoundMoney((segCharges.brokerage || 0) + (segCharges.stt || 0) +
+            (segCharges.gst || 0) + (segCharges.exchangeCharges || 0) +
+            (segCharges.sebiCharges || 0) + (segCharges.stampDuty || 0) +
+            (segCharges.ipft || 0))
     };
 
     if (!window._cnChargeVerification.sttMatch) {
-        console.warn('STT MISMATCH: CN total=' + _cnSttTotal + ', allocated=' + allocatedStt + ', diff=' + sttDiff);
-        console.warn('STT exempt: ' + window._cnChargeVerification.sttExemptSymbols.join(', '));
-        console.warn('STT eligible: ' + window._cnChargeVerification.sttEligibleSymbols.join(', '));
-    } else {
-        console.log('STT verification passed: CN=' + _cnSttTotal + ', allocated=' + allocatedStt);
+        console.warn('STT allocation mismatch: CN total=' + cnSttTotal +
+            ', allocated=' + allocatedStt + ', diff=' + sttAllocDiff);
     }
-
-    // ========================================================================
-    // CN Total Reconciliation:
-    // Compare total CN charges vs total allocated charges. If there's a gap
-    // (e.g. stamp duty exempted from non-equity instruments), distribute the
-    // unallocated amount proportionally by gross_amount into other_charges
-    // so the import net amount matches the CN exactly.
-    // ========================================================================
-    var cnTotalCharges = roundMoney((segCharges.brokerage || 0) + (segCharges.stt || 0) +
-        (segCharges.gst || 0) + (segCharges.exchangeCharges || 0) + (segCharges.sebiCharges || 0) +
-        (segCharges.stampDuty || 0) + (segCharges.ipft || 0));
-
-    var allocatedTotalCharges = 0;
-    rows.forEach(function(r) { allocatedTotalCharges += r.total_charges; });
-    allocatedTotalCharges = roundMoney(allocatedTotalCharges);
-
-    var chargeGap = roundMoney(cnTotalCharges - allocatedTotalCharges);
-
-    if (Math.abs(chargeGap) > 0.01) {
-        console.log('CN charge reconciliation: CN total=' + cnTotalCharges + ', allocated=' + allocatedTotalCharges + ', gap=' + chargeGap + ' — distributing to other_charges');
-
-        // Distribute gap proportionally by gross_amount
-        var distributed = 0;
-        rows.forEach(function(r, idx) {
-            var proportion = Math.abs(r.gross_amount) / totalGross;
-            var share;
-            if (idx === rows.length - 1) {
-                // Last row gets remainder to avoid rounding drift
-                share = roundMoney(chargeGap - distributed);
-            } else {
-                share = roundMoney(chargeGap * proportion);
-            }
-            r.other_charges = roundMoney(r.other_charges + share);
-            r.total_charges = roundMoney(r.brokerage + r.stt + r.gst + r.other_charges);
-            if (wmsIsBuyLikeType(r.transaction_type)) {
-                r.net_amount = roundMoney(r.gross_amount + r.total_charges);
-            } else {
-                r.net_amount = roundMoney(r.gross_amount - r.total_charges);
-            }
-            distributed += share;
-        });
-
-        // Store reconciliation info for display
-        window._cnChargeVerification.reconciled = true;
-        window._cnChargeVerification.chargeGap = chargeGap;
-        window._cnChargeVerification.cnTotalCharges = cnTotalCharges;
+    if (!window._cnChargeVerification.sttExpectedMatch) {
+        console.warn('STT expected-vs-CN mismatch (possible parser misalignment): ' +
+            'regulatory-expected=' + expectedStt + ', CN reports=' + cnSttTotal +
+            ', diff=' + window._cnChargeVerification.sttExpectedDiff +
+            '. Investigate the parser if this diff is large.');
     } else {
-        window._cnChargeVerification.reconciled = false;
-        window._cnChargeVerification.chargeGap = 0;
+        console.log('STT verification OK: CN=' + cnSttTotal +
+            ', regulatory-expected=' + expectedStt +
+            ', allocated=' + allocatedStt);
     }
 }
 
