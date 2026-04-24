@@ -17,6 +17,11 @@ var incDateState = { day: 1, month: 0, year: 2026 };
 var incDateActiveSeg = null;
 var incDateTypeBuf = '';
 
+// Last date successfully used on Save — remembered across modal open/close
+// so the user can batch entries for the same day without re-picking each time.
+// null on first open (falls back to today). Updated only on successful save.
+var incLastSavedDate = null;
+
 // Type labels for modal title
 var INC_TYPE_LABELS = {
     'DIVIDEND': 'Dividend',
@@ -120,8 +125,9 @@ function openIncomeModal(txnType) {
     document.getElementById('incTagPills').innerHTML = '';
     document.getElementById('incTagDd').innerHTML = '';
 
-    // Set date to today
-    rhDateSetFromDate('inc', new Date());
+    // Use the last saved date (or today on first open) so batch entries
+    // for the same day don't require re-picking the date every time.
+    rhDateSetFromDate('inc', incLastSavedDate || new Date());
 
     document.getElementById('incomeOverlay').classList.add('show');
     setTimeout(function() { document.getElementById('incSecurityInput').focus(); }, 100);
@@ -226,7 +232,20 @@ function incPopulateHoldings() {
             '<td class="inc-net-cell" id="inc-net-' + idx + '"></td>' +
             '</tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody>';
+    // Total row — updates live as the user fills in amounts. Qty is a hard
+    // total, Price is blank (different per row), TDS + Amount + Net Amt sum.
+    var totalQty = 0;
+    holdings.forEach(function(h) { totalQty += (h.netQuantity || 0); });
+    html += '<tfoot><tr class="inc-total-row" style="background:#f1f5f9; font-weight:600; border-top:2px solid #cbd5e0;">' +
+        '<td style="padding:4px 6px;">Total</td>' +
+        '<td class="inc-qty-cell">' + totalQty.toLocaleString() + '</td>' +
+        '<td class="r">—</td>' +
+        '<td class="r" id="inc-total-tds"></td>' +
+        '<td class="r" id="inc-total-amt"></td>' +
+        '<td class="inc-net-cell" id="inc-total-net"></td>' +
+        '</tr></tfoot>';
+    html += '</table>';
     document.getElementById('incTableWrap').innerHTML = html;
     document.getElementById('incSaveBtn').disabled = false;
 
@@ -315,6 +334,32 @@ function incUpdateNetAmt(idx) {
     var amt = parseFloat((amtEl.dataset.rawValue || amtEl.value || '').replace(/,/g, '')) || 0;
     var net = Math.round((amt - tds) * 100) / 100;
     netEl.textContent = net ? wmsFmtAmt(net) : '';
+    incUpdateTotals();
+}
+
+// Recalculate the TDS / Amount / Net totals in the footer row. Called after
+// every per-row update so the footer always reflects the current state.
+function incUpdateTotals() {
+    var sumTds = 0, sumAmt = 0, sumNet = 0;
+    for (var i = 0; i < incHoldings.length; i++) {
+        var tdsEl = document.getElementById('inc-tds-' + i);
+        var amtEl = document.getElementById('inc-amt-' + i);
+        if (!tdsEl || !amtEl) continue;
+        var tds = parseFloat((tdsEl.dataset.rawValue || tdsEl.value || '').replace(/,/g, '')) || 0;
+        var amt = parseFloat((amtEl.dataset.rawValue || amtEl.value || '').replace(/,/g, '')) || 0;
+        sumTds += tds;
+        sumAmt += amt;
+        sumNet += (amt - tds);
+    }
+    sumTds = Math.round(sumTds * 100) / 100;
+    sumAmt = Math.round(sumAmt * 100) / 100;
+    sumNet = Math.round(sumNet * 100) / 100;
+    var tdsTotal = document.getElementById('inc-total-tds');
+    var amtTotal = document.getElementById('inc-total-amt');
+    var netTotal = document.getElementById('inc-total-net');
+    if (tdsTotal) tdsTotal.textContent = sumTds ? wmsFmtAmt(sumTds) : '';
+    if (amtTotal) amtTotal.textContent = sumAmt ? wmsFmtAmt(sumAmt) : '';
+    if (netTotal) netTotal.textContent = sumNet ? wmsFmtAmt(sumNet) : '';
 }
 
 // ============================================================================
@@ -502,6 +547,8 @@ async function incSaveTransactions() {
     try {
         document.getElementById('incSaveBtn').disabled = true;
         await wmsBatchCreateTransactions(txns);
+        // Remember the date so the next modal open defaults to the same day.
+        incLastSavedDate = new Date(incDateState.year, incDateState.month, incDateState.day);
         closeIncomeModal();
         if (typeof trRefresh === 'function') await trRefresh();
         showAlert((INC_TYPE_LABELS[incSelectedType] || 'Income') + ': ' + txns.length + ' transaction(s) saved.', 'success', 4000);

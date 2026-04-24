@@ -10,6 +10,8 @@ var rhEntDdCtrl = null;             // wmsDropdown controller for entitlement sy
 var rhEntTags = [];                 // current tag list for entitlement form
 var rhEntTagCtrl = null;            // wmsTagInput controller for entitlement
 var rhEntDateState = { day: 1, month: 0, year: 2026 };
+// Persist last saved date across modal open/close (null = first open, use today)
+var rhEntLastSavedDate = null;
 var rhEntDateActiveSeg = null;
 var rhEntDateTypeBuf = '';
 var rhEntCurrentStep = 1;           // 1 = holdings table, 2 = review RE security
@@ -21,6 +23,8 @@ var rhPayDdCtrl = null;             // wmsDropdown controller for payment securi
 var rhPayTags = [];                 // current tag list for payment form
 var rhPayTagCtrl = null;            // wmsTagInput controller for payment
 var rhPayDateState = { day: 1, month: 0, year: 2026 };
+// Persist last saved date across modal open/close (null = first open, use today)
+var rhPayLastSavedDate = null;
 var rhPayDateActiveSeg = null;
 var rhPayDateTypeBuf = '';
 
@@ -437,7 +441,7 @@ function openRightsEntitlementModal() {
     rhEntSelectedSecurity = null;
     rhEntHoldings = [];
     rhEntCurrentStep = 1;
-    rhDateSetFromDate('rhEnt', new Date());
+    rhDateSetFromDate('rhEnt', rhEntLastSavedDate || new Date());
     document.getElementById('rhEntSymbolInput').value = '';
     document.getElementById('rhEntSymbolBadge').innerHTML = '';
     document.getElementById('rhEntTableWrap').innerHTML = '<div class="rights-empty">Select a date and symbol to view holdings</div>';
@@ -499,18 +503,35 @@ function rhEntPopulateHoldings() {
         '<th class="r" style="width:30%">Cur Qty</th>' +
         '<th class="r" style="width:30%">Rights Recd</th>' +
         '</tr></thead><tbody>';
+    var totalCurQty = 0;
     holdings.forEach(function(h, idx) {
+        totalCurQty += (h.netQuantity || 0);
         html += '<tr>' +
             '<td>' + h.combinedLabel + '</td>' +
             '<td class="r">' + h.netQuantity.toLocaleString() + '</td>' +
             '<td class="r"><input type="text" inputmode="numeric" data-idx="' + idx + '" class="rh-ent-qty" placeholder="0"></td>' +
             '</tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody>' +
+        '<tfoot><tr style="background:#f1f5f9; font-weight:600; border-top:2px solid #cbd5e0;">' +
+        '<td>Total</td>' +
+        '<td class="r">' + totalCurQty.toLocaleString() + '</td>' +
+        '<td class="r" id="rhEnt-total-recd">0</td>' +
+        '</tr></tfoot></table>';
     document.getElementById('rhEntTableWrap').innerHTML = html;
     document.getElementById('rhEntConfirmBtn').disabled = false;
 
-    // Add focus/blur formatting for rights qty inputs
+    // Live total of Rights Received — updates on every input/blur.
+    function rhEntUpdateTotal() {
+        var sum = 0;
+        document.querySelectorAll('.rh-ent-qty').forEach(function(el) {
+            sum += parseInt((el.value || '').replace(/,/g, '')) || 0;
+        });
+        var totalEl = document.getElementById('rhEnt-total-recd');
+        if (totalEl) totalEl.textContent = sum.toLocaleString();
+    }
+
+    // Add focus/blur formatting for rights qty inputs + update total
     document.querySelectorAll('.rh-ent-qty').forEach(function(el) {
         el.addEventListener('focus', function() {
             var raw = parseInt(el.value.replace(/,/g, '')) || 0;
@@ -519,7 +540,9 @@ function rhEntPopulateHoldings() {
         el.addEventListener('blur', function() {
             var raw = parseInt(el.value.replace(/,/g, '')) || 0;
             el.value = raw ? raw.toLocaleString('en-IN') : '';
+            rhEntUpdateTotal();
         });
+        el.addEventListener('input', rhEntUpdateTotal);
     });
 
     // Initialize tag input with auto-populated tags
@@ -763,6 +786,9 @@ async function rhEntSave() {
             await rhBatchCreateTransactions(txns);
         }
 
+        // Remember the date so the next open defaults to the same day.
+        rhEntLastSavedDate = new Date(rhEntDateState.year, rhEntDateState.month, rhEntDateState.day);
+
         closeRightsEntitlementModal();
         await wmsLoadSecuritiesCm(0, {all: true});
         if (typeof trRefresh === 'function') await trRefresh();
@@ -783,7 +809,7 @@ async function rhEntSave() {
 function openRightsPaymentModal() {
     rhPaySelectedSecurity = null;
     rhPayHoldings = [];
-    rhDateSetFromDate('rhPay', new Date());
+    rhDateSetFromDate('rhPay', rhPayLastSavedDate || new Date());
     document.getElementById('rhPaySecurityInput').value = '';
     document.getElementById('rhPaySecurityBadge').innerHTML = '';
     document.getElementById('rhPayTableWrap').innerHTML = '<div class="rights-empty">Select a date and security to view holdings</div>';
@@ -842,7 +868,9 @@ function rhPayPopulateHoldings() {
         '<th class="r" style="width:19%">Charges</th>' +
         '<th class="r" style="width:18%">Total</th>' +
         '</tr></thead><tbody>';
+    var totalReQty = 0;
     holdings.forEach(function(h, idx) {
+        totalReQty += (h.netQuantity || 0);
         html += '<tr>' +
             '<td>' + h.combinedLabel + '</td>' +
             '<td class="r">' + h.netQuantity.toLocaleString() + '</td>' +
@@ -851,7 +879,14 @@ function rhPayPopulateHoldings() {
             '<td class="r"><span id="rh-pay-total-' + idx + '">0.00</span></td>' +
             '</tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody>' +
+        '<tfoot><tr style="background:#f1f5f9; font-weight:600; border-top:2px solid #cbd5e0;">' +
+        '<td>Total</td>' +
+        '<td class="r">' + totalReQty.toLocaleString() + '</td>' +
+        '<td class="r">—</td>' +
+        '<td class="r" id="rh-pay-total-charges">0.00</td>' +
+        '<td class="r" id="rh-pay-total-grand">0.00</td>' +
+        '</tr></tfoot></table>';
     document.getElementById('rhPayTableWrap').innerHTML = html;
     document.getElementById('rhPaySaveBtn').disabled = false;
 
@@ -890,6 +925,22 @@ function rhPayUpdateTotal(idx) {
     var charges = parseFloat((chargesInput ? (chargesInput.dataset.rawValue || chargesInput.value || '') : '0').replace(/,/g, '')) || 0;
     var total = (h.netQuantity * price) + charges;
     totalSpan.textContent = total > 0 ? wmsFmtAmt(total) : '0.00';
+    rhPayUpdateGrandTotal();
+}
+
+// Sum the per-row Charges and Totals into the footer row.
+function rhPayUpdateGrandTotal() {
+    var sumCharges = 0, sumGrand = 0;
+    for (var i = 0; i < rhPayHoldings.length; i++) {
+        var chargesEl = document.getElementById('rh-pay-charges-' + i);
+        var totalEl = document.getElementById('rh-pay-total-' + i);
+        if (chargesEl) sumCharges += parseFloat((chargesEl.dataset.rawValue || chargesEl.value || '').replace(/,/g, '')) || 0;
+        if (totalEl) sumGrand += parseFloat((totalEl.textContent || '').replace(/,/g, '')) || 0;
+    }
+    var chTot = document.getElementById('rh-pay-total-charges');
+    var grTot = document.getElementById('rh-pay-total-grand');
+    if (chTot) chTot.textContent = sumCharges > 0 ? wmsFmtAmt(sumCharges) : '0.00';
+    if (grTot) grTot.textContent = sumGrand > 0 ? wmsFmtAmt(sumGrand) : '0.00';
 }
 
 // ============================================================================
@@ -954,6 +1005,8 @@ async function rhPaySaveTransactions() {
     try {
         document.getElementById('rhPaySaveBtn').disabled = true;
         await rhBatchCreateTransactions(txns);
+        // Remember the date so the next open defaults to the same day.
+        rhPayLastSavedDate = new Date(rhPayDateState.year, rhPayDateState.month, rhPayDateState.day);
         closeRightsPaymentModal();
         if (typeof trRefresh === 'function') await trRefresh();
         showAlert('Rights payment: ' + txns.length + ' transaction(s) saved.', 'success', 4000);

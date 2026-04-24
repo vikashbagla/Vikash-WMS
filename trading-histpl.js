@@ -19,6 +19,8 @@ var hplTagCtrl = null;          // wmsTagInput controller
 
 // Date state (used by rhInitDateWidget('hpl'))
 var hplDateState = { day: 1, month: 0, year: 2026 };
+// Persist last saved date across modal open/close (null = first open, use today)
+var hplLastSavedDate = null;
 var hplDateActiveSeg = null;
 var hplDateTypeBuf = '';
 
@@ -206,7 +208,7 @@ function openHistPlModal() {
     if (hplDdCtrlTrader) hplDdCtrlTrader.close();
     if (hplDdCtrlBroker) hplDdCtrlBroker.close();
 
-    rhDateSetFromDate('hpl', new Date());
+    rhDateSetFromDate('hpl', hplLastSavedDate || new Date());
 
     document.getElementById('hplOverlay').classList.add('show');
     setTimeout(function() { document.getElementById('hplInvestorInput').focus(); }, 100);
@@ -470,6 +472,8 @@ async function hplSaveTransaction() {
     try {
         document.getElementById('hplSaveBtn').disabled = true;
         await wmsBatchCreateTransactions([txn]);
+        // Remember the date so the next open defaults to the same day.
+        hplLastSavedDate = new Date(hplDateState.year, hplDateState.month, hplDateState.day);
         closeHistPlModal();
         if (typeof trRefresh === 'function') await trRefresh();
         showAlert('Historical P&L: ' + (amount >= 0 ? 'Profit' : 'Loss') + ' ' + wmsFmtAmt(amount) + ' saved for ' + shortSym + '.', 'success', 4000);

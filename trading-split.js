@@ -13,6 +13,8 @@ var splitDdCtrl = null;             // wmsDropdown controller for symbol search
 var splitTags = [];                 // current tag list for this form
 var splitTagCtrl = null;            // wmsTagInput controller
 var splitDateState = { day: 1, month: 0, year: 2026 };
+// Persist last saved date across modal open/close (null = first open, use today)
+var splitLastSavedDate = null;
 var splitDateActiveSeg = null;
 var splitDateTypeBuf = '';
 
@@ -287,7 +289,7 @@ function splitSearchSymbol(input, dd) {
 function openSplitModal() {
     splitSelectedSecurity = null;
     splitHoldings = [];
-    splitDateSetFromDate(new Date());
+    splitDateSetFromDate(splitLastSavedDate || new Date());
     document.getElementById('splitSymbolInput').value = '';
     document.getElementById('splitSymbolBadge').innerHTML = '';
     document.getElementById('splitRatioRow').style.display = 'none';
@@ -349,18 +351,34 @@ function splitPopulateHoldings() {
         '<th class="r" style="width:20%">Cur Qty</th>' +
         '<th class="r" style="width:25%">Additional Qty</th>' +
         '</tr></thead><tbody>';
+    var totalCurQty = 0;
     holdings.forEach(function(h, idx) {
+        totalCurQty += (h.netQuantity || 0);
         html += '<tr>' +
             '<td title="' + h.combinedLabel + '">' + h.combinedLabel + '</td>' +
             '<td class="r">' + h.netQuantity.toLocaleString() + '</td>' +
             '<td class="r"><input type="text" inputmode="numeric" data-idx="' + idx + '" class="split-qty-input" placeholder="0"></td>' +
             '</tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody>' +
+        '<tfoot><tr style="background:#f1f5f9; font-weight:600; border-top:2px solid #cbd5e0;">' +
+        '<td>Total</td>' +
+        '<td class="r">' + totalCurQty.toLocaleString() + '</td>' +
+        '<td class="r" id="split-total-additional">0</td>' +
+        '</tr></tfoot></table>';
     document.getElementById('splitTableWrap').innerHTML = html;
     document.getElementById('splitSaveBtn').disabled = false;
 
-    // Add focus/blur formatting for split qty inputs
+    function splitUpdateTotal() {
+        var sum = 0;
+        document.querySelectorAll('.split-qty-input').forEach(function(el) {
+            sum += parseInt((el.value || '').replace(/,/g, '')) || 0;
+        });
+        var totalEl = document.getElementById('split-total-additional');
+        if (totalEl) totalEl.textContent = sum.toLocaleString();
+    }
+
+    // Add focus/blur formatting for split qty inputs + live total
     document.querySelectorAll('.split-qty-input').forEach(function(el) {
         el.addEventListener('focus', function() {
             var raw = parseInt(el.value.replace(/,/g, '')) || 0;
@@ -369,7 +387,9 @@ function splitPopulateHoldings() {
         el.addEventListener('blur', function() {
             var raw = parseInt(el.value.replace(/,/g, '')) || 0;
             el.value = raw ? raw.toLocaleString('en-IN') : '';
+            splitUpdateTotal();
         });
+        el.addEventListener('input', splitUpdateTotal);
     });
 
     // Initialize tag input with auto-populated tags
@@ -431,13 +451,18 @@ function splitApplyRatio() {
     }
 
     var inputs = document.querySelectorAll('.split-qty-input');
+    var totalAdditional = 0;
     inputs.forEach(function(inp) {
         var idx = parseInt(inp.dataset.idx);
         if (splitHoldings[idx]) {
             var additionalQty = splitHoldings[idx].netQuantity * (splitTo - 1);
             inp.value = additionalQty.toLocaleString('en-IN');
+            totalAdditional += additionalQty;
         }
     });
+    // Refresh the footer total directly (programmatic .value changes don't fire 'input').
+    var totalEl = document.getElementById('split-total-additional');
+    if (totalEl) totalEl.textContent = totalAdditional.toLocaleString();
 }
 
 // ============================================================================
@@ -515,6 +540,9 @@ async function splitSaveTransactions() {
         if (txns.length > 0) {
             await wmsBatchCreateTransactions(txns);
         }
+
+        // Remember the date so the next open defaults to the same day.
+        splitLastSavedDate = new Date(splitDateState.year, splitDateState.month, splitDateState.day);
 
         closeSplitModal();
         if (typeof trRefresh === 'function') await trRefresh();

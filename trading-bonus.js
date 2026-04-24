@@ -10,6 +10,8 @@ var bonusDdCtrl = null;             // wmsDropdown controller for symbol search
 var bonusTags = [];                 // current tag list for this form
 var bonusTagCtrl = null;            // wmsTagInput controller
 var bonusDateState = { day: 1, month: 0, year: 2026 };
+// Persist last saved date across modal open/close (null = first open, use today)
+var bonusLastSavedDate = null;
 var bonusDateActiveSeg = null;
 var bonusDateTypeBuf = '';
 
@@ -285,7 +287,7 @@ function bonusSearchSymbol(input, dd) {
 function openBonusModal() {
     bonusSelectedSecurity = null;
     bonusHoldings = [];
-    bonusDateSetFromDate(new Date());
+    bonusDateSetFromDate(bonusLastSavedDate || new Date());
     document.getElementById('bonusSymbolInput').value = '';
     document.getElementById('bonusSymbolBadge').innerHTML = '';
     document.getElementById('bonusRatioRow').style.display = 'none';
@@ -348,18 +350,34 @@ function bonusPopulateHoldings() {
         '<th class="r" style="width:20%">Cur Qty</th>' +
         '<th class="r" style="width:25%">Bonus Qty</th>' +
         '</tr></thead><tbody>';
+    var totalCurQty = 0;
     holdings.forEach(function(h, idx) {
+        totalCurQty += (h.netQuantity || 0);
         html += '<tr>' +
             '<td title="' + h.combinedLabel + '">' + h.combinedLabel + '</td>' +
             '<td class="r">' + h.netQuantity.toLocaleString() + '</td>' +
             '<td class="r"><input type="text" inputmode="numeric" data-idx="' + idx + '" class="bonus-qty-input" placeholder="0"></td>' +
             '</tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody>' +
+        '<tfoot><tr style="background:#f1f5f9; font-weight:600; border-top:2px solid #cbd5e0;">' +
+        '<td>Total</td>' +
+        '<td class="r">' + totalCurQty.toLocaleString() + '</td>' +
+        '<td class="r" id="bonus-total-bonus">0</td>' +
+        '</tr></tfoot></table>';
     document.getElementById('bonusTableWrap').innerHTML = html;
     document.getElementById('bonusSaveBtn').disabled = false;
 
-    // Add focus/blur formatting for bonus qty inputs
+    function bonusUpdateTotal() {
+        var sum = 0;
+        document.querySelectorAll('.bonus-qty-input').forEach(function(el) {
+            sum += parseInt((el.value || '').replace(/,/g, '')) || 0;
+        });
+        var totalEl = document.getElementById('bonus-total-bonus');
+        if (totalEl) totalEl.textContent = sum.toLocaleString();
+    }
+
+    // Add focus/blur formatting for bonus qty inputs + live total
     document.querySelectorAll('.bonus-qty-input').forEach(function(el) {
         el.addEventListener('focus', function() {
             var raw = parseInt(el.value.replace(/,/g, '')) || 0;
@@ -368,7 +386,9 @@ function bonusPopulateHoldings() {
         el.addEventListener('blur', function() {
             var raw = parseInt(el.value.replace(/,/g, '')) || 0;
             el.value = raw ? raw.toLocaleString('en-IN') : '';
+            bonusUpdateTotal();
         });
+        el.addEventListener('input', bonusUpdateTotal);
     });
 
     // Initialize tag input with auto-populated tags
@@ -430,13 +450,18 @@ function bonusApplyRatio() {
     }
 
     var inputs = document.querySelectorAll('.bonus-qty-input');
+    var totalBonus = 0;
     inputs.forEach(function(inp) {
         var idx = parseInt(inp.dataset.idx);
         if (bonusHoldings[idx]) {
             var bonusQty = Math.floor(bonusHoldings[idx].netQuantity * ratioNew / ratioExisting);
             inp.value = bonusQty;
+            totalBonus += bonusQty;
         }
     });
+    // Refresh the footer total directly (programmatic .value changes don't fire 'input').
+    var totalEl = document.getElementById('bonus-total-bonus');
+    if (totalEl) totalEl.textContent = totalBonus.toLocaleString();
 }
 
 // ============================================================================
@@ -515,6 +540,9 @@ async function bonusSaveTransactions() {
         if (txns.length > 0) {
             await wmsBatchCreateTransactions(txns);
         }
+
+        // Remember the date so the next open defaults to the same day.
+        bonusLastSavedDate = new Date(bonusDateState.year, bonusDateState.month, bonusDateState.day);
 
         closeBonusModal();
         if (typeof trRefresh === 'function') await trRefresh();
