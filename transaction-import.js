@@ -1238,28 +1238,50 @@ function allocateCharges(rows, segCharges) {
             console.warn('CN charge reconciliation: ' + cnKey + ' — CN reports ' +
                 cnTotal.toFixed(2) + ' but regulatory schedule expected 0; ' +
                 'falling back to proportional-by-gross split.');
-            var assigned = 0;
-            rows.forEach(function(r, idx) {
-                var share = (idx === rows.length - 1)
-                    ? wmsRoundMoney(cnTotal - assigned)
-                    : wmsRoundMoney(cnTotal * (r.gross_amount / totalGross));
-                r[rowField] = share;
-                assigned += share;
+            rows.forEach(function(r) {
+                r[rowField] = wmsRoundMoney(cnTotal * (r.gross_amount / totalGross));
             });
+            // Absorb rounding drift into the first row so totals match exactly.
+            _absorbRoundingDelta(rows, rowField, cnTotal, function(r) { return r.gross_amount; });
             return;
         }
 
-        // Case C (common): scale proportionally to each row's expected share.
+        // Case C (common): scale each row's expected value by (CN_total /
+        // expected_total).  Result: rows with expected = 0 stay at 0 (buy-only
+        // stamp etc.); rows with expected > 0 split the CN amount in the
+        // ratio dictated by the regulatory schedule.
         var scale = cnTotal / expTotal;
-        var assigned = 0;
-        rows.forEach(function(r, idx) {
-            var raw = (r._expected[expectedKey] || 0) * scale;
-            var share = (idx === rows.length - 1)
-                ? wmsRoundMoney(cnTotal - assigned)
-                : wmsRoundMoney(raw);
-            r[rowField] = share;
-            assigned += share;
+        rows.forEach(function(r) {
+            r[rowField] = wmsRoundMoney((r._expected[expectedKey] || 0) * scale);
         });
+        // Absorb rounding drift into the row with the LARGEST expected value —
+        // NEVER a row whose regulatory expected is zero (would wrongly give
+        // stamp to a SELL leg or STT to an F&O buy leg, etc.).
+        _absorbRoundingDelta(rows, rowField, cnTotal, function(r) {
+            return r._expected[expectedKey] || 0;
+        });
+    }
+
+    // Apply rounding correction so sum(rowField) === cnTotal to the paise.
+    // The delta lands on the row whose `weightFn` returns the largest value —
+    // weightFn picks "eligible" rows only, preventing the classic bug where a
+    // 1-paise residue gets pinned onto a SELL row that shouldn't attract the
+    // charge at all.
+    function _absorbRoundingDelta(rowList, rowField, cnTotal, weightFn) {
+        if (!rowList || rowList.length === 0) return;
+        var assigned = 0;
+        rowList.forEach(function(r) { assigned += (r[rowField] || 0); });
+        var delta = wmsRoundMoney(cnTotal - assigned);
+        if (Math.abs(delta) < 0.01) return;
+        var bestRow = null;
+        var bestWeight = 0;
+        rowList.forEach(function(r) {
+            var w = weightFn(r) || 0;
+            if (w > bestWeight) { bestWeight = w; bestRow = r; }
+        });
+        if (bestRow) {
+            bestRow[rowField] = wmsRoundMoney(bestRow[rowField] + delta);
+        }
     }
 
     reconcileType('brokerage',        'brokerage',          'brokerage');
