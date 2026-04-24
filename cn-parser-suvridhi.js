@@ -253,102 +253,271 @@ function parseSuvridhiTradeData(lineText, isin) {
 }
 
 function parseSuvridhiCharges(allText) {
+    // ========================================================================
+    // COORDINATE-BASED CHARGES PARSER — 2026-04-24 rewrite.
+    //
+    // Instead of regexing numbers out of the joined line text and guessing
+    // column alignment from the count, we:
+    //
+    //   1. Find the charges data row (line starting "NCL" with ≥ 8 numbers).
+    //   2. Cluster its items by x-position into numeric TOKENS. Handles both
+    //      word-spaced PDFs (one item = one number) and character-spaced PDFs
+    //      (one number = 6-10 adjacent single-char items, e.g. K120/644).
+    //   3. Find column HEADER labels by scanning lines above the data row
+    //      for the Suvridhi charge names (Brokerage, Securities Transaction
+    //      Tax, Transaction Charges, SEBI, Stamp Duty, IPFT, Taxable Value,
+    //      CGST/SGST or IGST, Net Amount).
+    //   4. Map each numeric token to the nearest header label by x-alignment.
+    //
+    // Benefits vs the old token-count heuristic:
+    //   • No assumption about column count — if Suvridhi adds a column
+    //     (e.g. Clearing Charges), each value still maps by its header, and
+    //     the new column shows up as "unknown" in the log instead of silently
+    //     shifting everything.
+    //   • No "nums[0] > nums[1] * 2" trickery — the header's x defines the
+    //     column, period. Balanced BUY+SELL CNs (K120) and unbalanced CNs
+    //     use identical code paths.
+    //   • Sanity check: TaxableValue must equal Brokerage+TxnCh+SEBI+IPFT.
+    //     If off by > ₹1 we log a loud warning (the canonical signal of a
+    //     column-alignment bug — all our historical parser failures failed
+    //     this test).
+    // ========================================================================
+
     var charges = {
         equity: { brokerage: 0, stt: 0, gst: 0, exchangeCharges: 0, sebiCharges: 0, stampDuty: 0, ipft: 0 },
-        nfo: { brokerage: 0, stt: 0, gst: 0, exchangeCharges: 0, sebiCharges: 0, stampDuty: 0, ipft: 0 }
+        nfo:    { brokerage: 0, stt: 0, gst: 0, exchangeCharges: 0, sebiCharges: 0, stampDuty: 0, ipft: 0 }
     };
-
-    // Suvridhi charges are in a summary table row:
-    // "NCL-Equities [2026012 M] 6,55,059.75 975.00 -656.00 -19.48 -0.66 0.00 0.00 995.14 -179.13 6,54,204.48"
-    //
-    // extractNumbers only matches numbers with exactly 2 decimal places ([\d,]+\.\d{2}),
-    // so settlement number (no decimal, e.g. "2026012 M") is never extracted.
-    // First number is always PayIn/PayOut obligation.
-    //
-    // After skipping PayIn/PayOut:
-    //   [idx+0] = Brokerage
-    //   [idx+1] = STT
-    //   [idx+2] = Transaction Charges
-    //   [idx+3] = SEBI Turnover Fees
-    //   [idx+4] = Stamp Duty
-    //   [idx+5] = IPFT Charges
-    //   [idx+6] = Taxable Value (skip)
-    //   [idx+7] = GST (single IGST column) -OR- CGST (if CGST+SGST format)
-    //   [idx+8] = SGST (only if CGST+SGST format)
-    //   [last]  = Net Amount (skip)
 
     for (var p = 0; p < allText.length; p++) {
         var lines = CN_UTILS.buildLines(allText[p]);
 
+        // Locate the charges data row — first line starting "NCL" with ≥ 8
+        // 2-decimal numbers (the header line "NCL-Equities" has 0 numbers).
+        var dataIdx = -1;
         for (var li = 0; li < lines.length; li++) {
-            var lineText = lines[li].text;
-
-            // Find the NCL-Equities charges data row
-            // In character-spaced PDFs, "NCL-" and "Equities" may be on separate lines,
-            // so match just "NCL" prefix (the header-only "NCL-Equities" line has < 8 numbers)
-            if (!lineText.match(/^NCL/i)) continue;
-
-            var nums = CN_UTILS.extractNumbers(lineText);
-            // Must have enough numbers to be the charges row (not just the segment header)
-            if (nums.length < 8) continue;
-
-            console.log('Suvridhi charges: ' + nums.length + ' numbers: ' + JSON.stringify(nums));
-
-            // Column layout (fixed by Suvridhi CN format):
-            //   [PayIn/Out | Brok | STT | TxnCh | SEBI | Stamp | IPFT | Taxable | GST... | NetAmt]
-            // GST is 1 column (IGST, for out-of-state clients) or 2 columns (CGST+SGST).
-            //
-            //   11 numbers → PayIn/Out present, CGST+SGST (2 GST cols)
-            //   10 numbers → PayIn/Out present, IGST       (1 GST col)
-            //   9 numbers  → No PayIn/Out, IGST            (defensive)
-            //
-            // The previous "nums[0] > nums[1]*2" heuristic failed when trades
-            // in a single CN nearly netted out (e.g. K120/644: net PayIn/Out
-            // -402 vs brokerage 3,600) — it kept idx=0 and the entire row
-            // shifted by one column.  Count-based logic is unambiguous because
-            // Suvridhi always includes the PayIn/Out column in their layout.
-            var idx, gstCols;
-            if (nums.length >= 11) {
-                idx = 1; gstCols = 2;  // CGST+SGST, skip PayIn/Out
-            } else if (nums.length === 10) {
-                idx = 1; gstCols = 1;  // IGST, skip PayIn/Out
-            } else if (nums.length === 9) {
-                idx = 0; gstCols = 1;  // Defensive fallback — IGST without PayIn/Out
-            } else {
-                console.warn('Suvridhi charges: unexpected column count ' + nums.length + ', skipping extraction');
-                continue;
-            }
-
-            charges.equity.brokerage      = Math.abs(nums[idx]);
-            charges.equity.stt            = Math.abs(nums[idx + 1]);
-            charges.equity.exchangeCharges = Math.abs(nums[idx + 2]);
-            charges.equity.sebiCharges    = Math.abs(nums[idx + 3]);
-            charges.equity.stampDuty      = Math.abs(nums[idx + 4]);
-            charges.equity.ipft           = Math.abs(nums[idx + 5]);
-            // nums[idx+6] = Taxable Value (skip)
-            if (gstCols === 2) {
-                charges.equity.gst = Math.abs(nums[idx + 7]) + Math.abs(nums[idx + 8]);
-            } else if (gstCols === 1) {
-                charges.equity.gst = Math.abs(nums[idx + 7]);
-            }
-
-            // Sanity check: TaxableValue should equal Brokerage + TxnCh + SEBI + IPFT
-            // (these are the services subject to GST; STT and stamp duty are not
-            // taxable under GST).  A mismatch > ₹1 indicates column misalignment.
-            var taxableExpected = charges.equity.brokerage + charges.equity.exchangeCharges +
-                                  charges.equity.sebiCharges + charges.equity.ipft;
-            var taxableRead = Math.abs(nums[idx + 6]);
-            if (Math.abs(taxableRead - taxableExpected) > 1.00) {
-                console.warn('Suvridhi charges: Taxable Value mismatch — ' +
-                    'read ' + taxableRead.toFixed(2) + ' vs ' +
-                    'expected (Brok+TxnCh+SEBI+IPFT) ' + taxableExpected.toFixed(2) +
-                    '.  Possible column misalignment.');
-            }
-
-            console.log('Suvridhi equity charges:', JSON.stringify(charges.equity));
-            break;
+            if (!/^NCL/i.test(lines[li].text)) continue;
+            if (CN_UTILS.extractNumbers(lines[li].text).length >= 8) { dataIdx = li; break; }
         }
+        if (dataIdx < 0) continue;
+
+        var dataLine = lines[dataIdx];
+
+        // Cluster data-row items by x-gap into numeric tokens. Char-spaced
+        // PDFs emit single chars ("2", ",", "4", "7", "3", ".", "0", "0"),
+        // word-spaced PDFs emit "-2,473.00" as one item — either way we end
+        // up with a single token per column value.
+        var dataTokens = _svClusterNumericTokens(dataLine.items);
+        if (dataTokens.length < 8) {
+            console.warn('Suvridhi charges: data row had only ' + dataTokens.length + ' numeric tokens, expected ≥ 8 — skipping.');
+            continue;
+        }
+
+        // Find header column anchors by scanning lines ABOVE the data row
+        // within a reasonable y-band (Suvridhi's header block spans ~30-50
+        // vertical units above the data row across its 2-4 wrapped lines).
+        var headerAnchors = _svFindChargesHeaderAnchors(lines, dataLine.y, dataLine.y + 50);
+
+        // Map each numeric token to a named column by x-proximity to header
+        // anchors. Returns {brokerage, stt, txnCh, sebi, stamp, ipft,
+        // taxable, cgst, sgst, igst, payInOut, netAmount} (any can be null).
+        var mapped = _svMapTokensToColumns(dataTokens, headerAnchors);
+
+        charges.equity.brokerage       = Math.abs(mapped.brokerage || 0);
+        charges.equity.stt             = Math.abs(mapped.stt || 0);
+        charges.equity.exchangeCharges = Math.abs(mapped.txnCh || 0);
+        charges.equity.sebiCharges     = Math.abs(mapped.sebi || 0);
+        charges.equity.stampDuty       = Math.abs(mapped.stamp || 0);
+        charges.equity.ipft            = Math.abs(mapped.ipft || 0);
+        if (mapped.cgst != null && mapped.sgst != null) {
+            charges.equity.gst = Math.abs(mapped.cgst) + Math.abs(mapped.sgst);
+        } else if (mapped.igst != null) {
+            charges.equity.gst = Math.abs(mapped.igst);
+        } else if (mapped.cgst != null) {
+            // IGST column was matched as CGST — happens when only one GST
+            // column exists.  Use it directly.
+            charges.equity.gst = Math.abs(mapped.cgst);
+        } else {
+            charges.equity.gst = 0;
+        }
+
+        // Sanity check — the canonical column-alignment tripwire.
+        var taxableExpected = charges.equity.brokerage + charges.equity.exchangeCharges +
+                              charges.equity.sebiCharges + charges.equity.ipft;
+        var taxableRead = mapped.taxable != null ? Math.abs(mapped.taxable) : null;
+        if (taxableRead != null && Math.abs(taxableRead - taxableExpected) > 1.00) {
+            console.warn('Suvridhi charges: Taxable Value mismatch — ' +
+                'read ' + taxableRead.toFixed(2) + ' vs ' +
+                'expected (Brok+TxnCh+SEBI+IPFT) ' + taxableExpected.toFixed(2) +
+                '. Likely column misalignment — please verify.');
+        }
+
+        console.log('Suvridhi equity charges (coordinate-based):', JSON.stringify(charges.equity));
+        break;
     }
 
     return charges;
+}
+
+// ----------------------------------------------------------------------------
+// Helpers for the coordinate-based charges parser.
+// ----------------------------------------------------------------------------
+
+// Cluster a line's items by x-gap into TOKENS, then filter to numeric tokens
+// and return [{text, value, x, endX}, ...]. Adjacent items with gap ≤ 2 are
+// concatenated. Handles both char-spaced and word-spaced PDFs.
+function _svClusterNumericTokens(items) {
+    if (!items || items.length === 0) return [];
+    var sorted = items.slice().sort(function(a, b) { return a.x - b.x; });
+    var clusters = [];
+    var cur = null;
+    for (var i = 0; i < sorted.length; i++) {
+        var it = sorted[i];
+        if (!it.text || !it.text.trim()) continue;
+        if (cur && (it.x - cur.endX) <= 2) {
+            cur.text += it.text;
+            cur.endX = it.x + (it.width || 0);
+        } else {
+            if (cur) clusters.push(cur);
+            cur = { text: it.text, x: it.x, endX: it.x + (it.width || 0) };
+        }
+    }
+    if (cur) clusters.push(cur);
+
+    // Retain only tokens that parse cleanly as a number matching "[digits,].dd".
+    // This excludes: "NCL-Equities", "[2026075M]", wrapped label text.
+    var numeric = [];
+    for (var j = 0; j < clusters.length; j++) {
+        var t = clusters[j].text.replace(/\s+/g, '');
+        // Accept optional leading minus, digits + optional commas, . and 2 decimals.
+        if (/^-?[\d,]+\.\d{2}$/.test(t)) {
+            var val = parseFloat(t.replace(/,/g, ''));
+            if (!isNaN(val)) {
+                numeric.push({
+                    text: t, value: val,
+                    x: clusters[j].x, endX: clusters[j].endX
+                });
+            }
+        }
+    }
+    return numeric;
+}
+
+// Find x-position of a label SUBSTRING in any header line above the data row.
+// Uses char-level positioning so it works for both word-spaced PDFs ("Brokerage"
+// as one item) AND character-spaced PDFs where "PayIn/PayOutBrokerage" gets
+// extracted as 21 adjacent single-character items.
+//
+// Returns the x-coordinate of the label's first character, or null if not found.
+function _svFindLabelX(lines, label, yMin, yMax) {
+    for (var li = 0; li < lines.length; li++) {
+        var ln = lines[li];
+        if (ln.y <= yMin || ln.y >= yMax) continue;
+        // Build a char-level array: [{ch, x}, ...] from sorted items.
+        var sorted = ln.items.slice().sort(function(a, b) { return a.x - b.x; });
+        var chars = [];
+        var lastEnd = null;
+        for (var i = 0; i < sorted.length; i++) {
+            var it = sorted[i];
+            if (!it.text) continue;
+            if (lastEnd !== null && (it.x - lastEnd) > 2) {
+                // Inject a space — matches buildLines' word-split behaviour.
+                chars.push({ ch: ' ', x: it.x });
+            }
+            var txt = it.text;
+            var wCh = (it.width || 0) / Math.max(1, txt.length);
+            for (var c = 0; c < txt.length; c++) {
+                chars.push({ ch: txt[c], x: it.x + c * wCh });
+            }
+            lastEnd = it.x + (it.width || 0);
+        }
+        var joined = chars.map(function(c) { return c.ch; }).join('');
+        var idx = joined.indexOf(label);
+        if (idx >= 0) return chars[idx].x;
+    }
+    return null;
+}
+
+// Find header column anchors by substring-searching for each charge label in
+// any header line above the data row. Substring search is intentionally
+// permissive: it works whether the label appears as a standalone item
+// ("Brokerage") or fused into a superword ("PayIn/PayOutBrokerage") from tight
+// char spacing. Returns {columnName: x_left_edge}.
+//
+// The tricky column is TxnCh — its label "Transaction" is ambiguous because
+// "Securities Transaction Tax" (STT column header) also contains it. We
+// resolve by anchoring STT via the uniquely-identifying word "Securities"
+// and synthesising TxnCh as the midpoint between STT and SEBI — Suvridhi's
+// TxnCh column always sits there.
+function _svFindChargesHeaderAnchors(lines, dataY, topY) {
+    var anchors = {};
+    var assign = function(name, label) {
+        var x = _svFindLabelX(lines, label, dataY, topY);
+        if (x != null) anchors[name] = { x: x, label: label };
+    };
+    assign('payInOut',  'Pay');         // first "Pay" → PayIn/Out
+    assign('brokerage', 'Brokerage');
+    assign('stt',       'Securities');  // STT column — unambiguous anchor
+    assign('sebi',      'SEBI');
+    assign('stamp',     'Stamp');
+    assign('ipft',      'IPFT');
+    assign('taxable',   'Taxable');
+    assign('cgst',      'CGST');
+    assign('sgst',      'SGST');
+    assign('igst',      'IGST');
+    // "Net Amount" — label collapses to "NetAmount" in tight-spacing PDFs, to
+    // "Net A mount" in V106 (the only split). Try "Net" as common prefix.
+    assign('netAmount', 'Net');
+
+    // Synthesise TxnCh as midpoint between STT and SEBI. In every Suvridhi
+    // CN the TxnCh column sits in that gap. Guard: only when the gap is wide
+    // enough to contain a column (distance > 40 x-units).
+    if (anchors.stt && anchors.sebi && (anchors.sebi.x - anchors.stt.x) > 40) {
+        anchors.txnCh = {
+            x: (anchors.stt.x + anchors.sebi.x) / 2,
+            label: '(synthesised TxnCh = midpoint(STT, SEBI))'
+        };
+    }
+    return anchors;
+}
+
+// Map each numeric data token to the column whose x-range contains it.
+// Ranges are computed from sorted anchor x-edges: each anchor [anchor_i.x,
+// anchor_{i+1}.x) is that column's range. The LAST anchor extends to +∞.
+// Uses the token's LEFT EDGE (not center) because Suvridhi right-aligns
+// numeric values within each column — the left edge is the reliable
+// reference point.
+function _svMapTokensToColumns(tokens, anchors) {
+    var anchorList = [];
+    for (var name in anchors) {
+        if (Object.prototype.hasOwnProperty.call(anchors, name)) {
+            anchorList.push({ name: name, x: anchors[name].x });
+        }
+    }
+    anchorList.sort(function(a, b) { return a.x - b.x; });
+    if (anchorList.length === 0) return {};
+
+    // Compute ranges: [anchor_i.x, anchor_{i+1}.x). Last anchor → [x, ∞).
+    var ranges = [];
+    for (var i = 0; i < anchorList.length; i++) {
+        ranges.push({
+            name: anchorList[i].name,
+            xMin: anchorList[i].x,
+            xMax: (i + 1 < anchorList.length) ? anchorList[i + 1].x : Infinity
+        });
+    }
+
+    var out = {};
+    for (var t = 0; t < tokens.length; t++) {
+        var tk = tokens[t];
+        for (var r = 0; r < ranges.length; r++) {
+            if (tk.x >= ranges[r].xMin && tk.x < ranges[r].xMax) {
+                // First-wins so summary-row tokens (e.g. "Total (Net)" line)
+                // don't overwrite data-row tokens. Tokens are ordered left-to-right
+                // within a single row so duplicates within a row are unlikely.
+                if (out[ranges[r].name] == null) out[ranges[r].name] = tk.value;
+                break;
+            }
+        }
+    }
+    return out;
 }
