@@ -64,6 +64,11 @@ var lgVM = wmsViewManager({
 // Data
 var lgLedgerEntries = [];
 var lgCombined = [];
+// Full-history combined rows with running balance (superset of lgCombined,
+// which is clipped to the active date filter).  Stashed so that the recon
+// drift check (Layer 3a) has access to all RECONCILIATION rows, even when
+// the current date window excludes them. See LESSONS §E.17.5.
+var lgFullCombined = [];
 
 // Filters
 var lgSelectedInvestorIds = [];
@@ -304,6 +309,27 @@ function lgInit() {
 
     // Modal close handlers — Book Interest
     lgInitModal('lgBookInterestModal', 'lgBookInterestClose', 'lgBookCancelBtn');
+
+    // Modal close handlers — Reconciliation Review (Layer 3b)
+    lgInitModal('lgReconReviewModal', 'lgReconReviewClose', 'lgReconReviewCancelBtn');
+
+    // Recon banner Review button (Layer 3a → 3b)
+    var reconReviewBtn = document.getElementById('lgReconBannerReviewBtn');
+    if (reconReviewBtn) reconReviewBtn.addEventListener('click', lgReconReviewOpen);
+
+    // Review modal: click a row to open the txn's Edit modal.
+    var reconReviewBody = document.getElementById('lgReconReviewBody');
+    if (reconReviewBody) {
+        reconReviewBody.addEventListener('click', function(e) {
+            var tr = e.target.closest('tr[data-txn-id]');
+            if (!tr) return;
+            var txnId = tr.getAttribute('data-txn-id');
+            if (txnId && typeof trOpenEditModal === 'function') {
+                lgReconReviewClose();
+                trOpenEditModal(txnId);
+            }
+        });
+    }
 
     // Interest post button
     var intPostBtn = document.getElementById('lgInterestPostBtn');
@@ -854,9 +880,13 @@ async function lgRefresh() {
     // Current cash balance = last running balance across full history (used by Summary)
     lgCurrentCashBalance = fullCombined.length > 0 ? fullCombined[fullCombined.length - 1]._runningBalance : 0;
 
+    // Stash for Layer 3a (recon drift detection) — see lgCheckReconDrift.
+    lgFullCombined = fullCombined;
+
     lgRenderEntries(lgCombined);
     lgRenderSummary();
     lgUpdateAddRowAvailability();
+    lgCheckReconDrift();
 }
 
 function lgRenderEntries(rows) {
@@ -1732,6 +1762,207 @@ async function lgReconcileUpTo(reconDate, reconBalance) {
     }
 }
 window.lgReconcileUpTo = lgReconcileUpTo;
+
+// ============================================================================
+// LAYER 3a — RECONCILIATION DRIFT DETECTION
+//
+// After every lgRefresh we walk lgFullCombined with a PARALLEL running balance
+// that mirrors wmsBuildLedger except it treats RECONCILIATION rows as NO-OP
+// (not as anchors).  At each RECONCILIATION row we compare:
+//
+//     stored_amount   vs   parallel_balance_before_the_recon_row
+//
+// If they diverge for the LATEST recon (by sortKey — entry_date then created_at)
+// we surface a yellow banner above the transactions block.  The diff catches
+// both pre-recon edits (amount of a trade changed) AND deletes (row simply
+// vanishes from lgFullCombined since there is no soft-delete), which an
+// updated_at check alone would miss.
+//
+// See LESSONS §E.17.5.
+// ============================================================================
+
+function lgCheckReconDrift() {
+    var banner = document.getElementById('lgReconBanner');
+    if (!banner) return;
+    var rows = lgFullCombined || [];
+    if (rows.length === 0) { lgHideReconBanner(); return; }
+
+    // Parallel-balance pass: ignore RECONCILIATION anchor effect, everything
+    // else matches wmsBuildLedger / the pending-interest re-sort loop.
+    var parallelBal = 0;
+    var driftReports = [];  // {row, storedAmt, computedBal, diff}
+    for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        if (r._rowType === 'ledger' && r.entryType === 'RECONCILIATION') {
+            // Capture drift AT this row — balance BEFORE applying it.
+            var storedAmt = parseFloat(r.amount) || 0;
+            var diff = storedAmt - parallelBal;
+            driftReports.push({
+                row: r,
+                storedAmt: storedAmt,
+                computedBal: parallelBal,
+                diff: diff,
+                sortKey: r.sortKey || (r.date + '|0|' + ((r._source && r._source.created_at) || ''))
+            });
+            // Do NOT advance parallelBal — recon is audit-only in this pass.
+            continue;
+        }
+        if (r._rowType === 'ledger' && r.entryType === 'OPENING_BALANCE') {
+            parallelBal = parseFloat(r.amount) || 0;
+            continue;
+        }
+        if (r._isPending) continue;                       // pending interest not committed
+        if (r._nfoCashImpact === false) continue;         // futures info rows
+        parallelBal += parseFloat(r.amount) || 0;
+    }
+
+    if (driftReports.length === 0) { lgHideReconBanner(); return; }
+
+    // Pick LATEST recon (by sortKey — entry_date then created_at).
+    driftReports.sort(function(a, b) {
+        return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0;
+    });
+    var latest = driftReports[driftReports.length - 1];
+
+    // Floating-point tolerance — round to paise.
+    if (Math.abs(latest.diff) < 0.01) { lgHideReconBanner(); return; }
+
+    lgShowReconBanner(latest);
+}
+
+function lgHideReconBanner() {
+    var banner = document.getElementById('lgReconBanner');
+    if (banner) {
+        banner.style.display = 'none';
+        banner.classList.add('lg-recon-banner-hidden');
+    }
+    // Release any stashed review payload.
+    lgReconBannerState = null;
+}
+
+var lgReconBannerState = null;  // {reconRow, storedAmt, computedBal, diff}
+
+function lgShowReconBanner(report) {
+    var banner = document.getElementById('lgReconBanner');
+    var msgEl = document.getElementById('lgReconBannerMsg');
+    if (!banner || !msgEl) return;
+
+    var reconRow = report.row;
+    var prettyDate = lgFmtDate(reconRow.date) || reconRow.date;
+    var stored = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(report.storedAmt) : String(report.storedAmt);
+    var computed = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(report.computedBal) : String(report.computedBal);
+    var diffAmt = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(Math.abs(report.diff)) : String(Math.abs(report.diff));
+    var direction = report.diff > 0 ? 'now lower' : 'now higher';
+
+    msgEl.innerHTML =
+        '<b>Balance mismatch on reconciliation ' + wmsEsc(prettyDate) + '</b> &middot; ' +
+        'reconciled at <b>' + wmsEsc(stored) + '</b>, computed is <b>' + wmsEsc(computed) + '</b> ' +
+        '<span class="lg-recon-banner-diff">(diff ' + wmsEsc(diffAmt) + ', balance ' + direction + ')</span>. ' +
+        'A pre-reconciliation transaction was edited or deleted.';
+
+    banner.classList.remove('lg-recon-banner-hidden');
+    banner.style.display = 'flex';
+
+    lgReconBannerState = report;
+}
+
+// ============================================================================
+// LAYER 3b — REVIEW MODAL
+// Lists pre-recon trades whose updated_at > recon.created_at and whose
+// transaction_date <= recon.entry_date.  Deletes are not itemisable here
+// (there's no soft-delete) — they surface via the banner's diff total only.
+// ============================================================================
+
+function lgReconReviewOpen() {
+    if (!lgReconBannerState || !lgReconBannerState.row) return;
+    var modal = document.getElementById('lgReconReviewModal');
+    if (!modal) return;
+
+    var reconRow = lgReconBannerState.row;
+    var reconSrc = reconRow._source || {};
+    var reconCreatedAt = reconSrc.created_at || '';
+    var reconEntryDate = reconRow.date;
+    var prettyDate = lgFmtDate(reconEntryDate) || reconEntryDate;
+
+    // Summary header.
+    var summary = document.getElementById('lgReconReviewSummary');
+    if (summary) {
+        var diffAbs = Math.abs(lgReconBannerState.diff || 0);
+        var diffStr = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(diffAbs) : String(diffAbs);
+        summary.innerHTML =
+            'Reconciliation on <b>' + wmsEsc(prettyDate) + '</b>. ' +
+            'Pre-reconciliation trades modified since then (edits only). ' +
+            'Unexplained balance diff of <b>' + wmsEsc(diffStr) + '</b> may be due to a delete — ' +
+            'deletes are not itemised here.';
+    }
+
+    // Build list.
+    var body = document.getElementById('lgReconReviewBody');
+    if (!body) return;
+
+    var dirty = (trTransactions || []).filter(function(t) {
+        if (!t.transaction_date || t.transaction_date > reconEntryDate) return false;
+        if (!t.updated_at || !reconCreatedAt) return false;
+        if (t.updated_at <= reconCreatedAt) return false;
+        // Match recon scope: investor always required; trader/broker only if
+        // the recon was narrowed to them.
+        if (reconSrc.investor_id && t.investor_id !== reconSrc.investor_id) return false;
+        if (reconSrc.trader_id) {
+            var effTrader = t.trader_id || t.investor_id;
+            if (effTrader !== reconSrc.trader_id) return false;
+        }
+        if (reconSrc.broker_id && t.broker_id !== reconSrc.broker_id) return false;
+        return true;
+    }).sort(function(a, b) {
+        return (a.transaction_date || '').localeCompare(b.transaction_date || '');
+    });
+
+    if (dirty.length === 0) {
+        body.innerHTML =
+            '<div class="lg-rr-hint">No pre-reconciliation edits detected by updated_at. ' +
+            'If the banner is still showing, the drift is explained by a <b>deleted</b> ' +
+            'trade or a ledger entry change — delete activity cannot be itemised (no soft-delete). ' +
+            'Re-reconcile to clear the banner.</div>';
+    } else {
+        var rows = dirty.map(function(t) {
+            var sym = t.short_symbol || t.symbol || '-';
+            var type = t.transaction_type || '-';
+            var qty = Math.abs(t.quantity || 0);
+            var net = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(t.display_net_amount || t.net_amount || 0) : String(t.net_amount || 0);
+            var dt = lgFmtDate(t.transaction_date) || t.transaction_date || '-';
+            var updDt = t.updated_at ? String(t.updated_at).slice(0, 19).replace('T', ' ') : '-';
+            return '<tr data-txn-id="' + wmsEsc(t.id) + '">' +
+                '<td>' + wmsEsc(dt) + '</td>' +
+                '<td>' + wmsEsc(sym) + '</td>' +
+                '<td>' + wmsEsc(type) + '</td>' +
+                '<td class="text-right">' + wmsEsc(String(qty)) + '</td>' +
+                '<td class="text-right">' + wmsEsc(net) + '</td>' +
+                '<td>' + wmsEsc(updDt) + '</td>' +
+                '</tr>';
+        }).join('');
+        body.innerHTML =
+            '<div class="lg-rr-hint">Click any row to open its Edit modal. Deletes are NOT listed — ' +
+            'they explain any residual balance diff after edits are accounted for.</div>' +
+            '<table>' +
+              '<thead><tr>' +
+                '<th>Txn Date</th>' +
+                '<th>Symbol</th>' +
+                '<th>Type</th>' +
+                '<th class="text-right">Qty</th>' +
+                '<th class="text-right">Net</th>' +
+                '<th>Modified At</th>' +
+              '</tr></thead>' +
+              '<tbody>' + rows + '</tbody>' +
+            '</table>';
+    }
+
+    modal.classList.add('show');
+}
+
+function lgReconReviewClose() {
+    var modal = document.getElementById('lgReconReviewModal');
+    if (modal) modal.classList.remove('show');
+}
 
 async function lgAddEntry() {
     var entryDate = lgNewDateInput ? lgNewDateInput.getValue() : '';
