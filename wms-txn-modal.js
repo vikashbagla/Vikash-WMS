@@ -1304,6 +1304,11 @@ async function wmsDeleteTransaction(txnId) {
     if (txn.is_locked) { showAlert('Transaction is locked. Unlock it first.', 'error'); return; }
     if (!confirm('Delete this ' + txn.transaction_type + ' transaction for ' + txn.symbol + '?\n\nThis cannot be undone.')) return;
 
+    // Layer 4: pre-reconciliation delete guard — same check as edit path, but
+    // more important here because deletes are NOT itemisable in the Layer 3b
+    // review modal (no soft-delete) — only visible via the banner's diff.
+    if (!(await wmsConfirmIfPreRecon(txn, 'delete'))) return;
+
     var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + txnId, {
         method: 'DELETE',
         headers: wmsHeaders({'Prefer': 'return=minimal'})
@@ -1522,11 +1527,104 @@ function wmsRecalcTraderCharges() {
 // EDIT MODAL: SAVE
 // ============================================================================
 
+/**
+ * Layer 4 helper — find the latest stored RECONCILIATION ledger_entry whose
+ * scope (investor, optionally trader / broker) matches this txn AND whose
+ * entry_date is on or after the txn's transaction_date.  Returns the raw
+ * ledger_entries row or null.
+ *
+ * Lives here (not in trading-ledger.js) because the guard must work even if
+ * the Statements module has never been loaded this session — e.g. user edits
+ * a pre-recon trade from the Portfolio or Transactions page.
+ */
+async function wmsFindLatestReconForTxn(txn) {
+    if (!txn || !txn.investor_id || !txn.transaction_date) return null;
+    if (typeof SUPABASE_URL === 'undefined' || typeof wmsHeaders !== 'function') return null;
+
+    var rows;
+    try {
+        var url = SUPABASE_URL + '/rest/v1/ledger_entries' +
+            '?select=*' +
+            '&investor_id=eq.' + encodeURIComponent(txn.investor_id) +
+            '&entry_type=eq.RECONCILIATION';
+        var resp = await fetch(url, {
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'})
+        });
+        if (!resp.ok) return null;
+        rows = await resp.json();
+    } catch (err) {
+        console.warn('wmsFindLatestReconForTxn fetch failed:', err && err.message);
+        return null;
+    }
+    if (!rows || rows.length === 0) return null;
+
+    var effTrader = txn.trader_id || txn.investor_id;
+    var matches = rows.filter(function(r) {
+        if (!r.entry_date || r.entry_date < txn.transaction_date) return false;
+        if (r.trader_id && r.trader_id !== effTrader) return false;
+        if (r.broker_id && r.broker_id !== txn.broker_id) return false;
+        return true;
+    });
+    if (matches.length === 0) return null;
+
+    matches.sort(function(a, b) {
+        if (a.entry_date !== b.entry_date) return a.entry_date < b.entry_date ? -1 : 1;
+        var ac = a.created_at || '';
+        var bc = b.created_at || '';
+        return ac < bc ? -1 : ac > bc ? 1 : 0;
+    });
+    return matches[matches.length - 1];
+}
+window.wmsFindLatestReconForTxn = wmsFindLatestReconForTxn;
+
+/**
+ * Layer 4 — pre-reconciliation guard for edit and delete paths.
+ *
+ * Shows a confirm dialog if this txn is on or before the latest applicable
+ * RECONCILIATION.  Returns true if the operation should proceed, false if
+ * the user cancels.  Fails OPEN on network errors — the banner on Statements
+ * will still catch any drift introduced by the edit.
+ *
+ * @param {Object} txn - The transaction row being edited/deleted.
+ * @param {string} action - 'edit' or 'delete' (for dialog text only).
+ */
+async function wmsConfirmIfPreRecon(txn, action) {
+    if (!txn || !txn.transaction_date || !txn.investor_id) return true;
+
+    var recon;
+    try {
+        recon = await wmsFindLatestReconForTxn(txn);
+    } catch (err) {
+        console.warn('wmsConfirmIfPreRecon: recon lookup failed:', err && err.message);
+        return true;  // fail-open
+    }
+    if (!recon) return true;
+
+    var reconDate = recon.entry_date;
+    // Format as DD-MMM-YY if formatDate is available, else passthrough.
+    var prettyRecon = (typeof formatDate === 'function') ? formatDate(reconDate) : reconDate;
+    var prettyTxn = (typeof formatDate === 'function') ? formatDate(txn.transaction_date) : txn.transaction_date;
+    var verb = action === 'delete' ? 'Deleting' : 'Editing';
+
+    var msg =
+        'This trade (' + prettyTxn + ') is on or before the last reconciliation (' + prettyRecon + ').\n\n' +
+        verb + ' it will invalidate that reconciliation — Statements will show a yellow ' +
+        'balance-mismatch banner until you re-reconcile.\n\n' +
+        'Proceed?';
+
+    return window.confirm(msg);
+}
+
 async function wmsEditSave() {
     if (!wmsEditingTxnId || !wmsTxnCtx) return;
     var txn = wmsTxnCtx.transactions.find(function(t) { return t.id === wmsEditingTxnId; });
     if (!txn) return;
     if (txn.is_locked) { showAlert('Transaction is locked and cannot be edited.', 'error'); return; }
+
+    // Layer 4: pre-reconciliation edit guard — if this trade's date is on or
+    // before a stored RECONCILIATION, warn the user that saving will
+    // invalidate the recon and surface a yellow banner on Statements.
+    if (!(await wmsConfirmIfPreRecon(txn, 'edit'))) return;
 
     var tags = wmsEditTagCtrl ? wmsEditTagCtrl.getTags() : [];
     if (tags.length === 0) tags = ['blank'];

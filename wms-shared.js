@@ -2661,12 +2661,17 @@ document.addEventListener('visibilitychange', function() {
 
 // ============================================================================
 // STT ELIGIBILITY CHECK (Rule G.8.5)
-// Only plain EQUITY stocks attract STT. All non-equity instruments (ETFs, MFs,
-// debt, SGBs, REITs, InvITs, NCDs, etc.) are exempt from STT and stamp duty.
+// Equity cash-market stocks attract STT AND stamp duty — both main-board
+// (EQUITY) and SME-board (EQUITY_SME) at the same rates.  Non-equity
+// instruments (ETFs, MFs, debt, SGBs, REITs, InvITs, NCDs, etc.) are exempt.
+// F&O has its own STT schedule handled separately — this helper is only
+// consulted for EQUITY-segment CN imports.
+// Source: Finance Act schedule — EQUITY_SME is not on the STT exemption list.
 // ============================================================================
 
 function wmsIsSTTEligible(securityType) {
-    return (securityType || '').toUpperCase() === 'EQUITY';
+    var t = (securityType || '').toUpperCase();
+    return t === 'EQUITY' || t === 'EQUITY_SME';
 }
 
 // ============================================================================
@@ -5379,7 +5384,7 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
         } else if (e.entry_type === 'CASH_RECEIVED') {
             signedAmt = -Math.abs(signedAmt);
         }
-        // else OPENING_BALANCE, ADJUSTMENT: use sign as-is
+        // else OPENING_BALANCE, RECONCILIATION, ADJUSTMENT: use sign as-is
 
         combined.push({
             _rowType: 'ledger',
@@ -5614,17 +5619,22 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
     combined.sort(function(a, b) { return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0; });
 
     // Compute running balance.
-    // OPENING_BALANCE entries RESET the running balance to their stored amount
-    // (they represent the entire starting cash position, not a delta). All
-    // earlier history is discarded at that point. Subsequent rows continue
-    // from the new base.
+    // OPENING_BALANCE and RECONCILIATION entries both RESET the running
+    // balance to their stored amount — OPENING_BALANCE is the period-start
+    // anchor, RECONCILIATION is an audit snapshot the user confirmed at a
+    // later date ("at this date, the balance was verified to be X"). Both
+    // discard earlier drift and rebase subsequent rows onto the snapshot
+    // value. This is what makes reconciliation meaningful: if the user
+    // edits a pre-recon transaction later, the RECONCILIATION row's amount
+    // still anchors the balance at its date, preserving the user's audit.
     //
     // NFO trade rows (_nfoCashImpact === false) appear in the ledger but
     // do NOT change the running balance — they are informational line items.
     // Only NFO_PNL rows (realised P&L on cover) hit the balance.
     var bal = 0;
     combined.forEach(function(row) {
-        if (row._rowType === 'ledger' && row.entryType === 'OPENING_BALANCE') {
+        if (row._rowType === 'ledger' &&
+            (row.entryType === 'OPENING_BALANCE' || row.entryType === 'RECONCILIATION')) {
             bal = row.amount;
         } else if (row._nfoCashImpact !== false) {
             bal += row.amount;

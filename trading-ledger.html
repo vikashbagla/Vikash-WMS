@@ -143,6 +143,58 @@
 .lg-type-income { color:#d97706; background:#fffbeb; }
 .lg-type-cash { color:#667eea; background:#eef2ff; }
 .lg-type-other { color:#718096; background:#f7fafc; }
+.lg-type-recon { color:#047857; background:#d1fae5; }
+
+/* Recon "✓" inline trigger — shown on row hover on the LEFT of the date.
+   Clicking it reconciles everything up to AND including that row's date,
+   using the row's running balance as the anchor amount. */
+.lg-recon-trigger {
+    display: none; cursor: pointer; color: #059669; font-weight: 700;
+    margin-right: 4px; padding: 0 3px; border-radius: 3px;
+    font-size: 11px; user-select: none;
+}
+.lg-recon-trigger:hover { background: #d1fae5; }
+#lgTable tbody tr:hover .lg-recon-trigger { display: inline-block; }
+/* Hide the inline trigger on row types that can't / shouldn't be recon anchors */
+#lgTable tr.lg-row-pending .lg-recon-trigger,
+#lgTable tr.lg-row-recon  .lg-recon-trigger { display: none !important; }
+
+/* Reconciliation row — distinct green styling so the audit snapshot stands out */
+#lgTable tr.lg-row-recon td {
+    background: #ecfdf5; border-top: 2px solid #059669; border-bottom: 2px solid #059669;
+    font-weight: 600;
+}
+#lgTable tr.lg-row-recon:hover td { background: #d1fae5; }
+
+/* Reconciliation drift banner — shows above the transactions block when
+   current data no longer matches the latest stored recon snapshot (pre-recon
+   trade was edited or deleted).  See LESSONS §E.17.5. */
+#lgReconBanner {
+    margin: 6px 8px 0 8px; padding: 8px 12px;
+    background: #fef3c7; border: 1px solid #f59e0b; border-left: 4px solid #d97706;
+    border-radius: 4px; font-size: 12px; color: #78350f;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+#lgReconBanner.lg-recon-banner-hidden { display: none !important; }
+#lgReconBanner .lg-recon-banner-icon { font-size: 14px; }
+#lgReconBanner .lg-recon-banner-msg { flex: 1 1 auto; }
+#lgReconBanner .lg-recon-banner-msg b { color: #78350f; }
+#lgReconBanner .lg-recon-banner-diff { font-weight: 700; color: #b45309; }
+#lgReconBanner button {
+    font-size: 11px; padding: 3px 10px; border-radius: 3px;
+    border: 1px solid #d97706; background: #fff; color: #b45309;
+    cursor: pointer; white-space: nowrap;
+}
+#lgReconBanner button:hover { background: #fef3c7; }
+
+/* Review Dirty Txns modal */
+#lgReconReviewBody table { width: 100%; font-size: 11px; }
+#lgReconReviewBody th, #lgReconReviewBody td { padding: 4px 6px; border-bottom: 1px solid #f1f5f9; }
+#lgReconReviewBody th { background: #f7fafc; text-align: left; font-weight: 600; color: #4a5568; }
+#lgReconReviewBody tr:hover td { background: #f7fafc; cursor: pointer; }
+#lgReconReviewBody .lg-rr-empty { padding: 18px; text-align: center; color: #9ca3af; }
+#lgReconReviewBody .lg-rr-hint { padding: 8px 10px; background: #fef3c7; border: 1px solid #f59e0b;
+    border-radius: 3px; margin-bottom: 10px; font-size: 11px; color: #78350f; }
 </style>
 </head>
 
@@ -201,6 +253,13 @@
     <!--    Open Positions, Summary cards) on a single page          -->
     <!-- ============================================================ -->
     <div id="lgUnifiedScroll">
+
+      <!-- Reconciliation drift banner (only shown when drift detected) -->
+      <div id="lgReconBanner" class="lg-recon-banner-hidden">
+        <span class="lg-recon-banner-icon">⚠</span>
+        <span class="lg-recon-banner-msg" id="lgReconBannerMsg"></span>
+        <button type="button" id="lgReconBannerReviewBtn">Review →</button>
+      </div>
 
       <!-- 3a. Transactions block (collapsible) -->
       <div class="lg-booked-section" id="lgTransactionsBlock">
@@ -450,6 +509,29 @@
     <div class="wms-modal-footer">
       <button id="lgBookCancelBtn" class="wms-btn wms-btn-secondary">Cancel</button>
       <button id="lgBookConfirmBtn" class="wms-btn wms-btn-primary">Confirm & Post</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 8. RECONCILIATION REVIEW MODAL                               -->
+<!-- Lists pre-recon transactions whose updated_at > recon.created_at,
+     so the user can audit what changed since the reconciliation.
+     Deletes cannot be itemised here (no soft-delete) — the balance
+     diff in the banner is the signal for deletions. -->
+<!-- ============================================================ -->
+<div id="lgReconReviewModal" class="wms-modal-overlay">
+  <div class="wms-modal-dialog" style="width:720px;">
+    <div class="wms-modal-header">
+      <h3>Review Pre-Reconciliation Changes</h3>
+      <button class="wms-btn-close" id="lgReconReviewClose">✕</button>
+    </div>
+    <div style="padding:12px; overflow-y:auto; max-height:60vh;">
+      <div id="lgReconReviewSummary" style="margin-bottom:8px; font-size:12px; color:#4a5568;"></div>
+      <div id="lgReconReviewBody"></div>
+    </div>
+    <div class="wms-modal-footer">
+      <button id="lgReconReviewCancelBtn" class="wms-btn wms-btn-secondary">Close</button>
     </div>
   </div>
 </div>
