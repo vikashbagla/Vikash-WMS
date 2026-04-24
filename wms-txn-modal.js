@@ -1546,11 +1546,22 @@ async function wmsFindLatestReconForTxn(txn) {
     if (!txn || !txn.investor_id || !txn.transaction_date) return null;
     if (typeof SUPABASE_URL === 'undefined' || typeof wmsHeaders !== 'function') return null;
 
+    // A reconciliation made on stmt_Tx (trader filter only) stores
+    // investor_id = Tx's UUID because lgGetEffectiveInvestorId resolves a
+    // trader-only filter to the trader's UUID (it shares a namespace with
+    // investor_id in this app).  So for a trade where investor = X and
+    // trader = Y, both X-scoped recons AND Y-scoped recons can apply.
+    // Query both candidates and filter further in memory.
+    var effTrader = txn.trader_id || txn.investor_id;
+    var candidates = [txn.investor_id];
+    if (effTrader && effTrader !== txn.investor_id) candidates.push(effTrader);
+
     var rows;
     try {
+        var inList = candidates.map(function(id) { return '"' + id + '"'; }).join(',');
         var url = SUPABASE_URL + '/rest/v1/ledger_entries' +
             '?select=*' +
-            '&investor_id=eq.' + encodeURIComponent(txn.investor_id) +
+            '&investor_id=in.(' + inList + ')' +
             '&entry_type=eq.RECONCILIATION';
         var resp = await fetch(url, {
             headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'})
@@ -1563,12 +1574,23 @@ async function wmsFindLatestReconForTxn(txn) {
     }
     if (!rows || rows.length === 0) return null;
 
-    var effTrader = txn.trader_id || txn.investor_id;
+    // A recon applies to this txn if ALL of:
+    //   (a) recon.entry_date >= txn.transaction_date
+    //   (b) recon.broker_id is null OR == txn.broker_id
+    //   (c) either
+    //       - recon.investor_id == txn.investor_id AND
+    //         (recon.trader_id is null OR recon.trader_id == effTrader), OR
+    //       - recon.investor_id == effTrader (trader-perspective recon)
+    //         — broker check alone is sufficient, no further trader filter.
     var matches = rows.filter(function(r) {
         if (!r.entry_date || r.entry_date < txn.transaction_date) return false;
-        if (r.trader_id && r.trader_id !== effTrader) return false;
         if (r.broker_id && r.broker_id !== txn.broker_id) return false;
-        return true;
+        if (r.investor_id === txn.investor_id) {
+            if (r.trader_id && r.trader_id !== effTrader) return false;
+            return true;
+        }
+        if (r.investor_id === effTrader) return true;
+        return false;
     });
     if (matches.length === 0) return null;
 

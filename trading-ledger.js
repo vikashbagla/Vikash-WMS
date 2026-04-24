@@ -1902,17 +1902,31 @@ function lgReconReviewOpen() {
     // populated server-side on every PATCH (after the 2026-04-24 edit-save
     // fix that uses return=representation — older edits saved before that
     // deploy may carry stale in-memory updated_at).
+    //
+    // Scope matching mirrors wmsFindLatestReconForTxn in wms-txn-modal.js:
+    // a trade belongs to a recon if EITHER the recon is base-investor-scoped
+    // (recon.investor_id == t.investor_id and trader/broker filters pass) OR
+    // the recon is trader-perspective (recon.investor_id == t's effective
+    // trader — recons made on stmt_Tx store investor_id = Tx's UUID because
+    // lgGetEffectiveInvestorId resolves a trader-only filter to the trader's
+    // UUID).  Without this, UNIPARTS-like cases (investor=T0, trader=T3,
+    // recon made on stmt_T3) fail to list the trade as dirty.
     var dirty = (trTransactions || []).filter(function(t) {
         if (!t.transaction_date || t.transaction_date > reconEntryDate) return false;
         if (!t.updated_at || !reconCreatedAt) return false;
         if (t.updated_at <= reconCreatedAt) return false;
-        if (reconSrc.investor_id && t.investor_id !== reconSrc.investor_id) return false;
-        if (reconSrc.trader_id) {
-            var effTrader = t.trader_id || t.investor_id;
-            if (effTrader !== reconSrc.trader_id) return false;
-        }
         if (reconSrc.broker_id && t.broker_id !== reconSrc.broker_id) return false;
-        return true;
+        var effTrader = t.trader_id || t.investor_id;
+        if (reconSrc.investor_id === t.investor_id) {
+            // Base-investor recon: trader filter (if set) must match
+            if (reconSrc.trader_id && reconSrc.trader_id !== effTrader) return false;
+            return true;
+        }
+        if (reconSrc.investor_id === effTrader) {
+            // Trader-perspective recon — implicit trader match via investor_id
+            return true;
+        }
+        return false;
     }).sort(function(a, b) {
         return (a.transaction_date || '').localeCompare(b.transaction_date || '');
     });
