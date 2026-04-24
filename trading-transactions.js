@@ -26,7 +26,9 @@ var trTxTagPillFilter = null;
 var trTxViewMode = 'list';        // 'list' or 'matching'
 var trTxMatchMethod = 'lifo';     // 'fifo' or 'lifo'
 var trTxShowAll = false;
-var trTxFnoOnly = false;
+// Segment filter: 'all' | 'eq' | 'fno'. Replaces the old binary trTxFnoOnly
+// (checkbox). A three-button toggle sits in the options bar.
+var trTxSecFilter = 'all';
 
 // Transaction type filter state
 var trTxSelectedTxnTypes = [];
@@ -220,12 +222,16 @@ function trTxSetupOptionsBar() {
         });
     }
 
-    // F&O Only toggle
-    var fnoCb = document.getElementById('trTx-fno-only');
-    if (fnoCb) {
-        fnoCb.addEventListener('change', function() {
-            trTxFnoOnly = fnoCb.checked;
-            trTxRender();
+    // Segment filter toggle (All / EQ Only / F&O Only)
+    var secFilter = document.getElementById('trTx-sec-filter');
+    if (secFilter) {
+        secFilter.querySelectorAll('.trTx-toggle-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                secFilter.querySelectorAll('.trTx-toggle-btn').forEach(function(b) { b.classList.remove('active'); });
+                btn.classList.add('active');
+                trTxSecFilter = btn.dataset.sec;
+                trTxRender();
+            });
         });
     }
 
@@ -694,10 +700,16 @@ function trTxGetFilteredTransactions() {
         filtered = filtered.filter(function(t) { return !t.dont_display; });
     }
 
-    // Filter: F&O only (NFO exchange, NFO security_type, or MCX)
-    if (trTxFnoOnly) {
+    // Segment filter: 'all' | 'eq' | 'fno'. Anything with NFO exchange/type
+    // or MCX exchange counts as F&O; everything else is EQ (incl. DIVIDEND,
+    // INTEREST, OTHER_INCOME, RIGHTS_*, BONUS, SPLIT, HISTORICAL_PL on equity).
+    if (trTxSecFilter === 'fno') {
         filtered = filtered.filter(function(t) {
             return t.exchange === 'NFO' || t.security_type === 'NFO' || t.exchange === 'MCX';
+        });
+    } else if (trTxSecFilter === 'eq') {
+        filtered = filtered.filter(function(t) {
+            return !(t.exchange === 'NFO' || t.security_type === 'NFO' || t.exchange === 'MCX');
         });
     }
 

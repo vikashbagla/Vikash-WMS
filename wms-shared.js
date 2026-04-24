@@ -884,6 +884,45 @@ function wmsInitFormulaInput() {
 }
 
 // ============================================================================
+// SELECT-ON-FOCUS — select entire content when a text/number input gains focus
+//
+// Install once at app startup via wmsInitSelectOnFocus(). When any text-ish
+// input or textarea receives focus AND already has non-empty content, the
+// content is selected so the user can replace it with a single keystroke
+// instead of getting a cursor at end / middle. Default browser behaviour
+// puts the cursor wherever the click landed (or at the end on Tab), which
+// meant every edit required a Ctrl+A or manual selection first.
+//
+// Skips: readonly / disabled / hidden / checkbox / radio / date / color /
+// etc. — only text, number, search, tel, url, email, password, and textareas.
+// ============================================================================
+
+function wmsInitSelectOnFocus() {
+    if (window._wmsSelectOnFocusInstalled) return;
+    window._wmsSelectOnFocusInstalled = true;
+
+    document.addEventListener('focusin', function(e) {
+        var el = e.target;
+        if (!el) return;
+        var tag = el.tagName;
+        if (tag !== 'INPUT' && tag !== 'TEXTAREA') return;
+        if (el.readOnly || el.disabled) return;
+        if (tag === 'INPUT') {
+            var t = (el.type || 'text').toLowerCase();
+            if (['text','number','search','tel','url','email','password'].indexOf(t) < 0) return;
+        }
+        if (!el.value) return;
+        // Defer past the browser's own focus / click handling so we don't
+        // fight cursor placement. Wrap in try/catch because Chrome rejects
+        // setSelectionRange on some number inputs.
+        setTimeout(function() {
+            if (document.activeElement !== el) return;  // moved on already
+            try { el.select(); } catch (err) { /* ignore */ }
+        }, 0);
+    });
+}
+
+// ============================================================================
 // INCOME TYPE CHECK (Rule G.3.1)
 // ============================================================================
 

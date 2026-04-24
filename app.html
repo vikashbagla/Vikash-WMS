@@ -518,6 +518,11 @@
         // types "=" as the first character. See wms-shared.js wmsEvalFormula.
         if (typeof wmsInitFormulaInput === 'function') wmsInitFormulaInput();
 
+        // Select entire content when a text/number input gains focus so users
+        // can replace values with a single keystroke. Skips readonly / disabled
+        // / non-textual inputs. See wms-shared.js wmsInitSelectOnFocus.
+        if (typeof wmsInitSelectOnFocus === 'function') wmsInitSelectOnFocus();
+
         // Show dev banner if running in dev environment
         if (window.WMS_ENV === 'dev') {
             var devBanner = document.getElementById('devBanner');

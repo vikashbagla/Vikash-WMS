@@ -301,9 +301,12 @@
     <label title="Show hidden (dont_display) transactions">
         <input type="checkbox" id="trTx-show-all"> Show All
     </label>
-    <label title="Show only F&O transactions">
-        <input type="checkbox" id="trTx-fno-only"> F&O Only
-    </label>
+    <span style="font-size:11px; color:#718096;">Segment:</span>
+    <div class="trTx-toggle-group" id="trTx-sec-filter">
+        <button class="trTx-toggle-btn active" data-sec="all">All</button>
+        <button class="trTx-toggle-btn" data-sec="eq">EQ Only</button>
+        <button class="trTx-toggle-btn" data-sec="fno">F&amp;O Only</button>
+    </div>
     <div class="trTx-option-separator"></div>
     <span style="font-size:11px; color:#718096;">View:</span>
     <div class="trTx-toggle-group" id="trTx-view-toggle">
