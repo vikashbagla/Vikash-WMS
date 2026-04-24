@@ -294,34 +294,55 @@ function parseSuvridhiCharges(allText) {
 
             console.log('Suvridhi charges: ' + nums.length + ' numbers: ' + JSON.stringify(nums));
 
-            // First number is always PayIn/PayOut (settlement number has no decimals → not extracted)
-            // Skip it if it's a large amount; for small CNs it could be < 10000, so also check
-            // if skipping it leaves enough numbers for the charges
-            var idx = 0;
-            if (nums.length >= 9 && Math.abs(nums[0]) > Math.abs(nums[1]) * 2) {
-                idx = 1;  // Skip PayIn/PayOut obligation
+            // Column layout (fixed by Suvridhi CN format):
+            //   [PayIn/Out | Brok | STT | TxnCh | SEBI | Stamp | IPFT | Taxable | GST... | NetAmt]
+            // GST is 1 column (IGST, for out-of-state clients) or 2 columns (CGST+SGST).
+            //
+            //   11 numbers → PayIn/Out present, CGST+SGST (2 GST cols)
+            //   10 numbers → PayIn/Out present, IGST       (1 GST col)
+            //   9 numbers  → No PayIn/Out, IGST            (defensive)
+            //
+            // The previous "nums[0] > nums[1]*2" heuristic failed when trades
+            // in a single CN nearly netted out (e.g. K120/644: net PayIn/Out
+            // -402 vs brokerage 3,600) — it kept idx=0 and the entire row
+            // shifted by one column.  Count-based logic is unambiguous because
+            // Suvridhi always includes the PayIn/Out column in their layout.
+            var idx, gstCols;
+            if (nums.length >= 11) {
+                idx = 1; gstCols = 2;  // CGST+SGST, skip PayIn/Out
+            } else if (nums.length === 10) {
+                idx = 1; gstCols = 1;  // IGST, skip PayIn/Out
+            } else if (nums.length === 9) {
+                idx = 0; gstCols = 1;  // Defensive fallback — IGST without PayIn/Out
+            } else {
+                console.warn('Suvridhi charges: unexpected column count ' + nums.length + ', skipping extraction');
+                continue;
             }
 
-            if (idx + 7 <= nums.length) {
-                charges.equity.brokerage      = Math.abs(nums[idx]);
-                charges.equity.stt            = Math.abs(nums[idx + 1]);
-                charges.equity.exchangeCharges = Math.abs(nums[idx + 2]);
-                charges.equity.sebiCharges    = Math.abs(nums[idx + 3]);
-                charges.equity.stampDuty      = Math.abs(nums[idx + 4]);
-                charges.equity.ipft           = Math.abs(nums[idx + 5]);
-                // nums[idx+6] = taxable value (skip)
+            charges.equity.brokerage      = Math.abs(nums[idx]);
+            charges.equity.stt            = Math.abs(nums[idx + 1]);
+            charges.equity.exchangeCharges = Math.abs(nums[idx + 2]);
+            charges.equity.sebiCharges    = Math.abs(nums[idx + 3]);
+            charges.equity.stampDuty      = Math.abs(nums[idx + 4]);
+            charges.equity.ipft           = Math.abs(nums[idx + 5]);
+            // nums[idx+6] = Taxable Value (skip)
+            if (gstCols === 2) {
+                charges.equity.gst = Math.abs(nums[idx + 7]) + Math.abs(nums[idx + 8]);
+            } else if (gstCols === 1) {
+                charges.equity.gst = Math.abs(nums[idx + 7]);
+            }
 
-                // Detect CGST+SGST (2 columns) vs single IGST column:
-                // CGST+SGST: remaining after idx has 10 values (brok..ipft + taxable + cgst + sgst + net)
-                // IGST:      remaining after idx has 9 values  (brok..ipft + taxable + igst + net)
-                var remaining = nums.length - idx;
-                if (remaining >= 10 && idx + 9 <= nums.length) {
-                    // CGST + SGST format — sum both
-                    charges.equity.gst = Math.abs(nums[idx + 7]) + Math.abs(nums[idx + 8]);
-                } else if (idx + 8 <= nums.length) {
-                    // Single IGST column
-                    charges.equity.gst = Math.abs(nums[idx + 7]);
-                }
+            // Sanity check: TaxableValue should equal Brokerage + TxnCh + SEBI + IPFT
+            // (these are the services subject to GST; STT and stamp duty are not
+            // taxable under GST).  A mismatch > ₹1 indicates column misalignment.
+            var taxableExpected = charges.equity.brokerage + charges.equity.exchangeCharges +
+                                  charges.equity.sebiCharges + charges.equity.ipft;
+            var taxableRead = Math.abs(nums[idx + 6]);
+            if (Math.abs(taxableRead - taxableExpected) > 1.00) {
+                console.warn('Suvridhi charges: Taxable Value mismatch — ' +
+                    'read ' + taxableRead.toFixed(2) + ' vs ' +
+                    'expected (Brok+TxnCh+SEBI+IPFT) ' + taxableExpected.toFixed(2) +
+                    '.  Possible column misalignment.');
             }
 
             console.log('Suvridhi equity charges:', JSON.stringify(charges.equity));

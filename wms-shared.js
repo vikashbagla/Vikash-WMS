@@ -2661,12 +2661,17 @@ document.addEventListener('visibilitychange', function() {
 
 // ============================================================================
 // STT ELIGIBILITY CHECK (Rule G.8.5)
-// Only plain EQUITY stocks attract STT. All non-equity instruments (ETFs, MFs,
-// debt, SGBs, REITs, InvITs, NCDs, etc.) are exempt from STT and stamp duty.
+// Equity cash-market stocks attract STT AND stamp duty — both main-board
+// (EQUITY) and SME-board (EQUITY_SME) at the same rates.  Non-equity
+// instruments (ETFs, MFs, debt, SGBs, REITs, InvITs, NCDs, etc.) are exempt.
+// F&O has its own STT schedule handled separately — this helper is only
+// consulted for EQUITY-segment CN imports.
+// Source: Finance Act schedule — EQUITY_SME is not on the STT exemption list.
 // ============================================================================
 
 function wmsIsSTTEligible(securityType) {
-    return (securityType || '').toUpperCase() === 'EQUITY';
+    var t = (securityType || '').toUpperCase();
+    return t === 'EQUITY' || t === 'EQUITY_SME';
 }
 
 // ============================================================================
