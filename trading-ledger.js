@@ -317,6 +317,10 @@ function lgInit() {
     var reconReviewBtn = document.getElementById('lgReconBannerReviewBtn');
     if (reconReviewBtn) reconReviewBtn.addEventListener('click', lgReconReviewOpen);
 
+    // Cancel Reconciliation button inside the review modal (deletes the recon row).
+    var reconDelBtn = document.getElementById('lgReconReviewDeleteBtn');
+    if (reconDelBtn) reconDelBtn.addEventListener('click', lgReconReviewCancel);
+
     // Review modal: click a row to open the txn's Edit modal.
     var reconReviewBody = document.getElementById('lgReconReviewBody');
     if (reconReviewBody) {
@@ -1884,28 +1888,24 @@ function lgReconReviewOpen() {
     var reconEntryDate = reconRow.date;
     var prettyDate = lgFmtDate(reconEntryDate) || reconEntryDate;
 
-    // Summary header.
-    var summary = document.getElementById('lgReconReviewSummary');
-    if (summary) {
-        var diffAbs = Math.abs(lgReconBannerState.diff || 0);
-        var diffStr = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(diffAbs) : String(diffAbs);
-        summary.innerHTML =
-            'Reconciliation on <b>' + wmsEsc(prettyDate) + '</b>. ' +
-            'Pre-reconciliation trades modified since then (edits only). ' +
-            'Unexplained balance diff of <b>' + wmsEsc(diffStr) + '</b> may be due to a delete — ' +
-            'deletes are not itemised here.';
-    }
+    // Stash the recon id on the modal so the "Cancel Reconciliation" button
+    // knows which row to delete.
+    modal.dataset.reconEntryId = (reconSrc.id || '');
 
-    // Build list.
-    var body = document.getElementById('lgReconReviewBody');
-    if (!body) return;
+    var diffAbs = Math.abs(lgReconBannerState.diff || 0);
+    var diffStr = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(diffAbs) : String(diffAbs);
+    var directionWord = lgReconBannerState.diff < 0 ? 'higher' : 'lower';
+    var storedStr = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(lgReconBannerState.storedAmt || 0) : String(lgReconBannerState.storedAmt || 0);
+    var computedStr = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(lgReconBannerState.computedBal || 0) : String(lgReconBannerState.computedBal || 0);
 
+    // Scope-filter pre-recon txns modified since the recon.  updated_at is
+    // populated server-side on every PATCH (after the 2026-04-24 edit-save
+    // fix that uses return=representation — older edits saved before that
+    // deploy may carry stale in-memory updated_at).
     var dirty = (trTransactions || []).filter(function(t) {
         if (!t.transaction_date || t.transaction_date > reconEntryDate) return false;
         if (!t.updated_at || !reconCreatedAt) return false;
         if (t.updated_at <= reconCreatedAt) return false;
-        // Match recon scope: investor always required; trader/broker only if
-        // the recon was narrowed to them.
         if (reconSrc.investor_id && t.investor_id !== reconSrc.investor_id) return false;
         if (reconSrc.trader_id) {
             var effTrader = t.trader_id || t.investor_id;
@@ -1917,14 +1917,36 @@ function lgReconReviewOpen() {
         return (a.transaction_date || '').localeCompare(b.transaction_date || '');
     });
 
+    // Headline summary — reconciled amount, computed amount, diff, and the
+    // most likely cause classification (edit vs delete).
+    var summary = document.getElementById('lgReconReviewSummary');
+    if (summary) {
+        var causeMsg;
+        if (dirty.length > 0) {
+            causeMsg = '<b>' + dirty.length + ' pre-reconciliation trade' +
+                (dirty.length === 1 ? ' has' : 's have') +
+                ' been modified since this reconciliation</b> (listed below). ' +
+                'If the balance mismatch exactly equals the impact of those edits, ' +
+                'that explains the drift.';
+        } else {
+            causeMsg = '<b>No pre-reconciliation edits detected.</b> The drift is most likely due to a <b>deleted</b> pre-reconciliation trade — deletes leave no `updated_at` trace to itemise. Cancel this reconciliation (button below) to clear the banner, then re-reconcile against the current balance.';
+        }
+        summary.innerHTML =
+            '<div style="margin-bottom:6px;">Reconciliation on <b>' + wmsEsc(prettyDate) + '</b> &middot; ' +
+            'reconciled at <b>' + wmsEsc(storedStr) + '</b>, computed is <b>' + wmsEsc(computedStr) +
+            '</b> (balance now ' + directionWord + ' by <b>' + wmsEsc(diffStr) + '</b>).</div>' +
+            '<div>' + causeMsg + '</div>';
+    }
+
+    // Build the dirty-txn list (or an empty-state hint).
+    var body = document.getElementById('lgReconReviewBody');
+    if (!body) return;
+
     if (dirty.length === 0) {
         body.innerHTML =
-            '<div class="lg-rr-hint">No pre-reconciliation edits detected by updated_at. ' +
-            'If the banner is still showing, the drift is explained by a <b>deleted</b> ' +
-            'trade or a ledger entry change — delete activity cannot be itemised (no soft-delete). ' +
-            'Re-reconcile to clear the banner.</div>';
+            '<div class="lg-rr-hint">Most likely a <b>delete</b>. No edits to list here — click <b>Cancel Reconciliation</b> below to remove the stale snapshot, then re-reconcile on the latest balance.</div>';
     } else {
-        var rows = dirty.map(function(t) {
+        var rowsHtml = dirty.map(function(t) {
             var sym = t.short_symbol || t.symbol || '-';
             var type = t.transaction_type || '-';
             var qty = Math.abs(t.quantity || 0);
@@ -1941,22 +1963,58 @@ function lgReconReviewOpen() {
                 '</tr>';
         }).join('');
         body.innerHTML =
-            '<div class="lg-rr-hint">Click any row to open its Edit modal. Deletes are NOT listed — ' +
-            'they explain any residual balance diff after edits are accounted for.</div>' +
+            '<div class="lg-rr-hint">Click any row to open its Edit modal and review the current values. If the balance mismatch is not fully explained by these edits, a <b>delete</b> is the remaining suspect — cancel this reconciliation and re-do it.</div>' +
             '<table>' +
               '<thead><tr>' +
                 '<th>Txn Date</th>' +
                 '<th>Symbol</th>' +
                 '<th>Type</th>' +
                 '<th class="text-right">Qty</th>' +
-                '<th class="text-right">Net</th>' +
+                '<th class="text-right">Net (current)</th>' +
                 '<th>Modified At</th>' +
               '</tr></thead>' +
-              '<tbody>' + rows + '</tbody>' +
+              '<tbody>' + rowsHtml + '</tbody>' +
             '</table>';
     }
 
     modal.classList.add('show');
+}
+
+// Cancel the reconciliation whose drift triggered the review modal — deletes
+// the RECONCILIATION ledger_entries row so the banner clears and running
+// balances go back to "live" (anchor removed, history continuous from the
+// prior OPENING_BALANCE or recon).  Fires from the "Cancel Reconciliation"
+// button in the review modal footer.
+async function lgReconReviewCancel() {
+    var modal = document.getElementById('lgReconReviewModal');
+    if (!modal) return;
+    var reconId = modal.dataset.reconEntryId || '';
+    if (!reconId) { showAlert('No reconciliation selected to cancel', 'warning', 3000); return; }
+
+    var reconRow = lgReconBannerState && lgReconBannerState.row;
+    var prettyDate = reconRow ? (lgFmtDate(reconRow.date) || reconRow.date) : '';
+    var msg = 'Cancel the reconciliation on ' + prettyDate + '?\n\n' +
+              'This removes the stored snapshot row. Running balances will ' +
+              'recompute from current transactions and the yellow banner will clear.';
+    if (!window.confirm(msg)) return;
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + encodeURIComponent(reconId), {
+            method: 'DELETE',
+            headers: wmsHeaders({'Prefer': 'return=minimal'})
+        });
+        if (resp.ok) {
+            showAlert('Reconciliation cancelled', 'success', 2500);
+            lgReconReviewClose();
+            lgRefresh();
+        } else {
+            var errText = '';
+            try { errText = await resp.text(); } catch (_) {}
+            showAlert('Failed to cancel reconciliation (HTTP ' + resp.status + ')' + (errText ? ': ' + errText.slice(0, 200) : ''), 'error', 6000);
+        }
+    } catch (err) {
+        showAlert('Failed to cancel reconciliation: ' + err.message, 'error', 5000);
+    }
 }
 
 function lgReconReviewClose() {

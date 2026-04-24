@@ -1321,6 +1321,11 @@ async function wmsDeleteTransaction(txnId) {
         if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
         wmsTxnRefreshCurrentView();
         if (wmsTxnCtx.afterChange) wmsTxnCtx.afterChange();
+        // Refresh Statements if visible — keeps the drift banner & balances
+        // in sync when the delete originated from the Statements page.
+        if (typeof lgRefresh === 'function' && document.getElementById('lgContainer')) {
+            try { lgRefresh(); } catch (e) { console.warn('lgRefresh after delete failed:', e && e.message); }
+        }
     } else {
         showAlert('Failed to delete: HTTP ' + resp.status, 'error');
     }
@@ -1589,16 +1594,23 @@ window.wmsFindLatestReconForTxn = wmsFindLatestReconForTxn;
  * @param {string} action - 'edit' or 'delete' (for dialog text only).
  */
 async function wmsConfirmIfPreRecon(txn, action) {
-    if (!txn || !txn.transaction_date || !txn.investor_id) return true;
+    if (!txn || !txn.transaction_date || !txn.investor_id) {
+        console.log('[pre-recon guard] skipped — txn missing id/date/investor', txn && txn.id);
+        return true;
+    }
 
     var recon;
     try {
         recon = await wmsFindLatestReconForTxn(txn);
     } catch (err) {
-        console.warn('wmsConfirmIfPreRecon: recon lookup failed:', err && err.message);
+        console.warn('[pre-recon guard] recon lookup failed:', err && err.message);
         return true;  // fail-open
     }
-    if (!recon) return true;
+    if (!recon) {
+        console.log('[pre-recon guard] no matching RECONCILIATION found for txn on ' + txn.transaction_date + ' (investor ' + txn.investor_id + ', trader ' + (txn.trader_id || '—') + ', broker ' + (txn.broker_id || '—') + ') — proceeding without prompt');
+        return true;
+    }
+    console.log('[pre-recon guard] MATCH — recon ' + recon.entry_date + ' vs txn ' + txn.transaction_date + '; showing confirm for ' + action);
 
     var reconDate = recon.entry_date;
     // Format as DD-MMM-YY if formatDate is available, else passthrough.
@@ -1656,19 +1668,47 @@ async function wmsEditSave() {
         dont_display: document.getElementById('wmsEditDontDisplay').checked
     };
 
+    // Use return=representation so the server's fresh row (with updated_at)
+    // comes back and lands in memory — without this the in-memory row keeps
+    // its stale updated_at and the Statements "Review pre-recon changes"
+    // modal misses edits because the updated_at filter evaluates against a
+    // pre-save timestamp.
     var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + wmsEditingTxnId, {
         method: 'PATCH',
-        headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
+        headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
         body: JSON.stringify(body)
     });
 
     if (resp.ok) {
-        Object.keys(body).forEach(function(k) { txn[k] = body[k]; });
+        // Merge server response onto in-memory txn so updated_at (and any
+        // server-computed columns) are fresh.  Fall back to client-side copy
+        // if the response body is missing/malformed.
+        var serverRow = null;
+        try {
+            var respText = await resp.text();
+            if (respText) {
+                var parsed = JSON.parse(respText);
+                if (Array.isArray(parsed) && parsed.length > 0) serverRow = parsed[0];
+                else if (parsed && typeof parsed === 'object') serverRow = parsed;
+            }
+        } catch (_) { /* ignore — fall through to client merge */ }
+        if (serverRow) {
+            Object.keys(serverRow).forEach(function(k) { txn[k] = serverRow[k]; });
+        } else {
+            Object.keys(body).forEach(function(k) { txn[k] = body[k]; });
+        }
         if (typeof wmsComputeDisplayNetAmount === 'function') txn.display_net_amount = wmsComputeDisplayNetAmount(txn);
         showAlert('Transaction saved', 'success', 2000);
         wmsEditModalClose();
         wmsTxnRefreshCurrentView();
         if (wmsTxnCtx.afterChange) wmsTxnCtx.afterChange();
+        // If Statements page is currently rendered, refresh it too so the
+        // drift banner and running balances reflect the edit immediately.
+        // (wmsTxnCtx.afterChange may not be wired to lgRefresh depending on
+        // which page launched the edit modal.)
+        if (typeof lgRefresh === 'function' && document.getElementById('lgContainer')) {
+            try { lgRefresh(); } catch (e) { console.warn('lgRefresh after edit failed:', e && e.message); }
+        }
     } else {
         var errText = await resp.text();
         showAlert('Failed to save: ' + errText, 'error');
