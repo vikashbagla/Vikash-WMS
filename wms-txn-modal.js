@@ -1546,12 +1546,18 @@ async function wmsFindLatestReconForTxn(txn) {
     if (!txn || !txn.investor_id || !txn.transaction_date) return null;
     if (typeof SUPABASE_URL === 'undefined' || typeof wmsHeaders !== 'function') return null;
 
-    // A reconciliation made on stmt_Tx (trader filter only) stores
-    // investor_id = Tx's UUID because lgGetEffectiveInvestorId resolves a
-    // trader-only filter to the trader's UUID (it shares a namespace with
-    // investor_id in this app).  So for a trade where investor = X and
-    // trader = Y, both X-scoped recons AND Y-scoped recons can apply.
-    // Query both candidates and filter further in memory.
+    // Scope matching for ledger entries is view-filter-driven (§E.17.8):
+    // a recon row's view_id points at the portfolio_views row whose filter
+    // was active at save time. A recon applies to a txn iff
+    // wmsMatchesViewFilter(txn, recon.view.filters).
+    //
+    // For rows with view_id = NULL (predate the view_id migration, or saved
+    // from ad-hoc filters before the pre-POST gate was enforced), fall back
+    // to the legacy investor_id/trader_id/broker_id column match.
+    //
+    // We still query by candidate investor_ids (txn.investor_id OR txn's
+    // effective trader) to take advantage of the existing investor index;
+    // the broader scope filter then runs in memory.
     var effTrader = txn.trader_id || txn.investor_id;
     var candidates = [txn.investor_id];
     if (effTrader && effTrader !== txn.investor_id) candidates.push(effTrader);
@@ -1559,8 +1565,10 @@ async function wmsFindLatestReconForTxn(txn) {
     var rows;
     try {
         var inList = candidates.map(function(id) { return '"' + id + '"'; }).join(',');
+        // Embed the referenced view via PostgREST resource-embedding — gives us
+        // {id, entry_date, ..., view: {id, filters}} per row in a single RTT.
         var url = SUPABASE_URL + '/rest/v1/ledger_entries' +
-            '?select=*' +
+            '?select=*,view:portfolio_views(id,name,filters)' +
             '&investor_id=in.(' + inList + ')' +
             '&entry_type=eq.RECONCILIATION';
         var resp = await fetch(url, {
@@ -1574,16 +1582,13 @@ async function wmsFindLatestReconForTxn(txn) {
     }
     if (!rows || rows.length === 0) return null;
 
-    // A recon applies to this txn if ALL of:
-    //   (a) recon.entry_date >= txn.transaction_date
-    //   (b) recon.broker_id is null OR == txn.broker_id
-    //   (c) either
-    //       - recon.investor_id == txn.investor_id AND
-    //         (recon.trader_id is null OR recon.trader_id == effTrader), OR
-    //       - recon.investor_id == effTrader (trader-perspective recon)
-    //         — broker check alone is sufficient, no further trader filter.
     var matches = rows.filter(function(r) {
         if (!r.entry_date || r.entry_date < txn.transaction_date) return false;
+        if (r.view && r.view.filters && typeof wmsMatchesViewFilter === 'function') {
+            // Preferred: view-filter-driven scope match.
+            return wmsMatchesViewFilter(txn, r.view.filters);
+        }
+        // Legacy fallback — investor_id / trader_id / broker_id column match.
         if (r.broker_id && r.broker_id !== txn.broker_id) return false;
         if (r.investor_id === txn.investor_id) {
             if (r.trader_id && r.trader_id !== effTrader) return false;
