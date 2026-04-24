@@ -1403,29 +1403,27 @@ function lgRenderSummary() {
 
     // ------------------------------------------------------------
     // Summary cards
-    //   The ledger uses the investor-receivable convention:
-    //     +ve cash balance  → investor owes the firm
-    //     -ve cash balance  → firm owes the investor (credit)
-    //   Outstanding (what the investor currently owes us) =
-    //     max(0, cash balance)  +  open NFO margin
-    //   The Outstanding card surfaces the "Balance + Margin = Total"
-    //   breakdown directly beneath the headline figure so the two
-    //   components are always visible.
+    //   Ledger convention (same for investor AND trader perspectives —
+    //   see LESSONS E.15.1, revised 2026-04-24):
+    //     +ve cash balance  → counterparty owes the firm
+    //     -ve cash balance  → firm owes the counterparty (credit)
+    //   Raw cashBalance flows through to every card so negative balances
+    //   are preserved end-to-end. Outstanding = raw cash + margin (may be
+    //   negative if firm's cash debt exceeds the margin collateral).
     // ------------------------------------------------------------
     var cashBalance = (typeof lgCurrentCashBalance === 'number') ? lgCurrentCashBalance : (lgCarryForwardBalance || 0);
-    var clampedCashBal = Math.max(0, cashBalance);
-    var outstanding = clampedCashBal + currentNfoMargin;
+    var outstanding = cashBalance + currentNfoMargin;
 
-    // Transactions block header now shows: "NFO Margin + Balance = Total Balance"
-    // Total matches the Outstanding summary card. "Balance" is the cash ledger
-    // balance clamped to >= 0 (same formula used for Outstanding above).
+    // Transactions block header: "NFO Margin + Balance = Total". Balance
+    // shows the RAW cash balance (can be negative). Total = margin + raw
+    // balance, matching the Outstanding summary card exactly.
     var txnBalEl = document.getElementById('lgTransactionsBalance');
     if (txnBalEl) {
         txnBalEl.innerHTML =
             '<span style="color:#718096; font-weight:500;">NFO Margin</span> ' +
             lgFmt(currentNfoMargin) +
             ' <span style="color:#718096; font-weight:500;">+ Balance</span> ' +
-            lgFmt(clampedCashBal) +
+            lgFmt(cashBalance) +
             ' <span style="color:#718096; font-weight:500;">=</span> ' +
             lgFmt(outstanding);
     }
@@ -1448,12 +1446,14 @@ function lgRenderSummary() {
 
     var potentialTax = Math.max(0, totalBookedGain) * (taxRatePct / 100);
 
-    // Net Receivable = total holdings value (EQ + NFO MTM) − Cash Balance − Tax.
-    // Cash Balance (not full Outstanding) is subtracted so that NFO margin —
-    // which is collateral, not cash owed — is netted out of the receivable
-    // per the "net of NFO margin" spec.
+    // Net Receivable = total holdings value (EQ + NFO MTM) − raw cash
+    // balance − Tax. NFO margin is NOT subtracted (it's collateral, not
+    // cash owed). Raw (unclamped) cash balance means a negative balance —
+    // firm owes the counterparty — ADDS to what they're receivable (the
+    // cash credit is part of what they'd take away if they closed out).
+    // See LESSONS E.15.1 (revised 2026-04-24).
     var totalHoldingsValue = totalEqValue + totalNfoMtm;
-    var netReceivable = totalHoldingsValue - clampedCashBal - potentialTax;
+    var netReceivable = totalHoldingsValue - cashBalance - potentialTax;
 
     // Balance w/o MTM = Net Receivable − Current MTM.
     // "What would Net Receivable look like if every open position closed at
@@ -1461,7 +1461,10 @@ function lgRenderSummary() {
     // the canonical formula used on every ledger.
     var totalCurrentMtm = totalEqMtm + totalNfoMtm;
     var balNoMtm = netReceivable - totalCurrentMtm;
-    var pctBalOverOutstanding = outstanding !== 0 ? (balNoMtm / outstanding) * 100 : 0;
+    // Ratio is meaningful only when outstanding is meaningfully positive;
+    // when it's near-zero or negative, the ratio is either a divide risk
+    // or semantically confusing, so suppress it.
+    var pctBalOverOutstanding = outstanding > 0.01 ? (balNoMtm / outstanding) * 100 : 0;
 
     function setCard(id, val, useAmtClass) {
         var el = document.getElementById(id);
@@ -1470,13 +1473,14 @@ function lgRenderSummary() {
         if (useAmtClass) el.className = 'lg-summary-card-value ' + lgAmtClass(val);
     }
     setCard('lgCardHoldingsValue', totalHoldingsValue, false);
-    // Outstanding card shows the TOTAL (cash + margin) as the headline, with
-    // "Bal X + Margin Y" beneath it so the split stays visible.
-    setCard('lgCardOutstanding', outstanding, false);
+    // Outstanding card shows the TOTAL (raw cash + margin) as the headline,
+    // with "Bal X + Margin Y" beneath it. Raw cash means a -ve balance is
+    // shown as-is — important when firm owes the counterparty money.
+    setCard('lgCardOutstanding', outstanding, true);
     var outBreakEl = document.getElementById('lgCardOutstandingBreakdown');
     if (outBreakEl) {
         outBreakEl.innerHTML =
-            'Bal ' + lgFmt(clampedCashBal) +
+            'Bal ' + lgFmt(cashBalance) +
             ' + Margin ' + lgFmt(currentNfoMargin);
     }
     setCard('lgCardPotentialTax', potentialTax, false);
@@ -1491,7 +1495,7 @@ function lgRenderSummary() {
         if (balParent) balParent.className = 'lg-summary-card-value ' + lgAmtClass(balNoMtm);
     }
     var balSubEl = document.getElementById('lgCardBalNoMtmSub');
-    if (balSubEl) balSubEl.textContent = outstanding !== 0 ? '(' + pctBalOverOutstanding.toFixed(1) + '%)' : '';
+    if (balSubEl) balSubEl.textContent = outstanding > 0.01 ? '(' + pctBalOverOutstanding.toFixed(1) + '%)' : '';
 
     // ------------------------------------------------------------
     // Booked P&L collapsible — grouped by symbol, FY only
@@ -2174,10 +2178,10 @@ function lgGatherExportData() {
         holdingRows.push([displaySym, isNfo ? 'NFO' : 'EQ', qty2, avgCost, cmp, mtm, value]);
     });
 
-    // 5. Summary card values (same formulas as lgRenderSummary)
+    // 5. Summary card values (same formulas as lgRenderSummary — raw cash
+    //    balance flows through so -ve balances are preserved end-to-end).
     var cashBalance = (typeof lgCurrentCashBalance === 'number') ? lgCurrentCashBalance : (lgCarryForwardBalance || 0);
-    var clampedCashBal = Math.max(0, cashBalance);
-    var outstanding = clampedCashBal + currentNfoMargin;
+    var outstanding = cashBalance + currentNfoMargin;
     var totalHoldingsValue = totalEqValue + totalNfoMtm;
 
     // FY bounds for booked P&L
@@ -2195,10 +2199,10 @@ function lgGatherExportData() {
     var totalBookedGain = 0;
     fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
     var potentialTax = Math.max(0, totalBookedGain) * (taxRatePct / 100);
-    var netReceivable = totalHoldingsValue - clampedCashBal - potentialTax;
+    var netReceivable = totalHoldingsValue - cashBalance - potentialTax;
     var totalCurrentMtm = totalEqMtm + totalNfoMtm;
     var balNoMtm = netReceivable - totalCurrentMtm;
-    var pctBalOverOutstanding = outstanding !== 0 ? (balNoMtm / outstanding) : 0;
+    var pctBalOverOutstanding = outstanding > 0.01 ? (balNoMtm / outstanding) : 0;
 
     // Booked P&L rows (grouped by symbol)
     var bySym = {};
@@ -2226,7 +2230,7 @@ function lgGatherExportData() {
         totalValue: totalEqValue + totalNfoMtm,
         holdingsValue: totalHoldingsValue,
         outstanding: outstanding,
-        outstandingBal: clampedCashBal,
+        outstandingBal: cashBalance,
         outstandingMargin: currentNfoMargin,
         potentialTax: potentialTax,
         netReceivable: netReceivable,
@@ -2463,10 +2467,10 @@ function lgExportExcel() {
         { type: 'blank' },
 
         // ── Summary Cards ──
-        // Outstanding in export = cash balance only (not balance + margin).
-        // Net Receivable = Holdings − Cash Balance − Tax. This matches the
-        // on-screen card formula which also uses clampedCashBal, not the
-        // full outstanding (margin is collateral, not cash owed).
+        // Outstanding in export = raw cash balance (not balance + margin).
+        // Net Receivable = Holdings − Cash Balance − Tax. Raw means -ve
+        // balances flow through — firm's debt to counterparty ADDs to the
+        // receivable. Margin is collateral, not cash owed. See LESSONS E.15.1.
         { type: 'summary', rows: [
             { label: 'Total Value of Holdings', value: sumHoldingsVal },
             { label: 'Less: Outstanding', value: d.outstandingBal },
