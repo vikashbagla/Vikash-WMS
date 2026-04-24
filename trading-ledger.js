@@ -143,7 +143,8 @@ var LG_TYPE_LABELS = {
     'OPENING_BALANCE': 'Opening Bal',
     'ADJUSTMENT': 'Adjustment',
     'INTEREST_BOOKED': 'Interest',
-    'NFO_PNL': 'F&O P&L'
+    'NFO_PNL': 'F&O P&L',
+    'RECONCILIATION': '✓ Reconciled'
 };
 
 var LG_TYPE_CSS = {
@@ -163,7 +164,8 @@ var LG_TYPE_CSS = {
     'OPENING_BALANCE': 'lg-type-cash',
     'ADJUSTMENT': 'lg-type-other',
     'INTEREST_BOOKED': 'lg-type-income',
-    'NFO_PNL': 'lg-type-income'
+    'NFO_PNL': 'lg-type-income',
+    'RECONCILIATION': 'lg-type-recon'
 };
 
 // ============================================================================
@@ -810,16 +812,16 @@ async function lgRefresh() {
                     var bal = 0;
                     for (var fi = 0; fi < fullCombined.length; fi++) {
                         var fr = fullCombined[fi];
-                        if (fr._rowType === 'ledger' && fr.entryType === 'OPENING_BALANCE') {
+                        // OPENING_BALANCE and RECONCILIATION are balance anchors —
+                        // they hard-SET the running balance to their stored amount.
+                        // Mirrors wmsBuildLedger in wms-shared.js (see LESSONS E.17.1).
+                        if (fr._rowType === 'ledger' &&
+                            (fr.entryType === 'OPENING_BALANCE' || fr.entryType === 'RECONCILIATION')) {
                             bal = fr.amount;
                         } else if (fr._isPending) {
                             // Pending (not-yet-committed) interest does NOT contribute
                             // to the running balance — the balance stays committed-only
-                            // until the user clicks Commit on the pending row. The
-                            // pending row's _runningBalance therefore equals the
-                            // committed balance just BEFORE it, which is semantically
-                            // correct ("if this gets committed, balance becomes bal +
-                            // amount; until then, balance is still bal").
+                            // until the user clicks Commit on the pending row.
                         } else if (fr._nfoCashImpact !== false) {
                             bal += fr.amount;
                         }
@@ -1002,7 +1004,11 @@ function lgRenderEntries(rows) {
 
         // Trade rows are clickable → open shared trading edit modal
         var trAttrs = '';
-        if (row._rowType === 'nfo_pnl') {
+        var isReconRow = (row._rowType === 'ledger' && row.entryType === 'RECONCILIATION');
+        if (isReconRow) {
+            // Reconciliation audit snapshot — persistent green styling
+            trAttrs = ' class="lg-row-recon" data-entry-id="' + wmsEsc((row._source && row._source.id) || '') + '"';
+        } else if (row._rowType === 'nfo_pnl') {
             trAttrs = ' class="lg-row-nfo-pnl"';
         } else if (row._rowType === 'trade' && row.isNFO && !row._isOption) {
             // Futures trade rows are informational (no cash impact) — muted style
@@ -1019,8 +1025,25 @@ function lgRenderEntries(rows) {
         var displayAmt = isFuturesTrade ? ('<span style="opacity:0.45">' + amount + '</span>') : amount;
         var displayBal = isFuturesTrade ? ('<span style="opacity:0.45">' + balance + '</span>') : balance;
 
+        // Hover-triggered recon mark on the left of the date cell. Clicking
+        // reconciles everything UP TO AND INCLUDING this row's date at the
+        // row's running balance. Skipped on reconciliation rows (persistent
+        // mark instead) and pending interest rows.
+        var reconMark = '';
+        if (isReconRow) {
+            // Persistent ✓ badge for existing reconciliation rows — shows
+            // this IS an audit snapshot, not a candidate for new recon.
+            reconMark = '<span style="color:#059669; font-weight:700; margin-right:4px;">✓</span>';
+        } else if (row._rowType !== 'pending_interest' && row.date) {
+            reconMark = '<span class="lg-recon-trigger" ' +
+                'data-recon-date="' + wmsEsc(row.date) + '" ' +
+                'data-recon-balance="' + (row._runningBalance || 0) + '" ' +
+                'onclick="event.stopPropagation(); lgReconcileUpTo(this.dataset.reconDate, parseFloat(this.dataset.reconBalance));" ' +
+                'title="Reconcile all entries up to and including ' + wmsEsc(row.date) + '">✓</span>';
+        }
+
         html += '<tr' + trAttrs + '>' +
-            '<td class="text-right">' + date + '</td>' +
+            '<td class="text-right">' + reconMark + date + '</td>' +
             '<td>' + symbol + (actions ? ' ' + actions : '') + '</td>' +
             '<td>' + typeHtml + '</td>' +
             '<td class="text-right">' + qty + '</td>' +
@@ -1030,8 +1053,12 @@ function lgRenderEntries(rows) {
             '<td class="text-right ' + balClass + '">' + displayBal + '</td>' +
             '</tr>';
 
-        // Only accumulate cash-impact rows in the total
-        if (row._nfoCashImpact !== false) {
+        // Only accumulate cash-impact rows in the total.
+        // Skip balance-anchor rows (OPENING_BALANCE, RECONCILIATION) — their
+        // amount is a snapshot value, not a delta, and would double-count.
+        var isAnchor = (row._rowType === 'ledger' &&
+            (row.entryType === 'OPENING_BALANCE' || row.entryType === 'RECONCILIATION'));
+        if (row._nfoCashImpact !== false && !isAnchor) {
             totalAmount += row.amount;
         }
     });
@@ -1639,6 +1666,72 @@ function lgUpdateAddRowAvailability() {
     newRow.style.opacity = enabled ? '1' : '0.6';
     newRow.title = enabled ? '' : 'Select exactly one investor (or trader) to add entries';
 }
+
+// ============================================================================
+// RECONCILIATION — audit snapshot of the running balance at a chosen date.
+// The user hovers any ledger row, clicks the ✓ icon that appears to the
+// left of the date, confirms the balance, and a RECONCILIATION ledger_entry
+// is inserted at that date with amount = the row's running balance. All
+// entries on/before that date are visually marked as reconciled.
+// See LESSONS §E.17 + migration 38.
+// ============================================================================
+
+async function lgReconcileUpTo(reconDate, reconBalance) {
+    if (!reconDate) return;
+    var investorId = lgGetEffectiveInvestorId();
+    if (!investorId) {
+        showAlert('Select exactly one investor (or trader) to reconcile', 'warning', 4000);
+        return;
+    }
+    var fmtBal = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(reconBalance) : String(reconBalance);
+    var prettyDate = lgFmtDate(reconDate) || reconDate;
+    var msg = 'Reconcile all entries up to and including ' + prettyDate + '?\n\n' +
+              'Balance on this date: ' + fmtBal + '\n\n' +
+              'Future edits to pre-reconciliation trades will be flagged for your review.';
+    if (!window.confirm(msg)) return;
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries', {
+            method: 'POST',
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
+            body: JSON.stringify({
+                investor_id: investorId,
+                // Carry trader + broker through if the current filter resolves to a
+                // single value — matches how add-entry scopes recon to the filtered
+                // slice. If multiple or none selected, leave null so the recon row
+                // is investor-wide (visible across all trader/broker combos for
+                // this investor).
+                trader_id: (lgSelectedTraderIds && lgSelectedTraderIds.length === 1) ? lgSelectedTraderIds[0] : null,
+                broker_id: (lgSelectedBrokerIds && lgSelectedBrokerIds.length === 1) ? lgSelectedBrokerIds[0] : null,
+                entry_date: reconDate,
+                entry_type: 'RECONCILIATION',
+                amount: reconBalance,
+                reference: 'Reconciled',
+                notes: ''
+            })
+        });
+        if (resp.ok) {
+            showAlert('Reconciled up to ' + prettyDate + ' at ' + fmtBal, 'success', 3500);
+            lgRefresh();
+        } else {
+            var errText = '';
+            try { errText = await resp.text(); } catch (_) {}
+            var errMsg = 'Failed to reconcile (HTTP ' + resp.status + ')';
+            try {
+                var parsed = JSON.parse(errText);
+                if (parsed && parsed.message) errMsg += ': ' + parsed.message;
+            } catch (_) {
+                if (errText) errMsg += ': ' + errText.slice(0, 200);
+            }
+            console.warn('lgReconcileUpTo failed:', resp.status, errText);
+            showAlert(errMsg, 'error', 6000);
+        }
+    } catch (err) {
+        console.warn('Failed to reconcile:', err.message);
+        showAlert('Failed to reconcile: ' + err.message, 'error', 5000);
+    }
+}
+window.lgReconcileUpTo = lgReconcileUpTo;
 
 async function lgAddEntry() {
     var entryDate = lgNewDateInput ? lgNewDateInput.getValue() : '';
