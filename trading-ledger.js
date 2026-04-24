@@ -812,6 +812,14 @@ async function lgRefresh() {
                         var fr = fullCombined[fi];
                         if (fr._rowType === 'ledger' && fr.entryType === 'OPENING_BALANCE') {
                             bal = fr.amount;
+                        } else if (fr._isPending) {
+                            // Pending (not-yet-committed) interest does NOT contribute
+                            // to the running balance — the balance stays committed-only
+                            // until the user clicks Commit on the pending row. The
+                            // pending row's _runningBalance therefore equals the
+                            // committed balance just BEFORE it, which is semantically
+                            // correct ("if this gets committed, balance becomes bal +
+                            // amount; until then, balance is still bal").
                         } else if (fr._nfoCashImpact !== false) {
                             bal += fr.amount;
                         }
