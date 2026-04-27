@@ -311,14 +311,47 @@ function trFnoGetTxns() {
 // MATCHING: Calculate F&O positions with FIFO/LIFO matching
 // ============================================================================
 
-function trFnoCalcPositions() {
+function trFnoCalcPositions(filtersOverride) {
     // MIGRATED (2026-04-11) to the shared FIFO/LIFO cost engine in wms-shared.js.
     // Previously used an inline per-contract matching loop; now delegates to
     // `wmsCalcFifoCost` / `wmsCalcLifoCost` per (investor|trader|broker|contract)
     // slice and consumes `gains[]` for matched rows and `holdings[].lots` for
     // open rows. Live-diff vs the old inline engine: zero delta across
     // fifo/lifo × all/open × filtered/unfiltered. See WMS-LESSONS §J.5.H.
-    var txns = trFnoGetTxns();
+    //
+    // Optional `filtersOverride` (added 2026-04-27) lets the Day-P&L banner
+    // call this function with the default view's filters instead of the live
+    // page filters.  Single source of truth for the F&O computation — no
+    // duplicated loop in trading.js, banner totals can never drift from the
+    // page (e.g. when a new filter dimension like expiryFilter is added).
+    // Shape: { investorIds, traderIds, brokerIds, tagNames, tagLogic,
+    //          expiryFilter, fnoMode, matchMethod } — same as
+    //          portfolio_views.filters JSON.  Any field omitted falls back
+    //          to the corresponding global (live page state).
+    var fO = filtersOverride || null;
+    var effInvIds   = fO && fO.investorIds  != null ? fO.investorIds  : trSelectedInvestorIds;
+    var effTrdIds   = fO && fO.traderIds    != null ? fO.traderIds    : trSelectedTraderIds;
+    var effBrkIds   = fO && fO.brokerIds    != null ? fO.brokerIds    : trSelectedBrokerIds;
+    var effTagNames = fO && fO.tagNames     != null ? fO.tagNames     : trSelectedTagNames;
+    var effTagLogic = fO && fO.tagLogic     != null ? fO.tagLogic     : trTagFilterLogic;
+    var effExpiry   = fO && fO.expiryFilter != null ? fO.expiryFilter : trFnoExpiryFilter;
+    var effMode     = fO && fO.fnoMode      != null ? fO.fnoMode      : trFnoMode;
+    var effMatch    = fO && fO.matchMethod  != null ? fO.matchMethod  : trFnoMatchMethod;
+
+    // Build the F&O txn slice using effective filters (replaces trFnoGetTxns
+    // when an override is in play).  Logic mirrors trFnoGetTxns exactly.
+    var txns;
+    if (fO) {
+        txns = trTransactions.filter(function(t) {
+            return t.security_type === 'NFO' || t.security_type === 'MCX';
+        });
+        if (effInvIds && effInvIds.length > 0) txns = txns.filter(function(t) { return effInvIds.indexOf(t.investor_id) >= 0; });
+        if (effTrdIds && effTrdIds.length > 0) txns = txns.filter(function(t) { var tid = t.trader_id || t.investor_id; return tid && effTrdIds.indexOf(tid) >= 0; });
+        if (effBrkIds && effBrkIds.length > 0) txns = txns.filter(function(t) { return t.broker_id && effBrkIds.indexOf(t.broker_id) >= 0; });
+        if (effTagNames && effTagNames.length > 0) txns = txns.filter(function(t) { return wmsMatchTagsFilter(t.tags, effTagNames, effTagLogic); });
+    } else {
+        txns = trFnoGetTxns();
+    }
     var trades = txns.filter(function(t) {
         return t.transaction_type === 'BUY' || t.transaction_type === 'SELL';
     });
@@ -348,12 +381,14 @@ function trFnoCalcPositions() {
         var tB = (monthIdx[pb[0]] !== undefined) ? new Date(2000 + parseInt(pb[1], 10), monthIdx[pb[0]], 1).getTime() : -1;
         return tB - tA;
     });
-    trFnoBuildExpiryFilter(expiryKeys);
+    // Skip the UI side-effect when an override is in play (banner refresh
+    // path) so the F&O page's expiry-filter pills don't briefly flicker.
+    if (!fO) trFnoBuildExpiryFilter(expiryKeys);
 
     // Process each underlying symbol
     var symbolResults = [];
     var todayStr = new Date().toISOString().slice(0, 10);
-    var matchMethod = trFnoMatchMethod === 'lifo' ? 'lifo' : 'fifo';
+    var matchMethod = effMatch === 'lifo' ? 'lifo' : 'fifo';
 
     Object.keys(bySymbol).sort().forEach(function(underlying) {
         var symbolTrades = bySymbol[underlying];
@@ -391,7 +426,7 @@ function trFnoCalcPositions() {
             var contractExpiry = _wmsTxnGetExpiryLabel(g.contractLabel);
 
             // Apply expiry filter (null = not yet initialized, treat as no filter)
-            if (trFnoExpiryFilter && trFnoExpiryFilter.length > 0 && trFnoExpiryFilter.indexOf(contractExpiry) < 0) return;
+            if (effExpiry && effExpiry.length > 0 && effExpiry.indexOf(contractExpiry) < 0) return;
 
             // Sort chronologically: date, then time (null = 00:00:00), then id as tie-breaker
             var sorted = g.txns.slice().sort(function(a, b) {
@@ -543,7 +578,7 @@ function trFnoCalcPositions() {
         if (contractGroups.length === 0) return;
 
         // In "open" mode, filter contract groups to only those with open positions
-        if (trFnoMode === 'open') {
+        if (effMode === 'open') {
             contractGroups = contractGroups.filter(function(cg) { return cg.openQty > 0; });
             if (contractGroups.length === 0) return;
         }
