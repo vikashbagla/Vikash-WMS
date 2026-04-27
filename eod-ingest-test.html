@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EOD Prices Ingest — Test &amp; Backfill</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, sans-serif;
+    max-width: 880px; margin: 24px auto; padding: 0 20px;
+    color: #1f2937; background: #f9fafb;
+  }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  .sub { color: #6b7280; font-size: 14px; margin-bottom: 20px; }
+  .panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 18px; margin-bottom: 16px; }
+  label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin: 0 0 6px; }
+  input[type="text"], input[type="password"], input[type="number"] {
+    width: 100%; padding: 8px 10px; font-size: 14px; border: 1px solid #d1d5db; border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  input[type="number"] { font-family: inherit; }
+  .row { display: flex; gap: 12px; margin-bottom: 12px; }
+  .row > div { flex: 1; }
+  .help { font-size: 12px; color: #6b7280; margin-top: 4px; }
+  .btn {
+    border: none; border-radius: 6px; padding: 10px 16px; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .btn-primary { background: #2563eb; color: white; }
+  .btn-primary:hover { background: #1d4ed8; }
+  .btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+  .btn-secondary:hover { background: #e5e7eb; }
+  .btn-danger { background: #dc2626; color: white; }
+  .btn-danger:hover { background: #b91c1c; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .actions { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+  .result { margin-top: 16px; }
+  .result.success { color: #047857; }
+  .result.error { color: #dc2626; }
+  .result-block {
+    background: #1f2937; color: #e5e7eb; padding: 14px; border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+    white-space: pre-wrap; word-break: break-word; max-height: 480px; overflow-y: auto;
+  }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    margin-left: 8px; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .badge.success { background: #d1fae5; color: #065f46; }
+  .badge.error   { background: #fee2e2; color: #991b1b; }
+  .badge.loading { background: #dbeafe; color: #1e40af; }
+  .stat-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;
+    margin: 14px 0;
+  }
+  .stat { background: #f3f4f6; padding: 10px 12px; border-radius: 6px; }
+  .stat-label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat-value { font-size: 20px; font-weight: 700; color: #1f2937; margin-top: 2px; }
+  .missing-list, .failed-list {
+    background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; padding: 10px;
+    margin-top: 12px; font-size: 13px;
+  }
+  .failed-list { background: #fee2e2; border-color: #fca5a5; }
+  details summary { cursor: pointer; user-select: none; font-weight: 600; }
+  details > pre { margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<h1>EOD Prices Ingest — Test &amp; Backfill</h1>
+<p class="sub">Calls the <code>eod-prices-ingest</code> Edge Function. Fields are saved in this browser's localStorage so you only enter them once.</p>
+
+<div class="panel">
+  <label for="projectUrl">Supabase Project URL</label>
+  <input type="text" id="projectUrl" placeholder="https://lynvrwteylgpwlwbslse.supabase.co">
+  <p class="help">Just the project root, e.g. <code>https://lynvrwteylgpwlwbslse.supabase.co</code>. This page appends <code>/functions/v1/eod-prices-ingest</code>.</p>
+
+  <label for="cronKey" style="margin-top:14px">Cron secret key (<code>x-cron-key</code> header)</label>
+  <input type="password" id="cronKey" placeholder="(the same secret used by fyers-auto-login on cron-job.org)">
+  <p class="help">Stored locally in your browser only. Never sent anywhere except the Supabase Edge Function URL above.</p>
+
+  <label for="daysBack" style="margin-top:14px">Days back (for the Custom run only)</label>
+  <input type="number" id="daysBack" min="1" max="366" value="5">
+  <p class="help">Daily run is 5. Backfill is 252. Use this field only for the "Custom run" button.</p>
+
+  <div class="actions">
+    <button class="btn btn-primary"   onclick="run(5)">Smoke test (5-day window)</button>
+    <button class="btn btn-secondary" onclick="run(parseInt(document.getElementById('daysBack').value, 10))">Custom run</button>
+    <button class="btn btn-danger"    onclick="if(confirm('Backfill 252 days for the entire universe — takes ~30s. Continue?')) run(252)">Full backfill (252-day)</button>
+  </div>
+</div>
+
+<div id="resultPanel" class="panel" style="display:none">
+  <div id="resultHeader" class="result"></div>
+  <div id="resultStats"></div>
+  <div id="resultMissing"></div>
+  <div id="resultFailed"></div>
+  <details style="margin-top:14px">
+    <summary>Full JSON response</summary>
+    <pre id="resultJson" class="result-block"></pre>
+  </details>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const KEYS = { url: 'wms_eod_test_url', key: 'wms_eod_test_cronkey' };
+
+  // Load saved values
+  $('projectUrl').value = localStorage.getItem(KEYS.url) || '';
+  $('cronKey').value    = localStorage.getItem(KEYS.key) || '';
+
+  // Save on change
+  $('projectUrl').addEventListener('input', (e) => localStorage.setItem(KEYS.url, e.target.value.trim()));
+  $('cronKey').addEventListener('input',    (e) => localStorage.setItem(KEYS.key, e.target.value.trim()));
+
+  async function run(daysBack) {
+    const projectUrl = ($('projectUrl').value || '').trim().replace(/\/$/, '');
+    const cronKey    = ($('cronKey').value || '').trim();
+    if (!projectUrl) { alert('Enter the Supabase project URL first.'); return; }
+    if (!cronKey)    { alert('Enter the cron secret key first.'); return; }
+    if (!daysBack || daysBack < 1 || daysBack > 366) { alert('Days back must be 1–366.'); return; }
+
+    const url = `${projectUrl}/functions/v1/eod-prices-ingest`;
+    showLoading(daysBack);
+    setButtonsDisabled(true);
+
+    const startedAt = Date.now();
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'x-cron-key': cronKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days_back: daysBack }),
+      });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch (_e) { data = { raw_response: text }; }
+      if (res.ok && data.success) {
+        showSuccess(data, Date.now() - startedAt);
+      } else {
+        showError(data, res.status, Date.now() - startedAt);
+      }
+    } catch (err) {
+      showError({ error: String(err) }, 0, Date.now() - startedAt);
+    } finally {
+      setButtonsDisabled(false);
+    }
+  }
+
+  function setButtonsDisabled(d) {
+    document.querySelectorAll('.btn').forEach((b) => b.disabled = d);
+  }
+
+  function showLoading(daysBack) {
+    $('resultPanel').style.display = 'block';
+    $('resultHeader').className = 'result';
+    $('resultHeader').innerHTML = `<strong>Running ${daysBack}-day ingest…</strong> <span class="badge loading">In progress</span>`;
+    $('resultStats').innerHTML = '';
+    $('resultMissing').innerHTML = '';
+    $('resultFailed').innerHTML = '';
+    $('resultJson').textContent = '';
+  }
+
+  function showSuccess(d, ms) {
+    $('resultHeader').className = 'result success';
+    $('resultHeader').innerHTML = `<strong>Success</strong> <span class="badge success">${(ms / 1000).toFixed(1)}s</span>`;
+
+    $('resultStats').innerHTML = `
+      <div class="stat-grid">
+        <div class="stat"><div class="stat-label">Rows upserted</div><div class="stat-value">${d.rows_upserted ?? 0}</div></div>
+        <div class="stat"><div class="stat-label">Resolved</div><div class="stat-value">${d.resolved ?? 0}</div></div>
+        <div class="stat"><div class="stat-label">Missing in securities_db</div><div class="stat-value">${(d.missing || []).length}</div></div>
+        <div class="stat"><div class="stat-label">Failed (Fyers)</div><div class="stat-value">${(d.failed_symbols || []).length}</div></div>
+        <div class="stat"><div class="stat-label">Range from</div><div class="stat-value" style="font-size:14px">${d.range_from || '—'}</div></div>
+        <div class="stat"><div class="stat-label">Range to</div><div class="stat-value" style="font-size:14px">${d.range_to || '—'}</div></div>
+      </div>
+    `;
+
+    if ((d.missing || []).length > 0) {
+      $('resultMissing').innerHTML = `<div class="missing-list"><strong>Missing from <code>securities_db</code> (${d.missing.length}):</strong> ${d.missing.join(', ')}</div>`;
+    }
+    if ((d.failed_symbols || []).length > 0) {
+      const failedHtml = d.failed_symbols.map((f) => `<li><code>${f.symbol}</code>: ${f.error}</li>`).join('');
+      $('resultFailed').innerHTML = `<div class="failed-list"><strong>Fyers errors (${d.failed_symbols.length}):</strong><ul>${failedHtml}</ul></div>`;
+    }
+    $('resultJson').textContent = JSON.stringify(d, null, 2);
+  }
+
+  function showError(d, status, ms) {
+    $('resultHeader').className = 'result error';
+    $('resultHeader').innerHTML = `<strong>Failed${status ? ` (HTTP ${status})` : ''}</strong> <span class="badge error">${(ms / 1000).toFixed(1)}s</span>`;
+    $('resultJson').textContent = JSON.stringify(d, null, 2);
+  }
+</script>
+
+</body>
+</html>
