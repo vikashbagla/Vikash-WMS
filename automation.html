@@ -260,6 +260,22 @@ details summary {
         </div>
       </div>
 
+      <!-- Strategy Runner (Phase 2 — _test stub) -->
+      <div class="au-card">
+        <h3>Strategy Runner <span id="au-runner-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Calls <code>automation-runner</code> Edge Function. Phase 2 ships a <code>_test</code> stub strategy that alternates between ENTRY and EXIT on each invocation — used to validate chassis plumbing end-to-end (DB writes → email → run row → open-trades view). The real <code>pairs</code> strategy lands in Phase 3.</div>
+
+        <div id="au-runner-last-run" class="au-meta">Loading last run…</div>
+
+        <div class="au-actions">
+          <button class="au-btn au-btn-primary"   onclick="autoRunStrategy('_test')">Run _test stub</button>
+          <button class="au-btn au-btn-secondary" onclick="autoRunStrategy('')">Run all enabled</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRunnerLastRun()">Refresh status</button>
+        </div>
+
+        <div id="au-runner-response" style="display:none; margin-top:12px;"></div>
+      </div>
+
       <!-- Strategies snapshot -->
       <div class="au-card">
         <h3>Strategies</h3>

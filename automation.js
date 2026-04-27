@@ -40,6 +40,7 @@ async function initAutomation() {
     autoLoadEodLastRun();
     autoLoadMarketPricesStats();
     autoLoadStrategies();
+    autoLoadRunnerLastRun();
 }
 
 // Expose for app.html loader
@@ -203,6 +204,160 @@ async function autoLoadEodLastRun() {
                          r.status.toLowerCase());
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load run history: ' + autoEsc(String(e)) + '</span>';
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Strategy Runner — invoke automation-runner Edge Function + render response
+// ----------------------------------------------------------------------------
+
+var _autoRunnerInFlight = false;
+
+async function autoRunStrategy(stratName) {
+    if (_autoRunnerInFlight) return;
+    _autoRunnerInFlight = true;
+
+    autoSetRunnerStatus('loading', stratName ? 'running ' + stratName : 'running all');
+    autoSetRunnerButtonsDisabled(true);
+
+    var responsePanel = document.getElementById('au-runner-response');
+    responsePanel.style.display = 'block';
+    responsePanel.innerHTML = '<div class="au-meta">⏳ Running strategy ' + (stratName || '(all enabled)') + '… (~1-3s for stub, longer for real strategies)</div>';
+
+    var qs = '?wait=true';
+    if (stratName) qs += '&strategy=' + encodeURIComponent(stratName);
+
+    var startedAt = Date.now();
+    try {
+        var resp = await fetch(SUPABASE_URL + '/functions/v1/automation-runner' + qs, {
+            method: 'POST',
+            headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: '{}'
+        });
+        var text = await resp.text();
+        var data;
+        try { data = JSON.parse(text); } catch (_e) { data = { raw_response: text }; }
+        var ms = Date.now() - startedAt;
+        if (resp.ok && data && data.success) {
+            autoSetRunnerStatus('success', 'success');
+            autoRenderRunnerSuccess(data, ms);
+        } else {
+            autoSetRunnerStatus('error', 'failed');
+            autoRenderRunnerError(data, resp.status, ms);
+        }
+    } catch (err) {
+        autoSetRunnerStatus('error', 'failed');
+        autoRenderRunnerError({ error: String(err) }, 0, Date.now() - startedAt);
+    } finally {
+        _autoRunnerInFlight = false;
+        autoSetRunnerButtonsDisabled(false);
+        autoLoadRunnerLastRun();
+    }
+}
+
+function autoSetRunnerStatus(cls, label) {
+    var el = document.getElementById('au-runner-status');
+    if (!el) return;
+    el.className = 'au-badge ' + cls;
+    el.textContent = label;
+}
+
+function autoSetRunnerButtonsDisabled(disabled) {
+    // Disable only the runner card's buttons (admin tab has multiple cards)
+    var card = document.getElementById('au-runner-status');
+    if (!card) return;
+    var parent = card.closest('.au-card');
+    if (!parent) return;
+    parent.querySelectorAll('.au-btn').forEach(function (b) { b.disabled = disabled; });
+}
+
+function autoRenderRunnerSuccess(d, ms) {
+    var rp = document.getElementById('au-runner-response');
+    var html = '<div style="font-size:13px;color:#047857;font-weight:600">✓ Dispatch Success <span class="au-badge success">' + (ms / 1000).toFixed(1) + 's</span></div>';
+
+    var results = d.results || [];
+    if (results.length === 0) {
+        html += '<div class="au-warn-list" style="margin-top:8px">No strategies ran (none enabled, or filter excluded all).</div>';
+    } else {
+        html += '<div class="au-stat-grid">';
+        html += autoStatBlock('Strategies run', d.strategies_run || 0);
+        html += autoStatBlock('Total signals', results.reduce(function (a, r) { return a + (r.signals_generated || 0); }, 0));
+        html += autoStatBlock('Emails sent', results.reduce(function (a, r) { return a + (r.emails_sent || 0); }, 0));
+        html += autoStatBlock('Emails failed', results.reduce(function (a, r) { return a + (r.emails_failed || 0); }, 0));
+        html += '</div>';
+
+        // Per-strategy breakdown
+        html += '<div style="margin-top:10px"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Strategy</th><th style="padding:6px 8px">Status</th>' +
+                '<th style="padding:6px 8px">Signals</th><th style="padding:6px 8px">Email</th>' +
+                '<th style="padding:6px 8px">Duration</th><th style="padding:6px 8px">Error</th></tr></thead><tbody>';
+        results.forEach(function (r) {
+            var statusBadge = r.status === 'SUCCESS'
+                ? '<span class="au-badge success">success</span>'
+                : '<span class="au-badge error">failed</span>';
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px"><code>' + autoEsc(r.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px">' + statusBadge + '</td>' +
+                    '<td style="padding:6px 8px">' + (r.signals_generated || 0) + '</td>' +
+                    '<td style="padding:6px 8px">' + (r.emails_sent ? '✓' : (r.emails_failed ? '✗' : '—')) + '</td>' +
+                    '<td style="padding:6px 8px">' + ((r.duration_ms || 0) / 1000).toFixed(1) + 's</td>' +
+                    '<td style="padding:6px 8px;color:#7f1d1d;font-size:11px">' + autoEsc(r.error || '') + '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table></div>';
+    }
+
+    html += '<details style="margin-top:10px"><summary>Full JSON response</summary>';
+    html += '<pre class="au-result-block">' + autoEsc(JSON.stringify(d, null, 2)) + '</pre></details>';
+    rp.innerHTML = html;
+}
+
+function autoRenderRunnerError(d, status, ms) {
+    var rp = document.getElementById('au-runner-response');
+    var html = '<div style="font-size:13px;color:#dc2626;font-weight:600">✗ Failed' + (status ? ' (HTTP ' + status + ')' : '') + ' <span class="au-badge error">' + (ms / 1000).toFixed(1) + 's</span></div>';
+    if (d && d.error) html += '<div style="margin-top:6px;color:#7f1d1d;font-size:13px">' + autoEsc(d.error) + '</div>';
+    html += '<details style="margin-top:10px" open><summary>Full JSON response</summary>';
+    html += '<pre class="au-result-block">' + autoEsc(JSON.stringify(d, null, 2)) + '</pre></details>';
+    rp.innerHTML = html;
+}
+
+async function autoLoadRunnerLastRun() {
+    var el = document.getElementById('au-runner-last-run');
+    if (!el) return;
+    el.textContent = 'Loading last run…';
+    try {
+        // Skip _eod_ingest sentinel — that has its own card.
+        var resp = await fetch(
+            SUPABASE_URL + '/rest/v1/auto_runs?strategy_name=neq._eod_ingest&order=started_at.desc&limit=1',
+            { headers: wmsHeaders() }
+        );
+        var rows = await resp.json();
+        if (!Array.isArray(rows) || rows.length === 0) {
+            el.innerHTML = '<em style="color:#9ca3af">No strategy runs yet — try the buttons above.</em>';
+            autoSetRunnerStatus('idle', 'never run');
+            return;
+        }
+        var r = rows[0];
+        var dt = new Date(r.started_at);
+        var when = dt.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+        var dur = r.duration_ms != null ? (r.duration_ms / 1000).toFixed(1) + 's' : '—';
+        var statusBadge = r.status === 'SUCCESS' ? '<span class="au-badge success">success</span>' :
+                          r.status === 'FAILED'  ? '<span class="au-badge error">failed</span>' :
+                                                   '<span class="au-badge loading">running</span>';
+        el.innerHTML =
+            '<span><strong>Last run:</strong> ' + when + ' ' + statusBadge + '</span>' +
+            '<span><strong>Strategy:</strong> <code>' + autoEsc(r.strategy_name) + '</code></span>' +
+            '<span><strong>Duration:</strong> ' + dur + '</span>' +
+            '<span><strong>Signals:</strong> ' + (r.signals_generated != null ? r.signals_generated : '—') + '</span>' +
+            '<span><strong>Emails:</strong> ' + (r.emails_sent != null ? r.emails_sent : 0) + ' sent / ' + (r.emails_failed != null ? r.emails_failed : 0) + ' failed</span>';
+        if (r.status === 'FAILED' && r.error) {
+            el.innerHTML += '<div class="au-error-list" style="width:100%"><strong>Error:</strong> ' + autoEsc(r.error) + '</div>';
+        }
+        autoSetRunnerStatus(r.status === 'SUCCESS' ? 'success' : r.status === 'FAILED' ? 'error' : 'idle',
+                            r.status.toLowerCase());
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
     }
 }
 
