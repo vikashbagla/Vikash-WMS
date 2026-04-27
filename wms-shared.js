@@ -1354,6 +1354,135 @@ function wmsCalcFnoClosedTodayPnl(matchQty, isShort, openerDate, openerPpu, clos
 }
 
 // ============================================================================
+// SHARED F&O POSITION TOTALS — single source of truth for Day P&L + Exposure
+//
+// Used by:
+//   • trFnoBannerRefreshFromDefault (Day P&L banner) — passes the default
+//     view's filters
+//   • F&O Positions page total row — should call this with live filters once
+//     migrated (currently still computes inline; kept consistent by virtue of
+//     using the same per-row helpers wmsCalcFnoDayPnl + wmsCalcFnoClosedTodayPnl)
+//
+// Inputs:
+//   txns       — array of transaction rows (any types; helper filters by NFO/MCX)
+//   filters    — { investorIds, traderIds, brokerIds, tagNames, tagLogic,
+//                  expiryFilter (optional, e.g. ["May 26"]) }
+//                Empty array on any dimension = no constraint (matches
+//                wmsMatchesViewFilter semantics; same shape as
+//                portfolio_views.filters).
+//   opts       — { livePrices: <map symbol → {lp, ch}> }
+//
+// Returns:    { dayPnl, exposure }
+//
+// Why this exists: previously the banner had its own copy of the per-group
+// LIFO loop and didn't apply expiryFilter — so a Self-NFO-default user with
+// "May 26 only" in their saved view saw banner Day P&L include April-expired
+// contracts the page (correctly) hid. Centralising avoids that whole class
+// of drift.
+// ============================================================================
+
+function wmsCalcFnoPositionTotals(txns, filters, opts) {
+    if (!Array.isArray(txns) || txns.length === 0) return { dayPnl: 0, exposure: 0 };
+    filters = filters || {};
+    opts = opts || {};
+    var livePrices = opts.livePrices || (typeof wmsLivePrices !== 'undefined' ? wmsLivePrices : {});
+    var todayStr = new Date().toISOString().slice(0, 10);
+
+    var invIds   = filters.investorIds || [];
+    var trdIds   = filters.traderIds   || [];
+    var brkIds   = filters.brokerIds   || [];
+    var tagNames = filters.tagNames    || [];
+    var tagLogic = filters.tagLogic    || 'OR';
+    var expiry   = filters.expiryFilter || [];
+
+    // 1. Restrict to F&O segments + apply investor/trader/broker/tag filters.
+    var filtered = txns.filter(function(t) {
+        if (t.security_type !== 'NFO' && t.security_type !== 'MCX') return false;
+        if (invIds.length > 0 && invIds.indexOf(t.investor_id) < 0) return false;
+        if (trdIds.length > 0) {
+            var tid = t.trader_id || t.investor_id;
+            if (!tid || trdIds.indexOf(tid) < 0) return false;
+        }
+        if (brkIds.length > 0 && (!t.broker_id || brkIds.indexOf(t.broker_id) < 0)) return false;
+        if (tagNames.length > 0 && typeof wmsMatchTagsFilter === 'function') {
+            if (!wmsMatchTagsFilter(t.tags, tagNames, tagLogic)) return false;
+        }
+        return true;
+    });
+
+    var trades = filtered.filter(function(t) {
+        return t.transaction_type === 'BUY' || t.transaction_type === 'SELL';
+    });
+
+    // 2. Group trades by (investor|trader|broker|fullSymbol) — each becomes
+    //    one cost-engine run.  Apply expiry filter at the group level (every
+    //    txn in a group shares the same contract → same expiry).
+    var byGroup = {};
+    trades.forEach(function(t) {
+        var fullSym = (t.symbol || '').replace(/^[A-Z]+:/, '');
+        var key = (t.investor_id || '') + '|' +
+                  (t.trader_id || t.investor_id || '') + '|' +
+                  (t.broker_id || '') + '|' + fullSym;
+        if (!byGroup[key]) byGroup[key] = { fullSym: fullSym, txns: [] };
+        byGroup[key].txns.push(t);
+    });
+
+    var totDayPnl = 0, totExposure = 0;
+
+    Object.keys(byGroup).forEach(function(key) {
+        var g = byGroup[key];
+
+        // Expiry filter — same logic the F&O page applies.  We need
+        // wmsFormatContract + _wmsTxnGetExpiryLabel; if either isn't loaded
+        // (e.g. minimal-bundle context), we silently skip the filter rather
+        // than over-include.
+        if (expiry.length > 0 &&
+            typeof wmsFormatContract === 'function' &&
+            typeof _wmsTxnGetExpiryLabel === 'function') {
+            var contractLabel = wmsFormatContract(g.txns[0]);
+            var contractExpiry = _wmsTxnGetExpiryLabel(contractLabel);
+            if (expiry.indexOf(contractExpiry) < 0) return;
+        }
+
+        // Sort chronologically: date, then time (null = 00:00:00), then id.
+        var sorted = g.txns.slice().sort(function(a, b) {
+            var da = a.transaction_date || '', db = b.transaction_date || '';
+            if (da !== db) return da < db ? -1 : 1;
+            var ta = a.transaction_time || '', tb = b.transaction_time || '';
+            if (ta !== tb) return ta < tb ? -1 : 1;
+            return (a.id || 0) - (b.id || 0);
+        });
+
+        var result = wmsCalcLifoCost(sorted);
+        var cache = livePrices[g.fullSym];
+
+        // Closed-today Day P&L: one gain per match, only if closer == today.
+        result.gains.forEach(function(gain) {
+            var isShort = gain.sellDate < gain.buyDate;
+            var closerDate = isShort ? gain.buyDate : gain.sellDate;
+            if (closerDate !== todayStr) return;
+            var openerDate = isShort ? gain.sellDate : gain.buyDate;
+            var openerPpu  = isShort ? gain.sellProceedsPerUnit : gain.buyCostPerUnit;
+            var closerPpu  = isShort ? gain.buyCostPerUnit : gain.sellProceedsPerUnit;
+            totDayPnl += wmsCalcFnoClosedTodayPnl(gain.qty, isShort, openerDate, openerPpu, closerPpu, cache, todayStr);
+        });
+
+        // Exposure + open-position Day P&L: one entry per surviving lot.
+        Object.keys(result.holdings).forEach(function(hk) {
+            result.holdings[hk].lots.forEach(function(lot) {
+                if (!lot.qty) return;
+                var isShort = lot.qty < 0;
+                var absQty = Math.abs(lot.qty);
+                totExposure += absQty * lot.costPerUnit;
+                totDayPnl += wmsCalcFnoDayPnl(absQty, isShort, lot.date, lot.costPerUnit, cache);
+            });
+        });
+    });
+
+    return { dayPnl: totDayPnl, exposure: totExposure };
+}
+
+// ============================================================================
 
 function wmsIsOptionContract(symbol, shortSymbol) {
     if (!symbol || !shortSymbol) return false;

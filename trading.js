@@ -345,58 +345,14 @@ async function trFnoBannerRefreshFromDefault(forceRefresh) {
     }
 
     // Compute open + closed-today position totals using the shared LIFO engine.
-    // MIGRATED (2026-04-11) from inline matching loop to `wmsCalcLifoCost` per
-    // (investor|trader|broker|contract) slice. Live-diff: zero delta. See §J.5.H.
-    var trades = txns.filter(function(t) { return t.transaction_type === 'BUY' || t.transaction_type === 'SELL'; });
-    var totDayPnl = 0, totExposure = 0;
-    var todayStr = new Date().toISOString().slice(0, 10);
-
-    // Group trades by (inv|trd|brk|fullSym) — each group becomes one engine run.
-    var byGroup = {};
-    trades.forEach(function(t) {
-        var fullSym = (t.symbol || '').replace(/^[A-Z]+:/, '');
-        var key = (t.investor_id || '') + '|' + (t.trader_id || t.investor_id || '') + '|' + (t.broker_id || '') + '|' + fullSym;
-        if (!byGroup[key]) byGroup[key] = { fullSym: fullSym, txns: [] };
-        byGroup[key].txns.push(t);
-    });
-
-    Object.keys(byGroup).forEach(function(key) {
-        var g = byGroup[key];
-        var sorted = g.txns.slice().sort(function(a, b) {
-            var da = a.transaction_date || '', db = b.transaction_date || '';
-            if (da !== db) return da < db ? -1 : 1;
-            var ta = a.transaction_time || '', tb = b.transaction_time || '';
-            if (ta !== tb) return ta < tb ? -1 : 1;
-            return (a.id || 0) - (b.id || 0);
-        });
-        var result = wmsCalcLifoCost(sorted);
-        var cache = wmsLivePrices[g.fullSym];
-
-        // Closed-today Day P&L: one gain per match.
-        result.gains.forEach(function(gain) {
-            var isShort = gain.sellDate < gain.buyDate;
-            var closerDate = isShort ? gain.buyDate : gain.sellDate;
-            if (closerDate !== todayStr) return;
-            var openerDate = isShort ? gain.sellDate : gain.buyDate;
-            var openerPpu  = isShort ? gain.sellProceedsPerUnit : gain.buyCostPerUnit;
-            var closerPpu  = isShort ? gain.buyCostPerUnit : gain.sellProceedsPerUnit;
-            totDayPnl += wmsCalcFnoClosedTodayPnl(gain.qty, isShort, openerDate, openerPpu, closerPpu, cache, todayStr);
-        });
-
-        // Exposure + open-position Day P&L: one row per surviving lot.
-        Object.keys(result.holdings).forEach(function(hk) {
-            result.holdings[hk].lots.forEach(function(lot) {
-                if (!lot.qty) return;
-                var isShort = lot.qty < 0;
-                var absQty = Math.abs(lot.qty);
-                totExposure += absQty * lot.costPerUnit;
-                totDayPnl += wmsCalcFnoDayPnl(absQty, isShort, lot.date, lot.costPerUnit, cache);
-            });
-        });
-    });
-
-    window._trFnoDayPnl = totDayPnl;
-    window._trFnoExposure = totExposure;
+    // Single source of truth for the F&O totals computation — same helper the
+    // F&O page should call, ensuring banner and page can never drift on the
+    // filter set being applied (this is what bit us when expiryFilter was
+    // added to the page but not to the banner).  See wms-shared.js +
+    // LESSONS §J for the canonical computation.
+    var totals = wmsCalcFnoPositionTotals(txns, f, { livePrices: wmsLivePrices });
+    window._trFnoDayPnl   = totals.dayPnl;
+    window._trFnoExposure = totals.exposure;
     trUpdateDayPLBanner();
 }
 
