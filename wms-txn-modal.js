@@ -1785,6 +1785,12 @@ function wmsPreviewSplit() {
             symbol: txn.symbol, short_symbol: txn.short_symbol, company_name: txn.company_name,
             asset_class: txn.asset_class, exchange: txn.exchange, product: txn.product,
             transaction_type: txn.transaction_type, transaction_date: txn.transaction_date,
+            // Carry transaction_time so the split row sorts alongside its parent
+            // (matching FIFO/LIFO + Statements ordering — see migration 37 / E.16).
+            // NULL time would land the new row at the top of its date in
+            // ascending sort, which is wrong for splits — they should occupy the
+            // same slot as the parent.
+            transaction_time: txn.transaction_time || null,
             quantity: splitQty, lots: splitLots, price: txn.price,
             gross_amount: splitGross, brokerage: splitBrokerage, stt: splitStt,
             other_charges: splitOther, gst: splitGst, tds: splitTds,
