@@ -75,7 +75,11 @@
   <input type="text" id="projectUrl" placeholder="https://lynvrwteylgpwlwbslse.supabase.co">
   <p class="help">Just the project root, e.g. <code>https://lynvrwteylgpwlwbslse.supabase.co</code>. This page appends <code>/functions/v1/eod-prices-ingest</code>.</p>
 
-  <label for="cronKey" style="margin-top:14px">Cron secret key (<code>x-cron-key</code> header)</label>
+  <label for="anonKey" style="margin-top:14px">Supabase anon/public key (<code>Authorization: Bearer …</code> — gateway)</label>
+  <input type="password" id="anonKey" placeholder="(eyJhbGc... — Settings → API → anon/public)">
+  <p class="help">This is the public key already used by your WMS app frontend. Find it in Supabase Studio → Project Settings → API, or copy it from the existing fyers-auto-login cron-job.org entry's <code>Authorization</code> header (everything after <code>Bearer </code>). Required by the Supabase gateway before our function-level auth runs.</p>
+
+  <label for="cronKey" style="margin-top:14px">Cron secret key (<code>x-cron-key</code> header — function auth)</label>
   <input type="password" id="cronKey" placeholder="(the same secret used by fyers-auto-login on cron-job.org)">
   <p class="help">Stored locally in your browser only. Never sent anywhere except the Supabase Edge Function URL above.</p>
 
@@ -103,20 +107,24 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const KEYS = { url: 'wms_eod_test_url', key: 'wms_eod_test_cronkey' };
+  const KEYS = { url: 'wms_eod_test_url', anon: 'wms_eod_test_anonkey', key: 'wms_eod_test_cronkey' };
 
   // Load saved values
-  $('projectUrl').value = localStorage.getItem(KEYS.url) || '';
-  $('cronKey').value    = localStorage.getItem(KEYS.key) || '';
+  $('projectUrl').value = localStorage.getItem(KEYS.url)  || '';
+  $('anonKey').value    = localStorage.getItem(KEYS.anon) || '';
+  $('cronKey').value    = localStorage.getItem(KEYS.key)  || '';
 
   // Save on change
-  $('projectUrl').addEventListener('input', (e) => localStorage.setItem(KEYS.url, e.target.value.trim()));
-  $('cronKey').addEventListener('input',    (e) => localStorage.setItem(KEYS.key, e.target.value.trim()));
+  $('projectUrl').addEventListener('input', (e) => localStorage.setItem(KEYS.url,  e.target.value.trim()));
+  $('anonKey').addEventListener('input',    (e) => localStorage.setItem(KEYS.anon, e.target.value.trim()));
+  $('cronKey').addEventListener('input',    (e) => localStorage.setItem(KEYS.key,  e.target.value.trim()));
 
   async function run(daysBack) {
     const projectUrl = ($('projectUrl').value || '').trim().replace(/\/$/, '');
+    const anonKey    = ($('anonKey').value || '').trim();
     const cronKey    = ($('cronKey').value || '').trim();
     if (!projectUrl) { alert('Enter the Supabase project URL first.'); return; }
+    if (!anonKey)    { alert('Enter the Supabase anon/public key first.'); return; }
     if (!cronKey)    { alert('Enter the cron secret key first.'); return; }
     if (!daysBack || daysBack < 1 || daysBack > 366) { alert('Days back must be 1–366.'); return; }
 
@@ -128,7 +136,11 @@
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'x-cron-key': cronKey, 'Content-Type': 'application/json' },
+        headers: {
+          'Authorization': `Bearer ${anonKey}`,
+          'x-cron-key': cronKey,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ days_back: daysBack }),
       });
       const text = await res.text();
