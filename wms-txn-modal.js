@@ -1864,7 +1864,13 @@ function wmsPreviewSplit() {
             total_charges: splitTotalCharges, net_amount: splitNet,
             trader_charges: splitTraderCharges,
             margin_blocked: r2((txn.margin_blocked || 0) * ratio),
-            broker_contract_note_no: txn.broker_contract_note_no, broker_trade_id: null,
+            // Carry the parent's broker_trade_id and contract-note number so
+            // both halves of a split remain auditable to the broker fill.
+            // Fyers tradebook re-imports use fyCheckDuplicates' aggregate
+            // matcher (sum of qty across all rows sharing the broker_trade_id
+            // vs incoming qty) to recognise the split as "already imported".
+            broker_contract_note_no: txn.broker_contract_note_no,
+            broker_trade_id: txn.broker_trade_id || null,
             tags: (txn.tags || []).slice(),
             notes: '[SPLIT from txn ' + txn.id + '] ' + (txn.notes || ''),
             ignore_for_avg_cost: txn.ignore_for_avg_cost || false,
