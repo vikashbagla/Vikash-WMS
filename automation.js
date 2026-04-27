@@ -65,7 +65,10 @@ async function autoRunEodIngest(daysBack, confirmFirst) {
 
     var startedAt = Date.now();
     try {
-        var resp = await fetch(SUPABASE_URL + '/functions/v1/eod-prices-ingest', {
+        // ?wait=true → synchronous mode (function awaits completion before
+        // responding). cron-job.org uses async-default to avoid its 30s
+        // HTTP timeout, but here the user IS waiting for the answer in the UI.
+        var resp = await fetch(SUPABASE_URL + '/functions/v1/eod-prices-ingest?wait=true', {
             method: 'POST',
             headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ days_back: daysBack })
