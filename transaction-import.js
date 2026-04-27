@@ -3457,7 +3457,7 @@ window.cancelImport = function() {
     document.getElementById('excelPreviewOverlay').classList.remove('active');
     // Source-specific state reset
     if (_currentImportSource === 'FYERS') {
-        fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fyErrorRows = [];
+        fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fySkipRows = []; fyErrorRows = [];
         fyTradeDate = null;
         var fyStatus = document.getElementById('fyFetchStatus');
         if (fyStatus) fyStatus.textContent = '';
@@ -3683,6 +3683,7 @@ async function performImport(cfg) {
 var fyParsedRows = [];      // After grouping trades
 var fyNewRows = [];          // Will be inserted
 var fyUpdateRows = [];       // Will update existing
+var fySkipRows = [];         // Already imported and split — skipped on re-import
 var fyErrorRows = [];        // Could not match security
 var fyTradeDate = null;      // Today's date (YYYY-MM-DD)
 var fyInvestorId = null;     // "Veins" investor ID
@@ -4083,7 +4084,7 @@ async function fyProcessTrades(tradeBook) {
 // ============================================================================
 
 async function fyCheckDuplicates(rows) {
-    if (rows.length === 0) { fyNewRows = []; fyUpdateRows = []; return; }
+    if (rows.length === 0) { fyNewRows = []; fyUpdateRows = []; fySkipRows = []; return; }
 
     // Query existing transactions for this investor + broker + date.
     // Include broker_trade_id so we can match by Fyers order number overlap
@@ -4096,24 +4097,32 @@ async function fyCheckDuplicates(rows) {
 
     fyNewRows = [];
     fyUpdateRows = [];
+    fySkipRows = [];
 
     rows.forEach(function(r) {
-        // Order-ID matching rule:
+        // Aggregate-match rule (post-2026-04-27 split-aware):
         //   • Group the incoming row's Fyers orderNumber(s) into a Set.
-        //   • A candidate existing row matches only if it has the SAME symbol,
-        //     SAME transaction_type, AND at least one of its stored
-        //     broker_trade_id order numbers appears in the incoming Set.
-        //   • Rows with broker_trade_id = null (manual entries, split-off
-        //     children, CN-imported rows) never match any Fyers import —
-        //     they're immune. This is the correct behaviour: the Fyers
-        //     tradebook should only update its own prior imports, not touch
-        //     rows it didn't create.
-        //   • Different orders (even same symbol + type on the same day) will
-        //     miss all existing rows and classify as NEW.
+        //   • Find ALL existing rows that match by (symbol, type) AND share
+        //     at least one broker_trade_id order number with the incoming.
+        //     Splits propagate the parent's broker_trade_id, so an order that
+        //     was imported then split into N rows yields N matches here.
+        //   • Rows with broker_trade_id = null (manual entries, CN-imported
+        //     rows, splits made before the 2026-04-27 fix) never match — they
+        //     remain immune to Fyers re-import, which is correct.
+        //
+        // Decision:
+        //   • 0 matches              → NEW
+        //   • ≥1 match, sum(qty)
+        //         == incoming qty    → SKIP (already imported and split — no-op)
+        //   • ≥1 match, sum(qty)
+        //         != incoming qty    → UPDATE first match (broker qty changed,
+        //                              user must reconcile manually). Console
+        //                              warning + _splitMismatch hint stamped
+        //                              on the row for the preview UI.
         var rBare = (r.symbol || '').replace(/^[A-Z]+:/, '');
         var incomingOrders = new Set(r._orderNumbers || []);
 
-        var match = existing.find(function(e) {
+        var matches = existing.filter(function(e) {
             if ((e.symbol || '').replace(/^[A-Z]+:/, '') !== rBare) return false;
             if (e.transaction_type !== r.transaction_type) return false;
             var existingOrders = (e.broker_trade_id || '').split(',')
@@ -4123,16 +4132,49 @@ async function fyCheckDuplicates(rows) {
             return existingOrders.some(function(o) { return incomingOrders.has(o); });
         });
 
-        if (match) {
-            r._existingId = match.id;
-            r._action = 'UPDATE';
-            r.tags = match.tags || [];  // Preserve existing tags
-            fyUpdateRows.push(r);
-        } else {
-            r.tags = [];  // Empty tags for new rows
+        if (matches.length === 0) {
+            r.tags = [];
             r._action = 'NEW';
             fyNewRows.push(r);
+            return;
         }
+
+        var sumQty = 0;
+        matches.forEach(function(m) { sumQty += Math.abs(parseFloat(m.quantity) || 0); });
+        var incomingQty = Math.abs(parseFloat(r.qty) || 0);
+        // 1-unit tolerance — equity F&O qty is integer, but allow rounding.
+        var aggMatches = Math.abs(sumQty - incomingQty) < 1;
+
+        if (aggMatches && matches.length > 1) {
+            // Multi-row match whose qtys add up to the broker's value — this
+            // is a clean import-then-split. No-op. Show in preview as info.
+            r._action = 'SKIP';
+            r._skipReason = 'Already imported & split into ' + matches.length +
+                ' rows totaling ' + sumQty + ' (matches incoming).';
+            r._splitMatchIds = matches.map(function(m) { return m.id; });
+            r.tags = matches[0].tags || [];
+            fySkipRows.push(r);
+            return;
+        }
+
+        // Single match OR sum-mismatch — fall back to the legacy UPDATE-first.
+        // For the mismatch case, attach a hint so the preview UI / log can warn.
+        var primary = matches[0];
+        if (matches.length > 1 && !aggMatches) {
+            console.warn('Fyers re-import: ' + matches.length + ' existing rows for ' +
+                r.symbol + ' (' + r.transaction_type + ') sum to ' + sumQty +
+                ' but incoming qty is ' + incomingQty + ' — qty changed at broker. ' +
+                'Updating first row only; reconcile manually.');
+            r._splitMismatch = {
+                existingSum: sumQty,
+                incoming: incomingQty,
+                matchIds: matches.map(function(m) { return m.id; })
+            };
+        }
+        r._existingId = primary.id;
+        r._action = 'UPDATE';
+        r.tags = primary.tags || [];
+        fyUpdateRows.push(r);
     });
 
     // Add Excel-compatible fields so Fyers rows work in the shared preview modal
@@ -4177,7 +4219,15 @@ async function fyCheckDuplicates(rows) {
         err.isUpdate = false;
     });
 
-    console.log('Fyers duplicates: ' + fyNewRows.length + ' new, ' + fyUpdateRows.length + ' updates');
+    console.log('Fyers duplicates: ' + fyNewRows.length + ' new, ' +
+        fyUpdateRows.length + ' updates, ' +
+        fySkipRows.length + ' skipped (already imported & split)');
+    if (fySkipRows.length > 0 && typeof showAlert === 'function') {
+        showAlert(fySkipRows.length + ' Fyers row' +
+            (fySkipRows.length === 1 ? ' was' : 's were') +
+            ' skipped — already imported and split previously (totals match).',
+            'success', 5000);
+    }
 }
 
 // Build Transaction Record — Fyers wrapper around unified buildTransactionRecord()
@@ -4238,7 +4288,7 @@ window.fyImportToDatabase = async function() {
         brokerId: fyBrokerId,
         tradeDate: fyTradeDate,
         onReset: function() {
-            fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fyErrorRows = [];
+            fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fySkipRows = []; fyErrorRows = [];
             fyTradeDate = null;
             var fyStatus = document.getElementById('fyFetchStatus');
             if (fyStatus) fyStatus.textContent = '';
