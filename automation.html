@@ -292,17 +292,46 @@ details summary {
 
     <!-- Open Trades tab -->
     <div id="au-open-trades" class="automation-tab-panel">
-      <div class="au-soon">Open Trades view — coming in Phase 6 (after the runner is built).</div>
+      <div class="au-card">
+        <h3>Open PAPER Trades <span id="au-open-trades-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">All open trades across strategies. Each row shows the ENTRY signal that opened it; exits will be checked at every cron run.</div>
+        <div class="au-actions">
+          <button class="au-btn au-btn-secondary" onclick="autoLoadOpenTrades()">↻ Refresh</button>
+        </div>
+        <div id="au-open-trades-content" style="margin-top:12px">Click Refresh to load.</div>
+      </div>
     </div>
 
     <!-- Recent Events tab -->
     <div id="au-events" class="automation-tab-panel">
-      <div class="au-soon">Recent Events feed — coming in Phase 6.</div>
+      <div class="au-card">
+        <h3>Recent Events <span id="au-events-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Last 50 entries / exits across all strategies.</div>
+        <div class="au-actions">
+          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('all')">All</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('ENTRY')">Entries</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('EXIT')">Exits</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('email-failed')">Email Failed</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents(window._auEventsFilter || 'all')">↻ Refresh</button>
+        </div>
+        <div id="au-events-content" style="margin-top:12px">Click Refresh to load.</div>
+      </div>
     </div>
 
     <!-- Run History tab -->
     <div id="au-runs" class="automation-tab-panel">
-      <div class="au-soon">Run History — coming in Phase 6.</div>
+      <div class="au-card">
+        <h3>Run History <span id="au-runs-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Last 50 cron / manual runs. Includes EOD ingest, pairs scans, test stubs.</div>
+        <div class="au-actions">
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('all')">All</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('pairs')">Pairs</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('_eod_ingest')">EOD Ingest</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('failed')">Failed Only</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns(window._auRunsFilter || 'all')">↻ Refresh</button>
+        </div>
+        <div id="au-runs-content" style="margin-top:12px">Click Refresh to load.</div>
+      </div>
     </div>
 
   </div>

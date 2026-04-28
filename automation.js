@@ -24,6 +24,11 @@ function autoSwitchTab(tabId) {
     var panel = document.getElementById(tabId);
     if (btn) btn.classList.add('active');
     if (panel) panel.classList.add('active');
+
+    // Lazy-load on first activation of dashboard tabs
+    if (tabId === 'au-open-trades' && !window._auOpenTradesLoaded) { autoLoadOpenTrades(); window._auOpenTradesLoaded = true; }
+    if (tabId === 'au-events'      && !window._auEventsLoaded)     { autoLoadEvents('all');  window._auEventsLoaded = true; }
+    if (tabId === 'au-runs'        && !window._auRunsLoaded)       { autoLoadRuns('all');    window._auRunsLoaded = true; }
 }
 
 // ----------------------------------------------------------------------------
@@ -434,5 +439,258 @@ async function autoLoadStrategies() {
         el.innerHTML = html;
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
+    }
+}
+
+// ----------------------------------------------------------------------------
+// IST timestamp formatter — used everywhere a fired_at / started_at is shown.
+// ----------------------------------------------------------------------------
+
+function autoFmtIST(iso) {
+    if (!iso) return '—';
+    try {
+        return new Date(iso).toLocaleString('en-IN', {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+            timeZone: 'Asia/Kolkata',
+        });
+    } catch (_e) { return iso; }
+}
+
+function autoFmtDuration(ms) {
+    if (ms == null) return '—';
+    if (ms < 1000) return ms + 'ms';
+    return (ms / 1000).toFixed(1) + 's';
+}
+
+function autoStatusBadge(status) {
+    if (status === 'SUCCESS')  return '<span class="au-badge success">success</span>';
+    if (status === 'FAILED')   return '<span class="au-badge error">failed</span>';
+    if (status === 'RUNNING')  return '<span class="au-badge loading">running</span>';
+    return '<span class="au-badge idle">' + autoEsc(String(status || '—').toLowerCase()) + '</span>';
+}
+
+// ----------------------------------------------------------------------------
+// Open Trades tab
+// ----------------------------------------------------------------------------
+//
+// v_auto_open_trades is sparse (trade_id, strategy_name, net_position). To
+// give the user something useful, we join client-side to auto_signals to fetch
+// the ENTRY row for each open trade — that carries the metadata (Pair, Z90,
+// Score, Action, Z_Target, Z_Stop, qtys, etc).
+
+async function autoLoadOpenTrades() {
+    var el = document.getElementById('au-open-trades-content');
+    var statusEl = document.getElementById('au-open-trades-status');
+    if (!el) return;
+    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+    el.innerHTML = '<div class="au-meta">⏳ Loading open trades…</div>';
+
+    try {
+        // 1) Get list of open trade_ids from the view
+        var openResp = await fetch(
+            SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=*',
+            { headers: wmsHeaders() }
+        );
+        var openRows = await openResp.json();
+        if (!Array.isArray(openRows) || openRows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No open trades.</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 open'; }
+            return;
+        }
+
+        // 2) Fetch ENTRY signals for those trade_ids
+        var tradeIds = openRows.map(function (r) { return r.trade_id; });
+        var idsList = tradeIds.map(encodeURIComponent).join(',');
+        var sigResp = await fetch(
+            SUPABASE_URL + '/rest/v1/auto_signals?event_type=eq.ENTRY&trade_id=in.(' + idsList + ')&select=trade_id,fired_at,score,direction,legs,metadata,strategy_name',
+            { headers: wmsHeaders() }
+        );
+        var sigRows = await sigResp.json();
+        var byTrade = {};
+        sigRows.forEach(function (s) { byTrade[s.trade_id] = s; });
+
+        var now = Date.now();
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Pair</th>' +
+                '<th style="padding:6px 8px">Strategy</th>' +
+                '<th style="padding:6px 8px">Action</th>' +
+                '<th style="padding:6px 8px">Entry</th>' +
+                '<th style="padding:6px 8px">Days</th>' +
+                '<th style="padding:6px 8px">Entry Z90</th>' +
+                '<th style="padding:6px 8px">Z<sub>tgt</sub> / Z<sub>stop</sub></th>' +
+                '<th style="padding:6px 8px">Score</th>' +
+                '<th style="padding:6px 8px">Net Position</th>' +
+                '<th style="padding:6px 8px">Trade</th>' +
+                '</tr></thead><tbody>';
+        openRows.forEach(function (ot) {
+            var sig = byTrade[ot.trade_id];
+            var m = (sig && sig.metadata) || {};
+            var pair = m.Pair || '—';
+            var action = m.Action || (sig ? sig.direction : '—');
+            var entry = sig ? autoFmtIST(sig.fired_at) : '—';
+            var daysHeld = sig ? Math.floor((now - new Date(sig.fired_at).getTime()) / 86400000) : '—';
+            var entryZ = m.Z90 != null ? m.Z90 : '—';
+            var zTgt = m.Z_Target != null ? m.Z_Target : '—';
+            var zStop = m.Z_Stop != null ? m.Z_Stop : '—';
+            var score = sig ? (sig.score + '/' + (m.Score_Max || 13)) : '—';
+            // net_position is a JSONB object — render as compact string
+            var netPos = ot.net_position ? Object.keys(ot.net_position).map(function (k) {
+                var v = ot.net_position[k];
+                return (v > 0 ? '+' : '') + v + ' ' + k.replace('NSE:', '').replace('-EQ', '');
+            }).join(' / ') : '—';
+            var tradeFrag = ot.trade_id ? ot.trade_id.slice(0, 8) + '…' : '—';
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px"><strong>' + autoEsc(pair) + '</strong></td>' +
+                    '<td style="padding:6px 8px"><code>' + autoEsc(ot.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(action) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(entry) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(String(daysHeld)) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(String(entryZ)) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(String(zTgt)) + ' / ' + autoEsc(String(zStop)) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(score) + '</td>' +
+                    '<td style="padding:6px 8px;font-size:11px">' + autoEsc(netPos) + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(tradeFrag) + '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = openRows.length + ' open'; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
+        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Recent Events tab — auto_signals listing
+// ----------------------------------------------------------------------------
+
+async function autoLoadEvents(filter) {
+    window._auEventsFilter = filter || 'all';
+    var el = document.getElementById('au-events-content');
+    var statusEl = document.getElementById('au-events-status');
+    if (!el) return;
+    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+    el.innerHTML = '<div class="au-meta">⏳ Loading events…</div>';
+
+    var qs = '?select=id,trade_id,strategy_name,fired_at,event_type,direction,score,email_status,email_subject,metadata&order=fired_at.desc&limit=50';
+    if (filter === 'ENTRY')        qs += '&event_type=eq.ENTRY';
+    else if (filter === 'EXIT')    qs += '&event_type=neq.ENTRY';
+    else if (filter === 'email-failed') qs += '&email_status=eq.FAILED';
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_signals' + qs, { headers: wmsHeaders() });
+        var rows = await resp.json();
+        if (!Array.isArray(rows) || rows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No events match this filter.</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 events'; }
+            return;
+        }
+
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Time</th>' +
+                '<th style="padding:6px 8px">Strategy</th>' +
+                '<th style="padding:6px 8px">Pair</th>' +
+                '<th style="padding:6px 8px">Type</th>' +
+                '<th style="padding:6px 8px">Score</th>' +
+                '<th style="padding:6px 8px">Email</th>' +
+                '<th style="padding:6px 8px">Trade</th>' +
+                '</tr></thead><tbody>';
+        rows.forEach(function (s) {
+            var m = s.metadata || {};
+            var pair = m.Pair || '—';
+            var typeColor = s.event_type === 'ENTRY' ? '#047857' :
+                           s.event_type === 'TARGET_HIT' ? '#0891b2' :
+                           s.event_type === 'STOP_HIT' ? '#dc2626' :
+                           s.event_type === 'TIME_STOP' ? '#92400e' : '#6b7280';
+            var emailBadge = s.email_status === 'SENT' ? '<span class="au-badge success">sent</span>' :
+                             s.email_status === 'FAILED' ? '<span class="au-badge error">failed</span>' :
+                             s.email_status === 'PENDING' ? '<span class="au-badge loading">pending</span>' :
+                             '<span class="au-badge idle">—</span>';
+            var tradeFrag = s.trade_id ? s.trade_id.slice(0, 8) + '…' : '—';
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px;white-space:nowrap">' + autoEsc(autoFmtIST(s.fired_at)) + '</td>' +
+                    '<td style="padding:6px 8px"><code>' + autoEsc(s.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px"><strong>' + autoEsc(pair) + '</strong></td>' +
+                    '<td style="padding:6px 8px;color:' + typeColor + ';font-weight:600">' + autoEsc(s.event_type) + '</td>' +
+                    '<td style="padding:6px 8px">' + (s.score != null ? s.score : '—') + '</td>' +
+                    '<td style="padding:6px 8px">' + emailBadge + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(tradeFrag) + '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = rows.length + ' events'; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
+        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Run History tab — auto_runs listing
+// ----------------------------------------------------------------------------
+
+async function autoLoadRuns(filter) {
+    window._auRunsFilter = filter || 'all';
+    var el = document.getElementById('au-runs-content');
+    var statusEl = document.getElementById('au-runs-status');
+    if (!el) return;
+    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+    el.innerHTML = '<div class="au-meta">⏳ Loading runs…</div>';
+
+    var qs = '?select=id,strategy_name,started_at,finished_at,duration_ms,status,signals_generated,emails_sent,emails_failed,error&order=started_at.desc&limit=50';
+    if (filter === 'pairs')           qs += '&strategy_name=eq.pairs';
+    else if (filter === '_eod_ingest') qs += '&strategy_name=eq._eod_ingest';
+    else if (filter === 'failed')     qs += '&status=eq.FAILED';
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_runs' + qs, { headers: wmsHeaders() });
+        var rows = await resp.json();
+        if (!Array.isArray(rows) || rows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No runs match this filter.</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 runs'; }
+            return;
+        }
+
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Started</th>' +
+                '<th style="padding:6px 8px">Strategy</th>' +
+                '<th style="padding:6px 8px">Status</th>' +
+                '<th style="padding:6px 8px">Signals</th>' +
+                '<th style="padding:6px 8px">Email</th>' +
+                '<th style="padding:6px 8px">Duration</th>' +
+                '<th style="padding:6px 8px">Error</th>' +
+                '</tr></thead><tbody>';
+        rows.forEach(function (r) {
+            var emailCell = '—';
+            if (r.emails_sent || r.emails_failed) {
+                var sent = r.emails_sent || 0, failed = r.emails_failed || 0;
+                emailCell = (failed > 0 ? '<span style="color:#dc2626">' + failed + ' failed</span>' : '') +
+                            (sent > 0 && failed > 0 ? ' / ' : '') +
+                            (sent > 0 ? '<span style="color:#047857">' + sent + ' sent</span>' : '');
+            }
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px;white-space:nowrap">' + autoEsc(autoFmtIST(r.started_at)) + '</td>' +
+                    '<td style="padding:6px 8px"><code>' + autoEsc(r.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px">' + autoStatusBadge(r.status) + '</td>' +
+                    '<td style="padding:6px 8px">' + (r.signals_generated != null ? r.signals_generated : '—') + '</td>' +
+                    '<td style="padding:6px 8px;font-size:11px">' + emailCell + '</td>' +
+                    '<td style="padding:6px 8px">' + autoFmtDuration(r.duration_ms) + '</td>' +
+                    '<td style="padding:6px 8px;color:#7f1d1d;font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(r.error || '') + '">' +
+                        autoEsc((r.error || '').slice(0, 80)) + (r.error && r.error.length > 80 ? '…' : '') +
+                    '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = rows.length + ' runs'; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
+        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
     }
 }
