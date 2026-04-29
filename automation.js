@@ -717,10 +717,15 @@ async function autoFetchLatestPrices(sigRows) {
         var idToSym = {};
         var secIds = secs.map(function (r) { idToSym[r.id] = r.symbol; return r.id; });
 
-        // Pull recent prices per security_id (last few days, pick max client-side)
+        // Pull recent prices per security_id. Filter by date window (last 10
+        // calendar days) instead of a row limit — earlier "limit = N*7" trick
+        // returned all rows for the first security_id only because PostgREST
+        // sorts globally, not per-group. 10 days × universe ≈ 800 rows, well
+        // under PostgREST's 1000-row default page cap.
+        var cutoff = new Date(Date.now() - 10 * 86400 * 1000).toISOString().slice(0, 10);
         var idsList = secIds.map(encodeURIComponent).join(',');
         var priceResp = await fetch(
-            SUPABASE_URL + '/rest/v1/market_prices?security_id=in.(' + idsList + ')&select=security_id,price_date,close&order=security_id,price_date.desc&limit=' + (secIds.length * 7),
+            SUPABASE_URL + '/rest/v1/market_prices?security_id=in.(' + idsList + ')&price_date=gte.' + cutoff + '&select=security_id,price_date,close&order=price_date.desc',
             { headers: wmsHeaders() }
         );
         var prices = await priceResp.json();
