@@ -442,11 +442,15 @@ async function autoLoadStrategies() {
                 : '';
             var actions = '';
             if (!isSentinel) {
+                // Pause/Resume only. Recipient editing intentionally NOT exposed:
+                // Resend free tier blocks the whole send if any recipient is
+                // unverified, so adding new addresses via UI gives a false UX.
+                // Re-enable in Phase 7b once we have per-recipient send-loop
+                // OR a verified Resend sending domain. Until then, edit the
+                // recipients JSONB via Supabase Studio or DevTools console.
                 actions += '<button class="au-btn au-btn-secondary" style="padding:4px 8px;font-size:11px"' +
                            ' onclick="autoToggleStrategy(' + JSON.stringify(r.name).replace(/"/g, '&quot;') + ',' + r.enabled + ')">' +
-                           (r.enabled ? '⏸ Pause' : '▶ Resume') + '</button>' +
-                           ' <button class="au-btn au-btn-secondary" style="padding:4px 8px;font-size:11px"' +
-                           ' onclick="autoOpenRecipientsModal(' + JSON.stringify(r.name).replace(/"/g, '&quot;') + ')">✏ Recipients</button>';
+                           (r.enabled ? '⏸ Pause' : '▶ Resume') + '</button>';
             } else {
                 actions = '<span style="color:#9ca3af;font-size:11px">(sentinel)</span>';
             }
