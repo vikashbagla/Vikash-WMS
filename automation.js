@@ -413,7 +413,7 @@ async function autoLoadStrategies() {
     el.textContent = 'Loading…';
     try {
         var resp = await fetch(
-            SUPABASE_URL + '/rest/v1/auto_strategies?select=name,display_name,version,owner,enabled,execution_mode&order=name',
+            SUPABASE_URL + '/rest/v1/auto_strategies?select=name,display_name,version,owner,enabled,execution_mode,recipients&order=name',
             { headers: wmsHeaders() }
         );
         var rows = await resp.json();
@@ -421,24 +421,233 @@ async function autoLoadStrategies() {
             el.innerHTML = '<em style="color:#9ca3af">No strategies registered yet.</em>';
             return;
         }
-        var html = '<div style="width:100%"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        // Cache for the recipient-editor modal
+        window._auStrategiesCache = rows;
+        var html = '<div style="width:100%;overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
         html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
-                '<th style="padding:6px 8px">Name</th><th style="padding:6px 8px">Display</th>' +
-                '<th style="padding:6px 8px">Version</th><th style="padding:6px 8px">Owner</th>' +
-                '<th style="padding:6px 8px">Enabled</th><th style="padding:6px 8px">Mode</th></tr></thead><tbody>';
+                '<th style="padding:6px 8px">Name</th>' +
+                '<th style="padding:6px 8px">Display</th>' +
+                '<th style="padding:6px 8px">Version</th>' +
+                '<th style="padding:6px 8px">Enabled</th>' +
+                '<th style="padding:6px 8px">Mode</th>' +
+                '<th style="padding:6px 8px">Recipients</th>' +
+                '<th style="padding:6px 8px">Actions</th>' +
+                '</tr></thead><tbody>';
         rows.forEach(function (r) {
+            // Sentinel strategies (names starting with _) — read-only display
+            var isSentinel = r.name.startsWith('_');
+            var recipientsCount = Array.isArray(r.recipients) ? r.recipients.length : 0;
+            var recipientsTitle = Array.isArray(r.recipients)
+                ? r.recipients.map(function (x) { return (x.name || '') + ' <' + x.email + '>'; }).join(', ')
+                : '';
+            var actions = '';
+            if (!isSentinel) {
+                actions += '<button class="au-btn au-btn-secondary" style="padding:4px 8px;font-size:11px"' +
+                           ' onclick="autoToggleStrategy(' + JSON.stringify(r.name).replace(/"/g, '&quot;') + ',' + r.enabled + ')">' +
+                           (r.enabled ? '⏸ Pause' : '▶ Resume') + '</button>' +
+                           ' <button class="au-btn au-btn-secondary" style="padding:4px 8px;font-size:11px"' +
+                           ' onclick="autoOpenRecipientsModal(' + JSON.stringify(r.name).replace(/"/g, '&quot;') + ')">✏ Recipients</button>';
+            } else {
+                actions = '<span style="color:#9ca3af;font-size:11px">(sentinel)</span>';
+            }
             html += '<tr style="border-top:1px solid #e5e7eb">' +
                     '<td style="padding:6px 8px"><code>' + autoEsc(r.name) + '</code></td>' +
                     '<td style="padding:6px 8px">' + autoEsc(r.display_name) + '</td>' +
                     '<td style="padding:6px 8px">' + autoEsc(r.version || '—') + '</td>' +
-                    '<td style="padding:6px 8px">' + autoEsc(r.owner) + '</td>' +
-                    '<td style="padding:6px 8px">' + (r.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge idle">no</span>') + '</td>' +
-                    '<td style="padding:6px 8px">' + autoEsc(r.execution_mode) + '</td></tr>';
+                    '<td style="padding:6px 8px">' + (r.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge idle">paused</span>') + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(r.execution_mode) + '</td>' +
+                    '<td style="padding:6px 8px" title="' + autoEsc(recipientsTitle) + '">' + recipientsCount + '</td>' +
+                    '<td style="padding:6px 8px">' + actions + '</td>' +
+                    '</tr>';
         });
         html += '</tbody></table></div>';
         el.innerHTML = html;
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Strategy write actions (Phase 7a)
+// ----------------------------------------------------------------------------
+
+async function autoToggleStrategy(name, currentlyEnabled) {
+    var verb = currentlyEnabled ? 'Pause' : 'Resume';
+    var consequence = currentlyEnabled
+        ? 'No new scans will run for "' + name + '" until you Resume it. Open trades are NOT auto-managed while paused (no exit checks).'
+        : 'Strategy "' + name + '" will resume scanning at the next cron tick (next: every weekday at 9:30 / 11:30 / 13:30 / 15:15 IST).';
+    if (!confirm(verb + ' strategy "' + name + '"?\n\n' + consequence)) return;
+    try {
+        var resp = await fetch(
+            SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
+            { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+              body: JSON.stringify({ enabled: !currentlyEnabled }) }
+        );
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+        autoLoadStrategies();
+    } catch (e) {
+        alert('Failed to update: ' + (e.message || e));
+    }
+}
+
+function autoOpenRecipientsModal(name) {
+    var strat = (window._auStrategiesCache || []).find(function (s) { return s.name === name; });
+    if (!strat) { alert('Strategy "' + name + '" not loaded — refresh the strategies list.'); return; }
+    var rcpts = Array.isArray(strat.recipients) ? strat.recipients.slice() : [];
+    // Render modal
+    var modal = document.getElementById('au-recipients-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'au-recipients-modal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML =
+        '<div style="background:#fff;border-radius:8px;max-width:560px;width:90%;padding:20px;box-shadow:0 8px 24px rgba(0,0,0,0.18)">' +
+            '<h3 style="margin:0 0 4px;font-size:15px;color:#1f2937">Recipients for <code>' + autoEsc(name) + '</code></h3>' +
+            '<p style="margin:0 0 12px;font-size:12px;color:#6b7280">Anyone listed here gets the strategy\'s alert email on every signal. ' +
+            'The first email must match a Resend-verified address (currently <code>vikash.bagla@gmail.com</code>); additional recipients should be handled via Gmail forwards or domain verification.</p>' +
+            '<div id="au-recipients-rows"></div>' +
+            '<div style="margin-top:8px"><button class="au-btn au-btn-secondary" onclick="autoAddRecipientRow()">+ Add recipient</button></div>' +
+            '<div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end">' +
+                '<button class="au-btn au-btn-secondary" onclick="autoCloseRecipientsModal()">Cancel</button>' +
+                '<button class="au-btn au-btn-primary" onclick="autoSaveRecipients(' + JSON.stringify(name).replace(/"/g, '&quot;') + ')">Save</button>' +
+            '</div>' +
+        '</div>';
+    autoRenderRecipientsRows(rcpts);
+}
+
+function autoCloseRecipientsModal() {
+    var modal = document.getElementById('au-recipients-modal');
+    if (modal) modal.remove();
+}
+
+function autoRenderRecipientsRows(arr) {
+    var box = document.getElementById('au-recipients-rows');
+    if (!box) return;
+    if (arr.length === 0) { box.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:8px 0">No recipients — add at least one.</div>'; return; }
+    var html = '';
+    arr.forEach(function (r, i) {
+        html += '<div class="au-rcpt-row" style="display:flex;gap:6px;margin-bottom:6px;align-items:center">' +
+                '<input class="au-rcpt-name"  data-i="' + i + '" placeholder="Name"  value="' + autoEsc(r.name || '') + '" style="flex:1;padding:6px;border:1px solid #d1d5db;border-radius:4px;font-size:12px">' +
+                '<input class="au-rcpt-email" data-i="' + i + '" placeholder="email" value="' + autoEsc(r.email || '') + '" style="flex:2;padding:6px;border:1px solid #d1d5db;border-radius:4px;font-size:12px">' +
+                '<button class="au-btn au-btn-danger" style="padding:4px 10px;font-size:11px" onclick="autoRemoveRecipientRow(' + i + ')">×</button>' +
+                '</div>';
+    });
+    box.innerHTML = html;
+    box.dataset.rcpts = JSON.stringify(arr);
+}
+
+function autoCollectRecipientsFromForm() {
+    var rows = document.querySelectorAll('#au-recipients-rows .au-rcpt-row');
+    var arr = [];
+    rows.forEach(function (row) {
+        var name  = (row.querySelector('.au-rcpt-name')  || {}).value || '';
+        var email = (row.querySelector('.au-rcpt-email') || {}).value || '';
+        arr.push({ name: name.trim(), email: email.trim() });
+    });
+    return arr;
+}
+
+function autoAddRecipientRow() {
+    var current = autoCollectRecipientsFromForm();
+    current.push({ name: '', email: '' });
+    autoRenderRecipientsRows(current);
+}
+
+function autoRemoveRecipientRow(i) {
+    var current = autoCollectRecipientsFromForm();
+    current.splice(i, 1);
+    autoRenderRecipientsRows(current);
+}
+
+async function autoSaveRecipients(name) {
+    var rcpts = autoCollectRecipientsFromForm().filter(function (r) { return r.email; });
+    // Basic email shape validation
+    var bad = rcpts.find(function (r) { return !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email); });
+    if (bad) { alert('Invalid email: ' + bad.email); return; }
+    if (rcpts.length === 0) {
+        if (!confirm('No recipients — emails will not be sent for any future signal. Continue?')) return;
+    }
+    try {
+        var resp = await fetch(
+            SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
+            { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+              body: JSON.stringify({ recipients: rcpts }) }
+        );
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+        autoCloseRecipientsModal();
+        autoLoadStrategies();
+    } catch (e) {
+        alert('Failed to save: ' + (e.message || e));
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Manual close (Phase 7a)
+// ----------------------------------------------------------------------------
+//
+// v_auto_open_trades closes a trade when net qty per symbol == 0. So a manual
+// close is just a signal row whose legs are the reverse-side of the ENTRY's
+// legs, same qty. event_type='MANUAL_CLOSE' for audit trail; email_status set
+// to PENDING but no email actually sent — chassis is the only thing that calls
+// Resend, and we skip that here. Operator already knows they closed it.
+
+async function autoManualClose(tradeId) {
+    if (!tradeId) return;
+    // Pull the ENTRY signal for this trade to get the legs
+    var entryResp = await fetch(
+        SUPABASE_URL + '/rest/v1/auto_signals?trade_id=eq.' + encodeURIComponent(tradeId) + '&event_type=eq.ENTRY&select=*',
+        { headers: wmsHeaders() }
+    );
+    var entries = await entryResp.json();
+    if (!Array.isArray(entries) || entries.length === 0) {
+        alert('Could not find ENTRY signal for trade ' + tradeId.slice(0, 8));
+        return;
+    }
+    var entry = entries[0];
+    var pair = (entry.metadata && entry.metadata.Pair) || '(unknown pair)';
+    var prompt = 'Manually close ' + pair + '?\n\n' +
+                 'This inserts a CLOSE signal with reversed legs at entry prices. The trade will disappear from Open Trades immediately. ' +
+                 'NO email is sent. P&L will be computed against actual market close prices in the Performance dashboard (Phase 8).\n\n' +
+                 'Trade: ' + tradeId.slice(0, 8) + '…';
+    if (!confirm(prompt)) return;
+
+    var closeLegs = (entry.legs || []).map(function (leg) {
+        return Object.assign({}, leg, { side: leg.side === 'BUY' ? 'SELL' : 'BUY' });
+    });
+    var payload = {
+        trade_id: tradeId,
+        strategy_name: entry.strategy_name,
+        execution_mode: entry.execution_mode || 'PAPER',
+        event_type: 'MANUAL_CLOSE',
+        direction: 'CLOSE',
+        score: 0,
+        legs: closeLegs,
+        metadata: {
+            Pair: pair,
+            exit_reason: 'manual close by operator',
+            manual_override: true,
+            entry_signal_id: entry.id,
+        },
+        notes: 'Manually closed by operator at ' + new Date().toISOString(),
+        email_status: 'SKIPPED',
+        email_subject: null,
+        email_recipients: null,
+    };
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_signals', {
+            method: 'POST',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+            body: JSON.stringify(payload),
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+        autoLoadOpenTrades();
+        // Also refresh events tab if it's been visited
+        if (window._auEventsLoaded) autoLoadEvents(window._auEventsFilter || 'all');
+    } catch (e) {
+        alert('Failed to close: ' + (e.message || e));
     }
 }
 
@@ -523,6 +732,7 @@ async function autoLoadOpenTrades() {
                 '<th style="padding:6px 8px">Score</th>' +
                 '<th style="padding:6px 8px">Net Position</th>' +
                 '<th style="padding:6px 8px">Trade</th>' +
+                '<th style="padding:6px 8px">Action</th>' +
                 '</tr></thead><tbody>';
         openRows.forEach(function (ot) {
             var sig = byTrade[ot.trade_id];
@@ -552,6 +762,8 @@ async function autoLoadOpenTrades() {
                     '<td style="padding:6px 8px">' + autoEsc(score) + '</td>' +
                     '<td style="padding:6px 8px;font-size:11px">' + autoEsc(netPos) + '</td>' +
                     '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(tradeFrag) + '</td>' +
+                    '<td style="padding:6px 8px"><button class="au-btn au-btn-danger" style="padding:4px 8px;font-size:11px"' +
+                        ' onclick="autoManualClose(' + JSON.stringify(ot.trade_id).replace(/"/g, '&quot;') + ')">✕ Close</button></td>' +
                     '</tr>';
         });
         html += '</tbody></table></div>';
