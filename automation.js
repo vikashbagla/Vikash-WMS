@@ -726,7 +726,12 @@ async function autoFetchLatestPrices(sigRows) {
                 data.d.forEach(function (item) {
                     var v = item && item.v;
                     if (v && Number.isFinite(v.lp) && v.lp > 0 && v.short_name) {
-                        result[v.short_name] = { close: v.lp, date: 'live' };
+                        // Fyers returns short_name with NSE series suffix (e.g.
+                        // "TATASTEEL-EQ" / "ITC-BE" / "GOLDBEES-BE"); our legs
+                        // store short_symbol without it. Strip any trailing
+                        // -XX series code so the keys line up.
+                        var key = v.short_name.replace(/-(EQ|BE|BZ|BL|SM|ST)$/i, '');
+                        result[key] = { close: v.lp, date: 'live' };
                     }
                 });
             }
