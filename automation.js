@@ -698,16 +698,48 @@ function autoStatusBadge(status) {
 // eod-prices-ingest runs at 18:00 IST. Tooltip shows the mark date.
 
 async function autoFetchLatestPrices(sigRows) {
-    var symbols = new Set();
+    // Mark prices for live P&L. Reuses the app-wide Fyers quote helper
+    // (window.fyersCall) — which routes through the existing fyers-market-data
+    // Edge Function and uses the user's Fyers token from localStorage. No new
+    // server endpoint needed. Returns { SHORT_SYMBOL: { close, date } } where
+    // close = live LTP and date = 'live'. Falls back to market_prices last
+    // close per symbol if Fyers is unreachable (e.g. token expired).
+    var fyersKeys = new Set();
+    var shortToFyers = {};
     sigRows.forEach(function (s) {
-        (s.legs || []).forEach(function (l) { if (l.short_symbol) symbols.add(l.short_symbol); });
+        (s.legs || []).forEach(function (l) {
+            if (l.symbol) {
+                fyersKeys.add(l.symbol);
+                shortToFyers[l.short_symbol] = l.symbol;
+            }
+        });
     });
     var result = {};
-    if (symbols.size === 0) return result;
+    if (fyersKeys.size === 0) return result;
 
+    // Try Fyers live LTPs first
+    if (typeof window.fyersCall === 'function') {
+        try {
+            var keys = Array.from(fyersKeys);
+            var data = await window.fyersCall({ action: 'quotes', symbols: keys });
+            if (data && Array.isArray(data.d)) {
+                data.d.forEach(function (item) {
+                    var v = item && item.v;
+                    if (v && Number.isFinite(v.lp) && v.lp > 0 && v.short_name) {
+                        result[v.short_name] = { close: v.lp, date: 'live' };
+                    }
+                });
+            }
+            // If we got prices for all requested symbols, return early — fully live
+            if (Object.keys(result).length === fyersKeys.size) return result;
+        } catch (_e) { /* fall through to market_prices fallback */ }
+    }
+
+    // Fallback: latest close from market_prices for any symbols Fyers didn't return
     try {
-        // Resolve short_symbol -> security_id
-        var symList = Array.from(symbols).map(encodeURIComponent).join(',');
+        var missing = Object.keys(shortToFyers).filter(function (s) { return !result[s]; });
+        if (missing.length === 0) return result;
+        var symList = missing.map(encodeURIComponent).join(',');
         var secResp = await fetch(
             SUPABASE_URL + '/rest/v1/securities_db?symbol=in.(' + symList + ')&select=id,symbol',
             { headers: wmsHeaders() }
@@ -716,12 +748,6 @@ async function autoFetchLatestPrices(sigRows) {
         if (!Array.isArray(secs) || secs.length === 0) return result;
         var idToSym = {};
         var secIds = secs.map(function (r) { idToSym[r.id] = r.symbol; return r.id; });
-
-        // Pull recent prices per security_id. Filter by date window (last 10
-        // calendar days) instead of a row limit — earlier "limit = N*7" trick
-        // returned all rows for the first security_id only because PostgREST
-        // sorts globally, not per-group. 10 days × universe ≈ 800 rows, well
-        // under PostgREST's 1000-row default page cap.
         var cutoff = new Date(Date.now() - 10 * 86400 * 1000).toISOString().slice(0, 10);
         var idsList = secIds.map(encodeURIComponent).join(',');
         var priceResp = await fetch(
@@ -731,12 +757,12 @@ async function autoFetchLatestPrices(sigRows) {
         var prices = await priceResp.json();
         prices.forEach(function (p) {
             var sym = idToSym[p.security_id];
-            if (!sym) return;
+            if (!sym || result[sym]) return;
             if (!result[sym] || p.price_date > result[sym].date) {
                 result[sym] = { close: p.close, date: p.price_date };
             }
         });
-    } catch (_e) { /* swallow — UI shows '—' for missing prices */ }
+    } catch (_e) { /* keep whatever Fyers returned */ }
     return result;
 }
 
