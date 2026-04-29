@@ -58,7 +58,15 @@ var lgVM = wmsViewManager({
     onSaveComplete: function() {
         var prompt = document.getElementById('lgSavePrompt');
         if (prompt) prompt.style.display = 'none';
-    }
+    },
+    // View-filter lock (LESSONS §E.17.8) — a view becomes filter-locked once
+    // any ledger_entry references it. Used by wmsViewManager.updateCurrentView
+    // to refuse mutation, and by the app to disable the Update View button.
+    isViewLocked: function(viewId) { return lgIsViewLocked(viewId); },
+    // Pre-delete hook — warn about orphaning ledger entries before allowing
+    // deletion. ON DELETE SET NULL means entries survive but lose their view
+    // pointer and revert to legacy-column scope matching.
+    beforeDelete: function(viewId) { return lgConfirmViewDelete(viewId); }
 });
 
 // Data
@@ -316,6 +324,10 @@ function lgInit() {
     // Recon banner Review button (Layer 3a → 3b)
     var reconReviewBtn = document.getElementById('lgReconBannerReviewBtn');
     if (reconReviewBtn) reconReviewBtn.addEventListener('click', lgReconReviewOpen);
+
+    // Cancel Reconciliation button inside the review modal (deletes the recon row).
+    var reconDelBtn = document.getElementById('lgReconReviewDeleteBtn');
+    if (reconDelBtn) reconDelBtn.addEventListener('click', lgReconReviewCancel);
 
     // Review modal: click a row to open the txn's Edit modal.
     var reconReviewBody = document.getElementById('lgReconReviewBody');
@@ -883,9 +895,14 @@ async function lgRefresh() {
     // Stash for Layer 3a (recon drift detection) — see lgCheckReconDrift.
     lgFullCombined = fullCombined;
 
+    // Refresh the view-filter lock state (which views have ledger entries)
+    // — drives the Update View button's enabled state and the pre-POST gate.
+    await lgLoadViewLockState();
+
     lgRenderEntries(lgCombined);
     lgRenderSummary();
     lgUpdateAddRowAvailability();
+    lgUpdateViewLockUI();
     lgCheckReconDrift();
 }
 
@@ -1261,20 +1278,26 @@ async function lgSaveOpeningBalance() {
 
     try {
         if (ob.exists && ob.id) {
-            // Update existing opening balance
+            // Update existing opening balance — PATCH only amount, scope
+            // columns/view_id preserved as originally saved.
             await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + ob.id, {
                 method: 'PATCH',
                 headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
                 body: JSON.stringify({ amount: newAmount })
             });
         } else {
-            // Create new opening balance entry
+            // Create new opening balance entry — pre-ledger-POST gate required.
+            var viewId = await lgEnsureViewSaved('set opening balance');
+            if (!viewId) { lgObEditing = false; lgRefresh(); return; }
             var entryDate = lgDateFrom || new Date().toISOString().slice(0, 10);
             await fetch(SUPABASE_URL + '/rest/v1/ledger_entries', {
                 method: 'POST',
                 headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
                 body: JSON.stringify({
                     investor_id: investorId,
+                    trader_id: (lgSelectedTraderIds && lgSelectedTraderIds.length === 1) ? lgSelectedTraderIds[0] : null,
+                    broker_id: (lgSelectedBrokerIds && lgSelectedBrokerIds.length === 1) ? lgSelectedBrokerIds[0] : null,
+                    view_id: viewId,
                     entry_date: entryDate,
                     entry_type: 'OPENING_BALANCE',
                     amount: newAmount,
@@ -1713,6 +1736,11 @@ async function lgReconcileUpTo(reconDate, reconBalance) {
         showAlert('Select exactly one investor (or trader) to reconcile', 'warning', 4000);
         return;
     }
+
+    // Pre-ledger-POST gate — every ledger write must carry view_id.
+    var viewId = await lgEnsureViewSaved('reconcile');
+    if (!viewId) return;
+
     var fmtBal = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(reconBalance) : String(reconBalance);
     var prettyDate = lgFmtDate(reconDate) || reconDate;
     var msg = 'Reconcile all entries up to and including ' + prettyDate + '?\n\n' +
@@ -1727,12 +1755,13 @@ async function lgReconcileUpTo(reconDate, reconBalance) {
             body: JSON.stringify({
                 investor_id: investorId,
                 // Carry trader + broker through if the current filter resolves to a
-                // single value — matches how add-entry scopes recon to the filtered
-                // slice. If multiple or none selected, leave null so the recon row
-                // is investor-wide (visible across all trader/broker combos for
-                // this investor).
+                // single value — legacy columns retained for queryability and as
+                // scope fallback for rows predating the view_id migration (§39).
                 trader_id: (lgSelectedTraderIds && lgSelectedTraderIds.length === 1) ? lgSelectedTraderIds[0] : null,
                 broker_id: (lgSelectedBrokerIds && lgSelectedBrokerIds.length === 1) ? lgSelectedBrokerIds[0] : null,
+                // Canonical scope — points at the portfolio_views row whose
+                // filter was active when this reconciliation was saved.
+                view_id: viewId,
                 entry_date: reconDate,
                 entry_type: 'RECONCILIATION',
                 amount: reconBalance,
@@ -1884,47 +1913,80 @@ function lgReconReviewOpen() {
     var reconEntryDate = reconRow.date;
     var prettyDate = lgFmtDate(reconEntryDate) || reconEntryDate;
 
-    // Summary header.
-    var summary = document.getElementById('lgReconReviewSummary');
-    if (summary) {
-        var diffAbs = Math.abs(lgReconBannerState.diff || 0);
-        var diffStr = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(diffAbs) : String(diffAbs);
-        summary.innerHTML =
-            'Reconciliation on <b>' + wmsEsc(prettyDate) + '</b>. ' +
-            'Pre-reconciliation trades modified since then (edits only). ' +
-            'Unexplained balance diff of <b>' + wmsEsc(diffStr) + '</b> may be due to a delete — ' +
-            'deletes are not itemised here.';
-    }
+    // Stash the recon id on the modal so the "Cancel Reconciliation" button
+    // knows which row to delete.
+    modal.dataset.reconEntryId = (reconSrc.id || '');
 
-    // Build list.
-    var body = document.getElementById('lgReconReviewBody');
-    if (!body) return;
+    var diffAbs = Math.abs(lgReconBannerState.diff || 0);
+    var diffStr = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(diffAbs) : String(diffAbs);
+    var directionWord = lgReconBannerState.diff < 0 ? 'higher' : 'lower';
+    var storedStr = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(lgReconBannerState.storedAmt || 0) : String(lgReconBannerState.storedAmt || 0);
+    var computedStr = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(lgReconBannerState.computedBal || 0) : String(lgReconBannerState.computedBal || 0);
+
+    // Scope-filter pre-recon txns modified since the recon.  updated_at is
+    // populated server-side on every PATCH (after the 2026-04-24 edit-save
+    // fix that uses return=representation — older edits saved before that
+    // deploy may carry stale in-memory updated_at).
+    //
+    // Scope matching (§E.17.8): prefer the recon's view.filters (via its
+    // view_id FK); fall back to the legacy investor_id/trader_id/broker_id
+    // columns when view_id is absent (legacy rows / ad-hoc recons).
+    var reconView = reconSrc.view_id
+        ? lgVM.views.find(function(v) { return v.id === reconSrc.view_id; })
+        : null;
+    var matchByView = reconView && reconView.filters && typeof wmsMatchesViewFilter === 'function';
 
     var dirty = (trTransactions || []).filter(function(t) {
         if (!t.transaction_date || t.transaction_date > reconEntryDate) return false;
         if (!t.updated_at || !reconCreatedAt) return false;
         if (t.updated_at <= reconCreatedAt) return false;
-        // Match recon scope: investor always required; trader/broker only if
-        // the recon was narrowed to them.
-        if (reconSrc.investor_id && t.investor_id !== reconSrc.investor_id) return false;
-        if (reconSrc.trader_id) {
-            var effTrader = t.trader_id || t.investor_id;
-            if (effTrader !== reconSrc.trader_id) return false;
+
+        if (matchByView) {
+            return wmsMatchesViewFilter(t, reconView.filters);
         }
+        // Legacy column-based fallback — see wmsFindLatestReconForTxn.
         if (reconSrc.broker_id && t.broker_id !== reconSrc.broker_id) return false;
-        return true;
+        var effTrader = t.trader_id || t.investor_id;
+        if (reconSrc.investor_id === t.investor_id) {
+            if (reconSrc.trader_id && reconSrc.trader_id !== effTrader) return false;
+            return true;
+        }
+        if (reconSrc.investor_id === effTrader) return true;
+        return false;
     }).sort(function(a, b) {
         return (a.transaction_date || '').localeCompare(b.transaction_date || '');
     });
 
+    // Headline summary — reconciled amount, computed amount, diff, and the
+    // most likely cause classification (edit vs delete).
+    var summary = document.getElementById('lgReconReviewSummary');
+    if (summary) {
+        var causeMsg;
+        if (dirty.length > 0) {
+            causeMsg = '<b>' + dirty.length + ' pre-reconciliation trade' +
+                (dirty.length === 1 ? ' has' : 's have') +
+                ' been modified since this reconciliation</b> (listed below). ' +
+                'If the balance mismatch exactly equals the impact of those edits, ' +
+                'that explains the drift.';
+        } else {
+            causeMsg = '<b>No pre-reconciliation edits detected.</b> The drift is most likely due to a <b>deleted</b> pre-reconciliation trade — deletes leave no `updated_at` trace to itemise. Cancel this reconciliation (button below) to clear the banner, then re-reconcile against the current balance.';
+        }
+        summary.innerHTML =
+            '<div style="margin-bottom:6px;">Reconciliation on <b>' + wmsEsc(prettyDate) + '</b> &middot; ' +
+            'reconciled at <b>' + wmsEsc(storedStr) + '</b>, computed is <b>' + wmsEsc(computedStr) +
+            '</b> (balance now ' + directionWord + ' by <b>' + wmsEsc(diffStr) + '</b>).</div>' +
+            '<div>' + causeMsg + '</div>';
+    }
+
+    // Build the dirty-txn list (or an empty-state hint).
+    var body = document.getElementById('lgReconReviewBody');
+    if (!body) return;
+
     if (dirty.length === 0) {
         body.innerHTML =
-            '<div class="lg-rr-hint">No pre-reconciliation edits detected by updated_at. ' +
-            'If the banner is still showing, the drift is explained by a <b>deleted</b> ' +
-            'trade or a ledger entry change — delete activity cannot be itemised (no soft-delete). ' +
-            'Re-reconcile to clear the banner.</div>';
+            '<div class="lg-rr-hint">Most likely a <b>delete</b>. No edits to list here — click <b>Cancel Reconciliation</b> below to remove the stale snapshot, then re-reconcile on the latest balance.</div>';
     } else {
-        var rows = dirty.map(function(t) {
+        var rowsHtml = dirty.map(function(t) {
             var sym = t.short_symbol || t.symbol || '-';
             var type = t.transaction_type || '-';
             var qty = Math.abs(t.quantity || 0);
@@ -1941,27 +2003,225 @@ function lgReconReviewOpen() {
                 '</tr>';
         }).join('');
         body.innerHTML =
-            '<div class="lg-rr-hint">Click any row to open its Edit modal. Deletes are NOT listed — ' +
-            'they explain any residual balance diff after edits are accounted for.</div>' +
+            '<div class="lg-rr-hint">Click any row to open its Edit modal and review the current values. If the balance mismatch is not fully explained by these edits, a <b>delete</b> is the remaining suspect — cancel this reconciliation and re-do it.</div>' +
             '<table>' +
               '<thead><tr>' +
                 '<th>Txn Date</th>' +
                 '<th>Symbol</th>' +
                 '<th>Type</th>' +
                 '<th class="text-right">Qty</th>' +
-                '<th class="text-right">Net</th>' +
+                '<th class="text-right">Net (current)</th>' +
                 '<th>Modified At</th>' +
               '</tr></thead>' +
-              '<tbody>' + rows + '</tbody>' +
+              '<tbody>' + rowsHtml + '</tbody>' +
             '</table>';
     }
 
     modal.classList.add('show');
 }
 
+// Cancel the reconciliation whose drift triggered the review modal — deletes
+// the RECONCILIATION ledger_entries row so the banner clears and running
+// balances go back to "live" (anchor removed, history continuous from the
+// prior OPENING_BALANCE or recon).  Fires from the "Cancel Reconciliation"
+// button in the review modal footer.
+async function lgReconReviewCancel() {
+    var modal = document.getElementById('lgReconReviewModal');
+    if (!modal) return;
+    var reconId = modal.dataset.reconEntryId || '';
+    if (!reconId) { showAlert('No reconciliation selected to cancel', 'warning', 3000); return; }
+
+    var reconRow = lgReconBannerState && lgReconBannerState.row;
+    var prettyDate = reconRow ? (lgFmtDate(reconRow.date) || reconRow.date) : '';
+    var msg = 'Cancel the reconciliation on ' + prettyDate + '?\n\n' +
+              'This removes the stored snapshot row. Running balances will ' +
+              'recompute from current transactions and the yellow banner will clear.';
+    if (!window.confirm(msg)) return;
+
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + encodeURIComponent(reconId), {
+            method: 'DELETE',
+            headers: wmsHeaders({'Prefer': 'return=minimal'})
+        });
+        if (resp.ok) {
+            showAlert('Reconciliation cancelled', 'success', 2500);
+            lgReconReviewClose();
+            lgRefresh();
+        } else {
+            var errText = '';
+            try { errText = await resp.text(); } catch (_) {}
+            showAlert('Failed to cancel reconciliation (HTTP ' + resp.status + ')' + (errText ? ': ' + errText.slice(0, 200) : ''), 'error', 6000);
+        }
+    } catch (err) {
+        showAlert('Failed to cancel reconciliation: ' + err.message, 'error', 5000);
+    }
+}
+
 function lgReconReviewClose() {
     var modal = document.getElementById('lgReconReviewModal');
     if (modal) modal.classList.remove('show');
+}
+
+// ============================================================================
+// VIEW-FILTER LOCK + PRE-LEDGER-POST GATE (LESSONS §E.17.8)
+//
+// A view becomes filter-locked once any ledger_entry references it. We track
+// the set of locked views in `lgViewsWithEntries`, refreshed from the DB on
+// every lgRefresh. Used by:
+//   • wmsViewManager.updateCurrentView → refuses to mutate filters on locked
+//     views (programmatic guard — the UI button is also disabled)
+//   • lgUpdateViewLockUI → disables the Update View button + tooltip
+//   • lgEnsureViewSaved → the pre-ledger-POST gate
+// ============================================================================
+
+var lgViewsWithEntries = {};   // {viewId: true} — populated from DB on refresh
+
+async function lgLoadViewLockState() {
+    try {
+        var url = SUPABASE_URL + '/rest/v1/ledger_entries?select=view_id&view_id=not.is.null&limit=10000';
+        var resp = await fetch(url, { headers: wmsHeaders({'Content-Type': 'application/json'}) });
+        if (!resp.ok) return;
+        var rows = await resp.json();
+        lgViewsWithEntries = {};
+        (rows || []).forEach(function(r) { if (r.view_id) lgViewsWithEntries[r.view_id] = true; });
+    } catch (err) {
+        console.warn('lgLoadViewLockState failed:', err && err.message);
+    }
+}
+
+function lgIsViewLocked(viewId) {
+    return !!(viewId && lgViewsWithEntries[viewId]);
+}
+
+function lgUpdateViewLockUI() {
+    var updateBtn = document.getElementById('lgUpdateViewBtn');
+    if (!updateBtn) return;
+    var locked = lgIsViewLocked(lgVM.activeViewId);
+    if (locked) {
+        updateBtn.disabled = true;
+        updateBtn.title = 'This view has ledger entries and is filter-locked — create a new view to change filters';
+    } else {
+        // Don't override if there's no change to save (the regular dirty-check
+        // in wmsViewManager.updateViewButtons sets disabled appropriately).
+        updateBtn.title = 'Update current view with active filters';
+    }
+}
+
+// Deep-compare two filter objects. Filter shape is:
+//   {investorIds: [...], traderIds: [...], brokerIds: [...], tagNames: [...], tagLogic: 'OR'|'AND'}
+// Empty array == missing key (both mean "no constraint"). Order-insensitive.
+function lgFiltersEqual(a, b) {
+    if (!a || !b) return false;
+    var arrEq = function(x, y) {
+        var xs = (x || []).slice().sort();
+        var ys = (y || []).slice().sort();
+        if (xs.length !== ys.length) return false;
+        for (var i = 0; i < xs.length; i++) if (xs[i] !== ys[i]) return false;
+        return true;
+    };
+    return arrEq(a.investorIds, b.investorIds) &&
+           arrEq(a.traderIds, b.traderIds) &&
+           arrEq(a.brokerIds, b.brokerIds) &&
+           arrEq(a.tagNames, b.tagNames) &&
+           (a.tagLogic || 'OR') === (b.tagLogic || 'OR');
+}
+
+// Pre-ledger-POST gate. Every code path that writes to ledger_entries
+// (reconcile, add entry, commit interest, opening balance) MUST call this
+// first and include the returned view_id on the row being saved. Returns:
+//   • view_id (string) — current view is saved and clean, proceed
+//   • null             — user canceled, caller should abort
+async function lgEnsureViewSaved(actionLabel) {
+    var activeView = lgVM.views.find(function(v) { return v.id === lgVM.activeViewId; });
+    var currentFilters = {
+        investorIds: lgSelectedInvestorIds.slice(),
+        traderIds:   lgSelectedTraderIds.slice(),
+        brokerIds:   lgSelectedBrokerIds.slice(),
+        tagNames:    lgSelectedTagNames.slice(),
+        tagLogic:    lgTagFilterLogic
+    };
+
+    // Clean, saved → straight through.
+    if (activeView && lgFiltersEqual(activeView.filters || {}, currentFilters)) {
+        return activeView.id;
+    }
+
+    // Dirty or ad-hoc. Ask the user inline.
+    var name;
+    if (activeView) {
+        var locked = lgIsViewLocked(activeView.id);
+        if (!locked) {
+            // Dirty but not locked — offer Update-current or Save-as-new.
+            var updateChoice = window.confirm(
+                'Filters have changed since the saved view "' + activeView.name + '".\n\n' +
+                'OK  →  update "' + activeView.name + '" with the current filters and ' + actionLabel + '.\n' +
+                'Cancel  →  save the current filters as a new view instead.'
+            );
+            if (updateChoice) {
+                var ok = await lgVM.updateCurrentView();
+                return ok ? activeView.id : null;
+            }
+            name = window.prompt('Name for the new view:', '');
+        } else {
+            // Dirty + locked — must save as new (no update option).
+            name = window.prompt(
+                '"' + activeView.name + '" is filter-locked (has ledger entries).\n' +
+                'Save the current filters as a NEW view to ' + actionLabel + ':',
+                activeView.name + ' (copy)'
+            );
+        }
+    } else {
+        // No active view — ad-hoc filters.
+        name = window.prompt(
+            'Save your current filters as a view to ' + actionLabel + ':',
+            ''
+        );
+    }
+
+    if (!name || !name.trim()) return null;
+    var newView = await lgVM.saveCurrentView(name.trim());
+    return newView ? newView.id : null;
+}
+
+// Pre-delete confirmation — shown when the user tries to delete a view.
+// Counts ledger_entries referencing this view and warns that ON DELETE SET
+// NULL will orphan them (they remain, lose their view pointer, fall back to
+// legacy column scope). Recreating the same view by name does NOT re-link.
+async function lgConfirmViewDelete(viewId) {
+    var view = lgVM.views.find(function(v) { return v.id === viewId; });
+    var viewName = view ? view.name : '(unknown)';
+    var count = 0;
+    try {
+        var url = SUPABASE_URL + '/rest/v1/ledger_entries?view_id=eq.' + encodeURIComponent(viewId) + '&select=id';
+        var resp = await fetch(url, {
+            headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'count=exact'})
+        });
+        if (resp.ok) {
+            var rangeHdr = resp.headers.get('content-range');
+            if (rangeHdr) {
+                var m = rangeHdr.match(/\/(\d+)$/);
+                if (m) count = parseInt(m[1], 10) || 0;
+            } else {
+                var rows = await resp.json();
+                count = (rows || []).length;
+            }
+        }
+    } catch (err) {
+        console.warn('lgConfirmViewDelete: count failed:', err && err.message);
+    }
+
+    var msg;
+    if (count > 0) {
+        msg = 'Delete view "' + viewName + '"?\n\n' +
+              '⚠ ' + count + ' ledger entr' + (count === 1 ? 'y' : 'ies') +
+              ' (reconciliations, interest, adjustments) reference this view.\n' +
+              'They will be ORPHANED — the entries stay, but their view context is lost ' +
+              'and scope falls back to legacy columns. Re-creating a view with the same name ' +
+              'does NOT re-link them.\n\nProceed?';
+    } else {
+        msg = 'Delete view "' + viewName + '"?\n\nNo ledger entries reference it.';
+    }
+    return window.confirm(msg);
 }
 
 async function lgAddEntry() {
@@ -1985,12 +2245,20 @@ async function lgAddEntry() {
         return;
     }
 
+    // Pre-ledger-POST gate.
+    var viewId = await lgEnsureViewSaved(entryType === 'OPENING_BALANCE' ? 'set opening balance' : 'add this entry');
+    if (!viewId) return;
+
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries', {
             method: 'POST',
             headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify({
                 investor_id: investorId,
+                // Scope columns: single-value filter mirrors + canonical view_id.
+                trader_id: (lgSelectedTraderIds && lgSelectedTraderIds.length === 1) ? lgSelectedTraderIds[0] : null,
+                broker_id: (lgSelectedBrokerIds && lgSelectedBrokerIds.length === 1) ? lgSelectedBrokerIds[0] : null,
+                view_id: viewId,
                 entry_date: entryDate,
                 entry_type: entryType,
                 amount: amount,
@@ -2269,12 +2537,19 @@ async function lgCommitPendingInterest(pendingKey) {
         return;
     }
 
+    // Pre-ledger-POST gate.
+    var viewId = await lgEnsureViewSaved('commit interest');
+    if (!viewId) return;
+
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries', {
             method: 'POST',
             headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
             body: JSON.stringify({
                 investor_id: pending.investorId,
+                trader_id: (lgSelectedTraderIds && lgSelectedTraderIds.length === 1) ? lgSelectedTraderIds[0] : null,
+                broker_id: (lgSelectedBrokerIds && lgSelectedBrokerIds.length === 1) ? lgSelectedBrokerIds[0] : null,
+                view_id: viewId,
                 entry_date: pending.date,
                 entry_type: 'INTEREST_BOOKED',
                 amount: amount,

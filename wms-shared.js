@@ -2660,6 +2660,49 @@ document.addEventListener('visibilitychange', function() {
 });
 
 // ============================================================================
+// VIEW-FILTER EVALUATION (LESSONS §E.17.8)
+// Single source of truth for "does this candidate row match this filter?".
+// Used by:
+//   • lgRefresh (transaction display filter)
+//   • wmsBuildLedger._entryMatchesFilters (ledger display filter)
+//   • wmsFindLatestReconForTxn (pre-recon edit/delete guard)
+//   • lgReconReviewOpen (dirty-txn filter)
+//
+// Semantics (matches how portfolio_views.filters JSON is authored by the UI):
+//   • Empty array on any dimension = "no constraint" (any/all match).
+//   • Non-empty investorIds = candidate.investor_id must be in the list.
+//   • Non-empty traderIds   = effective trader (candidate.trader_id OR, if
+//                             null, candidate.investor_id) must be in the list.
+//   • Non-empty brokerIds   = candidate.broker_id must be set AND in list.
+//   • Non-empty tagNames    = candidate.tags must satisfy the tagLogic join
+//                             (AND/OR) of every tagName. Ignored when the
+//                             candidate has no `tags` field (ledger entries).
+// ============================================================================
+
+function wmsMatchesViewFilter(candidate, filters) {
+    if (!candidate || !filters) return true;
+    var investors = filters.investorIds || [];
+    var traders   = filters.traderIds   || [];
+    var brokers   = filters.brokerIds   || [];
+    var tagNames  = filters.tagNames    || [];
+    var tagLogic  = filters.tagLogic    || 'OR';
+
+    if (investors.length > 0 && investors.indexOf(candidate.investor_id) < 0) return false;
+    if (traders.length > 0) {
+        var effTrader = candidate.trader_id || candidate.investor_id;
+        if (!effTrader || traders.indexOf(effTrader) < 0) return false;
+    }
+    if (brokers.length > 0) {
+        if (!candidate.broker_id || brokers.indexOf(candidate.broker_id) < 0) return false;
+    }
+    if (tagNames.length > 0 && Array.isArray(candidate.tags)) {
+        if (typeof wmsMatchTagsFilter === 'function' &&
+            !wmsMatchTagsFilter(candidate.tags, tagNames, tagLogic)) return false;
+    }
+    return true;
+}
+
+// ============================================================================
 // STT ELIGIBILITY CHECK (Rule G.8.5)
 // Equity cash-market stocks attract STT AND stamp duty — both main-board
 // (EQUITY) and SME-board (EQUITY_SME) at the same rates.  Non-equity
@@ -6439,17 +6482,22 @@ function wmsViewManager(cfg) {
     // SAVE CURRENT VIEW
     // ----------------------------------------------------------------
     vm.saveCurrentView = async function saveCurrentView(name) {
+        // Returns the new view object on success, null on failure/cancel.
+        // Used by lgEnsureViewSaved (the pre-ledger-POST gate) to await and
+        // pick up the new view_id — see LESSONS §E.17.8.
+
         // B9: duplicate name check
         var exists = vm.views.some(function(v) { return v.name.toLowerCase() === name.toLowerCase(); });
         if (exists) {
             showAlert('A view named "' + name + '" already exists', 'error', 3000);
-            return;
+            return null;
         }
 
         var filters = cfg.getFilters();
         var sortOrder = vm.views.length;
         var isFirst = cfg.autoDefaultFirst && vm.views.length === 0;
 
+        var saved = null;
         try {
             var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views', {
                 method: 'POST', headers: _hdrs(),
@@ -6470,6 +6518,7 @@ function wmsViewManager(cfg) {
                     // B10: full applyView for consistency
                     vm.applyView(newView.id);
                     showAlert('View "' + name + '" saved', 'success', 2000);
+                    saved = newView;
                 }
             } else {
                 showAlert('Failed to save view', 'error', 3000);
@@ -6480,6 +6529,7 @@ function wmsViewManager(cfg) {
 
         // Module handles prompt hide
         if (cfg.onSaveComplete) cfg.onSaveComplete();
+        return saved;
     };
 
     // ----------------------------------------------------------------
@@ -6521,7 +6571,20 @@ function wmsViewManager(cfg) {
     // UPDATE CURRENT VIEW
     // ----------------------------------------------------------------
     vm.updateCurrentView = async function updateCurrentView() {
-        if (!vm.activeViewId) return;
+        // Returns true on success, false otherwise. Callers can await the
+        // result — lgEnsureViewSaved uses this to proceed after an in-gate
+        // "Update View" selection.
+        if (!vm.activeViewId) return false;
+
+        // Filter-lock guard: if the active view has ledger_entries pointing at
+        // it, we refuse to mutate `filters`. The caller is expected to have
+        // disabled the Update-View button in this state, but a second guard
+        // here prevents programmatic bypass.
+        if (cfg.isViewLocked && cfg.isViewLocked(vm.activeViewId)) {
+            showAlert('This view is locked (has ledger entries). Create a new view instead.', 'warning', 4000);
+            return false;
+        }
+
         var filters = cfg.getFilters();
 
         try {
@@ -6535,11 +6598,14 @@ function wmsViewManager(cfg) {
                 showAlert('View updated', 'success', 2000);
                 // Module-specific post-update hook (banner refresh, etc.)
                 if (cfg.onUpdateComplete && v) cfg.onUpdateComplete(v);
+                return true;
             } else {
                 showAlert('Failed to update view', 'error', 3000);
+                return false;
             }
         } catch (err) {
             showAlert('Failed to update view: ' + err.message, 'error', 3000);
+            return false;
         }
     };
 
@@ -6547,7 +6613,15 @@ function wmsViewManager(cfg) {
     // DELETE VIEW (B6: confirm dialog)
     // ----------------------------------------------------------------
     vm.deleteView = async function deleteView(viewId) {
-        if (!confirm('Delete this saved view?')) return;
+        // Module-level pre-delete hook — Statements uses this to warn about
+        // ledger_entries that'd be orphaned. Returning false from the hook
+        // aborts the delete.
+        if (cfg.beforeDelete) {
+            var proceed = await cfg.beforeDelete(viewId);
+            if (!proceed) return;
+        } else if (!confirm('Delete this saved view?')) {
+            return;
+        }
 
         try {
             var resp = await fetch(SUPABASE_URL + '/rest/v1/portfolio_views?id=eq.' + viewId, {

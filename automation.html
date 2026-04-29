@@ -1,0 +1,339 @@
+<!-- Automated Trading Module HTML -->
+<head>
+<style id="automation-styles">
+/* ================================================================
+   AUTOMATED TRADING MODULE STYLES
+   ================================================================ */
+
+.automation-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.automation-header-bar {
+    flex-shrink: 0;
+    background: #fff;
+    padding: 8px 0;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.automation-header-bar h2 {
+    margin: 0;
+    font-size: 15px;
+    color: #2d3748;
+}
+
+/* Tabs (mirrors reports module) */
+.automation-tabs {
+    flex-shrink: 0;
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid #e2e8f0;
+    background: #fff;
+    padding: 0 4px;
+}
+.automation-tab-btn {
+    padding: 8px 20px;
+    border: none;
+    background: none;
+    font-size: 13px;
+    font-weight: 600;
+    color: #718096;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
+}
+.automation-tab-btn:hover { color: #4a5568; }
+.automation-tab-btn.active {
+    color: #2563eb;
+    border-bottom-color: #2563eb;
+}
+
+.automation-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    background: #f9fafb;
+}
+
+.automation-tab-panel { display: none; }
+.automation-tab-panel.active { display: block; }
+
+.au-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+.au-card h3 {
+    margin: 0 0 4px;
+    font-size: 14px;
+    color: #1f2937;
+}
+.au-card .au-sub {
+    color: #6b7280;
+    font-size: 12px;
+    margin-bottom: 12px;
+}
+
+.au-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+.au-btn {
+    border: none;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.au-btn-primary { background: #2563eb; color: #fff; }
+.au-btn-primary:hover { background: #1d4ed8; }
+.au-btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+.au-btn-secondary:hover { background: #e5e7eb; }
+.au-btn-danger { background: #dc2626; color: #fff; }
+.au-btn-danger:hover { background: #b91c1c; }
+.au-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.au-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin: 12px 0;
+}
+.au-stat {
+    background: #f3f4f6;
+    padding: 10px 12px;
+    border-radius: 6px;
+}
+.au-stat-label {
+    font-size: 10px;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.au-stat-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #1f2937;
+    margin-top: 2px;
+}
+.au-stat-value.small { font-size: 13px; font-weight: 600; }
+
+.au-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.au-badge.success { background: #d1fae5; color: #065f46; }
+.au-badge.error   { background: #fee2e2; color: #991b1b; }
+.au-badge.loading { background: #dbeafe; color: #1e40af; }
+.au-badge.warning { background: #fef3c7; color: #92400e; }
+.au-badge.idle    { background: #f3f4f6; color: #6b7280; }
+
+.au-result-block {
+    background: #1f2937;
+    color: #e5e7eb;
+    padding: 12px;
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 360px;
+    overflow-y: auto;
+    margin-top: 12px;
+}
+
+.au-warn-list {
+    background: #fffbeb;
+    border: 1px solid #fcd34d;
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: #78350f;
+}
+.au-error-list {
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: #7f1d1d;
+}
+.au-error-list ul, .au-warn-list ul { margin: 4px 0 0 18px; padding: 0; }
+
+.au-soon {
+    background: #fff;
+    border: 2px dashed #d1d5db;
+    border-radius: 8px;
+    padding: 32px;
+    text-align: center;
+    color: #6b7280;
+    font-size: 14px;
+}
+
+.au-meta {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 8px;
+}
+.au-meta strong { color: #1f2937; }
+
+details summary {
+    cursor: pointer;
+    user-select: none;
+    font-weight: 600;
+    font-size: 12px;
+    color: #4b5563;
+}
+</style>
+</head>
+
+<div class="automation-container">
+
+  <!-- Header -->
+  <div class="automation-header-bar">
+    <h2>🤖 Automated Trading</h2>
+  </div>
+
+  <!-- Tabs -->
+  <div class="automation-tabs">
+    <button class="automation-tab-btn active" data-tab="au-admin">Admin</button>
+    <button class="automation-tab-btn"        data-tab="au-open-trades">Open Trades</button>
+    <button class="automation-tab-btn"        data-tab="au-events">Recent Events</button>
+    <button class="automation-tab-btn"        data-tab="au-runs">Run History</button>
+  </div>
+
+  <div class="automation-content">
+
+    <!-- Admin tab -->
+    <div id="au-admin" class="automation-tab-panel active">
+
+      <!-- EOD Prices Ingest -->
+      <div class="au-card">
+        <h3>EOD Prices Ingest <span id="au-eod-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Pulls end-of-day OHLCV bars from Fyers into <code>market_prices</code>. Daily run pulls 5 days (look-back self-heals missed runs); backfill pulls 252.</div>
+
+        <!-- Last run summary -->
+        <div id="au-eod-last-run" class="au-meta">Loading last run…</div>
+
+        <!-- Action buttons -->
+        <div class="au-actions">
+          <button class="au-btn au-btn-primary"   onclick="autoRunEodIngest(5)">Smoke test (5-day)</button>
+          <button class="au-btn au-btn-danger"    onclick="autoRunEodIngest(252, true)">Full backfill (252-day)</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadEodLastRun()">Refresh status</button>
+        </div>
+
+        <!-- Live response panel (hidden until first call) -->
+        <div id="au-eod-response" style="display:none; margin-top:12px;"></div>
+      </div>
+
+      <!-- market_prices snapshot -->
+      <div class="au-card">
+        <h3>market_prices snapshot</h3>
+        <div class="au-sub">Total OHLCV rows currently stored, latest date covered, distinct securities.</div>
+
+        <div id="au-mp-stats" class="au-meta">Loading…</div>
+
+        <div class="au-actions">
+          <button class="au-btn au-btn-secondary" onclick="autoLoadMarketPricesStats()">Refresh</button>
+        </div>
+      </div>
+
+      <!-- Strategy Runner (Phase 2 — _test stub) -->
+      <div class="au-card">
+        <h3>Strategy Runner <span id="au-runner-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Calls <code>automation-runner</code> Edge Function. Phase 2 ships a <code>_test</code> stub strategy that alternates between ENTRY and EXIT on each invocation — used to validate chassis plumbing end-to-end (DB writes → email → run row → open-trades view). The real <code>pairs</code> strategy lands in Phase 3.</div>
+
+        <div id="au-runner-last-run" class="au-meta">Loading last run…</div>
+
+        <div class="au-actions">
+          <button class="au-btn au-btn-primary"   onclick="autoRunStrategy('_test')">Run _test stub</button>
+          <button class="au-btn au-btn-secondary" onclick="autoRunStrategy('')">Run all enabled</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRunnerLastRun()">Refresh status</button>
+        </div>
+
+        <div id="au-runner-response" style="display:none; margin-top:12px;"></div>
+      </div>
+
+      <!-- Strategies snapshot -->
+      <div class="au-card">
+        <h3>Strategies</h3>
+        <div class="au-sub">Strategy plugins registered in <code>auto_strategies</code>. Sentinel <code>_eod_ingest</code> is the system row used by the EOD ingest job; not a real trading strategy.</div>
+
+        <div id="au-strategies-list" class="au-meta">Loading…</div>
+
+        <div class="au-actions">
+          <button class="au-btn au-btn-secondary" onclick="autoLoadStrategies()">Refresh</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Open Trades tab -->
+    <div id="au-open-trades" class="automation-tab-panel">
+      <div class="au-card">
+        <h3>Open PAPER Trades <span id="au-open-trades-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">All open trades across strategies. Each row shows the ENTRY signal that opened it; exits will be checked at every cron run.</div>
+        <div class="au-actions">
+          <button class="au-btn au-btn-secondary" onclick="autoLoadOpenTrades()">↻ Refresh</button>
+        </div>
+        <div id="au-open-trades-content" style="margin-top:12px">Click Refresh to load.</div>
+      </div>
+    </div>
+
+    <!-- Recent Events tab -->
+    <div id="au-events" class="automation-tab-panel">
+      <div class="au-card">
+        <h3>Recent Events <span id="au-events-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Last 50 entries / exits across all strategies.</div>
+        <div class="au-actions">
+          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('all')">All</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('ENTRY')">Entries</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('EXIT')">Exits</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('email-failed')">Email Failed</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents(window._auEventsFilter || 'all')">↻ Refresh</button>
+        </div>
+        <div id="au-events-content" style="margin-top:12px">Click Refresh to load.</div>
+      </div>
+    </div>
+
+    <!-- Run History tab -->
+    <div id="au-runs" class="automation-tab-panel">
+      <div class="au-card">
+        <h3>Run History <span id="au-runs-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Last 50 cron / manual runs. Includes EOD ingest, pairs scans, test stubs.</div>
+        <div class="au-actions">
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('all')">All</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('pairs')">Pairs</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('_eod_ingest')">EOD Ingest</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('failed')">Failed Only</button>
+          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns(window._auRunsFilter || 'all')">↻ Refresh</button>
+        </div>
+        <div id="au-runs-content" style="margin-top:12px">Click Refresh to load.</div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
