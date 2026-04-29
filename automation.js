@@ -691,6 +691,73 @@ function autoStatusBadge(status) {
 // give the user something useful, we join client-side to auto_signals to fetch
 // the ENTRY row for each open trade — that carries the metadata (Pair, Z90,
 // Score, Action, Z_Target, Z_Stop, qtys, etc).
+//
+// Live P&L mark: pull latest close per symbol from market_prices; compute
+// P&L per leg = (mark - entry_price) * qty for BUY, flipped for SELL; sum
+// across legs. Mark is yesterday's close during trading hours, today's after
+// eod-prices-ingest runs at 18:00 IST. Tooltip shows the mark date.
+
+async function autoFetchLatestPrices(sigRows) {
+    var symbols = new Set();
+    sigRows.forEach(function (s) {
+        (s.legs || []).forEach(function (l) { if (l.short_symbol) symbols.add(l.short_symbol); });
+    });
+    var result = {};
+    if (symbols.size === 0) return result;
+
+    try {
+        // Resolve short_symbol -> security_id
+        var symList = Array.from(symbols).map(encodeURIComponent).join(',');
+        var secResp = await fetch(
+            SUPABASE_URL + '/rest/v1/securities_db?symbol=in.(' + symList + ')&select=id,symbol',
+            { headers: wmsHeaders() }
+        );
+        var secs = await secResp.json();
+        if (!Array.isArray(secs) || secs.length === 0) return result;
+        var idToSym = {};
+        var secIds = secs.map(function (r) { idToSym[r.id] = r.symbol; return r.id; });
+
+        // Pull recent prices per security_id (last few days, pick max client-side)
+        var idsList = secIds.map(encodeURIComponent).join(',');
+        var priceResp = await fetch(
+            SUPABASE_URL + '/rest/v1/market_prices?security_id=in.(' + idsList + ')&select=security_id,price_date,close&order=security_id,price_date.desc&limit=' + (secIds.length * 7),
+            { headers: wmsHeaders() }
+        );
+        var prices = await priceResp.json();
+        prices.forEach(function (p) {
+            var sym = idToSym[p.security_id];
+            if (!sym) return;
+            if (!result[sym] || p.price_date > result[sym].date) {
+                result[sym] = { close: p.close, date: p.price_date };
+            }
+        });
+    } catch (_e) { /* swallow — UI shows '—' for missing prices */ }
+    return result;
+}
+
+function autoComputePnL(legs, priceMap) {
+    if (!Array.isArray(legs) || legs.length === 0) return null;
+    var total = 0;
+    var anyPriced = false;
+    var legBreakdown = [];
+    var markDate = null;
+    legs.forEach(function (l) {
+        var mark = priceMap[l.short_symbol];
+        if (!mark || !Number.isFinite(mark.close)) {
+            legBreakdown.push(l.short_symbol + ': mark unavailable');
+            return;
+        }
+        anyPriced = true;
+        if (!markDate || mark.date < markDate) markDate = mark.date; // oldest mark wins (worst case freshness)
+        var legPnL = (l.side === 'BUY')
+            ? (mark.close - l.price) * l.qty
+            : (l.price - mark.close) * l.qty;
+        total += legPnL;
+        legBreakdown.push(l.short_symbol + ' ' + l.side + ' ' + l.qty + ' @ entry ₹' + l.price + ' / mark ₹' + mark.close + ' = ' + (legPnL >= 0 ? '+' : '') + Math.round(legPnL));
+    });
+    if (!anyPriced) return null;
+    return { total: total, breakdown: legBreakdown.join(' • '), markDate: markDate };
+}
 
 async function autoLoadOpenTrades() {
     var el = document.getElementById('au-open-trades-content');
@@ -723,6 +790,11 @@ async function autoLoadOpenTrades() {
         var byTrade = {};
         sigRows.forEach(function (s) { byTrade[s.trade_id] = s; });
 
+        // 3) Fetch latest close per symbol from market_prices for live P&L mark.
+        //    During trading hours this is yesterday's close; after eod-prices-ingest
+        //    runs (18:00 IST) it'll be today's close. Tooltip shows the mark date.
+        var priceMap = await autoFetchLatestPrices(sigRows);
+
         var now = Date.now();
         var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
         html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
@@ -734,6 +806,7 @@ async function autoLoadOpenTrades() {
                 '<th style="padding:6px 8px">Entry Z90</th>' +
                 '<th style="padding:6px 8px">Z<sub>tgt</sub> / Z<sub>stop</sub></th>' +
                 '<th style="padding:6px 8px">Score</th>' +
+                '<th style="padding:6px 8px">P&amp;L</th>' +
                 '<th style="padding:6px 8px">Net Position</th>' +
                 '<th style="padding:6px 8px">Trade</th>' +
                 '<th style="padding:6px 8px">Action</th>' +
@@ -755,6 +828,18 @@ async function autoLoadOpenTrades() {
                 return (v > 0 ? '+' : '') + v + ' ' + k.replace('NSE:', '').replace('-EQ', '');
             }).join(' / ') : '—';
             var tradeFrag = ot.trade_id ? ot.trade_id.slice(0, 8) + '…' : '—';
+
+            // Live P&L — computed against latest market_prices close
+            var pnlCell = '<span style="color:#9ca3af">—</span>';
+            var pnlTooltip = 'Mark prices not available — was the EOD ingest run today?';
+            var pnl = sig ? autoComputePnL(sig.legs, priceMap) : null;
+            if (pnl) {
+                var sign = pnl.total >= 0 ? '+' : '−';
+                var color = pnl.total >= 0 ? '#047857' : '#dc2626';
+                var abs = Math.abs(Math.round(pnl.total)).toLocaleString('en-IN');
+                pnlCell = '<span style="color:' + color + ';font-weight:600">' + sign + '₹' + abs + '</span>';
+                pnlTooltip = 'Mark date: ' + pnl.markDate + ' • ' + pnl.breakdown;
+            }
             html += '<tr style="border-top:1px solid #e5e7eb">' +
                     '<td style="padding:6px 8px"><strong>' + autoEsc(pair) + '</strong></td>' +
                     '<td style="padding:6px 8px"><code>' + autoEsc(ot.strategy_name) + '</code></td>' +
@@ -764,6 +849,7 @@ async function autoLoadOpenTrades() {
                     '<td style="padding:6px 8px">' + autoEsc(String(entryZ)) + '</td>' +
                     '<td style="padding:6px 8px">' + autoEsc(String(zTgt)) + ' / ' + autoEsc(String(zStop)) + '</td>' +
                     '<td style="padding:6px 8px">' + autoEsc(score) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;white-space:nowrap" title="' + autoEsc(pnlTooltip) + '">' + pnlCell + '</td>' +
                     '<td style="padding:6px 8px;font-size:11px">' + autoEsc(netPos) + '</td>' +
                     '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(tradeFrag) + '</td>' +
                     '<td style="padding:6px 8px"><button class="au-btn au-btn-danger" style="padding:4px 8px;font-size:11px"' +
