@@ -132,10 +132,14 @@ function _wmsCnViewerEnsureDom() {
         '.wms-cn-empty { padding:24px; text-align:center; color:#9ca3af; font-size:13px; }' +
         '.wms-cn-footer { padding:10px 16px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; }' +
         '.wms-cn-footer-note { font-size:11px; color:#9ca3af; }' +
-        // Trigger styles (used in Edit modal + action menu)
-        '.wms-cn-trigger-link { display:inline-block; margin-left:6px; font-size:10px; color:#667eea; cursor:pointer; user-select:none; padding:2px 6px; border-radius:3px; vertical-align:middle; }' +
-        '.wms-cn-trigger-link:hover { background:#edf2ff; color:#4f46e5; }' +
-        '.wms-cn-trigger-link.disabled { color:#cbd5e0; cursor:not-allowed; pointer-events:none; }';
+        // Edit-modal trigger: input + button row, button styled as a small pill so
+        // it doesn't blend into the label. Higher specificity than .wms-edit-row label
+        // to avoid colour leak. Disabled state appears when the CN field is empty.
+        '.wms-edit-row .wms-cn-input-row { display:flex; gap:4px; align-items:stretch; min-width:0; }' +
+        '.wms-edit-row .wms-cn-input-row input { flex:1; min-width:0; }' +
+        '.wms-edit-row .wms-cn-view-btn { flex-shrink:0; background:#eef2ff; border:1px solid #c7d2fe; color:#4338ca; font-size:11px; font-weight:600; padding:4px 8px; border-radius:4px; cursor:pointer; white-space:nowrap; line-height:1; }' +
+        '.wms-edit-row .wms-cn-view-btn:hover { background:#e0e7ff; border-color:#a5b4fc; color:#3730a3; }' +
+        '.wms-edit-row .wms-cn-view-btn.disabled { background:#f7fafc; border-color:#edf2f7; color:#cbd5e0; cursor:not-allowed; pointer-events:none; }';
     document.head.appendChild(style);
 
     // ---- Inject HTML ----

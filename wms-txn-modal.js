@@ -305,7 +305,7 @@ function _wmsTxnEnsureDom() {
                         '<div class="wms-edit-row cols-4">' +
                             '<div class="form-group"><label>Investor</label><input type="text" id="wmsEditInvestor" disabled></div>' +
                             '<div class="form-group"><label>Broker</label><input type="text" id="wmsEditBroker" disabled></div>' +
-                            '<div class="form-group"><label>Contract Note No <span class="wms-cn-trigger-link disabled" id="wmsEditCnViewBtn" onclick="_wmsEditViewCn()" title="View all trades in this Contract Note">📄&nbsp;View</span></label><input type="text" id="wmsEditCnNo" class="editable-field" oninput="_wmsEditUpdateCnViewBtn()"></div>' +
+                            '<div class="form-group"><label>Contract Note No</label><div class="wms-cn-input-row"><input type="text" id="wmsEditCnNo" class="editable-field" oninput="_wmsEditUpdateCnViewBtn()"><button type="button" id="wmsEditCnViewBtn" class="wms-cn-view-btn disabled" onclick="_wmsEditViewCn()" title="View all trades on this Contract Note">📄 View CN</button></div></div>' +
                             '<div class="form-group"><label>Trader</label><select id="wmsEditTrader" class="editable-field"></select></div>' +
                         '</div>' +
                     '</div>' +
