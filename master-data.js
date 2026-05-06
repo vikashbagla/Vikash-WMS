@@ -1714,8 +1714,20 @@ function deriveSizeFromMarketCap(marketCap) {
 // `transactions` or `watchlist_items` (security_source='securities_db' only,
 // so NFO/options-dynamic items are excluded). Designed to be a small set
 // (~100-500 entries) — fast enough to fetch in 2 round-trips.
+//
+// Defensive UUID filter: a small number of legacy `watchlist_items` rows
+// carry pre-UUID identifiers like '7' or '2578'. The transactions table is
+// strictly UUID-typed at the DB so those can't land there, but old watchlist
+// rows do. Non-UUID values are silently dropped — they couldn't match any
+// `securities_db.id` row anyway, and including them in `.in('id', [...])`
+// would make PostgREST reject the entire batch with `22P02 invalid input
+// syntax for type uuid`.
 async function _collectRelevantEquitySecurityIds() {
+    var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     var ids = {};
+    var addIfUuid = function(v) {
+        if (v && UUID_RE.test(v)) ids[v] = true;
+    };
 
     // ---- transactions: every distinct security_id ----
     // Including all security_types is safe: the .in('id', ...) filter on
@@ -1731,9 +1743,7 @@ async function _collectRelevantEquitySecurityIds() {
             .range(from, from + BATCH - 1);
         if (resp.error) throw resp.error;
         var rows = resp.data || [];
-        for (var i = 0; i < rows.length; i++) {
-            if (rows[i].security_id) ids[rows[i].security_id] = true;
-        }
+        for (var i = 0; i < rows.length; i++) addIfUuid(rows[i].security_id);
         if (rows.length < BATCH) break;
         from += BATCH;
     }
@@ -1746,9 +1756,7 @@ async function _collectRelevantEquitySecurityIds() {
         .not('security_id', 'is', null);
     if (wresp.error) throw wresp.error;
     var wrows = wresp.data || [];
-    for (var j = 0; j < wrows.length; j++) {
-        if (wrows[j].security_id) ids[wrows[j].security_id] = true;
-    }
+    for (var j = 0; j < wrows.length; j++) addIfUuid(wrows[j].security_id);
 
     return Object.keys(ids);
 }
