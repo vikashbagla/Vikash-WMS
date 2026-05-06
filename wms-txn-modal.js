@@ -179,6 +179,14 @@ function _wmsTxnEnsureDom() {
         '.wms-edit-security-banner .sec-symbol { font-size:15px; font-weight:700; color:#2d3748; }' +
         '.wms-edit-security-banner .sec-company { font-size:12px; color:#718096; }' +
         '.wms-edit-security-banner .sec-type-badge { font-size:9px; font-weight:700; text-transform:uppercase; background:#edf2f7; color:#4a5568; padding:2px 6px; border-radius:3px; }' +
+        // CN viewer trigger (Edit modal): input + small pill button. Higher
+        // specificity than .wms-edit-row label so the parent label colour
+        // can't bleed into the button text.
+        '.wms-edit-row .wms-cn-input-row { display:flex; gap:4px; align-items:stretch; min-width:0; }' +
+        '.wms-edit-row .wms-cn-input-row input { flex:1; min-width:0; }' +
+        '.wms-edit-row .wms-cn-view-btn { flex-shrink:0; background:#eef2ff; border:1px solid #c7d2fe; color:#4338ca; font-size:11px; font-weight:600; padding:4px 8px; border-radius:4px; cursor:pointer; white-space:nowrap; line-height:1; }' +
+        '.wms-edit-row .wms-cn-view-btn:hover { background:#e0e7ff; border-color:#a5b4fc; color:#3730a3; }' +
+        '.wms-edit-row .wms-cn-view-btn.disabled { background:#f7fafc; border-color:#edf2f7; color:#cbd5e0; cursor:not-allowed; pointer-events:none; }' +
         // Button styles (btn-primary, btn-secondary, btn-danger, btn-close-modal)
         // are defined globally in app-styles.css — no duplication needed here.
         // Action cell (txn rows)
