@@ -1515,17 +1515,23 @@ function wmsRecalcTraderCharges() {
     var txn = wmsTxnCtx.transactions.find(function(t) { return t.id === wmsEditingTxnId; });
     if (!txn) return;
     var traderId = document.getElementById('wmsEditTrader').value || txn.investor_id;
-    var investorId = txn.investor_id;
-    var brokerId = txn.broker_id;
-    if (traderId !== investorId && wmsRefData && wmsRefData.ibaRatesMap) {
-        var gross = Math.abs(parseFloat(txn.gross_amount) || 0);
-        var inclusive = wmsIsChargesInclusive(wmsRefData.ibaRatesMap, investorId, brokerId);
-        var traderCharges = wmsGetBrokerage(wmsRefData.ibaRatesMap, traderId, brokerId, gross,
-            txn.security_type, txn.asset_class, txn.price, txn.quantity, txn.lots, inclusive);
-        document.getElementById('wmsEditTraderCharges').value = wmsEditFmt(traderCharges);
-    } else {
-        document.getElementById('wmsEditTraderCharges').value = wmsEditFmt(0);
-    }
+    // Single canonical helper — same code path as Add Transaction Step 9
+    // and the Split preview. See G.2.9 / G.2.10 in WMS-LESSONS.md.
+    var traderCharges = wmsCalcTraderCharges({
+        ibaRatesMap: wmsRefData ? wmsRefData.ibaRatesMap : null,
+        investorId: txn.investor_id,
+        brokerId: txn.broker_id,
+        traderId: traderId,
+        securityType: txn.security_type,
+        assetClass: txn.asset_class,
+        securityId: txn.security_id,
+        symbol: txn.symbol,
+        gross: Math.abs(parseFloat(txn.gross_amount) || 0),
+        price: txn.price,
+        quantity: txn.quantity,
+        lots: txn.lots
+    });
+    document.getElementById('wmsEditTraderCharges').value = wmsEditFmt(traderCharges);
 }
 
 // ============================================================================
@@ -1767,11 +1773,22 @@ function wmsToggleSplitPanel() {
 }
 
 function _wmsCalcSplitTraderCharges(txn, traderId, splitGross, splitQty, splitLots) {
-    if (!traderId || traderId === txn.investor_id) return 0;
-    if (!wmsRefData || !wmsRefData.ibaRatesMap) return 0;
-    var inclusive = wmsIsChargesInclusive(wmsRefData.ibaRatesMap, txn.investor_id, txn.broker_id);
-    return wmsGetBrokerage(wmsRefData.ibaRatesMap, traderId, txn.broker_id,
-        Math.abs(splitGross), txn.security_type, txn.asset_class, txn.price, splitQty, splitLots, inclusive) || 0;
+    // Single canonical helper — same code path as Add Transaction Step 9
+    // and Edit modal trader recalc. See G.2.9 / G.2.10 in WMS-LESSONS.md.
+    return wmsCalcTraderCharges({
+        ibaRatesMap: wmsRefData ? wmsRefData.ibaRatesMap : null,
+        investorId: txn.investor_id,
+        brokerId: txn.broker_id,
+        traderId: traderId,
+        securityType: txn.security_type,
+        assetClass: txn.asset_class,
+        securityId: txn.security_id,
+        symbol: txn.symbol,
+        gross: Math.abs(splitGross),
+        price: txn.price,
+        quantity: splitQty,
+        lots: splitLots
+    });
 }
 
 function wmsPreviewSplit() {

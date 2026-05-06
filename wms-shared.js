@@ -2800,6 +2800,80 @@ function wmsGetBrokerage(ibaRatesMap, investorId, brokerId, grossAmount, securit
 }
 
 /**
+ * Single source of truth for `trader_charges` computation (Rule G.2.9 / G.2.10).
+ *
+ * Used by every code path that needs to compute trader_charges:
+ *   - wmsAutoCalcCharges Step 9 (Add Transaction, fresh-calc imports)
+ *   - wmsRecalcTraderCharges (Edit modal — trader dropdown change)
+ *   - _wmsCalcSplitTraderCharges (Split preview — partial-qty new row)
+ *
+ * Same-entity short-circuit: when traderId is missing or equals investorId,
+ * returns 0 (no perspective adjustment needed).
+ *
+ * Inclusive-flag rule (G.2.9a): always reads `charges_inclusive` from the
+ * INVESTOR's IBA, never the trader's, so trader_charges and total_charges
+ * agree on the rounding formula on the same transaction.
+ *
+ * Asset_class rule (G.2.10): the `transactions` DB table doesn't carry
+ * asset_class — it's derived from securities_nfo. The caller may pass an
+ * explicit assetClass; if missing on an NFO row, the helper resolves it
+ * from `wmsRefData.securitiesNfoMap[securityId].instrument_type` /
+ * `option_type` / symbol regex `/(CE|PE)$/`. This is the ONLY place that
+ * resolution lives — consumers must NOT mutate `txn.asset_class` directly
+ * (doing so leaks the field into DB-write payloads where the column doesn't
+ * exist, triggering PGRST204).
+ *
+ * @param {object} opts
+ * @param {object} opts.ibaRatesMap   wmsRefData.ibaRatesMap
+ * @param {string} opts.investorId
+ * @param {string} opts.brokerId
+ * @param {string} opts.traderId      may equal investorId — short-circuits to 0
+ * @param {string} opts.securityType  'NFO', 'EQUITY', etc.
+ * @param {string} [opts.assetClass]  'OPTIONS' / 'FUTURES' for NFO; resolved if missing
+ * @param {string} [opts.securityId]  Used for NFO asset_class fallback lookup
+ * @param {string} [opts.symbol]      Used for NFO asset_class regex fallback
+ * @param {number} opts.gross         |gross_amount| of the slice being charged
+ * @param {number} opts.price
+ * @param {number} opts.quantity      Signed or absolute — wmsGetBrokerage uses abs
+ * @param {number} opts.lots
+ * @returns {number} Rupees, rounded to 2 dp. 0 when no trader perspective applies.
+ */
+function wmsCalcTraderCharges(opts) {
+    if (!opts) return 0;
+    var ibaRatesMap = opts.ibaRatesMap;
+    var investorId = opts.investorId;
+    var brokerId = opts.brokerId;
+    var traderId = opts.traderId;
+
+    if (!ibaRatesMap || !brokerId) return 0;
+    if (!traderId || traderId === investorId) return 0;
+
+    // Investor's inclusive flag — NOT the trader's (G.2.9a).
+    var inclusive = wmsIsChargesInclusive(ibaRatesMap, investorId, brokerId);
+
+    // Resolve asset_class for NFO when caller didn't pass one (G.2.10).
+    var assetClass = opts.assetClass || '';
+    if (!assetClass && opts.securityType === 'NFO') {
+        var nfo = (typeof wmsRefData !== 'undefined' && wmsRefData && wmsRefData.securitiesNfoMap)
+            ? wmsRefData.securitiesNfoMap[opts.securityId] : null;
+        if (nfo) {
+            if (nfo.instrument_type === 'OPTIONS' || nfo.instrument_type === 'FUTURES') {
+                assetClass = nfo.instrument_type;
+            } else if (nfo.option_type) {
+                assetClass = 'OPTIONS';
+            }
+        }
+        if (!assetClass) {
+            var sym = (opts.symbol || '').toUpperCase();
+            assetClass = /(CE|PE)$/.test(sym) ? 'OPTIONS' : 'FUTURES';
+        }
+    }
+
+    return wmsGetBrokerage(ibaRatesMap, traderId, brokerId, opts.gross || 0,
+        opts.securityType, assetClass, opts.price, opts.quantity, opts.lots, inclusive) || 0;
+}
+
+/**
  * Get regulatory charge rate from config (Rule G.7.1).
  * Falls back to NSE if exchange-specific rate not found (STT, SEBI, stamp are national).
  * @param {Array} regCharges   Array from regulatory_charges_config
@@ -3022,23 +3096,25 @@ function wmsAutoCalcCharges(row, opts) {
         }
     }
 
-    // Step 9: Trader charges (Rule G.2.9)
+    // Step 9: Trader charges — single canonical helper (Rule G.2.9 / G.2.10).
     var shouldCalcTrader = row._trdChgOverride ? false : (preserve
         ? (row.trader_charges === null || row.trader_charges === undefined)
         : true);
     if (shouldCalcTrader) {
-        var traderId = row.trader_id || investorId;
-        if (traderId !== investorId) {
-            // Rule G.2.9a — force trader_charges to use the same inclusive
-            // formula as total_charges so the two can't diverge on the same
-            // transaction (fixes TG-style per-share-ceil vs gross×pct bug
-            // where total_charges and trader_charges used different rounding).
-            row.trader_charges = wmsGetBrokerage(ibaRatesMap, traderId, brokerId, gross,
-                row.security_type, row.asset_class, row.price, row.quantity, row.lots,
-                inclusive);
-        } else {
-            row.trader_charges = 0;
-        }
+        row.trader_charges = wmsCalcTraderCharges({
+            ibaRatesMap: ibaRatesMap,
+            investorId: investorId,
+            brokerId: brokerId,
+            traderId: row.trader_id || investorId,
+            securityType: row.security_type,
+            assetClass: row.asset_class,
+            securityId: row.security_id,
+            symbol: row.symbol,
+            gross: gross,
+            price: row.price,
+            quantity: row.quantity,
+            lots: row.lots
+        });
     }
 
     // Step 10: Rate basis info for breakdown popover display
