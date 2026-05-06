@@ -2735,19 +2735,35 @@ function wmsIsChargesInclusive(ibaRatesMap, investorId, brokerId) {
 }
 
 /**
- * Get brokerage for a transaction from IBA rates (Rule G.2.2).
- * @param {Object} ibaRatesMap  The IBA rates map
+ * Get brokerage for a transaction from IBA rates (Rule G.2.2 / G.2.10).
+ *
+ * Asset_class fallback (G.2.10): the `transactions` DB table doesn't carry
+ * `asset_class` — it's a derived attribute of `securities_nfo`. Any caller
+ * passing `assetClass = undefined` for an NFO row would historically have
+ * routed OPTIONS through the FUTURES pricing branch (78× under-charge on
+ * per-lot flat tariffs). To prevent this for every present and future
+ * caller, the function now resolves a missing assetClass internally via
+ * `wmsRefData.securitiesNfoMap[securityId].instrument_type` / `option_type`,
+ * falling back to a `/(CE|PE)$/` symbol regex, and finally to FUTURES.
+ * Pass the optional `securityId` and `symbol` so the lookup can run; if
+ * neither is available the symbol regex / FUTURES fallback still applies.
+ * Callers that pass an explicit assetClass keep their original behaviour.
+ *
+ * @param {Object} ibaRatesMap     The IBA rates map
  * @param {string} investorId
  * @param {string} brokerId
- * @param {number} grossAmount  Absolute gross amount (qty × price)
- * @param {string} securityType  'EQUITY', 'ETF', 'NFO', etc.
- * @param {string} assetClass   'OPTIONS', 'FUTURES', etc. (for NFO)
- * @param {number} price        Per-unit price
- * @param {number} quantity     Signed quantity
- * @param {number} lots         Number of lots (for options flat rate)
+ * @param {number} grossAmount     Absolute gross amount (qty × price)
+ * @param {string} securityType    'EQUITY', 'ETF', 'NFO', etc.
+ * @param {string} [assetClass]    'OPTIONS' / 'FUTURES' for NFO; resolved if missing
+ * @param {number} price           Per-unit price
+ * @param {number} quantity        Signed quantity
+ * @param {number} lots            Number of lots (for options flat rate)
+ * @param {boolean} [inclusiveOverride]  G.2.9a override for the inclusive flag
+ * @param {string} [securityId]    NEW (G.2.10) — used for asset_class fallback lookup
+ * @param {string} [symbol]        NEW (G.2.10) — used for asset_class regex fallback
  * @returns {number} Brokerage amount rounded to 2 decimal places
  */
-function wmsGetBrokerage(ibaRatesMap, investorId, brokerId, grossAmount, securityType, assetClass, price, quantity, lots, inclusiveOverride) {
+function wmsGetBrokerage(ibaRatesMap, investorId, brokerId, grossAmount, securityType, assetClass, price, quantity, lots, inclusiveOverride, securityId, symbol) {
     if (!brokerId) return 0;
     var ibaEntry = ibaRatesMap[investorId + '|' + brokerId];
     if (!ibaEntry) return 0;
@@ -2760,10 +2776,30 @@ function wmsGetBrokerage(ibaRatesMap, investorId, brokerId, grossAmount, securit
         ? ibaEntry.charges_inclusive
         : inclusiveOverride;
 
+    // Rule G.2.10 — resolve asset_class fallback for NFO when caller passed
+    // it as undefined / null / ''. Single resolution point; every caller
+    // (current and future) gets the right pricing branch automatically.
+    var effAssetClass = assetClass;
+    if (!effAssetClass && securityType === 'NFO') {
+        var nfo = (typeof wmsRefData !== 'undefined' && wmsRefData && wmsRefData.securitiesNfoMap && securityId)
+            ? wmsRefData.securitiesNfoMap[securityId] : null;
+        if (nfo) {
+            if (nfo.instrument_type === 'OPTIONS' || nfo.instrument_type === 'FUTURES') {
+                effAssetClass = nfo.instrument_type;
+            } else if (nfo.option_type) {
+                effAssetClass = 'OPTIONS';
+            }
+        }
+        if (!effAssetClass) {
+            var sym = (symbol || '').toUpperCase();
+            effAssetClass = /(CE|PE)$/.test(sym) ? 'OPTIONS' : 'FUTURES';
+        }
+    }
+
     // Navigate the rates JSONB: equity.delivery for EQUITY/ETF, derivatives.futures/options for NFO
     var segment = null;
     if (securityType === 'NFO') {
-        if (assetClass === 'OPTIONS' && rates.derivatives && rates.derivatives.options) {
+        if (effAssetClass === 'OPTIONS' && rates.derivatives && rates.derivatives.options) {
             segment = rates.derivatives.options;
         } else {
             segment = rates.derivatives ? rates.derivatives.futures : null;
@@ -2851,26 +2887,12 @@ function wmsCalcTraderCharges(opts) {
     // Investor's inclusive flag — NOT the trader's (G.2.9a).
     var inclusive = wmsIsChargesInclusive(ibaRatesMap, investorId, brokerId);
 
-    // Resolve asset_class for NFO when caller didn't pass one (G.2.10).
-    var assetClass = opts.assetClass || '';
-    if (!assetClass && opts.securityType === 'NFO') {
-        var nfo = (typeof wmsRefData !== 'undefined' && wmsRefData && wmsRefData.securitiesNfoMap)
-            ? wmsRefData.securitiesNfoMap[opts.securityId] : null;
-        if (nfo) {
-            if (nfo.instrument_type === 'OPTIONS' || nfo.instrument_type === 'FUTURES') {
-                assetClass = nfo.instrument_type;
-            } else if (nfo.option_type) {
-                assetClass = 'OPTIONS';
-            }
-        }
-        if (!assetClass) {
-            var sym = (opts.symbol || '').toUpperCase();
-            assetClass = /(CE|PE)$/.test(sym) ? 'OPTIONS' : 'FUTURES';
-        }
-    }
-
+    // asset_class fallback (G.2.10) is now handled inside wmsGetBrokerage —
+    // we just pass securityId + symbol through and the underlying function
+    // resolves OPTIONS / FUTURES from securities_nfo when missing.
     return wmsGetBrokerage(ibaRatesMap, traderId, brokerId, opts.gross || 0,
-        opts.securityType, assetClass, opts.price, opts.quantity, opts.lots, inclusive) || 0;
+        opts.securityType, opts.assetClass, opts.price, opts.quantity, opts.lots,
+        inclusive, opts.securityId, opts.symbol) || 0;
 }
 
 /**
@@ -2988,13 +3010,16 @@ function wmsAutoCalcCharges(row, opts) {
 
     var inclusive = wmsIsChargesInclusive(ibaRatesMap, investorId, brokerId);
 
-    // Step 2: Brokerage (Rule G.2.2)
+    // Step 2: Brokerage (Rule G.2.2). Pass security_id + symbol so wmsGetBrokerage
+    // can resolve asset_class internally when the caller didn't set it on the row
+    // (G.2.10 — DB-loaded NFO rows have no asset_class column).
     var shouldCalcBrokerage = preserve
         ? (row.brokerage === null || row.brokerage === undefined || row.brokerage === 0)
         : true;
     if (shouldCalcBrokerage) {
         row.brokerage = wmsGetBrokerage(ibaRatesMap, investorId, brokerId, gross,
-            row.security_type, row.asset_class, row.price, row.quantity, row.lots);
+            row.security_type, row.asset_class, row.price, row.quantity, row.lots,
+            undefined, row.security_id, row.symbol);
     }
 
     // Step 3: charges_inclusive check (Rule G.2.3)
