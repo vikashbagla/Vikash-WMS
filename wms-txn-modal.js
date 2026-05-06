@@ -179,6 +179,14 @@ function _wmsTxnEnsureDom() {
         '.wms-edit-security-banner .sec-symbol { font-size:15px; font-weight:700; color:#2d3748; }' +
         '.wms-edit-security-banner .sec-company { font-size:12px; color:#718096; }' +
         '.wms-edit-security-banner .sec-type-badge { font-size:9px; font-weight:700; text-transform:uppercase; background:#edf2f7; color:#4a5568; padding:2px 6px; border-radius:3px; }' +
+        // CN viewer trigger (Edit modal): input + small pill button. Higher
+        // specificity than .wms-edit-row label so the parent label colour
+        // can't bleed into the button text.
+        '.wms-edit-row .wms-cn-input-row { display:flex; gap:4px; align-items:stretch; min-width:0; }' +
+        '.wms-edit-row .wms-cn-input-row input { flex:1; min-width:0; }' +
+        '.wms-edit-row .wms-cn-view-btn { flex-shrink:0; background:#eef2ff; border:1px solid #c7d2fe; color:#4338ca; font-size:11px; font-weight:600; padding:4px 8px; border-radius:4px; cursor:pointer; white-space:nowrap; line-height:1; }' +
+        '.wms-edit-row .wms-cn-view-btn:hover { background:#e0e7ff; border-color:#a5b4fc; color:#3730a3; }' +
+        '.wms-edit-row .wms-cn-view-btn.disabled { background:#f7fafc; border-color:#edf2f7; color:#cbd5e0; cursor:not-allowed; pointer-events:none; }' +
         // Button styles (btn-primary, btn-secondary, btn-danger, btn-close-modal)
         // are defined globally in app-styles.css — no duplication needed here.
         // Action cell (txn rows)
@@ -305,7 +313,7 @@ function _wmsTxnEnsureDom() {
                         '<div class="wms-edit-row cols-4">' +
                             '<div class="form-group"><label>Investor</label><input type="text" id="wmsEditInvestor" disabled></div>' +
                             '<div class="form-group"><label>Broker</label><input type="text" id="wmsEditBroker" disabled></div>' +
-                            '<div class="form-group"><label>Contract Note No</label><input type="text" id="wmsEditCnNo" class="editable-field"></div>' +
+                            '<div class="form-group"><label>Contract Note No</label><div class="wms-cn-input-row"><input type="text" id="wmsEditCnNo" class="editable-field" oninput="_wmsEditUpdateCnViewBtn()"><button type="button" id="wmsEditCnViewBtn" class="wms-cn-view-btn disabled" onclick="_wmsEditViewCn()" title="View all trades on this Contract Note">📄 View CN</button></div></div>' +
                             '<div class="form-group"><label>Trader</label><select id="wmsEditTrader" class="editable-field"></select></div>' +
                         '</div>' +
                     '</div>' +
@@ -1354,6 +1362,7 @@ function wmsEditModalOpen(txnId) {
     document.getElementById('wmsEditInvestor').value = wmsTxnInvName(txn.investor_id);
     document.getElementById('wmsEditBroker').value = wmsTxnBrkCode(txn.broker_id) || '-';
     document.getElementById('wmsEditCnNo').value = txn.broker_contract_note_no || '';
+    _wmsEditUpdateCnViewBtn();   // Enable/disable the "📄 View" CN-viewer trigger
 
     // Trader dropdown
     var traderSelect = document.getElementById('wmsEditTrader');
@@ -1533,6 +1542,37 @@ function wmsRecalcTraderCharges() {
     });
     document.getElementById('wmsEditTraderCharges').value = wmsEditFmt(traderCharges);
 }
+
+// ============================================================================
+// EDIT MODAL: CN VIEWER TRIGGER
+// (paired with the "📄 View" link next to the Contract Note No input.)
+// ============================================================================
+
+function _wmsEditUpdateCnViewBtn() {
+    var btn = document.getElementById('wmsEditCnViewBtn');
+    var input = document.getElementById('wmsEditCnNo');
+    if (!btn || !input) return;
+    var hasCn = (input.value || '').trim().length > 0;
+    btn.classList.toggle('disabled', !hasCn);
+}
+
+function _wmsEditViewCn() {
+    if (!wmsEditingTxnId || !wmsTxnCtx) return;
+    var txn = wmsTxnCtx.transactions.find(function(t) { return t.id === wmsEditingTxnId; });
+    if (!txn) return;
+    // Use the CURRENT input value so the viewer reflects an unsaved CN-no
+    // edit too. If empty, do nothing (button is disabled in that state).
+    var cnNo = (document.getElementById('wmsEditCnNo').value || '').trim();
+    if (!cnNo) return;
+    if (typeof wmsCnViewerOpen !== 'function') {
+        if (typeof showAlert === 'function') showAlert('CN viewer not loaded.', 'error');
+        return;
+    }
+    wmsCnViewerOpen(txn.investor_id, txn.broker_id, cnNo, wmsTxnCtx.transactions);
+}
+
+window._wmsEditUpdateCnViewBtn = _wmsEditUpdateCnViewBtn;
+window._wmsEditViewCn = _wmsEditViewCn;
 
 // ============================================================================
 // EDIT MODAL: SAVE

@@ -924,6 +924,10 @@ function trTxRenderList(filtered) {
         var deleteClass = isLocked ? 'action-menu-item danger disabled' : 'action-menu-item danger';
         var hideIcon = txn.dont_display ? '👁' : '👁';
         var hideTitle = txn.dont_display ? 'Show in Display' : 'Hide from Display';
+        var hasCn = !!(txn.broker_contract_note_no && txn.broker_contract_note_no.trim());
+        var viewCnHtml = hasCn
+            ? '<button class="action-menu-item" data-txaction="view-cn" data-txn-id="' + txn.id + '" title="View Contract Note">📄</button>'
+            : '';
 
         // Checkbox state
         var cbChecked = trTxSelectedIds[txn.id] ? ' checked' : '';
@@ -951,6 +955,7 @@ function trTxRenderList(filtered) {
                 '<button class="btn-action trTx-action-btn" data-txn-id="' + txn.id + '" title="Actions">⋮</button>' +
                 '<div class="action-menu" id="' + menuId + '">' +
                     '<button class="' + editClass + '" data-txaction="edit" data-txn-id="' + txn.id + '" title="Edit">✏️</button>' +
+                    viewCnHtml +
                     '<button class="action-menu-item" data-txaction="toggle-display" data-txn-id="' + txn.id + '" title="' + hideTitle + '">' + hideIcon + '</button>' +
                     '<button class="' + deleteClass + '" data-txaction="delete" data-txn-id="' + txn.id + '" title="Delete">🗑️</button>' +
                 '</div>' +
@@ -1002,6 +1007,7 @@ function trTxAttachRowListeners() {
             if (action === 'edit') trOpenEditModal(txnId);
             else if (action === 'toggle-display') trTxToggleFlag(txnId, 'dont_display');
             else if (action === 'delete') trTxDeleteTransaction(txnId);
+            else if (action === 'view-cn') trTxViewCn(txnId);
         });
     });
 
@@ -1071,6 +1077,26 @@ function trTxAttachRowListeners() {
 function trTxCloseAllMenus() {
     document.querySelectorAll('#trTx-list .action-menu.show').forEach(function(m) { m.classList.remove('show'); });
     trTxOpenMenuId = null;
+}
+
+// ============================================================================
+// VIEW CN — opens the shared cn-viewer modal over the in-memory trTransactions
+// (no DB read; the array is already loaded for the Transactions tab).
+// ============================================================================
+
+function trTxViewCn(txnId) {
+    var txn = trTransactions.find(function(t) { return t.id === txnId; });
+    if (!txn) return;
+    var cnNo = (txn.broker_contract_note_no || '').trim();
+    if (!cnNo) {
+        if (typeof showAlert === 'function') showAlert('No Contract Note number on this transaction.', 'error');
+        return;
+    }
+    if (typeof wmsCnViewerOpen !== 'function') {
+        if (typeof showAlert === 'function') showAlert('CN viewer not loaded.', 'error');
+        return;
+    }
+    wmsCnViewerOpen(txn.investor_id, txn.broker_id, cnNo, trTransactions);
 }
 
 // ============================================================================
