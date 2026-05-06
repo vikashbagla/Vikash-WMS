@@ -1700,34 +1700,107 @@ function deriveSizeFromMarketCap(marketCap) {
 // ── Yahoo Sync (unified: sector + size + 52-week high/low) ──
 // Single function replaces startSectorSync, startSizeSync, startWeek52Sync.
 // Yahoo edge function returns all fields in one call — no need for 3 passes.
+//
+// Scope (2026-05-06): only securities the user actually cares about — i.e.
+// any security_id that appears in `transactions` OR `watchlist_items`. This
+// brings the universe down from ~5-7k EQUITY+EQUITY_SME rows (15-30 min
+// runtime) to typically ~100-300 rows (~1 min runtime). NFO/MCX security_ids
+// from F&O trades or NFO watchlist items naturally don't match securities_db
+// (they live in `securities_nfo`), so they're excluded with no extra logic.
+// The existing `.in('security_type', ['EQUITY','EQUITY_SME'])` filter stays
+// as the final defence (B.14.6).
+
+// Returns an Array of distinct security_id values that appear in either
+// `transactions` or `watchlist_items` (security_source='securities_db' only,
+// so NFO/options-dynamic items are excluded). Designed to be a small set
+// (~100-500 entries) — fast enough to fetch in 2 round-trips.
+//
+// Defensive UUID filter: a small number of legacy `watchlist_items` rows
+// carry pre-UUID identifiers like '7' or '2578'. The transactions table is
+// strictly UUID-typed at the DB so those can't land there, but old watchlist
+// rows do. Non-UUID values are silently dropped — they couldn't match any
+// `securities_db.id` row anyway, and including them in `.in('id', [...])`
+// would make PostgREST reject the entire batch with `22P02 invalid input
+// syntax for type uuid`.
+async function _collectRelevantEquitySecurityIds() {
+    var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    var ids = {};
+    var addIfUuid = function(v) {
+        if (v && UUID_RE.test(v)) ids[v] = true;
+    };
+
+    // ---- transactions: every distinct security_id ----
+    // Including all security_types is safe: the .in('id', ...) filter on
+    // securities_db will only match equity-table IDs. NFO/MCX IDs live in
+    // securities_nfo and won't match. Pull only the column we need to keep
+    // the response small even on long histories.
+    var from = 0, BATCH = 1000;
+    while (true) {
+        var resp = await window.supabaseClient
+            .from('transactions')
+            .select('security_id')
+            .not('security_id', 'is', null)
+            .range(from, from + BATCH - 1);
+        if (resp.error) throw resp.error;
+        var rows = resp.data || [];
+        for (var i = 0; i < rows.length; i++) addIfUuid(rows[i].security_id);
+        if (rows.length < BATCH) break;
+        from += BATCH;
+    }
+
+    // ---- watchlist_items: only securities_db items ----
+    var wresp = await window.supabaseClient
+        .from('watchlist_items')
+        .select('security_id')
+        .eq('security_source', 'securities_db')
+        .not('security_id', 'is', null);
+    if (wresp.error) throw wresp.error;
+    var wrows = wresp.data || [];
+    for (var j = 0; j < wrows.length; j++) addIfUuid(wrows[j].security_id);
+
+    return Object.keys(ids);
+}
 
 async function startYahooSync() {
     var btn = document.getElementById('btnYahooSync');
     btn.disabled = true;
     btn.textContent = '⏳ Loading...';
-    setSecLoading(true, 'Fetching active equities...');
+    setSecLoading(true, 'Finding relevant securities...');
 
     try {
-        // Fetch all active equities
+        // Collect IDs from transactions + watchlist_items (B.14.7 / 2026-05-06)
+        var relevantIds = await _collectRelevantEquitySecurityIds();
+
+        if (relevantIds.length === 0) {
+            alert('No relevant equity securities found.\n\nYahoo Sync now runs only on securities that appear in your transactions or watchlist. Add some trades or watchlist entries first.');
+            return;
+        }
+
+        setSecLoading(true, 'Found ' + relevantIds.length + ' relevant security id(s). Fetching from Supabase...');
+
+        // Fetch securities_db rows for those ids. Existing filters preserved:
+        //   is_active=true (skip merged/inactive)
+        //   security_type IN ('EQUITY','EQUITY_SME') (Yahoo Sync is equity-only — B.14.6)
+        // Chunk the .in('id', [...]) clause to keep URLs under PostgREST limits
+        // (UUID ≈ 36 chars; 100 ids ≈ 3.6KB which is comfortably below ~8KB).
         var all = [];
-        var from = 0;
-        var BATCH = 1000;
-        while (true) {
+        var ID_CHUNK = 100;
+        for (var ci = 0; ci < relevantIds.length; ci += ID_CHUNK) {
+            var idBatch = relevantIds.slice(ci, ci + ID_CHUNK);
             var result = await window.supabaseClient
                 .from('securities_db')
                 .select('id,isin,symbol,nse_symbol,bse_symbol,sector,size,security_type')
                 .eq('is_active', true)
                 .in('security_type', ['EQUITY', 'EQUITY_SME'])
-                .order('isin', { ascending: true })
-                .range(from, from + BATCH - 1);
+                .in('id', idBatch);
             if (result.error) throw result.error;
             all = all.concat(result.data || []);
-            if (!result.data || result.data.length < BATCH) break;
-            from += BATCH;
         }
 
         if (all.length === 0) {
-            alert('No active equities found.');
+            alert('No matching active equities for your transactions / watchlist.\n\n' +
+                  '(' + relevantIds.length + ' security id(s) collected, but none matched ' +
+                  'an active EQUITY/EQUITY_SME row — likely all are F&O / debt / etc.)');
             return;
         }
 
