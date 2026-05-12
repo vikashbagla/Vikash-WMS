@@ -732,6 +732,18 @@ function trFnoBuildTotalRow(totExposure, totDayPnl, totRealised, totUnrealised, 
 // ============================================================================
 
 function trFnoRenderGrouped(positions) {
+    // Sort: symbols with any open position first, then fully-closed symbols.
+    // Within each half keep the existing alphabetical underlying order.
+    // In "Open" mode positions only contains open symbols already, so this
+    // is a no-op there. Matches the flat-view ordering (line 887-897).
+    // 2026-05-12 — owner request: in "All" mode show open positions on top.
+    positions.sort(function(a, b) {
+        var aOpen = (a.contractGroups || []).some(function(cg) { return cg.openQty > 0; }) ? 0 : 1;
+        var bOpen = (b.contractGroups || []).some(function(cg) { return cg.openQty > 0; }) ? 0 : 1;
+        if (aOpen !== bOpen) return aOpen - bOpen;
+        return (a.underlying || '').localeCompare(b.underlying || '');
+    });
+
     // Page totals — exposure = only open positions
     var pageTotExposure = 0, pageTotDayPnl = 0, pageTotRealised = 0, pageTotUnrealised = 0, pageTotNet = 0;
 
