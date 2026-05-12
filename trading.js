@@ -763,6 +763,17 @@ async function trLoadData() {
 
     trTransactions = wmsSanitizeTransactions(txnData);
 
+    // Refresh the shared tag autocomplete list from the freshly-loaded
+    // transactions. This is the single source of truth for tag suggestions
+    // across Add Transaction / Bonus / Split / Income / Rights / Hist P&L
+    // modals (all of which read wmsRefData.tags). Keeping tags derived from
+    // the in-memory array — instead of a separate DB query — guarantees
+    // freshness after every save/import and side-steps the LESSONS A.1.14
+    // 1000-row cap that silently dropped recent tags before 2026-05-12.
+    if (typeof wmsRefreshTagsFromTransactions === 'function') {
+        wmsRefreshTagsFromTransactions(trTransactions);
+    }
+
     // Build comprehensive search text for each transaction (Rule B.9.2)
     trTransactions.forEach(function(txn) {
         txn._searchText = wmsBuildSecuritySearchText({

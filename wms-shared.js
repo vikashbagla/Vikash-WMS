@@ -219,26 +219,55 @@ async function wmsLoadRefData() {
             wmsRefData.regChargesIndex[key] = rc.rate_percentage || 0;
         });
 
-        // 5. Existing tags (for autocomplete across modules)
-        resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?select=tags&tags=not.is.null&limit=5000', { headers: headers });
-        var tagRows = await resp.json();
-        var tagSet = {};
-        tagRows.forEach(function(r) {
-            if (Array.isArray(r.tags)) {
-                r.tags.forEach(function(t) {
-                    var trimmed = t.trim().toLowerCase();
+        // 5. Tags autocomplete list — derived from trTransactions, NOT from a
+        // separate DB query. Trading's `trLoadData()` populates this via
+        // `wmsRefreshTagsFromTransactions(trTransactions)` AFTER the full
+        // transaction set is loaded, so the tag list always reflects the
+        // current in-memory state. This avoids an extra DB round-trip at
+        // app start AND avoids the LESSONS A.1.14 trap (Supabase capping a
+        // separate query at 1000 rows and silently dropping newer tags).
+        // Initialise empty here so non-Trading modules can still safely
+        // read `wmsRefData.tags || []` before Trading loads.
+        // 2026-05-12: previously fetched directly here, but 'advNA' was
+        // missing from the Add Transaction dropdown because the book grew
+        // past 1000 rows and the newest tags fell off the truncated query.
+        wmsRefData.tags = [];
+
+        wmsRefData.ready = true;
+        console.log('WMS ref data loaded: ' + investors.length + ' investors, ' + brokers.length + ' brokers, ' +
+            ibAccounts.length + ' IBA, ' + wmsRefData.regCharges.length + ' reg charges (tags derived from trTransactions by Trading module)');
+    } catch (e) {
+        console.error('WMS ref data load error:', e);
+    }
+}
+
+/**
+ * Refresh the shared tag autocomplete list from a transactions array.
+ * Trading calls this from trLoadData() right after trTransactions is
+ * populated so wmsRefData.tags always mirrors the in-memory state. The
+ * resulting array is lower-cased + de-duplicated, sorted alphabetically,
+ * matching the previous DB-query shape. Returns the array for convenience.
+ */
+function wmsRefreshTagsFromTransactions(transactions) {
+    var tagSet = {};
+    if (Array.isArray(transactions)) {
+        transactions.forEach(function(t) {
+            if (Array.isArray(t.tags)) {
+                t.tags.forEach(function(tag) {
+                    var trimmed = (tag || '').trim().toLowerCase();
                     if (trimmed) tagSet[trimmed] = true;
                 });
             }
         });
-        wmsRefData.tags = Object.keys(tagSet).sort();
-
-        wmsRefData.ready = true;
-        console.log('WMS ref data loaded: ' + investors.length + ' investors, ' + brokers.length + ' brokers, ' +
-            ibAccounts.length + ' IBA, ' + wmsRefData.regCharges.length + ' reg charges, ' + wmsRefData.tags.length + ' tags');
-    } catch (e) {
-        console.error('WMS ref data load error:', e);
     }
+    var next = Object.keys(tagSet).sort();
+    // Mutate in place (B.2.3) so any consumer that captured a reference to
+    // wmsRefData.tags (e.g. trading-add-transaction.js's atExistingTags)
+    // sees the updated values without re-binding.
+    if (!Array.isArray(wmsRefData.tags)) wmsRefData.tags = [];
+    wmsRefData.tags.length = 0;
+    Array.prototype.push.apply(wmsRefData.tags, next);
+    return wmsRefData.tags;
 }
 
 // ============================================================================
