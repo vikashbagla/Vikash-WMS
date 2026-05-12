@@ -300,6 +300,15 @@ details summary {
         </div>
         <div id="au-open-trades-content" style="margin-top:12px">Click Refresh to load.</div>
       </div>
+      <div class="au-card" style="margin-top:16px">
+        <h3>Closed PAPER Trades <span id="au-closed-trades-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Trades whose legs net to zero (target hit, stop hit, time stop, or manual close). Realised P&amp;L is the actual cash settled — entry vs exit prices on each leg.</div>
+        <div class="au-actions">
+          <button class="au-btn au-btn-secondary" onclick="autoLoadClosedTrades()">↻ Refresh</button>
+        </div>
+        <div id="au-closed-trades-content" style="margin-top:12px">Click Refresh to load.</div>
+        <div id="au-closed-trades-footnote" class="au-meta" style="margin-top:8px;font-size:11px;color:#9ca3af"></div>
+      </div>
     </div>
 
     <!-- Recent Events tab -->

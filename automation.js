@@ -26,7 +26,7 @@ function autoSwitchTab(tabId) {
     if (panel) panel.classList.add('active');
 
     // Lazy-load on first activation of dashboard tabs
-    if (tabId === 'au-open-trades' && !window._auOpenTradesLoaded) { autoLoadOpenTrades(); window._auOpenTradesLoaded = true; }
+    if (tabId === 'au-open-trades' && !window._auOpenTradesLoaded) { autoLoadOpenTrades(); autoLoadClosedTrades(); window._auOpenTradesLoaded = true; }
     if (tabId === 'au-events'      && !window._auEventsLoaded)     { autoLoadEvents('all');  window._auEventsLoaded = true; }
     if (tabId === 'au-runs'        && !window._auRunsLoaded)       { autoLoadRuns('all');    window._auRunsLoaded = true; }
 }
@@ -895,6 +895,209 @@ async function autoLoadOpenTrades() {
         html += '</tbody></table></div>';
         el.innerHTML = html;
         if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = openRows.length + ' open'; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
+        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Closed Trades block (sibling card on the Open Trades tab)
+// ----------------------------------------------------------------------------
+//
+// There is no auto_trades table — every trade is a `trade_id` UUID shared
+// across `auto_signals` events (ENTRY → TARGET_HIT / STOP_HIT / TIME_STOP /
+// MANUAL_CLOSE). The `v_auto_open_trades` SQL view derives openness by
+// summing legs across signals and keeping trade_ids where some leg has
+// non-zero net qty.
+//
+// "Closed" is the inverse: trade_ids where ALL legs net to zero. Rather
+// than adding a mirror SQL view (Option B in the design discussion), we
+// derive this client-side from the same `legs` JSON the open view uses —
+// no DB migration, same source data, can't disagree with the open view
+// because both consume the same events.
+//
+// Realised P&L = Σ legs across all events of (side === 'SELL' ? +1 : −1)
+// × price × qty. For a fully-closed trade this is the actual cash settled.
+
+var _AU_CLOSED_LIMIT = 500;  // Recent events window — covers everything since PAPER launch
+
+function _autoExitTypeLabel(t) {
+    if (!t) return '—';
+    return t.replace(/_/g, ' ');  // TARGET_HIT → "TARGET HIT"
+}
+
+function _autoExitTypeColor(t) {
+    return t === 'TARGET_HIT' ? '#0891b2' :
+           t === 'STOP_HIT'   ? '#dc2626' :
+           t === 'TIME_STOP'  ? '#92400e' :
+           t === 'MANUAL_CLOSE' ? '#7c3aed' : '#6b7280';
+}
+
+async function autoLoadClosedTrades() {
+    var el = document.getElementById('au-closed-trades-content');
+    var statusEl = document.getElementById('au-closed-trades-status');
+    var footEl = document.getElementById('au-closed-trades-footnote');
+    if (!el) return;
+    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+    el.innerHTML = '<div class="au-meta">⏳ Loading closed trades…</div>';
+    if (footEl) footEl.textContent = '';
+
+    try {
+        // Fetch recent events. The window covers everything since the module
+        // went live (29-Apr-2026); revisit pagination if/when the event log
+        // grows past 500. Order desc so we naturally see the most recent
+        // first and footnote the scope cleanly.
+        var resp = await fetch(
+            SUPABASE_URL + '/rest/v1/auto_signals?order=fired_at.desc&limit=' + _AU_CLOSED_LIMIT +
+            '&select=id,trade_id,strategy_name,fired_at,event_type,direction,score,legs,metadata',
+            { headers: wmsHeaders() }
+        );
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()).slice(0, 200));
+        var allSignals = await resp.json();
+        if (!Array.isArray(allSignals)) allSignals = [];
+
+        // Group by trade_id
+        var byTrade = {};
+        allSignals.forEach(function (s) {
+            if (!s.trade_id) return;
+            if (!byTrade[s.trade_id]) byTrade[s.trade_id] = [];
+            byTrade[s.trade_id].push(s);
+        });
+
+        // For each group: compute per-symbol net qty + realised P&L. Closed
+        // iff every symbol nets to exactly zero AND there is ≥1 non-ENTRY
+        // event. Trades that have only the ENTRY in our window are obviously
+        // not closed.
+        var closedRows = [];
+        Object.keys(byTrade).forEach(function (tradeId) {
+            var events = byTrade[tradeId];
+            var hasExitEvent = false;
+            var netBySym = {};
+            var pnl = 0;
+            events.forEach(function (s) {
+                if (s.event_type !== 'ENTRY') hasExitEvent = true;
+                (s.legs || []).forEach(function (l) {
+                    var sym = l.short_symbol || l.symbol || '';
+                    if (!sym) return;
+                    var q = Number(l.qty) || 0;
+                    var p = Number(l.price) || 0;
+                    if ((l.side || '').toUpperCase() === 'BUY') {
+                        netBySym[sym] = (netBySym[sym] || 0) + q;
+                        pnl -= p * q;
+                    } else if ((l.side || '').toUpperCase() === 'SELL') {
+                        netBySym[sym] = (netBySym[sym] || 0) - q;
+                        pnl += p * q;
+                    }
+                });
+            });
+            if (!hasExitEvent) return;
+            // All symbols must net to zero (tolerate float dust from numeric storage)
+            var allZero = Object.keys(netBySym).every(function (k) {
+                return Math.abs(netBySym[k]) < 1e-6;
+            });
+            if (!allZero) return;
+
+            // Pick the ENTRY event (oldest within the trade) and the closing
+            // event (most recent non-ENTRY)
+            var entry = null, exit = null;
+            events.forEach(function (s) {
+                if (s.event_type === 'ENTRY') {
+                    if (!entry || s.fired_at < entry.fired_at) entry = s;
+                } else {
+                    if (!exit || s.fired_at > exit.fired_at) exit = s;
+                }
+            });
+            if (!entry) return;  // edge case — no ENTRY in our window (window too narrow)
+
+            closedRows.push({
+                trade_id: tradeId,
+                strategy_name: entry.strategy_name,
+                entry: entry,
+                exit: exit,
+                pnl: pnl
+            });
+        });
+
+        // Sort: most recently closed first
+        closedRows.sort(function (a, b) {
+            var aT = a.exit ? a.exit.fired_at : a.entry.fired_at;
+            var bT = b.exit ? b.exit.fired_at : b.entry.fired_at;
+            return bT < aT ? -1 : bT > aT ? 1 : 0;
+        });
+
+        if (closedRows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No closed trades in the last ' + _AU_CLOSED_LIMIT + ' events.</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 closed'; }
+            if (footEl) footEl.textContent = 'Scope: most recent ' + allSignals.length + ' events (max ' + _AU_CLOSED_LIMIT + ').';
+            return;
+        }
+
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Pair</th>' +
+                '<th style="padding:6px 8px">Strategy</th>' +
+                '<th style="padding:6px 8px">Action</th>' +
+                '<th style="padding:6px 8px">Entry</th>' +
+                '<th style="padding:6px 8px">Exit</th>' +
+                '<th style="padding:6px 8px">Days</th>' +
+                '<th style="padding:6px 8px">Entry Z90</th>' +
+                '<th style="padding:6px 8px">Exit Reason</th>' +
+                '<th style="padding:6px 8px;text-align:right">Realised P&amp;L</th>' +
+                '<th style="padding:6px 8px">Trade</th>' +
+                '</tr></thead><tbody>';
+
+        var totalPnL = 0, winCount = 0, lossCount = 0;
+        closedRows.forEach(function (ct) {
+            var em = (ct.entry && ct.entry.metadata) || {};
+            var pair = em.Pair || '—';
+            var action = em.Action || (ct.entry ? ct.entry.direction : '—');
+            var entryStr = ct.entry ? autoFmtIST(ct.entry.fired_at) : '—';
+            var exitStr = ct.exit ? autoFmtIST(ct.exit.fired_at) : '—';
+            var daysHeld = (ct.entry && ct.exit) ? Math.max(0, Math.floor((new Date(ct.exit.fired_at).getTime() - new Date(ct.entry.fired_at).getTime()) / 86400000)) : '—';
+            var entryZ = em.Z90 != null ? em.Z90 : '—';
+            var exitType = ct.exit ? ct.exit.event_type : '—';
+            var exitTypeColor = _autoExitTypeColor(exitType);
+
+            var pnl = ct.pnl;
+            totalPnL += pnl;
+            if (pnl >= 0) winCount++; else lossCount++;
+            var pnlSign = pnl >= 0 ? '+' : '−';
+            var pnlColor = pnl >= 0 ? '#047857' : '#dc2626';
+            var pnlAbs = Math.abs(Math.round(pnl)).toLocaleString('en-IN');
+            var pnlCell = '<span style="color:' + pnlColor + ';font-weight:600">' + pnlSign + '₹' + pnlAbs + '</span>';
+
+            var tradeFrag = ct.trade_id ? ct.trade_id.slice(0, 8) + '…' : '—';
+
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px"><strong>' + autoEsc(pair) + '</strong></td>' +
+                    '<td style="padding:6px 8px"><code>' + autoEsc(ct.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(action) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(entryStr) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(exitStr) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(String(daysHeld)) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(String(entryZ)) + '</td>' +
+                    '<td style="padding:6px 8px"><span style="color:' + exitTypeColor + ';font-weight:600">' + autoEsc(_autoExitTypeLabel(exitType)) + '</span></td>' +
+                    '<td style="padding:6px 8px;text-align:right;white-space:nowrap">' + pnlCell + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(tradeFrag) + '</td>' +
+                    '</tr>';
+        });
+
+        // Summary footer row
+        var totalSign = totalPnL >= 0 ? '+' : '−';
+        var totalColor = totalPnL >= 0 ? '#047857' : '#dc2626';
+        var totalAbs = Math.abs(Math.round(totalPnL)).toLocaleString('en-IN');
+        html += '<tfoot><tr style="border-top:2px solid #cbd5e0;background:#f7fafc;font-weight:700">' +
+                '<td colspan="8" style="padding:8px">Total (' + closedRows.length + ' closed' +
+                (winCount + lossCount > 0 ? ' — ' + winCount + 'W / ' + lossCount + 'L' : '') + ')</td>' +
+                '<td style="padding:8px;text-align:right;color:' + totalColor + '">' + totalSign + '₹' + totalAbs + '</td>' +
+                '<td style="padding:8px">—</td>' +
+                '</tr></tfoot>';
+
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = closedRows.length + ' closed'; }
+        if (footEl) footEl.textContent = 'Scope: most recent ' + allSignals.length + ' events (max ' + _AU_CLOSED_LIMIT + '). Trades whose ENTRY falls outside this window won\'t appear.';
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
         if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
