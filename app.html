@@ -224,7 +224,6 @@
         const localToken = getFyersToken();
         if (localToken) {
             window.fyersToken = localToken;
-            window._wmsFyersAccessToken = localToken;  // expose actual token for WS client (see LIVE-PRICES-WS-SPEC.md §3.3)
             console.log('✅ Fyers token valid for today (localStorage)');
             statusEl.innerHTML = '🟢 Fyers';
             statusEl.style.color = '#059669';
@@ -236,7 +235,6 @@
         if (dbRow && dbRow.api_access_token) {
             // Auto-login token exists — edge function will use it automatically
             window.fyersToken = 'db';  // truthy flag; actual token used server-side
-            window._wmsFyersAccessToken = dbRow.api_access_token;  // expose actual token for WS client (see LIVE-PRICES-WS-SPEC.md §3.3)
             const method = dbRow.api_token_method === 'auto' ? 'auto-login' : 'manual';
             console.log(`✅ Fyers token valid for today (DB, ${method})`);
             statusEl.innerHTML = '🟢 Fyers <span style="font-size:9px;color:#6b7280;">(auto)</span>';
@@ -246,7 +244,6 @@
 
         // 3. No token available
         window.fyersToken = null;
-        window._wmsFyersAccessToken = null;  // ensure WS client doesn't try to connect with stale token
         statusEl.innerHTML =
             '🔴 <a href="fyers-oauth.html" style="color:#dc2626;font-weight:600;">Fyers</a>';
         console.log('⚠️ Fyers token missing or expired');
@@ -633,7 +630,6 @@
     document.getElementById('app-styles-link').href = `app-styles.css?v=${_v}`;
     document.write(`<script src="utils.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-shared.js?v=${_v}"><\/script>`);
-    document.write(`<script src="wms-fyers-ws.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-txn-modal.js?v=${_v}"><\/script>`);
     document.write(`<script src="cn-viewer.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-export.js?v=${_v}"><\/script>`);
