@@ -45,10 +45,31 @@
     return;
   }
 
-  // Allow runtime disable via console:  window._wmsWsEnabled = false
-  // Default: enabled in dev
-  if (window._wmsWsEnabled === false) {
-    console.log('[wms-fyers-ws] Skipping — window._wmsWsEnabled is false.');
+  // -----------------------------------------------------------------------
+  // PHASE 1 HALTED 2026-05-19 — Fyers v3 WS protocol is undocumented
+  // -----------------------------------------------------------------------
+  // Probe results from this dev session:
+  //   • Code 1006 (abnormal close) on every connect attempt to
+  //     wss://api.fyers.in/socket/v2/data/ — handshake rejected before any
+  //     message can be exchanged.
+  //   • Fyers's KB explicitly states "Direct details on the WebSocket
+  //     message or packet structure for API v3 are not provided. Consider
+  //     using Python and Node.js packages." — they want callers to use
+  //     their SDK, not roll a custom client.
+  //   • Real packet format is binary protobuf (confirmed via marketcalls
+  //     OSS repo using msg.proto / msg_pb2.py); rolling our own requires
+  //     reverse-engineering and ongoing maintenance.
+  // Decision pending from owner: (a) bundle the official npm SDK, (b) run
+  //   a separate Node service holding the WS + broadcast to browser via
+  //   SSE, (c) tighten REST polling to 3-5s instead of 10s, or (d) keep
+  //   10s polling and abandon this migration. See AUTOMATION-LESSONS D.15.
+  //
+  // Until that decision lands, this script DEFAULTS TO DISABLED. To re-
+  // enable for further probing once a path is chosen, set
+  //   window._wmsWsEnabled = true   BEFORE the page loads (e.g. in console
+  //   with location.reload() right after), or remove this block.
+  if (window._wmsWsEnabled !== true) {
+    console.log('[wms-fyers-ws] HALTED — Fyers v3 WS protocol undocumented; awaiting owner direction. Set window._wmsWsEnabled = true to re-enable for probing. See AUTOMATION-LESSONS D.15.');
     return;
   }
 
@@ -119,6 +140,12 @@
   // Connection lifecycle
   // ---------------------------------------------------------------------------
   function connect() {
+    // Belt-and-braces: respect runtime disable (the disconnect() helper sets
+    // _wmsWsEnabled=false, and the original top-of-IIFE check only runs once).
+    if (window._wmsWsEnabled !== true) {
+      logInfo('connect() aborted — _wmsWsEnabled is not true');
+      return;
+    }
     var token = window._wmsFyersAccessToken;
     if (!token) {
       logErr('No Fyers access token in memory (window._wmsFyersAccessToken). Waiting 5s and retrying.');
