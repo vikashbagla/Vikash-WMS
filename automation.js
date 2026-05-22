@@ -46,6 +46,7 @@ async function initAutomation() {
     autoLoadMarketPricesStats();
     autoLoadStrategies();
     autoLoadRunnerLastRun();
+    autoLoadWebhookStatus();
 }
 
 // Expose for app.html loader
@@ -468,6 +469,203 @@ async function autoLoadStrategies() {
         el.innerHTML = html;
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Webhook-driven strategies status (Phase 10b — TV webhook path)
+// ----------------------------------------------------------------------------
+// Renders one row per strategy whose auto_strategies.metadata.source =
+// 'tv_webhook'. Shows: last received signal, today's signal count, last
+// heartbeat received, last run status, health badge.
+//
+// Health logic (uses last_heartbeat_at from auto_strategies.metadata):
+//   • during MCX hours (9:00–23:30 IST Mon–Fri):
+//       - green: heartbeat ≤ 90 min ago
+//       - amber: heartbeat 90–180 min ago
+//       - red:   heartbeat > 180 min ago OR never received
+//   • outside MCX hours: shown as "off-hours" (no expectations)
+// MCX hours are defined here, not in a shared util, because this widget is
+// the only consumer; if a second consumer appears, refactor to wms-shared.
+// ----------------------------------------------------------------------------
+
+function autoIsWithinMcxHours(now) {
+    // now is a JS Date (system clock). Compute IST hour-of-day + day-of-week.
+    var istMs = now.getTime() + (5.5 * 60 * 60 * 1000);
+    var ist = new Date(istMs);
+    var dow = ist.getUTCDay();       // 0=Sun, 6=Sat (UTC because we shifted)
+    if (dow === 0 || dow === 6) return false;
+    var minOfDay = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+    return minOfDay >= (9 * 60) && minOfDay <= (23 * 60 + 30);
+}
+
+function autoFmtAgo(iso) {
+    if (!iso) return { text: 'never', minutesAgo: Infinity };
+    var ts = new Date(iso).getTime();
+    if (!isFinite(ts)) return { text: 'invalid', minutesAgo: Infinity };
+    var minutesAgo = Math.max(0, Math.floor((Date.now() - ts) / 60000));
+    var text;
+    if (minutesAgo < 1) text = 'just now';
+    else if (minutesAgo < 60) text = minutesAgo + ' min ago';
+    else if (minutesAgo < 1440) text = Math.floor(minutesAgo / 60) + 'h ' + (minutesAgo % 60) + 'm ago';
+    else text = Math.floor(minutesAgo / 1440) + 'd ago';
+    return { text: text, minutesAgo: minutesAgo };
+}
+
+function autoFmtIstShort(iso) {
+    if (!iso) return '—';
+    try {
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return '—';
+        // Format: "22 May 12:50 IST"
+        var istMs = d.getTime() + (5.5 * 60 * 60 * 1000);
+        var ist = new Date(istMs);
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        var hh = String(ist.getUTCHours()).padStart(2, '0');
+        var mm = String(ist.getUTCMinutes()).padStart(2, '0');
+        return ist.getUTCDate() + ' ' + months[ist.getUTCMonth()] + ' ' + hh + ':' + mm + ' IST';
+    } catch (_) { return '—'; }
+}
+
+async function autoLoadWebhookStatus() {
+    var el = document.getElementById('au-webhook-status-list');
+    var badge = document.getElementById('au-webhook-status-badge');
+    if (!el) return;
+    el.textContent = 'Loading…';
+    if (badge) { badge.textContent = 'loading'; badge.className = 'au-badge idle'; }
+
+    try {
+        // 1. Get all webhook-driven strategies
+        var stratResp = await fetch(
+            SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>source=eq.tv_webhook&select=name,display_name,version,enabled,execution_mode,metadata&order=name',
+            { headers: wmsHeaders() }
+        );
+        var strats = await stratResp.json();
+        if (!Array.isArray(strats) || strats.length === 0) {
+            el.innerHTML = '<em style="color:#9ca3af">No webhook-driven strategies registered. To add one: set <code>metadata.source = "tv_webhook"</code> on the auto_strategies row.</em>';
+            if (badge) { badge.textContent = 'empty'; badge.className = 'au-badge idle'; }
+            return;
+        }
+
+        var inMcx = autoIsWithinMcxHours(new Date());
+
+        // 2. For each strategy, fetch latest webhook signal + today's count + latest run
+        var rows = await Promise.all(strats.map(async function (s) {
+            var name = s.name;
+            // Latest signal
+            var sigResp = await fetch(
+                SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=eq.' + encodeURIComponent(name) +
+                '&source=eq.tv_webhook&select=fired_at,event_type,metadata,email_status' +
+                '&order=fired_at.desc&limit=1',
+                { headers: wmsHeaders() }
+            );
+            var sigRows = sigResp.ok ? await sigResp.json() : [];
+
+            // Today's count (rolling 24h)
+            var since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            var countResp = await fetch(
+                SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=eq.' + encodeURIComponent(name) +
+                '&source=eq.tv_webhook&fired_at=gte.' + encodeURIComponent(since) +
+                '&select=id',
+                { headers: wmsHeaders({ 'Prefer': 'count=exact' }) }
+            );
+            var todayCount = 0;
+            if (countResp.ok) {
+                var cr = countResp.headers.get('content-range') || '';
+                var m = cr.match(/\/(\d+)$/);
+                todayCount = m ? parseInt(m[1], 10) : 0;
+            }
+
+            // Latest run
+            var runResp = await fetch(
+                SUPABASE_URL + '/rest/v1/auto_runs?strategy_name=eq.' + encodeURIComponent(name) +
+                '&select=started_at,status,error,metadata&order=started_at.desc&limit=1',
+                { headers: wmsHeaders() }
+            );
+            var runRows = runResp.ok ? await runResp.json() : [];
+
+            return {
+                strategy: s,
+                latest_signal: sigRows[0] || null,
+                today_count: todayCount,
+                latest_run: runRows[0] || null,
+                last_heartbeat_at: (s.metadata || {}).last_heartbeat_at || null,
+            };
+        }));
+
+        // 3. Render the table
+        var html = '<div style="width:100%;overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Strategy</th>' +
+                '<th style="padding:6px 8px">Health</th>' +
+                '<th style="padding:6px 8px">Last Signal</th>' +
+                '<th style="padding:6px 8px">Last 24h</th>' +
+                '<th style="padding:6px 8px">Last Heartbeat</th>' +
+                '<th style="padding:6px 8px">Last Run</th>' +
+                '</tr></thead><tbody>';
+
+        var worstHealth = 'green';   // overall badge
+        rows.forEach(function (r) {
+            var hb = autoFmtAgo(r.last_heartbeat_at);
+            var health = 'off-hours';
+            var healthBadge = '<span class="au-badge idle" title="MCX market closed — no heartbeat expected">🌙 off-hours</span>';
+            if (inMcx) {
+                if (r.last_heartbeat_at == null) {
+                    health = 'red';
+                    healthBadge = '<span class="au-badge error" title="No heartbeat ever received">🔴 silent</span>';
+                } else if (hb.minutesAgo <= 90) {
+                    health = 'green';
+                    healthBadge = '<span class="au-badge success" title="Heartbeat fresh (≤90 min)">🟢 healthy</span>';
+                } else if (hb.minutesAgo <= 180) {
+                    health = 'amber';
+                    healthBadge = '<span class="au-badge warning" title="Heartbeat aging (90–180 min)">🟡 stale</span>';
+                } else {
+                    health = 'red';
+                    healthBadge = '<span class="au-badge error" title="Heartbeat overdue (>180 min)">🔴 silent</span>';
+                }
+            }
+            if (health === 'red')   worstHealth = 'red';
+            else if (health === 'amber' && worstHealth !== 'red') worstHealth = 'amber';
+
+            var sig = r.latest_signal;
+            var sigCell = sig
+                ? autoFmtIstShort(sig.fired_at) + ' · <code>' + autoEsc(sig.event_type || '—') + '</code> · email <code>' + autoEsc(sig.email_status || '—') + '</code>'
+                : '<em style="color:#9ca3af">none yet</em>';
+
+            var run = r.latest_run;
+            var runCell;
+            if (!run) {
+                runCell = '<em style="color:#9ca3af">none yet</em>';
+            } else {
+                var runBadge = run.status === 'SUCCESS'
+                    ? '<span class="au-badge success">SUCCESS</span>'
+                    : '<span class="au-badge error" title="' + autoEsc(run.error || '') + '">FAILED</span>';
+                var runDeduped = (run.metadata || {}).deduped ? ' <span class="au-badge idle" title="duplicate dedupe_key — no DB write">deduped</span>' : '';
+                runCell = autoFmtIstShort(run.started_at) + ' · ' + runBadge + runDeduped;
+            }
+
+            html += '<tr style="border-top:1px solid #e5e7eb;vertical-align:top">' +
+                    '<td style="padding:6px 8px"><code>' + autoEsc(r.strategy.name) + '</code><br><span style="color:#6b7280;font-size:11px">' + autoEsc(r.strategy.display_name) + '</span></td>' +
+                    '<td style="padding:6px 8px">' + healthBadge + '</td>' +
+                    '<td style="padding:6px 8px">' + sigCell + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right"><b>' + r.today_count + '</b></td>' +
+                    '<td style="padding:6px 8px">' + (r.last_heartbeat_at ? autoFmtIstShort(r.last_heartbeat_at) + ' <span style="color:#6b7280">(' + autoEsc(hb.text) + ')</span>' : '<em style="color:#9ca3af">never</em>') + '</td>' +
+                    '<td style="padding:6px 8px">' + runCell + '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table></div>';
+        html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280">Health based on last heartbeat age during MCX hours (9:00–23:30 IST Mon–Fri). "Last 24h" is a rolling count over the past 24 hours.</div>';
+
+        el.innerHTML = html;
+        if (badge) {
+            if (!inMcx) { badge.textContent = 'off-hours'; badge.className = 'au-badge idle'; }
+            else if (worstHealth === 'red') { badge.textContent = 'alert'; badge.className = 'au-badge error'; }
+            else if (worstHealth === 'amber') { badge.textContent = 'stale'; badge.className = 'au-badge warning'; }
+            else { badge.textContent = 'healthy'; badge.className = 'au-badge success'; }
+        }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load webhook status: ' + autoEsc(String(e)) + '</span>';
+        if (badge) { badge.textContent = 'error'; badge.className = 'au-badge error'; }
     }
 }
 
