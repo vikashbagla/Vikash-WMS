@@ -26,7 +26,7 @@ function autoSwitchTab(tabId) {
     if (panel) panel.classList.add('active');
 
     // Lazy-load on first activation of dashboard tabs
-    if (tabId === 'au-open-trades' && !window._auOpenTradesLoaded) { autoLoadOpenTrades(); autoLoadClosedTrades(); window._auOpenTradesLoaded = true; }
+    if (tabId === 'au-open-trades' && !window._auOpenTradesLoaded) { autoLoadGsOpenTrades(); autoLoadGsClosedTrades(); autoLoadOpenTrades(); autoLoadClosedTrades(); window._auOpenTradesLoaded = true; }
     if (tabId === 'au-events'      && !window._auEventsLoaded)     { autoLoadEvents('all');  window._auEventsLoaded = true; }
     if (tabId === 'au-runs'        && !window._auRunsLoaded)       { autoLoadRuns('all');    window._auRunsLoaded = true; }
 }
@@ -993,6 +993,23 @@ function autoComputePnL(legs, priceMap) {
     return { total: total, breakdown: legBreakdown.join(' • '), markDate: markDate };
 }
 
+// Returns a Set of strategy names whose auto_strategies.metadata.source === 'tv_webhook'.
+// Cached on window after first call. The GS Open/Closed Trades cards handle these
+// strategies; the Pairs Open/Closed cards exclude them.
+async function autoGetWebhookStrategyNames() {
+    if (window._auWebhookStrategyNames instanceof Set) return window._auWebhookStrategyNames;
+    try {
+        var resp = await fetch(
+            SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>source=eq.tv_webhook&select=name',
+            { headers: wmsHeaders() }
+        );
+        var rows = await resp.json();
+        var set = new Set((rows || []).map(function (r) { return r.name; }));
+        window._auWebhookStrategyNames = set;
+        return set;
+    } catch (_e) { return new Set(); }
+}
+
 async function autoLoadOpenTrades() {
     var el = document.getElementById('au-open-trades-content');
     var statusEl = document.getElementById('au-open-trades-status');
@@ -1001,14 +1018,16 @@ async function autoLoadOpenTrades() {
     el.innerHTML = '<div class="au-meta">⏳ Loading open trades…</div>';
 
     try {
-        // 1) Get list of open trade_ids from the view
+        // 1) Get list of open trade_ids from the view, filter out webhook strategies
+        var webhookStrats = await autoGetWebhookStrategyNames();
         var openResp = await fetch(
             SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=*',
             { headers: wmsHeaders() }
         );
-        var openRows = await openResp.json();
+        var openRowsAll = await openResp.json();
+        var openRows = (openRowsAll || []).filter(function (r) { return !webhookStrats.has(r.strategy_name); });
         if (!Array.isArray(openRows) || openRows.length === 0) {
-            el.innerHTML = '<div class="au-soon" style="padding:20px">No open trades.</div>';
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No open pairs trades.</div>';
             if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 open'; }
             return;
         }
@@ -1142,6 +1161,8 @@ async function autoLoadClosedTrades() {
     if (footEl) footEl.textContent = '';
 
     try {
+        // Get set of webhook strategy names to exclude (handled by GS Closed card)
+        var webhookStrats = await autoGetWebhookStrategyNames();
         // Fetch recent events. The window covers everything since the module
         // went live (29-Apr-2026); revisit pagination if/when the event log
         // grows past 500. Order desc so we naturally see the most recent
@@ -1208,6 +1229,8 @@ async function autoLoadClosedTrades() {
             });
             if (!entry) return;  // edge case — no ENTRY in our window (window too narrow)
 
+            // Skip webhook-driven strategies — they have their own GS Closed card
+            if (webhookStrats.has(entry.strategy_name)) return;
             closedRows.push({
                 trade_id: tradeId,
                 strategy_name: entry.strategy_name,
@@ -1298,6 +1321,391 @@ async function autoLoadClosedTrades() {
         if (footEl) footEl.textContent = 'Scope: most recent ' + allSignals.length + ' events (max ' + _AU_CLOSED_LIMIT + '). Trades whose ENTRY falls outside this window won\'t appear.';
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
+        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// GS Open + Closed Trades cards (TV webhook driven — single-instrument MS007)
+// ----------------------------------------------------------------------------
+//
+// These cards mirror the structure of autoLoadOpenTrades / autoLoadClosedTrades
+// but render fields specific to single-instrument futures strategies (Silver
+// Mini, Gold Mini): entry/stop/ATR/contract/qty + live P&L computed against
+// the current Fyers LTP for the executed front-month symbol.
+//
+// Live P&L formula:
+//   side_sign × (ltp − entry_price) × qty_lots × point_value
+//   where side_sign = +1 for LONG, −1 for SHORT.
+//
+// Point values are intrinsic to the underlying contract spec (₹ profit per ₹1
+// price move per lot). Source of truth = gs_catalogue.ts on the server; we
+// duplicate the values here for browser use. Add new entries when a new GS
+// instrument is added to gs_catalogue.
+
+var AU_GS_POINT_VALUES = {
+    SILVERM: 5.0,
+    GOLDM:   10.0,
+    // Add more when needed; trades for instruments not listed show P&L as "—".
+};
+
+function autoGsPointValue(shortSymbol) {
+    return AU_GS_POINT_VALUES[shortSymbol] || null;
+}
+
+// Fetch current LTP for a list of full Fyers symbols via the existing
+// fyersCall helper (routes through fyers-market-data Edge Function). Returns
+// Map<symbol, ltp>. Empty map if Fyers isn't connected.
+async function autoFetchLtpForSymbols(symbols) {
+    var out = new Map();
+    if (!symbols || symbols.length === 0) return out;
+    if (typeof window.fyersCall !== 'function') return out;
+    try {
+        var resp = await window.fyersCall({ action: 'quotes', symbols: symbols });
+        if (resp && resp.s === 'ok' && Array.isArray(resp.d)) {
+            resp.d.forEach(function (item) {
+                var sym = item && item.n;
+                var lp = item && item.v && item.v.lp;
+                if (sym && typeof lp === 'number') out.set(sym, lp);
+            });
+        }
+    } catch (_e) { /* swallow — caller renders "—" if missing */ }
+    return out;
+}
+
+// Compute live P&L for one GS trade. Returns { pnl, breakdown } or null if
+// we can't compute (missing LTP or unknown point_value).
+function autoGsComputeLivePnl(entry, ltpMap) {
+    if (!entry || !Array.isArray(entry.legs) || entry.legs.length === 0) return null;
+    var leg = entry.legs[0];
+    var sym = leg.symbol;
+    var shortSym = leg.short_symbol;
+    var side = (leg.side || '').toUpperCase();
+    var entryPrice = Number(leg.price);
+    var qtyLots = (entry.metadata && Number(entry.metadata.qty_lots)) || 1;
+    var pv = autoGsPointValue(shortSym);
+    var ltp = ltpMap.get(sym);
+    if (!isFinite(entryPrice) || !pv || !isFinite(ltp)) return null;
+    var sideSign = side === 'BUY' ? 1 : -1;
+    var pnl = sideSign * (ltp - entryPrice) * qtyLots * pv;
+    var breakdown = side + ' ' + qtyLots + ' lot · entry ' + entryPrice + ' → LTP ' + ltp +
+                    ' · move ' + (ltp - entryPrice).toFixed(2) + ' × pv ' + pv;
+    return { pnl: pnl, ltp: ltp, breakdown: breakdown };
+}
+
+async function autoLoadGsOpenTrades() {
+    var el = document.getElementById('au-gs-open-content');
+    var statusEl = document.getElementById('au-gs-open-status');
+    if (!el) return;
+    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+    el.innerHTML = '<div class="au-meta">⏳ Loading GS open trades…</div>';
+
+    try {
+        var webhookStrats = await autoGetWebhookStrategyNames();
+
+        // 1. Open trades from v_auto_open_trades, filtered to webhook strategies
+        var openResp = await fetch(SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=*', { headers: wmsHeaders() });
+        var openAll = await openResp.json();
+        var openRows = (openAll || []).filter(function (r) { return webhookStrats.has(r.strategy_name); });
+
+        if (openRows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No open GS trades. When the analyst\'s MS007 fires an ENTRY alert, a row will appear here.</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 open'; }
+            return;
+        }
+
+        // 2. Fetch ENTRY signals for those trade_ids
+        var tradeIds = openRows.map(function (r) { return r.trade_id; });
+        var idsList = tradeIds.map(encodeURIComponent).join(',');
+        var sigResp = await fetch(
+            SUPABASE_URL + '/rest/v1/auto_signals?event_type=eq.ENTRY&trade_id=in.(' + idsList + ')&select=id,trade_id,strategy_name,fired_at,direction,legs,metadata',
+            { headers: wmsHeaders() }
+        );
+        var sigRows = await sigResp.json();
+        var byTrade = {};
+        sigRows.forEach(function (s) { byTrade[s.trade_id] = s; });
+
+        // 3. Live LTP for unique executed symbols
+        var uniqSyms = Array.from(new Set(sigRows.map(function (s) {
+            return (s.legs && s.legs[0] && s.legs[0].symbol) || null;
+        }).filter(Boolean)));
+        var ltpMap = await autoFetchLtpForSymbols(uniqSyms);
+
+        var now = Date.now();
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Strategy</th>' +
+                '<th style="padding:6px 8px">Side</th>' +
+                '<th style="padding:6px 8px">Entry</th>' +
+                '<th style="padding:6px 8px">Days</th>' +
+                '<th style="padding:6px 8px">Contract</th>' +
+                '<th style="padding:6px 8px;text-align:right">Qty</th>' +
+                '<th style="padding:6px 8px;text-align:right">Entry Px</th>' +
+                '<th style="padding:6px 8px;text-align:right">LTP</th>' +
+                '<th style="padding:6px 8px;text-align:right">Stop</th>' +
+                '<th style="padding:6px 8px;text-align:right">ATR</th>' +
+                '<th style="padding:6px 8px;text-align:right">Live P&amp;L</th>' +
+                '<th style="padding:6px 8px">Trade</th>' +
+                '<th style="padding:6px 8px">Action</th>' +
+                '</tr></thead><tbody>';
+
+        var totalPnl = 0, anyPnl = false;
+        openRows.forEach(function (ot) {
+            var sig = byTrade[ot.trade_id];
+            var leg = sig && sig.legs && sig.legs[0];
+            var m = (sig && sig.metadata) || {};
+            var side = sig ? (sig.direction || (leg && leg.side === 'BUY' ? 'LONG' : 'SHORT')) : '—';
+            var sideBadge = side === 'LONG'
+                ? '<span class="au-badge success">LONG</span>'
+                : side === 'SHORT'
+                    ? '<span class="au-badge error">SHORT</span>'
+                    : autoEsc(side);
+            var entryStr = sig ? autoFmtIST(sig.fired_at) : '—';
+            var daysHeld = sig ? Math.floor((now - new Date(sig.fired_at).getTime()) / 86400000) : '—';
+            var contract = leg ? leg.symbol : '—';
+            var qtyLots = m.qty_lots != null ? m.qty_lots : (leg ? leg.qty : '—');
+            var qtyUnits = m.qty_units != null ? m.qty_units : (leg ? leg.qty : '—');
+            var qtyCell = qtyLots + ' lot' + (qtyLots == 1 ? '' : 's') +
+                          (qtyUnits && qtyUnits != qtyLots ? ' · ' + qtyUnits + ' unit' + (qtyUnits == 1 ? '' : 's') : '');
+            var entryPx = leg && leg.price != null ? Number(leg.price).toLocaleString('en-IN') : '—';
+            var stopPx = m.stop_price != null ? Number(m.stop_price).toLocaleString('en-IN') : '—';
+            var atrVal = m.atr != null ? Number(m.atr).toLocaleString('en-IN', { maximumFractionDigits: 1 }) : '—';
+
+            var pnlInfo = sig ? autoGsComputeLivePnl(sig, ltpMap) : null;
+            var ltpCell, pnlCell, pnlTooltip;
+            if (pnlInfo) {
+                anyPnl = true;
+                totalPnl += pnlInfo.pnl;
+                ltpCell = Number(pnlInfo.ltp).toLocaleString('en-IN');
+                var sign = pnlInfo.pnl >= 0 ? '+' : '−';
+                var col = pnlInfo.pnl >= 0 ? '#047857' : '#dc2626';
+                var abs = Math.abs(Math.round(pnlInfo.pnl)).toLocaleString('en-IN');
+                pnlCell = '<span style="color:' + col + ';font-weight:600">' + sign + '₹' + abs + '</span>';
+                pnlTooltip = pnlInfo.breakdown;
+            } else {
+                ltpCell = '<span style="color:#9ca3af">—</span>';
+                pnlCell = '<span style="color:#9ca3af">—</span>';
+                pnlTooltip = 'Live P&L needs (a) Fyers connection for LTP and (b) a known point_value for the underlying.';
+            }
+
+            var tradeFrag = ot.trade_id ? ot.trade_id.slice(0, 8) + '…' : '—';
+
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px"><code>' + autoEsc(ot.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px">' + sideBadge + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(entryStr) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(String(daysHeld)) + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(contract) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(qtyCell) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(entryPx) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + ltpCell + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(stopPx) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(atrVal) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;white-space:nowrap" title="' + autoEsc(pnlTooltip) + '">' + pnlCell + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(tradeFrag) + '</td>' +
+                    '<td style="padding:6px 8px"><button class="au-btn au-btn-danger" style="padding:4px 8px;font-size:11px"' +
+                        ' onclick="autoManualClose(' + JSON.stringify(ot.trade_id).replace(/"/g, '&quot;') + ')">✕ Close</button></td>' +
+                    '</tr>';
+        });
+
+        if (anyPnl) {
+            var tSign = totalPnl >= 0 ? '+' : '−';
+            var tCol = totalPnl >= 0 ? '#047857' : '#dc2626';
+            var tAbs = Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
+            html += '<tfoot><tr style="border-top:2px solid #cbd5e0;background:#f7fafc;font-weight:700">' +
+                    '<td colspan="10" style="padding:8px;text-align:right">Total live P&L (' + openRows.length + ' open):</td>' +
+                    '<td style="padding:8px;text-align:right;color:' + tCol + '">' + tSign + '₹' + tAbs + '</td>' +
+                    '<td colspan="2" style="padding:8px"></td>' +
+                    '</tr></tfoot>';
+        }
+        html += '</table></div>';
+        html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280">LTP via Fyers /quotes (needs active Fyers connection). Point values: SILVERM=5, GOLDM=10. P&L = side × (LTP − entry) × lots × point_value.</div>';
+        el.innerHTML = html;
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = openRows.length + ' open'; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load GS open trades: ' + autoEsc(String(e)) + '</span>';
+        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
+    }
+}
+
+async function autoLoadGsClosedTrades() {
+    var el = document.getElementById('au-gs-closed-content');
+    var statusEl = document.getElementById('au-gs-closed-status');
+    if (!el) return;
+    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+    el.innerHTML = '<div class="au-meta">⏳ Loading GS closed trades…</div>';
+
+    try {
+        var webhookStrats = await autoGetWebhookStrategyNames();
+
+        // Fetch webhook-sourced auto_signals (last 500 events). Group by trade_id,
+        // include only trades that have at least one EXIT/MANUAL_CLOSE and net to
+        // zero qty.
+        var resp = await fetch(
+            SUPABASE_URL + '/rest/v1/auto_signals?source=eq.tv_webhook&order=fired_at.desc&limit=' + _AU_CLOSED_LIMIT +
+            '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata',
+            { headers: wmsHeaders() }
+        );
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()).slice(0, 200));
+        var sigs = await resp.json();
+        if (!Array.isArray(sigs)) sigs = [];
+        // Also pull MANUAL_CLOSE rows even if their source isn't tv_webhook (the
+        // manual-close path writes source='chassis' by default). Match by
+        // strategy_name being in webhookStrats and event_type='MANUAL_CLOSE'.
+        var stratList = Array.from(webhookStrats).map(function (n) { return '"' + n + '"'; }).join(',');
+        if (stratList) {
+            var mcResp = await fetch(
+                SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(' + encodeURIComponent(stratList) +
+                ')&event_type=eq.MANUAL_CLOSE&order=fired_at.desc&limit=' + _AU_CLOSED_LIMIT +
+                '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata',
+                { headers: wmsHeaders() }
+            );
+            if (mcResp.ok) {
+                var mcRows = await mcResp.json();
+                if (Array.isArray(mcRows)) sigs = sigs.concat(mcRows);
+            }
+        }
+
+        var byTrade = {};
+        sigs.forEach(function (s) {
+            if (!s.trade_id) return;
+            if (!byTrade[s.trade_id]) byTrade[s.trade_id] = [];
+            byTrade[s.trade_id].push(s);
+        });
+
+        var closedRows = [];
+        Object.keys(byTrade).forEach(function (tradeId) {
+            var events = byTrade[tradeId];
+            var hasExit = false;
+            var netQty = 0;
+            var entry = null, exit = null;
+            events.forEach(function (s) {
+                if (s.event_type !== 'ENTRY') hasExit = true;
+                if (s.event_type === 'ENTRY') {
+                    if (!entry || s.fired_at < entry.fired_at) entry = s;
+                } else {
+                    if (!exit || s.fired_at > exit.fired_at) exit = s;
+                }
+                (s.legs || []).forEach(function (l) {
+                    var q = Number(l.qty) || 0;
+                    if ((l.side || '').toUpperCase() === 'BUY')  netQty += q;
+                    if ((l.side || '').toUpperCase() === 'SELL') netQty -= q;
+                });
+            });
+            if (!hasExit || !entry) return;
+            if (Math.abs(netQty) > 1e-6) return;
+
+            // Compute realised P&L: side_sign × (exit_price − entry_price) × qty_lots × point_value
+            var leg = entry.legs && entry.legs[0];
+            var em = entry.metadata || {};
+            var qtyLots = em.qty_lots != null ? em.qty_lots : (leg ? leg.qty : 1);
+            var pv = leg ? autoGsPointValue(leg.short_symbol) : null;
+            var entryPx = leg ? Number(leg.price) : null;
+            var exitLeg = exit && exit.legs && exit.legs[0];
+            var exitPx = exitLeg ? Number(exitLeg.price) : null;
+            var pnl = null;
+            if (pv && isFinite(entryPx) && isFinite(exitPx)) {
+                var sideSign = (leg.side || '').toUpperCase() === 'BUY' ? 1 : -1;
+                pnl = sideSign * (exitPx - entryPx) * qtyLots * pv;
+            }
+
+            closedRows.push({
+                trade_id: tradeId,
+                strategy_name: entry.strategy_name,
+                entry: entry, exit: exit,
+                entry_price: entryPx, exit_price: exitPx, qty_lots: qtyLots,
+                pnl: pnl,
+                contract: leg ? leg.symbol : '—',
+            });
+        });
+
+        // Sort most-recently-closed first
+        closedRows.sort(function (a, b) {
+            var aT = a.exit ? a.exit.fired_at : a.entry.fired_at;
+            var bT = b.exit ? b.exit.fired_at : b.entry.fired_at;
+            return bT < aT ? -1 : bT > aT ? 1 : 0;
+        });
+
+        if (closedRows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No closed GS trades yet.</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 closed'; }
+            return;
+        }
+
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Strategy</th>' +
+                '<th style="padding:6px 8px">Side</th>' +
+                '<th style="padding:6px 8px">Entry</th>' +
+                '<th style="padding:6px 8px">Exit</th>' +
+                '<th style="padding:6px 8px">Days</th>' +
+                '<th style="padding:6px 8px">Contract</th>' +
+                '<th style="padding:6px 8px;text-align:right">Entry Px</th>' +
+                '<th style="padding:6px 8px;text-align:right">Exit Px</th>' +
+                '<th style="padding:6px 8px">Exit Reason</th>' +
+                '<th style="padding:6px 8px;text-align:right">Realised P&amp;L</th>' +
+                '<th style="padding:6px 8px">Trade</th>' +
+                '</tr></thead><tbody>';
+
+        var totalPnl = 0, wins = 0, losses = 0;
+        closedRows.forEach(function (ct) {
+            var leg = ct.entry.legs && ct.entry.legs[0];
+            var side = ct.entry.direction || (leg && leg.side === 'BUY' ? 'LONG' : 'SHORT');
+            var sideBadge = side === 'LONG'
+                ? '<span class="au-badge success">LONG</span>'
+                : side === 'SHORT' ? '<span class="au-badge error">SHORT</span>' : autoEsc(side);
+            var entryStr = autoFmtIST(ct.entry.fired_at);
+            var exitStr = ct.exit ? autoFmtIST(ct.exit.fired_at) : '—';
+            var daysHeld = ct.exit
+                ? Math.max(0, Math.floor((new Date(ct.exit.fired_at).getTime() - new Date(ct.entry.fired_at).getTime()) / 86400000))
+                : '—';
+            var exitType = ct.exit ? ct.exit.event_type : '—';
+            var exitTypeColor = _autoExitTypeColor(exitType);
+            var entryPxStr = ct.entry_price != null ? Number(ct.entry_price).toLocaleString('en-IN') : '—';
+            var exitPxStr = ct.exit_price != null ? Number(ct.exit_price).toLocaleString('en-IN') : '—';
+
+            var pnlCell;
+            if (ct.pnl != null) {
+                totalPnl += ct.pnl;
+                if (ct.pnl >= 0) wins++; else losses++;
+                var sign = ct.pnl >= 0 ? '+' : '−';
+                var col = ct.pnl >= 0 ? '#047857' : '#dc2626';
+                var abs = Math.abs(Math.round(ct.pnl)).toLocaleString('en-IN');
+                pnlCell = '<span style="color:' + col + ';font-weight:600">' + sign + '₹' + abs + '</span>';
+            } else {
+                pnlCell = '<span style="color:#9ca3af">—</span>';
+            }
+
+            var tradeFrag = ct.trade_id ? ct.trade_id.slice(0, 8) + '…' : '—';
+
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px"><code>' + autoEsc(ct.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px">' + sideBadge + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(entryStr) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(exitStr) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(String(daysHeld)) + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(ct.contract) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(entryPxStr) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(exitPxStr) + '</td>' +
+                    '<td style="padding:6px 8px"><span style="color:' + exitTypeColor + ';font-weight:600">' + autoEsc(_autoExitTypeLabel(exitType)) + '</span></td>' +
+                    '<td style="padding:6px 8px;text-align:right;white-space:nowrap">' + pnlCell + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(tradeFrag) + '</td>' +
+                    '</tr>';
+        });
+
+        var tSign = totalPnl >= 0 ? '+' : '−';
+        var tCol = totalPnl >= 0 ? '#047857' : '#dc2626';
+        var tAbs = Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
+        html += '<tfoot><tr style="border-top:2px solid #cbd5e0;background:#f7fafc;font-weight:700">' +
+                '<td colspan="9" style="padding:8px">Total (' + closedRows.length + ' closed — ' + wins + 'W / ' + losses + 'L)</td>' +
+                '<td style="padding:8px;text-align:right;color:' + tCol + '">' + tSign + '₹' + tAbs + '</td>' +
+                '<td style="padding:8px">—</td>' +
+                '</tr></tfoot>';
+        html += '</table></div>';
+        el.innerHTML = html;
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = closedRows.length + ' closed'; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load GS closed trades: ' + autoEsc(String(e)) + '</span>';
         if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
     }
 }

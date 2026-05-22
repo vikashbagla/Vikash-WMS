@@ -304,17 +304,38 @@ details summary {
 
     <!-- Open Trades tab -->
     <div id="au-open-trades" class="automation-tab-panel">
+
+      <!-- GS Open Trades (TV webhook driven) -->
       <div class="au-card">
-        <h3>Open PAPER Trades <span id="au-open-trades-status" class="au-badge idle">idle</span></h3>
-        <div class="au-sub">All open trades across strategies. Each row shows the ENTRY signal that opened it; exits will be checked at every cron run.</div>
+        <h3>GS Open Trades — Silver / Gold (TV Webhook) <span id="au-gs-open-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Single-instrument MS007 trades sourced from the analyst's TradingView Pine alerts. Live P&amp;L uses the current Fyers LTP of the executed front-month contract; stop &amp; ATR are from the entry signal's metadata.</div>
+        <div class="au-actions">
+          <button class="au-btn au-btn-secondary" onclick="autoLoadGsOpenTrades()">↻ Refresh</button>
+        </div>
+        <div id="au-gs-open-content" style="margin-top:12px">Click Refresh to load.</div>
+      </div>
+
+      <div class="au-card" style="margin-top:16px">
+        <h3>GS Closed Trades — Silver / Gold (TV Webhook) <span id="au-gs-closed-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Trades that have been exited via webhook (EXIT_SL / EXIT_TRAIL / EXIT_EMA / EXIT_TIME) or manually closed. Realised P&amp;L computed from entry vs exit price × qty × point_value.</div>
+        <div class="au-actions">
+          <button class="au-btn au-btn-secondary" onclick="autoLoadGsClosedTrades()">↻ Refresh</button>
+        </div>
+        <div id="au-gs-closed-content" style="margin-top:12px">Click Refresh to load.</div>
+      </div>
+
+      <!-- Pairs Open Trades (cron-driven chassis) -->
+      <div class="au-card" style="margin-top:24px">
+        <h3>Pairs Open Trades <span id="au-open-trades-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Pairs-strategy open trades (cron-driven chassis). Each row shows the ENTRY signal that opened it; exits are checked at every cron run. Mark P&amp;L uses market_prices EOD close (yesterday during trading hours, today after 18:00 IST ingest).</div>
         <div class="au-actions">
           <button class="au-btn au-btn-secondary" onclick="autoLoadOpenTrades()">↻ Refresh</button>
         </div>
         <div id="au-open-trades-content" style="margin-top:12px">Click Refresh to load.</div>
       </div>
       <div class="au-card" style="margin-top:16px">
-        <h3>Closed PAPER Trades <span id="au-closed-trades-status" class="au-badge idle">idle</span></h3>
-        <div class="au-sub">Trades whose legs net to zero (target hit, stop hit, time stop, or manual close). Realised P&amp;L is the actual cash settled — entry vs exit prices on each leg.</div>
+        <h3>Pairs Closed Trades <span id="au-closed-trades-status" class="au-badge idle">idle</span></h3>
+        <div class="au-sub">Pairs trades whose legs net to zero (target hit, stop hit, time stop, or manual close). Realised P&amp;L is the actual cash settled — entry vs exit prices on each leg.</div>
         <div class="au-actions">
           <button class="au-btn au-btn-secondary" onclick="autoLoadClosedTrades()">↻ Refresh</button>
         </div>
