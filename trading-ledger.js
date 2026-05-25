@@ -103,6 +103,15 @@ var lgTagFilterLogic = 'OR';
 // Potential Tax — see LESSONS §E.15.12).
 var lgStatementType = 'trader';
 
+// F&O futures rows toggle — purely a display filter (LESSONS §E.15.14).
+// When false, rows where _rowType==='trade' && _nfoCashImpact===false (futures
+// BUY/SELL with no cash impact) are HIDDEN from the Transactions table. Margin
+// + interest calculations are UNAFFECTED — they read the full transaction
+// universe upstream of this filter. NFO_PNL synthetic rows and options
+// (CE/PE) rows always render because they have _nfoCashImpact===true.
+// Session-state only — not persisted with the view.
+var lgShowFutures = true;
+
 // Date filter (shared wmsDateFilter component)
 var lgDateFilterInstance = null;
 var lgDateFrom = '';
@@ -487,6 +496,28 @@ function lgInit() {
     // Statement-type toggle (Trader / Broker). Wired once; lgVM.applyFilters
     // calls lgSyncStatementTypeToggle whenever a view loads. LESSONS §E.15.12.
     lgInitStatementTypeToggle();
+
+    // F&O futures show/hide toggle (LESSONS §E.15.14). Click on the checkbox
+    // must not bubble to the section-header collapse handler.
+    var futuresToggleEl = document.getElementById('lgFuturesToggle');
+    if (futuresToggleEl && !futuresToggleEl.dataset.lgWired) {
+        futuresToggleEl.dataset.lgWired = '1';
+        futuresToggleEl.checked = lgShowFutures;
+        futuresToggleEl.addEventListener('click', function(e) { e.stopPropagation(); });
+        futuresToggleEl.addEventListener('change', function() {
+            lgShowFutures = futuresToggleEl.checked;
+            // Re-render the transactions list only — engine + margin + interest
+            // unchanged (those run on the full transaction universe, not on
+            // the displayed rows).
+            lgRenderEntries(lgCombined);
+        });
+    }
+    // Also block clicks on the toggle's label wrapper from bubbling.
+    var futuresToggleWrap = document.getElementById('lgFuturesToggleWrap');
+    if (futuresToggleWrap && !futuresToggleWrap.dataset.lgWired) {
+        futuresToggleWrap.dataset.lgWired = '1';
+        futuresToggleWrap.addEventListener('click', function(e) { e.stopPropagation(); });
+    }
 
     // Load views and initial data
     lgVM.loadViews();
@@ -1015,6 +1046,14 @@ function lgRenderEntries(rows) {
     var lastBalance = openingBal.amount || 0; // Start with opening balance (carry-forward)
 
     sorted.forEach(function(row) {
+        // F&O futures display filter (LESSONS §E.15.14). When the toggle is
+        // OFF, hide rows that are futures trades with no cash impact (the
+        // muted "informational" rows). Engine/margin/interest are unaffected.
+        // Options (CE/PE) and NFO_PNL synthetic rows have _nfoCashImpact !==
+        // false so they always render.
+        if (!lgShowFutures && row._rowType === 'trade' && row._nfoCashImpact === false) {
+            return;
+        }
         var date = lgFmtDate(row.date);
         var symbol = '';
         var typeHtml = '';
@@ -1078,10 +1117,10 @@ function lgRenderEntries(rows) {
             symbol = lgFormatSymbol(row);
             typeHtml = lgFormatType(row);
 
+            // Qty column shows magnitude only — the Type badge ('Buy' / 'Sell' /
+            // 'Rights' / 'Bonus' / 'Split') already indicates direction; signing
+            // the qty as well would double-encode the information.
             var q = Math.abs(source.quantity || 0);
-            if (source.transaction_type === 'SELL' || source.transaction_type === 'RIGHTS_ENTITLEMENT' || source.transaction_type === 'BONUS' || source.transaction_type === 'SPLIT') {
-                q = -q;
-            }
             if (q !== 0) {
                 qty = typeof formatQuantity === 'function' ? formatQuantity(q) : String(Math.round(q));
             }
@@ -1178,18 +1217,16 @@ function lgRenderEntries(rows) {
     lgRenderOpeningBalance(openingBal);
     lgAttachObClickHandler();
 
-    // Update totals in tfoot — flip to counterparty POV for display
-    // (LESSONS §E.15.13).
-    var totalAmtEl = document.getElementById('lgTotalAmount');
+    // Update totals in tfoot — only the closing Balance is shown (the Amount
+    // sum was removed per owner spec — the closing Balance IS the total
+    // receivable/payable). Label is dynamic based on Balance sign.
+    var totalsLabelEl = document.getElementById('lgTotalsLabel');
     var totalBalEl = document.getElementById('lgTotalBalance');
-    if (totalAmtEl) {
-        var dispTotal = lgD(totalAmount);
-        totalAmtEl.innerHTML = lgFmt(dispTotal);
-        totalAmtEl.className = 'text-right ' + lgAmtClass(dispTotal);
-        totalAmtEl.style.fontWeight = '600';
+    var dispLastBal = lgD(lastBalance);
+    if (totalsLabelEl) {
+        totalsLabelEl.textContent = (dispLastBal < 0) ? 'Total Payable' : 'Total Receivable';
     }
     if (totalBalEl) {
-        var dispLastBal = lgD(lastBalance);
         totalBalEl.innerHTML = lgFmt(dispLastBal);
         totalBalEl.className = 'text-right ' + lgAmtClass(dispLastBal);
         totalBalEl.style.fontWeight = '600';
@@ -1268,10 +1305,12 @@ function lgRenderOpeningBalance(ob) {
         // at start (their credit), dispObDesc < 0 means counterparty owes firm.
         var dispObDesc = lgD(ob.amount || 0);
         var label = '';
+        // Counterparty-POV phrasing: +ve = firm owes counterparty (their receivable);
+        // -ve = counterparty owes firm (their payable). LESSONS \u00a7E.15.13.
         if (dispObDesc > 0) {
-            label = '\u2190 opening credit balance';
+            label = '\u2190 opening receivable';
         } else if (dispObDesc < 0) {
-            label = '\u2192 opening debit balance';
+            label = '\u2192 opening payable';
         } else {
             label = 'no opening balance';
         }
@@ -1653,12 +1692,14 @@ function lgRenderSummary() {
     var totalHoldingsValue = totalEqValue + totalNfoMtm;
     var netReceivable = totalHoldingsValue - cashBalance - potentialTax;
 
-    // Balance w/o MTM = Net Receivable − Current MTM.
-    // "What would Net Receivable look like if every open position closed at
-    // cost?" Current MTM is the total unrealised P&L across EQ + NFO. This is
-    // the canonical formula used on every ledger.
+    // Balance w/o MTM — conservative variant per owner spec 2026-05-25:
+    //   if MTM > 0 → BwoM = NR − MTM (close at cost, lose the unrealised gain)
+    //   if MTM ≤ 0 → BwoM = NR        (no adjustment — losses don't flatter
+    //                                   the picture; show worse of the two)
+    // This is intentionally asymmetric so the card always reads as the more
+    // conservative downside number from the counterparty's POV.
     var totalCurrentMtm = totalEqMtm + totalNfoMtm;
-    var balNoMtm = netReceivable - totalCurrentMtm;
+    var balNoMtm = (totalCurrentMtm > 0) ? (netReceivable - totalCurrentMtm) : netReceivable;
     // Ratio is meaningful only when outstanding is meaningfully positive;
     // when it's near-zero or negative, the ratio is either a divide risk
     // or semantically confusing, so suppress it.
@@ -1698,15 +1739,15 @@ function lgRenderSummary() {
     if (nrLabelEl) {
         nrLabelEl.textContent = (netReceivable < 0) ? 'Net Payable' : 'Net Receivable';
     }
-    // Balance w/o MTM lives inside an inner span so we can append a subscript ratio
+    // Balance w/o MTM — now a sub-text inside the NR card (LESSONS §E.15.13).
+    // Only show the ratio when outstanding is meaningfully positive.
     var balEl = document.getElementById('lgCardBalNoMtm');
     if (balEl) {
         balEl.innerHTML = lgFmt(balNoMtm);
-        var balParent = balEl.parentNode;
-        if (balParent) balParent.className = 'lg-summary-card-value ' + lgAmtClass(balNoMtm);
+        balEl.className = lgAmtClass(balNoMtm);
     }
     var balSubEl = document.getElementById('lgCardBalNoMtmSub');
-    if (balSubEl) balSubEl.textContent = outstanding > 0.01 ? '(' + pctBalOverOutstanding.toFixed(1) + '%)' : '';
+    if (balSubEl) balSubEl.textContent = outstanding > 0.01 ? ' (' + pctBalOverOutstanding.toFixed(1) + '%)' : '';
 
     // ------------------------------------------------------------
     // Booked P&L collapsible — grouped by symbol, FY only
@@ -2947,7 +2988,10 @@ function lgGatherExportData() {
     var potentialTax = isBrokerStmt ? 0 : Math.max(0, totalBookedGain) * (taxRatePct / 100);
     var netReceivable = totalHoldingsValue - cashBalance - potentialTax;
     var totalCurrentMtm = totalEqMtm + totalNfoMtm;
-    var balNoMtm = netReceivable - totalCurrentMtm;
+    // Conservative BwoM (LESSONS §E.15.13) — only subtract MTM when positive
+    // (lose unrealised gain on a close-at-cost). Negative MTM doesn't flatter
+    // BwoM upward; show the more conservative downside number.
+    var balNoMtm = (totalCurrentMtm > 0) ? (netReceivable - totalCurrentMtm) : netReceivable;
     var pctBalOverOutstanding = outstanding > 0.01 ? (balNoMtm / outstanding) : 0;
 
     // Booked P&L rows (grouped by symbol)
@@ -3168,9 +3212,10 @@ function lgExportExcel() {
         formula: hcVal + sumHoldingsRow + '+' + hcVal + sumOutstRow + '-' + hcVal + sumTaxRow,
         result: d.netReceivable
     };
-    // Balance w/o MTM = Net Receivable - Total MTM
+    // Balance w/o MTM (conservative — LESSONS §E.15.13): if MTM > 0 subtract;
+    // otherwise leave Net Receivable untouched.
     var sumBalNoMtmFormula = {
-        formula: hcVal + sumNetRecRow + '-' + hcMtm + holdTotalRow,
+        formula: 'IF(' + hcMtm + holdTotalRow + '>0,' + hcVal + sumNetRecRow + '-' + hcMtm + holdTotalRow + ',' + hcVal + sumNetRecRow + ')',
         result: d.balNoMtm
     };
 
