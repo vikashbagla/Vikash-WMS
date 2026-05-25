@@ -33,6 +33,26 @@
 
 /* Date-filter inline divider + export dropdown chrome */
 .lg-tabs-divider { width:1px; align-self:stretch; background:#cbd5e0; margin:0 4px; }
+
+/* F&O futures toggle inside Transactions section header — pure visual filter.
+   Hidden futures rows still contribute to margin + interest calc (see
+   LESSONS §E.15.14). Click event must not bubble to the section's collapse
+   handler — JS calls stopPropagation. */
+.lg-futures-toggle {
+    margin-left:14px; display:inline-flex; align-items:center; gap:5px;
+    font-size:10px; font-weight:500; color:#4a5568; cursor:pointer;
+    text-transform:none; letter-spacing:0;
+    user-select:none;
+}
+.lg-futures-toggle input[type="checkbox"] { margin:0; cursor:pointer; }
+
+/* Statement type toggle (Trader / Broker) — segmented control per D.4.2 */
+.lg-stmt-type-toggle { display:inline-flex; gap:0; align-items:center; }
+.lg-stmt-type-btn { padding:3px 12px; border:1px solid #e2e8f0; background:#fff; font-size:11px; font-weight:600; color:#718096; cursor:pointer; border-radius:0; }
+.lg-stmt-type-btn:first-child { border-radius:4px 0 0 4px; }
+.lg-stmt-type-btn:last-child { border-radius:0 4px 4px 0; border-left:none; }
+.lg-stmt-type-btn:hover:not(.active) { background:#f7fafc; color:#4a5568; }
+.lg-stmt-type-btn.active { background:#667eea; color:#fff; border-color:#667eea; }
 .lg-export-wrap { position:relative; }
 .lg-export-dropdown {
     position:absolute; top:100%; right:0; margin-top:2px;
@@ -114,6 +134,41 @@
 .lg-booked-body { padding:8px; }
 .lg-booked-body table { width:100%; }
 #lgSummaryHoldingsTable th.lg-col-type, #lgSummaryHoldingsTable td.lg-col-type { width:40px; padding-left:4px; padding-right:4px; text-align:center; }
+/* Booked P&L Type column — same compact centered styling as Open Positions */
+#lgBookedSection th.lg-col-type, #lgBookedSection td.lg-col-type { width:50px; padding-left:4px; padding-right:4px; text-align:center; }
+
+/* === Sticky scroll header chrome for the three Statements sections ===
+   Each layer overlaps the next by ~2px so sub-pixel gaps never expose
+   scrolling rows. Section header uses `top:-8px` to cover the 8px
+   padding-top of #lgUnifiedScroll (sticky `top:0` would leave the
+   padding region open, letting scrolling data rows bleed through above
+   the section header).
+
+   Stack from top of #lgUnifiedScroll's border box (z highest paints over):
+     0px ..  32px : .lg-booked-header  (z:11, top:-8)  ← absolute top
+     30px..  60px : thead th          (z:10, top:22)  ← 2px under header
+     58px..  ~96 : #lgNewEntryRow    (z:9,  top:50)  ← 2px under thead
+
+   ALL sticky elements need an opaque background or the gaps (even
+   sub-pixel ones) become visible bands when data rows scroll behind.
+   Global rules in app-styles.css (th sticky top:0, .total-row sticky
+   top:34px) are overridden here for the Statements scope ONLY — other
+   modules' tables keep their global behaviour. */
+.lg-booked-section .lg-booked-header {
+    position:sticky; top:-8px; z-index:11;
+    background:#f7fafc;
+}
+.lg-booked-section thead th { top:22px; background:#f7fafc; }
+#lgNewEntryRow { top:50px; }
+#lgNewEntryRow td { background:#f9fafb; }
+/* Opening Balance row scrolls with the data (was inheriting sticky from
+   the global .total-row rule). */
+#lgOpeningBalRow { position:static !important; top:auto !important; }
+/* The totals tfoot row at the bottom of the Transactions table also inherits
+   the global .total-row sticky rule — drop that here so it sits naturally
+   at the bottom of the table instead of colliding with the column headers
+   on scroll. */
+#lgTable tfoot tr.total-row { position:static !important; top:auto !important; }
 
 /* Summary table — reuse data-table styles */
 #lgSummarySection table { table-layout:auto; width:100%; }
@@ -207,6 +262,11 @@
       <div class="tr-view-tabs-container" id="lgViewTabs"></div>
       <div class="lg-date-inline" id="lgDateFilter"></div>
       <div class="tr-view-tabs-actions">
+        <span class="lg-stmt-type-toggle" id="lgStmtTypeToggle" title="Statement type — pick Trader for investor/sub-trader statements, Broker for broker-side statements">
+          <button type="button" data-type="trader" class="lg-stmt-type-btn">Trader</button>
+          <button type="button" data-type="broker" class="lg-stmt-type-btn">Broker</button>
+        </span>
+        <span class="lg-tabs-divider"></span>
         <button class="tr-vta-btn" id="lgNewViewBtn" title="New blank view">+</button>
         <div style="position:relative;">
           <button class="tr-vta-btn" id="lgMoreBtn" title="All views">▾ More</button>
@@ -266,6 +326,10 @@
         <div class="lg-booked-header" id="lgTransactionsHeader">
           <span class="lg-booked-caret">▼</span>
           <span>Transactions</span>
+          <label class="lg-futures-toggle" id="lgFuturesToggleWrap" title="Show / hide futures BUY/SELL rows. Hidden rows still contribute to margin + interest calc.">
+            <input type="checkbox" id="lgFuturesToggle" checked>
+            <span>Show F&amp;O</span>
+          </label>
           <span class="lg-booked-total" id="lgTransactionsBalance" style="margin-left:auto; font-weight:600;"></span>
         </div>
         <div class="lg-booked-body">
@@ -325,8 +389,7 @@
           </tbody>
           <tfoot>
             <tr class="total-row" style="border-top:2px solid #cbd5e0;">
-              <td colspan="6" class="text-right" style="font-weight:600;">TOTALS:</td>
-              <td id="lgTotalAmount" class="text-right" style="font-weight:600;"></td>
+              <td colspan="7" class="text-right" style="font-weight:600;" id="lgTotalsLabel">Total Receivable</td>
               <td id="lgTotalBalance" class="text-right" style="font-weight:600;"></td>
             </tr>
           </tfoot>
@@ -346,7 +409,7 @@
             <thead>
               <tr>
                 <th>Symbol</th>
-                <th>Type</th>
+                <th class="lg-col-type">Type</th>
                 <th class="text-right">Qty Closed</th>
                 <th class="text-right">Realised P&amp;L</th>
               </tr>
@@ -401,28 +464,23 @@
           <div class="lg-summary-card-label">Value of Holdings</div>
           <div class="lg-summary-card-value" id="lgCardHoldingsValue">-</div>
         </div>
-        <div class="lg-summary-op">−</div>
+        <div class="lg-summary-op">+</div>
         <div class="lg-summary-card">
           <div class="lg-summary-card-label">Outstanding</div>
           <div class="lg-summary-card-value" id="lgCardOutstanding">-</div>
           <div class="lg-card-sub" id="lgCardOutstandingBreakdown" style="display:block; font-size:10px; color:#718096; margin-top:2px; white-space:nowrap;">-</div>
         </div>
-        <div class="lg-summary-op">−</div>
-        <div class="lg-summary-card">
+        <div class="lg-summary-op" id="lgCardPotentialTaxOp">−</div>
+        <div class="lg-summary-card" id="lgCardPotentialTaxWrap">
           <div class="lg-summary-card-label" id="lgCardPotentialTaxLabel">Potential Tax (0%)</div>
           <div class="lg-summary-card-value" id="lgCardPotentialTax">-</div>
         </div>
         <div class="lg-summary-op">=</div>
         <div class="lg-summary-card lg-summary-card-highlight">
-          <div class="lg-summary-card-label">Net Receivable / (Payable)</div>
+          <div class="lg-summary-card-label" id="lgCardNetReceivableLabel">Net Receivable</div>
           <div class="lg-summary-card-value" id="lgCardNetReceivable">-</div>
-        </div>
-      </div>
-      <div class="lg-summary-row">
-        <div class="lg-summary-card">
-          <div class="lg-summary-card-label">Balance w/o MTM</div>
-          <div class="lg-summary-card-value">
-            <span id="lgCardBalNoMtm">-</span><span class="lg-card-sub" id="lgCardBalNoMtmSub"></span>
+          <div class="lg-card-sub" id="lgCardBalNoMtmWrap" style="display:block; font-size:10px; color:#718096; margin-top:2px; white-space:nowrap;">
+            Bal w/o MTM <span id="lgCardBalNoMtm">-</span><span id="lgCardBalNoMtmSub"></span>
           </div>
         </div>
       </div>
