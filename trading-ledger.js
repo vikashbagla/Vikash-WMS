@@ -1775,11 +1775,24 @@ function lgRenderSummary() {
         if (fyGains.length === 0) {
             bookedRowsEl.innerHTML = '<tr><td colspan="4" class="text-center" style="padding:12px; color:#9ca3af;">No booked P&L in ' + fyLabel + '</td></tr>';
         } else {
-            // Group by symbol+securityType
+            // Group by symbol+securityType. For NFO, key by the full
+            // prefix-stripped symbol so different expiries of the same
+            // underlying (e.g. MANAPPURAM 28 Apr Fut vs 26 May Fut) are
+            // distinct rows — otherwise the contract identity is lost in
+            // the aggregation. For EQ, group by short_symbol as before.
             var bySym = {};
             fyGains.forEach(function(g) {
-                var k = (g.shortSymbol || g.symbol) + '|' + (g.securityType || 'EQ');
-                if (!bySym[k]) bySym[k] = { shortSymbol: g.shortSymbol || g.symbol, securityType: g.securityType || 'EQ', qty: 0, gain: 0 };
+                var isNfo = g.securityType === 'NFO';
+                var groupKey = isNfo
+                    ? ((g.symbol || g.shortSymbol || '').replace(/^[A-Z]+:/, ''))
+                    : (g.shortSymbol || g.symbol || '');
+                var k = groupKey + '|' + (g.securityType || 'EQ');
+                if (!bySym[k]) bySym[k] = {
+                    shortSymbol: g.shortSymbol || g.symbol,
+                    fullSymbol: (g.symbol || '').replace(/^[A-Z]+:/, ''),
+                    securityType: g.securityType || 'EQ',
+                    qty: 0, gain: 0
+                };
                 bySym[k].qty += g.qty || 0;
                 bySym[k].gain += g.gain || 0;
             });
@@ -1787,9 +1800,24 @@ function lgRenderSummary() {
                 var b = bySym[k];
                 var cls = lgAmtClass(b.gain);
                 var typeL = (b.securityType === 'NFO') ? 'NFO' : 'EQ';
+                // Decode NFO contract details from the source transaction
+                // (same pattern as Open Positions). sourceLookup is keyed by
+                // the prefix-stripped full symbol for NFO and by
+                // short_symbol for EQ.
+                var symHtml = wmsEsc(b.shortSymbol || '');
+                if (b.securityType === 'NFO' && typeof wmsFormatContract === 'function') {
+                    var srcTxn = sourceLookup[b.fullSymbol];
+                    if (srcTxn) {
+                        var contract = wmsFormatContract(srcTxn);
+                        if (contract && contract !== 'Equity' && contract !== 'NFO') {
+                            symHtml = wmsEsc(b.shortSymbol || '') +
+                                ' <span style="color:#718096; font-size:10px;">' + wmsEsc(contract) + '</span>';
+                        }
+                    }
+                }
                 return '<tr>' +
-                    '<td>' + wmsEsc(b.shortSymbol) + '</td>' +
-                    '<td class="text-right">' + typeL + '</td>' +
+                    '<td>' + symHtml + '</td>' +
+                    '<td class="lg-col-type">' + typeL + '</td>' +
                     '<td class="text-right">' + (typeof formatQuantity === 'function' ? formatQuantity(b.qty) : String(Math.round(b.qty))) + '</td>' +
                     '<td class="text-right ' + cls + '">' + lgFmt(b.gain) + '</td>' +
                     '</tr>';

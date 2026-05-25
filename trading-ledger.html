@@ -134,6 +134,8 @@
 .lg-booked-body { padding:8px; }
 .lg-booked-body table { width:100%; }
 #lgSummaryHoldingsTable th.lg-col-type, #lgSummaryHoldingsTable td.lg-col-type { width:40px; padding-left:4px; padding-right:4px; text-align:center; }
+/* Booked P&L Type column — same compact centered styling as Open Positions */
+#lgBookedSection th.lg-col-type, #lgBookedSection td.lg-col-type { width:50px; padding-left:4px; padding-right:4px; text-align:center; }
 
 /* === Sticky scroll header chrome for the three Statements sections ===
    Each layer overlaps the next by ~2px so sub-pixel gaps never expose
@@ -407,7 +409,7 @@
             <thead>
               <tr>
                 <th>Symbol</th>
-                <th>Type</th>
+                <th class="lg-col-type">Type</th>
                 <th class="text-right">Qty Closed</th>
                 <th class="text-right">Realised P&amp;L</th>
               </tr>
