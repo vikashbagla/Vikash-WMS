@@ -2545,14 +2545,20 @@ function lgPopulateInterestDetail(calc, currentAmount) {
                     '<span style="' + labelStyle + '">' + wmsEsc(calc.period) + '</span>' +
                 '</div>';
 
-            // Counterparty-POV display flip (LESSONS §E.15.13) — Balance row
-            // shows the flipped value (-ve = counterparty's deficit). The
-            // Total Base row below stays in firm-POV magnitude because that's
-            // the actual basis the interest formula uses (max(0, cash) + margin).
+            // Show the DEBIT portion of the running balance, i.e. the magnitude
+            // that the interest formula actually uses (`max(0, cash) + margin`).
+            // Showing the signed balance here makes the row arithmetic look
+            // wrong because Total Base is unsigned — e.g. "Balance (19,363.94)
+            // + Margin 8,422.74 = Total Base 27,786.67" doesn't visibly add up.
+            // Labelling this as "Debit Balance" + showing the positive magnitude
+            // makes the math read correctly and matches the rule from E.15.6
+            // that a credit balance (firm owes counterparty) earns no interest
+            // — Debit Balance is 0 in that case.
+            var debitBal = Math.max(0, cash);
             var balanceRow =
                 '<div style="' + rowStyle + '">' +
-                    '<span style="' + labelStyle + '">Balance</span>' +
-                    '<span style="' + valueStyle + '">' + lgFmt(lgD(cash)) + '</span>' +
+                    '<span style="' + labelStyle + '">Debit Balance</span>' +
+                    '<span style="' + valueStyle + '">' + lgFmt(debitBal) + '</span>' +
                 '</div>';
 
             var marginRow =
