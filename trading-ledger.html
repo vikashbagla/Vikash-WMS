@@ -124,10 +124,12 @@
 #lgSummaryHoldingsTable th.lg-col-type, #lgSummaryHoldingsTable td.lg-col-type { width:40px; padding-left:4px; padding-right:4px; text-align:center; }
 
 /* === Sticky scroll header chrome for the three Statements sections ===
-   Layers from top of the #lgUnifiedScroll viewport:
-     0px ..  30px : .lg-booked-header (section title strip)        z:11
-     30px..  60px : thead th         (column headers)              z:10
-     60px..  ~90px: #lgNewEntryRow   (inline add-entry row)        z:9
+   Layers stack inside #lgUnifiedScroll's padding box. Heights below are
+   the rendered heights of each strip; the `top:` values must abut to
+   prevent a visible gap that scrolling rows peek through:
+     0px ..  32px : .lg-booked-header (section title strip)        z:11
+     32px..  62px : thead th         (column headers)              z:10
+     62px..  ~100: #lgNewEntryRow   (inline add-entry row, ~38px) z:9
      scrolls      : #lgOpeningBalRow (was sticky, now scrolls)
      scrolls      : data rows + tfoot
    ALL sticky elements need an opaque background or the scrolling data
@@ -138,8 +140,8 @@
     position:sticky; top:0; z-index:11;
     background:#f7fafc;
 }
-.lg-booked-section thead th { top:30px; background:#f7fafc; }
-#lgNewEntryRow { top:60px; }
+.lg-booked-section thead th { top:32px; background:#f7fafc; }
+#lgNewEntryRow { top:62px; }
 #lgNewEntryRow td { background:#f9fafb; }
 /* Opening Balance row scrolls with the data (was inheriting sticky from
    the global .total-row rule). */
