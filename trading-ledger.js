@@ -571,6 +571,30 @@ function lgUpdateUnitLabels() {
 // FORMATTING HELPERS — Use canonical formatAmount/formatPrice/getAmountClass
 // ============================================================================
 
+// ----------------------------------------------------------------------------
+// COUNTERPARTY-POV DISPLAY FLIP — LESSONS §E.15.13
+// ----------------------------------------------------------------------------
+// The engine (wmsBuildLedger, summary card formulas, interest base) ALL stay
+// in the firm-POV convention: +ve cash balance = counterparty owes firm. This
+// matters because the interest base uses `max(0, cashBalance) + margin` — the
+// clamp only fires correctly in the firm-POV convention.
+//
+// The DISPLAY layer flips everything that is "balance-like" by ×(-1) so the
+// statement reads from the counterparty's POV (the trader's perspective for
+// Trader statements, the firm's perspective for Broker statements — both
+// flip the same way relative to the engine's firm-receivable convention):
+//   Trader statement: -ve balance = trader owes firm; +ve = firm owes trader
+//   Broker statement: -ve balance = firm owes broker; +ve = broker owes firm
+//
+// Values that DO NOT flip: Holdings Value (always positive magnitude), NFO
+// Margin (positive collateral magnitude), Potential Tax (positive liability),
+// Booked P&L + MTM (universal +/- = profit/loss), Net Receivable & Balance
+// w/o MTM (formulas Holdings − Cash − Tax already produce counterparty-POV
+// signs because Cash is internally firm-POV).
+//
+// DB is untouched. Engine is untouched.
+function lgD(v) { return (typeof v === 'number') ? -v : v; }
+
 function lgFmt(value) {
     if (value === 0 || value === null || value === undefined) return '-';
     return typeof formatAmount === 'function' ? formatAmount(value) : wmsFmtAmt(value);
@@ -1001,12 +1025,17 @@ function lgRenderEntries(rows) {
         var balance = '';
         var actions = '';
 
+        // Counterparty-POV display values (LESSONS §E.15.13). Engine still uses
+        // raw firm-POV row.amount / row._runningBalance for totals + internal math.
+        var dispAmt = lgD(row.amount);
+        var dispBal = lgD(row._runningBalance);
+
         if (row._rowType === 'pending_interest') {
             // Synthetic, unposted weekly interest row
             typeHtml = '<span class="lg-type lg-type-income">Interest (pending)</span>';
             symbol = wmsEsc(row.reference || '');
-            amount = '<span class="lg-int-amt" title="Click to view calculation / edit">' + lgFmt(Math.round(row.amount)) + '</span>';
-            balance = lgFmt(row._runningBalance);
+            amount = '<span class="lg-int-amt" title="Click to view calculation / edit">' + lgFmt(Math.round(dispAmt)) + '</span>';
+            balance = lgFmt(dispBal);
             lastBalance = row._runningBalance;
             actions = '<span class="lg-actions">' +
                 '<a href="#" class="lg-commit-int" onclick="event.preventDefault(); lgCommitPendingInterest(\'' + wmsEsc(row._pendingKey) + '\');" title="Commit this interest row">✓ Commit</a>' +
@@ -1018,9 +1047,9 @@ function lgRenderEntries(rows) {
             if (row.entryType === 'INTEREST_BOOKED') {
                 var entryId = source.id;
                 amount = '<span class="lg-int-amt" onclick="event.preventDefault(); lgShowInterestDetail(\'' + wmsEsc(entryId) + '\');" title="Click to view calculation / edit">' +
-                    lgFmt(Math.round(row.amount)) + '</span>';
+                    lgFmt(Math.round(dispAmt)) + '</span>';
             } else {
-                amount = lgFmt(row.amount);
+                amount = lgFmt(dispAmt);
             }
 
             // Show reference as symbol for ledger entries
@@ -1028,7 +1057,7 @@ function lgRenderEntries(rows) {
                 symbol = wmsEsc(source.reference);
             }
 
-            balance = lgFmt(row._runningBalance);
+            balance = lgFmt(dispBal);
             lastBalance = row._runningBalance;
 
             // Edit/delete — standard icons (D.9: ✏️ edit, 🗑️ delete)
@@ -1041,8 +1070,8 @@ function lgRenderEntries(rows) {
             symbol = lgFormatSymbol(row);
             typeHtml = lgFormatType(row);
             qty = row.quantity ? (typeof formatQuantity === 'function' ? formatQuantity(row.quantity) : String(Math.round(row.quantity))) : '';
-            amount = lgFmt(row.amount);
-            balance = lgFmt(row._runningBalance);
+            amount = lgFmt(dispAmt);
+            balance = lgFmt(dispBal);
             lastBalance = row._runningBalance;
         } else if (row._rowType === 'trade') {
             var source = row._source;
@@ -1066,13 +1095,15 @@ function lgRenderEntries(rows) {
                 net = lgFmtPrice(netPerUnit);
             }
 
-            amount = lgFmt(row.amount);
-            balance = lgFmt(row._runningBalance);
+            amount = lgFmt(dispAmt);
+            balance = lgFmt(dispBal);
             lastBalance = row._runningBalance;
         }
 
-        var amtClass = lgAmtClass(row.amount);
-        var balClass = lgAmtClass(row._runningBalance);
+        // Colour classes reflect the DISPLAYED (flipped) value so red = -ve in
+        // the counterparty's view (their account in deficit / payment out).
+        var amtClass = lgAmtClass(dispAmt);
+        var balClass = lgAmtClass(dispBal);
 
         // Trade rows are clickable → open shared trading edit modal
         var trAttrs = '';
@@ -1147,17 +1178,20 @@ function lgRenderEntries(rows) {
     lgRenderOpeningBalance(openingBal);
     lgAttachObClickHandler();
 
-    // Update totals in tfoot
+    // Update totals in tfoot — flip to counterparty POV for display
+    // (LESSONS §E.15.13).
     var totalAmtEl = document.getElementById('lgTotalAmount');
     var totalBalEl = document.getElementById('lgTotalBalance');
     if (totalAmtEl) {
-        totalAmtEl.innerHTML = lgFmt(totalAmount);
-        totalAmtEl.className = 'text-right ' + lgAmtClass(totalAmount);
+        var dispTotal = lgD(totalAmount);
+        totalAmtEl.innerHTML = lgFmt(dispTotal);
+        totalAmtEl.className = 'text-right ' + lgAmtClass(dispTotal);
         totalAmtEl.style.fontWeight = '600';
     }
     if (totalBalEl) {
-        totalBalEl.innerHTML = lgFmt(lastBalance);
-        totalBalEl.className = 'text-right ' + lgAmtClass(lastBalance);
+        var dispLastBal = lgD(lastBalance);
+        totalBalEl.innerHTML = lgFmt(dispLastBal);
+        totalBalEl.className = 'text-right ' + lgAmtClass(dispLastBal);
         totalBalEl.style.fontWeight = '600';
     }
 }
@@ -1209,32 +1243,37 @@ function lgRenderOpeningBalance(ob) {
         // For any later window (mid-FY filter), the value is a computed carry-forward
         // and must not be editable.
         var isEditable = !ob.isCarryForward && (!ob.exists || ob.storedDate === ob.date);
+        // Counterparty-POV display flip (LESSONS §E.15.13). ob.amount stays in
+        // firm-POV internally — only display flips.
+        var dispOb = lgD(ob.amount);
         var amtHtml;
         if (isEditable) {
             amtHtml = ob.exists ?
-                '<span class="lg-ob-amount" title="Double-click to edit">' + lgFmt(ob.amount) + '</span>' :
+                '<span class="lg-ob-amount" title="Double-click to edit">' + lgFmt(dispOb) + '</span>' :
                 '<span class="lg-ob-amount" style="color:#9ca3af;" title="Double-click to set opening balance">Set...</span>';
         } else {
-            amtHtml = '<span title="Carry-forward running balance as of ' + wmsEsc(ob.date) + ' (not editable)">' + lgFmt(ob.amount) + '</span>';
+            amtHtml = '<span title="Carry-forward running balance as of ' + wmsEsc(ob.date) + ' (not editable)">' + lgFmt(dispOb) + '</span>';
         }
         amountEl.innerHTML = amtHtml;
-        amountEl.className = 'text-right ' + lgAmtClass(ob.amount);
+        amountEl.className = 'text-right ' + lgAmtClass(dispOb);
     }
     if (balanceEl) {
-        balanceEl.innerHTML = lgFmt(ob.amount);
-        balanceEl.className = 'text-right ' + lgAmtClass(ob.amount);
+        var dispObBal = lgD(ob.amount);
+        balanceEl.innerHTML = lgFmt(dispObBal);
+        balanceEl.className = 'text-right ' + lgAmtClass(dispObBal);
     }
     var descEl = document.getElementById('lgObDescription');
     if (descEl) {
-        var amt = ob.amount || 0;
+        // Counterparty-POV labels — dispObDesc > 0 means firm owes counterparty
+        // at start (their credit), dispObDesc < 0 means counterparty owes firm.
+        var dispObDesc = lgD(ob.amount || 0);
         var label = '';
-        // Investor-receivable view: +ve balance = investor/trader/broker owes the firm
-        if (amt > 0) {
-            label = '\u2192 amount owed to the firm';
-        } else if (amt < 0) {
-            label = '\u2190 amount owed by the firm';
+        if (dispObDesc > 0) {
+            label = '\u2190 opening credit balance';
+        } else if (dispObDesc < 0) {
+            label = '\u2192 opening debit balance';
         } else {
-            label = 'no outstanding balance';
+            label = 'no opening balance';
         }
         descEl.textContent = label;
     }
@@ -1565,18 +1604,21 @@ function lgRenderSummary() {
     var cashBalance = (typeof lgCurrentCashBalance === 'number') ? lgCurrentCashBalance : (lgCarryForwardBalance || 0);
     var outstanding = cashBalance + currentNfoMargin;
 
-    // Transactions block header: "NFO Margin + Balance = Total". Balance
-    // shows the RAW cash balance (can be negative). Total = margin + raw
-    // balance, matching the Outstanding summary card exactly.
+    // Transactions block header: "NFO Margin + Balance = Total" — Balance
+    // and Total flipped to counterparty-POV (LESSONS §E.15.13). Margin stays
+    // as a positive collateral magnitude. Total = Margin + displayBalance =
+    // currentNfoMargin + (-cashBalance) = same as displayOutstanding below.
+    var displayCash = lgD(cashBalance);
+    var displayOutstanding = displayCash + currentNfoMargin;
     var txnBalEl = document.getElementById('lgTransactionsBalance');
     if (txnBalEl) {
         txnBalEl.innerHTML =
             '<span style="color:#718096; font-weight:500;">NFO Margin</span> ' +
             lgFmt(currentNfoMargin) +
             ' <span style="color:#718096; font-weight:500;">+ Balance</span> ' +
-            lgFmt(cashBalance) +
+            lgFmt(displayCash) +
             ' <span style="color:#718096; font-weight:500;">=</span> ' +
-            lgFmt(outstanding);
+            lgFmt(displayOutstanding);
     }
 
     // Current FY bounds — fixed Apr-Mar cadence per user instruction
@@ -1629,14 +1671,14 @@ function lgRenderSummary() {
         if (useAmtClass) el.className = 'lg-summary-card-value ' + lgAmtClass(val);
     }
     setCard('lgCardHoldingsValue', totalHoldingsValue, false);
-    // Outstanding card shows the TOTAL (raw cash + margin) as the headline,
-    // with "Bal X + Margin Y" beneath it. Raw cash means a -ve balance is
-    // shown as-is — important when firm owes the counterparty money.
-    setCard('lgCardOutstanding', outstanding, true);
+    // Outstanding card — counterparty-POV (LESSONS §E.15.13). Headline =
+    // displayCash + Margin (matches the subtitle sum). Negative = counterparty
+    // owes firm; positive = firm owes counterparty.
+    setCard('lgCardOutstanding', displayOutstanding, true);
     var outBreakEl = document.getElementById('lgCardOutstandingBreakdown');
     if (outBreakEl) {
         outBreakEl.innerHTML =
-            'Bal ' + lgFmt(cashBalance) +
+            'Bal ' + lgFmt(displayCash) +
             ' + Margin ' + lgFmt(currentNfoMargin);
     }
     setCard('lgCardPotentialTax', potentialTax, false);
@@ -1650,6 +1692,12 @@ function lgRenderSummary() {
     if (taxCardWrap) taxCardWrap.style.display = isBrokerStmt ? 'none' : '';
     if (taxOpEl) taxOpEl.style.display = isBrokerStmt ? 'none' : '';
     setCard('lgCardNetReceivable', netReceivable, true);
+    // Dynamic label: positive netReceivable means counterparty receives net
+    // (firm pays out); negative means counterparty pays net (LESSONS §E.15.13).
+    var nrLabelEl = document.getElementById('lgCardNetReceivableLabel');
+    if (nrLabelEl) {
+        nrLabelEl.textContent = (netReceivable < 0) ? 'Net Payable' : 'Net Receivable';
+    }
     // Balance w/o MTM lives inside an inner span so we can append a subscript ratio
     var balEl = document.getElementById('lgCardBalNoMtm');
     if (balEl) {
@@ -2456,10 +2504,14 @@ function lgPopulateInterestDetail(calc, currentAmount) {
                     '<span style="' + labelStyle + '">' + wmsEsc(calc.period) + '</span>' +
                 '</div>';
 
+            // Counterparty-POV display flip (LESSONS §E.15.13) — Balance row
+            // shows the flipped value (-ve = counterparty's deficit). The
+            // Total Base row below stays in firm-POV magnitude because that's
+            // the actual basis the interest formula uses (max(0, cash) + margin).
             var balanceRow =
                 '<div style="' + rowStyle + '">' +
                     '<span style="' + labelStyle + '">Balance</span>' +
-                    '<span style="' + valueStyle + '">' + lgFmt(cash) + '</span>' +
+                    '<span style="' + valueStyle + '">' + lgFmt(lgD(cash)) + '</span>' +
                 '</div>';
 
             var marginRow =
@@ -2779,7 +2831,10 @@ function lgGatherExportData() {
         if (row._nfoCashImpact !== false) totalAmount += row.amount;
         lastBalance = balance;
 
-        txnRows.push([date, symbol, typeLabel, qty, price, net, amount, balance]);
+        // Counterparty-POV display flip (LESSONS §E.15.13) — flip amount &
+        // balance for export so the downloaded statement matches the on-screen
+        // sign convention.
+        txnRows.push([date, symbol, typeLabel, qty, price, net, lgD(amount), lgD(balance)]);
     });
 
     // 4. Holdings (recompute from filtered transactions — same as lgRenderSummary)
@@ -2908,21 +2963,25 @@ function lgGatherExportData() {
         return [b.shortSymbol, b.securityType === 'NFO' ? 'NFO' : 'EQ', b.qty, b.gain];
     });
 
+    // Counterparty-POV display values (LESSONS §E.15.13). Balance-like values
+    // are flipped (×-1) for export so the downloaded statement matches the
+    // on-screen sign convention. Holdings/Tax/Margin/NR/BalNoMtm stay as-is
+    // (NR & BalNoMtm formulas already produce counterparty-POV signs).
     return {
         viewName: viewName,
         dateLabel: dateLabel,
         fyLabel: fyLabel,
         statementType: lgStatementType,
-        openingBal: { date: openingBalDate, amount: openingBalAmt },
+        openingBal: { date: openingBalDate, amount: lgD(openingBalAmt) },
         txnRows: txnRows,
-        totalAmount: totalAmount,
-        lastBalance: lastBalance,
+        totalAmount: lgD(totalAmount),
+        lastBalance: lgD(lastBalance),
         holdingRows: holdingRows,
         totalMtm: totalEqMtm + totalNfoMtm,
         totalValue: totalEqValue + totalNfoMtm,
         holdingsValue: totalHoldingsValue,
-        outstanding: outstanding,
-        outstandingBal: cashBalance,
+        outstanding: lgD(cashBalance) + currentNfoMargin,
+        outstandingBal: lgD(cashBalance),
         outstandingMargin: currentNfoMargin,
         potentialTax: potentialTax,
         netReceivable: netReceivable,
@@ -3100,9 +3159,13 @@ function lgExportExcel() {
     // Tax = MAX(0, bookedGain) * rate — we'll link to booked total later
     // For now, Outstanding is hardcoded (it's cash balance + margin, computed values)
     // Potential Tax: linked after we know booked P&L total row
-    // Net Receivable = Holdings - Outstanding - Tax
+    // Net Receivable = Holdings + Outstanding - Tax (LESSONS §E.15.13)
+    // Outstanding is now displayed in counterparty-POV: -ve when counterparty
+    // owes the firm. Adding a -ve Outstanding to Holdings is equivalent to
+    // the old `Holdings - cashBalance` subtraction. The plus operator keeps
+    // the cell arithmetic readable against the on-screen card strip.
     var sumNetRecFormula = {
-        formula: hcVal + sumHoldingsRow + '-' + hcVal + sumOutstRow + '-' + hcVal + sumTaxRow,
+        formula: hcVal + sumHoldingsRow + '+' + hcVal + sumOutstRow + '-' + hcVal + sumTaxRow,
         result: d.netReceivable
     };
     // Balance w/o MTM = Net Receivable - Total MTM
@@ -3165,9 +3228,9 @@ function lgExportExcel() {
         // receivable. Margin is collateral, not cash owed. See LESSONS E.15.1.
         { type: 'summary', rows: [
             { label: 'Total Value of Holdings', value: sumHoldingsVal },
-            { label: 'Less: Outstanding', value: d.outstandingBal },
+            { label: 'Plus: Outstanding', value: d.outstandingBal },
             { label: 'Less: Potential Tax (' + taxRatePct + '%)', value: sumTaxFormula },
-            { label: 'Net Receivable / (Payable)', value: sumNetRecFormula, bold: true },
+            { label: (d.netReceivable < 0 ? 'Net Payable' : 'Net Receivable'), value: sumNetRecFormula, bold: true },
             { label: 'Balance without MTM', value: sumBalNoMtmFormula, bold: true,
                 extraCol: 6, extraValue: sumPctFormula, extraFormat: 'pct' }
         ]},
@@ -3236,9 +3299,9 @@ function lgExportPdf() {
                 { type: 'blank' },
                 { type: 'summary', rows: [
                     { label: 'Total Value of Holdings', value: d.holdingsValue },
-                    { label: 'Less: Outstanding', value: d.outstanding },
+                    { label: 'Plus: Outstanding', value: d.outstanding },
                     { label: 'Less: Potential Tax (' + taxRatePct + '%)', value: d.potentialTax },
-                    { label: 'Net Receivable / (Payable)', value: d.netReceivable, bold: true },
+                    { label: (d.netReceivable < 0 ? 'Net Payable' : 'Net Receivable'), value: d.netReceivable, bold: true },
                     { label: 'Balance without MTM', value: d.balNoMtm, bold: true }
                 ]},
                 { type: 'blank' },
