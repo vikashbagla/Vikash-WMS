@@ -33,6 +33,14 @@
 
 /* Date-filter inline divider + export dropdown chrome */
 .lg-tabs-divider { width:1px; align-self:stretch; background:#cbd5e0; margin:0 4px; }
+
+/* Statement type toggle (Trader / Broker) — segmented control per D.4.2 */
+.lg-stmt-type-toggle { display:inline-flex; gap:0; align-items:center; }
+.lg-stmt-type-btn { padding:3px 12px; border:1px solid #e2e8f0; background:#fff; font-size:11px; font-weight:600; color:#718096; cursor:pointer; border-radius:0; }
+.lg-stmt-type-btn:first-child { border-radius:4px 0 0 4px; }
+.lg-stmt-type-btn:last-child { border-radius:0 4px 4px 0; border-left:none; }
+.lg-stmt-type-btn:hover:not(.active) { background:#f7fafc; color:#4a5568; }
+.lg-stmt-type-btn.active { background:#667eea; color:#fff; border-color:#667eea; }
 .lg-export-wrap { position:relative; }
 .lg-export-dropdown {
     position:absolute; top:100%; right:0; margin-top:2px;
@@ -207,6 +215,11 @@
       <div class="tr-view-tabs-container" id="lgViewTabs"></div>
       <div class="lg-date-inline" id="lgDateFilter"></div>
       <div class="tr-view-tabs-actions">
+        <span class="lg-stmt-type-toggle" id="lgStmtTypeToggle" title="Statement type — pick Trader for investor/sub-trader statements, Broker for broker-side statements">
+          <button type="button" data-type="trader" class="lg-stmt-type-btn">Trader</button>
+          <button type="button" data-type="broker" class="lg-stmt-type-btn">Broker</button>
+        </span>
+        <span class="lg-tabs-divider"></span>
         <button class="tr-vta-btn" id="lgNewViewBtn" title="New blank view">+</button>
         <div style="position:relative;">
           <button class="tr-vta-btn" id="lgMoreBtn" title="All views">▾ More</button>
@@ -407,8 +420,8 @@
           <div class="lg-summary-card-value" id="lgCardOutstanding">-</div>
           <div class="lg-card-sub" id="lgCardOutstandingBreakdown" style="display:block; font-size:10px; color:#718096; margin-top:2px; white-space:nowrap;">-</div>
         </div>
-        <div class="lg-summary-op">−</div>
-        <div class="lg-summary-card">
+        <div class="lg-summary-op" id="lgCardPotentialTaxOp">−</div>
+        <div class="lg-summary-card" id="lgCardPotentialTaxWrap">
           <div class="lg-summary-card-label" id="lgCardPotentialTaxLabel">Potential Tax (0%)</div>
           <div class="lg-summary-card-value" id="lgCardPotentialTax">-</div>
         </div>

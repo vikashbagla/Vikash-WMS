@@ -33,7 +33,10 @@ var lgVM = wmsViewManager({
             traderIds: lgSelectedTraderIds.slice(),
             brokerIds: lgSelectedBrokerIds.slice(),
             tagNames: lgSelectedTagNames.slice(),
-            tagLogic: lgTagFilterLogic
+            tagLogic: lgTagFilterLogic,
+            // Statement type — 'trader' (investor / sub-trader perspective) or
+            // 'broker' (broker-side perspective). See LESSONS §E.15.12.
+            statementType: lgStatementType
         };
     },
     applyFilters: function(f) {
@@ -47,6 +50,13 @@ var lgVM = wmsViewManager({
         lgSelectedTagNames.length = 0;
         Array.prototype.push.apply(lgSelectedTagNames, f.tagNames || []);
         lgTagFilterLogic = f.tagLogic || 'OR';
+
+        // Statement type — backward-compat: any view saved before this feature
+        // shipped won't have a statementType key. Default to 'trader' so the
+        // existing T1/T2/T3 views behave exactly as they did pre-feature.
+        // LESSONS §E.15.12.
+        lgStatementType = (f.statementType === 'broker') ? 'broker' : 'trader';
+        lgSyncStatementTypeToggle();
 
         // Sync pill UI
         ['investor', 'trader', 'broker', 'tag'].forEach(function(type) {
@@ -84,6 +94,14 @@ var lgSelectedTraderIds = [];
 var lgSelectedBrokerIds = [];
 var lgSelectedTagNames = [];
 var lgTagFilterLogic = 'OR';
+
+// Statement type — 'trader' (default, investor / sub-trader perspective) or
+// 'broker' (broker-side perspective). Persisted alongside filters on each
+// portfolio_views row. Controls (a) which perspective wmsBuildLedger uses,
+// (b) whether ledger_entries are fetched (broker = no, since cash entries
+// are investor-scoped), and (c) which summary cards render (broker hides
+// Potential Tax — see LESSONS §E.15.12).
+var lgStatementType = 'trader';
 
 // Date filter (shared wmsDateFilter component)
 var lgDateFilterInstance = null;
@@ -466,6 +484,10 @@ function lgInit() {
     // Update unit labels in column headers
     lgUpdateUnitLabels();
 
+    // Statement-type toggle (Trader / Broker). Wired once; lgVM.applyFilters
+    // calls lgSyncStatementTypeToggle whenever a view loads. LESSONS §E.15.12.
+    lgInitStatementTypeToggle();
+
     // Load views and initial data
     lgVM.loadViews();
 
@@ -699,11 +721,13 @@ async function lgRefresh() {
     } else if (lgSelectedTraderIds.length > 0) {
         entityIds = lgSelectedTraderIds.slice();
     }
-    var brokerOnly = (lgSelectedInvestorIds.length === 0 && lgSelectedTraderIds.length === 0 && lgSelectedBrokerIds.length > 0);
+    // Broker statements never draw on investor ledger entries (those track
+    // investor cash with the firm, not broker P&L). Drive the fetch-skip off
+    // the explicit statement type, NOT off the pill combination — the user's
+    // toggle is now authoritative. See LESSONS §E.15.12.
+    var brokerOnly = (lgStatementType === 'broker');
 
     if (brokerOnly) {
-        // Broker-only view doesn't draw on investor ledger entries — those track
-        // investor cash with the firm, not broker P&L. Skip the fetch entirely.
         lgLedgerEntries = [];
     } else {
         var allQuery = '';
@@ -736,22 +760,23 @@ async function lgRefresh() {
         return true;
     });
 
-    // Resolve perspective from the active filter combination:
-    //   - investor / trader (alone, or combined with broker) → 'trader' if only
-    //     trader filters are present, else 'investor'
-    //   - broker only (no investor/trader) → 'broker'
-    // Per spec: any combination including investor/trader uses investor/trader
-    // signage; only when broker is the *sole* filter do we switch to broker view.
-    var hasInv = lgSelectedInvestorIds.length > 0;
-    var hasTrd = lgSelectedTraderIds.length > 0;
-    var hasBrk = lgSelectedBrokerIds.length > 0;
+    // Resolve perspective from the explicit statement type chosen by the user.
+    //   - Broker type → always 'broker' (uses raw DB net_amount, futures P&L
+    //     sign flipped — see wmsBuildLedger).
+    //   - Trader type → preserve the pre-toggle auto-resolution:
+    //         has investor filter → 'investor'
+    //         else has trader filter → 'trader'
+    //         else → 'investor' (default)
+    //     'investor' and 'trader' produce identical engine output today (both
+    //     use display_net_amount), but keep them distinct in case future rules
+    //     diverge. LESSONS §E.15.9 + §E.15.12.
     var lgPerspective;
-    if (hasInv) {
-        lgPerspective = 'investor';
-    } else if (hasTrd) {
-        lgPerspective = 'trader';
-    } else if (hasBrk) {
+    if (lgStatementType === 'broker') {
         lgPerspective = 'broker';
+    } else if (lgSelectedInvestorIds.length > 0) {
+        lgPerspective = 'investor';
+    } else if (lgSelectedTraderIds.length > 0) {
+        lgPerspective = 'trader';
     } else {
         lgPerspective = 'investor';
     }
@@ -1323,6 +1348,44 @@ async function lgSaveOpeningBalance() {
 // Tax rate on booked gains — resolved from investor/IBA DB fields via wmsGetTaxRate().
 // Checks investor pill first; if no single investor, falls back to trader pill
 // (traders are also in the investors table and can have their own tax rate).
+// ============================================================================
+// STATEMENT TYPE TOGGLE (Trader / Broker)
+// ============================================================================
+// Two-segment control in the view-tabs bar. Switching the toggle changes
+// `lgStatementType` and re-runs `lgRefresh` immediately. The value is then
+// persisted into `portfolio_views.filters` when the user saves the view.
+// LESSONS §E.15.12.
+
+function lgInitStatementTypeToggle() {
+    var container = document.getElementById('lgStmtTypeToggle');
+    if (!container || container.dataset.lgWired) return;
+    container.dataset.lgWired = '1';
+    container.addEventListener('click', function(e) {
+        var btn = e.target.closest('.lg-stmt-type-btn');
+        if (!btn) return;
+        var newType = btn.getAttribute('data-type');
+        if (!newType || newType === lgStatementType) return;
+        lgStatementType = newType;
+        lgSyncStatementTypeToggle();
+        // lgVM.updateViewButtons rechecks dirty-state vs saved view filters,
+        // including the new statementType field via lgFiltersEqual.
+        if (lgVM && typeof lgVM.updateViewButtons === 'function') lgVM.updateViewButtons();
+        lgRefresh();
+    });
+    lgSyncStatementTypeToggle();
+}
+
+function lgSyncStatementTypeToggle() {
+    var container = document.getElementById('lgStmtTypeToggle');
+    if (!container) return;
+    var btns = container.querySelectorAll('.lg-stmt-type-btn');
+    for (var i = 0; i < btns.length; i++) {
+        var t = btns[i].getAttribute('data-type');
+        if (t === lgStatementType) btns[i].classList.add('active');
+        else btns[i].classList.remove('active');
+    }
+}
+
 function lgGetEffectiveTaxRate() {
     var invId = (lgSelectedInvestorIds.length === 1) ? lgSelectedInvestorIds[0] : null;
     if (!invId) invId = (lgSelectedTraderIds.length === 1) ? lgSelectedTraderIds[0] : null;
@@ -1532,7 +1595,12 @@ function lgRenderSummary() {
     var totalBookedGain = 0;
     fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
 
-    var potentialTax = Math.max(0, totalBookedGain) * (taxRatePct / 100);
+    // Potential Tax — only meaningful for Trader-type statements (it's the
+    // investor's tax liability on booked gains, not the broker's). Broker-type
+    // statements zero it out so it doesn't enter the Net Receivable formula.
+    // See LESSONS §E.15.12.
+    var isBrokerStmt = (lgStatementType === 'broker');
+    var potentialTax = isBrokerStmt ? 0 : Math.max(0, totalBookedGain) * (taxRatePct / 100);
 
     // Net Receivable = total holdings value (EQ + NFO MTM) − raw cash
     // balance − Tax. NFO margin is NOT subtracted (it's collateral, not
@@ -1574,6 +1642,13 @@ function lgRenderSummary() {
     setCard('lgCardPotentialTax', potentialTax, false);
     var taxLabelEl = document.getElementById('lgCardPotentialTaxLabel');
     if (taxLabelEl) taxLabelEl.textContent = 'Potential Tax (' + taxRatePct + '%)';
+    // Broker-type statements hide the Potential Tax card + its '−' operator,
+    // so the visible math reads Holdings − Outstanding = Net Receivable.
+    // LESSONS §E.15.12.
+    var taxCardWrap = document.getElementById('lgCardPotentialTaxWrap');
+    var taxOpEl = document.getElementById('lgCardPotentialTaxOp');
+    if (taxCardWrap) taxCardWrap.style.display = isBrokerStmt ? 'none' : '';
+    if (taxOpEl) taxOpEl.style.display = isBrokerStmt ? 'none' : '';
     setCard('lgCardNetReceivable', netReceivable, true);
     // Balance w/o MTM lives inside an inner span so we can append a subscript ratio
     var balEl = document.getElementById('lgCardBalNoMtm');
@@ -2108,8 +2183,11 @@ function lgUpdateViewLockUI() {
 }
 
 // Deep-compare two filter objects. Filter shape is:
-//   {investorIds: [...], traderIds: [...], brokerIds: [...], tagNames: [...], tagLogic: 'OR'|'AND'}
+//   {investorIds: [...], traderIds: [...], brokerIds: [...], tagNames: [...],
+//    tagLogic: 'OR'|'AND', statementType: 'trader'|'broker'}
 // Empty array == missing key (both mean "no constraint"). Order-insensitive.
+// Missing statementType defaults to 'trader' (backward-compat — views saved
+// before the toggle shipped had no statementType key). LESSONS §E.15.12.
 function lgFiltersEqual(a, b) {
     if (!a || !b) return false;
     var arrEq = function(x, y) {
@@ -2119,11 +2197,13 @@ function lgFiltersEqual(a, b) {
         for (var i = 0; i < xs.length; i++) if (xs[i] !== ys[i]) return false;
         return true;
     };
+    var normType = function(t) { return t === 'broker' ? 'broker' : 'trader'; };
     return arrEq(a.investorIds, b.investorIds) &&
            arrEq(a.traderIds, b.traderIds) &&
            arrEq(a.brokerIds, b.brokerIds) &&
            arrEq(a.tagNames, b.tagNames) &&
-           (a.tagLogic || 'OR') === (b.tagLogic || 'OR');
+           (a.tagLogic || 'OR') === (b.tagLogic || 'OR') &&
+           normType(a.statementType) === normType(b.statementType);
 }
 
 // Pre-ledger-POST gate. Every code path that writes to ledger_entries
@@ -2138,7 +2218,8 @@ async function lgEnsureViewSaved(actionLabel) {
         traderIds:   lgSelectedTraderIds.slice(),
         brokerIds:   lgSelectedBrokerIds.slice(),
         tagNames:    lgSelectedTagNames.slice(),
-        tagLogic:    lgTagFilterLogic
+        tagLogic:    lgTagFilterLogic,
+        statementType: lgStatementType
     };
 
     // Clean, saved → straight through.
@@ -2805,7 +2886,10 @@ function lgGatherExportData() {
     });
     var totalBookedGain = 0;
     fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
-    var potentialTax = Math.max(0, totalBookedGain) * (taxRatePct / 100);
+    // Broker-type exports zero out Potential Tax so it doesn't leak into Net
+    // Receivable (mirrors lgRenderSummary — see LESSONS §E.15.12).
+    var isBrokerStmt = (lgStatementType === 'broker');
+    var potentialTax = isBrokerStmt ? 0 : Math.max(0, totalBookedGain) * (taxRatePct / 100);
     var netReceivable = totalHoldingsValue - cashBalance - potentialTax;
     var totalCurrentMtm = totalEqMtm + totalNfoMtm;
     var balNoMtm = netReceivable - totalCurrentMtm;
@@ -2828,6 +2912,7 @@ function lgGatherExportData() {
         viewName: viewName,
         dateLabel: dateLabel,
         fyLabel: fyLabel,
+        statementType: lgStatementType,
         openingBal: { date: openingBalDate, amount: openingBalAmt },
         txnRows: txnRows,
         totalAmount: totalAmount,
