@@ -124,24 +124,28 @@
 #lgSummaryHoldingsTable th.lg-col-type, #lgSummaryHoldingsTable td.lg-col-type { width:40px; padding-left:4px; padding-right:4px; text-align:center; }
 
 /* === Sticky scroll header chrome for the three Statements sections ===
-   Layers stack inside #lgUnifiedScroll's padding box. Heights below are
-   the rendered heights of each strip; the `top:` values must abut to
-   prevent a visible gap that scrolling rows peek through:
-     0px ..  32px : .lg-booked-header (section title strip)        z:11
-     32px..  62px : thead th         (column headers)              z:10
-     62px..  ~100: #lgNewEntryRow   (inline add-entry row, ~38px) z:9
-     scrolls      : #lgOpeningBalRow (was sticky, now scrolls)
-     scrolls      : data rows + tfoot
-   ALL sticky elements need an opaque background or the scrolling data
-   rows bleed through. Global rules in app-styles.css (th sticky top:0,
-   .total-row sticky top:34px) are overridden here for the Statements
-   scope ONLY — other modules' tables keep their global behaviour. */
+   Each layer overlaps the next by ~2px so sub-pixel gaps never expose
+   scrolling rows. Section header uses `top:-8px` to cover the 8px
+   padding-top of #lgUnifiedScroll (sticky `top:0` would leave the
+   padding region open, letting scrolling data rows bleed through above
+   the section header).
+
+   Stack from top of #lgUnifiedScroll's border box (z highest paints over):
+     0px ..  32px : .lg-booked-header  (z:11, top:-8)  ← absolute top
+     30px..  60px : thead th          (z:10, top:22)  ← 2px under header
+     58px..  ~96 : #lgNewEntryRow    (z:9,  top:50)  ← 2px under thead
+
+   ALL sticky elements need an opaque background or the gaps (even
+   sub-pixel ones) become visible bands when data rows scroll behind.
+   Global rules in app-styles.css (th sticky top:0, .total-row sticky
+   top:34px) are overridden here for the Statements scope ONLY — other
+   modules' tables keep their global behaviour. */
 .lg-booked-section .lg-booked-header {
-    position:sticky; top:0; z-index:11;
+    position:sticky; top:-8px; z-index:11;
     background:#f7fafc;
 }
-.lg-booked-section thead th { top:32px; background:#f7fafc; }
-#lgNewEntryRow { top:62px; }
+.lg-booked-section thead th { top:22px; background:#f7fafc; }
+#lgNewEntryRow { top:50px; }
 #lgNewEntryRow td { background:#f9fafb; }
 /* Opening Balance row scrolls with the data (was inheriting sticky from
    the global .total-row rule). */
