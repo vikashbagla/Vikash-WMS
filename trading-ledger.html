@@ -123,6 +123,33 @@
 .lg-booked-body table { width:100%; }
 #lgSummaryHoldingsTable th.lg-col-type, #lgSummaryHoldingsTable td.lg-col-type { width:40px; padding-left:4px; padding-right:4px; text-align:center; }
 
+/* === Sticky scroll header chrome for the three Statements sections ===
+   Layers from top of the #lgUnifiedScroll viewport:
+     0px ..  30px : .lg-booked-header (section title strip)        z:11
+     30px..  60px : thead th         (column headers)              z:10
+     60px..  ~90px: #lgNewEntryRow   (inline add-entry row)        z:9
+     scrolls      : #lgOpeningBalRow (was sticky, now scrolls)
+     scrolls      : data rows + tfoot
+   ALL sticky elements need an opaque background or the scrolling data
+   rows bleed through. Global rules in app-styles.css (th sticky top:0,
+   .total-row sticky top:34px) are overridden here for the Statements
+   scope ONLY — other modules' tables keep their global behaviour. */
+.lg-booked-section .lg-booked-header {
+    position:sticky; top:0; z-index:11;
+    background:#f7fafc;
+}
+.lg-booked-section thead th { top:30px; background:#f7fafc; }
+#lgNewEntryRow { top:60px; }
+#lgNewEntryRow td { background:#f9fafb; }
+/* Opening Balance row scrolls with the data (was inheriting sticky from
+   the global .total-row rule). */
+#lgOpeningBalRow { position:static !important; top:auto !important; }
+/* The totals tfoot row at the bottom of the Transactions table also inherits
+   the global .total-row sticky rule — drop that here so it sits naturally
+   at the bottom of the table instead of colliding with the column headers
+   on scroll. */
+#lgTable tfoot tr.total-row { position:static !important; top:auto !important; }
+
 /* Summary table — reuse data-table styles */
 #lgSummarySection table { table-layout:auto; width:100%; }
 
