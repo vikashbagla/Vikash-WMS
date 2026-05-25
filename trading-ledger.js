@@ -1643,21 +1643,25 @@ function lgRenderSummary() {
     var cashBalance = (typeof lgCurrentCashBalance === 'number') ? lgCurrentCashBalance : (lgCarryForwardBalance || 0);
     var outstanding = cashBalance + currentNfoMargin;
 
-    // Transactions block header: "NFO Margin + Balance = Total" — Balance
-    // and Total flipped to counterparty-POV (LESSONS §E.15.13). Margin stays
-    // as a positive collateral magnitude. Total = Margin + displayBalance =
-    // currentNfoMargin + (-cashBalance) = same as displayOutstanding below.
+    // Transactions block header — informational only, no mixed-sign
+    // arithmetic. The signed cash balance and the positive collateral
+    // magnitude don't combine cleanly under a "+" operator, so just
+    // separate them with a pipe. Margin segment is hidden when zero.
+    // LESSONS §E.15.13.
     var displayCash = lgD(cashBalance);
     var displayOutstanding = displayCash + currentNfoMargin;
     var txnBalEl = document.getElementById('lgTransactionsBalance');
     if (txnBalEl) {
-        txnBalEl.innerHTML =
-            '<span style="color:#718096; font-weight:500;">NFO Margin</span> ' +
-            lgFmt(currentNfoMargin) +
-            ' <span style="color:#718096; font-weight:500;">+ Balance</span> ' +
-            lgFmt(displayCash) +
-            ' <span style="color:#718096; font-weight:500;">=</span> ' +
-            lgFmt(displayOutstanding);
+        var balanceTxt =
+            '<span style="color:#718096; font-weight:500;">Balance</span> ' +
+            '<span class="' + lgAmtClass(displayCash) + '">' + lgFmt(displayCash) + '</span>';
+        if (currentNfoMargin > 0.01) {
+            balanceTxt +=
+                ' <span style="color:#cbd5e0;">|</span> ' +
+                '<span style="color:#718096; font-weight:500;">F&amp;O Margin held</span> ' +
+                lgFmt(currentNfoMargin);
+        }
+        txnBalEl.innerHTML = balanceTxt;
     }
 
     // Current FY bounds — fixed Apr-Mar cadence per user instruction
@@ -1718,9 +1722,14 @@ function lgRenderSummary() {
     setCard('lgCardOutstanding', displayOutstanding, true);
     var outBreakEl = document.getElementById('lgCardOutstandingBreakdown');
     if (outBreakEl) {
-        outBreakEl.innerHTML =
-            'Bal ' + lgFmt(displayCash) +
-            ' + Margin ' + lgFmt(currentNfoMargin);
+        // Informational subtitle — no mixed-sign arithmetic. The headline IS
+        // the cash + margin combination per E.15.13; the subtitle just names
+        // the two components without implying an explicit operator.
+        var sub = 'Cash ' + lgFmt(displayCash);
+        if (currentNfoMargin > 0.01) {
+            sub += ' | Margin held ' + lgFmt(currentNfoMargin);
+        }
+        outBreakEl.innerHTML = sub;
     }
     setCard('lgCardPotentialTax', potentialTax, false);
     var taxLabelEl = document.getElementById('lgCardPotentialTaxLabel');
