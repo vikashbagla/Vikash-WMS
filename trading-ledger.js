@@ -1688,9 +1688,18 @@ function lgRenderSummary() {
         var avgCost = h.avgCost;
         var isNfo = (h.securityType === 'NFO');
 
-        // CMP from shared live price cache
+        // CMP from shared live price cache. For NFO contracts (options + futures)
+        // the live-price lookup MUST use the full contract symbol — e.g.
+        // 'PGEL26JUN500CE' or 'PGEL26MAYFUT' — NOT the underlying short_symbol.
+        // The holdings map key IS the prefix-stripped contract symbol for NFO
+        // (see _engineKey in wms-shared.js), so `key` is exactly what we need.
+        // Bug pre-fix: shortSym='PGEL' returned the underlying equity spot
+        // (478.45) for the PGEL 500 CE option row, producing a phantom MTM
+        // computed as (spot − premium_avg) instead of (option_lp − premium_avg).
+        // See LESSONS §E.15.16.
         var shortSym = h.shortSymbol || h.symbol;
-        var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[shortSym] : null;
+        var priceLookupKey = isNfo ? key : shortSym;
+        var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[priceLookupKey] : null;
         var cmp = (priceEntry && priceEntry.lp > 0) ? priceEntry.lp : avgCost;
 
         var value, mtm;
@@ -3151,7 +3160,11 @@ function lgGatherExportData() {
             }
         }
 
-        var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[shortSym] : null;
+        // Same NFO price-lookup fix as the on-screen Positions table (LESSONS
+        // §E.15.16). Use the holdings key (= full contract symbol) for NFO so
+        // option / futures prices resolve correctly in exports too.
+        var priceLookupKey2 = isNfo ? key : shortSym;
+        var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[priceLookupKey2] : null;
         var cmp = (priceEntry && priceEntry.lp > 0) ? priceEntry.lp : avgCost;
         var value, mtm;
         if (isNfo) {
