@@ -328,20 +328,11 @@ function lgInit() {
         });
     }
 
-    // Export dropdown toggle
+    // Export modal — opens a multi-option chooser (date range, sections, format).
+    // Replaces the legacy 2-item dropdown. See LESSONS §E.18.1.
     var exportBtn = document.getElementById('lgExportBtn');
-    var exportDd = document.getElementById('lgExportDropdown');
-    if (exportBtn && exportDd) {
-        exportBtn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            exportDd.classList.toggle('show');
-        });
-        document.addEventListener('click', function(e) {
-            if (!exportBtn.contains(e.target) && !exportDd.contains(e.target)) {
-                exportDd.classList.remove('show');
-            }
-        });
-    }
+    if (exportBtn) exportBtn.addEventListener('click', lgExportOpen);
+    lgInitModal('lgExportModal', 'lgExportModalClose');
 
     // Add Entry button
     var addBtn = document.getElementById('lgAddEntryBtn');
@@ -395,11 +386,23 @@ function lgInit() {
         });
     }
 
-    // Export buttons
-    var pdfBtn = document.getElementById('lgExportPdfBtn');
-    var xlsBtn = document.getElementById('lgExportExcelBtn');
-    if (pdfBtn) pdfBtn.addEventListener('click', lgExportPdf);
-    if (xlsBtn) xlsBtn.addEventListener('click', lgExportExcel);
+    // Export modal — format buttons inside the body (see #lgExportModal).
+    // Each fires the same data-gathering path with a different renderer.
+    var expPdfBtn      = document.getElementById('lgExpPdf');
+    var expXlsBtn      = document.getElementById('lgExpExcel');
+    var expImgCopyBtn  = document.getElementById('lgExpCopyImage');
+    var expImgDlBtn    = document.getElementById('lgExpDownloadImage');
+    if (expPdfBtn)     expPdfBtn.addEventListener('click',     function() { lgExportRun('pdf'); });
+    if (expXlsBtn)     expXlsBtn.addEventListener('click',     function() { lgExportRun('excel'); });
+    if (expImgCopyBtn) expImgCopyBtn.addEventListener('click', function() { lgExportRun('image_copy'); });
+    if (expImgDlBtn)   expImgDlBtn.addEventListener('click',   function() { lgExportRun('image_download'); });
+
+    // Date-range radio change → auto-fill the From/To inputs.
+    ['lgExpDateRangeCustom','lgExpDateRangeCurrentFY','lgExpDateRangePreviousFY','lgExpDateRangeSinceRecon']
+        .forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.addEventListener('change', lgExportSyncDates);
+        });
 
     // View management buttons
     var newViewBtn = document.getElementById('lgNewViewBtn');
@@ -3044,31 +3047,70 @@ async function lgPostInterest() {
 // This mirrors the data that lgRenderEntries + lgRenderSummary compute,
 // but pulled into a simple data structure instead of DOM html.
 
-function lgGatherExportData() {
+function lgGatherExportData(opts) {
+    // opts (all optional):
+    //   dateFrom, dateTo  — ISO yyyy-mm-dd window override; default = on-screen
+    //   includeFutures    — false hides _nfoCashImpact===false rows; default true
     // Resolve effective tax rate from DB (same logic as lgRenderSummary)
+    opts = opts || {};
     var taxRatePct = lgGetEffectiveTaxRate();
+    var rangeFrom = opts.dateFrom || lgDateFrom || '';
+    var rangeTo   = opts.dateTo   || lgDateTo   || '';
+    var includeFutures = (opts.includeFutures !== false);
 
     // 1. Active view name & date range
     var activeView = lgVM.views.find(function(v) { return v.id === lgVM.activeViewId; });
     var viewName = activeView ? activeView.name : 'Statement';
 
-    // Determine FY label from date range
+    // Determine FY label from chosen range
     var dateLabel = '';
-    if (lgDateFrom) {
-        var yr = parseInt(lgDateFrom.slice(0, 4), 10);
-        var mo = parseInt(lgDateFrom.slice(5, 7), 10);
+    if (rangeFrom) {
+        var yr = parseInt(rangeFrom.slice(0, 4), 10);
+        var mo = parseInt(rangeFrom.slice(5, 7), 10);
         var fyStart = (mo >= 4) ? yr : yr - 1;
         dateLabel = 'FY' + String(fyStart).slice(-2) + String(fyStart + 1).slice(-2);
     }
     if (!dateLabel) dateLabel = new Date().toISOString().slice(0, 10);
 
-    // 2. Opening balance
-    var ob = lgFindOpeningBalance();
-    var openingBalDate = ob.date || '';
-    var openingBalAmt = ob.amount || 0;
+    // 2. Opening balance + the source rowset.
+    //    When the caller passes an explicit date range different from on-screen,
+    //    re-derive the OB carry-forward + clipped rows from lgFullCombined so we
+    //    don't need to mutate lgDateFrom/lgDateTo + re-run lgRefresh (which
+    //    would trigger an on-screen flicker). Engine math is unchanged — we
+    //    just re-clip the already-computed running balance.
+    var rowSet, openingBalDate, openingBalAmt;
+    var rangeOverridden = (opts.dateFrom || opts.dateTo) &&
+                          (opts.dateFrom !== lgDateFrom || opts.dateTo !== lgDateTo);
+    if (rangeOverridden && Array.isArray(lgFullCombined) && lgFullCombined.length > 0) {
+        var carry = 0;
+        rowSet = [];
+        var df = rangeFrom || '2000-01-01';
+        var dt = rangeTo   || '2099-12-31';
+        for (var fi = 0; fi < lgFullCombined.length; fi++) {
+            var fr = lgFullCombined[fi];
+            var isOB = (fr._rowType === 'ledger' && fr.entryType === 'OPENING_BALANCE');
+            if ((fr.date && fr.date < df) || isOB) { carry = fr._runningBalance; }
+            else if (fr.date && fr.date >= df && fr.date <= dt) { rowSet.push(fr); }
+        }
+        openingBalDate = df;
+        openingBalAmt  = carry;
+    } else {
+        var ob = lgFindOpeningBalance();
+        openingBalDate = ob.date || '';
+        openingBalAmt  = ob.amount || 0;
+        rowSet = lgCombined.slice();
+    }
+
+    // Apply F&O futures filter at the rowSet level so per-row math + totals
+    // both see the trimmed list (engine is upstream — UNAFFECTED).
+    if (!includeFutures) {
+        rowSet = rowSet.filter(function(r) {
+            return !(r._rowType === 'trade' && r._nfoCashImpact === false);
+        });
+    }
 
     // 3. Transaction rows (same order as on screen)
-    var sorted = lgCombined.slice();
+    var sorted = rowSet.slice();
     if (lgSortCol) {
         sorted.sort(function(a, b) {
             var va, vb;
@@ -3229,17 +3271,29 @@ function lgGatherExportData() {
     var outstanding = cashBalance + currentNfoMargin;
     var totalHoldingsValue = totalEqValue + totalNfoMtm;
 
-    // FY bounds for booked P&L
-    var today = new Date();
-    var curY = today.getFullYear();
-    var curM = today.getMonth() + 1;
-    var fyStartYear = (curM >= 4) ? curY : curY - 1;
-    var fyStartStr = fyStartYear + '-04-01';
-    var fyEndStr = (fyStartYear + 1) + '-03-31';
-    var fyLabel = 'FY ' + fyStartYear + '-' + String(fyStartYear + 1).slice(-2);
+    // Booked P&L window — when the caller supplied an explicit range, USE IT
+    // verbatim (e.g. "since last recon" should book gains realised since that
+    // date). Otherwise default to the current FY based on today.
+    var bookedFrom, bookedTo, fyLabel;
+    if (rangeOverridden && rangeFrom) {
+        bookedFrom = rangeFrom;
+        bookedTo   = rangeTo || '2099-12-31';
+        var yr2 = parseInt(rangeFrom.slice(0, 4), 10);
+        var mo2 = parseInt(rangeFrom.slice(5, 7), 10);
+        var fyStartYearR = (mo2 >= 4) ? yr2 : yr2 - 1;
+        fyLabel = 'FY ' + fyStartYearR + '-' + String(fyStartYearR + 1).slice(-2);
+    } else {
+        var today = new Date();
+        var curY = today.getFullYear();
+        var curM = today.getMonth() + 1;
+        var fyStartYear = (curM >= 4) ? curY : curY - 1;
+        bookedFrom = fyStartYear + '-04-01';
+        bookedTo   = (fyStartYear + 1) + '-03-31';
+        fyLabel = 'FY ' + fyStartYear + '-' + String(fyStartYear + 1).slice(-2);
+    }
 
     var fyGains = allGains.filter(function(g) {
-        return g.sellDate && g.sellDate >= fyStartStr && g.sellDate <= fyEndStr;
+        return g.sellDate && g.sellDate >= bookedFrom && g.sellDate <= bookedTo;
     });
     var totalBookedGain = 0;
     fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
@@ -3312,7 +3366,10 @@ function _lgExportSymbol(row) {
 // ── Column definitions (shared between Excel & PDF) ───────────────
 
 var LG_EXPORT_TXN_COLS = [
-    { header: 'Date',    type: 'date',   format: 'ddd, dd-mmm-yy', width: 14 },
+    // Date column: skill long format 'ddd, dd-mmm-yy' so the day-of-week
+    // is visible. Uses the `date_long` preset (Excel format string + jsFmt
+    // both produce 'Wed, 01-Apr-26'). Width 13ch fits 'Wed, 01-Apr-26'.
+    { header: 'Date',    type: 'date_long', width: 13 },
     { header: 'Symbol',  type: 'text',   width: 20 },
     { header: 'Type',    type: 'type',   width: 10 },
     { header: 'Qty',     type: 'qty',    width: 9 },
@@ -3340,13 +3397,28 @@ var LG_EXPORT_BOOKED_COLS = [
 ];
 
 // ── Excel Export ──────────────────────────────────────────────────
+// Accepts a pre-built data object (from lgExportRun). Honors section flags
+// to skip unchecked blocks. Running layout (one sheet, sections top-to-
+// bottom) per LESSONS §E.18.1. When called without args, defaults to all
+// sections (legacy compatibility).
 
-function lgExportExcel() {
-    var d = lgGatherExportData();
-    if (!d.txnRows.length && !d.holdingRows.length) {
-        showAlert('No data to export', 'info', 2000);
+function lgExportExcel(d) {
+    if (!d) {
+        d = lgGatherExportData();
+        d.sectionFlags = { txn: true, openPos: true, booked: true };
+        d.txnSectionNet = {
+            balance: d.lastBalance,
+            holdingsValue: d.holdingsValue,
+            potentialTax: d.potentialTax,
+            net: d.lastBalance + d.holdingsValue - d.potentialTax
+        };
+    }
+    var flags = d.sectionFlags || { txn: true, openPos: true, booked: true };
+    if ((!flags.txn || !d.txnRows.length) && (!flags.openPos || !d.holdingRows.length) && (!flags.booked || !d.bookedRows.length)) {
+        showAlert('No data to export for the chosen sections', 'info', 2500);
         return;
     }
+    var taxRatePct = lgGetEffectiveTaxRate();
 
     // Column letters for formula references (0-based: A=Date, B=Symbol, ... H=Balance)
     // Txn cols: A=Date, B=Symbol, C=Type, D=Qty, E=Price, F=Net, G=Amount, H=Balance
@@ -3357,12 +3429,55 @@ function lgExportExcel() {
     var cNet = C(5);  // F = Net
 
     // ── Row tracking ──
-    // Row 1 = header, Row 2 = opening balance, Row 3.. = data
-    var headerRow = 1;
-    var obExcelRow = 2;
-    var firstDataRow = 3;
-    var lastDataRow = firstDataRow + d.txnRows.length - 1;
-    var totalExcelRow = lastDataRow + 1;
+    // Sections render conditionally based on `flags`, so the absolute Excel
+    // row of each block depends on which earlier blocks are present. Walk
+    // forward with a counter; each block reserves the rows it will occupy
+    // BEFORE the formulas are built, so cell references land correctly.
+    // Layout (with snapshot_header + section titles):
+    //   Row 1: snapshot header (bold left + grey right)
+    //   Row 2: blank
+    //   Transactions: 1 title + 1 header + 1 OB + N data + 1 total + 1 blank + 4 summary + 1 blank
+    //   Open Positions: 1 title + 1 header + M data + 1 total + 1 blank
+    //   Booked P&L: 1 title + 1 header + K data + 1 total
+    var nextRow = 1;
+    nextRow++;   // snapshot header
+    nextRow++;   // blank under snapshot header
+
+    var headerRow, obExcelRow, firstDataRow, lastDataRow, totalExcelRow, sumStartRow;
+    if (flags.txn && d.txnRows.length > 0) {
+        nextRow++;                         // section title 'TRANSACTIONS'
+        headerRow    = nextRow++;
+        obExcelRow   = nextRow++;
+        firstDataRow = nextRow;
+        nextRow     += d.txnRows.length;
+        lastDataRow  = nextRow - 1;
+        totalExcelRow = nextRow++;
+        nextRow++;                         // blank
+        sumStartRow  = nextRow;            // first of the 4 summary lines
+        nextRow     += 4;                  // 4 summary lines (Balance/+Holdings/-Tax/=Net)
+        nextRow++;                         // blank
+    }
+
+    var holdHeaderRow, holdFirstData, holdLastData, holdTotalRow;
+    if (flags.openPos && d.holdingRows.length > 0) {
+        nextRow++;                         // section title 'OPEN POSITIONS'
+        holdHeaderRow = nextRow++;
+        holdFirstData = nextRow;
+        nextRow      += d.holdingRows.length;
+        holdLastData  = nextRow - 1;
+        holdTotalRow  = nextRow++;
+        nextRow++;                         // blank
+    }
+
+    var bookedHeaderRow, bookedFirstData, bookedLastData, bookedTotalRow;
+    if (flags.booked && d.bookedRows.length > 0) {
+        nextRow++;                         // section title 'BOOKED P&L'
+        bookedHeaderRow = nextRow++;
+        bookedFirstData = nextRow;
+        nextRow        += d.bookedRows.length;
+        bookedLastData  = nextRow - 1;
+        bookedTotalRow  = nextRow++;
+    }
 
     // ── Opening Balance row with formula for Balance ──
     var obRow = [d.openingBal.date, 'Opening Balance', '', null, null, null, null, d.openingBal.amount];
@@ -3374,9 +3489,13 @@ function lgExportExcel() {
         var r = firstDataRow + idx; // Excel row number
         var newRow = row.slice(); // shallow copy
 
-        // Amount (col G): if there's qty AND net, use formula =D*F, else keep value
+        // Amount (col G): if there's qty AND net, use formula =-D*F (negate so
+        // the trader-POV sign comes out right — BUY's +ve qty produces -ve
+        // amount [cash out], SELL's -ve qty produces +ve amount [cash in]).
+        // Interest rows are hardcoded -ve in row[6]; we don't overwrite those.
+        // LESSONS §E.15.13 sign convention + §E.18.1 export.
         if (row[3] !== null && row[5] !== null && row[3] !== 0) {
-            newRow[6] = { formula: cQty + r + '*' + cNet + r, result: row[6] || 0 };
+            newRow[6] = { formula: '-' + cQty + r + '*' + cNet + r, result: row[6] || 0 };
         }
 
         // Balance (col H): running sum = OB + SUM(Amount from first data row to this row)
@@ -3401,15 +3520,7 @@ function lgExportExcel() {
         result: d.lastBalance
     };
 
-    // ── Holdings section ──
-    // Starts after: totalRow + 1 blank + pageBreak + title + header
-    // Row tracking: totalExcelRow, +1 blank, +0 pageBreak, +1 title, +1 header, then data
-    var holdTitleRow = totalExcelRow + 2; // blank + title (pageBreak doesn't consume a row)
-    var holdHeaderRow = holdTitleRow + 1;
-    var holdFirstData = holdHeaderRow + 1;
-    var holdLastData = holdFirstData + d.holdingRows.length - 1;
-    var holdTotalRow = holdLastData + 1;
-
+    // ── Holdings formulas (using row offsets computed above) ──
     // Holdings cols: A=Symbol, B=Type, C=Qty, D=AvgCost, E=CMP, F=MTM, G=Value
     var hcQty  = C(2); // C
     var hcAvg  = C(3); // D
@@ -3417,8 +3528,8 @@ function lgExportExcel() {
     var hcMtm  = C(5); // F
     var hcVal  = C(6); // G
 
-    var holdRowsWithFormulas = d.holdingRows.map(function(row, idx) {
-        var r = holdFirstData + idx;
+    var holdRowsWithFormulas = (flags.openPos ? d.holdingRows : []).map(function(row, idx) {
+        var r = holdFirstData + idx;       // ABSOLUTE Excel row (offsets pre-computed)
         var newRow = row.slice();
         var isNfo = (row[1] === 'NFO');
 
@@ -3438,117 +3549,98 @@ function lgExportExcel() {
         return newRow;
     });
 
-    var holdTotalMtm = {
+    var holdTotalMtm = (flags.openPos && d.holdingRows.length > 0) ? {
         formula: 'SUM(' + hcMtm + holdFirstData + ':' + hcMtm + holdLastData + ')',
         result: d.totalMtm
-    };
-    var holdTotalVal = {
+    } : 0;
+    var holdTotalVal = (flags.openPos && d.holdingRows.length > 0) ? {
         formula: 'SUM(' + hcVal + holdFirstData + ':' + hcVal + holdLastData + ')',
         result: d.totalValue
-    };
+    } : 0;
 
-    // ── Summary section (after holdings total + 1 blank) ──
-    var sumStartRow = holdTotalRow + 2; // +1 blank + first summary row
-    // Summary rows: holdingsValue, outstanding, tax, netReceivable, balNoMtm
-    var sumHoldingsRow  = sumStartRow;
-    var sumOutstRow     = sumStartRow + 1;
-    var sumTaxRow       = sumStartRow + 2;
-    var sumNetRecRow    = sumStartRow + 3;
-    var sumBalNoMtmRow  = sumStartRow + 4;
-
-    // Holdings Value = same as holdings total value cell
-    var sumHoldingsVal = {
-        formula: hcVal + holdTotalRow,
-        result: d.holdingsValue
-    };
-    // Tax = MAX(0, bookedGain) * rate — we'll link to booked total later
-    // For now, Outstanding is hardcoded (it's cash balance + margin, computed values)
-    // Potential Tax: linked after we know booked P&L total row
-    // Net Receivable = Holdings + Outstanding - Tax (LESSONS §E.15.13)
-    // Outstanding is now displayed in counterparty-POV: -ve when counterparty
-    // owes the firm. Adding a -ve Outstanding to Holdings is equivalent to
-    // the old `Holdings - cashBalance` subtraction. The plus operator keeps
-    // the cell arithmetic readable against the on-screen card strip.
-    var sumNetRecFormula = {
-        formula: hcVal + sumHoldingsRow + '+' + hcVal + sumOutstRow + '-' + hcVal + sumTaxRow,
-        result: d.netReceivable
-    };
-    // Balance w/o MTM (conservative — LESSONS §E.15.13): if MTM > 0 subtract;
-    // otherwise leave Net Receivable untouched.
-    var sumBalNoMtmFormula = {
-        formula: 'IF(' + hcMtm + holdTotalRow + '>0,' + hcVal + sumNetRecRow + '-' + hcMtm + holdTotalRow + ',' + hcVal + sumNetRecRow + ')',
-        result: d.balNoMtm
-    };
-
-    // ── Booked P&L section ──
-    // After summary: +1 blank, then: columns switch, title, header, data, total
-    var bookedTitleRow = sumBalNoMtmRow + 2;
-    var bookedHeaderRow = bookedTitleRow + 1;
-    var bookedFirstData = bookedHeaderRow + 1;
-    var bookedLastData = bookedFirstData + d.bookedRows.length - 1;
-    var bookedTotalRow = bookedLastData + 1;
-
+    // ── Booked P&L total formula ──
     // Booked cols: A=Symbol, B=Type, C=Qty, D=Gain
     var bcGain = C(3); // D
-
-    var bookedTotalFormula = d.bookedRows.length > 0
+    var bookedTotalFormula = (flags.booked && d.bookedRows.length > 0)
         ? { formula: 'SUM(' + bcGain + bookedFirstData + ':' + bcGain + bookedLastData + ')', result: d.totalBookedGain }
         : d.totalBookedGain;
 
-    // Now we can build the tax formula referencing booked total
-    // Tax = MAX(0, bookedTotal) * rate
-    // But the booked total is in a different column layout (col D).
-    // After 'columns' switch, the engine resets column defs but NOT column letters.
-    // The booked total sits in column D of the booked section.
-    var sumTaxFormula = {
-        formula: 'MAX(0,' + bcGain + bookedTotalRow + ')*' + (taxRatePct / 100),
-        result: d.potentialTax
-    };
+    // Build sections according to checked flags. Single sheet, sections flow
+    // top-to-bottom. The snapshot_header banner appears once at the very top
+    // (mirrors the F&O snapshot pattern + the on-screen unit reminder).
+    var sections = [];
 
-    // pct of outstanding (uses cash balance, same denominator as Outstanding row)
-    var sumPctFormula = d.outstandingBal !== 0
-        ? { formula: hcVal + sumBalNoMtmRow + '/' + hcVal + sumOutstRow, result: d.outstandingBal !== 0 ? (d.balNoMtm / d.outstandingBal) : 0 }
-        : 0;
+    // F&O-snapshot-style banner (left = view + range, right = unit + date)
+    var snapLeftText  = d.viewName + (d.dateLabel ? ' — ' + d.dateLabel : '');
+    var snapUnitLabel = (typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000";
+    var snapTodayStr  = lgFmtDate(new Date().toISOString().slice(0, 10)) || new Date().toISOString().slice(0, 10);
+    var snapRightText = 'all amounts in ' + snapUnitLabel + '  |  ' + snapTodayStr;
+    sections.push({ type: 'snapshot_header', leftText: snapLeftText, rightText: snapRightText });
+    sections.push({ type: 'blank' });
 
-    var sections = [
-        // ── Transactions ──
-        { type: 'header' },
-        { type: 'data', rows: [obRow] },
-        { type: 'data', rows: txnRowsWithFormulas },
-        { type: 'total', values: [null, null, null, null, null, 'TOTALS:', totalAmtFormula, totalBalFormula] },
-        { type: 'blank' },
-        { type: 'pageBreak' },
+    if (flags.txn && d.txnRows.length > 0) {
+        sections.push({ type: 'title', text: 'TRANSACTIONS' });
+        sections.push({ type: 'header' });
+        sections.push({ type: 'data', rows: [obRow] });
+        sections.push({ type: 'data', rows: txnRowsWithFormulas });
+        sections.push({ type: 'total', values: [null, null, null, null, null, 'TOTALS:', totalAmtFormula, totalBalFormula] });
+        sections.push({ type: 'blank' });
 
-        // ── Open Positions ──
-        { type: 'columns', columns: LG_EXPORT_HOLD_COLS },
-        { type: 'title', text: 'Open Positions' },
-        { type: 'header' },
-        { type: 'data', rows: holdRowsWithFormulas },
-        { type: 'total', values: [null, null, null, null, null, holdTotalMtm, holdTotalVal] },
-        { type: 'blank' },
+        // Right-side summary block: F33 = label, H33 = value. Forms a visual
+        // block aligned with the Amount/Balance columns above (LESSONS §E.18.1
+        // / owner spec 2026-05-26 — "Move the text to F33 instead of A33").
+        // Tax is rendered as a NEGATIVE value (it's a reduction); the Net
+        // formula sums all three lines so Net = Balance + Holdings + (-Tax).
+        // - Receivable / Payable label is dynamic on the closing Balance sign.
+        // - Net row is bold + light-grey fill matching the user's T28 highlight.
+        var balLabel    = (d.txnSectionNet.balance < 0) ? 'Payable' : 'Receivable';
+        var netLabel    = (d.txnSectionNet.net < 0) ? '= Net Payable' : '= Net Receivable';
+        var taxVal      = -Math.abs(d.txnSectionNet.potentialTax);
+        var balRow      = sumStartRow;
+        var holdSumRow  = sumStartRow + 1;
+        var taxSumRow   = sumStartRow + 2;
+        var netSumRow   = sumStartRow + 3;
+        // Net is computed in-sheet so editing any of Balance / Holdings / Tax
+        // updates Net live. Formula = sum of the 3 rows in col H.
+        var netFormula  = {
+            formula: cBal + balRow + '+' + cBal + holdSumRow + '+' + cBal + taxSumRow,
+            result: d.txnSectionNet.net
+        };
+        // 4 data rows — empty A:E, label in F, value in H (G blank as gap).
+        var summaryRows = [
+            [null, null, null, null, null, balLabel,                               null, d.txnSectionNet.balance],
+            [null, null, null, null, null, '+ Value of Holdings',                  null, d.txnSectionNet.holdingsValue],
+            [null, null, null, null, null, '− Potential Tax (' + taxRatePct + '%)', null, taxVal],
+            [null, null, null, null, null, netLabel,                                null, netFormula]
+        ];
+        // Highlight only the Net row.
+        summaryRows[3]._bold = true;
+        summaryRows[3]._fill = 'C0C0C0';  // light grey matching T28 in the user's annotated workbook
+        sections.push({ type: 'data', rows: summaryRows });
+        sections.push({ type: 'blank' });
+    }
 
-        // ── Summary Cards ──
-        // Outstanding in export = raw cash balance (not balance + margin).
-        // Net Receivable = Holdings − Cash Balance − Tax. Raw means -ve
-        // balances flow through — firm's debt to counterparty ADDs to the
-        // receivable. Margin is collateral, not cash owed. See LESSONS E.15.1.
-        { type: 'summary', rows: [
-            { label: 'Total Value of Holdings', value: sumHoldingsVal },
-            { label: 'Plus: Outstanding', value: d.outstandingBal },
-            { label: 'Less: Potential Tax (' + taxRatePct + '%)', value: sumTaxFormula },
-            { label: (d.netReceivable < 0 ? 'Net Payable' : 'Net Receivable'), value: sumNetRecFormula, bold: true },
-            { label: 'Balance without MTM', value: sumBalNoMtmFormula, bold: true,
-                extraCol: 6, extraValue: sumPctFormula, extraFormat: 'pct' }
-        ]},
-        { type: 'blank' },
+    if (flags.openPos && d.holdingRows.length > 0) {
+        sections.push({ type: 'columns', columns: LG_EXPORT_HOLD_COLS });
+        sections.push({ type: 'title', text: 'OPEN POSITIONS' });
+        sections.push({ type: 'header' });
+        sections.push({ type: 'data', rows: holdRowsWithFormulas });
+        sections.push({ type: 'total', values: [null, null, null, null, null, holdTotalMtm, holdTotalVal] });
+        sections.push({ type: 'blank' });
+    }
 
-        // ── Booked P&L ──
-        { type: 'columns', columns: LG_EXPORT_BOOKED_COLS },
-        { type: 'title', text: 'Booked P&L ' + d.fyLabel },
-        { type: 'header' },
-        { type: 'data', rows: d.bookedRows },
-        { type: 'total', values: [null, null, null, bookedTotalFormula] }
-    ];
+    if (flags.booked && d.bookedRows.length > 0) {
+        sections.push({ type: 'columns', columns: LG_EXPORT_BOOKED_COLS });
+        sections.push({ type: 'title', text: 'BOOKED P&L' });
+        sections.push({ type: 'header' });
+        sections.push({ type: 'data', rows: d.bookedRows });
+        sections.push({ type: 'total', values: [null, null, null, bookedTotalFormula] });
+    }
+
+    if (sections.length === 0) {
+        showAlert('No data to export in the chosen range', 'info', 2500);
+        return;
+    }
 
     var filename = wmsExportFilename('Statement', d.viewName, d.dateLabel, 'xlsx');
 
@@ -3570,62 +3662,606 @@ function lgExportExcel() {
 }
 
 // ── PDF Export ─────────────────────────────────────────────────────
+// Accepts a pre-built data object (from lgExportRun's gatherer). When called
+// without args (legacy path), it gathers via lgGatherExportData() with all
+// sections enabled — preserves backwards-compat with any other entry points.
+// LESSONS §E.18.1 — modal-driven, one PDF page per checked section.
 
-function lgExportPdf() {
-    var d = lgGatherExportData();
-    if (!d.txnRows.length && !d.holdingRows.length) {
-        showAlert('No data to export', 'info', 2000);
+function lgExportPdf(d) {
+    if (!d) {
+        d = lgGatherExportData();
+        d.sectionFlags = { txn: true, openPos: true, booked: true };
+        d.txnSectionNet = {
+            balance: d.lastBalance,
+            holdingsValue: d.holdingsValue,
+            potentialTax: d.potentialTax,
+            net: d.lastBalance + d.holdingsValue - d.potentialTax
+        };
+    }
+    var flags = d.sectionFlags || { txn: true, openPos: true, booked: true };
+    if ((!flags.txn || !d.txnRows.length) && (!flags.openPos || !d.holdingRows.length) && (!flags.booked || !d.bookedRows.length)) {
+        showAlert('No data to export for the chosen sections', 'info', 2500);
         return;
     }
+    var taxRatePct = lgGetEffectiveTaxRate();
 
-    // Opening balance row
+    // F&O-snapshot-style banner — bold view name on left, small grey unit
+    // + date footnote on right. Repeated on every page.
+    var snapLeft  = d.viewName + (d.dateLabel ? ' — ' + d.dateLabel : '');
+    var unitLabel = (typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000";
+    var todayStr  = lgFmtDate(new Date().toISOString().slice(0, 10)) || new Date().toISOString().slice(0, 10);
+    var snapRight = 'all amounts in ' + unitLabel + '  |  ' + todayStr;
+    var snapshotHeader = { type: 'snapshot_header', leftText: snapLeft, rightText: snapRight };
+
+    // Opening balance row for the Transactions table
     var obRow = [d.openingBal.date, 'Opening Balance', '', null, null, null, null, d.openingBal.amount];
 
     var filename = wmsExportFilename('Statement', d.viewName, d.dateLabel, 'pdf');
+    var pages = [];
 
-    var pages = [
-        // Page 1: Transactions
-        {
+    if (flags.txn && d.txnRows.length > 0) {
+        // Transactions block — own page with a TRANSACTIONS section title at
+        // the top. Totals summary (right-side, labelCol=F, valueCol=H) below
+        // the data: Balance + Value of Holdings − Potential Tax = Net.
+        // (Tax displayed as -ve; Net row bold + light-grey highlight + border.)
+        var txnNetLabel = (d.txnSectionNet.net < 0) ? '= Net Payable' : '= Net Receivable';
+        var txnBalLabel = (d.txnSectionNet.balance < 0) ? 'Payable' : 'Receivable';
+        var txnTaxValue = -Math.abs(d.txnSectionNet.potentialTax);
+        pages.push({
             columns: LG_EXPORT_TXN_COLS,
             sections: [
+                snapshotHeader,
+                { type: 'title', text: 'TRANSACTIONS' },
                 { type: 'header' },
                 { type: 'data', rows: [obRow] },
                 { type: 'data', rows: d.txnRows },
-                { type: 'total', values: [null, null, null, null, null, 'TOTALS:', d.totalAmount, d.lastBalance] }
-            ]
-        },
-        // Page 2: Holdings + Summary + Booked P&L
-        {
-            columns: LG_EXPORT_HOLD_COLS,
-            sections: [
-                { type: 'title', text: 'Open Positions' },
-                { type: 'header' },
-                { type: 'data', rows: d.holdingRows },
-                { type: 'total', values: [null, null, null, null, null, d.totalMtm, d.totalValue] },
+                { type: 'total', values: [null, null, null, null, null, 'TOTALS:', d.totalAmount, d.lastBalance] },
                 { type: 'blank' },
                 { type: 'summary', rows: [
-                    { label: 'Total Value of Holdings', value: d.holdingsValue },
-                    { label: 'Plus: Outstanding', value: d.outstanding },
-                    { label: 'Less: Potential Tax (' + taxRatePct + '%)', value: d.potentialTax },
-                    { label: (d.netReceivable < 0 ? 'Net Payable' : 'Net Receivable'), value: d.netReceivable, bold: true },
-                    { label: 'Balance without MTM', value: d.balNoMtm, bold: true }
-                ]},
-                { type: 'blank' },
-                { type: 'title', text: 'Booked P&L ' + d.fyLabel },
-                { type: 'summary', rows: d.bookedRows.map(function(br) {
-                    return { label: br[0] + ' (' + br[1] + ') — Qty ' + (br[2] || 0), value: br[3], bold: false };
-                }).concat([
-                    { label: 'Total Booked P&L', value: d.totalBookedGain, bold: true }
-                ])}
+                    { label: txnBalLabel,                                value: d.txnSectionNet.balance,       labelCol: 6, valueCol: 8 },
+                    { label: '+ Value of Holdings',                       value: d.txnSectionNet.holdingsValue, labelCol: 6, valueCol: 8 },
+                    { label: '− Potential Tax (' + taxRatePct + '%)',    value: txnTaxValue,                   labelCol: 6, valueCol: 8 },
+                    { label: txnNetLabel,                                 value: d.txnSectionNet.net,           labelCol: 6, valueCol: 8, bold: true, fill: 'C0C0C0', border: true }
+                ]}
             ]
-        }
-    ];
+        });
+    }
 
+    if (flags.openPos && d.holdingRows.length > 0) {
+        // Open Positions block — own page with snapshot banner + section title.
+        pages.push({
+            columns: LG_EXPORT_HOLD_COLS,
+            sections: [
+                snapshotHeader,
+                { type: 'title', text: 'OPEN POSITIONS' },
+                { type: 'header' },
+                { type: 'data', rows: d.holdingRows },
+                { type: 'total', values: [null, null, null, null, null, d.totalMtm, d.totalValue] }
+            ]
+        });
+    }
+
+    if (flags.booked && d.bookedRows.length > 0) {
+        // Booked P&L block — own page with snapshot banner + section title.
+        pages.push({
+            columns: LG_EXPORT_BOOKED_COLS,
+            sections: [
+                snapshotHeader,
+                { type: 'title', text: 'BOOKED P&L' },
+                { type: 'header' },
+                { type: 'data', rows: d.bookedRows },
+                { type: 'total', values: [null, null, null, d.totalBookedGain] }
+            ]
+        });
+    }
+
+    if (pages.length === 0) {
+        showAlert('No data to export in the chosen range', 'info', 2500);
+        return;
+    }
+
+    // No title bar — the user wants "just the trades", no firm branding.
     wmsExportPdf({
         filename: filename,
-        title: 'Statement — ' + d.viewName + ' — ' + d.dateLabel,
         pages: pages
     });
+}
+
+// ── Image Export ──────────────────────────────────────────────────
+// Draws the selected sections onto a tall canvas (one section after another)
+// then tries to copy as PNG to clipboard. Falls back to download if the
+// browser blocks clipboard writes. Layout is intentionally minimal — just
+// the tables, no firm branding (LESSONS §E.18.1).
+
+function lgExportImage(d, mode) {
+    if (!d) return;
+    mode = mode || 'copy';  // 'copy' = clipboard with download fallback; 'download' = file only
+    var flags = d.sectionFlags || { txn: true, openPos: true, booked: true };
+    var taxRatePct = lgGetEffectiveTaxRate();
+
+    // Layout constants — skill / office-formatting (Aptos 9.5pt).
+    var DPR = 2;
+    var W = 1200;                    // CSS width
+    var PAD = 16;
+    var ROW_H = 20;
+    var HEADER_H = 24;
+    var TITLE_H = 26;
+    var SNAP_H = 32;
+    var SECTION_GAP = 10;
+    var BLOCK_GAP = 22;
+    var FONT = '12px Aptos, Helvetica, Arial, sans-serif';
+    var FONT_BOLD = 'bold 12px Aptos, Helvetica, Arial, sans-serif';
+    var FONT_SECTION = 'bold 14px Aptos, Helvetica, Arial, sans-serif';
+    var FONT_SNAP_LEFT  = 'bold 15px Aptos, Helvetica, Arial, sans-serif';
+    var FONT_SNAP_RIGHT = '11px Aptos, Helvetica, Arial, sans-serif';
+    var TEXT_DARK = '#1a202c';
+    var TEXT_MUTED = '#4a5568';
+    var ROW_ALT = '#f7fafc';
+    var BORDER = '#e2e8f0';
+
+    // Helper — measure total canvas height before drawing
+    function blockHeight(rowsCount, hasHeader, hasTotals, extraLines) {
+        var h = 0;
+        if (hasHeader) h += HEADER_H;
+        h += rowsCount * ROW_H;
+        if (hasTotals) h += ROW_H;
+        if (extraLines) h += extraLines * ROW_H;
+        return h;
+    }
+
+    var totalH = PAD;
+    var pendingBlocks = [];
+
+    // Reserve room for the snapshot-header banner at the top of the image.
+    totalH += SNAP_H + 8;
+
+    if (flags.txn && d.txnRows.length > 0) {
+        // +1 for the OB row, +4 for the Net-summary lines (Balance / +Holdings / -Tax / =Net)
+        var h = TITLE_H + blockHeight(d.txnRows.length + 1, true, true, 4 + 1) + SECTION_GAP;
+        totalH += h;
+        pendingBlocks.push({ kind: 'txn', height: h });
+    }
+    if (flags.openPos && d.holdingRows.length > 0) {
+        var h2 = TITLE_H + blockHeight(d.holdingRows.length, true, true, 0);
+        if (pendingBlocks.length > 0) totalH += BLOCK_GAP;
+        totalH += h2;
+        pendingBlocks.push({ kind: 'openpos', height: h2 });
+    }
+    if (flags.booked && d.bookedRows.length > 0) {
+        var h3 = TITLE_H + blockHeight(d.bookedRows.length, true, true, 0);
+        if (pendingBlocks.length > 0) totalH += BLOCK_GAP;
+        totalH += h3;
+        pendingBlocks.push({ kind: 'booked', height: h3 });
+    }
+    totalH += PAD;
+
+    if (pendingBlocks.length === 0) {
+        if (typeof showAlert === 'function') showAlert('No data to export for the chosen sections', 'info', 2500);
+        return;
+    }
+
+    // Create canvas at 2× DPR for sharpness
+    var canvas = document.createElement('canvas');
+    canvas.width = W * DPR;
+    canvas.height = totalH * DPR;
+    var ctx = canvas.getContext('2d');
+    ctx.scale(DPR, DPR);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, totalH);
+
+    // fmtAmt — match WMS on-screen unit ('000 by default). formatAmountRaw
+    // already applies the user's unit preference + Indian / international
+    // comma grouping. fmtPrice keeps full rupees (per-unit prices don't get
+    // divided). fmtQty is integer-comma.
+    var fmtAmt = (typeof formatAmountRaw === 'function')
+        ? formatAmountRaw
+        : ((typeof wmsFmtAmt === 'function') ? wmsFmtAmt : function(v) { return String(v); });
+    var fmtPrice = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt : function(v) { return v == null ? '' : Number(v).toFixed(2); };
+    var fmtQty = (typeof formatQuantity === 'function') ? formatQuantity : function(v) { return v == null ? '' : String(v); };
+    var fmtDate = (typeof lgFmtDate === 'function') ? lgFmtDate : function(v) { return v; };
+
+    // Drawing helper — render a single table row across given column widths.
+    // Auto-applies red when the formatted value is in parens (e.g. '(12,345)'),
+    // matching the skill's "negatives in red parens" convention. Caller-passed
+    // `color` overrides only when not red-auto'd.
+    var RED = '#dc2626';
+    function drawCell(text, x, y, w, align, font, color) {
+        ctx.font = font;
+        var s = String(text == null ? '' : text);
+        // Auto-red for parens-wrapped negatives.
+        var isNegFmt = /^\(.*\)$/.test(s.trim());
+        ctx.fillStyle = isNegFmt ? RED : (color || TEXT_DARK);
+        ctx.textAlign = align || 'left';
+        ctx.textBaseline = 'middle';
+        var tx = align === 'right' ? x + w - 6 : (align === 'center' ? x + w / 2 : x + 6);
+        // Clip overflow by truncating with ellipsis
+        var maxW = w - 10;
+        var original = s;
+        while (s.length > 0 && ctx.measureText(s).width > maxW) {
+            s = s.slice(0, -1);
+        }
+        if (s.length < original.length && s.length > 1) s = s.slice(0, -1) + '…';
+        ctx.fillText(s, tx, y + ROW_H / 2);
+    }
+
+    function drawHeaderRow(y, headers, widths, aligns) {
+        ctx.fillStyle = '#edf2f7';
+        ctx.fillRect(PAD, y, W - 2 * PAD, HEADER_H);
+        ctx.strokeStyle = BORDER;
+        ctx.beginPath();
+        ctx.moveTo(PAD, y + HEADER_H);
+        ctx.lineTo(W - PAD, y + HEADER_H);
+        ctx.stroke();
+        var x = PAD;
+        for (var i = 0; i < headers.length; i++) {
+            drawCell(headers[i], x, y, widths[i], aligns[i], FONT_BOLD, TEXT_MUTED);
+            x += widths[i];
+        }
+    }
+
+    function drawDataRow(y, cells, widths, aligns, rowIdx, bold) {
+        if (rowIdx % 2 === 1) {
+            ctx.fillStyle = ROW_ALT;
+            ctx.fillRect(PAD, y, W - 2 * PAD, ROW_H);
+        }
+        var x = PAD;
+        for (var i = 0; i < cells.length; i++) {
+            drawCell(cells[i], x, y, widths[i], aligns[i], bold ? FONT_BOLD : FONT, TEXT_DARK);
+            x += widths[i];
+        }
+    }
+
+    // Section title — bold uppercase header above each block (skill / image).
+    function drawSectionTitle(y, text) {
+        ctx.font = FONT_SECTION;
+        ctx.fillStyle = TEXT_DARK;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, PAD, y + TITLE_H / 2);
+        // Thin black underline so the title visually separates from the table
+        ctx.strokeStyle = '#1a202c';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(PAD, y + TITLE_H - 2);
+        ctx.lineTo(W - PAD, y + TITLE_H - 2);
+        ctx.stroke();
+    }
+
+    // Snapshot-style banner — bold left title + small grey right footnote.
+    // One-row band at the very top of the image (mirrors F&O snapshot style).
+    function drawSnapshotHeader(y, leftText, rightText) {
+        ctx.font = FONT_SNAP_LEFT;
+        ctx.fillStyle = TEXT_DARK;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(leftText || '', PAD, y + SNAP_H / 2);
+
+        ctx.font = FONT_SNAP_RIGHT;
+        ctx.fillStyle = TEXT_MUTED;
+        ctx.textAlign = 'right';
+        ctx.fillText(rightText || '', W - PAD, y + SNAP_H / 2);
+
+        // Thin underline below
+        ctx.strokeStyle = '#cbd5e0';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(PAD, y + SNAP_H);
+        ctx.lineTo(W - PAD, y + SNAP_H);
+        ctx.stroke();
+    }
+
+    var y = PAD;
+
+    // ── Snapshot header (banner at top, one-row F&O-snapshot style) ──
+    var imgSnapLeft  = d.viewName + (d.dateLabel ? ' — ' + d.dateLabel : '');
+    var imgUnitLabel = (typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000";
+    var imgTodayStr  = lgFmtDate(new Date().toISOString().slice(0, 10)) || new Date().toISOString().slice(0, 10);
+    drawSnapshotHeader(y, imgSnapLeft, 'all amounts in ' + imgUnitLabel + '  |  ' + imgTodayStr);
+    y += SNAP_H + 8;
+
+    // ── Transactions block ──
+    if (flags.txn && d.txnRows.length > 0) {
+        drawSectionTitle(y, 'TRANSACTIONS');
+        y += TITLE_H;
+        var txnHeaders = ['Date', 'Symbol', 'Type', 'Qty', 'Price', 'Net', 'Amount', 'Balance'];
+        var txnAligns  = ['left',  'left',   'left', 'right','right','right','right', 'right'];
+        var txnW = [80, 200, 110, 70, 80, 80, 100, 100];
+        // Normalize widths to fit W - 2*PAD
+        var sumW = txnW.reduce(function(a, b) { return a + b; }, 0);
+        var scale = (W - 2 * PAD) / sumW;
+        txnW = txnW.map(function(w) { return w * scale; });
+
+        drawHeaderRow(y, txnHeaders, txnW, txnAligns);
+        y += HEADER_H;
+
+        // Opening Balance row
+        drawDataRow(y, [
+            fmtDate(d.openingBal.date) || d.openingBal.date,
+            'Opening Balance', '', '', '', '', '', fmtAmt(d.openingBal.amount)
+        ], txnW, txnAligns, 0, true);
+        y += ROW_H;
+
+        // Data rows — each item in d.txnRows is [date, sym, type, qty, price, net, amt, bal]
+        // Price + Net are PER-UNIT prices (always full rupees, never unit-divided).
+        // Amount + Balance follow the on-screen unit (divided when in '000).
+        d.txnRows.forEach(function(r, i) {
+            var cells = [
+                fmtDate(r[0]) || r[0],
+                r[1] || '',
+                r[2] || '',
+                r[3] == null ? '' : fmtQty(r[3]),
+                r[4] == null ? '' : fmtPrice(r[4]),
+                r[5] == null ? '' : fmtPrice(r[5]),
+                r[6] == null ? '' : fmtAmt(r[6]),
+                r[7] == null ? '' : fmtAmt(r[7])
+            ];
+            drawDataRow(y, cells, txnW, txnAligns, i + 1, false);
+            y += ROW_H;
+        });
+
+        // Totals row
+        drawDataRow(y, ['', '', '', '', '', 'TOTALS:', fmtAmt(d.totalAmount), fmtAmt(d.lastBalance)], txnW, txnAligns, 99, true);
+        y += ROW_H;
+
+        // Net-summary lines (Balance / +Holdings / −Tax / =Net) — right-aligned key+value
+        var summaryLines = [
+            ['Balance (closing)',                  d.txnSectionNet.balance,       false],
+            ['+ Value of Holdings',                 d.txnSectionNet.holdingsValue, false],
+            ['− Potential Tax (' + taxRatePct + '%)', d.txnSectionNet.potentialTax, false],
+            [(d.txnSectionNet.net < 0 ? '= Net Payable' : '= Net Receivable'), d.txnSectionNet.net, true]
+        ];
+        // Add a gap row
+        y += 6;
+        summaryLines.forEach(function(s) {
+            ctx.font = s[2] ? FONT_BOLD : FONT;
+            ctx.fillStyle = TEXT_DARK;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(s[0], W - PAD - 130, y + ROW_H / 2);
+            ctx.fillText(fmtAmt(s[1]), W - PAD - 6, y + ROW_H / 2);
+            y += ROW_H;
+        });
+        y += SECTION_GAP;
+    }
+
+    // ── Open Positions block ──
+    if (flags.openPos && d.holdingRows.length > 0) {
+        if (flags.txn) y += 0; // already added BLOCK_GAP via height calc; keep gap visual
+        drawSectionTitle(y, 'OPEN POSITIONS');
+        y += TITLE_H;
+        var posHeaders = ['Symbol', 'Type', 'Qty', 'Avg Cost', 'CMP', 'MTM', 'Value'];
+        var posAligns  = ['left',   'left', 'right','right',   'right','right','right'];
+        var posW = [220, 70, 100, 110, 110, 120, 120];
+        var sumP = posW.reduce(function(a, b) { return a + b; }, 0);
+        var scaleP = (W - 2 * PAD) / sumP;
+        posW = posW.map(function(w) { return w * scaleP; });
+
+        drawHeaderRow(y, posHeaders, posW, posAligns);
+        y += HEADER_H;
+
+        d.holdingRows.forEach(function(r, i) {
+            // Avg Cost + CMP are per-unit prices (full rupees). MTM + Value
+            // follow the on-screen unit.
+            var cells = [
+                r[0] || '',
+                r[1] || '',
+                r[2] == null ? '' : fmtQty(r[2]),
+                r[3] == null ? '' : fmtPrice(r[3]),
+                r[4] == null ? '' : fmtPrice(r[4]),
+                r[5] == null ? '' : fmtAmt(r[5]),
+                r[6] == null ? '' : fmtAmt(r[6])
+            ];
+            drawDataRow(y, cells, posW, posAligns, i + 1, false);
+            y += ROW_H;
+        });
+        drawDataRow(y, ['', '', '', '', '', fmtAmt(d.totalMtm), fmtAmt(d.totalValue)], posW, posAligns, 99, true);
+        y += ROW_H;
+        y += SECTION_GAP;
+    }
+
+    // ── Booked P&L block ──
+    if (flags.booked && d.bookedRows.length > 0) {
+        drawSectionTitle(y, 'BOOKED P&L');
+        y += TITLE_H;
+        var bkHeaders = ['Symbol', 'Type', 'Qty', 'Gain / (Loss)'];
+        var bkAligns  = ['left',   'left', 'right','right'];
+        var bkW = [240, 100, 120, 200];
+        var sumB = bkW.reduce(function(a, b) { return a + b; }, 0);
+        var scaleB = (W - 2 * PAD) / sumB;
+        bkW = bkW.map(function(w) { return w * scaleB; });
+
+        drawHeaderRow(y, bkHeaders, bkW, bkAligns);
+        y += HEADER_H;
+
+        d.bookedRows.forEach(function(r, i) {
+            var cells = [
+                r[0] || '',
+                r[1] || '',
+                r[2] == null ? '' : fmtQty(r[2]),
+                r[3] == null ? '' : fmtAmt(r[3])
+            ];
+            drawDataRow(y, cells, bkW, bkAligns, i + 1, false);
+            y += ROW_H;
+        });
+        drawDataRow(y, ['', '', 'TOTAL:', fmtAmt(d.totalBookedGain)], bkW, bkAligns, 99, true);
+        y += ROW_H;
+    }
+
+    // Deliver the rendered canvas — either to clipboard (with download
+    // fallback) or as a direct download to the user's Downloads folder.
+    var filename = wmsExportFilename('Statement', d.viewName, d.dateLabel, 'png');
+    canvas.toBlob(async function(blob) {
+        if (!blob) {
+            if (typeof showAlert === 'function') showAlert('Failed to render image', 'error', 3000);
+            return;
+        }
+
+        function downloadFile(msg) {
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function() { URL.revokeObjectURL(url); }, 1500);
+            if (typeof showAlert === 'function' && msg) showAlert(msg, 'info', 4500);
+        }
+
+        if (mode === 'download') {
+            downloadFile('Image saved as ' + filename);
+            return;
+        }
+
+        // mode === 'copy' — try clipboard first, fall back to download.
+        var clipboardOk = false;
+        try {
+            if (navigator.clipboard && window.ClipboardItem) {
+                await navigator.clipboard.write([
+                    new ClipboardItem({ 'image/png': blob })
+                ]);
+                clipboardOk = true;
+            }
+        } catch (err) {
+            console.warn('Clipboard write failed, falling back to download:', err && err.message);
+        }
+        if (clipboardOk) {
+            if (typeof showAlert === 'function') showAlert('Statement image copied to clipboard — paste it into your chat', 'success', 4000);
+            return;
+        }
+        downloadFile('Image downloaded as ' + filename + ' (clipboard write was blocked)');
+    }, 'image/png');
+}
+
+// ============================================================================
+// EXPORT MODAL — single button → modal with date range + section + format
+// pickers. Replaces the legacy 2-item dropdown (LESSONS §E.18.1).
+// ============================================================================
+
+// Open the modal and seed defaults: Current FY date range, all sections on,
+// F&O on, dates auto-filled to current-FY bounds.
+function lgExportOpen() {
+    var modal = document.getElementById('lgExportModal');
+    if (!modal) return;
+    // Reset defaults — Current FY + all sections + F&O on
+    var d = document.getElementById('lgExpDateRangeCurrentFY');
+    if (d) d.checked = true;
+    var fno = document.getElementById('lgExpShowFno');
+    if (fno) fno.checked = true;
+    var t = document.getElementById('lgExpSecTxn');
+    if (t) t.checked = true;
+    var p = document.getElementById('lgExpSecOpenPos');
+    if (p) p.checked = true;
+    var b = document.getElementById('lgExpSecBookedPL');
+    if (b) b.checked = true;
+    lgExportSyncDates();
+    lgShowModal('lgExportModal');
+}
+
+// Wire-up: when the date-range radio changes, re-fill From/To unless Custom.
+// "Since last recon": latest RECONCILIATION row's entry_date + 1 → today.
+function lgExportSyncDates() {
+    var checked = document.querySelector('input[name="lgExpDateRange"]:checked');
+    if (!checked) return;
+    var preset = checked.value;
+    var fromEl = document.getElementById('lgExpDateFrom');
+    var toEl   = document.getElementById('lgExpDateTo');
+    if (!fromEl || !toEl) return;
+
+    // Custom — leave fields untouched, just enable them.
+    fromEl.disabled = (preset !== 'custom');
+    toEl.disabled   = (preset !== 'custom');
+    if (preset === 'custom') {
+        // Seed with the on-screen range if empty
+        if (!fromEl.value) fromEl.value = lgDateFrom || '';
+        if (!toEl.value)   toEl.value   = lgDateTo   || '';
+        return;
+    }
+
+    var today = new Date();
+    var curY = today.getFullYear();
+    var curM = today.getMonth() + 1;
+    var fyStartY = (curM >= 4) ? curY : curY - 1;
+
+    if (preset === 'currentFY') {
+        fromEl.value = fyStartY + '-04-01';
+        toEl.value   = (fyStartY + 1) + '-03-31';
+    } else if (preset === 'previousFY') {
+        fromEl.value = (fyStartY - 1) + '-04-01';
+        toEl.value   = fyStartY + '-03-31';
+    } else if (preset === 'sinceRecon') {
+        var latestRecon = null;
+        (lgFullCombined || []).forEach(function(r) {
+            if (r._rowType === 'ledger' && r.entryType === 'RECONCILIATION') {
+                if (!latestRecon || (r.date || '') > (latestRecon.date || '')) latestRecon = r;
+            }
+        });
+        if (latestRecon) {
+            // From = the day AFTER the recon date (the recon itself is the OB anchor)
+            var d = new Date(latestRecon.date);
+            d.setDate(d.getDate() + 1);
+            fromEl.value = d.toISOString().slice(0, 10);
+        } else {
+            fromEl.value = fyStartY + '-04-01';
+            if (typeof showAlert === 'function') {
+                showAlert('No reconciliation found in this view — defaulting From to FY start', 'info', 3500);
+            }
+        }
+        toEl.value = today.toISOString().slice(0, 10);
+    }
+}
+
+// Orchestrator — read modal state, gather data, dispatch to format renderer.
+function lgExportRun(format) {
+    var fromEl = document.getElementById('lgExpDateFrom');
+    var toEl   = document.getElementById('lgExpDateTo');
+    var dateFrom = fromEl ? fromEl.value : '';
+    var dateTo   = toEl   ? toEl.value   : '';
+    var includeFutures = !!(document.getElementById('lgExpShowFno') || {}).checked;
+    var includeTxn     = !!(document.getElementById('lgExpSecTxn') || {}).checked;
+    var includeOpenPos = !!(document.getElementById('lgExpSecOpenPos') || {}).checked;
+    var includeBooked  = !!(document.getElementById('lgExpSecBookedPL') || {}).checked;
+
+    if (!includeTxn && !includeOpenPos && !includeBooked) {
+        if (typeof showAlert === 'function') {
+            showAlert('Tick at least one section (Transactions, Open Positions, or Booked P&L)', 'warning', 3500);
+        }
+        return;
+    }
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+        if (typeof showAlert === 'function') showAlert('From date is after To date', 'warning', 3000);
+        return;
+    }
+
+    var data = lgGatherExportData({
+        dateFrom: dateFrom || undefined,
+        dateTo:   dateTo   || undefined,
+        includeFutures: includeFutures
+    });
+
+    // Stash section flags on the data object so the renderers know what to emit.
+    data.sectionFlags = {
+        txn:     includeTxn,
+        openPos: includeOpenPos,
+        booked:  includeBooked
+    };
+    // Computed total when Transactions is shown: Balance + Holdings - Tax = Net.
+    // Balance already in counterparty-POV. Holdings + (-Tax) gives Net.
+    data.txnSectionNet = {
+        balance:      data.lastBalance,
+        holdingsValue: data.holdingsValue,
+        potentialTax: data.potentialTax,
+        net:          data.lastBalance + data.holdingsValue - data.potentialTax
+    };
+
+    if (format === 'pdf')   { lgExportPdf(data);   }
+    else if (format === 'excel') { lgExportExcel(data); }
+    else if (format === 'image_copy')     { lgExportImage(data, 'copy'); }
+    else if (format === 'image_download') { lgExportImage(data, 'download'); }
+    else if (format === 'image')          { lgExportImage(data, 'copy'); }  // legacy alias
+
+    var modal = document.getElementById('lgExportModal');
+    if (modal) modal.classList.remove('show');
 }
 
 // ============================================================================

@@ -53,19 +53,28 @@
 .lg-stmt-type-btn:last-child { border-radius:0 4px 4px 0; border-left:none; }
 .lg-stmt-type-btn:hover:not(.active) { background:#f7fafc; color:#4a5568; }
 .lg-stmt-type-btn.active { background:#667eea; color:#fff; border-color:#667eea; }
-.lg-export-wrap { position:relative; }
-.lg-export-dropdown {
-    position:absolute; top:100%; right:0; margin-top:2px;
-    background:#fff; border:1px solid #cbd5e0; border-radius:4px;
-    box-shadow:0 2px 8px rgba(0,0,0,0.08); z-index:50; min-width:120px;
-    display:none;
+/* Export options modal — sections inside the body. Three format buttons in
+   the footer; each fires a different render path on the same gathered data. */
+.lg-export-section { margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid #edf2f7; }
+.lg-export-section:last-child { border-bottom:none; margin-bottom:6px; }
+.lg-export-section-label {
+    font-size:10px; font-weight:600; color:#4a5568; text-transform:uppercase;
+    letter-spacing:0.5px; margin-bottom:8px;
 }
-.lg-export-dropdown.show { display:block; }
-.lg-export-dropdown button {
-    display:block; width:100%; text-align:left; background:none; border:none;
-    padding:6px 12px; font-size:11px; cursor:pointer; color:#2d3748;
+.lg-export-radio-grid {
+    display:grid; grid-template-columns:1fr 1fr; gap:6px 14px;
+    font-size:12px; color:#2d3748; margin-bottom:10px;
 }
-.lg-export-dropdown button:hover { background:#f7fafc; color:#667eea; }
+.lg-export-radio-grid label { display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
+.lg-export-radio-grid input[type="radio"] { margin:0; cursor:pointer; }
+.lg-export-dates { display:flex; gap:14px; font-size:12px; color:#2d3748; }
+.lg-export-dates label { display:flex; align-items:center; gap:6px; }
+.lg-export-dates input[type="date"] { font-size:12px; padding:3px 6px; }
+.lg-export-cbx {
+    display:flex; align-items:center; gap:8px; font-size:12px; color:#2d3748;
+    padding:3px 0; cursor:pointer; user-select:none;
+}
+.lg-export-cbx input[type="checkbox"] { margin:0; cursor:pointer; }
 
 /* Table — override table-container column widths for statements layout */
 #lgTable { table-layout:fixed; width:100%; min-width:780px; }
@@ -296,13 +305,7 @@
         <button class="tr-vta-btn" id="lgSaveNewBtn" title="Save as new view">+ Save New</button>
         <button class="tr-vta-btn" id="lgFiltersToggle" title="Toggle filters" style="font-size:10px;">▲</button>
         <span class="lg-tabs-divider"></span>
-        <div class="lg-export-wrap">
-          <button class="tr-vta-btn" id="lgExportBtn" title="Export statement">⇩ Export ▾</button>
-          <div class="lg-export-dropdown" id="lgExportDropdown">
-            <button id="lgExportPdfBtn" type="button">Export PDF</button>
-            <button id="lgExportExcelBtn" type="button">Export Excel</button>
-          </div>
-        </div>
+        <button class="tr-vta-btn" id="lgExportBtn" title="Export statement (opens options modal)">⇩ Export</button>
         <div class="tr-save-prompt" id="lgSavePrompt">
           <input type="text" id="lgSavePromptName" placeholder="View name..." class="wms-input-compact">
           <button class="tr-vta-btn wms-btn-primary" id="lgSavePromptOk">✓</button>
@@ -613,6 +616,66 @@
     <div class="wms-modal-footer" style="justify-content:space-between;">
       <button id="lgReconReviewDeleteBtn" class="wms-btn" style="background:#fef3c7; color:#b45309; border:1px solid #d97706;" title="Delete this reconciliation snapshot">Cancel Reconciliation</button>
       <button id="lgReconReviewCancelBtn" class="wms-btn wms-btn-secondary">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 9. EXPORT OPTIONS MODAL                                      -->
+<!-- Replaces the legacy 2-item dropdown. Lets the user pick:     -->
+<!--   • Date range (Custom / Current FY / Previous FY / Since   -->
+<!--     last recon) — preset radios auto-fill From/To inputs    -->
+<!--   • Show F&O rows (default ON)                              -->
+<!--   • Which sections to include (Transactions, Open Positions, -->
+<!--     Booked P&L) — at least one must be checked              -->
+<!--   • Export format (PDF / Excel / Copy as Image)             -->
+<!-- ============================================================ -->
+<div id="lgExportModal" class="wms-modal-overlay">
+  <div class="wms-modal-dialog" style="width:480px;">
+    <div class="wms-modal-header">
+      <h3>Export Statement</h3>
+      <button class="wms-btn-close" id="lgExportModalClose">✕</button>
+    </div>
+    <div style="padding:14px 16px; overflow-y:auto; max-height:75vh;">
+
+      <!-- Date Range -->
+      <div class="lg-export-section">
+        <div class="lg-export-section-label">Date Range</div>
+        <div class="lg-export-radio-grid">
+          <label><input type="radio" name="lgExpDateRange" value="custom" id="lgExpDateRangeCustom"> Custom</label>
+          <label><input type="radio" name="lgExpDateRange" value="currentFY" id="lgExpDateRangeCurrentFY" checked> Current FY</label>
+          <label><input type="radio" name="lgExpDateRange" value="previousFY" id="lgExpDateRangePreviousFY"> Previous FY</label>
+          <label><input type="radio" name="lgExpDateRange" value="sinceRecon" id="lgExpDateRangeSinceRecon"> Since last recon</label>
+        </div>
+        <div class="lg-export-dates">
+          <label>From: <input type="date" id="lgExpDateFrom" class="wms-input-compact"></label>
+          <label>To:   <input type="date" id="lgExpDateTo"   class="wms-input-compact"></label>
+        </div>
+      </div>
+
+      <!-- Rows to show -->
+      <div class="lg-export-section">
+        <div class="lg-export-section-label">Rows to show</div>
+        <label class="lg-export-cbx"><input type="checkbox" id="lgExpShowFno" checked> Show F&amp;O trade rows in Transactions</label>
+      </div>
+
+      <!-- Sections -->
+      <div class="lg-export-section">
+        <div class="lg-export-section-label">Sections to include</div>
+        <label class="lg-export-cbx"><input type="checkbox" id="lgExpSecTxn"      checked> Transactions</label>
+        <label class="lg-export-cbx"><input type="checkbox" id="lgExpSecOpenPos"  checked> Open Positions</label>
+        <label class="lg-export-cbx"><input type="checkbox" id="lgExpSecBookedPL" checked> Booked P&amp;L</label>
+        <div id="lgExpTotalsHint" style="font-size:10px; color:#718096; margin-top:4px; padding-left:18px;">
+          When Transactions is shown, the totals row reads: <b>Balance + Value of Holdings − Potential Tax = Net</b>.
+        </div>
+      </div>
+    </div>
+
+    <div class="wms-modal-footer" style="gap:6px; justify-content:flex-end;">
+      <button id="lgExpDownloadImage" class="wms-btn" title="Download a PNG of the selected sections to your Downloads folder">⬇ Image</button>
+      <button id="lgExpCopyImage"     class="wms-btn" title="Copy a PNG of the selected sections to clipboard (paste straight into chat / WhatsApp Web)">📋 Copy Image</button>
+      <button id="lgExpExcel"         class="wms-btn">⬇ Excel</button>
+      <button id="lgExpPdf"           class="wms-btn wms-btn-primary">⬇ PDF</button>
     </div>
   </div>
 </div>

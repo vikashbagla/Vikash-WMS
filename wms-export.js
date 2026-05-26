@@ -28,6 +28,8 @@
 
 var WMS_EXPORT_PRESETS = {
     date: {
+        // Skill default — short date 'dd-mmm-yy'. Use 'date_long' for the long
+        // 'ddd, dd-mmm-yy' format on primary-axis columns.
         excelFmt: 'dd-mmm-yy',
         align: 'right',
         width: 12,
@@ -40,59 +42,96 @@ var WMS_EXPORT_PRESETS = {
             return dd + '-' + months[d.getMonth()] + '-' + String(d.getFullYear()).slice(-2);
         }
     },
+    date_long: {
+        excelFmt: 'ddd, dd-mmm-yy',
+        align: 'right',
+        width: 14,
+        jsFmt: function(v) {
+            if (!v) return '';
+            var d = (v instanceof Date) ? v : new Date(v);
+            if (isNaN(d.getTime())) return String(v);
+            var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+            var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            var dd = String(d.getDate()).padStart(2, '0');
+            return days[d.getDay()] + ', ' + dd + '-' + months[d.getMonth()] + '-' + String(d.getFullYear()).slice(-2);
+        }
+    },
     text: {
         excelFmt: '@',
         align: 'left',
         width: 15,
         jsFmt: function(v) { return (v === null || v === undefined) ? '' : String(v); }
     },
+    // The Excel number-format STRING below is universal — the comma grouping
+    // (Indian lakh/crore vs Western thousands) is controlled by Excel's
+    // system / regional locale, NOT by this format string. Same .xlsx file
+    // displays Indian grouping on a machine set to India and Western on a
+    // machine set to US. The `;-_)` zero clause shows zero as a hyphen
+    // followed by space-the-width-of-`)`, so zero rows align vertically
+    // with the closing `)` of negatives above and below.
     qty: {
-        excelFmt: '#,##0;(#,##0);"-"',
+        excelFmt: '#,##0;[Red](#,##0);-_)',
         align: 'right',
         width: 9,
         jsFmt: function(v) {
-            if (v === 0 || v === null || v === undefined || isNaN(v)) return '-';
-            var abs = Math.abs(Math.round(v));
-            var s = abs.toLocaleString('en-US');
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
+            var s = Math.abs(Math.round(v)).toLocaleString();
             return v < 0 ? '(' + s + ')' : s;
         }
     },
     price: {
-        excelFmt: '#,##0.00;(#,##0.00);"-"',
+        excelFmt: '#,##0.00;[Red](#,##0.00);-_)',
         align: 'right',
         width: 10,
         jsFmt: function(v) {
-            if (v === 0 || v === null || v === undefined || isNaN(v)) return '-';
-            var abs = Math.abs(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-            return v < 0 ? '(' + abs + ')' : abs;
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
+            var s = Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return v < 0 ? '(' + s + ')' : s;
         }
     },
     amount: {
-        excelFmt: '#,##0;(#,##0);"-"',
+        // Skill canonical for AMOUNT columns — match the WMS on-screen unit.
+        // Default = thousands ('000): the trailing `,` in the Excel format
+        // string tells Excel to divide the cell value by 1000 on display
+        // (each comma = ÷1000); the CELL VALUE stays in full rupees so
+        // formulas continue to work. jsFmt also divides by 1000 for PDF +
+        // Image which can't rely on Excel's format engine.
+        excelFmt: '#,##0.00,;[Red](#,##0.00,);-_)',
         align: 'right',
         width: 12,
         jsFmt: function(v) {
-            if (v === 0 || v === null || v === undefined || isNaN(v)) return '-';
-            var abs = Math.abs(Math.round(v)).toLocaleString('en-US');
-            return v < 0 ? '(' + abs + ')' : abs;
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
+            var scaled = Math.abs(v) / 1000;
+            var s = scaled.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return v < 0 ? '(' + s + ')' : s;
+        }
+    },
+    amount0: {
+        excelFmt: '#,##0;[Red](#,##0);-_)',
+        align: 'right',
+        width: 12,
+        jsFmt: function(v) {
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
+            var s = Math.abs(Math.round(v)).toLocaleString();
+            return v < 0 ? '(' + s + ')' : s;
         }
     },
     amount2: {
-        excelFmt: '#,##0.00;(#,##0.00);"-"',
+        excelFmt: '#,##0.00;[Red](#,##0.00);-_)',
         align: 'right',
         width: 12,
         jsFmt: function(v) {
-            if (v === 0 || v === null || v === undefined || isNaN(v)) return '-';
-            var abs = Math.abs(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-            return v < 0 ? '(' + abs + ')' : abs;
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
+            var s = Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return v < 0 ? '(' + s + ')' : s;
         }
     },
     pct: {
-        excelFmt: '0.00%;(0.00%);"-"',
+        excelFmt: '0.00%;[Red](0.00%);-_)',
         align: 'right',
         width: 8,
         jsFmt: function(v) {
-            if (v === 0 || v === null || v === undefined || isNaN(v)) return '-';
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
             var abs = (Math.abs(v) * 100).toFixed(2) + '%';
             return v < 0 ? '(' + abs + ')' : abs;
         }
@@ -109,8 +148,12 @@ var WMS_EXPORT_PRESETS = {
 // 2. STYLING CONSTANTS
 // ============================================================================
 
-var WMS_EXPORT_FONT = 'Arial Narrow';
-var WMS_EXPORT_FONT_SIZE = 10;
+// Skill: office-formatting (universal across projects, ratified 2026-05-26).
+// Aptos 9.5 pt is the standard typeface for all exports. Negatives render in
+// red parentheses with the Indian-comma format; zero renders as a single
+// hyphen + space. Dates default to dd-mmm-yy short and ddd, dd-mmm-yy long.
+var WMS_EXPORT_FONT = 'Aptos';
+var WMS_EXPORT_FONT_SIZE = 9.5;
 var WMS_EXPORT_HEADER_FILL = 'F7FAFC';
 var WMS_EXPORT_TOTAL_FILL  = 'F0F4F8';
 var WMS_EXPORT_SECTION_FILL = 'EEF2FF';
@@ -158,20 +201,28 @@ function _wmsExStyleCell(cell, resolved, isHeader, isTotal, isSectionTitle) {
     // Determine if this is a formula cell (ExcelJS stores formula as cell.value.formula)
     var isFormula = (cell.value !== null && typeof cell.value === 'object' && cell.value.formula);
 
-    // Data cells: blue text for hardcoded inputs, black for formulas.
-    // Negative values → red (overrides blue/black).
+    // Data cells: blue text for NUMERIC hardcoded inputs, black for formulas
+    // and for ALL text values. Negative numbers → red (overrides blue/black).
+    // Skill §4 (office-formatting): text strings stay black even when they're
+    // hardcoded; only numeric / date inputs the reader could change show blue.
     if (!isHeader && !isSectionTitle && !isTotal) {
+        var rawVal = cell.value;
         var numVal;
+        var isNumeric;
+        var isDate = (rawVal instanceof Date);
         if (isFormula) {
-            numVal = (typeof cell.value.result === 'number') ? cell.value.result : NaN;
+            numVal = (typeof rawVal.result === 'number') ? rawVal.result : NaN;
+            isNumeric = !isNaN(numVal);
         } else {
-            numVal = (typeof cell.value === 'number') ? cell.value : NaN;
+            numVal = (typeof rawVal === 'number') ? rawVal : NaN;
+            isNumeric = !isNaN(numVal);
         }
 
-        if (!isNaN(numVal) && numVal < 0) {
+        if (isNumeric && numVal < 0) {
             font.color = { argb: WMS_EXPORT_RED };
-        } else if (!isFormula && cell.value !== null && cell.value !== undefined && cell.value !== '') {
-            // Hardcoded input value → blue text (industry standard)
+        } else if (!isFormula && (isNumeric || isDate) && rawVal !== null && rawVal !== undefined && rawVal !== '') {
+            // Hardcoded numeric / date input → blue text.
+            // Text strings stay black (the default font color set above).
             font.color = { argb: WMS_EXPORT_BLUE };
         }
     }
@@ -296,6 +347,11 @@ function wmsExportExcel(config) {
         // Set initial column widths
         _wmsExApplyColWidths(ws, activeCols);
 
+        // Skill default row height (15 pt) and hide gridlines for the cleaner
+        // border-driven look (office-formatting skill §5 + §9).
+        ws.properties.defaultRowHeight = 15;
+        ws.views = [{ showGridLines: false }];
+
         var curRow = 1;
 
         for (var secIdx = 0; secIdx < sheetCfg.sections.length; secIdx++) {
@@ -310,7 +366,30 @@ function wmsExportExcel(config) {
                         hCell.value = activeCols[ci].header;
                         _wmsExStyleCell(hCell, activeCols[ci], true, false, false);
                     }
-                    headerRow.height = 18;
+                    headerRow.height = 15;  // skill default
+                    curRow++;
+                    break;
+
+                case 'snapshot_header':
+                    // One-row banner at the top of an export, mirroring the
+                    // F&O snapshot style: bold left title + small grey right
+                    // 'all amounts in ₹ \'000 | dd-Mmm-yy'. The left text
+                    // anchors to col A; the right text anchors to the last
+                    // column of activeCols (so it aligns with the value
+                    // columns of the table below).
+                    var snapRow = ws.getRow(curRow);
+                    var leftCell  = snapRow.getCell(1);
+                    leftCell.value = sec.leftText || '';
+                    leftCell.font = { name: WMS_EXPORT_FONT, size: WMS_EXPORT_FONT_SIZE + 1.5, bold: true, color: { argb: WMS_EXPORT_BLACK } };
+                    leftCell.alignment = { horizontal: 'left', vertical: 'middle' };
+
+                    var rightCol = activeCols.length;
+                    var rightCell = snapRow.getCell(rightCol);
+                    rightCell.value = sec.rightText || '';
+                    rightCell.font = { name: WMS_EXPORT_FONT, size: WMS_EXPORT_FONT_SIZE - 0.5, bold: false, color: { argb: WMS_EXPORT_GREY } };
+                    rightCell.alignment = { horizontal: 'right', vertical: 'middle' };
+
+                    snapRow.height = 20;
                     curRow++;
                     break;
 
@@ -529,13 +608,15 @@ function _wmsExApplyColWidths(ws, resolvedCols) {
 // }
 // ============================================================================
 
-var WMS_PDF_FONT_FAMILY = 'Arial Narrow, Arial, Helvetica, sans-serif';
-var WMS_PDF_FONT_SIZE   = 9;
-var WMS_PDF_HEADER_SIZE = 9;
+// office-formatting skill — Aptos 9.5pt across all surfaces; canvas falls
+// back to Helvetica if the user's machine doesn't have Aptos installed.
+var WMS_PDF_FONT_FAMILY = 'Aptos, Helvetica, Arial, sans-serif';
+var WMS_PDF_FONT_SIZE   = 9.5;
+var WMS_PDF_HEADER_SIZE = 9.5;
 var WMS_PDF_TITLE_SIZE  = 11;
-var WMS_PDF_ROW_HEIGHT  = 18;
-var WMS_PDF_HEADER_H    = 22;
-var WMS_PDF_TITLE_H     = 24;
+var WMS_PDF_ROW_HEIGHT  = 15;  // matches Excel skill row height
+var WMS_PDF_HEADER_H    = 20;
+var WMS_PDF_TITLE_H     = 22;
 var WMS_PDF_PAD         = 5;
 
 function wmsExportPdf(config) {
@@ -546,7 +627,13 @@ function wmsExportPdf(config) {
     }
 
     var JsPDF = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
-    var dpr = 2; // device pixel ratio for sharp rendering
+    // DPR controls the canvas oversampling — 1.5× keeps text sharp at print
+    // resolution and reduces the per-page bitmap area by ~2.3× vs DPR=2
+    // (~14MB → ~6MB before JPEG, ~2-3MB after). For lossless PNG output the
+    // resulting PDF was 14MB on a typical 3-page statement; JPEG q=0.95 on a
+    // white-background table is visually indistinguishable from PNG and
+    // 3-5× smaller. See LESSONS §E.18.x (PDF size optimisation).
+    var dpr = 1.5;
     // A4 dimensions in mm → pixels at 72 DPI
     var pageWmm = 210, pageHmm = 297;
     var pxPerMm = 3.7795; // approximate
@@ -575,6 +662,7 @@ function wmsExportPdf(config) {
                 case 'data':   totalH += (s.rows || []).length * WMS_PDF_ROW_HEIGHT * dpr; break;
                 case 'total':  totalH += WMS_PDF_ROW_HEIGHT * dpr; break;
                 case 'title':  totalH += WMS_PDF_TITLE_H * dpr; break;
+                case 'snapshot_header': totalH += (WMS_PDF_TITLE_H + 4) * dpr; break;
                 case 'blank':  totalH += (s.count || 1) * WMS_PDF_ROW_HEIGHT * dpr; break;
                 case 'summary': totalH += (s.rows || []).length * WMS_PDF_ROW_HEIGHT * dpr; break;
             }
@@ -632,6 +720,30 @@ function wmsExportPdf(config) {
                     ctx.fillText(sec2.text || '', WMS_PDF_PAD * dpr, y + WMS_PDF_FONT_SIZE * dpr + 4 * dpr);
                     y += WMS_PDF_TITLE_H * dpr;
                     break;
+                case 'snapshot_header':
+                    // F&O-snapshot-style banner: bold left title + small grey
+                    // right unit/date footnote. No background.
+                    var bandH = (WMS_PDF_TITLE_H + 4) * dpr;
+                    ctx.fillStyle = '#' + WMS_EXPORT_BLACK;
+                    ctx.font = 'bold ' + ((WMS_PDF_FONT_SIZE + 1.5) * dpr) + 'px ' + WMS_PDF_FONT_FAMILY;
+                    ctx.textAlign = 'left';
+                    ctx.fillText(sec2.leftText || '', WMS_PDF_PAD * dpr, y + (WMS_PDF_FONT_SIZE + 1.5) * dpr + 2 * dpr);
+
+                    ctx.fillStyle = '#' + WMS_EXPORT_GREY;
+                    ctx.font = ((WMS_PDF_FONT_SIZE - 0.5) * dpr) + 'px ' + WMS_PDF_FONT_FAMILY;
+                    ctx.textAlign = 'right';
+                    ctx.fillText(sec2.rightText || '', cvs.width - WMS_PDF_PAD * dpr, y + (WMS_PDF_FONT_SIZE + 1.5) * dpr + 2 * dpr);
+
+                    // Thin underline below the banner
+                    ctx.strokeStyle = '#' + WMS_EXPORT_BORDER_DARK;
+                    ctx.lineWidth = dpr * 0.75;
+                    ctx.beginPath();
+                    ctx.moveTo(0, y + bandH - 2 * dpr);
+                    ctx.lineTo(cvs.width, y + bandH - 2 * dpr);
+                    ctx.stroke();
+
+                    y += bandH;
+                    break;
                 case 'blank':
                     y += (sec2.count || 1) * WMS_PDF_ROW_HEIGHT * dpr;
                     break;
@@ -646,14 +758,16 @@ function wmsExportPdf(config) {
         canvases.push(cvs);
     }
 
-    // Build PDF
+    // Build PDF — encode each page canvas as high-quality JPEG so the file
+    // stays small. q=0.95 on white-background table text is visually
+    // indistinguishable from lossless PNG but ~3-5× smaller on disk.
     var doc = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     for (var pgi = 0; pgi < canvases.length; pgi++) {
         if (pgi > 0) doc.addPage();
-        var imgData = canvases[pgi].toDataURL('image/png');
+        var imgData = canvases[pgi].toDataURL('image/jpeg', 0.95);
         var imgW = pageWmm - 2 * marginMm;
         var imgH = (canvases[pgi].height / canvases[pgi].width) * imgW;
-        doc.addImage(imgData, 'PNG', marginMm, marginMm, imgW, imgH);
+        doc.addImage(imgData, 'JPEG', marginMm, marginMm, imgW, imgH);
     }
 
     doc.save(config.filename || 'WMS_Export.pdf');
@@ -713,7 +827,13 @@ function _wmsExPdfDrawRow(ctx, cols, colPx, rowData, y, dpr, isTotal) {
         var displayText = '';
 
         if (val !== null && val !== undefined && val !== '') {
-            if (resolved.jsFmt && typeof val !== 'string') {
+            // Apply the column's formatter UNLESS it's a text column (where
+            // the value is already a finished display string). Previously the
+            // formatter was skipped for ALL strings, which meant ISO date
+            // strings like '2026-04-01' rendered raw in the PDF instead of
+            // 'Wed, 01-Apr-26'. Date columns now format strings too.
+            var isTextCol = (resolved.type === 'text' || resolved.type === 'type');
+            if (resolved.jsFmt && !isTextCol) {
                 displayText = resolved.jsFmt(val);
             } else {
                 displayText = String(val);
@@ -749,22 +869,50 @@ function _wmsExPdfDrawRow(ctx, cols, colPx, rowData, y, dpr, isTotal) {
 }
 
 function _wmsExPdfDrawSummaryRow(ctx, cols, colPx, sr, y, dpr) {
-    var totalW = 0; for (var i = 0; i < colPx.length; i++) totalW += colPx[i];
-
+    // Optionally place the label + value at SPECIFIC column indices, mirroring
+    // the Excel layout (skill / office-formatting §6: right-aligned summary
+    // block). `sr.labelCol` and `sr.valueCol` are 1-indexed column numbers.
+    // Defaults: label far-left, value far-right.
     ctx.font = (sr.bold ? 'bold ' : '') + (WMS_PDF_FONT_SIZE * dpr) + 'px ' + WMS_PDF_FONT_FAMILY;
+
+    // Compute X offsets for each column (cumulative widths)
+    var colStartX = [WMS_PDF_PAD * dpr];
+    for (var i = 0; i < colPx.length; i++) {
+        colStartX.push(colStartX[i] + colPx[i]);
+    }
+    var totalW = colStartX[colPx.length] - WMS_PDF_PAD * dpr;
+
+    // Optional row background (light grey for the highlighted Net row)
+    if (sr.fill) {
+        ctx.fillStyle = '#' + sr.fill;
+        ctx.fillRect(0, y, totalW + WMS_PDF_PAD * 2 * dpr, WMS_PDF_ROW_HEIGHT * dpr);
+    }
+
+    // Label
+    var labelColIdx = (sr.labelCol && sr.labelCol >= 1) ? (sr.labelCol - 1) : 0;
+    var labelX = colStartX[Math.min(labelColIdx, colPx.length - 1)];
     ctx.fillStyle = '#' + WMS_EXPORT_BLACK;
     ctx.textAlign = 'left';
-    ctx.fillText(sr.label || '', WMS_PDF_PAD * dpr, y + WMS_PDF_FONT_SIZE * dpr + 3 * dpr);
+    ctx.fillText(sr.label || '', labelX, y + WMS_PDF_FONT_SIZE * dpr + 3 * dpr);
 
-    // Value in last column area
+    // Value
     var valFmt = sr.format || 'amount';
     var preset = WMS_EXPORT_PRESETS[valFmt] || WMS_EXPORT_PRESETS.text;
     var displayVal = preset.jsFmt ? preset.jsFmt(sr.value) : String(sr.value);
-
     var numVal = (typeof sr.value === 'number') ? sr.value : NaN;
     ctx.fillStyle = (!isNaN(numVal) && numVal < 0) ? '#' + WMS_EXPORT_RED : '#' + WMS_EXPORT_BLACK;
     ctx.textAlign = 'right';
-    ctx.fillText(displayVal, totalW + WMS_PDF_PAD * dpr, y + WMS_PDF_FONT_SIZE * dpr + 3 * dpr);
+
+    var valueColIdx = (sr.valueCol && sr.valueCol >= 1) ? sr.valueCol : colPx.length;
+    var valEndX = colStartX[Math.min(valueColIdx, colPx.length)] - 4 * dpr;
+    ctx.fillText(displayVal, valEndX, y + WMS_PDF_FONT_SIZE * dpr + 3 * dpr);
+
+    // Optional border around the row (thin black for the highlighted Net row)
+    if (sr.border) {
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = dpr;
+        ctx.strokeRect(labelX - 2 * dpr, y, valEndX - labelX + 6 * dpr, WMS_PDF_ROW_HEIGHT * dpr);
+    }
 
     return y + WMS_PDF_ROW_HEIGHT * dpr;
 }
