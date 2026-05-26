@@ -200,6 +200,24 @@
 .lg-type-other { color:#718096; background:#f7fafc; }
 .lg-type-recon { color:#047857; background:#d1fae5; }
 
+/* Recon cancel ✕ link (LESSONS §E.17.9) — sits next to the green ✓ on a
+   RECONCILIATION row OR on the synthesized OB row in hide-pre-recon mode.
+   Grey at rest, red on hover so it does not steal attention from the row data,
+   but is obvious when the user is looking for it. */
+.lg-recon-cancel {
+    display:inline-block;
+    color:#cbd5e0;
+    font-weight:700;
+    font-size:11px;
+    margin-right:4px;
+    margin-left:-2px;
+    text-decoration:none;
+    cursor:pointer;
+    line-height:1;
+}
+.lg-recon-cancel:hover { color:#dc2626; }
+#lgTable tr.lg-row-recon:hover .lg-recon-cancel { color:#dc2626; }
+
 /* Recon "✓" inline trigger — shown on row hover on the LEFT of the date.
    Clicking it reconciles everything up to AND including that row's date,
    using the row's running balance as the anchor amount. */
@@ -326,6 +344,10 @@
         <div class="lg-booked-header" id="lgTransactionsHeader">
           <span class="lg-booked-caret">▼</span>
           <span>Transactions</span>
+          <label class="lg-futures-toggle" id="lgHidePreReconWrap" title="When checked, rows on or before the latest reconciliation date are hidden and the reconciled balance becomes the new opening balance.">
+            <input type="checkbox" id="lgHidePreReconToggle" checked>
+            <span>Hide pre-recon</span>
+          </label>
           <label class="lg-futures-toggle" id="lgFuturesToggleWrap" title="Show / hide futures BUY/SELL rows. Hidden rows still contribute to margin + interest calc.">
             <input type="checkbox" id="lgFuturesToggle" checked>
             <span>Show F&amp;O</span>
@@ -379,7 +401,7 @@
                  input row above) -->
             <tr id="lgOpeningBalRow" class="total-row">
               <td class="text-right" id="lgObDate"></td>
-              <td style="font-weight:600;">Opening Balance</td>
+              <td style="font-weight:600;" id="lgObSymbol">Opening Balance</td>
               <td colspan="4" id="lgObDescription" style="color:#6b7280; font-style:italic; font-size:11px;"></td>
               <td class="text-right" id="lgObAmount"></td>
               <td class="text-right" id="lgObBalance"></td>

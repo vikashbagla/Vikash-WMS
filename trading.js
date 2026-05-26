@@ -8,6 +8,22 @@
 var INCOME_TYPES = WMS_INCOME_TYPES;
 
 var trTransactions = [];
+
+// Promise that resolves the FIRST time `trLoadData()` finishes populating
+// `trTransactions`. Subsequent loads (refresh button) re-fire trLoadData but
+// the promise stays resolved — subscribers only need to know that initial
+// transactions are in memory. Modules that lazy-load (Statements, F&O) MUST
+// await this before calling any function that filters `trTransactions`,
+// otherwise they race against the initial load and see an empty array.
+// See LESSONS §A.1.18 (recon drift false-positive on page reload).
+var trDataReady = null;
+var _trDataReadyResolve = null;
+window._trDataReadyResolved = false;  // sync mirror — checkable from anywhere without awaiting
+(function _initTrDataReadyPromise() {
+    trDataReady = new Promise(function(resolve) { _trDataReadyResolve = resolve; });
+})();
+window.trDataReady = trDataReady;
+
 var trInvestors = [];
 var trBrokers = [];
 var trSelectedInvestorIds = [];
@@ -757,7 +773,7 @@ async function trLoadData() {
     // Load ALL transactions (no transaction_type filter — includes DIVIDEND, etc.)
     // Uses wmsFetchAllRaw() to paginate past Supabase's 1000-row default limit.
     var txnData = await wmsFetchAllRaw(
-        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,product,transaction_type,transaction_date,transaction_time,quantity,lots,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display&order=transaction_date.asc,transaction_time.asc.nullsfirst,id.asc'
+        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,product,transaction_type,transaction_date,transaction_time,quantity,lots,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display,created_at,updated_at&order=transaction_date.asc,transaction_time.asc.nullsfirst,id.asc'
     );
     console.log('Trading: Loaded ' + txnData.length + ' transactions (all types)');
 
@@ -788,6 +804,13 @@ async function trLoadData() {
     trBrokers = wmsRefData.brokers;
 
     trInitFilterPills();
+
+    // Signal that initial transactions are in memory — lazy-loaded sub-modules
+    // (Statements via trLoadLedgerModule, F&O) await `trDataReady` before
+    // calling any function that filters `trTransactions`. Idempotent — safe
+    // to call on every subsequent refresh (resolve() is a no-op once resolved).
+    if (_trDataReadyResolve) { _trDataReadyResolve(); }
+    window._trDataReadyResolved = true;
 }
 
 async function trRefresh() {
@@ -2345,6 +2368,17 @@ async function trLoadLedgerModule() {
     if (!trInvestors || trInvestors.length === 0) {
         trInvestors = wmsRefData.investors || [];
         trBrokers  = wmsRefData.brokers  || [];
+    }
+    // Race-condition fix (LESSONS §A.1.18): trRestoreTab kicks this module off
+    // BEFORE initTrading awaits trLoadData. Without this await, lgRefresh runs
+    // with an empty trTransactions, wmsBuildLedger emits a partial ledger
+    // (OB + interest only, no trades), and lgCheckReconDrift then flags a
+    // spurious "balance mismatch" on any view that has a RECONCILIATION row.
+    // The drift number equals exactly the sum of pre-recon trades that the
+    // engine couldn't see. Waiting until trDataReady resolves guarantees a
+    // consistent first paint.
+    if (window.trDataReady && typeof window.trDataReady.then === 'function') {
+        await window.trDataReady;
     }
     if (typeof lgInit === 'function') { lgInit(); lgRefresh(); }
 }

@@ -112,6 +112,16 @@ var lgStatementType = 'trader';
 // Session-state only — not persisted with the view.
 var lgShowFutures = true;
 
+// Hide-pre-reconciliation rows toggle (LESSONS §E.15.15). When true (default),
+// all rows with date <= the latest RECONCILIATION row's date are hidden from
+// the Transactions table, and the Opening Balance row is overridden to show
+// the recon date + recon's running balance (so the recon becomes the new "as
+// of" anchor). When false, full history is shown with the recon row visible
+// inline as a green ✓ marker. Engine, margin, interest, drift check, and DB
+// rows are UNAFFECTED — this is a pure display filter. Session-state only —
+// not persisted with the view (mirrors lgShowFutures).
+var lgHidePreRecon = true;
+
 // Date filter (shared wmsDateFilter component)
 var lgDateFilterInstance = null;
 var lgDateFrom = '';
@@ -517,6 +527,25 @@ function lgInit() {
     if (futuresToggleWrap && !futuresToggleWrap.dataset.lgWired) {
         futuresToggleWrap.dataset.lgWired = '1';
         futuresToggleWrap.addEventListener('click', function(e) { e.stopPropagation(); });
+    }
+
+    // Hide-pre-recon toggle (LESSONS §E.15.15). When checked, rows on or before
+    // the latest RECONCILIATION row are hidden and the OB row is overridden to
+    // show the recon date + recon balance. Display-only — engine unaffected.
+    var hideReconEl = document.getElementById('lgHidePreReconToggle');
+    if (hideReconEl && !hideReconEl.dataset.lgWired) {
+        hideReconEl.dataset.lgWired = '1';
+        hideReconEl.checked = lgHidePreRecon;
+        hideReconEl.addEventListener('click', function(e) { e.stopPropagation(); });
+        hideReconEl.addEventListener('change', function() {
+            lgHidePreRecon = hideReconEl.checked;
+            lgRenderEntries(lgCombined);
+        });
+    }
+    var hideReconWrap = document.getElementById('lgHidePreReconWrap');
+    if (hideReconWrap && !hideReconWrap.dataset.lgWired) {
+        hideReconWrap.dataset.lgWired = '1';
+        hideReconWrap.addEventListener('click', function(e) { e.stopPropagation(); });
     }
 
     // Load views and initial data
@@ -1041,6 +1070,43 @@ function lgRenderEntries(rows) {
     // can't find the (currently detached) child elements.
     var openingBal = lgFindOpeningBalance();
 
+    // Hide-pre-recon mode (LESSONS §E.15.15). Find the LATEST RECONCILIATION
+    // row within the currently-visible rows. When found AND lgHidePreRecon is
+    // true, all rows with date <= recon.date will be skipped below, and the
+    // OB row is overridden to show the recon date + recon's running balance
+    // (the snapshot anchor). Engine-side _runningBalance on rows AFTER the
+    // recon is unchanged, so subsequent displayed balances stay consistent.
+    var latestRecon = null;
+    if (lgHidePreRecon) {
+        for (var ri = 0; ri < sorted.length; ri++) {
+            var rRow = sorted[ri];
+            if (rRow._rowType === 'ledger' && rRow.entryType === 'RECONCILIATION') {
+                if (!latestRecon || (rRow.date || '') > (latestRecon.date || '')) {
+                    latestRecon = rRow;
+                }
+            }
+        }
+        if (latestRecon) {
+            // Override OB to recon snapshot. Use the engine's _runningBalance
+            // (firm-POV) — display flip is applied by lgRenderOpeningBalance
+            // via lgD(). If drift exists between stored recon.amount and the
+            // computed _runningBalance, the yellow drift banner separately
+            // alerts the user; the displayed OB tracks the engine so that
+            // subsequent row balances line up.
+            openingBal = {
+                id: null,
+                date: latestRecon.date,
+                amount: (typeof latestRecon._runningBalance === 'number') ? latestRecon._runningBalance : (latestRecon.amount || 0),
+                storedAmount: 0,
+                storedDate: '',
+                isCarryForward: true,  // disables inline edit on the synthetic OB
+                exists: false,
+                isReconBased: true,    // marker for lgRenderOpeningBalance to swap layout
+                reconId: (latestRecon._source && latestRecon._source.id) || ''
+            };
+        }
+    }
+
     var html = '';
     var totalAmount = 0;
     var lastBalance = openingBal.amount || 0; // Start with opening balance (carry-forward)
@@ -1052,6 +1118,13 @@ function lgRenderEntries(rows) {
         // Options (CE/PE) and NFO_PNL synthetic rows have _nfoCashImpact !==
         // false so they always render.
         if (!lgShowFutures && row._rowType === 'trade' && row._nfoCashImpact === false) {
+            return;
+        }
+        // Hide-pre-recon filter (LESSONS §E.15.15). Skip every row dated on or
+        // before the latest reconciliation (including the recon row itself —
+        // it becomes the synthesized OB row above). Engine/margin/interest are
+        // unaffected — they read the full ledger upstream of this filter.
+        if (latestRecon && row.date && row.date <= latestRecon.date) {
             return;
         }
         var date = lgFmtDate(row.date);
@@ -1174,8 +1247,18 @@ function lgRenderEntries(rows) {
         var reconMark = '';
         if (isReconRow) {
             // Persistent ✓ badge for existing reconciliation rows — shows
-            // this IS an audit snapshot, not a candidate for new recon.
-            reconMark = '<span style="color:#059669; font-weight:700; margin-right:4px;">✓</span>';
+            // this IS an audit snapshot, not a candidate for new recon. The
+            // adjacent ✕ link calls lgCancelReconciliation (LESSONS §E.17.9)
+            // to delete just this snapshot row (no trades / interest / cash
+            // entries are affected). stopPropagation prevents the row-click
+            // trade-edit modal from opening.
+            var reconRowId = (row._source && row._source.id) || '';
+            reconMark = '<span style="color:#059669; font-weight:700; margin-right:2px;">✓</span>' +
+                '<a href="#" class="lg-recon-cancel" ' +
+                'data-recon-id="' + wmsEsc(reconRowId) + '" ' +
+                'data-recon-date="' + wmsEsc(row.date) + '" ' +
+                'onclick="event.preventDefault(); event.stopPropagation(); lgCancelReconciliation(this.dataset.reconId, this.dataset.reconDate);" ' +
+                'title="Cancel this reconciliation snapshot (trades + interest are untouched)">✕</a>';
         } else if (row._rowType !== 'pending_interest' && row.date) {
             reconMark = '<span class="lg-recon-trigger" ' +
                 'data-recon-date="' + wmsEsc(row.date) + '" ' +
@@ -1269,9 +1352,35 @@ function lgRenderOpeningBalance(ob) {
     var dateEl = document.getElementById('lgObDate');
     var amountEl = document.getElementById('lgObAmount');
     var balanceEl = document.getElementById('lgObBalance');
+    var symbolEl = document.getElementById('lgObSymbol');
 
     if (dateEl) {
-        dateEl.textContent = ob.date ? lgFmtDate(ob.date) : '';
+        // Hide-pre-recon mode (LESSONS §E.15.15): when the OB is synthesized
+        // from the latest RECONCILIATION row, prefix the date with the green
+        // ✓ marker AND a ✕ cancel link (LESSONS §E.17.9). This is the user's
+        // only way to cancel a recon while hide-pre-recon is ON, since the
+        // actual recon row is collapsed into this synthetic OB.
+        var dateText = ob.date ? lgFmtDate(ob.date) : '';
+        if (ob.isReconBased) {
+            var cancelHtml = '';
+            if (ob.reconId) {
+                cancelHtml = '<a href="#" class="lg-recon-cancel" ' +
+                    'data-recon-id="' + wmsEsc(ob.reconId) + '" ' +
+                    'data-recon-date="' + wmsEsc(ob.date) + '" ' +
+                    'onclick="event.preventDefault(); event.stopPropagation(); lgCancelReconciliation(this.dataset.reconId, this.dataset.reconDate);" ' +
+                    'title="Cancel this reconciliation snapshot (trades + interest are untouched)">✕</a>';
+            }
+            dateEl.innerHTML = '<span style="color:#059669; font-weight:700; margin-right:2px;" title="Reconciled balance — pre-recon rows hidden">✓</span>' + cancelHtml + wmsEsc(dateText);
+        } else {
+            dateEl.textContent = dateText;
+        }
+    }
+
+    // Symbol cell — for a recon-based OB, drop the "Opening Balance" text so
+    // the row reads as a pure reconciliation anchor (Type column carries the
+    // "✓ Reconciled" badge below). For a regular OB, restore the default text.
+    if (symbolEl) {
+        symbolEl.textContent = ob.isReconBased ? '' : 'Opening Balance';
     }
     if (amountEl) {
         if (lgObEditing) return; // Don't overwrite while editing
@@ -1289,7 +1398,10 @@ function lgRenderOpeningBalance(ob) {
                 '<span class="lg-ob-amount" title="Double-click to edit">' + lgFmt(dispOb) + '</span>' :
                 '<span class="lg-ob-amount" style="color:#9ca3af;" title="Double-click to set opening balance">Set...</span>';
         } else {
-            amtHtml = '<span title="Carry-forward running balance as of ' + wmsEsc(ob.date) + ' (not editable)">' + lgFmt(dispOb) + '</span>';
+            var titleText = ob.isReconBased
+                ? 'Reconciled balance as of ' + wmsEsc(ob.date) + ' (pre-recon rows hidden — toggle "Hide pre-recon" to see them)'
+                : 'Carry-forward running balance as of ' + wmsEsc(ob.date) + ' (not editable)';
+            amtHtml = '<span title="' + titleText + '">' + lgFmt(dispOb) + '</span>';
         }
         amountEl.innerHTML = amtHtml;
         amountEl.className = 'text-right ' + lgAmtClass(dispOb);
@@ -1305,16 +1417,25 @@ function lgRenderOpeningBalance(ob) {
         // at start (their credit), dispObDesc < 0 means counterparty owes firm.
         var dispObDesc = lgD(ob.amount || 0);
         var label = '';
-        // Counterparty-POV phrasing: +ve = firm owes counterparty (their receivable);
-        // -ve = counterparty owes firm (their payable). LESSONS \u00a7E.15.13.
-        if (dispObDesc > 0) {
-            label = '\u2190 opening receivable';
-        } else if (dispObDesc < 0) {
-            label = '\u2192 opening payable';
+        if (ob.isReconBased) {
+            // Hide-pre-recon mode (LESSONS \u00a7E.15.15): replace the arrow-style
+            // description with a "\u2713 Reconciled" Type-column badge. descEl
+            // spans Type / Qty / Price / Net via colspan=4, so the badge sits
+            // visually in the Type column. The italic + grey of the parent
+            // inline style is overridden so the badge reads cleanly.
+            descEl.innerHTML = '<span class="lg-type lg-type-recon" style="font-style:normal;">\u2713 Reconciled</span>';
         } else {
-            label = 'no opening balance';
+            // Counterparty-POV phrasing: +ve = firm owes counterparty (their receivable);
+            // -ve = counterparty owes firm (their payable). LESSONS \u00a7E.15.13.
+            if (dispObDesc > 0) {
+                label = '\u2190 opening receivable';
+            } else if (dispObDesc < 0) {
+                label = '\u2192 opening payable';
+            } else {
+                label = 'no opening balance';
+            }
+            descEl.textContent = label;
         }
-        descEl.textContent = label;
     }
 }
 
@@ -1567,9 +1688,18 @@ function lgRenderSummary() {
         var avgCost = h.avgCost;
         var isNfo = (h.securityType === 'NFO');
 
-        // CMP from shared live price cache
+        // CMP from shared live price cache. For NFO contracts (options + futures)
+        // the live-price lookup MUST use the full contract symbol — e.g.
+        // 'PGEL26JUN500CE' or 'PGEL26MAYFUT' — NOT the underlying short_symbol.
+        // The holdings map key IS the prefix-stripped contract symbol for NFO
+        // (see _engineKey in wms-shared.js), so `key` is exactly what we need.
+        // Bug pre-fix: shortSym='PGEL' returned the underlying equity spot
+        // (478.45) for the PGEL 500 CE option row, producing a phantom MTM
+        // computed as (spot − premium_avg) instead of (option_lp − premium_avg).
+        // See LESSONS §E.15.16.
         var shortSym = h.shortSymbol || h.symbol;
-        var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[shortSym] : null;
+        var priceLookupKey = isNfo ? key : shortSym;
+        var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[priceLookupKey] : null;
         var cmp = (priceEntry && priceEntry.lp > 0) ? priceEntry.lp : avgCost;
 
         var value, mtm;
@@ -2015,6 +2145,19 @@ window.lgReconcileUpTo = lgReconcileUpTo;
 function lgCheckReconDrift() {
     var banner = document.getElementById('lgReconBanner');
     if (!banner) return;
+
+    // Defensive guard (LESSONS §A.1.18): if the initial trLoadData() hasn't
+    // resolved yet, trTransactions is still []. lgRefresh would have built
+    // lgFullCombined off an empty txnFiltered, so the parallel-balance pass
+    // here misses every pre-recon trade and falsely flags ~"recon mismatch =
+    // sum of missing trades". The primary fix lives in trLoadLedgerModule
+    // (await trDataReady before lgInit/lgRefresh) — this guard catches any
+    // other call site that races the data load.
+    if (typeof window !== 'undefined' && window._trDataReadyResolved === false) {
+        lgHideReconBanner();
+        return;
+    }
+
     var rows = lgFullCombined || [];
     if (rows.length === 0) { lgHideReconBanner(); return; }
 
@@ -2138,10 +2281,22 @@ function lgReconReviewOpen() {
         : null;
     var matchByView = reconView && reconView.filters && typeof wmsMatchesViewFilter === 'function';
 
-    var dirty = (trTransactions || []).filter(function(t) {
+    // Both INSERT and EDIT of a pre-recon trade invalidate the recon snapshot.
+    // - INSERT: row.created_at > recon.created_at (back-dated trade added after
+    //   the recon was made). updated_at is also typically set on insert and
+    //   equals created_at, but we don't require it because some Supabase setups
+    //   only fire the updated_at trigger on UPDATE.
+    // - EDIT: row.updated_at > recon.created_at && created_at <= recon.created_at.
+    // LESSONS §E.17.6a — initial load MUST include created_at + updated_at in
+    // the SELECT, otherwise both are null in memory and this filter never matches.
+    if (!reconCreatedAt) {
+        // Cannot run timestamp comparisons without recon.created_at — bail.
+    }
+    var dirty = (!reconCreatedAt ? [] : (trTransactions || [])).filter(function(t) {
         if (!t.transaction_date || t.transaction_date > reconEntryDate) return false;
-        if (!t.updated_at || !reconCreatedAt) return false;
-        if (t.updated_at <= reconCreatedAt) return false;
+        // Treat null timestamps as "before recon" (we can't know otherwise).
+        var lastMod = t.updated_at || t.created_at || '';
+        if (!lastMod || lastMod <= reconCreatedAt) return false;
 
         if (matchByView) {
             return wmsMatchesViewFilter(t, reconView.filters);
@@ -2155,23 +2310,44 @@ function lgReconReviewOpen() {
         }
         if (reconSrc.investor_id === effTrader) return true;
         return false;
+    }).map(function(t) {
+        // Classify as insert vs edit so the modal can label rows distinctly.
+        // An insert leaves created_at strictly greater than recon.created_at.
+        // (Edits typically keep created_at unchanged from when the row was
+        // first inserted, and only updated_at advances.)
+        var isInsert = !!(t.created_at && t.created_at > reconCreatedAt);
+        return { txn: t, action: isInsert ? 'inserted' : 'edited' };
     }).sort(function(a, b) {
-        return (a.transaction_date || '').localeCompare(b.transaction_date || '');
+        return (a.txn.transaction_date || '').localeCompare(b.txn.transaction_date || '');
     });
 
+    // Split detection by action so the narrative can be specific.
+    var inserts = dirty.filter(function(d) { return d.action === 'inserted'; });
+    var edits   = dirty.filter(function(d) { return d.action === 'edited'; });
+
     // Headline summary — reconciled amount, computed amount, diff, and the
-    // most likely cause classification (edit vs delete).
+    // most likely cause classification.
     var summary = document.getElementById('lgReconReviewSummary');
     if (summary) {
         var causeMsg;
         if (dirty.length > 0) {
-            causeMsg = '<b>' + dirty.length + ' pre-reconciliation trade' +
-                (dirty.length === 1 ? ' has' : 's have') +
-                ' been modified since this reconciliation</b> (listed below). ' +
-                'If the balance mismatch exactly equals the impact of those edits, ' +
-                'that explains the drift.';
+            var parts = [];
+            if (inserts.length > 0) {
+                parts.push('<b>' + inserts.length + '</b> back-dated trade' +
+                    (inserts.length === 1 ? '' : 's') + ' inserted');
+            }
+            if (edits.length > 0) {
+                parts.push('<b>' + edits.length + '</b> trade' +
+                    (edits.length === 1 ? '' : 's') + ' edited');
+            }
+            causeMsg = parts.join(' and ') + ' since this reconciliation (listed below). ' +
+                'If the balance mismatch equals the impact of these changes, that explains the drift. ' +
+                'Any residual could still be a delete.';
         } else {
-            causeMsg = '<b>No pre-reconciliation edits detected.</b> The drift is most likely due to a <b>deleted</b> pre-reconciliation trade — deletes leave no `updated_at` trace to itemise. Cancel this reconciliation (button below) to clear the banner, then re-reconcile against the current balance.';
+            causeMsg = '<b>No pre-reconciliation inserts or edits detected.</b> ' +
+                'The drift is most likely due to a <b>deleted</b> pre-reconciliation trade. ' +
+                'Deletes leave no audit trail in the current schema, so they cannot be itemised here. ' +
+                'Cancel this reconciliation (button below) and re-reconcile against the current balance.';
         }
         summary.innerHTML =
             '<div style="margin-bottom:6px;">Reconciliation on <b>' + wmsEsc(prettyDate) + '</b> &middot; ' +
@@ -2186,26 +2362,33 @@ function lgReconReviewOpen() {
 
     if (dirty.length === 0) {
         body.innerHTML =
-            '<div class="lg-rr-hint">Most likely a <b>delete</b>. No edits to list here — click <b>Cancel Reconciliation</b> below to remove the stale snapshot, then re-reconcile on the latest balance.</div>';
+            '<div class="lg-rr-hint">Most likely a <b>delete</b>. No inserts or edits to list here — click <b>Cancel Reconciliation</b> below to remove the stale snapshot, then re-reconcile on the latest balance.</div>';
     } else {
-        var rowsHtml = dirty.map(function(t) {
+        var rowsHtml = dirty.map(function(d) {
+            var t = d.txn;
             var sym = t.short_symbol || t.symbol || '-';
             var type = t.transaction_type || '-';
             var qty = Math.abs(t.quantity || 0);
             var net = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(t.display_net_amount || t.net_amount || 0) : String(t.net_amount || 0);
             var dt = lgFmtDate(t.transaction_date) || t.transaction_date || '-';
-            var updDt = t.updated_at ? String(t.updated_at).slice(0, 19).replace('T', ' ') : '-';
+            var changeTs = t.updated_at || t.created_at || '';
+            var changeDt = changeTs ? String(changeTs).slice(0, 19).replace('T', ' ') : '-';
+            // Distinguish inserts (green ➕) from edits (orange ✏️).
+            var actionLabel = d.action === 'inserted'
+                ? '<span style="color:#047857; font-weight:600;">➕ Inserted</span>'
+                : '<span style="color:#b45309; font-weight:600;">✏️ Edited</span>';
             return '<tr data-txn-id="' + wmsEsc(t.id) + '">' +
                 '<td>' + wmsEsc(dt) + '</td>' +
                 '<td>' + wmsEsc(sym) + '</td>' +
                 '<td>' + wmsEsc(type) + '</td>' +
                 '<td class="text-right">' + wmsEsc(String(qty)) + '</td>' +
                 '<td class="text-right">' + wmsEsc(net) + '</td>' +
-                '<td>' + wmsEsc(updDt) + '</td>' +
+                '<td>' + actionLabel + '</td>' +
+                '<td>' + wmsEsc(changeDt) + '</td>' +
                 '</tr>';
         }).join('');
         body.innerHTML =
-            '<div class="lg-rr-hint">Click any row to open its Edit modal and review the current values. If the balance mismatch is not fully explained by these edits, a <b>delete</b> is the remaining suspect — cancel this reconciliation and re-do it.</div>' +
+            '<div class="lg-rr-hint">Click any row to open its Edit modal and review. If the mismatch is not fully explained by these inserts / edits, a <b>delete</b> is the remaining suspect — cancel this reconciliation and re-do it.</div>' +
             '<table>' +
               '<thead><tr>' +
                 '<th>Txn Date</th>' +
@@ -2213,7 +2396,8 @@ function lgReconReviewOpen() {
                 '<th>Type</th>' +
                 '<th class="text-right">Qty</th>' +
                 '<th class="text-right">Net (current)</th>' +
-                '<th>Modified At</th>' +
+                '<th>Action</th>' +
+                '<th>Changed At</th>' +
               '</tr></thead>' +
               '<tbody>' + rowsHtml + '</tbody>' +
             '</table>';
@@ -2222,23 +2406,32 @@ function lgReconReviewOpen() {
     modal.classList.add('show');
 }
 
-// Cancel the reconciliation whose drift triggered the review modal — deletes
-// the RECONCILIATION ledger_entries row so the banner clears and running
-// balances go back to "live" (anchor removed, history continuous from the
-// prior OPENING_BALANCE or recon).  Fires from the "Cancel Reconciliation"
-// button in the review modal footer.
-async function lgReconReviewCancel() {
-    var modal = document.getElementById('lgReconReviewModal');
-    if (!modal) return;
-    var reconId = modal.dataset.reconEntryId || '';
-    if (!reconId) { showAlert('No reconciliation selected to cancel', 'warning', 3000); return; }
-
-    var reconRow = lgReconBannerState && lgReconBannerState.row;
-    var prettyDate = reconRow ? (lgFmtDate(reconRow.date) || reconRow.date) : '';
-    var msg = 'Cancel the reconciliation on ' + prettyDate + '?\n\n' +
-              'This removes the stored snapshot row. Running balances will ' +
-              'recompute from current transactions and the yellow banner will clear.';
-    if (!window.confirm(msg)) return;
+// Shared recon-cancellation routine (LESSONS §E.17.9). Called from THREE
+// surfaces — they all funnel through here so the prompt + DELETE + refresh
+// behavior stays identical regardless of where the user clicked:
+//   1. the ✕ next to the green ✓ on a visible RECONCILIATION row in the
+//      Transactions table (Path 1 — works in show-all mode)
+//   2. the ✕ next to the green ✓ on the synthesized Opening Balance row when
+//      "Hide pre-recon" mode is ON (Path 1b — works while the recon row is
+//      collapsed into the OB anchor)
+//   3. the "Cancel Reconciliation" button inside the drift-review modal
+//      (Path 2 — only available when the yellow drift banner is showing)
+// Only the RECONCILIATION row is DELETEd — trades stay in `transactions`,
+// INTEREST_BOOKED / CASH_RECEIVED / CASH_PAID / OPENING_BALANCE are all
+// independent ledger_entries rows with their own ids and are NOT touched.
+async function lgCancelReconciliation(reconId, reconDate, options) {
+    if (!reconId) {
+        showAlert('No reconciliation selected to cancel', 'warning', 3000);
+        return false;
+    }
+    options = options || {};
+    var prettyDate = reconDate ? (lgFmtDate(reconDate) || reconDate) : '';
+    var msg = 'Cancel the reconciliation' + (prettyDate ? ' on ' + prettyDate : '') + '?\n\n' +
+              'This removes the snapshot row ONLY — all trades, interest, and ' +
+              'cash entries remain unchanged. Running balances will recompute ' +
+              'from current transactions and the yellow drift banner (if shown) ' +
+              'will clear. You can re-reconcile any time.';
+    if (!window.confirm(msg)) return false;
 
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + encodeURIComponent(reconId), {
@@ -2247,16 +2440,36 @@ async function lgReconReviewCancel() {
         });
         if (resp.ok) {
             showAlert('Reconciliation cancelled', 'success', 2500);
-            lgReconReviewClose();
+            if (typeof options.onSuccess === 'function') {
+                try { options.onSuccess(); } catch (e) { console.warn('lgCancelReconciliation onSuccess threw:', e); }
+            }
             lgRefresh();
+            return true;
         } else {
             var errText = '';
             try { errText = await resp.text(); } catch (_) {}
             showAlert('Failed to cancel reconciliation (HTTP ' + resp.status + ')' + (errText ? ': ' + errText.slice(0, 200) : ''), 'error', 6000);
+            return false;
         }
     } catch (err) {
         showAlert('Failed to cancel reconciliation: ' + err.message, 'error', 5000);
+        return false;
     }
+}
+window.lgCancelReconciliation = lgCancelReconciliation;
+
+// Path 2: drift-review modal's "Cancel Reconciliation" button. Pulls the
+// recon id off the modal dataset (stashed by lgReconReviewOpen) and delegates
+// to the shared routine.
+async function lgReconReviewCancel() {
+    var modal = document.getElementById('lgReconReviewModal');
+    if (!modal) return;
+    var reconId = modal.dataset.reconEntryId || '';
+    var reconRow = lgReconBannerState && lgReconBannerState.row;
+    var reconDate = reconRow ? reconRow.date : '';
+    await lgCancelReconciliation(reconId, reconDate, {
+        onSuccess: function() { lgReconReviewClose(); }
+    });
 }
 
 function lgReconReviewClose() {
@@ -2988,7 +3201,11 @@ function lgGatherExportData() {
             }
         }
 
-        var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[shortSym] : null;
+        // Same NFO price-lookup fix as the on-screen Positions table (LESSONS
+        // §E.15.16). Use the holdings key (= full contract symbol) for NFO so
+        // option / futures prices resolve correctly in exports too.
+        var priceLookupKey2 = isNfo ? key : shortSym;
+        var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[priceLookupKey2] : null;
         var cmp = (priceEntry && priceEntry.lp > 0) ? priceEntry.lp : avgCost;
         var value, mtm;
         if (isNfo) {
