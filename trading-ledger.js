@@ -112,6 +112,16 @@ var lgStatementType = 'trader';
 // Session-state only — not persisted with the view.
 var lgShowFutures = true;
 
+// Hide-pre-reconciliation rows toggle (LESSONS §E.15.15). When true (default),
+// all rows with date <= the latest RECONCILIATION row's date are hidden from
+// the Transactions table, and the Opening Balance row is overridden to show
+// the recon date + recon's running balance (so the recon becomes the new "as
+// of" anchor). When false, full history is shown with the recon row visible
+// inline as a green ✓ marker. Engine, margin, interest, drift check, and DB
+// rows are UNAFFECTED — this is a pure display filter. Session-state only —
+// not persisted with the view (mirrors lgShowFutures).
+var lgHidePreRecon = true;
+
 // Date filter (shared wmsDateFilter component)
 var lgDateFilterInstance = null;
 var lgDateFrom = '';
@@ -517,6 +527,25 @@ function lgInit() {
     if (futuresToggleWrap && !futuresToggleWrap.dataset.lgWired) {
         futuresToggleWrap.dataset.lgWired = '1';
         futuresToggleWrap.addEventListener('click', function(e) { e.stopPropagation(); });
+    }
+
+    // Hide-pre-recon toggle (LESSONS §E.15.15). When checked, rows on or before
+    // the latest RECONCILIATION row are hidden and the OB row is overridden to
+    // show the recon date + recon balance. Display-only — engine unaffected.
+    var hideReconEl = document.getElementById('lgHidePreReconToggle');
+    if (hideReconEl && !hideReconEl.dataset.lgWired) {
+        hideReconEl.dataset.lgWired = '1';
+        hideReconEl.checked = lgHidePreRecon;
+        hideReconEl.addEventListener('click', function(e) { e.stopPropagation(); });
+        hideReconEl.addEventListener('change', function() {
+            lgHidePreRecon = hideReconEl.checked;
+            lgRenderEntries(lgCombined);
+        });
+    }
+    var hideReconWrap = document.getElementById('lgHidePreReconWrap');
+    if (hideReconWrap && !hideReconWrap.dataset.lgWired) {
+        hideReconWrap.dataset.lgWired = '1';
+        hideReconWrap.addEventListener('click', function(e) { e.stopPropagation(); });
     }
 
     // Load views and initial data
@@ -1041,6 +1070,42 @@ function lgRenderEntries(rows) {
     // can't find the (currently detached) child elements.
     var openingBal = lgFindOpeningBalance();
 
+    // Hide-pre-recon mode (LESSONS §E.15.15). Find the LATEST RECONCILIATION
+    // row within the currently-visible rows. When found AND lgHidePreRecon is
+    // true, all rows with date <= recon.date will be skipped below, and the
+    // OB row is overridden to show the recon date + recon's running balance
+    // (the snapshot anchor). Engine-side _runningBalance on rows AFTER the
+    // recon is unchanged, so subsequent displayed balances stay consistent.
+    var latestRecon = null;
+    if (lgHidePreRecon) {
+        for (var ri = 0; ri < sorted.length; ri++) {
+            var rRow = sorted[ri];
+            if (rRow._rowType === 'ledger' && rRow.entryType === 'RECONCILIATION') {
+                if (!latestRecon || (rRow.date || '') > (latestRecon.date || '')) {
+                    latestRecon = rRow;
+                }
+            }
+        }
+        if (latestRecon) {
+            // Override OB to recon snapshot. Use the engine's _runningBalance
+            // (firm-POV) — display flip is applied by lgRenderOpeningBalance
+            // via lgD(). If drift exists between stored recon.amount and the
+            // computed _runningBalance, the yellow drift banner separately
+            // alerts the user; the displayed OB tracks the engine so that
+            // subsequent row balances line up.
+            openingBal = {
+                id: null,
+                date: latestRecon.date,
+                amount: (typeof latestRecon._runningBalance === 'number') ? latestRecon._runningBalance : (latestRecon.amount || 0),
+                storedAmount: 0,
+                storedDate: '',
+                isCarryForward: true,  // disables inline edit on the synthetic OB
+                exists: false,
+                isReconBased: true     // marker for lgRenderOpeningBalance to badge ✓
+            };
+        }
+    }
+
     var html = '';
     var totalAmount = 0;
     var lastBalance = openingBal.amount || 0; // Start with opening balance (carry-forward)
@@ -1052,6 +1117,13 @@ function lgRenderEntries(rows) {
         // Options (CE/PE) and NFO_PNL synthetic rows have _nfoCashImpact !==
         // false so they always render.
         if (!lgShowFutures && row._rowType === 'trade' && row._nfoCashImpact === false) {
+            return;
+        }
+        // Hide-pre-recon filter (LESSONS §E.15.15). Skip every row dated on or
+        // before the latest reconciliation (including the recon row itself —
+        // it becomes the synthesized OB row above). Engine/margin/interest are
+        // unaffected — they read the full ledger upstream of this filter.
+        if (latestRecon && row.date && row.date <= latestRecon.date) {
             return;
         }
         var date = lgFmtDate(row.date);
@@ -1271,7 +1343,16 @@ function lgRenderOpeningBalance(ob) {
     var balanceEl = document.getElementById('lgObBalance');
 
     if (dateEl) {
-        dateEl.textContent = ob.date ? lgFmtDate(ob.date) : '';
+        // Hide-pre-recon mode (LESSONS §E.15.15): when the OB is synthesized
+        // from the latest RECONCILIATION row, prefix the date with the same
+        // green ✓ marker that appears next to recon rows in show-all mode, so
+        // the user knows this OB is a reconciled anchor (not the FY-start OB).
+        var dateText = ob.date ? lgFmtDate(ob.date) : '';
+        if (ob.isReconBased) {
+            dateEl.innerHTML = '<span style="color:#059669; font-weight:700; margin-right:4px;" title="Reconciled balance — pre-recon rows hidden">✓</span>' + wmsEsc(dateText);
+        } else {
+            dateEl.textContent = dateText;
+        }
     }
     if (amountEl) {
         if (lgObEditing) return; // Don't overwrite while editing
@@ -1289,7 +1370,10 @@ function lgRenderOpeningBalance(ob) {
                 '<span class="lg-ob-amount" title="Double-click to edit">' + lgFmt(dispOb) + '</span>' :
                 '<span class="lg-ob-amount" style="color:#9ca3af;" title="Double-click to set opening balance">Set...</span>';
         } else {
-            amtHtml = '<span title="Carry-forward running balance as of ' + wmsEsc(ob.date) + ' (not editable)">' + lgFmt(dispOb) + '</span>';
+            var titleText = ob.isReconBased
+                ? 'Reconciled balance as of ' + wmsEsc(ob.date) + ' (pre-recon rows hidden — toggle "Hide pre-recon" to see them)'
+                : 'Carry-forward running balance as of ' + wmsEsc(ob.date) + ' (not editable)';
+            amtHtml = '<span title="' + titleText + '">' + lgFmt(dispOb) + '</span>';
         }
         amountEl.innerHTML = amtHtml;
         amountEl.className = 'text-right ' + lgAmtClass(dispOb);
