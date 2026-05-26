@@ -808,40 +808,14 @@ async function lgRefresh() {
     } else if (lgSelectedTraderIds.length > 0) {
         entityIds = lgSelectedTraderIds.slice();
     }
-    // Broker vs trader/investor statements load DIFFERENT slices of the
-    // ledger_entries table:
-    //   • Trader/investor view — fetches ALL entries for the resolved
-    //     investor(s): OPENING_BALANCE, INTEREST_BOOKED, CASH_RECEIVED,
-    //     CASH_PAID, RECONCILIATION. These track the investor's running
-    //     balance with the firm.
-    //   • Broker view — fetches only the BALANCE-ANCHOR rows
-    //     (OPENING_BALANCE + RECONCILIATION) scoped to the active broker.
-    //     Cash flows (INTEREST_BOOKED / CASH_*) are NOT relevant here —
-    //     those are investor-side bookkeeping. The anchors ARE relevant
-    //     because the trader-to-broker balance is a real outstanding
-    //     position the owner needs to track + reconcile. See LESSONS
-    //     §E.15.12 + §E.18.2 (broker OB support, added 2026-05-26).
+    // Broker statements never draw on investor ledger entries (those track
+    // investor cash with the firm, not broker P&L). Drive the fetch-skip off
+    // the explicit statement type, NOT off the pill combination — the user's
+    // toggle is now authoritative. See LESSONS §E.15.12.
     var brokerOnly = (lgStatementType === 'broker');
 
     if (brokerOnly) {
-        // Build query: anchor entries only, scoped to broker_id (+ investor
-        // if the view has one). Without the broker_id scope we'd pull every
-        // investor's OB and pollute the running-balance loop.
-        var brokerQs = [ 'entry_type.in.(OPENING_BALANCE,RECONCILIATION)' ];
-        if (lgSelectedBrokerIds.length > 0) {
-            brokerQs.push('broker_id.in.(' + lgSelectedBrokerIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')');
-        }
-        if (entityIds.length > 0) {
-            brokerQs.push('investor_id.in.(' + entityIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')');
-        }
-        try {
-            var brokerUrl = SUPABASE_URL + '/rest/v1/ledger_entries?select=*&' + brokerQs.join('&') + '&order=entry_date.asc';
-            var brokerResp = await fetch(brokerUrl, { headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}) });
-            lgLedgerEntries = brokerResp.ok ? await brokerResp.json() : [];
-        } catch (err) {
-            console.warn('Failed to fetch broker-view ledger entries:', err.message);
-            lgLedgerEntries = [];
-        }
+        lgLedgerEntries = [];
     } else {
         var allQuery = '';
         if (entityIds.length > 0) {
@@ -1360,15 +1334,9 @@ function lgFindOpeningBalance() {
     // then PATCHes the wrong investor's row (observed bug: editing on
     // stmt_T2 silently overwrote T3's opening balance).
     var effInvId = (typeof lgGetEffectiveInvestorId === 'function') ? lgGetEffectiveInvestorId() : null;
-    // Broker statements: ALSO scope by broker_id so we pick the right OB when
-    // an investor has multiple broker accounts (LESSONS §E.18.2). For trader
-    // / investor views, broker scope is left open (matches pre-fix behavior).
-    var effBrokerId = (lgStatementType === 'broker' && lgSelectedBrokerIds.length === 1)
-        ? lgSelectedBrokerIds[0] : null;
     var stored = lgLedgerEntries.find(function(e) {
         if (e.entry_type !== 'OPENING_BALANCE') return false;
         if (effInvId && e.investor_id !== effInvId) return false;
-        if (effBrokerId && e.broker_id !== effBrokerId) return false;
         return true;
     });
     return {
