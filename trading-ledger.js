@@ -3424,12 +3424,48 @@ function lgExportExcel(d) {
     var cNet = C(5);  // F = Net
 
     // ── Row tracking ──
-    // Row 1 = header, Row 2 = opening balance, Row 3.. = data
-    var headerRow = 1;
-    var obExcelRow = 2;
-    var firstDataRow = 3;
-    var lastDataRow = firstDataRow + d.txnRows.length - 1;
-    var totalExcelRow = lastDataRow + 1;
+    // Sections render conditionally based on `flags`, so the absolute Excel
+    // row of each block depends on which earlier blocks are present. Walk
+    // forward with a counter; each block reserves the rows it will occupy
+    // BEFORE the formulas are built, so cell references land correctly.
+    // Block sizes:
+    //   Transactions: 1 header + 1 OB + N data + 1 total + 1 blank + 4 summary + 1 blank
+    //   Open Positions: 1 header + M data + 1 total + 1 blank
+    //   Booked P&L: 1 header + K data + 1 total
+    var nextRow = 1;
+
+    var headerRow, obExcelRow, firstDataRow, lastDataRow, totalExcelRow, sumStartRow;
+    if (flags.txn && d.txnRows.length > 0) {
+        headerRow    = nextRow++;          // Excel row 1
+        obExcelRow   = nextRow++;          // Excel row 2
+        firstDataRow = nextRow;            // Excel row 3
+        nextRow     += d.txnRows.length;
+        lastDataRow  = nextRow - 1;        // Excel row 2 + N
+        totalExcelRow = nextRow++;         // TOTALS row
+        nextRow++;                         // blank
+        sumStartRow  = nextRow;            // first of the 4 summary lines
+        nextRow     += 4;                  // 4 summary lines (Balance/+Holdings/-Tax/=Net)
+        nextRow++;                         // blank
+    }
+
+    var holdHeaderRow, holdFirstData, holdLastData, holdTotalRow;
+    if (flags.openPos && d.holdingRows.length > 0) {
+        holdHeaderRow = nextRow++;
+        holdFirstData = nextRow;
+        nextRow      += d.holdingRows.length;
+        holdLastData  = nextRow - 1;
+        holdTotalRow  = nextRow++;
+        nextRow++;                         // blank
+    }
+
+    var bookedHeaderRow, bookedFirstData, bookedLastData, bookedTotalRow;
+    if (flags.booked && d.bookedRows.length > 0) {
+        bookedHeaderRow = nextRow++;
+        bookedFirstData = nextRow;
+        nextRow        += d.bookedRows.length;
+        bookedLastData  = nextRow - 1;
+        bookedTotalRow  = nextRow++;
+    }
 
     // ── Opening Balance row with formula for Balance ──
     var obRow = [d.openingBal.date, 'Opening Balance', '', null, null, null, null, d.openingBal.amount];
@@ -3441,9 +3477,13 @@ function lgExportExcel(d) {
         var r = firstDataRow + idx; // Excel row number
         var newRow = row.slice(); // shallow copy
 
-        // Amount (col G): if there's qty AND net, use formula =D*F, else keep value
+        // Amount (col G): if there's qty AND net, use formula =-D*F (negate so
+        // the trader-POV sign comes out right — BUY's +ve qty produces -ve
+        // amount [cash out], SELL's -ve qty produces +ve amount [cash in]).
+        // Interest rows are hardcoded -ve in row[6]; we don't overwrite those.
+        // LESSONS §E.15.13 sign convention + §E.18.1 export.
         if (row[3] !== null && row[5] !== null && row[3] !== 0) {
-            newRow[6] = { formula: cQty + r + '*' + cNet + r, result: row[6] || 0 };
+            newRow[6] = { formula: '-' + cQty + r + '*' + cNet + r, result: row[6] || 0 };
         }
 
         // Balance (col H): running sum = OB + SUM(Amount from first data row to this row)
@@ -3468,15 +3508,7 @@ function lgExportExcel(d) {
         result: d.lastBalance
     };
 
-    // ── Holdings section ──
-    // Starts after: totalRow + 1 blank + pageBreak + title + header
-    // Row tracking: totalExcelRow, +1 blank, +0 pageBreak, +1 title, +1 header, then data
-    var holdTitleRow = totalExcelRow + 2; // blank + title (pageBreak doesn't consume a row)
-    var holdHeaderRow = holdTitleRow + 1;
-    var holdFirstData = holdHeaderRow + 1;
-    var holdLastData = holdFirstData + d.holdingRows.length - 1;
-    var holdTotalRow = holdLastData + 1;
-
+    // ── Holdings formulas (using row offsets computed above) ──
     // Holdings cols: A=Symbol, B=Type, C=Qty, D=AvgCost, E=CMP, F=MTM, G=Value
     var hcQty  = C(2); // C
     var hcAvg  = C(3); // D
@@ -3484,8 +3516,8 @@ function lgExportExcel(d) {
     var hcMtm  = C(5); // F
     var hcVal  = C(6); // G
 
-    var holdRowsWithFormulas = d.holdingRows.map(function(row, idx) {
-        var r = holdFirstData + idx;
+    var holdRowsWithFormulas = (flags.openPos ? d.holdingRows : []).map(function(row, idx) {
+        var r = holdFirstData + idx;       // ABSOLUTE Excel row (offsets pre-computed)
         var newRow = row.slice();
         var isNfo = (row[1] === 'NFO');
 
@@ -3505,77 +3537,21 @@ function lgExportExcel(d) {
         return newRow;
     });
 
-    var holdTotalMtm = {
+    var holdTotalMtm = (flags.openPos && d.holdingRows.length > 0) ? {
         formula: 'SUM(' + hcMtm + holdFirstData + ':' + hcMtm + holdLastData + ')',
         result: d.totalMtm
-    };
-    var holdTotalVal = {
+    } : 0;
+    var holdTotalVal = (flags.openPos && d.holdingRows.length > 0) ? {
         formula: 'SUM(' + hcVal + holdFirstData + ':' + hcVal + holdLastData + ')',
         result: d.totalValue
-    };
+    } : 0;
 
-    // ── Summary section (after holdings total + 1 blank) ──
-    var sumStartRow = holdTotalRow + 2; // +1 blank + first summary row
-    // Summary rows: holdingsValue, outstanding, tax, netReceivable, balNoMtm
-    var sumHoldingsRow  = sumStartRow;
-    var sumOutstRow     = sumStartRow + 1;
-    var sumTaxRow       = sumStartRow + 2;
-    var sumNetRecRow    = sumStartRow + 3;
-    var sumBalNoMtmRow  = sumStartRow + 4;
-
-    // Holdings Value = same as holdings total value cell
-    var sumHoldingsVal = {
-        formula: hcVal + holdTotalRow,
-        result: d.holdingsValue
-    };
-    // Tax = MAX(0, bookedGain) * rate — we'll link to booked total later
-    // For now, Outstanding is hardcoded (it's cash balance + margin, computed values)
-    // Potential Tax: linked after we know booked P&L total row
-    // Net Receivable = Holdings + Outstanding - Tax (LESSONS §E.15.13)
-    // Outstanding is now displayed in counterparty-POV: -ve when counterparty
-    // owes the firm. Adding a -ve Outstanding to Holdings is equivalent to
-    // the old `Holdings - cashBalance` subtraction. The plus operator keeps
-    // the cell arithmetic readable against the on-screen card strip.
-    var sumNetRecFormula = {
-        formula: hcVal + sumHoldingsRow + '+' + hcVal + sumOutstRow + '-' + hcVal + sumTaxRow,
-        result: d.netReceivable
-    };
-    // Balance w/o MTM (conservative — LESSONS §E.15.13): if MTM > 0 subtract;
-    // otherwise leave Net Receivable untouched.
-    var sumBalNoMtmFormula = {
-        formula: 'IF(' + hcMtm + holdTotalRow + '>0,' + hcVal + sumNetRecRow + '-' + hcMtm + holdTotalRow + ',' + hcVal + sumNetRecRow + ')',
-        result: d.balNoMtm
-    };
-
-    // ── Booked P&L section ──
-    // After summary: +1 blank, then: columns switch, title, header, data, total
-    var bookedTitleRow = sumBalNoMtmRow + 2;
-    var bookedHeaderRow = bookedTitleRow + 1;
-    var bookedFirstData = bookedHeaderRow + 1;
-    var bookedLastData = bookedFirstData + d.bookedRows.length - 1;
-    var bookedTotalRow = bookedLastData + 1;
-
+    // ── Booked P&L total formula ──
     // Booked cols: A=Symbol, B=Type, C=Qty, D=Gain
     var bcGain = C(3); // D
-
-    var bookedTotalFormula = d.bookedRows.length > 0
+    var bookedTotalFormula = (flags.booked && d.bookedRows.length > 0)
         ? { formula: 'SUM(' + bcGain + bookedFirstData + ':' + bcGain + bookedLastData + ')', result: d.totalBookedGain }
         : d.totalBookedGain;
-
-    // Now we can build the tax formula referencing booked total
-    // Tax = MAX(0, bookedTotal) * rate
-    // But the booked total is in a different column layout (col D).
-    // After 'columns' switch, the engine resets column defs but NOT column letters.
-    // The booked total sits in column D of the booked section.
-    var sumTaxFormula = {
-        formula: 'MAX(0,' + bcGain + bookedTotalRow + ')*' + (taxRatePct / 100),
-        result: d.potentialTax
-    };
-
-    // pct of outstanding (uses cash balance, same denominator as Outstanding row)
-    var sumPctFormula = d.outstandingBal !== 0
-        ? { formula: hcVal + sumBalNoMtmRow + '/' + hcVal + sumOutstRow, result: d.outstandingBal !== 0 ? (d.balNoMtm / d.outstandingBal) : 0 }
-        : 0;
 
     // Build sections according to checked flags. "Running" layout —
     // sections flow top-to-bottom on a single sheet. The user explicitly
@@ -3588,16 +3564,38 @@ function lgExportExcel(d) {
         sections.push({ type: 'data', rows: txnRowsWithFormulas });
         sections.push({ type: 'total', values: [null, null, null, null, null, 'TOTALS:', totalAmtFormula, totalBalFormula] });
         sections.push({ type: 'blank' });
-        // Net-receivable summary at the bottom of the Transactions block.
-        // Balance (closing) + Value of Holdings − Potential Tax = Net.
-        // Static numeric values (not formulas) because the Holdings block may
-        // not be present in this export.
-        sections.push({ type: 'summary', rows: [
-            { label: 'Balance (closing)',                     value: d.txnSectionNet.balance },
-            { label: '+ Value of Holdings',                    value: d.txnSectionNet.holdingsValue },
-            { label: '− Potential Tax (' + taxRatePct + '%)', value: d.txnSectionNet.potentialTax },
-            { label: (d.txnSectionNet.net < 0 ? '= Net Payable' : '= Net Receivable'), value: d.txnSectionNet.net, bold: true }
-        ]});
+
+        // Right-side summary block: F33 = label, H33 = value. Forms a visual
+        // block aligned with the Amount/Balance columns above (LESSONS §E.18.1
+        // / owner spec 2026-05-26 — "Move the text to F33 instead of A33").
+        // Tax is rendered as a NEGATIVE value (it's a reduction); the Net
+        // formula sums all three lines so Net = Balance + Holdings + (-Tax).
+        // - Receivable / Payable label is dynamic on the closing Balance sign.
+        // - Net row is bold + light-grey fill matching the user's T28 highlight.
+        var balLabel    = (d.txnSectionNet.balance < 0) ? 'Payable' : 'Receivable';
+        var netLabel    = (d.txnSectionNet.net < 0) ? '= Net Payable' : '= Net Receivable';
+        var taxVal      = -Math.abs(d.txnSectionNet.potentialTax);
+        var balRow      = sumStartRow;
+        var holdSumRow  = sumStartRow + 1;
+        var taxSumRow   = sumStartRow + 2;
+        var netSumRow   = sumStartRow + 3;
+        // Net is computed in-sheet so editing any of Balance / Holdings / Tax
+        // updates Net live. Formula = sum of the 3 rows in col H.
+        var netFormula  = {
+            formula: cBal + balRow + '+' + cBal + holdSumRow + '+' + cBal + taxSumRow,
+            result: d.txnSectionNet.net
+        };
+        // 4 data rows — empty A:E, label in F, value in H (G blank as gap).
+        var summaryRows = [
+            [null, null, null, null, null, balLabel,                               null, d.txnSectionNet.balance],
+            [null, null, null, null, null, '+ Value of Holdings',                  null, d.txnSectionNet.holdingsValue],
+            [null, null, null, null, null, '− Potential Tax (' + taxRatePct + '%)', null, taxVal],
+            [null, null, null, null, null, netLabel,                                null, netFormula]
+        ];
+        // Highlight only the Net row.
+        summaryRows[3]._bold = true;
+        summaryRows[3]._fill = 'C0C0C0';  // light grey matching T28 in the user's annotated workbook
+        sections.push({ type: 'data', rows: summaryRows });
         sections.push({ type: 'blank' });
     }
 

@@ -28,6 +28,8 @@
 
 var WMS_EXPORT_PRESETS = {
     date: {
+        // Skill default — short date 'dd-mmm-yy'. Use 'date_long' for the long
+        // 'ddd, dd-mmm-yy' format on primary-axis columns.
         excelFmt: 'dd-mmm-yy',
         align: 'right',
         width: 12,
@@ -40,59 +42,90 @@ var WMS_EXPORT_PRESETS = {
             return dd + '-' + months[d.getMonth()] + '-' + String(d.getFullYear()).slice(-2);
         }
     },
+    date_long: {
+        excelFmt: 'ddd, dd-mmm-yy',
+        align: 'right',
+        width: 14,
+        jsFmt: function(v) {
+            if (!v) return '';
+            var d = (v instanceof Date) ? v : new Date(v);
+            if (isNaN(d.getTime())) return String(v);
+            var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+            var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            var dd = String(d.getDate()).padStart(2, '0');
+            return days[d.getDay()] + ', ' + dd + '-' + months[d.getMonth()] + '-' + String(d.getFullYear()).slice(-2);
+        }
+    },
     text: {
         excelFmt: '@',
         align: 'left',
         width: 15,
         jsFmt: function(v) { return (v === null || v === undefined) ? '' : String(v); }
     },
+    // The Excel number-format STRING below is universal — the comma grouping
+    // (Indian lakh/crore vs Western thousands) is controlled by Excel's
+    // system / regional locale, NOT by this format string. Same .xlsx file
+    // displays Indian grouping on a machine set to India and Western on a
+    // machine set to US. The `;-_)` zero clause shows zero as a hyphen
+    // followed by space-the-width-of-`)`, so zero rows align vertically
+    // with the closing `)` of negatives above and below.
     qty: {
-        excelFmt: '#,##0;(#,##0);"-"',
+        excelFmt: '#,##0;[Red](#,##0);-_)',
         align: 'right',
         width: 9,
         jsFmt: function(v) {
-            if (v === 0 || v === null || v === undefined || isNaN(v)) return '-';
-            var abs = Math.abs(Math.round(v));
-            var s = abs.toLocaleString('en-US');
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
+            var s = Math.abs(Math.round(v)).toLocaleString();
             return v < 0 ? '(' + s + ')' : s;
         }
     },
     price: {
-        excelFmt: '#,##0.00;(#,##0.00);"-"',
+        excelFmt: '#,##0.00;[Red](#,##0.00);-_)',
         align: 'right',
         width: 10,
         jsFmt: function(v) {
-            if (v === 0 || v === null || v === undefined || isNaN(v)) return '-';
-            var abs = Math.abs(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-            return v < 0 ? '(' + abs + ')' : abs;
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
+            var s = Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return v < 0 ? '(' + s + ')' : s;
         }
     },
     amount: {
-        excelFmt: '#,##0;(#,##0);"-"',
+        // Skill canonical 2-dp format. 0-dp variant available as `amount0`.
+        excelFmt: '#,##0.00;[Red](#,##0.00);-_)',
         align: 'right',
         width: 12,
         jsFmt: function(v) {
-            if (v === 0 || v === null || v === undefined || isNaN(v)) return '-';
-            var abs = Math.abs(Math.round(v)).toLocaleString('en-US');
-            return v < 0 ? '(' + abs + ')' : abs;
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
+            var s = Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return v < 0 ? '(' + s + ')' : s;
+        }
+    },
+    amount0: {
+        excelFmt: '#,##0;[Red](#,##0);-_)',
+        align: 'right',
+        width: 12,
+        jsFmt: function(v) {
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
+            var s = Math.abs(Math.round(v)).toLocaleString();
+            return v < 0 ? '(' + s + ')' : s;
         }
     },
     amount2: {
-        excelFmt: '#,##0.00;(#,##0.00);"-"',
+        excelFmt: '#,##0.00;[Red](#,##0.00);-_)',
         align: 'right',
         width: 12,
         jsFmt: function(v) {
-            if (v === 0 || v === null || v === undefined || isNaN(v)) return '-';
-            var abs = Math.abs(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-            return v < 0 ? '(' + abs + ')' : abs;
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
+            var s = Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return v < 0 ? '(' + s + ')' : s;
         }
     },
     pct: {
-        excelFmt: '0.00%;(0.00%);"-"',
+        excelFmt: '0.00%;[Red](0.00%);-_)',
         align: 'right',
         width: 8,
         jsFmt: function(v) {
-            if (v === 0 || v === null || v === undefined || isNaN(v)) return '-';
+            if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
             var abs = (Math.abs(v) * 100).toFixed(2) + '%';
             return v < 0 ? '(' + abs + ')' : abs;
         }
@@ -109,8 +142,12 @@ var WMS_EXPORT_PRESETS = {
 // 2. STYLING CONSTANTS
 // ============================================================================
 
-var WMS_EXPORT_FONT = 'Arial Narrow';
-var WMS_EXPORT_FONT_SIZE = 10;
+// Skill: office-formatting (universal across projects, ratified 2026-05-26).
+// Aptos 9.5 pt is the standard typeface for all exports. Negatives render in
+// red parentheses with the Indian-comma format; zero renders as a single
+// hyphen + space. Dates default to dd-mmm-yy short and ddd, dd-mmm-yy long.
+var WMS_EXPORT_FONT = 'Aptos';
+var WMS_EXPORT_FONT_SIZE = 9.5;
 var WMS_EXPORT_HEADER_FILL = 'F7FAFC';
 var WMS_EXPORT_TOTAL_FILL  = 'F0F4F8';
 var WMS_EXPORT_SECTION_FILL = 'EEF2FF';
@@ -296,6 +333,11 @@ function wmsExportExcel(config) {
         // Set initial column widths
         _wmsExApplyColWidths(ws, activeCols);
 
+        // Skill default row height (15 pt) and hide gridlines for the cleaner
+        // border-driven look (office-formatting skill §5 + §9).
+        ws.properties.defaultRowHeight = 15;
+        ws.views = [{ showGridLines: false }];
+
         var curRow = 1;
 
         for (var secIdx = 0; secIdx < sheetCfg.sections.length; secIdx++) {
@@ -310,7 +352,7 @@ function wmsExportExcel(config) {
                         hCell.value = activeCols[ci].header;
                         _wmsExStyleCell(hCell, activeCols[ci], true, false, false);
                     }
-                    headerRow.height = 18;
+                    headerRow.height = 15;  // skill default
                     curRow++;
                     break;
 
