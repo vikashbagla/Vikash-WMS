@@ -3906,9 +3906,15 @@ async function fyProcessTrades(tradeBook) {
     // Set trade date to today
     fyTradeDate = new Date().toISOString().split('T')[0];
 
-    // Filter: segment 10 (CM/Equity) and segment 11 (F&O) — skip commodity (segment 20)
+    // Fyers segments: 10 = Capital Market (Equity), 11 = Equity F&O,
+    // 12 = Currency Derivatives, 20 = Commodity (MCX).
+    // WMS supports EQUITY + NFO + MCX as first-class security types
+    // (master-data.js has commodity charges; reports.js + trading-transactions.js
+    // route MCX through the derivatives path alongside NFO). Currency
+    // derivatives (segment 12) are NOT yet supported downstream — keep
+    // those filtered out until securities + reporting are wired up.
     var validTrades = tradeBook.filter(function(t) {
-        return t.segment === 10 || t.segment === 11;
+        return t.segment === 10 || t.segment === 11 || t.segment === 20;
     });
     var skipped = tradeBook.length - validTrades.length;
     if (skipped > 0) console.log('Fyers: Skipped ' + skipped + ' trade(s) with unsupported segment');
