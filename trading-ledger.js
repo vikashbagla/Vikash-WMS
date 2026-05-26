@@ -2281,10 +2281,22 @@ function lgReconReviewOpen() {
         : null;
     var matchByView = reconView && reconView.filters && typeof wmsMatchesViewFilter === 'function';
 
-    var dirty = (trTransactions || []).filter(function(t) {
+    // Both INSERT and EDIT of a pre-recon trade invalidate the recon snapshot.
+    // - INSERT: row.created_at > recon.created_at (back-dated trade added after
+    //   the recon was made). updated_at is also typically set on insert and
+    //   equals created_at, but we don't require it because some Supabase setups
+    //   only fire the updated_at trigger on UPDATE.
+    // - EDIT: row.updated_at > recon.created_at && created_at <= recon.created_at.
+    // LESSONS §E.17.6a — initial load MUST include created_at + updated_at in
+    // the SELECT, otherwise both are null in memory and this filter never matches.
+    if (!reconCreatedAt) {
+        // Cannot run timestamp comparisons without recon.created_at — bail.
+    }
+    var dirty = (!reconCreatedAt ? [] : (trTransactions || [])).filter(function(t) {
         if (!t.transaction_date || t.transaction_date > reconEntryDate) return false;
-        if (!t.updated_at || !reconCreatedAt) return false;
-        if (t.updated_at <= reconCreatedAt) return false;
+        // Treat null timestamps as "before recon" (we can't know otherwise).
+        var lastMod = t.updated_at || t.created_at || '';
+        if (!lastMod || lastMod <= reconCreatedAt) return false;
 
         if (matchByView) {
             return wmsMatchesViewFilter(t, reconView.filters);
@@ -2298,23 +2310,44 @@ function lgReconReviewOpen() {
         }
         if (reconSrc.investor_id === effTrader) return true;
         return false;
+    }).map(function(t) {
+        // Classify as insert vs edit so the modal can label rows distinctly.
+        // An insert leaves created_at strictly greater than recon.created_at.
+        // (Edits typically keep created_at unchanged from when the row was
+        // first inserted, and only updated_at advances.)
+        var isInsert = !!(t.created_at && t.created_at > reconCreatedAt);
+        return { txn: t, action: isInsert ? 'inserted' : 'edited' };
     }).sort(function(a, b) {
-        return (a.transaction_date || '').localeCompare(b.transaction_date || '');
+        return (a.txn.transaction_date || '').localeCompare(b.txn.transaction_date || '');
     });
 
+    // Split detection by action so the narrative can be specific.
+    var inserts = dirty.filter(function(d) { return d.action === 'inserted'; });
+    var edits   = dirty.filter(function(d) { return d.action === 'edited'; });
+
     // Headline summary — reconciled amount, computed amount, diff, and the
-    // most likely cause classification (edit vs delete).
+    // most likely cause classification.
     var summary = document.getElementById('lgReconReviewSummary');
     if (summary) {
         var causeMsg;
         if (dirty.length > 0) {
-            causeMsg = '<b>' + dirty.length + ' pre-reconciliation trade' +
-                (dirty.length === 1 ? ' has' : 's have') +
-                ' been modified since this reconciliation</b> (listed below). ' +
-                'If the balance mismatch exactly equals the impact of those edits, ' +
-                'that explains the drift.';
+            var parts = [];
+            if (inserts.length > 0) {
+                parts.push('<b>' + inserts.length + '</b> back-dated trade' +
+                    (inserts.length === 1 ? '' : 's') + ' inserted');
+            }
+            if (edits.length > 0) {
+                parts.push('<b>' + edits.length + '</b> trade' +
+                    (edits.length === 1 ? '' : 's') + ' edited');
+            }
+            causeMsg = parts.join(' and ') + ' since this reconciliation (listed below). ' +
+                'If the balance mismatch equals the impact of these changes, that explains the drift. ' +
+                'Any residual could still be a delete.';
         } else {
-            causeMsg = '<b>No pre-reconciliation edits detected.</b> The drift is most likely due to a <b>deleted</b> pre-reconciliation trade — deletes leave no `updated_at` trace to itemise. Cancel this reconciliation (button below) to clear the banner, then re-reconcile against the current balance.';
+            causeMsg = '<b>No pre-reconciliation inserts or edits detected.</b> ' +
+                'The drift is most likely due to a <b>deleted</b> pre-reconciliation trade. ' +
+                'Deletes leave no audit trail in the current schema, so they cannot be itemised here. ' +
+                'Cancel this reconciliation (button below) and re-reconcile against the current balance.';
         }
         summary.innerHTML =
             '<div style="margin-bottom:6px;">Reconciliation on <b>' + wmsEsc(prettyDate) + '</b> &middot; ' +
@@ -2329,26 +2362,33 @@ function lgReconReviewOpen() {
 
     if (dirty.length === 0) {
         body.innerHTML =
-            '<div class="lg-rr-hint">Most likely a <b>delete</b>. No edits to list here — click <b>Cancel Reconciliation</b> below to remove the stale snapshot, then re-reconcile on the latest balance.</div>';
+            '<div class="lg-rr-hint">Most likely a <b>delete</b>. No inserts or edits to list here — click <b>Cancel Reconciliation</b> below to remove the stale snapshot, then re-reconcile on the latest balance.</div>';
     } else {
-        var rowsHtml = dirty.map(function(t) {
+        var rowsHtml = dirty.map(function(d) {
+            var t = d.txn;
             var sym = t.short_symbol || t.symbol || '-';
             var type = t.transaction_type || '-';
             var qty = Math.abs(t.quantity || 0);
             var net = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt(t.display_net_amount || t.net_amount || 0) : String(t.net_amount || 0);
             var dt = lgFmtDate(t.transaction_date) || t.transaction_date || '-';
-            var updDt = t.updated_at ? String(t.updated_at).slice(0, 19).replace('T', ' ') : '-';
+            var changeTs = t.updated_at || t.created_at || '';
+            var changeDt = changeTs ? String(changeTs).slice(0, 19).replace('T', ' ') : '-';
+            // Distinguish inserts (green ➕) from edits (orange ✏️).
+            var actionLabel = d.action === 'inserted'
+                ? '<span style="color:#047857; font-weight:600;">➕ Inserted</span>'
+                : '<span style="color:#b45309; font-weight:600;">✏️ Edited</span>';
             return '<tr data-txn-id="' + wmsEsc(t.id) + '">' +
                 '<td>' + wmsEsc(dt) + '</td>' +
                 '<td>' + wmsEsc(sym) + '</td>' +
                 '<td>' + wmsEsc(type) + '</td>' +
                 '<td class="text-right">' + wmsEsc(String(qty)) + '</td>' +
                 '<td class="text-right">' + wmsEsc(net) + '</td>' +
-                '<td>' + wmsEsc(updDt) + '</td>' +
+                '<td>' + actionLabel + '</td>' +
+                '<td>' + wmsEsc(changeDt) + '</td>' +
                 '</tr>';
         }).join('');
         body.innerHTML =
-            '<div class="lg-rr-hint">Click any row to open its Edit modal and review the current values. If the balance mismatch is not fully explained by these edits, a <b>delete</b> is the remaining suspect — cancel this reconciliation and re-do it.</div>' +
+            '<div class="lg-rr-hint">Click any row to open its Edit modal and review. If the mismatch is not fully explained by these inserts / edits, a <b>delete</b> is the remaining suspect — cancel this reconciliation and re-do it.</div>' +
             '<table>' +
               '<thead><tr>' +
                 '<th>Txn Date</th>' +
@@ -2356,7 +2396,8 @@ function lgReconReviewOpen() {
                 '<th>Type</th>' +
                 '<th class="text-right">Qty</th>' +
                 '<th class="text-right">Net (current)</th>' +
-                '<th>Modified At</th>' +
+                '<th>Action</th>' +
+                '<th>Changed At</th>' +
               '</tr></thead>' +
               '<tbody>' + rowsHtml + '</tbody>' +
             '</table>';
