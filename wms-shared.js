@@ -5741,16 +5741,20 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
                     var realisedPnl = wmsRoundMoney(totalSellProceeds - totalBuyCost);
                     if (realisedPnl === 0) continue; // no P&L to post
 
-                    // Sign for running balance:
-                    //   Investor/trader: profit (positive realisedPnl) → credit (negative amount)
-                    //                    loss (negative realisedPnl) → debit (positive amount)
-                    //   Broker: flipped — profit → debit, loss → credit
-                    var pnlAmount;
-                    if (perspective === 'broker') {
-                        pnlAmount = realisedPnl;   // profit = +ve = debit (firm owes broker)
-                    } else {
-                        pnlAmount = -realisedPnl;   // profit = +ve → -ve = credit (investor owes less)
-                    }
+                    // Sign for running balance (LESSONS §E.15.13):
+                    //   • Profit (realisedPnl > 0): the trader is OWED MORE → in
+                    //     firm-POV the balance MOVES DOWN (firm owed less by
+                    //     counterparty) → amount = -realisedPnl.
+                    //   • Loss  (realisedPnl < 0): the trader OWES MORE → balance
+                    //     MOVES UP → amount = -realisedPnl (still flips sign).
+                    //   Same direction for BOTH investor/trader AND broker views:
+                    //   the display-layer lgD() flip handles perspective uniformly
+                    //   (same way TRADE rows do — see line ~5616 above where
+                    //   broker only swaps the amount SOURCE, not the sign).
+                    //   Pre-fix the broker branch flipped sign too, producing
+                    //   profit-increases-counterparty-debt which the user
+                    //   correctly flagged as wrong on stmt_TG (2026-05-26).
+                    var pnlAmount = -realisedPnl;
 
                     nfoPnlRows.push({
                         _rowType: 'nfo_pnl',
