@@ -827,12 +827,14 @@ async function lgRefresh() {
         // Build query: anchor entries only, scoped to broker_id (+ investor
         // if the view has one). Without the broker_id scope we'd pull every
         // investor's OB and pollute the running-balance loop.
-        var brokerQs = [ 'entry_type.in.(OPENING_BALANCE,RECONCILIATION)' ];
+        // PostgREST filter syntax is `field=op.value` — NOT `field.op.value`.
+        // The dot-only form is silently ignored (returns the unfiltered set).
+        var brokerQs = [ 'entry_type=in.(OPENING_BALANCE,RECONCILIATION)' ];
         if (lgSelectedBrokerIds.length > 0) {
-            brokerQs.push('broker_id.in.(' + lgSelectedBrokerIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')');
+            brokerQs.push('broker_id=in.(' + lgSelectedBrokerIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')');
         }
         if (entityIds.length > 0) {
-            brokerQs.push('investor_id.in.(' + entityIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')');
+            brokerQs.push('investor_id=in.(' + entityIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')');
         }
         try {
             var brokerUrl = SUPABASE_URL + '/rest/v1/ledger_entries?select=*&' + brokerQs.join('&') + '&order=entry_date.asc';
