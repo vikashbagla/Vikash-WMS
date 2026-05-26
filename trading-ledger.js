@@ -3366,9 +3366,10 @@ function _lgExportSymbol(row) {
 // ── Column definitions (shared between Excel & PDF) ───────────────
 
 var LG_EXPORT_TXN_COLS = [
-    // Date column: short skill format dd-mmm-yy (long format was eating too
-    // much width in PDF). Width trimmed to 10ch to leave room for amounts.
-    { header: 'Date',    type: 'date',   format: 'dd-mmm-yy', width: 10 },
+    // Date column: skill long format 'ddd, dd-mmm-yy' so the day-of-week
+    // is visible. Uses the `date_long` preset (Excel format string + jsFmt
+    // both produce 'Wed, 01-Apr-26'). Width 13ch fits 'Wed, 01-Apr-26'.
+    { header: 'Date',    type: 'date_long', width: 13 },
     { header: 'Symbol',  type: 'text',   width: 20 },
     { header: 'Type',    type: 'type',   width: 10 },
     { header: 'Qty',     type: 'qty',    width: 9 },
