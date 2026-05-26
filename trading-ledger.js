@@ -3432,11 +3432,15 @@ function lgExportExcel(d) {
     // row of each block depends on which earlier blocks are present. Walk
     // forward with a counter; each block reserves the rows it will occupy
     // BEFORE the formulas are built, so cell references land correctly.
-    // Block sizes:
-    //   Transactions: 1 header + 1 OB + N data + 1 total + 1 blank + 4 summary + 1 blank
-    //   Open Positions: 1 header + M data + 1 total + 1 blank
-    //   Booked P&L: 1 header + K data + 1 total
+    // Layout (with snapshot_header + section titles):
+    //   Row 1: snapshot header (bold left + grey right)
+    //   Row 2: blank
+    //   Transactions: 1 title + 1 header + 1 OB + N data + 1 total + 1 blank + 4 summary + 1 blank
+    //   Open Positions: 1 title + 1 header + M data + 1 total + 1 blank
+    //   Booked P&L: 1 title + 1 header + K data + 1 total
     var nextRow = 1;
+    nextRow++;   // snapshot header
+    nextRow++;   // blank under snapshot header
 
     var headerRow, obExcelRow, firstDataRow, lastDataRow, totalExcelRow, sumStartRow;
     if (flags.txn && d.txnRows.length > 0) {
@@ -3560,10 +3564,18 @@ function lgExportExcel(d) {
         ? { formula: 'SUM(' + bcGain + bookedFirstData + ':' + bcGain + bookedLastData + ')', result: d.totalBookedGain }
         : d.totalBookedGain;
 
-    // Build sections according to checked flags. "Running" layout —
-    // sections flow top-to-bottom on a single sheet. The user explicitly
-    // said NO firm branding / header — drop titles too.
+    // Build sections according to checked flags. Single sheet, sections flow
+    // top-to-bottom. The snapshot_header banner appears once at the very top
+    // (mirrors the F&O snapshot pattern + the on-screen unit reminder).
     var sections = [];
+
+    // F&O-snapshot-style banner (left = view + range, right = unit + date)
+    var snapLeftText  = d.viewName + (d.dateLabel ? ' — ' + d.dateLabel : '');
+    var snapUnitLabel = (typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000";
+    var snapTodayStr  = lgFmtDate(new Date().toISOString().slice(0, 10)) || new Date().toISOString().slice(0, 10);
+    var snapRightText = 'all amounts in ' + snapUnitLabel + '  |  ' + snapTodayStr;
+    sections.push({ type: 'snapshot_header', leftText: snapLeftText, rightText: snapRightText });
+    sections.push({ type: 'blank' });
 
     if (flags.txn && d.txnRows.length > 0) {
         sections.push({ type: 'title', text: 'TRANSACTIONS' });
@@ -3672,6 +3684,14 @@ function lgExportPdf(d) {
     }
     var taxRatePct = lgGetEffectiveTaxRate();
 
+    // F&O-snapshot-style banner — bold view name on left, small grey unit
+    // + date footnote on right. Repeated on every page.
+    var snapLeft  = d.viewName + (d.dateLabel ? ' — ' + d.dateLabel : '');
+    var unitLabel = (typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000";
+    var todayStr  = lgFmtDate(new Date().toISOString().slice(0, 10)) || new Date().toISOString().slice(0, 10);
+    var snapRight = 'all amounts in ' + unitLabel + '  |  ' + todayStr;
+    var snapshotHeader = { type: 'snapshot_header', leftText: snapLeft, rightText: snapRight };
+
     // Opening balance row for the Transactions table
     var obRow = [d.openingBal.date, 'Opening Balance', '', null, null, null, null, d.openingBal.amount];
 
@@ -3689,6 +3709,7 @@ function lgExportPdf(d) {
         pages.push({
             columns: LG_EXPORT_TXN_COLS,
             sections: [
+                snapshotHeader,
                 { type: 'title', text: 'TRANSACTIONS' },
                 { type: 'header' },
                 { type: 'data', rows: [obRow] },
@@ -3706,10 +3727,11 @@ function lgExportPdf(d) {
     }
 
     if (flags.openPos && d.holdingRows.length > 0) {
-        // Open Positions block — own page with section title.
+        // Open Positions block — own page with snapshot banner + section title.
         pages.push({
             columns: LG_EXPORT_HOLD_COLS,
             sections: [
+                snapshotHeader,
                 { type: 'title', text: 'OPEN POSITIONS' },
                 { type: 'header' },
                 { type: 'data', rows: d.holdingRows },
@@ -3719,10 +3741,11 @@ function lgExportPdf(d) {
     }
 
     if (flags.booked && d.bookedRows.length > 0) {
-        // Booked P&L block — own page with section title.
+        // Booked P&L block — own page with snapshot banner + section title.
         pages.push({
             columns: LG_EXPORT_BOOKED_COLS,
             sections: [
+                snapshotHeader,
                 { type: 'title', text: 'BOOKED P&L' },
                 { type: 'header' },
                 { type: 'data', rows: d.bookedRows },
@@ -3762,11 +3785,14 @@ function lgExportImage(d, mode) {
     var ROW_H = 20;
     var HEADER_H = 24;
     var TITLE_H = 26;
+    var SNAP_H = 32;
     var SECTION_GAP = 10;
     var BLOCK_GAP = 22;
     var FONT = '12px Aptos, Helvetica, Arial, sans-serif';
     var FONT_BOLD = 'bold 12px Aptos, Helvetica, Arial, sans-serif';
     var FONT_SECTION = 'bold 14px Aptos, Helvetica, Arial, sans-serif';
+    var FONT_SNAP_LEFT  = 'bold 15px Aptos, Helvetica, Arial, sans-serif';
+    var FONT_SNAP_RIGHT = '11px Aptos, Helvetica, Arial, sans-serif';
     var TEXT_DARK = '#1a202c';
     var TEXT_MUTED = '#4a5568';
     var ROW_ALT = '#f7fafc';
@@ -3784,6 +3810,9 @@ function lgExportImage(d, mode) {
 
     var totalH = PAD;
     var pendingBlocks = [];
+
+    // Reserve room for the snapshot-header banner at the top of the image.
+    totalH += SNAP_H + 8;
 
     if (flags.txn && d.txnRows.length > 0) {
         // +1 for the OB row, +4 for the Net-summary lines (Balance / +Holdings / -Tax / =Net)
@@ -3819,7 +3848,14 @@ function lgExportImage(d, mode) {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, W, totalH);
 
-    var fmtAmt = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt : function(v) { return String(v); };
+    // fmtAmt — match WMS on-screen unit ('000 by default). formatAmountRaw
+    // already applies the user's unit preference + Indian / international
+    // comma grouping. fmtPrice keeps full rupees (per-unit prices don't get
+    // divided). fmtQty is integer-comma.
+    var fmtAmt = (typeof formatAmountRaw === 'function')
+        ? formatAmountRaw
+        : ((typeof wmsFmtAmt === 'function') ? wmsFmtAmt : function(v) { return String(v); });
+    var fmtPrice = (typeof wmsFmtAmt === 'function') ? wmsFmtAmt : function(v) { return v == null ? '' : Number(v).toFixed(2); };
     var fmtQty = (typeof formatQuantity === 'function') ? formatQuantity : function(v) { return v == null ? '' : String(v); };
     var fmtDate = (typeof lgFmtDate === 'function') ? lgFmtDate : function(v) { return v; };
 
@@ -3883,7 +3919,37 @@ function lgExportImage(d, mode) {
         ctx.stroke();
     }
 
+    // Snapshot-style banner — bold left title + small grey right footnote.
+    // One-row band at the very top of the image (mirrors F&O snapshot style).
+    function drawSnapshotHeader(y, leftText, rightText) {
+        ctx.font = FONT_SNAP_LEFT;
+        ctx.fillStyle = TEXT_DARK;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(leftText || '', PAD, y + SNAP_H / 2);
+
+        ctx.font = FONT_SNAP_RIGHT;
+        ctx.fillStyle = TEXT_MUTED;
+        ctx.textAlign = 'right';
+        ctx.fillText(rightText || '', W - PAD, y + SNAP_H / 2);
+
+        // Thin underline below
+        ctx.strokeStyle = '#cbd5e0';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(PAD, y + SNAP_H);
+        ctx.lineTo(W - PAD, y + SNAP_H);
+        ctx.stroke();
+    }
+
     var y = PAD;
+
+    // ── Snapshot header (banner at top, one-row F&O-snapshot style) ──
+    var imgSnapLeft  = d.viewName + (d.dateLabel ? ' — ' + d.dateLabel : '');
+    var imgUnitLabel = (typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000";
+    var imgTodayStr  = lgFmtDate(new Date().toISOString().slice(0, 10)) || new Date().toISOString().slice(0, 10);
+    drawSnapshotHeader(y, imgSnapLeft, 'all amounts in ' + imgUnitLabel + '  |  ' + imgTodayStr);
+    y += SNAP_H + 8;
 
     // ── Transactions block ──
     if (flags.txn && d.txnRows.length > 0) {
@@ -3908,14 +3974,16 @@ function lgExportImage(d, mode) {
         y += ROW_H;
 
         // Data rows — each item in d.txnRows is [date, sym, type, qty, price, net, amt, bal]
+        // Price + Net are PER-UNIT prices (always full rupees, never unit-divided).
+        // Amount + Balance follow the on-screen unit (divided when in '000).
         d.txnRows.forEach(function(r, i) {
             var cells = [
                 fmtDate(r[0]) || r[0],
                 r[1] || '',
                 r[2] || '',
                 r[3] == null ? '' : fmtQty(r[3]),
-                r[4] == null ? '' : fmtAmt(r[4]),
-                r[5] == null ? '' : fmtAmt(r[5]),
+                r[4] == null ? '' : fmtPrice(r[4]),
+                r[5] == null ? '' : fmtPrice(r[5]),
                 r[6] == null ? '' : fmtAmt(r[6]),
                 r[7] == null ? '' : fmtAmt(r[7])
             ];
@@ -3964,12 +4032,14 @@ function lgExportImage(d, mode) {
         y += HEADER_H;
 
         d.holdingRows.forEach(function(r, i) {
+            // Avg Cost + CMP are per-unit prices (full rupees). MTM + Value
+            // follow the on-screen unit.
             var cells = [
                 r[0] || '',
                 r[1] || '',
                 r[2] == null ? '' : fmtQty(r[2]),
-                r[3] == null ? '' : fmtAmt(r[3]),
-                r[4] == null ? '' : fmtAmt(r[4]),
+                r[3] == null ? '' : fmtPrice(r[3]),
+                r[4] == null ? '' : fmtPrice(r[4]),
                 r[5] == null ? '' : fmtAmt(r[5]),
                 r[6] == null ? '' : fmtAmt(r[6])
             ];

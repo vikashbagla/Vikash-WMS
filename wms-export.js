@@ -90,14 +90,19 @@ var WMS_EXPORT_PRESETS = {
         }
     },
     amount: {
-        // Skill canonical for AMOUNT columns — 0 decimal places. The 2-dp
-        // variant is available as `amount2` for prices / rates / ratios.
-        excelFmt: '#,##0;[Red](#,##0);-_)',
+        // Skill canonical for AMOUNT columns — match the WMS on-screen unit.
+        // Default = thousands ('000): the trailing `,` in the Excel format
+        // string tells Excel to divide the cell value by 1000 on display
+        // (each comma = ÷1000); the CELL VALUE stays in full rupees so
+        // formulas continue to work. jsFmt also divides by 1000 for PDF +
+        // Image which can't rely on Excel's format engine.
+        excelFmt: '#,##0.00,;[Red](#,##0.00,);-_)',
         align: 'right',
         width: 12,
         jsFmt: function(v) {
             if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
-            var s = Math.abs(Math.round(v)).toLocaleString();
+            var scaled = Math.abs(v) / 1000;
+            var s = scaled.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             return v < 0 ? '(' + s + ')' : s;
         }
     },
@@ -365,6 +370,29 @@ function wmsExportExcel(config) {
                     curRow++;
                     break;
 
+                case 'snapshot_header':
+                    // One-row banner at the top of an export, mirroring the
+                    // F&O snapshot style: bold left title + small grey right
+                    // 'all amounts in ₹ \'000 | dd-Mmm-yy'. The left text
+                    // anchors to col A; the right text anchors to the last
+                    // column of activeCols (so it aligns with the value
+                    // columns of the table below).
+                    var snapRow = ws.getRow(curRow);
+                    var leftCell  = snapRow.getCell(1);
+                    leftCell.value = sec.leftText || '';
+                    leftCell.font = { name: WMS_EXPORT_FONT, size: WMS_EXPORT_FONT_SIZE + 1.5, bold: true, color: { argb: WMS_EXPORT_BLACK } };
+                    leftCell.alignment = { horizontal: 'left', vertical: 'middle' };
+
+                    var rightCol = activeCols.length;
+                    var rightCell = snapRow.getCell(rightCol);
+                    rightCell.value = sec.rightText || '';
+                    rightCell.font = { name: WMS_EXPORT_FONT, size: WMS_EXPORT_FONT_SIZE - 0.5, bold: false, color: { argb: WMS_EXPORT_GREY } };
+                    rightCell.alignment = { horizontal: 'right', vertical: 'middle' };
+
+                    snapRow.height = 20;
+                    curRow++;
+                    break;
+
                 case 'data':
                     var dataRows = sec.rows || [];
                     for (var ri = 0; ri < dataRows.length; ri++) {
@@ -628,6 +656,7 @@ function wmsExportPdf(config) {
                 case 'data':   totalH += (s.rows || []).length * WMS_PDF_ROW_HEIGHT * dpr; break;
                 case 'total':  totalH += WMS_PDF_ROW_HEIGHT * dpr; break;
                 case 'title':  totalH += WMS_PDF_TITLE_H * dpr; break;
+                case 'snapshot_header': totalH += (WMS_PDF_TITLE_H + 4) * dpr; break;
                 case 'blank':  totalH += (s.count || 1) * WMS_PDF_ROW_HEIGHT * dpr; break;
                 case 'summary': totalH += (s.rows || []).length * WMS_PDF_ROW_HEIGHT * dpr; break;
             }
@@ -684,6 +713,30 @@ function wmsExportPdf(config) {
                     ctx.fillStyle = '#' + WMS_EXPORT_BLACK;
                     ctx.fillText(sec2.text || '', WMS_PDF_PAD * dpr, y + WMS_PDF_FONT_SIZE * dpr + 4 * dpr);
                     y += WMS_PDF_TITLE_H * dpr;
+                    break;
+                case 'snapshot_header':
+                    // F&O-snapshot-style banner: bold left title + small grey
+                    // right unit/date footnote. No background.
+                    var bandH = (WMS_PDF_TITLE_H + 4) * dpr;
+                    ctx.fillStyle = '#' + WMS_EXPORT_BLACK;
+                    ctx.font = 'bold ' + ((WMS_PDF_FONT_SIZE + 1.5) * dpr) + 'px ' + WMS_PDF_FONT_FAMILY;
+                    ctx.textAlign = 'left';
+                    ctx.fillText(sec2.leftText || '', WMS_PDF_PAD * dpr, y + (WMS_PDF_FONT_SIZE + 1.5) * dpr + 2 * dpr);
+
+                    ctx.fillStyle = '#' + WMS_EXPORT_GREY;
+                    ctx.font = ((WMS_PDF_FONT_SIZE - 0.5) * dpr) + 'px ' + WMS_PDF_FONT_FAMILY;
+                    ctx.textAlign = 'right';
+                    ctx.fillText(sec2.rightText || '', cvs.width - WMS_PDF_PAD * dpr, y + (WMS_PDF_FONT_SIZE + 1.5) * dpr + 2 * dpr);
+
+                    // Thin underline below the banner
+                    ctx.strokeStyle = '#' + WMS_EXPORT_BORDER_DARK;
+                    ctx.lineWidth = dpr * 0.75;
+                    ctx.beginPath();
+                    ctx.moveTo(0, y + bandH - 2 * dpr);
+                    ctx.lineTo(cvs.width, y + bandH - 2 * dpr);
+                    ctx.stroke();
+
+                    y += bandH;
                     break;
                 case 'blank':
                     y += (sec2.count || 1) * WMS_PDF_ROW_HEIGHT * dpr;
