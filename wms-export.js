@@ -90,13 +90,14 @@ var WMS_EXPORT_PRESETS = {
         }
     },
     amount: {
-        // Skill canonical 2-dp format. 0-dp variant available as `amount0`.
-        excelFmt: '#,##0.00;[Red](#,##0.00);-_)',
+        // Skill canonical for AMOUNT columns — 0 decimal places. The 2-dp
+        // variant is available as `amount2` for prices / rates / ratios.
+        excelFmt: '#,##0;[Red](#,##0);-_)',
         align: 'right',
         width: 12,
         jsFmt: function(v) {
             if (v === 0 || v === null || v === undefined || isNaN(v)) return '- ';
-            var s = Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            var s = Math.abs(Math.round(v)).toLocaleString();
             return v < 0 ? '(' + s + ')' : s;
         }
     },
@@ -195,20 +196,28 @@ function _wmsExStyleCell(cell, resolved, isHeader, isTotal, isSectionTitle) {
     // Determine if this is a formula cell (ExcelJS stores formula as cell.value.formula)
     var isFormula = (cell.value !== null && typeof cell.value === 'object' && cell.value.formula);
 
-    // Data cells: blue text for hardcoded inputs, black for formulas.
-    // Negative values → red (overrides blue/black).
+    // Data cells: blue text for NUMERIC hardcoded inputs, black for formulas
+    // and for ALL text values. Negative numbers → red (overrides blue/black).
+    // Skill §4 (office-formatting): text strings stay black even when they're
+    // hardcoded; only numeric / date inputs the reader could change show blue.
     if (!isHeader && !isSectionTitle && !isTotal) {
+        var rawVal = cell.value;
         var numVal;
+        var isNumeric;
+        var isDate = (rawVal instanceof Date);
         if (isFormula) {
-            numVal = (typeof cell.value.result === 'number') ? cell.value.result : NaN;
+            numVal = (typeof rawVal.result === 'number') ? rawVal.result : NaN;
+            isNumeric = !isNaN(numVal);
         } else {
-            numVal = (typeof cell.value === 'number') ? cell.value : NaN;
+            numVal = (typeof rawVal === 'number') ? rawVal : NaN;
+            isNumeric = !isNaN(numVal);
         }
 
-        if (!isNaN(numVal) && numVal < 0) {
+        if (isNumeric && numVal < 0) {
             font.color = { argb: WMS_EXPORT_RED };
-        } else if (!isFormula && cell.value !== null && cell.value !== undefined && cell.value !== '') {
-            // Hardcoded input value → blue text (industry standard)
+        } else if (!isFormula && (isNumeric || isDate) && rawVal !== null && rawVal !== undefined && rawVal !== '') {
+            // Hardcoded numeric / date input → blue text.
+            // Text strings stay black (the default font color set above).
             font.color = { argb: WMS_EXPORT_BLUE };
         }
     }
@@ -571,13 +580,15 @@ function _wmsExApplyColWidths(ws, resolvedCols) {
 // }
 // ============================================================================
 
-var WMS_PDF_FONT_FAMILY = 'Arial Narrow, Arial, Helvetica, sans-serif';
-var WMS_PDF_FONT_SIZE   = 9;
-var WMS_PDF_HEADER_SIZE = 9;
+// office-formatting skill — Aptos 9.5pt across all surfaces; canvas falls
+// back to Helvetica if the user's machine doesn't have Aptos installed.
+var WMS_PDF_FONT_FAMILY = 'Aptos, Helvetica, Arial, sans-serif';
+var WMS_PDF_FONT_SIZE   = 9.5;
+var WMS_PDF_HEADER_SIZE = 9.5;
 var WMS_PDF_TITLE_SIZE  = 11;
-var WMS_PDF_ROW_HEIGHT  = 18;
-var WMS_PDF_HEADER_H    = 22;
-var WMS_PDF_TITLE_H     = 24;
+var WMS_PDF_ROW_HEIGHT  = 15;  // matches Excel skill row height
+var WMS_PDF_HEADER_H    = 20;
+var WMS_PDF_TITLE_H     = 22;
 var WMS_PDF_PAD         = 5;
 
 function wmsExportPdf(config) {
@@ -755,7 +766,13 @@ function _wmsExPdfDrawRow(ctx, cols, colPx, rowData, y, dpr, isTotal) {
         var displayText = '';
 
         if (val !== null && val !== undefined && val !== '') {
-            if (resolved.jsFmt && typeof val !== 'string') {
+            // Apply the column's formatter UNLESS it's a text column (where
+            // the value is already a finished display string). Previously the
+            // formatter was skipped for ALL strings, which meant ISO date
+            // strings like '2026-04-01' rendered raw in the PDF instead of
+            // 'Wed, 01-Apr-26'. Date columns now format strings too.
+            var isTextCol = (resolved.type === 'text' || resolved.type === 'type');
+            if (resolved.jsFmt && !isTextCol) {
                 displayText = resolved.jsFmt(val);
             } else {
                 displayText = String(val);
@@ -791,22 +808,50 @@ function _wmsExPdfDrawRow(ctx, cols, colPx, rowData, y, dpr, isTotal) {
 }
 
 function _wmsExPdfDrawSummaryRow(ctx, cols, colPx, sr, y, dpr) {
-    var totalW = 0; for (var i = 0; i < colPx.length; i++) totalW += colPx[i];
-
+    // Optionally place the label + value at SPECIFIC column indices, mirroring
+    // the Excel layout (skill / office-formatting §6: right-aligned summary
+    // block). `sr.labelCol` and `sr.valueCol` are 1-indexed column numbers.
+    // Defaults: label far-left, value far-right.
     ctx.font = (sr.bold ? 'bold ' : '') + (WMS_PDF_FONT_SIZE * dpr) + 'px ' + WMS_PDF_FONT_FAMILY;
+
+    // Compute X offsets for each column (cumulative widths)
+    var colStartX = [WMS_PDF_PAD * dpr];
+    for (var i = 0; i < colPx.length; i++) {
+        colStartX.push(colStartX[i] + colPx[i]);
+    }
+    var totalW = colStartX[colPx.length] - WMS_PDF_PAD * dpr;
+
+    // Optional row background (light grey for the highlighted Net row)
+    if (sr.fill) {
+        ctx.fillStyle = '#' + sr.fill;
+        ctx.fillRect(0, y, totalW + WMS_PDF_PAD * 2 * dpr, WMS_PDF_ROW_HEIGHT * dpr);
+    }
+
+    // Label
+    var labelColIdx = (sr.labelCol && sr.labelCol >= 1) ? (sr.labelCol - 1) : 0;
+    var labelX = colStartX[Math.min(labelColIdx, colPx.length - 1)];
     ctx.fillStyle = '#' + WMS_EXPORT_BLACK;
     ctx.textAlign = 'left';
-    ctx.fillText(sr.label || '', WMS_PDF_PAD * dpr, y + WMS_PDF_FONT_SIZE * dpr + 3 * dpr);
+    ctx.fillText(sr.label || '', labelX, y + WMS_PDF_FONT_SIZE * dpr + 3 * dpr);
 
-    // Value in last column area
+    // Value
     var valFmt = sr.format || 'amount';
     var preset = WMS_EXPORT_PRESETS[valFmt] || WMS_EXPORT_PRESETS.text;
     var displayVal = preset.jsFmt ? preset.jsFmt(sr.value) : String(sr.value);
-
     var numVal = (typeof sr.value === 'number') ? sr.value : NaN;
     ctx.fillStyle = (!isNaN(numVal) && numVal < 0) ? '#' + WMS_EXPORT_RED : '#' + WMS_EXPORT_BLACK;
     ctx.textAlign = 'right';
-    ctx.fillText(displayVal, totalW + WMS_PDF_PAD * dpr, y + WMS_PDF_FONT_SIZE * dpr + 3 * dpr);
+
+    var valueColIdx = (sr.valueCol && sr.valueCol >= 1) ? sr.valueCol : colPx.length;
+    var valEndX = colStartX[Math.min(valueColIdx, colPx.length)] - 4 * dpr;
+    ctx.fillText(displayVal, valEndX, y + WMS_PDF_FONT_SIZE * dpr + 3 * dpr);
+
+    // Optional border around the row (thin black for the highlighted Net row)
+    if (sr.border) {
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = dpr;
+        ctx.strokeRect(labelX - 2 * dpr, y, valEndX - labelX + 6 * dpr, WMS_PDF_ROW_HEIGHT * dpr);
+    }
 
     return y + WMS_PDF_ROW_HEIGHT * dpr;
 }

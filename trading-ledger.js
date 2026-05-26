@@ -388,12 +388,14 @@ function lgInit() {
 
     // Export modal — format buttons inside the body (see #lgExportModal).
     // Each fires the same data-gathering path with a different renderer.
-    var expPdfBtn   = document.getElementById('lgExpPdf');
-    var expXlsBtn   = document.getElementById('lgExpExcel');
-    var expImgBtn   = document.getElementById('lgExpCopyImage');
-    if (expPdfBtn) expPdfBtn.addEventListener('click', function() { lgExportRun('pdf'); });
-    if (expXlsBtn) expXlsBtn.addEventListener('click', function() { lgExportRun('excel'); });
-    if (expImgBtn) expImgBtn.addEventListener('click', function() { lgExportRun('image'); });
+    var expPdfBtn      = document.getElementById('lgExpPdf');
+    var expXlsBtn      = document.getElementById('lgExpExcel');
+    var expImgCopyBtn  = document.getElementById('lgExpCopyImage');
+    var expImgDlBtn    = document.getElementById('lgExpDownloadImage');
+    if (expPdfBtn)     expPdfBtn.addEventListener('click',     function() { lgExportRun('pdf'); });
+    if (expXlsBtn)     expXlsBtn.addEventListener('click',     function() { lgExportRun('excel'); });
+    if (expImgCopyBtn) expImgCopyBtn.addEventListener('click', function() { lgExportRun('image_copy'); });
+    if (expImgDlBtn)   expImgDlBtn.addEventListener('click',   function() { lgExportRun('image_download'); });
 
     // Date-range radio change → auto-fill the From/To inputs.
     ['lgExpDateRangeCustom','lgExpDateRangeCurrentFY','lgExpDateRangePreviousFY','lgExpDateRangeSinceRecon']
@@ -3364,7 +3366,9 @@ function _lgExportSymbol(row) {
 // ── Column definitions (shared between Excel & PDF) ───────────────
 
 var LG_EXPORT_TXN_COLS = [
-    { header: 'Date',    type: 'date',   format: 'ddd, dd-mmm-yy', width: 14 },
+    // Date column: short skill format dd-mmm-yy (long format was eating too
+    // much width in PDF). Width trimmed to 10ch to leave room for amounts.
+    { header: 'Date',    type: 'date',   format: 'dd-mmm-yy', width: 10 },
     { header: 'Symbol',  type: 'text',   width: 20 },
     { header: 'Type',    type: 'type',   width: 10 },
     { header: 'Qty',     type: 'qty',    width: 9 },
@@ -3436,12 +3440,13 @@ function lgExportExcel(d) {
 
     var headerRow, obExcelRow, firstDataRow, lastDataRow, totalExcelRow, sumStartRow;
     if (flags.txn && d.txnRows.length > 0) {
-        headerRow    = nextRow++;          // Excel row 1
-        obExcelRow   = nextRow++;          // Excel row 2
-        firstDataRow = nextRow;            // Excel row 3
+        nextRow++;                         // section title 'TRANSACTIONS'
+        headerRow    = nextRow++;
+        obExcelRow   = nextRow++;
+        firstDataRow = nextRow;
         nextRow     += d.txnRows.length;
-        lastDataRow  = nextRow - 1;        // Excel row 2 + N
-        totalExcelRow = nextRow++;         // TOTALS row
+        lastDataRow  = nextRow - 1;
+        totalExcelRow = nextRow++;
         nextRow++;                         // blank
         sumStartRow  = nextRow;            // first of the 4 summary lines
         nextRow     += 4;                  // 4 summary lines (Balance/+Holdings/-Tax/=Net)
@@ -3450,6 +3455,7 @@ function lgExportExcel(d) {
 
     var holdHeaderRow, holdFirstData, holdLastData, holdTotalRow;
     if (flags.openPos && d.holdingRows.length > 0) {
+        nextRow++;                         // section title 'OPEN POSITIONS'
         holdHeaderRow = nextRow++;
         holdFirstData = nextRow;
         nextRow      += d.holdingRows.length;
@@ -3460,6 +3466,7 @@ function lgExportExcel(d) {
 
     var bookedHeaderRow, bookedFirstData, bookedLastData, bookedTotalRow;
     if (flags.booked && d.bookedRows.length > 0) {
+        nextRow++;                         // section title 'BOOKED P&L'
         bookedHeaderRow = nextRow++;
         bookedFirstData = nextRow;
         nextRow        += d.bookedRows.length;
@@ -3559,6 +3566,7 @@ function lgExportExcel(d) {
     var sections = [];
 
     if (flags.txn && d.txnRows.length > 0) {
+        sections.push({ type: 'title', text: 'TRANSACTIONS' });
         sections.push({ type: 'header' });
         sections.push({ type: 'data', rows: [obRow] });
         sections.push({ type: 'data', rows: txnRowsWithFormulas });
@@ -3601,6 +3609,7 @@ function lgExportExcel(d) {
 
     if (flags.openPos && d.holdingRows.length > 0) {
         sections.push({ type: 'columns', columns: LG_EXPORT_HOLD_COLS });
+        sections.push({ type: 'title', text: 'OPEN POSITIONS' });
         sections.push({ type: 'header' });
         sections.push({ type: 'data', rows: holdRowsWithFormulas });
         sections.push({ type: 'total', values: [null, null, null, null, null, holdTotalMtm, holdTotalVal] });
@@ -3609,6 +3618,7 @@ function lgExportExcel(d) {
 
     if (flags.booked && d.bookedRows.length > 0) {
         sections.push({ type: 'columns', columns: LG_EXPORT_BOOKED_COLS });
+        sections.push({ type: 'title', text: 'BOOKED P&L' });
         sections.push({ type: 'header' });
         sections.push({ type: 'data', rows: d.bookedRows });
         sections.push({ type: 'total', values: [null, null, null, bookedTotalFormula] });
@@ -3669,32 +3679,38 @@ function lgExportPdf(d) {
     var pages = [];
 
     if (flags.txn && d.txnRows.length > 0) {
-        // Transactions block — own page. Totals reads:
-        //   Balance + Value of Holdings − Potential Tax = Net
-        // (Balance is the last running balance shown in counterparty-POV.)
+        // Transactions block — own page with a TRANSACTIONS section title at
+        // the top. Totals summary (right-side, labelCol=F, valueCol=H) below
+        // the data: Balance + Value of Holdings − Potential Tax = Net.
+        // (Tax displayed as -ve; Net row bold + light-grey highlight + border.)
+        var txnNetLabel = (d.txnSectionNet.net < 0) ? '= Net Payable' : '= Net Receivable';
+        var txnBalLabel = (d.txnSectionNet.balance < 0) ? 'Payable' : 'Receivable';
+        var txnTaxValue = -Math.abs(d.txnSectionNet.potentialTax);
         pages.push({
             columns: LG_EXPORT_TXN_COLS,
             sections: [
+                { type: 'title', text: 'TRANSACTIONS' },
                 { type: 'header' },
                 { type: 'data', rows: [obRow] },
                 { type: 'data', rows: d.txnRows },
                 { type: 'total', values: [null, null, null, null, null, 'TOTALS:', d.totalAmount, d.lastBalance] },
                 { type: 'blank' },
                 { type: 'summary', rows: [
-                    { label: 'Balance (closing)',           value: d.txnSectionNet.balance },
-                    { label: '+ Value of Holdings',          value: d.txnSectionNet.holdingsValue },
-                    { label: '− Potential Tax (' + taxRatePct + '%)', value: d.txnSectionNet.potentialTax },
-                    { label: (d.txnSectionNet.net < 0 ? '= Net Payable' : '= Net Receivable'), value: d.txnSectionNet.net, bold: true }
+                    { label: txnBalLabel,                                value: d.txnSectionNet.balance,       labelCol: 6, valueCol: 8 },
+                    { label: '+ Value of Holdings',                       value: d.txnSectionNet.holdingsValue, labelCol: 6, valueCol: 8 },
+                    { label: '− Potential Tax (' + taxRatePct + '%)',    value: txnTaxValue,                   labelCol: 6, valueCol: 8 },
+                    { label: txnNetLabel,                                 value: d.txnSectionNet.net,           labelCol: 6, valueCol: 8, bold: true, fill: 'C0C0C0', border: true }
                 ]}
             ]
         });
     }
 
     if (flags.openPos && d.holdingRows.length > 0) {
-        // Open Positions block — own page.
+        // Open Positions block — own page with section title.
         pages.push({
             columns: LG_EXPORT_HOLD_COLS,
             sections: [
+                { type: 'title', text: 'OPEN POSITIONS' },
                 { type: 'header' },
                 { type: 'data', rows: d.holdingRows },
                 { type: 'total', values: [null, null, null, null, null, d.totalMtm, d.totalValue] }
@@ -3703,10 +3719,11 @@ function lgExportPdf(d) {
     }
 
     if (flags.booked && d.bookedRows.length > 0) {
-        // Booked P&L block — own page.
+        // Booked P&L block — own page with section title.
         pages.push({
             columns: LG_EXPORT_BOOKED_COLS,
             sections: [
+                { type: 'title', text: 'BOOKED P&L' },
                 { type: 'header' },
                 { type: 'data', rows: d.bookedRows },
                 { type: 'total', values: [null, null, null, d.totalBookedGain] }
@@ -3732,22 +3749,24 @@ function lgExportPdf(d) {
 // browser blocks clipboard writes. Layout is intentionally minimal — just
 // the tables, no firm branding (LESSONS §E.18.1).
 
-function lgExportImage(d) {
+function lgExportImage(d, mode) {
     if (!d) return;
+    mode = mode || 'copy';  // 'copy' = clipboard with download fallback; 'download' = file only
     var flags = d.sectionFlags || { txn: true, openPos: true, booked: true };
     var taxRatePct = lgGetEffectiveTaxRate();
 
-    // Layout constants
+    // Layout constants — skill / office-formatting (Aptos 9.5pt).
     var DPR = 2;
     var W = 1200;                    // CSS width
     var PAD = 16;
-    var ROW_H = 22;
-    var HEADER_H = 26;
-    var SECTION_GAP = 14;
-    var BLOCK_GAP = 24;
-    var FONT = '12px Arial, Helvetica, sans-serif';
-    var FONT_BOLD = 'bold 12px Arial, Helvetica, sans-serif';
-    var FONT_SECTION = 'bold 13px Arial, Helvetica, sans-serif';
+    var ROW_H = 20;
+    var HEADER_H = 24;
+    var TITLE_H = 26;
+    var SECTION_GAP = 10;
+    var BLOCK_GAP = 22;
+    var FONT = '12px Aptos, Helvetica, Arial, sans-serif';
+    var FONT_BOLD = 'bold 12px Aptos, Helvetica, Arial, sans-serif';
+    var FONT_SECTION = 'bold 14px Aptos, Helvetica, Arial, sans-serif';
     var TEXT_DARK = '#1a202c';
     var TEXT_MUTED = '#4a5568';
     var ROW_ALT = '#f7fafc';
@@ -3768,18 +3787,18 @@ function lgExportImage(d) {
 
     if (flags.txn && d.txnRows.length > 0) {
         // +1 for the OB row, +4 for the Net-summary lines (Balance / +Holdings / -Tax / =Net)
-        var h = blockHeight(d.txnRows.length + 1, true, true, 4 + 1) + SECTION_GAP;
+        var h = TITLE_H + blockHeight(d.txnRows.length + 1, true, true, 4 + 1) + SECTION_GAP;
         totalH += h;
         pendingBlocks.push({ kind: 'txn', height: h });
     }
     if (flags.openPos && d.holdingRows.length > 0) {
-        var h2 = blockHeight(d.holdingRows.length, true, true, 0);
+        var h2 = TITLE_H + blockHeight(d.holdingRows.length, true, true, 0);
         if (pendingBlocks.length > 0) totalH += BLOCK_GAP;
         totalH += h2;
         pendingBlocks.push({ kind: 'openpos', height: h2 });
     }
     if (flags.booked && d.bookedRows.length > 0) {
-        var h3 = blockHeight(d.bookedRows.length, true, true, 0);
+        var h3 = TITLE_H + blockHeight(d.bookedRows.length, true, true, 0);
         if (pendingBlocks.length > 0) totalH += BLOCK_GAP;
         totalH += h3;
         pendingBlocks.push({ kind: 'booked', height: h3 });
@@ -3848,10 +3867,28 @@ function lgExportImage(d) {
         }
     }
 
+    // Section title — bold uppercase header above each block (skill / image).
+    function drawSectionTitle(y, text) {
+        ctx.font = FONT_SECTION;
+        ctx.fillStyle = TEXT_DARK;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, PAD, y + TITLE_H / 2);
+        // Thin black underline so the title visually separates from the table
+        ctx.strokeStyle = '#1a202c';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(PAD, y + TITLE_H - 2);
+        ctx.lineTo(W - PAD, y + TITLE_H - 2);
+        ctx.stroke();
+    }
+
     var y = PAD;
 
     // ── Transactions block ──
     if (flags.txn && d.txnRows.length > 0) {
+        drawSectionTitle(y, 'TRANSACTIONS');
+        y += TITLE_H;
         var txnHeaders = ['Date', 'Symbol', 'Type', 'Qty', 'Price', 'Net', 'Amount', 'Balance'];
         var txnAligns  = ['left',  'left',   'left', 'right','right','right','right', 'right'];
         var txnW = [80, 200, 110, 70, 80, 80, 100, 100];
@@ -3914,6 +3951,8 @@ function lgExportImage(d) {
     // ── Open Positions block ──
     if (flags.openPos && d.holdingRows.length > 0) {
         if (flags.txn) y += 0; // already added BLOCK_GAP via height calc; keep gap visual
+        drawSectionTitle(y, 'OPEN POSITIONS');
+        y += TITLE_H;
         var posHeaders = ['Symbol', 'Type', 'Qty', 'Avg Cost', 'CMP', 'MTM', 'Value'];
         var posAligns  = ['left',   'left', 'right','right',   'right','right','right'];
         var posW = [220, 70, 100, 110, 110, 120, 120];
@@ -3944,6 +3983,8 @@ function lgExportImage(d) {
 
     // ── Booked P&L block ──
     if (flags.booked && d.bookedRows.length > 0) {
+        drawSectionTitle(y, 'BOOKED P&L');
+        y += TITLE_H;
         var bkHeaders = ['Symbol', 'Type', 'Qty', 'Gain / (Loss)'];
         var bkAligns  = ['left',   'left', 'right','right'];
         var bkW = [240, 100, 120, 200];
@@ -3968,14 +4009,33 @@ function lgExportImage(d) {
         y += ROW_H;
     }
 
-    // Now: try clipboard → fallback to download.
+    // Deliver the rendered canvas — either to clipboard (with download
+    // fallback) or as a direct download to the user's Downloads folder.
     var filename = wmsExportFilename('Statement', d.viewName, d.dateLabel, 'png');
     canvas.toBlob(async function(blob) {
         if (!blob) {
             if (typeof showAlert === 'function') showAlert('Failed to render image', 'error', 3000);
             return;
         }
-        // Try Clipboard API first.
+
+        function downloadFile(msg) {
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function() { URL.revokeObjectURL(url); }, 1500);
+            if (typeof showAlert === 'function' && msg) showAlert(msg, 'info', 4500);
+        }
+
+        if (mode === 'download') {
+            downloadFile('Image saved as ' + filename);
+            return;
+        }
+
+        // mode === 'copy' — try clipboard first, fall back to download.
         var clipboardOk = false;
         try {
             if (navigator.clipboard && window.ClipboardItem) {
@@ -3991,16 +4051,7 @@ function lgExportImage(d) {
             if (typeof showAlert === 'function') showAlert('Statement image copied to clipboard — paste it into your chat', 'success', 4000);
             return;
         }
-        // Fallback — download as file.
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(function() { URL.revokeObjectURL(url); }, 1500);
-        if (typeof showAlert === 'function') showAlert('Image downloaded as ' + filename + ' (clipboard write was blocked)', 'info', 4500);
+        downloadFile('Image downloaded as ' + filename + ' (clipboard write was blocked)');
     }, 'image/png');
 }
 
@@ -4127,7 +4178,9 @@ function lgExportRun(format) {
 
     if (format === 'pdf')   { lgExportPdf(data);   }
     else if (format === 'excel') { lgExportExcel(data); }
-    else if (format === 'image') { lgExportImage(data); }
+    else if (format === 'image_copy')     { lgExportImage(data, 'copy'); }
+    else if (format === 'image_download') { lgExportImage(data, 'download'); }
+    else if (format === 'image')          { lgExportImage(data, 'copy'); }  // legacy alias
 
     var modal = document.getElementById('lgExportModal');
     if (modal) modal.classList.remove('show');
