@@ -2136,6 +2136,19 @@ window.lgReconcileUpTo = lgReconcileUpTo;
 function lgCheckReconDrift() {
     var banner = document.getElementById('lgReconBanner');
     if (!banner) return;
+
+    // Defensive guard (LESSONS §A.1.18): if the initial trLoadData() hasn't
+    // resolved yet, trTransactions is still []. lgRefresh would have built
+    // lgFullCombined off an empty txnFiltered, so the parallel-balance pass
+    // here misses every pre-recon trade and falsely flags ~"recon mismatch =
+    // sum of missing trades". The primary fix lives in trLoadLedgerModule
+    // (await trDataReady before lgInit/lgRefresh) — this guard catches any
+    // other call site that races the data load.
+    if (typeof window !== 'undefined' && window._trDataReadyResolved === false) {
+        lgHideReconBanner();
+        return;
+    }
+
     var rows = lgFullCombined || [];
     if (rows.length === 0) { lgHideReconBanner(); return; }
 
