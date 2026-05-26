@@ -3860,19 +3860,26 @@ function lgExportImage(d, mode) {
     var fmtDate = (typeof lgFmtDate === 'function') ? lgFmtDate : function(v) { return v; };
 
     // Drawing helper — render a single table row across given column widths.
+    // Auto-applies red when the formatted value is in parens (e.g. '(12,345)'),
+    // matching the skill's "negatives in red parens" convention. Caller-passed
+    // `color` overrides only when not red-auto'd.
+    var RED = '#dc2626';
     function drawCell(text, x, y, w, align, font, color) {
         ctx.font = font;
-        ctx.fillStyle = color || TEXT_DARK;
+        var s = String(text == null ? '' : text);
+        // Auto-red for parens-wrapped negatives.
+        var isNegFmt = /^\(.*\)$/.test(s.trim());
+        ctx.fillStyle = isNegFmt ? RED : (color || TEXT_DARK);
         ctx.textAlign = align || 'left';
         ctx.textBaseline = 'middle';
         var tx = align === 'right' ? x + w - 6 : (align === 'center' ? x + w / 2 : x + 6);
         // Clip overflow by truncating with ellipsis
         var maxW = w - 10;
-        var s = String(text == null ? '' : text);
+        var original = s;
         while (s.length > 0 && ctx.measureText(s).width > maxW) {
             s = s.slice(0, -1);
         }
-        if (s.length < String(text == null ? '' : text).length && s.length > 1) s = s.slice(0, -1) + '…';
+        if (s.length < original.length && s.length > 1) s = s.slice(0, -1) + '…';
         ctx.fillText(s, tx, y + ROW_H / 2);
     }
 

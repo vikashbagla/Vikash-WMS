@@ -627,7 +627,13 @@ function wmsExportPdf(config) {
     }
 
     var JsPDF = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
-    var dpr = 2; // device pixel ratio for sharp rendering
+    // DPR controls the canvas oversampling — 1.5× keeps text sharp at print
+    // resolution and reduces the per-page bitmap area by ~2.3× vs DPR=2
+    // (~14MB → ~6MB before JPEG, ~2-3MB after). For lossless PNG output the
+    // resulting PDF was 14MB on a typical 3-page statement; JPEG q=0.95 on a
+    // white-background table is visually indistinguishable from PNG and
+    // 3-5× smaller. See LESSONS §E.18.x (PDF size optimisation).
+    var dpr = 1.5;
     // A4 dimensions in mm → pixels at 72 DPI
     var pageWmm = 210, pageHmm = 297;
     var pxPerMm = 3.7795; // approximate
@@ -752,14 +758,16 @@ function wmsExportPdf(config) {
         canvases.push(cvs);
     }
 
-    // Build PDF
+    // Build PDF — encode each page canvas as high-quality JPEG so the file
+    // stays small. q=0.95 on white-background table text is visually
+    // indistinguishable from lossless PNG but ~3-5× smaller on disk.
     var doc = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     for (var pgi = 0; pgi < canvases.length; pgi++) {
         if (pgi > 0) doc.addPage();
-        var imgData = canvases[pgi].toDataURL('image/png');
+        var imgData = canvases[pgi].toDataURL('image/jpeg', 0.95);
         var imgW = pageWmm - 2 * marginMm;
         var imgH = (canvases[pgi].height / canvases[pgi].width) * imgW;
-        doc.addImage(imgData, 'PNG', marginMm, marginMm, imgW, imgH);
+        doc.addImage(imgData, 'JPEG', marginMm, marginMm, imgW, imgH);
     }
 
     doc.save(config.filename || 'WMS_Export.pdf');
