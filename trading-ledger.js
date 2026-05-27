@@ -2912,43 +2912,73 @@ function _lgRenderWeeklyBreakdown(calc) {
         '</div>';
 }
 
+// Module-level sort state for the trace table — toggled by clicking the
+// Date header. Default 'desc' = newest first (matches in-progress visibility).
+var lgTraceSortDesc = true;
+
+// Toggle and re-render — invoked by the Date header onclick.
+window.lgToggleMonthlyTraceSort = function() {
+    lgTraceSortDesc = !lgTraceSortDesc;
+    // Re-render whichever calc the modal is currently showing. The pending
+    // and posted paths both stash the calc differently — use whichever is set.
+    var calc = null;
+    if (lgPendingModalKey) {
+        var pending = lgPendingInterestRows.find(function(r) { return r._pendingKey === lgPendingModalKey; });
+        if (pending) calc = pending._calc;
+    } else if (lgInterestDetailEntryId) {
+        // For posted entries we don't keep _calc around; re-trigger the modal flow
+        // so it recomputes. Simpler than caching.
+        lgShowInterestDetail(lgInterestDetailEntryId);
+        return;
+    }
+    if (calc) {
+        var body = document.getElementById('lgInterestDetailBreakdown');
+        if (body) body.innerHTML = _lgRenderMonthlyTrace(calc);
+    }
+};
+
 // ── Daily-monthly-compound trace (one row per day) ─────────────────────────
-// The trace shows the full per-day arithmetic so Vikash can audit each day's
-// debit balance, margin, base, daily interest, and running monthly accrual.
-// Compound mode means each day's base includes the month-to-date interest
-// accrued so far — the trace lays that progression out explicitly.
+// Shows the full per-day arithmetic so Vikash can audit each day's debit
+// balance, margin, base, daily interest, and running monthly accrual.
 function _lgRenderMonthlyTrace(calc) {
     var trace = calc.trace || [];
     var roundedInterest = Math.round(calc.interest);
-    var compoundNote = calc.compound
-        ? '× Rate (' + calc.rate + '% p.a.) × (1/365), <strong>compounded daily</strong>'
-        : '× Rate (' + calc.rate + '% p.a.) × (1/365), simple';
+    // Daily accrual is SIMPLE (per 2026-05-27 owner spec). Cross-month
+    // compounding happens via the posted INTEREST_BOOKED entry — describe
+    // the math, not the cross-month effect.
+    var rateNote = '× Rate (' + calc.rate + '% p.a.) × (1/365) daily';
 
-    // Compact column styling: ~4px row padding, 11.5px font, tabular numbers,
-    // narrow date column (~88px), value columns flex equally. With 720px-wide
-    // modal and 6 cols, a 31-day month fits in ~430px tall — well within the
-    // 80vh modal height on a 900-px laptop screen.
-    var headerCellStyle =
-        'padding:5px 8px; font-size:10.5px; text-transform:uppercase; letter-spacing:0.3px; ' +
+    // Compact styling — keep all 6 columns on screen with no horizontal
+    // scroll inside the 720-px modal. 11-px font, 2-6 px padding.
+    var thBase =
+        'padding:5px 6px; font-size:10.5px; text-transform:uppercase; letter-spacing:0.3px; ' +
         'color:#64748b; font-weight:600; background:#f1f5f9; border-bottom:1px solid #cbd5e0; ' +
-        'text-align:right; white-space:nowrap;';
-    var firstHeaderCellStyle = headerCellStyle.replace('text-align:right', 'text-align:left');
-    var cellStyle = 'padding:3px 8px; font-size:11.5px; font-variant-numeric:tabular-nums; ' +
-        'text-align:right; border-bottom:1px solid #f1f5f9; line-height:1.4;';
-    var firstCellStyle = cellStyle.replace('text-align:right', 'text-align:left') + ' color:#4a5568; white-space:nowrap;';
+        'white-space:nowrap;';
+    var thRight = thBase + ' text-align:right;';
+    var tdBase = 'padding:2px 6px; font-size:11px; font-variant-numeric:tabular-nums; ' +
+        'border-bottom:1px solid #f1f5f9; line-height:1.45; white-space:nowrap;';
+    var tdRight = tdBase + ' text-align:right; color:#1a202c;';
+    var tdDate = tdBase + ' text-align:right; color:#4a5568;';
 
-    // Build rows — newest at top so the in-progress days are visible without scrolling.
+    // Sort the trace per the current sort state. Date strings are ISO
+    // (YYYY-MM-DD) so lexical comparison is chronological.
+    var sortedTrace = trace.slice().sort(function(a, b) {
+        return lgTraceSortDesc ? (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)
+                                : (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+    });
+    var sortArrow = lgTraceSortDesc ? ' ▼' : ' ▲';
+
     var rowsHtml = '';
-    for (var i = trace.length - 1; i >= 0; i--) {
-        var t = trace[i];
+    for (var i = 0; i < sortedTrace.length; i++) {
+        var t = sortedTrace[i];
         rowsHtml +=
             '<tr>' +
-                '<td style="' + firstCellStyle + '">' + lgFmtDate(t.date) + '</td>' +
-                '<td style="' + cellStyle + '">' + lgFmt(t.debitBal) + '</td>' +
-                '<td style="' + cellStyle + '">' + lgFmt(t.margin) + '</td>' +
-                '<td style="' + cellStyle + '">' + lgFmt(t.base) + '</td>' +
-                '<td style="' + cellStyle + '">' + lgFmt(t.dailyInterest) + '</td>' +
-                '<td style="' + cellStyle + ' font-weight:600; color:#2d3748;">' + lgFmt(t.accruedSoFar) + '</td>' +
+                '<td style="' + tdDate + '">' + lgFmtDate(t.date) + '</td>' +
+                '<td style="' + tdRight + '">' + lgFmt(t.debitBal) + '</td>' +
+                '<td style="' + tdRight + '">' + lgFmt(t.margin) + '</td>' +
+                '<td style="' + tdRight + '">' + lgFmt(t.base) + '</td>' +
+                '<td style="' + tdRight + '">' + lgFmt(t.dailyInterest) + '</td>' +
+                '<td style="' + tdRight + ' font-weight:600; color:#2d3748;">' + lgFmt(t.accruedSoFar) + '</td>' +
             '</tr>';
     }
 
@@ -2962,29 +2992,36 @@ function _lgRenderMonthlyTrace(calc) {
         'color:#718096; font-weight:600;">Period · ' + trace.length + ' day' + (trace.length === 1 ? '' : 's') + '</div>' +
         '<div style="' + rowStyle + ' border-bottom:1px solid #e2e8f0;">' +
             '<span style="' + labelStyle + '">' + wmsEsc(calc.period) + '</span>' +
-            '<span style="font-size:10.5px; color:#94a3b8;">' + compoundNote + '</span>' +
+            '<span style="font-size:10.5px; color:#94a3b8;">' + rateNote + '</span>' +
         '</div>';
 
-    // Set explicit column widths so the layout is predictable across months
-    // of varying lengths. Date column wide enough for "Wed, 30-Apr-26".
+    // Explicit widths so the 6 columns fit within the 720-px modal content
+    // area (~680 px after padding + scrollbar). Sum = 660 px; the table
+    // width:100% absorbs the small remainder. Date column is RIGHT-aligned
+    // per user request; click toggles sort direction.
     var colgroup =
         '<colgroup>' +
-            '<col style="width:108px;">' +
-            '<col><col><col><col><col>' +
+            '<col style="width:104px;">' +   // Date — "Wed, 30-Apr-26" fits
+            '<col style="width:108px;">' +   // Debit Bal
+            '<col style="width:108px;">' +   // F&O Margin
+            '<col style="width:112px;">' +   // Base
+            '<col style="width:100px;">' +   // Day Int
+            '<col style="width:128px;">' +   // Accrued (largest end-of-month value)
         '</colgroup>';
 
     var traceHtml =
-        '<div style="max-height:540px; overflow:auto; border-bottom:1px solid #e2e8f0;">' +
+        '<div style="max-height:560px; overflow-y:auto; overflow-x:hidden; border-bottom:1px solid #e2e8f0;">' +
         '<table style="width:100%; border-collapse:collapse; table-layout:fixed;">' +
         colgroup +
         '<thead style="position:sticky; top:0; z-index:1;">' +
             '<tr>' +
-                '<th style="' + firstHeaderCellStyle + '">Date</th>' +
-                '<th style="' + headerCellStyle + '">Debit Bal</th>' +
-                '<th style="' + headerCellStyle + '">F&amp;O Margin</th>' +
-                '<th style="' + headerCellStyle + '">Base</th>' +
-                '<th style="' + headerCellStyle + '">Day Int</th>' +
-                '<th style="' + headerCellStyle + '">Accrued</th>' +
+                '<th style="' + thRight + ' cursor:pointer; user-select:none;" ' +
+                    'onclick="lgToggleMonthlyTraceSort()" title="Click to toggle sort">Date' + sortArrow + '</th>' +
+                '<th style="' + thRight + '">Debit Bal</th>' +
+                '<th style="' + thRight + '">F&amp;O Margin</th>' +
+                '<th style="' + thRight + '">Base</th>' +
+                '<th style="' + thRight + '">Day Int</th>' +
+                '<th style="' + thRight + '">Accrued</th>' +
             '</tr>' +
         '</thead>' +
         '<tbody>' + rowsHtml + '</tbody></table>' +
