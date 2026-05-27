@@ -1845,12 +1845,19 @@ function lgRenderSummary() {
     var totalBookedGain = 0;
     fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
 
-    // Potential Tax — only meaningful for Trader-type statements (it's the
-    // investor's tax liability on booked gains, not the broker's). Broker-type
-    // statements zero it out so it doesn't enter the Net Receivable formula.
-    // See LESSONS §E.15.12.
+    // Potential Tax — applies on BOTH trader and broker statements: it's the
+    // firm-level tax exposure on already-booked gains (and on broker statements,
+    // these are the gains realised via THAT broker). The rate resolves via
+    // wmsGetTaxRate(investorId, brokerId) which prefers the IBA-level override
+    // (investor_broker_accounts.tax_rate, migration 33) before falling back to
+    // investor-level, so each broker can have its own rate.
+    // Revised 2026-05-27 from the 2026-05-25 design that zero'd this for broker
+    // views — that hid relevant tax exposure from the Net Receivable formula
+    // (the broker statement IS the firm's view of the broker invoice; closing
+    // positions to settle the invoice triggers real tax for the firm).
+    // See LESSONS §E.15.12 (revised).
     var isBrokerStmt = (lgStatementType === 'broker');
-    var potentialTax = isBrokerStmt ? 0 : Math.max(0, totalBookedGain) * (taxRatePct / 100);
+    var potentialTax = Math.max(0, totalBookedGain) * (taxRatePct / 100);
 
     // Net Receivable = total holdings value (EQ + NFO MTM) − raw cash
     // balance − Tax. NFO margin is NOT subtracted (it's collateral, not
@@ -1898,13 +1905,14 @@ function lgRenderSummary() {
     setCard('lgCardPotentialTax', potentialTax, false);
     var taxLabelEl = document.getElementById('lgCardPotentialTaxLabel');
     if (taxLabelEl) taxLabelEl.textContent = 'Potential Tax (' + taxRatePct + '%)';
-    // Broker-type statements hide the Potential Tax card + its '−' operator,
-    // so the visible math reads Holdings − Outstanding = Net Receivable.
-    // LESSONS §E.15.12.
+    // Potential Tax card is visible on BOTH trader AND broker statements
+    // (revised 2026-05-27). The IBA-level tax_rate resolution gives each
+    // broker its own rate, so on stmt_TG (T0/TG) the displayed rate comes
+    // from investor_broker_accounts.tax_rate for (T0, TG). LESSONS §E.15.12.
     var taxCardWrap = document.getElementById('lgCardPotentialTaxWrap');
     var taxOpEl = document.getElementById('lgCardPotentialTaxOp');
-    if (taxCardWrap) taxCardWrap.style.display = isBrokerStmt ? 'none' : '';
-    if (taxOpEl) taxOpEl.style.display = isBrokerStmt ? 'none' : '';
+    if (taxCardWrap) taxCardWrap.style.display = '';
+    if (taxOpEl) taxOpEl.style.display = '';
     setCard('lgCardNetReceivable', netReceivable, true);
     // Dynamic label: positive netReceivable means counterparty receives net
     // (firm pays out); negative means counterparty pays net (LESSONS §E.15.13).
@@ -3327,10 +3335,12 @@ function lgGatherExportData(opts) {
     });
     var totalBookedGain = 0;
     fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
-    // Broker-type exports zero out Potential Tax so it doesn't leak into Net
-    // Receivable (mirrors lgRenderSummary — see LESSONS §E.15.12).
+    // Potential Tax applies to BOTH trader and broker exports — same rate
+    // resolution as lgRenderSummary via wmsGetTaxRate(invId, brokerId) (IBA
+    // override before investor-level fallback). Mirrors the on-screen
+    // summary card (LESSONS §E.15.12, revised 2026-05-27).
     var isBrokerStmt = (lgStatementType === 'broker');
-    var potentialTax = isBrokerStmt ? 0 : Math.max(0, totalBookedGain) * (taxRatePct / 100);
+    var potentialTax = Math.max(0, totalBookedGain) * (taxRatePct / 100);
     var netReceivable = totalHoldingsValue - cashBalance - potentialTax;
     var totalCurrentMtm = totalEqMtm + totalNfoMtm;
     // Conservative BwoM (LESSONS §E.15.13) — only subtract MTM when positive
