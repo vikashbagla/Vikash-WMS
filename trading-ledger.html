@@ -517,12 +517,15 @@
 <!-- 6. INTEREST DETAIL MODAL                                     -->
 <!-- ============================================================ -->
 <div id="lgInterestDetail" class="wms-modal-overlay">
-  <div class="wms-modal-dialog" style="width:500px;">
+  <!-- Wider dialog so the daily trace shows all 6 columns + ~31 rows without
+       horizontal or excessive vertical scrolling. Weekly-friday case keeps
+       its compact look because the inner breakdown has only ~5 rows. -->
+  <div class="wms-modal-dialog" style="width:720px; max-width:96vw;">
     <div class="wms-modal-header">
       <h3>Interest Detail</h3>
       <button class="wms-btn-close" id="lgInterestDetailClose">✕</button>
     </div>
-    <div style="padding:12px; overflow-y:auto; max-height:60vh;">
+    <div style="padding:12px; overflow-y:auto; max-height:80vh;">
       <!-- Period breakdown table -->
       <div id="lgInterestDetailBreakdown" style="margin-bottom:12px;">
         <div class="text-center" style="padding:20px; color:#9ca3af;">Loading...</div>
