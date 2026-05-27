@@ -972,15 +972,16 @@ async function lgRefresh() {
                 }
                 var marginEvents = wmsCalcMarginFIFO(nfoTxns, marginOpts);
 
-                // Frequency-dispatch + perspective-aware. On broker view the
-                // interest engine flips the cash sign internally (firm-POV -ve
-                // cash = firm owes broker = debit position that attracts interest).
-                // See LESSONS E.15.6 (rev) — owner spec 2026-05-27.
+                // Frequency-dispatch: pick the engine matching the configured
+                // interest terms. Both engines emit the same period shape
+                // ({period, postDate, interest, ...}) so downstream pending-row
+                // generation is identical. `daily_monthly_compound` adds a
+                // `trace` field per period for the detail modal (E.15.6c).
                 var periods;
                 if (terms.frequency === 'weekly_friday') {
-                    periods = wmsCalcInterestWeeklyFriday(fullCombined, terms, genFrom, today, marginEvents, lgPerspective);
+                    periods = wmsCalcInterestWeeklyFriday(fullCombined, terms, genFrom, today, marginEvents);
                 } else if (terms.frequency === 'daily_monthly_compound') {
-                    periods = wmsCalcInterestDailyMonthlyCompound(fullCombined, terms, genFrom, today, marginEvents, lgPerspective);
+                    periods = wmsCalcInterestDailyMonthlyCompound(fullCombined, terms, genFrom, today, marginEvents);
                 } else {
                     console.warn('Unsupported interest frequency: ' + terms.frequency);
                     periods = [];
@@ -3167,14 +3168,11 @@ async function lgShowInterestDetail(entryId) {
         }
         var marginEvents = wmsCalcMarginFIFO(nfoTxns, marginOptsDetail);
 
-        // Perspective-aware engine: broker view flips cash sign for interest base.
-        var detailPerspective = (lgStatementType === 'broker') ? 'broker'
-            : (traderMode ? 'trader' : 'investor');
         var periods;
         if (interestTerms.frequency === 'daily_monthly_compound') {
-            periods = wmsCalcInterestDailyMonthlyCompound(full, interestTerms, fromStr, toStr, marginEvents, detailPerspective);
+            periods = wmsCalcInterestDailyMonthlyCompound(full, interestTerms, fromStr, toStr, marginEvents);
         } else {
-            periods = wmsCalcInterestWeeklyFriday(full, interestTerms, fromStr, toStr, marginEvents, detailPerspective);
+            periods = wmsCalcInterestWeeklyFriday(full, interestTerms, fromStr, toStr, marginEvents);
         }
         calc = periods.length > 0 ? periods[0] : null;
     } catch (err) {
