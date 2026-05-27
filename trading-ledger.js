@@ -3009,9 +3009,13 @@ function _lgRenderMonthlyTrace(calc) {
             '<col style="width:128px;">' +   // Accrued (largest end-of-month value)
         '</colgroup>';
 
+    // NOTE: app-styles.css has a global `table { min-width: 940px }` rule that
+    // forces every table in the app to be at least 940 px wide. That overrides
+    // our 720-px modal and shoves the right columns off-screen. Reset min-width
+    // to 0 here so table-layout:fixed + our colgroup widths actually take effect.
     var traceHtml =
-        '<div style="max-height:560px; overflow-y:auto; overflow-x:hidden; border-bottom:1px solid #e2e8f0;">' +
-        '<table style="width:100%; border-collapse:collapse; table-layout:fixed;">' +
+        '<div style="max-height:560px; overflow-y:auto; overflow-x:auto; border-bottom:1px solid #e2e8f0;">' +
+        '<table style="width:100%; min-width:0; border-collapse:collapse; table-layout:fixed;">' +
         colgroup +
         '<thead style="position:sticky; top:0; z-index:1;">' +
             '<tr>' +
