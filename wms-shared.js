@@ -3451,6 +3451,114 @@ function wmsEsc(text) {
     return _wmsEscDiv.innerHTML;
 }
 
+/**
+ * Inject a PNG `pHYs` chunk (or rewrite an existing one) declaring the image's
+ * physical DPI so receiving apps (Word, Pages, image viewers) resolve canvas
+ * pixels → page inches correctly. Used by the statement image export so a
+ * 1200 px-wide PNG renders as 8 inches when inserted at 150 DPI — fitting
+ * inside an A4 portrait page (8.27"). Without metadata, apps default to
+ * 96 DPI and the same 1200 px PNG would land at 12.5", overflowing A4.
+ *
+ * Returns a NEW Blob; the input Blob is not mutated.
+ *
+ * @param {Blob} blob - PNG blob (e.g. canvas.toBlob output)
+ * @param {number} dpi - Target DPI (typically 150 for A4 portrait fit)
+ * @returns {Promise<Blob>} new PNG blob with pHYs chunk
+ */
+function wmsAddPngDpi(blob, dpi) {
+    return new Promise(function(resolve, reject) {
+        if (!blob || blob.type !== 'image/png') { resolve(blob); return; }
+        var reader = new FileReader();
+        reader.onerror = function() { resolve(blob); };
+        reader.onload = function() {
+            try {
+                var src = new Uint8Array(reader.result);
+                // PNG signature is 8 bytes; first chunk after that is IHDR
+                // (always 13 data bytes). Length(4) + Type(4) + Data + CRC(4).
+                var sigLen = 8;
+                if (src.length < sigLen + 8) { resolve(blob); return; }
+                var ihdrLen = (src[sigLen] << 24) | (src[sigLen+1] << 16) | (src[sigLen+2] << 8) | src[sigLen+3];
+                var ihdrEnd = sigLen + 4 + 4 + ihdrLen + 4;
+
+                // pixels-per-meter = dpi * 39.3701 (1 inch = 0.0254 m)
+                var ppm = Math.round(dpi * 39.3701);
+                // pHYs chunk type + data (13 bytes): 'pHYs' + ppmX(4) + ppmY(4) + unit(1=meters)
+                var td = new Uint8Array(13);
+                td[0] = 0x70; td[1] = 0x48; td[2] = 0x59; td[3] = 0x73; // 'pHYs'
+                td[4] = (ppm >>> 24) & 0xff; td[5] = (ppm >>> 16) & 0xff; td[6] = (ppm >>> 8) & 0xff; td[7] = ppm & 0xff;
+                td[8] = (ppm >>> 24) & 0xff; td[9] = (ppm >>> 16) & 0xff; td[10] = (ppm >>> 8) & 0xff; td[11] = ppm & 0xff;
+                td[12] = 1; // unit specifier = meters
+                var crc = _wmsCrc32(td);
+
+                // Strip any pre-existing pHYs chunk before injection (canvas.toBlob
+                // doesn't emit one today, but be defensive against future browser changes).
+                var clean = _wmsStripPngChunk(src, 'pHYs');
+
+                var pHYs = new Uint8Array(21);
+                pHYs[0] = 0; pHYs[1] = 0; pHYs[2] = 0; pHYs[3] = 9; // data length = 9
+                for (var k = 0; k < 13; k++) pHYs[4 + k] = td[k];
+                pHYs[17] = (crc >>> 24) & 0xff; pHYs[18] = (crc >>> 16) & 0xff;
+                pHYs[19] = (crc >>> 8) & 0xff; pHYs[20] = crc & 0xff;
+
+                // Recompute ihdrEnd relative to the (possibly shorter) clean buffer
+                // — IHDR is always the first chunk so its offset is unchanged.
+                var out = new Uint8Array(clean.length + 21);
+                out.set(clean.subarray(0, ihdrEnd), 0);
+                out.set(pHYs, ihdrEnd);
+                out.set(clean.subarray(ihdrEnd), ihdrEnd + 21);
+                resolve(new Blob([out], { type: 'image/png' }));
+            } catch (err) {
+                console.warn('wmsAddPngDpi: failed, returning original blob —', err && err.message);
+                resolve(blob);
+            }
+        };
+        reader.readAsArrayBuffer(blob);
+    });
+}
+
+// CRC-32 (IEEE 802.3 polynomial 0xEDB88320) — used by PNG chunks. Small enough
+// to inline; lazily-built lookup table for speed on repeated calls.
+var _wmsCrc32Table = null;
+function _wmsCrc32(data) {
+    if (!_wmsCrc32Table) {
+        _wmsCrc32Table = new Uint32Array(256);
+        for (var n = 0; n < 256; n++) {
+            var c = n;
+            for (var k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+            _wmsCrc32Table[n] = c >>> 0;
+        }
+    }
+    var crc = 0xffffffff;
+    for (var i = 0; i < data.length; i++) crc = (_wmsCrc32Table[(crc ^ data[i]) & 0xff] ^ (crc >>> 8)) >>> 0;
+    return (crc ^ 0xffffffff) >>> 0;
+}
+
+// Walks the PNG chunk stream and returns a new buffer with chunks of `type`
+// removed (rare — only matters if the source PNG already declared its DPI).
+function _wmsStripPngChunk(buf, type) {
+    if (buf.length < 8) return buf;
+    var sigLen = 8;
+    var typeBytes = [type.charCodeAt(0), type.charCodeAt(1), type.charCodeAt(2), type.charCodeAt(3)];
+    var pieces = [buf.subarray(0, sigLen)];
+    var pos = sigLen;
+    while (pos < buf.length - 8) {
+        var len = (buf[pos] << 24) | (buf[pos+1] << 16) | (buf[pos+2] << 8) | buf[pos+3];
+        var chunkEnd = pos + 4 + 4 + len + 4;
+        var match = buf[pos+4] === typeBytes[0] && buf[pos+5] === typeBytes[1] &&
+                    buf[pos+6] === typeBytes[2] && buf[pos+7] === typeBytes[3];
+        if (!match) pieces.push(buf.subarray(pos, chunkEnd));
+        pos = chunkEnd;
+    }
+    if (pos < buf.length) pieces.push(buf.subarray(pos));
+    var totalLen = 0;
+    for (var i = 0; i < pieces.length; i++) totalLen += pieces[i].length;
+    if (totalLen === buf.length) return buf;  // nothing removed
+    var out = new Uint8Array(totalLen);
+    var offset = 0;
+    for (var j = 0; j < pieces.length; j++) { out.set(pieces[j], offset); offset += pieces[j].length; }
+    return out;
+}
+
 // ============================================================================
 // wmsDropdown — Unified autocomplete/keyboard-navigable dropdown
 //
@@ -5741,16 +5849,18 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
                     var realisedPnl = wmsRoundMoney(totalSellProceeds - totalBuyCost);
                     if (realisedPnl === 0) continue; // no P&L to post
 
-                    // Sign for running balance:
-                    //   Investor/trader: profit (positive realisedPnl) → credit (negative amount)
-                    //                    loss (negative realisedPnl) → debit (positive amount)
-                    //   Broker: flipped — profit → debit, loss → credit
-                    var pnlAmount;
-                    if (perspective === 'broker') {
-                        pnlAmount = realisedPnl;   // profit = +ve = debit (firm owes broker)
-                    } else {
-                        pnlAmount = -realisedPnl;   // profit = +ve → -ve = credit (investor owes less)
-                    }
+                    // Sign for running balance — firm-POV, consistent across ALL perspectives:
+                    //   profit (positive realisedPnl) → credit (negative amount, reduces balance)
+                    //   loss   (negative realisedPnl) → debit  (positive amount, increases balance)
+                    //
+                    // Broker view counterparty-POV display flip is applied UNIFORMLY in the
+                    // display layer (`lgD()` in trading-ledger.js / `lgRenderEntries`). A
+                    // broker-specific branch HERE would DOUBLE-flip — which was exactly the
+                    // bug observed on stmt_TG: F&O profit was *increasing* the -ve balance
+                    // instead of reducing it (BUY/SELL trade rows worked correctly because
+                    // they use the same single-source sign convention).
+                    // See WMS-CONTEXT 🎯 PRIORITY Issue 1 (2026-05-26 root cause analysis).
+                    var pnlAmount = -realisedPnl;
 
                     nfoPnlRows.push({
                         _rowType: 'nfo_pnl',
