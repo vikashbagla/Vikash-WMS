@@ -952,7 +952,25 @@ async function lgRefresh() {
                 }).sort(function(a, b) {
                     return (a.transaction_date || '').localeCompare(b.transaction_date || '');
                 });
-                var marginEvents = wmsCalcMarginFIFO(nfoTxns);
+                // Broker view: apply the filter investor's IBA margin rate
+                // UNIFORMLY across every trade (not per-trade trader_id).
+                // T0's IBA with TG = 25%; without this override, T2-attributed
+                // trades would use (T2, TG) IBA = 33.33%, mixing rates.
+                // For trader/investor views: legacy per-trade lookup.
+                // Defaults to T0 if no investor filter is set (firm's IBA).
+                var marginOpts = {};
+                if (lgStatementType === 'broker') {
+                    var effInvForMargin = invId; // resolved earlier in this block
+                    if (!effInvForMargin) {
+                        // No investor filter — default to T0 by short_name lookup.
+                        var t0 = (wmsRefData.investors || []).find(function(i) {
+                            return (i.short_name || '').toUpperCase() === 'T0';
+                        });
+                        effInvForMargin = t0 ? t0.id : null;
+                    }
+                    if (effInvForMargin) marginOpts.marginRateInvestorId = effInvForMargin;
+                }
+                var marginEvents = wmsCalcMarginFIFO(nfoTxns, marginOpts);
 
                 // Frequency-dispatch: pick the engine matching the configured
                 // interest terms. Both engines emit the same period shape
@@ -2906,14 +2924,18 @@ function _lgRenderMonthlyTrace(calc) {
         ? '× Rate (' + calc.rate + '% p.a.) × (1/365), <strong>compounded daily</strong>'
         : '× Rate (' + calc.rate + '% p.a.) × (1/365), simple';
 
+    // Compact column styling: ~4px row padding, 11.5px font, tabular numbers,
+    // narrow date column (~88px), value columns flex equally. With 720px-wide
+    // modal and 6 cols, a 31-day month fits in ~430px tall — well within the
+    // 80vh modal height on a 900-px laptop screen.
     var headerCellStyle =
-        'padding:6px 8px; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; ' +
-        'color:#718096; font-weight:600; background:#f7fafc; border-bottom:1px solid #e2e8f0; ' +
+        'padding:5px 8px; font-size:10.5px; text-transform:uppercase; letter-spacing:0.3px; ' +
+        'color:#64748b; font-weight:600; background:#f1f5f9; border-bottom:1px solid #cbd5e0; ' +
         'text-align:right; white-space:nowrap;';
     var firstHeaderCellStyle = headerCellStyle.replace('text-align:right', 'text-align:left');
-    var cellStyle = 'padding:5px 8px; font-size:12px; font-variant-numeric:tabular-nums; ' +
-        'text-align:right; border-bottom:1px solid #f1f5f9;';
-    var firstCellStyle = cellStyle.replace('text-align:right', 'text-align:left') + ' color:#4a5568;';
+    var cellStyle = 'padding:3px 8px; font-size:11.5px; font-variant-numeric:tabular-nums; ' +
+        'text-align:right; border-bottom:1px solid #f1f5f9; line-height:1.4;';
+    var firstCellStyle = cellStyle.replace('text-align:right', 'text-align:left') + ' color:#4a5568; white-space:nowrap;';
 
     // Build rows — newest at top so the in-progress days are visible without scrolling.
     var rowsHtml = '';
@@ -2930,22 +2952,31 @@ function _lgRenderMonthlyTrace(calc) {
             '</tr>';
     }
 
-    var rowStyle = 'display:flex; justify-content:space-between; padding:8px 12px; font-size:13px;';
+    var rowStyle = 'display:flex; justify-content:space-between; padding:6px 10px; font-size:12px;';
     var labelStyle = 'color:#4a5568;';
     var valueStyle = 'font-variant-numeric:tabular-nums; color:#1a202c;';
 
     var periodHeader =
-        '<div style="padding:8px 12px; background:#f7fafc; border-radius:6px 6px 0 0; ' +
-        'font-size:11px; text-transform:uppercase; letter-spacing:0.5px; ' +
+        '<div style="padding:6px 10px; background:#f7fafc; border-radius:6px 6px 0 0; ' +
+        'font-size:10.5px; text-transform:uppercase; letter-spacing:0.4px; ' +
         'color:#718096; font-weight:600;">Period · ' + trace.length + ' day' + (trace.length === 1 ? '' : 's') + '</div>' +
         '<div style="' + rowStyle + ' border-bottom:1px solid #e2e8f0;">' +
             '<span style="' + labelStyle + '">' + wmsEsc(calc.period) + '</span>' +
-            '<span style="font-size:11px; color:#94a3b8;">' + compoundNote + '</span>' +
+            '<span style="font-size:10.5px; color:#94a3b8;">' + compoundNote + '</span>' +
         '</div>';
 
+    // Set explicit column widths so the layout is predictable across months
+    // of varying lengths. Date column wide enough for "Wed, 30-Apr-26".
+    var colgroup =
+        '<colgroup>' +
+            '<col style="width:108px;">' +
+            '<col><col><col><col><col>' +
+        '</colgroup>';
+
     var traceHtml =
-        '<div style="max-height:280px; overflow:auto; border-bottom:1px solid #e2e8f0;">' +
-        '<table style="width:100%; border-collapse:collapse;">' +
+        '<div style="max-height:540px; overflow:auto; border-bottom:1px solid #e2e8f0;">' +
+        '<table style="width:100%; border-collapse:collapse; table-layout:fixed;">' +
+        colgroup +
         '<thead style="position:sticky; top:0; z-index:1;">' +
             '<tr>' +
                 '<th style="' + firstHeaderCellStyle + '">Date</th>' +
@@ -2960,7 +2991,7 @@ function _lgRenderMonthlyTrace(calc) {
         '</div>';
 
     var interestRow =
-        '<div style="' + rowStyle + ' background:#edf2f7; font-weight:700; font-size:14px;">' +
+        '<div style="' + rowStyle + ' background:#edf2f7; font-weight:700; font-size:13px;">' +
             '<span style="color:#1a202c;">Total Monthly Interest</span>' +
             '<span style="' + valueStyle + ' color:#2d3748; font-weight:700;">' + lgFmt(roundedInterest) + '</span>' +
         '</div>';
@@ -3086,7 +3117,15 @@ async function lgShowInterestDetail(entryId) {
             if (tc !== 0) return tc;
             return (a.id || 0) - (b.id || 0);
         });
-        var marginEvents = wmsCalcMarginFIFO(nfoTxns);
+        // Broker view: apply filter-investor's IBA margin rate uniformly.
+        // For trader/investor views: per-trade legacy lookup. See E.15.6 / E.15.12.
+        var marginOptsDetail = {};
+        if (lgStatementType === 'broker') {
+            var effInvDetail = investorId || ((wmsRefData.investors || [])
+                .find(function(i) { return (i.short_name || '').toUpperCase() === 'T0'; }) || {}).id;
+            if (effInvDetail) marginOptsDetail.marginRateInvestorId = effInvDetail;
+        }
+        var marginEvents = wmsCalcMarginFIFO(nfoTxns, marginOptsDetail);
 
         var periods;
         if (interestTerms.frequency === 'daily_monthly_compound') {

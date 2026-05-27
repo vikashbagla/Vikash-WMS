@@ -6203,13 +6203,20 @@ function wmsCalcInterestDailyMonthlyCompound(ledger, terms, fromStr, toStr, marg
             var cashBal_d = wmsCalcClosingBalance(ledger, dStr);
             var debitBal_d = Math.max(0, cashBal_d);
             var margin_d   = marginEvents ? wmsGetMarginRunningAt(marginEvents, dStr) : 0;
-            var base_d     = debitBal_d + margin_d + (compound ? monthAccrued : 0);
-            // Round each day's interest to 2dp before accumulating. Two reasons:
-            //   1) The trace's per-day values sum EXACTLY to the posted monthly
-            //      total — no audit confusion when Vikash adds up the column.
-            //   2) Compounding on rounded daily values matches how banks /
-            //      brokers actually compute interest in practice (each day's
-            //      accrual is in real rupees-and-paise).
+            // Daily interest is SIMPLE — base = debit + margin only. No
+            // intra-month accrual added to the base. The `compound` flag
+            // on the terms governs cross-MONTH behaviour: once a month's
+            // interest is posted as INTEREST_BOOKED, that entry joins the
+            // ledger and naturally inflates next month's running balance
+            // (the running cash balance IS the compounding channel). If
+            // the user doesn't post a month's interest, it doesn't compound
+            // — which matches the explicit "post to compound" workflow.
+            // Earlier implementation added monthAccrued to base_d, which
+            // was DAILY compounding within the month — wrong per owner spec
+            // 2026-05-27 ("daily is simple interest").
+            var base_d = debitBal_d + margin_d;
+            // Round each day's interest to 2dp before accumulating so the
+            // trace's per-day column sums EXACTLY to the posted monthly total.
             var daily_d = wmsRoundMoney(base_d * dailyRate);
             monthAccrued += daily_d;
             trace.push({
@@ -6357,11 +6364,24 @@ function wmsCalcInterestDailyMonthly(ledger, terms, fromStr, toStr) {
  * When a closing trade is detected (opposite direction), FIFO-match to oldest open position.
  *
  * @param {Array} transactions - sorted by date, NFO transactions only
+ * @param {object} [opts]      - optional overrides
+ * @param {string} [opts.marginRateInvestorId] - if set, every trade's margin rate
+ *                  resolves from `wmsGetMarginRate(opts.marginRateInvestorId, t.broker_id)`
+ *                  INSTEAD of the per-trade trader_id/investor_id lookup. This is what
+ *                  broker views want: ALL trades on stmt_TG should use the (T0, TG) IBA
+ *                  rate uniformly, not pick up the per-trader IBA (T2 has 33.33% vs
+ *                  T0's 25% — mixing them on the broker view is wrong because the
+ *                  broker statement is the firm's view of the broker invoice, and the
+ *                  firm-level margin rate with that broker is the single applicable
+ *                  rate). When unset, the legacy per-trade trader_id-first lookup is
+ *                  used (matches how trader views like stmt_T2 work today).
  * @returns {Array} of {date, symbol, marginAdj, runningMargin}
  *          marginAdj = positive when margin blocked, negative when released
  *          runningMargin = cumulative margin after this adjustment
  */
-function wmsCalcMarginFIFO(transactions) {
+function wmsCalcMarginFIFO(transactions, opts) {
+    opts = opts || {};
+    var rateOverrideInv = opts.marginRateInvestorId || null;
     var results = [];
     var positions = {}; // {contractKey} -> [{date, qty, price, marginRate, amount}]
     var runningMargin = 0;
@@ -6419,15 +6439,22 @@ function wmsCalcMarginFIFO(transactions) {
             : (parseFloat(t.net_amount) || 0);
 
         // Get margin rate.
-        // When trader_id differs from investor_id (trader-only books), the trade sits in
-        // the trader's namespace and must use the trader's IBA rate, not the parent
-        // investor's. Fall back to the investor's rate only when the trader's isn't set.
+        // (a) If caller provided `opts.marginRateInvestorId` (broker views do),
+        //     use that fixed investor with the trade's broker_id for ALL trades.
+        //     This makes broker statements apply the FILTER's IBA rate uniformly
+        //     instead of mixing per-trader rates (e.g. T2's 33.33% with T0's 25%).
+        // (b) Otherwise (trader/investor views): legacy lookup — trader_id first,
+        //     falling back to investor_id. Matches trader-view expectations.
         var marginRate = 0;
-        if (t.trader_id && t.trader_id !== t.investor_id) {
-            marginRate = wmsGetMarginRate(t.trader_id, t.broker_id);
-        }
-        if (!marginRate) {
-            marginRate = wmsGetMarginRate(t.investor_id, t.broker_id);
+        if (rateOverrideInv) {
+            marginRate = wmsGetMarginRate(rateOverrideInv, t.broker_id);
+        } else {
+            if (t.trader_id && t.trader_id !== t.investor_id) {
+                marginRate = wmsGetMarginRate(t.trader_id, t.broker_id);
+            }
+            if (!marginRate) {
+                marginRate = wmsGetMarginRate(t.investor_id, t.broker_id);
+            }
         }
         if (!marginRate || marginRate === 0) return; // No margin for this investor-broker combo
 
