@@ -808,27 +808,47 @@ async function lgRefresh() {
     } else if (lgSelectedTraderIds.length > 0) {
         entityIds = lgSelectedTraderIds.slice();
     }
-    // Broker statements never draw on investor ledger entries (those track
-    // investor cash with the firm, not broker P&L). Drive the fetch-skip off
-    // the explicit statement type, NOT off the pill combination — the user's
-    // toggle is now authoritative. See LESSONS §E.15.12.
+    // Broker statements DO need OPENING_BALANCE and RECONCILIATION rows: the
+    // trader-to-broker outstanding balance is a real position the owner tracks
+    // + reconciles separately. They do NOT need the investor-cash entry types
+    // (INTEREST_BOOKED / CASH_RECEIVED / CASH_PAID) which model the investor's
+    // cash with the firm (not relevant to the broker invoice view).
+    // See WMS-CONTEXT 🎯 PRIORITY Issue 2 + LESSONS §E.15.12 (revised).
+    //
+    // PostgREST filter syntax: `field=in.(values)` — NOT `field.in.(values)`
+    // (the dotted form is silently ignored, returning the unfiltered set).
+    // The pre-existing non-broker branch had the same bug but was masked by
+    // downstream JS-side filtering in wmsBuildLedger. We fix both forms here
+    // to make the URL actually filter on the server side. WMS-CONTEXT Issue 3.
     var brokerOnly = (lgStatementType === 'broker');
 
-    if (brokerOnly) {
+    try {
+        var qParts = [];
+        if (brokerOnly) {
+            // Broker view: OPENING_BALANCE + RECONCILIATION only, scoped to
+            // (broker_id [+ investor_id if present]).
+            qParts.push('entry_type=in.(OPENING_BALANCE,RECONCILIATION)');
+            if (lgSelectedBrokerIds.length > 0) {
+                qParts.push('broker_id=in.(' + lgSelectedBrokerIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')');
+            }
+            if (lgSelectedInvestorIds.length > 0) {
+                qParts.push('investor_id=in.(' + lgSelectedInvestorIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')');
+            }
+        } else {
+            // Investor / trader view: pull all entry types for the
+            // selected investor(s). wmsBuildLedger will JS-side filter
+            // again on perspective and tag/broker filters.
+            if (entityIds.length > 0) {
+                qParts.push('investor_id=in.(' + entityIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')');
+            }
+        }
+        var filterQs = qParts.length > 0 ? '&' + qParts.join('&') : '';
+        var url = SUPABASE_URL + '/rest/v1/ledger_entries?select=*' + filterQs + '&order=entry_date.asc';
+        var resp = await fetch(url, { headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}) });
+        lgLedgerEntries = resp.ok ? await resp.json() : [];
+    } catch (err) {
+        console.warn('Failed to fetch ledger entries:', err.message);
         lgLedgerEntries = [];
-    } else {
-        var allQuery = '';
-        if (entityIds.length > 0) {
-            allQuery += 'investor_id.in.(' + entityIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')';
-        }
-        try {
-            var url = SUPABASE_URL + '/rest/v1/ledger_entries?select=*' + (allQuery ? '&' + allQuery : '') + '&order=entry_date.asc';
-            var resp = await fetch(url, { headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}) });
-            lgLedgerEntries = resp.ok ? await resp.json() : [];
-        } catch (err) {
-            console.warn('Failed to fetch ledger entries:', err.message);
-            lgLedgerEntries = [];
-        }
     }
 
     // Filter transactions by non-date filters (investor/trader/broker/tags) — NO date filter yet.
@@ -1333,10 +1353,20 @@ function lgFindOpeningBalance() {
     // in the array regardless of which view is active, and the inline edit
     // then PATCHes the wrong investor's row (observed bug: editing on
     // stmt_T2 silently overwrote T3's opening balance).
+    //
+    // ALSO scope by broker_id for broker statements (e.g. stmt_TG). An
+    // investor with multiple broker accounts has one OB row per broker;
+    // without this filter the wrong broker's OB would be returned and the
+    // inline edit would PATCH the wrong row. The save path
+    // (lgSaveOpeningBalance) already includes broker_id in POST bodies.
+    // WMS-CONTEXT 🎯 PRIORITY Issue 2.
     var effInvId = (typeof lgGetEffectiveInvestorId === 'function') ? lgGetEffectiveInvestorId() : null;
+    var isBroker = (lgStatementType === 'broker');
+    var effBrkId = (isBroker && lgSelectedBrokerIds.length === 1) ? lgSelectedBrokerIds[0] : null;
     var stored = lgLedgerEntries.find(function(e) {
         if (e.entry_type !== 'OPENING_BALANCE') return false;
         if (effInvId && e.investor_id !== effInvId) return false;
+        if (effBrkId && e.broker_id !== effBrkId) return false;
         return true;
     });
     return {
@@ -4089,11 +4119,25 @@ function lgExportImage(d, mode) {
 
     // Deliver the rendered canvas — either to clipboard (with download
     // fallback) or as a direct download to the user's Downloads folder.
+    //
+    // A4 PORTRAIT FIT: the canvas is W=1200 px wide. Word / Pages / Preview
+    // default to 96 DPI when no metadata is present → 1200 px ≈ 12.5", which
+    // overflows A4 portrait (8.27"). Inject a pHYs chunk declaring 150 DPI so
+    // 1200 px resolves to exactly 8" wide — fits inside A4 portrait with room
+    // to spare. The visible pixel sharpness is unchanged (DPR=2 → 2400 px
+    // internal raster). User concern, 2026-05-27.
     var filename = wmsExportFilename('Statement', d.viewName, d.dateLabel, 'png');
-    canvas.toBlob(async function(blob) {
-        if (!blob) {
+    canvas.toBlob(async function(blobRaw) {
+        if (!blobRaw) {
             if (typeof showAlert === 'function') showAlert('Failed to render image', 'error', 3000);
             return;
+        }
+        // A4-fit DPI tag — non-fatal if helper missing (graceful degrade).
+        var blob = blobRaw;
+        try {
+            if (typeof wmsAddPngDpi === 'function') blob = await wmsAddPngDpi(blobRaw, 150);
+        } catch (err) {
+            console.warn('wmsAddPngDpi failed, using untagged PNG —', err && err.message);
         }
 
         function downloadFile(msg) {
