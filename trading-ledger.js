@@ -920,7 +920,8 @@ async function lgRefresh() {
         // Interest terms resolve via IBA-first (broker-account override) then
         // investor-level — so a broker view picks up its own rate if set.
         var terms = wmsGetInterestTerms(invId, effBrkIdForInterest);
-        if (terms && terms.frequency === 'weekly_friday' && terms.rate > 0) {
+        var supportedFreq = terms && (terms.frequency === 'weekly_friday' || terms.frequency === 'daily_monthly_compound');
+        if (terms && supportedFreq && terms.rate > 0) {
             // Last posted Saturday = max entry_date of INTEREST_BOOKED for
             // this (investor [+ broker on broker view]).
             var lastPosted = null;
