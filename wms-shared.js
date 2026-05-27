@@ -5960,17 +5960,9 @@ function wmsCalcClosingBalance(ledger, dateStr) {
  * @param {string} toStr       - YYYY-MM-DD
  * @returns {Array} of {period, closingBalance, days, rate, interest, postDate}
  */
-function wmsCalcInterestWeeklyFriday(ledger, terms, fromStr, toStr, marginEvents, perspective) {
+function wmsCalcInterestWeeklyFriday(ledger, terms, fromStr, toStr, marginEvents) {
     if (!terms || !terms.rate) return [];
     var rate = terms.rate;
-    // For broker perspective, interest accrues on the FIRM's debit to broker
-    // (firm-POV -ve cash → firm owes broker → broker charges interest on that
-    // margin loan). Flip the sign so the same max-clamp logic catches it.
-    // For trader/investor perspective, no flip — investor's debit to firm
-    // (firm-POV +ve cash) attracts interest as before.
-    // Owner directive 2026-05-27: "if I owe money to broker (-ve bal), then I
-    // have to pay interest". See LESSONS E.15.6 (rev) + E.15.13.
-    var perspMult = (perspective === 'broker') ? -1 : 1;
     var results = [];
 
     // Find all Fridays in the range
@@ -5992,10 +5984,9 @@ function wmsCalcInterestWeeklyFriday(ledger, terms, fromStr, toStr, marginEvents
     while (cur <= to) {
         var fridayStr = cur.toISOString().slice(0, 10);
         var closingBal = wmsCalcClosingBalance(ledger, fridayStr);
-        // Include any outstanding F&O margin at Friday EOD in the interest base.
-        // For broker perspective the cash sign flips (see perspMult above).
+        // Include any outstanding F&O margin at Friday EOD in the interest base
         var marginAtFri = marginEvents ? wmsGetMarginRunningAt(marginEvents, fridayStr) : 0;
-        var base = (closingBal * perspMult) + marginAtFri;
+        var base = closingBal + marginAtFri;
         // Weekly: rate × (1/52), floored at zero
         var interest = wmsRoundMoney(Math.max(0, base) * (rate / 100) * (1 / 52));
 
@@ -6012,15 +6003,14 @@ function wmsCalcInterestWeeklyFriday(ledger, terms, fromStr, toStr, marginEvents
 
         results.push({
             period: periodLabel,
-            closingBalance: closingBal * perspMult, // sign-aligned for display
+            closingBalance: closingBal,
             marginBalance: marginAtFri,
             baseBalance: base,
             days: 7,
             rate: rate,
             interest: interest,
             postDate: postDateStr,
-            fridayDate: fridayStr,
-            perspective: perspective || 'investor'
+            fridayDate: fridayStr
         });
 
         // Move to next Friday
@@ -6167,14 +6157,11 @@ function wmsCalcInterestDailyFriday(ledger, terms, fromStr, toStr, marginEvents)
  * @returns {Array} of {period, closingBalance, marginBalance, baseBalance,
  *                     days, rate, interest, postDate, frequency, compound, trace}
  */
-function wmsCalcInterestDailyMonthlyCompound(ledger, terms, fromStr, toStr, marginEvents, perspective) {
+function wmsCalcInterestDailyMonthlyCompound(ledger, terms, fromStr, toStr, marginEvents) {
     if (!terms || !terms.rate) return [];
     var rate = terms.rate;
     var compound = terms.compound === true;
     var dailyRate = (rate / 100) / 365;   // calendar-day basis
-    // For broker perspective, debit balance comes from FIRM's debt to broker
-    // (firm-POV -ve cash). Flip sign so max-clamp catches it. See E.15.6 (rev).
-    var perspMult = (perspective === 'broker') ? -1 : 1;
     var results = [];
 
     // Helpers — work in UTC to avoid DST drift on date arithmetic.
@@ -6214,16 +6201,19 @@ function wmsCalcInterestDailyMonthlyCompound(ledger, terms, fromStr, toStr, marg
         while (cursor <= loopEnd) {
             var dStr = toIso(cursor);
             var cashBal_d = wmsCalcClosingBalance(ledger, dStr);
-            // Apply perspective sign-flip before the max-clamp so broker view
-            // catches the firm's debit-to-broker (firm-POV -ve cash) as the
-            // interest-bearing balance.
-            var debitBal_d = Math.max(0, cashBal_d * perspMult);
+            var debitBal_d = Math.max(0, cashBal_d);
             var margin_d   = marginEvents ? wmsGetMarginRunningAt(marginEvents, dStr) : 0;
             // Daily interest is SIMPLE — base = debit + margin only. No
             // intra-month accrual added to the base. The `compound` flag
             // on the terms governs cross-MONTH behaviour: once a month's
             // interest is posted as INTEREST_BOOKED, that entry joins the
-            // ledger and naturally inflates next month's running balance.
+            // ledger and naturally inflates next month's running balance
+            // (the running cash balance IS the compounding channel). If
+            // the user doesn't post a month's interest, it doesn't compound
+            // — which matches the explicit "post to compound" workflow.
+            // Earlier implementation added monthAccrued to base_d, which
+            // was DAILY compounding within the month — wrong per owner spec
+            // 2026-05-27 ("daily is simple interest").
             var base_d = debitBal_d + margin_d;
             // Round each day's interest to 2dp before accumulating so the
             // trace's per-day column sums EXACTLY to the posted monthly total.
@@ -6247,7 +6237,7 @@ function wmsCalcInterestDailyMonthlyCompound(ledger, terms, fromStr, toStr, marg
             var lastDayStr = toIso(loopEnd);
             var closingBal = wmsCalcClosingBalance(ledger, lastDayStr);
             var marginAtEnd = marginEvents ? wmsGetMarginRunningAt(marginEvents, lastDayStr) : 0;
-            var debitAtEnd = Math.max(0, closingBal * perspMult);
+            var debitAtEnd = Math.max(0, closingBal);
             // Use the actual posting date — month-end for completed months,
             // today's date for the in-progress month (so the pending row
             // shows up as commitable RIGHT NOW with accrual-to-date).
@@ -6259,16 +6249,15 @@ function wmsCalcInterestDailyMonthlyCompound(ledger, terms, fromStr, toStr, marg
             results.push({
                 period: periodLabel,
                 monthLabel: monthLabel,
-                closingBalance: closingBal * perspMult, // sign-aligned for display
+                closingBalance: closingBal,           // signed cash at last day
                 marginBalance: marginAtEnd,
-                baseBalance: debitAtEnd + marginAtEnd,
+                baseBalance: debitAtEnd + marginAtEnd, // unclamped-signed display base
                 days: trace.length,
                 rate: rate,
                 interest: roundedInterest,
                 postDate: postDateStr,
                 frequency: 'daily_monthly_compound',
                 compound: compound,
-                perspective: perspective || 'investor',
                 trace: trace
             });
         }
