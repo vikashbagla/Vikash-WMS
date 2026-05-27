@@ -953,7 +953,27 @@ async function lgRefresh() {
                 });
                 var marginEvents = wmsCalcMarginFIFO(nfoTxns);
 
-                var periods = wmsCalcInterestWeeklyFriday(fullCombined, terms, genFrom, today, marginEvents);
+                // Frequency-dispatch: pick the engine matching the configured
+                // interest terms. Both engines emit the same period shape
+                // ({period, postDate, interest, ...}) so downstream pending-row
+                // generation is identical. `daily_monthly_compound` adds a
+                // `trace` field per period for the detail modal (E.15.6c).
+                var periods;
+                if (terms.frequency === 'weekly_friday') {
+                    periods = wmsCalcInterestWeeklyFriday(fullCombined, terms, genFrom, today, marginEvents);
+                } else if (terms.frequency === 'daily_monthly_compound') {
+                    periods = wmsCalcInterestDailyMonthlyCompound(fullCombined, terms, genFrom, today, marginEvents);
+                } else {
+                    console.warn('Unsupported interest frequency: ' + terms.frequency);
+                    periods = [];
+                }
+
+                // Reference label adapts to the cadence — "Weekly interest"
+                // for the weekly engine, "Monthly interest" for the monthly one.
+                var refPrefix = (terms.frequency === 'daily_monthly_compound')
+                    ? 'Monthly interest '
+                    : 'Weekly interest ';
+
                 // Skip zero-interest rows entirely (user §8.3)
                 for (var pi = 0; pi < periods.length; pi++) {
                     var p = periods[pi];
@@ -970,7 +990,7 @@ async function lgRefresh() {
                         entryType: 'INTEREST_BOOKED',
                         amount: p.interest,
                         investorId: invId,
-                        reference: 'Weekly interest ' + p.period,
+                        reference: refPrefix + p.period,
                         notes: ''
                     };
                     fullCombined.push(pendingRow);
@@ -2819,78 +2839,151 @@ function lgCancelDelete() {
 // INTEREST CALCULATION & POSTING
 // ============================================================================
 
+// ── Weekly-friday breakdown (single Friday EOD + rate × 1/52) ─────────────
+function _lgRenderWeeklyBreakdown(calc) {
+    var roundedInterest = Math.round(calc.interest);
+    var cash = calc.closingBalance || 0;
+    var margin = calc.marginBalance || 0;
+    var base = calc.baseBalance != null ? calc.baseBalance : (cash + margin);
+    var clampedBase = Math.max(0, base);
+
+    var rowStyle = 'display:flex; justify-content:space-between; padding:8px 12px; font-size:13px;';
+    var labelStyle = 'color:#4a5568;';
+    var valueStyle = 'font-variant-numeric:tabular-nums; color:#1a202c;';
+
+    var periodHeader =
+        '<div style="padding:8px 12px; background:#f7fafc; border-radius:6px 6px 0 0; ' +
+        'font-size:11px; text-transform:uppercase; letter-spacing:0.5px; ' +
+        'color:#718096; font-weight:600;">Period</div>' +
+        '<div style="' + rowStyle + ' border-bottom:1px solid #e2e8f0;">' +
+            '<span style="' + labelStyle + '">' + wmsEsc(calc.period) + '</span>' +
+        '</div>';
+
+    // Show the DEBIT portion of the running balance, i.e. the magnitude that
+    // the interest formula actually uses (`max(0, cash) + margin`).
+    var debitBal = Math.max(0, cash);
+    var balanceRow =
+        '<div style="' + rowStyle + '">' +
+            '<span style="' + labelStyle + '">Debit Balance</span>' +
+            '<span style="' + valueStyle + '">' + lgFmt(debitBal) + '</span>' +
+        '</div>';
+    var marginRow =
+        '<div style="' + rowStyle + '">' +
+            '<span style="' + labelStyle + '">F&amp;O Margin</span>' +
+            '<span style="' + valueStyle + '">' + lgFmt(margin) + '</span>' +
+        '</div>';
+    var totalRow =
+        '<div style="' + rowStyle + ' border-top:1px solid #e2e8f0; background:#f7fafc; font-weight:600;">' +
+            '<span style="color:#1a202c;">Total Base</span>' +
+            '<span style="' + valueStyle + ' font-weight:700;">' + lgFmt(clampedBase) + '</span>' +
+        '</div>';
+    var rateRow =
+        '<div style="' + rowStyle + '">' +
+            '<span style="' + labelStyle + '">× Rate (' + calc.rate + '% p.a.) × (1/52)</span>' +
+            '<span style="' + valueStyle + '"></span>' +
+        '</div>';
+    var interestRow =
+        '<div style="' + rowStyle + ' border-top:1px solid #e2e8f0; background:#edf2f7; font-weight:700; font-size:14px;">' +
+            '<span style="color:#1a202c;">Interest</span>' +
+            '<span style="' + valueStyle + ' color:#2d3748; font-weight:700;">' + lgFmt(roundedInterest) + '</span>' +
+        '</div>';
+
+    return '<div style="border:1px solid #e2e8f0; border-radius:6px; overflow:hidden;">' +
+        periodHeader + balanceRow + marginRow + totalRow + rateRow + interestRow +
+        '</div>';
+}
+
+// ── Daily-monthly-compound trace (one row per day) ─────────────────────────
+// The trace shows the full per-day arithmetic so Vikash can audit each day's
+// debit balance, margin, base, daily interest, and running monthly accrual.
+// Compound mode means each day's base includes the month-to-date interest
+// accrued so far — the trace lays that progression out explicitly.
+function _lgRenderMonthlyTrace(calc) {
+    var trace = calc.trace || [];
+    var roundedInterest = Math.round(calc.interest);
+    var compoundNote = calc.compound
+        ? '× Rate (' + calc.rate + '% p.a.) × (1/365), <strong>compounded daily</strong>'
+        : '× Rate (' + calc.rate + '% p.a.) × (1/365), simple';
+
+    var headerCellStyle =
+        'padding:6px 8px; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; ' +
+        'color:#718096; font-weight:600; background:#f7fafc; border-bottom:1px solid #e2e8f0; ' +
+        'text-align:right; white-space:nowrap;';
+    var firstHeaderCellStyle = headerCellStyle.replace('text-align:right', 'text-align:left');
+    var cellStyle = 'padding:5px 8px; font-size:12px; font-variant-numeric:tabular-nums; ' +
+        'text-align:right; border-bottom:1px solid #f1f5f9;';
+    var firstCellStyle = cellStyle.replace('text-align:right', 'text-align:left') + ' color:#4a5568;';
+
+    // Build rows — newest at top so the in-progress days are visible without scrolling.
+    var rowsHtml = '';
+    for (var i = trace.length - 1; i >= 0; i--) {
+        var t = trace[i];
+        rowsHtml +=
+            '<tr>' +
+                '<td style="' + firstCellStyle + '">' + lgFmtDate(t.date) + '</td>' +
+                '<td style="' + cellStyle + '">' + lgFmt(t.debitBal) + '</td>' +
+                '<td style="' + cellStyle + '">' + lgFmt(t.margin) + '</td>' +
+                '<td style="' + cellStyle + '">' + lgFmt(t.base) + '</td>' +
+                '<td style="' + cellStyle + '">' + lgFmt(t.dailyInterest) + '</td>' +
+                '<td style="' + cellStyle + ' font-weight:600; color:#2d3748;">' + lgFmt(t.accruedSoFar) + '</td>' +
+            '</tr>';
+    }
+
+    var rowStyle = 'display:flex; justify-content:space-between; padding:8px 12px; font-size:13px;';
+    var labelStyle = 'color:#4a5568;';
+    var valueStyle = 'font-variant-numeric:tabular-nums; color:#1a202c;';
+
+    var periodHeader =
+        '<div style="padding:8px 12px; background:#f7fafc; border-radius:6px 6px 0 0; ' +
+        'font-size:11px; text-transform:uppercase; letter-spacing:0.5px; ' +
+        'color:#718096; font-weight:600;">Period · ' + trace.length + ' day' + (trace.length === 1 ? '' : 's') + '</div>' +
+        '<div style="' + rowStyle + ' border-bottom:1px solid #e2e8f0;">' +
+            '<span style="' + labelStyle + '">' + wmsEsc(calc.period) + '</span>' +
+            '<span style="font-size:11px; color:#94a3b8;">' + compoundNote + '</span>' +
+        '</div>';
+
+    var traceHtml =
+        '<div style="max-height:280px; overflow:auto; border-bottom:1px solid #e2e8f0;">' +
+        '<table style="width:100%; border-collapse:collapse;">' +
+        '<thead style="position:sticky; top:0; z-index:1;">' +
+            '<tr>' +
+                '<th style="' + firstHeaderCellStyle + '">Date</th>' +
+                '<th style="' + headerCellStyle + '">Debit Bal</th>' +
+                '<th style="' + headerCellStyle + '">F&amp;O Margin</th>' +
+                '<th style="' + headerCellStyle + '">Base</th>' +
+                '<th style="' + headerCellStyle + '">Day Int</th>' +
+                '<th style="' + headerCellStyle + '">Accrued</th>' +
+            '</tr>' +
+        '</thead>' +
+        '<tbody>' + rowsHtml + '</tbody></table>' +
+        '</div>';
+
+    var interestRow =
+        '<div style="' + rowStyle + ' background:#edf2f7; font-weight:700; font-size:14px;">' +
+            '<span style="color:#1a202c;">Total Monthly Interest</span>' +
+            '<span style="' + valueStyle + ' color:#2d3748; font-weight:700;">' + lgFmt(roundedInterest) + '</span>' +
+        '</div>';
+
+    return '<div style="border:1px solid #e2e8f0; border-radius:6px; overflow:hidden;">' +
+        periodHeader + traceHtml + interestRow +
+        '</div>';
+}
+
 // Render the interest detail modal with the calculation breakdown.
 // Works for both posted rows (entry in DB) and pending rows (_calc in memory).
+// Dispatches by `calc.frequency`:
+//   - 'daily_monthly_compound' → renders a daily-trace table (one row per day)
+//   - everything else (default = 'weekly_friday') → renders the single-Friday
+//     breakdown unchanged from the pre-2026-05-27 layout.
 function lgPopulateInterestDetail(calc, currentAmount) {
     var detailBody = document.getElementById('lgInterestDetailBreakdown');
     var totalEditEl = document.getElementById('lgInterestTotalEdit');
 
     if (detailBody) {
-        if (calc) {
-            var roundedInterest = Math.round(calc.interest);
-            var cash = calc.closingBalance || 0;
-            var margin = calc.marginBalance || 0;
-            var base = calc.baseBalance != null ? calc.baseBalance : (cash + margin);
-            var clampedBase = Math.max(0, base);
-
-            var rowStyle =
-                'display:flex; justify-content:space-between; padding:8px 12px; ' +
-                'font-size:13px;';
-            var labelStyle = 'color:#4a5568;';
-            var valueStyle = 'font-variant-numeric:tabular-nums; color:#1a202c;';
-
-            var periodHeader =
-                '<div style="padding:8px 12px; background:#f7fafc; border-radius:6px 6px 0 0; ' +
-                'font-size:11px; text-transform:uppercase; letter-spacing:0.5px; ' +
-                'color:#718096; font-weight:600;">Period</div>' +
-                '<div style="' + rowStyle + ' border-bottom:1px solid #e2e8f0;">' +
-                    '<span style="' + labelStyle + '">' + wmsEsc(calc.period) + '</span>' +
-                '</div>';
-
-            // Show the DEBIT portion of the running balance, i.e. the magnitude
-            // that the interest formula actually uses (`max(0, cash) + margin`).
-            // Showing the signed balance here makes the row arithmetic look
-            // wrong because Total Base is unsigned — e.g. "Balance (19,363.94)
-            // + Margin 8,422.74 = Total Base 27,786.67" doesn't visibly add up.
-            // Labelling this as "Debit Balance" + showing the positive magnitude
-            // makes the math read correctly and matches the rule from E.15.6
-            // that a credit balance (firm owes counterparty) earns no interest
-            // — Debit Balance is 0 in that case.
-            var debitBal = Math.max(0, cash);
-            var balanceRow =
-                '<div style="' + rowStyle + '">' +
-                    '<span style="' + labelStyle + '">Debit Balance</span>' +
-                    '<span style="' + valueStyle + '">' + lgFmt(debitBal) + '</span>' +
-                '</div>';
-
-            var marginRow =
-                '<div style="' + rowStyle + '">' +
-                    '<span style="' + labelStyle + '">F&amp;O Margin</span>' +
-                    '<span style="' + valueStyle + '">' + lgFmt(margin) + '</span>' +
-                '</div>';
-
-            var totalRow =
-                '<div style="' + rowStyle + ' border-top:1px solid #e2e8f0; background:#f7fafc; font-weight:600;">' +
-                    '<span style="color:#1a202c;">Total Base</span>' +
-                    '<span style="' + valueStyle + ' font-weight:700;">' + lgFmt(clampedBase) + '</span>' +
-                '</div>';
-
-            var rateRow =
-                '<div style="' + rowStyle + '">' +
-                    '<span style="' + labelStyle + '">× Rate (' + calc.rate + '% p.a.) × (1/52)</span>' +
-                    '<span style="' + valueStyle + '"></span>' +
-                '</div>';
-
-            var interestRow =
-                '<div style="' + rowStyle + ' border-top:1px solid #e2e8f0; background:#edf2f7; font-weight:700; font-size:14px;">' +
-                    '<span style="color:#1a202c;">Interest</span>' +
-                    '<span style="' + valueStyle + ' color:#2d3748; font-weight:700;">' + lgFmt(roundedInterest) + '</span>' +
-                '</div>';
-
-            detailBody.innerHTML =
-                '<div style="border:1px solid #e2e8f0; border-radius:6px; overflow:hidden;">' +
-                    periodHeader + balanceRow + marginRow + totalRow + rateRow + interestRow +
-                '</div>';
+        if (calc && calc.frequency === 'daily_monthly_compound') {
+            detailBody.innerHTML = _lgRenderMonthlyTrace(calc);
+        } else if (calc) {
+            detailBody.innerHTML = _lgRenderWeeklyBreakdown(calc);
         } else {
             detailBody.innerHTML = '<div class="text-center" style="padding:20px; color:#9ca3af;">No calculation data available</div>';
         }
@@ -2915,22 +3008,39 @@ async function lgShowInterestDetail(entryId) {
     lgPendingModalKey = null;
 
     var investorId = entry.investor_id;
-    var interestTerms = wmsGetInterestTerms(investorId);
+    // Pass broker_id to resolve IBA-level terms (parity with the lgRefresh
+    // pending-interest generator). Use entry's own broker_id if it carries
+    // one (broker-account-scoped interest); else fall back to the current
+    // single-broker filter if active.
+    var brokerIdForTerms = entry.broker_id || ((lgStatementType === 'broker' && lgSelectedBrokerIds.length === 1)
+        ? lgSelectedBrokerIds[0] : null);
+    var interestTerms = wmsGetInterestTerms(investorId, brokerIdForTerms);
 
     if (!interestTerms) {
         showAlert('No interest terms configured', 'warning', 3000);
         return;
     }
 
-    // Recompute the calculation for this row by finding the Friday before entry_date
-    // and running the same weekly engine for a single period.
+    // Recompute the calculation for this row by finding the relevant period
+    // and running the engine matching the terms' frequency.
+    //   weekly_friday          → from = Friday before entry_date (single Friday)
+    //   daily_monthly_compound → from = first day of entry_date's month,
+    //                             to  = entry_date (month-end)
     var calc = null;
     try {
         var postDate = new Date(entry.entry_date);
-        var friday = new Date(postDate);
-        friday.setDate(friday.getDate() - 1);
-        var fromStr = friday.toISOString().slice(0, 10);
-        var toStr = fromStr;
+        var fromStr, toStr;
+        if (interestTerms.frequency === 'daily_monthly_compound') {
+            // Whole month leading up to entry_date.
+            var monthStart = new Date(Date.UTC(postDate.getUTCFullYear(), postDate.getUTCMonth(), 1));
+            fromStr = monthStart.toISOString().slice(0, 10);
+            toStr = entry.entry_date;
+        } else {
+            var friday = new Date(postDate);
+            friday.setDate(friday.getDate() - 1);
+            fromStr = friday.toISOString().slice(0, 10);
+            toStr = fromStr;
+        }
 
         // Build ledger excluding this entry itself (so the running balance matches
         // what it was just before this interest row was posted).
@@ -2977,7 +3087,12 @@ async function lgShowInterestDetail(entryId) {
         });
         var marginEvents = wmsCalcMarginFIFO(nfoTxns);
 
-        var periods = wmsCalcInterestWeeklyFriday(full, interestTerms, fromStr, toStr, marginEvents);
+        var periods;
+        if (interestTerms.frequency === 'daily_monthly_compound') {
+            periods = wmsCalcInterestDailyMonthlyCompound(full, interestTerms, fromStr, toStr, marginEvents);
+        } else {
+            periods = wmsCalcInterestWeeklyFriday(full, interestTerms, fromStr, toStr, marginEvents);
+        }
         calc = periods.length > 0 ? periods[0] : null;
     } catch (err) {
         console.warn('Failed to recompute interest detail:', err.message);
