@@ -6125,6 +6125,148 @@ function wmsCalcInterestDailyFriday(ledger, terms, fromStr, toStr, marginEvents)
 }
 
 /**
+ * Daily-accrual interest, posted monthly, optionally compounded.
+ *
+ * Walks each day in the range, computing interest on (debit_balance + margin)
+ * at that day's EOD. Accumulates per-month and emits one period row per
+ * completed-or-in-progress month with the total monthly accrual.
+ *
+ * Compounding: when `terms.compound === true`, the accumulator within the
+ * month is added to each subsequent day's base so the interest itself earns
+ * interest until month-end posting. After the month-end post, the accumulator
+ * resets — the posted INTEREST_BOOKED entry now lives in the ledger and
+ * affects the running balance for the next month's daily accruals (so the
+ * effect of last month's interest still compounds into the next month via
+ * the cash-balance channel).
+ *
+ * Daily base formula matches wmsCalcInterestWeeklyFriday's intent:
+ *     debit_balance = max(0, cash_running_balance_at_EOD_d)
+ *     base_d        = debit_balance + margin_d
+ *   The clamp at 0 means a credit position (firm owes counterparty) earns
+ *   no interest — per E.15.6, only the investor's debit (firm owes us)
+ *   triggers interest. Margin is always positive (collateral magnitude).
+ *
+ * Each result row carries a `trace` array for the detail modal — one entry
+ * per day with {date, debitBal, margin, base, dailyInterest, accruedSoFar}.
+ *
+ * @param {Array}  ledger        - sorted output of wmsBuildLedger
+ * @param {object} terms         - {rate, frequency, compound}
+ * @param {string} fromStr       - YYYY-MM-DD (inclusive). Daily loop starts here.
+ * @param {string} toStr         - YYYY-MM-DD (inclusive). Loop clips to this.
+ * @param {Array}  marginEvents  - optional; output of wmsCalcMarginFIFO
+ * @returns {Array} of {period, closingBalance, marginBalance, baseBalance,
+ *                     days, rate, interest, postDate, frequency, compound, trace}
+ */
+function wmsCalcInterestDailyMonthlyCompound(ledger, terms, fromStr, toStr, marginEvents) {
+    if (!terms || !terms.rate) return [];
+    var rate = terms.rate;
+    var compound = terms.compound === true;
+    var dailyRate = (rate / 100) / 365;   // calendar-day basis
+    var results = [];
+
+    // Helpers — work in UTC to avoid DST drift on date arithmetic.
+    function toIso(d) { return d.toISOString().slice(0, 10); }
+    function addDaysUtc(d, n) {
+        var nd = new Date(d.getTime());
+        nd.setUTCDate(nd.getUTCDate() + n);
+        return nd;
+    }
+    function monthEndUtc(year, month0) {
+        // Last day of month0 (0..11). Day 0 of next month = last day of this month.
+        return new Date(Date.UTC(year, month0 + 1, 0));
+    }
+
+    // Walk MONTH-BY-MONTH from the month containing fromStr through the month
+    // containing toStr. Each month's daily loop is clipped to [fromStr, toStr].
+    var fromDate = new Date(fromStr + 'T00:00:00Z');
+    var toDate   = new Date(toStr   + 'T00:00:00Z');
+    if (fromDate > toDate) return [];
+
+    var mYear  = fromDate.getUTCFullYear();
+    var mMonth = fromDate.getUTCMonth();
+
+    var lastMonthYM = toDate.getUTCFullYear() * 12 + toDate.getUTCMonth();
+    while ((mYear * 12 + mMonth) <= lastMonthYM) {
+        var monthFirst = new Date(Date.UTC(mYear, mMonth, 1));
+        var monthLast  = monthEndUtc(mYear, mMonth);
+
+        // Clip the daily loop to the requested window.
+        var loopStart = monthFirst < fromDate ? fromDate : monthFirst;
+        var loopEnd   = monthLast  > toDate   ? toDate   : monthLast;
+
+        var monthAccrued = 0;
+        var trace = [];
+
+        var cursor = new Date(loopStart.getTime());
+        while (cursor <= loopEnd) {
+            var dStr = toIso(cursor);
+            var cashBal_d = wmsCalcClosingBalance(ledger, dStr);
+            var debitBal_d = Math.max(0, cashBal_d);
+            var margin_d   = marginEvents ? wmsGetMarginRunningAt(marginEvents, dStr) : 0;
+            var base_d     = debitBal_d + margin_d + (compound ? monthAccrued : 0);
+            // Round each day's interest to 2dp before accumulating. Two reasons:
+            //   1) The trace's per-day values sum EXACTLY to the posted monthly
+            //      total — no audit confusion when Vikash adds up the column.
+            //   2) Compounding on rounded daily values matches how banks /
+            //      brokers actually compute interest in practice (each day's
+            //      accrual is in real rupees-and-paise).
+            var daily_d = wmsRoundMoney(base_d * dailyRate);
+            monthAccrued += daily_d;
+            trace.push({
+                date: dStr,
+                debitBal: wmsRoundMoney(debitBal_d),
+                margin: wmsRoundMoney(margin_d),
+                base: wmsRoundMoney(base_d),
+                dailyInterest: daily_d,
+                accruedSoFar: wmsRoundMoney(monthAccrued)
+            });
+            cursor = addDaysUtc(cursor, 1);
+        }
+
+        var roundedInterest = wmsRoundMoney(monthAccrued);
+        if (roundedInterest > 0) {
+            // Closing-balance + margin at the LAST day of the loop window
+            // (which is month-end for completed months, today for in-progress).
+            var lastDayStr = toIso(loopEnd);
+            var closingBal = wmsCalcClosingBalance(ledger, lastDayStr);
+            var marginAtEnd = marginEvents ? wmsGetMarginRunningAt(marginEvents, lastDayStr) : 0;
+            var debitAtEnd = Math.max(0, closingBal);
+            // Use the actual posting date — month-end for completed months,
+            // today's date for the in-progress month (so the pending row
+            // shows up as commitable RIGHT NOW with accrual-to-date).
+            var postDateStr = toIso(loopEnd);
+
+            var monthLabel = monthFirst.toLocaleDateString('en-IN', {month:'short', year:'numeric'}); // "Apr 2026"
+            var periodLabel = toLocaleShort(loopStart) + ' to ' + toLocaleShort(loopEnd);
+
+            results.push({
+                period: periodLabel,
+                monthLabel: monthLabel,
+                closingBalance: closingBal,           // signed cash at last day
+                marginBalance: marginAtEnd,
+                baseBalance: debitAtEnd + marginAtEnd, // unclamped-signed display base
+                days: trace.length,
+                rate: rate,
+                interest: roundedInterest,
+                postDate: postDateStr,
+                frequency: 'daily_monthly_compound',
+                compound: compound,
+                trace: trace
+            });
+        }
+
+        // Advance to next month.
+        if (mMonth === 11) { mMonth = 0; mYear++; } else { mMonth++; }
+    }
+
+    return results;
+}
+
+function toLocaleShort(d) {
+    return d.toLocaleDateString('en-IN', {day:'2-digit', month:'short'});
+}
+
+/**
  * Get running F&O margin as of a given date (inclusive).
  * Walks through margin events (output of wmsCalcMarginFIFO) in date order
  * and returns the last runningMargin value at/before dateStr.
