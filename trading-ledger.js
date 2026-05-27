@@ -808,26 +808,25 @@ async function lgRefresh() {
     } else if (lgSelectedTraderIds.length > 0) {
         entityIds = lgSelectedTraderIds.slice();
     }
-    // Broker statements DO need OPENING_BALANCE and RECONCILIATION rows: the
-    // trader-to-broker outstanding balance is a real position the owner tracks
-    // + reconciles separately. They do NOT need the investor-cash entry types
-    // (INTEREST_BOOKED / CASH_RECEIVED / CASH_PAID) which model the investor's
-    // cash with the firm (not relevant to the broker invoice view).
-    // See WMS-CONTEXT 🎯 PRIORITY Issue 2 + LESSONS §E.15.12 (revised).
+    // Broker statements fetch ALL entry types (OPENING_BALANCE, RECONCILIATION,
+    // INTEREST_BOOKED, CASH_RECEIVED, CASH_PAID) scoped to (broker_id [+ investor_id
+    // when present]). The 2026-05-27 morning revision had restricted broker view
+    // to OB + RECON only — that was wrong: it hid committed interest entries
+    // (the POST went through, but lgRefresh's narrow fetch never pulled the
+    // row back, so the same pending row regenerated and the user saw "nothing
+    // happened"). Interest and cash flows ARE relevant on a broker-account view
+    // because they're scoped by broker_id in the DB — they represent the cash
+    // ledger on that specific broker account. See WMS-LESSONS §E.15.12 (rev 2).
     //
     // PostgREST filter syntax: `field=in.(values)` — NOT `field.in.(values)`
     // (the dotted form is silently ignored, returning the unfiltered set).
-    // The pre-existing non-broker branch had the same bug but was masked by
-    // downstream JS-side filtering in wmsBuildLedger. We fix both forms here
-    // to make the URL actually filter on the server side. WMS-CONTEXT Issue 3.
     var brokerOnly = (lgStatementType === 'broker');
 
     try {
         var qParts = [];
         if (brokerOnly) {
-            // Broker view: OPENING_BALANCE + RECONCILIATION only, scoped to
-            // (broker_id [+ investor_id if present]).
-            qParts.push('entry_type=in.(OPENING_BALANCE,RECONCILIATION)');
+            // Broker view: scope by (broker_id [+ investor_id]). Pull every
+            // entry type — wmsBuildLedger already handles per-perspective math.
             if (lgSelectedBrokerIds.length > 0) {
                 qParts.push('broker_id=in.(' + lgSelectedBrokerIds.map(function(id) { return '"' + id + '"'; }).join(',') + ')');
             }
@@ -909,17 +908,28 @@ async function lgRefresh() {
     // Resolve to a single effective investor ID — works for either investor
     // filter (length 1) or trader-only filter (length 1, trader_id == investor_id).
     var effInvId = lgGetEffectiveInvestorId();
+    // On broker view, also resolve the effective broker — the lastPosted
+    // INTEREST_BOOKED scan needs to scope by broker_id so a broker-specific
+    // commit (e.g. on stmt_TG) isn't masked by interest entries on OTHER
+    // brokers for the same investor.
+    var effBrkIdForInterest = (lgStatementType === 'broker' && lgSelectedBrokerIds.length === 1)
+        ? lgSelectedBrokerIds[0]
+        : null;
     if (effInvId) {
         var invId = effInvId;
-        var terms = wmsGetInterestTerms(invId);
+        // Interest terms resolve via IBA-first (broker-account override) then
+        // investor-level — so a broker view picks up its own rate if set.
+        var terms = wmsGetInterestTerms(invId, effBrkIdForInterest);
         if (terms && terms.frequency === 'weekly_friday' && terms.rate > 0) {
-            // Last posted Saturday = max entry_date of INTEREST_BOOKED for this investor
+            // Last posted Saturday = max entry_date of INTEREST_BOOKED for
+            // this (investor [+ broker on broker view]).
             var lastPosted = null;
             for (var li = 0; li < lgLedgerEntries.length; li++) {
                 var le = lgLedgerEntries[li];
-                if (le.entry_type === 'INTEREST_BOOKED' && le.investor_id === invId) {
-                    if (!lastPosted || le.entry_date > lastPosted) lastPosted = le.entry_date;
-                }
+                if (le.entry_type !== 'INTEREST_BOOKED') continue;
+                if (le.investor_id !== invId) continue;
+                if (effBrkIdForInterest && le.broker_id !== effBrkIdForInterest) continue;
+                if (!lastPosted || le.entry_date > lastPosted) lastPosted = le.entry_date;
             }
             // Start window = (last posted + 1 day) OR the earliest activity date OR FY start
             var genFrom;
