@@ -1117,8 +1117,16 @@ function wmsTxnRenderMatchingView() {
         var startCollapsed = groupResults.length > 1;
         var collapsedClass = startCollapsed ? ' collapsed' : '';
 
+        // Group header now exposes the OUTSTANDING qty in the QTY column —
+        // sum of open (unmatched) lots for this investor/trader/broker/contract
+        // grouping. Previously the QTY column was absorbed into the label
+        // colspan=3, leaving no per-group total qty visible. Owner request 2026-05-29.
+        var openQtyHtml = grp.totalOpenQty > 0
+            ? '<span class="wms-trM-group-total">' + formatQuantity(grp.totalOpenQty) + '</span>'
+            : '';
         html += '<tr class="wms-trM-group-header' + collapsedClass + '" data-group-id="' + groupId + '">' +
-            '<td colspan="3"><span class="wms-trM-collapse-icon">▼</span> ' + wmsEsc(grp.groupLabel) + ' — ' + wmsEsc(grp.contractLabel) + shortLabel + '</td>' +
+            '<td colspan="2"><span class="wms-trM-collapse-icon">▼</span> ' + wmsEsc(grp.groupLabel) + ' — ' + wmsEsc(grp.contractLabel) + shortLabel + '</td>' +
+            '<td class="text-right">' + openQtyHtml + '</td>' +
             '<td class="wms-trM-buy-start"></td><td></td>' +
             '<td class="text-right"><span class="wms-trM-group-total">' + (grp.totalBuyAmt > 0 ? formatAmount(grp.totalBuyAmt) : '') + '</span></td>' +
             '<td class="wms-trM-sell-start"></td><td></td>' +
