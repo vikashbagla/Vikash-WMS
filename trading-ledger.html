@@ -46,6 +46,16 @@
 }
 .lg-futures-toggle input[type="checkbox"] { margin:0; cursor:pointer; }
 
+/* Filter row (Row 2) — sits between the view tabs bar and the pill filters
+   bar. Always visible. Houses the date filter + statement type toggle +
+   the ▲/▼ toggle for the pill filters (Row 3). Owner request 2026-05-29 —
+   previous single-row layout overflowed on stmt_TG/T3 etc. */
+.lg-filter-row-top {
+    display:flex; align-items:center; gap:8px; padding:4px 8px;
+    background:#fafbfc; border-bottom:1px solid #e2e8f0;
+    min-height:32px; font-size:11px;
+}
+
 /* Statement type toggle (Trader / Broker) — segmented control per D.4.2 */
 .lg-stmt-type-toggle { display:inline-flex; gap:0; align-items:center; }
 .lg-stmt-type-btn { padding:3px 12px; border:1px solid #e2e8f0; background:#fff; font-size:11px; font-weight:600; color:#718096; cursor:pointer; border-radius:0; }
@@ -283,17 +293,13 @@
 <div id="lgContainer">
 
     <!-- ============================================================ -->
-    <!-- 1. VIEW TABS BAR                                             -->
+    <!-- 1. VIEW TABS BAR — tabs + view-management actions only.      -->
+    <!--    Filters moved to a separate row below (Row 2) per owner   -->
+    <!--    request 2026-05-29: previous single-row layout overflowed.-->
     <!-- ============================================================ -->
     <div class="tr-view-tabs-bar" style="flex-shrink:0;">
       <div class="tr-view-tabs-container" id="lgViewTabs"></div>
-      <div class="lg-date-inline" id="lgDateFilter"></div>
       <div class="tr-view-tabs-actions">
-        <span class="lg-stmt-type-toggle" id="lgStmtTypeToggle" title="Statement type — pick Trader for investor/sub-trader statements, Broker for broker-side statements">
-          <button type="button" data-type="trader" class="lg-stmt-type-btn">Trader</button>
-          <button type="button" data-type="broker" class="lg-stmt-type-btn">Broker</button>
-        </span>
-        <span class="lg-tabs-divider"></span>
         <button class="tr-vta-btn" id="lgNewViewBtn" title="New blank view">+</button>
         <div style="position:relative;">
           <button class="tr-vta-btn" id="lgMoreBtn" title="All views">▾ More</button>
@@ -303,7 +309,6 @@
         </div>
         <button class="tr-vta-btn" id="lgUpdateViewBtn" title="Update current view with active filters" disabled>↻ Update</button>
         <button class="tr-vta-btn" id="lgSaveNewBtn" title="Save as new view">+ Save New</button>
-        <button class="tr-vta-btn" id="lgFiltersToggle" title="Toggle filters" style="font-size:10px;">▲</button>
         <span class="lg-tabs-divider"></span>
         <button class="tr-vta-btn" id="lgExportBtn" title="Export statement (opens options modal)">⇩ Export</button>
         <div class="tr-save-prompt" id="lgSavePrompt">
@@ -315,12 +320,22 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- 2. FILTER BAR (hidden by default, toggled via ▲/▼ button)   -->
-    <!--    Row 1: Date filter (Period + FY)                         -->
-    <!--    Row 2: Pill filters (Investor/Trader/Broker/Tags)        -->
+    <!-- 2. FILTER ROW (always visible) — date range + statement type -->
+    <!--    + ▲ toggle for the secondary pill filters in Row 3.        -->
+    <!-- ============================================================ -->
+    <div class="lg-filter-row-top" style="flex-shrink:0;">
+      <div class="lg-date-inline" id="lgDateFilter"></div>
+      <span class="lg-stmt-type-toggle" id="lgStmtTypeToggle" title="Statement type — pick Trader for investor/sub-trader statements, Broker for broker-side statements">
+        <button type="button" data-type="trader" class="lg-stmt-type-btn">Trader</button>
+        <button type="button" data-type="broker" class="lg-stmt-type-btn">Broker</button>
+      </span>
+      <button class="tr-vta-btn" id="lgFiltersToggle" title="Toggle Investor/Trader/Broker/Tag pill filters" style="margin-left:auto; font-size:11px;">▲ Pill filters</button>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- 3. PILL FILTERS (collapsible) — Investor/Trader/Broker/Tags. -->
     <!-- ============================================================ -->
     <div id="lgFiltersBar">
-      <!-- Pill filters (Investor/Trader/Broker/Tags) -->
       <div class="lg-filters-grid">
         <div id="lgFilterInvestor"></div>
         <div id="lgFilterTrader"></div>

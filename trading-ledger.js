@@ -307,14 +307,16 @@ function lgInit() {
         });
     }
 
-    // Filters toggle button (same pattern as Portfolio)
+    // Filters toggle button \u2014 collapses the pill filter row.
+    // The button now sits in Row 2 (filter row) with a "Pill filters" label
+    // so the arrow direction stays paired with what it controls.
     var filtersToggle = document.getElementById('lgFiltersToggle');
     if (filtersToggle) {
         filtersToggle.addEventListener('click', function() {
             var filtersDiv = document.getElementById('lgFiltersBar');
             var isHidden = filtersDiv.style.display === 'none';
             filtersDiv.style.display = isHidden ? 'flex' : 'none';
-            this.textContent = isHidden ? '\u25BC' : '\u25B2';
+            this.textContent = (isHidden ? '\u25BC' : '\u25B2') + ' Pill filters';
         });
     }
 
