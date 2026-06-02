@@ -1629,7 +1629,13 @@ async function autoLoadGsOpenTrades() {
                     '</tr></tfoot>';
         }
         html += '</table></div>';
-        html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280">LTP via Fyers /quotes (needs active Fyers connection). Lot sizes: SILVERM 1 lot = 5 kg, GOLDM 1 lot = 100 g. Exposure = lots × point_value × entry price. Margin: SILVERM 20% · GOLDM 10% (Fyers SPAN+exposure, rounded up). P&L = side × (LTP − entry) × lots × point_value.</div>';
+        html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6">' +
+                '• LTP via Fyers /quotes (needs active Fyers connection).<br>' +
+                '• Lot sizes: SILVERM 1 lot = 5 kg · GOLDM 1 lot = 100 g.<br>' +
+                '• Exposure = lots × point_value × entry price.<br>' +
+                '• Margin: SILVERM 20% · GOLDM 10% (Fyers SPAN+exposure, rounded up).<br>' +
+                '• P&amp;L = side × (LTP − entry) × lots × point_value.' +
+                '</div>';
         el.innerHTML = html;
         if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = openRows.length + ' open'; }
     } catch (e) {
