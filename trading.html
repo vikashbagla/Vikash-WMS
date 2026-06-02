@@ -597,6 +597,31 @@
 
     /* View tabs: scrollable */
     .tr-view-tabs-bar { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    /* === PHONE REVIEW-ONLY: Portfolio — keep view tabs + More dropdown for
+       selecting a saved view; hide all view-editing + filter controls === */
+    #tr-new-view-btn,
+    #tr-update-view-btn,
+    #tr-save-new-btn,
+    #tr-filters-toggle,
+    #trPortfolioFilters { display: none !important; }
+
+    /* === PHONE REVIEW-ONLY: F&O — same view-select-only treatment === */
+    #tr-fno-new-view-btn,
+    #tr-fno-update-view-btn,
+    #tr-fno-save-new-btn,
+    #tr-fno-filters-toggle,
+    #trFnoSharedFilters { display: none !important; }
+
+    /* F&O secondary controls: keep Open/All + Collapse/Expand; hide expiry
+       filter, LIFO/FIFO, Flat View, Snapshot, and the Expire-Worthless
+       maintenance action (writes data — not a review action) */
+    #trFnoExpiryWrap,
+    #trFnoSettleExpiredBtn,
+    .trFno-flat-toggle,
+    #trFnoSnapBtn { display: none !important; }
+    .trFno-filters-bar .trFno-toggle-group:has(button[data-fno-match]),
+    .trFno-filters-bar .trFno-toggle-group:has(#trFnoSettleExpiredBtn) { display: none !important; }
 }
 </style>
 </head>

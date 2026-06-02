@@ -780,6 +780,11 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
     /* Main content */
     .main-content { padding: 2px 4px 68px; }
     .content-container { border-radius: 4px; padding: 4px 4px; }
+
+    /* PHONE REVIEW-ONLY: drop Settings (master-data) from the bottom nav —
+       no maintenance on the phone. Remaining 4 items redistribute evenly.
+       Gated at phone width only, so iPad (≤768) keeps Settings reachable. */
+    .wms-bottom-nav .bnav-item[data-module="master-data"] { display: none; }
 }
 
 /* ================================================================
