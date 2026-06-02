@@ -31,6 +31,21 @@ function autoSwitchTab(tabId) {
     if (tabId === 'au-runs'        && !window._auRunsLoaded)       { autoLoadRuns('all');    window._auRunsLoaded = true; }
 }
 
+// Sub-tab switcher (currently used inside the Open Trades tab to split GS vs Pairs).
+// Sub-tab buttons + panels are scoped to a single parent tab panel; only buttons/panels
+// within the same parent toggle (so multiple sub-tab groups can co-exist later if needed).
+function autoSwitchSubTab(subtabId) {
+    var panel = document.getElementById(subtabId);
+    if (!panel) return;
+    var parent = panel.parentElement;
+    if (!parent) return;
+    parent.querySelectorAll('.au-subtab-btn').forEach(function (b) { b.classList.remove('active'); });
+    parent.querySelectorAll('.au-subtab-panel').forEach(function (p) { p.classList.remove('active'); });
+    var btn = parent.querySelector('.au-subtab-btn[data-subtab="' + subtabId + '"]');
+    if (btn) btn.classList.add('active');
+    panel.classList.add('active');
+}
+
 // ----------------------------------------------------------------------------
 // Init
 // ----------------------------------------------------------------------------
@@ -39,6 +54,11 @@ async function initAutomation() {
     // Wire tab buttons
     document.querySelectorAll('.automation-tab-btn').forEach(function (btn) {
         btn.addEventListener('click', function () { autoSwitchTab(btn.dataset.tab); });
+    });
+
+    // Wire sub-tab buttons (Open Trades: GS vs Pairs)
+    document.querySelectorAll('.au-subtab-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () { autoSwitchSubTab(btn.dataset.subtab); });
     });
 
     // Load admin-tab data in parallel
@@ -535,12 +555,18 @@ async function autoLoadWebhookStatus() {
     if (badge) { badge.textContent = 'loading'; badge.className = 'au-badge idle'; }
 
     try {
-        // 1. Get all webhook-driven strategies
+        // 1. Get all webhook-driven strategies.
+        // Filter out system sentinels (name starts with '_', e.g. '_invalid' which
+        // we keep in the table as an FK placeholder for malformed-JSON deliveries
+        // but is not a real operational strategy).
         var stratResp = await fetch(
             SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>source=eq.tv_webhook&select=name,display_name,version,enabled,execution_mode,metadata&order=name',
             { headers: wmsHeaders() }
         );
-        var strats = await stratResp.json();
+        var stratsAll = await stratResp.json();
+        var strats = Array.isArray(stratsAll)
+            ? stratsAll.filter(function (s) { return s.name && !s.name.startsWith('_'); })
+            : stratsAll;
         if (!Array.isArray(strats) || strats.length === 0) {
             el.innerHTML = '<em style="color:#9ca3af">No webhook-driven strategies registered. To add one: set <code>metadata.source = "tv_webhook"</code> on the auto_strategies row.</em>';
             if (badge) { badge.textContent = 'empty'; badge.className = 'au-badge idle'; }
@@ -996,6 +1022,8 @@ function autoComputePnL(legs, priceMap) {
 // Returns a Set of strategy names whose auto_strategies.metadata.source === 'tv_webhook'.
 // Cached on window after first call. The GS Open/Closed Trades cards handle these
 // strategies; the Pairs Open/Closed cards exclude them.
+// System sentinels (name starts with '_', e.g. '_invalid') are filtered out — they
+// are infrastructure rows, not real strategies.
 async function autoGetWebhookStrategyNames() {
     if (window._auWebhookStrategyNames instanceof Set) return window._auWebhookStrategyNames;
     try {
@@ -1004,7 +1032,9 @@ async function autoGetWebhookStrategyNames() {
             { headers: wmsHeaders() }
         );
         var rows = await resp.json();
-        var set = new Set((rows || []).map(function (r) { return r.name; }));
+        var set = new Set((rows || [])
+            .filter(function (r) { return r.name && !r.name.startsWith('_'); })
+            .map(function (r) { return r.name; }));
         window._auWebhookStrategyNames = set;
         return set;
     } catch (_e) { return new Set(); }
