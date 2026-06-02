@@ -1273,6 +1273,24 @@ function trRefreshAllViews() {
     if (typeof trFnoRender === 'function') trFnoRender();
 }
 
+// Single source of per-holding derived values — used by BOTH the desktop table
+// row and the phone compact-row list (trRenderPortfolioMobile). Keeps all the
+// pl / dayPL / pct math in one place (no duplication across renderers).
+function trHoldingVM(h, totalInvested, totalValue) {
+    var price = trGetPrice(h);
+    var md = trGetLiveData(h);
+    var invested = h.totalCost;
+    var currentValue = h.quantity * price;
+    var pl = currentValue - invested;
+    var plPct = invested !== 0 ? (pl / Math.abs(invested)) * 100 : 0;
+    var invPct = totalInvested !== 0 ? (invested / Math.abs(totalInvested)) * 100 : 0;
+    var valPct = totalValue !== 0 ? (currentValue / Math.abs(totalValue)) * 100 : 0;
+    var dayPL = h._txns ? wmsCalcStockDayPL(h._txns, md, null, {includeNfo:true}) : (md ? h.quantity * md.ch : null);
+    var dayChp = md ? md.chp : null;
+    return { price: price, md: md, invested: invested, currentValue: currentValue,
+             pl: pl, plPct: plPct, invPct: invPct, valPct: valPct, dayPL: dayPL, dayChp: dayChp };
+}
+
 function trRenderPortfolio() {
     var list = document.getElementById('tr-portfolio-list');
     if (!list) return;
@@ -1289,6 +1307,8 @@ function trRenderPortfolio() {
 
     if (holdings.length === 0) {
         if (list) list.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#9ca3af;">No holdings to display</td></tr>';
+        var cardsEmpty = document.getElementById('tr-portfolio-cards');
+        if (cardsEmpty) cardsEmpty.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af;">No holdings to display</div>';
         var summaryEl = document.getElementById('tr-portfolio-summary');
         if (summaryEl) summaryEl.innerHTML = '';
         trUpdateSortIndicators();
@@ -1345,16 +1365,10 @@ function trRenderPortfolio() {
 
     // Render rows
     var rows = holdings.map(function(h) {
-        var price = trGetPrice(h);
-        var md = trGetLiveData(h);
-        var invested = h.totalCost;
-        var currentValue = h.quantity * price;
-        var pl = currentValue - invested;
-        var plPct = invested !== 0 ? (pl / Math.abs(invested)) * 100 : 0;
-        var invPct = totalInvested !== 0 ? (invested / Math.abs(totalInvested)) * 100 : 0;
-        var valPct = totalValue !== 0 ? (currentValue / Math.abs(totalValue)) * 100 : 0;
-        var dayPL = h._txns ? wmsCalcStockDayPL(h._txns, md, null, {includeNfo:true}) : (md ? h.quantity * md.ch : null);
-        var dayChp = md ? md.chp : null;
+        var vm = trHoldingVM(h, totalInvested, totalValue);
+        var price = vm.price, md = vm.md, invested = vm.invested, currentValue = vm.currentValue;
+        var pl = vm.pl, plPct = vm.plPct, invPct = vm.invPct, valPct = vm.valPct;
+        var dayPL = vm.dayPL, dayChp = vm.dayChp;
 
         // CMP slider: use 52-week high/low from securities_db (not day H/L)
         var cmpSlider = '';
@@ -1460,8 +1474,85 @@ function trRenderPortfolio() {
         '</tr>';
 
     list.innerHTML = totalRow + rows;
+
+    // Phone compact-row list — same holdings/order/totals as the table above.
+    trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, totalPLPct, totalDayPL, totalDayPLPct);
+
     trUpdateSortIndicators();
     trAttachRowListeners();
+}
+
+// ============================================================================
+// PHONE COMPACT-ROW LIST (≤480px) — reuses trHoldingVM for all derived numbers
+// ============================================================================
+function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, totalPLPct, totalDayPL, totalDayPLPct) {
+    var box = document.getElementById('tr-portfolio-cards');
+    if (!box) return;
+
+    var dayValHtml = (totalDayPL !== null)
+        ? '<div class="trm-s-val ' + getAmountClass(totalDayPL) + '">' + formatAmount(totalDayPL) + '</div>'
+        : '<div class="trm-s-val">-</div>';
+
+    var summary =
+        '<div class="trm-summary">' +
+            '<div class="trm-s-block"><div class="trm-s-label">Invested</div><div class="trm-s-val">' + formatAmount(totalInvested) + '</div></div>' +
+            '<div class="trm-s-block"><div class="trm-s-label">Value</div><div class="trm-s-val">' + formatAmount(totalValue) + '</div></div>' +
+            '<div class="trm-s-block"><div class="trm-s-label">Day P&L</div>' + dayValHtml + '</div>' +
+            '<div class="trm-s-block"><div class="trm-s-label">Total P&L</div><div class="trm-s-val ' + getAmountClass(totalPL) + '">' + formatAmount(totalPL) + '</div></div>' +
+        '</div>';
+
+    var rows = holdings.map(function(h) {
+        var vm = trHoldingVM(h, totalInvested, totalValue);
+        var isOpen = trExpandedKey === h.key;
+        var name = wmsEsc(h.companyName || h.shortSymbol);
+        var qtyStr = h.quantity < 0 ? '(' + formatQuantity(Math.abs(h.quantity)) + ')' : formatQuantity(h.quantity);
+        var dayPctHtml = vm.dayChp !== null
+            ? ' <span class="' + getAmountClass(vm.dayChp) + '">' + formatPercent(vm.dayChp) + '</span>'
+            : '';
+
+        var row =
+            '<div class="trm-row' + (isOpen ? ' trm-open' : '') + '" data-key="' + h.key + '">' +
+                '<div class="trm-l1">' +
+                    '<span class="trm-sym">' + name + '</span>' +
+                    '<span class="trm-pl-main ' + getAmountClass(vm.pl) + '">' + formatAmount(vm.pl) + '</span>' +
+                '</div>' +
+                '<div class="trm-l2">' +
+                    '<span>' + qtyStr + ' &middot; ' + formatPrice(vm.price, false) + dayPctHtml + '</span>' +
+                    '<span class="trm-r">' + formatAmount(vm.currentValue) + ' <span class="' + getAmountClass(vm.plPct) + '">' + formatPercent(vm.plPct) + '</span></span>' +
+                '</div>' +
+            '</div>';
+
+        var detail = '';
+        if (isOpen) {
+            var tagsHtml = (h.tags && h.tags.length > 0)
+                ? '<div class="trm-tags">' + h.tags.map(function(t) { return '<span class="tag-pill">' + wmsEsc(t) + '</span>'; }).join('') + '</div>'
+                : '';
+            var dayDetail = vm.dayPL !== null
+                ? '<span class="trm-d-v ' + getAmountClass(vm.dayPL) + '">' + formatAmount(vm.dayPL) + ' ' + formatPercent(vm.dayChp) + '</span>'
+                : '<span class="trm-d-v">-</span>';
+            detail =
+                '<div class="trm-detail">' +
+                    '<div class="trm-detail-grid">' +
+                        '<div class="trm-d-item"><span class="trm-d-k">Avg cost</span><span class="trm-d-v">' + formatPrice(h.avgCost, false) + '</span></div>' +
+                        '<div class="trm-d-item"><span class="trm-d-k">CMP</span><span class="trm-d-v">' + formatPrice(vm.price, false) + '</span></div>' +
+                        '<div class="trm-d-item"><span class="trm-d-k">Invested</span><span class="trm-d-v">' + formatAmount(vm.invested) + ' &middot; ' + vm.invPct.toFixed(1) + '%</span></div>' +
+                        '<div class="trm-d-item"><span class="trm-d-k">Day\'s P&L</span>' + dayDetail + '</div>' +
+                        '<div class="trm-d-item"><span class="trm-d-k">% of portfolio</span><span class="trm-d-v">' + vm.valPct.toFixed(1) + '%</span></div>' +
+                    '</div>' + tagsHtml +
+                '</div>';
+        }
+        return row + detail;
+    }).join('');
+
+    box.innerHTML = summary + rows;
+
+    box.querySelectorAll('.trm-row[data-key]').forEach(function(el) {
+        el.addEventListener('click', function() {
+            var key = el.dataset.key;
+            trExpandedKey = (trExpandedKey === key) ? null : key;
+            trRenderPortfolio();
+        });
+    });
 }
 
 // ============================================================================
