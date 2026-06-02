@@ -1388,12 +1388,26 @@ var AU_GS_PHYSICAL_LOT = {
     GOLDM:   { qty: 100, unit: 'g'  },
 };
 
+// Margin requirement as % of notional exposure (Fyers SPAN + exposure, rounded
+// up to a conservative buffer). Confirmed against Fyers margin calculator
+// 2026-06-02: SILVERM 1 lot @ ~₹13.65L exposure → ~₹2.55L margin (18.7%, round
+// to 20). GOLDM 1 lot @ ~₹15.80L exposure → ~₹1.45L margin (9.2%, round to 10).
+// Update when broker margin rules change.
+var AU_GS_MARGIN_PCT = {
+    SILVERM: 20,
+    GOLDM:   10,
+};
+
 function autoGsPointValue(shortSymbol) {
     return AU_GS_POINT_VALUES[shortSymbol] || null;
 }
 
 function autoGsPhysicalLot(shortSymbol) {
     return AU_GS_PHYSICAL_LOT[shortSymbol] || null;
+}
+
+function autoGsMarginPct(shortSymbol) {
+    return AU_GS_MARGIN_PCT[shortSymbol] || null;
 }
 
 // Fetch current LTP for a list of full Fyers symbols via the existing
@@ -1486,11 +1500,13 @@ async function autoLoadGsOpenTrades() {
                 '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ SL</span></th>' +
                 '<th style="padding:6px 8px;text-align:right">LTP</th>' +
                 '<th style="padding:6px 8px;text-align:right">Exposure</th>' +
+                '<th style="padding:6px 8px;text-align:right">Margin<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ %</span></th>' +
                 '<th style="padding:6px 8px;text-align:right">Live P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>' +
                 '<th style="padding:6px 8px">Action</th>' +
                 '</tr></thead><tbody>';
 
         var totalPnl = 0, anyPnl = false;
+        var totalExposure = 0, totalMargin = 0, anyExposure = false;
         openRows.forEach(function (ot) {
             var sig = byTrade[ot.trade_id];
             var leg = sig && sig.legs && sig.legs[0];
@@ -1532,6 +1548,20 @@ async function autoLoadGsOpenTrades() {
             var exposureCell = exposure != null
                 ? '₹' + Math.round(exposure).toLocaleString('en-IN')
                 : '<span style="color:#9ca3af">—</span>';
+            if (exposure != null) { totalExposure += exposure; anyExposure = true; }
+
+            // Margin = exposure × margin_pct/100. Per-instrument %, see
+            // AU_GS_MARGIN_PCT. Sub-row shows the % used.
+            var marginPct = shortSym ? autoGsMarginPct(shortSym) : null;
+            var margin = (exposure != null && marginPct != null) ? (exposure * marginPct / 100) : null;
+            var marginCell;
+            if (margin != null) {
+                totalMargin += margin;
+                marginCell = '₹' + Math.round(margin).toLocaleString('en-IN') +
+                             '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + marginPct + '%</div>';
+            } else {
+                marginCell = '<span style="color:#9ca3af">—</span>';
+            }
 
             var pnlInfo = sig ? autoGsComputeLivePnl(sig, ltpMap) : null;
             var ltpCell, pnlCell, pnlTooltip;
@@ -1567,24 +1597,39 @@ async function autoLoadGsOpenTrades() {
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(entryPxMain) + stopSub + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + ltpCell + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + exposureCell + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + marginCell + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top" title="' + autoEsc(pnlTooltip) + '">' + pnlCell + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top"><button class="au-btn au-btn-danger" style="padding:4px 8px;font-size:11px"' +
                         ' onclick="autoManualClose(' + JSON.stringify(ot.trade_id).replace(/"/g, '&quot;') + ')">✕ Close</button></td>' +
                     '</tr>';
         });
 
-        if (anyPnl) {
-            var tSign = totalPnl >= 0 ? '+' : '−';
-            var tCol = totalPnl >= 0 ? '#047857' : '#dc2626';
-            var tAbs = Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
+        if (anyExposure || anyPnl) {
+            var expCell = anyExposure
+                ? '₹' + Math.round(totalExposure).toLocaleString('en-IN')
+                : '<span style="color:#9ca3af">—</span>';
+            var mgnCell = anyExposure
+                ? '₹' + Math.round(totalMargin).toLocaleString('en-IN')
+                : '<span style="color:#9ca3af">—</span>';
+            var pnlTotalCell;
+            if (anyPnl) {
+                var tSign = totalPnl >= 0 ? '+' : '−';
+                var tCol = totalPnl >= 0 ? '#047857' : '#dc2626';
+                var tAbs = Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
+                pnlTotalCell = '<span style="color:' + tCol + '">' + tSign + '₹' + tAbs + '</span>';
+            } else {
+                pnlTotalCell = '<span style="color:#9ca3af">—</span>';
+            }
             html += '<tfoot><tr style="border-top:2px solid #cbd5e0;background:#f7fafc;font-weight:700">' +
-                    '<td colspan="9" style="padding:8px;text-align:right">Total live P&L (' + openRows.length + ' open):</td>' +
-                    '<td style="padding:8px;text-align:right;color:' + tCol + '">' + tSign + '₹' + tAbs + '</td>' +
+                    '<td colspan="8" style="padding:8px;text-align:right">Totals (' + openRows.length + ' open):</td>' +
+                    '<td style="padding:8px;text-align:right">' + expCell + '</td>' +
+                    '<td style="padding:8px;text-align:right">' + mgnCell + '</td>' +
+                    '<td style="padding:8px;text-align:right">' + pnlTotalCell + '</td>' +
                     '<td style="padding:8px"></td>' +
                     '</tr></tfoot>';
         }
         html += '</table></div>';
-        html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280">LTP via Fyers /quotes (needs active Fyers connection). Lot sizes: SILVERM 1 lot = 5 kg, GOLDM 1 lot = 100 g. Exposure = lots × point_value × entry price. P&L = side × (LTP − entry) × lots × point_value.</div>';
+        html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280">LTP via Fyers /quotes (needs active Fyers connection). Lot sizes: SILVERM 1 lot = 5 kg, GOLDM 1 lot = 100 g. Exposure = lots × point_value × entry price. Margin: SILVERM 20% · GOLDM 10% (Fyers SPAN+exposure, rounded up). P&L = side × (LTP − entry) × lots × point_value.</div>';
         el.innerHTML = html;
         if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = openRows.length + ' open'; }
     } catch (e) {
