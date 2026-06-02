@@ -442,8 +442,16 @@ async function autoLoadStrategies() {
             el.innerHTML = '<em style="color:#9ca3af">No strategies registered yet.</em>';
             return;
         }
-        // Cache for the recipient-editor modal
+        // Cache for the recipient-editor modal — keep ALL rows (including
+        // sentinels) so internal lookups still work.
         window._auStrategiesCache = rows;
+        // For display: hide underscore-prefix sentinels (_invalid, _test,
+        // _eod_ingest etc) — they're infrastructure rows, not operational.
+        var displayRows = rows.filter(function (r) { return r.name && !r.name.startsWith('_'); });
+        if (displayRows.length === 0) {
+            el.innerHTML = '<em style="color:#9ca3af">No strategies registered yet.</em>';
+            return;
+        }
         var html = '<div style="width:100%;overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
         html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
                 '<th style="padding:6px 8px">Name</th>' +
@@ -454,27 +462,20 @@ async function autoLoadStrategies() {
                 '<th style="padding:6px 8px">Recipients</th>' +
                 '<th style="padding:6px 8px">Actions</th>' +
                 '</tr></thead><tbody>';
-        rows.forEach(function (r) {
-            // Sentinel strategies (names starting with _) — read-only display
-            var isSentinel = r.name.startsWith('_');
+        displayRows.forEach(function (r) {
             var recipientsCount = Array.isArray(r.recipients) ? r.recipients.length : 0;
             var recipientsTitle = Array.isArray(r.recipients)
                 ? r.recipients.map(function (x) { return (x.name || '') + ' <' + x.email + '>'; }).join(', ')
                 : '';
-            var actions = '';
-            if (!isSentinel) {
-                // Pause/Resume only. Recipient editing intentionally NOT exposed:
-                // Resend free tier blocks the whole send if any recipient is
-                // unverified, so adding new addresses via UI gives a false UX.
-                // Re-enable in Phase 7b once we have per-recipient send-loop
-                // OR a verified Resend sending domain. Until then, edit the
-                // recipients JSONB via Supabase Studio or DevTools console.
-                actions += '<button class="au-btn au-btn-secondary" style="padding:4px 8px;font-size:11px"' +
-                           ' onclick="autoToggleStrategy(' + JSON.stringify(r.name).replace(/"/g, '&quot;') + ',' + r.enabled + ')">' +
-                           (r.enabled ? '⏸ Pause' : '▶ Resume') + '</button>';
-            } else {
-                actions = '<span style="color:#9ca3af;font-size:11px">(sentinel)</span>';
-            }
+            // Pause/Resume only. Recipient editing intentionally NOT exposed:
+            // Resend free tier blocks the whole send if any recipient is
+            // unverified, so adding new addresses via UI gives a false UX.
+            // Re-enable in Phase 7b once we have per-recipient send-loop
+            // OR a verified Resend sending domain. Until then, edit the
+            // recipients JSONB via Supabase Studio or DevTools console.
+            var actions = '<button class="au-btn au-btn-secondary" style="padding:4px 8px;font-size:11px"' +
+                          ' onclick="autoToggleStrategy(' + JSON.stringify(r.name).replace(/"/g, '&quot;') + ',' + r.enabled + ')">' +
+                          (r.enabled ? '⏸ Pause' : '▶ Resume') + '</button>';
             html += '<tr style="border-top:1px solid #e5e7eb">' +
                     '<td style="padding:6px 8px"><code>' + autoEsc(r.name) + '</code></td>' +
                     '<td style="padding:6px 8px">' + autoEsc(r.display_name) + '</td>' +
@@ -1379,8 +1380,20 @@ var AU_GS_POINT_VALUES = {
     // Add more when needed; trades for instruments not listed show P&L as "—".
 };
 
+// Physical lot size for display (so "5 lots" can be enriched as "= 25 kg").
+// SILVERM: 1 lot = 5 kg of silver.
+// GOLDM:   1 lot = 100 g of gold (= 10 × 10g quotation unit).
+var AU_GS_PHYSICAL_LOT = {
+    SILVERM: { qty: 5,   unit: 'kg' },
+    GOLDM:   { qty: 100, unit: 'g'  },
+};
+
 function autoGsPointValue(shortSymbol) {
     return AU_GS_POINT_VALUES[shortSymbol] || null;
+}
+
+function autoGsPhysicalLot(shortSymbol) {
+    return AU_GS_PHYSICAL_LOT[shortSymbol] || null;
 }
 
 // Fetch current LTP for a list of full Fyers symbols via the existing
@@ -1467,15 +1480,13 @@ async function autoLoadGsOpenTrades() {
                 '<th style="padding:6px 8px">Strategy</th>' +
                 '<th style="padding:6px 8px">Side</th>' +
                 '<th style="padding:6px 8px">Entry</th>' +
-                '<th style="padding:6px 8px">Days</th>' +
+                '<th style="padding:6px 8px;text-align:right">Days</th>' +
                 '<th style="padding:6px 8px">Contract</th>' +
                 '<th style="padding:6px 8px;text-align:right">Qty</th>' +
-                '<th style="padding:6px 8px;text-align:right">Entry Px</th>' +
+                '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ SL</span></th>' +
                 '<th style="padding:6px 8px;text-align:right">LTP</th>' +
-                '<th style="padding:6px 8px;text-align:right">Stop</th>' +
-                '<th style="padding:6px 8px;text-align:right">ATR</th>' +
-                '<th style="padding:6px 8px;text-align:right">Live P&amp;L</th>' +
-                '<th style="padding:6px 8px">Trade</th>' +
+                '<th style="padding:6px 8px;text-align:right">Exposure</th>' +
+                '<th style="padding:6px 8px;text-align:right">Live P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>' +
                 '<th style="padding:6px 8px">Action</th>' +
                 '</tr></thead><tbody>';
 
@@ -1493,13 +1504,34 @@ async function autoLoadGsOpenTrades() {
             var entryStr = sig ? autoFmtIST(sig.fired_at) : '—';
             var daysHeld = sig ? Math.floor((now - new Date(sig.fired_at).getTime()) / 86400000) : '—';
             var contract = leg ? leg.symbol : '—';
-            var qtyLots = m.qty_lots != null ? m.qty_lots : (leg ? leg.qty : '—');
-            var qtyUnits = m.qty_units != null ? m.qty_units : (leg ? leg.qty : '—');
-            var qtyCell = qtyLots + ' lot' + (qtyLots == 1 ? '' : 's') +
-                          (qtyUnits && qtyUnits != qtyLots ? ' · ' + qtyUnits + ' unit' + (qtyUnits == 1 ? '' : 's') : '');
-            var entryPx = leg && leg.price != null ? Number(leg.price).toLocaleString('en-IN') : '—';
-            var stopPx = m.stop_price != null ? Number(m.stop_price).toLocaleString('en-IN') : '—';
-            var atrVal = m.atr != null ? Number(m.atr).toLocaleString('en-IN', { maximumFractionDigits: 1 }) : '—';
+            var shortSym = leg ? leg.short_symbol : null;
+            var entryPriceNum = leg && leg.price != null ? Number(leg.price) : null;
+            var stopPriceNum = m.stop_price != null ? Number(m.stop_price) : null;
+
+            // Qty cell: "5 lots" + sub-row "25 kg" (physical size if known).
+            var qtyLots = m.qty_lots != null ? Number(m.qty_lots) : (leg ? Number(leg.qty) : null);
+            var qtyMain = qtyLots != null ? qtyLots + ' lot' + (qtyLots == 1 ? '' : 's') : '—';
+            var physLot = autoGsPhysicalLot(shortSym);
+            var qtySub = '';
+            if (qtyLots != null && physLot) {
+                var totalPhys = qtyLots * physLot.qty;
+                qtySub = '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + totalPhys + ' ' + physLot.unit + '</div>';
+            }
+            var qtyCell = autoEsc(qtyMain) + qtySub;
+
+            // Entry Px cell: main = entry price (Indian format); sub = "SL: 272,661" rounded to 0 decimals.
+            var entryPxMain = entryPriceNum != null ? Number(entryPriceNum).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '—';
+            var stopSub = stopPriceNum != null
+                ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">SL: ' + Math.round(stopPriceNum).toLocaleString('en-IN') + '</div>'
+                : '';
+
+            // Exposure = qty_lots × point_value × entry_price  (₹ notional).
+            // For SILVERM 7 lots @ ₹273,000: 7 × 5 × 273,000 = ₹95,55,000.
+            var pv = shortSym ? autoGsPointValue(shortSym) : null;
+            var exposure = (qtyLots != null && pv && entryPriceNum != null) ? (qtyLots * pv * entryPriceNum) : null;
+            var exposureCell = exposure != null
+                ? '₹' + Math.round(exposure).toLocaleString('en-IN')
+                : '<span style="color:#9ca3af">—</span>';
 
             var pnlInfo = sig ? autoGsComputeLivePnl(sig, ltpMap) : null;
             var ltpCell, pnlCell, pnlTooltip;
@@ -1510,7 +1542,14 @@ async function autoLoadGsOpenTrades() {
                 var sign = pnlInfo.pnl >= 0 ? '+' : '−';
                 var col = pnlInfo.pnl >= 0 ? '#047857' : '#dc2626';
                 var abs = Math.abs(Math.round(pnlInfo.pnl)).toLocaleString('en-IN');
-                pnlCell = '<span style="color:' + col + ';font-weight:600">' + sign + '₹' + abs + '</span>';
+                var pctSub = '';
+                if (exposure && exposure > 0) {
+                    var pct = (pnlInfo.pnl / exposure) * 100;
+                    var pctSign = pct >= 0 ? '+' : '−';
+                    pctSub = '<div style="color:' + col + ';font-size:10px;margin-top:1px;font-weight:500">' +
+                             pctSign + Math.abs(pct).toFixed(2) + '%</div>';
+                }
+                pnlCell = '<span style="color:' + col + ';font-weight:600">' + sign + '₹' + abs + '</span>' + pctSub;
                 pnlTooltip = pnlInfo.breakdown;
             } else {
                 ltpCell = '<span style="color:#9ca3af">—</span>';
@@ -1518,22 +1557,18 @@ async function autoLoadGsOpenTrades() {
                 pnlTooltip = 'Live P&L needs (a) Fyers connection for LTP and (b) a known point_value for the underlying.';
             }
 
-            var tradeFrag = ot.trade_id ? ot.trade_id.slice(0, 8) + '…' : '—';
-
             html += '<tr style="border-top:1px solid #e5e7eb">' +
-                    '<td style="padding:6px 8px"><code>' + autoEsc(ot.strategy_name) + '</code></td>' +
-                    '<td style="padding:6px 8px">' + sideBadge + '</td>' +
-                    '<td style="padding:6px 8px">' + autoEsc(entryStr) + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(String(daysHeld)) + '</td>' +
-                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(contract) + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(qtyCell) + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(entryPx) + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right">' + ltpCell + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(stopPx) + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(atrVal) + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right;white-space:nowrap" title="' + autoEsc(pnlTooltip) + '">' + pnlCell + '</td>' +
-                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(tradeFrag) + '</td>' +
-                    '<td style="padding:6px 8px"><button class="au-btn au-btn-danger" style="padding:4px 8px;font-size:11px"' +
+                    '<td style="padding:6px 8px;vertical-align:top"><code>' + autoEsc(ot.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>' +
+                    '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(entryStr) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(String(daysHeld)) + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px;vertical-align:top">' + autoEsc(contract) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + qtyCell + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(entryPxMain) + stopSub + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + ltpCell + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + exposureCell + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top" title="' + autoEsc(pnlTooltip) + '">' + pnlCell + '</td>' +
+                    '<td style="padding:6px 8px;vertical-align:top"><button class="au-btn au-btn-danger" style="padding:4px 8px;font-size:11px"' +
                         ' onclick="autoManualClose(' + JSON.stringify(ot.trade_id).replace(/"/g, '&quot;') + ')">✕ Close</button></td>' +
                     '</tr>';
         });
@@ -1543,13 +1578,13 @@ async function autoLoadGsOpenTrades() {
             var tCol = totalPnl >= 0 ? '#047857' : '#dc2626';
             var tAbs = Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
             html += '<tfoot><tr style="border-top:2px solid #cbd5e0;background:#f7fafc;font-weight:700">' +
-                    '<td colspan="10" style="padding:8px;text-align:right">Total live P&L (' + openRows.length + ' open):</td>' +
+                    '<td colspan="9" style="padding:8px;text-align:right">Total live P&L (' + openRows.length + ' open):</td>' +
                     '<td style="padding:8px;text-align:right;color:' + tCol + '">' + tSign + '₹' + tAbs + '</td>' +
-                    '<td colspan="2" style="padding:8px"></td>' +
+                    '<td style="padding:8px"></td>' +
                     '</tr></tfoot>';
         }
         html += '</table></div>';
-        html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280">LTP via Fyers /quotes (needs active Fyers connection). Point values: SILVERM=5, GOLDM=10. P&L = side × (LTP − entry) × lots × point_value.</div>';
+        html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280">LTP via Fyers /quotes (needs active Fyers connection). Lot sizes: SILVERM 1 lot = 5 kg, GOLDM 1 lot = 100 g. Exposure = lots × point_value × entry price. P&L = side × (LTP − entry) × lots × point_value.</div>';
         el.innerHTML = html;
         if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = openRows.length + ' open'; }
     } catch (e) {
