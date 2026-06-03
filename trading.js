@@ -1275,6 +1275,14 @@ function trRefreshAllViews() {
     if (typeof trFnoRender === 'function') trFnoRender();
 }
 
+// Phone helper: format a per-share PRICE with a ₹ prefix (to distinguish prices
+// from rupee amounts in the compact lists). Returns '-' untouched for zero/null.
+// Never used on desktop — desktop keeps plain formatPrice.
+function trFmtRupee(v) {
+    var s = formatPrice(v, false);
+    return s === '-' ? s : '₹' + s;
+}
+
 // Single source of per-holding derived values — used by BOTH the desktop table
 // row and the phone compact-row list (trRenderPortfolioMobile). Keeps all the
 // pl / dayPL / pct math in one place (no duplication across renderers).
@@ -1337,6 +1345,10 @@ function trRenderPortfolio() {
                 valA = (a.companyName || a.shortSymbol || '').toLowerCase();
                 valB = (b.companyName || b.shortSymbol || '').toLowerCase();
                 return trSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+            case 'date':
+                valA = (a._txns && a._txns.length) ? Math.max.apply(null, a._txns.map(function(t){ return new Date(t.transaction_date).getTime() || 0; })) : 0;
+                valB = (b._txns && b._txns.length) ? Math.max.apply(null, b._txns.map(function(t){ return new Date(t.transaction_date).getTime() || 0; })) : 0;
+                break;
             case 'invested':
                 valA = a.totalCost; valB = b.totalCost; break;
             case 'pl':
@@ -1490,6 +1502,7 @@ function trRenderPortfolio() {
 function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, totalPLPct, totalDayPL, totalDayPLPct) {
     var box = document.getElementById('tr-portfolio-cards');
     if (!box) return;
+    trWireSortButton();
 
     // ---- Investor breakup drill-in (one holding → per-investor compact rows) ----
     if (trMobileBreakupKey) {
@@ -1519,7 +1532,7 @@ function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, t
             ? ' <span class="' + getAmountClass(vm.dayChp) + '">' + formatPercent(vm.dayChp) + '</span>'
             : '';
 
-        var row = trBuildMobileRow(h.key, name, vm.pl, qtyStr, formatPrice(vm.price, false), dayPctHtml, vm.currentValue, vm.plPct, isOpen);
+        var row = trBuildMobileRow(h.key, name, vm.pl, qtyStr, trFmtRupee(vm.price), dayPctHtml, vm.currentValue, vm.plPct, isOpen);
 
         var detail = '';
         if (isOpen) {
@@ -1537,8 +1550,8 @@ function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, t
             detail =
                 '<div class="trm-detail">' +
                     '<div class="trm-detail-grid">' +
-                        '<div class="trm-d-item"><span class="trm-d-k">Avg cost</span><span class="trm-d-v">' + formatPrice(h.avgCost, false) + '</span></div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">CMP</span><span class="trm-d-v">' + formatPrice(vm.price, false) + '</span></div>' +
+                        '<div class="trm-d-item"><span class="trm-d-k">Avg cost</span><span class="trm-d-v">' + trFmtRupee(h.avgCost) + '</span></div>' +
+                        '<div class="trm-d-item"><span class="trm-d-k">CMP</span><span class="trm-d-v">' + trFmtRupee(vm.price) + '</span></div>' +
                         '<div class="trm-d-item"><span class="trm-d-k">Invested</span><span class="trm-d-v">' + formatAmount(vm.invested) + ' &middot; ' + vm.invPct.toFixed(1) + '%</span></div>' +
                         '<div class="trm-d-item"><span class="trm-d-k">Day\'s P&L</span>' + dayDetail + '</div>' +
                         '<div class="trm-d-item"><span class="trm-d-k">% of portfolio</span><span class="trm-d-v">' + vm.valPct.toFixed(1) + '%</span></div>' +
@@ -1558,6 +1571,56 @@ function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, t
             trMobileBreakupInv = null;
             trRenderPortfolio();
         });
+    });
+}
+
+// Phone-only sort control (next to ▾ More). Wires once per DOM lifetime via a
+// data attribute (resets when the lazy-loaded trading.html DOM is recreated).
+// Drives the shared trSortColumn/trSortDirection — the mobile list is built from
+// the already-sorted `holdings`, so just re-rendering applies the new order.
+function trWireSortButton() {
+    var btn = document.getElementById('tr-sort-btn');
+    var dd = document.getElementById('tr-sort-dropdown');
+    if (!btn || !dd || btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var willOpen = dd.style.display === 'none';
+        var more = document.getElementById('tr-more-dropdown'); if (more) more.style.display = 'none';
+        dd.style.display = willOpen ? 'block' : 'none';
+        if (willOpen) trSortDropdownMark();
+    });
+    dd.querySelectorAll('[data-sort]').forEach(function(item) {
+        item.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var col = item.dataset.sort;
+            if (trSortColumn === col) {
+                trSortDirection = (trSortDirection === 'asc') ? 'desc' : 'asc';
+            } else {
+                trSortColumn = col;
+                trSortDirection = (col === 'company') ? 'asc' : 'desc';  // names A→Z, numbers/date high→low
+            }
+            trSortByPct = false;
+            dd.style.display = 'none';
+            trRenderPortfolio();
+        });
+    });
+    if (!window._trSortDocWired) {
+        window._trSortDocWired = true;
+        document.addEventListener('click', function() {
+            var d = document.getElementById('tr-sort-dropdown'); if (d) d.style.display = 'none';
+        });
+    }
+}
+
+// Mark the active sort option + show its direction arrow when the menu opens
+function trSortDropdownMark() {
+    var dd = document.getElementById('tr-sort-dropdown'); if (!dd) return;
+    dd.querySelectorAll('[data-sort]').forEach(function(item) {
+        var active = item.dataset.sort === trSortColumn;
+        item.classList.toggle('active', active);
+        var arrow = item.querySelector('.tr-sort-arrow');
+        if (arrow) arrow.textContent = active ? (trSortDirection === 'asc' ? '▲' : '▼') : '';
     });
 }
 
@@ -1604,7 +1667,7 @@ function trRenderPortfolioBreakup(box, h, totalInvested, totalValue) {
         var dayPctHtml = g.dayChp !== null
             ? ' <span class="' + getAmountClass(g.dayChp) + '">' + formatPercent(g.dayChp) + '</span>'
             : '';
-        var row = trBuildMobileRow('inv:' + g.investorId, wmsEsc(g.name), g.pl, qtyStr, formatPrice(vm.price, false), dayPctHtml, g.value, g.plPct, isOpen);
+        var row = trBuildMobileRow('inv:' + g.investorId, wmsEsc(g.name), g.pl, qtyStr, trFmtRupee(vm.price), dayPctHtml, g.value, g.plPct, isOpen);
 
         var detail = '';
         if (isOpen) {
@@ -1618,8 +1681,8 @@ function trRenderPortfolioBreakup(box, h, totalInvested, totalValue) {
             detail =
                 '<div class="trm-detail">' +
                     '<div class="trm-detail-grid">' +
-                        '<div class="trm-d-item"><span class="trm-d-k">Avg cost</span><span class="trm-d-v">' + formatPrice(g.avgCost, false) + '</span></div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">CMP</span><span class="trm-d-v">' + formatPrice(vm.price, false) + '</span></div>' +
+                        '<div class="trm-d-item"><span class="trm-d-k">Avg cost</span><span class="trm-d-v">' + trFmtRupee(g.avgCost) + '</span></div>' +
+                        '<div class="trm-d-item"><span class="trm-d-k">CMP</span><span class="trm-d-v">' + trFmtRupee(vm.price) + '</span></div>' +
                         '<div class="trm-d-item"><span class="trm-d-k">Invested</span><span class="trm-d-v">' + formatAmount(g.invested) + '</span></div>' +
                         '<div class="trm-d-item"><span class="trm-d-k">Day\'s P&L</span>' + dayDetail + '</div>' +
                         '<div class="trm-d-item"><span class="trm-d-k">% of stock</span><span class="trm-d-v">' + pctOfStock.toFixed(1) + '%</span></div>' +
