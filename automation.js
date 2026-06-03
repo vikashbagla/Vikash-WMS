@@ -81,9 +81,16 @@ function autoUpdateGsRefreshTickStatus(state) {
 
 // Sticky GS totals state — populated by both autoLoadGsOpenTrades and
 // autoLoadGsClosedTrades. autoUpdateGsTotalsBar reads it and writes to the bar.
+//
+// peakExposure / peakMargin are the HIGH-WATER marks across all signal time
+// (entries add, exits subtract the matching entry's value). They represent
+// the MAX simultaneous capital at risk at any point since the first trade.
+// Recomputed every time autoLoadGsClosedTrades runs (since it already pulls
+// every webhook signal — closed AND still-open).
 var _auGsTotals = {
     openCount: null, openExposure: null, openMargin: null, openLivePnl: null,
     closedCount: null, closedWins: null, closedLosses: null, closedRealisedPnl: null,
+    peakExposure: null, peakMargin: null,
 };
 
 function autoUpdateGsTotalsBar() {
@@ -103,14 +110,15 @@ function autoUpdateGsTotalsBar() {
         return '₹' + Math.round(n).toLocaleString('en-IN');
     };
 
-    // Max Exposure / Max Margin = sum across currently-open positions (the max
-    // capital at risk RIGHT NOW). Shows "—" if no open positions.
-    document.getElementById('au-gs-tb-exp').textContent = hasOpen && t.openExposure != null
-        ? fmtFlat(t.openExposure) : '—';
-    document.getElementById('au-gs-tb-mgn').textContent = hasOpen && t.openMargin != null
-        ? fmtFlat(t.openMargin) : '—';
+    // Max Exposure / Max Margin = PEAK simultaneous capital at risk across
+    // all signal time since first trade (entries add, exits subtract the
+    // matching entry's value). Computed in autoLoadGsClosedTrades.
+    document.getElementById('au-gs-tb-exp').textContent = t.peakExposure != null
+        ? fmtFlat(t.peakExposure) : '—';
+    document.getElementById('au-gs-tb-mgn').textContent = t.peakMargin != null
+        ? fmtFlat(t.peakMargin) : '—';
 
-    // Net P&L = open live P&L + closed realised P&L. % is against Max Exposure.
+    // Net P&L = open live P&L + closed realised P&L. % is against Max Exposure (peak).
     var netPnl = (t.openLivePnl || 0) + (t.closedRealisedPnl || 0);
     var anyPnl = (t.openLivePnl != null) || (t.closedRealisedPnl != null);
     var netCell = document.getElementById('au-gs-tb-net');
@@ -119,8 +127,8 @@ function autoUpdateGsTotalsBar() {
         var sign = netPnl >= 0 ? '+' : '−';
         var amt = '₹' + Math.abs(Math.round(netPnl)).toLocaleString('en-IN');
         var pctHtml = '';
-        if (t.openExposure && t.openExposure > 0) {
-            var pct = (netPnl / t.openExposure) * 100;
+        if (t.peakExposure && t.peakExposure > 0) {
+            var pct = (netPnl / t.peakExposure) * 100;
             var pctSign = pct >= 0 ? '+' : '−';
             pctHtml = ' <span style="font-weight:500;font-size:11px;color:' + col + '">(' + pctSign + Math.abs(pct).toFixed(2) + '%)</span>';
         }
@@ -1851,6 +1859,42 @@ async function autoLoadGsClosedTrades() {
             if (!byTrade[s.trade_id]) byTrade[s.trade_id] = [];
             byTrade[s.trade_id].push(s);
         });
+
+        // Peak exposure / margin computation (HIGH-WATER mark across all signal
+        // time — entries add, exits subtract the matching ENTRY's value, not
+        // the EXIT's leg.qty which may be ATR-mismatched per D.26).
+        // The running total at any moment = sum of currently-open trades' entry
+        // exposures. The max of that running total is the peak.
+        var sigsAsc = sigs.slice().sort(function (a, b) {
+            return a.fired_at < b.fired_at ? -1 : a.fired_at > b.fired_at ? 1 : 0;
+        });
+        var entryByTrade = {};
+        sigsAsc.forEach(function (s) {
+            if (s.event_type === 'ENTRY') entryByTrade[s.trade_id] = s;
+        });
+        function _gsTradeExposureOf(entrySig) {
+            if (!entrySig || !entrySig.legs || !entrySig.legs[0]) return { exp: 0, mgn: 0 };
+            var leg = entrySig.legs[0];
+            var em = entrySig.metadata || {};
+            var qLots = em.qty_lots != null ? Number(em.qty_lots) : Number(leg.qty || 0);
+            var pv  = autoGsPointValue(leg.short_symbol);
+            var mP  = autoGsMarginPct(leg.short_symbol);
+            var exp = (qLots && pv && leg.price != null) ? (qLots * pv * Number(leg.price)) : 0;
+            var mgn = mP ? (exp * mP / 100) : 0;
+            return { exp: exp, mgn: mgn };
+        }
+        var _runExp = 0, _runMgn = 0;
+        var _peakExp = 0, _peakMgn = 0;
+        sigsAsc.forEach(function (s) {
+            var entrySig = entryByTrade[s.trade_id];
+            var em = _gsTradeExposureOf(entrySig);
+            if (s.event_type === 'ENTRY') { _runExp += em.exp; _runMgn += em.mgn; }
+            else                          { _runExp -= em.exp; _runMgn -= em.mgn; }
+            if (_runExp > _peakExp) _peakExp = _runExp;
+            if (_runMgn > _peakMgn) _peakMgn = _runMgn;
+        });
+        _auGsTotals.peakExposure = _peakExp > 0 ? _peakExp : null;
+        _auGsTotals.peakMargin   = _peakMgn > 0 ? _peakMgn : null;
 
         var closedRows = [];
         Object.keys(byTrade).forEach(function (tradeId) {
