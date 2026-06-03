@@ -1512,6 +1512,7 @@ function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, t
     var box = document.getElementById('tr-portfolio-cards');
     if (!box) return;
     trWireSortButton();
+    trWireMoreRepos();
 
     // ---- Investor breakup drill-in (one holding → per-investor compact rows) ----
     if (trMobileBreakupKey) {
@@ -1556,6 +1557,10 @@ function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, t
             var breakupLink = invCount > 1
                 ? '<div class="trm-breakup-link" data-bkey="' + h.key + '">By investor (' + invCount + ') <span class="trm-chev">&rsaquo;</span></div>'
                 : '';
+            var hInvs = {}, hBrks = {};
+            (h._txns || []).forEach(function(t) { hInvs[trInvName(t.investor_id)] = 1; var bc = trBrkCode(t.broker_id); if (bc) hBrks[bc] = 1; });
+            var hInvStr = Object.keys(hInvs).join(', ') || '-';
+            var hBrkStr = Object.keys(hBrks).join(', ') || '-';
             detail =
                 '<div class="trm-detail">' +
                     '<div class="trm-detail-grid">' +
@@ -1564,6 +1569,8 @@ function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, t
                         '<div class="trm-d-item"><span class="trm-d-k">Invested</span><span class="trm-d-v">' + formatAmount(vm.invested) + ' &middot; ' + vm.invPct.toFixed(1) + '%</span></div>' +
                         '<div class="trm-d-item"><span class="trm-d-k">Day\'s P&L</span>' + dayDetail + '</div>' +
                         '<div class="trm-d-item"><span class="trm-d-k">% of portfolio</span><span class="trm-d-v">' + vm.valPct.toFixed(1) + '%</span></div>' +
+                        '<div class="trm-d-item trm-d-wide"><span class="trm-d-k">Investor</span><span class="trm-d-v">' + wmsEsc(hInvStr) + '</span></div>' +
+                        '<div class="trm-d-item trm-d-wide"><span class="trm-d-k">Broker</span><span class="trm-d-v">' + wmsEsc(hBrkStr) + '</span></div>' +
                     '</div>' + tagsHtml + breakupLink +
                 '</div>';
         }
@@ -1583,6 +1590,35 @@ function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, t
     });
 }
 
+// Phone-only: the view-tabs-bar dropdowns (▾More, ⇅Sort) are clipped by the
+// overflow:hidden tab/container ancestors when the tab is short. On ≤480 re-anchor
+// the OPEN dropdown to the viewport (position:fixed) so it escapes all clipping.
+// No-op on desktop (>480) — desktop keeps the absolute-positioned dropdown.
+function trReposDropdownMobile(dd, btn) {
+    if (!dd || !btn || window.innerWidth > 480) return;
+    if (dd.style.display !== 'block') return;
+    var r = btn.getBoundingClientRect();
+    dd.style.position = 'fixed';
+    dd.style.top = (r.bottom + 4) + 'px';
+    dd.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
+    dd.style.left = 'auto';
+    dd.style.zIndex = '2000';
+}
+
+// Re-anchor the ▾More dropdowns (Portfolio + F&O) after the view manager toggles
+// them. Wired once per DOM lifetime via dataset guard.
+function trWireMoreRepos() {
+    [['tr-more-btn', 'tr-more-dropdown'], ['tr-fno-more-btn', 'tr-fno-more-dropdown']].forEach(function(pair) {
+        var btn = document.getElementById(pair[0]);
+        if (!btn || btn.dataset.reposWired) return;
+        btn.dataset.reposWired = '1';
+        btn.addEventListener('click', function() {
+            var dd = document.getElementById(pair[1]);
+            setTimeout(function() { trReposDropdownMobile(dd, btn); }, 0);
+        });
+    });
+}
+
 // Phone-only sort control (next to ▾ More). Wires once per DOM lifetime via a
 // data attribute (resets when the lazy-loaded trading.html DOM is recreated).
 // Drives the shared trSortColumn/trSortDirection — the mobile list is built from
@@ -1597,7 +1633,7 @@ function trWireSortButton() {
         var willOpen = dd.style.display === 'none';
         var more = document.getElementById('tr-more-dropdown'); if (more) more.style.display = 'none';
         dd.style.display = willOpen ? 'block' : 'none';
-        if (willOpen) trSortDropdownMark();
+        if (willOpen) { trSortDropdownMark(); trReposDropdownMobile(dd, btn); }
     });
     dd.querySelectorAll('[data-sort]').forEach(function(item) {
         item.addEventListener('click', function(e) {

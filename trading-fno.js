@@ -705,9 +705,23 @@ function trFnoRender() {
 // expand reuses trFnoExpandedSymbols (so Collapse/Expand-all drives it too);
 // contract-detail expand uses trFnoMobileContractKey.
 // ============================================================================
+// Distinct investor + broker names for a contract group (resolved from the
+// leg transactions via shared trInvName / trBrkCode).
+function trFnoCgParties(cg) {
+    var ids = {};
+    (cg.rows || []).forEach(function(r) { if (r.buyTxnId) ids[r.buyTxnId] = 1; if (r.sellTxnId) ids[r.sellTxnId] = 1; });
+    var invs = {}, brks = {};
+    Object.keys(ids).forEach(function(id) {
+        var t = (typeof trTransactions !== 'undefined') ? trTransactions.find(function(x) { return x.id === id; }) : null;
+        if (t) { invs[trInvName(t.investor_id)] = 1; var bc = trBrkCode(t.broker_id); if (bc) brks[bc] = 1; }
+    });
+    return { inv: Object.keys(invs).join(', ') || '-', brk: Object.keys(brks).join(', ') || '-' };
+}
+
 function trFnoRenderMobile(positions) {
     var box = document.getElementById('tr-fno-cards');
     if (!box) return;
+    if (typeof trWireMoreRepos === 'function') trWireMoreRepos();
     if (!positions || positions.length === 0) {
         box.innerHTML = '<div class="trm-empty">No F&O positions found</div>';
         return;
@@ -736,16 +750,17 @@ function trFnoRenderMobile(positions) {
         var symOpen = !!trFnoExpandedSymbols[p.underlying];
         var net = p.totalRealisedPnl + p.totalUnrealisedPnl;
 
-        // Collapsed row shows Qty · Cost · CMP from the representative open contract
-        // (prefer the open futures leg). Ticker / expiry / exposure live in the expanded detail.
+        // Collapsed row: Qty · Cost on line 2; CMP sits immediately left of the
+        // P&L amount on line 1. Values from the representative open contract
+        // (prefer the open futures leg). Ticker / expiry / exposure → expanded detail.
         var repCg = (p.contractGroups || []).filter(function(cg) { return cg.isFuture && cg.openQty; })[0]
                  || (p.contractGroups || []).filter(function(cg) { return cg.openQty; })[0];
-        var leftInfo;
+        var leftInfo, cmpBadge = '';
         if (repCg) {
             var rCost = (repCg.openQty && repCg.openCost) ? trFmtRupee(repCg.openCost / repCg.openQty) : '-';
             var rOpenRow = (repCg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
-            var rCmp = rOpenRow ? trFmtRupee(rOpenRow.cmp) : '-';
-            leftInfo = formatQuantity(repCg.openQty) + ' &middot; ' + rCost + ' &middot; ' + rCmp;
+            if (rOpenRow) cmpBadge = '<span class="trm-grp-cmp">' + trFmtRupee(rOpenRow.cmp) + '</span>';
+            leftInfo = formatQuantity(repCg.openQty) + ' &middot; ' + rCost;
         } else {
             leftInfo = '<span style="color:#a0aec0;">Closed</span>';
         }
@@ -754,7 +769,7 @@ function trFnoRenderMobile(positions) {
             '<div class="trm-grp" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
                 '<div class="trm-grp-l1">' +
                     '<span class="trm-grp-name"><span class="trm-grp-chev">' + (symOpen ? '&#9662;' : '&#9656;') + '</span><span class="trm-grp-txt">' + wmsEsc(p.companyName || p.underlying) + '</span></span>' +
-                    '<span class="trm-pl-main ' + getAmountClass(net) + '">' + formatAmount(net) + '</span>' +
+                    '<span class="trm-grp-r">' + cmpBadge + '<span class="trm-pl-main ' + getAmountClass(net) + '">' + formatAmount(net) + '</span></span>' +
                 '</div>' +
                 '<div class="trm-grp-l2">' +
                     '<span>' + leftInfo + '</span>' +
@@ -787,6 +802,7 @@ function trFnoRenderMobile(positions) {
                 if (cOpen) {
                     var openRow = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
                     var cmpStr = openRow ? trFmtRupee(openRow.cmp) : '-';
+                    var parties = trFnoCgParties(cg);
                     detail =
                         '<div class="trm-detail"><div class="trm-detail-grid">' +
                             '<div class="trm-d-item"><span class="trm-d-k">Symbol</span><span class="trm-d-v">' + wmsEsc(p.underlying) + '</span></div>' +
@@ -799,6 +815,8 @@ function trFnoRenderMobile(positions) {
                             '<div class="trm-d-item"><span class="trm-d-k">Realised</span><span class="trm-d-v ' + getAmountClass(cReal) + '">' + formatAmount(cReal) + '</span></div>' +
                             '<div class="trm-d-item"><span class="trm-d-k">Unrealised</span><span class="trm-d-v ' + getAmountClass(cUnreal) + '">' + formatAmount(cUnreal) + '</span></div>' +
                             '<div class="trm-d-item"><span class="trm-d-k">Net</span><span class="trm-d-v ' + getAmountClass(cNet) + '">' + formatAmount(cNet) + '</span></div>' +
+                            '<div class="trm-d-item trm-d-wide"><span class="trm-d-k">Investor</span><span class="trm-d-v">' + wmsEsc(parties.inv) + '</span></div>' +
+                            '<div class="trm-d-item trm-d-wide"><span class="trm-d-k">Broker</span><span class="trm-d-v">' + wmsEsc(parties.brk) + '</span></div>' +
                         '</div></div>';
                 }
                 return row + detail;
