@@ -92,6 +92,53 @@
 .au-subtab-panel { display: none; }
 .au-subtab-panel.active { display: block; }
 
+/* Sticky GS totals bar at the bottom of the Open Trades GS sub-panel.
+   Sticks to the bottom of the scroll container so it's always visible. */
+.au-totals-bar {
+    position: sticky;
+    bottom: 0;
+    background: #fff;
+    border-top: 2px solid #cbd5e0;
+    padding: 10px 16px;
+    margin: 16px -16px -16px -16px; /* hug the container's edges */
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    font-size: 12px;
+    align-items: center;
+    box-shadow: 0 -2px 6px rgba(0,0,0,0.04);
+    z-index: 10;
+}
+.au-totals-bar .au-tot-group {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+}
+.au-totals-bar .au-tot-label {
+    color: #6b7280;
+    font-weight: 500;
+}
+.au-totals-bar .au-tot-value {
+    font-weight: 700;
+    color: #1f2937;
+}
+.au-totals-bar .au-tot-sep {
+    color: #d1d5db;
+}
+.au-totals-bar .au-tot-net {
+    margin-left: auto;
+    font-size: 13px;
+}
+.au-refresh-tick {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #10b981;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+.au-refresh-tick.paused { background: #9ca3af; }
+
 .au-card {
     background: #fff;
     border: 1px solid #e2e8f0;
@@ -357,6 +404,23 @@ details summary {
             <button class="au-btn au-btn-secondary" onclick="autoLoadGsClosedTrades()">↻ Refresh</button>
           </div>
           <div id="au-gs-closed-content" style="margin-top:12px">Click Refresh to load.</div>
+        </div>
+
+        <!-- Sticky combined-totals bar for GS Open + Closed -->
+        <div id="au-gs-totals-bar" class="au-totals-bar" style="display:none">
+          <span class="au-tot-group" title="Auto-refresh status">
+            <span id="au-gs-refresh-tick" class="au-refresh-tick"></span>
+            <span class="au-tot-label" id="au-gs-refresh-label">live</span>
+          </span>
+          <span class="au-tot-sep">|</span>
+          <span class="au-tot-group"><span class="au-tot-label">Open:</span> <span class="au-tot-value" id="au-gs-tb-open-count">—</span></span>
+          <span class="au-tot-group"><span class="au-tot-label">Exposure:</span> <span class="au-tot-value" id="au-gs-tb-exp">—</span></span>
+          <span class="au-tot-group"><span class="au-tot-label">Margin:</span> <span class="au-tot-value" id="au-gs-tb-mgn">—</span></span>
+          <span class="au-tot-group"><span class="au-tot-label">Live P&amp;L:</span> <span class="au-tot-value" id="au-gs-tb-live">—</span></span>
+          <span class="au-tot-sep">|</span>
+          <span class="au-tot-group"><span class="au-tot-label">Closed:</span> <span class="au-tot-value" id="au-gs-tb-closed-count">—</span></span>
+          <span class="au-tot-group"><span class="au-tot-label">Realised:</span> <span class="au-tot-value" id="au-gs-tb-realised">—</span></span>
+          <span class="au-tot-net"><span class="au-tot-label">Net P&amp;L:</span> <span class="au-tot-value" id="au-gs-tb-net">—</span></span>
         </div>
       </div>
 

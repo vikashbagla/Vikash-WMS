@@ -29,6 +29,102 @@ function autoSwitchTab(tabId) {
     if (tabId === 'au-open-trades' && !window._auOpenTradesLoaded) { autoLoadGsOpenTrades(); autoLoadGsClosedTrades(); autoLoadOpenTrades(); autoLoadClosedTrades(); window._auOpenTradesLoaded = true; }
     if (tabId === 'au-events'      && !window._auEventsLoaded)     { autoLoadEvents('all');  window._auEventsLoaded = true; }
     if (tabId === 'au-runs'        && !window._auRunsLoaded)       { autoLoadRuns('all');    window._auRunsLoaded = true; }
+
+    // Start/stop the GS Open Trades auto-refresh timer based on which tab is active.
+    if (tabId === 'au-open-trades') {
+        autoStartGsAutoRefresh();
+    } else {
+        autoStopGsAutoRefresh();
+    }
+}
+
+// GS Open Trades auto-refresh — runs while the Open Trades tab + GS sub-tab are
+// active AND MCX market is open AND the document is visible. Cadence matches
+// the WMS app's 10s refresh interval (wms-shared.js).
+var AU_GS_REFRESH_MS = 10000;
+var _auGsRefreshTimer = null;
+
+function autoStartGsAutoRefresh() {
+    autoStopGsAutoRefresh();
+    _auGsRefreshTimer = setInterval(function () {
+        // Only refresh if the user is actually looking at the GS Open Trades sub-tab.
+        var openTradesActive = document.getElementById('au-open-trades')?.classList.contains('active');
+        var gsSubActive      = document.getElementById('au-ot-gs')?.classList.contains('active');
+        if (!openTradesActive || !gsSubActive) return;
+        if (document.hidden) return;
+        if (!autoIsWithinMcxHours(new Date())) {
+            autoUpdateGsRefreshTickStatus('off-hours');
+            return;
+        }
+        autoUpdateGsRefreshTickStatus('live');
+        autoLoadGsOpenTrades(true /* silent — don't flash 'loading' badge */);
+    }, AU_GS_REFRESH_MS);
+    autoUpdateGsRefreshTickStatus(autoIsWithinMcxHours(new Date()) ? 'live' : 'off-hours');
+}
+
+function autoStopGsAutoRefresh() {
+    if (_auGsRefreshTimer) {
+        clearInterval(_auGsRefreshTimer);
+        _auGsRefreshTimer = null;
+    }
+    autoUpdateGsRefreshTickStatus('paused');
+}
+
+function autoUpdateGsRefreshTickStatus(state) {
+    var tick = document.getElementById('au-gs-refresh-tick');
+    var label = document.getElementById('au-gs-refresh-label');
+    if (!tick || !label) return;
+    if (state === 'live')        { tick.classList.remove('paused'); label.textContent = 'live · 10s'; }
+    else if (state === 'paused') { tick.classList.add('paused');    label.textContent = 'paused'; }
+    else if (state === 'off-hours') { tick.classList.add('paused'); label.textContent = 'mkt closed'; }
+}
+
+// Sticky GS totals state — populated by both autoLoadGsOpenTrades and
+// autoLoadGsClosedTrades. autoUpdateGsTotalsBar reads it and writes to the bar.
+var _auGsTotals = {
+    openCount: null, openExposure: null, openMargin: null, openLivePnl: null,
+    closedCount: null, closedWins: null, closedLosses: null, closedRealisedPnl: null,
+};
+
+function autoUpdateGsTotalsBar() {
+    var bar = document.getElementById('au-gs-totals-bar');
+    if (!bar) return;
+    var t = _auGsTotals;
+    var hasOpen = t.openCount != null;
+    var hasClosed = t.closedCount != null;
+    if (!hasOpen && !hasClosed) {
+        bar.style.display = 'none';
+        return;
+    }
+    bar.style.display = 'flex';
+
+    var fmtRupees = function (n) {
+        if (n == null) return '—';
+        var sign = n >= 0 ? '+' : '−';
+        var col  = n >= 0 ? '#047857' : '#dc2626';
+        return '<span style="color:' + col + '">' + sign + '₹' + Math.abs(Math.round(n)).toLocaleString('en-IN') + '</span>';
+    };
+    var fmtFlat = function (n) {
+        if (n == null) return '—';
+        return '₹' + Math.round(n).toLocaleString('en-IN');
+    };
+
+    document.getElementById('au-gs-tb-open-count').textContent = hasOpen ? (t.openCount + (t.openCount === 1 ? ' trade' : ' trades')) : '—';
+    document.getElementById('au-gs-tb-exp').textContent  = hasOpen ? fmtFlat(t.openExposure) : '—';
+    document.getElementById('au-gs-tb-mgn').textContent  = hasOpen ? fmtFlat(t.openMargin) : '—';
+    document.getElementById('au-gs-tb-live').innerHTML   = hasOpen ? fmtRupees(t.openLivePnl) : '—';
+
+    var closedLbl = '—';
+    if (hasClosed) {
+        closedLbl = t.closedCount + (t.closedCount === 1 ? ' trade' : ' trades');
+        if (t.closedWins != null && t.closedLosses != null) closedLbl += ' (' + t.closedWins + 'W/' + t.closedLosses + 'L)';
+    }
+    document.getElementById('au-gs-tb-closed-count').textContent = closedLbl;
+    document.getElementById('au-gs-tb-realised').innerHTML = hasClosed ? fmtRupees(t.closedRealisedPnl) : '—';
+
+    var netPnl = (t.openLivePnl || 0) + (t.closedRealisedPnl || 0);
+    if (!hasOpen && !hasClosed) netPnl = null;
+    document.getElementById('au-gs-tb-net').innerHTML = fmtRupees(netPnl);
 }
 
 // Sub-tab switcher (currently used inside the Open Trades tab to split GS vs Pairs).
@@ -44,6 +140,13 @@ function autoSwitchSubTab(subtabId) {
     var btn = parent.querySelector('.au-subtab-btn[data-subtab="' + subtabId + '"]');
     if (btn) btn.classList.add('active');
     panel.classList.add('active');
+
+    // Update refresh tick visual state — refresh only runs while GS sub-tab is active.
+    if (subtabId === 'au-ot-gs') {
+        autoUpdateGsRefreshTickStatus(autoIsWithinMcxHours(new Date()) ? 'live' : 'off-hours');
+    } else {
+        autoUpdateGsRefreshTickStatus('paused');
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -1486,12 +1589,18 @@ function autoGsComputeLivePnl(entry, ltpMap) {
     return { pnl: pnl, ltp: ltp, breakdown: breakdown };
 }
 
-async function autoLoadGsOpenTrades() {
+async function autoLoadGsOpenTrades(silent) {
     var el = document.getElementById('au-gs-open-content');
     var statusEl = document.getElementById('au-gs-open-status');
     if (!el) return;
-    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
-    el.innerHTML = '<div class="au-meta">⏳ Loading GS open trades…</div>';
+    if (!silent) {
+        if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+        if (!el.firstElementChild || el.firstElementChild.tagName !== 'DIV' || !el.firstElementChild.querySelector('table')) {
+            // Only show the spinner if there's no rendered table yet — auto-refresh
+            // keeps the existing table on screen for smooth flicker-free updates.
+            el.innerHTML = '<div class="au-meta">⏳ Loading GS open trades…</div>';
+        }
+    }
 
     try {
         var webhookStrats = await autoGetWebhookStrategyNames();
@@ -1682,6 +1791,13 @@ async function autoLoadGsOpenTrades() {
                 '</div>';
         el.innerHTML = html;
         if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = openRows.length + ' open'; }
+
+        // Populate shared totals state for the sticky bar
+        _auGsTotals.openCount = openRows.length;
+        _auGsTotals.openExposure = anyExposure ? totalExposure : null;
+        _auGsTotals.openMargin = anyExposure ? totalMargin : null;
+        _auGsTotals.openLivePnl = anyPnl ? totalPnl : null;
+        autoUpdateGsTotalsBar();
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load GS open trades: ' + autoEsc(String(e)) + '</span>';
         if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
@@ -1895,6 +2011,13 @@ async function autoLoadGsClosedTrades() {
         html += '</table></div>';
         el.innerHTML = html;
         if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = closedRows.length + ' closed'; }
+
+        // Populate shared totals state for the sticky bar
+        _auGsTotals.closedCount = closedRows.length;
+        _auGsTotals.closedWins = wins;
+        _auGsTotals.closedLosses = losses;
+        _auGsTotals.closedRealisedPnl = totalPnl;
+        autoUpdateGsTotalsBar();
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load GS closed trades: ' + autoEsc(String(e)) + '</span>';
         if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
