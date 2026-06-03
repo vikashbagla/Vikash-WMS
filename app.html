@@ -99,13 +99,13 @@
             <span class="bnav-icon">📊</span>
             <span class="bnav-label">Portfolio</span>
         </button>
-        <button class="bnav-item" data-module="trading" data-subtab="tr-watchlist">
-            <span class="bnav-icon">👁</span>
-            <span class="bnav-label">Watchlist</span>
-        </button>
         <button class="bnav-item" data-module="trading" data-subtab="tr-fno-positions">
             <span class="bnav-icon">📈</span>
             <span class="bnav-label">F&O</span>
+        </button>
+        <button class="bnav-item" data-module="trading" data-subtab="tr-watchlist">
+            <span class="bnav-icon">👁</span>
+            <span class="bnav-label">Watchlist</span>
         </button>
         <button class="bnav-item" data-module="trading" data-subtab="tr-transactions">
             <span class="bnav-icon">📋</span>
@@ -609,10 +609,21 @@
         // Load last active module or default to portfolio
         var lastModule = localStorage.getItem('wms_last_module') || 'reports';
         if (lastModule === 'portfolio') lastModule = 'reports'; // migrate old preference
-        loadModule(lastModule);
 
-        // Set initial bottom nav active state
-        updateBottomNavActive(lastModule);
+        // Phone (≤480px) is review-first: always open Trading → Portfolio,
+        // ignoring the last-used module. Desktop/tablet keep last-module behaviour.
+        if (window.matchMedia('(max-width:480px)').matches) {
+            Promise.resolve(loadModule('trading')).then(function() {
+                if (typeof trSwitchTab === 'function') trSwitchTab('tr-portfolio');
+                document.querySelectorAll('#wmsBottomNav .bnav-item').forEach(function(b) { b.classList.remove('active'); });
+                var pBtn = document.querySelector('#wmsBottomNav .bnav-item[data-subtab="tr-portfolio"]');
+                if (pBtn) pBtn.classList.add('active');
+            });
+        } else {
+            loadModule(lastModule);
+            // Set initial bottom nav active state
+            updateBottomNavActive(lastModule);
+        }
     });
 
     // Keep bottom nav active state in sync

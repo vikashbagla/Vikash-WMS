@@ -336,6 +336,17 @@
             }
         }
 
+        /* ---- Phone (iPhone / small Android): strip marketing text, show login only ---- */
+        @media (max-width: 480px) {
+            .landing-header { display: none; }       /* hide big title + tagline */
+            .landing-left { display: none; }         /* hide feature-list marketing panel */
+            .landing-card {
+                grid-template-columns: 1fr;
+                max-width: 360px;
+            }
+            .landing-right { padding: 48px 28px; }
+        }
+
         /* Loading Spinner */
         .spinner {
             border: 3px solid #f3f3f3;

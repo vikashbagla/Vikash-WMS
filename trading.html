@@ -534,6 +534,41 @@
 .btn-close-modal:hover { background: #edf2f7; color: #4a5568; }
 
 /* ================================================================
+   PHONE COMPACT LIST (Portfolio / F&O) — hidden on desktop, shown ≤480
+   ================================================================ */
+.tr-mobile-list { display: none; flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.trm-summary {
+    position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between;
+    align-items: center; gap: 8px; padding: 8px 12px; background: #fafbfd;
+    border-bottom: 1px solid #e2e8f0;
+}
+.trm-summary .trm-s-block { text-align: center; flex: 1; }
+.trm-summary .trm-s-label { font-size: 8px; color: #94a0b3; text-transform: uppercase; letter-spacing: .3px; }
+.trm-summary .trm-s-val { font-size: 12px; font-weight: 600; color: #2d3748; }
+.trm-row { padding: 8px 12px; border-bottom: 1px solid #f0f2f6; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.trm-l1 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.trm-sym { font-weight: 600; font-size: 13px; color: #2d3748; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trm-pl-main { font-weight: 600; font-size: 13px; white-space: nowrap; }
+.trm-l2 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 2px; font-size: 10.5px; color: #94a0b3; }
+.trm-l2 .trm-r { text-align: right; white-space: nowrap; }
+.trm-pos { color: #059669; }
+.trm-neg { color: #dc2626; }
+.trm-detail { padding: 8px 12px 10px; background: #f8fafc; border-bottom: 1px solid #f0f2f6; }
+.trm-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+.trm-d-item { display: flex; justify-content: space-between; font-size: 11px; }
+.trm-d-item .trm-d-k { color: #94a0b3; }
+.trm-d-item .trm-d-v { color: #2d3748; font-weight: 500; }
+.trm-tags { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+.trm-tags .tag-pill { font-size: 9px; }
+.trm-row.trm-open { background: #f6f8ff; }
+.trm-breakup-link { margin-top: 8px; padding: 7px 0 2px; border-top: 1px dashed #e2e8f0; color: #667eea; font-size: 12px; font-weight: 500; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+.trm-chev { font-size: 16px; line-height: 1; }
+.trm-breakup-hd { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #fafbfd; border-bottom: 1px solid #e2e8f0; }
+.trm-back { border: 1px solid #cdd4e6; background: #f6f8ff; color: #4a5568; font-size: 12px; padding: 4px 10px; border-radius: 6px; cursor: pointer; flex-shrink: 0; }
+.trm-breakup-title { flex: 1; font-weight: 600; font-size: 13px; color: #2d3748; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trm-breakup-tot { font-weight: 600; font-size: 13px; flex-shrink: 0; }
+
+/* ================================================================
    RESPONSIVE: Tablet
    ================================================================ */
 @media (max-width:768px) {
@@ -552,19 +587,30 @@
    RESPONSIVE: Phone
    ================================================================ */
 @media (max-width:480px) {
-    /* --- Trading header: remove title row, compact layout --- */
+    /* --- Trading header: single compact row, Day P&L left + Zero toggle right --- */
     .trading-header-bar {
-        flex-direction: column;
-        align-items: stretch;
-        padding: 4px 0;
-        gap: 4px;
+        flex-direction: row;
+        align-items: center;
+        flex-wrap: nowrap;
+        padding: 4px 6px;
+        gap: 6px;
     }
 
     /* Hide "Trading" title and "all amounts in ₹ '000" (moved to app header) */
     .trading-header-bar > div:first-child { display: none; }
 
-    /* Day P&L banner: hide Portfolio block, compact sizing to match rest of screen */
-    #trDayPLBanner { justify-content: center; gap: 8px; }
+    /* Day P&L banner: take available width on the left, scroll if needed; hide
+       Portfolio block, compact sizing to match rest of screen */
+    #trDayPLBanner {
+        justify-content: flex-start;
+        flex: 1;
+        min-width: 0;
+        gap: 8px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+    #trDayPLBanner::-webkit-scrollbar { display: none; }
     #trDayPLBanner > .tr-pl-block-sep { display: none; }
     #trDayPLBanner > .tr-pl-block:last-child { display: none; }
     #trDayPLBanner .tr-pl-block-label { font-size: 8px; margin-bottom: 0; }
@@ -575,28 +621,63 @@
     #trDayPLBanner .tr-pl-card { padding: 2px 6px; }
     #trDayPLBanner .tr-pl-sep { margin: 0 2px; }
 
-    /* Action buttons: compact single row */
+    /* Actions: keep ONLY the Zero toggle (pushed to the far right); hide
+       "+ Others" and "+/- Trade" — no entry/maintenance on the phone */
     .trading-header-bar > div:last-child {
         display: flex;
-        justify-content: flex-end;
+        align-items: center;
+        margin-left: auto;
+        flex-shrink: 0;
         gap: 6px;
         padding: 0 2px;
     }
+    .trading-header-bar > div:last-child > *:not(#trToggleZeroBtn) { display: none !important; }
     .trading-header-bar .btn-toggle-zero {
         font-size: 10px !important;
         padding: 3px 6px !important;
     }
-    .trading-header-bar .btn-others {
-        font-size: 10px;
-        padding: 3px 6px;
-    }
-    .trading-header-bar .btn-add-txn {
-        font-size: 11px;
-        padding: 4px 10px;
-    }
 
-    /* View tabs: scrollable */
-    .tr-view-tabs-bar { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    /* View tabs: only the tab strip scrolls horizontally — the BAR itself must
+       stay overflow:visible so the ▾ More dropdown isn't clipped (it's an
+       absolutely-positioned child). The container already scrolls (base CSS). */
+    .tr-view-tabs-bar { overflow: visible; }
+    .tr-view-tabs-container { -webkit-overflow-scrolling: touch; }
+
+    /* Declutter: show ONLY the active view tab — switch views via ▾ More.
+       Also hide the tab's ✕ close so a view can't be deleted by mistake. */
+    #tr-view-tabs .tr-view-tab:not(.active),
+    #tr-fno-view-tabs .tr-view-tab:not(.active) { display: none; }
+    #tr-view-tabs .tr-tab-close,
+    #tr-fno-view-tabs .tr-tab-close { display: none; }
+
+    /* === PHONE REVIEW-ONLY: Portfolio — keep view tabs + More dropdown for
+       selecting a saved view; hide all view-editing + filter controls === */
+    #tr-new-view-btn,
+    #tr-update-view-btn,
+    #tr-save-new-btn,
+    #tr-filters-toggle,
+    #trPortfolioFilters { display: none !important; }
+
+    /* Swap the wide table for the compact phone list */
+    #tr-portfolio .table-container { display: none !important; }
+    #tr-portfolio-cards { display: flex; flex-direction: column; }
+
+    /* === PHONE REVIEW-ONLY: F&O — same view-select-only treatment === */
+    #tr-fno-new-view-btn,
+    #tr-fno-update-view-btn,
+    #tr-fno-save-new-btn,
+    #tr-fno-filters-toggle,
+    #trFnoSharedFilters { display: none !important; }
+
+    /* F&O secondary controls: keep Open/All + Collapse/Expand; hide expiry
+       filter, LIFO/FIFO, Flat View, Snapshot, and the Expire-Worthless
+       maintenance action (writes data — not a review action) */
+    #trFnoExpiryWrap,
+    #trFnoSettleExpiredBtn,
+    .trFno-flat-toggle,
+    #trFnoSnapBtn { display: none !important; }
+    .trFno-filters-bar .trFno-toggle-group:has(button[data-fno-match]),
+    .trFno-filters-bar .trFno-toggle-group:has(#trFnoSettleExpiredBtn) { display: none !important; }
 }
 </style>
 </head>
@@ -718,6 +799,9 @@
                 </tbody>
             </table>
         </div>
+
+        <!-- Portfolio compact list (phone only — built by trRenderPortfolioMobile) -->
+        <div id="tr-portfolio-cards" class="tr-mobile-list"></div>
 
     </div>
 

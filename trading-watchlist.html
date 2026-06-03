@@ -886,6 +886,14 @@
 
     /* Hide debug link on phone */
     .btn-wl-debug { display: none; }
+
+    /* PHONE REVIEW-ONLY: remove watchlist management — no creating new
+       watchlists (header button, name input, and empty-state create button)
+       and no reordering watchlists. Viewing/refresh/sort stay available. */
+    #trWlNewBtn,
+    #trWlNewWrap,
+    .btn-new-watchlist,
+    #trWlReorderBtn { display: none !important; }
 }
 </style>
 
