@@ -30,51 +30,55 @@ function autoSwitchTab(tabId) {
     if (tabId === 'au-events'      && !window._auEventsLoaded)     { autoLoadEvents('all');  window._auEventsLoaded = true; }
     if (tabId === 'au-runs'        && !window._auRunsLoaded)       { autoLoadRuns('all');    window._auRunsLoaded = true; }
 
-    // Start/stop the GS Open Trades auto-refresh timer based on which tab is active.
+    // Open Trades P&L refreshes via the shared app-wide price timer (no module
+    // timer). Ensure the provider is registered + the single timer is running.
     if (tabId === 'au-open-trades') {
-        autoStartGsAutoRefresh();
-    } else {
-        autoStopGsAutoRefresh();
+        autoEnsureSharedRefresh();
     }
 }
 
-// GS Open Trades auto-refresh — runs while the Open Trades tab + GS sub-tab are
-// active AND MCX market is open AND the document is visible. Cadence matches
-// the WMS app's 10s refresh interval (wms-shared.js).
-var AU_GS_REFRESH_MS = 10000;
-var _auGsRefreshTimer = null;
+// GS Open Trades live P&L flows through the SINGLE app-wide price system
+// (wms-shared.js → wmsStandardRefresh / wmsLivePrices / wmsStartRefreshTimer).
+// No module-local timer or Fyers fetch — the shared timer keeps wmsLivePrices
+// warm on the app cadence (10s equity, 2-min MCX evening) and its
+// wmsRefreshRender() calls autoOnSharedRefresh() each cycle to re-render.
+// (AUTOMATION-LESSONS Part 1; WMS-LESSONS §E.11.10)
 
-function autoStartGsAutoRefresh() {
-    autoStopGsAutoRefresh();
-    _auGsRefreshTimer = setInterval(function () {
-        // Only refresh if the user is actually looking at the GS Open Trades sub-tab.
-        var openTradesActive = document.getElementById('au-open-trades')?.classList.contains('active');
-        var gsSubActive      = document.getElementById('au-ot-gs')?.classList.contains('active');
-        if (!openTradesActive || !gsSubActive) return;
-        if (document.hidden) return;
-        if (!autoIsWithinMcxHours(new Date())) {
-            autoUpdateGsRefreshTickStatus('off-hours');
-            return;
-        }
-        autoUpdateGsRefreshTickStatus('live');
-        autoLoadGsOpenTrades(true /* silent — don't flash 'loading' badge */);
-    }, AU_GS_REFRESH_MS);
-    autoUpdateGsRefreshTickStatus(autoIsWithinMcxHours(new Date()) ? 'live' : 'off-hours');
+// Symbols the open-trade views need priced; merged into the shared refresh list
+// via wmsRegisterRefreshSymbolProvider. Updated whenever GS open trades load.
+var _auGsSyms = [];   // [{ fyersKey, cacheKey }]
+function autoGetRefreshSymbols() { return _auGsSyms; }
+
+// Register the provider (idempotent) + make sure the single shared timer runs
+// while the user is on the Open Trades tab. Called from autoSwitchTab.
+function autoEnsureSharedRefresh() {
+    if (typeof wmsRegisterRefreshSymbolProvider === 'function') {
+        wmsRegisterRefreshSymbolProvider('auto_open_trades', autoGetRefreshSymbols);
+    }
+    if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+    if (typeof wmsStartRefreshTimer === 'function' && typeof wmsIsRefreshWindow === 'function'
+        && wmsIsRefreshWindow() && window.fyersToken) {
+        wmsStartRefreshTimer();
+    }
 }
 
-function autoStopGsAutoRefresh() {
-    if (_auGsRefreshTimer) {
-        clearInterval(_auGsRefreshTimer);
-        _auGsRefreshTimer = null;
-    }
-    autoUpdateGsRefreshTickStatus('paused');
+// Called by wms-shared.js wmsRefreshRender() on every shared price cycle.
+// Re-renders the GS open trades (reading LTP from wmsLivePrices) only while the
+// user is viewing that sub-tab.
+function autoOnSharedRefresh() {
+    if (document.hidden) return;
+    if (!document.getElementById('au-open-trades')?.classList.contains('active')) return;
+    if (!document.getElementById('au-ot-gs')?.classList.contains('active')) return;
+    autoLoadGsOpenTrades(true /* silent — flicker-free */);
+    autoUpdateGsRefreshTickStatus(
+        (typeof wmsIsRefreshWindow === 'function' && wmsIsRefreshWindow()) ? 'live' : 'off-hours');
 }
 
 function autoUpdateGsRefreshTickStatus(state) {
     var tick = document.getElementById('au-gs-refresh-tick');
     var label = document.getElementById('au-gs-refresh-label');
     if (!tick || !label) return;
-    if (state === 'live')        { tick.classList.remove('paused'); label.textContent = 'live · 10s'; }
+    if (state === 'live')        { tick.classList.remove('paused'); label.textContent = 'live'; }
     else if (state === 'paused') { tick.classList.add('paused');    label.textContent = 'paused'; }
     else if (state === 'off-hours') { tick.classList.add('paused'); label.textContent = 'mkt closed'; }
 }
@@ -152,9 +156,12 @@ function autoSwitchSubTab(subtabId) {
     if (btn) btn.classList.add('active');
     panel.classList.add('active');
 
-    // Update refresh tick visual state — refresh only runs while GS sub-tab is active.
+    // Update refresh tick visual state — live P&L re-renders while the GS sub-tab
+    // is active (driven by the shared app-wide price timer).
     if (subtabId === 'au-ot-gs') {
-        autoUpdateGsRefreshTickStatus(autoIsWithinMcxHours(new Date()) ? 'live' : 'off-hours');
+        autoUpdateGsRefreshTickStatus(
+            (typeof wmsIsRefreshWindow === 'function' && wmsIsRefreshWindow()) ? 'live' : 'off-hours');
+        autoEnsureSharedRefresh();
     } else {
         autoUpdateGsRefreshTickStatus('paused');
     }
@@ -625,13 +632,17 @@ async function autoLoadStrategies() {
 // ----------------------------------------------------------------------------
 
 function autoIsWithinMcxHours(now) {
-    // now is a JS Date (system clock). Compute IST hour-of-day + day-of-week.
+    // Single source of truth = the app-wide MCX window in wms-shared.js
+    // (8:55 AM–11:55 PM IST). Used here only for the Webhook Status panel's
+    // market-open indicator; price refresh runs through the shared timer.
+    if (typeof wmsIsMcxHours === 'function') return wmsIsMcxHours();
+    // Fallback if wms-shared.js hasn't loaded: Mon-Fri 9:00 AM–11:55 PM IST.
     var istMs = now.getTime() + (5.5 * 60 * 60 * 1000);
     var ist = new Date(istMs);
     var dow = ist.getUTCDay();       // 0=Sun, 6=Sat (UTC because we shifted)
     if (dow === 0 || dow === 6) return false;
     var minOfDay = ist.getUTCHours() * 60 + ist.getUTCMinutes();
-    return minOfDay >= (9 * 60) && minOfDay <= (23 * 60 + 30);
+    return minOfDay >= (9 * 60) && minOfDay <= (23 * 60 + 55);
 }
 
 function autoFmtAgo(iso) {
@@ -1560,23 +1571,20 @@ function autoGsMarginPct(shortSymbol) {
     return AU_GS_MARGIN_PCT[shortSymbol] || null;
 }
 
-// Fetch current LTP for a list of full Fyers symbols via the existing
-// fyersCall helper (routes through fyers-market-data Edge Function). Returns
-// Map<symbol, ltp>. Empty map if Fyers isn't connected.
-async function autoFetchLtpForSymbols(symbols) {
+// Read current LTP for a list of full Fyers symbols from the shared price cache
+// `wmsLivePrices` (populated by the single app-wide wmsStandardRefresh). Returns
+// Map<symbol, ltp>. No direct Fyers call — the shared timer owns all fetching.
+// (WMS-LESSONS §E.11.10)
+function autoFetchLtpForSymbols(symbols) {
     var out = new Map();
     if (!symbols || symbols.length === 0) return out;
-    if (typeof window.fyersCall !== 'function') return out;
-    try {
-        var resp = await window.fyersCall({ action: 'quotes', symbols: symbols });
-        if (resp && resp.s === 'ok' && Array.isArray(resp.d)) {
-            resp.d.forEach(function (item) {
-                var sym = item && item.n;
-                var lp = item && item.v && item.v.lp;
-                if (sym && typeof lp === 'number') out.set(sym, lp);
-            });
-        }
-    } catch (_e) { /* swallow — caller renders "—" if missing */ }
+    var cache = window.wmsLivePrices || {};
+    symbols.forEach(function (sym) {
+        if (!sym) return;
+        var bare = sym.replace(/^[A-Z]+:/, '');
+        var rec = cache[sym] || cache[bare];
+        if (rec && typeof rec.lp === 'number' && rec.lp > 0) out.set(sym, rec.lp);
+    });
     return out;
 }
 
@@ -1638,11 +1646,26 @@ async function autoLoadGsOpenTrades(silent) {
         var byTrade = {};
         sigRows.forEach(function (s) { byTrade[s.trade_id] = s; });
 
-        // 3. Live LTP for unique executed symbols
+        // 3. Live LTP for unique executed symbols — sourced from the shared price
+        //    cache (wmsLivePrices), kept warm by the single app-wide refresh timer.
         var uniqSyms = Array.from(new Set(sigRows.map(function (s) {
             return (s.legs && s.legs[0] && s.legs[0].symbol) || null;
         }).filter(Boolean)));
-        var ltpMap = await autoFetchLtpForSymbols(uniqSyms);
+        // Register these symbols with the shared refresh list so the app-wide
+        // timer fetches them every cycle (E.11.10).
+        _auGsSyms = uniqSyms.map(function (s) { return { fyersKey: s, cacheKey: s.replace(/^[A-Z]+:/, '') }; });
+        if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+        // On a user-initiated (non-silent) load, warm the cache once if these
+        // symbols aren't priced yet — the silent shared-refresh cycles just read.
+        if (!silent && typeof wmsStandardRefresh === 'function' && window.fyersToken) {
+            var cold = uniqSyms.some(function (s) {
+                var b = s.replace(/^[A-Z]+:/, '');
+                var r = (window.wmsLivePrices || {})[s] || (window.wmsLivePrices || {})[b];
+                return !(r && r.lp > 0);
+            });
+            if (cold) { try { await wmsStandardRefresh(true); } catch (_e) {} }
+        }
+        var ltpMap = autoFetchLtpForSymbols(uniqSyms);
 
         var now = Date.now();
         var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';

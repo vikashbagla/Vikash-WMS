@@ -2382,6 +2382,15 @@ var wmsMcxRefreshInterval = 120000; // 2 minutes — cadence during MCX-only eve
 var _wmsLastMcxFetch = 0;       // timestamp of last evening MCX-only fetch
 var wmsRefreshFirstDone = false; // first-load flag for Stage 2+3 resolution
 
+// Symbol-provider registry — extension point so any module (e.g. Auto Trading)
+// can fold its symbols into the SINGLE refresh list. Each provider is a function
+// returning [{ fyersKey, cacheKey }]. This keeps the whole app on ONE
+// wmsStandardRefresh / ONE cadence rather than module-local timers + fetches.
+var wmsRefreshSymbolProviders = {};
+function wmsRegisterRefreshSymbolProvider(key, fn) {
+    if (typeof fn === 'function') wmsRefreshSymbolProviders[key] = fn;
+}
+
 // Legacy aliases — kept so existing callers don't break during migration
 var wmsAutoRefreshTimers = {};
 function wmsStartAutoRefresh(id, opts) { /* no-op: replaced by standard refresh */ }
@@ -2528,6 +2537,17 @@ function wmsBuildRefreshSymbols() {
             });
         });
     }
+
+    // 4. Extra symbols from registered providers (e.g. Auto Trading open trades)
+    Object.keys(wmsRefreshSymbolProviders).forEach(function (k) {
+        var extra;
+        try { extra = wmsRefreshSymbolProviders[k](); } catch (e) { extra = null; }
+        (extra || []).forEach(function (s) {
+            if (!s || !s.fyersKey || !s.cacheKey || seen[s.cacheKey]) return;
+            seen[s.cacheKey] = true;
+            list.push({ fyersKey: s.fyersKey, cacheKey: s.cacheKey });
+        });
+    });
 
     wmsRefreshSymbols = list;
     console.log('wmsBuildRefreshSymbols:', list.length, 'unique symbols');
@@ -2681,6 +2701,12 @@ function wmsRefreshRender() {
     if (isReportsActive && typeof rptRenderPortfolio === 'function') {
         rptRenderPortfolio();
         if (typeof rptUpdatePriceStatus === 'function') rptUpdatePriceStatus('live');
+    }
+
+    // Auto Trading module — re-render open-trade P&L from the shared price cache.
+    // The module no longer runs its own timer/fetch (LESSONS §E.11.10).
+    if (typeof autoOnSharedRefresh === 'function') {
+        try { autoOnSharedRefresh(); } catch (err) { console.warn('Auto refresh render failed:', err); }
     }
 }
 
