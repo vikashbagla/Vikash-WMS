@@ -911,8 +911,9 @@ function trFnoRenderGrouped(positions) {
         var avgBuyPrice = (!p.futIsShort && p.futAvgCost > 0) ? formatPrice(p.futAvgCost, false) : '';
         var avgSellPrice = (p.futIsShort && p.futAvgCost > 0) ? formatPrice(p.futAvgCost, false) : '';
 
-        // Current month contract % change — find nearest-expiry futures contract
+        // Current month contract % change + live CMP — find nearest-expiry futures contract
         var contractChpHtml = '';
+        var futCmpStr = '';
         var nearestFut = null;
         p.contractGroups.forEach(function(cg) {
             if (!cg.isFuture || !cg.openQty) return;
@@ -928,6 +929,19 @@ function trFnoRenderGrouped(positions) {
                 var chpColor = chpVal > 0 ? '#059669' : chpVal < 0 ? '#dc2626' : '#9ca3af';
                 contractChpHtml = '<div style="font-size:11px;color:' + chpColor + ';">' + chpSign + chpVal.toFixed(2) + '%</div>';
             }
+            if (futCache && futCache.lp > 0) {
+                futCmpStr = '<span class="trFno-grp-cmp" title="Live CMP — current-expiry contract (' + wmsEsc(nearestFut.contractLabel || '') + ')">' + formatPrice(futCache.lp, false) + '</span>';
+            }
+        }
+
+        // Live CMP of the current-expiry futures contract goes in the "closing side"
+        // price column: Sell Price for a net-long group, Buy Price for a net-short
+        // group. Mirrors the per-contract detail-row behaviour (D.12.2).
+        var grpBuyCell = avgBuyPrice;
+        var grpSellCell = avgSellPrice;
+        if (futCmpStr) {
+            if (p.futIsShort) grpBuyCell = futCmpStr;
+            else grpSellCell = futCmpStr;
         }
 
         // P&L as % of exposure
@@ -947,9 +961,9 @@ function trFnoRenderGrouped(positions) {
             '<td></td>' +
             '<td class="text-right">' + formatQuantity(p.futOpenQty) + '</td>' +
             '<td class="trM-buy-start"></td>' +
-            '<td class="text-right">' + avgBuyPrice + '</td>' +
+            '<td class="text-right">' + grpBuyCell + '</td>' +
             '<td class="trM-sell-start"></td>' +
-            '<td class="text-right">' + avgSellPrice + '</td>' +
+            '<td class="text-right">' + grpSellCell + '</td>' +
             '<td class="text-right trFno-pnl-start">' + formatAmount(exposure) + '</td>' +
             '<td class="text-right"><span class="' + dClass + '">' + formatAmount(dPnl) + '</span>' + contractChpHtml + '</td>' +
             '<td class="text-right"><span class="' + rClass + '">' + formatAmount(rPnl) + '</span></td>' +
