@@ -98,33 +98,36 @@ function autoUpdateGsTotalsBar() {
     }
     bar.style.display = 'flex';
 
-    var fmtRupees = function (n) {
-        if (n == null) return '—';
-        var sign = n >= 0 ? '+' : '−';
-        var col  = n >= 0 ? '#047857' : '#dc2626';
-        return '<span style="color:' + col + '">' + sign + '₹' + Math.abs(Math.round(n)).toLocaleString('en-IN') + '</span>';
-    };
     var fmtFlat = function (n) {
         if (n == null) return '—';
         return '₹' + Math.round(n).toLocaleString('en-IN');
     };
 
-    document.getElementById('au-gs-tb-open-count').textContent = hasOpen ? (t.openCount + (t.openCount === 1 ? ' trade' : ' trades')) : '—';
-    document.getElementById('au-gs-tb-exp').textContent  = hasOpen ? fmtFlat(t.openExposure) : '—';
-    document.getElementById('au-gs-tb-mgn').textContent  = hasOpen ? fmtFlat(t.openMargin) : '—';
-    document.getElementById('au-gs-tb-live').innerHTML   = hasOpen ? fmtRupees(t.openLivePnl) : '—';
+    // Max Exposure / Max Margin = sum across currently-open positions (the max
+    // capital at risk RIGHT NOW). Shows "—" if no open positions.
+    document.getElementById('au-gs-tb-exp').textContent = hasOpen && t.openExposure != null
+        ? fmtFlat(t.openExposure) : '—';
+    document.getElementById('au-gs-tb-mgn').textContent = hasOpen && t.openMargin != null
+        ? fmtFlat(t.openMargin) : '—';
 
-    var closedLbl = '—';
-    if (hasClosed) {
-        closedLbl = t.closedCount + (t.closedCount === 1 ? ' trade' : ' trades');
-        if (t.closedWins != null && t.closedLosses != null) closedLbl += ' (' + t.closedWins + 'W/' + t.closedLosses + 'L)';
-    }
-    document.getElementById('au-gs-tb-closed-count').textContent = closedLbl;
-    document.getElementById('au-gs-tb-realised').innerHTML = hasClosed ? fmtRupees(t.closedRealisedPnl) : '—';
-
+    // Net P&L = open live P&L + closed realised P&L. % is against Max Exposure.
     var netPnl = (t.openLivePnl || 0) + (t.closedRealisedPnl || 0);
-    if (!hasOpen && !hasClosed) netPnl = null;
-    document.getElementById('au-gs-tb-net').innerHTML = fmtRupees(netPnl);
+    var anyPnl = (t.openLivePnl != null) || (t.closedRealisedPnl != null);
+    var netCell = document.getElementById('au-gs-tb-net');
+    if (anyPnl) {
+        var col = netPnl >= 0 ? '#047857' : '#dc2626';
+        var sign = netPnl >= 0 ? '+' : '−';
+        var amt = '₹' + Math.abs(Math.round(netPnl)).toLocaleString('en-IN');
+        var pctHtml = '';
+        if (t.openExposure && t.openExposure > 0) {
+            var pct = (netPnl / t.openExposure) * 100;
+            var pctSign = pct >= 0 ? '+' : '−';
+            pctHtml = ' <span style="font-weight:500;font-size:11px;color:' + col + '">(' + pctSign + Math.abs(pct).toFixed(2) + '%)</span>';
+        }
+        netCell.innerHTML = '<span style="color:' + col + ';font-weight:700">' + sign + amt + '</span>' + pctHtml;
+    } else {
+        netCell.innerHTML = '—';
+    }
 }
 
 // Sub-tab switcher (currently used inside the Open Trades tab to split GS vs Pairs).
