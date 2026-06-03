@@ -884,15 +884,51 @@ async function autoManualClose(tradeId) {
 // IST timestamp formatter — used everywhere a fired_at / started_at is shown.
 // ----------------------------------------------------------------------------
 
+// dd-mmm-yy hh:mm in IST. Compact for tight columns.
+// e.g. "03-Jun-26 14:21"
 function autoFmtIST(iso) {
     if (!iso) return '—';
     try {
-        return new Date(iso).toLocaleString('en-IN', {
-            dateStyle: 'medium',
-            timeStyle: 'short',
-            timeZone: 'Asia/Kolkata',
-        });
+        var d = new Date(iso);
+        // Add +5:30 to UTC to get IST, then read UTC parts
+        var ist = new Date(d.getTime() + 5.5 * 3600 * 1000);
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        var dd = String(ist.getUTCDate()).padStart(2, '0');
+        var mm = months[ist.getUTCMonth()];
+        var yy = String(ist.getUTCFullYear()).slice(2);
+        var hh = String(ist.getUTCHours()).padStart(2, '0');
+        var min = String(ist.getUTCMinutes()).padStart(2, '0');
+        return dd + '-' + mm + '-' + yy + ' ' + hh + ':' + min;
     } catch (_e) { return iso; }
+}
+
+// Pretty-format a futures contract symbol for display.
+// Strips the MCX: prefix and reconstructs as "SILVERM 30 Jun 26 Fut"
+// using the expiry_date field instead of the symbol's embedded month code.
+// e.g. ("MCX:SILVERM26JUNFUT", "2026-06-30") → "SILVERM 30 Jun 26 Fut"
+function autoFmtContract(symbol, expiry_date) {
+    if (!symbol) return '—';
+    var short = symbol.replace(/^MCX:/, '');
+    // If no expiry_date provided, return the bare short (e.g. SILVERM26JUNFUT)
+    if (!expiry_date) return short;
+    // Extract the underlying (strip trailing "26JUNFUT" / "26JUL FUT" etc)
+    var underlying = short.replace(/\d+[A-Z]+FUT$/, '');
+    try {
+        var d = new Date(expiry_date);
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        var dd = String(d.getUTCDate()).padStart(2, '0');
+        var mm = months[d.getUTCMonth()];
+        var yy = String(d.getUTCFullYear()).slice(2);
+        return underlying + ' ' + dd + ' ' + mm + ' ' + yy + ' Fut';
+    } catch (_e) {
+        return underlying || short;
+    }
+}
+
+// Indian-format integer rupee (zero decimals). e.g. 271955 → "2,71,955"
+function autoFmtPrice0(n) {
+    if (n == null || !isFinite(n)) return '—';
+    return Math.round(Number(n)).toLocaleString('en-IN');
 }
 
 function autoFmtDuration(ms) {
@@ -1493,8 +1529,7 @@ async function autoLoadGsOpenTrades() {
         html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
                 '<th style="padding:6px 8px">Strategy</th>' +
                 '<th style="padding:6px 8px">Side</th>' +
-                '<th style="padding:6px 8px">Entry</th>' +
-                '<th style="padding:6px 8px;text-align:right">Days</th>' +
+                '<th style="padding:6px 8px">Entry<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>' +
                 '<th style="padding:6px 8px">Contract</th>' +
                 '<th style="padding:6px 8px;text-align:right">Qty</th>' +
                 '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ SL</span></th>' +
@@ -1518,8 +1553,11 @@ async function autoLoadGsOpenTrades() {
                     ? '<span class="au-badge error">SHORT</span>'
                     : autoEsc(side);
             var entryStr = sig ? autoFmtIST(sig.fired_at) : '—';
-            var daysHeld = sig ? Math.floor((now - new Date(sig.fired_at).getTime()) / 86400000) : '—';
-            var contract = leg ? leg.symbol : '—';
+            var daysHeld = sig ? Math.floor((now - new Date(sig.fired_at).getTime()) / 86400000) : null;
+            var daysSub = daysHeld != null
+                ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + daysHeld + ' day' + (daysHeld === 1 ? '' : 's') + '</div>'
+                : '';
+            var contract = leg ? autoFmtContract(leg.symbol, leg.expiry_date) : '—';
             var shortSym = leg ? leg.short_symbol : null;
             var entryPriceNum = leg && leg.price != null ? Number(leg.price) : null;
             var stopPriceNum = m.stop_price != null ? Number(m.stop_price) : null;
@@ -1535,10 +1573,10 @@ async function autoLoadGsOpenTrades() {
             }
             var qtyCell = autoEsc(qtyMain) + qtySub;
 
-            // Entry Px cell: main = entry price (Indian format); sub = "SL: 272,661" rounded to 0 decimals.
-            var entryPxMain = entryPriceNum != null ? Number(entryPriceNum).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '—';
+            // Entry Px cell: main = entry price (zero decimals); sub = "SL: 272,661" rounded to 0 decimals.
+            var entryPxMain = autoFmtPrice0(entryPriceNum);
             var stopSub = stopPriceNum != null
-                ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">SL: ' + Math.round(stopPriceNum).toLocaleString('en-IN') + '</div>'
+                ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">SL: ' + autoFmtPrice0(stopPriceNum) + '</div>'
                 : '';
 
             // Exposure = qty_lots × point_value × entry_price  (₹ notional).
@@ -1568,7 +1606,7 @@ async function autoLoadGsOpenTrades() {
             if (pnlInfo) {
                 anyPnl = true;
                 totalPnl += pnlInfo.pnl;
-                ltpCell = Number(pnlInfo.ltp).toLocaleString('en-IN');
+                ltpCell = autoFmtPrice0(pnlInfo.ltp);
                 var sign = pnlInfo.pnl >= 0 ? '+' : '−';
                 var col = pnlInfo.pnl >= 0 ? '#047857' : '#dc2626';
                 var abs = Math.abs(Math.round(pnlInfo.pnl)).toLocaleString('en-IN');
@@ -1590,9 +1628,8 @@ async function autoLoadGsOpenTrades() {
             html += '<tr style="border-top:1px solid #e5e7eb">' +
                     '<td style="padding:6px 8px;vertical-align:top"><code>' + autoEsc(ot.strategy_name) + '</code></td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>' +
-                    '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(entryStr) + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(String(daysHeld)) + '</td>' +
-                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px;vertical-align:top">' + autoEsc(contract) + '</td>' +
+                    '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(entryStr) + daysSub + '</td>' +
+                    '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(contract) + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + qtyCell + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(entryPxMain) + stopSub + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + ltpCell + '</td>' +
@@ -1616,15 +1653,22 @@ async function autoLoadGsOpenTrades() {
                 var tSign = totalPnl >= 0 ? '+' : '−';
                 var tCol = totalPnl >= 0 ? '#047857' : '#dc2626';
                 var tAbs = Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
-                pnlTotalCell = '<span style="color:' + tCol + '">' + tSign + '₹' + tAbs + '</span>';
+                var totPctSub = '';
+                if (anyExposure && totalExposure > 0) {
+                    var totPct = (totalPnl / totalExposure) * 100;
+                    var totPctSign = totPct >= 0 ? '+' : '−';
+                    totPctSub = '<div style="color:' + tCol + ';font-size:10px;margin-top:1px;font-weight:500">' +
+                                totPctSign + Math.abs(totPct).toFixed(2) + '%</div>';
+                }
+                pnlTotalCell = '<span style="color:' + tCol + '">' + tSign + '₹' + tAbs + '</span>' + totPctSub;
             } else {
                 pnlTotalCell = '<span style="color:#9ca3af">—</span>';
             }
             html += '<tfoot><tr style="border-top:2px solid #cbd5e0;background:#f7fafc;font-weight:700">' +
-                    '<td colspan="8" style="padding:8px;text-align:right">Totals (' + openRows.length + ' open):</td>' +
-                    '<td style="padding:8px;text-align:right">' + expCell + '</td>' +
-                    '<td style="padding:8px;text-align:right">' + mgnCell + '</td>' +
-                    '<td style="padding:8px;text-align:right">' + pnlTotalCell + '</td>' +
+                    '<td colspan="7" style="padding:8px;text-align:right">Totals (' + openRows.length + ' open):</td>' +
+                    '<td style="padding:8px;text-align:right;vertical-align:top">' + expCell + '</td>' +
+                    '<td style="padding:8px;text-align:right;vertical-align:top">' + mgnCell + '</td>' +
+                    '<td style="padding:8px;text-align:right;vertical-align:top">' + pnlTotalCell + '</td>' +
                     '<td style="padding:8px"></td>' +
                     '</tr></tfoot>';
         }
@@ -1732,6 +1776,8 @@ async function autoLoadGsClosedTrades() {
                 entry_price: entryPx, exit_price: exitPx, qty_lots: qtyLots,
                 pnl: pnl,
                 contract: leg ? leg.symbol : '—',
+                expiry_date: leg ? leg.expiry_date : null,
+                short_symbol: leg ? leg.short_symbol : null,
             });
         });
 
@@ -1753,17 +1799,17 @@ async function autoLoadGsClosedTrades() {
                 '<th style="padding:6px 8px">Strategy</th>' +
                 '<th style="padding:6px 8px">Side</th>' +
                 '<th style="padding:6px 8px">Entry</th>' +
-                '<th style="padding:6px 8px">Exit</th>' +
-                '<th style="padding:6px 8px">Days</th>' +
+                '<th style="padding:6px 8px">Exit<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>' +
                 '<th style="padding:6px 8px">Contract</th>' +
+                '<th style="padding:6px 8px;text-align:right">Qty</th>' +
                 '<th style="padding:6px 8px;text-align:right">Entry Px</th>' +
                 '<th style="padding:6px 8px;text-align:right">Exit Px</th>' +
                 '<th style="padding:6px 8px">Exit Reason</th>' +
-                '<th style="padding:6px 8px;text-align:right">Realised P&amp;L</th>' +
-                '<th style="padding:6px 8px">Trade</th>' +
+                '<th style="padding:6px 8px;text-align:right">Realised P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>' +
                 '</tr></thead><tbody>';
 
         var totalPnl = 0, wins = 0, losses = 0;
+        var totalExposure = 0, anyExposure = false;
         closedRows.forEach(function (ct) {
             var leg = ct.entry.legs && ct.entry.legs[0];
             var side = ct.entry.direction || (leg && leg.side === 'BUY' ? 'LONG' : 'SHORT');
@@ -1774,11 +1820,30 @@ async function autoLoadGsClosedTrades() {
             var exitStr = ct.exit ? autoFmtIST(ct.exit.fired_at) : '—';
             var daysHeld = ct.exit
                 ? Math.max(0, Math.floor((new Date(ct.exit.fired_at).getTime() - new Date(ct.entry.fired_at).getTime()) / 86400000))
-                : '—';
+                : null;
+            var daysSub = daysHeld != null
+                ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + daysHeld + ' day' + (daysHeld === 1 ? '' : 's') + '</div>'
+                : '';
             var exitType = ct.exit ? ct.exit.event_type : '—';
             var exitTypeColor = _autoExitTypeColor(exitType);
-            var entryPxStr = ct.entry_price != null ? Number(ct.entry_price).toLocaleString('en-IN') : '—';
-            var exitPxStr = ct.exit_price != null ? Number(ct.exit_price).toLocaleString('en-IN') : '—';
+            var entryPxStr = autoFmtPrice0(ct.entry_price);
+            var exitPxStr = autoFmtPrice0(ct.exit_price);
+            var contractStr = autoFmtContract(ct.contract, ct.expiry_date);
+
+            // Qty cell: lots + physical sub-row
+            var qtyLots = ct.qty_lots != null ? Number(ct.qty_lots) : null;
+            var qtyMain = qtyLots != null ? qtyLots + ' lot' + (qtyLots == 1 ? '' : 's') : '—';
+            var physLot = autoGsPhysicalLot(ct.short_symbol);
+            var qtySub = '';
+            if (qtyLots != null && physLot) {
+                qtySub = '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + (qtyLots * physLot.qty) + ' ' + physLot.unit + '</div>';
+            }
+            var qtyCell = autoEsc(qtyMain) + qtySub;
+
+            // Exposure for % calc (same formula as Open Trades): lots × pv × entry_price
+            var pv = ct.short_symbol ? autoGsPointValue(ct.short_symbol) : null;
+            var exposure = (qtyLots != null && pv && ct.entry_price != null) ? (qtyLots * pv * ct.entry_price) : null;
+            if (exposure != null) { totalExposure += exposure; anyExposure = true; }
 
             var pnlCell;
             if (ct.pnl != null) {
@@ -1787,35 +1852,45 @@ async function autoLoadGsClosedTrades() {
                 var sign = ct.pnl >= 0 ? '+' : '−';
                 var col = ct.pnl >= 0 ? '#047857' : '#dc2626';
                 var abs = Math.abs(Math.round(ct.pnl)).toLocaleString('en-IN');
-                pnlCell = '<span style="color:' + col + ';font-weight:600">' + sign + '₹' + abs + '</span>';
+                var pctSub = '';
+                if (exposure && exposure > 0) {
+                    var pct = (ct.pnl / exposure) * 100;
+                    var pctSign = pct >= 0 ? '+' : '−';
+                    pctSub = '<div style="color:' + col + ';font-size:10px;margin-top:1px;font-weight:500">' +
+                             pctSign + Math.abs(pct).toFixed(2) + '%</div>';
+                }
+                pnlCell = '<span style="color:' + col + ';font-weight:600">' + sign + '₹' + abs + '</span>' + pctSub;
             } else {
                 pnlCell = '<span style="color:#9ca3af">—</span>';
             }
 
-            var tradeFrag = ct.trade_id ? ct.trade_id.slice(0, 8) + '…' : '—';
-
             html += '<tr style="border-top:1px solid #e5e7eb">' +
-                    '<td style="padding:6px 8px"><code>' + autoEsc(ct.strategy_name) + '</code></td>' +
-                    '<td style="padding:6px 8px">' + sideBadge + '</td>' +
-                    '<td style="padding:6px 8px">' + autoEsc(entryStr) + '</td>' +
-                    '<td style="padding:6px 8px">' + autoEsc(exitStr) + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(String(daysHeld)) + '</td>' +
-                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(ct.contract) + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(entryPxStr) + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(exitPxStr) + '</td>' +
-                    '<td style="padding:6px 8px"><span style="color:' + exitTypeColor + ';font-weight:600">' + autoEsc(_autoExitTypeLabel(exitType)) + '</span></td>' +
-                    '<td style="padding:6px 8px;text-align:right;white-space:nowrap">' + pnlCell + '</td>' +
-                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(tradeFrag) + '</td>' +
+                    '<td style="padding:6px 8px;vertical-align:top"><code>' + autoEsc(ct.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>' +
+                    '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(entryStr) + '</td>' +
+                    '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(exitStr) + daysSub + '</td>' +
+                    '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(contractStr) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + qtyCell + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(entryPxStr) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(exitPxStr) + '</td>' +
+                    '<td style="padding:6px 8px;vertical-align:top"><span style="color:' + exitTypeColor + ';font-weight:600">' + autoEsc(_autoExitTypeLabel(exitType)) + '</span></td>' +
+                    '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + pnlCell + '</td>' +
                     '</tr>';
         });
 
         var tSign = totalPnl >= 0 ? '+' : '−';
         var tCol = totalPnl >= 0 ? '#047857' : '#dc2626';
         var tAbs = Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
+        var totalPctSub = '';
+        if (anyExposure && totalExposure > 0) {
+            var totPct = (totalPnl / totalExposure) * 100;
+            var totPctSign = totPct >= 0 ? '+' : '−';
+            totalPctSub = '<div style="color:' + tCol + ';font-size:10px;margin-top:1px;font-weight:500">' +
+                          totPctSign + Math.abs(totPct).toFixed(2) + '%</div>';
+        }
         html += '<tfoot><tr style="border-top:2px solid #cbd5e0;background:#f7fafc;font-weight:700">' +
                 '<td colspan="9" style="padding:8px">Total (' + closedRows.length + ' closed — ' + wins + 'W / ' + losses + 'L)</td>' +
-                '<td style="padding:8px;text-align:right;color:' + tCol + '">' + tSign + '₹' + tAbs + '</td>' +
-                '<td style="padding:8px">—</td>' +
+                '<td style="padding:8px;text-align:right;vertical-align:top"><span style="color:' + tCol + '">' + tSign + '₹' + tAbs + '</span>' + totalPctSub + '</td>' +
                 '</tr></tfoot>';
         html += '</table></div>';
         el.innerHTML = html;
