@@ -735,6 +735,21 @@ function trFnoRenderMobile(positions) {
     var body = ordered.map(function(p) {
         var symOpen = !!trFnoExpandedSymbols[p.underlying];
         var net = p.totalRealisedPnl + p.totalUnrealisedPnl;
+
+        // Collapsed row shows Qty · Cost · CMP from the representative open contract
+        // (prefer the open futures leg). Ticker / expiry / exposure live in the expanded detail.
+        var repCg = (p.contractGroups || []).filter(function(cg) { return cg.isFuture && cg.openQty; })[0]
+                 || (p.contractGroups || []).filter(function(cg) { return cg.openQty; })[0];
+        var leftInfo;
+        if (repCg) {
+            var rCost = (repCg.openQty && repCg.openCost) ? trFmtRupee(repCg.openCost / repCg.openQty) : '-';
+            var rOpenRow = (repCg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
+            var rCmp = rOpenRow ? trFmtRupee(rOpenRow.cmp) : '-';
+            leftInfo = formatQuantity(repCg.openQty) + ' &middot; ' + rCost + ' &middot; ' + rCmp;
+        } else {
+            leftInfo = '<span style="color:#a0aec0;">Closed</span>';
+        }
+
         var grp =
             '<div class="trm-grp" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
                 '<div class="trm-grp-l1">' +
@@ -742,7 +757,7 @@ function trFnoRenderMobile(positions) {
                     '<span class="trm-pl-main ' + getAmountClass(net) + '">' + formatAmount(net) + '</span>' +
                 '</div>' +
                 '<div class="trm-grp-l2">' +
-                    '<span>' + wmsEsc(p.underlying) + ' &middot; Exp ' + formatAmount(p.totalOpenCost) + '</span>' +
+                    '<span>' + leftInfo + '</span>' +
                     '<span class="trm-r">Day <span class="' + getAmountClass(p.totalDayPnl || 0) + '">' + formatAmount(p.totalDayPnl || 0) + '</span></span>' +
                 '</div>' +
             '</div>';
@@ -754,7 +769,7 @@ function trFnoRenderMobile(positions) {
                 var cOpen = trFnoMobileContractKey === key;
                 var cReal = cg.totalPnl || 0, cUnreal = cg.unrealisedPnl || 0, cNet = cReal + cUnreal, cDay = cg.dayPnl || 0, cExp = cg.openCost || 0;
                 var shortTag = cg.isShort ? ' <span style="color:#dc2626;font-size:10px;">(S)</span>' : '';
-                var avg = (cg.openQty && cExp) ? formatPrice(cExp / cg.openQty, false) : '-';
+                var avg = (cg.openQty && cExp) ? trFmtRupee(cExp / cg.openQty) : '-';
 
                 var row =
                     '<div class="trm-row trm-sub' + (cOpen ? ' trm-open' : '') + '" data-fno-ckey="' + wmsEsc(key) + '">' +
@@ -771,9 +786,10 @@ function trFnoRenderMobile(positions) {
                 var detail = '';
                 if (cOpen) {
                     var openRow = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
-                    var cmpStr = openRow ? formatPrice(openRow.cmp, false) : '-';
+                    var cmpStr = openRow ? trFmtRupee(openRow.cmp) : '-';
                     detail =
                         '<div class="trm-detail"><div class="trm-detail-grid">' +
+                            '<div class="trm-d-item"><span class="trm-d-k">Symbol</span><span class="trm-d-v">' + wmsEsc(p.underlying) + '</span></div>' +
                             '<div class="trm-d-item"><span class="trm-d-k">Expiry</span><span class="trm-d-v">' + wmsEsc(cg.groupLabel || '-') + '</span></div>' +
                             '<div class="trm-d-item"><span class="trm-d-k">Open qty</span><span class="trm-d-v">' + formatQuantity(cg.openQty) + '</span></div>' +
                             '<div class="trm-d-item"><span class="trm-d-k">Avg</span><span class="trm-d-v">' + avg + '</span></div>' +

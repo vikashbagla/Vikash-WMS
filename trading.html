@@ -197,6 +197,8 @@
 }
 .tr-more-item:hover { background: #f0f4ff; }
 .tr-more-item.active { background: #eef2ff; font-weight: 600; color: #667eea; }
+#tr-sort-dropdown .tr-more-item { justify-content: space-between; }
+.tr-sort-arrow { color: #667eea; font-size: 11px; }
 .tr-more-item .tr-more-name { flex: 1; }
 .tr-more-item .tr-more-badge {
     font-size: 10px; padding: 1px 5px; border-radius: 3px;
@@ -659,6 +661,9 @@
     #tr-view-tabs .tr-tab-close,
     #tr-fno-view-tabs .tr-tab-close { display: none; }
 
+    /* Phone-only sort button (next to More) */
+    #tr-sort-btn { display: inline-block !important; }
+
     /* === PHONE REVIEW-ONLY: Portfolio — keep view tabs + More dropdown for
        selecting a saved view; hide all view-editing + filter controls === */
     #tr-new-view-btn,
@@ -746,6 +751,16 @@
                     <button class="tr-vta-btn" id="tr-more-btn" title="All views">▾ More</button>
                     <div class="tr-more-dropdown" id="tr-more-dropdown" style="display:none;">
                         <div id="tr-more-list"></div>
+                    </div>
+                </div>
+                <div style="position:relative;">
+                    <button class="tr-vta-btn" id="tr-sort-btn" title="Sort holdings" style="display:none;">⇅ Sort</button>
+                    <div class="tr-more-dropdown" id="tr-sort-dropdown" style="display:none;">
+                        <div class="tr-more-item" data-sort="date">Date <span class="tr-sort-arrow"></span></div>
+                        <div class="tr-more-item" data-sort="company">Symbol <span class="tr-sort-arrow"></span></div>
+                        <div class="tr-more-item" data-sort="daypl">Day's P&amp;L <span class="tr-sort-arrow"></span></div>
+                        <div class="tr-more-item" data-sort="invested">Investment <span class="tr-sort-arrow"></span></div>
+                        <div class="tr-more-item" data-sort="value">Current value <span class="tr-sort-arrow"></span></div>
                     </div>
                 </div>
                 <button class="tr-vta-btn" id="tr-update-view-btn" title="Update current view with active filters" disabled>↻ Update</button>
