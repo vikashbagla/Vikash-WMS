@@ -833,6 +833,15 @@ async function trRefresh() {
     var activeTab = document.querySelector('.trading-tab-content.active');
     if (activeTab && activeTab.id === 'tr-transactions' && typeof trTxRender === 'function') {
         trTxRender();
+    } else if (activeTab && activeTab.id === 'tr-ledger' && typeof lgRefresh === 'function') {
+        // Statements: the standard refresh path (wmsRefreshRender) only re-renders
+        // the Open Positions table + Summary via lgRenderSummary — it does NOT
+        // rebuild lgFullCombined or re-run the reconciliation drift check. So a
+        // stale/false drift banner computed during an earlier ledger build never
+        // clears on the Refresh button. Do a full ledger rebuild here (same as a
+        // tab switch) so the drift banner re-evaluates against fresh data.
+        // See LESSONS §E.17.10.
+        try { await lgRefresh(); } catch (err) { console.warn('Statements refresh failed:', err); }
     }
 
     showLoading(false);
