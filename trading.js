@@ -456,8 +456,9 @@ async function initTrading() {
             trFnoRender();
         }
 
-        // Start the single standard refresh timer (runs always, regardless of active tab)
-        if (wmsIsMarketHours() && window.fyersToken) {
+        // Start the single standard refresh timer (runs always, regardless of active tab).
+        // Refresh window = equity hours OR MCX hours when MCX symbols are held.
+        if (wmsIsRefreshWindow() && window.fyersToken) {
             wmsStartRefreshTimer();
         }
     } catch (error) {
@@ -937,9 +938,10 @@ function trUpdatePriceStatus(status) {
         el.textContent = 'Refreshing...';
         el.style.color = '#667eea';
     } else {
-        // Always show last updated time; green if market open, red if closed
+        // Always show last updated time; green if a refresh window is open
+        // (equity, or MCX with MCX symbols), red if closed
         el.textContent = now;
-        var marketOpen = typeof wmsIsMarketHours === 'function' && wmsIsMarketHours();
+        var marketOpen = typeof wmsIsRefreshWindow === 'function' && wmsIsRefreshWindow();
         el.style.color = marketOpen ? '#059669' : '#dc2626';
     }
 }
