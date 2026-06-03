@@ -122,6 +122,11 @@ var lgShowFutures = true;
 // not persisted with the view (mirrors lgShowFutures).
 var lgHidePreRecon = true;
 
+// Broker-statement split aggregation (LESSONS §E.17.11). Tracks which collapsed
+// split-groups the user has expanded. Keyed by aggKey (date|symbol|price|side|
+// firstTxnId). Session-state only — not persisted with the view.
+var lgAggExpanded = {};
+
 // Date filter (shared wmsDateFilter component)
 var lgDateFilterInstance = null;
 var lgDateFrom = '';
@@ -482,6 +487,15 @@ function lgInit() {
             }
             // Ignore clicks on interactive children (buttons, links, inputs, etc.)
             if (e.target.closest('button, a, input, select, .lg-actions, .lg-confirm-bar, .lg-ob-edit')) return;
+            // Aggregated broker-split header → toggle expand/collapse (E.17.11).
+            // (Member rows carry lg-row-agg-member, NOT lg-row-agg, so they fall
+            // through to the edit path below.)
+            var aggTr = e.target.closest('tr.lg-row-agg');
+            if (aggTr) {
+                var ak = aggTr.getAttribute('data-agg-key');
+                if (ak) { lgAggExpanded[ak] = !lgAggExpanded[ak]; lgRenderEntries(lgCombined); }
+                return;
+            }
             var tr = e.target.closest('tr.lg-row-trade');
             if (!tr) return;
             var txnId = tr.getAttribute('data-txn-id');
@@ -1089,6 +1103,85 @@ async function lgRefresh() {
     lgCheckReconDrift();
 }
 
+// ============================================================================
+// BROKER-STATEMENT SPLIT AGGREGATION (LESSONS §E.17.11)
+// A single broker fill that WMS split across traders shows as 2+ rows with the
+// same date / symbol / price / side. The broker's own statement shows it as ONE
+// line, so manual reconciliation is tedious. In a BROKER statement we collapse
+// adjacent matching trade rows into one expandable display row. DISPLAY ONLY —
+// the engine, running balances, interest and reconciliation all run on the
+// underlying individual transactions upstream of this render layer.
+// ============================================================================
+
+function lgAggKey(row) {
+    var s = row._source || {};
+    var sym = (s.short_symbol || row.short_symbol || row.symbol || '').toUpperCase();
+    var px = (s.price != null) ? s.price : '';
+    var side = (s.transaction_type || '').toUpperCase();
+    return (row.date || '') + '|' + sym + '|' + px + '|' + side;
+}
+
+function lgMakeAggRow(group, key) {
+    var first = group[0], last = group[group.length - 1];
+    var totQty = 0, totAmount = 0, totNet = 0;
+    group.forEach(function(m) {
+        totQty += Math.abs((m._source && m._source.quantity) || 0);
+        totAmount += (m.amount || 0);
+        totNet += (m.netAmount || 0);
+    });
+    var sign = ((first._source && first._source.quantity) || 0) < 0 ? -1 : 1;
+    var agg = Object.assign({}, first);
+    agg._rowType = 'trade';   // keep as a trade row so lgFormatSymbol/lgFormatType
+    agg._isAgg = true;        // and the balance/total logic work natively
+    agg._members = group;
+    agg._aggKey = key + '|' + ((first._source && first._source.id) || '');
+    agg._source = Object.assign({}, first._source, { quantity: sign * totQty });
+    agg.quantity = sign * totQty;     // sign only — magnitude used for display
+    agg.amount = totAmount;           // firm-POV signed sum (cash impact)
+    agg.netAmount = totNet;           // magnitude sum (per-unit = net/qty)
+    agg._runningBalance = last._runningBalance;  // balance after the last split
+    delete agg._aggMember;
+    return agg;
+}
+
+function lgAggregateBrokerSplits(rows) {
+    // Only broker statements aggregate. Trader/investor views keep raw rows so
+    // each trader's allocation stays an independent line.
+    if (lgStatementType !== 'broker') return rows;
+    var out = [];
+    var i = 0;
+    while (i < rows.length) {
+        var r = rows[i];
+        if (r._rowType === 'trade' && r._source && r._source.id) {
+            var key = lgAggKey(r);
+            var group = [r];
+            var j = i + 1;
+            while (j < rows.length) {
+                var n = rows[j];
+                if (n._rowType === 'trade' && n._source && n._source.id && lgAggKey(n) === key) {
+                    group.push(n); j++;
+                } else break;
+            }
+            if (group.length >= 2) {
+                var aggRow = lgMakeAggRow(group, key);
+                out.push(aggRow);
+                // When expanded, also emit the individual member rows (rendered
+                // normally + indented) so each trader split stays editable.
+                if (lgAggExpanded[aggRow._aggKey]) {
+                    group.forEach(function(m) { m._aggMember = true; m._aggKey = aggRow._aggKey; out.push(m); });
+                }
+                i = j;
+                continue;
+            } else {
+                delete r._aggMember;  // clear any stale flag from a prior render
+            }
+        }
+        out.push(r);
+        i++;
+    }
+    return out;
+}
+
 function lgRenderEntries(rows) {
     var tbody = document.getElementById('lgBody');
     if (!tbody) return;
@@ -1185,22 +1278,22 @@ function lgRenderEntries(rows) {
     var totalAmount = 0;
     var lastBalance = openingBal.amount || 0; // Start with opening balance (carry-forward)
 
-    sorted.forEach(function(row) {
-        // F&O futures display filter (LESSONS §E.15.14). When the toggle is
-        // OFF, hide rows that are futures trades with no cash impact (the
-        // muted "informational" rows). Engine/margin/interest are unaffected.
-        // Options (CE/PE) and NFO_PNL synthetic rows have _nfoCashImpact !==
-        // false so they always render.
-        if (!lgShowFutures && row._rowType === 'trade' && row._nfoCashImpact === false) {
-            return;
-        }
-        // Hide-pre-recon filter (LESSONS §E.15.15). Skip every row dated on or
-        // before the latest reconciliation (including the recon row itself —
-        // it becomes the synthesized OB row above). Engine/margin/interest are
-        // unaffected — they read the full ledger upstream of this filter.
-        if (latestRecon && row.date && row.date <= latestRecon.date) {
-            return;
-        }
+    // Pre-filter BEFORE aggregation so hidden rows can't break adjacency:
+    //  - F&O futures filter (LESSONS §E.15.14): when the toggle is OFF, hide
+    //    futures trade rows with no cash impact (muted informational rows).
+    //    Options (CE/PE) + NFO_PNL synthetic rows have _nfoCashImpact !== false.
+    //  - Hide-pre-recon filter (LESSONS §E.15.15): skip rows dated on/before the
+    //    latest reconciliation (the recon row becomes the synthesized OB row).
+    // Engine/margin/interest read the full ledger upstream — unaffected.
+    var visibleRows = sorted.filter(function(row) {
+        if (!lgShowFutures && row._rowType === 'trade' && row._nfoCashImpact === false) return false;
+        if (latestRecon && row.date && row.date <= latestRecon.date) return false;
+        return true;
+    });
+    // Collapse broker split-trades into expandable rows (broker view only).
+    var renderList = lgAggregateBrokerSplits(visibleRows);
+
+    renderList.forEach(function(row) {
         var date = lgFmtDate(row.date);
         var symbol = '';
         var typeHtml = '';
@@ -1264,6 +1357,19 @@ function lgRenderEntries(rows) {
             symbol = lgFormatSymbol(row);
             typeHtml = lgFormatType(row);
 
+            // Aggregated broker-split header: caret + ×N badge (E.17.11).
+            if (row._isAgg) {
+                var caret = lgAggExpanded[row._aggKey] ? '▾' : '▸';
+                symbol = '<span class="lg-agg-caret">' + caret + '</span>' + symbol +
+                         '<span class="lg-agg-count">×' + row._members.length + '</span>';
+            } else if (row._aggMember) {
+                // Expanded member row: tag with the trader it's allocated to.
+                var _tnm = (typeof wmsRefData !== 'undefined' && wmsRefData.investorObjMap)
+                    ? wmsRefData.investorObjMap[source && source.trader_id] : null;
+                var _tlabel = _tnm ? (_tnm.short_name || _tnm.name) : '';
+                if (_tlabel) symbol += ' <span class="lg-agg-trader">· ' + wmsEsc(_tlabel) + '</span>';
+            }
+
             // Qty column shows magnitude only — the Type badge ('Buy' / 'Sell' /
             // 'Rights' / 'Bonus' / 'Split') already indicates direction; signing
             // the qty as well would double-encode the information.
@@ -1297,6 +1403,9 @@ function lgRenderEntries(rows) {
         if (isReconRow) {
             // Reconciliation audit snapshot — persistent green styling
             trAttrs = ' class="lg-row-recon" data-entry-id="' + wmsEsc((row._source && row._source.id) || '') + '"';
+        } else if (row._isAgg) {
+            // Aggregated broker-split header — click toggles expand (no edit).
+            trAttrs = ' class="lg-row-agg" data-agg-key="' + wmsEsc(row._aggKey) + '"';
         } else if (row._rowType === 'nfo_pnl') {
             trAttrs = ' class="lg-row-nfo-pnl"';
         } else if (row._rowType === 'trade' && row.isNFO && !row._isOption) {
@@ -1306,6 +1415,12 @@ function lgRenderEntries(rows) {
             trAttrs = ' class="lg-row-trade" data-txn-id="' + wmsEsc(row._source.id) + '"';
         } else if (row._rowType === 'pending_interest') {
             trAttrs = ' class="lg-row-pending" data-pending-key="' + wmsEsc(row._pendingKey) + '"';
+        }
+
+        // Indent + tag expanded split-member rows (E.17.11) while keeping the
+        // lg-row-trade class + data-txn-id so each member stays editable.
+        if (row._aggMember && trAttrs.indexOf('class="') >= 0) {
+            trAttrs = trAttrs.replace('class="', 'class="lg-row-agg-member ');
         }
 
         // Futures trade rows: muted (no cash impact, balance unchanged).

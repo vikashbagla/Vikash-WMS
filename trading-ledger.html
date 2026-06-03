@@ -202,6 +202,18 @@
 #lgTable tr.lg-row-trade { cursor:pointer; }
 #lgTable tr.lg-row-trade:hover td { background:#f7fafc; }
 
+/* Aggregated broker-split header row (E.17.11) — collapses 2+ trader splits of
+   one broker fill into a single line; click to expand the individual splits. */
+#lgTable tr.lg-row-agg { cursor:pointer; }
+#lgTable tr.lg-row-agg:hover td { background:#eef2ff; }
+.lg-agg-caret { display:inline-block; width:12px; color:#667eea; font-size:10px; margin-right:2px; }
+.lg-agg-count { display:inline-block; margin-left:6px; padding:0 5px; font-size:10px; font-weight:600;
+                color:#4338ca; background:#e0e7ff; border-radius:8px; vertical-align:middle; }
+/* Expanded member rows — indented + tagged with the trader they're allocated to */
+#lgTable tr.lg-row-agg-member td:nth-child(2) { padding-left:24px; }
+#lgTable tr.lg-row-agg-member td { background:#fafbff; }
+.lg-agg-trader { font-size:10px; color:#94a3b8; }
+
 /* Pending (not yet committed) weekly interest row */
 #lgTable tr.lg-row-pending td { background:#fffbeb; border-top:1px dashed #fbbf24; border-bottom:1px dashed #fbbf24; }
 #lgTable tr.lg-row-pending:hover td { background:#fef3c7; }
