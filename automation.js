@@ -46,8 +46,9 @@ function autoSwitchTab(tabId) {
 
 // Symbols the open-trade views need priced; merged into the shared refresh list
 // via wmsRegisterRefreshSymbolProvider. Updated whenever GS open trades load.
-var _auGsSyms = [];   // [{ fyersKey, cacheKey }]
-function autoGetRefreshSymbols() { return _auGsSyms; }
+var _auGsSyms = [];     // GS (commodity) open-trade symbols [{ fyersKey, cacheKey }]
+var _auPairsSyms = [];  // Pairs (equity) open-trade symbols
+function autoGetRefreshSymbols() { return _auGsSyms.concat(_auPairsSyms); }
 
 // Register the provider (idempotent) + make sure the single shared timer runs
 // while the user is on the Open Trades tab. Called from autoSwitchTab.
@@ -68,8 +69,10 @@ function autoEnsureSharedRefresh() {
 function autoOnSharedRefresh() {
     if (document.hidden) return;
     if (!document.getElementById('au-open-trades')?.classList.contains('active')) return;
-    if (!document.getElementById('au-ot-gs')?.classList.contains('active')) return;
-    autoLoadGsOpenTrades(true /* silent — flicker-free */);
+    var gsActive    = document.getElementById('au-ot-gs')?.classList.contains('active');
+    var pairsActive = document.getElementById('au-ot-pairs')?.classList.contains('active');
+    if (gsActive)    autoLoadGsOpenTrades(true /* silent — flicker-free */);
+    if (pairsActive) autoLoadOpenTrades(true /* silent — flicker-free */);
     autoUpdateGsRefreshTickStatus(
         (typeof wmsIsRefreshWindow === 'function' && wmsIsRefreshWindow()) ? 'live' : 'off-hours');
 }
@@ -1084,49 +1087,39 @@ function autoStatusBadge(status) {
 // eod-prices-ingest runs at 18:00 IST. Tooltip shows the mark date.
 
 async function autoFetchLatestPrices(sigRows) {
-    // Mark prices for live P&L. Reuses the app-wide Fyers quote helper
-    // (window.fyersCall) — which routes through the existing fyers-market-data
-    // Edge Function and uses the user's Fyers token from localStorage. No new
-    // server endpoint needed. Returns { SHORT_SYMBOL: { close, date } } where
-    // close = live LTP and date = 'live'. Falls back to market_prices last
-    // close per symbol if Fyers is unreachable (e.g. token expired).
-    var fyersKeys = new Set();
+    // Marks for live P&L. Live LTP comes from the shared price cache
+    // (wmsLivePrices, populated by the single app-wide wmsStandardRefresh) — no
+    // direct Fyers call. Returns { SHORT_SYMBOL: { close, date } } with
+    // date='live' for cache hits; falls back to the latest market_prices close
+    // for any symbol not in the cache. (WMS-LESSONS §E.11.10)
     var shortToFyers = {};
     sigRows.forEach(function (s) {
         (s.legs || []).forEach(function (l) {
-            if (l.symbol) {
-                fyersKeys.add(l.symbol);
-                shortToFyers[l.short_symbol] = l.symbol;
-            }
+            if (l.symbol && l.short_symbol) shortToFyers[l.short_symbol] = l.symbol;
         });
     });
     var result = {};
-    if (fyersKeys.size === 0) return result;
+    var shorts = Object.keys(shortToFyers);
+    if (shorts.length === 0) return result;
 
-    // Try Fyers live LTPs first
-    if (typeof window.fyersCall === 'function') {
-        try {
-            var keys = Array.from(fyersKeys);
-            var data = await window.fyersCall({ action: 'quotes', symbols: keys });
-            if (data && Array.isArray(data.d)) {
-                data.d.forEach(function (item) {
-                    var v = item && item.v;
-                    if (v && Number.isFinite(v.lp) && v.lp > 0 && v.short_name) {
-                        // Fyers returns short_name with NSE series suffix (e.g.
-                        // "TATASTEEL-EQ" / "ITC-BE" / "GOLDBEES-BE"); our legs
-                        // store short_symbol without it. Strip any trailing
-                        // -XX series code so the keys line up.
-                        var key = v.short_name.replace(/-(EQ|BE|BZ|BL|SM|ST)$/i, '');
-                        result[key] = { close: v.lp, date: 'live' };
-                    }
-                });
-            }
-            // If we got prices for all requested symbols, return early — fully live
-            if (Object.keys(result).length === fyersKeys.size) return result;
-        } catch (_e) { /* fall through to market_prices fallback */ }
+    // Register pairs symbols with the shared refresh list so the app-wide timer
+    // fetches them; warm the cache once if anything is still missing.
+    _auPairsSyms = shorts.map(function (ss) { return { fyersKey: shortToFyers[ss], cacheKey: ss }; });
+    if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+    if (typeof wmsStandardRefresh === 'function' && window.fyersToken) {
+        var cold = shorts.some(function (ss) { var r = (window.wmsLivePrices || {})[ss]; return !(r && r.lp > 0); });
+        if (cold) { try { await wmsStandardRefresh(true); } catch (_e) {} }
     }
+    var cache = window.wmsLivePrices || {};
+    shorts.forEach(function (ss) {
+        var fk = shortToFyers[ss];
+        var bare = fk.replace(/^[A-Z]+:/, '').replace(/-(EQ|BE|BZ|BL|SM|ST)$/i, '');
+        var rec = cache[ss] || cache[fk] || cache[bare];
+        if (rec && Number.isFinite(rec.lp) && rec.lp > 0) result[ss] = { close: rec.lp, date: 'live' };
+    });
+    if (Object.keys(result).length === shorts.length) return result;
 
-    // Fallback: latest close from market_prices for any symbols Fyers didn't return
+    // Fallback: latest close from market_prices for any symbols not in the cache
     try {
         var missing = Object.keys(shortToFyers).filter(function (s) { return !result[s]; });
         if (missing.length === 0) return result;
@@ -1202,12 +1195,18 @@ async function autoGetWebhookStrategyNames() {
     } catch (_e) { return new Set(); }
 }
 
-async function autoLoadOpenTrades() {
+async function autoLoadOpenTrades(silent) {
     var el = document.getElementById('au-open-trades-content');
     var statusEl = document.getElementById('au-open-trades-status');
     if (!el) return;
-    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
-    el.innerHTML = '<div class="au-meta">⏳ Loading open trades…</div>';
+    if (!silent) {
+        if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+        // Keep the existing table on screen during silent shared-refresh cycles
+        // for flicker-free updates; only show the spinner on a user-initiated load.
+        if (!el.firstElementChild || !el.querySelector('table')) {
+            el.innerHTML = '<div class="au-meta">⏳ Loading open trades…</div>';
+        }
+    }
 
     try {
         // 1) Get list of open trade_ids from the view, filter out webhook strategies
