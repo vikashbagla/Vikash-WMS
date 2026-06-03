@@ -14,6 +14,7 @@ var trFnoExpiryFilter = null;      // null = not yet initialized (will default t
 var trFnoFlatView = false;        // true = flat (ungrouped) for snapshot
 var trFnoExpandedSymbols = {};    // { symbol: true } for expanded symbol rows
 var trFnoExpandedGroups = {};     // { 'symbol|idx': true } for expanded sub-group rows
+var trFnoMobileContractKey = null; // phone: 'symbol|idx' of the contract row whose detail is expanded
 var trFnoInitDone = false;
 var trFnoColCount = 12;
 var trFnoContractPricesFetched = false;
@@ -632,6 +633,8 @@ function trFnoRender() {
     window._trFnoLastPositions = positions;  // Store for snapshot
     if (!positions || positions.length === 0) {
         tbody.innerHTML = '<tr><td colspan="' + trFnoColCount + '" style="text-align:center;padding:40px;color:#9ca3af;">No F&O positions found</td></tr>';
+        var emptyCards = document.getElementById('tr-fno-cards');
+        if (emptyCards) emptyCards.innerHTML = '<div class="trm-empty">No F&O positions found</div>';
         return;
     }
 
@@ -684,6 +687,9 @@ function trFnoRender() {
         });
     });
 
+    // Phone compact list — grouped by symbol, same positions data as the table
+    trFnoRenderMobile(positions);
+
     // On first F&O render, rebuild symbol list (may include new F&O contracts)
     // and trigger a refresh. Subsequent refreshes handled by standard timer.
     if (!trFnoContractPricesFetched && window.fyersToken) {
@@ -691,6 +697,117 @@ function trFnoRender() {
         if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
         if (typeof wmsStandardRefresh === 'function') wmsStandardRefresh(true);
     }
+}
+
+// ============================================================================
+// PHONE COMPACT LIST (≤480px) — grouped by symbol → contract rows → tap-to-expand
+// Reuses the SAME positions objects the desktop table renders from. Symbol-level
+// expand reuses trFnoExpandedSymbols (so Collapse/Expand-all drives it too);
+// contract-detail expand uses trFnoMobileContractKey.
+// ============================================================================
+function trFnoRenderMobile(positions) {
+    var box = document.getElementById('tr-fno-cards');
+    if (!box) return;
+    if (!positions || positions.length === 0) {
+        box.innerHTML = '<div class="trm-empty">No F&O positions found</div>';
+        return;
+    }
+
+    // Same ordering as grouped table: symbols with any open position first, then alpha
+    var ordered = positions.slice().sort(function(a, b) {
+        var ao = (a.contractGroups || []).some(function(cg) { return cg.openQty > 0; }) ? 0 : 1;
+        var bo = (b.contractGroups || []).some(function(cg) { return cg.openQty > 0; }) ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+        return (a.underlying || '').localeCompare(b.underlying || '');
+    });
+
+    var totExp = 0, totDay = 0, totReal = 0, totUnreal = 0;
+    ordered.forEach(function(p) { totExp += p.totalOpenCost; totDay += p.totalDayPnl || 0; totReal += p.totalRealisedPnl; totUnreal += p.totalUnrealisedPnl; });
+    var totNet = totReal + totUnreal;
+
+    var summary =
+        '<div class="trm-summary">' +
+            '<div class="trm-s-block"><div class="trm-s-label">Exposure</div><div class="trm-s-val">' + formatAmount(totExp) + '</div></div>' +
+            '<div class="trm-s-block"><div class="trm-s-label">Day P&L</div><div class="trm-s-val ' + getAmountClass(totDay) + '">' + formatAmount(totDay) + '</div></div>' +
+            '<div class="trm-s-block"><div class="trm-s-label">Net P&L</div><div class="trm-s-val ' + getAmountClass(totNet) + '">' + formatAmount(totNet) + '</div></div>' +
+        '</div>';
+
+    var body = ordered.map(function(p) {
+        var symOpen = !!trFnoExpandedSymbols[p.underlying];
+        var net = p.totalRealisedPnl + p.totalUnrealisedPnl;
+        var grp =
+            '<div class="trm-grp" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
+                '<div class="trm-grp-l1">' +
+                    '<span class="trm-grp-name"><span class="trm-grp-chev">' + (symOpen ? '&#9662;' : '&#9656;') + '</span><span class="trm-grp-txt">' + wmsEsc(p.companyName || p.underlying) + '</span></span>' +
+                    '<span class="trm-pl-main ' + getAmountClass(net) + '">' + formatAmount(net) + '</span>' +
+                '</div>' +
+                '<div class="trm-grp-l2">' +
+                    '<span>' + wmsEsc(p.underlying) + ' &middot; Exp ' + formatAmount(p.totalOpenCost) + '</span>' +
+                    '<span class="trm-r">Day <span class="' + getAmountClass(p.totalDayPnl || 0) + '">' + formatAmount(p.totalDayPnl || 0) + '</span></span>' +
+                '</div>' +
+            '</div>';
+
+        var contracts = '';
+        if (symOpen) {
+            contracts = p.contractGroups.map(function(cg, cgIdx) {
+                var key = p.underlying + '|' + cgIdx;
+                var cOpen = trFnoMobileContractKey === key;
+                var cReal = cg.totalPnl || 0, cUnreal = cg.unrealisedPnl || 0, cNet = cReal + cUnreal, cDay = cg.dayPnl || 0, cExp = cg.openCost || 0;
+                var shortTag = cg.isShort ? ' <span style="color:#dc2626;font-size:10px;">(S)</span>' : '';
+                var avg = (cg.openQty && cExp) ? formatPrice(cExp / cg.openQty, false) : '-';
+
+                var row =
+                    '<div class="trm-row trm-sub' + (cOpen ? ' trm-open' : '') + '" data-fno-ckey="' + wmsEsc(key) + '">' +
+                        '<div class="trm-l1">' +
+                            '<span class="trm-sym">' + wmsEsc(cg.contractLabel) + shortTag + '</span>' +
+                            '<span class="trm-pl-main ' + getAmountClass(cNet) + '">' + formatAmount(cNet) + '</span>' +
+                        '</div>' +
+                        '<div class="trm-l2">' +
+                            '<span>' + formatQuantity(cg.openQty) + ' &middot; ' + avg + '</span>' +
+                            '<span class="trm-r">' + formatAmount(cExp) + ' &middot; Day <span class="' + getAmountClass(cDay) + '">' + formatAmount(cDay) + '</span></span>' +
+                        '</div>' +
+                    '</div>';
+
+                var detail = '';
+                if (cOpen) {
+                    var openRow = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
+                    var cmpStr = openRow ? formatPrice(openRow.cmp, false) : '-';
+                    detail =
+                        '<div class="trm-detail"><div class="trm-detail-grid">' +
+                            '<div class="trm-d-item"><span class="trm-d-k">Expiry</span><span class="trm-d-v">' + wmsEsc(cg.groupLabel || '-') + '</span></div>' +
+                            '<div class="trm-d-item"><span class="trm-d-k">Open qty</span><span class="trm-d-v">' + formatQuantity(cg.openQty) + '</span></div>' +
+                            '<div class="trm-d-item"><span class="trm-d-k">Avg</span><span class="trm-d-v">' + avg + '</span></div>' +
+                            '<div class="trm-d-item"><span class="trm-d-k">CMP</span><span class="trm-d-v">' + cmpStr + '</span></div>' +
+                            '<div class="trm-d-item"><span class="trm-d-k">Day P&L</span><span class="trm-d-v ' + getAmountClass(cDay) + '">' + formatAmount(cDay) + '</span></div>' +
+                            '<div class="trm-d-item"><span class="trm-d-k">Exposure</span><span class="trm-d-v">' + formatAmount(cExp) + '</span></div>' +
+                            '<div class="trm-d-item"><span class="trm-d-k">Realised</span><span class="trm-d-v ' + getAmountClass(cReal) + '">' + formatAmount(cReal) + '</span></div>' +
+                            '<div class="trm-d-item"><span class="trm-d-k">Unrealised</span><span class="trm-d-v ' + getAmountClass(cUnreal) + '">' + formatAmount(cUnreal) + '</span></div>' +
+                            '<div class="trm-d-item"><span class="trm-d-k">Net</span><span class="trm-d-v ' + getAmountClass(cNet) + '">' + formatAmount(cNet) + '</span></div>' +
+                        '</div></div>';
+                }
+                return row + detail;
+            }).join('');
+        }
+        return grp + contracts;
+    }).join('');
+
+    box.innerHTML = summary + body;
+
+    box.querySelectorAll('.trm-grp[data-fno-symbol]').forEach(function(el) {
+        el.addEventListener('click', function() {
+            var sym = el.dataset.fnoSymbol;
+            if (trFnoExpandedSymbols[sym]) delete trFnoExpandedSymbols[sym]; else trFnoExpandedSymbols[sym] = true;
+            trFnoRender();
+        });
+    });
+    box.querySelectorAll('.trm-row[data-fno-ckey]').forEach(function(el) {
+        el.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var key = el.dataset.fnoCkey;
+            trFnoMobileContractKey = (trFnoMobileContractKey === key) ? null : key;
+            trFnoRender();
+        });
+    });
 }
 
 // ============================================================================

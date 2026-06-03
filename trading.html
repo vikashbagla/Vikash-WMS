@@ -567,6 +567,15 @@
 .trm-back { border: 1px solid #cdd4e6; background: #f6f8ff; color: #4a5568; font-size: 12px; padding: 4px 10px; border-radius: 6px; cursor: pointer; flex-shrink: 0; }
 .trm-breakup-title { flex: 1; font-weight: 600; font-size: 13px; color: #2d3748; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .trm-breakup-tot { font-weight: 600; font-size: 13px; flex-shrink: 0; }
+/* F&O grouped-by-symbol: collapsible symbol header + indented contract rows */
+.trm-grp { display: flex; flex-direction: column; padding: 9px 12px; border-bottom: 1px solid #eef1f5; background: #f4f6fb; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.trm-grp-l1 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.trm-grp-name { font-weight: 600; font-size: 13px; color: #2d3748; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.trm-grp-name .trm-grp-txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trm-grp-chev { font-size: 10px; color: #94a0b3; flex-shrink: 0; }
+.trm-grp-l2 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 2px; font-size: 10.5px; color: #94a0b3; }
+.trm-row.trm-sub { padding-left: 22px; background: #fff; }
+.trm-empty { padding: 40px; text-align: center; color: #9ca3af; }
 
 /* ================================================================
    RESPONSIVE: Tablet
@@ -661,6 +670,10 @@
     /* Swap the wide table for the compact phone list */
     #tr-portfolio .table-container { display: none !important; }
     #tr-portfolio-cards { display: flex; flex-direction: column; }
+
+    /* F&O: swap the wide grouped table for the compact phone list */
+    #tr-fno-positions #trFnoTableWrap { display: none !important; }
+    #tr-fno-cards { display: flex; flex-direction: column; }
 
     /* === PHONE REVIEW-ONLY: F&O — same view-select-only treatment === */
     #tr-fno-new-view-btn,
@@ -902,6 +915,10 @@
                 </tbody>
             </table>
         </div>
+
+        <!-- F&O compact list (phone only — built by trFnoRenderMobile) -->
+        <div id="tr-fno-cards" class="tr-mobile-list"></div>
+
     </div>
 
     <!-- Tab: Statements (lazy-loaded from trading-ledger.html + trading-ledger.js) -->
