@@ -579,6 +579,10 @@
 .trm-grp-l2 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 2px; font-size: 10.5px; color: #94a0b3; }
 .trm-row.trm-sub { padding-left: 22px; background: #fff; }
 .trm-empty { padding: 40px; text-align: center; color: #9ca3af; }
+.trm-grp-r { display: flex; align-items: baseline; gap: 6px; flex-shrink: 0; }
+.trm-grp-cmp { font-size: 11px; color: #64748b; white-space: nowrap; }
+.trm-detail-grid .trm-d-wide { grid-column: 1 / -1; }
+.trm-detail-grid .trm-d-wide .trm-d-v { text-align: right; }
 
 /* ================================================================
    RESPONSIVE: Tablet
@@ -643,11 +647,12 @@
         gap: 6px;
         padding: 0 2px;
     }
-    .trading-header-bar > div:last-child > *:not(#trToggleZeroBtn) { display: none !important; }
+    .trading-header-bar > div:last-child > *:not(#trToggleZeroBtn):not(#trAddTxnBtn) { display: none !important; }
     .trading-header-bar .btn-toggle-zero {
         font-size: 10px !important;
         padding: 3px 6px !important;
     }
+    .trading-header-bar #trAddTxnBtn { font-size: 10px !important; padding: 4px 8px !important; }
 
     /* View tabs: only the tab strip scrolls horizontally — the BAR itself must
        stay overflow:visible so the ▾ More dropdown isn't clipped (it's an

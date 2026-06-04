@@ -2358,8 +2358,8 @@ function _wmsPromoteToLeader() {
     }, 5000);
     if (wmsTabChannel) wmsTabChannel.postMessage({ type: 'heartbeat', tabId: wmsTabId });
 
-    // Start refresh timer if market is open
-    if (wmsIsMarketHours() && window.fyersToken) {
+    // Start refresh timer if a market is open (equity, or MCX with MCX symbols)
+    if (wmsIsRefreshWindow() && window.fyersToken) {
         wmsStartRefreshTimer();
     }
 }
@@ -2377,8 +2377,19 @@ wmsTabSyncInit();
 
 var wmsRefreshSymbols = [];    // [{ fyersKey, cacheKey }, ...]
 var wmsRefreshTimer = null;    // single setInterval ID
-var wmsRefreshInterval = 10000; // 10 seconds
+var wmsRefreshInterval = 10000; // 10 seconds (base tick + equity cadence)
+var wmsMcxRefreshInterval = 120000; // 2 minutes — cadence during MCX-only evening
+var _wmsLastMcxFetch = 0;       // timestamp of last evening MCX-only fetch
 var wmsRefreshFirstDone = false; // first-load flag for Stage 2+3 resolution
+
+// Symbol-provider registry — extension point so any module (e.g. Auto Trading)
+// can fold its symbols into the SINGLE refresh list. Each provider is a function
+// returning [{ fyersKey, cacheKey }]. This keeps the whole app on ONE
+// wmsStandardRefresh / ONE cadence rather than module-local timers + fetches.
+var wmsRefreshSymbolProviders = {};
+function wmsRegisterRefreshSymbolProvider(key, fn) {
+    if (typeof fn === 'function') wmsRefreshSymbolProviders[key] = fn;
+}
 
 // Legacy aliases — kept so existing callers don't break during migration
 var wmsAutoRefreshTimers = {};
@@ -2397,6 +2408,42 @@ function wmsIsMarketHours() {
     if (day === 0 || day === 6) return false;
     var timeInMinutes = ist.getHours() * 60 + ist.getMinutes();
     return timeInMinutes >= 550 && timeInMinutes <= 935;
+}
+
+/**
+ * wmsIsMcxHours — true during the MCX commodity session (Mon-Fri, ~9:00 AM–
+ * 11:55 PM IST with a 5-min buffer). MCX bullion/metals (GOLD, SILVER, GOLDM,
+ * SILVERM, …) trade far later than NSE/BSE equity, so open MCX positions need
+ * live prices into the night. Upper bound 11:55 PM covers the DST-extended close.
+ * (LESSONS §E.11.9)
+ */
+function wmsIsMcxHours() {
+    var now = new Date();
+    var utcMs = now.getTime() + (now.getTimezoneOffset() * 60000);
+    var ist = new Date(utcMs + (5.5 * 3600000));
+    var day = ist.getDay();
+    if (day === 0 || day === 6) return false;
+    var t = ist.getHours() * 60 + ist.getMinutes();
+    return t >= 535 && t <= 1435; // 8:55 AM – 11:55 PM IST
+}
+
+/**
+ * wmsHasMcxSymbols — true if the current refresh list holds any MCX contract
+ * (fyersKey prefixed 'MCX:'). Gates the evening MCX-only refresh so users with
+ * no commodity exposure still stop refreshing at the equity close.
+ */
+function wmsHasMcxSymbols() {
+    return wmsRefreshSymbols.some(function(s) { return /^MCX:/.test(s.fyersKey); });
+}
+
+/**
+ * wmsIsRefreshWindow — the single gate for "should the price-refresh timer run?":
+ * EITHER equity is open, OR MCX is open AND we actually hold MCX symbols. Used by
+ * every timer start/stop/visibility check so refresh continues through the MCX
+ * evening session for commodity positions only.
+ */
+function wmsIsRefreshWindow() {
+    return wmsIsMarketHours() || (wmsIsMcxHours() && wmsHasMcxSymbols());
 }
 
 /**
@@ -2434,7 +2481,15 @@ function wmsBuildRefreshSymbols() {
             var bare = t.symbol.replace(/^[A-Z]+:/, '');
             if (!seen[bare]) {
                 seen[bare] = true;
-                var fKey = t.symbol.indexOf(':') >= 0 ? t.symbol : 'NSE:' + bare;
+                // Keep the stored exchange prefix when present (the working path).
+                // If a symbol somehow lacks a prefix, default by segment: MCX
+                // commodity contracts → 'MCX:', everything else → 'NSE:'. Previously
+                // this always fell back to 'NSE:', which would mis-route an
+                // unprefixed MCX symbol. Robustness guard — no effect on existing
+                // (prefixed) data.
+                var fKey = t.symbol.indexOf(':') >= 0
+                    ? t.symbol
+                    : ((t.security_type === 'MCX' ? 'MCX:' : 'NSE:') + bare);
                 list.push({ fyersKey: fKey, cacheKey: bare });
             }
             // Also add the underlying equity symbol so portfolio rows can look up
@@ -2483,6 +2538,17 @@ function wmsBuildRefreshSymbols() {
         });
     }
 
+    // 4. Extra symbols from registered providers (e.g. Auto Trading open trades)
+    Object.keys(wmsRefreshSymbolProviders).forEach(function (k) {
+        var extra;
+        try { extra = wmsRefreshSymbolProviders[k](); } catch (e) { extra = null; }
+        (extra || []).forEach(function (s) {
+            if (!s || !s.fyersKey || !s.cacheKey || seen[s.cacheKey]) return;
+            seen[s.cacheKey] = true;
+            list.push({ fyersKey: s.fyersKey, cacheKey: s.cacheKey });
+        });
+    });
+
     wmsRefreshSymbols = list;
     console.log('wmsBuildRefreshSymbols:', list.length, 'unique symbols');
 }
@@ -2494,7 +2560,8 @@ function wmsBuildRefreshSymbols() {
  *
  * @param {boolean} [forceRefresh=false] — true = refetch all; false = only uncached
  */
-async function wmsStandardRefresh(forceRefresh) {
+async function wmsStandardRefresh(forceRefresh, opts) {
+    opts = opts || {};
     if (!window.fyersToken || !window.fyersCall) return;
     if (wmsRefreshSymbols.length === 0) return;
 
@@ -2509,6 +2576,13 @@ async function wmsStandardRefresh(forceRefresh) {
         : wmsRefreshSymbols.filter(function(s) {
             return !wmsLivePrices[s.cacheKey] || wmsLivePrices[s.cacheKey].lp <= 0;
         });
+
+    // MCX-only mode (evening timer cycles): keep just the MCX contracts so we
+    // don't re-poll closed equities every cycle. First-load and manual refresh
+    // pass no opts, so they still fetch everything once. (LESSONS §E.11.9)
+    if (opts.mcxOnly) {
+        toFetch = toFetch.filter(function(s) { return /^MCX:/.test(s.fyersKey); });
+    }
 
     // 2. Batch fetch from Fyers (chunks of 50)
     if (toFetch.length > 0) {
@@ -2552,7 +2626,7 @@ async function wmsStandardRefresh(forceRefresh) {
     }
 
     // 3. First-load only: run Stage 2+3 resolution for unresolved equity symbols
-    if (!wmsRefreshFirstDone && typeof wmsFetchEquityPrices === 'function') {
+    if (!wmsRefreshFirstDone && !opts.mcxOnly && typeof wmsFetchEquityPrices === 'function') {
         var unresolvedEquity = [];
         wmsRefreshSymbols.forEach(function(s) {
             // Only equity (has -EQ suffix in fyersKey)
@@ -2628,6 +2702,12 @@ function wmsRefreshRender() {
         rptRenderPortfolio();
         if (typeof rptUpdatePriceStatus === 'function') rptUpdatePriceStatus('live');
     }
+
+    // Auto Trading module — re-render open-trade P&L from the shared price cache.
+    // The module no longer runs its own timer/fetch (LESSONS §E.11.10).
+    if (typeof autoOnSharedRefresh === 'function') {
+        try { autoOnSharedRefresh(); } catch (err) { console.warn('Auto refresh render failed:', err); }
+    }
 }
 
 /**
@@ -2639,7 +2719,7 @@ function wmsUpdateFyersTime() {
     if (!el) return;
     var now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     el.textContent = now;
-    var marketOpen = typeof wmsIsMarketHours === 'function' && wmsIsMarketHours();
+    var marketOpen = typeof wmsIsRefreshWindow === 'function' && wmsIsRefreshWindow();
     el.style.color = marketOpen ? '#059669' : '#dc2626';
 }
 
@@ -2653,12 +2733,25 @@ function wmsStartRefreshTimer() {
     wmsStopRefreshTimer();
     wmsRefreshTimer = setInterval(async function() {
         if (document.hidden) return;
-        if (!wmsIsMarketHours()) {
+        var equityOpen = wmsIsMarketHours();
+        var mcxOpen = wmsIsMcxHours() && wmsHasMcxSymbols();
+        if (!equityOpen && !mcxOpen) {
             wmsStopRefreshTimer();
             if (typeof trUpdatePriceStatus === 'function') trUpdatePriceStatus('last-txn');
             return;
         }
-        await wmsStandardRefresh(true); // force = true for timer cycles
+        if (equityOpen) {
+            // Equity hours: full refresh every tick (10s).
+            await wmsStandardRefresh(true);
+        } else {
+            // Equity closed, MCX open: fetch ONLY MCX contracts, throttled to the
+            // MCX cadence (default 2 min) so we don't re-poll closed equities and
+            // keep overnight API load low. (LESSONS §E.11.9)
+            var now = Date.now();
+            if (now - _wmsLastMcxFetch < wmsMcxRefreshInterval) return;
+            _wmsLastMcxFetch = now;
+            await wmsStandardRefresh(true, { mcxOnly: true });
+        }
     }, wmsRefreshInterval);
 }
 
@@ -2677,7 +2770,7 @@ document.addEventListener('visibilitychange', function() {
     if (!document.hidden) {
         // Page became visible — leader does an immediate refresh + restarts timer;
         // follower just renders from cache (leader will broadcast shortly)
-        if (wmsIsMarketHours() && window.fyersToken) {
+        if (wmsIsRefreshWindow() && window.fyersToken) {
             if (wmsTabIsLeader) {
                 wmsStandardRefresh(true);
                 wmsStartRefreshTimer();

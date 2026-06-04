@@ -644,36 +644,44 @@ function addAddTxnRow(copyFromId) {
 
     var tr = document.createElement('tr');
     tr.dataset.rowId = rowId;
+    var _sell = row.quantity < 0;
     tr.innerHTML =
         // Trader
-        '<td><select class="addTxn-trader-sel" data-rid="' + rowId + '">' + traderOptions + '</select></td>' +
+        '<td data-mlabel="Trader"><select class="addTxn-trader-sel" data-rid="' + rowId + '">' + traderOptions + '</select></td>' +
         // Symbol
-        '<td style="position:relative;">' +
+        '<td data-mlabel="Symbol" style="position:relative;">' +
             '<input type="text" class="addTxn-sym-input" data-rid="' + rowId + '" placeholder="Search..." autocomplete="off" value="' + (row.symbol || '') + '">' +
             '<div class="addTxn-sym-dd" id="addTxnSymDd_' + rowId + '"></div>' +
         '</td>' +
+        // Side (Buy/Sell) — phone only; flips qty sign (desktop derives type from sign)
+        '<td class="addTxn-side-cell" data-mlabel="Side">' +
+            '<div class="addTxn-side-seg">' +
+                '<button type="button" class="addTxn-side-btn addTxn-side-buy' + (_sell ? '' : ' active') + '" data-rid="' + rowId + '">Buy</button>' +
+                '<button type="button" class="addTxn-side-btn addTxn-side-sell' + (_sell ? ' active' : '') + '" data-rid="' + rowId + '">Sell</button>' +
+            '</div>' +
+        '</td>' +
         // Lots
-        '<td><input type="number" class="addTxn-lots-input' + (isNfo ? '' : ' disabled-lots') + '" data-rid="' + rowId + '" step="1" value="' + (row.lots || '') + '"' + (isNfo ? '' : ' disabled') + '></td>' +
+        '<td data-mlabel="Lots"><input type="number" class="addTxn-lots-input' + (isNfo ? '' : ' disabled-lots') + '" data-rid="' + rowId + '" step="1" value="' + (row.lots || '') + '"' + (isNfo ? '' : ' disabled') + '></td>' +
         // Qty
-        '<td><input type="text" class="addTxn-qty-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtQty(row.quantity) + '"></td>' +
+        '<td data-mlabel="Qty"><input type="text" class="addTxn-qty-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtQty(row.quantity) + '"></td>' +
         // Price
-        '<td><input type="text" class="addTxn-price-input addTxn-amt-field" data-rid="' + rowId + '" inputmode="decimal" value="' + atFmtPrice(row.price) + '"></td>' +
+        '<td data-mlabel="Price"><input type="text" class="addTxn-price-input addTxn-amt-field" data-rid="' + rowId + '" inputmode="decimal" value="' + atFmtPrice(row.price) + '"></td>' +
         // Gross (editable)
-        '<td><input type="text" class="addTxn-gross-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.gross_amount) + '"></td>' +
+        '<td data-mlabel="Gross"><input type="text" class="addTxn-gross-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.gross_amount) + '"></td>' +
         // Total charges (editable, dblclick for breakdown)
-        '<td><input type="text" class="addTxn-totchg-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.total_charges) + '" title="Double-click for breakdown"></td>' +
+        '<td data-mlabel="Charges"><input type="text" class="addTxn-totchg-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.total_charges) + '" title="Double-click for breakdown"></td>' +
         // Trader charges (editable)
-        '<td><input type="text" class="addTxn-trdchg-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.trader_charges) + '"></td>' +
+        '<td data-mlabel="Trader charges"><input type="text" class="addTxn-trdchg-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.trader_charges) + '"></td>' +
         // Net amount (editable)
-        '<td><input type="text" class="addTxn-net-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.net_amount) + '"></td>' +
+        '<td data-mlabel="Net amount"><input type="text" class="addTxn-net-input addTxn-amt-field" data-rid="' + rowId + '" value="' + atFmtAmt(row.net_amount) + '"></td>' +
         // Tags
-        '<td style="position:relative;">' +
+        '<td data-mlabel="Tags" style="position:relative;">' +
             '<input type="text" class="addTxn-tags-input" data-rid="' + rowId + '" placeholder="Tags..." autocomplete="off">' +
             '<div class="addTxn-tag-pills" id="addTxnTagPills_' + rowId + '"></div>' +
             '<div class="addTxn-tag-dd" id="addTxnTagDd_' + rowId + '"></div>' +
         '</td>' +
         // Delete
-        '<td><button class="addTxn-del-btn" data-rid="' + rowId + '" title="Remove row">&#x1F5D1;</button></td>';
+        '<td class="addTxn-del-cell"><button class="addTxn-del-btn" data-rid="' + rowId + '" title="Remove row">&#x1F5D1;</button></td>';
 
     document.getElementById('addTxnTbody').appendChild(tr);
 
@@ -724,6 +732,27 @@ function attachAddTxnRowHandlers(rowId) {
     var trdchgInput = document.querySelector('.addTxn-trdchg-input[data-rid="' + rowId + '"]');
     var netInput = document.querySelector('.addTxn-net-input[data-rid="' + rowId + '"]');
     var delBtn = document.querySelector('.addTxn-del-btn[data-rid="' + rowId + '"]');
+    var buyBtn = document.querySelector('.addTxn-side-buy[data-rid="' + rowId + '"]');
+    var sellBtn = document.querySelector('.addTxn-side-sell[data-rid="' + rowId + '"]');
+
+    // --- Side (Buy/Sell) toggle — phone only. Maps directly onto the qty sign
+    // (the single source of BUY/SELL: quantity >= 0 = BUY, < 0 = SELL). ---
+    function atSyncSide() {
+        var sell = (row.quantity || 0) < 0;
+        if (buyBtn) buyBtn.classList.toggle('active', !sell);
+        if (sellBtn) sellBtn.classList.toggle('active', sell);
+    }
+    function atSetSide(sell) {
+        var mag = Math.abs(row.quantity || 0);
+        row.quantity = sell ? -mag : mag;
+        if (row.lots) row.lots = sell ? -Math.abs(row.lots) : Math.abs(row.lots);
+        qtyInput.value = atFmtQty(row.quantity);
+        if (lotsInput && row.lot_size > 1) lotsInput.value = row.lots || '';
+        recalcAddTxnRow(rowId);
+        atSyncSide();
+    }
+    if (buyBtn) buyBtn.addEventListener('click', function() { atSetSide(false); });
+    if (sellBtn) sellBtn.addEventListener('click', function() { atSetSide(true); });
 
     // --- Trader change ---
     traderSel.addEventListener('change', function() {
@@ -796,6 +825,7 @@ function attachAddTxnRowHandlers(rowId) {
             qtyInput.value = atFmtQty(row.quantity);
         }
         recalcAddTxnRow(rowId);
+        atSyncSide();  // keep Buy/Sell toggle in step
     });
 
     // --- Qty focus/blur formatting ---
@@ -821,6 +851,7 @@ function attachAddTxnRowHandlers(rowId) {
         row._grossOverride = false;
         row._netOverride = false;
         recalcAddTxnRow(rowId);
+        atSyncSide();  // keep Buy/Sell toggle in step with the typed sign
     });
 
     // --- Price focus/blur formatting ---
