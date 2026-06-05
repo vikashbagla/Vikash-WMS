@@ -520,19 +520,22 @@ async function autoLoadMarketPricesStats() {
     if (!el) return;
     el.textContent = 'Loading…';
     try {
-        // PostgREST count via Prefer: count=exact + range header
+        // resolution=eq.1D filter — explicit since migration 43 made market_prices polymorphic.
+        // This card describes the equity EOD ingest only; MCX 15-min rows have their own card.
+        // Without this filter the "Latest date" would jump to an intraday timestamp once
+        // mcx-candles-ingest starts landing rows, making the EOD-staleness signal misleading.
         var countResp = await fetch(
-            SUPABASE_URL + '/rest/v1/market_prices?select=id',
+            SUPABASE_URL + '/rest/v1/market_prices?select=id&resolution=eq.1D',
             { headers: wmsHeaders({ 'Prefer': 'count=exact', 'Range-Unit': 'items', 'Range': '0-0' }) }
         );
         var contentRange = countResp.headers.get('content-range') || '';
         var totalRows = (contentRange.split('/')[1] || '0').replace(/\D/g, '') || '0';
 
         // Distinct security count + min/max date — separate small queries for clarity
-        var minResp = await fetch(SUPABASE_URL + '/rest/v1/market_prices?select=price_date&order=price_date.asc&limit=1',
+        var minResp = await fetch(SUPABASE_URL + '/rest/v1/market_prices?select=price_date&resolution=eq.1D&order=price_date.asc&limit=1',
                                   { headers: wmsHeaders() });
         var minRows = await minResp.json();
-        var maxResp = await fetch(SUPABASE_URL + '/rest/v1/market_prices?select=price_date&order=price_date.desc&limit=1',
+        var maxResp = await fetch(SUPABASE_URL + '/rest/v1/market_prices?select=price_date&resolution=eq.1D&order=price_date.desc&limit=1',
                                   { headers: wmsHeaders() });
         var maxRows = await maxResp.json();
 
@@ -1135,7 +1138,7 @@ async function autoFetchLatestPrices(sigRows) {
         var cutoff = new Date(Date.now() - 10 * 86400 * 1000).toISOString().slice(0, 10);
         var idsList = secIds.map(encodeURIComponent).join(',');
         var priceResp = await fetch(
-            SUPABASE_URL + '/rest/v1/market_prices?security_id=in.(' + idsList + ')&price_date=gte.' + cutoff + '&select=security_id,price_date,close&order=price_date.desc',
+            SUPABASE_URL + '/rest/v1/market_prices?security_id=in.(' + idsList + ')&resolution=eq.1D&price_date=gte.' + cutoff + '&select=security_id,price_date,close&order=price_date.desc',
             { headers: wmsHeaders() }
         );
         var prices = await priceResp.json();
