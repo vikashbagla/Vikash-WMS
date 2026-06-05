@@ -35,6 +35,10 @@ function autoSwitchTab(tabId) {
     if (tabId === 'au-open-trades') {
         autoEnsureSharedRefresh();
     }
+
+    // Refresh the fixed bar's visibility — it floats above every tab so we must
+    // suppress it explicitly when leaving Open Trades.
+    autoUpdateGsTotalsBar();
 }
 
 // GS Open Trades live P&L flows through the SINGLE app-wide price system
@@ -100,17 +104,32 @@ var _auGsTotals = {
     peakExposure: null, peakMargin: null,
 };
 
+// True only when the GS Open Trades view is the active panel — i.e. main tab =
+// Open Trades AND sub-tab = GS. Because the totals bar is position:fixed it
+// floats above every view, so we must explicitly suppress it on every other
+// tab/sub-tab combo.
+function autoIsGsViewActive() {
+    var mainPanel = document.getElementById('au-open-trades');
+    if (!mainPanel || !mainPanel.classList.contains('active')) return false;
+    var gsPanel = document.getElementById('au-ot-gs');
+    return !!(gsPanel && gsPanel.classList.contains('active'));
+}
+
 function autoUpdateGsTotalsBar() {
     var bar = document.getElementById('au-gs-totals-bar');
     if (!bar) return;
     var t = _auGsTotals;
     var hasOpen = t.openCount != null;
     var hasClosed = t.closedCount != null;
-    if (!hasOpen && !hasClosed) {
+    // Hide if GS view isn't active OR we have no data. The body class controls
+    // bottom padding so the last table row isn't covered by the fixed bar.
+    if (!autoIsGsViewActive() || (!hasOpen && !hasClosed)) {
         bar.style.display = 'none';
+        document.body.classList.remove('au-totals-bar-visible');
         return;
     }
     bar.style.display = 'flex';
+    document.body.classList.add('au-totals-bar-visible');
 
     var fmtFlat = function (n) {
         if (n == null) return '—';
@@ -168,6 +187,9 @@ function autoSwitchSubTab(subtabId) {
     } else {
         autoUpdateGsRefreshTickStatus('paused');
     }
+
+    // Refresh fixed-bar visibility on sub-tab switch (Pairs ↔ GS)
+    autoUpdateGsTotalsBar();
 }
 
 // ----------------------------------------------------------------------------

@@ -92,22 +92,34 @@
 .au-subtab-panel { display: none; }
 .au-subtab-panel.active { display: block; }
 
-/* Sticky GS totals bar at the bottom of the Open Trades GS sub-panel.
-   Sticks to the bottom of the scroll container so it's always visible. */
+/* Floating GS totals bar locked to the viewport bottom.
+   Was position:sticky — but sticky tracks the scroll container's bottom, not
+   the viewport's, so on iPad / iOS the bar would float above the last row
+   when the URL bar collapsed (D.32 / WMS-LESSONS pending tooling write-up).
+   position:fixed + safe-area-inset-bottom + body padding-bottom is the
+   robust fix. The companion JS keeps the bar hidden when the GS sub-tab
+   isn't the active view (since fixed bars float above ALL tabs, not just
+   the one they conceptually belong to). */
 .au-totals-bar {
-    position: sticky;
+    position: fixed;
+    left: 0;
+    right: 0;
     bottom: 0;
     background: #fff;
     border-top: 2px solid #cbd5e0;
-    padding: 10px 16px;
-    margin: 16px -16px -16px -16px; /* hug the container's edges */
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)) 16px;
     display: flex;
     flex-wrap: wrap;
     gap: 18px;
     font-size: 12px;
     align-items: center;
-    box-shadow: 0 -2px 6px rgba(0,0,0,0.04);
-    z-index: 10;
+    box-shadow: 0 -2px 6px rgba(0,0,0,0.08);
+    z-index: 100;
+}
+/* When the bar is visible, push body content up so the last table row
+   isn't hidden under it. Applied/removed by autoUpdateGsTotalsBar. */
+body.au-totals-bar-visible {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
 }
 .au-totals-bar .au-tot-group {
     display: flex;
