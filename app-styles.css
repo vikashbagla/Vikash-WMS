@@ -10,7 +10,11 @@ body {
     background: #f5f7fa;
     color: #2d3748;
     line-height: 1.4;
-    height: 100vh;
+    /* 100dvh (dynamic viewport height) instead of 100vh so iOS Safari/Chrome
+       toolbars don't hide the last table row. 100vh = "large viewport" on iOS —
+       the area that would be visible if the toolbar were hidden. dvh shrinks
+       live when the toolbar shows. See WMS-LESSONS D.15. */
+    height: 100dvh;
     overflow: hidden;
 }
 
@@ -125,7 +129,8 @@ body {
 /* LAYOUT — fills viewport below header+nav */
 .main-content {
     max-width: 1600px; margin: 0 auto; padding: 8px 14px;
-    height: calc(100vh - 82px);
+    /* dvh (dynamic viewport height) — see body rule + WMS-LESSONS D.15. */
+    height: calc(100dvh - 82px);
     display: flex; flex-direction: column;
 }
 .content-container {
