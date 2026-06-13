@@ -42,7 +42,8 @@ SELECT
     legs, direction, score, notes, metadata,
     email_status, email_sent_at, email_subject, email_error,
     '[]'::jsonb AS email_recipients,            -- BLANKED (had analyst+owner emails)
-    dedupe_key, source, created_at
+    dedupe_key, source
+    -- Note: auto_signals has no created_at — fired_at is the canonical timestamp.
 FROM auto_signals
 WHERE strategy_name IN ('silver_mini_15m', 'gold_mini_15m', 'pairs')
   AND execution_mode = 'PAPER';
