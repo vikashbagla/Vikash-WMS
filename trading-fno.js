@@ -716,6 +716,11 @@ function trFnoCgParties(cg) {
     return { inv: Object.keys(invs).join(', ') || '-', brk: Object.keys(brks).join(', ') || '-' };
 }
 
+// Signed qty display — short positions show as negative (in parentheses).
+function trFnoQty(q) {
+    return q < 0 ? '(' + formatQuantity(Math.abs(q)) + ')' : formatQuantity(q);
+}
+
 // CMP (₹) only for a contract group (from the open leg).
 function trFnoCgCmp(cg) {
     var o = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
@@ -770,11 +775,12 @@ function trFnoRenderMobile(positions) {
     ordered.forEach(function(p) { totExp += p.totalOpenCost; totDay += p.totalDayPnl || 0; totReal += p.totalRealisedPnl; totUnreal += p.totalUnrealisedPnl; });
     var totNet = totReal + totUnreal;
 
-    var summary =
-        '<div class="trm-summary">' +
-            '<div class="trm-s-block"><div class="trm-s-label">Exposure</div><div class="trm-s-val">' + formatAmount(totExp) + '</div></div>' +
-            '<div class="trm-s-block"><div class="trm-s-label">Day P&L</div><div class="trm-s-val ' + getAmountClass(totDay) + '">' + formatAmount(totDay) + '</div></div>' +
-            '<div class="trm-s-block"><div class="trm-s-label">Net P&L</div><div class="trm-s-val ' + getAmountClass(totNet) + '">' + formatAmount(totNet) + '</div></div>' +
+    // Single clean row that is BOTH the page totals AND the column headers
+    var totRow =
+        '<div class="trm-fno-tot fc3">' +
+            '<div class="fc-a"><span class="trm-tot-k">Exposure</span> <span class="trm-tot-v">' + formatAmount(totExp) + '</span></div>' +
+            '<div class="fc-b"><div class="trm-tot-k">Day\'s P&L</div><div class="trm-tot-v ' + getAmountClass(totDay) + '">' + formatAmount(totDay) + '</div></div>' +
+            '<div class="fc-c"><div class="trm-tot-k">Total P&L</div><div class="trm-tot-v ' + getAmountClass(totNet) + '">' + formatAmount(totNet) + '</div></div>' +
         '</div>';
 
     var body = ordered.map(function(p) {
@@ -789,12 +795,17 @@ function trFnoRenderMobile(positions) {
                  || (p.contractGroups || []).filter(function(cg) { return cg.openQty; })[0];
         // Symbol-level Qty/Avg = TOTAL across all open contracts (the per-contract
         // breakup is shown when expanded). CMP from the representative contract.
+        // Signed total qty across open contracts (short = negative); avg on |qty|.
         var totQty = 0, totCost = 0;
-        (p.contractGroups || []).forEach(function(cg) { if (cg.openQty) { totQty += cg.openQty; totCost += (cg.openCost || 0); } });
+        (p.contractGroups || []).forEach(function(cg) {
+            if (!cg.openQty) return;
+            totQty += cg.isShort ? -Math.abs(cg.openQty) : Math.abs(cg.openQty);
+            totCost += (cg.openCost || 0);
+        });
         var aL2;
         if (repCg) {
-            var symAvg = totQty ? trFmtRupee(totCost / totQty) : '-';
-            aL2 = formatQuantity(totQty) + ' <span class="trm-at">@</span> ' + symAvg + ' &middot; ' + trFnoCgCmp(repCg);
+            var symAvg = totQty ? trFmtRupee(totCost / Math.abs(totQty)) : '-';
+            aL2 = trFnoQty(totQty) + ' <span class="trm-at">@</span> ' + symAvg + ' &middot; ' + trFnoCgCmpDay(repCg);
         } else {
             aL2 = '<span style="color:#a0aec0;">Closed</span>';
         }
@@ -806,7 +817,7 @@ function trFnoRenderMobile(positions) {
             '<div class="trm-grp" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
                 '<div class="fc3">' +
                     '<div class="fc-a">' +
-                        '<div class="fc-a-l1"><span class="trm-grp-chev">' + (symOpen ? '&#9662;' : '&#9656;') + '</span><span class="fc-a-txt">' + wmsEsc(p.companyName || p.underlying) + '</span></div>' +
+                        '<div class="fc-a-l1"><span class="fc-a-txt">' + wmsEsc(p.companyName || p.underlying) + '</span></div>' +
                         '<div class="fc-a-l2">' + aL2 + '</div>' +
                     '</div>' +
                     '<div class="fc-b"><div class="fc-amt ' + getAmountClass(dPnl) + '">' + formatAmount(dPnl) + '</div><div class="fc-pct ' + getAmountClass(dPnl) + '">' + dPctS + '</div></div>' +
@@ -822,7 +833,8 @@ function trFnoRenderMobile(positions) {
                 var cReal = cg.totalPnl || 0, cUnreal = cg.unrealisedPnl || 0, cNet = cReal + cUnreal, cDay = cg.dayPnl || 0, cExp = cg.openCost || 0;
                 var shortTag = cg.isShort ? ' <span style="color:#dc2626;font-size:10px;">(S)</span>' : '';
                 var avg = (cg.openQty && cExp) ? trFmtRupee(cExp / cg.openQty) : '-';
-                var caL2 = formatQuantity(cg.openQty) + ' <span class="trm-at">@</span> ' + avg + ' &middot; ' + trFnoCgCmp(cg);
+                var cSignedQty = cg.isShort ? -Math.abs(cg.openQty) : Math.abs(cg.openQty);
+                var caL2 = trFnoQty(cSignedQty) + ' <span class="trm-at">@</span> ' + avg + ' &middot; ' + trFnoCgCmpDay(cg);
                 var cDPctS = (cExp > 0 && cDay !== 0) ? formatPercent((cDay / cExp) * 100) : '';
                 var cNPctS = (cExp > 0 && cNet !== 0) ? formatPercent((cNet / cExp) * 100) : '';
 
@@ -865,8 +877,7 @@ function trFnoRenderMobile(positions) {
         return grp + contracts;
     }).join('');
 
-    var fnoHdr = '<div class="trm-fno-hd"><div class="fc-a"></div><div class="fc-b">Day\'s P&L</div><div class="fc-c">Total P&L</div></div>';
-    box.innerHTML = summary + fnoHdr + body;
+    box.innerHTML = totRow + body;
 
     box.querySelectorAll('.trm-grp[data-fno-symbol]').forEach(function(el) {
         el.addEventListener('click', function() {

@@ -591,8 +591,11 @@
 .trm-detail-grid .trm-d-wide { grid-column: 1 / -1; }
 .trm-detail-grid .trm-d-wide .trm-d-v { text-align: right; }
 /* F&O 3-column layout: position info | Day's P&L | Total P&L */
-.trm-fno-hd { display: flex; align-items: flex-end; gap: 8px; padding: 5px 12px; background: #f1f3fb; border-bottom: 1px solid #e2e8f0; }
-.trm-fno-hd .fc-b, .trm-fno-hd .fc-c { font-size: 9px; color: #94a0b3; text-transform: uppercase; letter-spacing: .2px; }
+.trm-fno-tot { position: sticky; top: 0; z-index: 2; padding: 7px 12px; background: #f1f3fb; border-bottom: 1px solid #e2e8f0; }
+.trm-fno-tot .fc-a { display: flex; align-items: baseline; gap: 5px; }
+.trm-tot-k { font-size: 9px; color: #94a0b3; text-transform: uppercase; letter-spacing: .2px; }
+.trm-tot-v { font-size: 12px; font-weight: 600; }
+.trm-fno-tot .fc-a .trm-tot-v { color: #2d3748; }
 .fc3 { display: flex; align-items: center; gap: 8px; }
 .fc-a { flex: 1; min-width: 0; }
 .fc-b, .fc-c { width: 78px; flex-shrink: 0; text-align: right; }
