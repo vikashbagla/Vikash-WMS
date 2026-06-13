@@ -411,6 +411,11 @@ async function openAddInvestorModal() {
     mdSetupRateInput(document.getElementById('investorTaxRate'), 'percent');
     document.getElementById('brokerAccountsList').innerHTML = '';
     brokerAccountCounter = 0;
+    // Accounting controls — default to not-in-accounting
+    document.getElementById('investorBookMode').value = 'none';
+    mdPopulateBookParents(null);
+    document.getElementById('investorPostFno').checked = true;
+    mdOnBookModeChange();
     document.getElementById('investorModal').classList.add('show');
 }
 
@@ -437,6 +442,14 @@ async function editInvestor(id) {
     mdSetupRateInput(document.getElementById('investorInterestRate'), 'percent');
     mdSetupRateInput(document.getElementById('investorTaxRate'), 'percent');
 
+    // Accounting controls
+    var invBookMode = investor.accounting_enabled ? 'own' : (investor.book_parent_id ? 'client' : 'none');
+    document.getElementById('investorBookMode').value = invBookMode;
+    mdPopulateBookParents(investor.id);
+    document.getElementById('investorBookParent').value = investor.book_parent_id || '';
+    document.getElementById('investorPostFno').checked = investor.post_fno !== false;
+    mdOnBookModeChange();
+
     const accounts = await DB.getBrokerAccounts(id);
     document.getElementById('brokerAccountsList').innerHTML = '';
     brokerAccountCounter = 0;
@@ -446,6 +459,23 @@ async function editInvestor(id) {
 
     document.getElementById('investorModal').classList.add('show');
 }
+
+// ---- Accounting (book) controls in the investor form ----
+function mdPopulateBookParents(excludeId) {
+    var sel = document.getElementById('investorBookParent');
+    if (!sel) return;
+    var list = (window.wmsRefData && wmsRefData.investors ? wmsRefData.investors : [])
+        .filter(function (i) { return i.accounting_enabled && i.id !== excludeId; })
+        .sort(function (a, b) { return (a.short_name || a.name).localeCompare(b.short_name || b.name); });
+    sel.innerHTML = '<option value="">— select parent book —</option>' +
+        list.map(function (i) { return '<option value="' + i.id + '">' + (i.short_name || i.name) + '</option>'; }).join('');
+}
+function mdOnBookModeChange() {
+    var mode = document.getElementById('investorBookMode').value;
+    document.getElementById('investorBookParentWrap').style.display = (mode === 'client') ? '' : 'none';
+    document.getElementById('investorPostFnoWrap').style.display = (mode === 'own') ? '' : 'none';
+}
+window.mdOnBookModeChange = mdOnBookModeChange;
 
 // Rate input display formatting: shows "0.5%" on blur, raw "0.005" on focus
 // mode: 'decimal' = stored as decimal proportion (0.005 = 0.5%), 'percent' = stored as % (18 = 18%)
@@ -694,6 +724,10 @@ async function saveInvestor() {
     if (invIntRate > 0) {
         invInterestTerms = { rate: invIntRate, frequency: invIntFreq || 'weekly_friday', compound: (invIntFreq === 'daily_monthly_compound') };
     }
+    var invBookMode = document.getElementById('investorBookMode').value;
+    var invBookParent = document.getElementById('investorBookParent').value || null;
+    var invPostFno = document.getElementById('investorPostFno').checked;
+
     const data = {
         name: document.getElementById('investorName').value.trim(),
         short_name: document.getElementById('investorShortName').value.trim() || null,
@@ -703,7 +737,11 @@ async function saveInvestor() {
         phone: document.getElementById('investorPhone').value.trim() || null,
         is_active: document.getElementById('investorStatus').value === 'true',
         interest_terms: invInterestTerms,
-        tax_rate: mdReadRate(document.getElementById('investorTaxRate'))
+        tax_rate: mdReadRate(document.getElementById('investorTaxRate')),
+        // Accounting (book) role — see WMS_Accounting_Module_Plan.md §3.0
+        accounting_enabled: invBookMode === 'own',
+        book_parent_id: invBookMode === 'client' ? invBookParent : null,
+        post_fno: invBookMode === 'own' ? invPostFno : true
     };
 
     if (!data.name) {
@@ -713,6 +751,11 @@ async function saveInvestor() {
 
     if (!data.account_type) {
         alert('Please select account type');
+        return;
+    }
+
+    if (invBookMode === 'client' && !invBookParent) {
+        alert('Pick the parent book this investor is a client of.');
         return;
     }
 

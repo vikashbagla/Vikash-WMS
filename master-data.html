@@ -584,6 +584,30 @@
                     </div>
 
                     <div class="form-section">
+                        <div class="form-section-title">Accounting</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Books</label>
+                                <select id="investorBookMode" onchange="mdOnBookModeChange()">
+                                    <option value="none">Not in accounting</option>
+                                    <option value="own">Own books</option>
+                                    <option value="client">Client of another investor</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="investorBookParentWrap" style="display:none;">
+                                <label>Client of (parent book)</label>
+                                <select id="investorBookParent"></select>
+                            </div>
+                        </div>
+                        <div class="form-row" id="investorPostFnoWrap" style="display:none;">
+                            <div class="form-group">
+                                <label><input type="checkbox" id="investorPostFno" checked style="width:auto;margin-right:6px;vertical-align:middle;"> Post F&amp;O trades to this book's P&amp;L</label>
+                            </div>
+                        </div>
+                        <p style="font-size:10px;color:#888;margin:2px 0 0 0;">"Own books" = maintains its own accounting books. "Client" = activity posts into the parent's book (the parent must have own books).</p>
+                    </div>
+
+                    <div class="form-section">
                         <div class="form-section-title">Broker Accounts</div>
                         <div id="brokerAccountsList"></div>
                         <button type="button" class="btn-add-broker" onclick="addBrokerAccount()">+ Add Broker Account</button>
