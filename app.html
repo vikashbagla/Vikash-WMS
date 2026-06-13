@@ -84,6 +84,7 @@
             <button class="nav-btn" data-module="trading">📈 Trading</button>
             <button class="nav-btn" data-module="automation">🤖 Auto Trading</button>
             <button class="nav-btn active" data-module="reports">📊 Reports</button>
+            <button class="nav-btn" data-module="accounting">📒 Accounting</button>
             <button class="nav-btn" data-module="import-transactions">📥 Import Transactions</button>
             <button class="nav-btn" data-module="master-data">🗂️ Master Database</button>
         </div>
@@ -505,6 +506,12 @@
                 injectModule(html, container);
                 await loadScript('automation.js');
                 if (typeof initAutomation === 'function') await initAutomation();
+
+            } else if (moduleName === 'accounting') {
+                const html = await (await fetch('accounting.html' + _cb)).text();
+                injectModule(html, container);
+                await loadScript('accounting.js');
+                if (typeof initAccounting === 'function') await initAccounting();
 
             } else {
                 container.innerHTML = '<div class="coming-soon">🚧 Coming soon!</div>';
