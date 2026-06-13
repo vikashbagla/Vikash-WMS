@@ -564,6 +564,13 @@
 .trm-tags { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
 .trm-tags .tag-pill { font-size: 9px; }
 .trm-row.trm-open { background: #f6f8ff; }
+/* 3-zone line 2: Qty@Avg (left) · CMP day% (middle) · sort-metric % (right) */
+.trm-r1 { flex-shrink: 0; }
+.trm-l2-3 .trm-zl { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; }
+.trm-l2-3 .trm-zm { flex: 1.15; text-align: center; white-space: nowrap; }
+.trm-l2-3 .trm-zr { flex: 0.9; text-align: right; white-space: nowrap; }
+.trm-muted-pct { color: #94a0b3; }
+.trm-at { color: #94a0b3; }
 .trm-breakup-link { margin-top: 8px; padding: 7px 0 2px; border-top: 1px dashed #e2e8f0; color: #667eea; font-size: 12px; font-weight: 500; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
 .trm-chev { font-size: 16px; line-height: 1; }
 .trm-breakup-hd { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #fafbfd; border-bottom: 1px solid #e2e8f0; }
