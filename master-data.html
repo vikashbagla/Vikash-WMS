@@ -599,12 +599,20 @@
                                 <select id="investorBookParent"></select>
                             </div>
                         </div>
-                        <div class="form-row" id="investorPostFnoWrap" style="display:none;">
+                        <div class="form-row">
                             <div class="form-group">
-                                <label><input type="checkbox" id="investorPostFno" checked style="width:auto;margin-right:6px;vertical-align:middle;"> Post F&amp;O trades to this book's P&amp;L</label>
+                                <label>STT Treatment</label>
+                                <select id="investorSttMethod">
+                                    <option value="cost">Add STT to cost</option>
+                                    <option value="expense">STT as separate expense</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="investorPostFnoWrap" style="display:none;">
+                                <label>F&amp;O Posting</label>
+                                <label style="font-weight:normal;"><input type="checkbox" id="investorPostFno" checked style="width:auto;margin-right:6px;vertical-align:middle;"> Post F&amp;O trades to this book's P&amp;L</label>
                             </div>
                         </div>
-                        <p style="font-size:10px;color:#888;margin:2px 0 0 0;">"Own books" = maintains its own accounting books. "Client" = activity posts into the parent's book (the parent must have own books).</p>
+                        <p style="font-size:10px;color:#888;margin:2px 0 0 0;">STT treatment: "Add to cost" capitalises STT into the investment cost; "Separate expense" books it on its own. "Own books" = maintains its own accounting books; "Client" = activity posts into the parent's book (the parent must have own books).</p>
                     </div>
 
                     <div class="form-section">

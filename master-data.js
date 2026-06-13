@@ -415,6 +415,7 @@ async function openAddInvestorModal() {
     document.getElementById('investorBookMode').value = 'none';
     mdPopulateBookParents(null);
     document.getElementById('investorPostFno').checked = true;
+    document.getElementById('investorSttMethod').value = 'cost';
     mdOnBookModeChange();
     document.getElementById('investorModal').classList.add('show');
 }
@@ -448,6 +449,7 @@ async function editInvestor(id) {
     mdPopulateBookParents(investor.id);
     document.getElementById('investorBookParent').value = investor.book_parent_id || '';
     document.getElementById('investorPostFno').checked = investor.post_fno !== false;
+    document.getElementById('investorSttMethod').value = investor.stt_accounting_method ? 'expense' : 'cost';
     mdOnBookModeChange();
 
     const accounts = await DB.getBrokerAccounts(id);
@@ -741,7 +743,8 @@ async function saveInvestor() {
         // Accounting (book) role — see WMS_Accounting_Module_Plan.md §3.0
         accounting_enabled: invBookMode === 'own',
         book_parent_id: invBookMode === 'client' ? invBookParent : null,
-        post_fno: invBookMode === 'own' ? invPostFno : true
+        post_fno: invBookMode === 'own' ? invPostFno : true,
+        stt_accounting_method: document.getElementById('investorSttMethod').value === 'expense'
     };
 
     if (!data.name) {
