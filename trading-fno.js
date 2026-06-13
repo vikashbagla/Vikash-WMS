@@ -718,6 +718,15 @@ function trFnoCgParties(cg) {
     return { inv: Object.keys(invs).join(', ') || '-', brk: Object.keys(brks).join(', ') || '-' };
 }
 
+// CMP (₹) + day% for a contract group (CMP from open leg, day% from live cache).
+function trFnoCgCmpDay(cg) {
+    var openRow = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
+    if (!openRow) return '-';
+    var chp = null;
+    if (cg.fullSymbol) { var fc = wmsLivePrices[cg.fullSymbol.replace(/^[A-Z]+:/, '')]; if (fc && fc.chp !== undefined && fc.chp !== null) chp = fc.chp; }
+    return trFmtRupee(openRow.cmp) + (chp != null ? ' <span class="' + getAmountClass(chp) + '">' + formatPercent(chp) + '</span>' : '');
+}
+
 function trFnoRenderMobile(positions) {
     var box = document.getElementById('tr-fno-cards');
     if (!box) return;
@@ -750,30 +759,33 @@ function trFnoRenderMobile(positions) {
         var symOpen = !!trFnoExpandedSymbols[p.underlying];
         var net = p.totalRealisedPnl + p.totalUnrealisedPnl;
 
-        // Collapsed row: Qty · Cost on line 2; CMP sits immediately left of the
-        // P&L amount on line 1. Values from the representative open contract
-        // (prefer the open futures leg). Ticker / expiry / exposure → expanded detail.
+        // 3-zone line 2 (mirrors Portfolio): Qty@Avg (left) · CMP day% (middle) ·
+        // net P&L% of exposure (right). Values from the representative open
+        // contract (prefer the open futures leg). Ticker/expiry → expanded detail.
+        var exposure = p.totalOpenCost;
         var repCg = (p.contractGroups || []).filter(function(cg) { return cg.isFuture && cg.openQty; })[0]
                  || (p.contractGroups || []).filter(function(cg) { return cg.openQty; })[0];
-        var leftInfo, cmpBadge = '';
+        var qtyAvg, cmpDay;
         if (repCg) {
             var rCost = (repCg.openQty && repCg.openCost) ? trFmtRupee(repCg.openCost / repCg.openQty) : '-';
-            var rOpenRow = (repCg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
-            if (rOpenRow) cmpBadge = '<span class="trm-grp-cmp">' + trFmtRupee(rOpenRow.cmp) + '</span>';
-            leftInfo = formatQuantity(repCg.openQty) + ' &middot; ' + rCost;
+            qtyAvg = formatQuantity(repCg.openQty) + ' <span class="trm-at">@</span> ' + rCost;
+            cmpDay = trFnoCgCmpDay(repCg);
         } else {
-            leftInfo = '<span style="color:#a0aec0;">Closed</span>';
+            qtyAvg = '<span style="color:#a0aec0;">Closed</span>';
+            cmpDay = '-';
         }
+        var netPct = (exposure > 0) ? '<span class="' + getAmountClass(net) + '">' + formatPercent((net / exposure) * 100) + '</span>' : '-';
 
         var grp =
             '<div class="trm-grp" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
                 '<div class="trm-grp-l1">' +
                     '<span class="trm-grp-name"><span class="trm-grp-chev">' + (symOpen ? '&#9662;' : '&#9656;') + '</span><span class="trm-grp-txt">' + wmsEsc(p.companyName || p.underlying) + '</span></span>' +
-                    '<span class="trm-grp-r">' + cmpBadge + '<span class="trm-pl-main ' + getAmountClass(net) + '">' + formatAmount(net) + '</span></span>' +
+                    '<span class="trm-pl-main ' + getAmountClass(net) + '">' + formatAmount(net) + '</span>' +
                 '</div>' +
-                '<div class="trm-grp-l2">' +
-                    '<span>' + leftInfo + '</span>' +
-                    '<span class="trm-r">Day <span class="' + getAmountClass(p.totalDayPnl || 0) + '">' + formatAmount(p.totalDayPnl || 0) + '</span></span>' +
+                '<div class="trm-grp-l2 trm-l2-3">' +
+                    '<span class="trm-zl">' + qtyAvg + '</span>' +
+                    '<span class="trm-zm">' + cmpDay + '</span>' +
+                    '<span class="trm-zr">' + netPct + '</span>' +
                 '</div>' +
             '</div>';
 
@@ -785,6 +797,9 @@ function trFnoRenderMobile(positions) {
                 var cReal = cg.totalPnl || 0, cUnreal = cg.unrealisedPnl || 0, cNet = cReal + cUnreal, cDay = cg.dayPnl || 0, cExp = cg.openCost || 0;
                 var shortTag = cg.isShort ? ' <span style="color:#dc2626;font-size:10px;">(S)</span>' : '';
                 var avg = (cg.openQty && cExp) ? trFmtRupee(cExp / cg.openQty) : '-';
+                var cQtyAvg = formatQuantity(cg.openQty) + ' <span class="trm-at">@</span> ' + avg;
+                var cCmpDay = trFnoCgCmpDay(cg);
+                var cNetPct = (cExp > 0) ? '<span class="' + getAmountClass(cNet) + '">' + formatPercent((cNet / cExp) * 100) + '</span>' : '-';
 
                 var row =
                     '<div class="trm-row trm-sub' + (cOpen ? ' trm-open' : '') + '" data-fno-ckey="' + wmsEsc(key) + '">' +
@@ -792,9 +807,10 @@ function trFnoRenderMobile(positions) {
                             '<span class="trm-sym">' + wmsEsc(cg.contractLabel) + shortTag + '</span>' +
                             '<span class="trm-pl-main ' + getAmountClass(cNet) + '">' + formatAmount(cNet) + '</span>' +
                         '</div>' +
-                        '<div class="trm-l2">' +
-                            '<span>' + formatQuantity(cg.openQty) + ' &middot; ' + avg + '</span>' +
-                            '<span class="trm-r">' + formatAmount(cExp) + ' &middot; Day <span class="' + getAmountClass(cDay) + '">' + formatAmount(cDay) + '</span></span>' +
+                        '<div class="trm-l2 trm-l2-3">' +
+                            '<span class="trm-zl">' + cQtyAvg + '</span>' +
+                            '<span class="trm-zm">' + cCmpDay + '</span>' +
+                            '<span class="trm-zr">' + cNetPct + '</span>' +
                         '</div>' +
                     '</div>';
 

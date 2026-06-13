@@ -1767,17 +1767,25 @@ function trRenderPortfolioBreakup(box, h, totalInvested, totalValue) {
             var tagsHtml = (g.tags && g.tags.length > 0)
                 ? '<div class="trm-tags">' + g.tags.map(function(t) { return '<span class="tag-pill">' + wmsEsc(t) + '</span>'; }).join('') + '</div>'
                 : '';
-            var dayDetail = g.dayPL !== null
-                ? '<span class="trm-d-v ' + getAmountClass(g.dayPL) + '">' + formatAmount(g.dayPL) + ' ' + formatPercent(g.dayChp) + '</span>'
-                : '<span class="trm-d-v">-</span>';
+            var gBrks = {};
+            (g.txns || []).forEach(function(t) { var bc = trBrkCode(t.broker_id); if (bc) gBrks[bc] = 1; });
+            var gBrkStr = Object.keys(gBrks).join(', ') || '-';
+            var bCmpDay = trFmtRupee(vm.price) + dayPctHtml;
+            var bTotPlV = '<span class="' + getAmountClass(g.pl) + '">' + formatAmount(g.pl) + ' ' + formatPercent(g.plPct) + '</span>';
+            var bDayPlV = (g.dayPL !== null)
+                ? '<span class="' + getAmountClass(g.dayPL) + '">' + formatAmount(g.dayPL) + ' ' + formatPercent(g.dayChp) + '</span>'
+                : '-';
             detail =
                 '<div class="trm-detail">' +
                     '<div class="trm-detail-grid">' +
-                        '<div class="trm-d-item"><span class="trm-d-k">Avg cost</span><span class="trm-d-v">' + trFmtRupee(g.avgCost) + '</span></div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">CMP</span><span class="trm-d-v">' + trFmtRupee(vm.price) + '</span></div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">Invested</span><span class="trm-d-v">' + formatAmount(g.invested) + '</span></div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">Day\'s P&L</span>' + dayDetail + '</div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">% of stock</span><span class="trm-d-v">' + pctOfStock.toFixed(1) + '%</span></div>' +
+                        trDi('Qty &amp; Avg', qtyStr + ' @ ' + trFmtRupee(g.avgCost)) +
+                        trDi('CMP &amp; day%', bCmpDay) +
+                        trDi('Invested', formatAmount(g.invested)) +
+                        trDi('Cur. value', formatAmount(g.value)) +
+                        trDi('% of stock', pctOfStock.toFixed(1) + '%') +
+                        trDi('Total P&L', bTotPlV) +
+                        trDi('Broker', wmsEsc(gBrkStr)) +
+                        trDi("Day's P&L", bDayPlV) +
                     '</div>' + tagsHtml +
                 '</div>';
         }
