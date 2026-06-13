@@ -716,6 +716,12 @@ function trFnoCgParties(cg) {
     return { inv: Object.keys(invs).join(', ') || '-', brk: Object.keys(brks).join(', ') || '-' };
 }
 
+// CMP (₹) only for a contract group (from the open leg).
+function trFnoCgCmp(cg) {
+    var o = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
+    return o ? trFmtRupee(o.cmp) : '-';
+}
+
 // CMP (₹) + day% for a contract group (CMP from open leg, day% from live cache).
 function trFnoCgCmpDay(cg) {
     var openRow = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
@@ -781,27 +787,30 @@ function trFnoRenderMobile(positions) {
         var exposure = p.totalOpenCost;
         var repCg = (p.contractGroups || []).filter(function(cg) { return cg.isFuture && cg.openQty; })[0]
                  || (p.contractGroups || []).filter(function(cg) { return cg.openQty; })[0];
-        var qtyAvg, cmpDay;
+        // Symbol-level Qty/Avg = TOTAL across all open contracts (the per-contract
+        // breakup is shown when expanded). CMP from the representative contract.
+        var totQty = 0, totCost = 0;
+        (p.contractGroups || []).forEach(function(cg) { if (cg.openQty) { totQty += cg.openQty; totCost += (cg.openCost || 0); } });
+        var aL2;
         if (repCg) {
-            var rCost = (repCg.openQty && repCg.openCost) ? trFmtRupee(repCg.openCost / repCg.openQty) : '-';
-            qtyAvg = formatQuantity(repCg.openQty) + ' <span class="trm-at">@</span> ' + rCost;
-            cmpDay = trFnoCgCmpDay(repCg);
+            var symAvg = totQty ? trFmtRupee(totCost / totQty) : '-';
+            aL2 = formatQuantity(totQty) + ' <span class="trm-at">@</span> ' + symAvg + ' &middot; ' + trFnoCgCmp(repCg);
         } else {
-            qtyAvg = '<span style="color:#a0aec0;">Closed</span>';
-            cmpDay = '-';
+            aL2 = '<span style="color:#a0aec0;">Closed</span>';
         }
-        var netPct = (exposure > 0) ? '<span class="' + getAmountClass(net) + '">' + formatPercent((net / exposure) * 100) + '</span>' : '-';
+        var dPnl = p.totalDayPnl || 0;
+        var dPctS = (exposure > 0 && dPnl !== 0) ? formatPercent((dPnl / exposure) * 100) : '';
+        var nPctS = (exposure > 0 && net !== 0) ? formatPercent((net / exposure) * 100) : '';
 
         var grp =
             '<div class="trm-grp" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
-                '<div class="trm-grp-l1">' +
-                    '<span class="trm-grp-name"><span class="trm-grp-chev">' + (symOpen ? '&#9662;' : '&#9656;') + '</span><span class="trm-grp-txt">' + wmsEsc(p.companyName || p.underlying) + '</span></span>' +
-                    '<span class="trm-pl-main ' + getAmountClass(net) + '">' + formatAmount(net) + '</span>' +
-                '</div>' +
-                '<div class="trm-grp-l2 trm-l2-3">' +
-                    '<span class="trm-zl">' + qtyAvg + '</span>' +
-                    '<span class="trm-zm">' + cmpDay + '</span>' +
-                    '<span class="trm-zr">' + netPct + '</span>' +
+                '<div class="fc3">' +
+                    '<div class="fc-a">' +
+                        '<div class="fc-a-l1"><span class="trm-grp-chev">' + (symOpen ? '&#9662;' : '&#9656;') + '</span><span class="fc-a-txt">' + wmsEsc(p.companyName || p.underlying) + '</span></div>' +
+                        '<div class="fc-a-l2">' + aL2 + '</div>' +
+                    '</div>' +
+                    '<div class="fc-b"><div class="fc-amt ' + getAmountClass(dPnl) + '">' + formatAmount(dPnl) + '</div><div class="fc-pct ' + getAmountClass(dPnl) + '">' + dPctS + '</div></div>' +
+                    '<div class="fc-c"><div class="fc-amt ' + getAmountClass(net) + '">' + formatAmount(net) + '</div><div class="fc-pct ' + getAmountClass(net) + '">' + nPctS + '</div></div>' +
                 '</div>' +
             '</div>';
 
@@ -813,20 +822,19 @@ function trFnoRenderMobile(positions) {
                 var cReal = cg.totalPnl || 0, cUnreal = cg.unrealisedPnl || 0, cNet = cReal + cUnreal, cDay = cg.dayPnl || 0, cExp = cg.openCost || 0;
                 var shortTag = cg.isShort ? ' <span style="color:#dc2626;font-size:10px;">(S)</span>' : '';
                 var avg = (cg.openQty && cExp) ? trFmtRupee(cExp / cg.openQty) : '-';
-                var cQtyAvg = formatQuantity(cg.openQty) + ' <span class="trm-at">@</span> ' + avg;
-                var cCmpDay = trFnoCgCmpDay(cg);
-                var cNetPct = (cExp > 0) ? '<span class="' + getAmountClass(cNet) + '">' + formatPercent((cNet / cExp) * 100) + '</span>' : '-';
+                var caL2 = formatQuantity(cg.openQty) + ' <span class="trm-at">@</span> ' + avg + ' &middot; ' + trFnoCgCmp(cg);
+                var cDPctS = (cExp > 0 && cDay !== 0) ? formatPercent((cDay / cExp) * 100) : '';
+                var cNPctS = (cExp > 0 && cNet !== 0) ? formatPercent((cNet / cExp) * 100) : '';
 
                 var row =
                     '<div class="trm-row trm-sub' + (cOpen ? ' trm-open' : '') + '" data-fno-ckey="' + wmsEsc(key) + '">' +
-                        '<div class="trm-l1">' +
-                            '<span class="trm-sym">' + wmsEsc(cg.contractLabel) + shortTag + '</span>' +
-                            '<span class="trm-pl-main ' + getAmountClass(cNet) + '">' + formatAmount(cNet) + '</span>' +
-                        '</div>' +
-                        '<div class="trm-l2 trm-l2-3">' +
-                            '<span class="trm-zl">' + cQtyAvg + '</span>' +
-                            '<span class="trm-zm">' + cCmpDay + '</span>' +
-                            '<span class="trm-zr">' + cNetPct + '</span>' +
+                        '<div class="fc3">' +
+                            '<div class="fc-a">' +
+                                '<div class="fc-a-l1"><span class="fc-a-txt">' + wmsEsc(cg.contractLabel) + shortTag + '</span></div>' +
+                                '<div class="fc-a-l2">' + caL2 + '</div>' +
+                            '</div>' +
+                            '<div class="fc-b"><div class="fc-amt ' + getAmountClass(cDay) + '">' + formatAmount(cDay) + '</div><div class="fc-pct ' + getAmountClass(cDay) + '">' + cDPctS + '</div></div>' +
+                            '<div class="fc-c"><div class="fc-amt ' + getAmountClass(cNet) + '">' + formatAmount(cNet) + '</div><div class="fc-pct ' + getAmountClass(cNet) + '">' + cNPctS + '</div></div>' +
                         '</div>' +
                     '</div>';
 
@@ -857,7 +865,8 @@ function trFnoRenderMobile(positions) {
         return grp + contracts;
     }).join('');
 
-    box.innerHTML = summary + body;
+    var fnoHdr = '<div class="trm-fno-hd"><div class="fc-a"></div><div class="fc-b">Day\'s P&L</div><div class="fc-c">Total P&L</div></div>';
+    box.innerHTML = summary + fnoHdr + body;
 
     box.querySelectorAll('.trm-grp[data-fno-symbol]').forEach(function(el) {
         el.addEventListener('click', function() {
