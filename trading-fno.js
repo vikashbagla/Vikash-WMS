@@ -795,17 +795,20 @@ function trFnoRenderMobile(positions) {
                  || (p.contractGroups || []).filter(function(cg) { return cg.openQty; })[0];
         // Symbol-level Qty/Avg = TOTAL across all open contracts (the per-contract
         // breakup is shown when expanded). CMP from the representative contract.
-        // Signed total qty across open contracts (short = negative); avg on |qty|.
-        var totQty = 0, totCost = 0;
+        // Net (signed) qty for direction display; avg weighted on GROSS qty so a
+        // long+short spread doesn't inflate the avg (cost ÷ net would over-state it).
+        var totNetQty = 0, totGrossQty = 0, totCost = 0;
         (p.contractGroups || []).forEach(function(cg) {
             if (!cg.openQty) return;
-            totQty += cg.isShort ? -Math.abs(cg.openQty) : Math.abs(cg.openQty);
+            var q = Math.abs(cg.openQty);
+            totNetQty += cg.isShort ? -q : q;
+            totGrossQty += q;
             totCost += (cg.openCost || 0);
         });
         var aL2;
         if (repCg) {
-            var symAvg = totQty ? trFmtRupee(totCost / Math.abs(totQty)) : '-';
-            aL2 = trFnoQty(totQty) + ' <span class="trm-at">@</span> ' + symAvg + ' &middot; ' + trFnoCgCmpDay(repCg);
+            var symAvg = totGrossQty ? trFmtRupee(totCost / totGrossQty) : '-';
+            aL2 = trFnoQty(totNetQty) + ' <span class="trm-at">@</span> ' + symAvg + ' &middot; ' + trFnoCgCmpDay(repCg);
         } else {
             aL2 = '<span style="color:#a0aec0;">Closed</span>';
         }
