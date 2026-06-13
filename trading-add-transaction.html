@@ -633,16 +633,21 @@
 
 /* ===== PHONE: full-screen sheet + table reflowed into stacked trade cards ===== */
 @media (max-width: 480px) {
-    .addTxn-overlay { align-items: stretch; justify-content: stretch; }
-    .addTxn-modal { width: 100%; max-width: 100%; height: 100%; max-height: 100%; border-radius: 0; }
-    .addTxn-body { padding: 10px 12px; }
+    /* Hard horizontal clip so NOTHING can push the page wider than the phone
+       (was zooming the whole page out — "half off screen"). */
+    .addTxn-overlay { align-items: stretch; justify-content: stretch; overflow: hidden; -webkit-text-size-adjust: 100%; }
+    .addTxn-modal { width: 100vw; max-width: 100vw; height: 100%; max-height: 100%; border-radius: 0; overflow-x: hidden; box-sizing: border-box; }
+    .addTxn-body { padding: 10px 12px; overflow-x: hidden; max-width: 100%; box-sizing: border-box; }
+    .addTxn-modal *, .addTxn-modal *::before { box-sizing: border-box; }
+    .addTxn-modal input, .addTxn-modal select, .addTxn-modal .atDate-wrap { max-width: 100%; }
 
     /* Date + account stack full width */
-    .addTxn-fields-row { flex-direction: column; align-items: stretch; gap: 10px; }
-    .addTxn-fields-row .addTxn-field[style*="width: 140px"] { width: 100% !important; }
+    .addTxn-fields-row { flex-direction: column; align-items: stretch; gap: 10px; width: 100%; }
+    .addTxn-fields-row .addTxn-field { width: 100% !important; max-width: 100%; }
+    #addTxnInvBrkInput { width: 100%; box-sizing: border-box; }
 
     /* table → cards */
-    .addTxn-table-wrap { overflow: visible; }
+    .addTxn-table-wrap { overflow: visible; min-height: 0; border: none; max-width: 100%; }
     .addTxn-table, .addTxn-table tbody, .addTxn-table tr, .addTxn-table td { display: block; width: 100%; }
     .addTxn-table thead { display: none; }
     .addTxn-table tr {
