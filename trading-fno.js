@@ -795,20 +795,18 @@ function trFnoRenderMobile(positions) {
                  || (p.contractGroups || []).filter(function(cg) { return cg.openQty; })[0];
         // Symbol-level Qty/Avg = TOTAL across all open contracts (the per-contract
         // breakup is shown when expanded). CMP from the representative contract.
-        // Net (signed) qty for direction display; avg weighted on GROSS qty so a
-        // long+short spread doesn't inflate the avg (cost ÷ net would over-state it).
-        var totNetQty = 0, totGrossQty = 0, totCost = 0;
-        (p.contractGroups || []).forEach(function(cg) {
-            if (!cg.openQty) return;
-            var q = Math.abs(cg.openQty);
-            totNetQty += cg.isShort ? -q : q;
-            totGrossQty += q;
-            totCost += (cg.openCost || 0);
-        });
+        // Symbol Qty/Avg = FUTURES ONLY (options do not change a future's qty or
+        // avg — see trFnoCalcPositions "options distort qty"). Short = negative.
+        // CMP from the representative (futures-preferred) contract. Options-only
+        // symbols fall back to their representative option contract.
         var aL2;
-        if (repCg) {
-            var symAvg = totGrossQty ? trFmtRupee(totCost / totGrossQty) : '-';
-            aL2 = trFnoQty(totNetQty) + ' <span class="trm-at">@</span> ' + symAvg + ' &middot; ' + trFnoCgCmpDay(repCg);
+        if (p.futOpenQty > 0) {
+            var sQ = p.futIsShort ? -p.futOpenQty : p.futOpenQty;
+            aL2 = trFnoQty(sQ) + ' <span class="trm-at">@</span> ' + trFmtRupee(p.futAvgCost) + ' &middot; ' + (repCg ? trFnoCgCmpDay(repCg) : '-');
+        } else if (repCg) {
+            var oQ = repCg.isShort ? -Math.abs(repCg.openQty) : Math.abs(repCg.openQty);
+            var oAvg = (repCg.openQty && repCg.openCost) ? trFmtRupee(repCg.openCost / Math.abs(repCg.openQty)) : '-';
+            aL2 = trFnoQty(oQ) + ' <span class="trm-at">@</span> ' + oAvg + ' &middot; ' + trFnoCgCmpDay(repCg);
         } else {
             aL2 = '<span style="color:#a0aec0;">Closed</span>';
         }
