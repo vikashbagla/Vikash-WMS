@@ -80,16 +80,41 @@ FROM auto_runs;
 
 GRANT SELECT ON v_analyst_runs TO anon;
 
--- ─── View 4: v_auto_open_trades ──────────────────────────────────────────────
--- Filtered to analyst strategies. v_auto_open_trades is itself a view
--- aggregating from auto_signals; security_invoker=false here bypasses the
--- anon RLS denial on the auto_signals chain.
+-- ─── View 4: open trades — INLINED from v_auto_open_trades ──────────────────
+-- We don't chain through v_auto_open_trades because that view doesn't have
+-- security_invoker=false, so chaining drops back into RLS-enforced context
+-- and the anon caller gets []. Inlining the aggregation here keeps everything
+-- inside our own security_invoker=false view that runs as postgres owner →
+-- bypasses RLS on auto_signals → returns data correctly.
+--
+-- Same algorithm as v_auto_open_trades (migration 40):
+--   1. Per-signal-leg net qty signed by side (BUY positive, SELL negative)
+--   2. Aggregate per (trade_id × symbol)
+--   3. Keep trades where at least one symbol has non-zero net qty
 
 CREATE OR REPLACE VIEW v_analyst_open_trades
 WITH (security_invoker = false) AS
-SELECT *
-FROM v_auto_open_trades
-WHERE strategy_name IN ('silver_mini_15m', 'gold_mini_15m', 'pairs');
+WITH leg_flow AS (
+    SELECT s.trade_id,
+           s.strategy_name,
+           leg->>'symbol'        AS symbol,
+           leg->>'short_symbol'  AS short_symbol,
+           SUM(CASE WHEN leg->>'side' = 'BUY'
+                    THEN (leg->>'qty')::numeric
+                    ELSE -(leg->>'qty')::numeric
+               END) AS net_qty
+    FROM auto_signals s,
+         jsonb_array_elements(s.legs) AS leg
+    WHERE s.strategy_name IN ('silver_mini_15m', 'gold_mini_15m', 'pairs')
+      AND s.execution_mode = 'PAPER'
+    GROUP BY s.trade_id, s.strategy_name, leg->>'symbol', leg->>'short_symbol'
+)
+SELECT trade_id,
+       strategy_name,
+       jsonb_object_agg(symbol, net_qty) AS net_position
+FROM leg_flow
+GROUP BY trade_id, strategy_name
+HAVING NOT bool_and(net_qty = 0);
 
 GRANT SELECT ON v_analyst_open_trades TO anon;
 
