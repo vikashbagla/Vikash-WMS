@@ -103,15 +103,9 @@ function trFnoInit() {
 
     // ---- View bar event handlers ----
 
-    // More dropdown toggle
-    var fnoMoreBtn = document.getElementById('tr-fno-more-btn');
-    if (fnoMoreBtn) {
-        fnoMoreBtn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var dd = document.getElementById('tr-fno-more-dropdown');
-            dd.style.display = (dd.style.display === 'none') ? 'block' : 'none';
-        });
-    }
+    // More dropdown toggle — wired via trFnoWireMore() (element-guarded; also
+    // re-called from trFnoRenderMobile so the live button is always wired).
+    trFnoWireMore();
 
     // Update View button
     var fnoUpdateBtn = document.getElementById('tr-fno-update-view-btn');
@@ -175,13 +169,17 @@ function trFnoInit() {
         });
     }
 
-    // Close More dropdown on outside click
-    document.addEventListener('click', function(e) {
-        if (!e.target.closest('#tr-fno-more-btn') && !e.target.closest('#tr-fno-more-dropdown')) {
-            var mdd = document.getElementById('tr-fno-more-dropdown');
-            if (mdd) mdd.style.display = 'none';
-        }
-    });
+    // Close More dropdown on outside click — wired ONCE globally (document
+    // persists across module reloads, so guard against stacking duplicates).
+    if (!window._trFnoMoreOutsideWired) {
+        window._trFnoMoreOutsideWired = true;
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('#tr-fno-more-btn') && !e.target.closest('#tr-fno-more-dropdown')) {
+                var mdd = document.getElementById('tr-fno-more-dropdown');
+                if (mdd) mdd.style.display = 'none';
+            }
+        });
+    }
 
     // Load saved views from DB
     trFnoVM.loadViews();
@@ -727,10 +725,28 @@ function trFnoCgCmpDay(cg) {
     return trFmtRupee(openRow.cmp) + (chp != null ? ' <span class="' + getAmountClass(chp) + '">' + formatPercent(chp) + '</span>' : '');
 }
 
+// Wire the ▾More dropdown toggle on the (live) F&O view-tabs button. Element-
+// guarded via dataset so repeated calls never stack listeners; repositions to
+// the viewport synchronously on open (phone) so it can't be clipped or raced
+// by F&O's frequent live-price re-renders.
+function trFnoWireMore() {
+    var btn = document.getElementById('tr-fno-more-btn');
+    if (!btn || btn.dataset.moreWired) return;
+    btn.dataset.moreWired = '1';
+    btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var dd = document.getElementById('tr-fno-more-dropdown');
+        if (!dd) return;
+        var willOpen = (dd.style.display === 'none' || dd.style.display === '');
+        dd.style.display = willOpen ? 'block' : 'none';
+        if (willOpen && typeof trReposDropdownMobile === 'function') trReposDropdownMobile(dd, btn);
+    });
+}
+
 function trFnoRenderMobile(positions) {
     var box = document.getElementById('tr-fno-cards');
     if (!box) return;
-    if (typeof trWireMoreRepos === 'function') trWireMoreRepos();
+    trFnoWireMore();
     if (!positions || positions.length === 0) {
         box.innerHTML = '<div class="trm-empty">No F&O positions found</div>';
         return;

@@ -1618,7 +1618,8 @@ function trReposDropdownMobile(dd, btn) {
 // Re-anchor the ▾More dropdowns (Portfolio + F&O) after the view manager toggles
 // them. Wired once per DOM lifetime via dataset guard.
 function trWireMoreRepos() {
-    [['tr-more-btn', 'tr-more-dropdown'], ['tr-fno-more-btn', 'tr-fno-more-dropdown']].forEach(function(pair) {
+    // F&O handles its own More toggle+repos in trFnoWireMore(); only Portfolio here.
+    [['tr-more-btn', 'tr-more-dropdown']].forEach(function(pair) {
         var btn = document.getElementById(pair[0]);
         if (!btn || btn.dataset.reposWired) return;
         btn.dataset.reposWired = '1';
