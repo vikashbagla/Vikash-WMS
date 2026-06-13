@@ -644,6 +644,9 @@
        can't shrink it → table stayed ~940px wide → page zoomed out. min-width:0
        lets everything collapse to the viewport. */
     .addTxn-modal input, .addTxn-modal select, .addTxn-modal .atDate-wrap { max-width: 100%; min-width: 0; }
+    /* Search-result dropdowns default to min-width:380px — clamp so they can't
+       overflow the ~360px content width when results appear. */
+    .addTxn-search-dd, .addTxn-sym-dd, .addTxn-tag-dd { min-width: 0; max-width: 100%; left: 0; right: 0; }
 
     /* Date + account stack full width */
     .addTxn-fields-row { flex-direction: column; align-items: stretch; gap: 10px; width: 100%; }
