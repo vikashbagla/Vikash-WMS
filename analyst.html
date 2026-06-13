@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>WMS Automation — Analyst View</title>
+
+<!-- ============================================================================
+     analyst.html — public read-only view of the Automated Trading module.
+     ============================================================================
+
+     Architecture (see migration 44 + WMS-CONTEXT.md):
+
+     1. NO login. No Google OAuth gate. Anyone with this URL can read.
+     2. window.__WMS_ANALYST_MODE = true is set BEFORE any script loads.
+     3. A fetch interceptor (defined in the inline <script> below) rewrites
+        every /rest/v1/<base_table> URL to /rest/v1/v_analyst_<base_table>,
+        so automation.js queries the analyst views (defined in migration 44)
+        without any code change to automation.js itself.
+     4. The views are SECURITY INVOKER=false → run as creator → bypass anon
+        RLS denial on the underlying tables.
+     5. Sensitive fields (recipients, email_recipients, broker_tokens) are
+        BLANKED in the views (not omitted) so automation.js's queries that
+        explicitly request those columns still work — they just see empty data.
+     6. Write attempts (POST/PATCH/DELETE on views, or Edge Function calls
+        like fyers-market-data) fail naturally — views aren't updatable
+        without rules; Edge Functions still check Vikash's email. The page
+        renders fine; clicking write actions just shows an error toast.
+     7. The Admin tab is shown — nothing on it leaks owner data through the
+        views (it just won't be able to trigger anything via Edge Functions).
+
+     URL: https://vikashbagla.github.io/Vikash-WMS/analyst.html (prod)
+          https://vikash-wms.pages.dev/analyst.html (dev)
+
+     ============================================================================ -->
+
+<!-- Supabase JS SDK (some wms-shared.js code paths use it; safe to include) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+/* Minimal page shell — analyst.html is standalone, not loaded inside app.html.
+   We don't pull in app-styles.css because it assumes the full app frame
+   (top nav, login state, bottom nav, etc.). Just need a thin header + the
+   automation content area. */
+
+* { box-sizing: border-box; }
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100dvh;            /* dvh per WMS-LESSONS D.15 */
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    color: #2d3748;
+    background: #f5f7fa;
+    line-height: 1.4;
+}
+.analyst-header {
+    flex-shrink: 0;
+    background: linear-gradient(90deg, #2d3748, #4a5568);
+    color: #fff;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.analyst-header h1 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+.analyst-header .analyst-badge {
+    background: rgba(255,255,255,0.18);
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+}
+.analyst-shell {
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+}
+.analyst-content {
+    flex: 1;
+    overflow: hidden;
+    background: #fff;
+    margin: 8px 14px;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+}
+.analyst-loading {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #718096;
+    font-size: 13px;
+}
+.analyst-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid #e2e8f0;
+    border-top-color: #667eea;
+    border-radius: 50%;
+    animation: analystSpin 0.8s linear infinite;
+    margin-right: 10px;
+}
+@keyframes analystSpin { to { transform: rotate(360deg); } }
+
+/* automation.html's body content uses .automation-container as the top-level
+   wrapper; that's expected to fill its parent. .analyst-content is the parent. */
+</style>
+
+<!-- ============================================================================
+     SETUP: global config + analyst-mode flag + fetch interceptor.
+     MUST run BEFORE wms-shared.js or automation.js are loaded.
+     ============================================================================ -->
+<script>
+    // Supabase project endpoints (same prod project as the main app — RLS does
+    // the security work; views show only what the analyst is allowed to see).
+    window.SUPABASE_URL      = 'https://lynvrwteylgpwlwbslse.supabase.co';
+    window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
+
+    // Analyst mode flag — automation.js can read this if it wants to skip
+    // user-specific UI affordances. Currently unused (we don't hide anything),
+    // but kept available so we can gate things later without touching the
+    // fetch interceptor.
+    window.__WMS_ANALYST_MODE = true;
+
+    // ─── Fetch interceptor — rewrite base-table URLs to analyst views ─────────
+    //
+    // Catches every fetch() call. If the URL contains /rest/v1/<base_table>
+    // where <base_table> is one of the auto-trading tables Vikash's owner_all
+    // RLS denies to anon, we swap it for the matching v_analyst_<x> view name.
+    //
+    // ASSUMPTIONS:
+    //   - automation.js builds URLs like SUPABASE_URL + '/rest/v1/auto_signals?...'
+    //   - The table name is always immediately after /rest/v1/ and followed by
+    //     either '?' (query string), '#' (fragment), end of string, or '/'
+    //     (PostgREST RPC-style paths).
+    //
+    // NOT REWRITTEN:
+    //   - /functions/v1/<edge-function>  → analyst Edge calls still hit the
+    //     real function (which will then 401 because the analyst's anon JWT
+    //     doesn't have Vikash's email). That's the intended fail-closed.
+    //   - Any /rest/v1/<other_table>  → already gated by base table's RLS,
+    //     anon gets empty results.
+
+    var ANALYST_TABLE_MAP = {
+        'auto_signals'        : 'v_analyst_signals',
+        'auto_strategies'     : 'v_analyst_strategies',
+        'auto_runs'           : 'v_analyst_runs',
+        'v_auto_open_trades'  : 'v_analyst_open_trades',
+        'market_prices'       : 'v_analyst_market_prices',
+        'securities_db'       : 'v_analyst_securities_lookup',
+        'securities_nfo'      : 'v_analyst_securities_nfo_lookup',
+    };
+
+    var _origFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+        try {
+            var url = (typeof input === 'string') ? input : (input && input.url) || '';
+            if (url.indexOf('/rest/v1/') !== -1) {
+                url = url.replace(/\/rest\/v1\/([a-zA-Z_][a-zA-Z0-9_]*)/, function (match, tableName) {
+                    var mapped = ANALYST_TABLE_MAP[tableName] || tableName;
+                    return '/rest/v1/' + mapped;
+                });
+                if (typeof input === 'string') {
+                    input = url;
+                } else if (input && input.url) {
+                    // Request object — must recreate to change URL
+                    input = new Request(url, input);
+                }
+            }
+        } catch (_e) {
+            // never break fetch on a routing error
+        }
+        return _origFetch(input, init);
+    };
+
+    // ─── Stub Fyers call (no LTP for analyst — they have no Fyers session) ────
+    // automation.js calls window.fyersCall() to fetch LTP for live P&L.
+    // The actual fyers-market-data Edge Function requires Vikash's JWT, so
+    // it would 401 for the analyst. Stub to return empty so the dashboard
+    // doesn't show error toasts and just renders open trades without LTP.
+    window.fyersCall = async function () {
+        return { s: 'no_session', d: [] };
+    };
+</script>
+
+</head>
+<body>
+
+<div class="analyst-shell">
+    <div class="analyst-header">
+        <h1>WMS Automation — Analyst View</h1>
+        <span class="analyst-badge">READ-ONLY</span>
+    </div>
+
+    <div id="analyst-content" class="analyst-content">
+        <div class="analyst-loading">
+            <div class="analyst-spinner"></div>
+            <span>Loading automation dashboard…</span>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ─── Bootstrap: fetch automation.html + inject styles + load automation.js ──
+
+    (async function bootstrapAnalyst() {
+        try {
+            // 1. Pull the same module fragment that app.html injects for Vikash
+            var cb = '?t=' + Date.now();
+            var html = await (await fetch('automation.html' + cb)).text();
+
+            // 2. Parse + inject <head><style> blocks from automation.html into our document head
+            var parsed = new DOMParser().parseFromString(html, 'text/html');
+            parsed.querySelectorAll('head style').forEach(function (style) {
+                var existing = document.getElementById(style.id);
+                if (existing) existing.remove();
+                document.head.appendChild(style.cloneNode(true));
+            });
+
+            // 3. Inject body content into the content container
+            var container = document.getElementById('analyst-content');
+            container.innerHTML = parsed.body.innerHTML;
+
+            // 4. Load wms-shared.js (must be loaded before automation.js — provides wmsHeaders etc.)
+            await loadScript('wms-shared.js' + cb);
+
+            // 5. Load automation.js — defines initAutomation()
+            await loadScript('automation.js' + cb);
+
+            // 6. Kick off the automation page
+            if (typeof window.initAutomation === 'function') {
+                await window.initAutomation();
+            } else {
+                console.warn('initAutomation() not found after automation.js loaded');
+            }
+        } catch (e) {
+            document.getElementById('analyst-content').innerHTML =
+                '<div class="analyst-loading" style="color:#dc2626">' +
+                'Failed to load analyst dashboard: ' + (e && e.message ? e.message : String(e)) +
+                '</div>';
+            console.error('Analyst bootstrap failed:', e);
+        }
+    })();
+
+    function loadScript(src) {
+        return new Promise(function (resolve, reject) {
+            var s = document.createElement('script');
+            s.src = src;
+            s.onload = resolve;
+            s.onerror = function () { reject(new Error('Failed to load: ' + src)); };
+            document.body.appendChild(s);
+        });
+    }
+</script>
+
+</body>
+</html>
