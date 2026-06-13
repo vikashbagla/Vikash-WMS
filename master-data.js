@@ -415,7 +415,7 @@ async function openAddInvestorModal() {
     document.getElementById('investorBookMode').value = 'none';
     mdPopulateBookParents(null);
     document.getElementById('investorPostFno').checked = true;
-    document.getElementById('investorSttMethod').value = 'cost';
+    document.getElementById('investorSttExpense').checked = false;
     mdOnBookModeChange();
     document.getElementById('investorModal').classList.add('show');
 }
@@ -449,7 +449,7 @@ async function editInvestor(id) {
     mdPopulateBookParents(investor.id);
     document.getElementById('investorBookParent').value = investor.book_parent_id || '';
     document.getElementById('investorPostFno').checked = investor.post_fno !== false;
-    document.getElementById('investorSttMethod').value = investor.stt_accounting_method ? 'expense' : 'cost';
+    document.getElementById('investorSttExpense').checked = !!investor.stt_accounting_method;
     mdOnBookModeChange();
 
     const accounts = await DB.getBrokerAccounts(id);
@@ -475,7 +475,9 @@ function mdPopulateBookParents(excludeId) {
 function mdOnBookModeChange() {
     var mode = document.getElementById('investorBookMode').value;
     document.getElementById('investorBookParentWrap').style.display = (mode === 'client') ? '' : 'none';
-    document.getElementById('investorPostFnoWrap').style.display = (mode === 'own') ? '' : 'none';
+    // STT + F&O settings apply only to own-books investors; clients inherit the parent's
+    document.getElementById('investorBookSettingsRow').style.display = (mode === 'own') ? '' : 'none';
+    document.getElementById('investorClientNote').style.display = (mode === 'client') ? '' : 'none';
 }
 window.mdOnBookModeChange = mdOnBookModeChange;
 
@@ -729,6 +731,12 @@ async function saveInvestor() {
     var invBookMode = document.getElementById('investorBookMode').value;
     var invBookParent = document.getElementById('investorBookParent').value || null;
     var invPostFno = document.getElementById('investorPostFno').checked;
+    var invSttExpense = document.getElementById('investorSttExpense').checked;
+    // Clients inherit STT + F&O from their parent book; own-books use the form values.
+    var parentBook = (invBookMode === 'client' && invBookParent && window.wmsRefData && wmsRefData.investors)
+        ? wmsRefData.investors.find(function (i) { return i.id === invBookParent; }) : null;
+    var effPostFno = (invBookMode === 'own') ? invPostFno : (parentBook ? (parentBook.post_fno !== false) : true);
+    var effSttExpense = (invBookMode === 'own') ? invSttExpense : (parentBook ? !!parentBook.stt_accounting_method : false);
 
     const data = {
         name: document.getElementById('investorName').value.trim(),
@@ -743,8 +751,8 @@ async function saveInvestor() {
         // Accounting (book) role — see WMS_Accounting_Module_Plan.md §3.0
         accounting_enabled: invBookMode === 'own',
         book_parent_id: invBookMode === 'client' ? invBookParent : null,
-        post_fno: invBookMode === 'own' ? invPostFno : true,
-        stt_accounting_method: document.getElementById('investorSttMethod').value === 'expense'
+        post_fno: effPostFno,
+        stt_accounting_method: effSttExpense
     };
 
     if (!data.name) {
