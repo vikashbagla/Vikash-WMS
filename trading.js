@@ -1544,16 +1544,16 @@ function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, t
             ? ' <span class="' + getAmountClass(vm.dayChp) + '">' + formatPercent(vm.dayChp) + '</span>'
             : '';
 
-        var row = trBuildMobileRow(h.key, name, vm.pl, qtyStr, trFmtRupee(vm.price), dayPctHtml, vm.currentValue, vm.plPct, isOpen);
+        var m = trSortMetric(vm);
+        var leftHtml = qtyStr + ' <span class="trm-at">@</span> ' + trFmtRupee(h.avgCost);
+        var midHtml = trFmtRupee(vm.price) + dayPctHtml;
+        var row = trBuildMobileRow(h.key, name, m.topHtml, leftHtml, midHtml, m.botHtml, isOpen);
 
         var detail = '';
         if (isOpen) {
             var tagsHtml = (h.tags && h.tags.length > 0)
                 ? '<div class="trm-tags">' + h.tags.map(function(t) { return '<span class="tag-pill">' + wmsEsc(t) + '</span>'; }).join('') + '</div>'
                 : '';
-            var dayDetail = vm.dayPL !== null
-                ? '<span class="trm-d-v ' + getAmountClass(vm.dayPL) + '">' + formatAmount(vm.dayPL) + ' ' + formatPercent(vm.dayChp) + '</span>'
-                : '<span class="trm-d-v">-</span>';
             // Offer the investor drill-in only when the holding spans >1 investor
             var invCount = trInvestorBreakdown(h, vm.price, vm.md).length;
             var breakupLink = invCount > 1
@@ -1563,16 +1563,24 @@ function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, t
             (h._txns || []).forEach(function(t) { hInvs[trInvName(t.investor_id)] = 1; var bc = trBrkCode(t.broker_id); if (bc) hBrks[bc] = 1; });
             var hInvStr = Object.keys(hInvs).join(', ') || '-';
             var hBrkStr = Object.keys(hBrks).join(', ') || '-';
+            var cmpDay = trFmtRupee(vm.price) + dayPctHtml;
+            var totPlV = '<span class="' + getAmountClass(vm.pl) + '">' + formatAmount(vm.pl) + ' ' + formatPercent(vm.plPct) + '</span>';
+            var dayPlV = (vm.dayPL !== null)
+                ? '<span class="' + getAmountClass(vm.dayPL) + '">' + formatAmount(vm.dayPL) + ' ' + formatPercent(vm.dayChp) + '</span>'
+                : '-';
+            // Left column reads top-to-bottom: Qty&Avg, Invested, Investor, Broker
+            // Right column: CMP&day%, Current value, Total P&L, Day's P&L (grid is row-major)
             detail =
                 '<div class="trm-detail">' +
                     '<div class="trm-detail-grid">' +
-                        '<div class="trm-d-item"><span class="trm-d-k">Avg cost</span><span class="trm-d-v">' + trFmtRupee(h.avgCost) + '</span></div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">CMP</span><span class="trm-d-v">' + trFmtRupee(vm.price) + '</span></div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">Invested</span><span class="trm-d-v">' + formatAmount(vm.invested) + ' &middot; ' + vm.invPct.toFixed(1) + '%</span></div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">Day\'s P&L</span>' + dayDetail + '</div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">% of portfolio</span><span class="trm-d-v">' + vm.valPct.toFixed(1) + '%</span></div>' +
-                        '<div class="trm-d-item trm-d-wide"><span class="trm-d-k">Investor</span><span class="trm-d-v">' + wmsEsc(hInvStr) + '</span></div>' +
-                        '<div class="trm-d-item trm-d-wide"><span class="trm-d-k">Broker</span><span class="trm-d-v">' + wmsEsc(hBrkStr) + '</span></div>' +
+                        trDi('Qty &amp; Avg', qtyStr + ' @ ' + trFmtRupee(h.avgCost)) +
+                        trDi('CMP &amp; day%', cmpDay) +
+                        trDi('Invested', formatAmount(vm.invested) + ' &middot; <span class="trm-muted-pct">' + vm.invPct.toFixed(1) + '%</span>') +
+                        trDi('Cur. value', formatAmount(vm.currentValue) + ' &middot; <span class="trm-muted-pct">' + vm.valPct.toFixed(1) + '%</span>') +
+                        trDi('Investor', wmsEsc(hInvStr)) +
+                        trDi('Total P&L', totPlV) +
+                        trDi('Broker', wmsEsc(hBrkStr)) +
+                        trDi("Day's P&L", dayPlV) +
                     '</div>' + tagsHtml + breakupLink +
                 '</div>';
         }
@@ -1610,7 +1618,8 @@ function trReposDropdownMobile(dd, btn) {
 // Re-anchor the ▾More dropdowns (Portfolio + F&O) after the view manager toggles
 // them. Wired once per DOM lifetime via dataset guard.
 function trWireMoreRepos() {
-    [['tr-more-btn', 'tr-more-dropdown'], ['tr-fno-more-btn', 'tr-fno-more-dropdown']].forEach(function(pair) {
+    // F&O handles its own More toggle+repos in trFnoWireMore(); only Portfolio here.
+    [['tr-more-btn', 'tr-more-dropdown']].forEach(function(pair) {
         var btn = document.getElementById(pair[0]);
         if (!btn || btn.dataset.reposWired) return;
         btn.dataset.reposWired = '1';
@@ -1671,18 +1680,51 @@ function trSortDropdownMark() {
     });
 }
 
-// Shared compact-row markup (used by the holdings list AND the breakup list)
-function trBuildMobileRow(key, name, pl, leftQtyCmp, cmpStr, dayPctHtml, value, plPct, isOpen) {
+// Shared 3-zone compact-row markup (holdings list AND breakup list):
+// line 1 = name + right-top amount; line 2 = Qty@Avg (left) · CMP day% (middle) · metric% (right).
+// All four content slots are ready HTML so callers control formatting/colour.
+function trBuildMobileRow(key, name, rightTopHtml, leftHtml, midHtml, rightBotHtml, isOpen) {
     return '<div class="trm-row' + (isOpen ? ' trm-open' : '') + '" data-key="' + key + '">' +
             '<div class="trm-l1">' +
                 '<span class="trm-sym">' + name + '</span>' +
-                '<span class="trm-pl-main ' + getAmountClass(pl) + '">' + formatAmount(pl) + '</span>' +
+                '<span class="trm-r1">' + rightTopHtml + '</span>' +
             '</div>' +
-            '<div class="trm-l2">' +
-                '<span>' + leftQtyCmp + ' &middot; ' + cmpStr + dayPctHtml + '</span>' +
-                '<span class="trm-r">' + formatAmount(value) + ' <span class="' + getAmountClass(plPct) + '">' + formatPercent(plPct) + '</span></span>' +
+            '<div class="trm-l2 trm-l2-3">' +
+                '<span class="trm-zl">' + leftHtml + '</span>' +
+                '<span class="trm-zm">' + midHtml + '</span>' +
+                '<span class="trm-zr">' + rightBotHtml + '</span>' +
             '</div>' +
         '</div>';
+}
+
+// Right-column metric for the compact row, driven by the active sort:
+// Date/Symbol → Total P&L; Day's P&L → Day's P&L; Investment → Invested;
+// Current value → Current value. Returns ready top (amount) + bottom (%) HTML.
+function trSortMetric(vm) {
+    var amt, amtCls, pctHtml;
+    switch (trSortColumn) {
+        case 'daypl':
+            amt = vm.dayPL; amtCls = getAmountClass(vm.dayPL);
+            pctHtml = (vm.dayChp != null) ? '<span class="' + getAmountClass(vm.dayChp) + '">' + formatPercent(vm.dayChp) + '</span>' : '-';
+            break;
+        case 'invested':
+            amt = vm.invested; amtCls = '';
+            pctHtml = '<span class="trm-muted-pct">' + vm.invPct.toFixed(1) + '%</span>';
+            break;
+        case 'value':
+            amt = vm.currentValue; amtCls = '';
+            pctHtml = '<span class="trm-muted-pct">' + vm.valPct.toFixed(1) + '%</span>';
+            break;
+        default: // 'date' / 'company' → Total P&L
+            amt = vm.pl; amtCls = getAmountClass(vm.pl);
+            pctHtml = '<span class="' + getAmountClass(vm.plPct) + '">' + formatPercent(vm.plPct) + '</span>';
+    }
+    return { topHtml: '<span class="trm-pl-main ' + amtCls + '">' + formatAmount(amt) + '</span>', botHtml: pctHtml };
+}
+
+// One detail-box item (label + value on the SAME row, compact)
+function trDi(k, v) {
+    return '<div class="trm-d-item"><span class="trm-d-k">' + k + '</span><span class="trm-d-v">' + v + '</span></div>';
 }
 
 function trWireMobileRows(box) {
@@ -1714,7 +1756,11 @@ function trRenderPortfolioBreakup(box, h, totalInvested, totalValue) {
         var dayPctHtml = g.dayChp !== null
             ? ' <span class="' + getAmountClass(g.dayChp) + '">' + formatPercent(g.dayChp) + '</span>'
             : '';
-        var row = trBuildMobileRow('inv:' + g.investorId, wmsEsc(g.name), g.pl, qtyStr, trFmtRupee(vm.price), dayPctHtml, g.value, g.plPct, isOpen);
+        var bRightTop = '<span class="trm-pl-main ' + getAmountClass(g.pl) + '">' + formatAmount(g.pl) + '</span>';
+        var bLeft = qtyStr + ' <span class="trm-at">@</span> ' + trFmtRupee(g.avgCost);
+        var bMid = trFmtRupee(vm.price) + dayPctHtml;
+        var bRightBot = '<span class="' + getAmountClass(g.plPct) + '">' + formatPercent(g.plPct) + '</span>';
+        var row = trBuildMobileRow('inv:' + g.investorId, wmsEsc(g.name), bRightTop, bLeft, bMid, bRightBot, isOpen);
 
         var detail = '';
         if (isOpen) {
@@ -1722,17 +1768,25 @@ function trRenderPortfolioBreakup(box, h, totalInvested, totalValue) {
             var tagsHtml = (g.tags && g.tags.length > 0)
                 ? '<div class="trm-tags">' + g.tags.map(function(t) { return '<span class="tag-pill">' + wmsEsc(t) + '</span>'; }).join('') + '</div>'
                 : '';
-            var dayDetail = g.dayPL !== null
-                ? '<span class="trm-d-v ' + getAmountClass(g.dayPL) + '">' + formatAmount(g.dayPL) + ' ' + formatPercent(g.dayChp) + '</span>'
-                : '<span class="trm-d-v">-</span>';
+            var gBrks = {};
+            (g.txns || []).forEach(function(t) { var bc = trBrkCode(t.broker_id); if (bc) gBrks[bc] = 1; });
+            var gBrkStr = Object.keys(gBrks).join(', ') || '-';
+            var bCmpDay = trFmtRupee(vm.price) + dayPctHtml;
+            var bTotPlV = '<span class="' + getAmountClass(g.pl) + '">' + formatAmount(g.pl) + ' ' + formatPercent(g.plPct) + '</span>';
+            var bDayPlV = (g.dayPL !== null)
+                ? '<span class="' + getAmountClass(g.dayPL) + '">' + formatAmount(g.dayPL) + ' ' + formatPercent(g.dayChp) + '</span>'
+                : '-';
             detail =
                 '<div class="trm-detail">' +
                     '<div class="trm-detail-grid">' +
-                        '<div class="trm-d-item"><span class="trm-d-k">Avg cost</span><span class="trm-d-v">' + trFmtRupee(g.avgCost) + '</span></div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">CMP</span><span class="trm-d-v">' + trFmtRupee(vm.price) + '</span></div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">Invested</span><span class="trm-d-v">' + formatAmount(g.invested) + '</span></div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">Day\'s P&L</span>' + dayDetail + '</div>' +
-                        '<div class="trm-d-item"><span class="trm-d-k">% of stock</span><span class="trm-d-v">' + pctOfStock.toFixed(1) + '%</span></div>' +
+                        trDi('Qty &amp; Avg', qtyStr + ' @ ' + trFmtRupee(g.avgCost)) +
+                        trDi('CMP &amp; day%', bCmpDay) +
+                        trDi('Invested', formatAmount(g.invested)) +
+                        trDi('Cur. value', formatAmount(g.value)) +
+                        trDi('% of stock', pctOfStock.toFixed(1) + '%') +
+                        trDi('Total P&L', bTotPlV) +
+                        trDi('Broker', wmsEsc(gBrkStr)) +
+                        trDi("Day's P&L", bDayPlV) +
                     '</div>' + tagsHtml +
                 '</div>';
         }

@@ -103,15 +103,9 @@ function trFnoInit() {
 
     // ---- View bar event handlers ----
 
-    // More dropdown toggle
-    var fnoMoreBtn = document.getElementById('tr-fno-more-btn');
-    if (fnoMoreBtn) {
-        fnoMoreBtn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var dd = document.getElementById('tr-fno-more-dropdown');
-            dd.style.display = (dd.style.display === 'none') ? 'block' : 'none';
-        });
-    }
+    // More dropdown toggle — wired via trFnoWireMore() (element-guarded; also
+    // re-called from trFnoRenderMobile so the live button is always wired).
+    trFnoWireMore();
 
     // Update View button
     var fnoUpdateBtn = document.getElementById('tr-fno-update-view-btn');
@@ -175,13 +169,17 @@ function trFnoInit() {
         });
     }
 
-    // Close More dropdown on outside click
-    document.addEventListener('click', function(e) {
-        if (!e.target.closest('#tr-fno-more-btn') && !e.target.closest('#tr-fno-more-dropdown')) {
-            var mdd = document.getElementById('tr-fno-more-dropdown');
-            if (mdd) mdd.style.display = 'none';
-        }
-    });
+    // Close More dropdown on outside click — wired ONCE globally (document
+    // persists across module reloads, so guard against stacking duplicates).
+    if (!window._trFnoMoreOutsideWired) {
+        window._trFnoMoreOutsideWired = true;
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('#tr-fno-more-btn') && !e.target.closest('#tr-fno-more-dropdown')) {
+                var mdd = document.getElementById('tr-fno-more-dropdown');
+                if (mdd) mdd.style.display = 'none';
+            }
+        });
+    }
 
     // Load saved views from DB
     trFnoVM.loadViews();
@@ -718,10 +716,48 @@ function trFnoCgParties(cg) {
     return { inv: Object.keys(invs).join(', ') || '-', brk: Object.keys(brks).join(', ') || '-' };
 }
 
+// Signed qty display — short positions show as negative (in parentheses).
+function trFnoQty(q) {
+    return q < 0 ? '(' + formatQuantity(Math.abs(q)) + ')' : formatQuantity(q);
+}
+
+// CMP (₹) only for a contract group (from the open leg).
+function trFnoCgCmp(cg) {
+    var o = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
+    return o ? trFmtRupee(o.cmp) : '-';
+}
+
+// CMP (₹) + day% for a contract group (CMP from open leg, day% from live cache).
+function trFnoCgCmpDay(cg) {
+    var openRow = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
+    if (!openRow) return '-';
+    var chp = null;
+    if (cg.fullSymbol) { var fc = wmsLivePrices[cg.fullSymbol.replace(/^[A-Z]+:/, '')]; if (fc && fc.chp !== undefined && fc.chp !== null) chp = fc.chp; }
+    return trFmtRupee(openRow.cmp) + (chp != null ? ' <span class="' + getAmountClass(chp) + '">' + formatPercent(chp) + '</span>' : '');
+}
+
+// Wire the ▾More dropdown toggle on the (live) F&O view-tabs button. Element-
+// guarded via dataset so repeated calls never stack listeners; repositions to
+// the viewport synchronously on open (phone) so it can't be clipped or raced
+// by F&O's frequent live-price re-renders.
+function trFnoWireMore() {
+    var btn = document.getElementById('tr-fno-more-btn');
+    if (!btn || btn.dataset.moreWired) return;
+    btn.dataset.moreWired = '1';
+    btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var dd = document.getElementById('tr-fno-more-dropdown');
+        if (!dd) return;
+        var willOpen = (dd.style.display === 'none' || dd.style.display === '');
+        dd.style.display = willOpen ? 'block' : 'none';
+        if (willOpen && typeof trReposDropdownMobile === 'function') trReposDropdownMobile(dd, btn);
+    });
+}
+
 function trFnoRenderMobile(positions) {
     var box = document.getElementById('tr-fno-cards');
     if (!box) return;
-    if (typeof trWireMoreRepos === 'function') trWireMoreRepos();
+    trFnoWireMore();
     if (!positions || positions.length === 0) {
         box.innerHTML = '<div class="trm-empty">No F&O positions found</div>';
         return;
@@ -739,41 +775,54 @@ function trFnoRenderMobile(positions) {
     ordered.forEach(function(p) { totExp += p.totalOpenCost; totDay += p.totalDayPnl || 0; totReal += p.totalRealisedPnl; totUnreal += p.totalUnrealisedPnl; });
     var totNet = totReal + totUnreal;
 
-    var summary =
-        '<div class="trm-summary">' +
-            '<div class="trm-s-block"><div class="trm-s-label">Exposure</div><div class="trm-s-val">' + formatAmount(totExp) + '</div></div>' +
-            '<div class="trm-s-block"><div class="trm-s-label">Day P&L</div><div class="trm-s-val ' + getAmountClass(totDay) + '">' + formatAmount(totDay) + '</div></div>' +
-            '<div class="trm-s-block"><div class="trm-s-label">Net P&L</div><div class="trm-s-val ' + getAmountClass(totNet) + '">' + formatAmount(totNet) + '</div></div>' +
+    // Single clean row that is BOTH the page totals AND the column headers
+    var totRow =
+        '<div class="trm-fno-tot fc3">' +
+            '<div class="fc-a"><span class="trm-tot-k">Exposure</span> <span class="trm-tot-v">' + formatAmount(totExp) + '</span></div>' +
+            '<div class="fc-b"><div class="trm-tot-k">Day\'s P&L</div><div class="trm-tot-v ' + getAmountClass(totDay) + '">' + formatAmount(totDay) + '</div></div>' +
+            '<div class="fc-c"><div class="trm-tot-k">Total P&L</div><div class="trm-tot-v ' + getAmountClass(totNet) + '">' + formatAmount(totNet) + '</div></div>' +
         '</div>';
 
     var body = ordered.map(function(p) {
         var symOpen = !!trFnoExpandedSymbols[p.underlying];
         var net = p.totalRealisedPnl + p.totalUnrealisedPnl;
 
-        // Collapsed row: Qty · Cost on line 2; CMP sits immediately left of the
-        // P&L amount on line 1. Values from the representative open contract
-        // (prefer the open futures leg). Ticker / expiry / exposure → expanded detail.
+        // 3-zone line 2 (mirrors Portfolio): Qty@Avg (left) · CMP day% (middle) ·
+        // net P&L% of exposure (right). Values from the representative open
+        // contract (prefer the open futures leg). Ticker/expiry → expanded detail.
+        var exposure = p.totalOpenCost;
         var repCg = (p.contractGroups || []).filter(function(cg) { return cg.isFuture && cg.openQty; })[0]
                  || (p.contractGroups || []).filter(function(cg) { return cg.openQty; })[0];
-        var leftInfo, cmpBadge = '';
-        if (repCg) {
-            var rCost = (repCg.openQty && repCg.openCost) ? trFmtRupee(repCg.openCost / repCg.openQty) : '-';
-            var rOpenRow = (repCg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
-            if (rOpenRow) cmpBadge = '<span class="trm-grp-cmp">' + trFmtRupee(rOpenRow.cmp) + '</span>';
-            leftInfo = formatQuantity(repCg.openQty) + ' &middot; ' + rCost;
+        // Symbol-level Qty/Avg = TOTAL across all open contracts (the per-contract
+        // breakup is shown when expanded). CMP from the representative contract.
+        // Symbol Qty/Avg = FUTURES ONLY (options do not change a future's qty or
+        // avg — see trFnoCalcPositions "options distort qty"). Short = negative.
+        // CMP from the representative (futures-preferred) contract. Options-only
+        // symbols fall back to their representative option contract.
+        var aL2;
+        if (p.futOpenQty > 0) {
+            var sQ = p.futIsShort ? -p.futOpenQty : p.futOpenQty;
+            aL2 = trFnoQty(sQ) + ' <span class="trm-at">@</span> ' + trFmtRupee(p.futAvgCost) + ' &middot; ' + (repCg ? trFnoCgCmpDay(repCg) : '-');
+        } else if (repCg) {
+            var oQ = repCg.isShort ? -Math.abs(repCg.openQty) : Math.abs(repCg.openQty);
+            var oAvg = (repCg.openQty && repCg.openCost) ? trFmtRupee(repCg.openCost / Math.abs(repCg.openQty)) : '-';
+            aL2 = trFnoQty(oQ) + ' <span class="trm-at">@</span> ' + oAvg + ' &middot; ' + trFnoCgCmpDay(repCg);
         } else {
-            leftInfo = '<span style="color:#a0aec0;">Closed</span>';
+            aL2 = '<span style="color:#a0aec0;">Closed</span>';
         }
+        var dPnl = p.totalDayPnl || 0;
+        var dPctS = (exposure > 0 && dPnl !== 0) ? formatPercent((dPnl / exposure) * 100) : '';
+        var nPctS = (exposure > 0 && net !== 0) ? formatPercent((net / exposure) * 100) : '';
 
         var grp =
             '<div class="trm-grp" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
-                '<div class="trm-grp-l1">' +
-                    '<span class="trm-grp-name"><span class="trm-grp-chev">' + (symOpen ? '&#9662;' : '&#9656;') + '</span><span class="trm-grp-txt">' + wmsEsc(p.companyName || p.underlying) + '</span></span>' +
-                    '<span class="trm-grp-r">' + cmpBadge + '<span class="trm-pl-main ' + getAmountClass(net) + '">' + formatAmount(net) + '</span></span>' +
-                '</div>' +
-                '<div class="trm-grp-l2">' +
-                    '<span>' + leftInfo + '</span>' +
-                    '<span class="trm-r">Day <span class="' + getAmountClass(p.totalDayPnl || 0) + '">' + formatAmount(p.totalDayPnl || 0) + '</span></span>' +
+                '<div class="fc3">' +
+                    '<div class="fc-a">' +
+                        '<div class="fc-a-l1"><span class="fc-a-txt">' + wmsEsc(p.companyName || p.underlying) + '</span></div>' +
+                        '<div class="fc-a-l2">' + aL2 + '</div>' +
+                    '</div>' +
+                    '<div class="fc-b"><div class="fc-amt ' + getAmountClass(dPnl) + '">' + formatAmount(dPnl) + '</div><div class="fc-pct ' + getAmountClass(dPnl) + '">' + dPctS + '</div></div>' +
+                    '<div class="fc-c"><div class="fc-amt ' + getAmountClass(net) + '">' + formatAmount(net) + '</div><div class="fc-pct ' + getAmountClass(net) + '">' + nPctS + '</div></div>' +
                 '</div>' +
             '</div>';
 
@@ -785,16 +834,20 @@ function trFnoRenderMobile(positions) {
                 var cReal = cg.totalPnl || 0, cUnreal = cg.unrealisedPnl || 0, cNet = cReal + cUnreal, cDay = cg.dayPnl || 0, cExp = cg.openCost || 0;
                 var shortTag = cg.isShort ? ' <span style="color:#dc2626;font-size:10px;">(S)</span>' : '';
                 var avg = (cg.openQty && cExp) ? trFmtRupee(cExp / cg.openQty) : '-';
+                var cSignedQty = cg.isShort ? -Math.abs(cg.openQty) : Math.abs(cg.openQty);
+                var caL2 = trFnoQty(cSignedQty) + ' <span class="trm-at">@</span> ' + avg + ' &middot; ' + trFnoCgCmpDay(cg);
+                var cDPctS = (cExp > 0 && cDay !== 0) ? formatPercent((cDay / cExp) * 100) : '';
+                var cNPctS = (cExp > 0 && cNet !== 0) ? formatPercent((cNet / cExp) * 100) : '';
 
                 var row =
                     '<div class="trm-row trm-sub' + (cOpen ? ' trm-open' : '') + '" data-fno-ckey="' + wmsEsc(key) + '">' +
-                        '<div class="trm-l1">' +
-                            '<span class="trm-sym">' + wmsEsc(cg.contractLabel) + shortTag + '</span>' +
-                            '<span class="trm-pl-main ' + getAmountClass(cNet) + '">' + formatAmount(cNet) + '</span>' +
-                        '</div>' +
-                        '<div class="trm-l2">' +
-                            '<span>' + formatQuantity(cg.openQty) + ' &middot; ' + avg + '</span>' +
-                            '<span class="trm-r">' + formatAmount(cExp) + ' &middot; Day <span class="' + getAmountClass(cDay) + '">' + formatAmount(cDay) + '</span></span>' +
+                        '<div class="fc3">' +
+                            '<div class="fc-a">' +
+                                '<div class="fc-a-l1"><span class="fc-a-txt">' + wmsEsc(cg.contractLabel) + shortTag + '</span></div>' +
+                                '<div class="fc-a-l2">' + caL2 + '</div>' +
+                            '</div>' +
+                            '<div class="fc-b"><div class="fc-amt ' + getAmountClass(cDay) + '">' + formatAmount(cDay) + '</div><div class="fc-pct ' + getAmountClass(cDay) + '">' + cDPctS + '</div></div>' +
+                            '<div class="fc-c"><div class="fc-amt ' + getAmountClass(cNet) + '">' + formatAmount(cNet) + '</div><div class="fc-pct ' + getAmountClass(cNet) + '">' + cNPctS + '</div></div>' +
                         '</div>' +
                     '</div>';
 
@@ -825,7 +878,7 @@ function trFnoRenderMobile(positions) {
         return grp + contracts;
     }).join('');
 
-    box.innerHTML = summary + body;
+    box.innerHTML = totRow + body;
 
     box.querySelectorAll('.trm-grp[data-fno-symbol]').forEach(function(el) {
         el.addEventListener('click', function() {
