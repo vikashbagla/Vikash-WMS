@@ -416,13 +416,19 @@ function demergerRenderPreview() {
         grand.qty += s.totalQty; grand.cost += s.totalCost; grand.parent += sParentCost;
     });
 
-    html += '</tbody><tfoot>' +
-        '<tr><td class="l">Total original</td><td>' + formatQuantity(grand.qty) + '</td><td>' + demergerFmt(grand.cost) + '</td><td>100%</td></tr>' +
-        '<tr><td class="l">&#8627; Parent retains</td><td></td><td>' + demergerFmt(grand.parent) + '</td><td>' + retain.toFixed(2) + '%</td></tr>';
-    named2.forEach(function(col, ci) {
-        html += '<tr class="dmg-newco"><td class="l">&#8627; ' + wmsEsc(col.label) + '</td><td></td><td>' + demergerFmt(coTotals[ci]) + '</td><td>' + col.pct.toFixed(2) + '%</td></tr>';
-    });
-    html += '</tfoot></table>';
+    html += '</tbody>';
+    // Grand-total footer only adds value when there's more than one holding;
+    // for a single holding it would just repeat that holding's allocation.
+    if (demergerSlices.length > 1) {
+        html += '<tfoot>' +
+            '<tr><td class="l">Total original</td><td>' + formatQuantity(grand.qty) + '</td><td>' + demergerFmt(grand.cost) + '</td><td>100%</td></tr>' +
+            '<tr><td class="l">&#8627; Parent retains</td><td></td><td>' + demergerFmt(grand.parent) + '</td><td>' + retain.toFixed(2) + '%</td></tr>';
+        named2.forEach(function(col, ci) {
+            html += '<tr class="dmg-newco"><td class="l">&#8627; ' + wmsEsc(col.label) + '</td><td></td><td>' + demergerFmt(coTotals[ci]) + '</td><td>' + col.pct.toFixed(2) + '%</td></tr>';
+        });
+        html += '</tfoot>';
+    }
+    html += '</table>';
 
     var unit = (typeof getUnitDescription === 'function') ? getUnitDescription() : '';
     if (unit) html += '<div style="font-size:10px;color:#a0aec0;margin-top:4px;">All cost values in ' + unit + '. Quantity unchanged — each resulting company carries the same shares as the parent; new shares inherit the parent lot\'s original date.</div>';
@@ -472,7 +478,9 @@ async function demergerSave() {
             txns.push(_dmgTxn({
                 investor_id: s.investor_id, trader_id: s.trader_id, broker_id: s.broker_id,
                 sec: parent, symbol: parentSym, exchange: parentExch,
-                quantity: 0, price: fracAwayTotal, net_amount: removedCost, date: dateStr,
+                // qty −1 sentinel: parent cost-reduction leg (DB forbids qty 0).
+                // Engine reads the negative sign as "scale open lots, don't add qty".
+                quantity: -1, price: fracAwayTotal, net_amount: removedCost, date: dateStr,
                 notes: '[Demerger of ' + parentSym + ' on ' + dateStr + ': ' + sumPct.toFixed(2) + '% of cost allocated to ' + coList + ']'
             }));
 

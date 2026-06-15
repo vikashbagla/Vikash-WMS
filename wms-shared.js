@@ -1178,13 +1178,22 @@ function wmsCalcAvgCost(transactions) {
             if (!txn.ignore_for_avg_cost) {
                 totalCost += netAmt;
             }
+        } else if (txnType === 'DEMERGER') {
+            // DEMERGER (LESSONS §K.1). Incoming leg (qty > 0, resulting company)
+            // adds cost + qty like a BUY. Parent leg (qty < 0 sentinel) subtracts
+            // the removed cost and does NOT change quantity.
+            if (!txn.ignore_for_avg_cost) {
+                if (txn.quantity > 0) {
+                    netQuantity += txn.quantity;
+                    totalCost += netAmt;
+                } else {
+                    totalCost -= netAmt;
+                }
+            }
         } else {
             if (txn.ignore_for_avg_cost) continue;
             netQuantity += txn.quantity;
-            // DEMERGER incoming leg (resulting company, qty > 0) adds cost like a
-            // BUY. DEMERGER parent leg has qty 0 → falls to the else and subtracts
-            // net_amount (the cost moved out) from the parent's basis (LESSONS §K.1).
-            if (txnType === 'BUY' || (txnType === 'DEMERGER' && txn.quantity > 0)) {
+            if (txnType === 'BUY') {
                 totalCost += netAmt;
             } else {
                 totalCost -= netAmt;
@@ -1568,17 +1577,20 @@ function _wmsCostEngine(transactions, method) {
         }
 
         // ---------- DEMERGER (LESSONS §K.1) ----------
-        // Two legs, both transaction_type 'DEMERGER', distinguished by quantity:
+        // Two legs, both transaction_type 'DEMERGER', distinguished by quantity
+        // SIGN (the DB forbids quantity 0 — chk_quantity_not_zero):
         //   • Incoming (resulting company, qty > 0): a cost-bearing lot dated to
         //     the ORIGINAL parent lot's buy date (transaction_date carries that
         //     date so the holding period continues). Treated like a fresh BUY lot
         //     — no short-cover logic (a demerger receipt is always a fresh long).
-        //   • Parent reduction (qty === 0): scales every OPEN lot's costPerUnit
-        //     down by the retained factor f = 1 − price, where price holds the
-        //     allocated-away fraction (Σ of resulting-company %). Qty + dates
-        //     unchanged — mirrors SPLIT's per-lot cost scaling. Cash-neutral.
+        //   • Parent reduction (qty < 0, a −1 sentinel): scales every OPEN lot's
+        //     costPerUnit down by the retained factor f = 1 − price (price holds
+        //     the allocated-away fraction, Σ of resulting-company %). Qty + dates
+        //     unchanged — mirrors SPLIT's per-lot cost scaling. Cash-neutral; the
+        //     sentinel qty is NOT added to the holding.
         if (txnType === 'DEMERGER') {
-            if (txnQty > 0) {
+            var dmgRawQty = t.quantity || 0;
+            if (dmgRawQty > 0) {
                 lots[key].push({
                     date: txnDate, qty: txnQty, price: txnPrice,
                     costPerUnit: (txnNetAmount / txnQty),
