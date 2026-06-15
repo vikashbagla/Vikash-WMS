@@ -398,12 +398,7 @@ function demergerRenderPreview() {
         // Slice header — the original holding being demerged
         html += '<tr class="dmg-slice-row"><td class="l">' + wmsEsc(s.combinedLabel) + '</td>' +
             '<td>' + formatQuantity(s.totalQty) + '</td><td>' + demergerFmt(s.totalCost) + '</td><td>100%</td></tr>';
-        // Open lots (shows the original buy dates that the new shares inherit)
-        s.lots.forEach(function(l) {
-            html += '<tr class="dmg-lot-row"><td class="l">&bull; lot ' + lgFmtOrDate(l.date) + '</td>' +
-                '<td>' + formatQuantity(l.qty) + '</td><td>' + demergerFmt(l.cost) + '</td><td></td></tr>';
-        });
-        // Allocation result — parent + one row per resulting company
+        // Allocation result FIRST (the key numbers) — parent + one row per resulting company
         var sParentCost = wmsRoundMoney(s.totalCost * fParent);
         html += '<tr class="dmg-alloc-row"><td class="l">&#8627; Parent retains</td>' +
             '<td>' + formatQuantity(s.totalQty) + '</td><td>' + demergerFmt(sParentCost) + '</td><td>' + retain.toFixed(2) + '%</td></tr>';
@@ -412,6 +407,11 @@ function demergerRenderPreview() {
             coTotals[ci] += cc;
             html += '<tr class="dmg-alloc-row dmg-newco"><td class="l">&#8627; ' + wmsEsc(col.label) + '</td>' +
                 '<td>' + formatQuantity(s.totalQty) + '</td><td>' + demergerFmt(cc) + '</td><td>' + col.pct.toFixed(2) + '%</td></tr>';
+        });
+        // Open lots BELOW as supporting detail (shows the original buy dates the new shares inherit)
+        s.lots.forEach(function(l) {
+            html += '<tr class="dmg-lot-row"><td class="l">&bull; lot ' + lgFmtOrDate(l.date) + '</td>' +
+                '<td>' + formatQuantity(l.qty) + '</td><td>' + demergerFmt(l.cost) + '</td><td></td></tr>';
         });
         grand.qty += s.totalQty; grand.cost += s.totalCost; grand.parent += sParentCost;
     });
