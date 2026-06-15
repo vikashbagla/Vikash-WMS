@@ -1,0 +1,123 @@
+<head>
+<style>
+/* Self-contained overlay/modal styles (works without bonus/rights loaded) */
+.rights-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+    background:rgba(0,0,0,0.4); z-index:1200; align-items:center; justify-content:center; }
+.rights-overlay.show { display:flex; }
+.rights-modal { background:#fff; border-radius:10px; max-width:860px; width:96%; max-height:92vh;
+    display:flex; flex-direction:column; box-shadow:0 8px 32px rgba(0,0,0,0.18); }
+.rights-header { padding:12px 16px; border-bottom:1px solid #e2e8f0; display:flex;
+    justify-content:space-between; align-items:center; flex-shrink:0; }
+.rights-header h3 { margin:0; font-size:14px; font-weight:600; color:#2d3748; }
+.rights-body { padding:12px 16px; overflow-y:auto; flex:1; }
+.rights-footer { padding:10px 16px; border-top:1px solid #e2e8f0; display:flex;
+    justify-content:flex-end; gap:8px; flex-shrink:0; }
+.rights-fields-row { display:flex; gap:14px; margin-bottom:12px; align-items:flex-start; }
+.rights-field { display:flex; flex-direction:column; position:relative; }
+.rights-field label { font-size:10px; font-weight:600; color:#718096; text-transform:uppercase;
+    margin-bottom:3px; letter-spacing:0.3px; }
+.rights-field input[type="text"] { padding:5px 8px; border:1px solid #e2e8f0; border-radius:4px;
+    font-size:12px; color:#2d3748; outline:none; height:28px; box-sizing:border-box; }
+.rights-field input:focus { border-color:#667eea; box-shadow:0 0 0 2px rgba(102,126,234,0.15); }
+.rhDate-wrap { display:flex; align-items:center; padding:5px 8px; border:1px solid #e2e8f0;
+    border-radius:4px; cursor:text; user-select:none; font-size:12px; color:#2d3748; height:28px; box-sizing:border-box; }
+.rhDate-wrap:focus-within { border-color:#667eea; box-shadow:0 0 0 2px rgba(102,126,234,0.15); }
+.rhDate-seg { padding:1px 2px; border-radius:2px; cursor:pointer; }
+.rhDate-seg.active { background:#667eea; color:#fff; }
+.rhDate-sep { margin:0 1px; color:#a0aec0; }
+.rhDate-cal-btn { background:none; border:none; cursor:pointer; font-size:11px; margin-left:4px; padding:0; line-height:1; }
+.rhDate-cal-picker { position:absolute; opacity:0; width:0; height:0; pointer-events:none; }
+.rights-search-dd { position:absolute; top:100%; left:0; right:0; background:white;
+    border:1px solid #e2e8f0; border-radius:4px; z-index:100; display:none; max-height:200px;
+    overflow-y:auto; box-shadow:0 4px 12px rgba(0,0,0,0.1); }
+.rights-search-dd.show { display:block; }
+.rights-search-dd .wms-dd-item { padding:6px 10px; cursor:pointer; font-size:12px; border-bottom:1px solid #f0f4f8; }
+.rights-search-dd .wms-dd-item:hover, .rights-search-dd .wms-dd-item.wms-dd-highlight { background:#eef2ff; }
+.rights-search-dd .wms-dd-item strong { color:#2d3748; }
+.rights-selected-badge { display:inline-block; background:#eef2ff; color:#667eea; padding:3px 8px;
+    border-radius:4px; font-size:11px; font-weight:500; margin-top:4px; }
+.rights-empty { padding:20px; text-align:center; color:#a0aec0; font-size:12px; }
+
+/* Demerger-specific */
+.dmg-co-row { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+.dmg-co-search { position:relative; flex:1; }
+.dmg-co-search input { width:100%; padding:5px 8px; border:1px solid #e2e8f0; border-radius:4px;
+    font-size:12px; height:28px; box-sizing:border-box; outline:none; }
+.dmg-co-search input:focus { border-color:#667eea; box-shadow:0 0 0 2px rgba(102,126,234,0.15); }
+.dmg-pct-input { width:74px; padding:5px 8px; border:1px solid #e2e8f0; border-radius:4px;
+    font-size:12px; height:28px; box-sizing:border-box; text-align:right; -moz-appearance:textfield; }
+.dmg-pct-input::-webkit-outer-spin-button, .dmg-pct-input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+.dmg-pct-input:focus { border-color:#667eea; box-shadow:0 0 0 2px rgba(102,126,234,0.15); }
+.dmg-co-remove { background:none; border:none; color:#cbd5e0; cursor:pointer; font-size:15px; padding:2px 5px; }
+.dmg-co-remove:hover { color:#dc2626; }
+.dmg-add-co { background:#fff; border:1px dashed #cbd5e0; color:#667eea; border-radius:4px;
+    font-size:11px; padding:5px 10px; cursor:pointer; margin-top:2px; }
+.dmg-add-co:hover { border-color:#667eea; background:#f7faff; }
+.dmg-alloc-summary { font-size:11px; margin:8px 0 4px; color:#4a5568; }
+.dmg-alloc-summary b { color:#2d3748; }
+.dmg-alloc-bad { color:#dc2626; font-weight:600; }
+.dmg-section-label { font-size:10px; font-weight:600; color:#718096; text-transform:uppercase;
+    letter-spacing:0.3px; margin:10px 0 4px; }
+
+/* Preview table */
+.dmg-table { width:100%; border-collapse:collapse; font-size:11px; margin-top:8px; }
+.dmg-table th { background:#f7fafc; padding:5px 7px; text-align:right; font-size:10px; font-weight:600;
+    color:#4a5568; text-transform:uppercase; border-bottom:2px solid #e2e8f0; white-space:nowrap; }
+.dmg-table th.l { text-align:left; }
+.dmg-table td { padding:5px 7px; border-bottom:1px solid #f0f4f8; text-align:right; white-space:nowrap; }
+.dmg-table td.l { text-align:left; }
+.dmg-slice-row td { background:#f0f4ff; font-weight:600; color:#2d3748; }
+.dmg-lot-row td { color:#4a5568; }
+.dmg-lot-row td.l { padding-left:18px; }
+.dmg-newco { color:#2563eb; }
+.dmg-table tfoot td { font-weight:700; border-top:2px solid #cbd5e0; background:#f7fafc; }
+</style>
+</head>
+
+<body>
+<div id="demergerOverlay" class="rights-overlay">
+    <div class="rights-modal">
+        <div class="rights-header">
+            <h3>Demerger</h3>
+            <button class="btn-close-modal" id="demergerCloseBtn" title="Close">&#10005;</button>
+        </div>
+        <div class="rights-body">
+            <div class="rights-fields-row">
+                <div class="rights-field">
+                    <label>Demerger Date</label>
+                    <div class="rhDate-wrap" id="demergerDateWrap" tabindex="0">
+                        <span class="rhDate-seg" data-seg="dd" id="demergerDateDd">25</span>
+                        <span class="rhDate-sep">-</span>
+                        <span class="rhDate-seg" data-seg="mmm" id="demergerDateMmm">Mar</span>
+                        <span class="rhDate-sep">-</span>
+                        <span class="rhDate-seg" data-seg="yyyy" id="demergerDateYyyy">2026</span>
+                        <button type="button" class="rhDate-cal-btn" id="demergerDateCalBtn" title="Pick date">&#x1F4C5;</button>
+                        <input type="date" id="demergerDateCalPicker" class="rhDate-cal-picker">
+                    </div>
+                </div>
+                <div class="rights-field" style="flex:1;">
+                    <label>Parent (Demerged) Company</label>
+                    <input type="text" id="demergerSymbolInput" placeholder="Search parent security..." autocomplete="off">
+                    <div class="rights-search-dd" id="demergerSymbolDd"></div>
+                    <div id="demergerSymbolBadge"></div>
+                </div>
+            </div>
+
+            <div id="demergerAllocWrap" style="display:none;">
+                <div class="dmg-section-label">Resulting Companies — cost allocation %</div>
+                <div id="demergerCompaniesWrap"></div>
+                <button type="button" class="dmg-add-co" id="demergerAddCoBtn">+ Add resulting company</button>
+                <div class="dmg-alloc-summary" id="demergerAllocSummary"></div>
+            </div>
+
+            <div id="demergerTableWrap">
+                <div class="rights-empty">Select a date and parent company to view holdings</div>
+            </div>
+        </div>
+        <div class="rights-footer">
+            <button class="btn-secondary" id="demergerCancelBtn">Cancel</button>
+            <button class="btn-primary" id="demergerSaveBtn" disabled>Save Demerger</button>
+        </div>
+    </div>
+</div>
+</body>

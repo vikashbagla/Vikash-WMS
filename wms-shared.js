@@ -1181,7 +1181,10 @@ function wmsCalcAvgCost(transactions) {
         } else {
             if (txn.ignore_for_avg_cost) continue;
             netQuantity += txn.quantity;
-            if (txnType === 'BUY') {
+            // DEMERGER incoming leg (resulting company, qty > 0) adds cost like a
+            // BUY. DEMERGER parent leg has qty 0 → falls to the else and subtracts
+            // net_amount (the cost moved out) from the parent's basis (LESSONS §K.1).
+            if (txnType === 'BUY' || (txnType === 'DEMERGER' && txn.quantity > 0)) {
                 totalCost += netAmt;
             } else {
                 totalCost -= netAmt;
@@ -1562,6 +1565,37 @@ function _wmsCostEngine(transactions, method) {
         } else {
             // Keep first-seen metadata but upgrade company name if missing.
             if (!meta[key].companyName && txnCompanyName) meta[key].companyName = txnCompanyName;
+        }
+
+        // ---------- DEMERGER (LESSONS §K.1) ----------
+        // Two legs, both transaction_type 'DEMERGER', distinguished by quantity:
+        //   • Incoming (resulting company, qty > 0): a cost-bearing lot dated to
+        //     the ORIGINAL parent lot's buy date (transaction_date carries that
+        //     date so the holding period continues). Treated like a fresh BUY lot
+        //     — no short-cover logic (a demerger receipt is always a fresh long).
+        //   • Parent reduction (qty === 0): scales every OPEN lot's costPerUnit
+        //     down by the retained factor f = 1 − price, where price holds the
+        //     allocated-away fraction (Σ of resulting-company %). Qty + dates
+        //     unchanged — mirrors SPLIT's per-lot cost scaling. Cash-neutral.
+        if (txnType === 'DEMERGER') {
+            if (txnQty > 0) {
+                lots[key].push({
+                    date: txnDate, qty: txnQty, price: txnPrice,
+                    costPerUnit: (txnNetAmount / txnQty),
+                    investorId: txnInvestorId, brokerId: txnBrokerId, tags: txnTags,
+                    securityType: txnSecType, txnId: t.id
+                });
+            } else {
+                var dmgFactor = 1 - (txnPrice || 0);   // retained fraction
+                var dmgLots = lots[key] || [];
+                for (var dmi = 0; dmi < dmgLots.length; dmi++) {
+                    if (dmgLots[dmi].qty > 0) {
+                        dmgLots[dmi].costPerUnit = dmgLots[dmi].costPerUnit * dmgFactor;
+                        dmgLots[dmi].price = (dmgLots[dmi].price || 0) * dmgFactor;
+                    }
+                }
+            }
+            continue;
         }
 
         // ---------- BUY ----------
