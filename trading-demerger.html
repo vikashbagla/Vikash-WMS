@@ -59,8 +59,13 @@
 .dmg-section-label { font-size:10px; font-weight:600; color:#718096; text-transform:uppercase;
     letter-spacing:0.3px; margin:10px 0 4px; }
 
-/* Preview table */
-.dmg-table { width:100%; border-collapse:collapse; font-size:11px; margin-top:8px; }
+/* Preview table — fixed columns; resulting companies are ROWS not columns,
+   so adding companies never widens the table. min-width:0 overrides the global
+   table { min-width:940px } rule (LESSONS §E.18.4) so it fits the modal. */
+.dmg-table { width:100%; min-width:0; border-collapse:collapse; font-size:11px; margin-top:8px; table-layout:fixed; }
+.dmg-table td.l, .dmg-table th.l { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dmg-alloc-row td.l { padding-left:20px; }
+.dmg-alloc-row td { color:#2d3748; }
 .dmg-table th { background:#f7fafc; padding:5px 7px; text-align:right; font-size:10px; font-weight:600;
     color:#4a5568; text-transform:uppercase; border-bottom:2px solid #e2e8f0; white-space:nowrap; }
 .dmg-table th.l { text-align:left; }

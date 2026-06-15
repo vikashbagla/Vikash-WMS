@@ -342,7 +342,7 @@ function demergerComputeSlices() {
         var inv = invMap[g.investor_id], trd = g.trader_id ? invMap[g.trader_id] : null, brk = brkMap[g.broker_id];
         var invL = inv ? (inv.short_name || inv.name) : '—', trdL = trd ? (trd.short_name || trd.name) : '', brkL = brk ? (brk.broker_code || brk.name) : '—';
         var combined = invL; if (trdL && trdL !== invL) combined += ' > ' + trdL; if (brkL) combined += ' > ' + brkL;
-        var lots = openLots.map(function(l) { return { date: l.date, qty: l.qty, costPerUnit: l.costPerUnit, cost: wmsRoundMoney(l.qty * l.costPerUnit) }; });
+        var lots = openLots.map(function(l) { return { date: l.date, qty: l.qty, costPerUnit: l.costPerUnit, cost: wmsRoundMoney(l.qty * l.costPerUnit), srcTxnId: l.txnId || null }; });
         var totalQty = 0, totalCost = 0;
         lots.forEach(function(l) { totalQty += l.qty; totalCost += l.cost; });
         slices.push({ key: key, investor_id: g.investor_id, trader_id: g.trader_id, broker_id: g.broker_id,
@@ -383,53 +383,49 @@ function demergerRenderPreview() {
         return;
     }
 
-    var coCols = named.map(function(c) {
-        return { label: (c.security.nse_symbol || c.security.symbol), pct: (parseFloat(c.pct) || 0) / 100 };
-    });
-
-    var html = '<table class="dmg-table"><thead><tr>' +
-        '<th class="l">Holding / Lot</th><th>Qty</th><th>Orig Cost</th>' +
-        '<th>Parent (' + retain.toFixed(1) + '%)</th>';
-    coCols.forEach(function(col) {
-        html += '<th class="dmg-newco">' + wmsEsc(col.label) + ' (' + (col.pct * 100).toFixed(1) + '%)</th>';
-    });
-    html += '</tr></thead><tbody>';
-
+    // Resulting companies render as ROWS (not columns) so adding companies never
+    // widens the table — fixed 4-column layout.
+    var named2 = named.map(function(c) { return { label: (c.security.nse_symbol || c.security.symbol), pct: (parseFloat(c.pct) || 0) }; });
     var fParent = retain / 100;
-    var grand = { qty: 0, cost: 0, parent: 0, co: coCols.map(function() { return 0; }) };
+
+    var html = '<table class="dmg-table"><colgroup><col style="width:46%"><col style="width:16%"><col style="width:24%"><col style="width:14%"></colgroup>' +
+        '<thead><tr><th class="l">Holding / Lot / Allocation</th><th>Qty</th><th>Cost</th><th>%</th></tr></thead><tbody>';
+
+    var grand = { qty: 0, cost: 0, parent: 0 };
+    var coTotals = named2.map(function() { return 0; });
 
     demergerSlices.forEach(function(s) {
-        var sParentCost = wmsRoundMoney(s.totalCost * fParent);
+        // Slice header — the original holding being demerged
         html += '<tr class="dmg-slice-row"><td class="l">' + wmsEsc(s.combinedLabel) + '</td>' +
-            '<td>' + formatQuantity(s.totalQty) + '</td><td>' + demergerFmt(s.totalCost) + '</td>' +
-            '<td>' + demergerFmt(sParentCost) + '</td>';
-        coCols.forEach(function(col, ci) {
-            var cc = wmsRoundMoney(s.totalCost * col.pct);
-            grand.co[ci] += cc;
-            html += '<td class="dmg-newco">' + demergerFmt(cc) + '</td>';
-        });
-        html += '</tr>';
-        grand.qty += s.totalQty; grand.cost += s.totalCost; grand.parent += sParentCost;
-        // per-lot rows
+            '<td>' + formatQuantity(s.totalQty) + '</td><td>' + demergerFmt(s.totalCost) + '</td><td>100%</td></tr>';
+        // Open lots (shows the original buy dates that the new shares inherit)
         s.lots.forEach(function(l) {
-            html += '<tr class="dmg-lot-row"><td class="l">&bull; ' + lgFmtOrDate(l.date) + '</td>' +
-                '<td>' + formatQuantity(l.qty) + '</td><td>' + demergerFmt(l.cost) + '</td>' +
-                '<td>' + demergerFmt(wmsRoundMoney(l.cost * fParent)) + '</td>';
-            coCols.forEach(function(col) {
-                html += '<td class="dmg-newco">' + demergerFmt(wmsRoundMoney(l.cost * col.pct)) + '</td>';
-            });
-            html += '</tr>';
+            html += '<tr class="dmg-lot-row"><td class="l">&bull; lot ' + lgFmtOrDate(l.date) + '</td>' +
+                '<td>' + formatQuantity(l.qty) + '</td><td>' + demergerFmt(l.cost) + '</td><td></td></tr>';
         });
+        // Allocation result — parent + one row per resulting company
+        var sParentCost = wmsRoundMoney(s.totalCost * fParent);
+        html += '<tr class="dmg-alloc-row"><td class="l">&#8627; Parent retains</td>' +
+            '<td>' + formatQuantity(s.totalQty) + '</td><td>' + demergerFmt(sParentCost) + '</td><td>' + retain.toFixed(2) + '%</td></tr>';
+        named2.forEach(function(col, ci) {
+            var cc = wmsRoundMoney(s.totalCost * col.pct / 100);
+            coTotals[ci] += cc;
+            html += '<tr class="dmg-alloc-row dmg-newco"><td class="l">&#8627; ' + wmsEsc(col.label) + '</td>' +
+                '<td>' + formatQuantity(s.totalQty) + '</td><td>' + demergerFmt(cc) + '</td><td>' + col.pct.toFixed(2) + '%</td></tr>';
+        });
+        grand.qty += s.totalQty; grand.cost += s.totalCost; grand.parent += sParentCost;
     });
 
-    html += '</tbody><tfoot><tr><td class="l">Total</td><td>' + formatQuantity(grand.qty) + '</td>' +
-        '<td>' + demergerFmt(grand.cost) + '</td><td>' + demergerFmt(grand.parent) + '</td>';
-    coCols.forEach(function(col, ci) { html += '<td class="dmg-newco">' + demergerFmt(grand.co[ci]) + '</td>'; });
-    html += '</tr></tfoot></table>';
+    html += '</tbody><tfoot>' +
+        '<tr><td class="l">Total original</td><td>' + formatQuantity(grand.qty) + '</td><td>' + demergerFmt(grand.cost) + '</td><td>100%</td></tr>' +
+        '<tr><td class="l">&#8627; Parent retains</td><td></td><td>' + demergerFmt(grand.parent) + '</td><td>' + retain.toFixed(2) + '%</td></tr>';
+    named2.forEach(function(col, ci) {
+        html += '<tr class="dmg-newco"><td class="l">&#8627; ' + wmsEsc(col.label) + '</td><td></td><td>' + demergerFmt(coTotals[ci]) + '</td><td>' + col.pct.toFixed(2) + '%</td></tr>';
+    });
+    html += '</tfoot></table>';
 
-    // amounts unit hint
     var unit = (typeof getUnitDescription === 'function') ? getUnitDescription() : '';
-    if (unit) html += '<div style="font-size:10px;color:#a0aec0;margin-top:4px;">All cost values in ' + unit + '. Quantity unchanged — each resulting company carries the same shares as the parent.</div>';
+    if (unit) html += '<div style="font-size:10px;color:#a0aec0;margin-top:4px;">All cost values in ' + unit + '. Quantity unchanged — each resulting company carries the same shares as the parent; new shares inherit the parent lot\'s original date.</div>';
 
     wrap.innerHTML = html;
 
@@ -493,7 +489,7 @@ async function demergerSave() {
                         sec: c.security, symbol: cSym, exchange: cExch,
                         quantity: l.qty, price: wmsRoundMoney(allocCost / l.qty), net_amount: allocCost,
                         date: l.date,   // ORIGINAL lot date → holding period carries over
-                        notes: '[Demerger from ' + parentSym + ' on ' + dateStr + ': ' + (f * 100).toFixed(2) + '% of original cost; parent lot ' + l.date + ']'
+                        notes: '[Demerger from ' + parentSym + ' on ' + dateStr + ': ' + (f * 100).toFixed(2) + '% of original cost; parent lot ' + l.date + (l.srcTxnId ? '; src trade ' + l.srcTxnId : '') + ']'
                     }));
                 });
             });
