@@ -719,7 +719,11 @@ function wmsTxnRenderTable(txns) {
     var runningQtyMap = {};
     var runSum = 0;
     chronoTxns.forEach(function(t) {
-        if (!wmsIsQtyExcluded(t.transaction_type)) {
+        // DEMERGER parent leg (qty < 0) is a cost-reduction marker — quantity is
+        // unchanged by a demerger, so it must NOT move the running qty. Incoming
+        // DEMERGER legs (qty > 0, resulting company) still count. (LESSONS §K.2)
+        var isDmgParent = (t.transaction_type === 'DEMERGER' && (t.quantity || 0) < 0);
+        if (!wmsIsQtyExcluded(t.transaction_type) && !isDmgParent) {
             runSum += (t.quantity || 0);
         }
         runningQtyMap[t.id] = runSum;

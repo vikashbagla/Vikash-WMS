@@ -1598,12 +1598,21 @@ function _wmsCostEngine(transactions, method) {
                     securityType: txnSecType, txnId: t.id
                 });
             } else {
-                var dmgFactor = 1 - (txnPrice || 0);   // retained fraction
+                // Parent cost-reduction leg (qty < 0). Derive the retained factor
+                // from the cost removed (|net_amount|) and the engine's OWN open
+                // cost — f = (openCost − removed) / openCost — so the `price` field
+                // is free to carry a display-meaningful per-share value.
                 var dmgLots = lots[key] || [];
+                var dmgOpenCost = 0;
                 for (var dmi = 0; dmi < dmgLots.length; dmi++) {
-                    if (dmgLots[dmi].qty > 0) {
-                        dmgLots[dmi].costPerUnit = dmgLots[dmi].costPerUnit * dmgFactor;
-                        dmgLots[dmi].price = (dmgLots[dmi].price || 0) * dmgFactor;
+                    if (dmgLots[dmi].qty > 0) dmgOpenCost += dmgLots[dmi].qty * dmgLots[dmi].costPerUnit;
+                }
+                var dmgRemoved = Math.abs(txnNetAmount);
+                var dmgFactor = (dmgOpenCost > 0) ? Math.max(0, (dmgOpenCost - dmgRemoved) / dmgOpenCost) : 1;
+                for (var dmj = 0; dmj < dmgLots.length; dmj++) {
+                    if (dmgLots[dmj].qty > 0) {
+                        dmgLots[dmj].costPerUnit = dmgLots[dmj].costPerUnit * dmgFactor;
+                        dmgLots[dmj].price = (dmgLots[dmj].price || 0) * dmgFactor;
                     }
                 }
             }

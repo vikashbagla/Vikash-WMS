@@ -475,12 +475,15 @@ async function demergerSave() {
         slices.forEach(function(s) {
             // --- Parent leg: one DEMERGER, qty 0, price = fraction away, net_amount = cost removed
             var removedCost = wmsRoundMoney(s.totalCost * fracAwayTotal);
+            // qty = −(open qty): the negative sign flags the parent cost-reduction
+            // leg (engine discriminates by sign; the DB forbids qty 0). It shows in
+            // the UI as |qty| (the real shares) with a per-share reduced-cost price,
+            // and is excluded from running qty + holdings.
+            var parentLegPrice = (s.totalQty > 0) ? wmsRoundMoney(removedCost / s.totalQty) : 0;
             txns.push(_dmgTxn({
                 investor_id: s.investor_id, trader_id: s.trader_id, broker_id: s.broker_id,
                 sec: parent, symbol: parentSym, exchange: parentExch,
-                // qty −1 sentinel: parent cost-reduction leg (DB forbids qty 0).
-                // Engine reads the negative sign as "scale open lots, don't add qty".
-                quantity: -1, price: fracAwayTotal, net_amount: removedCost, date: dateStr,
+                quantity: -s.totalQty, price: parentLegPrice, net_amount: removedCost, date: dateStr,
                 notes: '[Demerger of ' + parentSym + ' on ' + dateStr + ': ' + sumPct.toFixed(2) + '% of cost allocated to ' + coList + ']'
             }));
 
