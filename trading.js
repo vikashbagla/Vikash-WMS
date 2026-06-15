@@ -536,6 +536,8 @@ function trSetupEventHandlers() {
                 trLoadBonusModule(function() { openBonusModal(); });
             } else if (txnType === 'SPLIT') {
                 trLoadSplitModule(function() { openSplitModal(); });
+            } else if (txnType === 'DEMERGER') {
+                trLoadDemergerModule(function() { openDemergerModal(); });
             } else {
                 alert('Transaction type "' + txnType + '" — form coming soon.');
             }
@@ -2325,6 +2327,68 @@ async function trLoadBonusModule(callback) {
         showAlert('Failed to load Bonus module: ' + err.message, 'error');
         trBonusLoading = false;
         trBonusCallbacks = [];
+    }
+}
+
+// ============================================================================
+// DEMERGER MODULE — lazy loader (mirrors trLoadBonusModule)
+// ============================================================================
+
+var trDemergerLoaded = false;
+var trDemergerLoading = false;
+var trDemergerCallbacks = [];
+
+async function trLoadDemergerModule(callback) {
+    if (trDemergerLoaded) {
+        if (typeof callback === 'function') callback();
+        return;
+    }
+    if (trDemergerLoading) {
+        if (typeof callback === 'function') trDemergerCallbacks.push(callback);
+        return;
+    }
+    trDemergerLoading = true;
+    if (typeof callback === 'function') trDemergerCallbacks.push(callback);
+
+    try {
+        var htmlResp = await fetch('trading-demerger.html?t=' + Date.now());
+        if (!htmlResp.ok) throw new Error('Failed to load trading-demerger.html');
+        var htmlText = await htmlResp.text();
+
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(htmlText, 'text/html');
+        var styles = doc.querySelectorAll('style');
+        styles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+
+        var oldContainer = document.getElementById('tr-demerger-container');
+        if (oldContainer) oldContainer.remove();
+
+        var container = document.createElement('div');
+        container.id = 'tr-demerger-container';
+        container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
+        document.body.appendChild(container);
+
+        var oldScript = document.querySelector('script[src*="trading-demerger.js"]');
+        if (oldScript) oldScript.remove();
+        await new Promise(function(resolve, reject) {
+            var script = document.createElement('script');
+            script.src = 'trading-demerger.js?t=' + Date.now();
+            script.onload = resolve;
+            script.onerror = function() { reject(new Error('Failed to load trading-demerger.js')); };
+            document.body.appendChild(script);
+        });
+
+        trDemergerLoaded = true;
+        setTimeout(function() {
+            if (typeof initDemergerModule === 'function') initDemergerModule();
+            trDemergerCallbacks.forEach(function(cb) { cb(); });
+            trDemergerCallbacks = [];
+        }, 100);
+    } catch (err) {
+        console.error('Trading: Failed to load demerger module:', err);
+        showAlert('Failed to load Demerger module: ' + err.message, 'error');
+        trDemergerLoading = false;
+        trDemergerCallbacks = [];
     }
 }
 
