@@ -286,7 +286,7 @@ async function rptLoadData() {
     // HISTORICAL_PL (skipped by FIFO). No query-level filtering needed.
     // Uses wmsFetchAllRaw() to paginate past Supabase's 1000-row default limit.
     var txnData = await wmsFetchAllRaw(
-        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,transaction_time,quantity,price,gross_amount,net_amount,tags,dont_display&dont_display=eq.false&order=transaction_date.asc,transaction_time.asc.nullsfirst,id.asc'
+        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,transaction_time,quantity,price,gross_amount,net_amount,stt,tags,dont_display&dont_display=eq.false&order=transaction_date.asc,transaction_time.asc.nullsfirst,id.asc'
     );
 
     console.log('✅ Reports: loaded ' + txnData.length + ' transactions');
@@ -308,6 +308,7 @@ async function rptLoadData() {
             price: txn.price,
             grossAmount: txn.gross_amount,
             netAmount: txn.net_amount,
+            stt: txn.stt,
             tags: txn.tags || []
         };
     });
@@ -570,7 +571,7 @@ function rptInitViewBar() {
     if (filtersToggle && filtersDiv) {
         filtersToggle.addEventListener('click', function() {
             var isHidden = filtersDiv.style.display === 'none';
-            filtersDiv.style.display = isHidden ? '' : 'none';
+            filtersDiv.style.display = isHidden ? 'flex' : 'none';
             filtersToggle.textContent = isHidden ? '▲' : '▼';
         });
     }
@@ -1359,6 +1360,43 @@ function rptClassifyGain(gain) {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Capital-gains engine (STT-aware). STT is NOT a permitted CG deduction, but
+// WMS lets each investor flag STT as a separate expense (stt_accounting_method).
+//   • flag ON  (STT booked as a separate expense) → STT is EXCLUDED from the CG
+//     cost/proceeds: removed from buy cost, added back to sell proceeds.
+//   • flag OFF (STT capitalised into the trade)    → STT stays in (net_amount).
+// The flag is resolved PER TRADE by the trade's own investor (E.14: charges
+// belong to the executing investor_id). We reuse the shared FIFO engine for all
+// lot-matching + corporate-action logic and only feed it STT-adjusted amounts.
+// ----------------------------------------------------------------------------
+function rptCalcCapGains(txns) {
+    var invFlag = {};
+    rptInvestors.forEach(function(inv) { invFlag[String(inv.id)] = !!inv.stt_accounting_method; });
+
+    var adj = txns.map(function(t) {
+        var stt = Math.abs(parseFloat(t.stt) || 0);
+        if (stt <= 0) return t;                              // nothing to strip
+        if (!invFlag[String(t.investorId)]) return t;        // flag OFF → STT stays in CG
+        // flag ON → STT is a separate expense → strip it from the CG basis
+        var base = (t.netAmount !== undefined ? t.netAmount : t.net_amount) || 0;
+        var ty = (t.type || t.transaction_type || '').toUpperCase();
+        var c = {}; for (var k in t) c[k] = t[k];
+        if (ty === 'BUY' || ty === 'RIGHTS_PAYMENT') c.net_amount = base - stt;   // buy cost ↓
+        else if (ty === 'SELL')                      c.net_amount = base + stt;   // sell proceeds ↑
+        else                                         c.net_amount = base;
+        return c;                                            // net_amount (snake) wins over netAmount in the engine
+    });
+
+    return wmsCalcFifoCost(adj).gains;
+}
+
+// Bucket a realised gain into INTRADAY (same-day) / STCG / LTCG.
+function rptCGBucket(g) {
+    if (g.buyDate && g.sellDate && g.buyDate === g.sellDate) return 'INTRADAY';
+    return rptClassifyGain(g).type === 'LTCG' ? 'LTCG' : 'STCG';
+}
+
 function rptInitFYSelector() {
     var select = document.getElementById('rpt-fy-select');
     if (!select) return;
@@ -1480,11 +1518,11 @@ function rptRenderCapGains() {
         }
     }
 
-    // Run FIFO on ALL transactions (not just FY) to get correct lot matching
-    var fifo = rptFifoEngine(filtered);
+    // STT-aware capital-gains engine (runs on the filtered set for correct lot matching)
+    var gains = rptCalcCapGains(filtered);
 
-    // Filter gains to selected FY (sell date within FY)
-    var fyGains = fifo.gains.filter(function(g) {
+    // Keep gains whose SELL falls within the selected FY
+    var fyGains = gains.filter(function(g) {
         return g.sellDate >= fyStart && g.sellDate <= fyEnd;
     });
 
@@ -1494,46 +1532,46 @@ function rptRenderCapGains() {
         return;
     }
 
-    // Classify and aggregate
-    var totalLTCG = 0, totalSTCG = 0, totalGain = 0;
-    var ltcgCount = 0, stcgCount = 0;
-
+    // Aggregate per stock into Intra-day / Short-term / Long-term buckets
+    var perStock = {};
+    var totIntraday = 0, totSTCG = 0, totLTCG = 0;
     fyGains.forEach(function(g) {
-        var cls = rptClassifyGain(g);
-        g._cgType = cls.type;
-        g._cgRate = cls.rate;
-        g._cgRateNote = cls.rateNote;
-        totalGain += g.gain;
-        if (cls.type === 'LTCG') {
-            totalLTCG += g.gain;
-            ltcgCount++;
-        } else {
-            totalSTCG += g.gain;
-            stcgCount++;
+        var key = g.shortSymbol || g.symbol;
+        if (!perStock[key]) {
+            perStock[key] = {
+                symbol: key,
+                company: g.companyName || '',
+                securityType: g.securityType || 'EQUITY',
+                intraday: 0, stcg: 0, ltcg: 0
+            };
         }
+        var b = rptCGBucket(g);
+        if (b === 'INTRADAY') { perStock[key].intraday += g.gain; totIntraday += g.gain; }
+        else if (b === 'LTCG') { perStock[key].ltcg += g.gain; totLTCG += g.gain; }
+        else { perStock[key].stcg += g.gain; totSTCG += g.gain; }
     });
 
-    // Estimated tax
-    var ltcgTaxable = Math.max(0, totalLTCG - RPT_CG_LTCG_EXEMPTION);
+    // Estimated tax (capital gains only; intra-day is taxed at slab and excluded)
+    var ltcgTaxable = Math.max(0, totLTCG - RPT_CG_LTCG_EXEMPTION);
     var estLTCGTax = ltcgTaxable * RPT_CG_LTCG_RATE / 100;
-    var estSTCGTax = totalSTCG > 0 ? totalSTCG * RPT_CG_STCG_RATE / 100 : 0;
+    var estSTCGTax = totSTCG > 0 ? totSTCG * RPT_CG_STCG_RATE / 100 : 0;
 
-    // Summary cards
+    // Summary cards: Intra-day · Short-term · Long-term · Est. tax
     summaryEl.innerHTML =
         '<div class="rpt-cg-card">' +
-            '<div class="rpt-cg-card-label">Total Realized Gains</div>' +
-            '<div class="rpt-cg-card-value ' + getAmountClass(totalGain) + '">' + formatAmount(totalGain) + '</div>' +
-            '<div class="rpt-cg-card-sub">' + fyGains.length + ' transactions</div>' +
+            '<div class="rpt-cg-card-label">Intra-day Profit/Loss</div>' +
+            '<div class="rpt-cg-card-value ' + getAmountClass(totIntraday) + '">' + formatAmount(totIntraday) + '</div>' +
+            '<div class="rpt-cg-card-sub">taxed at slab (speculative)</div>' +
         '</div>' +
         '<div class="rpt-cg-card">' +
-            '<div class="rpt-cg-card-label">Long Term (LTCG)</div>' +
-            '<div class="rpt-cg-card-value ' + getAmountClass(totalLTCG) + '">' + formatAmount(totalLTCG) + '</div>' +
-            '<div class="rpt-cg-card-sub">' + ltcgCount + ' txns · ' + RPT_CG_LTCG_RATE + '% above ₹' + (RPT_CG_LTCG_EXEMPTION / 100000).toFixed(2) + 'L</div>' +
+            '<div class="rpt-cg-card-label">Short-term Capital Gain</div>' +
+            '<div class="rpt-cg-card-value ' + getAmountClass(totSTCG) + '">' + formatAmount(totSTCG) + '</div>' +
+            '<div class="rpt-cg-card-sub">' + RPT_CG_STCG_RATE + '% (listed equity)</div>' +
         '</div>' +
         '<div class="rpt-cg-card">' +
-            '<div class="rpt-cg-card-label">Short Term (STCG)</div>' +
-            '<div class="rpt-cg-card-value ' + getAmountClass(totalSTCG) + '">' + formatAmount(totalSTCG) + '</div>' +
-            '<div class="rpt-cg-card-sub">' + stcgCount + ' txns · ' + RPT_CG_STCG_RATE + '% (listed equity)</div>' +
+            '<div class="rpt-cg-card-label">Long-term Capital Gain</div>' +
+            '<div class="rpt-cg-card-value ' + getAmountClass(totLTCG) + '">' + formatAmount(totLTCG) + '</div>' +
+            '<div class="rpt-cg-card-sub">' + RPT_CG_LTCG_RATE + '% above ₹' + (RPT_CG_LTCG_EXEMPTION / 100000).toFixed(2) + 'L</div>' +
         '</div>' +
         '<div class="rpt-cg-card">' +
             '<div class="rpt-cg-card-label">Est. Tax Liability</div>' +
@@ -1541,86 +1579,56 @@ function rptRenderCapGains() {
             '<div class="rpt-cg-card-sub">LTCG: ' + formatAmount(estLTCGTax) + ' · STCG: ' + formatAmount(estSTCGTax) + '</div>' +
         '</div>';
 
-    // Sort gains: most recent sell date first
-    fyGains.sort(function(a, b) {
-        if (a.sellDate > b.sellDate) return -1;
-        if (a.sellDate < b.sellDate) return 1;
-        return a.symbol.localeCompare(b.symbol);
+    // One row per stock, ordered by asset class then symbol
+    var stocks = Object.keys(perStock).map(function(k) { return perStock[k]; });
+    stocks.forEach(function(s) { s.assetClass = rptGetAssetClass(s.securityType); });
+    stocks.sort(function(a, b) {
+        var ai = RPT_ASSET_CLASS_ORDER.indexOf(a.assetClass); if (ai < 0) ai = 99;
+        var bi = RPT_ASSET_CLASS_ORDER.indexOf(b.assetClass); if (bi < 0) bi = 99;
+        if (ai !== bi) return ai - bi;
+        return (a.symbol || '').localeCompare(b.symbol || '');
     });
 
-    // Detail table — grouped Buy/Sell, Qty+Price combined, fixed layout (fits one screen)
+    // Per-stock summary table — Stock | Type | Intra-day | Short-term | Long-term
     var html = '<table class="rpt-cg-table" style="width:100%; border-collapse:collapse; table-layout:fixed;">';
     html += '<colgroup>' +
-        '<col style="width:18%">' +   // Symbol
-        '<col style="width:8%">' +    // Type
-        '<col style="width:10%">' +   // Buy Date
-        '<col style="width:11%">' +   // Buy Qty/Price
-        '<col style="width:10%">' +   // Buy Cost
-        '<col style="width:10%">' +   // Sell Date
-        '<col style="width:11%">' +   // Sell Qty/Price
-        '<col style="width:11%">' +   // Sell Proceeds
-        '<col style="width:11%">' +   // Gain/Loss
+        '<col style="width:30%">' +   // Stock
+        '<col style="width:16%">' +   // Type
+        '<col style="width:18%">' +   // Intra-day
+        '<col style="width:18%">' +   // Short-term
+        '<col style="width:18%">' +   // Long-term
     '</colgroup>';
-    html += '<thead>' +
-        '<tr class="cg-hdr-grp">' +
-            '<th rowspan="2">Symbol</th>' +
-            '<th rowspan="2">Type</th>' +
-            '<th colspan="3" class="cg-grp-start cg-grp-label">Buy</th>' +
-            '<th colspan="3" class="cg-grp-start cg-grp-label">Sell</th>' +
-            '<th rowspan="2" class="text-right cg-grp-start">Gain / Loss</th>' +
-        '</tr>' +
-        '<tr class="cg-hdr-col">' +
-            '<th class="cg-grp-start">Date</th>' +
-            '<th class="text-right">Qty / Price</th>' +
-            '<th class="text-right">Cost</th>' +
-            '<th class="cg-grp-start">Date</th>' +
-            '<th class="text-right">Qty / Price</th>' +
-            '<th class="text-right">Proceeds</th>' +
-        '</tr>' +
-    '</thead><tbody>';
+    html += '<thead><tr>' +
+        '<th>Stock</th>' +
+        '<th>Type</th>' +
+        '<th class="text-right cg-grp-start">Intra-day Profit/Loss</th>' +
+        '<th class="text-right">Short-term Capital Gain</th>' +
+        '<th class="text-right">Long-term Capital Gain</th>' +
+    '</tr></thead><tbody>';
 
-    for (var i = 0; i < fyGains.length; i++) {
-        var g = fyGains[i];
-        var badgeClass = g._cgType === 'LTCG' ? 'ltcg' : 'stcg';
-
+    stocks.forEach(function(s) {
+        var badge = RPT_AC_BADGE[s.assetClass] || '—';
         html += '<tr>' +
             '<td>' +
-                '<div style="font-weight:600; font-size:12px; color:#2d3748;">' + g.symbol + '</div>' +
-                '<div style="font-size:10px; color:#a0aec0;">' + (g.companyName || '') + '</div>' +
+                '<div style="font-weight:600; font-size:12px; color:#2d3748;">' + s.symbol + '</div>' +
+                '<div style="font-size:10px; color:#a0aec0;">' + s.company + '</div>' +
             '</td>' +
-            '<td><span class="rpt-cg-type-badge ' + badgeClass + '" title="' + g._cgRateNote + '">' + g._cgType + '</span></td>' +
-            // Buy group
-            '<td class="cg-grp-start">' + formatDate(g.buyDate) + '</td>' +
-            '<td class="text-right">' +
-                '<div class="number-main">' + formatQuantity(g.qty) + '</div>' +
-                '<div class="number-sub">' + formatPrice(g.buyPrice, false) + '</div>' +
+            '<td>' +
+                '<span style="display:inline-block;border:1px solid #a0aec0;border-radius:3px;padding:0 5px;font-size:10px;font-weight:700;color:#4a5568;margin-right:5px;">' + badge + '</span>' +
+                '<span style="font-size:11px;color:#718096;">' + s.assetClass + '</span>' +
             '</td>' +
-            '<td class="text-right"><div class="number-main">' + formatAmount(g.buyCost) + '</div></td>' +
-            // Sell group
-            '<td class="cg-grp-start">' + formatDate(g.sellDate) + '</td>' +
-            '<td class="text-right">' +
-                '<div class="number-main">' + formatQuantity(g.qty) + '</div>' +
-                '<div class="number-sub">' + formatPrice(g.sellPrice, false) + '</div>' +
-            '</td>' +
-            '<td class="text-right"><div class="number-main">' + formatAmount(g.sellProceeds) + '</div></td>' +
-            // Result
-            '<td class="text-right cg-grp-start ' + getAmountClass(g.gain) + '" style="font-weight:600;">' + formatAmount(g.gain) + '</td>' +
+            '<td class="text-right cg-grp-start ' + getAmountClass(s.intraday) + '">' + formatAmount(s.intraday) + '</td>' +
+            '<td class="text-right ' + getAmountClass(s.stcg) + '">' + formatAmount(s.stcg) + '</td>' +
+            '<td class="text-right ' + getAmountClass(s.ltcg) + '">' + formatAmount(s.ltcg) + '</td>' +
         '</tr>';
-    }
+    });
 
-    // Totals row (9 columns; separators on cols 3/6/9 align with the body)
-    var totalBuyCost = 0, totalSellProceeds = 0, totalQty = 0;
-    fyGains.forEach(function(g) { totalBuyCost += g.buyCost; totalSellProceeds += g.sellProceeds; totalQty += g.qty; });
     html += '<tr class="total-row">' +
         '<td>TOTAL</td>' +
         '<td></td>' +
-        '<td class="cg-grp-start" style="font-size:11px;">' + fyGains.length + ' txns</td>' +
-        '<td class="text-right"><div class="number-main">' + formatQuantity(totalQty) + '</div></td>' +
-        '<td class="text-right">' + formatAmount(totalBuyCost) + '</td>' +
-        '<td class="cg-grp-start"></td>' +
-        '<td></td>' +
-        '<td class="text-right">' + formatAmount(totalSellProceeds) + '</td>' +
-        '<td class="text-right cg-grp-start ' + getAmountClass(totalGain) + '">' + formatAmount(totalGain) + '</td>' +
+        '<td class="text-right cg-grp-start ' + getAmountClass(totIntraday) + '">' + formatAmount(totIntraday) + '</td>' +
+        '<td class="text-right ' + getAmountClass(totSTCG) + '">' + formatAmount(totSTCG) + '</td>' +
+        '<td class="text-right ' + getAmountClass(totLTCG) + '">' + formatAmount(totLTCG) + '</td>' +
     '</tr>';
 
     html += '</tbody></table>';
