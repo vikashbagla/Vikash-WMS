@@ -485,6 +485,29 @@ function trSetupEventHandlers() {
     document.getElementById('trAddTxnBtn').addEventListener('click', function() {
         trOpenAddTransaction();
     });
+    // Quick Fyers import shortcut — loads the Import Transactions module (which
+    // defaults the Fyers investor to Veins via fyInit) and triggers the EXACT
+    // same fetch the import module's "Fetch Today's Trades" button calls. No new
+    // import logic — pure reuse of window.fyFetchTrades.
+    var trFyersBtn = document.getElementById('trFyersImportBtn');
+    if (trFyersBtn) {
+        trFyersBtn.addEventListener('click', async function() {
+            try { await loadModule('import-transactions'); } catch (e) { console.warn('Fyers shortcut: module load failed', e); }
+            // Wait for the Fyers box to finish init (investor defaulted to Veins,
+            // broker resolved), then fire the existing fetch which opens the preview.
+            var tries = 0;
+            var iv = setInterval(function() {
+                tries++;
+                if (typeof window.fyFetchTrades === 'function' && window.fyInvestorId && window.fyBrokerId) {
+                    clearInterval(iv);
+                    window.fyFetchTrades();
+                } else if (tries > 40) {
+                    clearInterval(iv);
+                    if (typeof showAlert === 'function') showAlert('Fyers import is taking a moment — open Import Transactions and use the Fyers box.', 'warning', 4000);
+                }
+            }, 150);
+        });
+    }
     document.getElementById('trToggleZeroBtn').addEventListener('click', trToggleZeroHoldings);
 
     // Filter toggle — Portfolio
