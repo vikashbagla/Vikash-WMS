@@ -261,9 +261,21 @@
     color: #2d3748;
 }
 
-/* CG detail table tweaks */
-.rpt-cg-table th { font-size: 11px; }
+/* CG detail table — fixed layout, grouped Buy/Sell, fits one screen (no h-scroll/overlap) */
+#rptCGBody > table { min-width: 0; }            /* override global .table-container 940px min-width */
+.rpt-cg-table { table-layout: fixed; }
+.rpt-cg-table th, .rpt-cg-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rpt-cg-table td > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rpt-cg-table td { font-size: 12px; }
+/* Two-row header: group labels (Buy/Sell) row sticky on top, column labels row sticks below it */
+.rpt-cg-table thead tr.cg-hdr-grp th { top: 0; z-index: 12; height: 26px; box-sizing: border-box; padding: 3px 8px; }
+.rpt-cg-table thead tr.cg-hdr-grp th.cg-grp-label { text-align: center; }
+.rpt-cg-table thead tr.cg-hdr-col th { top: 25px; z-index: 11; }
+/* Logical group separators (Buy | Sell | Result) — D.8.3 */
+.rpt-cg-table th.cg-grp-start { border-left: 2px solid #cbd5e0; }
+.rpt-cg-table td.cg-grp-start { border-left: 1px solid #edf1f6; }
+/* Bottom total row is a summary, not sticky */
+.rpt-cg-table .total-row { position: static; }
 .rpt-cg-type-badge {
     display: inline-block;
     padding: 1px 6px;
@@ -348,39 +360,11 @@
             <span style="font-size:11px; color:#a0aec0; margin-left:8px;">(April to March)</span>
         </div>
 
-        <!-- Filters for Capital Gains -->
+        <!-- Filters for Capital Gains (pill-based, built by wmsPillSearch in reports.js) -->
         <div id="rptCGFilters" style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid #e2e8f0;">
             <div class="filters-grid" style="flex:1; grid-template-columns: repeat(2, 1fr);">
-                <!-- Investor Filter -->
-                <div class="filter-group">
-                    <div class="filter-header">
-                        <label>Filter by Investor</label>
-                        <span class="clear-link" onclick="rptCGClearFilter('investor')">Clear all</span>
-                    </div>
-                    <div class="filter-search-container">
-                        <input type="text" class="filter-search-input" id="rpt-cg-investor-search"
-                               placeholder="Type to search investors..."
-                               oninput="rptCGFilterSearch('investor')"
-                               onclick="rptCGShowDropdown('investor')">
-                        <div class="filter-dropdown" id="rpt-cg-investor-dropdown"></div>
-                    </div>
-                    <div class="filter-selected-tags" id="rpt-cg-selected-investors"></div>
-                </div>
-                <!-- Broker Filter -->
-                <div class="filter-group">
-                    <div class="filter-header">
-                        <label>Filter by Broker</label>
-                        <span class="clear-link" onclick="rptCGClearFilter('broker')">Clear all</span>
-                    </div>
-                    <div class="filter-search-container">
-                        <input type="text" class="filter-search-input" id="rpt-cg-broker-search"
-                               placeholder="Type to search brokers..."
-                               oninput="rptCGFilterSearch('broker')"
-                               onclick="rptCGShowDropdown('broker')">
-                        <div class="filter-dropdown" id="rpt-cg-broker-dropdown"></div>
-                    </div>
-                    <div class="filter-selected-tags" id="rpt-cg-selected-brokers"></div>
-                </div>
+                <div id="rpt-cg-filter-investor"></div>
+                <div id="rpt-cg-filter-broker"></div>
             </div>
         </div>
 
