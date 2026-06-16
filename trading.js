@@ -802,15 +802,19 @@ function trRestoreTab() {
 // ----------------------------------------------------------------------------
 // TRANSACTIONS LOAD + INCREMENTAL-LOAD PROBE
 // ----------------------------------------------------------------------------
-// trTransactions stays in memory across module switches (trading.js stays
-// loaded; only the DOM is re-injected). On re-entry we cheaply PROBE the DB
-// (exact row COUNT + MAX(updated_at)) and skip the heavy full fetch when both
-// match what we captured at the last full load. Fail-safe by design: any
-// mismatch, NaN, or error → full reload. Deletes are caught by the count drop;
-// edits/inserts by max(updated_at) advancing — guaranteed by the BEFORE UPDATE
-// trigger (migration 47 / LESSONS A.9.5). The Refresh button ALWAYS full-loads.
-var _trTxnCount = null;        // server row count captured at last full load
-var _trTxnMaxUpdated = null;   // max(updated_at) string captured at last full load
+// On module entry we cheaply PROBE the DB (exact row COUNT + MAX(updated_at)) and
+// skip the heavy full fetch when both match what we captured at the last full
+// load. Fail-safe by design: any mismatch, NaN, or error → full reload. Deletes
+// are caught by the count drop; edits/inserts by max(updated_at) advancing —
+// guaranteed by the BEFORE UPDATE trigger (migration 47 / LESSONS A.9.5). The
+// Refresh button ALWAYS full-loads.
+//
+// IMPORTANT: trading.js is RE-EXECUTED on every module entry (app.html loadScript
+// removes + re-injects it with a fresh cache-bust), so module-level vars reset to
+// their initializers each time. The cache must therefore live on `window`, which
+// survives the re-execution. Shape:
+//   window._wmsTxnCache = { rows: [...sanitized txns...], count: <server rows>, maxUpdated: <str> }
+window._wmsTxnCache = window._wmsTxnCache || null;
 
 function trMaxUpdatedAt(rows) {
     var max = null, maxT = -Infinity;
@@ -852,11 +856,6 @@ async function trFetchTransactions() {
 
     trTransactions = wmsSanitizeTransactions(txnData);
 
-    // Capture probe baseline from the RAW server rows (NOT the sanitized array —
-    // sanitize could drop/merge rows, which would desync the count comparison).
-    _trTxnCount = txnData.length;
-    _trTxnMaxUpdated = trMaxUpdatedAt(txnData);
-
     // Build comprehensive search text for each transaction (Rule B.9.2)
     trTransactions.forEach(function(txn) {
         txn._searchText = wmsBuildSecuritySearchText({
@@ -864,6 +863,16 @@ async function trFetchTransactions() {
             shortSymbol: txn.short_symbol, companyName: txn.company_name
         });
     });
+
+    // Persist the cache + probe baseline on window so it survives the next
+    // trading.js re-execution (module switch). Baseline count/maxUpdated come
+    // from the RAW server rows (NOT the sanitized array — sanitize could
+    // drop/merge rows, which would desync the count comparison against the probe).
+    window._wmsTxnCache = {
+        rows: trTransactions,
+        count: txnData.length,
+        maxUpdated: trMaxUpdatedAt(txnData)
+    };
 }
 
 // In-memory derivations that must run on EVERY module entry — including the
@@ -903,16 +912,18 @@ async function trLoadData() {
 // Module-entry loader: reuse the in-memory cache when the probe proves it's
 // still current; otherwise full-load. Fail-safe — anything unexpected → full load.
 async function trLoadDataIfChanged() {
-    var haveCache = Array.isArray(trTransactions) && trTransactions.length > 0 && _trTxnCount !== null;
+    var cache = window._wmsTxnCache;
+    var haveCache = cache && Array.isArray(cache.rows) && cache.rows.length > 0 && cache.count != null;
     if (haveCache) {
         try {
             var probe = await trProbeTransactions();
-            if (!isNaN(probe.count) && probe.count === _trTxnCount && probe.maxUpdated === _trTxnMaxUpdated) {
+            if (!isNaN(probe.count) && probe.count === cache.count && probe.maxUpdated === cache.maxUpdated) {
                 console.log('Trading: transactions cache current (count=' + probe.count + ', maxUpdated=' + probe.maxUpdated + ') — skipping full DB load');
+                trTransactions = cache.rows; // re-point working array at the persisted cache
                 await trDeriveAfterLoad();
                 return true; // reused cache
             }
-            console.log('Trading: transactions changed (count ' + _trTxnCount + '→' + probe.count + ', maxUpdated ' + _trTxnMaxUpdated + '→' + probe.maxUpdated + ') — full reload');
+            console.log('Trading: transactions changed (count ' + cache.count + '→' + probe.count + ', maxUpdated ' + cache.maxUpdated + '→' + probe.maxUpdated + ') — full reload');
         } catch (e) {
             console.warn('Trading: probe failed → full load', e);
         }
