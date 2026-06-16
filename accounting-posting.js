@@ -123,7 +123,7 @@ function acctFifoAddCost(fifo, txn, amount) {
     var k = acctSecKey(txn);
     var lots = fifo[k] || (fifo[k] = []);
     if (lots.length) { lots[0].cost = acctR2(lots[0].cost + amount); }
-    else { lots.push({ qty: acctNum(txn.quantity), cost: acctR2(amount), date: txn.transaction_date }); }
+    else { lots.push({ qty: Math.abs(acctNum(txn.quantity)), cost: acctR2(amount), date: txn.transaction_date }); }
 }
 
 // ============================================================================
@@ -156,7 +156,7 @@ function acctBuildOne(txn, bookId, ctx, fifo, sttSeparate) {
     if (ACCT_NO_VOUCHER_TYPES[type]) {
         if (rel === 'OWN' && (type === 'BONUS' || type === 'SPLIT' || type === 'RIGHTS_ENTITLEMENT') && !acctIsFno(txn)) {
             // qty added at zero cost (lowers average cost); no cash, no voucher
-            acctFifoPush(fifo, txn, acctNum(txn.quantity), 0);
+            acctFifoPush(fifo, txn, Math.abs(acctNum(txn.quantity)), 0);
         }
         return { skip: type === 'HISTORICAL_PL' ? 'HISTORICAL_PL ignored (FIFO books)' : (type + ' has no cash effect') };
     }
@@ -191,7 +191,7 @@ function acctBuildOne(txn, bookId, ctx, fifo, sttSeparate) {
     // ---- OWN equity-like ------------------------------------------------------
     if (type === 'BUY') {
         var cost = sttSeparate ? (gross + charges - stt) : (gross + charges);
-        acctFifoPush(fifo, txn, acctNum(txn.quantity), cost);
+        acctFifoPush(fifo, txn, Math.abs(acctNum(txn.quantity)), cost);
         var lines = [acctLine(acctKeyInvestment(txn), cost, 0, sym)];
         if (sttSeparate && stt > 0) lines.push(acctLine(ACCT_SYS.stt(), stt, 0));
         lines.push(acctLine(acctKeyBroker(txn, ctx), 0, gross + charges));
@@ -199,7 +199,7 @@ function acctBuildOne(txn, bookId, ctx, fifo, sttSeparate) {
     }
 
     if (type === 'SELL') {
-        var qty = acctNum(txn.quantity);
+        var qty = Math.abs(acctNum(txn.quantity));   // SELL quantity is stored negative in the data
         var consumed = acctFifoConsume(fifo, txn, qty);
         var netSell = gross - charges;
         var proceedsForCg = sttSeparate ? (netSell + stt) : netSell;   // STT excluded from CG when separate
