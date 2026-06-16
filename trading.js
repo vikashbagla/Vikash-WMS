@@ -425,7 +425,10 @@ async function initTrading() {
     trRestoreTab();
 
     try {
-        await trLoadData();
+        // Probe-aware: reuse the in-memory transactions cache when the DB is
+        // unchanged since the last full load (see trLoadDataIfChanged). The
+        // Refresh button still calls trLoadData() directly for a forced reload.
+        await trLoadDataIfChanged();
     } catch (error) {
         console.error('Trading: Error loading data:', error);
         showAlert('Failed to load trading data: ' + error.message, 'error');
@@ -796,9 +799,50 @@ function trRestoreTab() {
 // DATA LOADING
 // ============================================================================
 
-async function trLoadData() {
-    var headers = wmsHeaders();
+// ----------------------------------------------------------------------------
+// TRANSACTIONS LOAD + INCREMENTAL-LOAD PROBE
+// ----------------------------------------------------------------------------
+// trTransactions stays in memory across module switches (trading.js stays
+// loaded; only the DOM is re-injected). On re-entry we cheaply PROBE the DB
+// (exact row COUNT + MAX(updated_at)) and skip the heavy full fetch when both
+// match what we captured at the last full load. Fail-safe by design: any
+// mismatch, NaN, or error → full reload. Deletes are caught by the count drop;
+// edits/inserts by max(updated_at) advancing — guaranteed by the BEFORE UPDATE
+// trigger (migration 47 / LESSONS A.9.5). The Refresh button ALWAYS full-loads.
+var _trTxnCount = null;        // server row count captured at last full load
+var _trTxnMaxUpdated = null;   // max(updated_at) string captured at last full load
 
+function trMaxUpdatedAt(rows) {
+    var max = null, maxT = -Infinity;
+    for (var i = 0; i < rows.length; i++) {
+        var u = rows[i] && rows[i].updated_at;
+        if (!u) continue;
+        var t = new Date(u).getTime();
+        if (t > maxT) { maxT = t; max = u; }
+    }
+    return max;
+}
+
+// Two tiny queries: exact row count (HEAD + Content-Range) and latest
+// updated_at. Both pass through the dev/prod fetch interceptor (→ _dev on dev).
+async function trProbeTransactions() {
+    var headers = wmsHeaders();
+    var countP = fetch(SUPABASE_URL + '/rest/v1/transactions?select=id', {
+        method: 'HEAD',
+        headers: Object.assign({}, headers, { 'Prefer': 'count=exact', 'Range-Unit': 'items', 'Range': '0-0' })
+    });
+    var maxP = fetch(SUPABASE_URL + '/rest/v1/transactions?select=updated_at&order=updated_at.desc.nullslast&limit=1', { headers: headers });
+    var res = await Promise.all([countP, maxP]);
+    var cr = res[0].headers.get('content-range') || '';
+    var count = cr.indexOf('/') >= 0 ? parseInt(cr.split('/')[1], 10) : NaN;
+    var maxRows = await res[1].json();
+    var maxUpdated = (maxRows && maxRows[0]) ? maxRows[0].updated_at : null;
+    return { count: count, maxUpdated: maxUpdated };
+}
+
+// Full fetch of ALL transactions (every type), sanitize, build search text,
+// and capture the probe baseline. Heavy — paginates the whole table.
+async function trFetchTransactions() {
     // Load ALL transactions (no transaction_type filter — includes DIVIDEND, etc.)
     // Uses wmsFetchAllRaw() to paginate past Supabase's 1000-row default limit.
     var txnData = await wmsFetchAllRaw(
@@ -808,16 +852,10 @@ async function trLoadData() {
 
     trTransactions = wmsSanitizeTransactions(txnData);
 
-    // Refresh the shared tag autocomplete list from the freshly-loaded
-    // transactions. This is the single source of truth for tag suggestions
-    // across Add Transaction / Bonus / Split / Income / Rights / Hist P&L
-    // modals (all of which read wmsRefData.tags). Keeping tags derived from
-    // the in-memory array — instead of a separate DB query — guarantees
-    // freshness after every save/import and side-steps the LESSONS A.1.14
-    // 1000-row cap that silently dropped recent tags before 2026-05-12.
-    if (typeof wmsRefreshTagsFromTransactions === 'function') {
-        wmsRefreshTagsFromTransactions(trTransactions);
-    }
+    // Capture probe baseline from the RAW server rows (NOT the sanitized array —
+    // sanitize could drop/merge rows, which would desync the count comparison).
+    _trTxnCount = txnData.length;
+    _trTxnMaxUpdated = trMaxUpdatedAt(txnData);
 
     // Build comprehensive search text for each transaction (Rule B.9.2)
     trTransactions.forEach(function(txn) {
@@ -826,6 +864,20 @@ async function trLoadData() {
             shortSymbol: txn.short_symbol, companyName: txn.company_name
         });
     });
+}
+
+// In-memory derivations that must run on EVERY module entry — including the
+// cache-reuse path — because the DOM is re-injected fresh each time (filter
+// pills must be rebuilt; trDataReady must resolve for lazy sub-modules). Cheap;
+// no DB query (tags derive from the in-memory array, ref data is cached).
+async function trDeriveAfterLoad() {
+    // Refresh the shared tag autocomplete list from the in-memory transactions.
+    // Single source of truth for tag suggestions across Add Transaction / Bonus /
+    // Split / Income / Rights / Hist P&L modals; side-steps the LESSONS A.1.14
+    // 1000-row cap that silently dropped recent tags before 2026-05-12.
+    if (typeof wmsRefreshTagsFromTransactions === 'function') {
+        wmsRefreshTagsFromTransactions(trTransactions);
+    }
 
     // Use shared reference data for investors and brokers (loaded at app startup)
     if (!wmsRefData.ready) await wmsLoadRefData();
@@ -840,6 +892,33 @@ async function trLoadData() {
     // to call on every subsequent refresh (resolve() is a no-op once resolved).
     if (_trDataReadyResolve) { _trDataReadyResolve(); }
     window._trDataReadyResolved = true;
+}
+
+// Full load = fetch + derive. Used by the Refresh button and on first entry.
+async function trLoadData() {
+    await trFetchTransactions();
+    await trDeriveAfterLoad();
+}
+
+// Module-entry loader: reuse the in-memory cache when the probe proves it's
+// still current; otherwise full-load. Fail-safe — anything unexpected → full load.
+async function trLoadDataIfChanged() {
+    var haveCache = Array.isArray(trTransactions) && trTransactions.length > 0 && _trTxnCount !== null;
+    if (haveCache) {
+        try {
+            var probe = await trProbeTransactions();
+            if (!isNaN(probe.count) && probe.count === _trTxnCount && probe.maxUpdated === _trTxnMaxUpdated) {
+                console.log('Trading: transactions cache current (count=' + probe.count + ', maxUpdated=' + probe.maxUpdated + ') — skipping full DB load');
+                await trDeriveAfterLoad();
+                return true; // reused cache
+            }
+            console.log('Trading: transactions changed (count ' + _trTxnCount + '→' + probe.count + ', maxUpdated ' + _trTxnMaxUpdated + '→' + probe.maxUpdated + ') — full reload');
+        } catch (e) {
+            console.warn('Trading: probe failed → full load', e);
+        }
+    }
+    await trLoadData();
+    return false; // full load
 }
 
 async function trRefresh() {
