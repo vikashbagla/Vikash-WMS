@@ -3522,7 +3522,8 @@ async function performImport(cfg) {
     var totalRows = cfg.newRows.length + cfg.updateRows.length;
     if (totalRows === 0) { tiAlert('error', 'No transactions to import.'); return; }
 
-    if (!confirm('Import ' + cfg.newRows.length + ' new + ' + cfg.updateRows.length + ' updates = ' + totalRows + ' transactions from ' + cfg.source + '?')) return;
+    // cfg.auto = headless/scheduled import — skip the interactive confirm dialog.
+    if (!cfg.auto && !confirm('Import ' + cfg.newRows.length + ' new + ' + cfg.updateRows.length + ' updates = ' + totalRows + ' transactions from ' + cfg.source + '?')) return;
 
     _importInProgress = true;
     tiLoading(true, 'Importing ' + cfg.source + ' transactions...');
@@ -3669,9 +3670,11 @@ async function performImport(cfg) {
     } catch (error) {
         tiLoading(false);
         tiAlert('error', 'Import failed: ' + error.message);
+        importErrors.push(error.message);
     }
     _importInProgress = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Import to Database'; }
+    return { insertCount: insertCount, updateCount: updateCount, errors: importErrors };
 }
 
 
@@ -3895,6 +3898,93 @@ window.fyFetchTrades = async function() {
         statusEl.textContent = 'Error: ' + e.message;
         statusEl.className = 'cn-status error';
         tiAlert('error', 'Fyers import failed: ' + e.message);
+    }
+};
+
+// ============================================================================
+// Fyers HEADLESS import — insert ONLY new trades (scheduled safety-net)
+// ============================================================================
+// Used by the weekday-night scheduled task. Fetches today's Veins tradebook,
+// runs the SAME grouping + dedupe as the interactive import, then inserts ONLY
+// genuinely-new rows (updateRows:[]) so existing trades — including ones the
+// user manually split to traders or edited — are NEVER touched. No modal, no
+// confirm. Returns a summary object the scheduled agent can report.
+// Precondition: the Import Transactions module must be loaded (fyInit has run)
+// so fyInvestorId (Veins) + fyBrokerId (Fyers) are resolved.
+window.fyImportNewOnly = async function() {
+    if (!fyInvestorId || !fyBrokerId) {
+        return { ok: false, error: 'Fyers investor/broker not configured (load Import module first).' };
+    }
+    // Token: localStorage (manual OAuth) OR window.fyersToken (DB auto-login)
+    var token = null;
+    try {
+        var stored = localStorage.getItem('fyers_token');
+        if (stored) {
+            var parsed = JSON.parse(stored);
+            var today = new Date().toISOString().split('T')[0];
+            if (parsed.date === today && parsed.token) token = parsed.token;
+        }
+    } catch (e) { /* ignore */ }
+    if (!token && window.fyersToken) token = window.fyersToken;
+    if (!token) return { ok: false, error: 'Fyers token expired or not available for today.' };
+
+    try {
+        if (typeof window.fyersCall !== 'function') return { ok: false, error: 'fyersCall unavailable — reload the app.' };
+        var response = await window.fyersCall({ action: 'tradebook', accessToken: token });
+        if (!response || response.error) {
+            return { ok: false, error: (response && response.error) || 'No response from Fyers API', tokenExpired: !!(response && response.tokenExpired) };
+        }
+        if (response.s !== 'ok' || !response.tradeBook) {
+            return { ok: false, error: 'Unexpected Fyers response: ' + (response.message || JSON.stringify(response).slice(0, 200)) };
+        }
+        var tradeBook = response.tradeBook;
+        var todayStr = new Date().toISOString().split('T')[0];
+        if (!tradeBook || tradeBook.length === 0) {
+            return { ok: true, date: todayStr, tradebookRows: 0, newImported: 0, updatesSkipped: 0, alreadySplitSkipped: 0, errorRows: 0, message: 'No trades in Fyers today.' };
+        }
+
+        // SAME grouping + dedupe as the interactive path → fyNewRows / fyUpdateRows / fySkipRows / fyErrorRows
+        await fyProcessTrades(tradeBook);
+        await _autoPopulateTagsForNewRows(fyNewRows, fyInvestorId);
+
+        var summary = {
+            ok: true,
+            date: fyTradeDate,
+            tradebookRows: tradeBook.length,
+            newImported: fyNewRows.length,
+            updatesSkipped: fyUpdateRows.length,        // existing trades — intentionally NOT updated
+            alreadySplitSkipped: fySkipRows.length,
+            errorRows: fyErrorRows.length
+        };
+
+        if (fyNewRows.length === 0) {
+            summary.message = 'Nothing new to import.';
+            return summary;
+        }
+
+        var result = await performImport({
+            source: 'FYERS',
+            newRows: fyNewRows,
+            updateRows: [],                  // NEVER update existing trades
+            errorRows: fyErrorRows,
+            buildRecord: fyBuildTransactionRecord,
+            overlayId: 'excelPreviewOverlay',
+            importBtnId: 'importBtn',
+            investorId: fyInvestorId,
+            brokerId: fyBrokerId,
+            tradeDate: fyTradeDate,
+            auto: true,                      // skip confirm() + modal interaction
+            onReset: function() {
+                fyParsedRows = []; fyNewRows = []; fyUpdateRows = []; fySkipRows = []; fyErrorRows = [];
+                fyTradeDate = null;
+            }
+        });
+        summary.newImported = (result && typeof result.insertCount === 'number') ? result.insertCount : summary.newImported;
+        summary.importErrors = (result && result.errors) ? result.errors : [];
+        return summary;
+    } catch (e) {
+        console.error('fyImportNewOnly error:', e);
+        return { ok: false, error: e.message };
     }
 };
 
