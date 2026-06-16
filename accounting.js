@@ -10,7 +10,7 @@ var acctGroups = [];          // all acct_groups rows
 var acctLedgers = [];         // all acct_ledgers rows
 var acctVoucherRows = [];     // acct_voucher_full rows for the selected book
 var acctBookId = null;        // selected book (investor id, accounting_enabled)
-var acctActiveTab = 'financials';
+var acctActiveTab = 'balance-sheet';
 var acctBookIds = null;       // consolidation VIEW set (null/[] = follow the single book select)
 var acctGroupById = {};       // id -> group
 
@@ -204,7 +204,8 @@ function acctWireUI() {
 // Rendering — tabs
 // ============================================================================
 function acctRenderActiveTab() {
-    if (acctActiveTab === 'financials') acctRenderFinancials();
+    if (acctActiveTab === 'balance-sheet') acctRenderFinancials();
+    else if (acctActiveTab === 'profit-loss') acctRenderPL();
     else if (acctActiveTab === 'trial-balance') acctRenderTrialBalance();
     else if (acctActiveTab === 'day-book') acctRenderDayBook();
     else if (acctActiveTab === 'ledgers') acctRenderLedgers();
@@ -263,13 +264,14 @@ function acctSideTree(net, rootName, negate) {
 }
 function acctFinNodeHtml(node, depth) {
     var pad = 12 + depth * 18;
-    var isGroup = !node.isLedger;
+    var isGroup = !node.isLedger && !node.isDiff;
     var collapsed = isGroup && acctFinCollapsed[node.key];
     var icon = isGroup
         ? '<span class="acct-fin-toggle">' + (collapsed ? '⊕' : '⊖') + '</span>'
         : '<span class="acct-fin-toggle-sp"></span>';
-    var cls = 'acct-fin-row ' + (isGroup ? 'acct-fin-group' : 'acct-fin-ledger acct-clickable');
-    var attr = isGroup ? ('data-node="' + node.key + '"') : ('data-ledger="' + node.ledgerId + '"');
+    var cls = node.isDiff ? 'acct-fin-row acct-fin-diff'
+        : 'acct-fin-row ' + (isGroup ? 'acct-fin-group' : 'acct-fin-ledger acct-clickable');
+    var attr = node.isDiff ? '' : (isGroup ? ('data-node="' + node.key + '"') : ('data-ledger="' + node.ledgerId + '"'));
     var h = '<div class="' + cls + '" ' + attr + ' style="padding-left:' + pad + 'px;">' +
         icon + '<span class="acct-fin-name">' + wmsEsc(node.label) + '</span>' +
         '<span class="acct-fin-amt">' + acctAmt(node.amount) + '</span></div>';
@@ -317,6 +319,16 @@ function acctRenderFinancials() {
     var leftTotal = cap.total + plNet + liab.total;
 
     var assets = acctSideTree(net, 'Assets', false);
+
+    // A balance sheet must always present matched — surface any residual as a
+    // "Difference in Balance Sheet" row on the short side (standard Tally/MProfit
+    // suspense line). With a clean double-entry trial balance this is 0.
+    var diff = Math.round((assets.total - leftTotal) * 100) / 100;
+    if (Math.abs(diff) >= 0.005) {
+        var dnode = { label: 'Difference in Balance Sheet', amount: Math.abs(diff), isDiff: true };
+        if (diff > 0) { leftNodes.unshift(dnode); leftTotal = Math.round((leftTotal + diff) * 100) / 100; }
+        else { assets.nodes.unshift(dnode); assets.total = Math.round((assets.total - diff) * 100) / 100; }
+    }
     var balanced = Math.round(leftTotal * 100) === Math.round(assets.total * 100);
 
     var html = '<div class="acct-fin-controls">' +
@@ -356,58 +368,122 @@ function acctRenderFinancials() {
     };
 }
 
+// ── Profit & Loss — T-format (Expenses | Income), same style as the BS ───────
+function acctRenderPL() {
+    var el = document.getElementById('acctPLBody');
+    if (!el) return;
+    if (!acctViewBookIds().length) { el.innerHTML = '<div class="acct-empty">No book selected. Enable accounting on an investor first.</div>'; return; }
+    if (!acctVoucherRows.length) { el.innerHTML = '<div class="acct-empty">No postings yet for ' + wmsEsc(acctViewTitle()) + '.</div>'; return; }
+    var net = acctComputeBalances();
+    var asOn = acctFinAsOn();
+    var inc = acctSideTree(net, 'Income', false);     // income positive
+    var exp = acctSideTree(net, 'Expenses', false);   // expense positive
+    var netProfit = inc.total - exp.total;
+    var leftNodes = exp.nodes.slice(), leftTotal = exp.total;
+    var rightNodes = inc.nodes.slice(), rightTotal = inc.total;
+    if (netProfit >= 0) { leftNodes.push({ label: 'Net Profit', amount: netProfit, isDiff: true }); leftTotal += netProfit; }
+    else { rightNodes.push({ label: 'Net Loss', amount: -netProfit, isDiff: true }); rightTotal += -netProfit; }
+
+    var html = '<div class="acct-fin-controls">' +
+        '<button class="wms-btn wms-btn-secondary" id="acctPLExpandAll">Expand all</button>' +
+        '<button class="wms-btn wms-btn-secondary" id="acctPLCollapseAll">Collapse all</button>' +
+        '<label class="acct-fin-zero"><input type="checkbox" id="acctPLShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
+        '<input type="text" id="acctPLSearch" class="wms-input" placeholder="Search ledgers & groups" value="' + wmsEsc(acctFinSearch) + '"></div>';
+    html += '<div class="acct-fin-scope">' + wmsEsc(acctViewTitle()) + ' · Profit &amp; Loss</div>';
+    html += '<div class="acct-fin-cols">' +
+        acctFinColumnHtml('Expenses', asOn, leftNodes) +
+        acctFinColumnHtml('Income', asOn, rightNodes) + '</div>';
+    html += '<div class="acct-fin-total"><span>Total</span><span>' + acctAmt(rightTotal) + '</span></div>';
+    el.innerHTML = html;
+
+    el.querySelectorAll('.acct-fin-group[data-node]').forEach(function (r) {
+        r.onclick = function () { acctFinCollapsed[r.dataset.node] = !acctFinCollapsed[r.dataset.node]; acctRenderPL(); };
+    });
+    el.querySelectorAll('.acct-fin-ledger[data-ledger]').forEach(function (r) {
+        r.onclick = function () { acctOpenLedgerDetail(r.dataset.ledger); };
+    });
+    var ea = document.getElementById('acctPLExpandAll'); if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderPL(); };
+    var ca = document.getElementById('acctPLCollapseAll'); if (ca) ca.onclick = function () { var keys = acctFinAllGroupKeys(leftNodes.concat(rightNodes), []); acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; }); acctRenderPL(); };
+    var sz = document.getElementById('acctPLShowZeroChk'); if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderPL(); };
+    var srch = document.getElementById('acctPLSearch'); if (srch) srch.oninput = function () { acctFinSearch = srch.value; acctRenderPL(); var s2 = document.getElementById('acctPLSearch'); if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); } };
+}
+
+// ── Trial Balance — grouped collapsible tree with Debit/Credit columns ───────
+function acctTbBuild(net) {
+    var nodes = [];
+    acctNatureOrder.forEach(function (nm) {
+        var root = acctGroups.find(function (g) { return !g.parent_group_id && g.name === nm; });
+        if (!root) return;
+        var rootNode = { key: 'tg:' + root.id, label: root.name, dr: 0, cr: 0, children: [] };
+        function ledNode(l) {
+            var b = net[l.id] || 0;
+            if (!acctFinShowZero && Math.round(b * 100) === 0) return null;
+            return { key: 'l:' + l.id, label: l.name, dr: b > 0 ? b : 0, cr: b < 0 ? -b : 0, isLedger: true, ledgerId: l.id };
+        }
+        acctLedgers.filter(function (l) { return l.group_id === root.id; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (l) { if (!acctFinMatch(l.name)) return; var n = ledNode(l); if (n) { rootNode.children.push(n); rootNode.dr += n.dr; rootNode.cr += n.cr; } });
+        acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (cg) {
+                var gnode = { key: 'tg:' + cg.id, label: cg.name, dr: 0, cr: 0, children: [] };
+                acctLedgers.filter(function (l) { return l.group_id === cg.id; })
+                    .sort(function (a, b) { return a.name.localeCompare(b.name); })
+                    .forEach(function (l) { if (!acctFinMatch(l.name) && !acctFinMatch(cg.name)) return; var n = ledNode(l); if (n) { gnode.children.push(n); gnode.dr += n.dr; gnode.cr += n.cr; } });
+                if (!gnode.children.length && !acctFinShowZero) return;
+                rootNode.children.push(gnode); rootNode.dr += gnode.dr; rootNode.cr += gnode.cr;
+            });
+        if (rootNode.children.length || acctFinShowZero) nodes.push(rootNode);
+    });
+    return nodes;
+}
+function acctTbNodeHtml(node, depth) {
+    var pad = 12 + depth * 18;
+    var isGroup = !node.isLedger;
+    var collapsed = isGroup && acctFinCollapsed[node.key];
+    var icon = isGroup ? '<span class="acct-fin-toggle">' + (collapsed ? '⊕' : '⊖') + '</span>' : '<span class="acct-fin-toggle-sp"></span>';
+    var cls = 'acct-fin-row ' + (isGroup ? 'acct-fin-group' : 'acct-fin-ledger acct-clickable');
+    var attr = isGroup ? ('data-node="' + node.key + '"') : ('data-ledger="' + node.ledgerId + '"');
+    var h = '<div class="' + cls + '" ' + attr + ' style="padding-left:' + pad + 'px;">' + icon +
+        '<span class="acct-fin-name">' + wmsEsc(node.label) + '</span>' +
+        '<span class="acct-tb-dr">' + (node.dr ? acctAmt(node.dr) : '') + '</span>' +
+        '<span class="acct-tb-cr">' + (node.cr ? acctAmt(node.cr) : '') + '</span></div>';
+    if (isGroup && node.children && !collapsed) { node.children.forEach(function (c) { h += acctTbNodeHtml(c, depth + 1); }); }
+    return h;
+}
 function acctRenderTrialBalance() {
     var el = document.getElementById('acctTBBody');
     if (!el) return;
-    if (!acctBookId) { el.innerHTML = '<div class="acct-empty">No book selected. Enable accounting on an investor first.</div>'; return; }
+    if (!acctViewBookIds().length) { el.innerHTML = '<div class="acct-empty">No book selected. Enable accounting on an investor first.</div>'; return; }
+    if (!acctVoucherRows.length) { el.innerHTML = '<div class="acct-empty">No postings yet for ' + wmsEsc(acctViewTitle()) + '.</div>'; return; }
+    var net = acctComputeBalances();
+    var nodes = acctTbBuild(net);
+    var totDr = nodes.reduce(function (a, n) { return a + n.dr; }, 0);
+    var totCr = nodes.reduce(function (a, n) { return a + n.cr; }, 0);
 
-    // Net balance per ledger (debit - credit)
-    var net = {};   // ledgerId -> net
-    acctVoucherRows.forEach(function (r) {
-        net[r.ledger_id] = (net[r.ledger_id] || 0) + (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
-    });
-    var ledgerIds = Object.keys(net).filter(function (id) { return Math.round(net[id] * 100) !== 0; });
-    if (!ledgerIds.length) {
-        el.innerHTML = '<div class="acct-empty">No postings yet for ' + wmsEsc(acctInvName(acctBookId)) + '. Use ➕ New Voucher to begin.</div>';
-        return;
-    }
-
-    // Build nature -> rows
-    var byNature = {};
-    ledgerIds.forEach(function (id) {
-        var lg = acctLedgers.find(function (x) { return x.id === id; });
-        if (!lg) return;
-        var nature = acctRootName(lg.group_id);
-        (byNature[nature] = byNature[nature] || []).push({ lg: lg, net: net[id] });
-    });
-
-    var totDr = 0, totCr = 0;
-    var html = '<table class="acct-table"><thead><tr><th>Ledger</th><th class="text-right">Debit</th><th class="text-right">Credit</th></tr></thead><tbody>';
-    var natures = Object.keys(byNature).sort(function (a, b) {
-        return acctNatureOrder.indexOf(a) - acctNatureOrder.indexOf(b);
-    });
-    natures.forEach(function (nature) {
-        html += '<tr class="acct-tb-group"><td colspan="3">' + wmsEsc(nature) + '</td></tr>';
-        byNature[nature].sort(function (a, b) { return a.lg.name.localeCompare(b.lg.name); });
-        byNature[nature].forEach(function (row) {
-            var dr = row.net > 0 ? row.net : 0;
-            var cr = row.net < 0 ? -row.net : 0;
-            totDr += dr; totCr += cr;
-            html += '<tr class="acct-tb-ledger acct-clickable" data-ledger="' + row.lg.id + '">' +
-                '<td class="acct-ledger-name">' + wmsEsc(row.lg.name) + '</td>' +
-                '<td class="text-right">' + (dr ? acctAmt(dr) : '-') + '</td>' +
-                '<td class="text-right">' + (cr ? acctAmt(cr) : '-') + '</td></tr>';
-        });
-    });
-    html += '<tr class="acct-tb-total"><td>Total</td>' +
-        '<td class="text-right">' + acctAmt(totDr) + '</td>' +
-        '<td class="text-right">' + acctAmt(totCr) + '</td></tr>';
-    html += '</tbody></table>';
+    var html = '<div class="acct-fin-controls">' +
+        '<button class="wms-btn wms-btn-secondary" id="acctTbExpandAll">Expand all</button>' +
+        '<button class="wms-btn wms-btn-secondary" id="acctTbCollapseAll">Collapse all</button>' +
+        '<label class="acct-fin-zero"><input type="checkbox" id="acctTbShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
+        '<input type="text" id="acctTbSearch" class="wms-input" placeholder="Search ledgers & groups" value="' + wmsEsc(acctFinSearch) + '"></div>';
+    html += '<div class="acct-fin-scope">' + wmsEsc(acctViewTitle()) + ' · Trial Balance</div>';
+    html += '<div class="acct-tb-wrap"><div class="acct-fin-hdr"><span class="acct-fin-toggle-sp"></span><span class="acct-fin-name">Ledger</span><span class="acct-tb-dr">Debit</span><span class="acct-tb-cr">Credit</span></div>';
+    nodes.forEach(function (n) { html += acctTbNodeHtml(n, 0); });
+    html += '</div>';
+    var bal = Math.round(totDr * 100) === Math.round(totCr * 100);
+    html += '<div class="acct-fin-total"><span class="acct-fin-name">Total' + (bal ? '' : ' ⚠ Dr ≠ Cr') + '</span><span class="acct-tb-dr">' + acctAmt(totDr) + '</span><span class="acct-tb-cr">' + acctAmt(totCr) + '</span></div>';
     el.innerHTML = html;
 
-    el.querySelectorAll('tr[data-ledger]').forEach(function (tr) {
-        tr.onclick = function () { acctOpenLedgerDetail(tr.dataset.ledger); };
+    el.querySelectorAll('.acct-fin-group[data-node]').forEach(function (r) {
+        r.onclick = function () { acctFinCollapsed[r.dataset.node] = !acctFinCollapsed[r.dataset.node]; acctRenderTrialBalance(); };
     });
+    el.querySelectorAll('.acct-fin-ledger[data-ledger]').forEach(function (r) {
+        r.onclick = function () { acctOpenLedgerDetail(r.dataset.ledger); };
+    });
+    var ea = document.getElementById('acctTbExpandAll'); if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderTrialBalance(); };
+    var ca = document.getElementById('acctTbCollapseAll'); if (ca) ca.onclick = function () { var keys = acctFinAllGroupKeys(nodes, []); acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; }); acctRenderTrialBalance(); };
+    var sz = document.getElementById('acctTbShowZeroChk'); if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderTrialBalance(); };
+    var srch = document.getElementById('acctTbSearch'); if (srch) srch.oninput = function () { acctFinSearch = srch.value; acctRenderTrialBalance(); var s2 = document.getElementById('acctTbSearch'); if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); } };
 }
 
 function acctRenderDayBook() {

@@ -125,7 +125,12 @@
 .acct-fin-group:hover { background: #eef2ff; }
 .acct-fin-ledger { cursor: pointer; }
 .acct-fin-ledger:hover { background: #f7faff; }
-.acct-fin-total { display: flex; justify-content: space-between; margin-top: 12px; padding: 9px 12px; background: #1e2a4a; color: #fff; font-weight: 700; font-size: 13px; border-radius: 6px; }
+.acct-fin-total { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding: 9px 12px; background: #1e2a4a; color: #fff; font-weight: 700; font-size: 13px; border-radius: 6px; }
+.acct-fin-total .acct-fin-name { flex: 1; }
+.acct-fin-diff { font-weight: 700; color: #dc2626; background: #fff5f5; }
+/* Trial Balance Dr/Cr columns */
+.acct-tb-wrap { border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
+.acct-tb-dr, .acct-tb-cr { width: 150px; flex-shrink: 0; padding-left: 10px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .acct-report-h { font-size: 11px; font-weight: 600; color: #718096; text-transform: uppercase; margin-bottom: 4px; }
 .acct-report-ul { margin: 0; padding-left: 18px; font-size: 12px; color: #4a5568; }
 .acct-report-ul li { margin: 2px 0; }
@@ -151,15 +156,21 @@
 
     <!-- ===== Tabs ===== -->
     <div class="acct-tabs">
-        <button class="acct-tab active" data-acct-tab="financials">Financials</button>
+        <button class="acct-tab active" data-acct-tab="balance-sheet">Balance Sheet</button>
+        <button class="acct-tab" data-acct-tab="profit-loss">Profit &amp; Loss</button>
         <button class="acct-tab" data-acct-tab="trial-balance">Trial Balance</button>
         <button class="acct-tab" data-acct-tab="day-book">Day Book</button>
         <button class="acct-tab" data-acct-tab="ledgers">Ledgers</button>
     </div>
 
-    <!-- Financials (Balance Sheet + P&L) -->
-    <div class="acct-tabpanel active" id="acctPanel-financials">
-        <div id="acctFinancialsBody"><div class="acct-empty">Select a book to view its Balance Sheet & P&amp;L.</div></div>
+    <!-- Balance Sheet -->
+    <div class="acct-tabpanel active" id="acctPanel-balance-sheet">
+        <div id="acctFinancialsBody"><div class="acct-empty">Select a book to view its Balance Sheet.</div></div>
+    </div>
+
+    <!-- Profit & Loss -->
+    <div class="acct-tabpanel" id="acctPanel-profit-loss">
+        <div id="acctPLBody"><div class="acct-empty">Select a book to view its Profit &amp; Loss.</div></div>
     </div>
 
     <!-- Trial Balance -->
