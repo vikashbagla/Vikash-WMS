@@ -1532,9 +1532,17 @@ function rptRenderCapGains() {
         return;
     }
 
-    // Aggregate per stock into Intra-day / Short-term / Long-term buckets
+    // Map stock → security_id (for master-data asset-class lookup, so the Type
+    // matches the Portfolio tab regardless of per-trade security_type drift)
+    var symSecId = {};
+    rptTransactions.forEach(function(t) {
+        var k = t.shortSymbol || t.symbol;
+        if (k && !symSecId[k] && t.securityId) symSecId[k] = t.securityId;
+    });
+
+    // Aggregate per stock: buy/sell amounts + Intra-day / Short-term / Long-term buckets
     var perStock = {};
-    var totIntraday = 0, totSTCG = 0, totLTCG = 0;
+    var totBuy = 0, totSell = 0, totIntraday = 0, totSTCG = 0, totLTCG = 0;
     fyGains.forEach(function(g) {
         var key = g.shortSymbol || g.symbol;
         if (!perStock[key]) {
@@ -1542,9 +1550,11 @@ function rptRenderCapGains() {
                 symbol: key,
                 company: g.companyName || '',
                 securityType: g.securityType || 'EQUITY',
-                intraday: 0, stcg: 0, ltcg: 0
+                buyAmt: 0, sellAmt: 0, intraday: 0, stcg: 0, ltcg: 0
             };
         }
+        perStock[key].buyAmt += g.buyCost;       totBuy += g.buyCost;
+        perStock[key].sellAmt += g.sellProceeds; totSell += g.sellProceeds;
         var b = rptCGBucket(g);
         if (b === 'INTRADAY') { perStock[key].intraday += g.gain; totIntraday += g.gain; }
         else if (b === 'LTCG') { perStock[key].ltcg += g.gain; totLTCG += g.gain; }
@@ -1579,28 +1589,39 @@ function rptRenderCapGains() {
             '<div class="rpt-cg-card-sub">LTCG: ' + formatAmount(estLTCGTax) + ' · STCG: ' + formatAmount(estSTCGTax) + '</div>' +
         '</div>';
 
-    // One row per stock, ordered by asset class then symbol
+    // One row per stock. Asset class resolved from the MASTER security record
+    // (curated source of truth) so it matches the Portfolio tab; fall back to the
+    // trade's own security_type only when the security isn't in the master cache.
     var stocks = Object.keys(perStock).map(function(k) { return perStock[k]; });
-    stocks.forEach(function(s) { s.assetClass = rptGetAssetClass(s.securityType); });
+    stocks.forEach(function(s) {
+        var secId = symSecId[s.symbol];
+        var rec = (secId && wmsRefData.securitiesCmMap) ? wmsRefData.securitiesCmMap[secId] : null;
+        s.assetClass = rptGetAssetClass((rec && rec.security_type) ? rec.security_type : s.securityType);
+    });
+    // Sort by Type (asset class) then Company name
     stocks.sort(function(a, b) {
         var ai = RPT_ASSET_CLASS_ORDER.indexOf(a.assetClass); if (ai < 0) ai = 99;
         var bi = RPT_ASSET_CLASS_ORDER.indexOf(b.assetClass); if (bi < 0) bi = 99;
         if (ai !== bi) return ai - bi;
-        return (a.symbol || '').localeCompare(b.symbol || '');
+        return (a.company || a.symbol || '').localeCompare(b.company || b.symbol || '');
     });
 
-    // Per-stock summary table — Stock | Type | Intra-day | Short-term | Long-term
+    // Per-stock summary table — Type | Stock | Buy Amt | Sell Amt | Intra-day | Short-term | Long-term
     var html = '<table class="rpt-cg-table" style="width:100%; border-collapse:collapse; table-layout:fixed;">';
     html += '<colgroup>' +
-        '<col style="width:30%">' +   // Stock
-        '<col style="width:16%">' +   // Type
-        '<col style="width:18%">' +   // Intra-day
-        '<col style="width:18%">' +   // Short-term
-        '<col style="width:18%">' +   // Long-term
+        '<col style="width:14%">' +   // Type
+        '<col style="width:26%">' +   // Stock
+        '<col style="width:12%">' +   // Total Buy Amount
+        '<col style="width:12%">' +   // Total Sell Amount
+        '<col style="width:12%">' +   // Intra-day
+        '<col style="width:12%">' +   // Short-term
+        '<col style="width:12%">' +   // Long-term
     '</colgroup>';
     html += '<thead><tr>' +
-        '<th>Stock</th>' +
         '<th>Type</th>' +
+        '<th>Stock</th>' +
+        '<th class="text-right cg-grp-start">Total Buy Amount</th>' +
+        '<th class="text-right">Total Sell Amount</th>' +
         '<th class="text-right cg-grp-start">Intra-day Profit/Loss</th>' +
         '<th class="text-right">Short-term Capital Gain</th>' +
         '<th class="text-right">Long-term Capital Gain</th>' +
@@ -1610,13 +1631,15 @@ function rptRenderCapGains() {
         var badge = RPT_AC_BADGE[s.assetClass] || '—';
         html += '<tr>' +
             '<td>' +
-                '<div style="font-weight:600; font-size:12px; color:#2d3748;">' + s.symbol + '</div>' +
-                '<div style="font-size:10px; color:#a0aec0;">' + s.company + '</div>' +
-            '</td>' +
-            '<td>' +
                 '<span style="display:inline-block;border:1px solid #a0aec0;border-radius:3px;padding:0 5px;font-size:10px;font-weight:700;color:#4a5568;margin-right:5px;">' + badge + '</span>' +
                 '<span style="font-size:11px;color:#718096;">' + s.assetClass + '</span>' +
             '</td>' +
+            '<td>' +
+                '<div style="font-weight:600; font-size:12px; color:#2d3748;">' + (s.company || s.symbol) + '</div>' +
+                '<div style="font-size:10px; color:#a0aec0;">' + s.symbol + '</div>' +
+            '</td>' +
+            '<td class="text-right cg-grp-start"><div class="number-main">' + formatAmount(s.buyAmt) + '</div></td>' +
+            '<td class="text-right"><div class="number-main">' + formatAmount(s.sellAmt) + '</div></td>' +
             '<td class="text-right cg-grp-start ' + getAmountClass(s.intraday) + '">' + formatAmount(s.intraday) + '</td>' +
             '<td class="text-right ' + getAmountClass(s.stcg) + '">' + formatAmount(s.stcg) + '</td>' +
             '<td class="text-right ' + getAmountClass(s.ltcg) + '">' + formatAmount(s.ltcg) + '</td>' +
@@ -1626,6 +1649,8 @@ function rptRenderCapGains() {
     html += '<tr class="total-row">' +
         '<td>TOTAL</td>' +
         '<td></td>' +
+        '<td class="text-right cg-grp-start">' + formatAmount(totBuy) + '</td>' +
+        '<td class="text-right">' + formatAmount(totSell) + '</td>' +
         '<td class="text-right cg-grp-start ' + getAmountClass(totIntraday) + '">' + formatAmount(totIntraday) + '</td>' +
         '<td class="text-right ' + getAmountClass(totSTCG) + '">' + formatAmount(totSTCG) + '</td>' +
         '<td class="text-right ' + getAmountClass(totLTCG) + '">' + formatAmount(totLTCG) + '</td>' +
