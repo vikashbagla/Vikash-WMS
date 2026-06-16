@@ -31,6 +31,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- transactions (production table)
+-- NOTE: prod already carried a legacy, un-versioned trigger named
+-- `update_transactions_updated_at` (Studio-applied, did the same job). Drop it so
+-- we converge on ONE version-controlled trigger rather than running two identical
+-- BEFORE UPDATE triggers. Harmless if it doesn't exist.
+DROP TRIGGER IF EXISTS update_transactions_updated_at ON transactions;
 DROP TRIGGER IF EXISTS trg_transactions_updated_at ON transactions;
 CREATE TRIGGER trg_transactions_updated_at
     BEFORE UPDATE ON transactions
