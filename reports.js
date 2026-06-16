@@ -98,6 +98,56 @@ var rptCGSelectedInvestorIds = [];
 var rptCGSelectedBrokerIds = [];
 var rptCGInvPillFilter = null;   // wmsPillSearch instance
 var rptCGBrkPillFilter = null;   // wmsPillSearch instance
+var rptCGSelectedTagNames = [];
+var rptCGTagFilterLogic = 'OR';
+var rptCGTagPillFilter = null;   // wmsPillSearch instance
+
+// ---- Capital Gains View Manager (wmsViewManager instance — same as Portfolio) ----
+var rptCGVM = wmsViewManager({
+    module: 'reports_capgains',
+    label: 'Rpt CapGains',
+    ids: {
+        viewTabs: 'rpt-cg-view-tabs',
+        moreList: 'rpt-cg-more-list',
+        moreDropdown: 'rpt-cg-more-dropdown',
+        updateBtn: 'rpt-cg-update-view-btn'
+    },
+    autoDefaultFirst: true,
+    getPills: function() {
+        return [
+            { pill: rptCGInvPillFilter, type: 'investor' },
+            { pill: rptCGBrkPillFilter, type: 'broker' },
+            { pill: rptCGTagPillFilter, type: 'tag' }
+        ];
+    },
+    getFilters: function() {
+        return {
+            investorIds: rptCGSelectedInvestorIds.slice(),
+            brokerIds: rptCGSelectedBrokerIds.slice(),
+            tagNames: rptCGSelectedTagNames.slice(),
+            tagLogic: rptCGTagFilterLogic
+        };
+    },
+    applyFilters: function(f) {
+        rptCGSelectedInvestorIds.length = 0;
+        Array.prototype.push.apply(rptCGSelectedInvestorIds, f.investorIds || []);
+        rptCGSelectedBrokerIds.length = 0;
+        Array.prototype.push.apply(rptCGSelectedBrokerIds, f.brokerIds || []);
+        rptCGSelectedTagNames.length = 0;
+        Array.prototype.push.apply(rptCGSelectedTagNames, f.tagNames || []);
+        rptCGTagFilterLogic = f.tagLogic || 'OR';
+
+        // Sync pill UI
+        var pills = [rptCGInvPillFilter, rptCGBrkPillFilter, rptCGTagPillFilter];
+        pills.forEach(function(p) { if (p && p.syncStates) p.syncStates(); });
+
+        // Update tag logic radio
+        document.querySelectorAll('input[name="rpt-cg-tag-logic"]').forEach(function(r) {
+            r.checked = r.value === rptCGTagFilterLogic;
+        });
+    },
+    onRefresh: function() { rptRenderCapGains(); }
+});
 
 // ============================================================================
 // ASSET CLASS MAPPING
@@ -191,9 +241,12 @@ async function initReports() {
     rptInitViewBar();
     rptInitFYSelector();
     rptInitCGFilters();
+    rptInitCGViewBar();
     await rptPortfolioVM.loadViews();
+    await rptCGVM.loadViews();
     // If no default view applied, render now
     if (!rptPortfolioVM.activeViewId) rptRenderPortfolio();
+    if (!rptCGVM.activeViewId) rptRenderCapGains();
     showLoading(false);
 }
 
@@ -526,6 +579,77 @@ function rptInitViewBar() {
     document.addEventListener('click', function(e) {
         if (!e.target.closest('#rpt-more-btn') && !e.target.closest('#rpt-more-dropdown')) {
             var mdd = document.getElementById('rpt-more-dropdown');
+            if (mdd) mdd.style.display = 'none';
+        }
+    });
+}
+
+// View bar for the Capital Gains tab (mirrors rptInitViewBar, using rptCGVM)
+function rptInitCGViewBar() {
+    var newBtn = document.getElementById('rpt-cg-new-view-btn');
+    if (newBtn) {
+        newBtn.addEventListener('click', function() {
+            rptCGVM.activeViewId = null;
+            rptCGVM.renderViewTabs();
+            rptCGVM.updateViewButtons();
+        });
+    }
+    var moreBtn = document.getElementById('rpt-cg-more-btn');
+    if (moreBtn) {
+        moreBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var dd = document.getElementById('rpt-cg-more-dropdown');
+            dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+        });
+    }
+    var updateBtn = document.getElementById('rpt-cg-update-view-btn');
+    if (updateBtn) {
+        updateBtn.addEventListener('click', function() { rptCGVM.updateCurrentView(); });
+    }
+    var saveNewBtn = document.getElementById('rpt-cg-save-new-btn');
+    var savePrompt = document.getElementById('rpt-cg-save-prompt');
+    var savePromptName = document.getElementById('rpt-cg-save-prompt-name');
+    if (saveNewBtn && savePrompt) {
+        saveNewBtn.addEventListener('click', function() {
+            savePrompt.classList.add('show');
+            saveNewBtn.style.display = 'none';
+            savePromptName.value = '';
+            savePromptName.focus();
+        });
+        document.getElementById('rpt-cg-save-prompt-ok').addEventListener('click', function() {
+            var name = savePromptName.value.trim();
+            if (name) rptCGVM.saveCurrentView(name);
+            savePrompt.classList.remove('show');
+            saveNewBtn.style.display = '';
+        });
+        document.getElementById('rpt-cg-save-prompt-cancel').addEventListener('click', function() {
+            savePrompt.classList.remove('show');
+            saveNewBtn.style.display = '';
+        });
+        savePromptName.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                var name = savePromptName.value.trim();
+                if (name) rptCGVM.saveCurrentView(name);
+                savePrompt.classList.remove('show');
+                saveNewBtn.style.display = '';
+            } else if (e.key === 'Escape') {
+                savePrompt.classList.remove('show');
+                saveNewBtn.style.display = '';
+            }
+        });
+    }
+    var filtersToggle = document.getElementById('rpt-cg-filters-toggle');
+    var filtersDiv = document.getElementById('rptCGFilters');
+    if (filtersToggle && filtersDiv) {
+        filtersToggle.addEventListener('click', function() {
+            var isHidden = filtersDiv.style.display === 'none';
+            filtersDiv.style.display = isHidden ? 'flex' : 'none';
+            filtersToggle.textContent = isHidden ? '▲' : '▼';
+        });
+    }
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('#rpt-cg-more-btn') && !e.target.closest('#rpt-cg-more-dropdown')) {
+            var mdd = document.getElementById('rpt-cg-more-dropdown');
             if (mdd) mdd.style.display = 'none';
         }
     });
@@ -1290,6 +1414,35 @@ function rptInitCGFilters() {
             onChange: rptRenderCapGains
         });
     }
+    // Tag pills (with Any/All radio) — same as Portfolio tab
+    var tagContainer = document.getElementById('rpt-cg-filter-tag');
+    if (tagContainer) {
+        var allTags = {};
+        rptTransactions.forEach(function(t) { if (t.tags) t.tags.forEach(function(tg) { allTags[tg] = true; }); });
+        var tagItems = Object.keys(allTags).sort().map(function(tag) {
+            return { id: tag, label: tag, searchText: tag };
+        });
+        var tagExtra = document.createElement('div');
+        tagExtra.className = 'tag-match-options';
+        tagExtra.innerHTML =
+            '<span style="font-size:11px;color:#718096;">Match:</span>' +
+            '<label class="radio-label"><input type="radio" name="rpt-cg-tag-logic" value="OR" checked> <span>Any</span></label>' +
+            '<label class="radio-label"><input type="radio" name="rpt-cg-tag-logic" value="AND"> <span>All</span></label>';
+        rptCGTagPillFilter = wmsPillSearch(tagContainer, {
+            label: 'Tag',
+            placeholder: 'Search tags...',
+            items: tagItems,
+            selectedIds: rptCGSelectedTagNames,
+            onChange: rptRenderCapGains,
+            headerExtra: tagExtra
+        });
+        tagExtra.addEventListener('change', function(e) {
+            if (e.target.name === 'rpt-cg-tag-logic') {
+                rptCGTagFilterLogic = e.target.value;
+                rptRenderCapGains();
+            }
+        });
+    }
 }
 
 
@@ -1314,6 +1467,17 @@ function rptRenderCapGains() {
     }
     if (rptCGSelectedBrokerIds.length > 0) {
         filtered = filtered.filter(function(t) { return t.brokerId && rptCGSelectedBrokerIds.indexOf(t.brokerId) >= 0; });
+    }
+    if (rptCGSelectedTagNames.length > 0) {
+        if (rptCGTagFilterLogic === 'AND') {
+            filtered = filtered.filter(function(t) {
+                return rptCGSelectedTagNames.every(function(tag) { return (t.tags || []).indexOf(tag) >= 0; });
+            });
+        } else {
+            filtered = filtered.filter(function(t) {
+                return (t.tags || []).some(function(tag) { return rptCGSelectedTagNames.indexOf(tag) >= 0; });
+            });
+        }
     }
 
     // Run FIFO on ALL transactions (not just FY) to get correct lot matching

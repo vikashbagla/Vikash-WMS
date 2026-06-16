@@ -353,18 +353,37 @@
 
     <!-- Tab: Capital Gains -->
     <div id="rpt-capgains" class="reports-tab-content">
-        <!-- FY selector + summary cards -->
-        <div class="rpt-fy-selector">
-            <label>Financial Year:</label>
-            <select id="rpt-fy-select" onchange="rptRenderCapGains()"></select>
-            <span style="font-size:11px; color:#a0aec0; margin-left:8px;">(April to March)</span>
+        <!-- View Tabs Bar (shared wmsViewManager — same as Portfolio tab) -->
+        <div class="rpt-view-tabs-bar">
+            <div class="rpt-view-tabs-container" id="rpt-cg-view-tabs"></div>
+            <div class="tr-view-tabs-actions">
+                <label style="font-size:11px; font-weight:600; color:#4a5568;">FY</label>
+                <select id="rpt-fy-select" onchange="rptRenderCapGains()" title="Financial Year (April to March)" style="font-size:11px; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px; background:#fff; color:#2d3748;"></select>
+                <span style="width:1px; height:18px; background:#e2e8f0; margin:0 2px;"></span>
+                <button class="tr-vta-btn" id="rpt-cg-new-view-btn" title="New blank view">+</button>
+                <div style="position:relative;">
+                    <button class="tr-vta-btn" id="rpt-cg-more-btn" title="All views">▾ More</button>
+                    <div class="tr-more-dropdown" id="rpt-cg-more-dropdown" style="display:none;">
+                        <div id="rpt-cg-more-list"></div>
+                    </div>
+                </div>
+                <button class="tr-vta-btn" id="rpt-cg-update-view-btn" title="Update current view with active filters" disabled>↻ Update</button>
+                <button class="tr-vta-btn" id="rpt-cg-save-new-btn" title="Save as new view">+ Save New</button>
+                <button class="tr-vta-btn" id="rpt-cg-filters-toggle" title="Toggle filters" style="font-size:10px;">▲</button>
+                <div class="tr-save-prompt" id="rpt-cg-save-prompt">
+                    <input type="text" id="rpt-cg-save-prompt-name" placeholder="View name...">
+                    <button class="tr-vta-btn" id="rpt-cg-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">✓</button>
+                    <button class="tr-vta-btn" id="rpt-cg-save-prompt-cancel">✕</button>
+                </div>
+            </div>
         </div>
 
         <!-- Filters for Capital Gains (pill-based, built by wmsPillSearch in reports.js) -->
         <div id="rptCGFilters" style="flex-shrink:0; display:flex; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid #e2e8f0;">
-            <div class="filters-grid" style="flex:1; grid-template-columns: repeat(2, 1fr);">
+            <div class="filters-grid" style="flex:1; grid-template-columns: repeat(3, 1fr);">
                 <div id="rpt-cg-filter-investor"></div>
                 <div id="rpt-cg-filter-broker"></div>
+                <div id="rpt-cg-filter-tag"></div>
             </div>
         </div>
 
