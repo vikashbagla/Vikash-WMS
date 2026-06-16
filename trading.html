@@ -658,17 +658,22 @@
     #trDayPLBanner .tr-pl-card { padding: 2px 6px; }
     #trDayPLBanner .tr-pl-sep { margin: 0 2px; }
 
-    /* Actions: keep ONLY the Zero toggle (pushed to the far right); hide
-       "+ Others" and "+/- Trade" — no entry/maintenance on the phone */
+    /* Actions: collapse the two-row desktop layout back to a single row and
+       keep ONLY Zero + Trade; hide "+ Others" and "⬇ Fyers" — no entry/
+       maintenance or Fyers import on the phone */
     .trading-header-bar > div:last-child {
-        display: flex;
-        align-items: center;
         margin-left: auto;
         flex-shrink: 0;
-        gap: 6px;
         padding: 0 2px;
     }
-    .trading-header-bar > div:last-child > *:not(#trToggleZeroBtn):not(#trAddTxnBtn) { display: none !important; }
+    .trading-header-bar .tr-header-actions {
+        flex-direction: row !important;
+        align-items: center !important;
+        gap: 6px !important;
+    }
+    .trading-header-bar .tr-header-actions-row { gap: 6px !important; }
+    .trading-header-bar .tr-others-wrap,
+    .trading-header-bar #trFyersImportBtn { display: none !important; }
     .trading-header-bar .btn-toggle-zero {
         font-size: 10px !important;
         padding: 3px 6px !important;
@@ -735,28 +740,32 @@
             <span id="tr-unit-desc" style="font-size: 10px; color: #a0aec0; display: block;"></span>
         </div>
         <div id="trDayPLBanner" style="display:flex;gap:24px;align-items:center;font-size:12px;"></div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-            <button class="btn-toggle-zero" id="trToggleZeroBtn" title="Show/hide zero holdings" style="padding: 4px 8px; font-size: 11px;">👁 Zero</button>
-            <div style="position: relative; display: inline-block;">
-                <button class="btn-others" id="trOthersBtn" title="Income &amp; Corporate Actions">+ Others ▾</button>
-                <div class="tr-others-dropdown" id="trOthersDropdown" style="display:none;">
-                    <div class="tr-others-group-label">Income</div>
-                    <button class="tr-others-item" data-type="DIVIDEND">Dividend</button>
-                    <button class="tr-others-item" data-type="INTEREST">Interest</button>
-                    <button class="tr-others-item" data-type="OTHER_INCOME">Other Income</button>
-                    <button class="tr-others-item" data-type="CAPITAL_REDUCTION">Capital Reduction</button>
-                    <div class="tr-others-group-label">Adjustments</div>
-                    <button class="tr-others-item" data-type="HISTORICAL_PL">Historical P&L</button>
-                    <div class="tr-others-group-label">Corporate Actions</div>
-                    <button class="tr-others-item" data-type="RIGHTS_ENTITLEMENT">Rights (Entitlement)</button>
-                    <button class="tr-others-item" data-type="RIGHTS_PAYMENT">Rights (Payment)</button>
-                    <button class="tr-others-item" data-type="BONUS">Bonus</button>
-                    <button class="tr-others-item" data-type="SPLIT">Split</button>
-                    <button class="tr-others-item" data-type="DEMERGER">Demerger</button>
+        <div class="tr-header-actions" style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
+            <div class="tr-header-actions-row" style="display: flex; align-items: center; gap: 8px;">
+                <div class="tr-others-wrap" style="position: relative; display: inline-block;">
+                    <button class="btn-others" id="trOthersBtn" title="Income &amp; Corporate Actions">+ Others ▾</button>
+                    <div class="tr-others-dropdown" id="trOthersDropdown" style="display:none;">
+                        <div class="tr-others-group-label">Income</div>
+                        <button class="tr-others-item" data-type="DIVIDEND">Dividend</button>
+                        <button class="tr-others-item" data-type="INTEREST">Interest</button>
+                        <button class="tr-others-item" data-type="OTHER_INCOME">Other Income</button>
+                        <button class="tr-others-item" data-type="CAPITAL_REDUCTION">Capital Reduction</button>
+                        <div class="tr-others-group-label">Adjustments</div>
+                        <button class="tr-others-item" data-type="HISTORICAL_PL">Historical P&L</button>
+                        <div class="tr-others-group-label">Corporate Actions</div>
+                        <button class="tr-others-item" data-type="RIGHTS_ENTITLEMENT">Rights (Entitlement)</button>
+                        <button class="tr-others-item" data-type="RIGHTS_PAYMENT">Rights (Payment)</button>
+                        <button class="tr-others-item" data-type="BONUS">Bonus</button>
+                        <button class="tr-others-item" data-type="SPLIT">Split</button>
+                        <button class="tr-others-item" data-type="DEMERGER">Demerger</button>
+                    </div>
                 </div>
+                <button class="btn-toggle-zero" id="trToggleZeroBtn" title="Show/hide zero holdings" style="padding: 4px 8px; font-size: 11px;">👁 Zero</button>
             </div>
-            <button class="btn-add-txn" id="trAddTxnBtn">+/- Trade</button>
-            <button class="btn-add-txn" id="trFyersImportBtn" title="Import today's Fyers trades for Veins" style="background:#0f9d58;">⬇ Fyers</button>
+            <div class="tr-header-actions-row" style="display: flex; align-items: center; gap: 8px;">
+                <button class="btn-add-txn" id="trAddTxnBtn">+/- Trade</button>
+                <button class="btn-add-txn" id="trFyersImportBtn" title="Import today's Fyers trades for Veins" style="background:#0f9d58;">⬇ Fyers</button>
+            </div>
         </div>
     </div>
 

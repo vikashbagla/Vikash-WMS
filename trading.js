@@ -501,6 +501,7 @@ function trSetupEventHandlers() {
                 if (typeof window.fyFetchTrades === 'function' && window.fyInvestorId && window.fyBrokerId) {
                     clearInterval(iv);
                     window.fyFetchTrades();
+                    trFyersWatchAndReturn();
                 } else if (tries > 40) {
                     clearInterval(iv);
                     if (typeof showAlert === 'function') showAlert('Fyers import is taking a moment — open Import Transactions and use the Fyers box.', 'warning', 4000);
@@ -2145,6 +2146,37 @@ async function trLoadTransactionsModule() {
     if (window.trTxInit) {
         window.trTxInit();
     }
+}
+
+// ============================================================================
+// FYERS SHORTCUT — return to Trading after the import preview modal closes
+// ============================================================================
+// The Fyers fetch opens the Import module's preview overlay (#excelPreviewOverlay,
+// toggled via the `active` class). We watch for that overlay to open and then
+// close (whether the user imported the trades or cancelled) and bring them back
+// to the Trading page, so they aren't stranded inside Import Transactions.
+function trFyersWatchAndReturn() {
+    var openTries = 0;
+    var waitOpen = setInterval(function() {
+        openTries++;
+        var ov = document.getElementById('excelPreviewOverlay');
+        if (ov && ov.classList.contains('active')) {
+            // Preview opened — now wait for it to close, then go back to Trading.
+            clearInterval(waitOpen);
+            var closeWatch = setInterval(function() {
+                var o = document.getElementById('excelPreviewOverlay');
+                if (!o || !o.classList.contains('active')) {
+                    clearInterval(closeWatch);
+                    if (typeof loadModule === 'function') loadModule('trading');
+                }
+            }, 300);
+        } else if (openTries > 75) {
+            // ~15s elapsed and no preview opened (e.g. no Fyers trades today, or a
+            // fetch error already surfaced its own alert) — return to Trading.
+            clearInterval(waitOpen);
+            if (typeof loadModule === 'function') loadModule('trading');
+        }
+    }, 200);
 }
 
 // ============================================================================
