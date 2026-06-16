@@ -63,6 +63,9 @@
 }
 
 .acct-empty { padding: 28px; text-align: center; color: #a0aec0; font-size: 13px; }
+.acct-edit-btn { border: 1px solid #e2e8f0; background: #f7fafc; border-radius: 5px; cursor: pointer; font-size: 11px; padding: 1px 6px; }
+.acct-edit-btn:hover { background: #edf2f7; }
+.acct-subgroup-row td { background: #fbfcfe; }
 .acct-consol-chip { display: inline-flex; align-items: center; gap: 6px; background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
 .acct-consol-chip .acct-consol-x { cursor: pointer; font-weight: 700; }
 .acct-consol-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #2d3748; padding: 5px 0; cursor: pointer; }
@@ -239,8 +242,12 @@
                     </thead>
                     <tbody id="acctVoucherLines"></tbody>
                 </table>
-                <div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                     <button id="acctAddLineBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;">➕ Add line</button>
+                    <span style="flex:1;"></span>
+                    <span style="font-size:11px;color:#718096;">Balance to</span>
+                    <select id="acctBalanceLedger" class="wms-input" style="max-width:200px;"></select>
+                    <button id="acctAutoBalanceBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;" title="Add a balancing line to the selected ledger">⚖ Auto-balance</button>
                 </div>
 
                 <div class="acct-balance-bar bad" id="acctBalanceBar">
@@ -278,7 +285,7 @@
 <div class="wms-modal-overlay" id="acctAddLedgerModal">
     <div class="wms-modal-dialog" style="max-width: 480px; width: 92%;">
         <div class="wms-modal-header">
-            <span style="font-size:15px;font-weight:700;">Add Ledger</span>
+            <span id="acctAddLedgerTitle" style="font-size:15px;font-weight:700;">Add Ledger</span>
             <button class="wms-btn-close" id="acctAddLedgerClose">✕</button>
         </div>
         <div class="wms-modal-body" style="padding:16px;">
@@ -350,7 +357,7 @@
 <div class="wms-modal-overlay" id="acctAddGroupModal">
     <div class="wms-modal-dialog" style="max-width: 440px; width: 92%;">
         <div class="wms-modal-header">
-            <span style="font-size:15px;font-weight:700;">Add Group</span>
+            <span id="acctAddGroupTitle" style="font-size:15px;font-weight:700;">Add Group</span>
             <button class="wms-btn-close" id="acctAddGroupClose">✕</button>
         </div>
         <div class="wms-modal-body" style="padding:16px;">
