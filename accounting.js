@@ -10,7 +10,7 @@ var acctGroups = [];          // all acct_groups rows
 var acctLedgers = [];         // all acct_ledgers rows
 var acctVoucherRows = [];     // acct_voucher_full rows for the selected book
 var acctBookId = null;        // selected book (investor id, accounting_enabled)
-var acctActiveTab = 'trial-balance';
+var acctActiveTab = 'financials';
 var acctGroupById = {};       // id -> group
 
 // Voucher modal working state
@@ -24,6 +24,7 @@ var acctVoucherModalCtrl = null;
 var acctLedgerModalCtrl = null;
 var acctAddLedgerModalCtrl = null;
 var acctAddGroupModalCtrl = null;
+var acctReportModalCtrl = null;
 
 var acctNatureOrder = ['Assets', 'Liabilities', 'Income', 'Expenses', 'Capital'];
 
@@ -173,6 +174,8 @@ function acctWireUI() {
     };
     var rb = document.getElementById('acctRebuildBtn');
     if (rb) rb.onclick = acctRebuildBooks;
+    var rba = document.getElementById('acctRebuildAllBtn');
+    if (rba) rba.onclick = acctRebuildAll;
 
     // Ledger tab toolbar
     var al = document.getElementById('acctAddLedgerBtn');
@@ -187,9 +190,99 @@ function acctWireUI() {
 // Rendering — tabs
 // ============================================================================
 function acctRenderActiveTab() {
-    if (acctActiveTab === 'trial-balance') acctRenderTrialBalance();
+    if (acctActiveTab === 'financials') acctRenderFinancials();
+    else if (acctActiveTab === 'trial-balance') acctRenderTrialBalance();
     else if (acctActiveTab === 'day-book') acctRenderDayBook();
     else if (acctActiveTab === 'ledgers') acctRenderLedgers();
+}
+
+// ---- Financials: Balance Sheet + P&L ---------------------------------------
+function acctComputeBalances() {
+    var net = {};
+    acctVoucherRows.forEach(function (r) {
+        net[r.ledger_id] = (net[r.ledger_id] || 0) + (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
+    });
+    return net;
+}
+// Group nonzero-balance ledgers by nature -> group, with nature-natural display sign.
+function acctBuildStatementModel() {
+    var net = acctComputeBalances();
+    var model = {};
+    acctNatureOrder.forEach(function (n) { model[n] = { groups: {}, total: 0 }; });
+    Object.keys(net).forEach(function (id) {
+        var bal = net[id];
+        if (Math.round(bal * 100) === 0) return;
+        var lg = acctLedgers.find(function (x) { return x.id === id; });
+        if (!lg) return;
+        var nature = acctRootName(lg.group_id);
+        if (!model[nature]) return;
+        var grp = acctGroupById[lg.group_id];
+        var grpName = grp ? grp.name : nature;
+        var crNormal = (nature === 'Liabilities' || nature === 'Income' || nature === 'Capital');
+        var disp = crNormal ? -bal : bal;   // nature-natural positive value
+        var g = model[nature].groups[grpName] || (model[nature].groups[grpName] = { ledgers: [], total: 0 });
+        g.ledgers.push({ lg: lg, disp: disp });
+        g.total += disp;
+        model[nature].total += disp;
+    });
+    var incomeTotal = model.Income.total, expenseTotal = model.Expenses.total;
+    return { model: model, incomeTotal: incomeTotal, expenseTotal: expenseTotal, netProfit: incomeTotal - expenseTotal };
+}
+function acctStmtNatureRows(label, nm) {
+    var h = '<tr class="acct-stmt-nature"><td>' + wmsEsc(label) + '</td><td class="text-right">' + acctAmt(nm.total) + '</td></tr>';
+    Object.keys(nm.groups).sort().forEach(function (gname) {
+        var g = nm.groups[gname];
+        h += '<tr class="acct-stmt-group"><td>' + wmsEsc(gname) + '</td><td class="text-right">' + acctAmt(g.total) + '</td></tr>';
+        g.ledgers.sort(function (a, b) { return a.lg.name.localeCompare(b.lg.name); }).forEach(function (e) {
+            h += '<tr class="acct-stmt-ledger acct-clickable" data-ledger="' + e.lg.id + '">' +
+                '<td class="acct-ledger-name">' + wmsEsc(e.lg.name) + '</td>' +
+                '<td class="text-right">' + acctAmt(e.disp) + '</td></tr>';
+        });
+    });
+    return h;
+}
+function acctRenderFinancials() {
+    var el = document.getElementById('acctFinancialsBody');
+    if (!el) return;
+    if (!acctBookId) { el.innerHTML = '<div class="acct-empty">No book selected. Enable accounting on an investor first.</div>'; return; }
+    if (!acctVoucherRows.length) {
+        el.innerHTML = '<div class="acct-empty">No postings yet for ' + wmsEsc(acctInvName(acctBookId)) + '. Use ↻ Rebuild from trades or ➕ New Voucher.</div>';
+        return;
+    }
+    var m = acctBuildStatementModel();
+
+    // Balance Sheet
+    var bs = '<table class="acct-stmt"><tbody>';
+    bs += '<tr class="acct-stmt-section"><td colspan="2">Liabilities &amp; Capital</td></tr>';
+    bs += acctStmtNatureRows('Capital', m.model.Capital);
+    bs += '<tr class="acct-stmt-ledger acct-clickable" id="acctBsNetProfit"><td class="acct-ledger-name">Current Year P&amp;L (see P&amp;L below)</td><td class="text-right">' + acctAmt(m.netProfit) + '</td></tr>';
+    bs += acctStmtNatureRows('Liabilities', m.model.Liabilities);
+    var lcTotal = m.model.Capital.total + m.netProfit + m.model.Liabilities.total;
+    bs += '<tr class="acct-tb-total"><td>Total Liabilities &amp; Capital</td><td class="text-right">' + acctAmt(lcTotal) + '</td></tr>';
+    bs += '<tr class="acct-stmt-section"><td colspan="2">Assets</td></tr>';
+    bs += acctStmtNatureRows('Assets', m.model.Assets);
+    bs += '<tr class="acct-tb-total"><td>Total Assets</td><td class="text-right">' + acctAmt(m.model.Assets.total) + '</td></tr>';
+    bs += '</tbody></table>';
+
+    // P&L
+    var pl = '<table class="acct-stmt"><tbody>';
+    pl += acctStmtNatureRows('Income', m.model.Income);
+    pl += acctStmtNatureRows('Expenses', m.model.Expenses);
+    pl += '<tr class="acct-tb-total"><td>Net Profit</td><td class="text-right">' + acctAmt(m.netProfit) + '</td></tr>';
+    pl += '</tbody></table>';
+
+    var balanced = Math.round(lcTotal * 100) === Math.round(m.model.Assets.total * 100);
+    var balNote = balanced ? '' : '<div style="color:#dc2626;font-size:11px;text-align:center;margin-bottom:8px;">⚠ Balance Sheet does not balance — check postings.</div>';
+
+    el.innerHTML = balNote +
+        '<div class="acct-stmt-wrap"><div class="acct-stmt-title">Balance Sheet — ' + wmsEsc(acctInvName(acctBookId)) + '</div>' + bs + '</div>' +
+        '<div class="acct-stmt-wrap" id="acctPLSection"><div class="acct-stmt-title">Profit &amp; Loss</div>' + pl + '</div>';
+
+    el.querySelectorAll('tr[data-ledger]').forEach(function (tr) {
+        tr.onclick = function () { acctOpenLedgerDetail(tr.dataset.ledger); };
+    });
+    var np = document.getElementById('acctBsNetProfit');
+    if (np) np.onclick = function () { var s = document.getElementById('acctPLSection'); if (s) s.scrollIntoView({ behavior: 'smooth' }); };
 }
 
 function acctRenderTrialBalance() {
@@ -657,6 +750,14 @@ function acctWireModals() {
     document.getElementById('acctAddGroupClose').onclick = function () { acctAddGroupModalCtrl && acctAddGroupModalCtrl.close(); };
     document.getElementById('acctAddGroupCancel').onclick = function () { acctAddGroupModalCtrl && acctAddGroupModalCtrl.close(); };
     document.getElementById('acctAddGroupSave').onclick = acctSaveGroup;
+
+    // Rebuild report modal
+    var rpOverlay = document.getElementById('acctReportModal');
+    if (rpOverlay && typeof wmsModal === 'function') acctReportModalCtrl = wmsModal(rpOverlay, {});
+    var rpClose = document.getElementById('acctReportClose');
+    if (rpClose) rpClose.onclick = function () { acctReportModalCtrl && acctReportModalCtrl.close(); };
+    var rpDone = document.getElementById('acctReportDone');
+    if (rpDone) rpDone.onclick = function () { acctReportModalCtrl && acctReportModalCtrl.close(); };
 }
 
 // ============================================================================
@@ -687,82 +788,138 @@ async function acctResolveLedgers(keys, outMap) {
     }
 }
 
+// Core: rebuild ONE book's auto-vouchers from its transactions. Returns a report
+// object; does NOT show UI (no confirm/loading/render). NOTE: on the dev site the
+// fetch interceptor routes "transactions" -> "transactions_dev" automatically.
+async function acctRebuildOne(bookId) {
+    var fields = 'id,investor_id,trader_id,broker_id,security_id,symbol,short_symbol,company_name,' +
+        'security_type,transaction_type,transaction_date,transaction_time,quantity,price,' +
+        'gross_amount,total_charges,stt,tds,net_amount,created_at';
+    var txns = await wmsFetchAllRaw(acctUrl('transactions?select=' + fields + '&investor_id=eq.' + bookId)) || [];
+    var bookInv = (wmsRefData.investors || []).find(function (i) { return i.id === bookId; }) || {};
+    var ctx = {
+        investor: function (id) { return (wmsRefData.investors || []).find(function (i) { return i.id === id; }); },
+        brokerName: function (id) { var b = (wmsRefData.brokers || []).find(function (x) { return x.id === id; }); return b ? (b.name || b.broker_code) : 'Broker'; },
+        sttSeparate: !!bookInv.stt_accounting_method,
+        postFno: bookInv.post_fno !== false
+    };
+    var result = acctProcessBook(bookId, txns, ctx);
+
+    // group skip reasons (collapse digit runs so similar reasons aggregate)
+    var skipReasons = {};
+    result.skipped.forEach(function (s) {
+        var key = String(s.reason).replace(/\d[\d,.]*/g, 'N');
+        skipReasons[key] = (skipReasons[key] || 0) + 1;
+    });
+
+    var keyMap = {};
+    if (result.vouchers.length) {
+        var uniqueKeys = {};
+        result.vouchers.forEach(function (v) { v.lines.forEach(function (l) { uniqueKeys[l.ledger.key] = l.ledger; }); });
+        await acctResolveLedgers(Object.keys(uniqueKeys).map(function (k) { return uniqueKeys[k]; }), keyMap);
+    }
+
+    // clear existing autos for this book (lines cascade)
+    await fetch(acctUrl('acct_vouchers?investor_id=eq.' + bookId + '&is_auto=eq.true'),
+        { method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' }) });
+
+    var posted = 0, failed = 0, firstErr = null;
+    for (var j = 0; j < result.vouchers.length; j++) {
+        var v = result.vouchers[j];
+        var header = { investor_id: bookId, voucher_type: v.voucherType, voucher_date: v.date,
+            narration: v.narration, is_auto: true, source_transaction_id: v.txnId };
+        var lines = v.lines.map(function (l) {
+            return { ledger_id: keyMap[l.ledger.key], debit_amount: l.debit, credit_amount: l.credit,
+                narration: l.narration, sort_order: l.sort_order };
+        });
+        if (lines.some(function (l) { return !l.ledger_id; })) { failed++; continue; }
+        var resp = await fetch(acctUrl('rpc/acct_post_voucher'), {
+            method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ p_header: header, p_lines: lines })
+        });
+        if (resp.ok) posted++; else { failed++; if (!firstErr) firstErr = await resp.text(); }
+    }
+    if (result.warnings.length) console.warn('[accounting] rebuild warnings for ' + acctInvName(bookId), result.warnings);
+    if (firstErr) console.error('[accounting] rebuild first error (' + acctInvName(bookId) + '):', firstErr);
+
+    return { bookId: bookId, book: acctInvName(bookId), posted: posted, skipped: result.skipped.length,
+        failed: failed, warnings: result.warnings.length, skipReasons: skipReasons,
+        warningsList: result.warnings, firstErr: firstErr };
+}
+
 async function acctRebuildBooks() {
     if (!acctBookId) { acctToast('Select a book first.', true); return; }
     if (typeof acctProcessBook !== 'function') { acctToast('Posting engine not loaded.', true); return; }
     if (!window.confirm('Rebuild auto-vouchers for ' + acctInvName(acctBookId) + ' from its transactions?\n\n' +
-        'This deletes existing AUTO-generated vouchers for this book and regenerates them from the trade history. ' +
-        'Manually-entered vouchers are kept.')) return;
-
+        'This deletes existing AUTO-generated vouchers for this book and regenerates them. Manual vouchers are kept.')) return;
     acctLoading(true);
     try {
-        // 1. This book's transactions. NOTE: on the dev site the fetch interceptor
-        //    routes "transactions" -> "transactions_dev" automatically, so dev reads
-        //    dev trades and prod reads prod trades. Accounting tables are single-set.
-        var fields = 'id,investor_id,trader_id,broker_id,security_id,symbol,short_symbol,company_name,' +
-            'security_type,transaction_type,transaction_date,transaction_time,quantity,price,' +
-            'gross_amount,total_charges,stt,tds,net_amount,created_at';
-        var txns = await wmsFetchAllRaw(acctUrl('transactions?select=' + fields + '&investor_id=eq.' + acctBookId)) || [];
-
-        // 2. Context for the pure engine
-        var bookInv = (wmsRefData.investors || []).find(function (i) { return i.id === acctBookId; }) || {};
-        var ctx = {
-            investor: function (id) { return (wmsRefData.investors || []).find(function (i) { return i.id === id; }); },
-            brokerName: function (id) { var b = (wmsRefData.brokers || []).find(function (x) { return x.id === id; }); return b ? (b.name || b.broker_code) : 'Broker'; },
-            sttSeparate: !!bookInv.stt_accounting_method,
-            postFno: bookInv.post_fno !== false
-        };
-
-        // 3. Run the engine (pure)
-        var result = acctProcessBook(acctBookId, txns, ctx);
-        if (!result.vouchers.length) {
-            acctToast('No postable transactions for ' + acctInvName(acctBookId) + ' (' + result.skipped.length + ' skipped).', true);
-            return;
-        }
-
-        // 4. Resolve/create every ledger the engine referenced
-        var uniqueKeys = {};
-        result.vouchers.forEach(function (v) { v.lines.forEach(function (l) { uniqueKeys[l.ledger.key] = l.ledger; }); });
-        var keyMap = {};
-        await acctResolveLedgers(Object.keys(uniqueKeys).map(function (k) { return uniqueKeys[k]; }), keyMap);
-
-        // 5. Clear existing auto-vouchers for this book (lines cascade)
-        await fetch(acctUrl('acct_vouchers?investor_id=eq.' + acctBookId + '&is_auto=eq.true'),
-            { method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' }) });
-
-        // 6. Post each voucher via the RPC
-        var posted = 0, failed = 0, firstErr = null;
-        for (var j = 0; j < result.vouchers.length; j++) {
-            var v = result.vouchers[j];
-            var header = { investor_id: acctBookId, voucher_type: v.voucherType, voucher_date: v.date,
-                narration: v.narration, is_auto: true, source_transaction_id: v.txnId };
-            var lines = v.lines.map(function (l) {
-                return { ledger_id: keyMap[l.ledger.key], debit_amount: l.debit, credit_amount: l.credit,
-                    narration: l.narration, sort_order: l.sort_order };
-            });
-            if (lines.some(function (l) { return !l.ledger_id; })) { failed++; continue; }
-            var resp = await fetch(acctUrl('rpc/acct_post_voucher'), {
-                method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ p_header: header, p_lines: lines })
-            });
-            if (resp.ok) posted++; else { failed++; if (!firstErr) firstErr = await resp.text(); }
-        }
-
-        await acctLoadBook();
-        acctRenderActiveTab();
-
-        var msg = 'Rebuilt ' + acctInvName(acctBookId) + ': ' + posted + ' posted';
-        if (result.skipped.length) msg += ', ' + result.skipped.length + ' skipped';
-        if (failed) msg += ', ' + failed + ' failed';
-        if (result.warnings.length) { msg += ', ' + result.warnings.length + ' warnings (console)'; console.warn('[accounting] rebuild warnings', result.warnings); }
-        if (firstErr) console.error('[accounting] rebuild first error:', firstErr);
-        acctToast(msg, failed > 0);
+        var r = await acctRebuildOne(acctBookId);
+        await acctLoadCatalogue(); await acctLoadBook(); acctRenderActiveTab();
+        acctShowRebuildReport([r]);
     } catch (e) {
         console.error('[accounting] rebuild failed', e);
         acctToast('Rebuild failed: ' + e.message, true);
-    } finally {
-        acctLoading(false);
+    } finally { acctLoading(false); }
+}
+
+async function acctRebuildAll() {
+    if (typeof acctProcessBook !== 'function') { acctToast('Posting engine not loaded.', true); return; }
+    var books = acctOwnBooks();
+    if (!books.length) { acctToast('No own-books to rebuild.', true); return; }
+    if (!window.confirm('Rebuild auto-vouchers for ALL ' + books.length + ' books from their transactions?\n\n' +
+        'Deletes and regenerates auto-vouchers for every book (manual vouchers kept). May take a minute for large books.')) return;
+    acctLoading(true);
+    try {
+        var reports = [];
+        for (var i = 0; i < books.length; i++) { reports.push(await acctRebuildOne(books[i].id)); }
+        await acctLoadCatalogue(); await acctLoadBook(); acctRenderActiveTab();
+        acctShowRebuildReport(reports);
+    } catch (e) {
+        console.error('[accounting] rebuild-all failed', e);
+        acctToast('Rebuild all failed: ' + e.message, true);
+    } finally { acctLoading(false); }
+}
+
+function acctShowRebuildReport(reports) {
+    var body = document.getElementById('acctReportBody');
+    if (!body) {
+        var tot = reports.reduce(function (a, r) { return a + r.posted; }, 0);
+        acctToast('Rebuilt ' + reports.length + ' book(s): ' + tot + ' vouchers posted.');
+        return;
     }
+    var html = '<table class="acct-table"><thead><tr><th>Book</th><th class="text-right">Posted</th><th class="text-right">Skipped</th><th class="text-right">Failed</th><th class="text-right">Warn</th></tr></thead><tbody>';
+    reports.forEach(function (r) {
+        html += '<tr><td>' + wmsEsc(r.book) + '</td>' +
+            '<td class="text-right">' + r.posted + '</td>' +
+            '<td class="text-right">' + (r.skipped || '-') + '</td>' +
+            '<td class="text-right"' + (r.failed ? ' style="color:#dc2626;font-weight:600;"' : '') + '>' + (r.failed || '-') + '</td>' +
+            '<td class="text-right">' + (r.warnings || '-') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    var allSkip = {}, allWarn = [];
+    reports.forEach(function (r) {
+        Object.keys(r.skipReasons || {}).forEach(function (k) { allSkip[k] = (allSkip[k] || 0) + r.skipReasons[k]; });
+        (r.warningsList || []).forEach(function (w) { allWarn.push(r.book + ': ' + w.warn); });
+    });
+    if (Object.keys(allSkip).length) {
+        html += '<div style="margin-top:14px;"><div class="acct-report-h">Skipped (no voucher — expected for opens / non-cash events)</div><ul class="acct-report-ul">';
+        Object.keys(allSkip).sort(function (a, b) { return allSkip[b] - allSkip[a]; }).forEach(function (k) {
+            html += '<li>' + wmsEsc(k) + ' — <b>' + allSkip[k] + '</b></li>';
+        });
+        html += '</ul></div>';
+    }
+    if (allWarn.length) {
+        html += '<div style="margin-top:14px;"><div class="acct-report-h" style="color:#b45309;">Warnings (' + allWarn.length + ')</div><ul class="acct-report-ul" style="color:#92400e;max-height:160px;overflow:auto;">';
+        allWarn.slice(0, 50).forEach(function (w) { html += '<li>' + wmsEsc(w) + '</li>'; });
+        if (allWarn.length > 50) html += '<li>… and ' + (allWarn.length - 50) + ' more</li>';
+        html += '</ul></div>';
+    }
+    if (reports.some(function (r) { return r.failed; })) {
+        html = '<div style="color:#dc2626;font-weight:600;margin-bottom:8px;">Some vouchers failed to post — see the browser console for the first error.</div>' + html;
+    }
+    body.innerHTML = html;
+    if (acctReportModalCtrl) acctReportModalCtrl.open();
 }
 
 // Expose entry point for app.html loadModule

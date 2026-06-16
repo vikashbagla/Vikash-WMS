@@ -106,6 +106,22 @@
 .acct-ledger-detail-head { margin-bottom: 10px; }
 .acct-ledger-detail-head .acct-ld-name { font-size: 15px; font-weight: 700; color: #1a202c; }
 .acct-ledger-detail-head .acct-ld-sub { font-size: 11px; color: #718096; }
+
+/* ---- Financial statements ---- */
+.acct-stmt-wrap { max-width: 720px; margin: 0 auto 22px; }
+.acct-stmt-title { font-size: 14px; font-weight: 700; color: #1a202c; padding: 4px 2px 8px; }
+.acct-stmt { width: 100%; border-collapse: collapse; font-size: 12px; }
+.acct-stmt td { padding: 5px 10px; border-bottom: 1px solid #f1f5f9; }
+.acct-stmt .text-right { text-align: right; font-variant-numeric: tabular-nums; }
+.acct-stmt-section td { background: #1f2937; color: #fff; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+.acct-stmt-nature td { background: #eef2ff; font-weight: 700; color: #312e81; }
+.acct-stmt-group td:first-child { padding-left: 22px; font-weight: 600; color: #475569; }
+.acct-stmt-group td { background: #f8fafc; }
+.acct-stmt-ledger td.acct-ledger-name { padding-left: 38px; }
+.acct-stmt-ledger:hover { background: #f7faff; }
+.acct-report-h { font-size: 11px; font-weight: 600; color: #718096; text-transform: uppercase; margin-bottom: 4px; }
+.acct-report-ul { margin: 0; padding-left: 18px; font-size: 12px; color: #4a5568; }
+.acct-report-ul li { margin: 2px 0; }
 </style>
 </head>
 <body>
@@ -121,19 +137,26 @@
         <div class="acct-actions">
             <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary">➕ New Voucher</button>
             <button id="acctRebuildBtn" class="wms-btn wms-btn-secondary" title="Regenerate auto-vouchers for this book from its transactions">↻ Rebuild from trades</button>
+            <button id="acctRebuildAllBtn" class="wms-btn wms-btn-secondary" title="Regenerate auto-vouchers for ALL books">↻↻ Rebuild all</button>
             <button id="acctRefreshBtn" class="wms-btn wms-btn-secondary" title="Refresh">🔄</button>
         </div>
     </div>
 
     <!-- ===== Tabs ===== -->
     <div class="acct-tabs">
-        <button class="acct-tab active" data-acct-tab="trial-balance">Trial Balance</button>
+        <button class="acct-tab active" data-acct-tab="financials">Financials</button>
+        <button class="acct-tab" data-acct-tab="trial-balance">Trial Balance</button>
         <button class="acct-tab" data-acct-tab="day-book">Day Book</button>
         <button class="acct-tab" data-acct-tab="ledgers">Ledgers</button>
     </div>
 
+    <!-- Financials (Balance Sheet + P&L) -->
+    <div class="acct-tabpanel active" id="acctPanel-financials">
+        <div id="acctFinancialsBody"><div class="acct-empty">Select a book to view its Balance Sheet & P&amp;L.</div></div>
+    </div>
+
     <!-- Trial Balance -->
-    <div class="acct-tabpanel active" id="acctPanel-trial-balance">
+    <div class="acct-tabpanel" id="acctPanel-trial-balance">
         <div id="acctTBBody"><div class="acct-empty">Select a book to view its Trial Balance.</div></div>
     </div>
 
@@ -260,6 +283,22 @@
         <div class="wms-modal-footer">
             <button class="wms-btn wms-btn-secondary" id="acctAddLedgerCancel">Cancel</button>
             <button class="wms-btn wms-btn-primary" id="acctAddLedgerSave">Add Ledger</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== Rebuild report modal ===================== -->
+<div class="wms-modal-overlay" id="acctReportModal">
+    <div class="wms-modal-dialog" style="max-width: 560px; width: 92%;">
+        <div class="wms-modal-header">
+            <span style="font-size:15px;font-weight:700;">Rebuild report</span>
+            <button class="wms-btn-close" id="acctReportClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
+            <div id="acctReportBody"></div>
+        </div>
+        <div class="wms-modal-footer">
+            <button class="wms-btn wms-btn-primary" id="acctReportDone">Done</button>
         </div>
     </div>
 </div>
