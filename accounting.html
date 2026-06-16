@@ -63,6 +63,10 @@
 }
 
 .acct-empty { padding: 28px; text-align: center; color: #a0aec0; font-size: 13px; }
+.acct-consol-chip { display: inline-flex; align-items: center; gap: 6px; background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
+.acct-consol-chip .acct-consol-x { cursor: pointer; font-weight: 700; }
+.acct-consol-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #2d3748; padding: 5px 0; cursor: pointer; }
+.acct-consol-item input { width: auto; }
 .acct-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
 
 /* ---- Voucher modal: line table ---- */
@@ -145,6 +149,8 @@
         <div class="acct-book-wrap">
             <label for="acctBookSelect">Book</label>
             <select id="acctBookSelect" class="wms-input acct-book-select"></select>
+            <button id="acctConsolidateBtn" class="wms-btn wms-btn-secondary" title="View consolidated across multiple books">📑 Consolidate</button>
+            <span id="acctConsolidateChip" class="acct-consol-chip" style="display:none;"></span>
         </div>
         <div class="acct-actions">
             <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary">➕ New Voucher</button>
@@ -301,6 +307,25 @@
         <div class="wms-modal-footer">
             <button class="wms-btn wms-btn-secondary" id="acctAddLedgerCancel">Cancel</button>
             <button class="wms-btn wms-btn-primary" id="acctAddLedgerSave">Add Ledger</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== Consolidate modal ===================== -->
+<div class="wms-modal-overlay" id="acctConsolidateModal">
+    <div class="wms-modal-dialog" style="max-width: 420px; width: 92%;">
+        <div class="wms-modal-header">
+            <span style="font-size:15px;font-weight:700;">Consolidate books</span>
+            <button class="wms-btn-close" id="acctConsolidateClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;max-height:60vh;overflow-y:auto;">
+            <p style="font-size:11px;color:#718096;margin:0 0 10px;">Select the books to combine into one set of statements (Balance Sheet, P&amp;L, Trial Balance).</p>
+            <label class="acct-consol-item" style="font-weight:700;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin-bottom:4px;"><input type="checkbox" id="acctConsolAll"> Select all</label>
+            <div id="acctConsolidateList"></div>
+        </div>
+        <div class="wms-modal-footer">
+            <button class="wms-btn wms-btn-secondary" id="acctConsolidateClear">Single book</button>
+            <button class="wms-btn wms-btn-primary" id="acctConsolidateApply">Apply</button>
         </div>
     </div>
 </div>

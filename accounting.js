@@ -26,6 +26,7 @@ var acctLedgerModalCtrl = null;
 var acctAddLedgerModalCtrl = null;
 var acctAddGroupModalCtrl = null;
 var acctReportModalCtrl = null;
+var acctConsolidateModalCtrl = null;
 
 var acctNatureOrder = ['Assets', 'Liabilities', 'Income', 'Expenses', 'Capital'];
 
@@ -87,6 +88,60 @@ function acctViewTitle() {
     var ids = acctViewBookIds();
     return ids.length ? acctInvName(ids[0]) : '—';
 }
+function acctSyncConsolChip() {
+    var chip = document.getElementById('acctConsolidateChip');
+    if (!chip) return;
+    if (acctIsConsolidated()) {
+        chip.style.display = '';
+        chip.innerHTML = 'Consolidated (' + acctBookIds.length + ') <span class="acct-consol-x" title="Clear">✕</span>';
+        var x = chip.querySelector('.acct-consol-x');
+        if (x) x.onclick = acctClearConsolidate;
+    } else { chip.style.display = 'none'; chip.innerHTML = ''; }
+}
+function acctSyncActionButtons() {
+    var consol = acctIsConsolidated();
+    ['acctNewVoucherBtn', 'acctRebuildBtn'].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.disabled = consol;
+    });
+}
+function acctOpenConsolidate() {
+    var sel = acctViewBookIds();
+    var books = acctOwnBooks();
+    var list = document.getElementById('acctConsolidateList');
+    if (list) {
+        list.innerHTML = books.map(function (b) {
+            var on = sel.indexOf(b.id) >= 0;
+            return '<label class="acct-consol-item"><input type="checkbox" class="acct-consol-cb" value="' + b.id + '"' + (on ? ' checked' : '') + '> ' + wmsEsc(b.short_name || b.name) + '</label>';
+        }).join('');
+    }
+    var all = document.getElementById('acctConsolAll');
+    if (all) {
+        all.checked = books.length > 0 && sel.length === books.length;
+        all.onclick = function () { document.querySelectorAll('.acct-consol-cb').forEach(function (c) { c.checked = all.checked; }); };
+    }
+    if (acctConsolidateModalCtrl) acctConsolidateModalCtrl.open();
+}
+async function acctApplyConsolidate() {
+    var ids = [].slice.call(document.querySelectorAll('.acct-consol-cb:checked')).map(function (c) { return c.value; });
+    if (acctConsolidateModalCtrl) acctConsolidateModalCtrl.close();
+    if (ids.length <= 1) {
+        acctBookIds = null;
+        if (ids.length === 1) { acctBookId = ids[0]; var s = document.getElementById('acctBookSelect'); if (s) s.value = ids[0]; }
+    } else {
+        acctBookIds = ids;
+    }
+    acctLoading(true);
+    try { await acctLoadBook(); acctRenderActiveTab(); acctSyncConsolChip(); acctSyncActionButtons(); }
+    finally { acctLoading(false); }
+}
+async function acctClearConsolidate() {
+    acctBookIds = null;
+    if (acctConsolidateModalCtrl) acctConsolidateModalCtrl.close();
+    acctLoading(true);
+    try { await acctLoadBook(); acctRenderActiveTab(); acctSyncConsolChip(); acctSyncActionButtons(); }
+    finally { acctLoading(false); }
+}
 function acctInvName(id) {
     var i = (wmsRefData.investors || []).find(function (x) { return x.id === id; });
     return i ? (i.short_name || i.name) : '—';
@@ -147,6 +202,8 @@ async function initAccounting() {
         await acctLoadBook();
         acctWireUI();
         acctRenderActiveTab();
+        acctSyncConsolChip();
+        acctSyncActionButtons();
     } catch (e) {
         console.error('[accounting] init error', e);
         acctToast('Failed to load Accounting: ' + e.message, true);
@@ -160,10 +217,13 @@ function acctWireUI() {
     var sel = document.getElementById('acctBookSelect');
     if (sel) sel.onchange = async function () {
         acctBookId = sel.value || null;
+        acctBookIds = null;   // picking a single book clears consolidation
         acctLoading(true);
-        try { await acctLoadBook(); acctRenderActiveTab(); }
+        try { await acctLoadBook(); acctRenderActiveTab(); acctSyncConsolChip(); acctSyncActionButtons(); }
         finally { acctLoading(false); }
     };
+    var cb = document.getElementById('acctConsolidateBtn');
+    if (cb) cb.onclick = acctOpenConsolidate;
 
     // Tabs
     document.querySelectorAll('.acct-tab').forEach(function (t) {
@@ -489,7 +549,7 @@ function acctRenderTrialBalance() {
 function acctRenderDayBook() {
     var el = document.getElementById('acctDayBookBody');
     if (!el) return;
-    if (!acctBookId) { el.innerHTML = '<div class="acct-empty">No book selected.</div>'; return; }
+    if (!acctViewBookIds().length) { el.innerHTML = '<div class="acct-empty">No book selected.</div>'; return; }
 
     // Group lines by voucher
     var vmap = {};
@@ -709,7 +769,7 @@ function acctOpenLedgerDetail(ledgerId) {
 
     var running = 0;
     var html = '<div class="acct-ledger-detail-head"><div class="acct-ld-name">' + wmsEsc(lg.name) + '</div>' +
-        '<div class="acct-ld-sub">' + wmsEsc(acctGroupPath(g)) + ' · ' + wmsEsc(acctInvName(acctBookId)) + '</div></div>';
+        '<div class="acct-ld-sub">' + wmsEsc(acctGroupPath(g)) + ' · ' + wmsEsc(acctViewTitle()) + '</div></div>';
     if (!rows.length) {
         html += '<div class="acct-empty">No postings in this book.</div>';
     } else {
@@ -905,6 +965,16 @@ function acctWireModals() {
     if (rpClose) rpClose.onclick = function () { acctReportModalCtrl && acctReportModalCtrl.close(); };
     var rpDone = document.getElementById('acctReportDone');
     if (rpDone) rpDone.onclick = function () { acctReportModalCtrl && acctReportModalCtrl.close(); };
+
+    // Consolidate modal
+    var coOverlay = document.getElementById('acctConsolidateModal');
+    if (coOverlay && typeof wmsModal === 'function') acctConsolidateModalCtrl = wmsModal(coOverlay, {});
+    var coClose = document.getElementById('acctConsolidateClose');
+    if (coClose) coClose.onclick = function () { acctConsolidateModalCtrl && acctConsolidateModalCtrl.close(); };
+    var coApply = document.getElementById('acctConsolidateApply');
+    if (coApply) coApply.onclick = acctApplyConsolidate;
+    var coClear = document.getElementById('acctConsolidateClear');
+    if (coClear) coClear.onclick = acctClearConsolidate;
 }
 
 // ============================================================================
