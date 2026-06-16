@@ -66,7 +66,9 @@ var ACCT_SYS = {
     stt: function () { return acctKeySystem('STT', 'STT_EXPENSE', 'Transaction Charges'); },
     cgST: function () { return acctKeySystem('Realised Capital Gains (ST)', 'REALISED_GAIN', 'Capital Gains'); },
     cgLT: function () { return acctKeySystem('Realised Capital Gains (LT)', 'REALISED_GAIN', 'Capital Gains'); },
-    income: function (name) { return acctKeySystem(name, 'INCOME', 'Trading & Other Income'); }
+    income: function (name) { return acctKeySystem(name, 'INCOME', 'Trading & Other Income'); },
+    fnoProfit: function () { return acctKeySystem('F&O Trading Profit', 'FNO_PL', 'F&O Income'); },
+    fnoLoss: function () { return acctKeySystem('F&O Trading Loss', 'FNO_PL', 'F&O Expenses'); }
 };
 
 // ---- A tiny line builder that keeps Dr/Cr non-negative ----------------------
@@ -139,11 +141,64 @@ function acctRelationship(txn, bookId, ctx) {
 }
 
 // ============================================================================
+// F&O FIFO P&L — P&L-only (no balance-sheet position), like the Statements
+// module. Positions are keyed by BENEFICIARY + contract, so own and each
+// client's F&O net independently. Charges of BOTH legs are netted into the
+// realised P&L at close (open-leg charges are deferred until the close).
+// ============================================================================
+function acctFnoKey(benId, txn) {
+    var contract = (txn.symbol || '').replace(/^[A-Z]+:/, '');   // strip exchange prefix (A.2.13)
+    return benId + '|' + (txn.security_id || contract);
+}
+// Returns realised net P&L for this trade (mutates the position store `fno`).
+function acctFnoMatch(fno, txn, benId) {
+    var key = acctFnoKey(benId, txn);
+    var lots = fno[key] || (fno[key] = []);
+    var mag = Math.abs(acctNum(txn.quantity));
+    var dir = (txn.transaction_type === 'BUY') ? 1 : -1;
+    var price = acctNum(txn.price);
+    var chargePerUnit = mag > 0 ? acctNum(txn.total_charges) / mag : 0;
+    var realised = 0, remaining = mag;
+    // close opposite-sign lots FIFO
+    while (remaining > 0 && lots.length && (lots[0].qty > 0 ? 1 : -1) === -dir) {
+        var lot = lots[0];
+        var take = Math.min(Math.abs(lot.qty), remaining);
+        var grossPnl = (lot.qty > 0)
+            ? (price - lot.price) * take      // long lot closed by a SELL
+            : (lot.price - price) * take;     // short lot closed by a BUY
+        realised += grossPnl - (lot.chargePerUnit * take) - (chargePerUnit * take);
+        lot.qty = (lot.qty > 0) ? (lot.qty - take) : (lot.qty + take);
+        if (Math.abs(lot.qty) < 1e-9) lots.shift();
+        remaining -= take;
+    }
+    // any remainder opens a new lot in the trade's direction
+    if (remaining > 0) lots.push({ qty: dir * remaining, price: price, chargePerUnit: chargePerUnit, date: txn.transaction_date });
+    return acctR2(realised);
+}
+// Build the F&O voucher (or a skip for a pure open / net-zero). post_fno is
+// checked by the caller. OWN → Broker vs F&O Trading P&L; client/party →
+// Broker vs the client current account.
+function acctBuildFno(txn, bookId, ctx, fno, relInfo) {
+    var pnl = acctFnoMatch(fno, txn, relInfo.benId);
+    if (Math.abs(pnl) < 0.005) return { skip: 'F&O ' + txn.transaction_type + ' (opening / no realised P&L)' };
+    var sym = txn.short_symbol || txn.symbol || '';
+    var broker = acctKeyBroker(txn, ctx);
+    var counter = (relInfo.rel === 'OWN')
+        ? ((pnl > 0) ? ACCT_SYS.fnoProfit() : ACCT_SYS.fnoLoss())
+        : acctKeyCounterparty(relInfo.benId, relInfo.benName, bookId);
+    var nar = sym + ' · F&O ' + txn.transaction_type + (relInfo.rel === 'OWN' ? '' : ' (' + (relInfo.benName || 'client') + ')');
+    var lines = (pnl > 0)
+        ? [acctLine(broker, pnl, 0), acctLine(counter, 0, pnl)]      // profit: cash in, credit P&L/client
+        : [acctLine(counter, -pnl, 0), acctLine(broker, 0, -pnl)];   // loss: debit P&L/client, cash out
+    return { voucherType: 'PMS-FNO', narration: nar, lines: lines };
+}
+
+// ============================================================================
 // Per-transaction voucher builder
 // Returns { voucherType, narration, lines:[...] } | { skip:reason }
-// Mutates `fifo` for OWN equity lots.
+// Mutates `fifo` (OWN equity lots) and `fno` (F&O positions).
 // ============================================================================
-function acctBuildOne(txn, bookId, ctx, fifo, sttSeparate) {
+function acctBuildOne(txn, bookId, ctx, fifo, fno, sttSeparate) {
     var type = txn.transaction_type;
     var relInfo = acctRelationship(txn, bookId, ctx);
     var rel = relInfo.rel;
@@ -159,6 +214,12 @@ function acctBuildOne(txn, bookId, ctx, fifo, sttSeparate) {
             acctFifoPush(fifo, txn, Math.abs(acctNum(txn.quantity)), 0);
         }
         return { skip: type === 'HISTORICAL_PL' ? 'HISTORICAL_PL ignored (FIFO books)' : (type + ' has no cash effect') };
+    }
+
+    // ---- F&O (own OR client): P&L-only on FIFO close, gated by the book's post_fno ----
+    if (acctIsFno(txn) && (type === 'BUY' || type === 'SELL')) {
+        if (!ctx.postFno) return { skip: 'F&O posting off for this book (post_fno=false)' };
+        return acctBuildFno(txn, bookId, ctx, fno, relInfo);
     }
 
     // ---- CLIENT / PARTY: net cash movement to a current account ----------------
@@ -185,10 +246,7 @@ function acctBuildOne(txn, bookId, ctx, fifo, sttSeparate) {
             lines: [acctLine(ACCT_SYS.pmsAdj(), amt, 0), acctLine(cp, 0, amt)] };
     }
 
-    // ---- OWN F&O: P&L-only, deferred to a later pass --------------------------
-    if (acctIsFno(txn)) return { skip: 'OWN F&O P&L deferred (post_fno pass not built yet)' };
-
-    // ---- OWN equity-like ------------------------------------------------------
+    // ---- OWN equity-like (F&O already handled above) --------------------------
     if (type === 'BUY') {
         var cost = sttSeparate ? (gross + charges - stt) : (gross + charges);
         acctFifoPush(fifo, txn, Math.abs(acctNum(txn.quantity)), cost);
@@ -263,6 +321,7 @@ function acctBuildOne(txn, bookId, ctx, fifo, sttSeparate) {
 function acctProcessBook(bookId, txns, ctx) {
     var sttSeparate = !!ctx.sttSeparate;
     var fifo = acctNewFifo();
+    var fno = {};   // F&O positions keyed by beneficiary+contract
     var sorted = (txns || []).slice().sort(function (a, b) {
         if (a.transaction_date !== b.transaction_date) return a.transaction_date < b.transaction_date ? -1 : 1;
         var at = a.transaction_time || '00:00:00', bt = b.transaction_time || '00:00:00';
@@ -271,7 +330,7 @@ function acctProcessBook(bookId, txns, ctx) {
     });
     var vouchers = [], skipped = [], warnings = [];
     sorted.forEach(function (txn) {
-        var res = acctBuildOne(txn, bookId, ctx, fifo, sttSeparate);
+        var res = acctBuildOne(txn, bookId, ctx, fifo, fno, sttSeparate);
         if (!res) { skipped.push({ txnId: txn.id, reason: 'null result' }); return; }
         if (res.skip) { skipped.push({ txnId: txn.id, reason: res.skip }); return; }
         if (res.warn) warnings.push({ txnId: txn.id, warn: res.warn });

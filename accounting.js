@@ -709,7 +709,8 @@ async function acctRebuildBooks() {
         var ctx = {
             investor: function (id) { return (wmsRefData.investors || []).find(function (i) { return i.id === id; }); },
             brokerName: function (id) { var b = (wmsRefData.brokers || []).find(function (x) { return x.id === id; }); return b ? (b.name || b.broker_code) : 'Broker'; },
-            sttSeparate: !!bookInv.stt_accounting_method
+            sttSeparate: !!bookInv.stt_accounting_method,
+            postFno: bookInv.post_fno !== false
         };
 
         // 3. Run the engine (pure)
