@@ -171,6 +171,8 @@ function acctWireUI() {
         try { await acctLoadCatalogue(); await acctLoadBook(); acctRenderActiveTab(); }
         finally { acctLoading(false); }
     };
+    var rb = document.getElementById('acctRebuildBtn');
+    if (rb) rb.onclick = acctRebuildBooks;
 
     // Ledger tab toolbar
     var al = document.getElementById('acctAddLedgerBtn');
@@ -655,6 +657,111 @@ function acctWireModals() {
     document.getElementById('acctAddGroupClose').onclick = function () { acctAddGroupModalCtrl && acctAddGroupModalCtrl.close(); };
     document.getElementById('acctAddGroupCancel').onclick = function () { acctAddGroupModalCtrl && acctAddGroupModalCtrl.close(); };
     document.getElementById('acctAddGroupSave').onclick = acctSaveGroup;
+}
+
+// ============================================================================
+// Phase 2 — Rebuild a book's auto-vouchers from its transactions
+// ============================================================================
+// Find-or-create each ledger key the engine emitted; fill outMap[key.key]=id.
+async function acctResolveLedgers(keys, outMap) {
+    for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        var existing = acctLedgers.find(function (l) { return l.name === key.name; });
+        if (existing) { outMap[key.key] = existing.id; continue; }
+        var grp = acctGroups.find(function (g) { return g.name === key.group; });
+        if (!grp) throw new Error('Group "' + key.group + '" not found for ledger "' + key.name + '"');
+        var body = {
+            name: key.name, group_id: grp.id, ledger_kind: key.kind || 'GENERAL',
+            is_global: key.isGlobal !== false,
+            scope_investor_id: (key.isGlobal === false) ? (key.scopeInvestorId || acctBookId) : null
+        };
+        var resp = await fetch(acctUrl('acct_ledgers'), {
+            method: 'POST',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+            body: JSON.stringify(body)
+        });
+        if (!resp.ok) throw new Error('Create ledger "' + key.name + '" failed: ' + (await resp.text()));
+        var row = (await resp.json())[0];
+        acctLedgers.push(row);
+        outMap[key.key] = row.id;
+    }
+}
+
+async function acctRebuildBooks() {
+    if (!acctBookId) { acctToast('Select a book first.', true); return; }
+    if (typeof acctProcessBook !== 'function') { acctToast('Posting engine not loaded.', true); return; }
+    if (!window.confirm('Rebuild auto-vouchers for ' + acctInvName(acctBookId) + ' from its transactions?\n\n' +
+        'This deletes existing AUTO-generated vouchers for this book and regenerates them from the trade history. ' +
+        'Manually-entered vouchers are kept.')) return;
+
+    acctLoading(true);
+    try {
+        // 1. This book's transactions. NOTE: on the dev site the fetch interceptor
+        //    routes "transactions" -> "transactions_dev" automatically, so dev reads
+        //    dev trades and prod reads prod trades. Accounting tables are single-set.
+        var fields = 'id,investor_id,trader_id,broker_id,security_id,symbol,short_symbol,company_name,' +
+            'security_type,transaction_type,transaction_date,transaction_time,quantity,price,' +
+            'gross_amount,total_charges,stt,tds,net_amount,created_at';
+        var txns = await wmsFetchAllRaw(acctUrl('transactions?select=' + fields + '&investor_id=eq.' + acctBookId)) || [];
+
+        // 2. Context for the pure engine
+        var bookInv = (wmsRefData.investors || []).find(function (i) { return i.id === acctBookId; }) || {};
+        var ctx = {
+            investor: function (id) { return (wmsRefData.investors || []).find(function (i) { return i.id === id; }); },
+            brokerName: function (id) { var b = (wmsRefData.brokers || []).find(function (x) { return x.id === id; }); return b ? (b.name || b.broker_code) : 'Broker'; },
+            sttSeparate: !!bookInv.stt_accounting_method
+        };
+
+        // 3. Run the engine (pure)
+        var result = acctProcessBook(acctBookId, txns, ctx);
+        if (!result.vouchers.length) {
+            acctToast('No postable transactions for ' + acctInvName(acctBookId) + ' (' + result.skipped.length + ' skipped).', true);
+            return;
+        }
+
+        // 4. Resolve/create every ledger the engine referenced
+        var uniqueKeys = {};
+        result.vouchers.forEach(function (v) { v.lines.forEach(function (l) { uniqueKeys[l.ledger.key] = l.ledger; }); });
+        var keyMap = {};
+        await acctResolveLedgers(Object.keys(uniqueKeys).map(function (k) { return uniqueKeys[k]; }), keyMap);
+
+        // 5. Clear existing auto-vouchers for this book (lines cascade)
+        await fetch(acctUrl('acct_vouchers?investor_id=eq.' + acctBookId + '&is_auto=eq.true'),
+            { method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' }) });
+
+        // 6. Post each voucher via the RPC
+        var posted = 0, failed = 0, firstErr = null;
+        for (var j = 0; j < result.vouchers.length; j++) {
+            var v = result.vouchers[j];
+            var header = { investor_id: acctBookId, voucher_type: v.voucherType, voucher_date: v.date,
+                narration: v.narration, is_auto: true, source_transaction_id: v.txnId };
+            var lines = v.lines.map(function (l) {
+                return { ledger_id: keyMap[l.ledger.key], debit_amount: l.debit, credit_amount: l.credit,
+                    narration: l.narration, sort_order: l.sort_order };
+            });
+            if (lines.some(function (l) { return !l.ledger_id; })) { failed++; continue; }
+            var resp = await fetch(acctUrl('rpc/acct_post_voucher'), {
+                method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ p_header: header, p_lines: lines })
+            });
+            if (resp.ok) posted++; else { failed++; if (!firstErr) firstErr = await resp.text(); }
+        }
+
+        await acctLoadBook();
+        acctRenderActiveTab();
+
+        var msg = 'Rebuilt ' + acctInvName(acctBookId) + ': ' + posted + ' posted';
+        if (result.skipped.length) msg += ', ' + result.skipped.length + ' skipped';
+        if (failed) msg += ', ' + failed + ' failed';
+        if (result.warnings.length) { msg += ', ' + result.warnings.length + ' warnings (console)'; console.warn('[accounting] rebuild warnings', result.warnings); }
+        if (firstErr) console.error('[accounting] rebuild first error:', firstErr);
+        acctToast(msg, failed > 0);
+    } catch (e) {
+        console.error('[accounting] rebuild failed', e);
+        acctToast('Rebuild failed: ' + e.message, true);
+    } finally {
+        acctLoading(false);
+    }
 }
 
 // Expose entry point for app.html loadModule
