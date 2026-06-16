@@ -11,6 +11,7 @@ var acctLedgers = [];         // all acct_ledgers rows
 var acctVoucherRows = [];     // acct_voucher_full rows for the selected book
 var acctBookId = null;        // selected book (investor id, accounting_enabled)
 var acctActiveTab = 'financials';
+var acctBookIds = null;       // consolidation VIEW set (null/[] = follow the single book select)
 var acctGroupById = {};       // id -> group
 
 // Voucher modal working state
@@ -75,6 +76,17 @@ function acctGroupPath(g) {
 function acctOwnBooks() {
     return (wmsRefData.investors || []).filter(function (i) { return i.accounting_enabled; });
 }
+// Books currently being VIEWED (consolidation set, else the single selected book).
+function acctViewBookIds() {
+    if (acctBookIds && acctBookIds.length) return acctBookIds;
+    return acctBookId ? [acctBookId] : [];
+}
+function acctIsConsolidated() { return !!(acctBookIds && acctBookIds.length > 1); }
+function acctViewTitle() {
+    if (acctIsConsolidated()) return 'Consolidated (' + acctBookIds.length + ' books)';
+    var ids = acctViewBookIds();
+    return ids.length ? acctInvName(ids[0]) : '—';
+}
 function acctInvName(id) {
     var i = (wmsRefData.investors || []).find(function (x) { return x.id === id; });
     return i ? (i.short_name || i.name) : '—';
@@ -98,9 +110,11 @@ async function acctLoadCatalogue() {
     acctGroups.forEach(function (g) { acctGroupById[g.id] = g; });
 }
 async function acctLoadBook() {
-    if (!acctBookId) { acctVoucherRows = []; return; }
+    var ids = acctViewBookIds();
+    if (!ids.length) { acctVoucherRows = []; return; }
+    var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
     acctVoucherRows = await wmsFetchAllRaw(acctUrl(
-        'acct_voucher_full?investor_id=eq.' + acctBookId +
+        'acct_voucher_full?' + filter +
         '&order=voucher_date.asc,voucher_number.asc,sort_order.asc')) || [];
 }
 
@@ -204,85 +218,142 @@ function acctComputeBalances() {
     });
     return net;
 }
-// Group nonzero-balance ledgers by nature -> group, with nature-natural display sign.
-function acctBuildStatementModel() {
-    var net = acctComputeBalances();
-    var model = {};
-    acctNatureOrder.forEach(function (n) { model[n] = { groups: {}, total: 0 }; });
-    Object.keys(net).forEach(function (id) {
-        var bal = net[id];
-        if (Math.round(bal * 100) === 0) return;
-        var lg = acctLedgers.find(function (x) { return x.id === id; });
-        if (!lg) return;
-        var nature = acctRootName(lg.group_id);
-        if (!model[nature]) return;
-        var grp = acctGroupById[lg.group_id];
-        var grpName = grp ? grp.name : nature;
-        var crNormal = (nature === 'Liabilities' || nature === 'Income' || nature === 'Capital');
-        var disp = crNormal ? -bal : bal;   // nature-natural positive value
-        var g = model[nature].groups[grpName] || (model[nature].groups[grpName] = { ledgers: [], total: 0 });
-        g.ledgers.push({ lg: lg, disp: disp });
-        g.total += disp;
-        model[nature].total += disp;
-    });
-    var incomeTotal = model.Income.total, expenseTotal = model.Expenses.total;
-    return { model: model, incomeTotal: incomeTotal, expenseTotal: expenseTotal, netProfit: incomeTotal - expenseTotal };
+// ── MProfit-style two-column T-format Balance Sheet (Liabilities | Assets) ───
+// Collapsible group->ledger tree; P&L embedded under Liabilities (Profit & Loss
+// -> Income / Expenses); balanced Total. Models MProfit's accounting view.
+var acctFinCollapsed = {};   // nodeKey -> true (default expanded)
+var acctFinShowZero = false;
+var acctFinSearch = '';
+
+function acctFinMatch(name) { return !acctFinSearch || String(name).toLowerCase().indexOf(acctFinSearch.toLowerCase()) >= 0; }
+function acctLedgerDisp(net, lg, negate) {
+    var nature = acctRootName(lg.group_id);
+    var crNormal = (nature === 'Liabilities' || nature === 'Income' || nature === 'Capital');
+    var base = crNormal ? -(net[lg.id] || 0) : (net[lg.id] || 0);
+    return negate ? -base : base;
 }
-function acctStmtNatureRows(label, nm) {
-    var h = '<tr class="acct-stmt-nature"><td>' + wmsEsc(label) + '</td><td class="text-right">' + acctAmt(nm.total) + '</td></tr>';
-    Object.keys(nm.groups).sort().forEach(function (gname) {
-        var g = nm.groups[gname];
-        h += '<tr class="acct-stmt-group"><td>' + wmsEsc(gname) + '</td><td class="text-right">' + acctAmt(g.total) + '</td></tr>';
-        g.ledgers.sort(function (a, b) { return a.lg.name.localeCompare(b.lg.name); }).forEach(function (e) {
-            h += '<tr class="acct-stmt-ledger acct-clickable" data-ledger="' + e.lg.id + '">' +
-                '<td class="acct-ledger-name">' + wmsEsc(e.lg.name) + '</td>' +
-                '<td class="text-right">' + acctAmt(e.disp) + '</td></tr>';
+// Build a node tree (child groups -> ledgers) under a root nature.
+function acctSideTree(net, rootName, negate) {
+    var root = acctGroups.find(function (g) { return !g.parent_group_id && g.name === rootName; });
+    if (!root) return { nodes: [], total: 0 };
+    var nodes = [];
+    function ledgerNode(lg) {
+        var amt = acctLedgerDisp(net, lg, negate);
+        if (!acctFinShowZero && Math.round(amt * 100) === 0) return null;
+        return { key: 'l:' + lg.id, label: lg.name, amount: amt, isLedger: true, ledgerId: lg.id };
+    }
+    acctLedgers.filter(function (l) { return l.group_id === root.id; })
+        .sort(function (a, b) { return a.name.localeCompare(b.name); })
+        .forEach(function (l) { if (acctFinMatch(l.name)) { var n = ledgerNode(l); if (n) nodes.push(n); } });
+    acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
+        .sort(function (a, b) { return a.name.localeCompare(b.name); })
+        .forEach(function (cg) {
+            var children = [];
+            acctLedgers.filter(function (l) { return l.group_id === cg.id; })
+                .sort(function (a, b) { return a.name.localeCompare(b.name); })
+                .forEach(function (l) {
+                    if (!acctFinMatch(l.name) && !acctFinMatch(cg.name)) return;
+                    var n = ledgerNode(l); if (n) children.push(n);
+                });
+            if (!children.length && !acctFinShowZero) return;
+            var total = children.reduce(function (a, n) { return a + n.amount; }, 0);
+            nodes.push({ key: 'g:' + cg.id, label: cg.name, amount: total, children: children });
         });
-    });
+    return { nodes: nodes, total: nodes.reduce(function (a, n) { return a + n.amount; }, 0) };
+}
+function acctFinNodeHtml(node, depth) {
+    var pad = 12 + depth * 18;
+    var isGroup = !node.isLedger;
+    var collapsed = isGroup && acctFinCollapsed[node.key];
+    var icon = isGroup
+        ? '<span class="acct-fin-toggle">' + (collapsed ? '⊕' : '⊖') + '</span>'
+        : '<span class="acct-fin-toggle-sp"></span>';
+    var cls = 'acct-fin-row ' + (isGroup ? 'acct-fin-group' : 'acct-fin-ledger acct-clickable');
+    var attr = isGroup ? ('data-node="' + node.key + '"') : ('data-ledger="' + node.ledgerId + '"');
+    var h = '<div class="' + cls + '" ' + attr + ' style="padding-left:' + pad + 'px;">' +
+        icon + '<span class="acct-fin-name">' + wmsEsc(node.label) + '</span>' +
+        '<span class="acct-fin-amt">' + acctAmt(node.amount) + '</span></div>';
+    if (isGroup && node.children && !collapsed) {
+        node.children.forEach(function (c) { h += acctFinNodeHtml(c, depth + 1); });
+    }
     return h;
+}
+function acctFinColumnHtml(title, asOn, nodes) {
+    var h = '<div class="acct-fin-col"><div class="acct-fin-hdr"><span>' + wmsEsc(title) + '</span><span>Bal. as on ' + wmsEsc(asOn) + '</span></div>';
+    nodes.forEach(function (n) { h += acctFinNodeHtml(n, 0); });
+    return h + '</div>';
+}
+function acctFinAllGroupKeys(nodes, acc) {
+    nodes.forEach(function (n) { if (!n.isLedger) { acc.push(n.key); if (n.children) acctFinAllGroupKeys(n.children, acc); } });
+    return acc;
+}
+function acctFinAsOn() {
+    var max = '';
+    acctVoucherRows.forEach(function (r) { if (r.voucher_date > max) max = r.voucher_date; });
+    return acctFmtDate(max || acctTodayYmd());
 }
 function acctRenderFinancials() {
     var el = document.getElementById('acctFinancialsBody');
     if (!el) return;
-    if (!acctBookId) { el.innerHTML = '<div class="acct-empty">No book selected. Enable accounting on an investor first.</div>'; return; }
+    if (!acctViewBookIds().length) { el.innerHTML = '<div class="acct-empty">No book selected. Enable accounting on an investor first.</div>'; return; }
     if (!acctVoucherRows.length) {
-        el.innerHTML = '<div class="acct-empty">No postings yet for ' + wmsEsc(acctInvName(acctBookId)) + '. Use ↻ Rebuild from trades or ➕ New Voucher.</div>';
+        el.innerHTML = '<div class="acct-empty">No postings yet for ' + wmsEsc(acctViewTitle()) + '. Use ↻ Rebuild from trades or ➕ New Voucher.</div>';
         return;
     }
-    var m = acctBuildStatementModel();
+    var net = acctComputeBalances();
+    var asOn = acctFinAsOn();
 
-    // Balance Sheet
-    var bs = '<table class="acct-stmt"><tbody>';
-    bs += '<tr class="acct-stmt-section"><td colspan="2">Liabilities &amp; Capital</td></tr>';
-    bs += acctStmtNatureRows('Capital', m.model.Capital);
-    bs += '<tr class="acct-stmt-ledger acct-clickable" id="acctBsNetProfit"><td class="acct-ledger-name">Current Year P&amp;L (see P&amp;L below)</td><td class="text-right">' + acctAmt(m.netProfit) + '</td></tr>';
-    bs += acctStmtNatureRows('Liabilities', m.model.Liabilities);
-    var lcTotal = m.model.Capital.total + m.netProfit + m.model.Liabilities.total;
-    bs += '<tr class="acct-tb-total"><td>Total Liabilities &amp; Capital</td><td class="text-right">' + acctAmt(lcTotal) + '</td></tr>';
-    bs += '<tr class="acct-stmt-section"><td colspan="2">Assets</td></tr>';
-    bs += acctStmtNatureRows('Assets', m.model.Assets);
-    bs += '<tr class="acct-tb-total"><td>Total Assets</td><td class="text-right">' + acctAmt(m.model.Assets.total) + '</td></tr>';
-    bs += '</tbody></table>';
+    // Liabilities side = Capital + Profit & Loss (embedded) + Liabilities
+    var cap = acctSideTree(net, 'Capital', false);
+    var inc = acctSideTree(net, 'Income', false);
+    var exp = acctSideTree(net, 'Expenses', true);   // negated so expenses reduce P&L
+    var plNet = inc.total + exp.total;
+    var plNode = { key: 'pl', label: 'Profit & Loss', amount: plNet, children: [
+        { key: 'pl-inc', label: 'Income', amount: inc.total, children: inc.nodes },
+        { key: 'pl-exp', label: 'Expenses', amount: exp.total, children: exp.nodes }
+    ] };
+    var liab = acctSideTree(net, 'Liabilities', false);
+    var leftNodes = cap.nodes.concat([plNode]).concat(liab.nodes);
+    var leftTotal = cap.total + plNet + liab.total;
 
-    // P&L
-    var pl = '<table class="acct-stmt"><tbody>';
-    pl += acctStmtNatureRows('Income', m.model.Income);
-    pl += acctStmtNatureRows('Expenses', m.model.Expenses);
-    pl += '<tr class="acct-tb-total"><td>Net Profit</td><td class="text-right">' + acctAmt(m.netProfit) + '</td></tr>';
-    pl += '</tbody></table>';
+    var assets = acctSideTree(net, 'Assets', false);
+    var balanced = Math.round(leftTotal * 100) === Math.round(assets.total * 100);
 
-    var balanced = Math.round(lcTotal * 100) === Math.round(m.model.Assets.total * 100);
-    var balNote = balanced ? '' : '<div style="color:#dc2626;font-size:11px;text-align:center;margin-bottom:8px;">⚠ Balance Sheet does not balance — check postings.</div>';
+    var html = '<div class="acct-fin-controls">' +
+        '<button class="wms-btn wms-btn-secondary" id="acctFinExpandAll">Expand all</button>' +
+        '<button class="wms-btn wms-btn-secondary" id="acctFinCollapseAll">Collapse all</button>' +
+        '<label class="acct-fin-zero"><input type="checkbox" id="acctFinShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
+        '<input type="text" id="acctFinSearch" class="wms-input" placeholder="Search ledgers & groups" value="' + wmsEsc(acctFinSearch) + '">' +
+        '</div>';
+    html += '<div class="acct-fin-scope">' + wmsEsc(acctViewTitle()) + '</div>';
+    html += '<div class="acct-fin-cols">' +
+        acctFinColumnHtml('Liabilities', asOn, leftNodes) +
+        acctFinColumnHtml('Assets', asOn, assets.nodes) + '</div>';
+    html += '<div class="acct-fin-total"><span>Total' + (balanced ? '' : ' ⚠ out of balance') + '</span><span>' + acctAmt(assets.total) + '</span></div>';
+    el.innerHTML = html;
 
-    el.innerHTML = balNote +
-        '<div class="acct-stmt-wrap"><div class="acct-stmt-title">Balance Sheet — ' + wmsEsc(acctInvName(acctBookId)) + '</div>' + bs + '</div>' +
-        '<div class="acct-stmt-wrap" id="acctPLSection"><div class="acct-stmt-title">Profit &amp; Loss</div>' + pl + '</div>';
-
-    el.querySelectorAll('tr[data-ledger]').forEach(function (tr) {
-        tr.onclick = function () { acctOpenLedgerDetail(tr.dataset.ledger); };
+    el.querySelectorAll('.acct-fin-group[data-node]').forEach(function (r) {
+        r.onclick = function () { acctFinCollapsed[r.dataset.node] = !acctFinCollapsed[r.dataset.node]; acctRenderFinancials(); };
     });
-    var np = document.getElementById('acctBsNetProfit');
-    if (np) np.onclick = function () { var s = document.getElementById('acctPLSection'); if (s) s.scrollIntoView({ behavior: 'smooth' }); };
+    el.querySelectorAll('.acct-fin-ledger[data-ledger]').forEach(function (r) {
+        r.onclick = function () { acctOpenLedgerDetail(r.dataset.ledger); };
+    });
+    var ea = document.getElementById('acctFinExpandAll');
+    if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderFinancials(); };
+    var ca = document.getElementById('acctFinCollapseAll');
+    if (ca) ca.onclick = function () {
+        var keys = acctFinAllGroupKeys(leftNodes.concat(assets.nodes), []);
+        acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; });
+        acctRenderFinancials();
+    };
+    var sz = document.getElementById('acctFinShowZeroChk');
+    if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderFinancials(); };
+    var srch = document.getElementById('acctFinSearch');
+    if (srch) srch.oninput = function () {
+        acctFinSearch = srch.value; acctRenderFinancials();
+        var s2 = document.getElementById('acctFinSearch');
+        if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); }
+    };
 }
 
 function acctRenderTrialBalance() {
