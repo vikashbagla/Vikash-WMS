@@ -18,6 +18,12 @@
 // Rule A.1.2: var only (avoid TDZ on browser script reload).
 // ============================================================================
 
+// Wrapped in an IIFE so NONE of the internal helpers leak as globals — this
+// engine defines names like `acctNum` that would otherwise collide with the
+// currency formatter of the same name in accounting.js (A.1.3). Only the public
+// API is exported at the bottom.
+(function () {
+
 var ACCT_NO_VOUCHER_TYPES = { BONUS: 1, SPLIT: 1, RIGHTS_ENTITLEMENT: 1, HISTORICAL_PL: 1 };
 var ACCT_INCOME_TYPES = { DIVIDEND: 'Dividend Income', INTEREST: 'Interest Income', OTHER_INCOME: 'Other Income' };
 // Securities treated as "debt" for the 36-month LT threshold; everything else 12 months.
@@ -288,3 +294,5 @@ if (typeof module !== 'undefined' && module.exports) {
         acctKeyInvestment: acctKeyInvestment, ACCT_SYS: ACCT_SYS };
 }
 if (typeof window !== 'undefined') { window.acctProcessBook = acctProcessBook; }
+
+})();
