@@ -96,6 +96,58 @@ var RPT_AC_BADGE = {
 // Capital Gains tab filters
 var rptCGSelectedInvestorIds = [];
 var rptCGSelectedBrokerIds = [];
+var rptCGInvPillFilter = null;   // wmsPillSearch instance
+var rptCGBrkPillFilter = null;   // wmsPillSearch instance
+var rptCGSelectedTagNames = [];
+var rptCGTagFilterLogic = 'OR';
+var rptCGTagPillFilter = null;   // wmsPillSearch instance
+
+// ---- Capital Gains View Manager (wmsViewManager instance — same as Portfolio) ----
+var rptCGVM = wmsViewManager({
+    module: 'reports_capgains',
+    label: 'Rpt CapGains',
+    ids: {
+        viewTabs: 'rpt-cg-view-tabs',
+        moreList: 'rpt-cg-more-list',
+        moreDropdown: 'rpt-cg-more-dropdown',
+        updateBtn: 'rpt-cg-update-view-btn'
+    },
+    autoDefaultFirst: true,
+    getPills: function() {
+        return [
+            { pill: rptCGInvPillFilter, type: 'investor' },
+            { pill: rptCGBrkPillFilter, type: 'broker' },
+            { pill: rptCGTagPillFilter, type: 'tag' }
+        ];
+    },
+    getFilters: function() {
+        return {
+            investorIds: rptCGSelectedInvestorIds.slice(),
+            brokerIds: rptCGSelectedBrokerIds.slice(),
+            tagNames: rptCGSelectedTagNames.slice(),
+            tagLogic: rptCGTagFilterLogic
+        };
+    },
+    applyFilters: function(f) {
+        rptCGSelectedInvestorIds.length = 0;
+        Array.prototype.push.apply(rptCGSelectedInvestorIds, f.investorIds || []);
+        rptCGSelectedBrokerIds.length = 0;
+        Array.prototype.push.apply(rptCGSelectedBrokerIds, f.brokerIds || []);
+        rptCGSelectedTagNames.length = 0;
+        Array.prototype.push.apply(rptCGSelectedTagNames, f.tagNames || []);
+        rptCGTagFilterLogic = f.tagLogic || 'OR';
+
+        // Sync pill UI
+        var pills = [rptCGInvPillFilter, rptCGBrkPillFilter, rptCGTagPillFilter];
+        pills.forEach(function(p) { if (p && p.syncStates) p.syncStates(); });
+
+        // Update tag logic radio
+        document.querySelectorAll('input[name="rpt-cg-tag-logic"]').forEach(function(r) {
+            r.checked = r.value === rptCGTagFilterLogic;
+        });
+    },
+    onRefresh: function() { rptRenderCapGains(); }
+});
 
 // ============================================================================
 // ASSET CLASS MAPPING
@@ -189,9 +241,12 @@ async function initReports() {
     rptInitViewBar();
     rptInitFYSelector();
     rptInitCGFilters();
+    rptInitCGViewBar();
     await rptPortfolioVM.loadViews();
+    await rptCGVM.loadViews();
     // If no default view applied, render now
     if (!rptPortfolioVM.activeViewId) rptRenderPortfolio();
+    if (!rptCGVM.activeViewId) rptRenderCapGains();
     showLoading(false);
 }
 
@@ -231,7 +286,7 @@ async function rptLoadData() {
     // HISTORICAL_PL (skipped by FIFO). No query-level filtering needed.
     // Uses wmsFetchAllRaw() to paginate past Supabase's 1000-row default limit.
     var txnData = await wmsFetchAllRaw(
-        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,transaction_time,quantity,price,gross_amount,net_amount,tags,dont_display&dont_display=eq.false&order=transaction_date.asc,transaction_time.asc.nullsfirst,id.asc'
+        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,transaction_time,quantity,price,gross_amount,net_amount,stt,tags,dont_display&dont_display=eq.false&order=transaction_date.asc,transaction_time.asc.nullsfirst,id.asc'
     );
 
     console.log('✅ Reports: loaded ' + txnData.length + ' transactions');
@@ -253,6 +308,7 @@ async function rptLoadData() {
             price: txn.price,
             grossAmount: txn.gross_amount,
             netAmount: txn.net_amount,
+            stt: txn.stt,
             tags: txn.tags || []
         };
     });
@@ -515,7 +571,7 @@ function rptInitViewBar() {
     if (filtersToggle && filtersDiv) {
         filtersToggle.addEventListener('click', function() {
             var isHidden = filtersDiv.style.display === 'none';
-            filtersDiv.style.display = isHidden ? '' : 'none';
+            filtersDiv.style.display = isHidden ? 'flex' : 'none';
             filtersToggle.textContent = isHidden ? '▲' : '▼';
         });
     }
@@ -524,6 +580,77 @@ function rptInitViewBar() {
     document.addEventListener('click', function(e) {
         if (!e.target.closest('#rpt-more-btn') && !e.target.closest('#rpt-more-dropdown')) {
             var mdd = document.getElementById('rpt-more-dropdown');
+            if (mdd) mdd.style.display = 'none';
+        }
+    });
+}
+
+// View bar for the Capital Gains tab (mirrors rptInitViewBar, using rptCGVM)
+function rptInitCGViewBar() {
+    var newBtn = document.getElementById('rpt-cg-new-view-btn');
+    if (newBtn) {
+        newBtn.addEventListener('click', function() {
+            rptCGVM.activeViewId = null;
+            rptCGVM.renderViewTabs();
+            rptCGVM.updateViewButtons();
+        });
+    }
+    var moreBtn = document.getElementById('rpt-cg-more-btn');
+    if (moreBtn) {
+        moreBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var dd = document.getElementById('rpt-cg-more-dropdown');
+            dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+        });
+    }
+    var updateBtn = document.getElementById('rpt-cg-update-view-btn');
+    if (updateBtn) {
+        updateBtn.addEventListener('click', function() { rptCGVM.updateCurrentView(); });
+    }
+    var saveNewBtn = document.getElementById('rpt-cg-save-new-btn');
+    var savePrompt = document.getElementById('rpt-cg-save-prompt');
+    var savePromptName = document.getElementById('rpt-cg-save-prompt-name');
+    if (saveNewBtn && savePrompt) {
+        saveNewBtn.addEventListener('click', function() {
+            savePrompt.classList.add('show');
+            saveNewBtn.style.display = 'none';
+            savePromptName.value = '';
+            savePromptName.focus();
+        });
+        document.getElementById('rpt-cg-save-prompt-ok').addEventListener('click', function() {
+            var name = savePromptName.value.trim();
+            if (name) rptCGVM.saveCurrentView(name);
+            savePrompt.classList.remove('show');
+            saveNewBtn.style.display = '';
+        });
+        document.getElementById('rpt-cg-save-prompt-cancel').addEventListener('click', function() {
+            savePrompt.classList.remove('show');
+            saveNewBtn.style.display = '';
+        });
+        savePromptName.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                var name = savePromptName.value.trim();
+                if (name) rptCGVM.saveCurrentView(name);
+                savePrompt.classList.remove('show');
+                saveNewBtn.style.display = '';
+            } else if (e.key === 'Escape') {
+                savePrompt.classList.remove('show');
+                saveNewBtn.style.display = '';
+            }
+        });
+    }
+    var filtersToggle = document.getElementById('rpt-cg-filters-toggle');
+    var filtersDiv = document.getElementById('rptCGFilters');
+    if (filtersToggle && filtersDiv) {
+        filtersToggle.addEventListener('click', function() {
+            var isHidden = filtersDiv.style.display === 'none';
+            filtersDiv.style.display = isHidden ? 'flex' : 'none';
+            filtersToggle.textContent = isHidden ? '▲' : '▼';
+        });
+    }
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('#rpt-cg-more-btn') && !e.target.closest('#rpt-cg-more-dropdown')) {
+            var mdd = document.getElementById('rpt-cg-more-dropdown');
             if (mdd) mdd.style.display = 'none';
         }
     });
@@ -996,20 +1123,20 @@ function rptRenderPortfolio() {
         ? ' <span style="font-size:10px;color:#667eea;">🔍 ' + rptSymbolSearchText + '</span>'
         : '';
 
-    // Page-level header (single, not repeated per group) — DARK background
-    html += '<thead><tr style="background:#e2e8f0; border-bottom:2px solid #cbd5e0;">' +
-        '<th id="rpt-th-symbol" class="sortable" onclick="rptSortPortfolio(\'symbol\')" style="width:17%; text-align:left; padding:6px 8px; font-size:11px; color:#4a5568; cursor:pointer;">' +
+    // Page-level header (single, not repeated per group) — uses app-standard global th styling
+    html += '<thead><tr>' +
+        '<th id="rpt-th-symbol" class="sortable" onclick="rptSortPortfolio(\'symbol\')" style="width:17%; text-align:left; cursor:pointer;">' +
             '<span id="rpt-header-toggle" onclick="event.stopPropagation(); rptToggleAllGroups();" style="display:inline-block;width:16px;font-size:12px;color:#718096;cursor:pointer;vertical-align:middle;" title="Collapse/Expand All">▾</span>' +
             'Company ' + symbolSortArrow + symbolSearchBadge +
         '</th>' +
-        '<th class="text-right" style="width:9%; padding:6px 8px; font-size:11px; color:#4a5568;">Qty<br><span class="subheader">FIFO Cost</span></th>' +
-        '<th class="text-right sortable" onclick="rptSortPortfolio(\'invested\')" style="width:11%; padding:6px 8px; font-size:11px; color:#4a5568;">Invested ' + (rptSortColumn === 'invested' ? sortArrow : '') + '</th>' +
-        '<th class="text-right" style="width:10%; padding:6px 8px; font-size:11px; color:#4a5568;">Price</th>' +
-        '<th class="text-right sortable" onclick="rptSortPortfolio(\'daypl\')" style="width:11%; padding:6px 8px; font-size:11px; color:#4a5568;">Day P&L ' + (rptSortColumn === 'daypl' ? sortLabel + sortArrow : '') + '</th>' +
-        '<th class="text-right sortable" onclick="rptSortPortfolio(\'pl\')" style="width:11%; padding:6px 8px; font-size:11px; color:#4a5568;">Gain ' + (rptSortColumn === 'pl' ? sortLabel + sortArrow : '') + '</th>' +
-        '<th class="text-right sortable" onclick="rptSortPortfolio(\'value\')" style="width:11%; padding:6px 8px; font-size:11px; color:#4a5568;">Value ' + (rptSortColumn === 'value' ? sortArrow : '') + '</th>' +
-        '<th style="width:9%; padding:6px 8px; font-size:11px; color:#4a5568;">Tags</th>' +
-        '<th style="width:40px; padding:6px 8px;"></th>' +
+        '<th class="text-right" style="width:9%;">Qty<br><span class="subheader">FIFO Cost</span></th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'invested\')" style="width:11%;">Invested ' + (rptSortColumn === 'invested' ? sortArrow : '') + '</th>' +
+        '<th class="text-right" style="width:10%;">Price</th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'daypl\')" style="width:11%;">Day P&L ' + (rptSortColumn === 'daypl' ? sortLabel + sortArrow : '') + '</th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'pl\')" style="width:11%;">Gain ' + (rptSortColumn === 'pl' ? sortLabel + sortArrow : '') + '</th>' +
+        '<th class="text-right sortable" onclick="rptSortPortfolio(\'value\')" style="width:11%;">Value ' + (rptSortColumn === 'value' ? sortArrow : '') + '</th>' +
+        '<th style="width:9%;">Tags</th>' +
+        '<th style="width:40px;"></th>' +
     '</tr></thead><tbody>';
 
     // Iterate groups
@@ -1233,6 +1360,43 @@ function rptClassifyGain(gain) {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Capital-gains engine (STT-aware). STT is NOT a permitted CG deduction, but
+// WMS lets each investor flag STT as a separate expense (stt_accounting_method).
+//   • flag ON  (STT booked as a separate expense) → STT is EXCLUDED from the CG
+//     cost/proceeds: removed from buy cost, added back to sell proceeds.
+//   • flag OFF (STT capitalised into the trade)    → STT stays in (net_amount).
+// The flag is resolved PER TRADE by the trade's own investor (E.14: charges
+// belong to the executing investor_id). We reuse the shared FIFO engine for all
+// lot-matching + corporate-action logic and only feed it STT-adjusted amounts.
+// ----------------------------------------------------------------------------
+function rptCalcCapGains(txns) {
+    var invFlag = {};
+    rptInvestors.forEach(function(inv) { invFlag[String(inv.id)] = !!inv.stt_accounting_method; });
+
+    var adj = txns.map(function(t) {
+        var stt = Math.abs(parseFloat(t.stt) || 0);
+        if (stt <= 0) return t;                              // nothing to strip
+        if (!invFlag[String(t.investorId)]) return t;        // flag OFF → STT stays in CG
+        // flag ON → STT is a separate expense → strip it from the CG basis
+        var base = (t.netAmount !== undefined ? t.netAmount : t.net_amount) || 0;
+        var ty = (t.type || t.transaction_type || '').toUpperCase();
+        var c = {}; for (var k in t) c[k] = t[k];
+        if (ty === 'BUY' || ty === 'RIGHTS_PAYMENT') c.net_amount = base - stt;   // buy cost ↓
+        else if (ty === 'SELL')                      c.net_amount = base + stt;   // sell proceeds ↑
+        else                                         c.net_amount = base;
+        return c;                                            // net_amount (snake) wins over netAmount in the engine
+    });
+
+    return wmsCalcFifoCost(adj).gains;
+}
+
+// Bucket a realised gain into INTRADAY (same-day) / STCG / LTCG.
+function rptCGBucket(g) {
+    if (g.buyDate && g.sellDate && g.buyDate === g.sellDate) return 'INTRADAY';
+    return rptClassifyGain(g).type === 'LTCG' ? 'LTCG' : 'STCG';
+}
+
 function rptInitFYSelector() {
     var select = document.getElementById('rpt-fy-select');
     if (!select) return;
@@ -1260,69 +1424,65 @@ function rptInitFYSelector() {
 
 // Capital Gains filter system
 function rptInitCGFilters() {
-    var invDd = document.getElementById('rpt-cg-investor-dropdown');
-    if (invDd) {
-        invDd.innerHTML = rptInvestors.map(function(inv) {
-            return '<div class="filter-dropdown-item" data-id="' + inv.id + '" onclick="rptCGToggleFilter(\'investor\',\'' + inv.id + '\',\'' + (inv.name || '').replace(/'/g, "\\'") + '\')">' + inv.name + '</div>';
-        }).join('');
+    // Investor pills (shared widget — same as Portfolio tab and the rest of the app)
+    var invContainer = document.getElementById('rpt-cg-filter-investor');
+    if (invContainer) {
+        var invItems = rptInvestors.map(function(inv) {
+            return { id: String(inv.id), label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') };
+        });
+        rptCGInvPillFilter = wmsPillSearch(invContainer, {
+            label: 'Investor',
+            placeholder: 'Search investors...',
+            items: invItems,
+            selectedIds: rptCGSelectedInvestorIds,
+            onChange: rptRenderCapGains
+        });
     }
-    var brkDd = document.getElementById('rpt-cg-broker-dropdown');
-    if (brkDd) {
-        brkDd.innerHTML = rptBrokers.map(function(brk) {
-            return '<div class="filter-dropdown-item" data-id="' + brk.id + '" onclick="rptCGToggleFilter(\'broker\',\'' + brk.id + '\',\'' + (brk.name || '').replace(/'/g, "\\'") + '\')">' + brk.name + '</div>';
-        }).join('');
+    // Broker pills
+    var brkContainer = document.getElementById('rpt-cg-filter-broker');
+    if (brkContainer) {
+        var brkItems = rptBrokers.map(function(b) {
+            return { id: String(b.id), label: b.broker_code || b.name, searchText: (b.name || '') + ' ' + (b.broker_code || '') };
+        });
+        rptCGBrkPillFilter = wmsPillSearch(brkContainer, {
+            label: 'Broker',
+            placeholder: 'Search brokers...',
+            items: brkItems,
+            selectedIds: rptCGSelectedBrokerIds,
+            onChange: rptRenderCapGains
+        });
+    }
+    // Tag pills (with Any/All radio) — same as Portfolio tab
+    var tagContainer = document.getElementById('rpt-cg-filter-tag');
+    if (tagContainer) {
+        var allTags = {};
+        rptTransactions.forEach(function(t) { if (t.tags) t.tags.forEach(function(tg) { allTags[tg] = true; }); });
+        var tagItems = Object.keys(allTags).sort().map(function(tag) {
+            return { id: tag, label: tag, searchText: tag };
+        });
+        var tagExtra = document.createElement('div');
+        tagExtra.className = 'tag-match-options';
+        tagExtra.innerHTML =
+            '<span style="font-size:11px;color:#718096;">Match:</span>' +
+            '<label class="radio-label"><input type="radio" name="rpt-cg-tag-logic" value="OR" checked> <span>Any</span></label>' +
+            '<label class="radio-label"><input type="radio" name="rpt-cg-tag-logic" value="AND"> <span>All</span></label>';
+        rptCGTagPillFilter = wmsPillSearch(tagContainer, {
+            label: 'Tag',
+            placeholder: 'Search tags...',
+            items: tagItems,
+            selectedIds: rptCGSelectedTagNames,
+            onChange: rptRenderCapGains,
+            headerExtra: tagExtra
+        });
+        tagExtra.addEventListener('change', function(e) {
+            if (e.target.name === 'rpt-cg-tag-logic') {
+                rptCGTagFilterLogic = e.target.value;
+                rptRenderCapGains();
+            }
+        });
     }
 }
 
-function rptCGShowDropdown(type) {
-    var types = ['investor', 'broker'];
-    types.forEach(function(t) {
-        var dd = document.getElementById('rpt-cg-' + t + '-dropdown');
-        if (dd) dd.classList.toggle('show', t === type);
-    });
-}
-
-function rptCGFilterSearch(type) {
-    var search = document.getElementById('rpt-cg-' + type + '-search').value.toLowerCase();
-    var items = document.querySelectorAll('#rpt-cg-' + type + '-dropdown .filter-dropdown-item');
-    items.forEach(function(item) {
-        item.style.display = item.textContent.toLowerCase().indexOf(search) >= 0 ? 'block' : 'none';
-    });
-}
-
-function rptCGToggleFilter(type, id, name) {
-    var arr = type === 'investor' ? rptCGSelectedInvestorIds : rptCGSelectedBrokerIds;
-    var idx = arr.indexOf(id);
-    if (idx > -1) arr.splice(idx, 1);
-    else arr.push(id);
-    rptCGUpdateFilterPills(type);
-    rptRenderCapGains();
-}
-
-function rptCGUpdateFilterPills(type) {
-    var arr, container, list;
-    if (type === 'investor') {
-        arr = rptCGSelectedInvestorIds;
-        container = document.getElementById('rpt-cg-selected-investors');
-        list = rptInvestors;
-    } else {
-        arr = rptCGSelectedBrokerIds;
-        container = document.getElementById('rpt-cg-selected-brokers');
-        list = rptBrokers;
-    }
-    container.innerHTML = arr.map(function(id) {
-        var item = list.find(function(x) { return x.id === id; });
-        var name = item ? item.name : id;
-        return '<div class="filter-tag-item">' + name + ' <span class="filter-tag-remove" onclick="rptCGToggleFilter(\'' + type + '\',\'' + id + '\',\'' + (name || '').replace(/'/g, "\\'") + '\')">×</span></div>';
-    }).join('');
-}
-
-function rptCGClearFilter(type) {
-    if (type === 'investor') rptCGSelectedInvestorIds = [];
-    else rptCGSelectedBrokerIds = [];
-    rptCGUpdateFilterPills(type);
-    rptRenderCapGains();
-}
 
 function rptRenderCapGains() {
     var summaryEl = document.getElementById('rpt-cg-summary');
@@ -1346,12 +1506,23 @@ function rptRenderCapGains() {
     if (rptCGSelectedBrokerIds.length > 0) {
         filtered = filtered.filter(function(t) { return t.brokerId && rptCGSelectedBrokerIds.indexOf(t.brokerId) >= 0; });
     }
+    if (rptCGSelectedTagNames.length > 0) {
+        if (rptCGTagFilterLogic === 'AND') {
+            filtered = filtered.filter(function(t) {
+                return rptCGSelectedTagNames.every(function(tag) { return (t.tags || []).indexOf(tag) >= 0; });
+            });
+        } else {
+            filtered = filtered.filter(function(t) {
+                return (t.tags || []).some(function(tag) { return rptCGSelectedTagNames.indexOf(tag) >= 0; });
+            });
+        }
+    }
 
-    // Run FIFO on ALL transactions (not just FY) to get correct lot matching
-    var fifo = rptFifoEngine(filtered);
+    // STT-aware capital-gains engine (runs on the filtered set for correct lot matching)
+    var gains = rptCalcCapGains(filtered);
 
-    // Filter gains to selected FY (sell date within FY)
-    var fyGains = fifo.gains.filter(function(g) {
+    // Keep gains whose SELL falls within the selected FY
+    var fyGains = gains.filter(function(g) {
         return g.sellDate >= fyStart && g.sellDate <= fyEnd;
     });
 
@@ -1361,46 +1532,56 @@ function rptRenderCapGains() {
         return;
     }
 
-    // Classify and aggregate
-    var totalLTCG = 0, totalSTCG = 0, totalGain = 0;
-    var ltcgCount = 0, stcgCount = 0;
-
-    fyGains.forEach(function(g) {
-        var cls = rptClassifyGain(g);
-        g._cgType = cls.type;
-        g._cgRate = cls.rate;
-        g._cgRateNote = cls.rateNote;
-        totalGain += g.gain;
-        if (cls.type === 'LTCG') {
-            totalLTCG += g.gain;
-            ltcgCount++;
-        } else {
-            totalSTCG += g.gain;
-            stcgCount++;
-        }
+    // Map stock → security_id (for master-data asset-class lookup, so the Type
+    // matches the Portfolio tab regardless of per-trade security_type drift)
+    var symSecId = {};
+    rptTransactions.forEach(function(t) {
+        var k = t.shortSymbol || t.symbol;
+        if (k && !symSecId[k] && t.securityId) symSecId[k] = t.securityId;
     });
 
-    // Estimated tax
-    var ltcgTaxable = Math.max(0, totalLTCG - RPT_CG_LTCG_EXEMPTION);
-    var estLTCGTax = ltcgTaxable * RPT_CG_LTCG_RATE / 100;
-    var estSTCGTax = totalSTCG > 0 ? totalSTCG * RPT_CG_STCG_RATE / 100 : 0;
+    // Aggregate per stock: buy/sell amounts + Intra-day / Short-term / Long-term buckets
+    var perStock = {};
+    var totBuy = 0, totSell = 0, totIntraday = 0, totSTCG = 0, totLTCG = 0;
+    fyGains.forEach(function(g) {
+        var key = g.shortSymbol || g.symbol;
+        if (!perStock[key]) {
+            perStock[key] = {
+                symbol: key,
+                company: g.companyName || '',
+                securityType: g.securityType || 'EQUITY',
+                buyAmt: 0, sellAmt: 0, intraday: 0, stcg: 0, ltcg: 0
+            };
+        }
+        perStock[key].buyAmt += g.buyCost;       totBuy += g.buyCost;
+        perStock[key].sellAmt += g.sellProceeds; totSell += g.sellProceeds;
+        var b = rptCGBucket(g);
+        if (b === 'INTRADAY') { perStock[key].intraday += g.gain; totIntraday += g.gain; }
+        else if (b === 'LTCG') { perStock[key].ltcg += g.gain; totLTCG += g.gain; }
+        else { perStock[key].stcg += g.gain; totSTCG += g.gain; }
+    });
 
-    // Summary cards
+    // Estimated tax (capital gains only; intra-day is taxed at slab and excluded)
+    var ltcgTaxable = Math.max(0, totLTCG - RPT_CG_LTCG_EXEMPTION);
+    var estLTCGTax = ltcgTaxable * RPT_CG_LTCG_RATE / 100;
+    var estSTCGTax = totSTCG > 0 ? totSTCG * RPT_CG_STCG_RATE / 100 : 0;
+
+    // Summary cards: Intra-day · Short-term · Long-term · Est. tax
     summaryEl.innerHTML =
         '<div class="rpt-cg-card">' +
-            '<div class="rpt-cg-card-label">Total Realized Gains</div>' +
-            '<div class="rpt-cg-card-value ' + getAmountClass(totalGain) + '">' + formatAmount(totalGain) + '</div>' +
-            '<div class="rpt-cg-card-sub">' + fyGains.length + ' transactions</div>' +
+            '<div class="rpt-cg-card-label">Intra-day Profit/Loss</div>' +
+            '<div class="rpt-cg-card-value ' + getAmountClass(totIntraday) + '">' + formatAmount(totIntraday) + '</div>' +
+            '<div class="rpt-cg-card-sub">taxed at slab (speculative)</div>' +
         '</div>' +
         '<div class="rpt-cg-card">' +
-            '<div class="rpt-cg-card-label">Long Term (LTCG)</div>' +
-            '<div class="rpt-cg-card-value ' + getAmountClass(totalLTCG) + '">' + formatAmount(totalLTCG) + '</div>' +
-            '<div class="rpt-cg-card-sub">' + ltcgCount + ' txns · ' + RPT_CG_LTCG_RATE + '% above ₹' + (RPT_CG_LTCG_EXEMPTION / 100000).toFixed(2) + 'L</div>' +
+            '<div class="rpt-cg-card-label">Short-term Capital Gain</div>' +
+            '<div class="rpt-cg-card-value ' + getAmountClass(totSTCG) + '">' + formatAmount(totSTCG) + '</div>' +
+            '<div class="rpt-cg-card-sub">' + RPT_CG_STCG_RATE + '% (listed equity)</div>' +
         '</div>' +
         '<div class="rpt-cg-card">' +
-            '<div class="rpt-cg-card-label">Short Term (STCG)</div>' +
-            '<div class="rpt-cg-card-value ' + getAmountClass(totalSTCG) + '">' + formatAmount(totalSTCG) + '</div>' +
-            '<div class="rpt-cg-card-sub">' + stcgCount + ' txns · ' + RPT_CG_STCG_RATE + '% (listed equity)</div>' +
+            '<div class="rpt-cg-card-label">Long-term Capital Gain</div>' +
+            '<div class="rpt-cg-card-value ' + getAmountClass(totLTCG) + '">' + formatAmount(totLTCG) + '</div>' +
+            '<div class="rpt-cg-card-sub">' + RPT_CG_LTCG_RATE + '% above ₹' + (RPT_CG_LTCG_EXEMPTION / 100000).toFixed(2) + 'L</div>' +
         '</div>' +
         '<div class="rpt-cg-card">' +
             '<div class="rpt-cg-card-label">Est. Tax Liability</div>' +
@@ -1408,84 +1589,76 @@ function rptRenderCapGains() {
             '<div class="rpt-cg-card-sub">LTCG: ' + formatAmount(estLTCGTax) + ' · STCG: ' + formatAmount(estSTCGTax) + '</div>' +
         '</div>';
 
-    // Sort gains: most recent sell date first
-    fyGains.sort(function(a, b) {
-        if (a.sellDate > b.sellDate) return -1;
-        if (a.sellDate < b.sellDate) return 1;
-        return a.symbol.localeCompare(b.symbol);
+    // One row per stock. Asset class resolved from the MASTER security record
+    // (curated source of truth) so it matches the Portfolio tab; fall back to the
+    // trade's own security_type only when the security isn't in the master cache.
+    var stocks = Object.keys(perStock).map(function(k) { return perStock[k]; });
+    stocks.forEach(function(s) {
+        var secId = symSecId[s.symbol];
+        var rec = (secId && wmsRefData.securitiesCmMap) ? wmsRefData.securitiesCmMap[secId] : null;
+        s.assetClass = rptGetAssetClass((rec && rec.security_type) ? rec.security_type : s.securityType);
+    });
+    // Sort by Type (asset class) then Company name
+    stocks.sort(function(a, b) {
+        var ai = RPT_ASSET_CLASS_ORDER.indexOf(a.assetClass); if (ai < 0) ai = 99;
+        var bi = RPT_ASSET_CLASS_ORDER.indexOf(b.assetClass); if (bi < 0) bi = 99;
+        if (ai !== bi) return ai - bi;
+        return (a.company || a.symbol || '').localeCompare(b.company || b.symbol || '');
     });
 
-    // Detail table
-    var html = '<table class="rpt-cg-table" style="width:100%; border-collapse:collapse;">';
+    // Per-stock summary table — Type | Stock | Buy Amt | Sell Amt | Intra-day | Short-term | Long-term
+    var html = '<table class="rpt-cg-table" style="width:100%; border-collapse:collapse; table-layout:fixed;">';
+    html += '<colgroup>' +
+        '<col style="width:14%">' +   // Type
+        '<col style="width:26%">' +   // Stock
+        '<col style="width:12%">' +   // Total Buy Amount
+        '<col style="width:12%">' +   // Total Sell Amount
+        '<col style="width:12%">' +   // Intra-day
+        '<col style="width:12%">' +   // Short-term
+        '<col style="width:12%">' +   // Long-term
+    '</colgroup>';
     html += '<thead><tr>' +
-        '<th style="text-align:left; padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Symbol</th>' +
-        '<th style="text-align:left; padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Type</th>' +
-        '<th style="text-align:left; padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Buy Date</th>' +
-        '<th style="text-align:left; padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Sell Date</th>' +
-        '<th class="text-right" style="padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Qty</th>' +
-        '<th class="text-right" style="padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Buy Price</th>' +
-        '<th class="text-right" style="padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Sell Price</th>' +
-        '<th class="text-right" style="padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Buy Cost</th>' +
-        '<th class="text-right" style="padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Sell Proceeds</th>' +
-        '<th class="text-right" style="padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Gain/Loss</th>' +
-        '<th class="text-right" style="padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Holding</th>' +
-        '<th style="padding:6px 8px; font-size:11px; color:#718096; border-bottom:1px solid #e2e8f0;">Tax Rate</th>' +
+        '<th>Type</th>' +
+        '<th>Stock</th>' +
+        '<th class="text-right cg-grp-start">Total Buy Amount</th>' +
+        '<th class="text-right">Total Sell Amount</th>' +
+        '<th class="text-right cg-grp-start">Intra-day Profit/Loss</th>' +
+        '<th class="text-right">Short-term Capital Gain</th>' +
+        '<th class="text-right">Long-term Capital Gain</th>' +
     '</tr></thead><tbody>';
 
-    for (var i = 0; i < fyGains.length; i++) {
-        var g = fyGains[i];
-        var badgeClass = g._cgType === 'LTCG' ? 'ltcg' : 'stcg';
-        var holdLabel = g.holdingDays + 'd';
-        if (g.holdingDays > 365) holdLabel = Math.floor(g.holdingDays / 365) + 'y ' + (g.holdingDays % 365) + 'd';
-
-        html += '<tr style="border-bottom:1px solid #f0f4f8;">' +
-            '<td style="padding:5px 8px;">' +
-                '<div style="font-weight:600; font-size:12px;">' + g.symbol + '</div>' +
-                '<div style="font-size:10px; color:#a0aec0;">' + (g.companyName || '') + '</div>' +
+    stocks.forEach(function(s) {
+        var badge = RPT_AC_BADGE[s.assetClass] || '—';
+        html += '<tr>' +
+            '<td>' +
+                '<span style="display:inline-block;border:1px solid #a0aec0;border-radius:3px;padding:0 5px;font-size:10px;font-weight:700;color:#4a5568;margin-right:5px;">' + badge + '</span>' +
+                '<span style="font-size:11px;color:#718096;">' + s.assetClass + '</span>' +
             '</td>' +
-            '<td style="padding:5px 8px;"><span class="rpt-cg-type-badge ' + badgeClass + '">' + g._cgType + '</span></td>' +
-            '<td style="padding:5px 8px; font-size:12px;">' + formatDate(g.buyDate) + '</td>' +
-            '<td style="padding:5px 8px; font-size:12px;">' + formatDate(g.sellDate) + '</td>' +
-            '<td class="text-right" style="padding:5px 8px; font-size:12px;">' + formatQuantity(g.qty) + '</td>' +
-            '<td class="text-right" style="padding:5px 8px; font-size:12px;">' + formatPrice(g.buyPrice, false) + '</td>' +
-            '<td class="text-right" style="padding:5px 8px; font-size:12px;">' + formatPrice(g.sellPrice, false) + '</td>' +
-            '<td class="text-right" style="padding:5px 8px; font-size:12px;">' + formatAmount(g.buyCost) + '</td>' +
-            '<td class="text-right" style="padding:5px 8px; font-size:12px;">' + formatAmount(g.sellProceeds) + '</td>' +
-            '<td class="text-right ' + getAmountClass(g.gain) + '" style="padding:5px 8px; font-size:12px; font-weight:600;">' + formatAmount(g.gain) + '</td>' +
-            '<td class="text-right" style="padding:5px 8px; font-size:11px; color:#718096;">' + holdLabel + '</td>' +
-            '<td style="padding:5px 8px; font-size:11px; color:#718096;" title="' + g._cgRateNote + '">' + g._cgRate + '</td>' +
+            '<td>' +
+                '<div style="font-weight:600; font-size:12px; color:#2d3748;">' + (s.company || s.symbol) + '</div>' +
+                '<div style="font-size:10px; color:#a0aec0;">' + s.symbol + '</div>' +
+            '</td>' +
+            '<td class="text-right cg-grp-start"><div class="number-main">' + formatAmount(s.buyAmt) + '</div></td>' +
+            '<td class="text-right"><div class="number-main">' + formatAmount(s.sellAmt) + '</div></td>' +
+            '<td class="text-right cg-grp-start ' + getAmountClass(s.intraday) + '">' + formatAmount(s.intraday) + '</td>' +
+            '<td class="text-right ' + getAmountClass(s.stcg) + '">' + formatAmount(s.stcg) + '</td>' +
+            '<td class="text-right ' + getAmountClass(s.ltcg) + '">' + formatAmount(s.ltcg) + '</td>' +
         '</tr>';
-    }
+    });
 
-    // Totals row
-    var totalBuyCost = 0, totalSellProceeds = 0;
-    fyGains.forEach(function(g) { totalBuyCost += g.buyCost; totalSellProceeds += g.sellProceeds; });
-    html += '<tr class="total-row" style="background:#f0f4f8; font-weight:700; border-top:2px solid #cbd5e0;">' +
-        '<td style="padding:6px 8px;">TOTAL</td>' +
-        '<td colspan="3" style="padding:6px 8px;">' + fyGains.length + ' transactions</td>' +
-        '<td class="text-right" style="padding:6px 8px;">' + formatQuantity(fyGains.reduce(function(s, g) { return s + g.qty; }, 0)) + '</td>' +
-        '<td colspan="2" style="padding:6px 8px;"></td>' +
-        '<td class="text-right" style="padding:6px 8px;">' + formatAmount(totalBuyCost) + '</td>' +
-        '<td class="text-right" style="padding:6px 8px;">' + formatAmount(totalSellProceeds) + '</td>' +
-        '<td class="text-right ' + getAmountClass(totalGain) + '" style="padding:6px 8px;">' + formatAmount(totalGain) + '</td>' +
-        '<td colspan="2" style="padding:6px 8px;"></td>' +
+    html += '<tr class="total-row">' +
+        '<td>TOTAL</td>' +
+        '<td></td>' +
+        '<td class="text-right cg-grp-start">' + formatAmount(totBuy) + '</td>' +
+        '<td class="text-right">' + formatAmount(totSell) + '</td>' +
+        '<td class="text-right cg-grp-start ' + getAmountClass(totIntraday) + '">' + formatAmount(totIntraday) + '</td>' +
+        '<td class="text-right ' + getAmountClass(totSTCG) + '">' + formatAmount(totSTCG) + '</td>' +
+        '<td class="text-right ' + getAmountClass(totLTCG) + '">' + formatAmount(totLTCG) + '</td>' +
     '</tr>';
 
     html += '</tbody></table>';
     bodyEl.innerHTML = html;
 }
-
-// ============================================================================
-// CLOSE DROPDOWNS ON OUTSIDE CLICK
-// ============================================================================
-
-document.addEventListener('click', function(e) {
-    if (!e.target.closest('.filter-search-container')) {
-        document.querySelectorAll('.reports-container .filter-dropdown').forEach(function(dd) {
-            dd.classList.remove('show');
-        });
-    }
-});
 
 // ============================================================================
 // EXPORTS
@@ -1505,8 +1678,4 @@ if (typeof window !== 'undefined') {
     window.rptCloseAllActionMenus = rptCloseAllActionMenus;
     window.rptRenderPortfolio = rptRenderPortfolio;
     window.rptRenderCapGains = rptRenderCapGains;
-    window.rptCGShowDropdown = rptCGShowDropdown;
-    window.rptCGFilterSearch = rptCGFilterSearch;
-    window.rptCGToggleFilter = rptCGToggleFilter;
-    window.rptCGClearFilter = rptCGClearFilter;
 }

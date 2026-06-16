@@ -1,0 +1,381 @@
+<!-- ============================================================================
+     WMS ACCOUNTING MODULE — Phase 1 shell
+     Namespace: acct (DB acct_*, JS acct*, CSS acct-*). See WMS-LESSONS §A.6.1.
+     Loaded by app.html loadModule('accounting') → initAccounting().
+     ============================================================================ -->
+<head>
+<style id="accounting-styles">
+.acct-container { padding: 0; font-size: 12px; color: #2d3748; }
+
+/* ---- Header bar (book selector + actions) ---- */
+.acct-headerbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; border-bottom: 1px solid #e2e8f0; background: #fff;
+    flex-wrap: wrap;
+}
+.acct-headerbar .acct-title { font-size: 15px; font-weight: 700; color: #1a202c; }
+.acct-headerbar .acct-book-wrap { display: flex; align-items: center; gap: 6px; }
+.acct-headerbar .acct-book-wrap label { font-size: 11px; font-weight: 600; color: #718096; text-transform: uppercase; }
+.acct-book-select { min-width: 200px; }
+.acct-headerbar .acct-actions { margin-left: auto; display: flex; gap: 8px; }
+
+/* ---- Tabs ---- */
+.acct-tabs {
+    display: flex; gap: 0; background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0; padding: 0 8px; min-height: 36px;
+}
+.acct-tab {
+    display: inline-flex; align-items: center; padding: 8px 16px;
+    border: none; background: transparent; cursor: pointer;
+    border-bottom: 2px solid transparent; color: #718096;
+    font-size: 12px; font-weight: 600;
+}
+.acct-tab:hover { color: #4a5568; background: #edf2f7; }
+.acct-tab.active { color: #667eea; border-bottom-color: #667eea; }
+
+.acct-tabpanel { display: none; padding: 14px; }
+.acct-tabpanel.active { display: block; }
+
+/* ---- Generic table ---- */
+.acct-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.acct-table th {
+    background: #f7fafc; font-size: 10px; font-weight: 600; text-transform: uppercase;
+    color: #718096; text-align: left; padding: 7px 10px; border-bottom: 1px solid #e2e8f0;
+    position: sticky; top: 0;
+}
+.acct-table td { padding: 6px 10px; border-bottom: 1px solid #edf2f7; vertical-align: middle; }
+.acct-table .text-right { text-align: right; font-variant-numeric: tabular-nums; }
+.acct-table tbody tr.acct-clickable { cursor: pointer; }
+.acct-table tbody tr.acct-clickable:hover { background: #f7faff; }
+
+/* Trial Balance grouping */
+.acct-tb-group td { background: #f1f5f9; font-weight: 700; color: #2d3748; }
+.acct-tb-ledger td.acct-ledger-name { padding-left: 24px; }
+.acct-tb-total td { background: #edf2f7; font-weight: 700; border-top: 2px solid #cbd5e0; }
+
+.acct-kind-badge {
+    display: inline-block; font-size: 9px; font-weight: 600; text-transform: uppercase;
+    color: #718096; background: #edf2f7; border-radius: 4px; padding: 1px 6px;
+}
+.acct-scope-badge {
+    display: inline-block; font-size: 9px; font-weight: 600;
+    color: #b45309; background: #fffbeb; border-radius: 4px; padding: 1px 6px;
+}
+
+.acct-empty { padding: 28px; text-align: center; color: #a0aec0; font-size: 13px; }
+.acct-edit-btn { border: 1px solid #e2e8f0; background: #f7fafc; border-radius: 5px; cursor: pointer; font-size: 11px; padding: 1px 6px; }
+.acct-edit-btn:hover { background: #edf2f7; }
+.acct-subgroup-row td { background: #fbfcfe; }
+.acct-consol-chip { display: inline-flex; align-items: center; gap: 6px; background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
+.acct-consol-chip .acct-consol-x { cursor: pointer; font-weight: 700; }
+.acct-consol-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #2d3748; padding: 5px 0; cursor: pointer; }
+.acct-consol-item input { width: auto; }
+.acct-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+
+/* ---- Voucher modal: line table ---- */
+.acct-type-toggle { display: inline-flex; gap: 1px; margin-bottom: 12px; }
+.acct-type-btn {
+    padding: 4px 12px; border: 1px solid #e2e8f0; background: #fff; cursor: pointer;
+    font-size: 11px; font-weight: 600; color: #718096;
+}
+.acct-type-btn:first-child { border-radius: 4px 0 0 4px; }
+.acct-type-btn:last-child { border-radius: 0 4px 4px 0; }
+.acct-type-btn.active { background: #667eea; color: #fff; border-color: #667eea; }
+
+.acct-voucher-grid { display: flex; flex-direction: column; gap: 10px; }
+.acct-field-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.acct-field { display: flex; flex-direction: column; gap: 4px; }
+.acct-field label { font-size: 10px; font-weight: 600; color: #718096; text-transform: uppercase; }
+
+.acct-lines-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.acct-lines-table th {
+    font-size: 10px; font-weight: 600; text-transform: uppercase; color: #718096;
+    text-align: left; padding: 5px 6px; border-bottom: 1px solid #e2e8f0;
+}
+.acct-lines-table th.text-right, .acct-lines-table td.text-right { text-align: right; }
+.acct-lines-table td { padding: 4px 6px; vertical-align: middle; }
+.acct-lines-table select.acct-line-ledger { width: 100%; }
+.acct-line-amt { width: 110px; text-align: right; }
+.acct-line-del {
+    width: 24px; height: 24px; border: 1px solid #e2e8f0; background: #f7fafc;
+    border-radius: 5px; cursor: pointer; color: #dc2626; line-height: 1;
+}
+
+.acct-balance-bar {
+    display: flex; align-items: center; gap: 14px; margin-top: 10px;
+    padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+}
+.acct-balance-bar.ok { background: #ecfdf5; color: #059669; }
+.acct-balance-bar.bad { background: #fef2f2; color: #dc2626; }
+.acct-balance-bar .acct-bal-spacer { flex: 1; }
+
+/* Ledger detail modal */
+.acct-ledger-detail-head { margin-bottom: 10px; }
+.acct-ledger-detail-head .acct-ld-name { font-size: 15px; font-weight: 700; color: #1a202c; }
+.acct-ledger-detail-head .acct-ld-sub { font-size: 11px; color: #718096; }
+
+/* ---- Financial statements: MProfit-style two-column T-format ---- */
+.acct-fin-controls { display: flex; align-items: center; gap: 8px; padding: 2px 0 10px; }
+.acct-fin-controls .wms-input { max-width: 240px; margin-left: auto; }
+.acct-fin-zero { font-size: 12px; color: #4a5568; display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+.acct-fin-zero input { width: auto; }
+.acct-fin-scope { font-size: 13px; font-weight: 700; color: #1a202c; margin: 0 0 8px; }
+.acct-fin-cols { display: flex; gap: 18px; align-items: flex-start; }
+.acct-fin-col { flex: 1; min-width: 0; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
+.acct-fin-hdr { display: flex; justify-content: space-between; background: #1e2a4a; color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 8px 12px; }
+.acct-fin-row { display: flex; align-items: center; padding: 5px 12px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: #4a5568; }
+.acct-fin-toggle { width: 16px; flex-shrink: 0; color: #667eea; font-size: 11px; }
+.acct-fin-toggle-sp { width: 16px; flex-shrink: 0; }
+.acct-fin-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-fin-amt { padding-left: 10px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.acct-fin-group { font-weight: 700; color: #1f2937; cursor: pointer; background: #f8fafc; }
+.acct-fin-group:hover { background: #eef2ff; }
+.acct-fin-ledger { cursor: pointer; }
+.acct-fin-ledger:hover { background: #f7faff; }
+.acct-fin-total { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding: 9px 12px; background: #1e2a4a; color: #fff; font-weight: 700; font-size: 13px; border-radius: 6px; }
+.acct-fin-total .acct-fin-name { flex: 1; }
+.acct-fin-diff { font-weight: 700; color: #dc2626; background: #fff5f5; }
+/* Trial Balance Dr/Cr columns */
+.acct-tb-wrap { border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
+.acct-tb-dr, .acct-tb-cr { width: 150px; flex-shrink: 0; padding-left: 10px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.acct-report-h { font-size: 11px; font-weight: 600; color: #718096; text-transform: uppercase; margin-bottom: 4px; }
+.acct-report-ul { margin: 0; padding-left: 18px; font-size: 12px; color: #4a5568; }
+.acct-report-ul li { margin: 2px 0; }
+</style>
+</head>
+<body>
+<div class="acct-container">
+
+    <!-- ===== Header bar ===== -->
+    <div class="acct-headerbar">
+        <span class="acct-title">📒 Accounting</span>
+        <div class="acct-book-wrap">
+            <label for="acctBookSelect">Book</label>
+            <select id="acctBookSelect" class="wms-input acct-book-select"></select>
+            <button id="acctConsolidateBtn" class="wms-btn wms-btn-secondary" title="View consolidated across multiple books">📑 Consolidate</button>
+            <span id="acctConsolidateChip" class="acct-consol-chip" style="display:none;"></span>
+        </div>
+        <div class="acct-actions">
+            <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary">➕ New Voucher</button>
+            <button id="acctRebuildBtn" class="wms-btn wms-btn-secondary" title="Regenerate auto-vouchers for this book from its transactions">↻ Rebuild from trades</button>
+            <button id="acctRebuildAllBtn" class="wms-btn wms-btn-secondary" title="Regenerate auto-vouchers for ALL books">↻↻ Rebuild all</button>
+            <button id="acctRefreshBtn" class="wms-btn wms-btn-secondary" title="Refresh">🔄</button>
+        </div>
+    </div>
+
+    <!-- ===== Tabs ===== -->
+    <div class="acct-tabs">
+        <button class="acct-tab active" data-acct-tab="balance-sheet">Balance Sheet</button>
+        <button class="acct-tab" data-acct-tab="profit-loss">Profit &amp; Loss</button>
+        <button class="acct-tab" data-acct-tab="trial-balance">Trial Balance</button>
+        <button class="acct-tab" data-acct-tab="day-book">Day Book</button>
+        <button class="acct-tab" data-acct-tab="ledgers">Ledgers</button>
+    </div>
+
+    <!-- Balance Sheet -->
+    <div class="acct-tabpanel active" id="acctPanel-balance-sheet">
+        <div id="acctFinancialsBody"><div class="acct-empty">Select a book to view its Balance Sheet.</div></div>
+    </div>
+
+    <!-- Profit & Loss -->
+    <div class="acct-tabpanel" id="acctPanel-profit-loss">
+        <div id="acctPLBody"><div class="acct-empty">Select a book to view its Profit &amp; Loss.</div></div>
+    </div>
+
+    <!-- Trial Balance -->
+    <div class="acct-tabpanel" id="acctPanel-trial-balance">
+        <div id="acctTBBody"><div class="acct-empty">Select a book to view its Trial Balance.</div></div>
+    </div>
+
+    <!-- Day Book -->
+    <div class="acct-tabpanel" id="acctPanel-day-book">
+        <div id="acctDayBookBody"><div class="acct-empty">Select a book to view its Day Book.</div></div>
+    </div>
+
+    <!-- Ledgers (chart of accounts) -->
+    <div class="acct-tabpanel" id="acctPanel-ledgers">
+        <div class="acct-toolbar">
+            <button id="acctAddLedgerBtn" class="wms-btn wms-btn-secondary">➕ Add Ledger</button>
+            <button id="acctAddGroupBtn" class="wms-btn wms-btn-secondary">➕ Add Group</button>
+        </div>
+        <div id="acctLedgersBody"><div class="acct-empty">Loading ledger catalogue…</div></div>
+    </div>
+
+</div>
+
+<!-- ===================== Voucher entry modal ===================== -->
+<div class="wms-modal-overlay" id="acctVoucherModal">
+    <div class="wms-modal-dialog" style="max-width: 720px; width: 92%;">
+        <div class="wms-modal-header">
+            <span id="acctVoucherTitle" style="font-size:15px;font-weight:700;">New Voucher</span>
+            <button class="wms-btn-close" id="acctVoucherClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
+            <div class="acct-type-toggle" id="acctVoucherTypeToggle">
+                <button class="acct-type-btn active" data-vtype="JOURNAL">Journal</button>
+                <button class="acct-type-btn" data-vtype="RECEIPT">Receipt</button>
+                <button class="acct-type-btn" data-vtype="PAYMENT">Payment</button>
+                <button class="acct-type-btn" data-vtype="CONTRA">Contra</button>
+                <button class="acct-type-btn" data-vtype="OPENING_BALANCE">Opening</button>
+            </div>
+
+            <div class="acct-voucher-grid">
+                <div class="acct-field-row">
+                    <div class="acct-field">
+                        <label>Date</label>
+                        <div id="acctVoucherDate"></div>
+                    </div>
+                    <div class="acct-field" style="flex:1;min-width:240px;">
+                        <label>Narration</label>
+                        <input type="text" id="acctVoucherNarration" class="wms-input" placeholder="Voucher narration">
+                    </div>
+                </div>
+
+                <table class="acct-lines-table">
+                    <thead>
+                        <tr>
+                            <th style="width:50%;">Ledger</th>
+                            <th class="text-right">Debit</th>
+                            <th class="text-right">Credit</th>
+                            <th style="width:28px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="acctVoucherLines"></tbody>
+                </table>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <button id="acctAddLineBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;">➕ Add line</button>
+                    <span style="flex:1;"></span>
+                    <span style="font-size:11px;color:#718096;">Balance to</span>
+                    <select id="acctBalanceLedger" class="wms-input" style="max-width:200px;"></select>
+                    <button id="acctAutoBalanceBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;" title="Add a balancing line to the selected ledger">⚖ Auto-balance</button>
+                </div>
+
+                <div class="acct-balance-bar bad" id="acctBalanceBar">
+                    <span id="acctBalanceMsg">Not balanced</span>
+                    <span class="acct-bal-spacer"></span>
+                    <span>Dr <span id="acctTotalDebit">0.00</span></span>
+                    <span>Cr <span id="acctTotalCredit">0.00</span></span>
+                </div>
+            </div>
+        </div>
+        <div class="wms-modal-footer">
+            <button class="wms-btn wms-btn-secondary" id="acctVoucherCancel">Cancel</button>
+            <button class="wms-btn wms-btn-primary" id="acctVoucherSave" disabled>Save Voucher</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== Ledger-detail modal ===================== -->
+<div class="wms-modal-overlay" id="acctLedgerModal">
+    <div class="wms-modal-dialog" style="max-width: 760px; width: 92%;">
+        <div class="wms-modal-header">
+            <span style="font-size:15px;font-weight:700;">Ledger</span>
+            <button class="wms-btn-close" id="acctLedgerClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
+            <div id="acctLedgerDetailBody"></div>
+        </div>
+        <div class="wms-modal-footer">
+            <button class="wms-btn wms-btn-secondary" id="acctLedgerDone">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== Add-ledger modal ===================== -->
+<div class="wms-modal-overlay" id="acctAddLedgerModal">
+    <div class="wms-modal-dialog" style="max-width: 480px; width: 92%;">
+        <div class="wms-modal-header">
+            <span id="acctAddLedgerTitle" style="font-size:15px;font-weight:700;">Add Ledger</span>
+            <button class="wms-btn-close" id="acctAddLedgerClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;">
+            <div class="acct-voucher-grid">
+                <div class="acct-field">
+                    <label>Ledger name</label>
+                    <input type="text" id="acctNewLedgerName" class="wms-input" placeholder="e.g. HDFC Bank – VB">
+                </div>
+                <div class="acct-field">
+                    <label>Group</label>
+                    <select id="acctNewLedgerGroup" class="wms-input"></select>
+                </div>
+                <div class="acct-field">
+                    <label>Availability</label>
+                    <div class="acct-type-toggle" id="acctNewLedgerScopeToggle">
+                        <button class="acct-type-btn active" data-scope="global">Global (all books)</button>
+                        <button class="acct-type-btn" data-scope="restricted">This book only</button>
+                    </div>
+                </div>
+                <div class="acct-field" id="acctNewLedgerScopeBookWrap" style="display:none;">
+                    <label>Restrict to book</label>
+                    <select id="acctNewLedgerScopeBook" class="wms-input"></select>
+                </div>
+            </div>
+        </div>
+        <div class="wms-modal-footer">
+            <button class="wms-btn wms-btn-secondary" id="acctAddLedgerCancel">Cancel</button>
+            <button class="wms-btn wms-btn-primary" id="acctAddLedgerSave">Add Ledger</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== Consolidate modal ===================== -->
+<div class="wms-modal-overlay" id="acctConsolidateModal">
+    <div class="wms-modal-dialog" style="max-width: 420px; width: 92%;">
+        <div class="wms-modal-header">
+            <span style="font-size:15px;font-weight:700;">Consolidate books</span>
+            <button class="wms-btn-close" id="acctConsolidateClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;max-height:60vh;overflow-y:auto;">
+            <p style="font-size:11px;color:#718096;margin:0 0 10px;">Select the books to combine into one set of statements (Balance Sheet, P&amp;L, Trial Balance).</p>
+            <label class="acct-consol-item" style="font-weight:700;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin-bottom:4px;"><input type="checkbox" id="acctConsolAll"> Select all</label>
+            <div id="acctConsolidateList"></div>
+        </div>
+        <div class="wms-modal-footer">
+            <button class="wms-btn wms-btn-secondary" id="acctConsolidateClear">Single book</button>
+            <button class="wms-btn wms-btn-primary" id="acctConsolidateApply">Apply</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== Rebuild report modal ===================== -->
+<div class="wms-modal-overlay" id="acctReportModal">
+    <div class="wms-modal-dialog" style="max-width: 560px; width: 92%;">
+        <div class="wms-modal-header">
+            <span style="font-size:15px;font-weight:700;">Rebuild report</span>
+            <button class="wms-btn-close" id="acctReportClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
+            <div id="acctReportBody"></div>
+        </div>
+        <div class="wms-modal-footer">
+            <button class="wms-btn wms-btn-primary" id="acctReportDone">Done</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== Add-group modal ===================== -->
+<div class="wms-modal-overlay" id="acctAddGroupModal">
+    <div class="wms-modal-dialog" style="max-width: 440px; width: 92%;">
+        <div class="wms-modal-header">
+            <span id="acctAddGroupTitle" style="font-size:15px;font-weight:700;">Add Group</span>
+            <button class="wms-btn-close" id="acctAddGroupClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;">
+            <div class="acct-voucher-grid">
+                <div class="acct-field">
+                    <label>Group name</label>
+                    <input type="text" id="acctNewGroupName" class="wms-input" placeholder="e.g. Fixed Deposits">
+                </div>
+                <div class="acct-field">
+                    <label>Parent group</label>
+                    <select id="acctNewGroupParent" class="wms-input"></select>
+                </div>
+            </div>
+        </div>
+        <div class="wms-modal-footer">
+            <button class="wms-btn wms-btn-secondary" id="acctAddGroupCancel">Cancel</button>
+            <button class="wms-btn wms-btn-primary" id="acctAddGroupSave">Add Group</button>
+        </div>
+    </div>
+</div>
+</body>
