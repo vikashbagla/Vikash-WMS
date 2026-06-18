@@ -2,3 +2,10 @@
 
 # Cost-engine harness regen artefact (rebuild via tests/build-cost-engine-xlsx.py)
 tests/cost-engine-results.json
+
+# wms-live (Phase 13 order-placer service on Droplet)
+wms-live/node_modules/
+wms-live/.env
+wms-live/*.log
+wms-live/npm-debug.log*
+wms-live/.npm/
