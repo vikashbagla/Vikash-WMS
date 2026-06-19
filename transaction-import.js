@@ -4124,7 +4124,13 @@ async function fyProcessTrades(tradeBook) {
         }
 
         var isNfo = g.segment === 11;
-        var secType = isNfo ? 'NFO' : (secMatch.security_type || 'EQUITY');
+        // Classify F&O by the contract's EXCHANGE (single source of truth =
+        // securities_nfo.exchange) so the manual import and the auto/edge-function
+        // import can't diverge: MCX commodity → 'MCX', NSE F&O → 'NFO'. Segment 10
+        // (cash market) keeps the security's own type. See WMS-LESSONS A.11.4.
+        var secType = (g.segment === 10)
+            ? (secMatch.security_type || 'EQUITY')
+            : (((secMatch.exchange || '') === 'MCX') ? 'MCX' : 'NFO');
         var lotSize = secMatch.lot_size || 1;
 
         var row = {
