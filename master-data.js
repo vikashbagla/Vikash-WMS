@@ -2787,6 +2787,17 @@ async function loadFOTable() {
 // F&O SYNC  — NSE_FO.csv + MCX_COM.csv  (FUTURES only)
 // ═══════════════════════════════════════════════════════════════
 
+// ── HARD-CODED MCX lot sizes (kg / quote-unit multiplier) ──────────────
+// Neither Fyers' nor Zerodha's symbol master carries the real MCX contract
+// size — both report lot_size = 1 for every commodity (the kg-per-lot lives in
+// MCX's contract specs, not any broker feed). So we hard-code the few we trade.
+// Keyed by UNDERLYING symbol, so it applies to every expiry automatically.
+// The F&O Sync shows an alert listing these at the end so they can't silently
+// rot — if MCX revises a contract size, edit the number here. See LESSONS A.11.5.
+//   SILVERM = 5  (Silver Mini, 5 kg, quoted ₹/kg)
+//   GOLDM   = 10 (Gold Mini, 100 g, quoted ₹/10 g)  ← VERIFY against a real trade
+var MCX_LOT_OVERRIDE = { SILVERM: 5, GOLDM: 10 };
+
 var _foCsvMap   = null;   // Map<symbol, record> built from CSV
 var _foDbMap    = null;   // Map<symbol, record> from DB
 var _foToAdd    = [];
@@ -2867,14 +2878,21 @@ async function startFOSync() {
             // silent data corruption if the column layout differs from what we
             // assume. By omitting them from the CSV record entirely they stay out
             // of the diff and the DB value is preserved.
+            const underlying = (cols[13] || '').trim();
+            // MCX: Fyers' col[3] is always 1 (no real lot size in the feed), so
+            // override from the hard-coded map keyed by underlying. NSE keeps col[3].
+            let lotSize = parseInt(cols[3]) || 1;
+            if (exchCode === 'MCX' && MCX_LOT_OVERRIDE[underlying.toUpperCase()] !== undefined) {
+                lotSize = MCX_LOT_OVERRIDE[underlying.toUpperCase()];
+            }
             return {
                 symbol,
                 instrument_name:   (cols[1]  || '').trim(),
                 exchange:          exchCode,
                 instrument_type:   instrumentType,
-                underlying_symbol: (cols[13] || '').trim(),
+                underlying_symbol: underlying,
                 expiry_date:       exDate,
-                lot_size:          parseInt(cols[3]) || 1,
+                lot_size:          lotSize,
                 trading_session:   (cols[6]  || '').trim(),
                 is_active:         isActive,
                 broker_tokens:     { fyers: { token: (cols[0] || '').trim(), symbol } }
@@ -3075,6 +3093,16 @@ async function commitFOSync() {
         // Refresh shared FO cache and re-render
         await wmsLoadSecuritiesNfo();
         renderUnified();
+
+        // Surface the hard-coded MCX lot sizes so they can't silently rot — the
+        // broker feeds don't carry them (Fyers/Zerodha report 1). If MCX revises a
+        // contract size, edit MCX_LOT_OVERRIDE near the top of this section.
+        var _mcxList = Object.keys(MCX_LOT_OVERRIDE)
+            .map(function(k) { return '   • ' + k + ' = ' + MCX_LOT_OVERRIDE[k]; }).join('\n');
+        alert('F&O master updated.\n\n' +
+            'MCX lot sizes are HARD-CODED (Fyers/Zerodha report 1 for MCX, so we maintain these by hand):\n\n' +
+            _mcxList + '\n\n' +
+            'If MCX has changed a contract size, update MCX_LOT_OVERRIDE in master-data.js and re-sync.');
 
         // Close modal
         closeSyncModal();
