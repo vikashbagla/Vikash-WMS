@@ -2418,7 +2418,9 @@ function renderUnified(resetPage) {
             '<td style="font-size:11px;color:#4a5568;">' + (r.size || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
             '<td style="font-size:11px;font-weight:600;">' + (r.underlying || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
             '<td style="font-size:11px;' + expiryCol + '">' + expiryStr + '</td>' +
-            '<td style="font-size:11px;text-align:right;">' + (r.lot_size || '<span style="color:#cbd5e0;">—</span>') + '</td>' +
+            (r._id
+                ? '<td class="lot-inline-edit" data-secid="' + r._id + '" data-src="' + r._src + '" style="font-size:11px;text-align:right;cursor:pointer;" title="Double-click to edit lot size">' + (r.lot_size || '<span style="color:#cbd5e0;">—</span>') + '</td>'
+                : '<td style="font-size:11px;text-align:right;">' + (r.lot_size || '<span style="color:#cbd5e0;">—</span>') + '</td>') +
             '<td style="font-size:11px;">' + r.exchanges + '</td>' +
             '<td><span class="status-badge ' + (r.is_active ? 'status-active' : 'status-inactive') + '">' +
                 (r.is_active ? 'Active' : 'Inactive') + '</span></td>' +
@@ -4503,6 +4505,55 @@ async function _secSaveInlineEdit(secId, field, value, cell) {
     }
 }
 
+// ── Inline numeric editor for the Lot Size column ─────────────────────
+// Double-click a Lot cell → number input → Enter/blur saves. Routes to
+// securities_nfo for F&O rows (data-src="fo") or securities_db for CM rows.
+function _lotOpenInlineEdit(cell) {
+    if (cell._lotEditing) return;
+    cell._lotEditing = true;
+    var cur = (cell.textContent || '').replace(/[^\d.]/g, '');
+    cell.innerHTML = '<input type="number" step="1" min="0" value="' + cur +
+        '" style="width:64px;font-size:11px;text-align:right;padding:1px 3px;">';
+    var input = cell.querySelector('input');
+    input.focus(); input.select();
+    var settled = false;
+    function finish(save) {
+        if (settled) return; settled = true;
+        cell._lotEditing = false;
+        var v = parseFloat(input.value);
+        if (save && !isNaN(v) && v >= 0) {
+            _lotSaveInline(cell.dataset.secid, cell.dataset.src, v, cell);
+        } else {
+            cell.innerHTML = cur ? cur : '<span style="color:#cbd5e0;">—</span>';
+        }
+    }
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', function() { finish(true); });
+}
+
+async function _lotSaveInline(secId, src, value, cell) {
+    var table = (src === 'fo') ? 'securities_nfo' : 'securities_db';
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/' + table + '?id=eq.' + secId, {
+            method: 'PATCH',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+            body: JSON.stringify({ lot_size: value })
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        cell.innerHTML = String(value);
+        // Keep in-memory caches in sync so imports / F&O views pick up the new lot size.
+        if (src === 'fo' && wmsRefData.securitiesNfoMap && wmsRefData.securitiesNfoMap[secId]) wmsRefData.securitiesNfoMap[secId].lot_size = value;
+        if (src === 'cm' && wmsRefData.securitiesCmMap && wmsRefData.securitiesCmMap[secId]) wmsRefData.securitiesCmMap[secId].lot_size = value;
+    } catch (e) {
+        console.error('Lot inline edit save error:', e);
+        alert('Error saving lot size: ' + e.message);
+        cell.innerHTML = '<span style="color:#cbd5e0;">—</span>';
+    }
+}
+
 // Attach dblclick handler via event delegation on tbody
 (function() {
     function attachSecInlineEdit() {
@@ -4514,6 +4565,13 @@ async function _secSaveInlineEdit(secId, field, value, cell) {
             if (cell) {
                 e.preventDefault();
                 _secOpenInlineDropdown(cell);
+                return;
+            }
+            // 1b) Inline numeric edit on the Lot Size cell (F&O + CM)
+            var lotCell = e.target.closest('.lot-inline-edit');
+            if (lotCell) {
+                e.preventDefault();
+                _lotOpenInlineEdit(lotCell);
                 return;
             }
             // 2) Details modal on any other part of a CM row
