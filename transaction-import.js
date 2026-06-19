@@ -4124,6 +4124,7 @@ async function fyProcessTrades(tradeBook) {
         }
 
         var isNfo = g.segment === 11;
+        var isMcx = g.segment === 20;
         // Classify F&O by the contract's EXCHANGE (single source of truth =
         // securities_nfo.exchange) so the manual import and the auto/edge-function
         // import can't diverge: MCX commodity → 'MCX', NSE F&O → 'NFO'. Segment 10
@@ -4133,6 +4134,16 @@ async function fyProcessTrades(tradeBook) {
             : (((secMatch.exchange || '') === 'MCX') ? 'MCX' : 'NFO');
         var lotSize = secMatch.lot_size || 1;
 
+        // Quantity convention (WMS-LESSONS A.11.5): Fyers sends NSE F&O qty already
+        // in UNDERLYING units (e.g. 65 for 1 NIFTY lot) but MCX qty in LOTS (1 for
+        // 1 SILVERM lot). For MCX we expand to underlying = lots × lot_size and
+        // scale the contract value by lot_size, so an imported 1-lot SILVERM records
+        // exactly like a manual entry (quantity = lots × lot_size, value = price × lot_size).
+        var fyQty   = isMcx ? (g.totalQty * lotSize) : g.totalQty;     // underlying units
+        var fyGross = isMcx ? (grossAmount * lotSize) : grossAmount;   // price stays per-unit
+        var fyLots  = isMcx ? g.totalQty
+                            : (isNfo && lotSize > 0 ? Math.round(g.totalQty / lotSize) : 0);
+
         var row = {
             security_id: secMatch.id,
             security_type: secType,
@@ -4141,10 +4152,10 @@ async function fyProcessTrades(tradeBook) {
             company_name: secMatch.company_name || g.symbol,
             exchange: secMatch.exchange || 'NSE',
             transaction_type: g.side,
-            quantity: g.side === 'SELL' ? -g.totalQty : g.totalQty,
-            lots: isNfo && lotSize > 0 ? Math.round(g.totalQty / lotSize) : 0,
+            quantity: g.side === 'SELL' ? -fyQty : fyQty,
+            lots: fyLots,
             price: roundMoney(avgPrice),
-            gross_amount: roundMoney(grossAmount),
+            gross_amount: roundMoney(fyGross),
             brokerage: 0,
             stt: 0,
             other_charges: 0,
