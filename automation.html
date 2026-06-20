@@ -309,6 +309,7 @@ details summary {
     <button class="automation-tab-btn"        data-tab="au-open-trades">Open Trades</button>
     <button class="automation-tab-btn"        data-tab="au-events">Recent Events</button>
     <button class="automation-tab-btn"        data-tab="au-runs">Run History</button>
+    <button class="automation-tab-btn"        data-tab="au-live" style="margin-left:auto;color:#b91c1c">🔴 Live Trading</button>
   </div>
 
   <div class="automation-content">
@@ -483,6 +484,30 @@ details summary {
         </div>
         <div id="au-runs-content" style="margin-top:12px">Click Refresh to load.</div>
       </div>
+    </div>
+
+    <!-- Live Trading tab (Phase 13 — LIVE order placement: controls + risk wrappers) -->
+    <div id="au-live" class="automation-tab-panel">
+
+      <div class="au-card">
+        <h3>Live Controls <span id="au-live-state-badge" class="au-badge idle">…</span></h3>
+        <div class="au-sub">Emergency stop + per-strategy pause for LIVE order placement. Changes take effect on the next signal (within ~1s). No deploy needed.</div>
+        <div id="au-live-controls" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
+        <div class="au-actions"><button class="au-btn au-btn-secondary" onclick="autoLoadLive()">↻ Refresh</button></div>
+      </div>
+
+      <div class="au-card">
+        <h3>Katalysthive (sharanaga_v1) — Risk Wrappers</h3>
+        <div class="au-sub">Checked before any Katalysthive signal is placed. A breach rejects the signal — nothing reaches the broker (fail-closed). Saved instantly.</div>
+        <div id="au-live-kh" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
+      </div>
+
+      <div class="au-card">
+        <h3>Lot Sizes</h3>
+        <div class="au-sub">Contracts per lot — used to convert quantities to lots for the exposure cap. Update when the exchange revises a lot size.</div>
+        <div id="au-live-lotsizes" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
+      </div>
+
     </div>
 
   </div>
