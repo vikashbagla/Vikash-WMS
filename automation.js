@@ -2276,6 +2276,7 @@ async function autoLoadLive() {
         _auLiveState = (Array.isArray(sRows) && sRows[0]) || { kill_switch: false, paused_sources: [], paused_brokers: [] };
         _auLiveLimits = await results[1].json();
         if (!Array.isArray(_auLiveLimits)) _auLiveLimits = [];
+        await _auSyncLotSizes();          // auto-derive lot sizes from securities_nfo cache (self-heals)
         autoRenderLiveControls();
         autoRenderKhWrappers();
         autoRenderLotSizes();
@@ -2355,6 +2356,8 @@ function autoRenderKhWrappers() {
     var capOn  = cap ? cap.enabled : true;
     var undVals = (und && und.limit_value && Array.isArray(und.limit_value.values)) ? und.limit_value.values.join(', ') : '';
     var undOn  = und ? und.enabled : true;
+    var lb = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'exposure_lookback_days');
+    var lbVal = (lb && lb.limit_value && lb.limit_value.value != null) ? lb.limit_value.value : 3;
     el.innerHTML =
         '<div style="margin-bottom:18px">' +
             '<div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:3px">Max open exposure (lots)' +
@@ -2374,6 +2377,14 @@ function autoRenderKhWrappers() {
                 '<input id="au-kh-und" value="' + autoEsc(undVals) + '" placeholder="NIFTY, BANKNIFTY" style="' + _AU_INP + ';flex:1;min-width:220px;max-width:380px;text-transform:uppercase">' +
                 '<label style="font-size:12px;color:#374151"><input type="checkbox" id="au-kh-und-on" ' + (undOn ? 'checked' : '') + '> enforce</label>' +
                 '<button class="au-btn au-btn-primary" onclick="autoSaveKhUnderlyings()">Save underlyings</button>' +
+            '</div>' +
+        '</div>' +
+        '<div style="margin-top:18px">' +
+            '<div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:3px">Open-position look-back (days)</div>' +
+            '<div style="font-size:11px;color:#6b7280;margin-bottom:6px">Days of order history scanned when tallying open KH exposure. KH is intraday, so 3 is plenty (covers a Fri→Mon weekend). Lower = faster check.</div>' +
+            '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+                '<input id="au-kh-lookback" type="number" min="1" max="90" value="' + autoEsc(String(lbVal)) + '" style="' + _AU_INP + ';width:120px">' +
+                '<button class="au-btn au-btn-primary" onclick="autoSaveKhLookback()">Save look-back</button>' +
             '</div>' +
         '</div>';
 }
@@ -2402,49 +2413,68 @@ async function autoSaveKhUnderlyings() {
     } catch (e) { alert('Failed to save underlyings: ' + (e.message || e)); }
 }
 
-// ---- Lot sizes (global config row) ----
+// ---- Look-back window (per-strategy) ----
+async function autoSaveKhLookback() {
+    var v = Number(document.getElementById('au-kh-lookback').value);
+    if (!v || v < 1 || v > 90) { alert('Enter a look-back between 1 and 90 days.'); return; }
+    try {
+        var ex = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'exposure_lookback_days');
+        await _auUpsertLimit(ex, AU_KH, 'exposure_lookback_days', { value: v }, true, 'log_only');
+        autoLoadLive();
+    } catch (e) { alert('Failed to save look-back: ' + (e.message || e)); }
+}
+
+// ---- Lot sizes — AUTO-derived from the securities_nfo cache (read-only, self-healing) ----
+var _AU_DEFAULT_UNDS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX', 'MIDCPNIFTY'];
+
+// Front-month lot size per underlying, from the in-memory securities_nfo cache (zero extra DB calls).
+function _auDeriveLotSizes(unds) {
+    var nfo = (window.wmsRefData && window.wmsRefData.securitiesNfo) || [];
+    var today = new Date().toISOString().slice(0, 10);
+    var map = {};
+    (unds || []).forEach(function (u) {
+        u = String(u || '').toUpperCase(); if (!u) return;
+        var rows = nfo.filter(function (r) { return String(r.underlying_symbol || '').toUpperCase() === u && r.lot_size && r.is_active !== false; });
+        if (!rows.length) return;
+        var future = rows.filter(function (r) { return r.expiry_date && r.expiry_date >= today; }).sort(function (a, b) { return a.expiry_date < b.expiry_date ? -1 : 1; });
+        var pick = future[0] || rows[0];
+        if (pick && Number(pick.lot_size) > 0) map[u] = Number(pick.lot_size);
+    });
+    return map;
+}
+
+// Derive lot sizes for the covered underlyings and persist ONLY if they changed (auto-heal each load/save).
+async function _auSyncLotSizes() {
+    try {
+        var undRule = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'allowed_underlyings');
+        var existing = _auFindLimit(null, null, null, 'lot_sizes');
+        var existingMap = (existing && existing.limit_value && existing.limit_value.values && typeof existing.limit_value.values === 'object') ? existing.limit_value.values : {};
+        var allowed = (undRule && undRule.limit_value && Array.isArray(undRule.limit_value.values)) ? undRule.limit_value.values.map(function (x) { return String(x).toUpperCase(); }) : [];
+        var covered = (allowed.length ? allowed.slice() : _AU_DEFAULT_UNDS.slice());
+        Object.keys(existingMap).forEach(function (u) { if (covered.indexOf(u) < 0) covered.push(u); });
+        var merged = Object.assign({}, existingMap, _auDeriveLotSizes(covered));   // derived wins; keep existing on a cache miss
+        if (JSON.stringify(merged) !== JSON.stringify(existingMap)) {
+            await _auUpsertLimit(existing, { source: null, strategy: null }, 'lot_sizes', { values: merged }, true, 'log_only');
+            var fresh = (await window.supabaseClient.from('wms_live_risk_limits').select('*')).data;
+            if (Array.isArray(fresh)) _auLiveLimits = fresh;
+        }
+    } catch (e) { /* non-fatal — display falls back to whatever is stored */ }
+}
+
 function autoRenderLotSizes() {
     var el = document.getElementById('au-live-lotsizes'); if (!el) return;
     var row = _auFindLimit(null, null, null, 'lot_sizes');
-    var map = (row && row.limit_value && row.limit_value.values && typeof row.limit_value.values === 'object') ? row.limit_value.values : { NIFTY: 65 };
-    var rows = Object.keys(map).map(function (k) { return _auLotSizeRowHtml(k, map[k]); }).join('');
+    var map = (row && row.limit_value && row.limit_value.values && typeof row.limit_value.values === 'object') ? row.limit_value.values : {};
+    var keys = Object.keys(map).sort();
+    var body = keys.length
+        ? keys.map(function (k) { return '<tr><td style="padding:3px 24px 3px 0">' + autoEsc(k) + '</td><td style="text-align:right">' + autoEsc(String(map[k])) + '</td></tr>'; }).join('')
+        : '<tr><td colspan="2" style="color:#9ca3af;padding:4px 0">No lot sizes yet — set an allowed underlying and they auto-fill from the securities master.</td></tr>';
     el.innerHTML =
-        '<div id="au-ls-rows">' + rows + '</div>' +
-        '<div class="au-actions">' +
-            '<button class="au-btn au-btn-secondary" onclick="autoAddLotSizeRow()">+ Add underlying</button>' +
-            '<button class="au-btn au-btn-primary" onclick="autoSaveLotSizes()">Save lot sizes</button>' +
-        '</div>';
-}
-
-function _auLotSizeRowHtml(name, val) {
-    return '<div class="au-ls-row" style="display:flex;gap:6px;margin-bottom:6px;align-items:center">' +
-        '<input class="au-ls-name" value="' + autoEsc(name || '') + '" placeholder="UNDERLYING" style="' + _AU_INP + ';width:170px;text-transform:uppercase">' +
-        '<input class="au-ls-val" type="number" min="1" value="' + autoEsc(val == null ? '' : String(val)) + '" placeholder="lot size" style="' + _AU_INP + ';width:120px">' +
-        '<button class="au-btn au-btn-danger" style="padding:4px 10px;font-size:11px" onclick="this.closest(\'.au-ls-row\').remove()">×</button>' +
-    '</div>';
-}
-
-function autoAddLotSizeRow() {
-    var box = document.getElementById('au-ls-rows'); if (!box) return;
-    box.insertAdjacentHTML('beforeend', _auLotSizeRowHtml('', ''));
-}
-
-async function autoSaveLotSizes() {
-    var map = {}; var bad = false;
-    document.querySelectorAll('#au-ls-rows .au-ls-row').forEach(function (r) {
-        var n = ((r.querySelector('.au-ls-name') || {}).value || '').trim().toUpperCase();
-        var v = Number((r.querySelector('.au-ls-val') || {}).value);
-        if (!n) return;
-        if (!v || v <= 0) { bad = true; return; }
-        map[n] = v;
-    });
-    if (bad) { alert('Every underlying needs a positive lot size.'); return; }
-    if (Object.keys(map).length === 0) { alert('Add at least one lot size.'); return; }
-    try {
-        var ex = _auFindLimit(null, null, null, 'lot_sizes');
-        await _auUpsertLimit(ex, { source: null, strategy: null }, 'lot_sizes', { values: map }, true, 'log_only');
-        autoLoadLive();
-    } catch (e) { alert('Failed to save lot sizes: ' + (e.message || e)); }
+        '<table style="font-size:12px;border-collapse:collapse">' +
+            '<thead><tr style="color:#6b7280;font-size:10px;text-transform:uppercase"><th style="text-align:left;padding-right:24px">Underlying</th><th style="text-align:right">Lot size</th></tr></thead>' +
+            '<tbody>' + body + '</tbody>' +
+        '</table>' +
+        '<div style="font-size:11px;color:#9ca3af;margin-top:8px">Auto-filled from the securities master (front-month contract) — no manual entry. Refreshes when you reopen this tab or run the F&amp;O sync.</div>';
 }
 
 // ---- shared upsert: PATCH by id if the rule exists, else POST a new row ----
