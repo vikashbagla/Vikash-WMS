@@ -2372,11 +2372,15 @@ function autoRenderKhWrappers() {
         '<div>' +
             '<div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:3px">Allowed underlyings' +
                 (und ? '' : ' <span style="color:#9ca3af;font-weight:400">— not set (all allowed)</span>') + '</div>' +
-            '<div style="font-size:11px;color:#6b7280;margin-bottom:6px">Comma-separated. A signal on any other underlying is rejected. Uncheck “enforce” to allow all.</div>' +
+            '<div style="font-size:11px;color:#6b7280;margin-bottom:6px">Use the quick-add chips below or type (comma-separated). Checked against your securities master on save to catch typos. A signal on any other underlying is rejected; uncheck “enforce” to allow all.</div>' +
             '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
                 '<input id="au-kh-und" value="' + autoEsc(undVals) + '" placeholder="NIFTY, BANKNIFTY" style="' + _AU_INP + ';flex:1;min-width:220px;max-width:380px;text-transform:uppercase">' +
                 '<label style="font-size:12px;color:#374151"><input type="checkbox" id="au-kh-und-on" ' + (undOn ? 'checked' : '') + '> enforce</label>' +
                 '<button class="au-btn au-btn-primary" onclick="autoSaveKhUnderlyings()">Save underlyings</button>' +
+            '</div>' +
+            '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                '<span style="font-size:11px;color:#9ca3af">Quick add:</span>' +
+                ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX'].map(function (u) { return '<button type="button" onclick="autoAddUnderlying(\'' + u + '\')" style="font-size:11px;padding:2px 9px;border:1px solid #d1d5db;border-radius:12px;background:#f9fafb;cursor:pointer;color:#374151">+ ' + u + '</button>'; }).join('') +
             '</div>' +
         '</div>' +
         '<div style="margin-top:18px">' +
@@ -2400,12 +2404,38 @@ async function autoSaveKhCap() {
     } catch (e) { alert('Failed to save cap: ' + (e.message || e)); }
 }
 
+// Valid F&O underlyings = distinct active underlyings in securities_nfo, plus the known
+// index set (some, e.g. SENSEX/BANKEX, are BSE and may not be in the NSE cache).
+function _auValidUnderlyings() {
+    var set = {};
+    ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50', 'SENSEX', 'BANKEX'].forEach(function (u) { set[u] = 1; });
+    var nfo = (window.wmsRefData && window.wmsRefData.securitiesNfo) || [];
+    nfo.forEach(function (r) { if (r.is_active !== false) { var u = String(r.underlying_symbol || '').toUpperCase(); if (u) set[u] = 1; } });
+    return set;
+}
+
+// Quick-add chip → append an underlying to the box (deduped, uppercase).
+function autoAddUnderlying(u) {
+    var inp = document.getElementById('au-kh-und'); if (!inp) return;
+    var cur = inp.value.split(',').map(function (s) { return s.trim().toUpperCase(); }).filter(Boolean);
+    if (cur.indexOf(u) < 0) cur.push(u);
+    inp.value = cur.join(', ');
+    inp.focus();
+}
+
 async function autoSaveKhUnderlyings() {
     var raw = document.getElementById('au-kh-und').value;
     var on  = document.getElementById('au-kh-und-on').checked;
     var vals = raw.split(',').map(function (s) { return s.trim().toUpperCase(); }).filter(Boolean)
         .filter(function (v, i, a) { return a.indexOf(v) === i; });
     if (on && vals.length === 0) { alert('Add at least one underlying, or uncheck “enforce” to allow all.'); return; }
+    // Validate against the securities master — flag anything unrecognised (likely a typo).
+    var valid = _auValidUnderlyings();
+    var unknown = vals.filter(function (v) { return !valid[v]; });
+    if (unknown.length) {
+        if (!confirm('These underlyings are NOT in your securities master and look like typos:\n\n   ' + unknown.join(', ') +
+            '\n\nA mistyped underlying will silently block its real signals. Fix it, or save anyway?')) return;
+    }
     try {
         var ex = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'allowed_underlyings');
         await _auUpsertLimit(ex, AU_KH, 'allowed_underlyings', { values: vals }, on, 'reject');
