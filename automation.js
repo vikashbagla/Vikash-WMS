@@ -29,6 +29,7 @@ function autoSwitchTab(tabId) {
     if (tabId === 'au-open-trades' && !window._auOpenTradesLoaded) { autoLoadGsOpenTrades(); autoLoadGsClosedTrades(); autoLoadOpenTrades(); autoLoadClosedTrades(); window._auOpenTradesLoaded = true; }
     if (tabId === 'au-events'      && !window._auEventsLoaded)     { autoLoadEvents('all');  window._auEventsLoaded = true; }
     if (tabId === 'au-runs'        && !window._auRunsLoaded)       { autoLoadRuns('all');    window._auRunsLoaded = true; }
+    if (tabId === 'au-live'        && !window._auLiveLoaded)       { autoLoadLive();         window._auLiveLoaded = true; }
 
     // Open Trades P&L refreshes via the shared app-wide price timer (no module
     // timer). Ensure the provider is registered + the single timer is running.
@@ -2248,4 +2249,254 @@ async function autoLoadRuns(filter) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
         if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
     }
+}
+
+// ============================================================================
+// Live Trading tab (Phase 13) — LIVE order-placement controls + risk wrappers
+// ----------------------------------------------------------------------------
+// Reads/writes app_state (kill switch + per-source pause) and wms_live_risk_limits
+// (the rules the katalysthive-webhook enforces before placing orders). All writes
+// go through the owner's session JWT (RLS owner_all). No SQL, no deploy.
+// ============================================================================
+
+var _auLiveState  = null;   // app_state singleton row
+var _auLiveLimits = [];     // wms_live_risk_limits rows
+var AU_KH = { source: 'katalysthive', strategy: 'sharanaga_v1' };
+var _AU_INP = 'padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:12px';
+
+async function autoLoadLive() {
+    var ctrl = document.getElementById('au-live-controls');
+    if (ctrl) ctrl.innerHTML = 'Loading…';
+    try {
+        var results = await Promise.all([
+            fetch(SUPABASE_URL + '/rest/v1/app_state?id=eq.1&select=kill_switch,paused_sources,paused_brokers', { headers: wmsHeaders() }),
+            fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits?select=*', { headers: wmsHeaders() })
+        ]);
+        var sRows = await results[0].json();
+        _auLiveState = (Array.isArray(sRows) && sRows[0]) || { kill_switch: false, paused_sources: [], paused_brokers: [] };
+        _auLiveLimits = await results[1].json();
+        if (!Array.isArray(_auLiveLimits)) _auLiveLimits = [];
+        await _auSyncLotSizes();          // auto-derive lot sizes from securities_nfo cache (self-heals)
+        autoRenderLiveControls();
+        autoRenderKhWrappers();
+        autoRenderLotSizes();
+    } catch (e) {
+        if (ctrl) ctrl.innerHTML = '<span style="color:#dc2626">Failed to load live config: ' + autoEsc(String(e)) + '</span>';
+    }
+}
+
+function _auFindLimit(source, strategy, iba, type) {
+    return _auLiveLimits.find(function (r) {
+        return (r.signal_source || null) === (source || null)
+            && (r.strategy_name || null) === (strategy || null)
+            && (r.iba_id || null) === (iba || null)
+            && r.limit_type === type;
+    }) || null;
+}
+
+// ---- Live controls (kill switch + KH pause) ----
+function autoRenderLiveControls() {
+    var el = document.getElementById('au-live-controls'); if (!el) return;
+    var ks = !!_auLiveState.kill_switch;
+    var paused = (_auLiveState.paused_sources || []).indexOf('katalysthive') !== -1;
+    var badge = document.getElementById('au-live-state-badge');
+    if (badge) {
+        if (ks)          { badge.textContent = 'KILL SWITCH ON'; badge.className = 'au-badge error'; }
+        else if (paused) { badge.textContent = 'KH paused';      badge.className = 'au-badge warning'; }
+        else             { badge.textContent = 'live';           badge.className = 'au-badge success'; }
+    }
+    el.innerHTML =
+        '<div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end">' +
+            '<div><div style="font-size:11px;color:#6b7280;margin-bottom:4px">Global kill switch (all sources)</div>' +
+                '<button class="au-btn ' + (ks ? 'au-btn-danger' : 'au-btn-secondary') + '" onclick="autoToggleKillSwitch()">' +
+                (ks ? '🛑 ON — click to resume trading' : 'Engage kill switch') + '</button></div>' +
+            '<div><div style="font-size:11px;color:#6b7280;margin-bottom:4px">Katalysthive source</div>' +
+                '<button class="au-btn ' + (paused ? 'au-btn-danger' : 'au-btn-secondary') + '" onclick="autoToggleKhPause()">' +
+                (paused ? '⏸ Paused — click to resume' : 'Pause Katalysthive') + '</button></div>' +
+        '</div>';
+}
+
+async function autoToggleKillSwitch() {
+    var on = !!_auLiveState.kill_switch;
+    var msg = on
+        ? 'Resume LIVE order placement (turn the kill switch OFF)?'
+        : '⚠️ Engage the GLOBAL kill switch?\n\nALL live order placement halts immediately. Every signal (Katalysthive + any future source) is rejected until you turn it off.';
+    if (!confirm(msg)) return;
+    await _auPatchAppState({ kill_switch: !on }, (on ? 'Resume from' : 'Engage') + ' kill switch (Live Trading tab)');
+}
+
+async function autoToggleKhPause() {
+    var cur = _auLiveState.paused_sources || [];
+    var paused = cur.indexOf('katalysthive') !== -1;
+    var next = paused ? cur.filter(function (s) { return s !== 'katalysthive'; }) : cur.concat(['katalysthive']);
+    var msg = paused
+        ? 'Resume Katalysthive signals?'
+        : 'Pause Katalysthive only?\n\nIts signals will be rejected (HTTP 503 SOURCE_PAUSED) until resumed. Other sources are unaffected.';
+    if (!confirm(msg)) return;
+    await _auPatchAppState({ paused_sources: next }, (paused ? 'Resume' : 'Pause') + ' katalysthive (Live Trading tab)');
+}
+
+async function _auPatchAppState(patch, reason) {
+    try {
+        patch.updated_by = (window.currentUser && window.currentUser.email) || 'app';
+        patch.updated_reason = reason;
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/app_state?id=eq.1',
+            { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify(patch) });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+        autoLoadLive();
+    } catch (e) { alert('Failed to update live controls: ' + (e.message || e)); }
+}
+
+// ---- Katalysthive risk wrappers ----
+function autoRenderKhWrappers() {
+    var el = document.getElementById('au-live-kh'); if (!el) return;
+    var cap = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'max_open_exposure_lots');
+    var und = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'allowed_underlyings');
+    var capVal = (cap && cap.limit_value && cap.limit_value.value != null) ? cap.limit_value.value : '';
+    var capOn  = cap ? cap.enabled : true;
+    var undVals = (und && und.limit_value && Array.isArray(und.limit_value.values)) ? und.limit_value.values.join(', ') : '';
+    var undOn  = und ? und.enabled : true;
+    var lb = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'exposure_lookback_days');
+    var lbVal = (lb && lb.limit_value && lb.limit_value.value != null) ? lb.limit_value.value : 3;
+    el.innerHTML =
+        '<div style="margin-bottom:18px">' +
+            '<div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:3px">Max open exposure (lots)' +
+                (cap ? '' : ' <span style="color:#9ca3af;font-weight:400">— not set (no cap enforced)</span>') + '</div>' +
+            '<div style="font-size:11px;color:#6b7280;margin-bottom:6px">Total open lots across all live KH trades (a trade counts as its largest leg’s lots). A new signal that would exceed this is rejected.</div>' +
+            '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+                '<input id="au-kh-cap" type="number" min="0" step="0.5" value="' + autoEsc(String(capVal)) + '" placeholder="e.g. 4" style="' + _AU_INP + ';width:120px">' +
+                '<label style="font-size:12px;color:#374151"><input type="checkbox" id="au-kh-cap-on" ' + (capOn ? 'checked' : '') + '> enforce</label>' +
+                '<button class="au-btn au-btn-primary" onclick="autoSaveKhCap()">Save cap</button>' +
+            '</div>' +
+        '</div>' +
+        '<div>' +
+            '<div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:3px">Allowed underlyings' +
+                (und ? '' : ' <span style="color:#9ca3af;font-weight:400">— not set (all allowed)</span>') + '</div>' +
+            '<div style="font-size:11px;color:#6b7280;margin-bottom:6px">Comma-separated. A signal on any other underlying is rejected. Uncheck “enforce” to allow all.</div>' +
+            '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+                '<input id="au-kh-und" value="' + autoEsc(undVals) + '" placeholder="NIFTY, BANKNIFTY" style="' + _AU_INP + ';flex:1;min-width:220px;max-width:380px;text-transform:uppercase">' +
+                '<label style="font-size:12px;color:#374151"><input type="checkbox" id="au-kh-und-on" ' + (undOn ? 'checked' : '') + '> enforce</label>' +
+                '<button class="au-btn au-btn-primary" onclick="autoSaveKhUnderlyings()">Save underlyings</button>' +
+            '</div>' +
+        '</div>' +
+        '<div style="margin-top:18px">' +
+            '<div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:3px">Open-position look-back (days)</div>' +
+            '<div style="font-size:11px;color:#6b7280;margin-bottom:6px">Days of order history scanned when tallying open KH exposure. KH is intraday, so 3 is plenty (covers a Fri→Mon weekend). Lower = faster check.</div>' +
+            '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+                '<input id="au-kh-lookback" type="number" min="1" max="90" value="' + autoEsc(String(lbVal)) + '" style="' + _AU_INP + ';width:120px">' +
+                '<button class="au-btn au-btn-primary" onclick="autoSaveKhLookback()">Save look-back</button>' +
+            '</div>' +
+        '</div>';
+}
+
+async function autoSaveKhCap() {
+    var v = document.getElementById('au-kh-cap').value;
+    var on = document.getElementById('au-kh-cap-on').checked;
+    if (v === '' || isNaN(Number(v)) || Number(v) < 0) { alert('Enter a non-negative number of lots (or 0 to block everything).'); return; }
+    try {
+        var ex = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'max_open_exposure_lots');
+        await _auUpsertLimit(ex, AU_KH, 'max_open_exposure_lots', { value: Number(v) }, on, 'reject');
+        autoLoadLive();
+    } catch (e) { alert('Failed to save cap: ' + (e.message || e)); }
+}
+
+async function autoSaveKhUnderlyings() {
+    var raw = document.getElementById('au-kh-und').value;
+    var on  = document.getElementById('au-kh-und-on').checked;
+    var vals = raw.split(',').map(function (s) { return s.trim().toUpperCase(); }).filter(Boolean)
+        .filter(function (v, i, a) { return a.indexOf(v) === i; });
+    if (on && vals.length === 0) { alert('Add at least one underlying, or uncheck “enforce” to allow all.'); return; }
+    try {
+        var ex = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'allowed_underlyings');
+        await _auUpsertLimit(ex, AU_KH, 'allowed_underlyings', { values: vals }, on, 'reject');
+        autoLoadLive();
+    } catch (e) { alert('Failed to save underlyings: ' + (e.message || e)); }
+}
+
+// ---- Look-back window (per-strategy) ----
+async function autoSaveKhLookback() {
+    var v = Number(document.getElementById('au-kh-lookback').value);
+    if (!v || v < 1 || v > 90) { alert('Enter a look-back between 1 and 90 days.'); return; }
+    try {
+        var ex = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'exposure_lookback_days');
+        await _auUpsertLimit(ex, AU_KH, 'exposure_lookback_days', { value: v }, true, 'log_only');
+        autoLoadLive();
+    } catch (e) { alert('Failed to save look-back: ' + (e.message || e)); }
+}
+
+// ---- Lot sizes — AUTO-derived from the securities_nfo cache (read-only, self-healing) ----
+var _AU_DEFAULT_UNDS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX', 'MIDCPNIFTY'];
+
+// Front-month lot size per underlying, from the in-memory securities_nfo cache (zero extra DB calls).
+function _auDeriveLotSizes(unds) {
+    var nfo = (window.wmsRefData && window.wmsRefData.securitiesNfo) || [];
+    var today = new Date().toISOString().slice(0, 10);
+    var map = {};
+    (unds || []).forEach(function (u) {
+        u = String(u || '').toUpperCase(); if (!u) return;
+        var rows = nfo.filter(function (r) { return String(r.underlying_symbol || '').toUpperCase() === u && r.lot_size && r.is_active !== false; });
+        if (!rows.length) return;
+        var future = rows.filter(function (r) { return r.expiry_date && r.expiry_date >= today; }).sort(function (a, b) { return a.expiry_date < b.expiry_date ? -1 : 1; });
+        var pick = future[0] || rows[0];
+        if (pick && Number(pick.lot_size) > 0) map[u] = Number(pick.lot_size);
+    });
+    return map;
+}
+
+// Derive lot sizes for the covered underlyings and persist ONLY if they changed (auto-heal each load/save).
+async function _auSyncLotSizes() {
+    try {
+        var undRule = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'allowed_underlyings');
+        var existing = _auFindLimit(null, null, null, 'lot_sizes');
+        var existingMap = (existing && existing.limit_value && existing.limit_value.values && typeof existing.limit_value.values === 'object') ? existing.limit_value.values : {};
+        var allowed = (undRule && undRule.limit_value && Array.isArray(undRule.limit_value.values)) ? undRule.limit_value.values.map(function (x) { return String(x).toUpperCase(); }) : [];
+        var covered = (allowed.length ? allowed.slice() : _AU_DEFAULT_UNDS.slice());
+        Object.keys(existingMap).forEach(function (u) { if (covered.indexOf(u) < 0) covered.push(u); });
+        var merged = Object.assign({}, existingMap, _auDeriveLotSizes(covered));   // derived wins; keep existing on a cache miss
+        if (JSON.stringify(merged) !== JSON.stringify(existingMap)) {
+            await _auUpsertLimit(existing, { source: null, strategy: null }, 'lot_sizes', { values: merged }, true, 'log_only');
+            var fresh = (await window.supabaseClient.from('wms_live_risk_limits').select('*')).data;
+            if (Array.isArray(fresh)) _auLiveLimits = fresh;
+        }
+    } catch (e) { /* non-fatal — display falls back to whatever is stored */ }
+}
+
+function autoRenderLotSizes() {
+    var el = document.getElementById('au-live-lotsizes'); if (!el) return;
+    var row = _auFindLimit(null, null, null, 'lot_sizes');
+    var map = (row && row.limit_value && row.limit_value.values && typeof row.limit_value.values === 'object') ? row.limit_value.values : {};
+    var keys = Object.keys(map).sort();
+    var body = keys.length
+        ? keys.map(function (k) { return '<tr><td style="padding:3px 24px 3px 0">' + autoEsc(k) + '</td><td style="text-align:right">' + autoEsc(String(map[k])) + '</td></tr>'; }).join('')
+        : '<tr><td colspan="2" style="color:#9ca3af;padding:4px 0">No lot sizes yet — set an allowed underlying and they auto-fill from the securities master.</td></tr>';
+    el.innerHTML =
+        '<table style="font-size:12px;border-collapse:collapse">' +
+            '<thead><tr style="color:#6b7280;font-size:10px;text-transform:uppercase"><th style="text-align:left;padding-right:24px">Underlying</th><th style="text-align:right">Lot size</th></tr></thead>' +
+            '<tbody>' + body + '</tbody>' +
+        '</table>' +
+        '<div style="font-size:11px;color:#9ca3af;margin-top:8px">Auto-filled from the securities master (front-month contract) — no manual entry. Refreshes when you reopen this tab or run the F&amp;O sync.</div>';
+}
+
+// ---- shared upsert: PATCH by id if the rule exists, else POST a new row ----
+async function _auUpsertLimit(existing, scope, type, value, enabled, breach) {
+    var url, method, body;
+    if (existing) {
+        url = SUPABASE_URL + '/rest/v1/wms_live_risk_limits?id=eq.' + existing.id;
+        method = 'PATCH';
+        body = JSON.stringify({ limit_value: value, enabled: enabled, breach_action: breach });
+    } else {
+        url = SUPABASE_URL + '/rest/v1/wms_live_risk_limits';
+        method = 'POST';
+        body = JSON.stringify({
+            signal_source: scope.source || null,
+            strategy_name: scope.strategy || null,
+            iba_id: null,
+            limit_type: type,
+            limit_value: value,
+            enabled: enabled,
+            breach_action: breach
+        });
+    }
+    var resp = await fetch(url, { method: method, headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: body });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
 }
