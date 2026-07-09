@@ -1873,33 +1873,36 @@ async function autoLoadGsClosedTrades() {
     try {
         var webhookStrats = await autoGetWebhookStrategyNames();
 
-        // Fetch webhook-sourced auto_signals (last 500 events). Group by trade_id,
+        // Fetch GS auto_signals (last _AU_CLOSED_LIMIT events). Group by trade_id,
         // include only trades that have at least one EXIT/MANUAL_CLOSE and net to
         // zero qty.
-        var resp = await fetch(
-            SUPABASE_URL + '/rest/v1/auto_signals?source=eq.tv_webhook&order=fired_at.desc&limit=' + _AU_CLOSED_LIMIT +
-            '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata',
-            { headers: wmsHeaders() }
-        );
-        if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()).slice(0, 200));
-        var sigs = await resp.json();
-        if (!Array.isArray(sigs)) sigs = [];
-        // Also pull MANUAL_CLOSE rows even if their source isn't tv_webhook (the
-        // manual-close path writes source='chassis' by default). Match by
-        // strategy_name being in webhookStrats and event_type='MANUAL_CLOSE'.
+        //
+        // Filter by strategy_name — NOT by source. The GS strategies migrated from
+        // tv-webhook execution to the automation-runner (chassis) in Jun 2026, so
+        // pre-migration signals have `source='tv_webhook'` and post-migration ones
+        // have `source='chassis'` (the auto_signals.source default from migration 41).
+        // A strategy-name filter cleanly covers both eras.
         var stratList = Array.from(webhookStrats).map(function (n) { return '"' + n + '"'; }).join(',');
+        var sigs = [];
         if (stratList) {
-            var mcResp = await fetch(
+            var resp = await fetch(
                 SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(' + encodeURIComponent(stratList) +
-                ')&event_type=eq.MANUAL_CLOSE&order=fired_at.desc&limit=' + _AU_CLOSED_LIMIT +
-                '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata',
+                ')&order=fired_at.desc&limit=' + _AU_CLOSED_LIMIT +
+                '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata,source',
                 { headers: wmsHeaders() }
             );
-            if (mcResp.ok) {
-                var mcRows = await mcResp.json();
-                if (Array.isArray(mcRows)) sigs = sigs.concat(mcRows);
-            }
+            if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()).slice(0, 200));
+            sigs = await resp.json();
+            if (!Array.isArray(sigs)) sigs = [];
         }
+
+        // Source filter — reads the <select> next to the Refresh button.
+        // Values: 'all' (default), 'chassis' (automation-runner), 'tv_webhook' (legacy Pine).
+        // The trade's source is defined by the ENTRY row's source; EXIT can differ
+        // (e.g. legacy tv_webhook entry + a MANUAL_CLOSE chassis exit) but the ENTRY
+        // is what defines "where this trade came from".
+        var _srcFilterEl = document.getElementById('au-gs-closed-source-filter');
+        var _srcFilter = _srcFilterEl ? _srcFilterEl.value : 'all';
 
         var byTrade = {};
         sigs.forEach(function (s) {
@@ -1980,6 +1983,8 @@ async function autoLoadGsClosedTrades() {
                 pnl = sideSign * (exitPx - entryPx) * qtyLots * pv;
             }
 
+            var _entrySrc = entry.source || null;
+            var _entryVer = (entry.metadata && (entry.metadata.strategy_version || entry.metadata.version)) || null;
             closedRows.push({
                 trade_id: tradeId,
                 strategy_name: entry.strategy_name,
@@ -1989,6 +1994,8 @@ async function autoLoadGsClosedTrades() {
                 contract: leg ? leg.symbol : '—',
                 expiry_date: leg ? leg.expiry_date : null,
                 short_symbol: leg ? leg.short_symbol : null,
+                source: _entrySrc,       // 'chassis' | 'tv_webhook' | null
+                version: _entryVer,      // e.g. 'v2.2' or 'MS007-v2.0' or null
             });
         });
 
@@ -1999,15 +2006,65 @@ async function autoLoadGsClosedTrades() {
             return bT < aT ? -1 : bT > aT ? 1 : 0;
         });
 
+        // Apply the source filter now (after we've built the totals bar's peak
+        // exposure / peak margin — those figures reflect ALL closed trades so
+        // filter changes don't distort the sticky-totals values).
+        var _closedTotal = closedRows.length;
+        if (_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') {
+            closedRows = closedRows.filter(function (ct) { return ct.source === _srcFilter; });
+        }
+
         if (closedRows.length === 0) {
-            el.innerHTML = '<div class="au-soon" style="padding:20px">No closed GS trades yet.</div>';
-            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 closed'; }
+            var _emptyMsg = _closedTotal === 0
+                ? 'No closed GS trades yet.'
+                : 'No closed GS trades match filter "' + autoEsc(_srcFilter) + '" (' + _closedTotal + ' hidden). Change filter above to see them.';
+            el.innerHTML = '<div class="au-soon" style="padding:20px">' + _emptyMsg + '</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 / ' + _closedTotal + ' closed'; }
             return;
         }
 
+        // Compute totals up front so we can render the total row at the TOP
+        // (owner ask 2026-07-09 — with many trades, scrolling to the tfoot is tedious).
+        var _totalPnl = 0, _wins = 0, _losses = 0;
+        var _totalExposure = 0, _anyExposure = false;
+        closedRows.forEach(function (ct) {
+            var _lg = ct.entry.legs && ct.entry.legs[0];
+            var _pv = _lg ? autoGsPointValue(_lg.short_symbol) : null;
+            var _mgPct = _lg ? autoGsMarginPct(_lg.short_symbol) : null;
+            if (_pv && ct.qty_lots && ct.entry_price != null) {
+                var _exp = Number(ct.qty_lots) * _pv * Number(ct.entry_price);
+                if (isFinite(_exp) && _exp > 0) { _totalExposure += _exp; _anyExposure = true; }
+            }
+            if (ct.pnl != null) {
+                _totalPnl += ct.pnl;
+                if (ct.pnl >= 0) _wins++; else _losses++;
+            }
+        });
+        var _tSign = _totalPnl >= 0 ? '+' : '−';
+        var _tCol  = _totalPnl >= 0 ? '#047857' : '#dc2626';
+        var _tAbs  = Math.abs(Math.round(_totalPnl)).toLocaleString('en-IN');
+        var _tPctSub = '';
+        if (_anyExposure && _totalExposure > 0) {
+            var _tPct = (_totalPnl / _totalExposure) * 100;
+            var _tPctSign = _tPct >= 0 ? '+' : '−';
+            _tPctSub = '<div style="color:' + _tCol + ';font-size:10px;margin-top:1px;font-weight:500">' +
+                        _tPctSign + Math.abs(_tPct).toFixed(2) + '%</div>';
+        }
+        var _totalLabel = 'Total (' + closedRows.length + ' closed — ' + _wins + 'W / ' + _losses + 'L' +
+                         (_srcFilter !== 'all' ? ' — filtered from ' + _closedTotal : '') + ')';
+
         var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
-        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
-                '<th style="padding:6px 8px">Strategy</th>' +
+        html += '<thead>' +
+                // Row 1 — totals (sticky at top so it stays visible even during vertical scroll of the table)
+                '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700;position:sticky;top:0">' +
+                '<td colspan="9" style="padding:8px">' + autoEsc(_totalLabel) + '</td>' +
+                '<td style="padding:8px;text-align:right;vertical-align:top;white-space:nowrap">' +
+                '<span style="color:' + _tCol + '">' + _tSign + '₹' + _tAbs + '</span>' + _tPctSub +
+                '</td>' +
+                '</tr>' +
+                // Row 2 — column headers
+                '<tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Strategy<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ source · version</span></th>' +
                 '<th style="padding:6px 8px">Side</th>' +
                 '<th style="padding:6px 8px">Entry</th>' +
                 '<th style="padding:6px 8px">Exit<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>' +
@@ -2075,8 +2132,23 @@ async function autoLoadGsClosedTrades() {
                 pnlCell = '<span style="color:#9ca3af">—</span>';
             }
 
+            // Source + version go under the Strategy code, as a small grey sub-line.
+            var srcLabel = ct.source === 'chassis' ? 'Runner'
+                         : ct.source === 'tv_webhook' ? 'TV Webhook'
+                         : (ct.source ? autoEsc(String(ct.source)) : '—');
+            var srcColor = ct.source === 'chassis' ? '#4338ca'
+                         : ct.source === 'tv_webhook' ? '#0891b2'
+                         : '#6b7280';
+            var verStr = ct.version ? autoEsc(String(ct.version)) : '—';
+            var strategyCell = '<code>' + autoEsc(ct.strategy_name) + '</code>' +
+                '<div style="font-size:10px;margin-top:2px">' +
+                    '<span style="color:' + srcColor + ';font-weight:500">' + srcLabel + '</span>' +
+                    '<span style="color:#9ca3af"> · </span>' +
+                    '<span style="color:#6b7280">' + verStr + '</span>' +
+                '</div>';
+
             html += '<tr style="border-top:1px solid #e5e7eb">' +
-                    '<td style="padding:6px 8px;vertical-align:top"><code>' + autoEsc(ct.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px;vertical-align:top">' + strategyCell + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(entryStr) + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(exitStr) + daysSub + '</td>' +
@@ -2089,23 +2161,15 @@ async function autoLoadGsClosedTrades() {
                     '</tr>';
         });
 
-        var tSign = totalPnl >= 0 ? '+' : '−';
-        var tCol = totalPnl >= 0 ? '#047857' : '#dc2626';
-        var tAbs = Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
-        var totalPctSub = '';
-        if (anyExposure && totalExposure > 0) {
-            var totPct = (totalPnl / totalExposure) * 100;
-            var totPctSign = totPct >= 0 ? '+' : '−';
-            totalPctSub = '<div style="color:' + tCol + ';font-size:10px;margin-top:1px;font-weight:500">' +
-                          totPctSign + Math.abs(totPct).toFixed(2) + '%</div>';
-        }
-        html += '<tfoot><tr style="border-top:2px solid #cbd5e0;background:#f7fafc;font-weight:700">' +
-                '<td colspan="9" style="padding:8px">Total (' + closedRows.length + ' closed — ' + wins + 'W / ' + losses + 'L)</td>' +
-                '<td style="padding:8px;text-align:right;vertical-align:top"><span style="color:' + tCol + '">' + tSign + '₹' + tAbs + '</span>' + totalPctSub + '</td>' +
-                '</tr></tfoot>';
-        html += '</table></div>';
+        // Totals row now renders at the TOP of the table (see thead above) —
+        // no tfoot needed. totalPnl/wins/losses computed inside the loop above
+        // are still used to populate _auGsTotals for the sticky totals bar.
+        html += '</tbody></table></div>';
         el.innerHTML = html;
-        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = closedRows.length + ' closed'; }
+        var _statusLabel = _srcFilter === 'all'
+            ? closedRows.length + ' closed'
+            : closedRows.length + ' / ' + _closedTotal + ' closed';
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = _statusLabel; }
 
         // Populate shared totals state for the sticky bar
         _auGsTotals.closedCount = closedRows.length;
