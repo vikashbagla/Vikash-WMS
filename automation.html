@@ -413,8 +413,17 @@ details summary {
         <div class="au-card" style="margin-top:16px">
           <h3>GS Closed Trades — Silver / Gold <span id="au-gs-closed-status" class="au-badge idle">idle</span></h3>
           <div class="au-sub">Trades that have exited (EXIT_SL / EXIT_TRAIL / EXIT_EMA / EXIT_TIME) or been manually closed. Realised P&amp;L computed from entry vs exit price × qty × point_value.</div>
-          <div class="au-actions">
+          <div class="au-actions" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
             <button class="au-btn au-btn-secondary" onclick="autoLoadGsClosedTrades()">↻ Refresh</button>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151">
+              <span>Source:</span>
+              <select id="au-gs-closed-source-filter" onchange="autoLoadGsClosedTrades()"
+                      style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                <option value="all">All</option>
+                <option value="chassis">Automation Runner</option>
+                <option value="tv_webhook">TV Webhook (legacy)</option>
+              </select>
+            </label>
           </div>
           <div id="au-gs-closed-content" style="margin-top:12px">Click Refresh to load.</div>
         </div>

@@ -1888,13 +1888,21 @@ async function autoLoadGsClosedTrades() {
             var resp = await fetch(
                 SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(' + encodeURIComponent(stratList) +
                 ')&order=fired_at.desc&limit=' + _AU_CLOSED_LIMIT +
-                '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata',
+                '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata,source',
                 { headers: wmsHeaders() }
             );
             if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()).slice(0, 200));
             sigs = await resp.json();
             if (!Array.isArray(sigs)) sigs = [];
         }
+
+        // Source filter — reads the <select> next to the Refresh button.
+        // Values: 'all' (default), 'chassis' (automation-runner), 'tv_webhook' (legacy Pine).
+        // The trade's source is defined by the ENTRY row's source; EXIT can differ
+        // (e.g. legacy tv_webhook entry + a MANUAL_CLOSE chassis exit) but the ENTRY
+        // is what defines "where this trade came from".
+        var _srcFilterEl = document.getElementById('au-gs-closed-source-filter');
+        var _srcFilter = _srcFilterEl ? _srcFilterEl.value : 'all';
 
         var byTrade = {};
         sigs.forEach(function (s) {
@@ -1975,6 +1983,8 @@ async function autoLoadGsClosedTrades() {
                 pnl = sideSign * (exitPx - entryPx) * qtyLots * pv;
             }
 
+            var _entrySrc = entry.source || null;
+            var _entryVer = (entry.metadata && (entry.metadata.strategy_version || entry.metadata.version)) || null;
             closedRows.push({
                 trade_id: tradeId,
                 strategy_name: entry.strategy_name,
@@ -1984,6 +1994,8 @@ async function autoLoadGsClosedTrades() {
                 contract: leg ? leg.symbol : '—',
                 expiry_date: leg ? leg.expiry_date : null,
                 short_symbol: leg ? leg.short_symbol : null,
+                source: _entrySrc,       // 'chassis' | 'tv_webhook' | null
+                version: _entryVer,      // e.g. 'v2.2' or 'MS007-v2.0' or null
             });
         });
 
@@ -1994,9 +2006,20 @@ async function autoLoadGsClosedTrades() {
             return bT < aT ? -1 : bT > aT ? 1 : 0;
         });
 
+        // Apply the source filter now (after we've built the totals bar's peak
+        // exposure / peak margin — those figures reflect ALL closed trades so
+        // filter changes don't distort the sticky-totals values).
+        var _closedTotal = closedRows.length;
+        if (_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') {
+            closedRows = closedRows.filter(function (ct) { return ct.source === _srcFilter; });
+        }
+
         if (closedRows.length === 0) {
-            el.innerHTML = '<div class="au-soon" style="padding:20px">No closed GS trades yet.</div>';
-            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 closed'; }
+            var _emptyMsg = _closedTotal === 0
+                ? 'No closed GS trades yet.'
+                : 'No closed GS trades match filter "' + autoEsc(_srcFilter) + '" (' + _closedTotal + ' hidden). Change filter above to see them.';
+            el.innerHTML = '<div class="au-soon" style="padding:20px">' + _emptyMsg + '</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 / ' + _closedTotal + ' closed'; }
             return;
         }
 
@@ -2011,6 +2034,7 @@ async function autoLoadGsClosedTrades() {
                 '<th style="padding:6px 8px;text-align:right">Entry Px</th>' +
                 '<th style="padding:6px 8px;text-align:right">Exit Px</th>' +
                 '<th style="padding:6px 8px">Exit Reason</th>' +
+                '<th style="padding:6px 8px">Source<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ version</span></th>' +
                 '<th style="padding:6px 8px;text-align:right">Realised P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>' +
                 '</tr></thead><tbody>';
 
@@ -2070,6 +2094,18 @@ async function autoLoadGsClosedTrades() {
                 pnlCell = '<span style="color:#9ca3af">—</span>';
             }
 
+            // Source + version cell — friendly labels; unknown values become an em-dash
+            var srcLabel = ct.source === 'chassis' ? 'Runner'
+                         : ct.source === 'tv_webhook' ? 'TV Webhook'
+                         : (ct.source ? autoEsc(String(ct.source)) : '—');
+            var srcColor = ct.source === 'chassis' ? '#4338ca'
+                         : ct.source === 'tv_webhook' ? '#0891b2'
+                         : '#6b7280';
+            var verSub = ct.version
+                ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + autoEsc(String(ct.version)) + '</div>'
+                : '<div style="color:#9ca3af;font-size:10px;margin-top:1px">—</div>';
+            var sourceCell = '<span style="color:' + srcColor + ';font-weight:600">' + srcLabel + '</span>' + verSub;
+
             html += '<tr style="border-top:1px solid #e5e7eb">' +
                     '<td style="padding:6px 8px;vertical-align:top"><code>' + autoEsc(ct.strategy_name) + '</code></td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>' +
@@ -2080,6 +2116,7 @@ async function autoLoadGsClosedTrades() {
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(entryPxStr) + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(exitPxStr) + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top"><span style="color:' + exitTypeColor + ';font-weight:600">' + autoEsc(_autoExitTypeLabel(exitType)) + '</span></td>' +
+                    '<td style="padding:6px 8px;vertical-align:top">' + sourceCell + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + pnlCell + '</td>' +
                     '</tr>';
         });
@@ -2095,12 +2132,17 @@ async function autoLoadGsClosedTrades() {
                           totPctSign + Math.abs(totPct).toFixed(2) + '%</div>';
         }
         html += '<tfoot><tr style="border-top:2px solid #cbd5e0;background:#f7fafc;font-weight:700">' +
-                '<td colspan="9" style="padding:8px">Total (' + closedRows.length + ' closed — ' + wins + 'W / ' + losses + 'L)</td>' +
+                '<td colspan="10" style="padding:8px">Total (' + closedRows.length + ' closed — ' + wins + 'W / ' + losses + 'L' +
+                (_srcFilter !== 'all' ? ' — filtered from ' + _closedTotal : '') +
+                ')</td>' +
                 '<td style="padding:8px;text-align:right;vertical-align:top"><span style="color:' + tCol + '">' + tSign + '₹' + tAbs + '</span>' + totalPctSub + '</td>' +
                 '</tr></tfoot>';
         html += '</table></div>';
         el.innerHTML = html;
-        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = closedRows.length + ' closed'; }
+        var _statusLabel = _srcFilter === 'all'
+            ? closedRows.length + ' closed'
+            : closedRows.length + ' / ' + _closedTotal + ' closed';
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = _statusLabel; }
 
         // Populate shared totals state for the sticky bar
         _auGsTotals.closedCount = closedRows.length;
