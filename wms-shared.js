@@ -5455,7 +5455,22 @@ var wmsDateFilter = function(containerEl, opts) {
 // ============================================================================
 
 /**
- * Calculate holdings for a symbol as of a given date, grouped by inv>trader>broker.
+ * Is this a derivative (non-cash-market) security type?
+ * Corporate actions — dividend, bonus, split, rights — accrue ONLY to cash-market
+ * holdings. Critically, NFO/MCX rows carry the UNDERLYING in `short_symbol`
+ * (an AMBUJACEM future has short_symbol = 'AMBUJACEM'), so ANY symbol-keyed
+ * holdings calculation will silently absorb F&O positions unless they're filtered out.
+ */
+function wmsIsDerivativeSecurity(securityType) {
+    var t = (securityType || '').toUpperCase();
+    return t === 'NFO' || t === 'MCX';
+}
+
+/**
+ * Calculate CASH-MARKET holdings for a symbol as of a given date, grouped by
+ * inv>trader>broker. F&O / MCX positions in the same underlying are EXCLUDED —
+ * corporate actions never accrue to a derivative position, and including them
+ * inflates both netQuantity and avgCost.
  * @param {string} shortSymbol — e.g. "RELIANCE"
  * @param {string} targetDate — ISO date string e.g. "2026-03-09"
  * @param {Array} transactions — full transactions array from caller
@@ -5464,6 +5479,9 @@ var wmsDateFilter = function(containerEl, opts) {
 function wmsCalcHoldingsAsOfDate(shortSymbol, targetDate, transactions) {
     var filtered = transactions.filter(function(t) {
         var sym = t.short_symbol || t.symbol;
+        // Cash-market only — see wmsIsDerivativeSecurity(). An AMBUJACEM futures leg
+        // shares the equity's short_symbol and would otherwise be counted as shares.
+        if (wmsIsDerivativeSecurity(t.security_type)) return false;
         return !t.dont_display && sym === shortSymbol && t.transaction_date <= targetDate;
     });
 

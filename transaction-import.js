@@ -3350,6 +3350,23 @@ function updateImportBtnCount() {
     if (btn) btn.textContent = 'Import ' + cbs.length + ' to Database';
 }
 
+// SINGLE source of truth for "which preview rows did the user tick?".
+// Returns { included: Set(rowObjects), fullList: [] } — or null when no checkbox
+// preview is on screen (headless callers, e.g. the scheduled import).
+// Used by BOTH importExcelToDatabase() and performImport() so row selection can
+// never be honoured in one import source and silently ignored in another.
+function _previewIncludedRows() {
+    var cbs = document.querySelectorAll('#previewTableBody .excel-row-cb');
+    if (!cbs.length) return null;
+    var fullList = excelConfirmedRows.concat(excelFlaggedRows);
+    var included = new Set();
+    document.querySelectorAll('#previewTableBody .excel-row-cb:checked').forEach(function(cb) {
+        var row = fullList[parseInt(cb.dataset.row, 10)];
+        if (row) included.add(row);
+    });
+    return { included: included, fullList: fullList };
+}
+
 // Recalculate net_amount when user edits charges (now reads from data object, not DOM inputs)
 function recalcExcelRow(index) {
     var allRows = excelConfirmedRows.concat(excelFlaggedRows);
@@ -3382,17 +3399,10 @@ async function importExcelToDatabase() {
     var allRows = excelConfirmedRows.slice();
     if (allRows.length === 0) { tiAlert('error', 'No confirmed transactions to import'); return; }
 
-    // Build index map: allRows index → row (for checkbox data-row matching)
+    // Row selection — one shared implementation (also enforced inside performImport).
     var fullList = excelConfirmedRows.concat(excelFlaggedRows);
-
-    // Filter to only checked (included) rows using checkbox data-row attribute
-    var checkedCbs = document.querySelectorAll('#previewTableBody .excel-row-cb:checked');
-    var includedIndices = {};
-    checkedCbs.forEach(function(cb) { includedIndices[cb.dataset.row] = true; });
-    allRows = allRows.filter(function(r) {
-        var idx = fullList.indexOf(r);
-        return includedIndices[idx];
-    });
+    var sel = _previewIncludedRows();
+    if (sel) allRows = allRows.filter(function(r) { return sel.included.has(r); });
     if (allRows.length === 0) { tiAlert('error', 'No rows selected for import'); return; }
 
     // Safety: skip rows with null security_id or zero quantity (DB constraints)
@@ -3519,8 +3529,24 @@ var _importInProgress = false;
 async function performImport(cfg) {
     if (_importInProgress) { tiAlert('warning', 'Import already in progress...'); return; }
 
+    // ── Honour the preview's row checkboxes HERE, at the single import chokepoint,
+    // so EVERY source (Excel, Fyers, and any future one) skips rows the user
+    // unticked. UPDATE rows render unchecked by default (opt-in) — that is what
+    // stops a re-import from silently overwriting a trade the user has since
+    // split/edited. Rows not present in the preview at all are passed through
+    // untouched, and `cfg.auto` (headless/scheduled) skips this entirely since
+    // there is no preview DOM. See LESSONS §B.4.9 (fix at the producer layer).
+    if (!cfg.auto) {
+        var sel = _previewIncludedRows();
+        if (sel) {
+            var keep = function(r) { return sel.fullList.indexOf(r) < 0 || sel.included.has(r); };
+            cfg.newRows = cfg.newRows.filter(keep);
+            cfg.updateRows = cfg.updateRows.filter(keep);
+        }
+    }
+
     var totalRows = cfg.newRows.length + cfg.updateRows.length;
-    if (totalRows === 0) { tiAlert('error', 'No transactions to import.'); return; }
+    if (totalRows === 0) { tiAlert('error', 'No rows selected to import.'); return; }
 
     // cfg.auto = headless/scheduled import — skip the interactive confirm dialog.
     if (!cfg.auto && !confirm('Import ' + cfg.newRows.length + ' new + ' + cfg.updateRows.length + ' updates = ' + totalRows + ' transactions from ' + cfg.source + '?')) return;
