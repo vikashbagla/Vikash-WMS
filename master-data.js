@@ -2817,6 +2817,55 @@ function setFOLoading(on, msg) {
     if (btnFOEx) btnFOEx.disabled = on;
 }
 
+// Manual trigger for the securities-fno-sync EF (options-reference sync).
+// Server-side flow — the EF downloads NSE_FO.csv + BSE_FO.csv from Fyers,
+// buckets options by (exchange, expiry_date, index/stock), and adds ONE
+// reference row per new bucket. Never touches futures rows.
+//
+// Automated: cron-job.org fires this same EF every Saturday 10:00 IST.
+// This button is the manual override for ad-hoc syncs (e.g. after a new
+// SEBI-approved product goes live and we want an early sync).
+async function startOptionsRefSync() {
+    const btn = document.getElementById('btnOptionsRefSync');
+    const orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing…'; }
+    try {
+        const token = window.wmsGetUserToken ? await wmsGetUserToken() : null;
+        if (!token) throw new Error('Not logged in — cannot authenticate to the sync EF');
+        const res = await fetch(window.SUPABASE_URL + '/functions/v1/securities-fno-sync', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-user-token': token,
+                'apikey':       window.SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + window.SUPABASE_ANON_KEY,
+            },
+        });
+        const body = await res.json();
+        if (!res.ok || !body.ok) {
+            alert('Options-Refs sync failed:\n\n' + JSON.stringify(body, null, 2));
+            return;
+        }
+        // Format a compact success summary
+        const nse = body.sources && body.sources.NSE || {};
+        const bse = body.sources && body.sources.BSE || {};
+        const msg =
+            '✓ Options-Refs sync complete (' + Math.round(body.duration_ms / 1000) + 's)\n\n' +
+            'Buckets seen — NSE: ' + (nse.buckets_seen || 0) + '   BSE: ' + (bse.buckets_seen || 0) + '\n' +
+            'Newly added: ' + body.added + '\n' +
+            'Already present: ' + body.already_present + '\n' +
+            'Deactivated (expired): ' + body.deactivated +
+            (body.errors && body.errors.length ? '\n\nErrors:\n' + body.errors.join('\n') : '');
+        alert(msg);
+        // Refresh the F&O stats pill in the UI
+        if (typeof loadFOStats === 'function') loadFOStats();
+    } catch (e) {
+        alert('Options-Refs sync error: ' + (e && e.message ? e.message : e));
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
 async function startFOSync() {
     setFOLoading(true, 'Downloading F&O data...');
     _syncModalMode = 'fo';
