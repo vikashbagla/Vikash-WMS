@@ -748,7 +748,7 @@ async function rhEntSave() {
             if (!h.rightsReceived || h.rightsReceived <= 0) return;
             txns.push({
                 investor_id: h.investor_id,
-                trader_id: h.trader_id || null,
+                trader_id: h.trader_id || h.investor_id,   // A.2.2 — never NULL
                 broker_id: h.broker_id,
                 security_id: newSecId,
                 security_type: 'RIGHTS',
@@ -966,7 +966,7 @@ async function rhPaySaveTransactions() {
         var grossAmount = h.netQuantity * price;
         txns.push({
             investor_id: h.investor_id,
-            trader_id: h.trader_id || null,
+            trader_id: h.trader_id || h.investor_id,   // A.2.2 — never NULL
             broker_id: h.broker_id,
             security_id: sec.id,
             security_type: sec.security_type || 'RIGHTS',
