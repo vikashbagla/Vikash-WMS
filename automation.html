@@ -675,7 +675,7 @@ details summary {
             </div>
           </div>
 
-          <!-- Sub-tabs -->
+          <!-- Sub-tabs (5) — Admin merged into Controls & Admin per owner 2026-07-09 -->
           <div class="au-subtabs">
             <button class="au-subtab-btn active" data-subtab="au-gs-fam-open-panel">
               Open Trades <span id="au-gs-fam-open-badge" class="au-badge idle">…</span>
@@ -685,8 +685,7 @@ details summary {
             </button>
             <button class="au-subtab-btn" data-subtab="au-gs-fam-events-panel">Signals &amp; Events</button>
             <button class="au-subtab-btn" data-subtab="au-gs-fam-runs-panel">Run History</button>
-            <button class="au-subtab-btn" data-subtab="au-gs-fam-controls-panel">Controls</button>
-            <button class="au-subtab-btn" data-subtab="au-gs-fam-admin-panel">Admin</button>
+            <button class="au-subtab-btn" data-subtab="au-gs-fam-controls-panel">Controls &amp; Admin</button>
             <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px" onclick="autoLoadGsFamRefresh()">↻ Refresh</button>
           </div>
 
@@ -697,6 +696,18 @@ details summary {
 
           <!-- Closed Trades panel (mirrors Legacy au-gs-closed-content) -->
           <div id="au-gs-fam-closed-panel" class="au-subtab-panel">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Source:</span>
+                <select id="au-gs-fam-closed-source-filter" onchange="autoGsSetClosedSourceFilter(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All</option>
+                  <option value="chassis">Automation Runner</option>
+                  <option value="tv_webhook">TV Webhook (legacy)</option>
+                </select>
+              </label>
+              <span style="font-size:11px;color:#6b7280">Peak exposure &amp; margin in the totals row respect this filter.</span>
+            </div>
             <div id="au-gs-fam-closed-content" class="au-meta">Loading GS closed trades…</div>
           </div>
 
@@ -718,21 +729,12 @@ details summary {
             </div>
           </div>
 
-          <!-- Controls (Phase B.3 after LIVE-cutover conversation) -->
+          <!-- Controls & Admin (merged per owner 2026-07-09) -->
           <div id="au-gs-fam-controls-panel" class="au-subtab-panel">
             <div class="fam-placeholder">
-              <h2>Controls</h2>
-              <p>Per-strategy pause (silver / gold individually via <code>app_state.paused_sources</code>) and PAPER↔LIVE toggle. Ships after Vikash's GS→LIVE cutover discussion.</p>
-              <span class="fam-eta">Phase B.3 — pending LIVE-cutover plan</span>
-            </div>
-          </div>
-
-          <!-- Admin (Phase B.2) -->
-          <div id="au-gs-fam-admin-panel" class="au-subtab-panel">
-            <div class="fam-placeholder">
-              <h2>Admin</h2>
-              <p>Strategy config (auto_strategies row), plugin MS007_VERSION display, EOD ingest cross-link, gs_catalogue snapshot.</p>
-              <span class="fam-eta">Phase B.2 — next</span>
+              <h2>Controls &amp; Admin</h2>
+              <p>Per-strategy pause (silver / gold individually via <code>app_state.paused_sources</code>), PAPER↔LIVE toggle, strategy config (<code>auto_strategies</code> row), plugin <code>MS007_VERSION</code> display, EOD ingest cross-link, <code>gs_catalogue</code> snapshot — all in one place.</p>
+              <span class="fam-eta">Phase B.2 (admin bits) + Phase B.3 (LIVE toggle after cutover plan)</span>
             </div>
           </div>
 
@@ -884,7 +886,7 @@ details summary {
             <button class="au-btn au-btn-secondary" onclick="autoLoadGsClosedTrades()">↻ Refresh</button>
             <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151">
               <span>Source:</span>
-              <select id="au-gs-closed-source-filter" onchange="autoLoadGsClosedTrades()"
+              <select id="au-gs-closed-source-filter" onchange="autoGsSetClosedSourceFilter(this.value)"
                       style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
                 <option value="all">All</option>
                 <option value="chassis">Automation Runner</option>

@@ -85,6 +85,25 @@ function autoSwitchFamily(fam) {
 }
 
 // ----------------------------------------------------------------------------
+// Shared source-filter state — kept in a single variable so the Legacy dropdown
+// (Legacy → Open Trades → GS card) and the family-page dropdown (GS → Closed
+// Trades tab) always agree. Changing either one syncs the other and re-runs
+// autoLoadGsClosedTrades. Read from autoLoadGsClosedTrades via _srcFilter.
+// ----------------------------------------------------------------------------
+var _auGsClosedSourceFilter = 'all';
+
+function autoGsSetClosedSourceFilter(value) {
+    _auGsClosedSourceFilter = value || 'all';
+    // Mirror the value to whichever dropdowns exist right now.
+    ['au-gs-closed-source-filter', 'au-gs-fam-closed-source-filter'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el && el.value !== _auGsClosedSourceFilter) el.value = _auGsClosedSourceFilter;
+    });
+    // Peak recomputes inside autoLoadGsClosedTrades. Re-run + re-render metrics.
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+}
+
+// ----------------------------------------------------------------------------
 // GS family page (Phase B — 2026-07-09)
 //
 // The Open Trades + Closed Trades tables are shared with Legacy via DOM
@@ -130,6 +149,13 @@ function autoGsFamSetupMirror() {
             dst.className = src.className;
             dst.textContent = src.textContent;
         }).observe(src, { childList: true, subtree: true, characterData: true, attributes: true });
+    });
+    // Initialize both source-filter dropdowns to the shared state value so a
+    // filter set on Legacy earlier in the session persists onto the family page
+    // (and vice-versa).
+    ['au-gs-closed-source-filter', 'au-gs-fam-closed-source-filter'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el && el.value !== _auGsClosedSourceFilter) el.value = _auGsClosedSourceFilter;
     });
     window._auGsFamMirrorReady = true;
 }
@@ -222,10 +248,14 @@ function autoRenderGsFamMetrics() {
         var w = t.closedWins || 0, l = t.closedLosses || 0, tot = w + l;
         setSub('au-gs-fam-metric-realised-sub', tot > 0 ? (w + ' wins · ' + l + ' losses · ' + tot + ' closed') : '');
     }
-    // Peak exposure
+    // Peak exposure — respects the source filter (chassis-only / tv_webhook-only / all)
     if (t.peakExposure != null) {
         setText('au-gs-fam-metric-peak', fmt(t.peakExposure), '');
-        setSub('au-gs-fam-metric-peak-sub', t.peakMargin != null ? ('peak margin ' + fmt(t.peakMargin)) : '');
+        var srcLabel = '';
+        if (t.peakSourceFilter === 'chassis')    srcLabel = ' · runner only';
+        else if (t.peakSourceFilter === 'tv_webhook') srcLabel = ' · TV webhook only';
+        setSub('au-gs-fam-metric-peak-sub',
+            (t.peakMargin != null ? ('peak margin ' + fmt(t.peakMargin)) : '') + srcLabel);
     }
 }
 
@@ -2311,13 +2341,14 @@ async function autoLoadGsClosedTrades() {
             if (!Array.isArray(sigs)) sigs = [];
         }
 
-        // Source filter — reads the <select> next to the Refresh button.
+        // Source filter — shared state variable so BOTH the Legacy dropdown
+        // (au-gs-closed-source-filter) and the new GS family page dropdown
+        // (au-gs-fam-closed-source-filter) stay in sync. Updated via
+        // autoGsSetClosedSourceFilter() which is wired to both onchange handlers.
         // Values: 'all' (default), 'chassis' (automation-runner), 'tv_webhook' (legacy Pine).
-        // The trade's source is defined by the ENTRY row's source; EXIT can differ
-        // (e.g. legacy tv_webhook entry + a MANUAL_CLOSE chassis exit) but the ENTRY
-        // is what defines "where this trade came from".
-        var _srcFilterEl = document.getElementById('au-gs-closed-source-filter');
-        var _srcFilter = _srcFilterEl ? _srcFilterEl.value : 'all';
+        // The trade's source is the ENTRY row's source; EXIT can differ (e.g. legacy
+        // tv_webhook entry + a MANUAL_CLOSE chassis exit) but ENTRY defines origin.
+        var _srcFilter = _auGsClosedSourceFilter || 'all';
 
         var byTrade = {};
         sigs.forEach(function (s) {
@@ -2326,11 +2357,17 @@ async function autoLoadGsClosedTrades() {
             byTrade[s.trade_id].push(s);
         });
 
-        // Peak exposure / margin computation (HIGH-WATER mark across all signal
-        // time — entries add, exits subtract the matching ENTRY's value, not
-        // the EXIT's leg.qty which may be ATR-mismatched per D.26).
-        // The running total at any moment = sum of currently-open trades' entry
-        // exposures. The max of that running total is the peak.
+        // Peak exposure / margin computation (HIGH-WATER mark — entries add,
+        // exits subtract the matching ENTRY's value, not the EXIT's leg.qty
+        // which may be ATR-mismatched per D.26). The running total at any
+        // moment = sum of currently-open trades' entry exposures. Max of that
+        // running total is the peak.
+        //
+        // Filter-aware (2026-07-09): when the source filter is set to a
+        // specific value, the peak is computed as if only that source ever
+        // existed — i.e. we walk only the signals whose ENTRY source matches.
+        // "Peak exposure for chassis-only" answers "max risk from that source
+        // alone" — the more useful lens for a per-source risk review.
         var sigsAsc = sigs.slice().sort(function (a, b) {
             return a.fired_at < b.fired_at ? -1 : a.fired_at > b.fired_at ? 1 : 0;
         });
@@ -2349,9 +2386,18 @@ async function autoLoadGsClosedTrades() {
             var mgn = mP ? (exp * mP / 100) : 0;
             return { exp: exp, mgn: mgn };
         }
+        // Apply source filter to the peak walk. 'all' → walk everything;
+        // 'chassis' / 'tv_webhook' → only signals whose ENTRY row matches.
+        var peakSigs = sigsAsc;
+        if (_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') {
+            peakSigs = sigsAsc.filter(function (s) {
+                var e = entryByTrade[s.trade_id];
+                return e && e.source === _srcFilter;
+            });
+        }
         var _runExp = 0, _runMgn = 0;
         var _peakExp = 0, _peakMgn = 0;
-        sigsAsc.forEach(function (s) {
+        peakSigs.forEach(function (s) {
             var entrySig = entryByTrade[s.trade_id];
             var em = _gsTradeExposureOf(entrySig);
             if (s.event_type === 'ENTRY') { _runExp += em.exp; _runMgn += em.mgn; }
@@ -2361,6 +2407,7 @@ async function autoLoadGsClosedTrades() {
         });
         _auGsTotals.peakExposure = _peakExp > 0 ? _peakExp : null;
         _auGsTotals.peakMargin   = _peakMgn > 0 ? _peakMgn : null;
+        _auGsTotals.peakSourceFilter = _srcFilter;  // for label rendering
 
         var closedRows = [];
         Object.keys(byTrade).forEach(function (tradeId) {
