@@ -1262,8 +1262,15 @@ function wmsCalcStockDayPL(txns, priceCache, todayStr, opts) {
     var ch  = priceCache.ch || 0;
     var prevClose = cmp - ch;
 
-    // Separate transactions: old (before today) net qty, today buys, today sells
-    var oldNetQty = 0;
+    // Split transactions into: (a) everything that made up yesterday's closing
+    // position, and (b) today's BUY / SELL trades, which need price-aware handling.
+    //
+    // CRITICAL (E.10.3): yesterday's quantity is derived from the canonical cost
+    // engine, NOT by summing BUY − SELL here. Quantity also arrives via BONUS,
+    // DEMERGER, SPLIT and RIGHTS. A holding built entirely from bonus/demerger
+    // shares (e.g. RELIANCE, VAML, VISL) would otherwise net to zero and report
+    // no Day P&L at all, while the % change beside it still rendered.
+    var oldTxns    = [];   // pre-today trades + corporate actions of any date
     var todayBuys  = [];   // { qty, price }
     var todaySells = [];   // { qty, price }
 
@@ -1284,20 +1291,18 @@ function wmsCalcStockDayPL(txns, priceCache, todayStr, opts) {
         if (absQty === 0) continue;
         var price = t.price || 0;
 
-        if (tType === 'BUY') {
-            if (tDate === todayStr) {
-                todayBuys.push({ qty: absQty, price: price });
-            } else {
-                oldNetQty += absQty;
-            }
-        } else if (tType === 'SELL') {
-            if (tDate === todayStr) {
-                todaySells.push({ qty: absQty, price: price });
-            } else {
-                oldNetQty -= absQty;
-            }
+        if (tType === 'BUY' && tDate === todayStr) {
+            todayBuys.push({ qty: absQty, price: price });
+        } else if (tType === 'SELL' && tDate === todayStr) {
+            todaySells.push({ qty: absQty, price: price });
+        } else {
+            oldTxns.push(t);
         }
     }
+
+    // netQuantity from wmsCalcAvgCost is order-independent (a signed sum), so the
+    // input order of oldTxns does not matter here. Only its avgCost would care.
+    var oldNetQty = oldTxns.length ? (wmsCalcAvgCost(oldTxns).netQuantity || 0) : 0;
 
     // Fast path: no today trades → simple oldNetQty × ch
     if (todayBuys.length === 0 && todaySells.length === 0) {
@@ -5982,78 +5987,105 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
                 return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0;
             });
 
-            // FIFO lots: each BUY creates a lot, each SELL consumes oldest lots.
-            // Lots track: qty remaining, cost-per-unit (perspective-correct).
+            // FIFO lots, SYMMETRIC in direction (E.10.4). A lot is LONG (opened by
+            // a BUY) or SHORT (opened by a SELL). Any trade first *covers* open lots
+            // of the opposite side FIFO — booking realised P&L — and only the
+            // uncovered remainder opens a new lot on its own side.
+            //
+            // The earlier version only ever let a SELL consume BUY lots. A short
+            // future (SELL first) therefore opened nothing, and the covering BUY
+            // opened a fresh LONG lot instead of closing the short: the position
+            // squared off on screen but NO F&O P&L row was ever posted, so short
+            // F&O profits/losses silently never reached the statement balance.
+            // Since lots are always covered before opening, the array only ever
+            // holds one side at a time — the side check below is a safety net.
             var lots = [];
             for (var ri = 0; ri < rows.length; ri++) {
                 var row = rows[ri];
                 var qty = Math.abs(row.quantity);
                 if (qty === 0) continue;
-                var perUnit = qty > 0 ? (row.netAmount / qty) : 0;
+                if (row.transactionType !== 'BUY' && row.transactionType !== 'SELL') continue;
 
-                if (row.transactionType === 'BUY') {
-                    // Open a new lot
-                    lots.push({ qty: qty, costPerUnit: perUnit });
-                } else if (row.transactionType === 'SELL') {
-                    // Cover against oldest lots (FIFO)
-                    var sellPerUnit = perUnit;
-                    var remainToSell = qty;
-                    var totalBuyCost = 0;
-                    var totalSellProceeds = 0;
+                // netAmount is a positive magnitude for both sides (Math.abs upstream),
+                // so perUnit is the per-unit cost (BUY) or per-unit proceeds (SELL).
+                var perUnit  = row.netAmount / qty;
+                var isBuy    = row.transactionType === 'BUY';
+                var openSide = isBuy ? 'LONG' : 'SHORT';
+                var coverSide = isBuy ? 'SHORT' : 'LONG';
 
-                    while (remainToSell > 0 && lots.length > 0) {
-                        var lot = lots[0];
-                        var matched = Math.min(remainToSell, lot.qty);
-                        totalBuyCost += matched * lot.costPerUnit;
-                        totalSellProceeds += matched * sellPerUnit;
-                        lot.qty -= matched;
-                        remainToSell -= matched;
-                        if (lot.qty <= 0) lots.shift();
+                var remain            = qty;
+                var matchedQty        = 0;
+                var totalBuyCost      = 0;
+                var totalSellProceeds = 0;
+
+                // Cover open lots of the opposite side, oldest first
+                while (remain > 0 && lots.length > 0 && lots[0].side === coverSide) {
+                    var lot = lots[0];
+                    var matched = Math.min(remain, lot.qty);
+                    if (isBuy) {
+                        // Covering a SHORT: the lot holds the sell proceeds
+                        totalSellProceeds += matched * lot.perUnit;
+                        totalBuyCost      += matched * perUnit;
+                    } else {
+                        // Covering a LONG: the lot holds the buy cost
+                        totalBuyCost      += matched * lot.perUnit;
+                        totalSellProceeds += matched * perUnit;
                     }
-
-                    // Realised P&L = sell proceeds − buy cost (FIFO matched)
-                    var realisedPnl = wmsRoundMoney(totalSellProceeds - totalBuyCost);
-                    if (realisedPnl === 0) continue; // no P&L to post
-
-                    // Sign for running balance — firm-POV, consistent across ALL perspectives:
-                    //   profit (positive realisedPnl) → credit (negative amount, reduces balance)
-                    //   loss   (negative realisedPnl) → debit  (positive amount, increases balance)
-                    //
-                    // Broker view counterparty-POV display flip is applied UNIFORMLY in the
-                    // display layer (`lgD()` in trading-ledger.js / `lgRenderEntries`). A
-                    // broker-specific branch HERE would DOUBLE-flip — which was exactly the
-                    // bug observed on stmt_TG: F&O profit was *increasing* the -ve balance
-                    // instead of reducing it (BUY/SELL trade rows worked correctly because
-                    // they use the same single-source sign convention).
-                    // See WMS-CONTEXT 🎯 PRIORITY Issue 1 (2026-05-26 root cause analysis).
-                    var pnlAmount = -realisedPnl;
-
-                    nfoPnlRows.push({
-                        _rowType: 'nfo_pnl',
-                        _source: row._source,
-                        _nfoCashImpact: true,
-                        date: row.date,
-                        // Sort after the SELL trade on the same date so the
-                        // P&L line appears right below the covering trade.
-                        sortKey: row.sortKey.replace('|1|', '|2|'),
-                        entryType: 'NFO_PNL',
-                        amount: pnlAmount,
-                        investorId: row.investorId,
-                        traderId: row.traderId,
-                        brokerId: row.brokerId,
-                        reference: '',
-                        notes: sym + ' F&O P&L',
-                        symbol: sym,
-                        transactionType: 'NFO_PNL',
-                        quantity: qty - remainToSell, // qty actually matched
-                        price: 0,
-                        isNFO: true,
-                        netAmount: Math.abs(realisedPnl),
-                        grossAmount: 0,
-                        traderCharges: 0,
-                        _realisedPnl: realisedPnl // unsigned: +ve = profit, -ve = loss
-                    });
+                    lot.qty  -= matched;
+                    remain   -= matched;
+                    matchedQty += matched;
+                    if (lot.qty <= 0) lots.shift();
                 }
+
+                // Uncovered remainder opens a new lot on this trade's own side
+                if (remain > 0) lots.push({ qty: remain, perUnit: perUnit, side: openSide });
+
+                if (matchedQty === 0) continue; // nothing closed → no P&L to post
+
+                // Realised P&L = sell proceeds − buy cost (FIFO matched).
+                // Identical for a long close and a short cover; only the source of
+                // each leg differs (lot vs. current trade).
+                var realisedPnl = wmsRoundMoney(totalSellProceeds - totalBuyCost);
+                if (realisedPnl === 0) continue; // no P&L to post
+
+                // Sign for running balance — firm-POV, consistent across ALL perspectives:
+                //   profit (positive realisedPnl) → credit (negative amount, reduces balance)
+                //   loss   (negative realisedPnl) → debit  (positive amount, increases balance)
+                //
+                // Broker view counterparty-POV display flip is applied UNIFORMLY in the
+                // display layer (`lgD()` in trading-ledger.js / `lgRenderEntries`). A
+                // broker-specific branch HERE would DOUBLE-flip — which was exactly the
+                // bug observed on stmt_TG: F&O profit was *increasing* the -ve balance
+                // instead of reducing it (BUY/SELL trade rows worked correctly because
+                // they use the same single-source sign convention).
+                // See WMS-CONTEXT 🎯 PRIORITY Issue 1 (2026-05-26 root cause analysis).
+                var pnlAmount = -realisedPnl;
+
+                nfoPnlRows.push({
+                    _rowType: 'nfo_pnl',
+                    _source: row._source,
+                    _nfoCashImpact: true,
+                    date: row.date,
+                    // Sort after the covering trade on the same date so the
+                    // P&L line appears right below it (BUY cover or SELL cover).
+                    sortKey: row.sortKey.replace('|1|', '|2|'),
+                    entryType: 'NFO_PNL',
+                    amount: pnlAmount,
+                    investorId: row.investorId,
+                    traderId: row.traderId,
+                    brokerId: row.brokerId,
+                    reference: '',
+                    notes: sym + ' F&O P&L',
+                    symbol: sym,
+                    transactionType: 'NFO_PNL',
+                    quantity: matchedQty, // qty actually closed
+                    price: 0,
+                    isNFO: true,
+                    netAmount: Math.abs(realisedPnl),
+                    grossAmount: 0,
+                    traderCharges: 0,
+                    _realisedPnl: realisedPnl // unsigned: +ve = profit, -ve = loss
+                });
             }
         }
 
