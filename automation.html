@@ -760,11 +760,17 @@ details summary {
           <div id="au-gs-fam-controls-panel" class="au-subtab-panel">
             <div id="au-gs-fam-controls-content">
 
-              <!-- Admin: strategy config + version + gs_catalogue snapshot -->
+              <!-- Admin: strategy config + scheduling + version + gs_catalogue snapshot -->
               <div class="au-card">
                 <h3>Strategy Configuration <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
                 <div class="au-sub">Rows from <code>auto_strategies</code> for silver_mini_15m + gold_mini_15m. Edit via SQL / Studio for now — a UI editor ships later.</div>
                 <div id="au-gs-fam-strategies" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>Scheduling</h3>
+                <div class="au-sub">All GS cadence lives in <b>external cron-job.org</b> jobs (not in <code>auto_strategies.cron_schedule</code>, which stays null for GS). "Last run" reads from <code>auto_runs</code>; a stale badge appears if the gap exceeds 2× cadence.</div>
+                <div id="au-gs-fam-scheduling" style="margin-top:12px" class="au-meta">Loading…</div>
               </div>
 
               <div class="au-card">

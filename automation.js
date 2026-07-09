@@ -346,13 +346,14 @@ async function autoLoadGsFamAdmin() {
             if (rows.length === 0) {
                 stratsEl.innerHTML = '<div class="au-soon">No matching auto_strategies rows.</div>';
             } else {
+                // Cron column dropped — scheduling isn't per-strategy for GS;
+                // see the Scheduling card below for the actual cron topology.
                 var html = '<table style="width:100%;font-size:12px;border-collapse:collapse">';
                 html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
                         '<th style="padding:6px 8px">Name</th>' +
                         '<th style="padding:6px 8px">Enabled</th>' +
                         '<th style="padding:6px 8px">Mode</th>' +
                         '<th style="padding:6px 8px">Version</th>' +
-                        '<th style="padding:6px 8px">Cron</th>' +
                         '<th style="padding:6px 8px">Metadata</th>' +
                         '</tr></thead><tbody>';
                 rows.forEach(function (s) {
@@ -362,8 +363,7 @@ async function autoLoadGsFamAdmin() {
                             '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge error">no</span>') + '</td>' +
                             '<td style="padding:6px 8px"><b>' + autoEsc(s.execution_mode || '—') + '</b></td>' +
                             '<td style="padding:6px 8px;font-family:monospace">' + autoEsc(s.version || '—') + '</td>' +
-                            '<td style="padding:6px 8px;font-family:monospace;font-size:10px">' + autoEsc(s.cron_schedule || '—') + '</td>' +
-                            '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280;max-width:400px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(meta) + '">' + autoEsc(meta.slice(0, 100)) + (meta.length > 100 ? '…' : '') + '</td>' +
+                            '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280;max-width:500px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(meta) + '">' + autoEsc(meta.slice(0, 120)) + (meta.length > 120 ? '…' : '') + '</td>' +
                             '</tr>';
                 });
                 html += '</tbody></table>';
@@ -374,7 +374,67 @@ async function autoLoadGsFamAdmin() {
         }
     }
 
-    // 2. Plugin version — most-recent auto_signals row's metadata.strategy_version wins
+    // 2. Scheduling — external cron-job.org cron topology. auto_strategies.cron_schedule
+    //    is null for GS by design (strategies don't own their cadence); reads
+    //    latest auto_runs row to display "last run" freshness per cron.
+    var schedEl = document.getElementById('au-gs-fam-scheduling');
+    if (schedEl) {
+        var schedJobs = [
+            { key: 'silver_mini_15m', label: 'Silver signal scan', endpoint: 'automation-runner?strategy=silver_mini_15m', cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
+            { key: 'gold_mini_15m',   label: 'Gold signal scan',   endpoint: 'automation-runner?strategy=gold_mini_15m',   cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
+            { key: '_eod_ingest',     label: 'EOD prices ingest',  endpoint: 'eod-prices-ingest',                          cadence: 'daily · after MCX close (~23:35 IST)',      staleMinutes: 60 * 30 }
+        ];
+        try {
+            var results = await Promise.all(schedJobs.map(function (j) {
+                return fetch(SUPABASE_URL + '/rest/v1/auto_runs?strategy_name=eq.' + encodeURIComponent(j.key) + '&order=finished_at.desc&limit=1&select=finished_at,status',
+                    { headers: wmsHeaders() }).then(function (r) { return r.ok ? r.json() : []; });
+            }));
+            var now = Date.now();
+            var html = '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+            html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                    '<th style="padding:6px 8px">Job</th>' +
+                    '<th style="padding:6px 8px">Endpoint (Edge Function)</th>' +
+                    '<th style="padding:6px 8px">Cadence</th>' +
+                    '<th style="padding:6px 8px">Last run</th>' +
+                    '<th style="padding:6px 8px">Status</th>' +
+                    '</tr></thead><tbody>';
+            schedJobs.forEach(function (j, i) {
+                var row = results[i][0];
+                var lastCell, badgeCell;
+                if (!row || !row.finished_at) {
+                    lastCell = '<span style="color:#9ca3af">never</span>';
+                    badgeCell = '<span class="au-badge idle" style="font-size:10px">no data</span>';
+                } else {
+                    var ageMin = Math.round((now - new Date(row.finished_at).getTime()) / 60000);
+                    var stale = ageMin > j.staleMinutes;
+                    var ago = ageMin < 60 ? (ageMin + 'm ago') : ageMin < 1440 ? (Math.round(ageMin/60) + 'h ago') : (Math.round(ageMin/1440) + 'd ago');
+                    lastCell = '<span title="' + autoEsc(autoFmtIST(row.finished_at)) + '">' + ago + '</span>';
+                    var okStatus = (row.status === 'success' || row.status === 'OK' || row.status === 'ok');
+                    if (stale)         badgeCell = '<span class="au-badge error" style="font-size:10px">STALE</span>';
+                    else if (okStatus) badgeCell = '<span class="au-badge success" style="font-size:10px">OK</span>';
+                    else               badgeCell = '<span class="au-badge idle" style="font-size:10px">' + autoEsc(row.status || '—') + '</span>';
+                }
+                html += '<tr style="border-top:1px solid #e5e7eb">' +
+                        '<td style="padding:6px 8px"><b>' + autoEsc(j.label) + '</b></td>' +
+                        '<td style="padding:6px 8px;font-family:monospace;font-size:11px;color:#4b5563">' + autoEsc(j.endpoint) + '</td>' +
+                        '<td style="padding:6px 8px;font-size:11px;color:#4b5563">' + autoEsc(j.cadence) + '</td>' +
+                        '<td style="padding:6px 8px;font-size:11px">' + lastCell + '</td>' +
+                        '<td style="padding:6px 8px">' + badgeCell + '</td>' +
+                        '</tr>';
+            });
+            html += '</tbody></table>';
+            html += '<div style="font-size:11px;color:#6b7280;margin-top:8px;line-height:1.5">' +
+                    '• Triggers configured at <a href="https://cron-job.org" target="_blank" style="color:#2563eb">cron-job.org</a> — not editable from WMS.<br>' +
+                    '• Silver &amp; gold have SEPARATE cron entries (EXPLICIT_ONLY_STRATEGIES guard in the runner blocks accidental invocation).<br>' +
+                    '• A stalled cron here means cron-job.org didn\'t hit the EF; check its dashboard.' +
+                    '</div>';
+            schedEl.innerHTML = html;
+        } catch (e) {
+            schedEl.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
+        }
+    }
+
+    // 3. Plugin version — most-recent auto_signals row's metadata.strategy_version wins
     //    (that's the source-of-truth for what's currently running). Falls back to
     //    auto_strategies.version if no recent signal.
     var vEl = document.getElementById('au-gs-fam-plugin-version');
