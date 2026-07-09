@@ -402,8 +402,8 @@ details summary {
       <!-- GS sub-panel (TV webhook driven) -->
       <div id="au-ot-gs" class="au-subtab-panel active">
         <div class="au-card">
-          <h3>GS Open Trades — Silver / Gold (TV Webhook) <span id="au-gs-open-status" class="au-badge idle">idle</span></h3>
-          <div class="au-sub">Single-instrument MS007 trades sourced from the analyst's TradingView Pine alerts. Live P&amp;L uses the current Fyers LTP of the executed front-month contract; stop &amp; ATR are from the entry signal's metadata.</div>
+          <h3>GS Open Trades — Silver / Gold <span id="au-gs-open-status" class="au-badge idle">idle</span></h3>
+          <div class="au-sub">Single-instrument MS007 trades from the automation-runner (chassis). Live P&amp;L uses the current Fyers LTP of the executed front-month contract; stop &amp; ATR are from the entry signal's metadata.</div>
           <div class="au-actions">
             <button class="au-btn au-btn-secondary" onclick="autoLoadGsOpenTrades()">↻ Refresh</button>
           </div>
@@ -411,8 +411,8 @@ details summary {
         </div>
 
         <div class="au-card" style="margin-top:16px">
-          <h3>GS Closed Trades — Silver / Gold (TV Webhook) <span id="au-gs-closed-status" class="au-badge idle">idle</span></h3>
-          <div class="au-sub">Trades that have been exited via webhook (EXIT_SL / EXIT_TRAIL / EXIT_EMA / EXIT_TIME) or manually closed. Realised P&amp;L computed from entry vs exit price × qty × point_value.</div>
+          <h3>GS Closed Trades — Silver / Gold <span id="au-gs-closed-status" class="au-badge idle">idle</span></h3>
+          <div class="au-sub">Trades that have exited (EXIT_SL / EXIT_TRAIL / EXIT_EMA / EXIT_TIME) or been manually closed. Realised P&amp;L computed from entry vs exit price × qty × point_value.</div>
           <div class="au-actions">
             <button class="au-btn au-btn-secondary" onclick="autoLoadGsClosedTrades()">↻ Refresh</button>
           </div>

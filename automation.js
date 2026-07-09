@@ -1873,32 +1873,27 @@ async function autoLoadGsClosedTrades() {
     try {
         var webhookStrats = await autoGetWebhookStrategyNames();
 
-        // Fetch webhook-sourced auto_signals (last 500 events). Group by trade_id,
+        // Fetch GS auto_signals (last _AU_CLOSED_LIMIT events). Group by trade_id,
         // include only trades that have at least one EXIT/MANUAL_CLOSE and net to
         // zero qty.
-        var resp = await fetch(
-            SUPABASE_URL + '/rest/v1/auto_signals?source=eq.tv_webhook&order=fired_at.desc&limit=' + _AU_CLOSED_LIMIT +
-            '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata',
-            { headers: wmsHeaders() }
-        );
-        if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()).slice(0, 200));
-        var sigs = await resp.json();
-        if (!Array.isArray(sigs)) sigs = [];
-        // Also pull MANUAL_CLOSE rows even if their source isn't tv_webhook (the
-        // manual-close path writes source='chassis' by default). Match by
-        // strategy_name being in webhookStrats and event_type='MANUAL_CLOSE'.
+        //
+        // Filter by strategy_name — NOT by source. The GS strategies migrated from
+        // tv-webhook execution to the automation-runner (chassis) in Jun 2026, so
+        // pre-migration signals have `source='tv_webhook'` and post-migration ones
+        // have `source='chassis'` (the auto_signals.source default from migration 41).
+        // A strategy-name filter cleanly covers both eras.
         var stratList = Array.from(webhookStrats).map(function (n) { return '"' + n + '"'; }).join(',');
+        var sigs = [];
         if (stratList) {
-            var mcResp = await fetch(
+            var resp = await fetch(
                 SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(' + encodeURIComponent(stratList) +
-                ')&event_type=eq.MANUAL_CLOSE&order=fired_at.desc&limit=' + _AU_CLOSED_LIMIT +
+                ')&order=fired_at.desc&limit=' + _AU_CLOSED_LIMIT +
                 '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata',
                 { headers: wmsHeaders() }
             );
-            if (mcResp.ok) {
-                var mcRows = await mcResp.json();
-                if (Array.isArray(mcRows)) sigs = sigs.concat(mcRows);
-            }
+            if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()).slice(0, 200));
+            sigs = await resp.json();
+            if (!Array.isArray(sigs)) sigs = [];
         }
 
         var byTrade = {};
