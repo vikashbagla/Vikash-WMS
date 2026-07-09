@@ -2023,9 +2023,48 @@ async function autoLoadGsClosedTrades() {
             return;
         }
 
+        // Compute totals up front so we can render the total row at the TOP
+        // (owner ask 2026-07-09 — with many trades, scrolling to the tfoot is tedious).
+        var _totalPnl = 0, _wins = 0, _losses = 0;
+        var _totalExposure = 0, _anyExposure = false;
+        closedRows.forEach(function (ct) {
+            var _lg = ct.entry.legs && ct.entry.legs[0];
+            var _pv = _lg ? autoGsPointValue(_lg.short_symbol) : null;
+            var _mgPct = _lg ? autoGsMarginPct(_lg.short_symbol) : null;
+            if (_pv && ct.qty_lots && ct.entry_price != null) {
+                var _exp = Number(ct.qty_lots) * _pv * Number(ct.entry_price);
+                if (isFinite(_exp) && _exp > 0) { _totalExposure += _exp; _anyExposure = true; }
+            }
+            if (ct.pnl != null) {
+                _totalPnl += ct.pnl;
+                if (ct.pnl >= 0) _wins++; else _losses++;
+            }
+        });
+        var _tSign = _totalPnl >= 0 ? '+' : '−';
+        var _tCol  = _totalPnl >= 0 ? '#047857' : '#dc2626';
+        var _tAbs  = Math.abs(Math.round(_totalPnl)).toLocaleString('en-IN');
+        var _tPctSub = '';
+        if (_anyExposure && _totalExposure > 0) {
+            var _tPct = (_totalPnl / _totalExposure) * 100;
+            var _tPctSign = _tPct >= 0 ? '+' : '−';
+            _tPctSub = '<div style="color:' + _tCol + ';font-size:10px;margin-top:1px;font-weight:500">' +
+                        _tPctSign + Math.abs(_tPct).toFixed(2) + '%</div>';
+        }
+        var _totalLabel = 'Total (' + closedRows.length + ' closed — ' + _wins + 'W / ' + _losses + 'L' +
+                         (_srcFilter !== 'all' ? ' — filtered from ' + _closedTotal : '') + ')';
+
         var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
-        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
-                '<th style="padding:6px 8px">Strategy</th>' +
+        html += '<thead>' +
+                // Row 1 — totals (sticky at top so it stays visible even during vertical scroll of the table)
+                '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700;position:sticky;top:0">' +
+                '<td colspan="9" style="padding:8px">' + autoEsc(_totalLabel) + '</td>' +
+                '<td style="padding:8px;text-align:right;vertical-align:top;white-space:nowrap">' +
+                '<span style="color:' + _tCol + '">' + _tSign + '₹' + _tAbs + '</span>' + _tPctSub +
+                '</td>' +
+                '</tr>' +
+                // Row 2 — column headers
+                '<tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Strategy<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ source · version</span></th>' +
                 '<th style="padding:6px 8px">Side</th>' +
                 '<th style="padding:6px 8px">Entry</th>' +
                 '<th style="padding:6px 8px">Exit<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>' +
@@ -2034,7 +2073,6 @@ async function autoLoadGsClosedTrades() {
                 '<th style="padding:6px 8px;text-align:right">Entry Px</th>' +
                 '<th style="padding:6px 8px;text-align:right">Exit Px</th>' +
                 '<th style="padding:6px 8px">Exit Reason</th>' +
-                '<th style="padding:6px 8px">Source<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ version</span></th>' +
                 '<th style="padding:6px 8px;text-align:right">Realised P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>' +
                 '</tr></thead><tbody>';
 
@@ -2094,20 +2132,23 @@ async function autoLoadGsClosedTrades() {
                 pnlCell = '<span style="color:#9ca3af">—</span>';
             }
 
-            // Source + version cell — friendly labels; unknown values become an em-dash
+            // Source + version go under the Strategy code, as a small grey sub-line.
             var srcLabel = ct.source === 'chassis' ? 'Runner'
                          : ct.source === 'tv_webhook' ? 'TV Webhook'
                          : (ct.source ? autoEsc(String(ct.source)) : '—');
             var srcColor = ct.source === 'chassis' ? '#4338ca'
                          : ct.source === 'tv_webhook' ? '#0891b2'
                          : '#6b7280';
-            var verSub = ct.version
-                ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + autoEsc(String(ct.version)) + '</div>'
-                : '<div style="color:#9ca3af;font-size:10px;margin-top:1px">—</div>';
-            var sourceCell = '<span style="color:' + srcColor + ';font-weight:600">' + srcLabel + '</span>' + verSub;
+            var verStr = ct.version ? autoEsc(String(ct.version)) : '—';
+            var strategyCell = '<code>' + autoEsc(ct.strategy_name) + '</code>' +
+                '<div style="font-size:10px;margin-top:2px">' +
+                    '<span style="color:' + srcColor + ';font-weight:500">' + srcLabel + '</span>' +
+                    '<span style="color:#9ca3af"> · </span>' +
+                    '<span style="color:#6b7280">' + verStr + '</span>' +
+                '</div>';
 
             html += '<tr style="border-top:1px solid #e5e7eb">' +
-                    '<td style="padding:6px 8px;vertical-align:top"><code>' + autoEsc(ct.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px;vertical-align:top">' + strategyCell + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(entryStr) + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(exitStr) + daysSub + '</td>' +
@@ -2116,28 +2157,14 @@ async function autoLoadGsClosedTrades() {
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(entryPxStr) + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(exitPxStr) + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top"><span style="color:' + exitTypeColor + ';font-weight:600">' + autoEsc(_autoExitTypeLabel(exitType)) + '</span></td>' +
-                    '<td style="padding:6px 8px;vertical-align:top">' + sourceCell + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + pnlCell + '</td>' +
                     '</tr>';
         });
 
-        var tSign = totalPnl >= 0 ? '+' : '−';
-        var tCol = totalPnl >= 0 ? '#047857' : '#dc2626';
-        var tAbs = Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
-        var totalPctSub = '';
-        if (anyExposure && totalExposure > 0) {
-            var totPct = (totalPnl / totalExposure) * 100;
-            var totPctSign = totPct >= 0 ? '+' : '−';
-            totalPctSub = '<div style="color:' + tCol + ';font-size:10px;margin-top:1px;font-weight:500">' +
-                          totPctSign + Math.abs(totPct).toFixed(2) + '%</div>';
-        }
-        html += '<tfoot><tr style="border-top:2px solid #cbd5e0;background:#f7fafc;font-weight:700">' +
-                '<td colspan="10" style="padding:8px">Total (' + closedRows.length + ' closed — ' + wins + 'W / ' + losses + 'L' +
-                (_srcFilter !== 'all' ? ' — filtered from ' + _closedTotal : '') +
-                ')</td>' +
-                '<td style="padding:8px;text-align:right;vertical-align:top"><span style="color:' + tCol + '">' + tSign + '₹' + tAbs + '</span>' + totalPctSub + '</td>' +
-                '</tr></tfoot>';
-        html += '</table></div>';
+        // Totals row now renders at the TOP of the table (see thead above) —
+        // no tfoot needed. totalPnl/wins/losses computed inside the loop above
+        // are still used to populate _auGsTotals for the sticky totals bar.
+        html += '</tbody></table></div>';
         el.innerHTML = html;
         var _statusLabel = _srcFilter === 'all'
             ? closedRows.length + ' closed'
