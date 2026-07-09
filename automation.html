@@ -470,6 +470,59 @@ details summary {
 .cron-list .cron-badge.stale { background: #fee2e2; color: #7f1d1d; }
 .cron-list .cron-badge.na { background: #f3f4f6; color: #6b7280; }
 
+/* ================================================================
+   FAMILY PAGE ANATOMY — Phase B (2026-07-09).
+   Shared shell for GS / KH / Pairs family pages: header strip,
+   metrics strip, sub-tab bar. See UI-REIMAGINE-PLAN.md §3.
+   ================================================================ */
+.fam-page { display: flex; flex-direction: column; gap: 12px; max-width: 1500px; margin: 0 auto; }
+
+.fam-header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 12px 16px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+}
+.fam-header .fam-title h2 { margin: 0; font-size: 17px; color: #1e293b; }
+.fam-header .fam-title .fam-sub { font-size: 11px; color: #6b7280; margin-top: 2px; }
+.fam-header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 11px; color: #6b7280; }
+.fam-header-right .fam-lastact { font-family: monospace; }
+
+.fam-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 8px;
+}
+.fam-metric-tile {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.fam-metric-tile .metric-label {
+    font-size: 10px;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-weight: 600;
+}
+.fam-metric-tile .metric-value {
+    font-size: 15px;
+    color: #1f2937;
+    font-weight: 700;
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+}
+.fam-metric-tile .metric-sub {
+    font-size: 10px;
+    color: #6b7280;
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+}
+.fam-metric-tile .metric-value.pos { color: #16a34a; }
+.fam-metric-tile .metric-value.neg { color: #dc2626; }
+
 </style>
 </head>
 
@@ -573,15 +626,116 @@ details summary {
       </div>
     </div>
 
-    <!-- 🥈🥇 GS placeholder -->
+    <!-- 🥈🥇 GS family page (Phase B — 2026-07-09).
+         Silver + gold combined. Feature parity with Legacy Open/Closed via
+         DOM mirroring (see automation.js autoGsFamSetupMirror). Signals /
+         Runs / Controls / Admin tabs ship in Phase B.2. -->
     <div id="au-fam-gs" class="automation-family-panel">
       <div class="fam-scroll">
-        <div class="fam-placeholder">
-          <h2>🥈🥇 GS — Silver &amp; Gold Mini</h2>
-          <p>MS007 v2.2 on MCX 15-min. Silver Mini + Gold Mini combined on one page with a Strategy column filter.</p>
-          <p>The family page ships in <b>Phase B</b>. Until then, GS Open / Closed / Events / Runs live under Legacy view.</p>
-          <span class="fam-eta">Phase B — coming soon</span><br>
-          <a class="fam-link-legacy" onclick="autoSwitchFamily('legacy'); setTimeout(()=>{const b=document.querySelector('.automation-tab-btn[data-tab=au-open-trades]'); if(b) b.click();}, 50);">→ Open GS trades in Legacy view</a>
+        <div class="fam-page">
+
+          <!-- Header strip -->
+          <div class="fam-header">
+            <div class="fam-title">
+              <h2>🥈🥇 GS — Silver &amp; Gold Mini</h2>
+              <div class="fam-sub">MS007 v2.2 on MCX 15-min · silver_mini_15m + gold_mini_15m combined</div>
+            </div>
+            <div class="fam-header-right">
+              <span class="status-pill paper" id="au-gs-fam-mode">🟡 PAPER</span>
+              <span id="au-gs-fam-lastact" class="fam-lastact">Last activity: —</span>
+            </div>
+          </div>
+
+          <!-- Metrics strip -->
+          <div class="fam-metrics">
+            <div class="fam-metric-tile">
+              <div class="metric-label">Open positions</div>
+              <div class="metric-value" id="au-gs-fam-metric-open">—</div>
+              <div class="metric-sub" id="au-gs-fam-metric-open-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Live P&amp;L (open)</div>
+              <div class="metric-value" id="au-gs-fam-metric-livepnl">—</div>
+              <div class="metric-sub" id="au-gs-fam-metric-livepnl-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Realised (all-time)</div>
+              <div class="metric-value" id="au-gs-fam-metric-realised">—</div>
+              <div class="metric-sub" id="au-gs-fam-metric-realised-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Peak exposure</div>
+              <div class="metric-value" id="au-gs-fam-metric-peak">—</div>
+              <div class="metric-sub" id="au-gs-fam-metric-peak-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Plugin version</div>
+              <div class="metric-value" id="au-gs-fam-metric-version">MS007-v2.2</div>
+              <div class="metric-sub">from plugin VERSION constant</div>
+            </div>
+          </div>
+
+          <!-- Sub-tabs -->
+          <div class="au-subtabs">
+            <button class="au-subtab-btn active" data-subtab="au-gs-fam-open-panel">
+              Open Trades <span id="au-gs-fam-open-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-gs-fam-closed-panel">
+              Closed Trades <span id="au-gs-fam-closed-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-gs-fam-events-panel">Signals &amp; Events</button>
+            <button class="au-subtab-btn" data-subtab="au-gs-fam-runs-panel">Run History</button>
+            <button class="au-subtab-btn" data-subtab="au-gs-fam-controls-panel">Controls</button>
+            <button class="au-subtab-btn" data-subtab="au-gs-fam-admin-panel">Admin</button>
+            <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px" onclick="autoLoadGsFamRefresh()">↻ Refresh</button>
+          </div>
+
+          <!-- Open Trades panel (mirrors Legacy au-gs-open-content) -->
+          <div id="au-gs-fam-open-panel" class="au-subtab-panel active">
+            <div id="au-gs-fam-open-content" class="au-meta">Loading GS open trades…</div>
+          </div>
+
+          <!-- Closed Trades panel (mirrors Legacy au-gs-closed-content) -->
+          <div id="au-gs-fam-closed-panel" class="au-subtab-panel">
+            <div id="au-gs-fam-closed-content" class="au-meta">Loading GS closed trades…</div>
+          </div>
+
+          <!-- Signals & Events (Phase B.2) -->
+          <div id="au-gs-fam-events-panel" class="au-subtab-panel">
+            <div class="fam-placeholder">
+              <h2>Signals &amp; Events</h2>
+              <p>Full auto_signals log filtered to silver_mini_15m + gold_mini_15m — ENTRY, EXIT, HEARTBEAT, with source and strategy_version columns.</p>
+              <span class="fam-eta">Phase B.2 — next</span>
+            </div>
+          </div>
+
+          <!-- Run History (Phase B.2) -->
+          <div id="au-gs-fam-runs-panel" class="au-subtab-panel">
+            <div class="fam-placeholder">
+              <h2>Run History</h2>
+              <p>auto_runs filtered to GS strategies. Duration, signals fired, errors.</p>
+              <span class="fam-eta">Phase B.2 — next</span>
+            </div>
+          </div>
+
+          <!-- Controls (Phase B.3 after LIVE-cutover conversation) -->
+          <div id="au-gs-fam-controls-panel" class="au-subtab-panel">
+            <div class="fam-placeholder">
+              <h2>Controls</h2>
+              <p>Per-strategy pause (silver / gold individually via <code>app_state.paused_sources</code>) and PAPER↔LIVE toggle. Ships after Vikash's GS→LIVE cutover discussion.</p>
+              <span class="fam-eta">Phase B.3 — pending LIVE-cutover plan</span>
+            </div>
+          </div>
+
+          <!-- Admin (Phase B.2) -->
+          <div id="au-gs-fam-admin-panel" class="au-subtab-panel">
+            <div class="fam-placeholder">
+              <h2>Admin</h2>
+              <p>Strategy config (auto_strategies row), plugin MS007_VERSION display, EOD ingest cross-link, gs_catalogue snapshot.</p>
+              <span class="fam-eta">Phase B.2 — next</span>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>

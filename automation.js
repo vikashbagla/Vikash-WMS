@@ -64,9 +64,169 @@ function autoSwitchFamily(fam) {
         window._auHealthLoaded = true;
     }
 
+    if (fam === 'gs') {
+        // First-time init: set up DOM mirroring so any legacy Open/Closed render
+        // also fills the family page targets, plus trigger initial load.
+        if (!window._auGsFamMirrorReady) autoGsFamSetupMirror();
+        if (!window._auGsFamLoaded) {
+            autoLoadGsFamRefresh();
+            window._auGsFamLoaded = true;
+        } else {
+            // Refresh metrics from the last-known _auGsTotals in case they've drifted.
+            autoRenderGsFamMetrics();
+        }
+        // GS Open Trades live P&L uses the shared refresh timer; make sure it's armed.
+        autoEnsureSharedRefresh();
+    }
+
     // GS totals bar hides itself when the GS Open Trades sub-tab isn't visible;
     // toggling family visibility must retrigger that check.
     autoUpdateGsTotalsBar();
+}
+
+// ----------------------------------------------------------------------------
+// GS family page (Phase B — 2026-07-09)
+//
+// The Open Trades + Closed Trades tables are shared with Legacy via DOM
+// mirroring. autoLoadGsOpenTrades / autoLoadGsClosedTrades render into
+// au-gs-open-content / au-gs-closed-content; a MutationObserver copies the
+// output into au-gs-fam-open-content / au-gs-fam-closed-content so both
+// views stay in perfect sync without duplicating render logic.
+// (Signals / Runs / Controls / Admin ship in Phase B.2 / B.3.)
+// ----------------------------------------------------------------------------
+
+function autoGsFamSetupMirror() {
+    var pairs = [
+        ['au-gs-open-content',   'au-gs-fam-open-content'],
+        ['au-gs-closed-content', 'au-gs-fam-closed-content']
+    ];
+    pairs.forEach(function (p) {
+        var src = document.getElementById(p[0]);
+        var dst = document.getElementById(p[1]);
+        if (!src || !dst || src._auMirrored) return;
+        src._auMirrored = true;
+        // Initial snapshot
+        dst.innerHTML = src.innerHTML;
+        // Live mirror on subsequent renders (innerHTML sets fire childList mutations)
+        new MutationObserver(function () {
+            dst.innerHTML = src.innerHTML;
+            // Metrics live off _auGsTotals which the load functions populate; recompute UI.
+            autoRenderGsFamMetrics();
+        }).observe(src, { childList: true, subtree: true, characterData: true });
+    });
+    // Also mirror the status badges (Open / Closed count pills next to sub-tab labels).
+    var badges = [
+        ['au-gs-open-status',   'au-gs-fam-open-badge'],
+        ['au-gs-closed-status', 'au-gs-fam-closed-badge']
+    ];
+    badges.forEach(function (p) {
+        var src = document.getElementById(p[0]);
+        var dst = document.getElementById(p[1]);
+        if (!src || !dst || src._auBadgeMirrored) return;
+        src._auBadgeMirrored = true;
+        dst.className = src.className;
+        dst.textContent = src.textContent;
+        new MutationObserver(function () {
+            dst.className = src.className;
+            dst.textContent = src.textContent;
+        }).observe(src, { childList: true, subtree: true, characterData: true, attributes: true });
+    });
+    window._auGsFamMirrorReady = true;
+}
+
+function autoLoadGsFamRefresh() {
+    // Delegate to the existing loaders — mirroring pulls the output into the family page.
+    if (typeof autoLoadGsOpenTrades === 'function') autoLoadGsOpenTrades();
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+    // Header metadata: mode pill + last activity
+    autoLoadGsFamHeader();
+}
+
+async function autoLoadGsFamHeader() {
+    try {
+        // Mode: read auto_strategies.execution_mode for silver + gold
+        var sr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=in.(silver_mini_15m,gold_mini_15m)&select=name,enabled,execution_mode,version',
+            { headers: wmsHeaders() });
+        var strategies = sr.ok ? await sr.json() : [];
+        var pill = document.getElementById('au-gs-fam-mode');
+        if (pill) {
+            var anyLive = strategies.some(function (s) { return s.execution_mode === 'LIVE'; });
+            var allEnabled = strategies.length > 0 && strategies.every(function (s) { return s.enabled; });
+            if (anyLive)         { pill.className = 'status-pill live';    pill.textContent = '🟢 LIVE'; }
+            else if (allEnabled) { pill.className = 'status-pill paper';   pill.textContent = '🟡 PAPER'; }
+            else                 { pill.className = 'status-pill stopped'; pill.textContent = '⏹ DISABLED'; }
+        }
+        // Version: use the max version across strategies (they should all be v2.2).
+        var vEl = document.getElementById('au-gs-fam-metric-version');
+        if (vEl && strategies.length > 0) {
+            var versions = Array.from(new Set(strategies.map(function (s) { return s.version || 'unknown'; })));
+            vEl.textContent = versions.join(' / ');
+        }
+        // Last activity: most recent auto_signals row for GS strategies
+        var ar = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(silver_mini_15m,gold_mini_15m)&order=fired_at.desc&limit=1&select=fired_at,event_type,strategy_name',
+            { headers: wmsHeaders() });
+        var last = ar.ok ? (await ar.json())[0] : null;
+        var laEl = document.getElementById('au-gs-fam-lastact');
+        if (laEl) {
+            if (last) {
+                var ago = Math.round((Date.now() - new Date(last.fired_at).getTime()) / 60000);
+                var agoStr = ago < 60 ? (ago + 'm ago') : ago < 1440 ? (Math.round(ago/60) + 'h ago') : (Math.round(ago/1440) + 'd ago');
+                laEl.textContent = 'Last activity: ' + last.event_type + ' · ' + last.strategy_name.replace('_mini_15m', '') + ' · ' + agoStr;
+            } else {
+                laEl.textContent = 'Last activity: no signals yet';
+            }
+        }
+    } catch (e) {
+        // Silent — header is nice-to-have, not critical
+    }
+}
+
+function autoRenderGsFamMetrics() {
+    var t = _auGsTotals || {};
+    var fmt = function (n) { if (n == null) return '—'; return '₹' + Math.round(n).toLocaleString('en-IN'); };
+    var fmtSigned = function (n) {
+        if (n == null) return '—';
+        var sign = n >= 0 ? '+' : '−';
+        return sign + '₹' + Math.round(Math.abs(n)).toLocaleString('en-IN');
+    };
+    var setText = function (id, txt, cls) {
+        var e = document.getElementById(id);
+        if (!e) return;
+        e.textContent = txt;
+        if (cls !== undefined) e.className = 'metric-value ' + cls;
+    };
+    var setSub = function (id, txt) {
+        var e = document.getElementById(id);
+        if (e) e.textContent = txt || '';
+    };
+
+    // Open positions
+    if (t.openCount != null) {
+        setText('au-gs-fam-metric-open', t.openCount + (t.openCount === 1 ? ' trade' : ' trades'), '');
+        setSub('au-gs-fam-metric-open-sub', t.openExposure != null ? ('exposure ' + fmt(t.openExposure)) : '');
+    }
+    // Live P&L on open
+    if (t.openLivePnl != null) {
+        var pnl = t.openLivePnl;
+        setText('au-gs-fam-metric-livepnl', fmtSigned(pnl), pnl >= 0 ? 'pos' : 'neg');
+        var pct = null;
+        if (t.openExposure && t.openExposure !== 0) pct = (pnl / t.openExposure) * 100;
+        setSub('au-gs-fam-metric-livepnl-sub', pct != null ? ((pct >= 0 ? '+' : '−') + Math.abs(pct).toFixed(2) + '% of exposure') : '');
+    } else if (t.openCount === 0) {
+        setText('au-gs-fam-metric-livepnl', '—', '');
+        setSub('au-gs-fam-metric-livepnl-sub', 'no open positions');
+    }
+    // Realised (all-time closed)
+    if (t.closedRealisedPnl != null) {
+        setText('au-gs-fam-metric-realised', fmtSigned(t.closedRealisedPnl), t.closedRealisedPnl >= 0 ? 'pos' : 'neg');
+        var w = t.closedWins || 0, l = t.closedLosses || 0, tot = w + l;
+        setSub('au-gs-fam-metric-realised-sub', tot > 0 ? (w + ' wins · ' + l + ' losses · ' + tot + ' closed') : '');
+    }
+    // Peak exposure
+    if (t.peakExposure != null) {
+        setText('au-gs-fam-metric-peak', fmt(t.peakExposure), '');
+        setSub('au-gs-fam-metric-peak-sub', t.peakMargin != null ? ('peak margin ' + fmt(t.peakMargin)) : '');
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -127,8 +287,8 @@ async function autoHealthToggleKill() {
     if (!_auHealthState) return;
     var on = !!_auHealthState.kill_switch;
     var msg = on
-        ? 'Resume ALL automated strategies (turn kill switch OFF)?'
-        : '⚠️ TRIP the master kill switch?\n\nAll strategies halt immediately — GS PAPER stops writing signals, Katalysthive LIVE stops placing orders. Every signal is rejected until resumed.';
+        ? 'Resume — turn the kill switch OFF?\n\nAll LIVE order placement is re-enabled from the next signal onwards.'
+        : '⚠️ TRIP the master kill switch?\n\nHalts all LIVE order placement broker-wide:\n• Katalysthive inbound signals are rejected (HTTP 503 KILL_SWITCH)\n• Droplet stops dispensing queued orders (poller returns kill_switch:true)\n\nReversible — toggle OFF to resume. No queue is destroyed, no data is lost.\n\nGS PAPER continues writing signals to auto_signals (chassis doesn\'t check kill_switch yet — see task #43); no orders reach any broker regardless.';
     if (!confirm(msg)) return;
     try {
         var patch = {
@@ -300,9 +460,15 @@ function autoEnsureSharedRefresh() {
 // user is viewing that sub-tab.
 function autoOnSharedRefresh() {
     if (document.hidden) return;
-    if (!document.getElementById('au-open-trades')?.classList.contains('active')) return;
-    var gsActive    = document.getElementById('au-ot-gs')?.classList.contains('active');
-    var pairsActive = document.getElementById('au-ot-pairs')?.classList.contains('active');
+    // GS live-price refresh triggers from EITHER surface:
+    //   (a) new GS family page → Open Trades sub-tab
+    //   (b) Legacy view → Open Trades tab → GS sub-tab (mirroring keeps both fresh)
+    var legacyOpen  = document.getElementById('au-open-trades')?.classList.contains('active');
+    var famGs       = document.getElementById('au-fam-gs')?.classList.contains('active');
+    var famOpenTab  = document.getElementById('au-gs-fam-open-panel')?.classList.contains('active');
+    var gsActive    = (legacyOpen && document.getElementById('au-ot-gs')?.classList.contains('active'))
+                   || (famGs && famOpenTab);
+    var pairsActive = legacyOpen && document.getElementById('au-ot-pairs')?.classList.contains('active');
     if (gsActive)    autoLoadGsOpenTrades(true /* silent — flicker-free */);
     if (pairsActive) autoLoadOpenTrades(true /* silent — flicker-free */);
     autoUpdateGsRefreshTickStatus(
