@@ -76,6 +76,16 @@ function autoSwitchFamily(fam) {
         autoEnsureSharedRefresh();
     }
 
+    if (fam === 'kh') {
+        if (!window._auKhFamMirrorReady) autoKhFamSetupMirror();
+        if (!window._auKhFamLoaded) {
+            autoLoadKhFamRefresh();
+            window._auKhFamLoaded = true;
+        } else {
+            autoRenderKhFamMetrics();
+        }
+    }
+
     if (fam === 'gs') {
         // First-time init: set up DOM mirroring so any legacy Open/Closed render
         // also fills the family page targets, plus trigger initial load.
@@ -942,6 +952,367 @@ async function autoLoadPairsFamAdmin() {
         } catch (e) {
             uniEl.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
         }
+    }
+}
+
+// ============================================================================
+// KH family page (Phase D — 2026-07-09)
+//
+// First UI presence for Katalysthive. KH does NOT go through auto_signals;
+// its data lives in wms_live_commands (signal_source='katalysthive').
+// The Controls & Admin sub-tab DOM-mirrors the Legacy Live Trading panel
+// content — SAME live-enforcing widgets, no rebuild. Legacy panel stays fully
+// functional in parallel until Phase E.
+// ============================================================================
+
+var _AU_KH_SRC = 'katalysthive';
+var _auKhMetrics = {
+    open: null, ingested24h: null, filled24h: null, rejected24h: null, errors24h: null,
+    topRejectReason: null
+};
+
+function autoKhFamSetupMirror() {
+    // Mirror the three Legacy Live Trading card content DIVs into KH family targets.
+    // The buttons inside these DIVs (e.g. arm/disarm kill, KH pause, save risk cap)
+    // have inline onclick handlers pointing to global functions that update the
+    // shared _auLiveState — clicking on either surface routes through the same code.
+    var pairs = [
+        ['au-live-controls', 'au-kh-fam-live-controls'],
+        ['au-live-kh',       'au-kh-fam-live-kh'],
+        ['au-live-lotsizes', 'au-kh-fam-live-lotsizes']
+    ];
+    pairs.forEach(function (t) {
+        var src = document.getElementById(t[0]);
+        var dst = document.getElementById(t[1]);
+        if (!src || !dst || src._auKhMirrored) return;
+        src._auKhMirrored = true;
+        dst.innerHTML = src.innerHTML;
+        new MutationObserver(function () { dst.innerHTML = src.innerHTML; })
+            .observe(src, { childList: true, subtree: true, characterData: true, attributes: true });
+    });
+    // The Legacy Live Trading badge (au-live-state-badge) also mirrors — it's the
+    // little "live/paused" indicator next to "Live Controls".
+    var badgeSrc = document.getElementById('au-live-state-badge');
+    var badgeDst = document.getElementById('au-kh-fam-live-badge');
+    if (badgeSrc && badgeDst && !badgeSrc._auKhBadgeMirrored) {
+        badgeSrc._auKhBadgeMirrored = true;
+        badgeDst.className = badgeSrc.className;
+        badgeDst.textContent = badgeSrc.textContent;
+        new MutationObserver(function () {
+            badgeDst.className = badgeSrc.className;
+            badgeDst.textContent = badgeSrc.textContent;
+        }).observe(badgeSrc, { childList: true, subtree: true, characterData: true, attributes: true });
+    }
+    window._auKhFamMirrorReady = true;
+}
+
+function autoLoadKhFamRefresh() {
+    autoLoadKhFamHeader();
+    autoLoadKhFamMetrics();
+    autoLoadKhFamOpen();
+    autoLoadKhFamRecent();
+    autoLoadKhFamRejections();
+    // Ensure the Legacy Live Trading state loads so the mirrors have content to copy.
+    if (typeof autoLoadLive === 'function' && !window._auLiveLoaded) {
+        autoLoadLive();
+        window._auLiveLoaded = true;
+    }
+}
+
+// ----- Header (mode pill + last activity) ------------------------------------
+async function autoLoadKhFamHeader() {
+    try {
+        var sr = await fetch(SUPABASE_URL + '/rest/v1/app_state?id=eq.1&select=kill_switch,paused_sources',
+            { headers: wmsHeaders() });
+        var state = sr.ok ? (await sr.json())[0] || {} : {};
+        var paused = (state.paused_sources || []).indexOf(_AU_KH_SRC) !== -1;
+        var pill = document.getElementById('au-kh-fam-mode');
+        if (pill) {
+            if (state.kill_switch)  { pill.className = 'status-pill stopped'; pill.textContent = '🛑 KILL SWITCH'; }
+            else if (paused)        { pill.className = 'status-pill paused';  pill.textContent = '⏸ PAUSED'; }
+            else                    { pill.className = 'status-pill live';    pill.textContent = '🟢 LIVE'; }
+        }
+        // Last activity — most-recent wms_live_commands row
+        var lr = await fetch(SUPABASE_URL + '/rest/v1/wms_live_commands?signal_source=eq.' + _AU_KH_SRC + '&order=created_at.desc&limit=1&select=created_at,status,broker_status,payload',
+            { headers: wmsHeaders() });
+        var last = lr.ok ? (await lr.json())[0] : null;
+        var laEl = document.getElementById('au-kh-fam-lastact');
+        if (laEl) {
+            if (last) {
+                var ago = Math.round((Date.now() - new Date(last.created_at).getTime()) / 60000);
+                var agoStr = ago < 60 ? (ago + 'm ago') : ago < 1440 ? (Math.round(ago/60) + 'h ago') : (Math.round(ago/1440) + 'd ago');
+                var sym = (last.payload && last.payload.symbol) || '';
+                laEl.textContent = 'Last activity: ' + (last.broker_status || last.status) + (sym ? ' · ' + sym : '') + ' · ' + agoStr;
+            } else {
+                laEl.textContent = 'Last activity: no commands yet';
+            }
+        }
+    } catch (_e) { /* silent */ }
+}
+
+// ----- Metrics --------------------------------------------------------------
+async function autoLoadKhFamMetrics() {
+    try {
+        var since24 = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+        var results = await Promise.all([
+            // Open commands (in-flight)
+            fetch(SUPABASE_URL + "/rest/v1/wms_live_commands?signal_source=eq." + _AU_KH_SRC + "&status=in.(pending,claimed,placed)&broker_status=is.null&select=id", { headers: wmsHeaders() }),
+            // Open commands with broker_status non-terminal
+            fetch(SUPABASE_URL + "/rest/v1/wms_live_commands?signal_source=eq." + _AU_KH_SRC + "&status=eq.placed&broker_status=in.(PENDING,OPEN,PARTIAL)&select=id", { headers: wmsHeaders() }),
+            // Ingested 24h — count all commands regardless of status
+            fetch(SUPABASE_URL + "/rest/v1/wms_live_commands?signal_source=eq." + _AU_KH_SRC + "&created_at=gte." + since24 + "&select=id,status,broker_status,error_code", { headers: wmsHeaders() })
+        ]);
+        var openNoBroker  = results[0].ok ? await results[0].json() : [];
+        var openNonTerm   = results[1].ok ? await results[1].json() : [];
+        var last24        = results[2].ok ? await results[2].json() : [];
+
+        _auKhMetrics.open        = openNoBroker.length + openNonTerm.length;
+        _auKhMetrics.ingested24h = last24.length;
+        _auKhMetrics.filled24h   = last24.filter(function (c) { return c.broker_status === 'FILLED'; }).length;
+        _auKhMetrics.rejected24h = last24.filter(function (c) { return c.status === 'rejected'; }).length;
+        _auKhMetrics.errors24h   = last24.filter(function (c) { return c.status === 'error'; }).length;
+
+        // Top reject reason
+        var codes = {};
+        last24.forEach(function (c) {
+            if (c.status === 'rejected' && c.error_code) codes[c.error_code] = (codes[c.error_code] || 0) + 1;
+        });
+        var top = Object.keys(codes).sort(function (a, b) { return codes[b] - codes[a]; })[0];
+        _auKhMetrics.topRejectReason = top ? (top + ' (' + codes[top] + ')') : null;
+
+        autoRenderKhFamMetrics();
+    } catch (_e) { /* silent */ }
+}
+
+function autoRenderKhFamMetrics() {
+    var t = _auKhMetrics;
+    var setText = function (id, txt, cls) {
+        var e = document.getElementById(id);
+        if (!e) return;
+        e.textContent = txt;
+        if (cls !== undefined) e.className = 'metric-value ' + cls;
+    };
+    var setSub = function (id, txt) { var e = document.getElementById(id); if (e) e.textContent = txt || ''; };
+
+    if (t.open != null)        { setText('au-kh-fam-metric-open', String(t.open), ''); setSub('au-kh-fam-metric-open-sub', 'pending / claimed / working'); }
+    if (t.ingested24h != null) { setText('au-kh-fam-metric-ingested', String(t.ingested24h), ''); setSub('au-kh-fam-metric-ingested-sub', 'all statuses'); }
+    if (t.filled24h != null)   { setText('au-kh-fam-metric-filled', String(t.filled24h), t.filled24h > 0 ? 'pos' : ''); setSub('au-kh-fam-metric-filled-sub', 'broker_status=FILLED'); }
+    if (t.rejected24h != null) {
+        setText('au-kh-fam-metric-rejected', String(t.rejected24h), t.rejected24h > 0 ? 'neg' : '');
+        setSub('au-kh-fam-metric-rejected-sub', t.topRejectReason ? ('top: ' + t.topRejectReason) : 'status=rejected');
+    }
+    if (t.errors24h != null)   { setText('au-kh-fam-metric-errors', String(t.errors24h), t.errors24h > 0 ? 'neg' : ''); setSub('au-kh-fam-metric-errors-sub', 'status=error'); }
+}
+
+// ----- KH commands renderers ------------------------------------------------
+function _autoKhStatusPill(status, brokerStatus) {
+    var t = brokerStatus || status || '—';
+    var cls = 'idle', color = '#6b7280';
+    if (brokerStatus === 'FILLED')                                { cls = 'success'; color = '#047857'; }
+    else if (brokerStatus === 'PARTIAL')                          { cls = 'loading'; color = '#0891b2'; }
+    else if (brokerStatus === 'PENDING' || brokerStatus === 'OPEN'){ cls = 'loading'; color = '#0891b2'; }
+    else if (brokerStatus === 'REJECTED')                         { cls = 'error';   color = '#dc2626'; }
+    else if (brokerStatus === 'CANCELLED' || brokerStatus === 'EXPIRED') { cls = 'idle'; color = '#7f1d1d'; }
+    else if (status === 'rejected')                               { cls = 'error';   color = '#dc2626'; }
+    else if (status === 'error')                                  { cls = 'error';   color = '#dc2626'; }
+    else if (status === 'placed')                                 { cls = 'loading'; color = '#0891b2'; }
+    else if (status === 'claimed')                                { cls = 'loading'; color = '#0891b2'; }
+    return '<span class="au-badge ' + cls + '" style="color:' + color + '">' + autoEsc(t) + '</span>';
+}
+
+function _autoKhCmdRow(c) {
+    var p = c.payload || {};
+    var symbol = p.symbol || '—';
+    var side = p.side === 1 ? 'BUY' : p.side === -1 ? 'SELL' : (p.side || '—');
+    var sideCell = side === 'BUY'  ? '<span class="au-badge success">BUY</span>'
+                : side === 'SELL' ? '<span class="au-badge error">SELL</span>'
+                : autoEsc(String(side));
+    var qty = p.qty != null ? p.qty : '—';
+    var filled = c.filled_qty != null ? c.filled_qty : 0;
+    var qtyCell = qty + (filled > 0 && filled !== qty ? ' <span style="color:#0891b2;font-size:10px">(' + filled + ' filled)</span>' : '');
+    var typeMap = { 1: 'LIMIT', 2: 'MARKET', 3: 'STOP', 4: 'STOPLIMIT' };
+    var type = typeMap[p.type] || p.type || '—';
+    var price = c.avg_fill_price != null ? autoFmtPrice0(Number(c.avg_fill_price))
+              : (p.limitPrice != null ? autoFmtPrice0(Number(p.limitPrice)) : '—');
+    var errCell = c.error_code
+        ? '<span style="color:#dc2626;font-weight:600" title="' + autoEsc(c.error_message || '') + '">' + autoEsc(c.error_code) + '</span>'
+        : '';
+    return '<tr style="border-top:1px solid #e5e7eb">' +
+           '<td style="padding:6px 8px;white-space:nowrap;font-family:monospace;font-size:11px">' + autoEsc(autoFmtIST(c.created_at)) + '</td>' +
+           '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(symbol) + '</td>' +
+           '<td style="padding:6px 8px">' + sideCell + '</td>' +
+           '<td style="padding:6px 8px;text-align:right">' + qtyCell + '</td>' +
+           '<td style="padding:6px 8px;font-size:11px">' + autoEsc(String(type)) + '</td>' +
+           '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">' + price + '</td>' +
+           '<td style="padding:6px 8px">' + _autoKhStatusPill(c.status, c.broker_status) + '</td>' +
+           '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280">' + autoEsc(c.broker_order_id || '') + '</td>' +
+           '<td style="padding:6px 8px;font-size:11px">' + errCell + '</td>' +
+           '</tr>';
+}
+
+// ----- Open Commands tab ----------------------------------------------------
+async function autoLoadKhFamOpen() {
+    var el = document.getElementById('au-kh-fam-open-content');
+    var badge = document.getElementById('au-kh-fam-open-badge');
+    if (!el) return;
+    if (badge) { badge.className = 'au-badge loading'; badge.textContent = 'loading'; }
+    try {
+        // Open = not-yet-terminal. Three categories:
+        //  (a) status IN (pending, claimed) — Droplet hasn't finalized broker call
+        //  (b) status=placed AND broker_status IN (PENDING, OPEN, PARTIAL) — with broker
+        //  (c) status=placed AND broker_status IS NULL — placed but no update yet
+        //      (rare + transient post-F2 orders-monitoring, but defensively included)
+        var qs = '?signal_source=eq.' + _AU_KH_SRC +
+                 '&or=(status.in.(pending,claimed),and(status.eq.placed,or(broker_status.is.null,broker_status.in.(PENDING,OPEN,PARTIAL))))' +
+                 '&order=created_at.desc&limit=50' +
+                 '&select=id,created_at,status,broker_status,broker_order_id,filled_qty,avg_fill_price,payload,error_code,error_message';
+        var r = await fetch(SUPABASE_URL + '/rest/v1/wms_live_commands' + qs, { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        if (!Array.isArray(rows) || rows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No open Katalysthive commands.</div>';
+            if (badge) { badge.className = 'au-badge idle'; badge.textContent = '0 open'; }
+            return;
+        }
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left;position:sticky;top:0;z-index:1">' +
+                '<th style="padding:6px 8px">Created (IST)</th>' +
+                '<th style="padding:6px 8px">Symbol</th>' +
+                '<th style="padding:6px 8px">Side</th>' +
+                '<th style="padding:6px 8px;text-align:right">Qty</th>' +
+                '<th style="padding:6px 8px">Type</th>' +
+                '<th style="padding:6px 8px;text-align:right">Price</th>' +
+                '<th style="padding:6px 8px">Status</th>' +
+                '<th style="padding:6px 8px">Broker order</th>' +
+                '<th style="padding:6px 8px">Error</th>' +
+                '</tr></thead><tbody>';
+        rows.forEach(function (c) { html += _autoKhCmdRow(c); });
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+        if (badge) { badge.className = 'au-badge success'; badge.textContent = rows.length + ' open'; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
+        if (badge) { badge.className = 'au-badge error'; badge.textContent = 'error'; }
+    }
+}
+
+// ----- Recent Activity tab --------------------------------------------------
+async function autoLoadKhFamRecent(filterOverride) {
+    var el = document.getElementById('au-kh-fam-recent-content');
+    var statusEl = document.getElementById('au-kh-fam-recent-status');
+    var badge = document.getElementById('au-kh-fam-recent-badge');
+    if (!el) return;
+    var sel = document.getElementById('au-kh-fam-recent-filter');
+    var filter = filterOverride && typeof filterOverride === 'string' && filterOverride !== '[object Event]'
+        ? filterOverride : (sel ? sel.value : 'all');
+    if (sel && filter !== sel.value) sel.value = filter;
+    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+    if (badge) { badge.className = 'au-badge loading'; badge.textContent = 'loading'; }
+
+    try {
+        var qs = '?signal_source=eq.' + _AU_KH_SRC + '&order=created_at.desc&limit=100' +
+                 '&select=id,created_at,status,broker_status,broker_order_id,filled_qty,avg_fill_price,payload,error_code,error_message';
+        if (filter === 'terminal') qs += '&or=(status.in.(rejected,error,cancelled),broker_status.in.(FILLED,REJECTED,CANCELLED,EXPIRED))';
+        else if (filter === 'rejected') qs += '&status=eq.rejected';
+        var r = await fetch(SUPABASE_URL + '/rest/v1/wms_live_commands' + qs, { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        if (!Array.isArray(rows) || rows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No commands match this filter.</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0'; }
+            if (badge) { badge.className = 'au-badge idle'; badge.textContent = '0'; }
+            return;
+        }
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left;position:sticky;top:0;z-index:1">' +
+                '<th style="padding:6px 8px">Created (IST)</th>' +
+                '<th style="padding:6px 8px">Symbol</th>' +
+                '<th style="padding:6px 8px">Side</th>' +
+                '<th style="padding:6px 8px;text-align:right">Qty</th>' +
+                '<th style="padding:6px 8px">Type</th>' +
+                '<th style="padding:6px 8px;text-align:right">Price</th>' +
+                '<th style="padding:6px 8px">Status</th>' +
+                '<th style="padding:6px 8px">Broker order</th>' +
+                '<th style="padding:6px 8px">Error</th>' +
+                '</tr></thead><tbody>';
+        rows.forEach(function (c) { html += _autoKhCmdRow(c); });
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = rows.length + ' rows'; }
+        if (badge) { badge.className = 'au-badge success'; badge.textContent = rows.length; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
+        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
+        if (badge) { badge.className = 'au-badge error'; badge.textContent = 'error'; }
+    }
+}
+
+// ----- Rejections tab -------------------------------------------------------
+async function autoLoadKhFamRejections() {
+    var el = document.getElementById('au-kh-fam-rejections-content');
+    if (!el) return;
+    try {
+        var since30 = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+        var qs = '?signal_source=eq.' + _AU_KH_SRC + '&status=eq.rejected&created_at=gte.' + since30 +
+                 '&order=created_at.desc&limit=200&select=id,created_at,error_code,error_message,payload';
+        var r = await fetch(SUPABASE_URL + '/rest/v1/wms_live_commands' + qs, { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        if (rows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No rejections in the last 30 days. ✅</div>';
+            return;
+        }
+        // Group by error_code for breakdown chart
+        var byCode = {};
+        rows.forEach(function (c) {
+            var k = c.error_code || 'UNKNOWN';
+            if (!byCode[k]) byCode[k] = { count: 0, latest: null, sample: null };
+            byCode[k].count += 1;
+            if (!byCode[k].latest || c.created_at > byCode[k].latest) {
+                byCode[k].latest = c.created_at;
+                byCode[k].sample = c.error_message || '';
+            }
+        });
+        var codes = Object.keys(byCode).sort(function (a, b) { return byCode[b].count - byCode[a].count; });
+        var maxCount = byCode[codes[0]].count;
+
+        var html = '<div class="au-card"><h3>Rejection breakdown (last 30d)</h3>';
+        html += '<div style="margin-top:12px;font-size:12px">';
+        codes.forEach(function (code) {
+            var info = byCode[code];
+            var pct = Math.round((info.count / maxCount) * 100);
+            html += '<div style="margin-bottom:8px">' +
+                    '<div style="display:flex;justify-content:space-between;margin-bottom:2px">' +
+                    '<b style="color:#7f1d1d">' + autoEsc(code) + '</b>' +
+                    '<span style="color:#4b5563">' + info.count + ' · latest ' + autoEsc(autoFmtIST(info.latest)) + '</span>' +
+                    '</div>' +
+                    '<div style="background:#fee2e2;border-radius:4px;height:6px;overflow:hidden">' +
+                    '<div style="background:#dc2626;height:100%;width:' + pct + '%"></div>' +
+                    '</div>' +
+                    (info.sample ? '<div style="font-size:11px;color:#6b7280;margin-top:2px">' + autoEsc(info.sample.slice(0, 200)) + '</div>' : '') +
+                    '</div>';
+        });
+        html += '</div></div>';
+
+        // Full list
+        html += '<div class="au-card" style="margin-top:12px"><h3>All rejections (last 30d)</h3>';
+        html += '<div style="overflow-x:auto;margin-top:8px"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Created (IST)</th>' +
+                '<th style="padding:6px 8px">Symbol</th>' +
+                '<th style="padding:6px 8px">Error code</th>' +
+                '<th style="padding:6px 8px">Message</th>' +
+                '</tr></thead><tbody>';
+        rows.forEach(function (c) {
+            var sym = (c.payload && c.payload.symbol) || '—';
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px;white-space:nowrap;font-family:monospace;font-size:11px">' + autoEsc(autoFmtIST(c.created_at)) + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(sym) + '</td>' +
+                    '<td style="padding:6px 8px;color:#7f1d1d;font-weight:600">' + autoEsc(c.error_code || 'UNKNOWN') + '</td>' +
+                    '<td style="padding:6px 8px;font-size:11px;color:#4b5563">' + autoEsc((c.error_message || '').slice(0, 200)) + '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table></div></div>';
+        el.innerHTML = html;
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
     }
 }
 

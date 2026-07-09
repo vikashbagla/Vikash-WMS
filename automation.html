@@ -863,15 +863,147 @@ details summary {
       </div>
     </div>
 
-    <!-- 🐦 KH placeholder -->
+    <!-- 🐦 KH family page (Phase D — 2026-07-09).
+         First UI presence for Katalysthive. Data source is wms_live_commands
+         (KH does NOT go through auto_signals). The Controls & Admin sub-tab
+         DOM-mirrors the Legacy Live Trading panel (au-live-controls, au-live-kh,
+         au-live-lotsizes) so the SAME live-enforcing risk widgets appear here
+         — no rebuild, no risk of a stray toggle mid-migration. -->
     <div id="au-fam-kh" class="automation-family-panel">
       <div class="fam-scroll">
-        <div class="fam-placeholder">
-          <h2>🐦 Katalysthive — sharanaga_v1</h2>
-          <p>First UI presence for KH signals + LIVE orders. Includes signal log, rejection breakdown, callback status, and absorbs the current Live Trading controls (kill / cap / allowed underlyings / lookback).</p>
-          <p>The family page ships in <b>Phase D</b> — carefully, because KH controls are enforcing real Katalysthive orders. Until then, KH controls remain in Legacy view → <b>Live Trading</b> tab, exactly as today.</p>
-          <span class="fam-eta">Phase D — coming after GS &amp; Pairs</span><br>
-          <a class="fam-link-legacy" onclick="autoSwitchFamily('legacy'); setTimeout(()=>{const b=document.querySelector('.automation-tab-btn[data-tab=au-live]'); if(b) b.click();}, 50);">→ Open KH Live Trading controls in Legacy view</a>
+        <div class="fam-page">
+
+          <!-- Header strip -->
+          <div class="fam-header">
+            <div class="fam-title">
+              <h2>🐦 Katalysthive — sharanaga_v1</h2>
+              <div class="fam-sub">External analyst webhook → LIVE Fyers orders · signal_source=katalysthive</div>
+            </div>
+            <div class="fam-header-right">
+              <span class="status-pill live" id="au-kh-fam-mode">🟢 LIVE</span>
+              <span id="au-kh-fam-lastact" class="fam-lastact">Last activity: —</span>
+            </div>
+          </div>
+
+          <!-- Metrics strip (KH-specific: commands, not trades) -->
+          <div class="fam-metrics">
+            <div class="fam-metric-tile">
+              <div class="metric-label">Open commands</div>
+              <div class="metric-value" id="au-kh-fam-metric-open">—</div>
+              <div class="metric-sub" id="au-kh-fam-metric-open-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Ingested (24h)</div>
+              <div class="metric-value" id="au-kh-fam-metric-ingested">—</div>
+              <div class="metric-sub" id="au-kh-fam-metric-ingested-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Filled (24h)</div>
+              <div class="metric-value" id="au-kh-fam-metric-filled">—</div>
+              <div class="metric-sub" id="au-kh-fam-metric-filled-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Rejected (24h)</div>
+              <div class="metric-value" id="au-kh-fam-metric-rejected">—</div>
+              <div class="metric-sub" id="au-kh-fam-metric-rejected-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Errors (24h)</div>
+              <div class="metric-value" id="au-kh-fam-metric-errors">—</div>
+              <div class="metric-sub" id="au-kh-fam-metric-errors-sub"></div>
+            </div>
+          </div>
+
+          <!-- Sub-tabs (5 — Callbacks placeholder until v1.1 ships) -->
+          <div class="au-subtabs">
+            <button class="au-subtab-btn active" data-subtab="au-kh-fam-open-panel">
+              Open Commands <span id="au-kh-fam-open-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-kh-fam-recent-panel">
+              Recent Activity <span id="au-kh-fam-recent-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-kh-fam-rejections-panel">Rejections</button>
+            <button class="au-subtab-btn" data-subtab="au-kh-fam-callbacks-panel">Callbacks</button>
+            <button class="au-subtab-btn" data-subtab="au-kh-fam-controls-panel" style="color:#b91c1c;font-weight:700">⚡ Controls &amp; Admin</button>
+            <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px" onclick="autoLoadKhFamRefresh()">↻ Refresh</button>
+          </div>
+
+          <!-- Open Commands (in-flight: pending / claimed / placed with non-terminal broker_status) -->
+          <div id="au-kh-fam-open-panel" class="au-subtab-panel active">
+            <div id="au-kh-fam-open-content" class="au-meta">Loading Katalysthive open commands…</div>
+          </div>
+
+          <!-- Recent Activity (last 100 commands, all statuses) -->
+          <div id="au-kh-fam-recent-panel" class="au-subtab-panel">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Status:</span>
+                <select id="au-kh-fam-recent-filter" onchange="autoLoadKhFamRecent(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All statuses</option>
+                  <option value="terminal">Terminal only (filled / cancelled / rejected)</option>
+                  <option value="rejected">Rejected only</option>
+                </select>
+              </label>
+              <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadKhFamRecent()">↻</button>
+              <span id="au-kh-fam-recent-status" class="au-badge idle" style="margin-left:auto">…</span>
+            </div>
+            <div id="au-kh-fam-recent-content" class="au-meta">Loading Katalysthive recent activity…</div>
+          </div>
+
+          <!-- Rejections (status='rejected', grouped by error_code) -->
+          <div id="au-kh-fam-rejections-panel" class="au-subtab-panel">
+            <div id="au-kh-fam-rejections-content" class="au-meta">Loading Katalysthive rejections…</div>
+          </div>
+
+          <!-- Callbacks (placeholder — v1.1 outbound callbacks) -->
+          <div id="au-kh-fam-callbacks-panel" class="au-subtab-panel">
+            <div class="fam-placeholder">
+              <h2>Callback delivery status</h2>
+              <p>Outbound callbacks to Katalysthive (order-status pushes back to their platform) will render here once the v1.1 callback pipeline ships. Right now: no callbacks are sent — Katalysthive polls our GET endpoints on their side.</p>
+              <span class="fam-eta">Phase D.2 — after v1.1 callbacks ship</span>
+            </div>
+          </div>
+
+          <!-- Controls & Admin — DOM-mirror the Legacy Live Trading panel content
+               (au-live-controls, au-live-kh, au-live-lotsizes). Same live-enforcing
+               widgets, relocated NOT rebuilt. Legacy panel remains fully functional
+               in parallel until Phase E. -->
+          <div id="au-kh-fam-controls-panel" class="au-subtab-panel">
+
+            <div class="au-card" style="border-left:4px solid #dc2626">
+              <h3>Live Controls <span id="au-kh-fam-live-badge" class="au-badge idle">…</span></h3>
+              <div class="au-sub">Master kill switch + Katalysthive source pause. Same underlying <code>app_state</code> row as the Health page — changes are broker-wide.</div>
+              <div id="au-kh-fam-live-controls" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
+              <div class="au-actions"><button class="au-btn au-btn-secondary au-live-btn" onclick="autoLoadLive()">↻ Refresh</button></div>
+            </div>
+
+            <div class="au-card">
+              <h3>Katalysthive (sharanaga_v1) — Risk Wrappers</h3>
+              <div class="au-sub">Checked before any Katalysthive signal is placed. A breach rejects the signal — nothing reaches the broker (fail-closed). Saved instantly to <code>wms_live_risk_limits</code>.</div>
+              <div id="au-kh-fam-live-kh" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
+            </div>
+
+            <div class="au-card">
+              <h3>Lot Sizes</h3>
+              <div class="au-sub">Contracts per lot — used to convert KH quantities into lots for the exposure cap. Auto-filled from the securities master; no manual entry, and kept current by the F&amp;O sync.</div>
+              <div id="au-kh-fam-live-lotsizes" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
+            </div>
+
+            <div class="au-card">
+              <h3>Integration Reference</h3>
+              <div class="au-sub">Analyst endpoint URL + docs link.</div>
+              <div style="margin-top:12px;font-family:monospace;font-size:11px;color:#4b5563;background:#f9fafb;padding:8px 10px;border-radius:4px">
+                POST https://&lt;project&gt;.supabase.co/functions/v1/katalysthive-webhook
+              </div>
+              <div style="margin-top:8px;font-size:11px;color:#6b7280">
+                Auth: API key via <code>Authorization: Bearer &lt;key&gt;</code> header. HMAC signature over body.<br>
+                Full contract: <code>Documentation/automation/kh/KATALYSTHIVE-WMS-INTEGRATION-v1.md</code>
+              </div>
+            </div>
+
+          </div>
+
         </div>
       </div>
     </div>
