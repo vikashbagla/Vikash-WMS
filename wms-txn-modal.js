@@ -1733,7 +1733,12 @@ async function wmsEditSave() {
     if (isSell && editedQty > 0) editedQty = -editedQty;
 
     var body = {
-        trader_id: traderVal || null,
+        // A.2.2 — the '(Same as Investor)' option has value '', which MEANS
+        // trader = investor. Persist that as investor_id, never NULL: a NULL
+        // trader_id is silently dropped by every trader-scoped filter
+        // (statements compare the raw column), so the row vanishes from the
+        // one statement it belongs on.
+        trader_id: traderVal || txn.investor_id,
         quantity: editedQty,
         price: editedPrice,
         gross_amount: wmsEditParse(document.getElementById('wmsEditGross')),
@@ -1862,7 +1867,10 @@ function wmsPreviewSplit() {
 
     var ratio = splitQtyAbs / origQtyAbs;
     function r2(v) { return Math.round((v || 0) * 100) / 100; }
-    var splitTraderVal = document.getElementById('wmsSplitTrader').value || null;
+    // A.2.2 — blank select = '(Same as Investor)' = investor_id, never NULL.
+    // This is the DEFAULT state of the split dropdown (nothing preselected),
+    // so a plain split would otherwise always write a NULL trader.
+    var splitTraderVal = document.getElementById('wmsSplitTrader').value || txn.investor_id;
 
     // Remaining
     var remainQtyAbs = origQtyAbs - splitQtyAbs;
