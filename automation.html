@@ -711,30 +711,89 @@ details summary {
             <div id="au-gs-fam-closed-content" class="au-meta">Loading GS closed trades…</div>
           </div>
 
-          <!-- Signals & Events (Phase B.2) -->
+          <!-- Signals & Events (Phase B.2) — auto_signals scoped to GS -->
           <div id="au-gs-fam-events-panel" class="au-subtab-panel">
-            <div class="fam-placeholder">
-              <h2>Signals &amp; Events</h2>
-              <p>Full auto_signals log filtered to silver_mini_15m + gold_mini_15m — ENTRY, EXIT, HEARTBEAT, with source and strategy_version columns.</p>
-              <span class="fam-eta">Phase B.2 — next</span>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Event type:</span>
+                <select id="au-gs-fam-events-filter" onchange="autoLoadGsFamEvents(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All</option>
+                  <option value="ENTRY">Entries only</option>
+                  <option value="EXIT">Exits only</option>
+                </select>
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Strategy:</span>
+                <select id="au-gs-fam-events-strat" onchange="autoLoadGsFamEvents()"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">Silver + Gold</option>
+                  <option value="silver_mini_15m">Silver Mini only</option>
+                  <option value="gold_mini_15m">Gold Mini only</option>
+                </select>
+              </label>
+              <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadGsFamEvents()">↻</button>
+              <span id="au-gs-fam-events-status" class="au-badge idle" style="margin-left:auto">…</span>
             </div>
+            <div id="au-gs-fam-events-content" class="au-meta">Loading GS signals & events…</div>
           </div>
 
-          <!-- Run History (Phase B.2) -->
+          <!-- Run History (Phase B.2) — auto_runs scoped to GS -->
           <div id="au-gs-fam-runs-panel" class="au-subtab-panel">
-            <div class="fam-placeholder">
-              <h2>Run History</h2>
-              <p>auto_runs filtered to GS strategies. Duration, signals fired, errors.</p>
-              <span class="fam-eta">Phase B.2 — next</span>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Filter:</span>
+                <select id="au-gs-fam-runs-filter" onchange="autoLoadGsFamRuns(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All runs</option>
+                  <option value="failed">Failed only</option>
+                  <option value="with_signals">With signals fired</option>
+                </select>
+              </label>
+              <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadGsFamRuns()">↻</button>
+              <span id="au-gs-fam-runs-status" class="au-badge idle" style="margin-left:auto">…</span>
             </div>
+            <div id="au-gs-fam-runs-content" class="au-meta">Loading GS run history…</div>
           </div>
 
-          <!-- Controls & Admin (merged per owner 2026-07-09) -->
+          <!-- Controls & Admin (Phase B.2 admin bits; B.3 controls after LIVE-cutover discussion) -->
           <div id="au-gs-fam-controls-panel" class="au-subtab-panel">
-            <div class="fam-placeholder">
-              <h2>Controls &amp; Admin</h2>
-              <p>Per-strategy pause (silver / gold individually via <code>app_state.paused_sources</code>), PAPER↔LIVE toggle, strategy config (<code>auto_strategies</code> row), plugin <code>MS007_VERSION</code> display, EOD ingest cross-link, <code>gs_catalogue</code> snapshot — all in one place.</p>
-              <span class="fam-eta">Phase B.2 (admin bits) + Phase B.3 (LIVE toggle after cutover plan)</span>
+            <div id="au-gs-fam-controls-content">
+
+              <!-- Admin: strategy config + version + gs_catalogue snapshot -->
+              <div class="au-card">
+                <h3>Strategy Configuration <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
+                <div class="au-sub">Rows from <code>auto_strategies</code> for silver_mini_15m + gold_mini_15m. Edit via SQL / Studio for now — a UI editor ships later.</div>
+                <div id="au-gs-fam-strategies" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>Plugin Version</h3>
+                <div class="au-sub">MS007 version constant compiled into the automation-runner Edge Function (both silver + gold plugins re-export the same constant).</div>
+                <div id="au-gs-fam-plugin-version" style="margin-top:12px;font-size:14px;font-weight:700;color:#1e40af;font-family:monospace">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>gs_catalogue snapshot</h3>
+                <div class="au-sub">Contract specs used for exposure / margin calc: lot size (kg / g), point_value (₹/pt), margin %.</div>
+                <div id="au-gs-fam-catalogue" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>Related actions</h3>
+                <div class="au-sub">Cross-links to shared Automated Trading tools.</div>
+                <div class="au-actions" style="margin-top:8px">
+                  <button class="au-btn au-btn-secondary" onclick="autoSwitchFamily('legacy'); setTimeout(function(){var b=document.querySelector('.automation-tab-btn[data-tab=au-admin]');if(b)b.click();},50)">→ EOD ingest &amp; strategy runner (Legacy Admin)</button>
+                </div>
+              </div>
+
+              <!-- Controls: pause + PAPER↔LIVE (Phase B.3) -->
+              <div class="au-card" style="border-color:#fde68a;background:linear-gradient(to bottom, #fffbeb, #fff)">
+                <h3>Controls <span class="au-badge idle" style="background:#fef3c7;color:#78350f">Phase B.3</span></h3>
+                <div class="au-sub">Per-strategy pause (silver / gold individually via <code>app_state.paused_sources</code>) and PAPER↔LIVE toggle. Ships after the GS→LIVE cutover discussion — the toggle needs to know what LIVE actually means for GS first.</div>
+                <div style="margin-top:12px;font-size:12px;color:#6b7280">Until then, use Legacy view → Live Trading tab for KH controls (which are the only LIVE controls right now).</div>
+              </div>
+
             </div>
           </div>
 

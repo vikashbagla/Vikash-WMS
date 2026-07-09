@@ -164,8 +164,268 @@ function autoLoadGsFamRefresh() {
     // Delegate to the existing loaders — mirroring pulls the output into the family page.
     if (typeof autoLoadGsOpenTrades === 'function') autoLoadGsOpenTrades();
     if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
-    // Header metadata: mode pill + last activity
+    // Header metadata + Phase B.2 tabs
     autoLoadGsFamHeader();
+    autoLoadGsFamEvents();
+    autoLoadGsFamRuns();
+    autoLoadGsFamAdmin();
+}
+
+// ----------------------------------------------------------------------------
+// GS Signals & Events tab (Phase B.2) — auto_signals scoped to GS strategies
+// ----------------------------------------------------------------------------
+var _AU_GS_STRATS = ['silver_mini_15m', 'gold_mini_15m'];
+
+async function autoLoadGsFamEvents(filterOverride) {
+    var el = document.getElementById('au-gs-fam-events-content');
+    var statusEl = document.getElementById('au-gs-fam-events-status');
+    if (!el) return;
+    var typeSel = document.getElementById('au-gs-fam-events-filter');
+    var stratSel = document.getElementById('au-gs-fam-events-strat');
+    var typeFilter = filterOverride && typeof filterOverride === 'string' && filterOverride !== '[object Event]'
+        ? filterOverride
+        : (typeSel ? typeSel.value : 'all');
+    if (typeSel && typeFilter !== typeSel.value) typeSel.value = typeFilter;
+    var stratFilter = stratSel ? stratSel.value : 'all';
+
+    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+
+    var strats = stratFilter === 'all' ? _AU_GS_STRATS : [stratFilter];
+    var qs = '?strategy_name=in.(' + strats.join(',') + ')' +
+             '&order=fired_at.desc&limit=200' +
+             '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata,source,email_status';
+    if (typeFilter === 'ENTRY')      qs += '&event_type=eq.ENTRY';
+    else if (typeFilter === 'EXIT')  qs += '&event_type=neq.ENTRY';
+
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_signals' + qs, { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        if (!Array.isArray(rows) || rows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No events match this filter.</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 events'; }
+            return;
+        }
+
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left;position:sticky;top:0;z-index:1">' +
+                '<th style="padding:6px 8px;white-space:nowrap">Time (IST)</th>' +
+                '<th style="padding:6px 8px">Strategy</th>' +
+                '<th style="padding:6px 8px">Event</th>' +
+                '<th style="padding:6px 8px">Side</th>' +
+                '<th style="padding:6px 8px">Contract</th>' +
+                '<th style="padding:6px 8px;text-align:right">Qty</th>' +
+                '<th style="padding:6px 8px;text-align:right">Price</th>' +
+                '<th style="padding:6px 8px">Source</th>' +
+                '<th style="padding:6px 8px">Version</th>' +
+                '<th style="padding:6px 8px">Email</th>' +
+                '<th style="padding:6px 8px">Trade</th>' +
+                '</tr></thead><tbody>';
+        rows.forEach(function (s) {
+            var m = s.metadata || {};
+            var leg = (s.legs && s.legs[0]) || {};
+            var typeColor = s.event_type === 'ENTRY' ? '#047857' :
+                           /^EXIT_SL|STOP_HIT/.test(s.event_type) ? '#dc2626' :
+                           /^EXIT/.test(s.event_type) ? '#0891b2' :
+                           s.event_type === 'MANUAL_CLOSE' ? '#92400e' : '#6b7280';
+            var side = s.direction || (leg.side === 'BUY' ? 'LONG' : leg.side === 'SELL' ? 'SHORT' : '—');
+            var contract = leg.symbol ? autoFmtContract(leg.symbol, leg.expiry_date) : '—';
+            var qty = m.qty_lots != null ? m.qty_lots + ' lot' + (m.qty_lots == 1 ? '' : 's') : (leg.qty || '—');
+            var price = leg.price != null ? autoFmtPrice0(Number(leg.price)) : '—';
+            var srcBadge = s.source === 'chassis' ? '<span class="au-badge success" style="font-size:9px">runner</span>'
+                        : s.source === 'tv_webhook' ? '<span class="au-badge idle" style="font-size:9px">TV webhook</span>'
+                        : '<span style="color:#9ca3af">' + autoEsc(s.source || '—') + '</span>';
+            var ver = (m.strategy_version || m.version || '—');
+            var emailBadge = s.email_status === 'SENT' ? '<span class="au-badge success" style="font-size:9px">sent</span>'
+                          : s.email_status === 'FAILED' ? '<span class="au-badge error" style="font-size:9px">failed</span>'
+                          : s.email_status === 'PENDING' ? '<span class="au-badge loading" style="font-size:9px">pending</span>'
+                          : '<span class="au-badge idle" style="font-size:9px">—</span>';
+            var tradeFrag = s.trade_id ? s.trade_id.slice(0, 20) : '—';
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px;white-space:nowrap;font-family:monospace;font-size:11px">' + autoEsc(autoFmtIST(s.fired_at)) + '</td>' +
+                    '<td style="padding:6px 8px"><code style="font-size:11px">' + autoEsc(s.strategy_name.replace('_mini_15m', '')) + '</code></td>' +
+                    '<td style="padding:6px 8px;color:' + typeColor + ';font-weight:600">' + autoEsc(s.event_type) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(side) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(contract) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + autoEsc(String(qty)) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">' + price + '</td>' +
+                    '<td style="padding:6px 8px">' + srcBadge + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280">' + autoEsc(ver) + '</td>' +
+                    '<td style="padding:6px 8px">' + emailBadge + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280" title="' + autoEsc(s.trade_id || '') + '">' + autoEsc(tradeFrag) + '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = rows.length + ' events'; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
+        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// GS Run History tab (Phase B.2) — auto_runs scoped to GS strategies
+// ----------------------------------------------------------------------------
+async function autoLoadGsFamRuns(filterOverride) {
+    var el = document.getElementById('au-gs-fam-runs-content');
+    var statusEl = document.getElementById('au-gs-fam-runs-status');
+    if (!el) return;
+    var sel = document.getElementById('au-gs-fam-runs-filter');
+    var filter = filterOverride && typeof filterOverride === 'string' && filterOverride !== '[object Event]'
+        ? filterOverride
+        : (sel ? sel.value : 'all');
+    if (sel && filter !== sel.value) sel.value = filter;
+
+    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+
+    var qs = '?strategy_name=in.(' + _AU_GS_STRATS.join(',') + ')' +
+             '&order=started_at.desc&limit=100' +
+             '&select=id,strategy_name,started_at,finished_at,duration_ms,status,signals_generated,emails_sent,emails_failed,error';
+    if (filter === 'failed')            qs += '&status=eq.FAILED';
+    else if (filter === 'with_signals') qs += '&signals_generated=gt.0';
+
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_runs' + qs, { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        if (!Array.isArray(rows) || rows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No runs match this filter.</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 runs'; }
+            return;
+        }
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left;position:sticky;top:0;z-index:1">' +
+                '<th style="padding:6px 8px">Started (IST)</th>' +
+                '<th style="padding:6px 8px">Strategy</th>' +
+                '<th style="padding:6px 8px">Status</th>' +
+                '<th style="padding:6px 8px;text-align:right">Signals</th>' +
+                '<th style="padding:6px 8px">Email</th>' +
+                '<th style="padding:6px 8px;text-align:right">Duration</th>' +
+                '<th style="padding:6px 8px">Error</th>' +
+                '</tr></thead><tbody>';
+        rows.forEach(function (rn) {
+            var emailCell = '—';
+            if (rn.emails_sent || rn.emails_failed) {
+                var sent = rn.emails_sent || 0, failed = rn.emails_failed || 0;
+                emailCell = (failed > 0 ? '<span style="color:#dc2626">' + failed + ' failed</span>' : '') +
+                            (sent > 0 && failed > 0 ? ' / ' : '') +
+                            (sent > 0 ? '<span style="color:#047857">' + sent + ' sent</span>' : '');
+            }
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px;white-space:nowrap;font-family:monospace;font-size:11px">' + autoEsc(autoFmtIST(rn.started_at)) + '</td>' +
+                    '<td style="padding:6px 8px"><code style="font-size:11px">' + autoEsc(rn.strategy_name.replace('_mini_15m', '')) + '</code></td>' +
+                    '<td style="padding:6px 8px">' + autoStatusBadge(rn.status) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + (rn.signals_generated != null ? rn.signals_generated : '—') + '</td>' +
+                    '<td style="padding:6px 8px;font-size:11px">' + emailCell + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">' + autoFmtDuration(rn.duration_ms) + '</td>' +
+                    '<td style="padding:6px 8px;color:#7f1d1d;font-size:11px;max-width:400px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(rn.error || '') + '">' +
+                        autoEsc((rn.error || '').slice(0, 100)) + (rn.error && rn.error.length > 100 ? '…' : '') +
+                    '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = rows.length + ' runs'; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
+        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// GS Controls & Admin tab (Phase B.2 — admin bits only; controls in B.3)
+// Renders: strategy config, plugin version, gs_catalogue snapshot.
+// ----------------------------------------------------------------------------
+async function autoLoadGsFamAdmin() {
+    // 1. auto_strategies rows for silver + gold
+    var stratsEl = document.getElementById('au-gs-fam-strategies');
+    if (stratsEl) {
+        try {
+            var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=in.(' + _AU_GS_STRATS.join(',') + ')&select=*',
+                { headers: wmsHeaders() });
+            var rows = r.ok ? await r.json() : [];
+            if (rows.length === 0) {
+                stratsEl.innerHTML = '<div class="au-soon">No matching auto_strategies rows.</div>';
+            } else {
+                var html = '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+                html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                        '<th style="padding:6px 8px">Name</th>' +
+                        '<th style="padding:6px 8px">Enabled</th>' +
+                        '<th style="padding:6px 8px">Mode</th>' +
+                        '<th style="padding:6px 8px">Version</th>' +
+                        '<th style="padding:6px 8px">Cron</th>' +
+                        '<th style="padding:6px 8px">Metadata</th>' +
+                        '</tr></thead><tbody>';
+                rows.forEach(function (s) {
+                    var meta = s.metadata ? JSON.stringify(s.metadata) : '—';
+                    html += '<tr style="border-top:1px solid #e5e7eb">' +
+                            '<td style="padding:6px 8px"><code>' + autoEsc(s.name) + '</code></td>' +
+                            '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge error">no</span>') + '</td>' +
+                            '<td style="padding:6px 8px"><b>' + autoEsc(s.execution_mode || '—') + '</b></td>' +
+                            '<td style="padding:6px 8px;font-family:monospace">' + autoEsc(s.version || '—') + '</td>' +
+                            '<td style="padding:6px 8px;font-family:monospace;font-size:10px">' + autoEsc(s.cron_schedule || '—') + '</td>' +
+                            '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280;max-width:400px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(meta) + '">' + autoEsc(meta.slice(0, 100)) + (meta.length > 100 ? '…' : '') + '</td>' +
+                            '</tr>';
+                });
+                html += '</tbody></table>';
+                stratsEl.innerHTML = html;
+            }
+        } catch (e) {
+            stratsEl.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
+        }
+    }
+
+    // 2. Plugin version — most-recent auto_signals row's metadata.strategy_version wins
+    //    (that's the source-of-truth for what's currently running). Falls back to
+    //    auto_strategies.version if no recent signal.
+    var vEl = document.getElementById('au-gs-fam-plugin-version');
+    if (vEl) {
+        try {
+            var r = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(' + _AU_GS_STRATS.join(',') + ')&source=eq.chassis&order=fired_at.desc&limit=1&select=metadata,fired_at',
+                { headers: wmsHeaders() });
+            var rows = r.ok ? await r.json() : [];
+            var version = null, since = null;
+            if (rows[0] && rows[0].metadata) {
+                version = rows[0].metadata.strategy_version || rows[0].metadata.version;
+                since = rows[0].fired_at;
+            }
+            if (version) {
+                vEl.innerHTML = autoEsc(version) +
+                    (since ? ' <span style="color:#6b7280;font-size:11px;font-weight:400;font-family:sans-serif"> (last observed ' + autoEsc(autoFmtIST(since)) + ')</span>' : '');
+            } else {
+                vEl.textContent = 'not yet observed in signals';
+            }
+        } catch (e) {
+            vEl.innerHTML = '<span style="color:#dc2626">' + autoEsc(String(e)) + '</span>';
+        }
+    }
+
+    // 3. gs_catalogue — hard-coded in the plugin, so we compute from helper fns
+    var catEl = document.getElementById('au-gs-fam-catalogue');
+    if (catEl && typeof autoGsPointValue === 'function') {
+        var instruments = [
+            { short: 'SILVERM', name: 'MCX Silver Mini', unit: '5 kg / lot' },
+            { short: 'GOLDM',   name: 'MCX Gold Mini',   unit: '100 g / lot' }
+        ];
+        var html = '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Instrument</th>' +
+                '<th style="padding:6px 8px">Lot size</th>' +
+                '<th style="padding:6px 8px;text-align:right">Point value (₹/pt)</th>' +
+                '<th style="padding:6px 8px;text-align:right">Margin %</th>' +
+                '</tr></thead><tbody>';
+        instruments.forEach(function (inst) {
+            var pv = autoGsPointValue(inst.short);
+            var mp = typeof autoGsMarginPct === 'function' ? autoGsMarginPct(inst.short) : null;
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px"><b>' + autoEsc(inst.short) + '</b> <span style="color:#6b7280">— ' + autoEsc(inst.name) + '</span></td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(inst.unit) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + (pv != null ? '₹' + pv : '—') + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + (mp != null ? mp + '%' : '—') + '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table>';
+        catEl.innerHTML = html;
+    }
 }
 
 async function autoLoadGsFamHeader() {
