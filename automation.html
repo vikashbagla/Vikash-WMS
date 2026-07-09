@@ -820,15 +820,146 @@ details summary {
       </div>
     </div>
 
-    <!-- 🔗 Pairs placeholder -->
+    <!-- 🔗 Pairs family page (Phase C — 2026-07-09).
+         Same anatomy as GS. Open/Closed via DOM mirroring of Legacy tables.
+         Metrics strip drops "peak exposure" (not a pairs concept), adds
+         "avg z-score at entry". Controls locked per LESSONS §B.21.8. -->
     <div id="au-fam-pairs" class="automation-family-panel">
       <div class="fam-scroll">
-        <div class="fam-placeholder">
-          <h2>🔗 Pairs Scanner</h2>
-          <p>Rolling co-integration scanner across a fixed universe. Metrics strip drops "peak exposure" and adds "avg z-score at entry".</p>
-          <p>The family page ships in <b>Phase C</b>. Until then, Pairs Open / Closed live under Legacy view.</p>
-          <span class="fam-eta">Phase C — after GS</span><br>
-          <a class="fam-link-legacy" onclick="autoSwitchFamily('legacy'); setTimeout(()=>{const b=document.querySelector('.automation-tab-btn[data-tab=au-open-trades]'); if(b) b.click();}, 50);">→ Open Pairs trades in Legacy view</a>
+        <div class="fam-page">
+
+          <!-- Header strip -->
+          <div class="fam-header">
+            <div class="fam-title">
+              <h2>🔗 Pairs Scanner</h2>
+              <div class="fam-sub">Rolling co-integration scanner across a fixed universe · non-GS strategies</div>
+            </div>
+            <div class="fam-header-right">
+              <span class="status-pill paper" id="au-pairs-fam-mode">🟡 PAPER</span>
+              <span id="au-pairs-fam-lastact" class="fam-lastact">Last activity: —</span>
+            </div>
+          </div>
+
+          <!-- Metrics strip -->
+          <div class="fam-metrics">
+            <div class="fam-metric-tile">
+              <div class="metric-label">Open positions</div>
+              <div class="metric-value" id="au-pairs-fam-metric-open">—</div>
+              <div class="metric-sub" id="au-pairs-fam-metric-open-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Realised (all-time)</div>
+              <div class="metric-value" id="au-pairs-fam-metric-realised">—</div>
+              <div class="metric-sub" id="au-pairs-fam-metric-realised-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Avg Z at entry (30d)</div>
+              <div class="metric-value" id="au-pairs-fam-metric-avgz">—</div>
+              <div class="metric-sub" id="au-pairs-fam-metric-avgz-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Last scan</div>
+              <div class="metric-value" id="au-pairs-fam-metric-lastscan">—</div>
+              <div class="metric-sub" id="au-pairs-fam-metric-lastscan-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">30-day signals fired</div>
+              <div class="metric-value" id="au-pairs-fam-metric-signals">—</div>
+              <div class="metric-sub" id="au-pairs-fam-metric-signals-sub"></div>
+            </div>
+          </div>
+
+          <!-- Sub-tabs (5 — Admin merged into Controls & Admin) -->
+          <div class="au-subtabs">
+            <button class="au-subtab-btn active" data-subtab="au-pairs-fam-open-panel">
+              Open Trades <span id="au-pairs-fam-open-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-pairs-fam-closed-panel">
+              Closed Trades <span id="au-pairs-fam-closed-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-pairs-fam-events-panel">Signals &amp; Events</button>
+            <button class="au-subtab-btn" data-subtab="au-pairs-fam-runs-panel">Run History</button>
+            <button class="au-subtab-btn" data-subtab="au-pairs-fam-controls-panel">Controls &amp; Admin</button>
+            <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px" onclick="autoLoadPairsFamRefresh()">↻ Refresh</button>
+          </div>
+
+          <!-- Open Trades (mirrors Legacy au-open-trades-content) -->
+          <div id="au-pairs-fam-open-panel" class="au-subtab-panel active">
+            <div id="au-pairs-fam-open-content" class="au-meta">Loading pairs open trades…</div>
+          </div>
+
+          <!-- Closed Trades (mirrors Legacy au-closed-trades-content) -->
+          <div id="au-pairs-fam-closed-panel" class="au-subtab-panel">
+            <div id="au-pairs-fam-closed-content" class="au-meta">Loading pairs closed trades…</div>
+          </div>
+
+          <!-- Signals & Events -->
+          <div id="au-pairs-fam-events-panel" class="au-subtab-panel">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Event type:</span>
+                <select id="au-pairs-fam-events-filter" onchange="autoLoadPairsFamEvents(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All</option>
+                  <option value="ENTRY">Entries only</option>
+                  <option value="EXIT">Exits only</option>
+                </select>
+              </label>
+              <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadPairsFamEvents()">↻</button>
+              <span id="au-pairs-fam-events-status" class="au-badge idle" style="margin-left:auto">…</span>
+            </div>
+            <div id="au-pairs-fam-events-content" class="au-meta">Loading pairs signals & events…</div>
+          </div>
+
+          <!-- Run History -->
+          <div id="au-pairs-fam-runs-panel" class="au-subtab-panel">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Filter:</span>
+                <select id="au-pairs-fam-runs-filter" onchange="autoLoadPairsFamRuns(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All runs</option>
+                  <option value="failed">Failed only</option>
+                  <option value="with_signals">With signals fired</option>
+                </select>
+              </label>
+              <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadPairsFamRuns()">↻</button>
+              <span id="au-pairs-fam-runs-status" class="au-badge idle" style="margin-left:auto">…</span>
+            </div>
+            <div id="au-pairs-fam-runs-content" class="au-meta">Loading pairs run history…</div>
+          </div>
+
+          <!-- Controls & Admin -->
+          <div id="au-pairs-fam-controls-panel" class="au-subtab-panel">
+            <div id="au-pairs-fam-controls-content">
+
+              <div class="au-card">
+                <h3>Strategy Configuration <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadPairsFamAdmin()">↻</button></h3>
+                <div class="au-sub">Rows from <code>auto_strategies</code> for non-GS strategies. Edit via SQL / Studio.</div>
+                <div id="au-pairs-fam-strategies" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>Scheduling</h3>
+                <div class="au-sub">Pairs cron fires at fixed times/day via cron-job.org (no per-strategy schedule in <code>auto_strategies</code>). Last scan freshness comes from <code>auto_runs</code>.</div>
+                <div id="au-pairs-fam-scheduling" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>Universe</h3>
+                <div class="au-sub">Symbols the co-integration scanner walks. Universe is hard-coded in the strategy plugin; edit via a plugin bump + EF redeploy.</div>
+                <div id="au-pairs-fam-universe" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card" style="border-color:#fde68a;background:linear-gradient(to bottom, #fffbeb, #fff)">
+                <h3>Controls <span class="au-badge idle" style="background:#fef3c7;color:#78350f">Locked</span></h3>
+                <div class="au-sub">Pairs logic is deliberately frozen — see <code>LESSONS.md §B.21.8</code>. Any change requires a plugin bump + fresh backtest window; no runtime toggles.</div>
+                <div style="margin-top:12px;font-size:12px;color:#6b7280">Emergency pause (source-level) is available on the Health page's master kill switch.</div>
+              </div>
+
+            </div>
+          </div>
+
         </div>
       </div>
     </div>

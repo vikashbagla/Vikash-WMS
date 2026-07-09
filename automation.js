@@ -64,6 +64,15 @@ function autoSwitchFamily(fam) {
         window._auHealthLoaded = true;
     }
 
+    if (fam === 'pairs') {
+        if (!window._auPairsFamMirrorReady) autoPairsFamSetupMirror();
+        if (!window._auPairsFamLoaded) {
+            autoLoadPairsFamRefresh();
+            window._auPairsFamLoaded = true;
+        }
+        autoEnsureSharedRefresh();
+    }
+
     if (fam === 'gs') {
         // First-time init: set up DOM mirroring so any legacy Open/Closed render
         // also fills the family page targets, plus trigger initial load.
@@ -459,7 +468,7 @@ async function autoLoadGsFamAdmin() {
         }
     }
 
-    // 3. gs_catalogue — hard-coded in the plugin, so we compute from helper fns
+    // 4. gs_catalogue — hard-coded in the plugin, so we compute from helper fns
     var catEl = document.getElementById('au-gs-fam-catalogue');
     if (catEl && typeof autoGsPointValue === 'function') {
         var instruments = [
@@ -485,6 +494,451 @@ async function autoLoadGsFamAdmin() {
         });
         html += '</tbody></table>';
         catEl.innerHTML = html;
+    }
+}
+
+// ============================================================================
+// Pairs family page (Phase C — 2026-07-09)
+//
+// Same anatomy as GS. Open/Closed inherit via DOM mirroring from Legacy tables
+// (au-open-trades-content → au-pairs-fam-open-content, likewise for closed).
+// Signals & Events / Run History / Admin have their own renderers scoped to
+// non-GS strategies. Controls are locked per LESSONS §B.21.8.
+// ============================================================================
+
+function autoPairsFamSetupMirror() {
+    var pairs = [
+        ['au-open-trades-content',   'au-pairs-fam-open-content'],
+        ['au-closed-trades-content', 'au-pairs-fam-closed-content']
+    ];
+    pairs.forEach(function (p) {
+        var src = document.getElementById(p[0]);
+        var dst = document.getElementById(p[1]);
+        if (!src || !dst || src._auPairsMirrored) return;
+        src._auPairsMirrored = true;
+        dst.innerHTML = src.innerHTML;
+        new MutationObserver(function () {
+            dst.innerHTML = src.innerHTML;
+            autoRenderPairsFamMetrics();
+        }).observe(src, { childList: true, subtree: true, characterData: true });
+    });
+    var badges = [
+        ['au-open-trades-status',   'au-pairs-fam-open-badge'],
+        ['au-closed-trades-status', 'au-pairs-fam-closed-badge']
+    ];
+    badges.forEach(function (p) {
+        var src = document.getElementById(p[0]);
+        var dst = document.getElementById(p[1]);
+        if (!src || !dst || src._auPairsBadgeMirrored) return;
+        src._auPairsBadgeMirrored = true;
+        dst.className = src.className;
+        dst.textContent = src.textContent;
+        new MutationObserver(function () {
+            dst.className = src.className;
+            dst.textContent = src.textContent;
+        }).observe(src, { childList: true, subtree: true, characterData: true, attributes: true });
+    });
+    window._auPairsFamMirrorReady = true;
+}
+
+function autoLoadPairsFamRefresh() {
+    if (typeof autoLoadOpenTrades === 'function')   autoLoadOpenTrades();
+    if (typeof autoLoadClosedTrades === 'function') autoLoadClosedTrades();
+    autoLoadPairsFamHeader();
+    autoLoadPairsFamEvents();
+    autoLoadPairsFamRuns();
+    autoLoadPairsFamAdmin();
+    autoLoadPairsFamMetricsFull();  // extra queries for metrics not covered by mirror
+}
+
+// ----- Header (mode pill + last activity) ------------------------------------
+async function autoLoadPairsFamHeader() {
+    try {
+        // Mode: read auto_strategies for pairs strategies (non-GS)
+        var webhookStrats = await autoGetWebhookStrategyNames();
+        var sr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?enabled=eq.true&select=name,execution_mode',
+            { headers: wmsHeaders() });
+        var all = sr.ok ? await sr.json() : [];
+        var pairsStrats = all.filter(function (s) { return s.name && !s.name.startsWith('_') && !webhookStrats.has(s.name); });
+        var pill = document.getElementById('au-pairs-fam-mode');
+        if (pill) {
+            if (pairsStrats.length === 0) { pill.className = 'status-pill stopped'; pill.textContent = '⏹ NO ENABLED PAIRS STRATEGIES'; }
+            else if (pairsStrats.some(function (s) { return s.execution_mode === 'LIVE'; })) { pill.className = 'status-pill live';  pill.textContent = '🟢 LIVE'; }
+            else                                                                             { pill.className = 'status-pill paper'; pill.textContent = '🟡 PAPER'; }
+        }
+        // Last activity — most-recent auto_signals for non-GS strategies
+        var stratNames = pairsStrats.map(function (s) { return s.name; });
+        if (stratNames.length > 0) {
+            var ar = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(' + stratNames.join(',') + ')&order=fired_at.desc&limit=1&select=fired_at,event_type,strategy_name',
+                { headers: wmsHeaders() });
+            var last = ar.ok ? (await ar.json())[0] : null;
+            var laEl = document.getElementById('au-pairs-fam-lastact');
+            if (laEl) {
+                if (last) {
+                    var ago = Math.round((Date.now() - new Date(last.fired_at).getTime()) / 60000);
+                    var agoStr = ago < 60 ? (ago + 'm ago') : ago < 1440 ? (Math.round(ago/60) + 'h ago') : (Math.round(ago/1440) + 'd ago');
+                    laEl.textContent = 'Last activity: ' + last.event_type + ' · ' + last.strategy_name + ' · ' + agoStr;
+                } else {
+                    laEl.textContent = 'Last activity: no signals yet';
+                }
+            }
+        }
+    } catch (_e) { /* silent */ }
+}
+
+// ----- Metrics --------------------------------------------------------------
+var _auPairsMetrics = { openCount: null, openLivePnl: null, realised: null, avgZ: null, avgZN: null, signalsIn30d: null, lastScanAt: null };
+
+function autoRenderPairsFamMetrics() {
+    var t = _auPairsMetrics;
+    var fmt = function (n) { if (n == null) return '—'; return '₹' + Math.round(n).toLocaleString('en-IN'); };
+    var fmtSigned = function (n) {
+        if (n == null) return '—';
+        var sign = n >= 0 ? '+' : '−';
+        return sign + '₹' + Math.round(Math.abs(n)).toLocaleString('en-IN');
+    };
+    var setText = function (id, txt, cls) {
+        var e = document.getElementById(id);
+        if (!e) return;
+        e.textContent = txt;
+        if (cls !== undefined) e.className = 'metric-value ' + cls;
+    };
+    var setSub = function (id, txt) { var e = document.getElementById(id); if (e) e.textContent = txt || ''; };
+
+    if (t.openCount != null) {
+        setText('au-pairs-fam-metric-open', t.openCount + (t.openCount === 1 ? ' trade' : ' trades'), '');
+        setSub('au-pairs-fam-metric-open-sub', t.openLivePnl != null ? ('live P&L ' + fmtSigned(t.openLivePnl)) : '');
+    }
+    if (t.realised != null) {
+        setText('au-pairs-fam-metric-realised', fmtSigned(t.realised), t.realised >= 0 ? 'pos' : 'neg');
+        setSub('au-pairs-fam-metric-realised-sub', '');
+    }
+    if (t.avgZ != null) {
+        setText('au-pairs-fam-metric-avgz', t.avgZ.toFixed(2), '');
+        setSub('au-pairs-fam-metric-avgz-sub', t.avgZN != null ? ('n=' + t.avgZN + ' entries') : '');
+    }
+    if (t.lastScanAt) {
+        var ago = Math.round((Date.now() - new Date(t.lastScanAt).getTime()) / 60000);
+        var agoStr = ago < 60 ? (ago + 'm ago') : ago < 1440 ? (Math.round(ago/60) + 'h ago') : (Math.round(ago/1440) + 'd ago');
+        setText('au-pairs-fam-metric-lastscan', agoStr, '');
+        setSub('au-pairs-fam-metric-lastscan-sub', new Date(t.lastScanAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
+    }
+    if (t.signalsIn30d != null) {
+        setText('au-pairs-fam-metric-signals', String(t.signalsIn30d), '');
+        setSub('au-pairs-fam-metric-signals-sub', '');
+    }
+}
+
+async function autoLoadPairsFamMetricsFull() {
+    try {
+        var webhookStrats = await autoGetWebhookStrategyNames();
+
+        // Open count from view (excluding GS + utility _-prefixed)
+        var vr = await fetch(SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=strategy_name,net_qty', { headers: wmsHeaders() });
+        if (vr.ok) {
+            var openRows = await vr.json();
+            var pairsOpen = (openRows || []).filter(function (r) {
+                return r.strategy_name && !r.strategy_name.startsWith('_') && !webhookStrats.has(r.strategy_name);
+            });
+            _auPairsMetrics.openCount = pairsOpen.length;
+        }
+
+        // Realised P&L all-time and 30-day signal count from auto_signals — approximate:
+        // for a proper realised we'd need to walk entry/exit pairs; for now show a
+        // signals-count proxy plus deep-link Legacy for full realised (until we
+        // wire the same walker used by autoLoadClosedTrades to feed a state var).
+        var since30 = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+        var sc = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?event_type=eq.ENTRY&fired_at=gte.' + since30 + '&select=score,metadata,strategy_name',
+            { headers: wmsHeaders() });
+        if (sc.ok) {
+            var entries = (await sc.json()).filter(function (s) {
+                return s.strategy_name && !s.strategy_name.startsWith('_') && !webhookStrats.has(s.strategy_name);
+            });
+            _auPairsMetrics.signalsIn30d = entries.length;
+            // Avg Z at entry — from metadata.Z90 field (per legacy render at line 2056)
+            var zVals = entries.map(function (s) { return s.metadata && s.metadata.Z90 != null ? Math.abs(Number(s.metadata.Z90)) : null; })
+                               .filter(function (v) { return v != null && !isNaN(v); });
+            if (zVals.length > 0) {
+                _auPairsMetrics.avgZ = zVals.reduce(function (a, b) { return a + b; }, 0) / zVals.length;
+                _auPairsMetrics.avgZN = zVals.length;
+            } else { _auPairsMetrics.avgZ = null; _auPairsMetrics.avgZN = null; }
+        }
+
+        // Last scan = latest auto_runs finished_at for any non-GS non-utility strategy
+        var lr = await fetch(SUPABASE_URL + '/rest/v1/auto_runs?order=finished_at.desc&limit=20&select=strategy_name,finished_at',
+            { headers: wmsHeaders() });
+        if (lr.ok) {
+            var runs = await lr.json();
+            var lastPairsRun = runs.find(function (r) {
+                return r.strategy_name && !r.strategy_name.startsWith('_') && !webhookStrats.has(r.strategy_name);
+            });
+            _auPairsMetrics.lastScanAt = lastPairsRun ? lastPairsRun.finished_at : null;
+        }
+
+        autoRenderPairsFamMetrics();
+    } catch (_e) { /* silent */ }
+}
+
+// ----- Signals & Events tab -------------------------------------------------
+async function autoLoadPairsFamEvents(filterOverride) {
+    var el = document.getElementById('au-pairs-fam-events-content');
+    var statusEl = document.getElementById('au-pairs-fam-events-status');
+    if (!el) return;
+    var sel = document.getElementById('au-pairs-fam-events-filter');
+    var filter = filterOverride && typeof filterOverride === 'string' && filterOverride !== '[object Event]'
+        ? filterOverride : (sel ? sel.value : 'all');
+    if (sel && filter !== sel.value) sel.value = filter;
+    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+
+    try {
+        var webhookStrats = await autoGetWebhookStrategyNames();
+        // Ideally we'd filter server-side; PostgREST doesn't support "not in (...)"
+        // cleanly for arbitrary sets, so overfetch + client-filter (limit 300).
+        var qs = '?order=fired_at.desc&limit=300&select=id,trade_id,strategy_name,fired_at,event_type,direction,score,metadata,source,email_status';
+        if (filter === 'ENTRY')     qs += '&event_type=eq.ENTRY';
+        else if (filter === 'EXIT') qs += '&event_type=neq.ENTRY';
+        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_signals' + qs, { headers: wmsHeaders() });
+        var all = r.ok ? await r.json() : [];
+        var rows = (all || []).filter(function (s) {
+            return s.strategy_name && !s.strategy_name.startsWith('_') && !webhookStrats.has(s.strategy_name);
+        }).slice(0, 200);
+
+        if (rows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No pairs events match this filter.</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 events'; }
+            return;
+        }
+
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left;position:sticky;top:0;z-index:1">' +
+                '<th style="padding:6px 8px">Time (IST)</th>' +
+                '<th style="padding:6px 8px">Strategy</th>' +
+                '<th style="padding:6px 8px">Pair</th>' +
+                '<th style="padding:6px 8px">Event</th>' +
+                '<th style="padding:6px 8px">Side</th>' +
+                '<th style="padding:6px 8px;text-align:right">Score</th>' +
+                '<th style="padding:6px 8px;text-align:right">Z90</th>' +
+                '<th style="padding:6px 8px">Email</th>' +
+                '<th style="padding:6px 8px">Trade</th>' +
+                '</tr></thead><tbody>';
+        rows.forEach(function (s) {
+            var m = s.metadata || {};
+            var typeColor = s.event_type === 'ENTRY' ? '#047857' :
+                           /STOP_HIT|EXIT_STOP/.test(s.event_type) ? '#dc2626' :
+                           /TARGET_HIT|EXIT_TARGET/.test(s.event_type) ? '#0891b2' :
+                           s.event_type === 'TIME_STOP' ? '#92400e' :
+                           s.event_type === 'MANUAL_CLOSE' ? '#7c3aed' : '#6b7280';
+            var emailBadge = s.email_status === 'SENT' ? '<span class="au-badge success" style="font-size:9px">sent</span>'
+                          : s.email_status === 'FAILED' ? '<span class="au-badge error" style="font-size:9px">failed</span>'
+                          : s.email_status === 'PENDING' ? '<span class="au-badge loading" style="font-size:9px">pending</span>'
+                          : '<span class="au-badge idle" style="font-size:9px">—</span>';
+            var tradeFrag = s.trade_id ? s.trade_id.slice(0, 20) : '—';
+            var z90 = m.Z90 != null ? Number(m.Z90).toFixed(2) : '—';
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px;white-space:nowrap;font-family:monospace;font-size:11px">' + autoEsc(autoFmtIST(s.fired_at)) + '</td>' +
+                    '<td style="padding:6px 8px"><code style="font-size:11px">' + autoEsc(s.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px"><b>' + autoEsc(m.Pair || '—') + '</b></td>' +
+                    '<td style="padding:6px 8px;color:' + typeColor + ';font-weight:600">' + autoEsc(s.event_type) + '</td>' +
+                    '<td style="padding:6px 8px">' + autoEsc(s.direction || m.Action || '—') + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + (s.score != null ? s.score : '—') + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">' + z90 + '</td>' +
+                    '<td style="padding:6px 8px">' + emailBadge + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280" title="' + autoEsc(s.trade_id || '') + '">' + autoEsc(tradeFrag) + '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = rows.length + ' events'; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
+        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
+    }
+}
+
+// ----- Run History tab ------------------------------------------------------
+async function autoLoadPairsFamRuns(filterOverride) {
+    var el = document.getElementById('au-pairs-fam-runs-content');
+    var statusEl = document.getElementById('au-pairs-fam-runs-status');
+    if (!el) return;
+    var sel = document.getElementById('au-pairs-fam-runs-filter');
+    var filter = filterOverride && typeof filterOverride === 'string' && filterOverride !== '[object Event]'
+        ? filterOverride : (sel ? sel.value : 'all');
+    if (sel && filter !== sel.value) sel.value = filter;
+    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
+
+    try {
+        var webhookStrats = await autoGetWebhookStrategyNames();
+        var qs = '?order=started_at.desc&limit=200&select=id,strategy_name,started_at,finished_at,duration_ms,status,signals_generated,emails_sent,emails_failed,error';
+        if (filter === 'failed')            qs += '&status=eq.FAILED';
+        else if (filter === 'with_signals') qs += '&signals_generated=gt.0';
+        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_runs' + qs, { headers: wmsHeaders() });
+        var all = r.ok ? await r.json() : [];
+        var rows = (all || []).filter(function (rn) {
+            return rn.strategy_name && !rn.strategy_name.startsWith('_') && !webhookStrats.has(rn.strategy_name);
+        }).slice(0, 100);
+
+        if (rows.length === 0) {
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No pairs runs match this filter.</div>';
+            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 runs'; }
+            return;
+        }
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left;position:sticky;top:0;z-index:1">' +
+                '<th style="padding:6px 8px">Started (IST)</th>' +
+                '<th style="padding:6px 8px">Strategy</th>' +
+                '<th style="padding:6px 8px">Status</th>' +
+                '<th style="padding:6px 8px;text-align:right">Signals</th>' +
+                '<th style="padding:6px 8px">Email</th>' +
+                '<th style="padding:6px 8px;text-align:right">Duration</th>' +
+                '<th style="padding:6px 8px">Error</th>' +
+                '</tr></thead><tbody>';
+        rows.forEach(function (rn) {
+            var emailCell = '—';
+            if (rn.emails_sent || rn.emails_failed) {
+                var sent = rn.emails_sent || 0, failed = rn.emails_failed || 0;
+                emailCell = (failed > 0 ? '<span style="color:#dc2626">' + failed + ' failed</span>' : '') +
+                            (sent > 0 && failed > 0 ? ' / ' : '') +
+                            (sent > 0 ? '<span style="color:#047857">' + sent + ' sent</span>' : '');
+            }
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px;white-space:nowrap;font-family:monospace;font-size:11px">' + autoEsc(autoFmtIST(rn.started_at)) + '</td>' +
+                    '<td style="padding:6px 8px"><code style="font-size:11px">' + autoEsc(rn.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px">' + autoStatusBadge(rn.status) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + (rn.signals_generated != null ? rn.signals_generated : '—') + '</td>' +
+                    '<td style="padding:6px 8px;font-size:11px">' + emailCell + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">' + autoFmtDuration(rn.duration_ms) + '</td>' +
+                    '<td style="padding:6px 8px;color:#7f1d1d;font-size:11px;max-width:400px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(rn.error || '') + '">' +
+                        autoEsc((rn.error || '').slice(0, 100)) + (rn.error && rn.error.length > 100 ? '…' : '') +
+                    '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = rows.length + ' runs'; }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
+        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
+    }
+}
+
+// ----- Controls & Admin tab -------------------------------------------------
+async function autoLoadPairsFamAdmin() {
+    var webhookStrats = await autoGetWebhookStrategyNames();
+
+    // 1. Strategy config table
+    var stratsEl = document.getElementById('au-pairs-fam-strategies');
+    if (stratsEl) {
+        try {
+            var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?select=*', { headers: wmsHeaders() });
+            var all = r.ok ? await r.json() : [];
+            var rows = all.filter(function (s) { return s.name && !s.name.startsWith('_') && !webhookStrats.has(s.name); });
+            if (rows.length === 0) {
+                stratsEl.innerHTML = '<div class="au-soon">No pairs strategies configured.</div>';
+            } else {
+                var html = '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+                html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                        '<th style="padding:6px 8px">Name</th>' +
+                        '<th style="padding:6px 8px">Enabled</th>' +
+                        '<th style="padding:6px 8px">Mode</th>' +
+                        '<th style="padding:6px 8px">Version</th>' +
+                        '<th style="padding:6px 8px">Metadata</th>' +
+                        '</tr></thead><tbody>';
+                rows.forEach(function (s) {
+                    var meta = s.metadata ? JSON.stringify(s.metadata) : '—';
+                    html += '<tr style="border-top:1px solid #e5e7eb">' +
+                            '<td style="padding:6px 8px"><code>' + autoEsc(s.name) + '</code></td>' +
+                            '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge error">no</span>') + '</td>' +
+                            '<td style="padding:6px 8px"><b>' + autoEsc(s.execution_mode || '—') + '</b></td>' +
+                            '<td style="padding:6px 8px;font-family:monospace">' + autoEsc(s.version || '—') + '</td>' +
+                            '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280;max-width:500px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(meta) + '">' + autoEsc(meta.slice(0, 120)) + (meta.length > 120 ? '…' : '') + '</td>' +
+                            '</tr>';
+                });
+                html += '</tbody></table>';
+                stratsEl.innerHTML = html;
+            }
+        } catch (e) {
+            stratsEl.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
+        }
+    }
+
+    // 2. Scheduling — cron-job.org "all enabled" cron hits automation-runner (no ?strategy=)
+    //    5 fixed times/day. Freshness = latest auto_runs across any pairs strategy.
+    var schedEl = document.getElementById('au-pairs-fam-scheduling');
+    if (schedEl) {
+        try {
+            var lr = await fetch(SUPABASE_URL + '/rest/v1/auto_runs?order=finished_at.desc&limit=20&select=strategy_name,finished_at,status',
+                { headers: wmsHeaders() });
+            var runs = lr.ok ? await lr.json() : [];
+            var last = runs.find(function (rn) {
+                return rn.strategy_name && !rn.strategy_name.startsWith('_') && !webhookStrats.has(rn.strategy_name);
+            });
+            var lastCell, badgeCell;
+            var STALE_MIN = 60 * 6;  // pairs runs at fixed times; 6h without a run = stale
+            if (!last) {
+                lastCell = '<span style="color:#9ca3af">never</span>';
+                badgeCell = '<span class="au-badge idle" style="font-size:10px">no data</span>';
+            } else {
+                var ageMin = Math.round((Date.now() - new Date(last.finished_at).getTime()) / 60000);
+                var stale = ageMin > STALE_MIN;
+                var ago = ageMin < 60 ? (ageMin + 'm ago') : ageMin < 1440 ? (Math.round(ageMin/60) + 'h ago') : (Math.round(ageMin/1440) + 'd ago');
+                lastCell = '<span title="' + autoEsc(autoFmtIST(last.finished_at)) + '">' + ago + ' · <code>' + autoEsc(last.strategy_name) + '</code></span>';
+                badgeCell = stale ? '<span class="au-badge error" style="font-size:10px">STALE</span>' : '<span class="au-badge success" style="font-size:10px">OK</span>';
+            }
+            var html = '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+            html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                    '<th style="padding:6px 8px">Job</th>' +
+                    '<th style="padding:6px 8px">Endpoint (Edge Function)</th>' +
+                    '<th style="padding:6px 8px">Cadence</th>' +
+                    '<th style="padding:6px 8px">Last run</th>' +
+                    '<th style="padding:6px 8px">Status</th>' +
+                    '</tr></thead><tbody>';
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px"><b>Pairs scan</b></td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px;color:#4b5563">automation-runner (no ?strategy= param)</td>' +
+                    '<td style="padding:6px 8px;font-size:11px;color:#4b5563">5 fixed times/day · NSE hours</td>' +
+                    '<td style="padding:6px 8px;font-size:11px">' + lastCell + '</td>' +
+                    '<td style="padding:6px 8px">' + badgeCell + '</td>' +
+                    '</tr></tbody></table>';
+            html += '<div style="font-size:11px;color:#6b7280;margin-top:8px;line-height:1.5">' +
+                    '• Runner iterates ALL enabled non-GS strategies on the pairs cron (per <code>EXPLICIT_ONLY_STRATEGIES</code> guard).<br>' +
+                    '• GS is excluded from this cron path — it has its own 15-min crons (see GS → Controls &amp; Admin).' +
+                    '</div>';
+            schedEl.innerHTML = html;
+        } catch (e) {
+            schedEl.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
+        }
+    }
+
+    // 3. Universe — hard-coded in the strategy plugin; we can only show what
+    //    signals reveal. Approximate by extracting unique pair labels from the
+    //    last 90d of ENTRY signals.
+    var uniEl = document.getElementById('au-pairs-fam-universe');
+    if (uniEl) {
+        try {
+            var since90 = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
+            var er = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?event_type=eq.ENTRY&fired_at=gte.' + since90 + '&select=metadata,strategy_name',
+                { headers: wmsHeaders() });
+            var entries = er.ok ? (await er.json()).filter(function (s) {
+                return s.strategy_name && !s.strategy_name.startsWith('_') && !webhookStrats.has(s.strategy_name);
+            }) : [];
+            var pairSet = new Set();
+            entries.forEach(function (s) { if (s.metadata && s.metadata.Pair) pairSet.add(s.metadata.Pair); });
+            var pairs = Array.from(pairSet).sort();
+            if (pairs.length === 0) {
+                uniEl.innerHTML = '<div style="color:#6b7280;font-size:12px">No entry signals in the last 90 days — universe cannot be inferred. Consult the strategy plugin source directly.</div>';
+            } else {
+                uniEl.innerHTML =
+                    '<div style="font-size:12px;color:#4b5563;margin-bottom:6px"><b>' + pairs.length + '</b> unique pairs observed in the last 90d of ENTRY signals:</div>' +
+                    '<div style="display:flex;flex-wrap:wrap;gap:6px">' +
+                    pairs.map(function (p) { return '<span style="background:#eff6ff;color:#1e40af;padding:2px 8px;border-radius:4px;font-size:11px;font-family:monospace">' + autoEsc(p) + '</span>'; }).join('') +
+                    '</div>' +
+                    '<div style="font-size:11px;color:#9ca3af;margin-top:8px">' +
+                    'Note: this is inferred from signal history, not the strategy plugin\'s configured universe. Silent pairs (no entries in 90d) won\'t appear.' +
+                    '</div>';
+            }
+        } catch (e) {
+            uniEl.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
+        }
     }
 }
 
@@ -816,9 +1270,12 @@ function autoOnSharedRefresh() {
     var legacyOpen  = document.getElementById('au-open-trades')?.classList.contains('active');
     var famGs       = document.getElementById('au-fam-gs')?.classList.contains('active');
     var famOpenTab  = document.getElementById('au-gs-fam-open-panel')?.classList.contains('active');
+    var famPairs      = document.getElementById('au-fam-pairs')?.classList.contains('active');
+    var famPairsOpen  = document.getElementById('au-pairs-fam-open-panel')?.classList.contains('active');
     var gsActive    = (legacyOpen && document.getElementById('au-ot-gs')?.classList.contains('active'))
                    || (famGs && famOpenTab);
-    var pairsActive = legacyOpen && document.getElementById('au-ot-pairs')?.classList.contains('active');
+    var pairsActive = (legacyOpen && document.getElementById('au-ot-pairs')?.classList.contains('active'))
+                   || (famPairs && famPairsOpen);
     if (gsActive)    autoLoadGsOpenTrades(true /* silent — flicker-free */);
     if (pairsActive) autoLoadOpenTrades(true /* silent — flicker-free */);
     autoUpdateGsRefreshTickStatus(
