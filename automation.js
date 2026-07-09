@@ -59,9 +59,12 @@ function autoSwitchFamily(fam) {
     if (btn) btn.classList.add('active');
     if (panel) panel.classList.add('active');
 
-    if (fam === 'health' && !window._auHealthLoaded) {
-        autoHealthLoadAll();
-        window._auHealthLoaded = true;
+    if (fam === 'health') {
+        if (!window._auHpMirrorsReady) autoHealthSetupPlatformMirrors();
+        if (!window._auHealthLoaded) {
+            autoHealthLoadAll();
+            window._auHealthLoaded = true;
+        }
     }
 
     if (fam === 'pairs') {
@@ -1044,6 +1047,50 @@ function autoHealthLoadAll() {
     autoHealthLoadErrors();
 }
 
+// ----------------------------------------------------------------------------
+// Health page — Platform Maintenance mirrors (2026-07-09).
+// Ported the Legacy Admin utilities (EOD ingest, market_prices snapshot,
+// Strategy Runner) to the Health page via DOM mirroring of Legacy state
+// elements. Buttons on both surfaces call the same global handlers (which
+// update Legacy IDs); observers propagate the visual state to Health.
+// ----------------------------------------------------------------------------
+function autoHealthSetupPlatformMirrors() {
+    if (window._auHpMirrorsReady) return;
+    var pairs = [
+        // EOD ingest
+        ['au-eod-status',      'au-hp-eod-status',      'badge'],
+        ['au-eod-last-run',    'au-hp-eod-last-run',    'content'],
+        ['au-eod-response',    'au-hp-eod-response',    'content'],
+        // market_prices snapshot
+        ['au-mp-stats',        'au-hp-mp-stats',        'content'],
+        // Strategy Runner
+        ['au-runner-status',   'au-hp-runner-status',   'badge'],
+        ['au-runner-last-run', 'au-hp-runner-last-run', 'content'],
+        ['au-runner-response', 'au-hp-runner-response', 'content']
+    ];
+    pairs.forEach(function (t) {
+        var src = document.getElementById(t[0]);
+        var dst = document.getElementById(t[1]);
+        if (!src || !dst) return;
+        var mode = t[2];
+        var applyOnce = function () {
+            if (mode === 'badge') {
+                dst.className = src.className;
+                dst.textContent = src.textContent;
+            } else {
+                dst.innerHTML = src.innerHTML;
+                // Sync display state (response panels toggle display:block on show)
+                if (src.style && src.style.cssText != null) dst.style.cssText = src.style.cssText;
+            }
+        };
+        applyOnce();
+        new MutationObserver(applyOnce).observe(src, {
+            childList: true, subtree: true, characterData: true, attributes: true
+        });
+    });
+    window._auHpMirrorsReady = true;
+}
+
 var _auHealthState = null;
 
 async function autoHealthLoadKill() {
@@ -1419,7 +1466,10 @@ async function initAutomation() {
         btn.addEventListener('click', function () { autoSwitchSubTab(btn.dataset.subtab); });
     });
 
-    // Health page is the default landing tab — load its data now + auto-refresh every 30s.
+    // Health page is the default landing tab — set up platform-utility mirrors
+    // BEFORE the parallel admin loads below so the initial state is captured,
+    // then load Health data + auto-refresh every 30s.
+    autoHealthSetupPlatformMirrors();
     autoHealthLoadAll();
     window._auHealthLoaded = true;
     if (!window._auHealthTimer) {
@@ -1501,7 +1551,9 @@ function autoSetEodStatus(cls, label) {
 }
 
 function autoSetEodButtonsDisabled(disabled) {
-    document.querySelectorAll('#au-admin .au-btn').forEach(function (b) {
+    // Class-based selector so both Legacy Admin (au-admin) and the new Health
+    // page platform-maintenance card get disabled simultaneously.
+    document.querySelectorAll('.au-eod-btn').forEach(function (b) {
         b.disabled = disabled;
     });
 }
@@ -1658,12 +1710,11 @@ function autoSetRunnerStatus(cls, label) {
 }
 
 function autoSetRunnerButtonsDisabled(disabled) {
-    // Disable only the runner card's buttons (admin tab has multiple cards)
-    var card = document.getElementById('au-runner-status');
-    if (!card) return;
-    var parent = card.closest('.au-card');
-    if (!parent) return;
-    parent.querySelectorAll('.au-btn').forEach(function (b) { b.disabled = disabled; });
+    // Class-based selector so both Legacy runner card and the new Health page
+    // runner card get disabled simultaneously.
+    document.querySelectorAll('.au-runner-btn').forEach(function (b) {
+        b.disabled = disabled;
+    });
 }
 
 function autoRenderRunnerSuccess(d, ms) {

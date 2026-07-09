@@ -604,6 +604,62 @@ details summary {
             <div id="au-health-errors" style="font-size:12px;color:#4b5563">Loading…</div>
           </div>
 
+          <!-- ================================================================
+               Platform maintenance — global admin utilities (2026-07-09).
+               Ported from Legacy Admin per owner Option A. State elements
+               are DOM-mirrored from Legacy targets by autoHealthSetupPlatformMirrors,
+               so a click on either surface propagates to both.
+               ================================================================ -->
+          <div class="health-card" style="grid-column: 1 / -1;">
+            <h3 style="border-bottom:1px solid #e5e7eb;padding-bottom:6px">🛠 Platform maintenance</h3>
+            <div class="health-sub" style="margin-bottom:12px">
+              Global utilities not scoped to any strategy family. State mirrors from the Legacy Admin panel — clicks on either surface stay in sync.
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px">
+
+              <!-- EOD prices ingest -->
+              <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px">
+                <h4 style="margin:0 0 4px;font-size:13px;color:#2d3748;display:flex;align-items:center;justify-content:space-between">
+                  EOD Prices Ingest <span id="au-hp-eod-status" class="au-badge idle">idle</span>
+                </h4>
+                <div class="au-sub" style="font-size:11px;color:#6b7280">Pulls EOD OHLCV from Fyers into <code>market_prices</code>. Daily = 5 days (self-heals gaps); backfill = 252.</div>
+                <div id="au-hp-eod-last-run" class="au-meta" style="margin-top:8px;font-size:11px">Loading last run…</div>
+                <div class="au-actions" style="margin-top:10px">
+                  <button class="au-btn au-btn-primary au-eod-btn"   onclick="autoRunEodIngest(5)">Smoke test (5-day)</button>
+                  <button class="au-btn au-btn-danger au-eod-btn"    onclick="autoRunEodIngest(252, true)">Full backfill</button>
+                  <button class="au-btn au-btn-secondary au-eod-btn" onclick="autoLoadEodLastRun()">↻</button>
+                </div>
+                <div id="au-hp-eod-response" style="display:none;margin-top:10px;font-size:11px"></div>
+              </div>
+
+              <!-- market_prices snapshot -->
+              <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px">
+                <h4 style="margin:0 0 4px;font-size:13px;color:#2d3748">market_prices snapshot</h4>
+                <div class="au-sub" style="font-size:11px;color:#6b7280">Total OHLCV rows, latest date covered, distinct securities.</div>
+                <div id="au-hp-mp-stats" class="au-meta" style="margin-top:8px;font-size:11px">Loading…</div>
+                <div class="au-actions" style="margin-top:10px">
+                  <button class="au-btn au-btn-secondary" onclick="autoLoadMarketPricesStats()">↻ Refresh</button>
+                </div>
+              </div>
+
+              <!-- Strategy Runner ad-hoc -->
+              <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px">
+                <h4 style="margin:0 0 4px;font-size:13px;color:#2d3748;display:flex;align-items:center;justify-content:space-between">
+                  Strategy Runner (ad-hoc) <span id="au-hp-runner-status" class="au-badge idle">idle</span>
+                </h4>
+                <div class="au-sub" style="font-size:11px;color:#6b7280">On-demand invocation of <code>automation-runner</code>. Bypasses cron — useful for manual tests only.</div>
+                <div id="au-hp-runner-last-run" class="au-meta" style="margin-top:8px;font-size:11px">Loading last run…</div>
+                <div class="au-actions" style="margin-top:10px">
+                  <button class="au-btn au-btn-primary au-runner-btn"   onclick="autoRunStrategy('_test')">Run _test stub</button>
+                  <button class="au-btn au-btn-secondary au-runner-btn" onclick="autoRunStrategy('')">Run all enabled</button>
+                  <button class="au-btn au-btn-secondary au-runner-btn" onclick="autoLoadRunnerLastRun()">↻</button>
+                </div>
+                <div id="au-hp-runner-response" style="display:none;margin-top:10px;font-size:11px"></div>
+              </div>
+
+            </div>
+          </div>
+
           <!-- EF quota placeholder -->
           <div class="health-card">
             <h3>Edge Function usage</h3>
@@ -787,9 +843,9 @@ details summary {
 
               <div class="au-card">
                 <h3>Related actions</h3>
-                <div class="au-sub">Cross-links to shared Automated Trading tools.</div>
+                <div class="au-sub">EOD prices ingest, market_prices snapshot, and ad-hoc Strategy Runner have moved to the ⚡ Health &amp; Global page (2026-07-09).</div>
                 <div class="au-actions" style="margin-top:8px">
-                  <button class="au-btn au-btn-secondary" onclick="autoSwitchFamily('legacy'); setTimeout(function(){var b=document.querySelector('.automation-tab-btn[data-tab=au-admin]');if(b)b.click();},50)">→ EOD ingest &amp; strategy runner (Legacy Admin)</button>
+                  <button class="au-btn au-btn-secondary" onclick="autoSwitchFamily('health')">→ Open Health &amp; Global page</button>
                 </div>
               </div>
 
@@ -992,9 +1048,9 @@ details summary {
 
         <!-- Action buttons -->
         <div class="au-actions">
-          <button class="au-btn au-btn-primary"   onclick="autoRunEodIngest(5)">Smoke test (5-day)</button>
-          <button class="au-btn au-btn-danger"    onclick="autoRunEodIngest(252, true)">Full backfill (252-day)</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadEodLastRun()">Refresh status</button>
+          <button class="au-btn au-btn-primary au-eod-btn"   onclick="autoRunEodIngest(5)">Smoke test (5-day)</button>
+          <button class="au-btn au-btn-danger au-eod-btn"    onclick="autoRunEodIngest(252, true)">Full backfill (252-day)</button>
+          <button class="au-btn au-btn-secondary au-eod-btn" onclick="autoLoadEodLastRun()">Refresh status</button>
         </div>
 
         <!-- Live response panel (hidden until first call) -->
@@ -1021,9 +1077,9 @@ details summary {
         <div id="au-runner-last-run" class="au-meta">Loading last run…</div>
 
         <div class="au-actions">
-          <button class="au-btn au-btn-primary"   onclick="autoRunStrategy('_test')">Run _test stub</button>
-          <button class="au-btn au-btn-secondary" onclick="autoRunStrategy('')">Run all enabled</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadRunnerLastRun()">Refresh status</button>
+          <button class="au-btn au-btn-primary au-runner-btn"   onclick="autoRunStrategy('_test')">Run _test stub</button>
+          <button class="au-btn au-btn-secondary au-runner-btn" onclick="autoRunStrategy('')">Run all enabled</button>
+          <button class="au-btn au-btn-secondary au-runner-btn" onclick="autoLoadRunnerLastRun()">Refresh status</button>
         </div>
 
         <div id="au-runner-response" style="display:none; margin-top:12px;"></div>
