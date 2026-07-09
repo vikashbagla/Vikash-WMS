@@ -2833,16 +2833,14 @@ async function runFOSyncEF() {
     const orig = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing…'; }
     try {
-        const token = window.wmsGetUserToken ? await wmsGetUserToken() : null;
-        if (!token) throw new Error('Not logged in — cannot authenticate to the sync EF');
-        const res = await fetch(window.SUPABASE_URL + '/functions/v1/securities-fno-sync', {
-            method: 'POST',
-            headers: {
-                'Content-Type':   'application/json',
-                'x-user-token':   token,
-                'apikey':         window.SUPABASE_ANON_KEY,
-                'Authorization':  'Bearer ' + window.SUPABASE_ANON_KEY,
-            },
+        // Use the shared wmsEdgeHeaders helper — same pattern the rest of the
+        // app uses to call Edge Functions (automation-runner, eod-prices-ingest).
+        // Returns { apikey, Authorization: Bearer <anon>, x-user-token: <jwt> }
+        // which satisfies both the Supabase gateway's Legacy-JWT verification
+        // AND our EF's verifyAuth owner-email check.
+        const res = await fetch(SUPABASE_URL + '/functions/v1/securities-fno-sync', {
+            method:  'POST',
+            headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
         });
         const body = await res.json();
         if (!res.ok || !body.ok) {
