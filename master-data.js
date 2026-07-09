@@ -2817,6 +2817,70 @@ function setFOLoading(on, msg) {
     if (btnFOEx) btnFOEx.disabled = on;
 }
 
+// F&O Sync — server-side via the securities-fno-sync Edge Function (2026-07-09).
+//
+// Replaces the browser-side download/parse/diff/commit flow (startFOSync_LEGACY
+// below, kept as reference only — not wired to any button). The EF does the
+// same three phases: INSERT new futures + options-reference rows, UPDATE
+// existing rows where fields drifted, PATCH is_active=false for expired rows.
+// Plus it adds one reference row per new options bucket for the KH webhook
+// symbol builder. Same auth pattern as automation-runner.
+//
+// Automated: cron-job.org fires this EF every Saturday 04:30 UTC (10:00 IST).
+// This button is the manual override.
+async function runFOSyncEF() {
+    const btn = document.getElementById('btnFOSync');
+    const orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing…'; }
+    try {
+        // Use the shared wmsEdgeHeaders helper — same pattern the rest of the
+        // app uses to call Edge Functions (automation-runner, eod-prices-ingest).
+        // Returns { apikey, Authorization: Bearer <anon>, x-user-token: <jwt> }
+        // which satisfies both the Supabase gateway's Legacy-JWT verification
+        // AND our EF's verifyAuth owner-email check.
+        const res = await fetch(SUPABASE_URL + '/functions/v1/securities-fno-sync', {
+            method:  'POST',
+            headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+        });
+        const body = await res.json();
+        if (!res.ok || !body.ok) {
+            alert('F&O Sync failed:\n\n' + JSON.stringify(body, null, 2));
+            return;
+        }
+        // Compact success summary
+        const s = body.sources || {};
+        const nse = s.NSE || {}; const bse = s.BSE || {}; const mcx = s.MCX || {};
+        const line = (label, x) => label + ':  ' + (x.rows_parsed || 0) + ' rows → ' +
+            (x.futures || 0) + ' fut · ' + (x.options || 0) + ' opt' +
+            (x.error ? '   ⚠ ' + x.error : '');
+        const msg =
+            '✓ F&O Sync complete (' + Math.round(body.duration_ms / 1000) + 's)\n\n' +
+            line('NSE', nse) + '\n' +
+            line('BSE', bse) + '\n' +
+            line('MCX', mcx) + '\n\n' +
+            'Futures added: ' + body.futures_added + '\n' +
+            'Options-ref added: ' + body.options_ref_added + '\n' +
+            'Rows updated: ' + body.updated + '\n' +
+            'Deactivated (expired): ' + body.deactivated +
+            (body.errors && body.errors.length ? '\n\nErrors:\n' + body.errors.join('\n') : '');
+        alert(msg);
+        localStorage.setItem('wms_last_fo_sync', new Date().toISOString());
+        if (typeof loadFOStats === 'function') loadFOStats();
+        if (typeof wmsLoadSecuritiesNfo === 'function') { await wmsLoadSecuritiesNfo(); }
+        if (typeof renderUnified === 'function') renderUnified();
+    } catch (e) {
+        alert('F&O Sync error: ' + (e && e.message ? e.message : e));
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
+// ─── Legacy browser-side F&O sync flow (deprecated 2026-07-09) ───────────────
+// The F&O Sync button now fires runFOSyncEF() above (server-side EF). The
+// browser-side functions below (startFOSync, commitFOSync, diffFORecord, etc.)
+// are UNWIRED — no button in master-data.html points at them anymore — but
+// left intact as reference and as a fallback path. To revert: edit
+// master-data.html onclick from runFOSyncEF() back to startFOSync().
 async function startFOSync() {
     setFOLoading(true, 'Downloading F&O data...');
     _syncModalMode = 'fo';

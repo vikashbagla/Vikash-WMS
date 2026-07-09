@@ -293,6 +293,236 @@ details summary {
     font-size: 12px;
     color: #4b5563;
 }
+
+/* ================================================================
+   FAMILY NAV — Phase A of UI reimagining (2026-07-09).
+   Strategy-family-first workspace. Sits ABOVE the existing sub-tabs.
+   Legacy panel wraps the old .automation-tabs + .automation-content,
+   preserving full functionality during Phases A–D. Retired in Phase E.
+   See Documentation/automation/UI-REIMAGINE-PLAN.md.
+   ================================================================ */
+.automation-family-tabs {
+    flex-shrink: 0;
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    border-bottom: 2px solid #e2e8f0;
+    background: linear-gradient(to bottom, #f8fafc, #ffffff);
+    padding: 0 4px;
+}
+.au-fam-tab-btn {
+    padding: 12px 20px;
+    border: none;
+    background: none;
+    font-size: 13px;
+    font-weight: 700;
+    color: #4b5563;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+.au-fam-tab-btn:hover:not(:disabled) { color: #1e40af; background: rgba(59, 130, 246, 0.06); }
+.au-fam-tab-btn.active { color: #1e40af; border-bottom-color: #1e40af; background: rgba(59, 130, 246, 0.08); }
+.au-fam-tab-btn:disabled { color: #cbd5e0; cursor: not-allowed; }
+.au-fam-tab-btn.legacy { margin-left: auto; color: #6b7280; font-weight: 600; font-size: 12px; }
+.au-fam-tab-btn.legacy.active { color: #6b7280; border-bottom-color: #9ca3af; background: #f3f4f6; }
+
+.automation-family-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+}
+.automation-family-panel {
+    flex: 1;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+}
+.automation-family-panel.active { display: flex; }
+.automation-family-panel > .fam-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    background: #f9fafb;
+}
+
+/* Placeholder cards for GS/KH/Pairs (functional pages ship in later phases) */
+.fam-placeholder {
+    max-width: 640px;
+    margin: 48px auto 24px;
+    padding: 28px;
+    background: #fff;
+    border: 1px dashed #cbd5e0;
+    border-radius: 8px;
+    text-align: center;
+}
+.fam-placeholder h2 { margin: 0 0 12px; font-size: 20px; color: #2d3748; }
+.fam-placeholder p { margin: 8px 0; color: #4b5563; font-size: 13px; line-height: 1.6; }
+.fam-placeholder .fam-eta {
+    display: inline-block;
+    margin-top: 12px;
+    padding: 6px 12px;
+    background: #fef3c7;
+    color: #78350f;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+}
+.fam-placeholder .fam-link-legacy {
+    display: inline-block;
+    margin-top: 14px;
+    padding: 6px 14px;
+    background: #eff6ff;
+    color: #2563eb;
+    border: 1px solid #bfdbfe;
+    border-radius: 6px;
+    text-decoration: none;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+}
+.fam-placeholder .fam-link-legacy:hover { background: #dbeafe; }
+
+/* Health page layout */
+.health-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 16px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+.health-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+.health-card h3 {
+    margin: 0 0 4px;
+    font-size: 14px;
+    color: #2d3748;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.health-card .health-sub { font-size: 11px; color: #6b7280; margin-bottom: 12px; }
+.health-card.kill-card { grid-column: 1 / -1; background: linear-gradient(to right, #fef2f2, #fff); border-color: #fecaca; }
+.health-card.families-card { grid-column: 1 / -1; }
+.kill-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px;
+    background: #fff;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+    margin-top: 8px;
+}
+.kill-state-label { font-size: 15px; font-weight: 700; flex: 1; }
+.kill-state-label.armed { color: #16a34a; }
+.kill-state-label.tripped { color: #b91c1c; }
+.kill-btn { padding: 8px 20px; border: none; border-radius: 4px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.kill-btn.arm { background: #16a34a; color: #fff; }
+.kill-btn.arm:hover { background: #15803d; }
+.kill-btn.trip { background: #dc2626; color: #fff; }
+.kill-btn.trip:hover { background: #b91c1c; }
+.kill-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.families-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+.families-table th {
+    text-align: left; padding: 8px 10px; background: #f9fafb;
+    border-bottom: 2px solid #e5e7eb; color: #4b5563; font-weight: 600;
+}
+.families-table td { padding: 10px; border-bottom: 1px solid #f3f4f6; color: #1f2937; }
+.families-table tr.clickable { cursor: pointer; transition: background 0.1s; }
+.families-table tr.clickable:hover { background: #f8fafc; }
+.families-table .status-pill {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 700;
+}
+.status-pill.live { background: #d1fae5; color: #065f46; }
+.status-pill.paper { background: #fef3c7; color: #78350f; }
+.status-pill.paused { background: #e5e7eb; color: #374151; }
+.status-pill.stopped { background: #fee2e2; color: #7f1d1d; }
+.status-pill.building { background: #e0e7ff; color: #3730a3; }
+.status-pill.new { background: #ecfeff; color: #155e75; }
+
+.cron-list { list-style: none; padding: 0; margin: 0; font-size: 12px; }
+.cron-list li {
+    padding: 6px 0; display: flex; justify-content: space-between;
+    border-bottom: 1px solid #f3f4f6;
+}
+.cron-list li:last-child { border-bottom: none; }
+.cron-list .cron-name { color: #4b5563; font-weight: 600; }
+.cron-list .cron-time { color: #6b7280; font-family: monospace; }
+.cron-list .cron-badge { padding: 1px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; }
+.cron-list .cron-badge.ok { background: #d1fae5; color: #065f46; }
+.cron-list .cron-badge.stale { background: #fee2e2; color: #7f1d1d; }
+.cron-list .cron-badge.na { background: #f3f4f6; color: #6b7280; }
+
+/* ================================================================
+   FAMILY PAGE ANATOMY — Phase B (2026-07-09).
+   Shared shell for GS / KH / Pairs family pages: header strip,
+   metrics strip, sub-tab bar. See UI-REIMAGINE-PLAN.md §3.
+   ================================================================ */
+.fam-page { display: flex; flex-direction: column; gap: 12px; max-width: 1500px; margin: 0 auto; }
+
+.fam-header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 12px 16px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+}
+.fam-header .fam-title h2 { margin: 0; font-size: 17px; color: #1e293b; }
+.fam-header .fam-title .fam-sub { font-size: 11px; color: #6b7280; margin-top: 2px; }
+.fam-header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 11px; color: #6b7280; }
+.fam-header-right .fam-lastact { font-family: monospace; }
+
+.fam-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 8px;
+}
+.fam-metric-tile {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.fam-metric-tile .metric-label {
+    font-size: 10px;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-weight: 600;
+}
+.fam-metric-tile .metric-value {
+    font-size: 15px;
+    color: #1f2937;
+    font-weight: 700;
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+}
+.fam-metric-tile .metric-sub {
+    font-size: 10px;
+    color: #6b7280;
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+}
+.fam-metric-tile .metric-value.pos { color: #16a34a; }
+.fam-metric-tile .metric-value.neg { color: #dc2626; }
+
 </style>
 </head>
 
@@ -302,6 +532,629 @@ details summary {
   <div class="automation-header-bar">
     <h2>🤖 Automated Trading</h2>
   </div>
+
+  <!-- ================================================================
+       FAMILY NAV (Phase A of UI reimagining, 2026-07-09).
+       Strategy-family-first workspace. Each family (GS/KH/Pairs) gets its
+       own page with uniform anatomy. Legacy view preserves the old
+       Admin/Open/Events/Runs/Live sub-tabs during Phases A–D.
+       See Documentation/automation/UI-REIMAGINE-PLAN.md.
+       ================================================================ -->
+  <div class="automation-family-tabs">
+    <button class="au-fam-tab-btn active" data-fam="health">⚡ Health &amp; Global</button>
+    <button class="au-fam-tab-btn"        data-fam="gs">🥈🥇 GS</button>
+    <button class="au-fam-tab-btn"        data-fam="kh">🐦 KH</button>
+    <button class="au-fam-tab-btn"        data-fam="pairs">🔗 Pairs</button>
+    <button class="au-fam-tab-btn"        data-fam="addnew" disabled title="Contact platform owner to add new strategy family">＋ Add strategy</button>
+    <button class="au-fam-tab-btn legacy" data-fam="legacy">📁 Legacy view</button>
+  </div>
+
+  <div class="automation-family-body">
+
+    <!-- ⚡ Health & Global Controls (Phase A functional) -->
+    <div id="au-fam-health" class="automation-family-panel active">
+      <div class="fam-scroll">
+        <div class="health-grid">
+
+          <!-- Master kill switch -->
+          <div class="health-card kill-card">
+            <h3>Master kill switch <span id="au-health-kill-badge" class="status-pill paused">…</span></h3>
+            <div class="health-sub">Halts <b>ALL</b> automated strategies (GS PAPER, KH LIVE, future). Toggle takes effect on the next signal (within ~1s). Backed by <code>app_state.kill_switch</code>.</div>
+            <div class="kill-toggle-row">
+              <span id="au-health-kill-label" class="kill-state-label">Loading…</span>
+              <button id="au-health-kill-btn" class="kill-btn arm" onclick="autoHealthToggleKill()" disabled>…</button>
+            </div>
+            <div id="au-health-kill-meta" style="font-size:11px;color:#6b7280;margin-top:6px"></div>
+          </div>
+
+          <!-- Family status board -->
+          <div class="health-card families-card">
+            <h3>Strategy families <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoHealthLoadFamilies()">↻</button></h3>
+            <div class="health-sub">Click any row to jump to that family's page.</div>
+            <table class="families-table">
+              <thead>
+                <tr>
+                  <th>Family</th>
+                  <th>Mode</th>
+                  <th>Status</th>
+                  <th>Open</th>
+                  <th>Today's P&amp;L</th>
+                  <th>Last activity</th>
+                </tr>
+              </thead>
+              <tbody id="au-health-families-body">
+                <tr><td colspan="6" style="color:#6b7280;text-align:center;padding:12px">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Cron health -->
+          <div class="health-card">
+            <h3>Cron health <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoHealthLoadCrons()">↻</button></h3>
+            <div class="health-sub">Last successful invocation per scheduled Edge Function. Stale = &gt; 2× cadence.</div>
+            <ul id="au-health-crons" class="cron-list">
+              <li><span class="cron-name">Loading…</span><span class="cron-badge na">–</span></li>
+            </ul>
+          </div>
+
+          <!-- Recent errors -->
+          <div class="health-card">
+            <h3>Recent errors (24h) <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoHealthLoadErrors()">↻</button></h3>
+            <div class="health-sub">Failed <code>auto_runs</code> across all families.</div>
+            <div id="au-health-errors" style="font-size:12px;color:#4b5563">Loading…</div>
+          </div>
+
+          <!-- ================================================================
+               Platform maintenance — global admin utilities (2026-07-09).
+               Ported from Legacy Admin per owner Option A. State elements
+               are DOM-mirrored from Legacy targets by autoHealthSetupPlatformMirrors,
+               so a click on either surface propagates to both.
+               ================================================================ -->
+          <div class="health-card" style="grid-column: 1 / -1;">
+            <h3 style="border-bottom:1px solid #e5e7eb;padding-bottom:6px">🛠 Platform maintenance</h3>
+            <div class="health-sub" style="margin-bottom:12px">
+              Global utilities not scoped to any strategy family. State mirrors from the Legacy Admin panel — clicks on either surface stay in sync.
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px">
+
+              <!-- EOD prices ingest -->
+              <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px">
+                <h4 style="margin:0 0 4px;font-size:13px;color:#2d3748;display:flex;align-items:center;justify-content:space-between">
+                  EOD Prices Ingest <span id="au-hp-eod-status" class="au-badge idle">idle</span>
+                </h4>
+                <div class="au-sub" style="font-size:11px;color:#6b7280">Pulls EOD OHLCV from Fyers into <code>market_prices</code>. Daily = 5 days (self-heals gaps); backfill = 252.</div>
+                <div id="au-hp-eod-last-run" class="au-meta" style="margin-top:8px;font-size:11px">Loading last run…</div>
+                <div class="au-actions" style="margin-top:10px">
+                  <button class="au-btn au-btn-primary au-eod-btn"   onclick="autoRunEodIngest(5)">Smoke test (5-day)</button>
+                  <button class="au-btn au-btn-danger au-eod-btn"    onclick="autoRunEodIngest(252, true)">Full backfill</button>
+                  <button class="au-btn au-btn-secondary au-eod-btn" onclick="autoLoadEodLastRun()">↻</button>
+                </div>
+                <div id="au-hp-eod-response" style="display:none;margin-top:10px;font-size:11px"></div>
+              </div>
+
+              <!-- market_prices snapshot -->
+              <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px">
+                <h4 style="margin:0 0 4px;font-size:13px;color:#2d3748">market_prices snapshot</h4>
+                <div class="au-sub" style="font-size:11px;color:#6b7280">Total OHLCV rows, latest date covered, distinct securities.</div>
+                <div id="au-hp-mp-stats" class="au-meta" style="margin-top:8px;font-size:11px">Loading…</div>
+                <div class="au-actions" style="margin-top:10px">
+                  <button class="au-btn au-btn-secondary" onclick="autoLoadMarketPricesStats()">↻ Refresh</button>
+                </div>
+              </div>
+
+              <!-- Strategy Runner ad-hoc -->
+              <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px">
+                <h4 style="margin:0 0 4px;font-size:13px;color:#2d3748;display:flex;align-items:center;justify-content:space-between">
+                  Strategy Runner (ad-hoc) <span id="au-hp-runner-status" class="au-badge idle">idle</span>
+                </h4>
+                <div class="au-sub" style="font-size:11px;color:#6b7280">On-demand invocation of <code>automation-runner</code>. Bypasses cron — useful for manual tests only.</div>
+                <div id="au-hp-runner-last-run" class="au-meta" style="margin-top:8px;font-size:11px">Loading last run…</div>
+                <div class="au-actions" style="margin-top:10px">
+                  <button class="au-btn au-btn-primary au-runner-btn"   onclick="autoRunStrategy('_test')">Run _test stub</button>
+                  <button class="au-btn au-btn-secondary au-runner-btn" onclick="autoRunStrategy('')">Run all enabled</button>
+                  <button class="au-btn au-btn-secondary au-runner-btn" onclick="autoLoadRunnerLastRun()">↻</button>
+                </div>
+                <div id="au-hp-runner-response" style="display:none;margin-top:10px;font-size:11px"></div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- EF quota placeholder -->
+          <div class="health-card">
+            <h3>Edge Function usage</h3>
+            <div class="health-sub">Rolling 30-day invocations vs Supabase Free-plan cap (500K/mo).</div>
+            <div id="au-health-quota" style="font-size:12px;color:#6b7280;padding:12px 0">
+              Requires Supabase log-drain integration — placeholder for later.
+            </div>
+          </div>
+
+          <!-- Droplet health placeholder -->
+          <div class="health-card">
+            <h3>Droplet health</h3>
+            <div class="health-sub">wms-live-1 service status (proxied from <code>/health</code>).</div>
+            <div id="au-health-droplet" style="font-size:12px;color:#6b7280;padding:12px 0">
+              Depends on Task #27 (Droplet status UI panel) — placeholder for later.
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- 🥈🥇 GS family page (Phase B — 2026-07-09).
+         Silver + gold combined. Feature parity with Legacy Open/Closed via
+         DOM mirroring (see automation.js autoGsFamSetupMirror). Signals /
+         Runs / Controls / Admin tabs ship in Phase B.2. -->
+    <div id="au-fam-gs" class="automation-family-panel">
+      <div class="fam-scroll">
+        <div class="fam-page">
+
+          <!-- Header strip -->
+          <div class="fam-header">
+            <div class="fam-title">
+              <h2>🥈🥇 GS — Silver &amp; Gold Mini</h2>
+              <div class="fam-sub">MS007 v2.2 on MCX 15-min · silver_mini_15m + gold_mini_15m combined</div>
+            </div>
+            <div class="fam-header-right">
+              <span class="status-pill paper" id="au-gs-fam-mode">🟡 PAPER</span>
+              <span id="au-gs-fam-lastact" class="fam-lastact">Last activity: —</span>
+            </div>
+          </div>
+
+          <!-- Metrics strip -->
+          <div class="fam-metrics">
+            <div class="fam-metric-tile">
+              <div class="metric-label">Open positions</div>
+              <div class="metric-value" id="au-gs-fam-metric-open">—</div>
+              <div class="metric-sub" id="au-gs-fam-metric-open-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Live P&amp;L (open)</div>
+              <div class="metric-value" id="au-gs-fam-metric-livepnl">—</div>
+              <div class="metric-sub" id="au-gs-fam-metric-livepnl-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Realised (all-time)</div>
+              <div class="metric-value" id="au-gs-fam-metric-realised">—</div>
+              <div class="metric-sub" id="au-gs-fam-metric-realised-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Peak exposure</div>
+              <div class="metric-value" id="au-gs-fam-metric-peak">—</div>
+              <div class="metric-sub" id="au-gs-fam-metric-peak-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Plugin version</div>
+              <div class="metric-value" id="au-gs-fam-metric-version">MS007-v2.2</div>
+              <div class="metric-sub">from plugin VERSION constant</div>
+            </div>
+          </div>
+
+          <!-- Sub-tabs (5) — Admin merged into Controls & Admin per owner 2026-07-09 -->
+          <div class="au-subtabs">
+            <button class="au-subtab-btn active" data-subtab="au-gs-fam-open-panel">
+              Open Trades <span id="au-gs-fam-open-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-gs-fam-closed-panel">
+              Closed Trades <span id="au-gs-fam-closed-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-gs-fam-events-panel">Signals &amp; Events</button>
+            <button class="au-subtab-btn" data-subtab="au-gs-fam-runs-panel">Run History</button>
+            <button class="au-subtab-btn" data-subtab="au-gs-fam-controls-panel">Controls &amp; Admin</button>
+            <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px" onclick="autoLoadGsFamRefresh()">↻ Refresh</button>
+          </div>
+
+          <!-- Open Trades panel (mirrors Legacy au-gs-open-content) -->
+          <div id="au-gs-fam-open-panel" class="au-subtab-panel active">
+            <div id="au-gs-fam-open-content" class="au-meta">Loading GS open trades…</div>
+          </div>
+
+          <!-- Closed Trades panel (mirrors Legacy au-gs-closed-content) -->
+          <div id="au-gs-fam-closed-panel" class="au-subtab-panel">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Source:</span>
+                <select id="au-gs-fam-closed-source-filter" onchange="autoGsSetClosedSourceFilter(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All</option>
+                  <option value="chassis">Automation Runner</option>
+                  <option value="tv_webhook">TV Webhook (legacy)</option>
+                </select>
+              </label>
+              <span style="font-size:11px;color:#6b7280">Peak exposure &amp; margin in the totals row respect this filter.</span>
+            </div>
+            <div id="au-gs-fam-closed-content" class="au-meta">Loading GS closed trades…</div>
+          </div>
+
+          <!-- Signals & Events (Phase B.2) — auto_signals scoped to GS -->
+          <div id="au-gs-fam-events-panel" class="au-subtab-panel">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Event type:</span>
+                <select id="au-gs-fam-events-filter" onchange="autoLoadGsFamEvents(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All</option>
+                  <option value="ENTRY">Entries only</option>
+                  <option value="EXIT">Exits only</option>
+                </select>
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Strategy:</span>
+                <select id="au-gs-fam-events-strat" onchange="autoLoadGsFamEvents()"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">Silver + Gold</option>
+                  <option value="silver_mini_15m">Silver Mini only</option>
+                  <option value="gold_mini_15m">Gold Mini only</option>
+                </select>
+              </label>
+              <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadGsFamEvents()">↻</button>
+              <span id="au-gs-fam-events-status" class="au-badge idle" style="margin-left:auto">…</span>
+            </div>
+            <div id="au-gs-fam-events-content" class="au-meta">Loading GS signals & events…</div>
+          </div>
+
+          <!-- Run History (Phase B.2) — auto_runs scoped to GS -->
+          <div id="au-gs-fam-runs-panel" class="au-subtab-panel">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Filter:</span>
+                <select id="au-gs-fam-runs-filter" onchange="autoLoadGsFamRuns(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All runs</option>
+                  <option value="failed">Failed only</option>
+                  <option value="with_signals">With signals fired</option>
+                </select>
+              </label>
+              <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadGsFamRuns()">↻</button>
+              <span id="au-gs-fam-runs-status" class="au-badge idle" style="margin-left:auto">…</span>
+            </div>
+            <div id="au-gs-fam-runs-content" class="au-meta">Loading GS run history…</div>
+          </div>
+
+          <!-- Controls & Admin (Phase B.2 admin bits; B.3 controls after LIVE-cutover discussion) -->
+          <div id="au-gs-fam-controls-panel" class="au-subtab-panel">
+            <div id="au-gs-fam-controls-content">
+
+              <!-- Admin: strategy config + scheduling + version + gs_catalogue snapshot -->
+              <div class="au-card">
+                <h3>Strategy Configuration <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
+                <div class="au-sub">Rows from <code>auto_strategies</code> for silver_mini_15m + gold_mini_15m. Edit via SQL / Studio for now — a UI editor ships later.</div>
+                <div id="au-gs-fam-strategies" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>Scheduling</h3>
+                <div class="au-sub">All GS cadence lives in <b>external cron-job.org</b> jobs (not in <code>auto_strategies.cron_schedule</code>, which stays null for GS). "Last run" reads from <code>auto_runs</code>; a stale badge appears if the gap exceeds 2× cadence.</div>
+                <div id="au-gs-fam-scheduling" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>Plugin Version</h3>
+                <div class="au-sub">MS007 version constant compiled into the automation-runner Edge Function (both silver + gold plugins re-export the same constant).</div>
+                <div id="au-gs-fam-plugin-version" style="margin-top:12px;font-size:14px;font-weight:700;color:#1e40af;font-family:monospace">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>gs_catalogue snapshot</h3>
+                <div class="au-sub">Contract specs used for exposure / margin calc: lot size (kg / g), point_value (₹/pt), margin %.</div>
+                <div id="au-gs-fam-catalogue" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>Related actions</h3>
+                <div class="au-sub">EOD prices ingest, market_prices snapshot, and ad-hoc Strategy Runner have moved to the ⚡ Health &amp; Global page (2026-07-09).</div>
+                <div class="au-actions" style="margin-top:8px">
+                  <button class="au-btn au-btn-secondary" onclick="autoSwitchFamily('health')">→ Open Health &amp; Global page</button>
+                </div>
+              </div>
+
+              <!-- Controls: pause + PAPER↔LIVE (Phase B.3) -->
+              <div class="au-card" style="border-color:#fde68a;background:linear-gradient(to bottom, #fffbeb, #fff)">
+                <h3>Controls <span class="au-badge idle" style="background:#fef3c7;color:#78350f">Phase B.3</span></h3>
+                <div class="au-sub">Per-strategy pause (silver / gold individually via <code>app_state.paused_sources</code>) and PAPER↔LIVE toggle. Ships after the GS→LIVE cutover discussion — the toggle needs to know what LIVE actually means for GS first.</div>
+                <div style="margin-top:12px;font-size:12px;color:#6b7280">Until then, use Legacy view → Live Trading tab for KH controls (which are the only LIVE controls right now).</div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- 🐦 KH family page (Phase D — 2026-07-09).
+         First UI presence for Katalysthive. Data source is wms_live_commands
+         (KH does NOT go through auto_signals). The Controls & Admin sub-tab
+         DOM-mirrors the Legacy Live Trading panel (au-live-controls, au-live-kh,
+         au-live-lotsizes) so the SAME live-enforcing risk widgets appear here
+         — no rebuild, no risk of a stray toggle mid-migration. -->
+    <div id="au-fam-kh" class="automation-family-panel">
+      <div class="fam-scroll">
+        <div class="fam-page">
+
+          <!-- Header strip -->
+          <div class="fam-header">
+            <div class="fam-title">
+              <h2>🐦 Katalysthive — sharanaga_v1</h2>
+              <div class="fam-sub">External analyst webhook → LIVE Fyers orders · signal_source=katalysthive</div>
+            </div>
+            <div class="fam-header-right">
+              <span class="status-pill live" id="au-kh-fam-mode">🟢 LIVE</span>
+              <span id="au-kh-fam-lastact" class="fam-lastact">Last activity: —</span>
+            </div>
+          </div>
+
+          <!-- Metrics strip (KH-specific: commands, not trades) -->
+          <div class="fam-metrics">
+            <div class="fam-metric-tile">
+              <div class="metric-label">Open commands</div>
+              <div class="metric-value" id="au-kh-fam-metric-open">—</div>
+              <div class="metric-sub" id="au-kh-fam-metric-open-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Ingested (24h)</div>
+              <div class="metric-value" id="au-kh-fam-metric-ingested">—</div>
+              <div class="metric-sub" id="au-kh-fam-metric-ingested-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Filled (24h)</div>
+              <div class="metric-value" id="au-kh-fam-metric-filled">—</div>
+              <div class="metric-sub" id="au-kh-fam-metric-filled-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Rejected (24h)</div>
+              <div class="metric-value" id="au-kh-fam-metric-rejected">—</div>
+              <div class="metric-sub" id="au-kh-fam-metric-rejected-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Errors (24h)</div>
+              <div class="metric-value" id="au-kh-fam-metric-errors">—</div>
+              <div class="metric-sub" id="au-kh-fam-metric-errors-sub"></div>
+            </div>
+          </div>
+
+          <!-- Sub-tabs (5 — Callbacks placeholder until v1.1 ships) -->
+          <div class="au-subtabs">
+            <button class="au-subtab-btn active" data-subtab="au-kh-fam-open-panel">
+              Open Commands <span id="au-kh-fam-open-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-kh-fam-recent-panel">
+              Recent Activity <span id="au-kh-fam-recent-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-kh-fam-rejections-panel">Rejections</button>
+            <button class="au-subtab-btn" data-subtab="au-kh-fam-callbacks-panel">Callbacks</button>
+            <button class="au-subtab-btn" data-subtab="au-kh-fam-controls-panel" style="color:#b91c1c;font-weight:700">⚡ Controls &amp; Admin</button>
+            <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px" onclick="autoLoadKhFamRefresh()">↻ Refresh</button>
+          </div>
+
+          <!-- Open Commands (in-flight: pending / claimed / placed with non-terminal broker_status) -->
+          <div id="au-kh-fam-open-panel" class="au-subtab-panel active">
+            <div id="au-kh-fam-open-content" class="au-meta">Loading Katalysthive open commands…</div>
+          </div>
+
+          <!-- Recent Activity (last 100 commands, all statuses) -->
+          <div id="au-kh-fam-recent-panel" class="au-subtab-panel">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Status:</span>
+                <select id="au-kh-fam-recent-filter" onchange="autoLoadKhFamRecent(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All statuses</option>
+                  <option value="terminal">Terminal only (filled / cancelled / rejected)</option>
+                  <option value="rejected">Rejected only</option>
+                </select>
+              </label>
+              <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadKhFamRecent()">↻</button>
+              <span id="au-kh-fam-recent-status" class="au-badge idle" style="margin-left:auto">…</span>
+            </div>
+            <div id="au-kh-fam-recent-content" class="au-meta">Loading Katalysthive recent activity…</div>
+          </div>
+
+          <!-- Rejections (status='rejected', grouped by error_code) -->
+          <div id="au-kh-fam-rejections-panel" class="au-subtab-panel">
+            <div id="au-kh-fam-rejections-content" class="au-meta">Loading Katalysthive rejections…</div>
+          </div>
+
+          <!-- Callbacks (placeholder — v1.1 outbound callbacks) -->
+          <div id="au-kh-fam-callbacks-panel" class="au-subtab-panel">
+            <div class="fam-placeholder">
+              <h2>Callback delivery status</h2>
+              <p>Outbound callbacks to Katalysthive (order-status pushes back to their platform) will render here once the v1.1 callback pipeline ships. Right now: no callbacks are sent — Katalysthive polls our GET endpoints on their side.</p>
+              <span class="fam-eta">Phase D.2 — after v1.1 callbacks ship</span>
+            </div>
+          </div>
+
+          <!-- Controls & Admin — DOM-mirror the Legacy Live Trading panel content
+               (au-live-controls, au-live-kh, au-live-lotsizes). Same live-enforcing
+               widgets, relocated NOT rebuilt. Legacy panel remains fully functional
+               in parallel until Phase E. -->
+          <div id="au-kh-fam-controls-panel" class="au-subtab-panel">
+
+            <div class="au-card" style="border-left:4px solid #dc2626">
+              <h3>Live Controls <span id="au-kh-fam-live-badge" class="au-badge idle">…</span></h3>
+              <div class="au-sub">Master kill switch + Katalysthive source pause. Same underlying <code>app_state</code> row as the Health page — changes are broker-wide.</div>
+              <div id="au-kh-fam-live-controls" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
+              <div class="au-actions"><button class="au-btn au-btn-secondary au-live-btn" onclick="autoLoadLive()">↻ Refresh</button></div>
+            </div>
+
+            <div class="au-card">
+              <h3>Katalysthive (sharanaga_v1) — Risk Wrappers</h3>
+              <div class="au-sub">Checked before any Katalysthive signal is placed. A breach rejects the signal — nothing reaches the broker (fail-closed). Saved instantly to <code>wms_live_risk_limits</code>.</div>
+              <div id="au-kh-fam-live-kh" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
+            </div>
+
+            <div class="au-card">
+              <h3>Lot Sizes</h3>
+              <div class="au-sub">Contracts per lot — used to convert KH quantities into lots for the exposure cap. Auto-filled from the securities master; no manual entry, and kept current by the F&amp;O sync.</div>
+              <div id="au-kh-fam-live-lotsizes" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
+            </div>
+
+            <div class="au-card">
+              <h3>Integration Reference</h3>
+              <div class="au-sub">Analyst endpoint URL + docs link.</div>
+              <div style="margin-top:12px;font-family:monospace;font-size:11px;color:#4b5563;background:#f9fafb;padding:8px 10px;border-radius:4px">
+                POST https://&lt;project&gt;.supabase.co/functions/v1/katalysthive-webhook
+              </div>
+              <div style="margin-top:8px;font-size:11px;color:#6b7280">
+                Auth: API key via <code>Authorization: Bearer &lt;key&gt;</code> header. HMAC signature over body.<br>
+                Full contract: <code>Documentation/automation/kh/KATALYSTHIVE-WMS-INTEGRATION-v1.md</code>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- 🔗 Pairs family page (Phase C — 2026-07-09).
+         Same anatomy as GS. Open/Closed via DOM mirroring of Legacy tables.
+         Metrics strip drops "peak exposure" (not a pairs concept), adds
+         "avg z-score at entry". Controls locked per LESSONS §B.21.8. -->
+    <div id="au-fam-pairs" class="automation-family-panel">
+      <div class="fam-scroll">
+        <div class="fam-page">
+
+          <!-- Header strip -->
+          <div class="fam-header">
+            <div class="fam-title">
+              <h2>🔗 Pairs Scanner</h2>
+              <div class="fam-sub">Rolling co-integration scanner across a fixed universe · non-GS strategies</div>
+            </div>
+            <div class="fam-header-right">
+              <span class="status-pill paper" id="au-pairs-fam-mode">🟡 PAPER</span>
+              <span id="au-pairs-fam-lastact" class="fam-lastact">Last activity: —</span>
+            </div>
+          </div>
+
+          <!-- Metrics strip -->
+          <div class="fam-metrics">
+            <div class="fam-metric-tile">
+              <div class="metric-label">Open positions</div>
+              <div class="metric-value" id="au-pairs-fam-metric-open">—</div>
+              <div class="metric-sub" id="au-pairs-fam-metric-open-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Realised (all-time)</div>
+              <div class="metric-value" id="au-pairs-fam-metric-realised">—</div>
+              <div class="metric-sub" id="au-pairs-fam-metric-realised-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Avg Z at entry (30d)</div>
+              <div class="metric-value" id="au-pairs-fam-metric-avgz">—</div>
+              <div class="metric-sub" id="au-pairs-fam-metric-avgz-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">Last scan</div>
+              <div class="metric-value" id="au-pairs-fam-metric-lastscan">—</div>
+              <div class="metric-sub" id="au-pairs-fam-metric-lastscan-sub"></div>
+            </div>
+            <div class="fam-metric-tile">
+              <div class="metric-label">30-day signals fired</div>
+              <div class="metric-value" id="au-pairs-fam-metric-signals">—</div>
+              <div class="metric-sub" id="au-pairs-fam-metric-signals-sub"></div>
+            </div>
+          </div>
+
+          <!-- Sub-tabs (5 — Admin merged into Controls & Admin) -->
+          <div class="au-subtabs">
+            <button class="au-subtab-btn active" data-subtab="au-pairs-fam-open-panel">
+              Open Trades <span id="au-pairs-fam-open-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-pairs-fam-closed-panel">
+              Closed Trades <span id="au-pairs-fam-closed-badge" class="au-badge idle">…</span>
+            </button>
+            <button class="au-subtab-btn" data-subtab="au-pairs-fam-events-panel">Signals &amp; Events</button>
+            <button class="au-subtab-btn" data-subtab="au-pairs-fam-runs-panel">Run History</button>
+            <button class="au-subtab-btn" data-subtab="au-pairs-fam-controls-panel">Controls &amp; Admin</button>
+            <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px" onclick="autoLoadPairsFamRefresh()">↻ Refresh</button>
+          </div>
+
+          <!-- Open Trades (mirrors Legacy au-open-trades-content) -->
+          <div id="au-pairs-fam-open-panel" class="au-subtab-panel active">
+            <div id="au-pairs-fam-open-content" class="au-meta">Loading pairs open trades…</div>
+          </div>
+
+          <!-- Closed Trades (mirrors Legacy au-closed-trades-content) -->
+          <div id="au-pairs-fam-closed-panel" class="au-subtab-panel">
+            <div id="au-pairs-fam-closed-content" class="au-meta">Loading pairs closed trades…</div>
+          </div>
+
+          <!-- Signals & Events -->
+          <div id="au-pairs-fam-events-panel" class="au-subtab-panel">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Event type:</span>
+                <select id="au-pairs-fam-events-filter" onchange="autoLoadPairsFamEvents(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All</option>
+                  <option value="ENTRY">Entries only</option>
+                  <option value="EXIT">Exits only</option>
+                </select>
+              </label>
+              <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadPairsFamEvents()">↻</button>
+              <span id="au-pairs-fam-events-status" class="au-badge idle" style="margin-left:auto">…</span>
+            </div>
+            <div id="au-pairs-fam-events-content" class="au-meta">Loading pairs signals & events…</div>
+          </div>
+
+          <!-- Run History -->
+          <div id="au-pairs-fam-runs-panel" class="au-subtab-panel">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Filter:</span>
+                <select id="au-pairs-fam-runs-filter" onchange="autoLoadPairsFamRuns(this.value)"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All runs</option>
+                  <option value="failed">Failed only</option>
+                  <option value="with_signals">With signals fired</option>
+                </select>
+              </label>
+              <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadPairsFamRuns()">↻</button>
+              <span id="au-pairs-fam-runs-status" class="au-badge idle" style="margin-left:auto">…</span>
+            </div>
+            <div id="au-pairs-fam-runs-content" class="au-meta">Loading pairs run history…</div>
+          </div>
+
+          <!-- Controls & Admin -->
+          <div id="au-pairs-fam-controls-panel" class="au-subtab-panel">
+            <div id="au-pairs-fam-controls-content">
+
+              <div class="au-card">
+                <h3>Strategy Configuration <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadPairsFamAdmin()">↻</button></h3>
+                <div class="au-sub">Rows from <code>auto_strategies</code> for non-GS strategies. Edit via SQL / Studio.</div>
+                <div id="au-pairs-fam-strategies" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>Scheduling</h3>
+                <div class="au-sub">Pairs cron fires at fixed times/day via cron-job.org (no per-strategy schedule in <code>auto_strategies</code>). Last scan freshness comes from <code>auto_runs</code>.</div>
+                <div id="au-pairs-fam-scheduling" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>Universe</h3>
+                <div class="au-sub">Symbols the co-integration scanner walks. Universe is hard-coded in the strategy plugin; edit via a plugin bump + EF redeploy.</div>
+                <div id="au-pairs-fam-universe" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card" style="border-color:#fde68a;background:linear-gradient(to bottom, #fffbeb, #fff)">
+                <h3>Controls <span class="au-badge idle" style="background:#fef3c7;color:#78350f">Locked</span></h3>
+                <div class="au-sub">Pairs logic is deliberately frozen — see <code>LESSONS.md §B.21.8</code>. Any change requires a plugin bump + fresh backtest window; no runtime toggles.</div>
+                <div style="margin-top:12px;font-size:12px;color:#6b7280">Emergency pause (source-level) is available on the Health page's master kill switch.</div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- 📁 Legacy view — wraps the original sub-tabs + content unchanged.
+         Retired in Phase E once all families have functional pages. -->
+    <div id="au-fam-legacy" class="automation-family-panel">
 
   <!-- Tabs -->
   <div class="automation-tabs">
@@ -327,9 +1180,9 @@ details summary {
 
         <!-- Action buttons -->
         <div class="au-actions">
-          <button class="au-btn au-btn-primary"   onclick="autoRunEodIngest(5)">Smoke test (5-day)</button>
-          <button class="au-btn au-btn-danger"    onclick="autoRunEodIngest(252, true)">Full backfill (252-day)</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadEodLastRun()">Refresh status</button>
+          <button class="au-btn au-btn-primary au-eod-btn"   onclick="autoRunEodIngest(5)">Smoke test (5-day)</button>
+          <button class="au-btn au-btn-danger au-eod-btn"    onclick="autoRunEodIngest(252, true)">Full backfill (252-day)</button>
+          <button class="au-btn au-btn-secondary au-eod-btn" onclick="autoLoadEodLastRun()">Refresh status</button>
         </div>
 
         <!-- Live response panel (hidden until first call) -->
@@ -356,9 +1209,9 @@ details summary {
         <div id="au-runner-last-run" class="au-meta">Loading last run…</div>
 
         <div class="au-actions">
-          <button class="au-btn au-btn-primary"   onclick="autoRunStrategy('_test')">Run _test stub</button>
-          <button class="au-btn au-btn-secondary" onclick="autoRunStrategy('')">Run all enabled</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadRunnerLastRun()">Refresh status</button>
+          <button class="au-btn au-btn-primary au-runner-btn"   onclick="autoRunStrategy('_test')">Run _test stub</button>
+          <button class="au-btn au-btn-secondary au-runner-btn" onclick="autoRunStrategy('')">Run all enabled</button>
+          <button class="au-btn au-btn-secondary au-runner-btn" onclick="autoLoadRunnerLastRun()">Refresh status</button>
         </div>
 
         <div id="au-runner-response" style="display:none; margin-top:12px;"></div>
@@ -417,7 +1270,7 @@ details summary {
             <button class="au-btn au-btn-secondary" onclick="autoLoadGsClosedTrades()">↻ Refresh</button>
             <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151">
               <span>Source:</span>
-              <select id="au-gs-closed-source-filter" onchange="autoLoadGsClosedTrades()"
+              <select id="au-gs-closed-source-filter" onchange="autoGsSetClosedSourceFilter(this.value)"
                       style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
                 <option value="all">All</option>
                 <option value="chassis">Automation Runner</option>
@@ -519,6 +1372,10 @@ details summary {
 
     </div>
 
-  </div>
+  </div><!-- /.automation-content (legacy) -->
 
-</div>
+    </div><!-- /#au-fam-legacy -->
+
+  </div><!-- /.automation-family-body -->
+
+</div><!-- /.automation-container -->

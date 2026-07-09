@@ -315,7 +315,7 @@
                 <div class="sec-panel">
                     <div class="sec-panel-title">Futures &amp; Options (F&amp;O)</div>
                     <div class="sec-panel-actions">
-                        <button class="btn-primary" onclick="startFOSync()" id="btnFOSync">⟳ F&amp;O Sync</button>
+                        <button class="btn-primary" onclick="runFOSyncEF()" id="btnFOSync" title="Server-side sync via securities-fno-sync Edge Function. Downloads Fyers NSE_FO / BSE_FO / MCX_COM CSVs, upserts futures, adds one reference row per new options bucket, deactivates expired. Also runs automatically every Sat 10:00 IST.">⟳ F&amp;O Sync</button>
                         <button class="btn-secondary" onclick="exportFOExcel()" id="btnFOExport">⬇ Export</button>
                     </div>
                     <div class="sec-panel-stats">
