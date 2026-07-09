@@ -42,6 +42,233 @@ function autoSwitchTab(tabId) {
     autoUpdateGsTotalsBar();
 }
 
+// ----------------------------------------------------------------------------
+// Family tab switching (Phase A of UI reimagining, 2026-07-09)
+//
+// Strategy-family-first workspace: [Health] [GS] [KH] [Pairs] [Legacy view].
+// Legacy panel wraps the existing sub-tabs unchanged. Family pages ship in
+// Phases B–D. See Documentation/automation/UI-REIMAGINE-PLAN.md.
+// ----------------------------------------------------------------------------
+
+function autoSwitchFamily(fam) {
+    if (!fam) return;
+    document.querySelectorAll('.au-fam-tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.automation-family-panel').forEach(p => p.classList.remove('active'));
+    var btn = document.querySelector('.au-fam-tab-btn[data-fam="' + fam + '"]');
+    var panel = document.getElementById('au-fam-' + fam);
+    if (btn) btn.classList.add('active');
+    if (panel) panel.classList.add('active');
+
+    if (fam === 'health' && !window._auHealthLoaded) {
+        autoHealthLoadAll();
+        window._auHealthLoaded = true;
+    }
+
+    // GS totals bar hides itself when the GS Open Trades sub-tab isn't visible;
+    // toggling family visibility must retrigger that check.
+    autoUpdateGsTotalsBar();
+}
+
+// ----------------------------------------------------------------------------
+// Health page renderers (Phase A — kill switch + families board + crons + errors)
+// ----------------------------------------------------------------------------
+
+function autoHealthLoadAll() {
+    autoHealthLoadKill();
+    autoHealthLoadFamilies();
+    autoHealthLoadCrons();
+    autoHealthLoadErrors();
+}
+
+var _auHealthState = null;
+
+async function autoHealthLoadKill() {
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/app_state?id=eq.1&select=kill_switch,paused_sources,updated_at,updated_by,updated_reason',
+            { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        _auHealthState = (rows && rows[0]) || { kill_switch: false, paused_sources: [] };
+        autoHealthRenderKill();
+    } catch (e) {
+        var el = document.getElementById('au-health-kill-label');
+        if (el) el.textContent = 'Failed to load: ' + (e.message || e);
+    }
+}
+
+function autoHealthRenderKill() {
+    var s = _auHealthState || {};
+    var on = !!s.kill_switch;
+    var badge = document.getElementById('au-health-kill-badge');
+    var label = document.getElementById('au-health-kill-label');
+    var btn   = document.getElementById('au-health-kill-btn');
+    var meta  = document.getElementById('au-health-kill-meta');
+    if (badge) {
+        badge.className = 'status-pill ' + (on ? 'stopped' : 'live');
+        badge.textContent = on ? 'TRIPPED' : 'ARMED';
+    }
+    if (label) {
+        label.className = 'kill-state-label ' + (on ? 'tripped' : 'armed');
+        label.textContent = on ? '🛑 Kill switch is TRIPPED — ALL strategies halted' : '✅ Kill switch is ARMED — strategies allowed to trade';
+    }
+    if (btn) {
+        btn.disabled = false;
+        btn.className = 'kill-btn ' + (on ? 'arm' : 'trip');
+        btn.textContent = on ? 'Resume all' : 'Trip kill switch';
+    }
+    if (meta) {
+        var ts = s.updated_at ? new Date(s.updated_at).toLocaleString() : '';
+        var who = s.updated_by || '';
+        var why = s.updated_reason || '';
+        meta.textContent = ts ? ('Last change: ' + ts + (who ? ' by ' + who : '') + (why ? ' — ' + why : '')) : '';
+    }
+}
+
+async function autoHealthToggleKill() {
+    if (!_auHealthState) return;
+    var on = !!_auHealthState.kill_switch;
+    var msg = on
+        ? 'Resume ALL automated strategies (turn kill switch OFF)?'
+        : '⚠️ TRIP the master kill switch?\n\nAll strategies halt immediately — GS PAPER stops writing signals, Katalysthive LIVE stops placing orders. Every signal is rejected until resumed.';
+    if (!confirm(msg)) return;
+    try {
+        var patch = {
+            kill_switch: !on,
+            updated_by: (window.currentUser && window.currentUser.email) || 'app',
+            updated_reason: (on ? 'Resume from' : 'Trip') + ' kill switch (Health page)'
+        };
+        var r = await fetch(SUPABASE_URL + '/rest/v1/app_state?id=eq.1',
+            { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify(patch) });
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()));
+        autoHealthLoadKill();
+        // Legacy Live Trading tab caches its own copy — force a reload next time it opens.
+        window._auLiveLoaded = false;
+    } catch (e) {
+        alert('Failed to toggle kill switch: ' + (e.message || e));
+    }
+}
+
+async function autoHealthLoadFamilies() {
+    var tbody = document.getElementById('au-health-families-body');
+    if (!tbody) return;
+    try {
+        var results = await Promise.all([
+            fetch(SUPABASE_URL + '/rest/v1/auto_strategies?select=name,enabled,execution_mode,version', { headers: wmsHeaders() }),
+            fetch(SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=strategy_name,net_qty', { headers: wmsHeaders() }),
+            fetch(SUPABASE_URL + '/rest/v1/app_state?id=eq.1&select=kill_switch,paused_sources', { headers: wmsHeaders() }),
+            fetch(SUPABASE_URL + '/rest/v1/wms_live_commands?signal_source=eq.katalysthive&status=in.(PENDING,WORKING,PLACED)&select=trade_id,quantity', { headers: wmsHeaders() })
+        ]);
+        var strategies = results[0].ok ? await results[0].json() : [];
+        var openLegs   = results[1].ok ? await results[1].json() : [];
+        var stateRows  = results[2].ok ? await results[2].json() : [];
+        var khOpen     = results[3].ok ? await results[3].json() : [];
+        var state = (stateRows && stateRows[0]) || { kill_switch: false, paused_sources: [] };
+        var paused = state.paused_sources || [];
+
+        var GS_NAMES = ['silver_mini_15m', 'gold_mini_15m'];
+        var families = [
+            { key: 'gs',    label: '🥈🥇 GS — Silver & Gold Mini', matcher: function (n) { return GS_NAMES.indexOf(n) !== -1; }, sources: ['chassis', 'tv_webhook'] },
+            { key: 'kh',    label: '🐦 Katalysthive — sharanaga_v1', matcher: null, sources: ['katalysthive'], external: true },
+            { key: 'pairs', label: '🔗 Pairs Scanner',              matcher: function (n) { return n && n.indexOf('pairs') === 0; }, sources: ['chassis'] }
+        ];
+
+        var rows = families.map(function (f) {
+            if (f.external) {
+                var isPaused = paused.indexOf('katalysthive') !== -1;
+                var status, statusLabel;
+                if (state.kill_switch) { status = 'stopped'; statusLabel = '🛑 STOPPED'; }
+                else if (isPaused)     { status = 'paused';  statusLabel = '⏸ PAUSED'; }
+                else                   { status = 'live';    statusLabel = '🟢 LIVE'; }
+                return { key: f.key, label: f.label, mode: 'LIVE', status: status, statusLabel: statusLabel, open: khOpen.length + ' cmd', pnl: '—', activity: '—' };
+            }
+            var matching = strategies.filter(function (s) { return f.matcher(s.name); });
+            var enabled = matching.some(function (s) { return s.enabled; });
+            var mode = matching.some(function (s) { return s.execution_mode === 'LIVE'; }) ? 'LIVE' : 'PAPER';
+            var openLots = openLegs.filter(function (l) { return f.matcher(l.strategy_name); }).length;
+            var isPaused = f.sources.some(function (src) { return paused.indexOf(src) !== -1; });
+            var status = 'building', statusLabel = '🔨 EMPTY';
+            if (matching.length > 0) {
+                if (state.kill_switch)      { status = 'stopped'; statusLabel = '🛑 STOPPED'; }
+                else if (!enabled)          { status = 'stopped'; statusLabel = '⏹ DISABLED'; }
+                else if (isPaused)          { status = 'paused';  statusLabel = '⏸ PAUSED'; }
+                else if (mode === 'LIVE')   { status = 'live';    statusLabel = '🟢 LIVE'; }
+                else                        { status = 'paper';   statusLabel = '🟡 PAPER'; }
+            }
+            return { key: f.key, label: f.label, mode: mode, status: status, statusLabel: statusLabel, open: openLots + ' legs', pnl: '—', activity: '—' };
+        });
+
+        tbody.innerHTML = rows.map(function (r) {
+            return '<tr class="clickable" onclick="autoSwitchFamily(\'' + r.key + '\')">'
+                + '<td><b>' + r.label + '</b></td>'
+                + '<td>' + r.mode + '</td>'
+                + '<td><span class="status-pill ' + r.status + '">' + r.statusLabel + '</span></td>'
+                + '<td>' + r.open + '</td>'
+                + '<td>' + r.pnl + '</td>'
+                + '<td>' + r.activity + '</td>'
+                + '</tr>';
+        }).join('');
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="6" style="color:#b91c1c;padding:12px">Failed: ' + (e.message || e) + '</td></tr>';
+    }
+}
+
+async function autoHealthLoadCrons() {
+    var el = document.getElementById('au-health-crons');
+    if (!el) return;
+    var jobs = [
+        { name: 'automation-runner (5-min)', strategy: null,           staleMinutes: 15 },
+        { name: 'eod-prices-ingest (daily)', strategy: '_eod_ingest',  staleMinutes: 60 * 30 },
+        { name: 'fyers-auto-login (daily)',  strategy: '_fyers_login', staleMinutes: 60 * 30 }
+    ];
+    try {
+        var results = await Promise.all(jobs.map(function (j) {
+            var q = j.strategy
+                ? '/rest/v1/auto_runs?strategy_name=eq.' + encodeURIComponent(j.strategy) + '&order=finished_at.desc&limit=1&select=finished_at,status'
+                : '/rest/v1/auto_runs?order=finished_at.desc&limit=1&select=finished_at,status';
+            return fetch(SUPABASE_URL + q, { headers: wmsHeaders() }).then(function (r) { return r.ok ? r.json() : []; });
+        }));
+        var now = Date.now();
+        el.innerHTML = jobs.map(function (j, i) {
+            var row = results[i][0];
+            if (!row || !row.finished_at) {
+                return '<li><span class="cron-name">' + j.name + '</span><span class="cron-time">never</span><span class="cron-badge na">no data</span></li>';
+            }
+            var ageMin = Math.round((now - new Date(row.finished_at).getTime()) / 60000);
+            var stale = ageMin > j.staleMinutes;
+            var label = ageMin < 60 ? (ageMin + 'm ago') : ageMin < 1440 ? (Math.round(ageMin / 60) + 'h ago') : (Math.round(ageMin / 1440) + 'd ago');
+            return '<li><span class="cron-name">' + j.name + '</span><span class="cron-time">' + label + '</span><span class="cron-badge ' + (stale ? 'stale' : 'ok') + '">' + (stale ? 'STALE' : 'OK') + '</span></li>';
+        }).join('');
+    } catch (e) {
+        el.innerHTML = '<li><span class="cron-name">Load failed</span><span class="cron-badge stale">' + (e.message || e) + '</span></li>';
+    }
+}
+
+async function autoHealthLoadErrors() {
+    var el = document.getElementById('au-health-errors');
+    if (!el) return;
+    try {
+        var since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+        var q = '/rest/v1/auto_runs?status=eq.error&started_at=gte.' + since + '&order=started_at.desc&limit=20&select=strategy_name,started_at,error_message';
+        var r = await fetch(SUPABASE_URL + q, { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        if (rows.length === 0) {
+            el.innerHTML = '<div style="color:#16a34a;font-weight:600">✅ No failed runs in the last 24h.</div>';
+            return;
+        }
+        el.innerHTML = '<div style="color:#b91c1c;font-weight:600;margin-bottom:6px">' + rows.length + ' failed run(s) in last 24h</div>'
+            + '<ul style="list-style:none;padding:0;margin:0;max-height:200px;overflow-y:auto">'
+            + rows.map(function (r) {
+                var ago = Math.round((Date.now() - new Date(r.started_at).getTime()) / 60000);
+                var msg = (r.error_message || '').substring(0, 100);
+                return '<li style="padding:6px 0;border-bottom:1px solid #f3f4f6;font-size:11px">'
+                    + '<b>' + r.strategy_name + '</b> — ' + ago + 'm ago<br>'
+                    + '<span style="color:#7f1d1d">' + msg + '</span></li>';
+            }).join('')
+            + '</ul>';
+    } catch (e) {
+        el.innerHTML = '<div style="color:#b91c1c">Failed: ' + (e.message || e) + '</div>';
+    }
+}
+
 // GS Open Trades live P&L flows through the SINGLE app-wide price system
 // (wms-shared.js → wmsStandardRefresh / wmsLivePrices / wmsStartRefreshTimer).
 // No module-local timer or Fyers fetch — the shared timer keeps wmsLivePrices
@@ -110,6 +337,10 @@ var _auGsTotals = {
 // floats above every view, so we must explicitly suppress it on every other
 // tab/sub-tab combo.
 function autoIsGsViewActive() {
+    // Legacy family panel wraps the old sub-tabs — the fixed totals bar must
+    // stay hidden when the user is on Health / GS / KH / Pairs family pages.
+    var legacyFam = document.getElementById('au-fam-legacy');
+    if (legacyFam && !legacyFam.classList.contains('active')) return false;
     var mainPanel = document.getElementById('au-open-trades');
     if (!mainPanel || !mainPanel.classList.contains('active')) return false;
     var gsPanel = document.getElementById('au-ot-gs');
@@ -198,7 +429,14 @@ function autoSwitchSubTab(subtabId) {
 // ----------------------------------------------------------------------------
 
 async function initAutomation() {
-    // Wire tab buttons
+    // Family tabs (Phase A of UI reimagining) — outer nav [Health][GS][KH][Pairs][Legacy]
+    document.querySelectorAll('.au-fam-tab-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            if (!btn.disabled && btn.dataset.fam) autoSwitchFamily(btn.dataset.fam);
+        });
+    });
+
+    // Wire tab buttons (Legacy view: Admin/Open/Events/Runs/Live)
     document.querySelectorAll('.automation-tab-btn').forEach(function (btn) {
         btn.addEventListener('click', function () { autoSwitchTab(btn.dataset.tab); });
     });
@@ -208,7 +446,18 @@ async function initAutomation() {
         btn.addEventListener('click', function () { autoSwitchSubTab(btn.dataset.subtab); });
     });
 
-    // Load admin-tab data in parallel
+    // Health page is the default landing tab — load its data now + auto-refresh every 30s.
+    autoHealthLoadAll();
+    window._auHealthLoaded = true;
+    if (!window._auHealthTimer) {
+        window._auHealthTimer = setInterval(function () {
+            var el = document.getElementById('au-fam-health');
+            if (el && el.classList.contains('active')) autoHealthLoadAll();
+        }, 30000);
+    }
+
+    // Load admin-tab data in parallel — still cheap, and warmed for the moment the
+    // user opens Legacy view.
     autoLoadEodLastRun();
     autoLoadMarketPricesStats();
     autoLoadStrategies();
