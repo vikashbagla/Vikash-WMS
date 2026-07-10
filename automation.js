@@ -221,6 +221,10 @@ async function autoLoadGsFamEvents(filterOverride) {
              '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata,source,email_status';
     if (typeFilter === 'ENTRY')      qs += '&event_type=eq.ENTRY';
     else if (typeFilter === 'EXIT')  qs += '&event_type=neq.ENTRY';
+    // Email-delivery failures are a Resend concern, not a strategy concern, but the
+    // only global surface for them (Legacy's "Email Failed" chip) went away with the
+    // Legacy Events tab. Each family page carries the filter now. (Phase E.2b)
+    else if (typeFilter === 'email-failed') qs += '&email_status=eq.FAILED';
 
     try {
         var r = await fetch(SUPABASE_URL + '/rest/v1/auto_signals' + qs, { headers: wmsHeaders() });
@@ -682,6 +686,7 @@ async function autoLoadPairsFamEvents(filterOverride) {
         var qs = '?order=fired_at.desc&limit=300&select=id,trade_id,strategy_name,fired_at,event_type,direction,score,metadata,source,email_status';
         if (filter === 'ENTRY')     qs += '&event_type=eq.ENTRY';
         else if (filter === 'EXIT') qs += '&event_type=neq.ENTRY';
+        else if (filter === 'email-failed') qs += '&email_status=eq.FAILED';   // see autoLoadGsFamEvents (Phase E.2b)
         var r = await fetch(SUPABASE_URL + '/rest/v1/auto_signals' + qs, { headers: wmsHeaders() });
         var all = r.ok ? await r.json() : [];
         var rows = (all || []).filter(function (s) {
@@ -1575,23 +1580,36 @@ async function autoHealthLoadErrors() {
 // The F&O contract sync (`securities-fno-sync`) does NOT write to `auto_runs` —
 // it reports by email. Don't expect it here.
 // ----------------------------------------------------------------------------
-async function autoHealthLoadPlatformRuns() {
+async function autoHealthLoadPlatformRuns(filterOverride) {
     var el = document.getElementById('au-hp-platform-runs');
     var badge = document.getElementById('au-hp-platform-runs-badge');
     if (!el) return;
+    var sel = document.getElementById('au-hp-platform-runs-filter');
+    // The 30s Health auto-refresh calls this with no argument — honour whatever
+    // filter the user last picked rather than silently resetting it to 'all'.
+    var filter = (typeof filterOverride === 'string' && filterOverride !== '[object Event]')
+        ? filterOverride
+        : (sel ? sel.value : 'all');
+    if (sel && sel.value !== filter) sel.value = filter;
+
     if (badge) { badge.className = 'au-badge loading'; badge.textContent = 'loading'; }
     try {
-        // PostgREST: `like.\_%` — the underscore is a LIKE wildcard and must be
-        // escaped, else it matches ANY first character and pulls in every strategy.
+        // Sentinel scope. PostgREST: the underscore is a LIKE single-char wildcard
+        // and MUST be escaped — bare `like._%` matches EVERY strategy, not just the
+        // `_`-prefixed system jobs (AUTOMATION-LESSONS F.12).
         var q = '/rest/v1/auto_runs?strategy_name=like.' + encodeURIComponent('\\_%') +
-                '&order=started_at.desc&limit=30' +
-                '&select=strategy_name,started_at,finished_at,duration_ms,status,error,metadata';
+                '&order=started_at.desc&limit=50' +
+                '&select=strategy_name,started_at,finished_at,duration_ms,status,signals_generated,emails_sent,emails_failed,error,metadata';
+        if (filter === 'failed')                       q += '&status=eq.FAILED';
+        else if (filter === 'with_signals')            q += '&signals_generated=gt.0';
+        else if (filter && filter.charAt(0) === '_')   q += '&strategy_name=eq.' + encodeURIComponent(filter);
+
         var r = await fetch(SUPABASE_URL + q, { headers: wmsHeaders() });
         if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()));
         var rows = await r.json();
 
         if (!Array.isArray(rows) || rows.length === 0) {
-            el.innerHTML = '<div class="au-soon">No housekeeping runs recorded yet.</div>';
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No runs match this filter.</div>';
             if (badge) { badge.className = 'au-badge idle'; badge.textContent = '0 runs'; }
             return;
         }
@@ -1604,6 +1622,8 @@ async function autoHealthLoadPlatformRuns() {
                 '<th style="padding:6px 8px">Started (IST)</th>' +
                 '<th style="padding:6px 8px">Status</th>' +
                 '<th style="padding:6px 8px;text-align:right">Duration</th>' +
+                '<th style="padding:6px 8px;text-align:right">Signals</th>' +
+                '<th style="padding:6px 8px;text-align:right">Emails</th>' +
                 '<th style="padding:6px 8px">Detail</th>' +
                 '</tr></thead><tbody>';
         rows.forEach(function (x) {
@@ -1613,15 +1633,18 @@ async function autoHealthLoadPlatformRuns() {
                     ? '<span class="au-badge loading">RUNNING</span>'
                     : '<span class="au-badge error">' + autoEsc(x.status || '—') + '</span>');
             var dur = x.duration_ms != null ? (x.duration_ms / 1000).toFixed(1) + 's' : '—';
+            var emails = (x.emails_sent || 0) + (x.emails_failed ? ' / ' + x.emails_failed + ' failed' : '');
             var detail = x.status === 'FAILED'
-                ? '<span style="color:#7f1d1d">' + autoEsc(String(x.error || '').slice(0, 120)) + '</span>'
+                ? '<span style="color:#7f1d1d" title="' + autoEsc(String(x.error || '')) + '">' + autoEsc(String(x.error || '').slice(0, 120)) + '</span>'
                 : '<span style="color:#6b7280">' + autoEsc(String((x.metadata && x.metadata.summary) || '').slice(0, 120)) + '</span>';
             html += '<tr style="border-top:1px solid #e5e7eb">' +
                     '<td style="padding:6px 8px"><code>' + autoEsc(x.strategy_name) + '</code></td>' +
                     '<td style="padding:6px 8px">' + autoHealthFmtIst(x.started_at) + '</td>' +
                     '<td style="padding:6px 8px">' + badgeHtml + '</td>' +
                     '<td style="padding:6px 8px;text-align:right">' + dur + '</td>' +
-                    '<td style="padding:6px 8px;max-width:420px;overflow:hidden;text-overflow:ellipsis">' + detail + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + (x.signals_generated != null ? x.signals_generated : '—') + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + emails + '</td>' +
+                    '<td style="padding:6px 8px;max-width:380px;overflow:hidden;text-overflow:ellipsis">' + detail + '</td>' +
                     '</tr>';
         });
         html += '</tbody></table></div>';

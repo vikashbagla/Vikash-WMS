@@ -660,17 +660,29 @@ details summary {
             </div>
           </div>
 
-          <!-- Platform run history (Phase E.1c, 2026-07-10).
-               Housekeeping jobs (_eod_ingest, _mcx_candles_ingest, _test) appear on
-               NO family page. Legacy's global Run History tab was their only home;
-               this card is that home per owner directive 2026-07-10. Interim
-               placement — revisit when the module is restructured. -->
+          <!-- Platform run history (Phase E.1c → upgraded to full table + filters E.2b, 2026-07-10).
+               The housekeeping jobs (_eod_ingest, _mcx_candles_ingest, _test) belong to NO
+               strategy family, so they get no family page. Owner decision 2026-07-10: history
+               lives on the family pages, therefore no global History page — which makes THIS
+               card the system jobs' Run History, and it must carry the same functionality as
+               a family Run History tab (full table + filters), not a stripped-down list. -->
           <div class="health-card">
             <h3>Platform run history
               <span id="au-hp-platform-runs-badge" class="au-badge idle">…</span>
               <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoHealthLoadPlatformRuns()">↻</button>
             </h3>
-            <div class="health-sub">Last 30 <code>auto_runs</code> for the system housekeeping jobs — the <code>_</code>-prefixed sentinel strategies. Strategy runs live on their family pages. (The F&amp;O contract sync reports by email, not to <code>auto_runs</code>.)</div>
+            <div class="health-sub">Last 50 <code>auto_runs</code> for the system housekeeping jobs — the <code>_</code>-prefixed sentinel strategies, which belong to no strategy family. Each family's own runs live on its family page. (The F&amp;O contract sync reports by email and writes no <code>auto_runs</code> row.)</div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+              <label style="font-size:11px;color:#6b7280">Filter</label>
+              <select id="au-hp-platform-runs-filter" onchange="autoHealthLoadPlatformRuns(this.value)"
+                      style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:12px">
+                <option value="all">All runs</option>
+                <option value="_eod_ingest">EOD Ingest</option>
+                <option value="_mcx_candles_ingest">MCX Candles</option>
+                <option value="failed">Failed only</option>
+                <option value="with_signals">With signals fired</option>
+              </select>
+            </div>
             <div id="au-hp-platform-runs" style="font-size:12px;color:#4b5563;margin-top:10px">Loading…</div>
           </div>
 
@@ -791,6 +803,7 @@ details summary {
                   <option value="all">All</option>
                   <option value="ENTRY">Entries only</option>
                   <option value="EXIT">Exits only</option>
+                  <option value="email-failed">Email failed</option>
                 </select>
               </label>
               <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
@@ -1110,6 +1123,7 @@ details summary {
                   <option value="all">All</option>
                   <option value="ENTRY">Entries only</option>
                   <option value="EXIT">Exits only</option>
+                  <option value="email-failed">Email failed</option>
                 </select>
               </label>
               <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadPairsFamEvents()">↻</button>
