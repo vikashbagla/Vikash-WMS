@@ -124,20 +124,17 @@ function autoBadgeTarget(ids) {
 }
 
 // ----------------------------------------------------------------------------
-// Shared source-filter state — kept in a single variable so the Legacy dropdown
-// (Legacy → Open Trades → GS card) and the family-page dropdown (GS → Closed
-// Trades tab) always agree. Changing either one syncs the other and re-runs
-// autoLoadGsClosedTrades. Read from autoLoadGsClosedTrades via _srcFilter.
+// GS closed-trades source filter (chassis / tv_webhook / all). Held in a module
+// variable so the peak exposure + margin metrics recompute against the same scope
+// as the table. Read by autoLoadGsClosedTrades via _srcFilter. (Pre-E.3 this also
+// kept a second, Legacy-side dropdown in sync.)
 // ----------------------------------------------------------------------------
 var _auGsClosedSourceFilter = 'all';
 
 function autoGsSetClosedSourceFilter(value) {
     _auGsClosedSourceFilter = value || 'all';
-    // Mirror the value to whichever dropdowns exist right now.
-    ['au-gs-closed-source-filter', 'au-gs-fam-closed-source-filter'].forEach(function (id) {
-        var el = document.getElementById(id);
-        if (el && el.value !== _auGsClosedSourceFilter) el.value = _auGsClosedSourceFilter;
-    });
+    var _sf = document.getElementById('au-gs-fam-closed-source-filter');
+    if (_sf && _sf.value !== _auGsClosedSourceFilter) _sf.value = _auGsClosedSourceFilter;
     // Peak recomputes inside autoLoadGsClosedTrades. Re-run + re-render metrics.
     if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
 }
@@ -153,12 +150,9 @@ function autoGsSetClosedSourceFilter(value) {
 // ----------------------------------------------------------------------------
 
 function autoLoadGsFamRefresh() {
-    // Keep both source-filter dropdowns showing the shared state (this used to be
-    // done by the mirror's setup step, removed in E.1a).
-    ['au-gs-closed-source-filter', 'au-gs-fam-closed-source-filter'].forEach(function (id) {
-        var el = document.getElementById(id);
-        if (el && el.value !== _auGsClosedSourceFilter) el.value = _auGsClosedSourceFilter;
-    });
+    // Keep the source-filter dropdown showing the current state.
+    var _sf = document.getElementById('au-gs-fam-closed-source-filter');
+    if (_sf && _sf.value !== _auGsClosedSourceFilter) _sf.value = _auGsClosedSourceFilter;
     // The renderers write to this page's targets directly (Phase E.1a).
     if (typeof autoLoadGsOpenTrades === 'function') autoLoadGsOpenTrades();
     if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
@@ -1706,6 +1700,15 @@ var _auGsTotals = {
     peakExposure: null, peakMargin: null,
 };
 
+// Single "GS totals changed → repaint everything that reads them" chokepoint.
+// Phase E.3 deleted the Legacy floating totals bar, so the GS family metrics strip
+// is now the only reader of _auGsTotals. The indirection stays: it is the one place
+// to hook any future totals consumer — e.g. the combined Net P&L figure the old bar
+// showed and the strip does not yet (deferred 2026-07-10).
+function autoGsTotalsChanged() {
+    if (typeof autoRenderGsFamMetrics === 'function') autoRenderGsFamMetrics();
+}
+
 function autoSwitchSubTab(subtabId) {
     var panel = document.getElementById(subtabId);
     if (!panel) return;
@@ -3243,7 +3246,7 @@ async function autoLoadGsClosedTrades() {
         }
 
         // Source filter — shared state variable so BOTH the Legacy dropdown
-        // (au-gs-closed-source-filter) and the new GS family page dropdown
+        // (deleted with Legacy in E.3) and the GS family page dropdown
         // (au-gs-fam-closed-source-filter) stay in sync. Updated via
         // autoGsSetClosedSourceFilter() which is wired to both onchange handlers.
         // Values: 'all' (default), 'chassis' (automation-runner), 'tv_webhook' (legacy Pine).
