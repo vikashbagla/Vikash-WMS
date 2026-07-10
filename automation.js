@@ -512,11 +512,11 @@ function autoLoadPairsFamRefresh() {
 async function autoLoadPairsFamHeader() {
     try {
         // Mode: read auto_strategies for pairs strategies (non-GS)
-        var webhookStrats = await autoGetWebhookStrategyNames();
+        var fam = await autoGetStrategyFamilies();
         var sr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?enabled=eq.true&select=name,execution_mode',
             { headers: wmsHeaders() });
         var all = sr.ok ? await sr.json() : [];
-        var pairsStrats = all.filter(function (s) { return s.name && !s.name.startsWith('_') && !webhookStrats.has(s.name); });
+        var pairsStrats = all.filter(function (s) { return autoIsPairs(fam, s.name); });
         var pill = document.getElementById('au-pairs-fam-mode');
         if (pill) {
             if (pairsStrats.length === 0) { pill.className = 'status-pill stopped'; pill.textContent = '⏹ NO ENABLED PAIRS STRATEGIES'; }
@@ -588,14 +588,14 @@ function autoRenderPairsFamMetrics() {
 
 async function autoLoadPairsFamMetricsFull() {
     try {
-        var webhookStrats = await autoGetWebhookStrategyNames();
+        var fam = await autoGetStrategyFamilies();
 
         // Open count from view (excluding GS + utility _-prefixed)
         var vr = await fetch(SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=strategy_name,net_qty', { headers: wmsHeaders() });
         if (vr.ok) {
             var openRows = await vr.json();
             var pairsOpen = (openRows || []).filter(function (r) {
-                return r.strategy_name && !r.strategy_name.startsWith('_') && !webhookStrats.has(r.strategy_name);
+                return autoIsPairs(fam, r.strategy_name);
             });
             _auPairsMetrics.openCount = pairsOpen.length;
         }
@@ -609,7 +609,7 @@ async function autoLoadPairsFamMetricsFull() {
             { headers: wmsHeaders() });
         if (sc.ok) {
             var entries = (await sc.json()).filter(function (s) {
-                return s.strategy_name && !s.strategy_name.startsWith('_') && !webhookStrats.has(s.strategy_name);
+                return autoIsPairs(fam, s.strategy_name);
             });
             _auPairsMetrics.signalsIn30d = entries.length;
             // Avg Z at entry — from metadata.Z90 field (per legacy render at line 2056)
@@ -627,7 +627,7 @@ async function autoLoadPairsFamMetricsFull() {
         if (lr.ok) {
             var runs = await lr.json();
             var lastPairsRun = runs.find(function (r) {
-                return r.strategy_name && !r.strategy_name.startsWith('_') && !webhookStrats.has(r.strategy_name);
+                return autoIsPairs(fam, r.strategy_name);
             });
             _auPairsMetrics.lastScanAt = lastPairsRun ? lastPairsRun.finished_at : null;
         }
@@ -648,7 +648,7 @@ async function autoLoadPairsFamEvents(filterOverride) {
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
 
     try {
-        var webhookStrats = await autoGetWebhookStrategyNames();
+        var fam = await autoGetStrategyFamilies();
         // Ideally we'd filter server-side; PostgREST doesn't support "not in (...)"
         // cleanly for arbitrary sets, so overfetch + client-filter (limit 300).
         var qs = '?order=fired_at.desc&limit=300&select=id,trade_id,strategy_name,fired_at,event_type,direction,score,metadata,source,email_status';
@@ -658,7 +658,7 @@ async function autoLoadPairsFamEvents(filterOverride) {
         var r = await fetch(SUPABASE_URL + '/rest/v1/auto_signals' + qs, { headers: wmsHeaders() });
         var all = r.ok ? await r.json() : [];
         var rows = (all || []).filter(function (s) {
-            return s.strategy_name && !s.strategy_name.startsWith('_') && !webhookStrats.has(s.strategy_name);
+            return autoIsPairs(fam, s.strategy_name);
         }).slice(0, 200);
 
         if (rows.length === 0) {
@@ -725,14 +725,14 @@ async function autoLoadPairsFamRuns(filterOverride) {
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
 
     try {
-        var webhookStrats = await autoGetWebhookStrategyNames();
+        var fam = await autoGetStrategyFamilies();
         var qs = '?order=started_at.desc&limit=200&select=id,strategy_name,started_at,finished_at,duration_ms,status,signals_generated,emails_sent,emails_failed,error';
         if (filter === 'failed')            qs += '&status=eq.FAILED';
         else if (filter === 'with_signals') qs += '&signals_generated=gt.0';
         var r = await fetch(SUPABASE_URL + '/rest/v1/auto_runs' + qs, { headers: wmsHeaders() });
         var all = r.ok ? await r.json() : [];
         var rows = (all || []).filter(function (rn) {
-            return rn.strategy_name && !rn.strategy_name.startsWith('_') && !webhookStrats.has(rn.strategy_name);
+            return autoIsPairs(fam, rn.strategy_name);
         }).slice(0, 100);
 
         if (rows.length === 0) {
@@ -781,7 +781,7 @@ async function autoLoadPairsFamRuns(filterOverride) {
 
 // ----- Controls & Admin tab -------------------------------------------------
 async function autoLoadPairsFamAdmin() {
-    var webhookStrats = await autoGetWebhookStrategyNames();
+    var fam = await autoGetStrategyFamilies();
 
     // 1. Strategy config table
     var stratsEl = document.getElementById('au-pairs-fam-strategies');
@@ -790,7 +790,7 @@ async function autoLoadPairsFamAdmin() {
             var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?select=*', { headers: wmsHeaders() });
             var all = r.ok ? await r.json() : [];
             _auCacheStrategies(all);
-            var rows = all.filter(function (s) { return s.name && !s.name.startsWith('_') && !webhookStrats.has(s.name); });
+            var rows = all.filter(function (s) { return autoIsPairs(fam, s.name); });
             if (rows.length === 0) {
                 stratsEl.innerHTML = '<div class="au-soon">No pairs strategies configured.</div>';
             } else {
@@ -831,7 +831,7 @@ async function autoLoadPairsFamAdmin() {
                 { headers: wmsHeaders() });
             var runs = lr.ok ? await lr.json() : [];
             var last = runs.find(function (rn) {
-                return rn.strategy_name && !rn.strategy_name.startsWith('_') && !webhookStrats.has(rn.strategy_name);
+                return autoIsPairs(fam, rn.strategy_name);
             });
             var lastCell, badgeCell;
             var STALE_MIN = 60 * 6;  // pairs runs at fixed times; 6h without a run = stale
@@ -880,7 +880,7 @@ async function autoLoadPairsFamAdmin() {
             var er = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?event_type=eq.ENTRY&fired_at=gte.' + since90 + '&select=metadata,strategy_name',
                 { headers: wmsHeaders() });
             var entries = er.ok ? (await er.json()).filter(function (s) {
-                return s.strategy_name && !s.strategy_name.startsWith('_') && !webhookStrats.has(s.strategy_name);
+                return autoIsPairs(fam, s.strategy_name);
             }) : [];
             var pairSet = new Set();
             entries.forEach(function (s) { if (s.metadata && s.metadata.Pair) pairSet.add(s.metadata.Pair); });
@@ -2541,21 +2541,43 @@ function autoComputePnL(legs, priceMap) {
 // strategies; the Pairs Open/Closed cards exclude them.
 // System sentinels (name starts with '_', e.g. '_invalid') are filtered out — they
 // are infrastructure rows, not real strategies.
-async function autoGetWebhookStrategyNames() {
-    if (window._auWebhookStrategyNames instanceof Set) return window._auWebhookStrategyNames;
+// ----------------------------------------------------------------------------
+// Strategy family classifier (KH-PLAN Phase KH-2, 2026-07-10).
+//
+// Was: `metadata.source === 'tv_webhook'` — a flag that stopped describing
+// reality when GS moved in-house on 2026-06-20 (AUTOMATION-LESSONS F.10), yet
+// was load-bearing in 9 places as "is this GS?". Worse, the Pairs page derived
+// its own membership as "not a `_` sentinel and not tv_webhook" — i.e. EVERYTHING
+// ELSE. So the moment the Katalysthive strategy row existed, KH appeared on the
+// Pairs page with a Pause button. Verified on prod before this fix.
+//
+// Now: `metadata.family` ∈ gs | pairs | kh | system is the single source of truth,
+// set by KH-1.1. Each page asks for ITS family by name; nobody is "everything else".
+//
+// A row with no family belongs to no page (and is logged). Fail-closed: a new
+// strategy is invisible until classified, rather than silently landing on Pairs.
+// ----------------------------------------------------------------------------
+async function autoGetStrategyFamilies() {
+    if (window._auStrategyFamilies instanceof Map) return window._auStrategyFamilies;
+    var map = new Map();
     try {
-        var resp = await fetch(
-            SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>source=eq.tv_webhook&select=name',
-            { headers: wmsHeaders() }
-        );
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?select=name,metadata', { headers: wmsHeaders() });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
         var rows = await resp.json();
-        var set = new Set((rows || [])
-            .filter(function (r) { return r.name && !r.name.startsWith('_'); })
-            .map(function (r) { return r.name; }));
-        window._auWebhookStrategyNames = set;
-        return set;
-    } catch (_e) { return new Set(); }
+        (rows || []).forEach(function (r) {
+            var fam = (r.metadata || {}).family || null;
+            if (!fam) console.warn('[autoGetStrategyFamilies] strategy has no metadata.family — it will appear on no page:', r.name);
+            map.set(r.name, fam);
+        });
+        window._auStrategyFamilies = map;
+    } catch (e) {
+        // Do NOT cache a failure: an empty map would silently empty every page.
+        console.error('[autoGetStrategyFamilies] failed:', e);
+    }
+    return map;
 }
+function autoIsGs(fam, name)    { return fam.get(name) === 'gs'; }
+function autoIsPairs(fam, name) { return fam.get(name) === 'pairs'; }
 
 async function autoLoadOpenTrades(silent) {
     // Family target first (reads prefer it); Legacy target drops out at Phase E.3.
@@ -2573,13 +2595,13 @@ async function autoLoadOpenTrades(silent) {
 
     try {
         // 1) Get list of open trade_ids from the view, filter out webhook strategies
-        var webhookStrats = await autoGetWebhookStrategyNames();
+        var fam = await autoGetStrategyFamilies();
         var openResp = await fetch(
             SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=*',
             { headers: wmsHeaders() }
         );
         var openRowsAll = await openResp.json();
-        var openRows = (openRowsAll || []).filter(function (r) { return !webhookStrats.has(r.strategy_name); });
+        var openRows = (openRowsAll || []).filter(function (r) { return autoIsPairs(fam, r.strategy_name); });
         if (!Array.isArray(openRows) || openRows.length === 0) {
             el.innerHTML = '<div class="au-soon" style="padding:20px">No open pairs trades.</div>';
             if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 open'; }
@@ -2719,7 +2741,7 @@ async function autoLoadClosedTrades() {
 
     try {
         // Get set of webhook strategy names to exclude (handled by GS Closed card)
-        var webhookStrats = await autoGetWebhookStrategyNames();
+        var fam = await autoGetStrategyFamilies();
         // Fetch recent events. The window covers everything since the module
         // went live (29-Apr-2026); revisit pagination if/when the event log
         // grows past 500. Order desc so we naturally see the most recent
@@ -2787,7 +2809,7 @@ async function autoLoadClosedTrades() {
             if (!entry) return;  // edge case — no ENTRY in our window (window too narrow)
 
             // Skip webhook-driven strategies — they have their own GS Closed card
-            if (webhookStrats.has(entry.strategy_name)) return;
+            if (autoIsGs(fam, entry.strategy_name)) return;
             closedRows.push({
                 trade_id: tradeId,
                 strategy_name: entry.strategy_name,
@@ -2988,12 +3010,12 @@ async function autoLoadGsOpenTrades(silent) {
     }
 
     try {
-        var webhookStrats = await autoGetWebhookStrategyNames();
+        var fam = await autoGetStrategyFamilies();
 
         // 1. Open trades from v_auto_open_trades, filtered to webhook strategies
         var openResp = await fetch(SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=*', { headers: wmsHeaders() });
         var openAll = await openResp.json();
-        var openRows = (openAll || []).filter(function (r) { return webhookStrats.has(r.strategy_name); });
+        var openRows = (openAll || []).filter(function (r) { return autoIsGs(fam, r.strategy_name); });
 
         if (openRows.length === 0) {
             el.innerHTML = '<div class="au-soon" style="padding:20px">No open GS trades. When the analyst\'s MS007 fires an ENTRY alert, a row will appear here.</div>';
@@ -3220,7 +3242,7 @@ async function autoLoadGsClosedTrades() {
     el.innerHTML = '<div class="au-meta">⏳ Loading GS closed trades…</div>';
 
     try {
-        var webhookStrats = await autoGetWebhookStrategyNames();
+        var fam = await autoGetStrategyFamilies();
 
         // Fetch GS auto_signals (last _AU_CLOSED_LIMIT events). Group by trade_id,
         // include only trades that have at least one EXIT/MANUAL_CLOSE and net to
@@ -3231,7 +3253,7 @@ async function autoLoadGsClosedTrades() {
         // pre-migration signals have `source='tv_webhook'` and post-migration ones
         // have `source='chassis'` (the auto_signals.source default from migration 41).
         // A strategy-name filter cleanly covers both eras.
-        var stratList = Array.from(webhookStrats).map(function (n) { return '"' + n + '"'; }).join(',');
+        var stratList = [...fam.keys()].filter(function (n) { return autoIsGs(fam, n); }).map(function (n) { return '"' + n + '"'; }).join(',');
         var sigs = [];
         if (stratList) {
             var resp = await fetch(
