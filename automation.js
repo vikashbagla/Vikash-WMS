@@ -17,34 +17,10 @@
 // Tab switching
 // ----------------------------------------------------------------------------
 
-function autoSwitchTab(tabId) {
-    document.querySelectorAll('.automation-tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.automation-tab-panel').forEach(p => p.classList.remove('active'));
-    var btn = document.querySelector('.automation-tab-btn[data-tab="' + tabId + '"]');
-    var panel = document.getElementById(tabId);
-    if (btn) btn.classList.add('active');
-    if (panel) panel.classList.add('active');
-
-    // Lazy-load on first activation of dashboard tabs
-    if (tabId === 'au-open-trades' && !window._auOpenTradesLoaded) { autoLoadGsOpenTrades(); autoLoadGsClosedTrades(); autoLoadOpenTrades(); autoLoadClosedTrades(); window._auOpenTradesLoaded = true; }
-    if (tabId === 'au-events'      && !window._auEventsLoaded)     { autoLoadEvents('all');  window._auEventsLoaded = true; }
-    if (tabId === 'au-runs'        && !window._auRunsLoaded)       { autoLoadRuns('all');    window._auRunsLoaded = true; }
-
-    // Open Trades P&L refreshes via the shared app-wide price timer (no module
-    // timer). Ensure the provider is registered + the single timer is running.
-    if (tabId === 'au-open-trades') {
-        autoEnsureSharedRefresh();
-    }
-
-    // Refresh the fixed bar's visibility — it floats above every tab so we must
-    // suppress it explicitly when leaving Open Trades.
-    autoUpdateGsTotalsBar();
-}
-
 // ----------------------------------------------------------------------------
 // Family tab switching (Phase A of UI reimagining, 2026-07-09)
 //
-// Strategy-family-first workspace: [Health] [GS] [KH] [Pairs] [Legacy view].
+// Strategy-family-first workspace: [Health] [GS] [KH] [Pairs]. (Legacy deleted E.3.)
 // Legacy panel wraps the existing sub-tabs unchanged. Family pages ship in
 // Phases B–D. See Documentation/automation/UI-REIMAGINE-PLAN.md.
 // ----------------------------------------------------------------------------
@@ -96,9 +72,6 @@ function autoSwitchFamily(fam) {
         autoEnsureSharedRefresh();
     }
 
-    // GS totals bar hides itself when the GS Open Trades sub-tab isn't visible;
-    // toggling family visibility must retrigger that check.
-    autoUpdateGsTotalsBar();
 }
 
 // ----------------------------------------------------------------------------
@@ -372,6 +345,7 @@ async function autoLoadGsFamAdmin() {
             var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=in.(' + _AU_GS_STRATS.join(',') + ')&select=*',
                 { headers: wmsHeaders() });
             var rows = r.ok ? await r.json() : [];
+            _auCacheStrategies(rows);
             if (rows.length === 0) {
                 stratsEl.innerHTML = '<div class="au-soon">No matching auto_strategies rows.</div>';
             } else {
@@ -821,6 +795,7 @@ async function autoLoadPairsFamAdmin() {
         try {
             var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?select=*', { headers: wmsHeaders() });
             var all = r.ok ? await r.json() : [];
+            _auCacheStrategies(all);
             var rows = all.filter(function (s) { return s.name && !s.name.startsWith('_') && !webhookStrats.has(s.name); });
             if (rows.length === 0) {
                 stratsEl.innerHTML = '<div class="au-soon">No pairs strategies configured.</div>';
@@ -1686,7 +1661,7 @@ var _auPairsSyms = [];  // Pairs (equity) open-trade symbols
 function autoGetRefreshSymbols() { return _auGsSyms.concat(_auPairsSyms); }
 
 // Register the provider (idempotent) + make sure the single shared timer runs
-// while the user is on the Open Trades tab. Called from autoSwitchTab.
+// while the user is on an Open Trades sub-tab. Called from autoSwitchSubTab.
 function autoEnsureSharedRefresh() {
     if (typeof wmsRegisterRefreshSymbolProvider === 'function') {
         wmsRegisterRefreshSymbolProvider('auto_open_trades', autoGetRefreshSymbols);
@@ -1703,35 +1678,22 @@ function autoEnsureSharedRefresh() {
 // user is viewing that sub-tab.
 function autoOnSharedRefresh() {
     if (document.hidden) return;
-    // GS live-price refresh triggers from EITHER surface:
-    //   (a) new GS family page → Open Trades sub-tab
-    //   (b) Legacy view → Open Trades tab → GS sub-tab (mirroring keeps both fresh)
-    var legacyOpen  = document.getElementById('au-open-trades')?.classList.contains('active');
-    var famGs       = document.getElementById('au-fam-gs')?.classList.contains('active');
-    var famOpenTab  = document.getElementById('au-gs-fam-open-panel')?.classList.contains('active');
-    var famPairs      = document.getElementById('au-fam-pairs')?.classList.contains('active');
-    var famPairsOpen  = document.getElementById('au-pairs-fam-open-panel')?.classList.contains('active');
-    var gsActive    = (legacyOpen && document.getElementById('au-ot-gs')?.classList.contains('active'))
-                   || (famGs && famOpenTab);
-    var pairsActive = (legacyOpen && document.getElementById('au-ot-pairs')?.classList.contains('active'))
-                   || (famPairs && famPairsOpen);
-    if (gsActive)    autoLoadGsOpenTrades(true /* silent — flicker-free */);
-    if (pairsActive) autoLoadOpenTrades(true /* silent — flicker-free */);
-    autoUpdateGsRefreshTickStatus(
-        (typeof wmsIsRefreshWindow === 'function' && wmsIsRefreshWindow()) ? 'live' : 'off-hours');
+    // Phase E.3: the Legacy Open Trades tab is gone — the family pages are the
+    // only surfaces. Re-render only the open-trades panel the user is looking at.
+    var famGs        = document.getElementById('au-fam-gs')?.classList.contains('active');
+    var famOpenTab   = document.getElementById('au-gs-fam-open-panel')?.classList.contains('active');
+    var famPairs     = document.getElementById('au-fam-pairs')?.classList.contains('active');
+    var famPairsOpen = document.getElementById('au-pairs-fam-open-panel')?.classList.contains('active');
+    if (famGs && famOpenTab)       autoLoadGsOpenTrades(true /* silent — flicker-free */);
+    if (famPairs && famPairsOpen)  autoLoadOpenTrades(true /* silent — flicker-free */);
+    // NOTE: the live/paused/"mkt closed" refresh-tick indicator lived in the Legacy
+    // totals bar and was NOT ported (owner call 2026-07-10 — defer to the next round
+    // of page improvements). Re-add it to the GS header strip then.
 }
 
-function autoUpdateGsRefreshTickStatus(state) {
-    var tick = document.getElementById('au-gs-refresh-tick');
-    var label = document.getElementById('au-gs-refresh-label');
-    if (!tick || !label) return;
-    if (state === 'live')        { tick.classList.remove('paused'); label.textContent = 'live'; }
-    else if (state === 'paused') { tick.classList.add('paused');    label.textContent = 'paused'; }
-    else if (state === 'off-hours') { tick.classList.add('paused'); label.textContent = 'mkt closed'; }
-}
 
-// Sticky GS totals state — populated by both autoLoadGsOpenTrades and
-// autoLoadGsClosedTrades. autoUpdateGsTotalsBar reads it and writes to the bar.
+// Shared GS totals state — populated by both autoLoadGsOpenTrades and
+// autoLoadGsClosedTrades, read by autoRenderGsFamMetrics via autoGsTotalsChanged().
 //
 // peakExposure / peakMargin are the HIGH-WATER marks across all signal time
 // (entries add, exits subtract the matching entry's value). They represent
@@ -1744,87 +1706,6 @@ var _auGsTotals = {
     peakExposure: null, peakMargin: null,
 };
 
-// True only when the GS Open Trades view is the active panel — i.e. main tab =
-// Open Trades AND sub-tab = GS. Because the totals bar is position:fixed it
-// floats above every view, so we must explicitly suppress it on every other
-// tab/sub-tab combo.
-function autoIsGsViewActive() {
-    // Legacy family panel wraps the old sub-tabs — the fixed totals bar must
-    // stay hidden when the user is on Health / GS / KH / Pairs family pages.
-    var legacyFam = document.getElementById('au-fam-legacy');
-    if (legacyFam && !legacyFam.classList.contains('active')) return false;
-    var mainPanel = document.getElementById('au-open-trades');
-    if (!mainPanel || !mainPanel.classList.contains('active')) return false;
-    var gsPanel = document.getElementById('au-ot-gs');
-    return !!(gsPanel && gsPanel.classList.contains('active'));
-}
-
-// Single "GS totals changed → repaint everything that reads them" chokepoint.
-// Repaints BOTH the Legacy floating totals bar and the GS family metrics strip.
-//
-// Before Phase E.1a the metrics strip was repainted as a side-effect of the
-// mirror's MutationObserver. It cannot be folded into autoUpdateGsTotalsBar()
-// because that function early-returns when the totals bar element is absent —
-// and the bar is Legacy-only markup that Phase E.3 deletes. Keeping the two
-// repaints behind one caller means E.3 removes the bar without silently
-// killing the metrics strip.
-function autoGsTotalsChanged() {
-    autoUpdateGsTotalsBar();
-    if (typeof autoRenderGsFamMetrics === 'function') autoRenderGsFamMetrics();
-}
-
-function autoUpdateGsTotalsBar() {
-    var bar = document.getElementById('au-gs-totals-bar');
-    if (!bar) return;
-    var t = _auGsTotals;
-    var hasOpen = t.openCount != null;
-    var hasClosed = t.closedCount != null;
-    // Hide if GS view isn't active OR we have no data. The body class controls
-    // bottom padding so the last table row isn't covered by the fixed bar.
-    if (!autoIsGsViewActive() || (!hasOpen && !hasClosed)) {
-        bar.style.display = 'none';
-        document.body.classList.remove('au-totals-bar-visible');
-        return;
-    }
-    bar.style.display = 'flex';
-    document.body.classList.add('au-totals-bar-visible');
-
-    var fmtFlat = function (n) {
-        if (n == null) return '—';
-        return '₹' + Math.round(n).toLocaleString('en-IN');
-    };
-
-    // Max Exposure / Max Margin = PEAK simultaneous capital at risk across
-    // all signal time since first trade (entries add, exits subtract the
-    // matching entry's value). Computed in autoLoadGsClosedTrades.
-    document.getElementById('au-gs-tb-exp').textContent = t.peakExposure != null
-        ? fmtFlat(t.peakExposure) : '—';
-    document.getElementById('au-gs-tb-mgn').textContent = t.peakMargin != null
-        ? fmtFlat(t.peakMargin) : '—';
-
-    // Net P&L = open live P&L + closed realised P&L. % is against Max Exposure (peak).
-    var netPnl = (t.openLivePnl || 0) + (t.closedRealisedPnl || 0);
-    var anyPnl = (t.openLivePnl != null) || (t.closedRealisedPnl != null);
-    var netCell = document.getElementById('au-gs-tb-net');
-    if (anyPnl) {
-        var col = netPnl >= 0 ? '#047857' : '#dc2626';
-        var sign = netPnl >= 0 ? '+' : '−';
-        var amt = '₹' + Math.abs(Math.round(netPnl)).toLocaleString('en-IN');
-        var pctHtml = '';
-        if (t.peakExposure && t.peakExposure > 0) {
-            var pct = (netPnl / t.peakExposure) * 100;
-            var pctSign = pct >= 0 ? '+' : '−';
-            pctHtml = ' <span style="font-weight:500;font-size:11px;color:' + col + '">(' + pctSign + Math.abs(pct).toFixed(2) + '%)</span>';
-        }
-        netCell.innerHTML = '<span style="color:' + col + ';font-weight:700">' + sign + amt + '</span>' + pctHtml;
-    } else {
-        netCell.innerHTML = '—';
-    }
-}
-
-// Sub-tab switcher (currently used inside the Open Trades tab to split GS vs Pairs).
-// Sub-tab buttons + panels are scoped to a single parent tab panel; only buttons/panels
-// within the same parent toggle (so multiple sub-tab groups can co-exist later if needed).
 function autoSwitchSubTab(subtabId) {
     var panel = document.getElementById(subtabId);
     if (!panel) return;
@@ -1836,18 +1717,12 @@ function autoSwitchSubTab(subtabId) {
     if (btn) btn.classList.add('active');
     panel.classList.add('active');
 
-    // Update refresh tick visual state — live P&L re-renders while the GS sub-tab
-    // is active (driven by the shared app-wide price timer).
-    if (subtabId === 'au-ot-gs') {
-        autoUpdateGsRefreshTickStatus(
-            (typeof wmsIsRefreshWindow === 'function' && wmsIsRefreshWindow()) ? 'live' : 'off-hours');
+    // Arm the shared price timer whenever an Open Trades panel becomes visible.
+    // (Phase E.3 removed the Legacy au-ot-gs / au-ot-pairs sub-tabs and the fixed
+    // totals bar that used to be toggled here.)
+    if (subtabId === 'au-gs-fam-open-panel' || subtabId === 'au-pairs-fam-open-panel') {
         autoEnsureSharedRefresh();
-    } else {
-        autoUpdateGsRefreshTickStatus('paused');
     }
-
-    // Refresh fixed-bar visibility on sub-tab switch (Pairs ↔ GS)
-    autoUpdateGsTotalsBar();
 }
 
 // ----------------------------------------------------------------------------
@@ -1860,11 +1735,6 @@ async function initAutomation() {
         btn.addEventListener('click', function () {
             if (!btn.disabled && btn.dataset.fam) autoSwitchFamily(btn.dataset.fam);
         });
-    });
-
-    // Wire tab buttons (Legacy view: Admin/Open/Events/Runs/Live)
-    document.querySelectorAll('.automation-tab-btn').forEach(function (btn) {
-        btn.addEventListener('click', function () { autoSwitchTab(btn.dataset.tab); });
     });
 
     // Wire sub-tab buttons (Open Trades: GS vs Pairs)
@@ -1883,11 +1753,10 @@ async function initAutomation() {
         }, 30000);
     }
 
-    // Load admin-tab data in parallel — still cheap, and warmed for the moment the
-    // user opens Legacy view.
+    // Warm the Health page's platform-maintenance panels (EOD ingest / market_prices
+    // / Runner last-run). Health is the default landing tab.
     autoLoadEodLastRun();
     autoLoadMarketPricesStats();
-    autoLoadStrategies();
     autoLoadRunnerLastRun();
 }
 
@@ -1908,7 +1777,7 @@ async function autoRunEodIngest(daysBack, confirmFirst) {
     autoSetEodStatus('loading', 'running ' + daysBack + 'd');
     autoSetEodButtonsDisabled(true);
 
-    var responsePanel = autoTarget(['au-hp-eod-response', 'au-eod-response']);
+    var responsePanel = autoTarget(['au-hp-eod-response']);
     responsePanel.style.display = 'block';
     responsePanel.innerHTML = '<div class="au-meta">⏳ Running ' + daysBack + '-day ingest… (may take ' + (daysBack > 30 ? '20–60' : '5–15') + ' seconds)</div>';
 
@@ -1947,7 +1816,7 @@ async function autoRunEodIngest(daysBack, confirmFirst) {
 }
 
 function autoSetEodStatus(cls, label) {
-    var el = autoBadgeTarget(['au-hp-eod-status', 'au-eod-status']);
+    var el = autoBadgeTarget(['au-hp-eod-status']);
     if (!el) return;
     el.className = 'au-badge ' + cls;
     el.textContent = label;
@@ -1962,7 +1831,7 @@ function autoSetEodButtonsDisabled(disabled) {
 }
 
 function autoRenderEodSuccess(d, ms) {
-    var rp = autoTarget(['au-hp-eod-response', 'au-eod-response']);
+    var rp = autoTarget(['au-hp-eod-response']);
     var html = '';
     html += '<div style="font-size:13px;color:#047857;font-weight:600">✓ Success <span class="au-badge success">' + (ms / 1000).toFixed(1) + 's</span></div>';
     html += '<div class="au-stat-grid">';
@@ -1991,7 +1860,7 @@ function autoRenderEodSuccess(d, ms) {
 }
 
 function autoRenderEodError(d, status, ms) {
-    var rp = autoTarget(['au-hp-eod-response', 'au-eod-response']);
+    var rp = autoTarget(['au-hp-eod-response']);
     var html = '';
     html += '<div style="font-size:13px;color:#dc2626;font-weight:600">✗ Failed' + (status ? ' (HTTP ' + status + ')' : '') + ' <span class="au-badge error">' + (ms / 1000).toFixed(1) + 's</span></div>';
     if (d && d.error) html += '<div style="margin-top:6px;color:#7f1d1d;font-size:13px">' + autoEsc(d.error) + '</div>';
@@ -2016,7 +1885,7 @@ function autoEsc(s) {
 // ----------------------------------------------------------------------------
 
 async function autoLoadEodLastRun() {
-    var el = autoTarget(['au-hp-eod-last-run', 'au-eod-last-run']);
+    var el = autoTarget(['au-hp-eod-last-run']);
     if (!el) return;
     el.textContent = 'Loading last run…';
     try {
@@ -2070,7 +1939,7 @@ async function autoRunStrategy(stratName) {
     autoSetRunnerStatus('loading', stratName ? 'running ' + stratName : 'running all');
     autoSetRunnerButtonsDisabled(true);
 
-    var responsePanel = autoTarget(['au-hp-runner-response', 'au-runner-response']);
+    var responsePanel = autoTarget(['au-hp-runner-response']);
     responsePanel.style.display = 'block';
     responsePanel.innerHTML = '<div class="au-meta">⏳ Running strategy ' + (stratName || '(all enabled)') + '… (~1-3s for stub, longer for real strategies)</div>';
 
@@ -2106,7 +1975,7 @@ async function autoRunStrategy(stratName) {
 }
 
 function autoSetRunnerStatus(cls, label) {
-    var el = autoBadgeTarget(['au-hp-runner-status', 'au-runner-status']);
+    var el = autoBadgeTarget(['au-hp-runner-status']);
     if (!el) return;
     el.className = 'au-badge ' + cls;
     el.textContent = label;
@@ -2121,7 +1990,7 @@ function autoSetRunnerButtonsDisabled(disabled) {
 }
 
 function autoRenderRunnerSuccess(d, ms) {
-    var rp = autoTarget(['au-hp-runner-response', 'au-runner-response']);
+    var rp = autoTarget(['au-hp-runner-response']);
     var html = '<div style="font-size:13px;color:#047857;font-weight:600">✓ Dispatch Success <span class="au-badge success">' + (ms / 1000).toFixed(1) + 's</span></div>';
 
     var results = d.results || [];
@@ -2163,7 +2032,7 @@ function autoRenderRunnerSuccess(d, ms) {
 }
 
 function autoRenderRunnerError(d, status, ms) {
-    var rp = autoTarget(['au-hp-runner-response', 'au-runner-response']);
+    var rp = autoTarget(['au-hp-runner-response']);
     var html = '<div style="font-size:13px;color:#dc2626;font-weight:600">✗ Failed' + (status ? ' (HTTP ' + status + ')' : '') + ' <span class="au-badge error">' + (ms / 1000).toFixed(1) + 's</span></div>';
     if (d && d.error) html += '<div style="margin-top:6px;color:#7f1d1d;font-size:13px">' + autoEsc(d.error) + '</div>';
     html += '<details style="margin-top:10px" open><summary>Full JSON response</summary>';
@@ -2172,7 +2041,7 @@ function autoRenderRunnerError(d, status, ms) {
 }
 
 async function autoLoadRunnerLastRun() {
-    var el = autoTarget(['au-hp-runner-last-run', 'au-runner-last-run']);
+    var el = autoTarget(['au-hp-runner-last-run']);
     if (!el) return;
     el.textContent = 'Loading last run…';
     try {
@@ -2215,7 +2084,7 @@ async function autoLoadRunnerLastRun() {
 // ----------------------------------------------------------------------------
 
 async function autoLoadMarketPricesStats() {
-    var el = autoTarget(['au-hp-mp-stats', 'au-mp-stats']);
+    var el = autoTarget(['au-hp-mp-stats']);
     if (!el) return;
     el.textContent = 'Loading…';
     try {
@@ -2254,68 +2123,6 @@ async function autoLoadMarketPricesStats() {
 // auto_strategies list
 // ----------------------------------------------------------------------------
 
-async function autoLoadStrategies() {
-    var el = document.getElementById('au-strategies-list');
-    if (!el) return;
-    el.textContent = 'Loading…';
-    try {
-        var resp = await fetch(
-            SUPABASE_URL + '/rest/v1/auto_strategies?select=name,display_name,version,owner,enabled,execution_mode,recipients&order=name',
-            { headers: wmsHeaders() }
-        );
-        var rows = await resp.json();
-        if (!Array.isArray(rows) || rows.length === 0) {
-            el.innerHTML = '<em style="color:#9ca3af">No strategies registered yet.</em>';
-            return;
-        }
-        // Cache for the recipient-editor modal — keep ALL rows (including
-        // sentinels) so internal lookups still work.
-        window._auStrategiesCache = rows;
-        // For display: hide underscore-prefix sentinels (_invalid, _test,
-        // _eod_ingest etc) — they're infrastructure rows, not operational.
-        var displayRows = rows.filter(function (r) { return r.name && !r.name.startsWith('_'); });
-        if (displayRows.length === 0) {
-            el.innerHTML = '<em style="color:#9ca3af">No strategies registered yet.</em>';
-            return;
-        }
-        var html = '<div style="width:100%;overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
-        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
-                '<th style="padding:6px 8px">Name</th>' +
-                '<th style="padding:6px 8px">Display</th>' +
-                '<th style="padding:6px 8px">Version</th>' +
-                '<th style="padding:6px 8px">Enabled</th>' +
-                '<th style="padding:6px 8px">Mode</th>' +
-                '<th style="padding:6px 8px">Recipients</th>' +
-                '<th style="padding:6px 8px">Actions</th>' +
-                '</tr></thead><tbody>';
-        displayRows.forEach(function (r) {
-            var recipientsCount = Array.isArray(r.recipients) ? r.recipients.length : 0;
-            var recipientsTitle = Array.isArray(r.recipients)
-                ? r.recipients.map(function (x) { return (x.name || '') + ' <' + x.email + '>'; }).join(', ')
-                : '';
-            // Pause/Resume only. Recipient editing intentionally NOT exposed:
-            // Resend free tier blocks the whole send if any recipient is
-            // unverified, so adding new addresses via UI gives a false UX.
-            // Re-enable in Phase 7b once we have per-recipient send-loop
-            // OR a verified Resend sending domain. Until then, edit the
-            // recipients JSONB via Supabase Studio or DevTools console.
-            var actions = autoStrategyActionCell(r);
-            html += '<tr style="border-top:1px solid #e5e7eb">' +
-                    '<td style="padding:6px 8px"><code>' + autoEsc(r.name) + '</code></td>' +
-                    '<td style="padding:6px 8px">' + autoEsc(r.display_name) + '</td>' +
-                    '<td style="padding:6px 8px">' + autoEsc(r.version || '—') + '</td>' +
-                    '<td style="padding:6px 8px">' + (r.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge idle">paused</span>') + '</td>' +
-                    '<td style="padding:6px 8px">' + autoEsc(r.execution_mode) + '</td>' +
-                    '<td style="padding:6px 8px" title="' + autoEsc(recipientsTitle) + '">' + recipientsCount + '</td>' +
-                    '<td style="padding:6px 8px">' + actions + '</td>' +
-                    '</tr>';
-        });
-        html += '</tbody></table></div>';
-        el.innerHTML = html;
-    } catch (e) {
-        el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
-    }
-}
 
 // ----------------------------------------------------------------------------
 // Strategy write actions (Phase 7a)
@@ -2353,8 +2160,19 @@ function autoStrategyActionCell(row) {
 // Element-presence guards mean this keeps working unchanged once Phase E
 // deletes the Legacy panel. Family headers refresh too — their status pill
 // reads `enabled` (all enabled => PAPER, otherwise DISABLED).
+// Merge freshly-fetched auto_strategies rows into the shared cache (used by the
+// dormant recipients editor). Merge, not replace — GS and Pairs each fetch a subset.
+function _auCacheStrategies(rows) {
+    if (!Array.isArray(rows)) return;
+    var cache = window._auStrategiesCache || [];
+    rows.forEach(function (r) {
+        var i = cache.findIndex(function (c) { return c.name === r.name; });
+        if (i >= 0) cache[i] = r; else cache.push(r);
+    });
+    window._auStrategiesCache = cache;
+}
+
 function autoRefreshStrategySurfaces() {
-    if (document.getElementById('au-strategies-list'))      autoLoadStrategies();
     if (document.getElementById('au-gs-fam-strategies'))    autoLoadGsFamAdmin();
     if (document.getElementById('au-gs-fam-mode'))          autoLoadGsFamHeader();
     if (document.getElementById('au-pairs-fam-strategies')) autoLoadPairsFamAdmin();
@@ -2381,6 +2199,12 @@ async function autoToggleStrategy(name, currentlyEnabled) {
     }
 }
 
+// DORMANT (Phase 7b). No caller: the recipients editor is intentionally not exposed
+// (Resend free tier 403s the whole batch on one unverified address — AUTOMATION-LESSONS
+// F.7f/F.7i). Kept for when per-recipient send or a verified domain ships; it must then
+// be wired onto the family Controls & Admin tabs, not a Legacy list. _auStrategiesCache
+// is populated by autoLoadGsFamAdmin / autoLoadPairsFamAdmin since Phase E.3 deleted
+// autoLoadStrategies along with the Legacy Admin table.
 function autoOpenRecipientsModal(name) {
     var strat = (window._auStrategiesCache || []).find(function (s) { return s.name === name; });
     if (!strat) { alert('Strategy "' + name + '" not loaded — refresh the strategies list.'); return; }
@@ -2468,7 +2292,7 @@ async function autoSaveRecipients(name) {
         );
         if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
         autoCloseRecipientsModal();
-        autoLoadStrategies();
+        autoRefreshStrategySurfaces();
     } catch (e) {
         alert('Failed to save: ' + (e.message || e));
     }
@@ -2535,8 +2359,9 @@ async function autoManualClose(tradeId) {
         });
         if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
         autoLoadOpenTrades();
-        // Also refresh events tab if it's been visited
-        if (window._auEventsLoaded) autoLoadEvents(window._auEventsFilter || 'all');
+        // Phase E.3: the Legacy Events tab is gone. Refresh the Pairs family
+        // Signals & Events tab instead, if it has been rendered.
+        if (document.getElementById('au-pairs-fam-events-content')) autoLoadPairsFamEvents();
     } catch (e) {
         alert('Failed to close: ' + (e.message || e));
     }
@@ -2731,8 +2556,8 @@ async function autoGetWebhookStrategyNames() {
 
 async function autoLoadOpenTrades(silent) {
     // Family target first (reads prefer it); Legacy target drops out at Phase E.3.
-    var el = autoTarget(['au-pairs-fam-open-content', 'au-open-trades-content']);
-    var statusEl = autoBadgeTarget(['au-pairs-fam-open-badge', 'au-open-trades-status']);
+    var el = autoTarget(['au-pairs-fam-open-content']);
+    var statusEl = autoBadgeTarget(['au-pairs-fam-open-badge']);
     if (!el) return;
     if (!silent) {
         if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
@@ -2879,11 +2704,11 @@ function _autoExitTypeColor(t) {
 
 async function autoLoadClosedTrades() {
     // Family target first (reads prefer it); Legacy target drops out at Phase E.3.
-    var el = autoTarget(['au-pairs-fam-closed-content', 'au-closed-trades-content']);
-    var statusEl = autoBadgeTarget(['au-pairs-fam-closed-badge', 'au-closed-trades-status']);
+    var el = autoTarget(['au-pairs-fam-closed-content']);
+    var statusEl = autoBadgeTarget(['au-pairs-fam-closed-badge']);
     // Scope footnote (the _AU_CLOSED_LIMIT disclosure, AUTOMATION-LESSONS F.7n) —
     // must appear on BOTH surfaces or the limit becomes invisible on the family page.
-    var footEl = autoBadgeTarget(['au-pairs-fam-closed-footnote', 'au-closed-trades-footnote']);
+    var footEl = autoBadgeTarget(['au-pairs-fam-closed-footnote']);
     if (!el) return;
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
     el.innerHTML = '<div class="au-meta">⏳ Loading closed trades…</div>';
@@ -3147,8 +2972,8 @@ function autoGsComputeLivePnl(entry, ltpMap) {
 
 async function autoLoadGsOpenTrades(silent) {
     // Family target first (reads prefer it); Legacy target drops out at Phase E.3.
-    var el = autoTarget(['au-gs-fam-open-content', 'au-gs-open-content']);
-    var statusEl = autoBadgeTarget(['au-gs-fam-open-badge', 'au-gs-open-status']);
+    var el = autoTarget(['au-gs-fam-open-content']);
+    var statusEl = autoBadgeTarget(['au-gs-fam-open-badge']);
     if (!el) return;
     if (!silent) {
         if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
@@ -3385,8 +3210,8 @@ async function autoLoadGsOpenTrades(silent) {
 }
 
 async function autoLoadGsClosedTrades() {
-    var el = autoTarget(['au-gs-fam-closed-content', 'au-gs-closed-content']);
-    var statusEl = autoBadgeTarget(['au-gs-fam-closed-badge', 'au-gs-closed-status']);
+    var el = autoTarget(['au-gs-fam-closed-content']);
+    var statusEl = autoBadgeTarget(['au-gs-fam-closed-badge']);
     if (!el) return;
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
     el.innerHTML = '<div class="au-meta">⏳ Loading GS closed trades…</div>';
@@ -3725,133 +3550,11 @@ async function autoLoadGsClosedTrades() {
 // Recent Events tab — auto_signals listing
 // ----------------------------------------------------------------------------
 
-async function autoLoadEvents(filter) {
-    window._auEventsFilter = filter || 'all';
-    var el = document.getElementById('au-events-content');
-    var statusEl = document.getElementById('au-events-status');
-    if (!el) return;
-    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
-    el.innerHTML = '<div class="au-meta">⏳ Loading events…</div>';
-
-    var qs = '?select=id,trade_id,strategy_name,fired_at,event_type,direction,score,email_status,email_subject,metadata&order=fired_at.desc&limit=50';
-    if (filter === 'ENTRY')        qs += '&event_type=eq.ENTRY';
-    else if (filter === 'EXIT')    qs += '&event_type=neq.ENTRY';
-    else if (filter === 'email-failed') qs += '&email_status=eq.FAILED';
-
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_signals' + qs, { headers: wmsHeaders() });
-        var rows = await resp.json();
-        if (!Array.isArray(rows) || rows.length === 0) {
-            el.innerHTML = '<div class="au-soon" style="padding:20px">No events match this filter.</div>';
-            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 events'; }
-            return;
-        }
-
-        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
-        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
-                '<th style="padding:6px 8px">Time</th>' +
-                '<th style="padding:6px 8px">Strategy</th>' +
-                '<th style="padding:6px 8px">Pair</th>' +
-                '<th style="padding:6px 8px">Type</th>' +
-                '<th style="padding:6px 8px">Score</th>' +
-                '<th style="padding:6px 8px">Email</th>' +
-                '<th style="padding:6px 8px">Trade</th>' +
-                '</tr></thead><tbody>';
-        rows.forEach(function (s) {
-            var m = s.metadata || {};
-            var pair = m.Pair || '—';
-            var typeColor = s.event_type === 'ENTRY' ? '#047857' :
-                           s.event_type === 'TARGET_HIT' ? '#0891b2' :
-                           s.event_type === 'STOP_HIT' ? '#dc2626' :
-                           s.event_type === 'TIME_STOP' ? '#92400e' : '#6b7280';
-            var emailBadge = s.email_status === 'SENT' ? '<span class="au-badge success">sent</span>' :
-                             s.email_status === 'FAILED' ? '<span class="au-badge error">failed</span>' :
-                             s.email_status === 'PENDING' ? '<span class="au-badge loading">pending</span>' :
-                             '<span class="au-badge idle">—</span>';
-            var tradeFrag = s.trade_id ? s.trade_id.slice(0, 8) + '…' : '—';
-            html += '<tr style="border-top:1px solid #e5e7eb">' +
-                    '<td style="padding:6px 8px;white-space:nowrap">' + autoEsc(autoFmtIST(s.fired_at)) + '</td>' +
-                    '<td style="padding:6px 8px"><code>' + autoEsc(s.strategy_name) + '</code></td>' +
-                    '<td style="padding:6px 8px"><strong>' + autoEsc(pair) + '</strong></td>' +
-                    '<td style="padding:6px 8px;color:' + typeColor + ';font-weight:600">' + autoEsc(s.event_type) + '</td>' +
-                    '<td style="padding:6px 8px">' + (s.score != null ? s.score : '—') + '</td>' +
-                    '<td style="padding:6px 8px">' + emailBadge + '</td>' +
-                    '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + autoEsc(tradeFrag) + '</td>' +
-                    '</tr>';
-        });
-        html += '</tbody></table></div>';
-        el.innerHTML = html;
-        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = rows.length + ' events'; }
-    } catch (e) {
-        el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
-        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
-    }
-}
 
 // ----------------------------------------------------------------------------
 // Run History tab — auto_runs listing
 // ----------------------------------------------------------------------------
 
-async function autoLoadRuns(filter) {
-    window._auRunsFilter = filter || 'all';
-    var el = document.getElementById('au-runs-content');
-    var statusEl = document.getElementById('au-runs-status');
-    if (!el) return;
-    if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
-    el.innerHTML = '<div class="au-meta">⏳ Loading runs…</div>';
-
-    var qs = '?select=id,strategy_name,started_at,finished_at,duration_ms,status,signals_generated,emails_sent,emails_failed,error&order=started_at.desc&limit=50';
-    if (filter === 'pairs')           qs += '&strategy_name=eq.pairs';
-    else if (filter === '_eod_ingest') qs += '&strategy_name=eq._eod_ingest';
-    else if (filter === 'failed')     qs += '&status=eq.FAILED';
-
-    try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_runs' + qs, { headers: wmsHeaders() });
-        var rows = await resp.json();
-        if (!Array.isArray(rows) || rows.length === 0) {
-            el.innerHTML = '<div class="au-soon" style="padding:20px">No runs match this filter.</div>';
-            if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 runs'; }
-            return;
-        }
-
-        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
-        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
-                '<th style="padding:6px 8px">Started</th>' +
-                '<th style="padding:6px 8px">Strategy</th>' +
-                '<th style="padding:6px 8px">Status</th>' +
-                '<th style="padding:6px 8px">Signals</th>' +
-                '<th style="padding:6px 8px">Email</th>' +
-                '<th style="padding:6px 8px">Duration</th>' +
-                '<th style="padding:6px 8px">Error</th>' +
-                '</tr></thead><tbody>';
-        rows.forEach(function (r) {
-            var emailCell = '—';
-            if (r.emails_sent || r.emails_failed) {
-                var sent = r.emails_sent || 0, failed = r.emails_failed || 0;
-                emailCell = (failed > 0 ? '<span style="color:#dc2626">' + failed + ' failed</span>' : '') +
-                            (sent > 0 && failed > 0 ? ' / ' : '') +
-                            (sent > 0 ? '<span style="color:#047857">' + sent + ' sent</span>' : '');
-            }
-            html += '<tr style="border-top:1px solid #e5e7eb">' +
-                    '<td style="padding:6px 8px;white-space:nowrap">' + autoEsc(autoFmtIST(r.started_at)) + '</td>' +
-                    '<td style="padding:6px 8px"><code>' + autoEsc(r.strategy_name) + '</code></td>' +
-                    '<td style="padding:6px 8px">' + autoStatusBadge(r.status) + '</td>' +
-                    '<td style="padding:6px 8px">' + (r.signals_generated != null ? r.signals_generated : '—') + '</td>' +
-                    '<td style="padding:6px 8px;font-size:11px">' + emailCell + '</td>' +
-                    '<td style="padding:6px 8px">' + autoFmtDuration(r.duration_ms) + '</td>' +
-                    '<td style="padding:6px 8px;color:#7f1d1d;font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(r.error || '') + '">' +
-                        autoEsc((r.error || '').slice(0, 80)) + (r.error && r.error.length > 80 ? '…' : '') +
-                    '</td>' +
-                    '</tr>';
-        });
-        html += '</tbody></table></div>';
-        el.innerHTML = html;
-        if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = rows.length + ' runs'; }
-    } catch (e) {
-        el.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e)) + '</span>';
-        if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
-    }
-}
 
 // ============================================================================
 // Live Trading tab (Phase 13) — LIVE order-placement controls + risk wrappers
