@@ -1572,9 +1572,15 @@ async function autoHealthLoadErrors() {
     if (!el) return;
     try {
         var since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-        var q = '/rest/v1/auto_runs?status=eq.error&started_at=gte.' + since + '&order=started_at.desc&limit=20&select=strategy_name,started_at,error_message';
+        // auto_runs.status domain is SUCCESS / FAILED / RUNNING (NOT lowercase
+        // 'error'), and the message column is `error` (NOT `error_message`).
+        // With the wrong column in ?select= PostgREST 400s, r.ok is false, rows
+        // becomes [], and this card rendered a GREEN "no failed runs" on every
+        // load — a monitoring card that could not report a failure. Fixed E.1c.
+        var q = '/rest/v1/auto_runs?status=eq.FAILED&started_at=gte.' + since + '&order=started_at.desc&limit=20&select=strategy_name,started_at,error';
         var r = await fetch(SUPABASE_URL + q, { headers: wmsHeaders() });
-        var rows = r.ok ? await r.json() : [];
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()));
+        var rows = await r.json();
         if (rows.length === 0) {
             el.innerHTML = '<div style="color:#16a34a;font-weight:600">✅ No failed runs in the last 24h.</div>';
             return;
@@ -1583,9 +1589,9 @@ async function autoHealthLoadErrors() {
             + '<ul style="list-style:none;padding:0;margin:0;max-height:200px;overflow-y:auto">'
             + rows.map(function (r) {
                 var ago = Math.round((Date.now() - new Date(r.started_at).getTime()) / 60000);
-                var msg = (r.error_message || '').substring(0, 100);
+                var msg = autoEsc((r.error || '').substring(0, 100));
                 return '<li style="padding:6px 0;border-bottom:1px solid #f3f4f6;font-size:11px">'
-                    + '<b>' + r.strategy_name + '</b> — ' + ago + 'm ago<br>'
+                    + '<b>' + autoEsc(r.strategy_name) + '</b> — ' + ago + 'm ago<br>'
                     + '<span style="color:#7f1d1d">' + msg + '</span></li>';
             }).join('')
             + '</ul>';
