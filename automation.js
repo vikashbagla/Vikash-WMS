@@ -68,7 +68,6 @@ function autoSwitchFamily(fam) {
     }
 
     if (fam === 'pairs') {
-        if (!window._auPairsFamMirrorReady) autoPairsFamSetupMirror();
         if (!window._auPairsFamLoaded) {
             autoLoadPairsFamRefresh();
             window._auPairsFamLoaded = true;
@@ -87,9 +86,8 @@ function autoSwitchFamily(fam) {
     }
 
     if (fam === 'gs') {
-        // First-time init: set up DOM mirroring so any legacy Open/Closed render
-        // also fills the family page targets, plus trigger initial load.
-        if (!window._auGsFamMirrorReady) autoGsFamSetupMirror();
+        // Phase E.1a: no mirror setup — the GS renderers write straight into this
+        // page's targets (autoTarget / autoBadgeTarget).
         if (!window._auGsFamLoaded) {
             autoLoadGsFamRefresh();
             window._auGsFamLoaded = true;
@@ -104,6 +102,50 @@ function autoSwitchFamily(fam) {
     // GS totals bar hides itself when the GS Open Trades sub-tab isn't visible;
     // toggling family visibility must retrigger that check.
     autoUpdateGsTotalsBar();
+}
+
+// ----------------------------------------------------------------------------
+// Multi-target render helpers (Phase E de-mirroring, 2026-07-10)
+//
+// Phases A–D let the family pages share the Legacy renderers by DOM-MIRRORING:
+// the Legacy renderer wrote into the Legacy element and a MutationObserver
+// copied the HTML across. That made every family page structurally dependent on
+// Legacy markup existing — deleting Legacy blanked them (AUTOMATION-LESSONS F.9).
+//
+// Replacement: the renderer writes to EVERY target present in the DOM. These two
+// helpers return a thin proxy over the element list exposing only the surface the
+// renderers actually use. Writes fan out to all targets; reads come from the
+// first PRESENT target (family page is listed first, so it wins).
+//
+// Consequence: deleting the Legacy markup in Phase E.3 requires ZERO renderer
+// changes — the missing id simply drops out of the list and the proxy narrows to
+// one element. Per LESSONS §B.4.9 the fix lives at the single layer every
+// consumer already passes through, not at each call site.
+//
+// Returns null when no target is present — every caller already guards on that.
+// ----------------------------------------------------------------------------
+
+function autoTarget(ids) {
+    var els = ids.map(function (id) { return document.getElementById(id); }).filter(Boolean);
+    if (els.length === 0) return null;
+    return {
+        set innerHTML(html) { els.forEach(function (e) { e.innerHTML = html; }); },
+        get innerHTML() { return els[0].innerHTML; },
+        get firstElementChild() { return els[0].firstElementChild; },
+        querySelector: function (sel) { return els[0].querySelector(sel); }
+    };
+}
+
+// Count / status pills: className + textContent only.
+function autoBadgeTarget(ids) {
+    var els = ids.map(function (id) { return document.getElementById(id); }).filter(Boolean);
+    if (els.length === 0) return null;
+    return {
+        set className(v) { els.forEach(function (e) { e.className = v; }); },
+        get className() { return els[0].className; },
+        set textContent(v) { els.forEach(function (e) { e.textContent = v; }); },
+        get textContent() { return els[0].textContent; }
+    };
 }
 
 // ----------------------------------------------------------------------------
@@ -126,64 +168,23 @@ function autoGsSetClosedSourceFilter(value) {
 }
 
 // ----------------------------------------------------------------------------
-// GS family page (Phase B — 2026-07-09)
+// GS family page (Phase B — 2026-07-09; de-mirrored Phase E.1a — 2026-07-10)
 //
-// The Open Trades + Closed Trades tables are shared with Legacy via DOM
-// mirroring. autoLoadGsOpenTrades / autoLoadGsClosedTrades render into
-// au-gs-open-content / au-gs-closed-content; a MutationObserver copies the
-// output into au-gs-fam-open-content / au-gs-fam-closed-content so both
-// views stay in perfect sync without duplicating render logic.
-// (Signals / Runs / Controls / Admin ship in Phase B.2 / B.3.)
+// The Open Trades + Closed Trades renderers (autoLoadGsOpenTrades /
+// autoLoadGsClosedTrades) write DIRECTLY into this page's targets via
+// autoTarget() / autoBadgeTarget(), which fan the same HTML out to the Legacy
+// elements too while they still exist. No MutationObserver, no mirror setup —
+// this page stands alone once Phase E.3 removes the Legacy markup.
 // ----------------------------------------------------------------------------
 
-function autoGsFamSetupMirror() {
-    var pairs = [
-        ['au-gs-open-content',   'au-gs-fam-open-content'],
-        ['au-gs-closed-content', 'au-gs-fam-closed-content']
-    ];
-    pairs.forEach(function (p) {
-        var src = document.getElementById(p[0]);
-        var dst = document.getElementById(p[1]);
-        if (!src || !dst || src._auMirrored) return;
-        src._auMirrored = true;
-        // Initial snapshot
-        dst.innerHTML = src.innerHTML;
-        // Live mirror on subsequent renders (innerHTML sets fire childList mutations)
-        new MutationObserver(function () {
-            dst.innerHTML = src.innerHTML;
-            // Metrics live off _auGsTotals which the load functions populate; recompute UI.
-            autoRenderGsFamMetrics();
-        }).observe(src, { childList: true, subtree: true, characterData: true });
-    });
-    // Also mirror the status badges (Open / Closed count pills next to sub-tab labels).
-    var badges = [
-        ['au-gs-open-status',   'au-gs-fam-open-badge'],
-        ['au-gs-closed-status', 'au-gs-fam-closed-badge']
-    ];
-    badges.forEach(function (p) {
-        var src = document.getElementById(p[0]);
-        var dst = document.getElementById(p[1]);
-        if (!src || !dst || src._auBadgeMirrored) return;
-        src._auBadgeMirrored = true;
-        dst.className = src.className;
-        dst.textContent = src.textContent;
-        new MutationObserver(function () {
-            dst.className = src.className;
-            dst.textContent = src.textContent;
-        }).observe(src, { childList: true, subtree: true, characterData: true, attributes: true });
-    });
-    // Initialize both source-filter dropdowns to the shared state value so a
-    // filter set on Legacy earlier in the session persists onto the family page
-    // (and vice-versa).
+function autoLoadGsFamRefresh() {
+    // Keep both source-filter dropdowns showing the shared state (this used to be
+    // done by the mirror's setup step, removed in E.1a).
     ['au-gs-closed-source-filter', 'au-gs-fam-closed-source-filter'].forEach(function (id) {
         var el = document.getElementById(id);
         if (el && el.value !== _auGsClosedSourceFilter) el.value = _auGsClosedSourceFilter;
     });
-    window._auGsFamMirrorReady = true;
-}
-
-function autoLoadGsFamRefresh() {
-    // Delegate to the existing loaders — mirroring pulls the output into the family page.
+    // The renderers write to this page's targets directly (Phase E.1a).
     if (typeof autoLoadGsOpenTrades === 'function') autoLoadGsOpenTrades();
     if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
     // Header metadata + Phase B.2 tabs
@@ -513,48 +514,15 @@ async function autoLoadGsFamAdmin() {
 }
 
 // ============================================================================
-// Pairs family page (Phase C — 2026-07-09)
+// Pairs family page (Phase C — 2026-07-09; de-mirrored Phase E.1b — 2026-07-10)
 //
-// Same anatomy as GS. Open/Closed inherit via DOM mirroring from Legacy tables
-// (au-open-trades-content → au-pairs-fam-open-content, likewise for closed).
-// Signals & Events / Run History / Admin have their own renderers scoped to
-// non-GS strategies. Controls are locked per LESSONS §B.21.8.
+// Same anatomy as GS. Open/Closed renderers (autoLoadOpenTrades /
+// autoLoadClosedTrades) write DIRECTLY into this page's targets via
+// autoTarget() / autoBadgeTarget(), fanning out to the Legacy elements while
+// they still exist. Signals & Events / Run History / Admin have their own
+// renderers scoped to non-GS strategies. Controls are locked per LESSONS §B.21.8
+// (the lock covers scanner logic, not the Pause/Resume enabled flag).
 // ============================================================================
-
-function autoPairsFamSetupMirror() {
-    var pairs = [
-        ['au-open-trades-content',   'au-pairs-fam-open-content'],
-        ['au-closed-trades-content', 'au-pairs-fam-closed-content']
-    ];
-    pairs.forEach(function (p) {
-        var src = document.getElementById(p[0]);
-        var dst = document.getElementById(p[1]);
-        if (!src || !dst || src._auPairsMirrored) return;
-        src._auPairsMirrored = true;
-        dst.innerHTML = src.innerHTML;
-        new MutationObserver(function () {
-            dst.innerHTML = src.innerHTML;
-            autoRenderPairsFamMetrics();
-        }).observe(src, { childList: true, subtree: true, characterData: true });
-    });
-    var badges = [
-        ['au-open-trades-status',   'au-pairs-fam-open-badge'],
-        ['au-closed-trades-status', 'au-pairs-fam-closed-badge']
-    ];
-    badges.forEach(function (p) {
-        var src = document.getElementById(p[0]);
-        var dst = document.getElementById(p[1]);
-        if (!src || !dst || src._auPairsBadgeMirrored) return;
-        src._auPairsBadgeMirrored = true;
-        dst.className = src.className;
-        dst.textContent = src.textContent;
-        new MutationObserver(function () {
-            dst.className = src.className;
-            dst.textContent = src.textContent;
-        }).observe(src, { childList: true, subtree: true, characterData: true, attributes: true });
-    });
-    window._auPairsFamMirrorReady = true;
-}
 
 function autoLoadPairsFamRefresh() {
     if (typeof autoLoadOpenTrades === 'function')   autoLoadOpenTrades();
@@ -563,7 +531,7 @@ function autoLoadPairsFamRefresh() {
     autoLoadPairsFamEvents();
     autoLoadPairsFamRuns();
     autoLoadPairsFamAdmin();
-    autoLoadPairsFamMetricsFull();  // extra queries for metrics not covered by mirror
+    autoLoadPairsFamMetricsFull();  // extra queries the trade tables don't cover
 }
 
 // ----- Header (mode pill + last activity) ------------------------------------
@@ -1742,6 +1710,20 @@ function autoIsGsViewActive() {
     return !!(gsPanel && gsPanel.classList.contains('active'));
 }
 
+// Single "GS totals changed → repaint everything that reads them" chokepoint.
+// Repaints BOTH the Legacy floating totals bar and the GS family metrics strip.
+//
+// Before Phase E.1a the metrics strip was repainted as a side-effect of the
+// mirror's MutationObserver. It cannot be folded into autoUpdateGsTotalsBar()
+// because that function early-returns when the totals bar element is absent —
+// and the bar is Legacy-only markup that Phase E.3 deletes. Keeping the two
+// repaints behind one caller means E.3 removes the bar without silently
+// killing the metrics strip.
+function autoGsTotalsChanged() {
+    autoUpdateGsTotalsBar();
+    if (typeof autoRenderGsFamMetrics === 'function') autoRenderGsFamMetrics();
+}
+
 function autoUpdateGsTotalsBar() {
     var bar = document.getElementById('au-gs-totals-bar');
     if (!bar) return;
@@ -2701,8 +2683,9 @@ async function autoGetWebhookStrategyNames() {
 }
 
 async function autoLoadOpenTrades(silent) {
-    var el = document.getElementById('au-open-trades-content');
-    var statusEl = document.getElementById('au-open-trades-status');
+    // Family target first (reads prefer it); Legacy target drops out at Phase E.3.
+    var el = autoTarget(['au-pairs-fam-open-content', 'au-open-trades-content']);
+    var statusEl = autoBadgeTarget(['au-pairs-fam-open-badge', 'au-open-trades-status']);
     if (!el) return;
     if (!silent) {
         if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
@@ -2848,9 +2831,12 @@ function _autoExitTypeColor(t) {
 }
 
 async function autoLoadClosedTrades() {
-    var el = document.getElementById('au-closed-trades-content');
-    var statusEl = document.getElementById('au-closed-trades-status');
-    var footEl = document.getElementById('au-closed-trades-footnote');
+    // Family target first (reads prefer it); Legacy target drops out at Phase E.3.
+    var el = autoTarget(['au-pairs-fam-closed-content', 'au-closed-trades-content']);
+    var statusEl = autoBadgeTarget(['au-pairs-fam-closed-badge', 'au-closed-trades-status']);
+    // Scope footnote (the _AU_CLOSED_LIMIT disclosure, AUTOMATION-LESSONS F.7n) —
+    // must appear on BOTH surfaces or the limit becomes invisible on the family page.
+    var footEl = autoBadgeTarget(['au-pairs-fam-closed-footnote', 'au-closed-trades-footnote']);
     if (!el) return;
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
     el.innerHTML = '<div class="au-meta">⏳ Loading closed trades…</div>';
@@ -3113,8 +3099,9 @@ function autoGsComputeLivePnl(entry, ltpMap) {
 }
 
 async function autoLoadGsOpenTrades(silent) {
-    var el = document.getElementById('au-gs-open-content');
-    var statusEl = document.getElementById('au-gs-open-status');
+    // Family target first (reads prefer it); Legacy target drops out at Phase E.3.
+    var el = autoTarget(['au-gs-fam-open-content', 'au-gs-open-content']);
+    var statusEl = autoBadgeTarget(['au-gs-fam-open-badge', 'au-gs-open-status']);
     if (!el) return;
     if (!silent) {
         if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
@@ -3136,6 +3123,14 @@ async function autoLoadGsOpenTrades(silent) {
         if (openRows.length === 0) {
             el.innerHTML = '<div class="au-soon" style="padding:20px">No open GS trades. When the analyst\'s MS007 fires an ENTRY alert, a row will appear here.</div>';
             if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 open'; }
+            // Zero out the shared totals + repaint. (Pre-E.1a this path skipped the
+            // update and the mirror's observer repainted the metrics strip from
+            // STALE totals — the strip could still show the last non-zero open count.)
+            _auGsTotals.openCount = 0;
+            _auGsTotals.openExposure = null;
+            _auGsTotals.openMargin = null;
+            _auGsTotals.openLivePnl = null;
+            autoGsTotalsChanged();
             return;
         }
 
@@ -3335,7 +3330,7 @@ async function autoLoadGsOpenTrades(silent) {
         _auGsTotals.openExposure = anyExposure ? totalExposure : null;
         _auGsTotals.openMargin = anyExposure ? totalMargin : null;
         _auGsTotals.openLivePnl = anyPnl ? totalPnl : null;
-        autoUpdateGsTotalsBar();
+        autoGsTotalsChanged();
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load GS open trades: ' + autoEsc(String(e)) + '</span>';
         if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
@@ -3343,8 +3338,8 @@ async function autoLoadGsOpenTrades(silent) {
 }
 
 async function autoLoadGsClosedTrades() {
-    var el = document.getElementById('au-gs-closed-content');
-    var statusEl = document.getElementById('au-gs-closed-status');
+    var el = autoTarget(['au-gs-fam-closed-content', 'au-gs-closed-content']);
+    var statusEl = autoBadgeTarget(['au-gs-fam-closed-badge', 'au-gs-closed-status']);
     if (!el) return;
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
     el.innerHTML = '<div class="au-meta">⏳ Loading GS closed trades…</div>';
@@ -3672,7 +3667,7 @@ async function autoLoadGsClosedTrades() {
         _auGsTotals.closedWins = wins;
         _auGsTotals.closedLosses = losses;
         _auGsTotals.closedRealisedPnl = totalPnl;
-        autoUpdateGsTotalsBar();
+        autoGsTotalsChanged();
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load GS closed trades: ' + autoEsc(String(e)) + '</span>';
         if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
