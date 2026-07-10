@@ -1229,17 +1229,11 @@ details summary {
         </div>
       </div>
 
-      <!-- Webhook-driven strategies (TradingView) -->
-      <div class="au-card">
-        <h3>Webhook-Driven Strategies (TradingView) <span id="au-webhook-status-badge" class="au-badge idle">idle</span></h3>
-        <div class="au-sub">Strategies whose signals arrive via <code>tv-webhook</code> from the analyst's TradingView Pine alerts (not from the cron-driven chassis). Heartbeat ping is expected hourly during MCX hours (9:00–23:30 IST Mon–Fri). See <code>WMS Claude/GS-TV-WEBHOOK-INTEGRATION.md</code>.</div>
-
-        <div id="au-webhook-status-list" class="au-meta" style="margin-top:12px">Loading…</div>
-
-        <div class="au-actions">
-          <button class="au-btn au-btn-secondary" onclick="autoLoadWebhookStatus()">↻ Refresh</button>
-        </div>
-      </div>
+      <!-- Webhook Status card removed 2026-07-10: GS moved off the TV webhook to
+           the 15-min automation-runner EF, so heartbeat monitoring is obsolete.
+           NOTE: auto_strategies.metadata.source='tv_webhook' is RETAINED on the GS
+           rows — it is now the GS-vs-Pairs family classifier read by
+           autoGetWebhookStrategyNames(). Do not clear it. -->
 
     </div>
 

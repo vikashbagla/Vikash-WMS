@@ -377,6 +377,7 @@ async function autoLoadGsFamAdmin() {
                         '<th style="padding:6px 8px">Mode</th>' +
                         '<th style="padding:6px 8px">Version</th>' +
                         '<th style="padding:6px 8px">Metadata</th>' +
+                        '<th style="padding:6px 8px">Actions</th>' +
                         '</tr></thead><tbody>';
                 rows.forEach(function (s) {
                     var meta = s.metadata ? JSON.stringify(s.metadata) : '—';
@@ -386,6 +387,7 @@ async function autoLoadGsFamAdmin() {
                             '<td style="padding:6px 8px"><b>' + autoEsc(s.execution_mode || '—') + '</b></td>' +
                             '<td style="padding:6px 8px;font-family:monospace">' + autoEsc(s.version || '—') + '</td>' +
                             '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280;max-width:500px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(meta) + '">' + autoEsc(meta.slice(0, 120)) + (meta.length > 120 ? '…' : '') + '</td>' +
+                            '<td style="padding:6px 8px">' + autoStrategyActionCell(s) + '</td>' +
                             '</tr>';
                 });
                 html += '</tbody></table>';
@@ -855,6 +857,7 @@ async function autoLoadPairsFamAdmin() {
                         '<th style="padding:6px 8px">Mode</th>' +
                         '<th style="padding:6px 8px">Version</th>' +
                         '<th style="padding:6px 8px">Metadata</th>' +
+                        '<th style="padding:6px 8px">Actions</th>' +
                         '</tr></thead><tbody>';
                 rows.forEach(function (s) {
                     var meta = s.metadata ? JSON.stringify(s.metadata) : '—';
@@ -864,6 +867,7 @@ async function autoLoadPairsFamAdmin() {
                             '<td style="padding:6px 8px"><b>' + autoEsc(s.execution_mode || '—') + '</b></td>' +
                             '<td style="padding:6px 8px;font-family:monospace">' + autoEsc(s.version || '—') + '</td>' +
                             '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280;max-width:500px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(meta) + '">' + autoEsc(meta.slice(0, 120)) + (meta.length > 120 ? '…' : '') + '</td>' +
+                            '<td style="padding:6px 8px">' + autoStrategyActionCell(s) + '</td>' +
                             '</tr>';
                 });
                 html += '</tbody></table>';
@@ -1856,7 +1860,6 @@ async function initAutomation() {
     autoLoadMarketPricesStats();
     autoLoadStrategies();
     autoLoadRunnerLastRun();
-    autoLoadWebhookStatus();
 }
 
 // Expose for app.html loader
@@ -2267,9 +2270,7 @@ async function autoLoadStrategies() {
             // Re-enable in Phase 7b once we have per-recipient send-loop
             // OR a verified Resend sending domain. Until then, edit the
             // recipients JSONB via Supabase Studio or DevTools console.
-            var actions = '<button class="au-btn au-btn-secondary" style="padding:4px 8px;font-size:11px"' +
-                          ' onclick="autoToggleStrategy(' + JSON.stringify(r.name).replace(/"/g, '&quot;') + ',' + r.enabled + ')">' +
-                          (r.enabled ? '⏸ Pause' : '▶ Resume') + '</button>';
+            var actions = autoStrategyActionCell(r);
             html += '<tr style="border-top:1px solid #e5e7eb">' +
                     '<td style="padding:6px 8px"><code>' + autoEsc(r.name) + '</code></td>' +
                     '<td style="padding:6px 8px">' + autoEsc(r.display_name) + '</td>' +
@@ -2288,221 +2289,55 @@ async function autoLoadStrategies() {
 }
 
 // ----------------------------------------------------------------------------
-// Webhook-driven strategies status (Phase 10b — TV webhook path)
-// ----------------------------------------------------------------------------
-// Renders one row per strategy whose auto_strategies.metadata.source =
-// 'tv_webhook'. Shows: last received signal, today's signal count, last
-// heartbeat received, last run status, health badge.
-//
-// Health logic (uses last_heartbeat_at from auto_strategies.metadata):
-//   • during MCX hours (9:00–23:30 IST Mon–Fri):
-//       - green: heartbeat ≤ 90 min ago
-//       - amber: heartbeat 90–180 min ago
-//       - red:   heartbeat > 180 min ago OR never received
-//   • outside MCX hours: shown as "off-hours" (no expectations)
-// MCX hours are defined here, not in a shared util, because this widget is
-// the only consumer; if a second consumer appears, refactor to wms-shared.
-// ----------------------------------------------------------------------------
-
-function autoIsWithinMcxHours(now) {
-    // Single source of truth = the app-wide MCX window in wms-shared.js
-    // (8:55 AM–11:55 PM IST). Used here only for the Webhook Status panel's
-    // market-open indicator; price refresh runs through the shared timer.
-    if (typeof wmsIsMcxHours === 'function') return wmsIsMcxHours();
-    // Fallback if wms-shared.js hasn't loaded: Mon-Fri 9:00 AM–11:55 PM IST.
-    var istMs = now.getTime() + (5.5 * 60 * 60 * 1000);
-    var ist = new Date(istMs);
-    var dow = ist.getUTCDay();       // 0=Sun, 6=Sat (UTC because we shifted)
-    if (dow === 0 || dow === 6) return false;
-    var minOfDay = ist.getUTCHours() * 60 + ist.getUTCMinutes();
-    return minOfDay >= (9 * 60) && minOfDay <= (23 * 60 + 55);
-}
-
-function autoFmtAgo(iso) {
-    if (!iso) return { text: 'never', minutesAgo: Infinity };
-    var ts = new Date(iso).getTime();
-    if (!isFinite(ts)) return { text: 'invalid', minutesAgo: Infinity };
-    var minutesAgo = Math.max(0, Math.floor((Date.now() - ts) / 60000));
-    var text;
-    if (minutesAgo < 1) text = 'just now';
-    else if (minutesAgo < 60) text = minutesAgo + ' min ago';
-    else if (minutesAgo < 1440) text = Math.floor(minutesAgo / 60) + 'h ' + (minutesAgo % 60) + 'm ago';
-    else text = Math.floor(minutesAgo / 1440) + 'd ago';
-    return { text: text, minutesAgo: minutesAgo };
-}
-
-function autoFmtIstShort(iso) {
-    if (!iso) return '—';
-    try {
-        var d = new Date(iso);
-        if (isNaN(d.getTime())) return '—';
-        // Format: "22 May 12:50 IST"
-        var istMs = d.getTime() + (5.5 * 60 * 60 * 1000);
-        var ist = new Date(istMs);
-        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        var hh = String(ist.getUTCHours()).padStart(2, '0');
-        var mm = String(ist.getUTCMinutes()).padStart(2, '0');
-        return ist.getUTCDate() + ' ' + months[ist.getUTCMonth()] + ' ' + hh + ':' + mm + ' IST';
-    } catch (_) { return '—'; }
-}
-
-async function autoLoadWebhookStatus() {
-    var el = document.getElementById('au-webhook-status-list');
-    var badge = document.getElementById('au-webhook-status-badge');
-    if (!el) return;
-    el.textContent = 'Loading…';
-    if (badge) { badge.textContent = 'loading'; badge.className = 'au-badge idle'; }
-
-    try {
-        // 1. Get all webhook-driven strategies.
-        // Filter out system sentinels (name starts with '_', e.g. '_invalid' which
-        // we keep in the table as an FK placeholder for malformed-JSON deliveries
-        // but is not a real operational strategy).
-        var stratResp = await fetch(
-            SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>source=eq.tv_webhook&select=name,display_name,version,enabled,execution_mode,metadata&order=name',
-            { headers: wmsHeaders() }
-        );
-        var stratsAll = await stratResp.json();
-        var strats = Array.isArray(stratsAll)
-            ? stratsAll.filter(function (s) { return s.name && !s.name.startsWith('_'); })
-            : stratsAll;
-        if (!Array.isArray(strats) || strats.length === 0) {
-            el.innerHTML = '<em style="color:#9ca3af">No webhook-driven strategies registered. To add one: set <code>metadata.source = "tv_webhook"</code> on the auto_strategies row.</em>';
-            if (badge) { badge.textContent = 'empty'; badge.className = 'au-badge idle'; }
-            return;
-        }
-
-        var inMcx = autoIsWithinMcxHours(new Date());
-
-        // 2. For each strategy, fetch latest webhook signal + today's count + latest run
-        var rows = await Promise.all(strats.map(async function (s) {
-            var name = s.name;
-            // Latest signal
-            var sigResp = await fetch(
-                SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=eq.' + encodeURIComponent(name) +
-                '&source=eq.tv_webhook&select=fired_at,event_type,metadata,email_status' +
-                '&order=fired_at.desc&limit=1',
-                { headers: wmsHeaders() }
-            );
-            var sigRows = sigResp.ok ? await sigResp.json() : [];
-
-            // Today's count (rolling 24h)
-            var since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-            var countResp = await fetch(
-                SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=eq.' + encodeURIComponent(name) +
-                '&source=eq.tv_webhook&fired_at=gte.' + encodeURIComponent(since) +
-                '&select=id',
-                { headers: wmsHeaders({ 'Prefer': 'count=exact' }) }
-            );
-            var todayCount = 0;
-            if (countResp.ok) {
-                var cr = countResp.headers.get('content-range') || '';
-                var m = cr.match(/\/(\d+)$/);
-                todayCount = m ? parseInt(m[1], 10) : 0;
-            }
-
-            // Latest run
-            var runResp = await fetch(
-                SUPABASE_URL + '/rest/v1/auto_runs?strategy_name=eq.' + encodeURIComponent(name) +
-                '&select=started_at,status,error,metadata&order=started_at.desc&limit=1',
-                { headers: wmsHeaders() }
-            );
-            var runRows = runResp.ok ? await runResp.json() : [];
-
-            return {
-                strategy: s,
-                latest_signal: sigRows[0] || null,
-                today_count: todayCount,
-                latest_run: runRows[0] || null,
-                last_heartbeat_at: (s.metadata || {}).last_heartbeat_at || null,
-            };
-        }));
-
-        // 3. Render the table
-        var html = '<div style="width:100%;overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
-        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
-                '<th style="padding:6px 8px">Strategy</th>' +
-                '<th style="padding:6px 8px">Health</th>' +
-                '<th style="padding:6px 8px">Last Signal</th>' +
-                '<th style="padding:6px 8px">Last 24h</th>' +
-                '<th style="padding:6px 8px">Last Heartbeat</th>' +
-                '<th style="padding:6px 8px">Last Run</th>' +
-                '</tr></thead><tbody>';
-
-        var worstHealth = 'green';   // overall badge
-        rows.forEach(function (r) {
-            var hb = autoFmtAgo(r.last_heartbeat_at);
-            var health = 'off-hours';
-            var healthBadge = '<span class="au-badge idle" title="MCX market closed — no heartbeat expected">🌙 off-hours</span>';
-            if (inMcx) {
-                if (r.last_heartbeat_at == null) {
-                    health = 'red';
-                    healthBadge = '<span class="au-badge error" title="No heartbeat ever received">🔴 silent</span>';
-                } else if (hb.minutesAgo <= 90) {
-                    health = 'green';
-                    healthBadge = '<span class="au-badge success" title="Heartbeat fresh (≤90 min)">🟢 healthy</span>';
-                } else if (hb.minutesAgo <= 180) {
-                    health = 'amber';
-                    healthBadge = '<span class="au-badge warning" title="Heartbeat aging (90–180 min)">🟡 stale</span>';
-                } else {
-                    health = 'red';
-                    healthBadge = '<span class="au-badge error" title="Heartbeat overdue (>180 min)">🔴 silent</span>';
-                }
-            }
-            if (health === 'red')   worstHealth = 'red';
-            else if (health === 'amber' && worstHealth !== 'red') worstHealth = 'amber';
-
-            var sig = r.latest_signal;
-            var sigCell = sig
-                ? autoFmtIstShort(sig.fired_at) + ' · <code>' + autoEsc(sig.event_type || '—') + '</code> · email <code>' + autoEsc(sig.email_status || '—') + '</code>'
-                : '<em style="color:#9ca3af">none yet</em>';
-
-            var run = r.latest_run;
-            var runCell;
-            if (!run) {
-                runCell = '<em style="color:#9ca3af">none yet</em>';
-            } else {
-                var runBadge = run.status === 'SUCCESS'
-                    ? '<span class="au-badge success">SUCCESS</span>'
-                    : '<span class="au-badge error" title="' + autoEsc(run.error || '') + '">FAILED</span>';
-                var runDeduped = (run.metadata || {}).deduped ? ' <span class="au-badge idle" title="duplicate dedupe_key — no DB write">deduped</span>' : '';
-                runCell = autoFmtIstShort(run.started_at) + ' · ' + runBadge + runDeduped;
-            }
-
-            html += '<tr style="border-top:1px solid #e5e7eb;vertical-align:top">' +
-                    '<td style="padding:6px 8px"><code>' + autoEsc(r.strategy.name) + '</code><br><span style="color:#6b7280;font-size:11px">' + autoEsc(r.strategy.display_name) + '</span></td>' +
-                    '<td style="padding:6px 8px">' + healthBadge + '</td>' +
-                    '<td style="padding:6px 8px">' + sigCell + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right"><b>' + r.today_count + '</b></td>' +
-                    '<td style="padding:6px 8px">' + (r.last_heartbeat_at ? autoFmtIstShort(r.last_heartbeat_at) + ' <span style="color:#6b7280">(' + autoEsc(hb.text) + ')</span>' : '<em style="color:#9ca3af">never</em>') + '</td>' +
-                    '<td style="padding:6px 8px">' + runCell + '</td>' +
-                    '</tr>';
-        });
-        html += '</tbody></table></div>';
-        html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280">Health based on last heartbeat age during MCX hours (9:00–23:30 IST Mon–Fri). "Last 24h" is a rolling count over the past 24 hours.</div>';
-
-        el.innerHTML = html;
-        if (badge) {
-            if (!inMcx) { badge.textContent = 'off-hours'; badge.className = 'au-badge idle'; }
-            else if (worstHealth === 'red') { badge.textContent = 'alert'; badge.className = 'au-badge error'; }
-            else if (worstHealth === 'amber') { badge.textContent = 'stale'; badge.className = 'au-badge warning'; }
-            else { badge.textContent = 'healthy'; badge.className = 'au-badge success'; }
-        }
-    } catch (e) {
-        el.innerHTML = '<span style="color:#dc2626">Failed to load webhook status: ' + autoEsc(String(e)) + '</span>';
-        if (badge) { badge.textContent = 'error'; badge.className = 'au-badge error'; }
-    }
-}
-
-// ----------------------------------------------------------------------------
 // Strategy write actions (Phase 7a)
 // ----------------------------------------------------------------------------
+//
+// ONE button builder + ONE toggle handler, shared by every table that lists
+// strategies (Legacy Admin, GS Controls & Admin, Pairs Controls & Admin).
+// Per LESSONS §B.4.9 the button HTML is NOT copied per renderer — a fourth
+// table added tomorrow inherits the correct button, dialog and refresh.
+//
+// Note for Pairs: Pause/Resume flips `auto_strategies.enabled`. That is NOT a
+// change to scanner logic / constants / boundaries, so it does not engage the
+// LESSONS §B.21.8 lock. The "logic locked" notice on that tab stands as-is.
+// ----------------------------------------------------------------------------
+
+// Resume cadence, per strategy — the confirm() dialog must tell the truth about
+// WHEN a resumed strategy next runs. GS runs on the 15-min automation-runner EF;
+// pairs runs on the five fixed cron-job.org ticks. (Before 2026-07-10 the dialog
+// hard-coded the pairs times for EVERY strategy, which mis-stated GS.)
+var _AU_RESUME_CADENCE = {
+    silver_mini_15m: 'every 15 minutes during MCX hours (9:00–23:30 IST, Mon–Fri)',
+    gold_mini_15m:   'every 15 minutes during MCX hours (9:00–23:30 IST, Mon–Fri)',
+    pairs:           'at the next scheduled scan (weekdays 9:30 / 11:30 / 13:30 / 15:15 / 18:05 IST)'
+};
+
+// Renders the Actions cell for one auto_strategies row. Used by all three tables.
+function autoStrategyActionCell(row) {
+    var nameArg = JSON.stringify(row.name).replace(/"/g, '&quot;');
+    return '<button class="au-btn au-btn-secondary" style="padding:4px 8px;font-size:11px"' +
+           ' onclick="autoToggleStrategy(' + nameArg + ',' + (!!row.enabled) + ')">' +
+           (row.enabled ? '⏸ Pause' : '▶ Resume') + '</button>';
+}
+
+// After a toggle, re-render every strategy surface currently in the DOM.
+// Element-presence guards mean this keeps working unchanged once Phase E
+// deletes the Legacy panel. Family headers refresh too — their status pill
+// reads `enabled` (all enabled => PAPER, otherwise DISABLED).
+function autoRefreshStrategySurfaces() {
+    if (document.getElementById('au-strategies-list'))      autoLoadStrategies();
+    if (document.getElementById('au-gs-fam-strategies'))    autoLoadGsFamAdmin();
+    if (document.getElementById('au-gs-fam-mode'))          autoLoadGsFamHeader();
+    if (document.getElementById('au-pairs-fam-strategies')) autoLoadPairsFamAdmin();
+    if (document.getElementById('au-pairs-fam-mode'))       autoLoadPairsFamHeader();
+}
 
 async function autoToggleStrategy(name, currentlyEnabled) {
     var verb = currentlyEnabled ? 'Pause' : 'Resume';
+    var cadence = _AU_RESUME_CADENCE[name] || 'at its next scheduled run';
     var consequence = currentlyEnabled
         ? 'No new scans will run for "' + name + '" until you Resume it. Open trades are NOT auto-managed while paused (no exit checks).'
-        : 'Strategy "' + name + '" will resume scanning at the next cron tick (next: every weekday at 9:30 / 11:30 / 13:30 / 15:15 IST).';
+        : 'Strategy "' + name + '" will resume scanning ' + cadence + '.';
     if (!confirm(verb + ' strategy "' + name + '"?\n\n' + consequence)) return;
     try {
         var resp = await fetch(
@@ -2511,7 +2346,7 @@ async function autoToggleStrategy(name, currentlyEnabled) {
               body: JSON.stringify({ enabled: !currentlyEnabled }) }
         );
         if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
-        autoLoadStrategies();
+        autoRefreshStrategySurfaces();
     } catch (e) {
         alert('Failed to update: ' + (e.message || e));
     }
