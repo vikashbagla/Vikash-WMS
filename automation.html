@@ -27,42 +27,7 @@
     color: #2d3748;
 }
 
-/* Tabs (mirrors reports module) */
-.automation-tabs {
-    flex-shrink: 0;
-    display: flex;
-    gap: 0;
-    border-bottom: 2px solid #e2e8f0;
-    background: #fff;
-    padding: 0 4px;
-}
-.automation-tab-btn {
-    padding: 8px 20px;
-    border: none;
-    background: none;
-    font-size: 13px;
-    font-weight: 600;
-    color: #718096;
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -2px;
-    transition: color 0.15s, border-color 0.15s;
-}
-.automation-tab-btn:hover { color: #4a5568; }
-.automation-tab-btn.active {
-    color: #2563eb;
-    border-bottom-color: #2563eb;
-}
 
-.automation-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px;
-    background: #f9fafb;
-}
-
-.automation-tab-panel { display: none; }
-.automation-tab-panel.active { display: block; }
 
 /* Sub-tabs (used inside Open Trades to split by strategy family) */
 .au-subtabs {
@@ -92,64 +57,9 @@
 .au-subtab-panel { display: none; }
 .au-subtab-panel.active { display: block; }
 
-/* Floating GS totals bar locked to the viewport bottom.
-   Was position:sticky — but sticky tracks the scroll container's bottom, not
-   the viewport's, so on iPad / iOS the bar would float above the last row
-   when the URL bar collapsed (D.32 / WMS-LESSONS pending tooling write-up).
-   position:fixed + safe-area-inset-bottom + body padding-bottom is the
-   robust fix. The companion JS keeps the bar hidden when the GS sub-tab
-   isn't the active view (since fixed bars float above ALL tabs, not just
-   the one they conceptually belong to). */
-.au-totals-bar {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: #fff;
-    border-top: 2px solid #cbd5e0;
-    padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)) 16px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 18px;
-    font-size: 12px;
-    align-items: center;
-    box-shadow: 0 -2px 6px rgba(0,0,0,0.08);
-    z-index: 100;
-}
-/* When the bar is visible, push body content up so the last table row
-   isn't hidden under it. Applied/removed by autoUpdateGsTotalsBar. */
-body.au-totals-bar-visible {
-    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
-}
-.au-totals-bar .au-tot-group {
-    display: flex;
-    gap: 8px;
-    align-items: baseline;
-}
-.au-totals-bar .au-tot-label {
-    color: #6b7280;
-    font-weight: 500;
-}
-.au-totals-bar .au-tot-value {
-    font-weight: 700;
-    color: #1f2937;
-}
-.au-totals-bar .au-tot-sep {
-    color: #d1d5db;
-}
-.au-totals-bar .au-tot-net {
-    margin-left: auto;
-    font-size: 13px;
-}
-.au-refresh-tick {
-    display: inline-block;
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: #10b981;
-    margin-right: 4px;
-    vertical-align: middle;
-}
-.au-refresh-tick.paused { background: #9ca3af; }
+/* (The floating GS totals bar and its refresh-tick lived here. Both were Legacy-only
+   markup, deleted with the Legacy panel in Phase E.3, 2026-07-10. The GS family metrics
+   strip replaces the bar; the live/paused tick is not yet ported — see UI-REIMAGINE §6a.) */
 
 .au-card {
     background: #fff;
@@ -296,9 +206,9 @@ details summary {
 
 /* ================================================================
    FAMILY NAV — Phase A of UI reimagining (2026-07-09).
-   Strategy-family-first workspace. Sits ABOVE the existing sub-tabs.
-   Legacy panel wraps the old .automation-tabs + .automation-content,
-   preserving full functionality during Phases A–D. Retired in Phase E.
+   Strategy-family-first workspace. The Legacy panel it wrapped during
+   Phases A–D was deleted in Phase E.3 (2026-07-10) once every surface it
+   carried had a family/Health home.
    See Documentation/automation/UI-REIMAGINE-PLAN.md.
    ================================================================ */
 .automation-family-tabs {
@@ -329,8 +239,6 @@ details summary {
 .au-fam-tab-btn:hover:not(:disabled) { color: #1e40af; background: rgba(59, 130, 246, 0.06); }
 .au-fam-tab-btn.active { color: #1e40af; border-bottom-color: #1e40af; background: rgba(59, 130, 246, 0.08); }
 .au-fam-tab-btn:disabled { color: #cbd5e0; cursor: not-allowed; }
-.au-fam-tab-btn.legacy { margin-left: auto; color: #6b7280; font-weight: 600; font-size: 12px; }
-.au-fam-tab-btn.legacy.active { color: #6b7280; border-bottom-color: #9ca3af; background: #f3f4f6; }
 
 .automation-family-body {
     flex: 1;
@@ -376,20 +284,6 @@ details summary {
     font-size: 12px;
     font-weight: 600;
 }
-.fam-placeholder .fam-link-legacy {
-    display: inline-block;
-    margin-top: 14px;
-    padding: 6px 14px;
-    background: #eff6ff;
-    color: #2563eb;
-    border: 1px solid #bfdbfe;
-    border-radius: 6px;
-    text-decoration: none;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-}
-.fam-placeholder .fam-link-legacy:hover { background: #dbeafe; }
 
 /* Health page layout */
 .health-grid {
@@ -536,8 +430,9 @@ details summary {
   <!-- ================================================================
        FAMILY NAV (Phase A of UI reimagining, 2026-07-09).
        Strategy-family-first workspace. Each family (GS/KH/Pairs) gets its
-       own page with uniform anatomy. Legacy view preserves the old
-       Admin/Open/Events/Runs/Live sub-tabs during Phases A–D.
+       own page with uniform anatomy. The Legacy view that preserved the old
+       Admin/Open/Events/Runs/Live sub-tabs through Phases A–D was deleted in
+       Phase E.3 (2026-07-10).
        See Documentation/automation/UI-REIMAGINE-PLAN.md.
        ================================================================ -->
   <div class="automation-family-tabs">
@@ -546,7 +441,6 @@ details summary {
     <button class="au-fam-tab-btn"        data-fam="kh">🐦 KH</button>
     <button class="au-fam-tab-btn"        data-fam="pairs">🔗 Pairs</button>
     <button class="au-fam-tab-btn"        data-fam="addnew" disabled title="Contact platform owner to add new strategy family">＋ Add strategy</button>
-    <button class="au-fam-tab-btn legacy" data-fam="legacy">📁 Legacy view</button>
   </div>
 
   <div class="automation-family-body">
@@ -606,9 +500,9 @@ details summary {
 
           <!-- ================================================================
                Platform maintenance — global admin utilities (2026-07-09).
-               Ported from Legacy Admin per owner Option A. State elements
-               are DOM-mirrored from Legacy targets by autoHealthSetupPlatformMirrors,
-               so a click on either surface propagates to both.
+               Ported from Legacy Admin per owner Option A. Since Phase E.1c the
+               renderers write straight into these elements (no DOM mirroring);
+               since E.3 this is their only home.
                ================================================================ -->
           <div class="health-card" style="grid-column: 1 / -1;">
             <h3 style="border-bottom:1px solid #e5e7eb;padding-bottom:6px">🛠 Platform maintenance</h3>
@@ -660,6 +554,32 @@ details summary {
             </div>
           </div>
 
+          <!-- Platform run history (Phase E.1c → upgraded to full table + filters E.2b, 2026-07-10).
+               The housekeeping jobs (_eod_ingest, _mcx_candles_ingest, _test) belong to NO
+               strategy family, so they get no family page. Owner decision 2026-07-10: history
+               lives on the family pages, therefore no global History page — which makes THIS
+               card the system jobs' Run History, and it must carry the same functionality as
+               a family Run History tab (full table + filters), not a stripped-down list. -->
+          <div class="health-card">
+            <h3>Platform run history
+              <span id="au-hp-platform-runs-badge" class="au-badge idle">…</span>
+              <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoHealthLoadPlatformRuns()">↻</button>
+            </h3>
+            <div class="health-sub">Last 50 <code>auto_runs</code> for the system housekeeping jobs — the <code>_</code>-prefixed sentinel strategies, which belong to no strategy family. Each family's own runs live on its family page. (The F&amp;O contract sync reports by email and writes no <code>auto_runs</code> row.)</div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+              <label style="font-size:11px;color:#6b7280">Filter</label>
+              <select id="au-hp-platform-runs-filter" onchange="autoHealthLoadPlatformRuns(this.value)"
+                      style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:12px">
+                <option value="all">All runs</option>
+                <option value="_eod_ingest">EOD Ingest</option>
+                <option value="_mcx_candles_ingest">MCX Candles</option>
+                <option value="failed">Failed only</option>
+                <option value="with_signals">With signals fired</option>
+              </select>
+            </div>
+            <div id="au-hp-platform-runs" style="font-size:12px;color:#4b5563;margin-top:10px">Loading…</div>
+          </div>
+
           <!-- EF quota placeholder -->
           <div class="health-card">
             <h3>Edge Function usage</h3>
@@ -682,10 +602,9 @@ details summary {
       </div>
     </div>
 
-    <!-- 🥈🥇 GS family page (Phase B — 2026-07-09).
-         Silver + gold combined. Feature parity with Legacy Open/Closed via
-         DOM mirroring (see automation.js autoGsFamSetupMirror). Signals /
-         Runs / Controls / Admin tabs ship in Phase B.2. -->
+    <!-- 🥈🥇 GS family page (Phase B — 2026-07-09; standalone since Phase E.1a).
+         Silver + gold combined. autoLoadGsOpenTrades / autoLoadGsClosedTrades render
+         directly into this page's targets — no DOM mirroring, no Legacy dependency. -->
     <div id="au-fam-gs" class="automation-family-panel">
       <div class="fam-scroll">
         <div class="fam-page">
@@ -777,6 +696,7 @@ details summary {
                   <option value="all">All</option>
                   <option value="ENTRY">Entries only</option>
                   <option value="EXIT">Exits only</option>
+                  <option value="email-failed">Email failed</option>
                 </select>
               </label>
               <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
@@ -851,9 +771,9 @@ details summary {
 
               <!-- Controls: pause + PAPER↔LIVE (Phase B.3) -->
               <div class="au-card" style="border-color:#fde68a;background:linear-gradient(to bottom, #fffbeb, #fff)">
-                <h3>Controls <span class="au-badge idle" style="background:#fef3c7;color:#78350f">Phase B.3</span></h3>
-                <div class="au-sub">Per-strategy pause (silver / gold individually via <code>app_state.paused_sources</code>) and PAPER↔LIVE toggle. Ships after the GS→LIVE cutover discussion — the toggle needs to know what LIVE actually means for GS first.</div>
-                <div style="margin-top:12px;font-size:12px;color:#6b7280">Until then, use Legacy view → Live Trading tab for KH controls (which are the only LIVE controls right now).</div>
+                <h3>PAPER ↔ LIVE toggle <span class="au-badge idle" style="background:#fef3c7;color:#78350f">Phase B.3</span></h3>
+                <div class="au-sub">Ships after the GS→LIVE cutover discussion — the toggle needs to know what LIVE actually means for GS first.</div>
+                <div style="margin-top:12px;font-size:12px;color:#6b7280">Per-strategy <b>Pause / Resume</b> already shipped — see the <b>Strategy Configuration</b> card above. KH's LIVE controls (kill switch, risk wrappers, lot sizes) live on the <b>🐦 KH</b> page under Controls &amp; Admin.</div>
               </div>
 
             </div>
@@ -863,12 +783,14 @@ details summary {
       </div>
     </div>
 
-    <!-- 🐦 KH family page (Phase D — 2026-07-09).
+    <!-- 🐦 KH family page (Phase D — 2026-07-09; sole owner of live controls since
+         Phase E.1d — 2026-07-10).
          First UI presence for Katalysthive. Data source is wms_live_commands
-         (KH does NOT go through auto_signals). The Controls & Admin sub-tab
-         DOM-mirrors the Legacy Live Trading panel (au-live-controls, au-live-kh,
-         au-live-lotsizes) so the SAME live-enforcing risk widgets appear here
-         — no rebuild, no risk of a stray toggle mid-migration. -->
+         (KH does NOT go through auto_signals). The Controls & Admin sub-tab is
+         now the ONLY renderer of the live-enforcing risk widgets — the Phase D
+         DOM-mirror produced duplicate element IDs and made the Legacy panel
+         silently discard operator edits. Relocated, never rebuilt: same
+         app_state / wms_live_risk_limits rows, same write paths. -->
     <div id="au-fam-kh" class="automation-family-panel">
       <div class="fam-scroll">
         <div class="fam-page">
@@ -965,10 +887,12 @@ details summary {
             </div>
           </div>
 
-          <!-- Controls & Admin — DOM-mirror the Legacy Live Trading panel content
-               (au-live-controls, au-live-kh, au-live-lotsizes). Same live-enforcing
-               widgets, relocated NOT rebuilt. Legacy panel remains fully functional
-               in parallel until Phase E. -->
+          <!-- Controls & Admin — the ONLY home of the live-enforcing widgets since
+               Phase E.1d. autoRenderLiveControls / autoRenderKhWrappers /
+               autoRenderLotSizes render straight into the three divs below.
+               ⚠️ The rendered HTML carries element IDs (au-kh-cap, au-kh-und,
+               au-kh-lookback, …) — never render it into a second container, or
+               getElementById() will read the wrong copy on save. -->
           <div id="au-kh-fam-controls-panel" class="au-subtab-panel">
 
             <div class="au-card" style="border-left:4px solid #dc2626">
@@ -1076,9 +1000,10 @@ details summary {
             <div id="au-pairs-fam-open-content" class="au-meta">Loading pairs open trades…</div>
           </div>
 
-          <!-- Closed Trades (mirrors Legacy au-closed-trades-content) -->
+          <!-- Closed Trades (owns its render as of Phase E.1b — no longer mirrored) -->
           <div id="au-pairs-fam-closed-panel" class="au-subtab-panel">
             <div id="au-pairs-fam-closed-content" class="au-meta">Loading pairs closed trades…</div>
+            <div id="au-pairs-fam-closed-footnote" class="au-meta" style="margin-top:8px;font-size:11px;color:#9ca3af"></div>
           </div>
 
           <!-- Signals & Events -->
@@ -1091,6 +1016,7 @@ details summary {
                   <option value="all">All</option>
                   <option value="ENTRY">Entries only</option>
                   <option value="EXIT">Exits only</option>
+                  <option value="email-failed">Email failed</option>
                 </select>
               </label>
               <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadPairsFamEvents()">↻</button>
@@ -1152,229 +1078,9 @@ details summary {
       </div>
     </div>
 
-    <!-- 📁 Legacy view — wraps the original sub-tabs + content unchanged.
-         Retired in Phase E once all families have functional pages. -->
-    <div id="au-fam-legacy" class="automation-family-panel">
-
-  <!-- Tabs -->
-  <div class="automation-tabs">
-    <button class="automation-tab-btn active" data-tab="au-admin">Admin</button>
-    <button class="automation-tab-btn"        data-tab="au-open-trades">Open Trades</button>
-    <button class="automation-tab-btn"        data-tab="au-events">Recent Events</button>
-    <button class="automation-tab-btn"        data-tab="au-runs">Run History</button>
-    <button class="automation-tab-btn"        data-tab="au-live" style="margin-left:auto;color:#b91c1c">🔴 Live Trading</button>
-  </div>
-
-  <div class="automation-content">
-
-    <!-- Admin tab -->
-    <div id="au-admin" class="automation-tab-panel active">
-
-      <!-- EOD Prices Ingest -->
-      <div class="au-card">
-        <h3>EOD Prices Ingest <span id="au-eod-status" class="au-badge idle">idle</span></h3>
-        <div class="au-sub">Pulls end-of-day OHLCV bars from Fyers into <code>market_prices</code>. Daily run pulls 5 days (look-back self-heals missed runs); backfill pulls 252.</div>
-
-        <!-- Last run summary -->
-        <div id="au-eod-last-run" class="au-meta">Loading last run…</div>
-
-        <!-- Action buttons -->
-        <div class="au-actions">
-          <button class="au-btn au-btn-primary au-eod-btn"   onclick="autoRunEodIngest(5)">Smoke test (5-day)</button>
-          <button class="au-btn au-btn-danger au-eod-btn"    onclick="autoRunEodIngest(252, true)">Full backfill (252-day)</button>
-          <button class="au-btn au-btn-secondary au-eod-btn" onclick="autoLoadEodLastRun()">Refresh status</button>
-        </div>
-
-        <!-- Live response panel (hidden until first call) -->
-        <div id="au-eod-response" style="display:none; margin-top:12px;"></div>
-      </div>
-
-      <!-- market_prices snapshot -->
-      <div class="au-card">
-        <h3>market_prices snapshot</h3>
-        <div class="au-sub">Total OHLCV rows currently stored, latest date covered, distinct securities.</div>
-
-        <div id="au-mp-stats" class="au-meta">Loading…</div>
-
-        <div class="au-actions">
-          <button class="au-btn au-btn-secondary" onclick="autoLoadMarketPricesStats()">Refresh</button>
-        </div>
-      </div>
-
-      <!-- Strategy Runner (Phase 2 — _test stub) -->
-      <div class="au-card">
-        <h3>Strategy Runner <span id="au-runner-status" class="au-badge idle">idle</span></h3>
-        <div class="au-sub">Calls <code>automation-runner</code> Edge Function. Phase 2 ships a <code>_test</code> stub strategy that alternates between ENTRY and EXIT on each invocation — used to validate chassis plumbing end-to-end (DB writes → email → run row → open-trades view). The real <code>pairs</code> strategy lands in Phase 3.</div>
-
-        <div id="au-runner-last-run" class="au-meta">Loading last run…</div>
-
-        <div class="au-actions">
-          <button class="au-btn au-btn-primary au-runner-btn"   onclick="autoRunStrategy('_test')">Run _test stub</button>
-          <button class="au-btn au-btn-secondary au-runner-btn" onclick="autoRunStrategy('')">Run all enabled</button>
-          <button class="au-btn au-btn-secondary au-runner-btn" onclick="autoLoadRunnerLastRun()">Refresh status</button>
-        </div>
-
-        <div id="au-runner-response" style="display:none; margin-top:12px;"></div>
-      </div>
-
-      <!-- Strategies snapshot -->
-      <div class="au-card">
-        <h3>Strategies</h3>
-        <div class="au-sub">Strategy plugins registered in <code>auto_strategies</code>. Sentinel <code>_eod_ingest</code> is the system row used by the EOD ingest job; not a real trading strategy.</div>
-
-        <div id="au-strategies-list" class="au-meta">Loading…</div>
-
-        <div class="au-actions">
-          <button class="au-btn au-btn-secondary" onclick="autoLoadStrategies()">Refresh</button>
-        </div>
-      </div>
-
-      <!-- Webhook-driven strategies (TradingView) -->
-      <div class="au-card">
-        <h3>Webhook-Driven Strategies (TradingView) <span id="au-webhook-status-badge" class="au-badge idle">idle</span></h3>
-        <div class="au-sub">Strategies whose signals arrive via <code>tv-webhook</code> from the analyst's TradingView Pine alerts (not from the cron-driven chassis). Heartbeat ping is expected hourly during MCX hours (9:00–23:30 IST Mon–Fri). See <code>WMS Claude/GS-TV-WEBHOOK-INTEGRATION.md</code>.</div>
-
-        <div id="au-webhook-status-list" class="au-meta" style="margin-top:12px">Loading…</div>
-
-        <div class="au-actions">
-          <button class="au-btn au-btn-secondary" onclick="autoLoadWebhookStatus()">↻ Refresh</button>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- Open Trades tab -->
-    <div id="au-open-trades" class="automation-tab-panel">
-
-      <!-- Strategy-family sub-tabs -->
-      <div class="au-subtabs">
-        <button class="au-subtab-btn active" data-subtab="au-ot-gs">GS — Silver / Gold</button>
-        <button class="au-subtab-btn"        data-subtab="au-ot-pairs">Pairs</button>
-      </div>
-
-      <!-- GS sub-panel (TV webhook driven) -->
-      <div id="au-ot-gs" class="au-subtab-panel active">
-        <div class="au-card">
-          <h3>GS Open Trades — Silver / Gold <span id="au-gs-open-status" class="au-badge idle">idle</span></h3>
-          <div class="au-sub">Single-instrument MS007 trades from the automation-runner (chassis). Live P&amp;L uses the current Fyers LTP of the executed front-month contract; stop &amp; ATR are from the entry signal's metadata.</div>
-          <div class="au-actions">
-            <button class="au-btn au-btn-secondary" onclick="autoLoadGsOpenTrades()">↻ Refresh</button>
-          </div>
-          <div id="au-gs-open-content" style="margin-top:12px">Click Refresh to load.</div>
-        </div>
-
-        <div class="au-card" style="margin-top:16px">
-          <h3>GS Closed Trades — Silver / Gold <span id="au-gs-closed-status" class="au-badge idle">idle</span></h3>
-          <div class="au-sub">Trades that have exited (EXIT_SL / EXIT_TRAIL / EXIT_EMA / EXIT_TIME) or been manually closed. Realised P&amp;L computed from entry vs exit price × qty × point_value.</div>
-          <div class="au-actions" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-            <button class="au-btn au-btn-secondary" onclick="autoLoadGsClosedTrades()">↻ Refresh</button>
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151">
-              <span>Source:</span>
-              <select id="au-gs-closed-source-filter" onchange="autoGsSetClosedSourceFilter(this.value)"
-                      style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
-                <option value="all">All</option>
-                <option value="chassis">Automation Runner</option>
-                <option value="tv_webhook">TV Webhook (legacy)</option>
-              </select>
-            </label>
-          </div>
-          <div id="au-gs-closed-content" style="margin-top:12px">Click Refresh to load.</div>
-        </div>
-
-        <!-- Sticky combined-totals bar for GS Open + Closed -->
-        <div id="au-gs-totals-bar" class="au-totals-bar" style="display:none">
-          <span class="au-tot-group" title="Auto-refresh status">
-            <span id="au-gs-refresh-tick" class="au-refresh-tick"></span>
-            <span class="au-tot-label" id="au-gs-refresh-label">live</span>
-          </span>
-          <span class="au-tot-sep">|</span>
-          <span class="au-tot-group" title="Sum of notional exposure across currently-open positions"><span class="au-tot-label">Max Exposure:</span> <span class="au-tot-value" id="au-gs-tb-exp">—</span></span>
-          <span class="au-tot-group" title="Sum of broker margin (SPAN+exposure) across currently-open positions"><span class="au-tot-label">Max Margin:</span> <span class="au-tot-value" id="au-gs-tb-mgn">—</span></span>
-          <span class="au-tot-net" title="Live P&amp;L on open trades + Realised P&amp;L on closed trades; % is against Max Exposure"><span class="au-tot-label">Net P&amp;L:</span> <span class="au-tot-value" id="au-gs-tb-net">—</span></span>
-        </div>
-      </div>
-
-      <!-- Pairs sub-panel (cron-driven chassis) -->
-      <div id="au-ot-pairs" class="au-subtab-panel">
-        <div class="au-card">
-          <h3>Pairs Open Trades <span id="au-open-trades-status" class="au-badge idle">idle</span></h3>
-          <div class="au-sub">Pairs-strategy open trades (cron-driven chassis). Each row shows the ENTRY signal that opened it; exits are checked at every cron run. Mark P&amp;L uses market_prices EOD close (yesterday during trading hours, today after 18:00 IST ingest).</div>
-          <div class="au-actions">
-            <button class="au-btn au-btn-secondary" onclick="autoLoadOpenTrades()">↻ Refresh</button>
-          </div>
-          <div id="au-open-trades-content" style="margin-top:12px">Click Refresh to load.</div>
-        </div>
-        <div class="au-card" style="margin-top:16px">
-          <h3>Pairs Closed Trades <span id="au-closed-trades-status" class="au-badge idle">idle</span></h3>
-          <div class="au-sub">Pairs trades whose legs net to zero (target hit, stop hit, time stop, or manual close). Realised P&amp;L is the actual cash settled — entry vs exit prices on each leg.</div>
-          <div class="au-actions">
-            <button class="au-btn au-btn-secondary" onclick="autoLoadClosedTrades()">↻ Refresh</button>
-          </div>
-          <div id="au-closed-trades-content" style="margin-top:12px">Click Refresh to load.</div>
-          <div id="au-closed-trades-footnote" class="au-meta" style="margin-top:8px;font-size:11px;color:#9ca3af"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Recent Events tab -->
-    <div id="au-events" class="automation-tab-panel">
-      <div class="au-card">
-        <h3>Recent Events <span id="au-events-status" class="au-badge idle">idle</span></h3>
-        <div class="au-sub">Last 50 entries / exits across all strategies.</div>
-        <div class="au-actions">
-          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('all')">All</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('ENTRY')">Entries</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('EXIT')">Exits</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents('email-failed')">Email Failed</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadEvents(window._auEventsFilter || 'all')">↻ Refresh</button>
-        </div>
-        <div id="au-events-content" style="margin-top:12px">Click Refresh to load.</div>
-      </div>
-    </div>
-
-    <!-- Run History tab -->
-    <div id="au-runs" class="automation-tab-panel">
-      <div class="au-card">
-        <h3>Run History <span id="au-runs-status" class="au-badge idle">idle</span></h3>
-        <div class="au-sub">Last 50 cron / manual runs. Includes EOD ingest, pairs scans, test stubs.</div>
-        <div class="au-actions">
-          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('all')">All</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('pairs')">Pairs</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('_eod_ingest')">EOD Ingest</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns('failed')">Failed Only</button>
-          <button class="au-btn au-btn-secondary" onclick="autoLoadRuns(window._auRunsFilter || 'all')">↻ Refresh</button>
-        </div>
-        <div id="au-runs-content" style="margin-top:12px">Click Refresh to load.</div>
-      </div>
-    </div>
-
-    <!-- Live Trading tab (Phase 13 — LIVE order placement: controls + risk wrappers) -->
-    <div id="au-live" class="automation-tab-panel">
-
-      <div class="au-card">
-        <h3>Live Controls <span id="au-live-state-badge" class="au-badge idle">…</span></h3>
-        <div class="au-sub">Emergency stop + per-strategy pause for LIVE order placement. Changes take effect on the next signal (within ~1s). No deploy needed.</div>
-        <div id="au-live-controls" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
-        <div class="au-actions"><button class="au-btn au-btn-secondary" onclick="autoLoadLive()">↻ Refresh</button></div>
-      </div>
-
-      <div class="au-card">
-        <h3>Katalysthive (sharanaga_v1) — Risk Wrappers</h3>
-        <div class="au-sub">Checked before any Katalysthive signal is placed. A breach rejects the signal — nothing reaches the broker (fail-closed). Saved instantly.</div>
-        <div id="au-live-kh" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
-      </div>
-
-      <div class="au-card">
-        <h3>Lot Sizes</h3>
-        <div class="au-sub">Contracts per lot — used to convert KH's quantities into lots for the exposure cap. Auto-filled from the securities master; no manual entry, and kept current by the F&amp;O sync.</div>
-        <div id="au-live-lotsizes" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
-      </div>
-
-    </div>
-
-  </div><!-- /.automation-content (legacy) -->
-
-    </div><!-- /#au-fam-legacy -->
+    <!-- 📁 Legacy view panel DELETED — Phase E.3, 2026-07-10.
+         Every surface it carried now lives on a family page or Health; audited
+         element-by-element before deletion. See automation/UI-REIMAGINE-PLAN.md §6a. -->
 
   </div><!-- /.automation-family-body -->
 
