@@ -29,7 +29,6 @@ function autoSwitchTab(tabId) {
     if (tabId === 'au-open-trades' && !window._auOpenTradesLoaded) { autoLoadGsOpenTrades(); autoLoadGsClosedTrades(); autoLoadOpenTrades(); autoLoadClosedTrades(); window._auOpenTradesLoaded = true; }
     if (tabId === 'au-events'      && !window._auEventsLoaded)     { autoLoadEvents('all');  window._auEventsLoaded = true; }
     if (tabId === 'au-runs'        && !window._auRunsLoaded)       { autoLoadRuns('all');    window._auRunsLoaded = true; }
-    if (tabId === 'au-live'        && !window._auLiveLoaded)       { autoLoadLive();         window._auLiveLoaded = true; }
 
     // Open Trades P&L refreshes via the shared app-wide price timer (no module
     // timer). Ensure the provider is registered + the single timer is running.
@@ -75,7 +74,6 @@ function autoSwitchFamily(fam) {
     }
 
     if (fam === 'kh') {
-        if (!window._auKhFamMirrorReady) autoKhFamSetupMirror();
         if (!window._auKhFamLoaded) {
             autoLoadKhFamRefresh();
             window._auKhFamLoaded = true;
@@ -947,52 +945,14 @@ var _auKhMetrics = {
     topRejectReason: null
 };
 
-function autoKhFamSetupMirror() {
-    // Mirror the three Legacy Live Trading card content DIVs into KH family targets.
-    // The buttons inside these DIVs (e.g. arm/disarm kill, KH pause, save risk cap)
-    // have inline onclick handlers pointing to global functions that update the
-    // shared _auLiveState — clicking on either surface routes through the same code.
-    var pairs = [
-        ['au-live-controls', 'au-kh-fam-live-controls'],
-        ['au-live-kh',       'au-kh-fam-live-kh'],
-        ['au-live-lotsizes', 'au-kh-fam-live-lotsizes']
-    ];
-    pairs.forEach(function (t) {
-        var src = document.getElementById(t[0]);
-        var dst = document.getElementById(t[1]);
-        if (!src || !dst || src._auKhMirrored) return;
-        src._auKhMirrored = true;
-        dst.innerHTML = src.innerHTML;
-        new MutationObserver(function () { dst.innerHTML = src.innerHTML; })
-            .observe(src, { childList: true, subtree: true, characterData: true, attributes: true });
-    });
-    // The Legacy Live Trading badge (au-live-state-badge) also mirrors — it's the
-    // little "live/paused" indicator next to "Live Controls".
-    var badgeSrc = document.getElementById('au-live-state-badge');
-    var badgeDst = document.getElementById('au-kh-fam-live-badge');
-    if (badgeSrc && badgeDst && !badgeSrc._auKhBadgeMirrored) {
-        badgeSrc._auKhBadgeMirrored = true;
-        badgeDst.className = badgeSrc.className;
-        badgeDst.textContent = badgeSrc.textContent;
-        new MutationObserver(function () {
-            badgeDst.className = badgeSrc.className;
-            badgeDst.textContent = badgeSrc.textContent;
-        }).observe(badgeSrc, { childList: true, subtree: true, characterData: true, attributes: true });
-    }
-    window._auKhFamMirrorReady = true;
-}
-
 function autoLoadKhFamRefresh() {
     autoLoadKhFamHeader();
     autoLoadKhFamMetrics();
     autoLoadKhFamOpen();
     autoLoadKhFamRecent();
     autoLoadKhFamRejections();
-    // Ensure the Legacy Live Trading state loads so the mirrors have content to copy.
-    if (typeof autoLoadLive === 'function' && !window._auLiveLoaded) {
-        autoLoadLive();
-        window._auLiveLoaded = true;
-    }
+    // This page IS the live-controls surface now (Phase E.1d) — load it directly.
+    if (typeof autoLoadLive === 'function') autoLoadLive();
 }
 
 // ----- Header (mode pill + last activity) ------------------------------------
@@ -1465,8 +1425,10 @@ async function autoHealthToggleKill() {
             { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify(patch) });
         if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()));
         autoHealthLoadKill();
-        // Legacy Live Trading tab caches its own copy — force a reload next time it opens.
-        window._auLiveLoaded = false;
+        // The KH page renders the same app_state row (kill switch + KH pause).
+        // Re-read it so both surfaces agree immediately. (Pre-E.1d this reset a
+        // window._auLiveLoaded cache flag on the Legacy Live Trading tab.)
+        if (document.getElementById('au-kh-fam-live-controls')) autoLoadLive();
     } catch (e) {
         alert('Failed to toggle kill switch: ' + (e.message || e));
     }
@@ -3882,7 +3844,7 @@ var AU_KH = { source: 'katalysthive', strategy: 'sharanaga_v1' };
 var _AU_INP = 'padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:12px';
 
 async function autoLoadLive() {
-    var ctrl = document.getElementById('au-live-controls');
+    var ctrl = document.getElementById('au-kh-fam-live-controls');
     if (ctrl) ctrl.innerHTML = 'Loading…';
     try {
         var results = await Promise.all([
@@ -3913,10 +3875,10 @@ function _auFindLimit(source, strategy, iba, type) {
 
 // ---- Live controls (kill switch + KH pause) ----
 function autoRenderLiveControls() {
-    var el = document.getElementById('au-live-controls'); if (!el) return;
+    var el = document.getElementById('au-kh-fam-live-controls'); if (!el) return;
     var ks = !!_auLiveState.kill_switch;
     var paused = (_auLiveState.paused_sources || []).indexOf('katalysthive') !== -1;
-    var badge = document.getElementById('au-live-state-badge');
+    var badge = document.getElementById('au-kh-fam-live-badge');
     if (badge) {
         if (ks)          { badge.textContent = 'KILL SWITCH ON'; badge.className = 'au-badge error'; }
         else if (paused) { badge.textContent = 'KH paused';      badge.className = 'au-badge warning'; }
@@ -3966,7 +3928,7 @@ async function _auPatchAppState(patch, reason) {
 
 // ---- Katalysthive risk wrappers ----
 function autoRenderKhWrappers() {
-    var el = document.getElementById('au-live-kh'); if (!el) return;
+    var el = document.getElementById('au-kh-fam-live-kh'); if (!el) return;
     var cap = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'max_open_exposure_lots');
     var und = _auFindLimit(AU_KH.source, AU_KH.strategy, null, 'allowed_underlyings');
     var capVal = (cap && cap.limit_value && cap.limit_value.value != null) ? cap.limit_value.value : '';
@@ -4109,7 +4071,7 @@ async function _auSyncLotSizes() {
 }
 
 function autoRenderLotSizes() {
-    var el = document.getElementById('au-live-lotsizes'); if (!el) return;
+    var el = document.getElementById('au-kh-fam-live-lotsizes'); if (!el) return;
     var row = _auFindLimit(null, null, null, 'lot_sizes');
     var map = (row && row.limit_value && row.limit_value.values && typeof row.limit_value.values === 'object') ? row.limit_value.values : {};
     var keys = Object.keys(map).sort();

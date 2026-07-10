@@ -877,12 +877,14 @@ details summary {
       </div>
     </div>
 
-    <!-- 🐦 KH family page (Phase D — 2026-07-09).
+    <!-- 🐦 KH family page (Phase D — 2026-07-09; sole owner of live controls since
+         Phase E.1d — 2026-07-10).
          First UI presence for Katalysthive. Data source is wms_live_commands
-         (KH does NOT go through auto_signals). The Controls & Admin sub-tab
-         DOM-mirrors the Legacy Live Trading panel (au-live-controls, au-live-kh,
-         au-live-lotsizes) so the SAME live-enforcing risk widgets appear here
-         — no rebuild, no risk of a stray toggle mid-migration. -->
+         (KH does NOT go through auto_signals). The Controls & Admin sub-tab is
+         now the ONLY renderer of the live-enforcing risk widgets — the Phase D
+         DOM-mirror produced duplicate element IDs and made the Legacy panel
+         silently discard operator edits. Relocated, never rebuilt: same
+         app_state / wms_live_risk_limits rows, same write paths. -->
     <div id="au-fam-kh" class="automation-family-panel">
       <div class="fam-scroll">
         <div class="fam-page">
@@ -979,10 +981,12 @@ details summary {
             </div>
           </div>
 
-          <!-- Controls & Admin — DOM-mirror the Legacy Live Trading panel content
-               (au-live-controls, au-live-kh, au-live-lotsizes). Same live-enforcing
-               widgets, relocated NOT rebuilt. Legacy panel remains fully functional
-               in parallel until Phase E. -->
+          <!-- Controls & Admin — the ONLY home of the live-enforcing widgets since
+               Phase E.1d. autoRenderLiveControls / autoRenderKhWrappers /
+               autoRenderLotSizes render straight into the three divs below.
+               ⚠️ The rendered HTML carries element IDs (au-kh-cap, au-kh-und,
+               au-kh-lookback, …) — never render it into a second container, or
+               getElementById() will read the wrong copy on save. -->
           <div id="au-kh-fam-controls-panel" class="au-subtab-panel">
 
             <div class="au-card" style="border-left:4px solid #dc2626">
@@ -1357,26 +1361,28 @@ details summary {
       </div>
     </div>
 
-    <!-- Live Trading tab (Phase 13 — LIVE order placement: controls + risk wrappers) -->
+    <!-- Live Trading tab — CONTENT RELOCATED to the KH family page (Phase E.1d, 2026-07-10).
+         Phase D DOM-mirrored the three cards here into the KH page. Because the
+         rendered HTML carries element IDs (au-kh-cap, au-kh-und, au-kh-lookback, …),
+         mirroring produced DUPLICATE IDs. getElementById() returns the FIRST match in
+         document order = the KH family copy, so an edit typed into THIS panel was
+         silently discarded and the KH page's value was saved instead. A live
+         risk-control writing a value the operator never typed.
+         The KH family page is now the SOLE renderer of these controls. Do not
+         re-add id-bearing markup here. This whole panel goes away at Phase E.3. -->
     <div id="au-live" class="automation-tab-panel">
 
       <div class="au-card">
-        <h3>Live Controls <span id="au-live-state-badge" class="au-badge idle">…</span></h3>
-        <div class="au-sub">Emergency stop + per-strategy pause for LIVE order placement. Changes take effect on the next signal (within ~1s). No deploy needed.</div>
-        <div id="au-live-controls" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
-        <div class="au-actions"><button class="au-btn au-btn-secondary" onclick="autoLoadLive()">↻ Refresh</button></div>
-      </div>
-
-      <div class="au-card">
-        <h3>Katalysthive (sharanaga_v1) — Risk Wrappers</h3>
-        <div class="au-sub">Checked before any Katalysthive signal is placed. A breach rejects the signal — nothing reaches the broker (fail-closed). Saved instantly.</div>
-        <div id="au-live-kh" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
-      </div>
-
-      <div class="au-card">
-        <h3>Lot Sizes</h3>
-        <div class="au-sub">Contracts per lot — used to convert KH's quantities into lots for the exposure cap. Auto-filled from the securities master; no manual entry, and kept current by the F&amp;O sync.</div>
-        <div id="au-live-lotsizes" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
+        <h3>Live Controls — moved</h3>
+        <div class="au-sub">
+          The kill switch, Katalysthive pause, risk wrappers and lot sizes now live on the
+          <b>🐦 KH — Katalysthive</b> family page, under <b>Controls &amp; Admin</b>.
+          They were duplicated here; the duplicate has been removed so that what you type is
+          what gets saved.
+        </div>
+        <div class="au-actions">
+          <button class="au-btn au-btn-primary" onclick="autoSwitchFamily('kh')">Go to KH → Controls &amp; Admin</button>
+        </div>
       </div>
 
     </div>
