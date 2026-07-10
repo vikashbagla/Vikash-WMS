@@ -1015,6 +1015,13 @@ async function autoSaveKhTags() {
         if (!meta.family || !meta.driver) throw new Error('refusing to save: strategy row is missing family/driver');
 
         var live = (_auKhTagCtrl && typeof _auKhTagCtrl.getTags === 'function') ? _auKhTagCtrl.getTags() : _auKhTags;
+
+        // B.17.1 — getTags() returns only tags CONFIRMED with Enter / comma / dropdown.
+        // Text still sitting in the box is not yet a tag. Typing a tag and clicking
+        // Save (without pressing Enter) must not silently discard it.
+        var pendingEl = document.getElementById('au-kh-tags-input');
+        if (pendingEl && pendingEl.value.trim()) live = live.concat(pendingEl.value.split(/[,;]/));
+
         var seen = {}, clean = [];
         live.forEach(function (t) {
             var v = String(t || '').trim();
@@ -1031,7 +1038,8 @@ async function autoSaveKhTags() {
         });
         if (!pr.ok) throw new Error('save HTTP ' + pr.status + ' ' + (await pr.text()));
 
-        if (msg) msg.textContent = 'Saved.';
+        if (pendingEl) pendingEl.value = '';   // consumed above; don't let it re-apply on the next Save
+        if (msg) msg.textContent = 'Saved. Applies to KH fills booked from now on; existing transactions are unchanged.';
         await autoLoadKhTags();   // re-read — never claim success from the local copy
     } catch (e) {
         if (badge) { badge.className = 'au-badge error'; badge.textContent = 'error'; }
