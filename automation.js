@@ -2536,11 +2536,6 @@ function autoComputePnL(legs, priceMap) {
     return { total: total, breakdown: legBreakdown.join(' • '), markDate: markDate };
 }
 
-// Returns a Set of strategy names whose auto_strategies.metadata.source === 'tv_webhook'.
-// Cached on window after first call. The GS Open/Closed Trades cards handle these
-// strategies; the Pairs Open/Closed cards exclude them.
-// System sentinels (name starts with '_', e.g. '_invalid') are filtered out — they
-// are infrastructure rows, not real strategies.
 // ----------------------------------------------------------------------------
 // Strategy family classifier (KH-PLAN Phase KH-2, 2026-07-10).
 //
