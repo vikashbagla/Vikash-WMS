@@ -919,6 +919,126 @@ var _auKhMetrics = {
     topRejectReason: null
 };
 
+// ----------------------------------------------------------------------------
+// KH trade tags (KH-PLAN Phase KH-3, 2026-07-10)
+//
+// Owner-configured tags applied to every transaction written from a Katalysthive
+// fill (KH-4 writes those rows in wms-live-cmd-complete). Stored on the strategy
+// row: auto_strategies.metadata.transaction_tags — strategy metadata, not a risk
+// limit, so it does not belong in wms_live_risk_limits.
+//
+// LESSONS A.2.12 forbids the SYSTEM adding/editing/removing tags. These are the
+// OWNER's own tags, typed into a UI tag field, merely applied at insert time.
+// The carve-out is recorded in A.2.12 — the system still never invents a tag.
+//
+// Uses the app-wide wmsTagInput widget, so behaviour matches every other tag field.
+// ⚠️ The widget captures the `tags` ARRAY REFERENCE at construction. Never reassign
+// _auKhTags — mutate it in place, or the pills silently stop updating (B.2.3).
+// ----------------------------------------------------------------------------
+
+var _auKhTags = [];
+var _auKhTagCtrl = null;
+
+// Distinct tags already in use, for autocomplete. 'blank' excluded (A.2.1).
+async function autoGetExistingTags() {
+    if (Array.isArray(window._auExistingTags)) return window._auExistingTags;
+    var seen = {};
+    try {
+        var rows = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/transactions?select=tags');
+        (rows || []).forEach(function (r) {
+            (Array.isArray(r.tags) ? r.tags : []).forEach(function (t) {
+                var v = String(t || '').trim();
+                if (!v || v.toLowerCase() === 'blank') return;
+                if (!(v.toLowerCase() in seen)) seen[v.toLowerCase()] = v;
+            });
+        });
+        window._auExistingTags = Object.values(seen).sort();
+    } catch (e) {
+        console.error('[autoGetExistingTags] failed:', e);
+        return [];   // never cache a failure — an empty list would look like "no tags exist"
+    }
+    return window._auExistingTags;
+}
+
+async function autoLoadKhTags() {
+    var badge = document.getElementById('au-kh-tags-status');
+    var msg   = document.getElementById('au-kh-tags-msg');
+    var input = document.getElementById('au-kh-tags-input');
+    var pills = document.getElementById('au-kh-tags-pills');
+    var dd    = document.getElementById('au-kh-tags-dd');
+    if (!input || !pills || !dd) return;
+    if (badge) { badge.className = 'au-badge loading'; badge.textContent = 'loading'; }
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + AU_KH.strategy + '&select=metadata',
+            { headers: wmsHeaders() });
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()));
+        var rows = await r.json();
+        if (!Array.isArray(rows) || rows.length === 0) throw new Error('strategy row ' + AU_KH.strategy + ' not found');
+        var saved = (rows[0].metadata || {}).transaction_tags;
+
+        _auKhTags.length = 0;                                  // mutate in place (B.2.3)
+        if (Array.isArray(saved)) Array.prototype.push.apply(_auKhTags, saved);
+
+        var existing = await autoGetExistingTags();
+        if (!_auKhTagCtrl) {
+            _auKhTagCtrl = wmsTagInput(input, pills, dd, { tags: _auKhTags, existingTags: existing, onChange: function () {} });
+        } else if (typeof _auKhTagCtrl.setExistingTags === 'function') {
+            _auKhTagCtrl.setExistingTags(existing);
+        }
+        if (_auKhTagCtrl && typeof _auKhTagCtrl.refresh === 'function') _auKhTagCtrl.refresh();
+
+        if (badge) {
+            badge.className = _auKhTags.length ? 'au-badge success' : 'au-badge idle';
+            badge.textContent = _auKhTags.length ? _auKhTags.length + ' tag' + (_auKhTags.length === 1 ? '' : 's') : 'none';
+        }
+        if (msg) msg.textContent = _auKhTags.length
+            ? 'Applied to every KH fill written into Trading.'
+            : "No tags set — KH trades will import with ['blank'].";
+    } catch (e) {
+        if (badge) { badge.className = 'au-badge error'; badge.textContent = 'error'; }
+        if (msg) msg.innerHTML = '<span style="color:#dc2626">Failed to load: ' + autoEsc(String(e.message || e)) + '</span>';
+    }
+}
+
+async function autoSaveKhTags() {
+    var badge = document.getElementById('au-kh-tags-status');
+    var msg   = document.getElementById('au-kh-tags-msg');
+    try {
+        // Read-modify-write: metadata also carries family + driver (KH-1). PostgREST
+        // PATCH replaces the whole jsonb value, so merge — never overwrite.
+        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + AU_KH.strategy + '&select=metadata',
+            { headers: wmsHeaders() });
+        if (!r.ok) throw new Error('read HTTP ' + r.status + ' ' + (await r.text()));
+        var cur = (await r.json())[0];
+        if (!cur) throw new Error('strategy row ' + AU_KH.strategy + ' not found');
+        var meta = Object.assign({}, cur.metadata || {});
+        if (!meta.family || !meta.driver) throw new Error('refusing to save: strategy row is missing family/driver');
+
+        var live = (_auKhTagCtrl && typeof _auKhTagCtrl.getTags === 'function') ? _auKhTagCtrl.getTags() : _auKhTags;
+        var seen = {}, clean = [];
+        live.forEach(function (t) {
+            var v = String(t || '').trim();
+            if (!v || v.toLowerCase() === 'blank') return;     // A.2.1 — 'blank' is the empty marker
+            if (v.toLowerCase() in seen) return;
+            seen[v.toLowerCase()] = 1; clean.push(v);
+        });
+        if (clean.length) meta.transaction_tags = clean; else delete meta.transaction_tags;
+
+        var pr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + AU_KH.strategy, {
+            method: 'PATCH',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+            body: JSON.stringify({ metadata: meta })
+        });
+        if (!pr.ok) throw new Error('save HTTP ' + pr.status + ' ' + (await pr.text()));
+
+        if (msg) msg.textContent = 'Saved.';
+        await autoLoadKhTags();   // re-read — never claim success from the local copy
+    } catch (e) {
+        if (badge) { badge.className = 'au-badge error'; badge.textContent = 'error'; }
+        if (msg) msg.innerHTML = '<span style="color:#dc2626">Failed to save: ' + autoEsc(String(e.message || e)) + '</span>';
+    }
+}
+
 function autoLoadKhFamRefresh() {
     autoLoadKhFamHeader();
     autoLoadKhFamMetrics();
@@ -927,6 +1047,7 @@ function autoLoadKhFamRefresh() {
     autoLoadKhFamRejections();
     // This page IS the live-controls surface now (Phase E.1d) — load it directly.
     if (typeof autoLoadLive === 'function') autoLoadLive();
+    autoLoadKhTags();
 }
 
 // ----- Header (mode pill + last activity) ------------------------------------
