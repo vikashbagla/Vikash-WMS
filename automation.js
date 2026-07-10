@@ -60,7 +60,6 @@ function autoSwitchFamily(fam) {
     if (panel) panel.classList.add('active');
 
     if (fam === 'health') {
-        if (!window._auHpMirrorsReady) autoHealthSetupPlatformMirrors();
         if (!window._auHealthLoaded) {
             autoHealthLoadAll();
             window._auHealthLoaded = true;
@@ -132,7 +131,12 @@ function autoTarget(ids) {
         set innerHTML(html) { els.forEach(function (e) { e.innerHTML = html; }); },
         get innerHTML() { return els[0].innerHTML; },
         get firstElementChild() { return els[0].firstElementChild; },
-        querySelector: function (sel) { return els[0].querySelector(sel); }
+        querySelector: function (sel) { return els[0].querySelector(sel); },
+        // Response panels toggle display:block when shown — fan that out too.
+        style: {
+            set display(v) { els.forEach(function (e) { e.style.display = v; }); },
+            get display() { return els[0].style.display; }
+        }
     };
 }
 
@@ -1388,51 +1392,18 @@ function autoHealthLoadAll() {
     autoHealthLoadFamilies();
     autoHealthLoadCrons();
     autoHealthLoadErrors();
+    autoHealthLoadPlatformRuns();
 }
 
 // ----------------------------------------------------------------------------
-// Health page — Platform Maintenance mirrors (2026-07-09).
-// Ported the Legacy Admin utilities (EOD ingest, market_prices snapshot,
-// Strategy Runner) to the Health page via DOM mirroring of Legacy state
-// elements. Buttons on both surfaces call the same global handlers (which
-// update Legacy IDs); observers propagate the visual state to Health.
+// Health page — Platform Maintenance (2026-07-09; de-mirrored Phase E.1c 2026-07-10).
+//
+// The Legacy Admin utilities (EOD ingest, market_prices snapshot, Strategy
+// Runner) now render straight into BOTH surfaces via autoTarget() /
+// autoBadgeTarget(). The old MutationObserver mirror is gone. Buttons were
+// already class-based (.au-eod-btn / .au-runner-btn) so both surfaces enable and
+// disable together with no extra wiring.
 // ----------------------------------------------------------------------------
-function autoHealthSetupPlatformMirrors() {
-    if (window._auHpMirrorsReady) return;
-    var pairs = [
-        // EOD ingest
-        ['au-eod-status',      'au-hp-eod-status',      'badge'],
-        ['au-eod-last-run',    'au-hp-eod-last-run',    'content'],
-        ['au-eod-response',    'au-hp-eod-response',    'content'],
-        // market_prices snapshot
-        ['au-mp-stats',        'au-hp-mp-stats',        'content'],
-        // Strategy Runner
-        ['au-runner-status',   'au-hp-runner-status',   'badge'],
-        ['au-runner-last-run', 'au-hp-runner-last-run', 'content'],
-        ['au-runner-response', 'au-hp-runner-response', 'content']
-    ];
-    pairs.forEach(function (t) {
-        var src = document.getElementById(t[0]);
-        var dst = document.getElementById(t[1]);
-        if (!src || !dst) return;
-        var mode = t[2];
-        var applyOnce = function () {
-            if (mode === 'badge') {
-                dst.className = src.className;
-                dst.textContent = src.textContent;
-            } else {
-                dst.innerHTML = src.innerHTML;
-                // Sync display state (response panels toggle display:block on show)
-                if (src.style && src.style.cssText != null) dst.style.cssText = src.style.cssText;
-            }
-        };
-        applyOnce();
-        new MutationObserver(applyOnce).observe(src, {
-            childList: true, subtree: true, characterData: true, attributes: true
-        });
-    });
-    window._auHpMirrorsReady = true;
-}
 
 var _auHealthState = null;
 
@@ -1621,6 +1592,93 @@ async function autoHealthLoadErrors() {
     } catch (e) {
         el.innerHTML = '<div style="color:#b91c1c">Failed: ' + (e.message || e) + '</div>';
     }
+}
+
+// ----------------------------------------------------------------------------
+// Platform run history (Phase E.1c, 2026-07-10)
+//
+// Housekeeping jobs run under `_`-prefixed SENTINEL strategy names
+// (`_eod_ingest`, `_mcx_candles_ingest`, `_test`). They belong to no strategy
+// family, so the family pages filter them out — Legacy's global Run History tab
+// was their ONLY surface. This card is their home per owner directive
+// 2026-07-10 ("move them to Health for the time being"), so Phase E.3 can delete
+// Legacy without losing visibility. Interim placement; revisit at restructure.
+//
+// The F&O contract sync (`securities-fno-sync`) does NOT write to `auto_runs` —
+// it reports by email. Don't expect it here.
+// ----------------------------------------------------------------------------
+async function autoHealthLoadPlatformRuns() {
+    var el = document.getElementById('au-hp-platform-runs');
+    var badge = document.getElementById('au-hp-platform-runs-badge');
+    if (!el) return;
+    if (badge) { badge.className = 'au-badge loading'; badge.textContent = 'loading'; }
+    try {
+        // PostgREST: `like.\_%` — the underscore is a LIKE wildcard and must be
+        // escaped, else it matches ANY first character and pulls in every strategy.
+        var q = '/rest/v1/auto_runs?strategy_name=like.' + encodeURIComponent('\\_%') +
+                '&order=started_at.desc&limit=30' +
+                '&select=strategy_name,started_at,finished_at,duration_ms,status,error,metadata';
+        var r = await fetch(SUPABASE_URL + q, { headers: wmsHeaders() });
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()));
+        var rows = await r.json();
+
+        if (!Array.isArray(rows) || rows.length === 0) {
+            el.innerHTML = '<div class="au-soon">No housekeeping runs recorded yet.</div>';
+            if (badge) { badge.className = 'au-badge idle'; badge.textContent = '0 runs'; }
+            return;
+        }
+
+        var failed = rows.filter(function (x) { return x.status === 'FAILED'; }).length;
+
+        var html = '<div style="width:100%;overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+                '<th style="padding:6px 8px">Job</th>' +
+                '<th style="padding:6px 8px">Started (IST)</th>' +
+                '<th style="padding:6px 8px">Status</th>' +
+                '<th style="padding:6px 8px;text-align:right">Duration</th>' +
+                '<th style="padding:6px 8px">Detail</th>' +
+                '</tr></thead><tbody>';
+        rows.forEach(function (x) {
+            var badgeHtml = x.status === 'SUCCESS'
+                ? '<span class="au-badge success">SUCCESS</span>'
+                : (x.status === 'RUNNING'
+                    ? '<span class="au-badge loading">RUNNING</span>'
+                    : '<span class="au-badge error">' + autoEsc(x.status || '—') + '</span>');
+            var dur = x.duration_ms != null ? (x.duration_ms / 1000).toFixed(1) + 's' : '—';
+            var detail = x.status === 'FAILED'
+                ? '<span style="color:#7f1d1d">' + autoEsc(String(x.error || '').slice(0, 120)) + '</span>'
+                : '<span style="color:#6b7280">' + autoEsc(String((x.metadata && x.metadata.summary) || '').slice(0, 120)) + '</span>';
+            html += '<tr style="border-top:1px solid #e5e7eb">' +
+                    '<td style="padding:6px 8px"><code>' + autoEsc(x.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px">' + autoHealthFmtIst(x.started_at) + '</td>' +
+                    '<td style="padding:6px 8px">' + badgeHtml + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right">' + dur + '</td>' +
+                    '<td style="padding:6px 8px;max-width:420px;overflow:hidden;text-overflow:ellipsis">' + detail + '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+
+        if (badge) {
+            badge.className = failed > 0 ? 'au-badge error' : 'au-badge success';
+            badge.textContent = failed > 0 ? failed + ' failed / ' + rows.length : rows.length + ' runs';
+        }
+    } catch (e) {
+        el.innerHTML = '<div style="color:#dc2626">Failed to load: ' + autoEsc(String(e.message || e)) + '</div>';
+        if (badge) { badge.className = 'au-badge error'; badge.textContent = 'error'; }
+    }
+}
+
+// IST short timestamp for the Health cards.
+function autoHealthFmtIst(iso) {
+    if (!iso) return '—';
+    try {
+        var ist = new Date(new Date(iso).getTime() + (5.5 * 3600 * 1000));
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        var hh = String(ist.getUTCHours()).padStart(2, '0');
+        var mm = String(ist.getUTCMinutes()).padStart(2, '0');
+        return ist.getUTCDate() + ' ' + months[ist.getUTCMonth()] + ' ' + hh + ':' + mm;
+    } catch (_) { return '—'; }
 }
 
 // GS Open Trades live P&L flows through the SINGLE app-wide price system
@@ -1823,10 +1881,8 @@ async function initAutomation() {
         btn.addEventListener('click', function () { autoSwitchSubTab(btn.dataset.subtab); });
     });
 
-    // Health page is the default landing tab — set up platform-utility mirrors
-    // BEFORE the parallel admin loads below so the initial state is captured,
-    // then load Health data + auto-refresh every 30s.
-    autoHealthSetupPlatformMirrors();
+    // Health page is the default landing tab. (Phase E.1c: no mirror setup — the
+    // platform-utility renderers write into the Health targets directly.)
     autoHealthLoadAll();
     window._auHealthLoaded = true;
     if (!window._auHealthTimer) {
@@ -1861,7 +1917,7 @@ async function autoRunEodIngest(daysBack, confirmFirst) {
     autoSetEodStatus('loading', 'running ' + daysBack + 'd');
     autoSetEodButtonsDisabled(true);
 
-    var responsePanel = document.getElementById('au-eod-response');
+    var responsePanel = autoTarget(['au-hp-eod-response', 'au-eod-response']);
     responsePanel.style.display = 'block';
     responsePanel.innerHTML = '<div class="au-meta">⏳ Running ' + daysBack + '-day ingest… (may take ' + (daysBack > 30 ? '20–60' : '5–15') + ' seconds)</div>';
 
@@ -1900,7 +1956,7 @@ async function autoRunEodIngest(daysBack, confirmFirst) {
 }
 
 function autoSetEodStatus(cls, label) {
-    var el = document.getElementById('au-eod-status');
+    var el = autoBadgeTarget(['au-hp-eod-status', 'au-eod-status']);
     if (!el) return;
     el.className = 'au-badge ' + cls;
     el.textContent = label;
@@ -1915,7 +1971,7 @@ function autoSetEodButtonsDisabled(disabled) {
 }
 
 function autoRenderEodSuccess(d, ms) {
-    var rp = document.getElementById('au-eod-response');
+    var rp = autoTarget(['au-hp-eod-response', 'au-eod-response']);
     var html = '';
     html += '<div style="font-size:13px;color:#047857;font-weight:600">✓ Success <span class="au-badge success">' + (ms / 1000).toFixed(1) + 's</span></div>';
     html += '<div class="au-stat-grid">';
@@ -1944,7 +2000,7 @@ function autoRenderEodSuccess(d, ms) {
 }
 
 function autoRenderEodError(d, status, ms) {
-    var rp = document.getElementById('au-eod-response');
+    var rp = autoTarget(['au-hp-eod-response', 'au-eod-response']);
     var html = '';
     html += '<div style="font-size:13px;color:#dc2626;font-weight:600">✗ Failed' + (status ? ' (HTTP ' + status + ')' : '') + ' <span class="au-badge error">' + (ms / 1000).toFixed(1) + 's</span></div>';
     if (d && d.error) html += '<div style="margin-top:6px;color:#7f1d1d;font-size:13px">' + autoEsc(d.error) + '</div>';
@@ -1969,7 +2025,7 @@ function autoEsc(s) {
 // ----------------------------------------------------------------------------
 
 async function autoLoadEodLastRun() {
-    var el = document.getElementById('au-eod-last-run');
+    var el = autoTarget(['au-hp-eod-last-run', 'au-eod-last-run']);
     if (!el) return;
     el.textContent = 'Loading last run…';
     try {
@@ -2023,7 +2079,7 @@ async function autoRunStrategy(stratName) {
     autoSetRunnerStatus('loading', stratName ? 'running ' + stratName : 'running all');
     autoSetRunnerButtonsDisabled(true);
 
-    var responsePanel = document.getElementById('au-runner-response');
+    var responsePanel = autoTarget(['au-hp-runner-response', 'au-runner-response']);
     responsePanel.style.display = 'block';
     responsePanel.innerHTML = '<div class="au-meta">⏳ Running strategy ' + (stratName || '(all enabled)') + '… (~1-3s for stub, longer for real strategies)</div>';
 
@@ -2059,7 +2115,7 @@ async function autoRunStrategy(stratName) {
 }
 
 function autoSetRunnerStatus(cls, label) {
-    var el = document.getElementById('au-runner-status');
+    var el = autoBadgeTarget(['au-hp-runner-status', 'au-runner-status']);
     if (!el) return;
     el.className = 'au-badge ' + cls;
     el.textContent = label;
@@ -2074,7 +2130,7 @@ function autoSetRunnerButtonsDisabled(disabled) {
 }
 
 function autoRenderRunnerSuccess(d, ms) {
-    var rp = document.getElementById('au-runner-response');
+    var rp = autoTarget(['au-hp-runner-response', 'au-runner-response']);
     var html = '<div style="font-size:13px;color:#047857;font-weight:600">✓ Dispatch Success <span class="au-badge success">' + (ms / 1000).toFixed(1) + 's</span></div>';
 
     var results = d.results || [];
@@ -2116,7 +2172,7 @@ function autoRenderRunnerSuccess(d, ms) {
 }
 
 function autoRenderRunnerError(d, status, ms) {
-    var rp = document.getElementById('au-runner-response');
+    var rp = autoTarget(['au-hp-runner-response', 'au-runner-response']);
     var html = '<div style="font-size:13px;color:#dc2626;font-weight:600">✗ Failed' + (status ? ' (HTTP ' + status + ')' : '') + ' <span class="au-badge error">' + (ms / 1000).toFixed(1) + 's</span></div>';
     if (d && d.error) html += '<div style="margin-top:6px;color:#7f1d1d;font-size:13px">' + autoEsc(d.error) + '</div>';
     html += '<details style="margin-top:10px" open><summary>Full JSON response</summary>';
@@ -2125,7 +2181,7 @@ function autoRenderRunnerError(d, status, ms) {
 }
 
 async function autoLoadRunnerLastRun() {
-    var el = document.getElementById('au-runner-last-run');
+    var el = autoTarget(['au-hp-runner-last-run', 'au-runner-last-run']);
     if (!el) return;
     el.textContent = 'Loading last run…';
     try {
@@ -2168,7 +2224,7 @@ async function autoLoadRunnerLastRun() {
 // ----------------------------------------------------------------------------
 
 async function autoLoadMarketPricesStats() {
-    var el = document.getElementById('au-mp-stats');
+    var el = autoTarget(['au-hp-mp-stats', 'au-mp-stats']);
     if (!el) return;
     el.textContent = 'Loading…';
     try {
