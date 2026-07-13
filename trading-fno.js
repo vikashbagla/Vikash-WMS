@@ -10,7 +10,7 @@
 
 var trFnoMode = 'open';           // 'open' | 'all'
 var trFnoMatchMethod = 'lifo';    // 'fifo' | 'lifo'
-var trFnoExpiryFilter = null;      // null = not yet initialized (will default to current+prev month)
+var trFnoExpiryHide = null;        // exclusion model (§D.12.23): live user override of hidden expiry labels for THIS session. null = no override → derive from the active view's saved filter each render. [] = nothing hidden = everything (incl. new contracts) shown.
 var trFnoFlatView = false;        // true = flat (ungrouped) for snapshot
 var trFnoExpandedSymbols = {};    // { symbol: true } for expanded symbol rows
 var trFnoExpandedGroups = {};     // { 'symbol|idx': true } for expanded sub-group rows
@@ -333,7 +333,6 @@ function trFnoCalcPositions(filtersOverride) {
     var effBrkIds   = fO && fO.brokerIds    != null ? fO.brokerIds    : trSelectedBrokerIds;
     var effTagNames = fO && fO.tagNames     != null ? fO.tagNames     : trSelectedTagNames;
     var effTagLogic = fO && fO.tagLogic     != null ? fO.tagLogic     : trTagFilterLogic;
-    var effExpiry   = fO && fO.expiryFilter != null ? fO.expiryFilter : trFnoExpiryFilter;
     var effMode     = fO && fO.fnoMode      != null ? fO.fnoMode      : trFnoMode;
     var effMatch    = fO && fO.matchMethod  != null ? fO.matchMethod  : trFnoMatchMethod;
 
@@ -380,9 +379,43 @@ function trFnoCalcPositions(filtersOverride) {
         var tB = (monthIdx[pb[0]] !== undefined) ? new Date(2000 + parseInt(pb[1], 10), monthIdx[pb[0]], 1).getTime() : -1;
         return tB - tA;
     });
-    // Skip the UI side-effect when an override is in play (banner refresh
-    // path) so the F&O page's expiry-filter pills don't briefly flicker.
-    if (!fO) trFnoBuildExpiryFilter(expiryKeys);
+
+    // Resolve the effective HIDDEN expiry set (exclusion model, §D.12.23). A view
+    // stores the expiries the user HID; everything else — including brand-new
+    // contracts — shows. Legacy views that stored an inclusion list convert on
+    // the fly via trFnoResolveHide. The override/banner path resolves from the
+    // default view's raw filters; the interactive path caches into
+    // trFnoExpiryHide once the label universe (expiryKeys) is known.
+    // Resolve the effective HIDDEN expiry set (exclusion model, §D.12.23),
+    // derived FRESH every render — never cached — so a reload / module re-exec
+    // (A.1.2a) always reflects the right source:
+    //   • banner/override path → the override's own filters;
+    //   • a live user override (trFnoExpiryHide non-null, set by toggling the
+    //     dropdown this session) → use it verbatim;
+    //   • otherwise → the ACTIVE view's saved filters (wmsViewManager sets
+    //     activeViewId BEFORE applyFilters, so this is always current). Legacy
+    //     inclusion filters convert inside trFnoResolveHide; genuinely-no-filter
+    //     resolves to [] (all shown, incl. new contracts).
+    var effHide;
+    if (fO) {
+        effHide = trFnoResolveHide(fO, expiryKeys);
+    } else if (trFnoExpiryHide !== null) {
+        effHide = trFnoExpiryHide;
+    } else {
+        var _activeView = (typeof trFnoVM !== 'undefined' && trFnoVM && trFnoVM.activeViewId && Array.isArray(trFnoVM.views))
+            ? trFnoVM.views.find(function(v) { return v && v.id === trFnoVM.activeViewId; })
+            : null;
+        effHide = trFnoResolveHide(_activeView ? _activeView.filters : null, expiryKeys);
+    }
+
+    // Rebuild the expiry dropdown on render — but NOT while it's open, and not
+    // on the banner-override path. Skipping the rebuild while open lets the user
+    // toggle several expiries in one go: each toggle re-filters the table live,
+    // but the dropdown DOM persists and only closes on outside-click (same as
+    // the tag dropdown). §D.12.23
+    var _expDd = document.getElementById('trFnoExpiryDropdown');
+    var _expOpen = !!(_expDd && _expDd.style.display !== 'none');
+    if (!fO && !_expOpen) trFnoBuildExpiryFilter(expiryKeys, effHide);
 
     // Process each underlying symbol
     var symbolResults = [];
@@ -424,8 +457,10 @@ function trFnoCalcPositions(filtersOverride) {
             var g = groups[key];
             var contractExpiry = _wmsTxnGetExpiryLabel(g.contractLabel);
 
-            // Apply expiry filter (null = not yet initialized, treat as no filter)
-            if (effExpiry && effExpiry.length > 0 && effExpiry.indexOf(contractExpiry) < 0) return;
+            // Apply expiry filter (exclusion model, §D.12.23): hide only the
+            // labels the user explicitly hid; everything else — incl. new
+            // contracts — shows.
+            if (effHide && effHide.length > 0 && effHide.indexOf(contractExpiry) >= 0) return;
 
             // Sort chronologically: date, then time (null = 00:00:00), then id as tie-breaker
             var sorted = g.txns.slice().sort(function(a, b) {
@@ -1358,7 +1393,43 @@ function trFnoRenderSummary(positions) {
 // EXPIRY FILTER: Dropdown for F&O tab
 // ============================================================================
 
-function trFnoBuildExpiryFilter(expiryLabels) {
+// Timestamp (ms) for an expiry label like "Jul 26". 'Equity' and unparseable
+// labels sort as oldest (-Infinity). Used for FY grouping + the divider.
+function trFnoExpiryTime(label) {
+    if (!label || label === 'Equity') return -Infinity;
+    var p = String(label).split(' ');
+    var mi = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11 };
+    if (mi[p[0]] === undefined || p[1] === undefined) return -Infinity;
+    return new Date(2000 + parseInt(p[1], 10), mi[p[0]], 1).getTime();
+}
+
+// Current financial year (Apr–Mar) bounds as ms timestamps.
+function trFnoCurrentFYBounds() {
+    var now = new Date();
+    var y = (now.getMonth() >= 3) ? now.getFullYear() : now.getFullYear() - 1;  // Apr = month 3
+    return { start: new Date(y, 3, 1).getTime(), end: new Date(y + 1, 2, 31, 23, 59, 59).getTime() };
+}
+
+// Resolve the effective HIDDEN expiry set from a view's raw stored filters
+// (§D.12.23 exclusion model). Preference: explicit `expiryHide` → use verbatim.
+// Legacy `expiryFilter` (inclusion list) → hide the labels NOT included that
+// are no newer than the newest included one; anything newer (new contracts)
+// stays visible. Nothing stored → hide nothing (all shown, incl. new).
+function trFnoResolveHide(rawFilters, expiryLabels) {
+    rawFilters = rawFilters || {};
+    if (Array.isArray(rawFilters.expiryHide)) return rawFilters.expiryHide.slice();
+    if (Array.isArray(rawFilters.expiryFilter) && rawFilters.expiryFilter.length > 0) {
+        var inc = rawFilters.expiryFilter;
+        var maxT = -Infinity;
+        inc.forEach(function(l) { var t = trFnoExpiryTime(l); if (t > maxT) maxT = t; });
+        return (expiryLabels || []).filter(function(l) {
+            return inc.indexOf(l) < 0 && trFnoExpiryTime(l) <= maxT;
+        });
+    }
+    return [];
+}
+
+function trFnoBuildExpiryFilter(expiryLabels, hideArg) {
     var wrap = document.getElementById('trFnoExpiryWrap');
     if (!wrap) return;
     if (expiryLabels.length <= 1) {
@@ -1367,33 +1438,35 @@ function trFnoBuildExpiryFilter(expiryLabels) {
     }
     wrap.style.display = '';
 
-    // Default: current + previous month on first load
-    if (trFnoExpiryFilter === null) {
-        var monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        var now = new Date();
-        var curMon = monthNames[now.getMonth()];
-        var curYY = String(now.getFullYear()).slice(-2);
-        var prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        var prevMon = monthNames[prevDate.getMonth()];
-        var prevYY = String(prevDate.getFullYear()).slice(-2);
-        var defaults = [curMon + ' ' + curYY, prevMon + ' ' + prevYY];
-        var matched = expiryLabels.filter(function(el) { return defaults.indexOf(el) >= 0; });
-        trFnoExpiryFilter = matched.length > 0 ? matched : [];
-    }
+    // Effective hidden set is computed by trFnoCalcPositions and passed in.
+    var hide = Array.isArray(hideArg) ? hideArg : (Array.isArray(trFnoExpiryHide) ? trFnoExpiryHide : []);
 
-    // Compute current expiry label for "Deselect All" fallback
+    var fy = trFnoCurrentFYBounds();
+    function inFY(el) { var t = trFnoExpiryTime(el); return t >= fy.start && t <= fy.end; }
+
+    // Current expiry label for the "Deselect All" fallback (keep current month).
     var _monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     var _now = new Date();
     var _curExpiryLabel = _monthNames[_now.getMonth()] + ' ' + String(_now.getFullYear()).slice(-2);
 
-    // Determine if all are currently selected
-    var allSelected = (trFnoExpiryFilter.length === 0);
+    var noneHidden = (hide.length === 0);
     var html = '<button class="trM-cf-btn" id="trFnoExpiryToggle">Expiry ▾</button>' +
         '<div class="trM-cf-dropdown" id="trFnoExpiryDropdown" style="display:none;">' +
-        '<div id="trFnoExpirySelectAll" style="padding:4px 12px;font-size:11px;color:#667eea;cursor:pointer;border-bottom:1px solid #e2e8f0;margin-bottom:2px;font-weight:600;">' +
-        (allSelected ? 'Deselect All' : 'Select All') + '</div>';
+        '<div style="display:flex; align-items:center; gap:8px; padding:4px 12px; border-bottom:1px solid #e2e8f0; margin-bottom:2px;">' +
+          '<span id="trFnoExpirySelectAll" style="font-size:11px; color:#667eea; cursor:pointer; font-weight:600;">' + (noneHidden ? 'Deselect All' : 'Select All') + '</span>' +
+          '<span style="color:#cbd5e0;">|</span>' +
+          '<span id="trFnoExpirySelectFY" style="font-size:11px; color:#667eea; cursor:pointer; font-weight:600;">Select FY</span>' +
+        '</div>';
+    // Labels are already sorted newest→oldest. Insert one divider before the
+    // first label older than the current FY start (separates current FY from
+    // older contracts, e.g. between Apr and Mar).
+    var dividerDone = false;
     expiryLabels.forEach(function(el) {
-        var checked = (trFnoExpiryFilter.length === 0 || trFnoExpiryFilter.indexOf(el) >= 0) ? ' checked' : '';
+        if (!dividerDone && trFnoExpiryTime(el) < fy.start) {
+            html += '<div style="border-top:1px solid #cbd5e0; margin:3px 8px;"></div>';
+            dividerDone = true;
+        }
+        var checked = (hide.indexOf(el) < 0) ? ' checked' : '';
         html += '<label class="trM-cf-item"><input type="checkbox" value="' + wmsEsc(el) + '"' + checked + '> ' + wmsEsc(el) + '</label>';
     });
     html += '</div>';
@@ -1402,56 +1475,58 @@ function trFnoBuildExpiryFilter(expiryLabels) {
     var toggleBtn = document.getElementById('trFnoExpiryToggle');
     var dropdown = document.getElementById('trFnoExpiryDropdown');
     var selectAllEl = document.getElementById('trFnoExpirySelectAll');
+    var selectFYEl = document.getElementById('trFnoExpirySelectFY');
     toggleBtn.addEventListener('click', function(e) {
         e.stopPropagation();
         dropdown.style.display = dropdown.style.display === 'none' ? '' : 'none';
     });
 
+    function domHide() {
+        var h = [];
+        dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(c) { if (!c.checked) h.push(c.value); });
+        return h;
+    }
     function updateSelectAllLabel() {
-        var cbs = dropdown.querySelectorAll('input[type="checkbox"]');
-        var allChecked = true;
-        cbs.forEach(function(c) { if (!c.checked) allChecked = false; });
-        selectAllEl.textContent = allChecked ? 'Deselect All' : 'Select All';
+        var anyUnchecked = false;
+        dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(c) { if (!c.checked) anyUnchecked = true; });
+        selectAllEl.textContent = anyUnchecked ? 'Select All' : 'Deselect All';
     }
 
     selectAllEl.addEventListener('click', function(e) {
         e.stopPropagation();
-        var cbs = dropdown.querySelectorAll('input[type="checkbox"]');
-        var allChecked = true;
-        cbs.forEach(function(c) { if (!c.checked) allChecked = false; });
-        if (!allChecked) {
-            // Select All
-            cbs.forEach(function(c) { c.checked = true; });
-            trFnoExpiryFilter = [];
+        var anyUnchecked = false;
+        dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(c) { if (!c.checked) anyUnchecked = true; });
+        if (anyUnchecked) {
+            // Select All → hide nothing
+            dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(c) { c.checked = true; });
+            trFnoExpiryHide = [];
         } else {
-            // Deselect All → keep only current expiry month
-            cbs.forEach(function(c) {
-                c.checked = (c.value === _curExpiryLabel);
-            });
-            trFnoExpiryFilter = expiryLabels.indexOf(_curExpiryLabel) >= 0 ? [_curExpiryLabel] : [];
+            // Deselect All → keep only the current expiry month visible
+            dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(c) { c.checked = (c.value === _curExpiryLabel); });
+            trFnoExpiryHide = expiryLabels.filter(function(el) { return el !== _curExpiryLabel; });
         }
+        updateSelectAllLabel();
+        trFnoRender();
+    });
+
+    selectFYEl.addEventListener('click', function(e) {
+        e.stopPropagation();
+        // Select FY → show only current-FY (Apr–Mar) expiries, hide the rest.
+        dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(c) { c.checked = inFY(c.value); });
+        trFnoExpiryHide = expiryLabels.filter(function(el) { return !inFY(el); });
         updateSelectAllLabel();
         trFnoRender();
     });
 
     dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(cb) {
         cb.addEventListener('change', function() {
-            var checked = [];
-            dropdown.querySelectorAll('input[type="checkbox"]:checked').forEach(function(c) {
-                checked.push(c.value);
-            });
-            if (checked.length === expiryLabels.length) {
-                trFnoExpiryFilter = []; // all selected = no filter
-            } else if (checked.length === 0) {
-                // None selected → fallback to current expiry
-                trFnoExpiryFilter = expiryLabels.indexOf(_curExpiryLabel) >= 0 ? [_curExpiryLabel] : [];
-                // Re-check the current expiry checkbox
-                dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(c) {
-                    if (c.value === _curExpiryLabel) c.checked = true;
-                });
-            } else {
-                trFnoExpiryFilter = checked;
+            var h = domHide();
+            // Guard: if the user hides EVERYTHING, keep the current month visible.
+            if (h.length === expiryLabels.length) {
+                dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(c) { if (c.value === _curExpiryLabel) c.checked = true; });
+                h = expiryLabels.filter(function(el) { return el !== _curExpiryLabel; });
             }
+            trFnoExpiryHide = h;
             updateSelectAllLabel();
             trFnoRender();
         });
@@ -1777,7 +1852,7 @@ var trFnoVM = wmsViewManager({
             tagLogic: trTagFilterLogic,
             fnoMode: trFnoMode,
             matchMethod: trFnoMatchMethod,
-            expiryFilter: trFnoExpiryFilter ? trFnoExpiryFilter.slice() : [],
+            expiryHide: trFnoExpiryHide ? trFnoExpiryHide.slice() : [],
             flatView: trFnoFlatView
         };
     },
@@ -1796,9 +1871,10 @@ var trFnoVM = wmsViewManager({
         // F&O-specific state
         trFnoMode = f.fnoMode || 'open';
         trFnoMatchMethod = f.matchMethod || 'lifo';
-        if (f.expiryFilter !== undefined) {
-            trFnoExpiryFilter = f.expiryFilter && f.expiryFilter.length > 0 ? f.expiryFilter.slice() : [];
-        }
+        // Expiry uses the exclusion model (expiryHide, §D.12.23). Clear any live
+        // user override so the newly-active view's own saved filter takes effect
+        // (trFnoCalcPositions derives the hidden set from the active view).
+        trFnoExpiryHide = null;
         trFnoFlatView = f.flatView || false;
 
         // Sync pill UI

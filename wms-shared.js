@@ -431,6 +431,41 @@ async function wmsLoadSecuritiesNfo(retryCount) {
     }
 }
 
+// Session guard (Rule A.1.2 → var): NFO security_ids we've already triggered a
+// reload for, so a contract genuinely absent from securities_nfo can't cause a
+// reload loop on every render pass.
+var _wmsNfoReloadAttempted = {};
+
+// Ensure the in-memory NFO master (securitiesNfoMap) covers every NFO contract
+// referenced by `transactions`. The master is loaded ONCE at app startup, but a
+// contract can be written to securities_nfo mid-session — a trade cannot be
+// booked without its contract existing there (the import creates it). Such a
+// contract is missing from the pre-loaded map, so structured lookups
+// (wmsFormatContract → expiry label / lot size / strike, margin FIFO, etc.)
+// silently fall back to fuzzy symbol parsing and mis-format. When we spot a
+// referenced contract that isn't in the map, reload the master ONCE per
+// newly-seen id; never loop on a truly-absent contract. Returns true if a
+// reload was performed. Await this before rendering anything that decodes NFO
+// contracts. See LESSONS §A.4.4.
+async function wmsEnsureNfoContracts(transactions) {
+    if (!Array.isArray(transactions)) return false;
+    var map = wmsRefData.securitiesNfoMap || {};
+    var sawNew = false;
+    for (var i = 0; i < transactions.length; i++) {
+        var t = transactions[i];
+        if (!t || t.security_type !== 'NFO' || !t.security_id) continue;
+        if (map[t.security_id]) continue;                     // already in cache
+        if (_wmsNfoReloadAttempted[t.security_id]) continue;  // tried once — don't loop
+        _wmsNfoReloadAttempted[t.security_id] = true;
+        sawNew = true;
+    }
+    if (sawNew) {
+        console.log('wmsEnsureNfoContracts: a trade references an NFO contract not in the cache — reloading securities_nfo');
+        await wmsLoadSecuritiesNfo();
+    }
+    return sawNew;
+}
+
 // ============================================================================
 // MULTI-TOKEN SEARCH HELPER (Rule B.9.2)
 // Splits query into tokens, returns true if ALL tokens match at least one field.

@@ -895,6 +895,17 @@ async function trDeriveAfterLoad() {
 
     trInitFilterPills();
 
+    // A trade can reference an NFO contract created mid-session (the import
+    // writes it to securities_nfo). Refresh the in-memory NFO master to cover
+    // any such contract BEFORE sub-modules render — otherwise contract decoding
+    // (expiry label, lot size, strike) falls back to fuzzy symbol parsing and
+    // mis-groups the position (e.g. an option leaking into the expiry filter as
+    // its full contract name). Reloads only when a genuinely-new missing id is
+    // seen; a no-op on the common path. See LESSONS §A.4.4.
+    if (typeof wmsEnsureNfoContracts === 'function') {
+        await wmsEnsureNfoContracts(trTransactions);
+    }
+
     // Signal that initial transactions are in memory — lazy-loaded sub-modules
     // (Statements via trLoadLedgerModule, F&O) await `trDataReady` before
     // calling any function that filters `trTransactions`. Idempotent — safe
