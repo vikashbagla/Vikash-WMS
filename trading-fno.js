@@ -408,9 +408,14 @@ function trFnoCalcPositions(filtersOverride) {
         effHide = trFnoExpiryHide;
     }
 
-    // Skip the UI side-effect when an override is in play (banner refresh
-    // path) so the F&O page's expiry-filter pills don't briefly flicker.
-    if (!fO) trFnoBuildExpiryFilter(expiryKeys);
+    // Rebuild the expiry dropdown on render — but NOT while it's open, and not
+    // on the banner-override path. Skipping the rebuild while open lets the user
+    // toggle several expiries in one go: each toggle re-filters the table live,
+    // but the dropdown DOM persists and only closes on outside-click (same as
+    // the tag dropdown). §D.12.23
+    var _expDd = document.getElementById('trFnoExpiryDropdown');
+    var _expOpen = !!(_expDd && _expDd.style.display !== 'none');
+    if (!fO && !_expOpen) trFnoBuildExpiryFilter(expiryKeys);
 
     // Process each underlying symbol
     var symbolResults = [];
