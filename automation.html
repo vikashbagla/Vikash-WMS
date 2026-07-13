@@ -908,6 +908,40 @@ details summary {
               <div id="au-kh-fam-live-kh" style="margin-top:12px;font-size:12px;color:#6b7280">Click Refresh to load.</div>
             </div>
 
+            <!-- Trade tags (KH-PLAN Phase KH-3, 2026-07-10).
+                 Owner-configured tags applied to every transaction written from a
+                 Katalysthive fill. Stored on auto_strategies.metadata.transaction_tags.
+                 ⚠️ LESSONS A.2.12 forbids the SYSTEM inventing tags; these are the
+                 owner's own input, entered here, and applied at insert time. -->
+            <div class="au-card">
+              <h3>Trade tags <span id="au-kh-tags-status" class="au-badge idle">…</span></h3>
+              <div class="au-sub">
+                Applied to each transaction written from a Katalysthive fill, at the moment it is written.
+                Same tag field as the rest of the app — type to search existing tags, Enter to add, × to remove.
+                Stored on the strategy row (<code>auto_strategies.metadata.transaction_tags</code>).
+                Leave empty and trades import as <code>blank</code>.<br>
+                <b>Changes apply to trades booked from now on.</b> Transactions already in the book are never re-tagged —
+                edit those in the Trading module if you want them changed.
+              </div>
+              <!-- Canonical wmsTagInput markup: input, then .wms-tag-pills, then .wms-tag-dd —
+                   exactly as trading-bonus / trading-split / trading-income / the edit modal.
+                   NEVER put an inline `display` on the dropdown: wmsTagInput reveals it by
+                   adding `.show`, and an inline style beats `.wms-tag-dd.show{display:flex}`,
+                   so the autocomplete renders its matches invisibly (this bit me once).
+                   `.wms-tag-dd` is position:relative and flows inline — no wrapper needed. -->
+              <div style="margin-top:10px;width:320px">
+                <input id="au-kh-tags-input" type="text" placeholder="Type to search tags, Enter to add…"
+                       style="padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:12px;width:100%" autocomplete="off">
+                <div class="wms-tag-pills" id="au-kh-tags-pills"></div>
+                <div class="wms-tag-dd" id="au-kh-tags-dd"></div>
+              </div>
+              <div class="au-actions">
+                <button class="au-btn au-btn-primary" onclick="autoSaveKhTags()">Save tags</button>
+                <button class="au-btn au-btn-secondary" onclick="autoLoadKhTags()">↻ Reload</button>
+              </div>
+              <div id="au-kh-tags-msg" style="margin-top:6px;font-size:11px;color:#6b7280"></div>
+            </div>
+
             <div class="au-card">
               <h3>Lot Sizes</h3>
               <div class="au-sub">Contracts per lot — used to convert KH quantities into lots for the exposure cap. Auto-filled from the securities master; no manual entry, and kept current by the F&amp;O sync.</div>
