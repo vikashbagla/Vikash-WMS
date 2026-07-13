@@ -1793,6 +1793,46 @@ function lgGetEffectiveTaxRate() {
     return wmsGetTaxRate(invId, brkId);
 }
 
+// Latest RECONCILIATION date the statement is anchored to, or '' when none
+// applies (no recon in scope, or hide-pre-recon is off). Single source of
+// truth for the "since last recon" split (§E.15.17). Reads lgFullCombined,
+// which lgRefresh populates (line ~1095) BEFORE lgRenderSummary runs and which
+// is already scoped to the active view's investor/trader/broker filter — so
+// the split date always matches the reconciliation the transaction section is
+// anchored to (§E.15.15).
+function lgAnchorReconDate() {
+    if (!lgHidePreRecon) return '';
+    if (!Array.isArray(lgFullCombined)) return '';
+    var latest = '';
+    for (var i = 0; i < lgFullCombined.length; i++) {
+        var r = lgFullCombined[i];
+        if (r && r._rowType === 'ledger' && r.entryType === 'RECONCILIATION') {
+            if ((r.date || '') > latest) latest = r.date || '';
+        }
+    }
+    return latest;
+}
+
+// Split a set of FY booked gains into Starting (realised on/before the recon
+// date) + New (realised after it), per §E.15.17. Returns
+// { split, reconDate, startingGain, newGains, total }. When no reconciliation
+// falls inside the FY window, split=false and newGains = all FY gains, so the
+// Booked P&L section renders exactly as it did before the split feature.
+// `total` is always the full-FY booked P&L (the Potential Tax base).
+function lgSplitBookedGains(fyGains, fyStartStr, fyEndStr) {
+    var reconDate = lgAnchorReconDate();
+    var total = 0;
+    fyGains.forEach(function(g) { total += (g.gain || 0); });
+    var inFy = reconDate && reconDate >= fyStartStr && reconDate <= fyEndStr;
+    if (!inFy) {
+        return { split: false, reconDate: '', startingGain: 0, newGains: fyGains.slice(), total: total };
+    }
+    var newGains = fyGains.filter(function(g) { return g.sellDate && g.sellDate > reconDate; });
+    var newSum = 0;
+    newGains.forEach(function(g) { newSum += (g.gain || 0); });
+    return { split: true, reconDate: reconDate, startingGain: total - newSum, newGains: newGains, total: total };
+}
+
 function lgRenderSummary() {
     var summaryBody = document.getElementById('lgSummaryBody');
     if (!summaryBody) return;
@@ -1897,7 +1937,7 @@ function lgRenderSummary() {
         // Bug pre-fix: shortSym='PGEL' returned the underlying equity spot
         // (478.45) for the PGEL 500 CE option row, producing a phantom MTM
         // computed as (spot − premium_avg) instead of (option_lp − premium_avg).
-        // See LESSONS §E.15.16.
+        // See LESSONS §E.15.17.
         var shortSym = h.shortSymbol || h.symbol;
         var priceLookupKey = isNfo ? key : shortSym;
         var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[priceLookupKey] : null;
@@ -2013,6 +2053,10 @@ function lgRenderSummary() {
     var totalBookedGain = 0;
     fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
 
+    // Split FY booked P&L into Starting (pre-recon) + New (since-recon) for the
+    // Booked P&L section (§E.15.17). Tax + header total stay on the FY total.
+    var lgBookedSplit = lgSplitBookedGains(fyGains, fyStartStr, fyEndStr);
+
     // Potential Tax — applies on BOTH trader and broker statements: it's the
     // firm-level tax exposure on already-booked gains (and on broker statements,
     // these are the gains realised via THAT broker). The rate resolves via
@@ -2114,13 +2158,32 @@ function lgRenderSummary() {
         if (fyGains.length === 0) {
             bookedRowsEl.innerHTML = '<tr><td colspan="4" class="text-center" style="padding:12px; color:#9ca3af;">No booked P&L in ' + fyLabel + '</td></tr>';
         } else {
+            // When a reconciliation splits the FY, the by-symbol rows show only
+            // the NEW (since-recon) gains, bracketed by a Starting line above and
+            // a New subtotal below; the header total stays on the FY figure
+            // (§E.15.17). Without a recon, newGains === all FY gains → unchanged.
+            var lgNewSum = totalBookedGain - lgBookedSplit.startingGain;
+            var lgStartRowHtml = '';
+            var lgNewSubtotalHtml = '';
+            if (lgBookedSplit.split) {
+                lgStartRowHtml = '<tr class="lg-booked-split-row">' +
+                    '<td colspan="3">Starting Booked P&amp;L ' +
+                    '<span style="color:#718096; font-size:10px;">as on ' + wmsEsc(lgFmtDate(lgBookedSplit.reconDate)) + '</span></td>' +
+                    '<td class="text-right ' + lgAmtClass(lgBookedSplit.startingGain) + '">' + lgFmt(lgBookedSplit.startingGain) + '</td>' +
+                    '</tr>';
+                lgNewSubtotalHtml = '<tr class="lg-booked-split-row" style="font-weight:600; border-top:1px solid #e2e8f0;">' +
+                    '<td colspan="3">New Booked P&amp;L ' +
+                    '<span style="color:#718096; font-size:10px;">since recon</span></td>' +
+                    '<td class="text-right ' + lgAmtClass(lgNewSum) + '">' + lgFmt(lgNewSum) + '</td>' +
+                    '</tr>';
+            }
             // Group by symbol+securityType. For NFO, key by the full
             // prefix-stripped symbol so different expiries of the same
             // underlying (e.g. MANAPPURAM 28 Apr Fut vs 26 May Fut) are
             // distinct rows — otherwise the contract identity is lost in
             // the aggregation. For EQ, group by short_symbol as before.
             var bySym = {};
-            fyGains.forEach(function(g) {
+            lgBookedSplit.newGains.forEach(function(g) {
                 var isNfo = g.securityType === 'NFO';
                 var groupKey = isNfo
                     ? ((g.symbol || g.shortSymbol || '').replace(/^[A-Z]+:/, ''))
@@ -2161,7 +2224,7 @@ function lgRenderSummary() {
                     '<td class="text-right ' + cls + '">' + lgFmt(b.gain) + '</td>' +
                     '</tr>';
             }).join('');
-            bookedRowsEl.innerHTML = bookedHtml;
+            bookedRowsEl.innerHTML = lgStartRowHtml + bookedHtml + lgNewSubtotalHtml;
         }
     }
 
@@ -3607,7 +3670,7 @@ function lgGatherExportData(opts) {
         }
 
         // Same NFO price-lookup fix as the on-screen Positions table (LESSONS
-        // §E.15.16). Use the holdings key (= full contract symbol) for NFO so
+        // §E.15.17). Use the holdings key (= full contract symbol) for NFO so
         // option / futures prices resolve correctly in exports too.
         var priceLookupKey2 = isNfo ? key : shortSym;
         var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[priceLookupKey2] : null;
@@ -3634,36 +3697,28 @@ function lgGatherExportData(opts) {
     var outstanding = cashBalance + currentNfoMargin;
     var totalHoldingsValue = totalEqValue + totalNfoMtm;
 
-    // Booked P&L window — when the caller supplied an explicit range, USE IT
-    // verbatim (e.g. "since last recon" should book gains realised since that
-    // date). Otherwise default to the current FY based on today.
-    var bookedFrom, bookedTo, fyLabel;
-    if (rangeOverridden && rangeFrom) {
-        bookedFrom = rangeFrom;
-        bookedTo   = rangeTo || '2099-12-31';
-        var yr2 = parseInt(rangeFrom.slice(0, 4), 10);
-        var mo2 = parseInt(rangeFrom.slice(5, 7), 10);
-        var fyStartYearR = (mo2 >= 4) ? yr2 : yr2 - 1;
-        fyLabel = 'FY ' + fyStartYearR + '-' + String(fyStartYearR + 1).slice(-2);
-    } else {
-        var today = new Date();
-        var curY = today.getFullYear();
-        var curM = today.getMonth() + 1;
-        var fyStartYear = (curM >= 4) ? curY : curY - 1;
-        bookedFrom = fyStartYear + '-04-01';
-        bookedTo   = (fyStartYear + 1) + '-03-31';
-        fyLabel = 'FY ' + fyStartYear + '-' + String(fyStartYear + 1).slice(-2);
-    }
+    // Potential Tax + the Booked P&L TOTAL always tax the FULL financial year
+    // (§E.15.17), independent of the statement's display window — this mirrors
+    // the on-screen summary card and stops a "since last recon" export from
+    // taxing only the since-recon slice. FY is anchored to the statement's
+    // as-of date (the range end when one is set, else today). The Booked P&L
+    // section then shows Starting (pre-recon) + New (since-recon, by symbol) +
+    // Total (FY), split at the same reconciliation the transaction section uses.
+    // Rate resolves via wmsGetTaxRate(invId, brokerId) (IBA override before
+    // investor-level fallback), same as lgRenderSummary.
+    var asOfStr = rangeTo || new Date().toISOString().slice(0, 10);
+    var asOfY = parseInt(asOfStr.slice(0, 4), 10);
+    var asOfM = parseInt(asOfStr.slice(5, 7), 10);
+    var fyStartYearX = (asOfM >= 4) ? asOfY : asOfY - 1;
+    var fyStartStrX = fyStartYearX + '-04-01';
+    var fyEndStrX   = (fyStartYearX + 1) + '-03-31';
+    var fyLabel = 'FY ' + fyStartYearX + '-' + String(fyStartYearX + 1).slice(-2);
 
     var fyGains = allGains.filter(function(g) {
-        return g.sellDate && g.sellDate >= bookedFrom && g.sellDate <= bookedTo;
+        return g.sellDate && g.sellDate >= fyStartStrX && g.sellDate <= fyEndStrX;
     });
-    var totalBookedGain = 0;
-    fyGains.forEach(function(g) { totalBookedGain += (g.gain || 0); });
-    // Potential Tax applies to BOTH trader and broker exports — same rate
-    // resolution as lgRenderSummary via wmsGetTaxRate(invId, brokerId) (IBA
-    // override before investor-level fallback). Mirrors the on-screen
-    // summary card (LESSONS §E.15.12, revised 2026-05-27).
+    var bookedSplitX = lgSplitBookedGains(fyGains, fyStartStrX, fyEndStrX);
+    var totalBookedGain = bookedSplitX.total;
     var isBrokerStmt = (lgStatementType === 'broker');
     var potentialTax = Math.max(0, totalBookedGain) * (taxRatePct / 100);
     var netReceivable = totalHoldingsValue - cashBalance - potentialTax;
@@ -3674,9 +3729,10 @@ function lgGatherExportData(opts) {
     var balNoMtm = (totalCurrentMtm > 0) ? (netReceivable - totalCurrentMtm) : netReceivable;
     var pctBalOverOutstanding = outstanding > 0.01 ? (balNoMtm / outstanding) : 0;
 
-    // Booked P&L rows (grouped by symbol)
+    // Booked P&L rows (grouped by symbol) — the NEW (since-recon) gains only.
+    // When there's no recon in the FY, newGains === all FY gains (unchanged).
     var bySym = {};
-    fyGains.forEach(function(g) {
+    bookedSplitX.newGains.forEach(function(g) {
         var k = (g.shortSymbol || g.symbol) + '|' + (g.securityType || 'EQ');
         if (!bySym[k]) bySym[k] = { shortSymbol: g.shortSymbol || g.symbol, securityType: g.securityType || 'EQ', qty: 0, gain: 0 };
         bySym[k].qty += g.qty || 0;
@@ -3712,7 +3768,11 @@ function lgGatherExportData(opts) {
         balNoMtm: balNoMtm,
         pctBalOverOutstanding: pctBalOverOutstanding,
         bookedRows: bookedRows,
-        totalBookedGain: totalBookedGain
+        totalBookedGain: totalBookedGain,
+        bookedSplit: bookedSplitX.split,
+        bookedStarting: bookedSplitX.startingGain,
+        bookedNew: (totalBookedGain - bookedSplitX.startingGain),
+        bookedReconDate: bookedSplitX.reconDate
     };
 }
 
@@ -3834,13 +3894,19 @@ function lgExportExcel(d) {
         nextRow++;                         // blank
     }
 
-    var bookedHeaderRow, bookedFirstData, bookedLastData, bookedTotalRow;
-    if (flags.booked && d.bookedRows.length > 0) {
+    // Booked P&L renders whenever there is FY booked P&L to show — either
+    // since-recon rows, or (recon exists but no new trades closed) a non-zero
+    // FY total that still needs its Starting line + Total displayed (§E.15.17).
+    var bookedShow = flags.booked && (d.bookedRows.length > 0 || (d.bookedSplit && Math.abs(d.totalBookedGain) > 0.005));
+    var bookedHeaderRow, bookedStartRow, bookedFirstData, bookedLastData, bookedNewRow, bookedTotalRow;
+    if (bookedShow) {
         nextRow++;                         // section title 'BOOKED P&L'
         bookedHeaderRow = nextRow++;
+        if (d.bookedSplit) bookedStartRow = nextRow++;   // Starting Booked P&L line
         bookedFirstData = nextRow;
         nextRow        += d.bookedRows.length;
         bookedLastData  = nextRow - 1;
+        if (d.bookedSplit) bookedNewRow = nextRow++;     // New Booked P&L subtotal
         bookedTotalRow  = nextRow++;
     }
 
@@ -3923,12 +3989,22 @@ function lgExportExcel(d) {
         result: d.totalValue
     } : 0;
 
-    // ── Booked P&L total formula ──
+    // ── Booked P&L total + (when split) New subtotal formulas ──
     // Booked cols: A=Symbol, B=Type, C=Qty, D=Gain
     var bcGain = C(3); // D
-    var bookedTotalFormula = (flags.booked && d.bookedRows.length > 0)
-        ? { formula: 'SUM(' + bcGain + bookedFirstData + ':' + bcGain + bookedLastData + ')', result: d.totalBookedGain }
-        : d.totalBookedGain;
+    // New subtotal = SUM of the since-recon symbol rows (0 hardcoded if none).
+    var bookedNewFormula = (d.bookedRows.length > 0)
+        ? { formula: 'SUM(' + bcGain + bookedFirstData + ':' + bcGain + bookedLastData + ')', result: d.bookedNew }
+        : d.bookedNew;
+    // Total: split → Starting cell + New subtotal cell; else SUM of the rows.
+    var bookedTotalFormula;
+    if (d.bookedSplit) {
+        bookedTotalFormula = { formula: bcGain + bookedStartRow + '+' + bcGain + bookedNewRow, result: d.totalBookedGain };
+    } else if (d.bookedRows.length > 0) {
+        bookedTotalFormula = { formula: 'SUM(' + bcGain + bookedFirstData + ':' + bcGain + bookedLastData + ')', result: d.totalBookedGain };
+    } else {
+        bookedTotalFormula = d.totalBookedGain;
+    }
 
     // Build sections according to checked flags. Single sheet, sections flow
     // top-to-bottom. The snapshot_header banner appears once at the very top
@@ -3994,12 +4070,19 @@ function lgExportExcel(d) {
         sections.push({ type: 'blank' });
     }
 
-    if (flags.booked && d.bookedRows.length > 0) {
+    if (bookedShow) {
         sections.push({ type: 'columns', columns: LG_EXPORT_BOOKED_COLS });
         sections.push({ type: 'title', text: 'BOOKED P&L' });
         sections.push({ type: 'header' });
-        sections.push({ type: 'data', rows: d.bookedRows });
-        sections.push({ type: 'total', values: [null, null, null, bookedTotalFormula] });
+        if (d.bookedSplit) {
+            var bkStartLabel = 'Starting Booked P&L' + (d.bookedReconDate ? ' (as on ' + (lgFmtDate(d.bookedReconDate) || d.bookedReconDate) + ')' : '');
+            sections.push({ type: 'data', rows: [[bkStartLabel, null, null, d.bookedStarting]] });
+        }
+        if (d.bookedRows.length > 0) sections.push({ type: 'data', rows: d.bookedRows });
+        if (d.bookedSplit) {
+            sections.push({ type: 'total', values: ['New Booked P&L (since recon)', null, null, bookedNewFormula] });
+        }
+        sections.push({ type: 'total', values: [(d.bookedSplit ? ('Total Booked P&L (' + d.fyLabel + ')') : null), null, null, bookedTotalFormula] });
     }
 
     if (sections.length === 0) {
@@ -4106,18 +4189,26 @@ function lgExportPdf(d) {
         });
     }
 
-    if (flags.booked && d.bookedRows.length > 0) {
+    var pdfBookedShow = flags.booked && (d.bookedRows.length > 0 || (d.bookedSplit && Math.abs(d.totalBookedGain) > 0.005));
+    if (pdfBookedShow) {
         // Booked P&L block — own page with snapshot banner + section title.
-        pages.push({
-            columns: LG_EXPORT_BOOKED_COLS,
-            sections: [
-                snapshotHeader,
-                { type: 'title', text: 'BOOKED P&L' },
-                { type: 'header' },
-                { type: 'data', rows: d.bookedRows },
-                { type: 'total', values: [null, null, null, d.totalBookedGain] }
-            ]
-        });
+        // Split (§E.15.17): Starting (pre-recon) + New (since-recon rows +
+        // subtotal) + Total (FY). Without a recon it's the plain rows + total.
+        var bkSections = [
+            snapshotHeader,
+            { type: 'title', text: 'BOOKED P&L' },
+            { type: 'header' }
+        ];
+        if (d.bookedSplit) {
+            var pdfStartLabel = 'Starting Booked P&L' + (d.bookedReconDate ? ' (as on ' + (lgFmtDate(d.bookedReconDate) || d.bookedReconDate) + ')' : '');
+            bkSections.push({ type: 'data', rows: [[pdfStartLabel, null, null, d.bookedStarting]] });
+        }
+        if (d.bookedRows.length > 0) bkSections.push({ type: 'data', rows: d.bookedRows });
+        if (d.bookedSplit) {
+            bkSections.push({ type: 'total', values: ['New Booked P&L (since recon)', null, null, d.bookedNew] });
+        }
+        bkSections.push({ type: 'total', values: [(d.bookedSplit ? ('Total Booked P&L (' + d.fyLabel + ')') : null), null, null, d.totalBookedGain] });
+        pages.push({ columns: LG_EXPORT_BOOKED_COLS, sections: bkSections });
     }
 
     if (pages.length === 0) {
@@ -4192,8 +4283,10 @@ function lgExportImage(d, mode) {
         totalH += h2;
         pendingBlocks.push({ kind: 'openpos', height: h2 });
     }
-    if (flags.booked && d.bookedRows.length > 0) {
-        var h3 = TITLE_H + blockHeight(d.bookedRows.length, true, true, 0);
+    var imgBookedShow = flags.booked && (d.bookedRows.length > 0 || (d.bookedSplit && Math.abs(d.totalBookedGain) > 0.005));
+    if (imgBookedShow) {
+        // +2 extra rows when split: the Starting line + the New subtotal.
+        var h3 = TITLE_H + blockHeight(d.bookedRows.length, true, true, d.bookedSplit ? 2 : 0);
         if (pendingBlocks.length > 0) totalH += BLOCK_GAP;
         totalH += h3;
         pendingBlocks.push({ kind: 'booked', height: h3 });
@@ -4425,7 +4518,7 @@ function lgExportImage(d, mode) {
     }
 
     // ── Booked P&L block ──
-    if (flags.booked && d.bookedRows.length > 0) {
+    if (imgBookedShow) {
         drawSectionTitle(y, 'BOOKED P&L');
         y += TITLE_H;
         var bkHeaders = ['Symbol', 'Type', 'Qty', 'Gain / (Loss)'];
@@ -4438,6 +4531,13 @@ function lgExportImage(d, mode) {
         drawHeaderRow(y, bkHeaders, bkW, bkAligns);
         y += HEADER_H;
 
+        // Starting Booked P&L (pre-recon) — one line above the since-recon rows.
+        if (d.bookedSplit) {
+            var imgStartLabel = 'Starting Booked P&L' + (d.bookedReconDate ? ' (as on ' + (fmtDate(d.bookedReconDate) || d.bookedReconDate) + ')' : '');
+            drawDataRow(y, [imgStartLabel, '', '', fmtAmt(d.bookedStarting)], bkW, bkAligns, 0, false);
+            y += ROW_H;
+        }
+
         d.bookedRows.forEach(function(r, i) {
             var cells = [
                 r[0] || '',
@@ -4448,7 +4548,16 @@ function lgExportImage(d, mode) {
             drawDataRow(y, cells, bkW, bkAligns, i + 1, false);
             y += ROW_H;
         });
-        drawDataRow(y, ['', '', 'TOTAL:', fmtAmt(d.totalBookedGain)], bkW, bkAligns, 99, true);
+
+        // New Booked P&L subtotal (since recon), then the FY Total.
+        if (d.bookedSplit) {
+            drawDataRow(y, ['New Booked P&L (since recon)', '', '', fmtAmt(d.bookedNew)], bkW, bkAligns, 99, true);
+            y += ROW_H;
+        }
+        var imgTotalCells = d.bookedSplit
+            ? ['Total Booked P&L (' + d.fyLabel + ')', '', '', fmtAmt(d.totalBookedGain)]
+            : ['', '', 'TOTAL:', fmtAmt(d.totalBookedGain)];
+        drawDataRow(y, imgTotalCells, bkW, bkAligns, 99, true);
         y += ROW_H;
     }
 
