@@ -395,17 +395,28 @@ function trFnoCalcPositions(filtersOverride) {
             // Prefer the freshly-applied view's raw filters (pending). If those
             // were cleared — e.g. trading-fno.js re-executed on a module switch
             // (A.1.2a), which resets these module vars to null — fall back to
-            // the ACTIVE view's own stored filters, so the expiry preference
+            // the active view's own stored filters, so the expiry preference
             // survives a reload instead of resetting to "all shown". (§D.12.23)
             var rawExp = _trFnoPendingExpiryFilters;
-            if (!rawExp && typeof trFnoVM !== 'undefined' && trFnoVM && trFnoVM.activeViewId && Array.isArray(trFnoVM.views)) {
+            var haveSource = !!rawExp;
+            if (!rawExp && typeof trFnoVM !== 'undefined' && trFnoVM && trFnoVM.activeViewId && Array.isArray(trFnoVM.views) && trFnoVM.views.length) {
                 var activeView = trFnoVM.views.find(function(v) { return v && v.id === trFnoVM.activeViewId; });
-                if (activeView) rawExp = activeView.filters;
+                if (activeView) { rawExp = activeView.filters; haveSource = true; }
             }
-            trFnoExpiryHide = trFnoResolveHide(rawExp, expiryKeys);
-            _trFnoPendingExpiryFilters = null;
+            var resolvedHide = trFnoResolveHide(rawExp, expiryKeys);
+            // Only CACHE when we actually had a source. On an early render during
+            // init (views not loaded yet, no pending) there is no source — use []
+            // transiently but leave trFnoExpiryHide null so a later render, once
+            // the view is available, re-resolves to the saved preference rather
+            // than freezing on "all shown". (§D.12.23)
+            if (haveSource) {
+                trFnoExpiryHide = resolvedHide;
+                _trFnoPendingExpiryFilters = null;
+            }
+            effHide = resolvedHide;
+        } else {
+            effHide = trFnoExpiryHide;
         }
-        effHide = trFnoExpiryHide;
     }
 
     // Rebuild the expiry dropdown on render — but NOT while it's open, and not
