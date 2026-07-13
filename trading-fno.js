@@ -392,7 +392,17 @@ function trFnoCalcPositions(filtersOverride) {
         effHide = trFnoResolveHide(fO, expiryKeys);
     } else {
         if (trFnoExpiryHide === null) {
-            trFnoExpiryHide = trFnoResolveHide(_trFnoPendingExpiryFilters, expiryKeys);
+            // Prefer the freshly-applied view's raw filters (pending). If those
+            // were cleared — e.g. trading-fno.js re-executed on a module switch
+            // (A.1.2a), which resets these module vars to null — fall back to
+            // the ACTIVE view's own stored filters, so the expiry preference
+            // survives a reload instead of resetting to "all shown". (§D.12.23)
+            var rawExp = _trFnoPendingExpiryFilters;
+            if (!rawExp && typeof trFnoVM !== 'undefined' && trFnoVM && trFnoVM.activeViewId && Array.isArray(trFnoVM.views)) {
+                var activeView = trFnoVM.views.find(function(v) { return v && v.id === trFnoVM.activeViewId; });
+                if (activeView) rawExp = activeView.filters;
+            }
+            trFnoExpiryHide = trFnoResolveHide(rawExp, expiryKeys);
             _trFnoPendingExpiryFilters = null;
         }
         effHide = trFnoExpiryHide;
