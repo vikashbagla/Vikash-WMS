@@ -10,8 +10,7 @@
 
 var trFnoMode = 'open';           // 'open' | 'all'
 var trFnoMatchMethod = 'lifo';    // 'fifo' | 'lifo'
-var trFnoExpiryHide = null;        // exclusion model (§D.12.23): expiry labels the user HID. null = not yet resolved for the active view; [] = nothing hidden = everything (incl. new contracts) shown.
-var _trFnoPendingExpiryFilters = null; // raw {expiryHide | legacy expiryFilter} from the last applied view; converted to trFnoExpiryHide once the expiry label universe is known.
+var trFnoExpiryHide = null;        // exclusion model (§D.12.23): live user override of hidden expiry labels for THIS session. null = no override → derive from the active view's saved filter each render. [] = nothing hidden = everything (incl. new contracts) shown.
 var trFnoFlatView = false;        // true = flat (ungrouped) for snapshot
 var trFnoExpandedSymbols = {};    // { symbol: true } for expanded symbol rows
 var trFnoExpandedGroups = {};     // { 'symbol|idx': true } for expanded sub-group rows
@@ -387,36 +386,26 @@ function trFnoCalcPositions(filtersOverride) {
     // the fly via trFnoResolveHide. The override/banner path resolves from the
     // default view's raw filters; the interactive path caches into
     // trFnoExpiryHide once the label universe (expiryKeys) is known.
+    // Resolve the effective HIDDEN expiry set (exclusion model, §D.12.23),
+    // derived FRESH every render — never cached — so a reload / module re-exec
+    // (A.1.2a) always reflects the right source:
+    //   • banner/override path → the override's own filters;
+    //   • a live user override (trFnoExpiryHide non-null, set by toggling the
+    //     dropdown this session) → use it verbatim;
+    //   • otherwise → the ACTIVE view's saved filters (wmsViewManager sets
+    //     activeViewId BEFORE applyFilters, so this is always current). Legacy
+    //     inclusion filters convert inside trFnoResolveHide; genuinely-no-filter
+    //     resolves to [] (all shown, incl. new contracts).
     var effHide;
     if (fO) {
         effHide = trFnoResolveHide(fO, expiryKeys);
+    } else if (trFnoExpiryHide !== null) {
+        effHide = trFnoExpiryHide;
     } else {
-        if (trFnoExpiryHide === null) {
-            // Prefer the freshly-applied view's raw filters (pending). If those
-            // were cleared — e.g. trading-fno.js re-executed on a module switch
-            // (A.1.2a), which resets these module vars to null — fall back to
-            // the active view's own stored filters, so the expiry preference
-            // survives a reload instead of resetting to "all shown". (§D.12.23)
-            var rawExp = _trFnoPendingExpiryFilters;
-            var haveSource = !!rawExp;
-            if (!rawExp && typeof trFnoVM !== 'undefined' && trFnoVM && trFnoVM.activeViewId && Array.isArray(trFnoVM.views) && trFnoVM.views.length) {
-                var activeView = trFnoVM.views.find(function(v) { return v && v.id === trFnoVM.activeViewId; });
-                if (activeView) { rawExp = activeView.filters; haveSource = true; }
-            }
-            var resolvedHide = trFnoResolveHide(rawExp, expiryKeys);
-            // Only CACHE when we actually had a source. On an early render during
-            // init (views not loaded yet, no pending) there is no source — use []
-            // transiently but leave trFnoExpiryHide null so a later render, once
-            // the view is available, re-resolves to the saved preference rather
-            // than freezing on "all shown". (§D.12.23)
-            if (haveSource) {
-                trFnoExpiryHide = resolvedHide;
-                _trFnoPendingExpiryFilters = null;
-            }
-            effHide = resolvedHide;
-        } else {
-            effHide = trFnoExpiryHide;
-        }
+        var _activeView = (typeof trFnoVM !== 'undefined' && trFnoVM && trFnoVM.activeViewId && Array.isArray(trFnoVM.views))
+            ? trFnoVM.views.find(function(v) { return v && v.id === trFnoVM.activeViewId; })
+            : null;
+        effHide = trFnoResolveHide(_activeView ? _activeView.filters : null, expiryKeys);
     }
 
     // Rebuild the expiry dropdown on render — but NOT while it's open, and not
@@ -426,7 +415,7 @@ function trFnoCalcPositions(filtersOverride) {
     // the tag dropdown). §D.12.23
     var _expDd = document.getElementById('trFnoExpiryDropdown');
     var _expOpen = !!(_expDd && _expDd.style.display !== 'none');
-    if (!fO && !_expOpen) trFnoBuildExpiryFilter(expiryKeys);
+    if (!fO && !_expOpen) trFnoBuildExpiryFilter(expiryKeys, effHide);
 
     // Process each underlying symbol
     var symbolResults = [];
@@ -1440,7 +1429,7 @@ function trFnoResolveHide(rawFilters, expiryLabels) {
     return [];
 }
 
-function trFnoBuildExpiryFilter(expiryLabels) {
+function trFnoBuildExpiryFilter(expiryLabels, hideArg) {
     var wrap = document.getElementById('trFnoExpiryWrap');
     if (!wrap) return;
     if (expiryLabels.length <= 1) {
@@ -1449,8 +1438,8 @@ function trFnoBuildExpiryFilter(expiryLabels) {
     }
     wrap.style.display = '';
 
-    // trFnoExpiryHide is resolved by trFnoCalcPositions before this runs.
-    var hide = Array.isArray(trFnoExpiryHide) ? trFnoExpiryHide : [];
+    // Effective hidden set is computed by trFnoCalcPositions and passed in.
+    var hide = Array.isArray(hideArg) ? hideArg : (Array.isArray(trFnoExpiryHide) ? trFnoExpiryHide : []);
 
     var fy = trFnoCurrentFYBounds();
     function inFY(el) { var t = trFnoExpiryTime(el); return t >= fy.start && t <= fy.end; }
@@ -1882,12 +1871,10 @@ var trFnoVM = wmsViewManager({
         // F&O-specific state
         trFnoMode = f.fnoMode || 'open';
         trFnoMatchMethod = f.matchMethod || 'lifo';
-        // Expiry uses the exclusion model (expiryHide, §D.12.23). Defer conversion
-        // of the raw stored filter (expiryHide, or a legacy expiryFilter
-        // inclusion list) until trFnoCalcPositions knows the label universe;
-        // null forces re-derivation for this view.
+        // Expiry uses the exclusion model (expiryHide, §D.12.23). Clear any live
+        // user override so the newly-active view's own saved filter takes effect
+        // (trFnoCalcPositions derives the hidden set from the active view).
         trFnoExpiryHide = null;
-        _trFnoPendingExpiryFilters = { expiryHide: f.expiryHide, expiryFilter: f.expiryFilter };
         trFnoFlatView = f.flatView || false;
 
         // Sync pill UI
