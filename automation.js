@@ -617,9 +617,25 @@ function autoManualRecalc(rowId) {
     // do here. Kept as a stable hook the handlers call.
 }
 
+var _atmVeinsId = null;
 function autoManualVeinsId() {
+    if (_atmVeinsId) return _atmVeinsId;
     var v = (_auManualTraders || []).find(function (t) { return (t.short_name || '').toLowerCase() === 'veins'; });
-    return v ? v.id : null;
+    if (v) _atmVeinsId = v.id;
+    return _atmVeinsId;
+}
+// Resolve Veins' investor id even if the trader dropdown list hasn't loaded yet
+// (the "(Same as Veins)" default renders regardless, so the sync lookup can be
+// null on a fresh form — which silently blanked the holding + tags).
+async function autoManualResolveVeinsId() {
+    var id = autoManualVeinsId();
+    if (id) return id;
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/investors?short_name=eq.Veins&select=id&limit=1', { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        if (rows[0] && rows[0].id) _atmVeinsId = rows[0].id;
+    } catch (e) { /* leave null */ }
+    return _atmVeinsId;
 }
 
 // On symbol/trader select, load (a) the current Veins holding for this
@@ -635,14 +651,18 @@ async function autoManualShowBalance(rowId) {
     // security_id guard aborted the whole load.)
     var row = autoManualRow(rowId); if (!row || !row.symbol) return;
     var bal = document.getElementById('atmBal_' + rowId);
-    var veinsId = autoManualVeinsId();
+    var veinsId = await autoManualResolveVeinsId();
     if (!veinsId) { if (bal) bal.textContent = ''; return; }
     var traderId = row.trader_id || veinsId;
     var bareSym = (row.symbol || '').replace(/^[A-Z]+:/, '');
     if (!bareSym) { if (bal) bal.textContent = ''; return; }
     try {
+        // Match the symbol both bare and exchange-qualified — booked rows are
+        // stored inconsistently (some bare, some with an "NSE:"/"MCX:" prefix).
+        var fyFull = autoManualFyersSymbol(row);
+        var symOr = 'or=(symbol.eq.' + encodeURIComponent(bareSym) + ',symbol.eq.' + encodeURIComponent(fyFull) + ')';
         var url = SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + encodeURIComponent(veinsId) +
-            '&symbol=eq.' + encodeURIComponent(bareSym) +
+            '&' + symOr +
             '&select=quantity,transaction_type,trader_id,investor_id,symbol,security_type,exchange,dont_display,ignore_for_avg_cost,tags&limit=1000';
         var r = await fetch(url, { headers: wmsHeaders() });
         var rows = r.ok ? await r.json() : [];
