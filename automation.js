@@ -72,6 +72,803 @@ function autoSwitchFamily(fam) {
         autoEnsureSharedRefresh();
     }
 
+    if (fam === 'manual') {
+        autoManualInit();
+    }
+
+}
+
+// ============================================================================
+// ✋ Manual — owner-only Fyers order entry (GOP-C4, 2026-07-14).
+// POSTs to the wms-manual-order EF, which validates + enqueues ONE order and
+// requires the server-side manual-order password (2nd factor over the shared
+// Auto-Trading session). The Confirm dialog gates each order; the password is
+// held in memory for this tab only (once per session). NEVER writes to
+// wms_live_commands directly — that would bypass the vetted-writer rule A.1.9e-i.
+// ============================================================================
+
+var _auManualPw = null;            // in-memory only, this tab, this session
+var _auManualPollTimer = null;
+var _auManualPending = null;
+var _AU_M_INP = 'width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box';
+var _auManualRowSeq = 0;           // leg-row id sequence
+var _auManualLegsToPlace = null;   // legs staged by Review, placed by Confirm
+var _auManualTraders = [];         // cached investors for the per-leg trader dropdown
+var _auManualLegTagCtrls = {};     // rid -> wmsTagInput controller (per-leg tags)
+
+function autoManualInit() {
+    if (!document.getElementById('au-manual-root')) return;
+    if (_auManualPw) autoManualRenderForm(); else autoManualRenderGate();
+}
+
+function autoManualRenderGate(msg) {
+    var root = document.getElementById('au-manual-root');
+    if (!root) return;
+    root.innerHTML =
+        '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:20px;background:#fff">' +
+        '<h3 style="margin:0 0 6px">✋ Manual order — unlock</h3>' +
+        '<div style="font-size:13px;color:#6b7280;margin-bottom:12px">Enter the manual-order password. Held only in this browser tab for this session; sent with every order and verified server-side.</div>' +
+        (msg ? '<div style="color:#cf222e;font-size:13px;margin-bottom:10px">' + autoEsc(msg) + '</div>' : '') +
+        '<input id="au-manual-pw" type="password" autocomplete="off" placeholder="Manual-order password" style="width:100%;max-width:320px;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px" onkeydown="if(event.key===\'Enter\')autoManualUnlock()">' +
+        '<div style="margin-top:12px"><button class="au-btn au-btn-primary" onclick="autoManualUnlock()">Unlock</button></div>' +
+        '</div>';
+    var el = document.getElementById('au-manual-pw'); if (el) el.focus();
+}
+
+function autoManualUnlock() {
+    var el = document.getElementById('au-manual-pw');
+    var v = el ? el.value : '';
+    if (!v) { autoManualRenderGate('Password required.'); return; }
+    _auManualPw = v;
+    autoManualRenderForm();
+}
+
+function autoManualLock() {
+    _auManualPw = null;
+    if (_auManualPollTimer) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
+    autoManualRenderGate('Locked.');
+}
+
+// ============================================================================
+// GOP-C4v2 (2026-07-14) — the Manual page is a faithful Add Transaction row
+// clone + live-order extras + bracket-linked SL. Ported (NOT shared) from
+// trading-add-transaction.js: symbol search (equity + F&O + Fyers options),
+// calculator amount fields (no spinner arrows, dataset.rawValue), lots<->qty
+// with signed side, live price via window.fyersCall. Live-order extras:
+// Market/Limit radios (Market disables price), an Add-SL leg (bracket-linked,
+// placed immediately with the entry — §2c), and a Cancel-SL button. NO product
+// field — the EF derives it. Places ONLY via the wms-manual-order EF (A.1.9e-i);
+// never writes wms_live_commands from the browser.
+//
+// Namespacing: the trading module owns `at*`/`addTxn-*`; this page uses `atm*`/
+// `atm-*` so the two never collide (the Trading module is NOT touched).
+// ============================================================================
+
+var _atmRows = [];            // [{rowId, security_id, symbol, short_symbol, company_name, security_type, asset_class, exchange, lot_size, broker_tokens, lots, quantity, price, orderType, tags, sl:{on,orderType,stopPrice,limitPrice}}]
+var _atmRowSeq = 0;
+var _atmSymItems = {};        // rowId -> search result items
+var _atmSymCtrls = {};        // rowId -> wmsDropdown controller
+var _atmTagCtrls = {};        // rowId -> wmsTagInput controller
+
+// ---- number helpers (ported from atFmt*, plus a safe calculator eval) -------
+function atmFmtQty(v) {
+    if (v === null || v === undefined || isNaN(v) || v === 0) return '';
+    var abs = Math.abs(Math.round(v));
+    var s = abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return v < 0 ? '-' + s : s;
+}
+function atmFmtPrice(v) {
+    if (v === null || v === undefined || isNaN(v) || v === 0) return '';
+    var abs = Math.abs(v);
+    return (v < 0 ? '-' : '') + abs.toFixed(2).replace(/\.?0+$/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+// Mini-calculator: evaluate a simple arithmetic expression (digits, . + - * / ()).
+// Anything else -> NaN. Never eval arbitrary code (no letters allowed).
+function atmEvalNum(str) {
+    var s = String(str == null ? '' : str).replace(/,/g, '').trim();
+    if (s === '') return 0;
+    if (!/^[-+*/(). 0-9]+$/.test(s)) return NaN;
+    try { var v = Function('"use strict";return (' + s + ')')(); return (typeof v === 'number' && isFinite(v)) ? v : NaN; }
+    catch (e) { return NaN; }
+}
+
+function autoManualField(label, inner) {
+    return '<div style="flex:1;margin-bottom:12px"><label style="display:block;font-size:12px;color:#374151;margin-bottom:4px">' + label + '</label>' + inner + '</div>';
+}
+
+function autoManualRenderForm() {
+    var root = document.getElementById('au-manual-root');
+    if (!root) return;
+    // The order grid needs room — override the panel's narrow 760px cap (8 columns
+    // don't fit in 760px; Symbol collapsed). Wide, like the Add Transaction table.
+    root.style.maxWidth = '1180px';
+    root.style.margin = '0 auto';
+    _atmRows = []; _atmRowSeq = 0; _atmSymItems = {}; _atmSymCtrls = {}; _atmTagCtrls = {};
+    root.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+          '<h3 style="margin:0">✋ Manual Fyers order <span style="font-size:12px;font-weight:400;color:#16a34a">● unlocked</span></h3>' +
+          '<button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualLock()">Lock</button>' +
+        '</div>' +
+        '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ <b>LIVE</b> orders on Veins/Fyers. No automated risk checks — the Confirm step is the only gate. One row per order; each is a separate Fyers order. <b>Qty/Lots is signed: + = BUY, − = SELL.</b> Product is derived automatically (F&O → MARGIN, equity → CNC).</div>' +
+        // Flex rows (NOT a fixed-width <table>) so columns fit the container at
+        // any width — no horizontal scroll (UI-STANDARDS §H.5.4). Symbol flexes;
+        // every other column has a fixed width + flex-shrink:0.
+        '<div class="atm-head">' +
+            '<span class="atm-c-trader">Trader</span><span class="atm-c-sym">Symbol</span>' +
+            '<span class="atm-c-lots">Lots</span><span class="atm-c-qty">Qty</span>' +
+            '<span class="atm-c-price">Price / Type</span><span class="atm-c-tags">Tags</span>' +
+            '<span class="atm-c-sl">SL</span><span class="atm-c-act"></span>' +
+        '</div>' +
+        '<div id="atm-rows"></div>' +
+        '<div style="margin-top:10px"><button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualAddOrderFromLast()">＋ Add order</button></div>' +
+        '<div style="margin-top:16px"><button class="wms-btn wms-btn-primary" onclick="autoManualReview()">Review order →</button></div>' +
+        '<div id="au-manual-status" style="margin-top:16px"></div>' +
+        '<style>' +
+          '.atm-head,.atm-main{display:flex;gap:8px;width:100%;align-items:flex-start;box-sizing:border-box}' +
+          '.atm-head{color:#6b7280;font-size:10px;font-weight:600;letter-spacing:.3px;text-transform:uppercase;border-bottom:1px solid #e5e7eb;padding:0 0 6px;margin-bottom:4px}' +
+          '.atm-order{padding:6px 0;border-bottom:1px solid #f1f5f9}' +
+          '.atm-c-trader{flex:0 0 140px;width:140px}' +
+          '.atm-c-sym{flex:1 1 auto;min-width:160px;position:relative}' +
+          '.atm-c-lots{flex:0 0 66px;width:66px}' +
+          '.atm-c-qty{flex:0 0 84px;width:84px}' +
+          '.atm-c-price{flex:0 0 150px;width:150px}' +
+          '.atm-c-tags{flex:0 0 190px;width:190px;position:relative}' +
+          '.atm-c-sl{flex:0 0 74px;width:74px}' +
+          '.atm-c-act{flex:0 0 34px;width:34px}' +
+          '.atm-main .wms-input,.atm-main .wms-input-compact{width:100%;font-size:12px}' +
+          '.atm-radios{display:flex;gap:8px;font-size:11px;color:#374151;margin-top:3px}' +
+          '.atm-radios label{display:flex;align-items:center;gap:3px;cursor:pointer}' +
+          '.atm-bal{font-size:10px;color:#2563eb;margin-top:2px}' +
+          '.atm-sl-panel{background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px;margin-top:6px}' +
+        '</style>';
+    autoManualLoadTraders();
+    autoManualAddRow();
+}
+
+async function autoManualLoadTraders() {
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,short_name,name&order=short_name.asc', { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        _auManualTraders = Array.isArray(rows) ? rows : [];
+    } catch (e) { _auManualTraders = []; }
+    document.querySelectorAll('.atm-trader').forEach(function (sel) { var cur = sel.value; sel.innerHTML = autoManualTraderOptions(); sel.value = cur; });
+}
+
+function autoManualTraderOptions() {
+    return '<option value="">(Same as Veins)</option>' + _auManualTraders.map(function (t) {
+        return '<option value="' + t.id + '">' + autoEsc(t.short_name || t.name || t.id) + '</option>';
+    }).join('');
+}
+
+// One order = one <tr>. Faithful to the Add Transaction row: trader, searchable
+// symbol (equity + F&O + options), signed lots/qty, calculator price field, plus
+// Market/Limit radios, a bracket-SL toggle, and per-row tags.
+function autoManualAddRow(copyFromId) {
+    if (!document.getElementById('atm-rows')) return;
+    var copyFrom = (copyFromId !== undefined) ? _atmRows.find(function (r) { return r.rowId === copyFromId; }) : null;
+    var rowId = ++_atmRowSeq;
+    var row = {
+        rowId: rowId,
+        trader_id: copyFrom ? copyFrom.trader_id : null,
+        security_id: copyFrom ? copyFrom.security_id : null,
+        symbol: copyFrom ? copyFrom.symbol : '',
+        short_symbol: copyFrom ? copyFrom.short_symbol : '',
+        company_name: copyFrom ? copyFrom.company_name : '',
+        security_type: copyFrom ? copyFrom.security_type : 'EQUITY',
+        asset_class: copyFrom ? copyFrom.asset_class : null,
+        exchange: copyFrom ? copyFrom.exchange : 'NSE',
+        lot_size: copyFrom ? copyFrom.lot_size : 1,
+        broker_tokens: copyFrom ? copyFrom.broker_tokens : null,
+        lots: copyFrom ? copyFrom.lots : 0,
+        quantity: copyFrom ? copyFrom.quantity : 0,
+        price: copyFrom ? copyFrom.price : 0,
+        orderType: copyFrom ? copyFrom.orderType : 'MARKET',
+        tags: copyFrom ? copyFrom.tags.slice() : [],
+        // SL is per-order and risk-bearing — never copied; add it deliberately per row.
+        sl: { on: false, orderType: 'SL-MARKET', stopPrice: 0, limitPrice: 0 }
+    };
+    _atmRows.push(row);
+
+    var lotsBased = autoManualIsLotsBased(row);
+    var order = document.createElement('div');
+    order.className = 'atm-order';
+    order.dataset.rid = rowId;
+    order.innerHTML =
+        '<div class="atm-main">' +
+            '<span class="atm-c-trader"><select class="wms-input wms-input-compact atm-trader" data-rid="' + rowId + '">' + autoManualTraderOptions() + '</select></span>' +
+            '<span class="atm-c-sym">' +
+                '<input type="text" class="wms-input wms-input-compact atm-sym" data-rid="' + rowId + '" placeholder="Search…" autocomplete="off" value="' + autoEsc(row.symbol || '') + '">' +
+                '<div class="wms-dd atm-symdd" id="atmSymDd_' + rowId + '"></div>' +
+            '</span>' +
+            '<span class="atm-c-lots"><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-lots" data-rid="' + rowId + '" placeholder="±lots"' + (lotsBased ? '' : ' disabled') + '><div class="atm-bal" id="atmBalLots_' + rowId + '"></div></span>' +
+            '<span class="atm-c-qty"><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-qty" data-rid="' + rowId + '" placeholder="±qty"><div class="atm-bal" id="atmBal_' + rowId + '"></div></span>' +
+            '<span class="atm-c-price">' +
+                '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-price" data-rid="' + rowId + '" placeholder="price" disabled>' +
+                '<div class="atm-radios">' +
+                    '<label><input type="radio" name="atmOt_' + rowId + '" class="atm-ot" data-rid="' + rowId + '" value="MARKET" checked>Mkt</label>' +
+                    '<label><input type="radio" name="atmOt_' + rowId + '" class="atm-ot" data-rid="' + rowId + '" value="LIMIT">Lmt</label>' +
+                '</div>' +
+            '</span>' +
+            '<span class="atm-c-tags">' +
+                '<input type="text" class="wms-input wms-input-compact atm-tags" data-rid="' + rowId + '" placeholder="Tags…" autocomplete="off">' +
+                '<div class="wms-tag-pills atm-tagpills" id="atmTagPills_' + rowId + '" style="margin-top:3px"></div>' +
+                '<div class="wms-tag-dd atm-tagdd" id="atmTagDd_' + rowId + '"></div>' +
+            '</span>' +
+            '<span class="atm-c-sl"><button type="button" class="wms-btn wms-btn-secondary atm-sl-toggle" data-rid="' + rowId + '" style="font-size:11px;padding:3px 6px" onclick="autoManualToggleSl(' + rowId + ')">＋ SL</button></span>' +
+            '<span class="atm-c-act"><button type="button" class="wms-btn wms-btn-secondary" title="Remove" style="font-size:12px;padding:3px 7px" onclick="autoManualRemoveRow(' + rowId + ')">✕</button></span>' +
+        '</div>' +
+        '<div class="atm-sl-panel" id="atmSlPanel_' + rowId + '" style="display:none"></div>';
+    document.getElementById('atm-rows').appendChild(order);
+    autoManualWireRow(rowId);
+    if (copyFrom) autoManualPopulateRowDom(rowId);   // mirror the copied order into the inputs
+}
+
+// Write a copied row's state into its DOM inputs (symbol, lots/qty, price, the
+// Market/Limit radio + disabled state, balance). Tags render via wmsTagInput's
+// initial `tags`. Ported spirit of the Add Transaction row-copy.
+function autoManualPopulateRowDom(rowId) {
+    var row = autoManualRow(rowId); if (!row) return;
+    var symInput = document.querySelector('.atm-sym[data-rid="' + rowId + '"]');
+    var lotsInput = document.querySelector('.atm-lots[data-rid="' + rowId + '"]');
+    var qtyInput = document.querySelector('.atm-qty[data-rid="' + rowId + '"]');
+    var priceInput = document.querySelector('.atm-price[data-rid="' + rowId + '"]');
+    if (row.security_id && symInput) symInput.value = autoManualFyersSymbol(row);
+    if (autoManualIsLotsBased(row)) { if (lotsInput) { lotsInput.disabled = false; lotsInput.value = row.lots || ''; } }
+    else { if (lotsInput) { lotsInput.disabled = true; lotsInput.value = ''; } }
+    if (qtyInput) qtyInput.readOnly = false;   // both Lots and Qty editable; each computes the other
+    if (qtyInput) qtyInput.value = atmFmtQty(row.quantity);
+    // Order type radio + price field state
+    var otRadio = document.querySelector('.atm-ot[data-rid="' + rowId + '"][value="' + row.orderType + '"]');
+    if (otRadio) otRadio.checked = true;
+    if (priceInput) {
+        priceInput.disabled = (row.orderType === 'MARKET');
+        priceInput.value = row.price ? atmFmtPrice(row.price) : '';
+        if (row.price) priceInput.dataset.rawValue = row.price;
+    }
+    autoManualShowBalance(rowId);
+}
+
+// "+ Add order" clones the previous order (like the Add Transaction row), so the
+// common case — same symbol/qty, different trader — is one edit away. A blank
+// first row copies nothing.
+function autoManualAddOrderFromLast() {
+    var last = _atmRows.length ? _atmRows[_atmRows.length - 1] : null;
+    autoManualAddRow(last ? last.rowId : undefined);
+}
+
+function autoManualRemoveRow(rowId) {
+    if (_atmRows.length <= 1) { autoManualRenderForm(); return; }   // last row → reset the whole form
+    _atmRows = _atmRows.filter(function (r) { return r.rowId !== rowId; });
+    var tr = document.querySelector('#atm-rows .atm-order[data-rid="' + rowId + '"]');
+    if (tr) tr.remove();
+    delete _atmSymItems[rowId]; delete _atmSymCtrls[rowId]; delete _atmTagCtrls[rowId];
+}
+
+function autoManualRow(rowId) { return _atmRows.find(function (r) { return r.rowId === rowId; }); }
+
+// Lots-driven vs qty-driven entry. MCX orders are placed in LOTS regardless of
+// the stored lot_size (Fyers reports lot_size=1 for most MCX; only SILVERM/GOLDM
+// are overridden — §A.11.5), so MCX is ALWAYS lots-driven. NSE F&O is lots-driven
+// when lot_size>1; equity cash is qty-driven.
+function autoManualIsLotsBased(row) { return !!row && (row.lot_size > 1 || row.exchange === 'MCX'); }
+
+function autoManualWireRow(rowId) {
+    var row = autoManualRow(rowId); if (!row) return;
+    var traderSel = document.querySelector('.atm-trader[data-rid="' + rowId + '"]');
+    var symInput = document.querySelector('.atm-sym[data-rid="' + rowId + '"]');
+    var lotsInput = document.querySelector('.atm-lots[data-rid="' + rowId + '"]');
+    var qtyInput = document.querySelector('.atm-qty[data-rid="' + rowId + '"]');
+    var priceInput = document.querySelector('.atm-price[data-rid="' + rowId + '"]');
+    var dd = document.getElementById('atmSymDd_' + rowId);
+
+    traderSel.addEventListener('change', function () { row.trader_id = traderSel.value || null; autoManualShowBalance(rowId); });
+
+    // --- Symbol search (ported: equity + F&O + Fyers options, LIVE universe) ---
+    _atmSymCtrls[rowId] = wmsDropdown(symInput, dd, {
+        itemSelector: '.wms-dd-item', closeOnSelect: true, blurDelay: 200, escClearsInput: false,
+        onSelect: function (itemEl) { autoManualPickSym(rowId, itemEl); }
+    });
+    var symTimer = null;
+    symInput.addEventListener('input', function () {
+        clearTimeout(symTimer);
+        var q = symInput.value.trim();
+        if (q.length < 2) { _atmSymCtrls[rowId].close(); return; }
+        symTimer = setTimeout(function () { autoManualSearchSym(rowId, q); }, 300);
+    });
+    dd.addEventListener('mousedown', function (e) {
+        var item = e.target.closest('.wms-dd-item'); if (!item || item.dataset.idx === undefined) return;
+        e.preventDefault(); autoManualPickSym(rowId, item); _atmSymCtrls[rowId].close();
+    });
+
+    // --- Lots (F&O) -> qty ---
+    lotsInput.addEventListener('input', function () {
+        var lots = parseInt(lotsInput.value.replace(/,/g, '')) || 0;
+        row.lots = lots;
+        if (autoManualIsLotsBased(row)) { row.quantity = Math.round(lots * row.lot_size); qtyInput.value = atmFmtQty(row.quantity); }
+        autoManualRecalc(rowId);
+    });
+    // --- Qty (equity, or manual override) ---
+    qtyInput.addEventListener('focus', function () { var raw = parseInt(qtyInput.value.replace(/,/g, '')) || 0; qtyInput.value = raw || ''; });
+    qtyInput.addEventListener('blur', function () { qtyInput.value = atmFmtQty(parseInt(qtyInput.value.replace(/,/g, '')) || 0); });
+    qtyInput.addEventListener('input', function () {
+        var qty = parseInt(qtyInput.value.replace(/,/g, '')) || 0;
+        row.quantity = qty;
+        if (autoManualIsLotsBased(row)) { row.lots = row.lot_size > 0 ? Math.round((qty / row.lot_size) * 100) / 100 : 0; lotsInput.value = row.lots || ''; }
+        autoManualRecalc(rowId);
+    });
+
+    // --- Price (calculator field; disabled unless Limit) ---
+    priceInput.addEventListener('focus', function () { var raw = parseFloat(priceInput.value.replace(/,/g, '')) || 0; priceInput.value = raw || ''; });
+    priceInput.addEventListener('blur', function () {
+        var v = atmEvalNum(priceInput.value);
+        if (isNaN(v)) { priceInput.value = atmFmtPrice(row.price); return; }
+        row.price = v; priceInput.dataset.rawValue = v; priceInput.value = atmFmtPrice(v);
+    });
+    priceInput.addEventListener('input', function () { var v = atmEvalNum(priceInput.value); if (!isNaN(v)) { row.price = v; priceInput.dataset.rawValue = v; } });
+
+    // --- Market/Limit radios (Market disables the price field) ---
+    document.querySelectorAll('.atm-ot[data-rid="' + rowId + '"]').forEach(function (rb) {
+        rb.addEventListener('change', function () {
+            if (!rb.checked) return;
+            row.orderType = rb.value;
+            priceInput.disabled = (rb.value === 'MARKET');
+            if (rb.value === 'MARKET') { /* keep the fetched live price shown but unused */ }
+            else { priceInput.focus(); }
+        });
+    });
+
+    // --- Tags widget ---
+    var ti = document.querySelector('.atm-tags[data-rid="' + rowId + '"]');
+    var tp = document.getElementById('atmTagPills_' + rowId);
+    var td = document.getElementById('atmTagDd_' + rowId);
+    if (ti && tp && td && typeof wmsTagInput === 'function') {
+        autoGetExistingTags().then(function (ex) {
+            _atmTagCtrls[rowId] = wmsTagInput(ti, tp, td, { tags: row.tags, existingTags: (ex || []).slice(), onChange: function () {} });
+        }).catch(function () {
+            _atmTagCtrls[rowId] = wmsTagInput(ti, tp, td, { tags: row.tags, existingTags: [], onChange: function () {} });
+        });
+    }
+}
+
+// Ported from searchAddTxnSymbol — options query -> Fyers; else the global
+// wmsRefData cache (equity + F&O). LIVE universe: F&O rows must be active +
+// non-expired (an expired contract can never be traded). Equity always passes.
+async function autoManualSearchSym(rowId, query) {
+    var dd = document.getElementById('atmSymDd_' + rowId);
+    var parsed = (typeof wmsParseOptionsQuery === 'function') ? wmsParseOptionsQuery(query) : null;
+    if (parsed) { await autoManualSearchOptions(rowId, parsed, dd); return; }
+    try {
+        if (!wmsRefData.securitiesCmReady || !wmsRefData.securitiesNfoReady) {
+            dd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">Loading securities…</div>';
+            dd.classList.add('show');
+            if (!wmsRefData.securitiesCmReady) await wmsLoadSecuritiesCm(0, { all: true });
+            if (!wmsRefData.securitiesNfoReady) await wmsLoadSecuritiesNfo();
+        }
+        var today = new Date().toISOString().slice(0, 10);
+        var cached = wmsSearchSecurities(query) || [];
+        var items = [];
+        cached.forEach(function (sec) {
+            if (sec._isNfo) {
+                // LIVE universe filter
+                if (sec.is_active === false) return;
+                if (sec.expiry_date && sec.expiry_date < today) return;
+                var isOpt = sec.symbol && (sec.symbol.match(/(CE|PE)$/) !== null);
+                items.push({
+                    security_id: sec.id, symbol: sec.symbol, short_symbol: sec.underlying_symbol || sec.symbol,
+                    company_name: sec.instrument_name || sec.symbol, security_type: 'NFO',
+                    asset_class: isOpt ? 'OPTIONS' : 'FUTURES', exchange: sec.exchange || 'NSE',
+                    lot_size: sec.lot_size || 1, broker_tokens: sec.broker_tokens,
+                    _label: sec.symbol, _sub: (sec.instrument_name || sec.underlying_symbol || '') + (sec.expiry_date ? ' · exp ' + sec.expiry_date : ''), _isNfo: true
+                });
+            } else {
+                items.push({
+                    security_id: sec.id, symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
+                    short_symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
+                    company_name: sec.company_name || sec.symbol, security_type: sec.security_type || 'EQUITY',
+                    asset_class: sec.asset_class || null, exchange: sec.nse_symbol ? 'NSE' : 'BSE',
+                    lot_size: sec.lot_size || 1, broker_tokens: sec.broker_tokens,
+                    _label: sec.nse_symbol || sec.bse_symbol || sec.symbol, _sub: sec.company_name || '', _isNfo: false
+                });
+            }
+        });
+        _atmSymItems[rowId] = items;
+        dd.innerHTML = items.length ? items.map(function (it, i) {
+            return '<div class="wms-dd-item' + (it._isNfo ? ' nfo' : '') + '" data-idx="' + i + '"><span style="font-family:monospace">' + autoEsc(it._label) + '</span>' +
+                (it._sub ? '<span style="color:#6b7280;font-size:11px;margin-left:8px">' + autoEsc(it._sub) + '</span>' : '') + '</div>';
+        }).join('') : '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">No matches</div>';
+        dd.classList.add('show');
+        _atmSymCtrls[rowId].resetIdx();
+    } catch (e) { console.error('[manual] symbol search', e); }
+}
+
+// Options via Fyers quotes (ported from atSearchOptions).
+async function autoManualSearchOptions(rowId, parsed, dd) {
+    if (!window.fyersToken) {
+        dd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">Fyers not connected — options search needs a live Fyers connection.</div>';
+        dd.classList.add('show'); return;
+    }
+    dd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">Searching options…</div>';
+    dd.classList.add('show');
+    var candidates = wmsBuildOptionsCandidates(parsed.underlying, parsed.strike, parsed.optionType, parsed.expiryHint) || [];
+    if (!candidates.length) { dd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">Could not build option symbols</div>'; return; }
+    try {
+        var data = await window.fyersCall({ action: 'quotes', symbols: candidates });
+        var results = [];
+        if (data && data.d) data.d.forEach(function (item) { if (item.v && item.v.lp > 0) results.push({ symbol: item.v.symbol, lp: item.v.lp, chp: item.v.chp || 0 }); });
+        if (!results.length) { dd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">No active options found</div>'; return; }
+        var items = [];
+        dd.innerHTML = results.map(function (r, i) {
+            var lbl = wmsFormatOptionsDisplay(r.symbol, parsed.underlying, parsed.strike, parsed.optionType);
+            items.push({ _fyersSymbol: r.symbol, _displayLabel: lbl, _parsed: parsed });
+            return '<div class="wms-dd-item nfo" data-idx="' + i + '"><span style="font-family:monospace">' + autoEsc(lbl) + '</span>' +
+                ' <span style="color:#6b7280">₹' + r.lp.toFixed(2) + '</span> <span style="color:' + (r.chp >= 0 ? '#059669' : '#dc2626') + '">' + (r.chp >= 0 ? '+' : '') + r.chp.toFixed(2) + '%</span></div>';
+        }).join('');
+        _atmSymItems[rowId] = items;
+        _atmSymCtrls[rowId].show(); _atmSymCtrls[rowId].resetIdx();
+    } catch (err) { dd.innerHTML = '<div class="wms-dd-item" style="color:#dc2626;cursor:default">Options search failed: ' + autoEsc(err.message || String(err)) + '</div>'; }
+}
+
+function autoManualPickSym(rowId, itemEl) {
+    var idx = parseInt(itemEl.dataset.idx);
+    var it = _atmSymItems[rowId] && _atmSymItems[rowId][idx];
+    if (!it) return;
+    if (it._fyersSymbol) autoManualSelectOptionsContract(rowId, it._fyersSymbol, it._parsed, it._displayLabel);
+    else autoManualSelectSecurity(rowId, it);
+}
+
+// Ported from atSelectOptionsContract — resolve/auto-create the NFO contract so
+// booking has a row to reference, then select it.
+async function autoManualSelectOptionsContract(rowId, fyersSymbol, parsed, displayLabel) {
+    var row = autoManualRow(rowId); if (!row) return;
+    var headers = wmsHeaders();
+    var bareSym = fyersSymbol.split(':')[1] || fyersSymbol;
+    var nfoCheck = SUPABASE_URL + '/rest/v1/securities_nfo?symbol=eq.' + encodeURIComponent(bareSym) +
+        '&select=id,symbol,underlying_symbol,exchange,instrument_type,lot_size,broker_tokens,expiry_date&limit=1';
+    var nfoResp = await fetch(nfoCheck, { headers: headers }).then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; });
+    var lotSize = 1, secId = null, brokerTokens = {};
+    if (nfoResp.length > 0) { lotSize = nfoResp[0].lot_size || 1; secId = nfoResp[0].id; brokerTokens = nfoResp[0].broker_tokens || {}; }
+    else {
+        var lotResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?underlying_symbol=eq.' + encodeURIComponent(parsed.underlying) + '&select=lot_size&limit=1', { headers: headers }).then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; });
+        if (lotResp.length > 0) lotSize = lotResp[0].lot_size || 1;
+        var MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+        var expiryDate = null, m = bareSym.match(/(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)/);
+        if (m) expiryDate = (2000 + parseInt(m[1])) + '-' + String(MONTHS.indexOf(m[2]) + 1).padStart(2, '0') + '-28';
+        var nfoRecord = {
+            symbol: bareSym, instrument_name: displayLabel || (parsed.underlying + ' ' + (parsed.strike ? parsed.strike + ' ' + parsed.optionType : 'FUT')),
+            exchange: fyersSymbol.split(':')[0] || 'NSE', instrument_type: parsed.optionType ? 'OPTIONS' : 'FUTURES',
+            underlying_symbol: parsed.underlying, expiry_date: expiryDate, strike_price: parsed.strike || null,
+            option_type: parsed.optionType || null, lot_size: lotSize, is_active: true, broker_tokens: {}
+        };
+        try {
+            var createResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
+                method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }), body: JSON.stringify(nfoRecord)
+            });
+            if (createResp.ok) {
+                var created = await createResp.json();
+                if (created && created.length > 0) {
+                    secId = created[0].id;
+                    if (secId && fyersSymbol && typeof wmsUpdateNfoBrokerToken === 'function') wmsUpdateNfoBrokerToken(secId, fyersSymbol);
+                    if (typeof wmsLoadSecuritiesNfo === 'function') wmsLoadSecuritiesNfo();
+                }
+            } else {
+                var errBody = await createResp.json().catch(function () { return {}; });
+                showAlert('Could not register NFO security: ' + (errBody.message || 'DB error'), 'error', 5000); return;
+            }
+        } catch (createErr) { showAlert('Could not register NFO security: ' + createErr.message, 'error', 5000); return; }
+    }
+    autoManualSelectSecurity(rowId, {
+        security_id: secId, symbol: fyersSymbol, short_symbol: parsed.underlying,
+        company_name: displayLabel || (parsed.underlying + ' Option'), security_type: 'NFO',
+        asset_class: parsed.optionType ? 'OPTIONS' : 'FUTURES', exchange: fyersSymbol.split(':')[0] || 'NSE',
+        lot_size: lotSize, broker_tokens: brokerTokens
+    });
+}
+
+function autoManualSelectSecurity(rowId, sec) {
+    var row = autoManualRow(rowId); if (!row) return;
+    row.security_id = sec.security_id; row.symbol = sec.symbol; row.short_symbol = sec.short_symbol;
+    row.company_name = sec.company_name; row.security_type = sec.security_type; row.asset_class = sec.asset_class;
+    row.exchange = sec.exchange; row.lot_size = sec.lot_size || 1; row.broker_tokens = sec.broker_tokens || null;
+
+    var symInput = document.querySelector('.atm-sym[data-rid="' + rowId + '"]');
+    if (symInput) symInput.value = autoManualFyersSymbol(row);
+    var lotsInput = document.querySelector('.atm-lots[data-rid="' + rowId + '"]');
+    var qtyInput = document.querySelector('.atm-qty[data-rid="' + rowId + '"]');
+    if (autoManualIsLotsBased(row)) { lotsInput.disabled = false; }
+    else { lotsInput.disabled = true; lotsInput.value = ''; row.lots = 0; }
+    if (qtyInput) qtyInput.readOnly = false;   // both Lots and Qty editable; each computes the other
+
+    autoManualFetchLivePrice(rowId);
+    autoManualShowBalance(rowId);
+    setTimeout(function () { if (autoManualIsLotsBased(row)) lotsInput.focus(); else if (qtyInput) qtyInput.focus(); }, 50);
+}
+
+// Exchange-qualified Fyers symbol for BOTH the live price fetch and the order
+// intent. NFO symbols may already carry a prefix; equity needs NSE:<sym>-EQ.
+function autoManualFyersSymbol(row) {
+    if (!row) return '';
+    if (row.security_type === 'EQUITY') {
+        var ft = row.broker_tokens && (row.broker_tokens.fyers || row.broker_tokens.fyers_nse);
+        if (ft && String(ft).indexOf(':') >= 0) return String(ft);
+        var ex = row.exchange === 'BSE' ? 'BSE' : 'NSE';
+        return ex + ':' + (row.short_symbol || row.symbol) + '-EQ';
+    }
+    if (row.symbol && row.symbol.indexOf(':') >= 0) return row.symbol;
+    return (row.exchange || 'NSE') + ':' + row.symbol;
+}
+
+// Live price on select -> fills the price field (per §2b). Uses the Fyers quotes
+// action (NOT endpoint — see CONTEXT.md app.html note).
+async function autoManualFetchLivePrice(rowId) {
+    var row = autoManualRow(rowId); if (!row) return;
+    var fy = autoManualFyersSymbol(row); if (!fy) return;
+    var priceInput = document.querySelector('.atm-price[data-rid="' + rowId + '"]');
+    try {
+        var data = await window.fyersCall({ action: 'quotes', symbols: [fy] });
+        var lp = 0;
+        if (data && data.d && data.d[0] && data.d[0].v && data.d[0].v.lp > 0) lp = data.d[0].v.lp;
+        if (lp > 0) { row.price = lp; if (priceInput) { priceInput.dataset.rawValue = lp; priceInput.value = atmFmtPrice(lp); } }
+    } catch (e) { /* leave price blank; user can type */ }
+}
+
+function autoManualRecalc(rowId) {
+    // Lots<->qty is handled inline in the input handlers; holdings + tags are
+    // network-loaded on symbol/trader select (not per keystroke), so nothing to
+    // do here. Kept as a stable hook the handlers call.
+}
+
+var _atmVeinsId = null;
+function autoManualVeinsId() {
+    if (_atmVeinsId) return _atmVeinsId;
+    var v = (_auManualTraders || []).find(function (t) { return (t.short_name || '').toLowerCase() === 'veins'; });
+    if (v) _atmVeinsId = v.id;
+    return _atmVeinsId;
+}
+// Resolve Veins' investor id even if the trader dropdown list hasn't loaded yet
+// (the "(Same as Veins)" default renders regardless, so the sync lookup can be
+// null on a fresh form — which silently blanked the holding + tags).
+async function autoManualResolveVeinsId() {
+    var id = autoManualVeinsId();
+    if (id) return id;
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/investors?short_name=eq.Veins&select=id&limit=1', { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        if (rows[0] && rows[0].id) _atmVeinsId = rows[0].id;
+    } catch (e) { /* leave null */ }
+    return _atmVeinsId;
+}
+
+// On symbol/trader select, load (a) the current Veins holding for this
+// (trader, symbol) as a balance label under Qty, and (b) the tags used on past
+// trades of it, auto-populated + editable — mirroring the Add Transaction row.
+// Reads the BOOKING book (`transactions`, where manual + KH + nightly fills
+// land), NOT `trTransactions` (which isn't loaded on the automation page).
+// Async, best-effort — never blocks or affects the order.
+async function autoManualShowBalance(rowId) {
+    // Gate on the SYMBOL (the match key), not security_id — a contract may be
+    // selected without a resolved security_id, but the holding still matches by
+    // symbol. (Both balance + tags were blank for MCX:SILVERMIC because the old
+    // security_id guard aborted the whole load.)
+    var row = autoManualRow(rowId); if (!row || !row.symbol) return;
+    var bal = document.getElementById('atmBal_' + rowId);
+    var veinsId = await autoManualResolveVeinsId();
+    if (!veinsId) { if (bal) bal.textContent = ''; return; }
+    var traderId = row.trader_id || veinsId;
+    var bareSym = (row.symbol || '').replace(/^[A-Z]+:/, '');
+    if (!bareSym) { if (bal) bal.textContent = ''; return; }
+    try {
+        // The booked symbol can be stored BARE ("SILVERMIC26AUGFUT") while
+        // securities_nfo stores it EXCHANGE-PREFIXED ("MCX:SILVERMIC26AUGFUT").
+        // Cast a wide net — bare/prefixed symbol, security_id, or underlying —
+        // then narrow to the EXACT contract in JS. Prefix-proof.
+        var norm = function (s) { return (s || '').replace(/^[A-Z]+:/, ''); };
+        var fyFull = autoManualFyersSymbol(row);
+        var conds = ['symbol.eq.' + encodeURIComponent(bareSym), 'symbol.eq.' + encodeURIComponent(fyFull)];
+        if (row.security_id) conds.push('security_id.eq.' + encodeURIComponent(row.security_id));
+        if (row.short_symbol) conds.push('short_symbol.eq.' + encodeURIComponent(row.short_symbol));
+        var url = SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + encodeURIComponent(veinsId) +
+            '&or=(' + conds.join(',') + ')' +
+            '&select=quantity,transaction_type,trader_id,investor_id,symbol,short_symbol,security_id,security_type,exchange,dont_display,ignore_for_avg_cost,tags&limit=2000';
+        var r = await fetch(url, { headers: wmsHeaders() });
+        var allRows = r.ok ? await r.json() : [];
+        if (!Array.isArray(allRows)) allRows = [];
+        // Narrow to the exact contract (same normalized symbol, or same security_id).
+        var rows = allRows.filter(function (t) { return norm(t.symbol) === bareSym || (row.security_id && t.security_id === row.security_id); });
+        // (a) balance: units under Qty, lots under Lots (lots-based rows only)
+        var lotsBal = document.getElementById('atmBalLots_' + rowId);
+        var forTrader = rows.filter(function (t) { return !t.dont_display && (t.trader_id || t.investor_id) === traderId; });
+        var net = (forTrader.length && typeof wmsCalcAvgCost === 'function') ? (wmsCalcAvgCost(forTrader).netQuantity || 0) : 0;
+        if (bal) bal.textContent = net ? ('Bal: ' + formatQuantity(net)) : '';
+        if (lotsBal) {
+            if (net && autoManualIsLotsBased(row) && row.lot_size > 0) {
+                var nl = Math.round(net / row.lot_size);
+                lotsBal.textContent = 'Bal: ' + nl + ' lot' + (Math.abs(nl) !== 1 ? 's' : '');
+            } else { lotsBal.textContent = ''; }
+        }
+        // (b) auto-populate tags — only when the row has none yet (never clobber
+        // what the user typed or a copied row already carries)
+        if (row.tags.length === 0 && typeof wmsFindMatchingTags === 'function') {
+            var matched = wmsFindMatchingTags(rows, veinsId, traderId, bareSym) || [];
+            if (matched.length) {
+                matched.forEach(function (t) { if (row.tags.indexOf(t) < 0) row.tags.push(t); });
+                if (_atmTagCtrls[rowId] && typeof _atmTagCtrls[rowId].refresh === 'function') _atmTagCtrls[rowId].refresh();
+            }
+        }
+    } catch (e) { if (bal) bal.textContent = ''; }
+}
+
+// ---- Bracket SL toggle + panel (§2c: opposite side, same qty, immediate) ----
+function autoManualToggleSl(rowId) {
+    var row = autoManualRow(rowId); if (!row) return;
+    var panel = document.getElementById('atmSlPanel_' + rowId);
+    var toggle = document.querySelector('.atm-sl-toggle[data-rid="' + rowId + '"]');
+    row.sl.on = !row.sl.on;
+    if (row.sl.on) {
+        panel.style.display = '';
+        toggle.textContent = '− SL';
+        panel.innerHTML =
+            '<div style="font-size:10px;color:#9a3412;text-transform:uppercase;margin-bottom:4px">Bracket stop-loss (opposite side, same qty)</div>' +
+            '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-sl-trigger" data-rid="' + rowId + '" placeholder="Trigger" style="width:80px">' +
+                '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-sl-limit" data-rid="' + rowId + '" placeholder="Limit" style="width:80px;display:none">' +
+                '<div class="atm-radios" style="margin-top:0">' +
+                    '<label><input type="radio" name="atmSlOt_' + rowId + '" class="atm-sl-ot" data-rid="' + rowId + '" value="SL-MARKET" checked>Mkt</label>' +
+                    '<label><input type="radio" name="atmSlOt_' + rowId + '" class="atm-sl-ot" data-rid="' + rowId + '" value="SL-LIMIT">Lmt</label>' +
+                '</div>' +
+            '</div>';
+        var trig = panel.querySelector('.atm-sl-trigger'), lim = panel.querySelector('.atm-sl-limit');
+        trig.addEventListener('blur', function () { var v = atmEvalNum(trig.value); row.sl.stopPrice = isNaN(v) ? 0 : v; trig.value = row.sl.stopPrice ? atmFmtPrice(row.sl.stopPrice) : ''; });
+        trig.addEventListener('input', function () { var v = atmEvalNum(trig.value); if (!isNaN(v)) row.sl.stopPrice = v; });
+        lim.addEventListener('blur', function () { var v = atmEvalNum(lim.value); row.sl.limitPrice = isNaN(v) ? 0 : v; lim.value = row.sl.limitPrice ? atmFmtPrice(row.sl.limitPrice) : ''; });
+        lim.addEventListener('input', function () { var v = atmEvalNum(lim.value); if (!isNaN(v)) row.sl.limitPrice = v; });
+        panel.querySelectorAll('.atm-sl-ot[data-rid="' + rowId + '"]').forEach(function (rb) {
+            rb.addEventListener('change', function () { if (!rb.checked) return; row.sl.orderType = rb.value; lim.style.display = (rb.value === 'SL-LIMIT') ? '' : 'none'; });
+        });
+    } else {
+        panel.style.display = 'none'; panel.innerHTML = ''; toggle.textContent = '＋ SL';
+        row.sl = { on: false, orderType: 'SL-MARKET', stopPrice: 0, limitPrice: 0 };
+    }
+}
+
+// ---- Review -> Confirm dialog ----------------------------------------------
+function autoManualReview() {
+    if (!_atmRows.length) { autoManualStatus('Add at least one order.', true); return; }
+    var legs = [];
+    for (var i = 0; i < _atmRows.length; i++) {
+        var row = _atmRows[i], n = i + 1;
+        var fy = autoManualFyersSymbol(row);
+        if (!row.security_id || !/^[A-Z]+:[A-Z0-9]+(-[A-Z0-9]+)?$/.test(fy)) { autoManualStatus('Order ' + n + ': pick a symbol from the search.', true); return; }
+        // Order qty convention (§A.11.5 — the single biggest correctness trap):
+        // MCX qty = LOTS (Fyers reports/accepts MCX in lots); NSE F&O + equity
+        // qty = UNITS (lots × lot_size). The fill-writer books on this same basis,
+        // so the two must agree. row.quantity holds units; row.lots holds lots.
+        // Key off the EXACT symbol we send the broker (not row.exchange), so the
+        // qty convention can never desync from the symbol prefix.
+        var isMcx = (fy.split(':')[0] === 'MCX');
+        var orderQty = isMcx ? row.lots : row.quantity;
+        var unitName = isMcx ? 'lots' : 'qty';
+        if (!Number.isFinite(orderQty) || orderQty === 0 || Math.floor(orderQty) !== orderQty) { autoManualStatus('Order ' + n + ': ' + unitName + ' must be a non-zero integer (+ buy / − sell).', true); return; }
+        var side = orderQty > 0 ? 'BUY' : 'SELL', absQty = Math.abs(orderQty);
+        var ot = row.orderType;
+        if (ot === 'LIMIT' && !(row.price > 0)) { autoManualStatus('Order ' + n + ': LIMIT needs a positive price.', true); return; }
+        var intent = { symbol: fy, side: side, qty: absQty, orderType: ot };
+        if (ot === 'LIMIT') intent.limitPrice = row.price;
+        // Bracket SL
+        if (row.sl && row.sl.on) {
+            if (!(row.sl.stopPrice > 0)) { autoManualStatus('Order ' + n + ': SL needs a positive trigger.', true); return; }
+            if (row.sl.orderType === 'SL-LIMIT' && !(row.sl.limitPrice > 0)) { autoManualStatus('Order ' + n + ': SL-Limit needs a positive limit.', true); return; }
+            intent.sl = { orderType: row.sl.orderType, stopPrice: row.sl.stopPrice };
+            if (row.sl.orderType === 'SL-LIMIT') intent.sl.limitPrice = row.sl.limitPrice;
+        }
+        // Tags + trader
+        var tags = (_atmTagCtrls[row.rowId] && typeof _atmTagCtrls[row.rowId].getTags === 'function') ? _atmTagCtrls[row.rowId].getTags() : (row.tags || []);
+        if (tags && tags.length) intent.tags = tags;
+        if (row.trader_id) intent.trader_id = row.trader_id;
+        var traderSel = document.querySelector('.atm-trader[data-rid="' + row.rowId + '"]');
+        var traderName = (row.trader_id && traderSel && traderSel.selectedOptions[0]) ? traderSel.selectedOptions[0].text : '';
+        var priceStr = (ot === 'LIMIT') ? ('@ ' + row.price) : '@ market';
+        var slStr = (row.sl && row.sl.on) ? ('  + SL ' + row.sl.orderType + ' trig ' + row.sl.stopPrice + (row.sl.orderType === 'SL-LIMIT' ? '/lim ' + row.sl.limitPrice : '')) : '';
+        var extra = (tags && tags.length ? '  tags:' + tags.join('/') : '') + (traderName ? '  trader:' + traderName : '');
+        var label = side + ' ' + absQty + (isMcx ? ' lot' + (absQty > 1 ? 's' : '') : 'u') + '  ' + fy + '  [' + ot + ']  ' + priceStr + slStr + extra;
+        legs.push({ label: label, intent: intent });
+    }
+    _auManualLegsToPlace = legs;
+    var el = document.getElementById('au-manual-status');
+    el.innerHTML =
+        '<div style="border:2px solid #f59e0b;border-radius:10px;padding:16px;background:#fffbeb">' +
+        '<div style="font-size:13px;color:#92400e;margin-bottom:8px">Confirm ' + legs.length + ' <b>LIVE</b> order(s) — each is a separate Fyers order (an SL is placed with, and linked to, its entry):</div>' +
+        legs.map(function (l) { return '<div style="font-family:monospace;font-size:13px;font-weight:600;margin:3px 0">' + autoEsc(l.label) + '</div>'; }).join('') +
+        '<div style="margin-top:14px"><button class="wms-btn wms-btn-primary" style="background:#dc2626" onclick="autoManualPlaceAll()">Confirm &amp; Place ' + legs.length + ' order(s)</button> ' +
+        '<button class="wms-btn wms-btn-secondary" onclick="autoManualStatus(\'\',false)">Cancel</button></div>' +
+        '</div>';
+}
+
+async function autoManualPlaceAll() {
+    var legs = _auManualLegsToPlace;
+    if (!legs || !legs.length) return;
+    if (!_auManualPw) { autoManualLock(); return; }
+    autoManualStatus('Placing ' + legs.length + ' order(s)…', false);
+    var results = [];
+    for (var k = 0; k < legs.length; k++) {
+        try {
+            var body = Object.assign({}, legs[k].intent, { password: _auManualPw, confirm: true });
+            var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
+                method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body)
+            });
+            var j = await resp.json().catch(function () { return {}; });
+            if (resp.status === 401) { _auManualPw = null; autoManualRenderGate((j.error || 'Unauthorized') + ' — re-enter password.'); return; }
+            results.push({ label: legs[k].label, ok: !!(resp.ok && j.ok), command_id: j.command_id || null, sl_command_id: j.sl_command_id || null, error: (resp.ok && j.ok) ? null : (j.error || ('HTTP ' + resp.status)) });
+        } catch (e) {
+            results.push({ label: legs[k].label, ok: false, command_id: null, sl_command_id: null, error: (e && e.message ? e.message : String(e)) });
+        }
+    }
+    _auManualLegsToPlace = null;
+    var ids = [];
+    results.forEach(function (r) { if (r.command_id) ids.push(r.command_id); if (r.sl_command_id) ids.push(r.sl_command_id); });
+    var el = document.getElementById('au-manual-status');
+    if (el) {
+        el.innerHTML = '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px;background:#fff">' +
+            '<div style="font-weight:600;margin-bottom:8px">Placed ' + results.filter(function (r) { return r.ok; }).length + '/' + results.length + ' order(s)</div>' +
+            results.map(function (r) {
+                var slNote = r.sl_command_id ? '  (+SL ' + r.sl_command_id + ' <button class="wms-btn wms-btn-secondary" style="font-size:10px;padding:1px 6px" onclick="autoManualCancelSl(\'' + r.sl_command_id + '\',this)">Cancel SL</button>)' : '';
+                return '<div style="font-family:monospace;font-size:12px;margin:2px 0;color:' + (r.ok ? '#166534' : '#991b1b') + '">' +
+                    (r.ok ? '✅' : '✗') + ' ' + autoEsc(r.label) + (r.ok ? '  → cmd ' + r.command_id + slNote : '  → ' + autoEsc(r.error || '')) + '</div>';
+            }).join('') +
+            '<div id="au-m-track" style="margin-top:10px;font-size:12px;color:#374151"></div></div>';
+    }
+    if (ids.length) autoManualTrackMany(ids);
+}
+
+// Cancel a working bracket SL — via the EF (never a direct queue write). The EF
+// enqueues a KH-style cancel; the Droplet cancels at Fyers and cmd-complete flips
+// the SL row to CANCELLED.
+async function autoManualCancelSl(slCommandId, btn) {
+    if (!_auManualPw) { autoManualLock(); return; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
+    try {
+        var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
+            method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ action: 'cancel_sl', sl_command_id: slCommandId, password: _auManualPw, confirm: true })
+        });
+        var j = await resp.json().catch(function () { return {}; });
+        if (resp.status === 401) { _auManualPw = null; autoManualRenderGate((j.error || 'Unauthorized') + ' — re-enter password.'); return; }
+        if (btn) { btn.textContent = (resp.ok && j.ok) ? 'SL cancel queued' : ('Cancel failed: ' + (j.error || resp.status)); }
+    } catch (e) { if (btn) { btn.disabled = false; btn.textContent = 'Cancel SL'; } }
+}
+
+function autoManualTrackMany(ids) {
+    if (_auManualPollTimer) clearInterval(_auManualPollTimer);
+    var tries = 0;
+    _auManualPollTimer = setInterval(async function () {
+        tries++;
+        try {
+            var r = await fetch(SUPABASE_URL + '/rest/v1/wms_live_commands?id=in.(' + ids.map(encodeURIComponent).join(',') +
+                ')&select=id,status,broker_status,broker_order_id,filled_qty,avg_fill_price,error_message,payload', { headers: wmsHeaders() });
+            var rowsx = r.ok ? await r.json() : [];
+            var box = document.getElementById('au-m-track');
+            if (box && Array.isArray(rowsx)) {
+                box.innerHTML = rowsx.map(function (c) {
+                    var role = (c.payload && c.payload._manual_meta && c.payload._manual_meta.leg_role) ? c.payload._manual_meta.leg_role : '';
+                    return '<div style="font-family:monospace">' + (role ? '[' + role + '] ' : '') + autoEsc(c.broker_status || c.status || '—') +
+                        (c.broker_order_id ? ' · ' + c.broker_order_id : '') +
+                        (c.filled_qty ? ' · filled ' + c.filled_qty + ' @ ' + c.avg_fill_price : '') +
+                        (c.error_message ? ' · ' + autoEsc(c.error_message) : '') + '</div>';
+                }).join('');
+                var done = rowsx.length >= ids.length && rowsx.every(function (c) {
+                    return ['FILLED', 'CANCELLED', 'REJECTED', 'EXPIRED'].indexOf(c.broker_status) >= 0 || ['rejected', 'error', 'cancelled'].indexOf(c.status) >= 0;
+                });
+                if (done) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
+            }
+        } catch (e) { /* keep polling */ }
+        if (tries > 40) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
+    }, 3000);
+}
+
+function autoManualStatus(msg, isErr) {
+    var el = document.getElementById('au-manual-status');
+    if (!el) return;
+    if (!msg) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div style="border:1px solid ' + (isErr ? '#fca5a5' : '#e5e7eb') + ';border-radius:8px;padding:10px 12px;font-size:13px;color:' + (isErr ? '#991b1b' : '#374151') + ';background:' + (isErr ? '#fef2f2' : '#f9fafb') + '">' + autoEsc(msg) + '</div>';
 }
 
 // ----------------------------------------------------------------------------

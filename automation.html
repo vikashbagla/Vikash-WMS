@@ -440,6 +440,7 @@ details summary {
     <button class="au-fam-tab-btn"        data-fam="gs">🥈🥇 GS</button>
     <button class="au-fam-tab-btn"        data-fam="kh">🐦 KH</button>
     <button class="au-fam-tab-btn"        data-fam="pairs">🔗 Pairs</button>
+    <button class="au-fam-tab-btn"        data-fam="manual">✋ Manual</button>
     <button class="au-fam-tab-btn"        data-fam="addnew" disabled title="Contact platform owner to add new strategy family">＋ Add strategy</button>
   </div>
 
@@ -1109,6 +1110,15 @@ details summary {
           </div>
 
         </div>
+      </div>
+    </div>
+
+    <!-- ✋ Manual — owner-only Fyers order entry (GOP-C4). All content is
+         rendered by autoManualInit() into #au-manual-root; the password gate
+         and confirm dialog live there. Places via the wms-manual-order EF. -->
+    <div id="au-fam-manual" class="automation-family-panel">
+      <div class="fam-scroll">
+        <div id="au-manual-root" style="max-width:760px;margin:0 auto">Loading…</div>
       </div>
     </div>
 
