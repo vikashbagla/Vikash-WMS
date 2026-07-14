@@ -179,6 +179,10 @@ function autoManualField(label, inner) {
 function autoManualRenderForm() {
     var root = document.getElementById('au-manual-root');
     if (!root) return;
+    // The order grid needs room — override the panel's narrow 760px cap (8 columns
+    // don't fit in 760px; Symbol collapsed). Wide, like the Add Transaction table.
+    root.style.maxWidth = '1180px';
+    root.style.margin = '0 auto';
     _atmRows = []; _atmRowSeq = 0; _atmSymItems = {}; _atmSymCtrls = {}; _atmTagCtrls = {};
     root.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
@@ -200,17 +204,17 @@ function autoManualRenderForm() {
         '<div style="margin-top:16px"><button class="wms-btn wms-btn-primary" onclick="autoManualReview()">Review order →</button></div>' +
         '<div id="au-manual-status" style="margin-top:16px"></div>' +
         '<style>' +
-          '.atm-head,.atm-main{display:flex;gap:8px;align-items:flex-start}' +
-          '.atm-head{color:#6b7280;font-size:10px;text-transform:uppercase;border-bottom:1px solid #e5e7eb;padding:0 0 6px;margin-bottom:4px}' +
+          '.atm-head,.atm-main{display:flex;gap:8px;width:100%;align-items:flex-start;box-sizing:border-box}' +
+          '.atm-head{color:#6b7280;font-size:10px;font-weight:600;letter-spacing:.3px;text-transform:uppercase;border-bottom:1px solid #e5e7eb;padding:0 0 6px;margin-bottom:4px}' +
           '.atm-order{padding:6px 0;border-bottom:1px solid #f1f5f9}' +
-          '.atm-c-trader{flex:0 0 120px;width:120px}' +
-          '.atm-c-sym{flex:1 1 auto;min-width:0;position:relative}' +
-          '.atm-c-lots{flex:0 0 62px;width:62px}' +
-          '.atm-c-qty{flex:0 0 82px;width:82px}' +
+          '.atm-c-trader{flex:0 0 140px;width:140px}' +
+          '.atm-c-sym{flex:1 1 auto;min-width:160px;position:relative}' +
+          '.atm-c-lots{flex:0 0 66px;width:66px}' +
+          '.atm-c-qty{flex:0 0 84px;width:84px}' +
           '.atm-c-price{flex:0 0 150px;width:150px}' +
-          '.atm-c-tags{flex:0 0 160px;width:160px;position:relative}' +
-          '.atm-c-sl{flex:0 0 70px;width:70px}' +
-          '.atm-c-act{flex:0 0 30px;width:30px}' +
+          '.atm-c-tags{flex:0 0 190px;width:190px;position:relative}' +
+          '.atm-c-sl{flex:0 0 74px;width:74px}' +
+          '.atm-c-act{flex:0 0 34px;width:34px}' +
           '.atm-main .wms-input,.atm-main .wms-input-compact{width:100%;font-size:12px}' +
           '.atm-radios{display:flex;gap:8px;font-size:11px;color:#374151;margin-top:3px}' +
           '.atm-radios label{display:flex;align-items:center;gap:3px;cursor:pointer}' +
