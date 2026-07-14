@@ -269,7 +269,7 @@ function autoManualAddRow(copyFromId) {
     };
     _atmRows.push(row);
 
-    var isNfo = row.lot_size > 1;
+    var lotsBased = autoManualIsLotsBased(row);
     var order = document.createElement('div');
     order.className = 'atm-order';
     order.dataset.rid = rowId;
@@ -280,7 +280,7 @@ function autoManualAddRow(copyFromId) {
                 '<input type="text" class="wms-input wms-input-compact atm-sym" data-rid="' + rowId + '" placeholder="Search…" autocomplete="off" value="' + autoEsc(row.symbol || '') + '">' +
                 '<div class="wms-dd atm-symdd" id="atmSymDd_' + rowId + '"></div>' +
             '</span>' +
-            '<span class="atm-c-lots"><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-lots" data-rid="' + rowId + '" placeholder="±lots"' + (isNfo ? '' : ' disabled') + '></span>' +
+            '<span class="atm-c-lots"><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-lots" data-rid="' + rowId + '" placeholder="±lots"' + (lotsBased ? '' : ' disabled') + '></span>' +
             '<span class="atm-c-qty"><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-qty" data-rid="' + rowId + '" placeholder="±qty"><div class="atm-bal" id="atmBal_' + rowId + '"></div></span>' +
             '<span class="atm-c-price">' +
                 '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-price" data-rid="' + rowId + '" placeholder="price" disabled>' +
@@ -313,8 +313,9 @@ function autoManualPopulateRowDom(rowId) {
     var qtyInput = document.querySelector('.atm-qty[data-rid="' + rowId + '"]');
     var priceInput = document.querySelector('.atm-price[data-rid="' + rowId + '"]');
     if (row.security_id && symInput) symInput.value = autoManualFyersSymbol(row);
-    if (row.lot_size > 1) { if (lotsInput) { lotsInput.disabled = false; lotsInput.value = row.lots || ''; } if (qtyInput) qtyInput.readOnly = true; }
-    else { if (lotsInput) { lotsInput.disabled = true; lotsInput.value = ''; } if (qtyInput) qtyInput.readOnly = false; }
+    if (autoManualIsLotsBased(row)) { if (lotsInput) { lotsInput.disabled = false; lotsInput.value = row.lots || ''; } }
+    else { if (lotsInput) { lotsInput.disabled = true; lotsInput.value = ''; } }
+    if (qtyInput) qtyInput.readOnly = false;   // both Lots and Qty editable; each computes the other
     if (qtyInput) qtyInput.value = atmFmtQty(row.quantity);
     // Order type radio + price field state
     var otRadio = document.querySelector('.atm-ot[data-rid="' + rowId + '"][value="' + row.orderType + '"]');
@@ -344,6 +345,12 @@ function autoManualRemoveRow(rowId) {
 }
 
 function autoManualRow(rowId) { return _atmRows.find(function (r) { return r.rowId === rowId; }); }
+
+// Lots-driven vs qty-driven entry. MCX orders are placed in LOTS regardless of
+// the stored lot_size (Fyers reports lot_size=1 for most MCX; only SILVERM/GOLDM
+// are overridden — §A.11.5), so MCX is ALWAYS lots-driven. NSE F&O is lots-driven
+// when lot_size>1; equity cash is qty-driven.
+function autoManualIsLotsBased(row) { return !!row && (row.lot_size > 1 || row.exchange === 'MCX'); }
 
 function autoManualWireRow(rowId) {
     var row = autoManualRow(rowId); if (!row) return;
@@ -377,7 +384,7 @@ function autoManualWireRow(rowId) {
     lotsInput.addEventListener('input', function () {
         var lots = parseInt(lotsInput.value.replace(/,/g, '')) || 0;
         row.lots = lots;
-        if (row.lot_size > 1) { row.quantity = Math.round(lots * row.lot_size); qtyInput.value = atmFmtQty(row.quantity); }
+        if (autoManualIsLotsBased(row)) { row.quantity = Math.round(lots * row.lot_size); qtyInput.value = atmFmtQty(row.quantity); }
         autoManualRecalc(rowId);
     });
     // --- Qty (equity, or manual override) ---
@@ -386,7 +393,7 @@ function autoManualWireRow(rowId) {
     qtyInput.addEventListener('input', function () {
         var qty = parseInt(qtyInput.value.replace(/,/g, '')) || 0;
         row.quantity = qty;
-        if (row.lot_size > 1 && qty !== 0) { row.lots = Math.round(qty / row.lot_size); lotsInput.value = row.lots || ''; }
+        if (autoManualIsLotsBased(row)) { row.lots = row.lot_size > 0 ? Math.round((qty / row.lot_size) * 100) / 100 : 0; lotsInput.value = row.lots || ''; }
         autoManualRecalc(rowId);
     });
 
@@ -567,12 +574,13 @@ function autoManualSelectSecurity(rowId, sec) {
     if (symInput) symInput.value = autoManualFyersSymbol(row);
     var lotsInput = document.querySelector('.atm-lots[data-rid="' + rowId + '"]');
     var qtyInput = document.querySelector('.atm-qty[data-rid="' + rowId + '"]');
-    if (row.lot_size > 1) { lotsInput.disabled = false; if (qtyInput) qtyInput.readOnly = true; }
-    else { lotsInput.disabled = true; lotsInput.value = ''; row.lots = 0; if (qtyInput) qtyInput.readOnly = false; }
+    if (autoManualIsLotsBased(row)) { lotsInput.disabled = false; }
+    else { lotsInput.disabled = true; lotsInput.value = ''; row.lots = 0; }
+    if (qtyInput) qtyInput.readOnly = false;   // both Lots and Qty editable; each computes the other
 
     autoManualFetchLivePrice(rowId);
     autoManualShowBalance(rowId);
-    setTimeout(function () { if (row.lot_size > 1) lotsInput.focus(); else if (qtyInput) qtyInput.focus(); }, 50);
+    setTimeout(function () { if (autoManualIsLotsBased(row)) lotsInput.focus(); else if (qtyInput) qtyInput.focus(); }, 50);
 }
 
 // Exchange-qualified Fyers symbol for BOTH the live price fetch and the order
