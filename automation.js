@@ -657,16 +657,23 @@ async function autoManualShowBalance(rowId) {
     var bareSym = (row.symbol || '').replace(/^[A-Z]+:/, '');
     if (!bareSym) { if (bal) bal.textContent = ''; return; }
     try {
-        // Match the symbol both bare and exchange-qualified — booked rows are
-        // stored inconsistently (some bare, some with an "NSE:"/"MCX:" prefix).
+        // The booked symbol can be stored BARE ("SILVERMIC26AUGFUT") while
+        // securities_nfo stores it EXCHANGE-PREFIXED ("MCX:SILVERMIC26AUGFUT").
+        // Cast a wide net — bare/prefixed symbol, security_id, or underlying —
+        // then narrow to the EXACT contract in JS. Prefix-proof.
+        var norm = function (s) { return (s || '').replace(/^[A-Z]+:/, ''); };
         var fyFull = autoManualFyersSymbol(row);
-        var symOr = 'or=(symbol.eq.' + encodeURIComponent(bareSym) + ',symbol.eq.' + encodeURIComponent(fyFull) + ')';
+        var conds = ['symbol.eq.' + encodeURIComponent(bareSym), 'symbol.eq.' + encodeURIComponent(fyFull)];
+        if (row.security_id) conds.push('security_id.eq.' + encodeURIComponent(row.security_id));
+        if (row.short_symbol) conds.push('short_symbol.eq.' + encodeURIComponent(row.short_symbol));
         var url = SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + encodeURIComponent(veinsId) +
-            '&' + symOr +
-            '&select=quantity,transaction_type,trader_id,investor_id,symbol,security_type,exchange,dont_display,ignore_for_avg_cost,tags&limit=1000';
+            '&or=(' + conds.join(',') + ')' +
+            '&select=quantity,transaction_type,trader_id,investor_id,symbol,short_symbol,security_id,security_type,exchange,dont_display,ignore_for_avg_cost,tags&limit=2000';
         var r = await fetch(url, { headers: wmsHeaders() });
-        var rows = r.ok ? await r.json() : [];
-        if (!Array.isArray(rows)) rows = [];
+        var allRows = r.ok ? await r.json() : [];
+        if (!Array.isArray(allRows)) allRows = [];
+        // Narrow to the exact contract (same normalized symbol, or same security_id).
+        var rows = allRows.filter(function (t) { return norm(t.symbol) === bareSym || (row.security_id && t.security_id === row.security_id); });
         // (a) balance: units under Qty, lots under Lots (lots-based rows only)
         var lotsBal = document.getElementById('atmBalLots_' + rowId);
         var forTrader = rows.filter(function (t) { return !t.dont_display && (t.trader_id || t.investor_id) === traderId; });
