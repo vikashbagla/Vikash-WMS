@@ -129,6 +129,49 @@ function autoManualLock() {
     autoManualRenderGate('Locked.');
 }
 
+// ============================================================================
+// GOP-C4v2 (2026-07-14) — the Manual page is a faithful Add Transaction row
+// clone + live-order extras + bracket-linked SL. Ported (NOT shared) from
+// trading-add-transaction.js: symbol search (equity + F&O + Fyers options),
+// calculator amount fields (no spinner arrows, dataset.rawValue), lots<->qty
+// with signed side, live price via window.fyersCall. Live-order extras:
+// Market/Limit radios (Market disables price), an Add-SL leg (bracket-linked,
+// placed immediately with the entry — §2c), and a Cancel-SL button. NO product
+// field — the EF derives it. Places ONLY via the wms-manual-order EF (A.1.9e-i);
+// never writes wms_live_commands from the browser.
+//
+// Namespacing: the trading module owns `at*`/`addTxn-*`; this page uses `atm*`/
+// `atm-*` so the two never collide (the Trading module is NOT touched).
+// ============================================================================
+
+var _atmRows = [];            // [{rowId, security_id, symbol, short_symbol, company_name, security_type, asset_class, exchange, lot_size, broker_tokens, lots, quantity, price, orderType, tags, sl:{on,orderType,stopPrice,limitPrice}}]
+var _atmRowSeq = 0;
+var _atmSymItems = {};        // rowId -> search result items
+var _atmSymCtrls = {};        // rowId -> wmsDropdown controller
+var _atmTagCtrls = {};        // rowId -> wmsTagInput controller
+
+// ---- number helpers (ported from atFmt*, plus a safe calculator eval) -------
+function atmFmtQty(v) {
+    if (v === null || v === undefined || isNaN(v) || v === 0) return '';
+    var abs = Math.abs(Math.round(v));
+    var s = abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return v < 0 ? '-' + s : s;
+}
+function atmFmtPrice(v) {
+    if (v === null || v === undefined || isNaN(v) || v === 0) return '';
+    var abs = Math.abs(v);
+    return (v < 0 ? '-' : '') + abs.toFixed(2).replace(/\.?0+$/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+// Mini-calculator: evaluate a simple arithmetic expression (digits, . + - * / ()).
+// Anything else -> NaN. Never eval arbitrary code (no letters allowed).
+function atmEvalNum(str) {
+    var s = String(str == null ? '' : str).replace(/,/g, '').trim();
+    if (s === '') return 0;
+    if (!/^[-+*/(). 0-9]+$/.test(s)) return NaN;
+    try { var v = Function('"use strict";return (' + s + ')')(); return (typeof v === 'number' && isFinite(v)) ? v : NaN; }
+    catch (e) { return NaN; }
+}
+
 function autoManualField(label, inner) {
     return '<div style="flex:1;margin-bottom:12px"><label style="display:block;font-size:12px;color:#374151;margin-bottom:4px">' + label + '</label>' + inner + '</div>';
 }
@@ -136,19 +179,35 @@ function autoManualField(label, inner) {
 function autoManualRenderForm() {
     var root = document.getElementById('au-manual-root');
     if (!root) return;
-    _auManualRowSeq = 0;
+    _atmRows = []; _atmRowSeq = 0; _atmSymItems = {}; _atmSymCtrls = {}; _atmTagCtrls = {};
     root.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
           '<h3 style="margin:0">✋ Manual Fyers order <span style="font-size:12px;font-weight:400;color:#16a34a">● unlocked</span></h3>' +
-          '<button class="au-btn au-btn-secondary" style="font-size:12px" onclick="autoManualLock()">Lock</button>' +
+          '<button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualLock()">Lock</button>' +
         '</div>' +
-        '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ <b>LIVE</b> orders on Veins/Fyers. No automated risk checks — the Confirm step is the only gate. One card per leg; each leg is a separate Fyers order. <b>Lots is signed: + = BUY, − = SELL.</b></div>' +
-        '<div id="au-m-legs"></div>' +
-        '<button class="au-btn au-btn-secondary" style="font-size:12px" onclick="autoManualAddLeg()">＋ Add leg</button>' +
-        '<div style="margin-top:16px"><button class="au-btn au-btn-primary" onclick="autoManualReview()">Review order →</button></div>' +
-        '<div id="au-manual-status" style="margin-top:16px"></div>';
+        '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ <b>LIVE</b> orders on Veins/Fyers. No automated risk checks — the Confirm step is the only gate. One row per order; each is a separate Fyers order. <b>Qty/Lots is signed: + = BUY, − = SELL.</b> Product is derived automatically (F&O → MARGIN, equity → CNC).</div>' +
+        '<div style="overflow-x:auto"><table class="atm-table" style="width:100%;border-collapse:collapse;font-size:12px">' +
+          '<thead><tr style="text-align:left;color:#6b7280;font-size:10px;text-transform:uppercase;border-bottom:1px solid #e5e7eb">' +
+            '<th style="padding:6px 6px">Trader</th><th style="padding:6px 6px;min-width:190px">Symbol</th>' +
+            '<th style="padding:6px 6px;width:70px">Lots</th><th style="padding:6px 6px;width:90px">Qty</th>' +
+            '<th style="padding:6px 6px;width:150px">Price / Type</th>' +
+            '<th style="padding:6px 6px;min-width:150px">Tags</th><th style="padding:6px 6px;width:120px">SL</th><th style="padding:6px 6px;width:34px"></th>' +
+          '</tr></thead>' +
+          '<tbody id="atm-tbody"></tbody>' +
+        '</table></div>' +
+        '<div style="margin-top:10px"><button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualAddRow()">＋ Add order</button></div>' +
+        '<div style="margin-top:16px"><button class="wms-btn wms-btn-primary" onclick="autoManualReview()">Review order →</button></div>' +
+        '<div id="au-manual-status" style="margin-top:16px"></div>' +
+        '<style>' +
+          '.atm-table td{padding:5px 6px;vertical-align:top;border-bottom:1px solid #f1f5f9}' +
+          '.atm-table .wms-input,.atm-table .wms-input-compact{font-size:12px}' +
+          '.atm-radios{display:flex;gap:8px;font-size:11px;color:#374151;margin-top:3px}' +
+          '.atm-radios label{display:flex;align-items:center;gap:3px;cursor:pointer}' +
+          '.atm-bal{font-size:10px;color:#2563eb;margin-top:2px}' +
+          '.atm-sl-panel{background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px;margin-top:6px}' +
+        '</style>';
     autoManualLoadTraders();
-    autoManualAddLeg();
+    autoManualAddRow();
 }
 
 async function autoManualLoadTraders() {
@@ -157,7 +216,7 @@ async function autoManualLoadTraders() {
         var rows = r.ok ? await r.json() : [];
         _auManualTraders = Array.isArray(rows) ? rows : [];
     } catch (e) { _auManualTraders = []; }
-    document.querySelectorAll('.au-ml-trader').forEach(function (sel) { var cur = sel.value; sel.innerHTML = autoManualTraderOptions(); sel.value = cur; });
+    document.querySelectorAll('.atm-trader').forEach(function (sel) { var cur = sel.value; sel.innerHTML = autoManualTraderOptions(); sel.value = cur; });
 }
 
 function autoManualTraderOptions() {
@@ -166,190 +225,439 @@ function autoManualTraderOptions() {
     }).join('');
 }
 
-// One leg = a card. Searchable symbol (ACTIVE + non-expired only) + signed Lots
-// (+ buy / − sell) with live Qty, type/product/prices with live order value, a
-// WMS-side Trader dropdown, and its own tag widget. Close to the Add Transaction row.
-function autoManualAddLeg() {
-    var legs = document.getElementById('au-m-legs');
-    if (!legs) return;
-    var rid = ++_auManualRowSeq;
-    var lbl = 'display:block;font-size:10px;color:#6b7280;margin-bottom:2px';
-    var out = 'padding:8px 4px;font-family:monospace;font-size:13px;color:#111827';
-    var card = document.createElement('div');
-    card.className = 'au-ml-row';
-    card.dataset.rid = rid;
-    card.style.cssText = 'border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:10px;background:#fafafa';
-    card.innerHTML =
-        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:11px;font-weight:600;color:#6b7280">Leg ' + rid + '</span>' +
-          '<button class="au-btn au-btn-secondary" title="Remove leg" style="padding:2px 8px;font-size:12px" onclick="autoManualRemoveLeg(' + rid + ')">× remove</button></div>' +
-        '<div style="display:grid;grid-template-columns:2.6fr 0.9fr 1.2fr 1.1fr 1fr;gap:8px;align-items:end">' +
-          '<div style="position:relative"><label style="' + lbl + '">Symbol</label><input class="au-ml-sym" autocomplete="off" placeholder="search / type" style="' + _AU_M_INP + '"><div class="wms-dd au-ml-symdd"></div></div>' +
-          '<div><label style="' + lbl + '">Lots ±</label><input class="au-ml-lots" type="number" step="1" placeholder="+2 / −1" style="' + _AU_M_INP + '"></div>' +
-          '<div><label style="' + lbl + '">Qty (units)</label><div class="au-ml-qty" style="' + out + '">—</div></div>' +
-          '<div><label style="' + lbl + '">Type</label><select class="au-ml-otype" style="' + _AU_M_INP + '"><option>MARKET</option><option>LIMIT</option><option>SL-MARKET</option><option>SL-LIMIT</option></select></div>' +
-          '<div><label style="' + lbl + '">Product</label><select class="au-ml-product" style="' + _AU_M_INP + '"><option>MARGIN</option><option>INTRADAY</option><option>CNC</option></select></div>' +
-        '</div>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1.3fr 1.7fr;gap:8px;align-items:end;margin-top:8px">' +
-          '<div><label style="' + lbl + '">Limit</label><input class="au-ml-limit" type="number" step="0.05" style="' + _AU_M_INP + '"></div>' +
-          '<div><label style="' + lbl + '">Trigger</label><input class="au-ml-stop" type="number" step="0.05" style="' + _AU_M_INP + '"></div>' +
-          '<div><label style="' + lbl + '">Order value</label><div class="au-ml-value" style="' + out + '">—</div></div>' +
-          '<div><label style="' + lbl + '">Trader (WMS only)</label><select class="au-ml-trader" style="' + _AU_M_INP + '">' + autoManualTraderOptions() + '</select></div>' +
-        '</div>' +
-        '<div style="margin-top:8px;position:relative"><label style="' + lbl + '">Tags</label><input class="au-ml-tags" autocomplete="off" placeholder="Type a tag + Enter or comma…" style="' + _AU_M_INP + '"><div class="wms-tag-pills au-ml-tagpills" style="margin-top:4px"></div><div class="wms-tag-dd au-ml-tagdd"></div></div>';
-    legs.appendChild(card);
-    autoManualWireRowSymbol(card);
-    autoManualWireRowExtras(card, rid);
+// One order = one <tr>. Faithful to the Add Transaction row: trader, searchable
+// symbol (equity + F&O + options), signed lots/qty, calculator price field, plus
+// Market/Limit radios, a bracket-SL toggle, and per-row tags.
+function autoManualAddRow(copyFromId) {
+    var tbody = document.getElementById('atm-tbody');
+    if (!tbody) return;
+    var copyFrom = (copyFromId !== undefined) ? _atmRows.find(function (r) { return r.rowId === copyFromId; }) : null;
+    var rowId = ++_atmRowSeq;
+    var row = {
+        rowId: rowId,
+        trader_id: copyFrom ? copyFrom.trader_id : null,
+        security_id: copyFrom ? copyFrom.security_id : null,
+        symbol: copyFrom ? copyFrom.symbol : '',
+        short_symbol: copyFrom ? copyFrom.short_symbol : '',
+        company_name: copyFrom ? copyFrom.company_name : '',
+        security_type: copyFrom ? copyFrom.security_type : 'EQUITY',
+        asset_class: copyFrom ? copyFrom.asset_class : null,
+        exchange: copyFrom ? copyFrom.exchange : 'NSE',
+        lot_size: copyFrom ? copyFrom.lot_size : 1,
+        broker_tokens: copyFrom ? copyFrom.broker_tokens : null,
+        lots: 0, quantity: 0, price: copyFrom ? copyFrom.price : 0,
+        orderType: 'MARKET',
+        tags: copyFrom ? copyFrom.tags.slice() : [],
+        sl: { on: false, orderType: 'SL-MARKET', stopPrice: 0, limitPrice: 0 }
+    };
+    _atmRows.push(row);
+
+    var isNfo = row.lot_size > 1;
+    var tr = document.createElement('tr');
+    tr.dataset.rid = rowId;
+    tr.innerHTML =
+        '<td><select class="wms-input wms-input-compact atm-trader" data-rid="' + rowId + '">' + autoManualTraderOptions() + '</select></td>' +
+        '<td style="position:relative">' +
+            '<input type="text" class="wms-input wms-input-compact atm-sym" data-rid="' + rowId + '" placeholder="Search…" autocomplete="off" value="' + autoEsc(row.symbol || '') + '">' +
+            '<div class="wms-dd atm-symdd" id="atmSymDd_' + rowId + '"></div>' +
+        '</td>' +
+        '<td><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-lots' + (isNfo ? '' : '') + '" data-rid="' + rowId + '" placeholder="±lots"' + (isNfo ? '' : ' disabled') + '></td>' +
+        '<td><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-qty" data-rid="' + rowId + '" placeholder="±qty"><div class="atm-bal" id="atmBal_' + rowId + '"></div></td>' +
+        '<td>' +
+            '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-price" data-rid="' + rowId + '" placeholder="price" disabled>' +
+            '<div class="atm-radios">' +
+                '<label><input type="radio" name="atmOt_' + rowId + '" class="atm-ot" data-rid="' + rowId + '" value="MARKET" checked>Mkt</label>' +
+                '<label><input type="radio" name="atmOt_' + rowId + '" class="atm-ot" data-rid="' + rowId + '" value="LIMIT">Lmt</label>' +
+            '</div>' +
+        '</td>' +
+        '<td style="position:relative">' +
+            '<input type="text" class="wms-input wms-input-compact atm-tags" data-rid="' + rowId + '" placeholder="Tags…" autocomplete="off">' +
+            '<div class="wms-tag-pills atm-tagpills" id="atmTagPills_' + rowId + '" style="margin-top:3px"></div>' +
+            '<div class="wms-tag-dd atm-tagdd" id="atmTagDd_' + rowId + '"></div>' +
+        '</td>' +
+        '<td><button type="button" class="wms-btn wms-btn-secondary atm-sl-toggle" data-rid="' + rowId + '" style="font-size:11px;padding:3px 8px" onclick="autoManualToggleSl(' + rowId + ')">＋ SL</button>' +
+            '<div class="atm-sl-panel" id="atmSlPanel_' + rowId + '" style="display:none"></div></td>' +
+        '<td><button type="button" class="wms-btn wms-btn-secondary" title="Remove" style="font-size:12px;padding:3px 8px" onclick="autoManualRemoveRow(' + rowId + ')">✕</button></td>';
+    tbody.appendChild(tr);
+    autoManualWireRow(rowId);
 }
 
-function autoManualWireRowExtras(card, rid) {
-    var recalc = function () { autoManualRecalcRow(card); };
-    ['.au-ml-lots', '.au-ml-limit'].forEach(function (s) { var e = card.querySelector(s); if (e) e.addEventListener('input', recalc); });
-    var ot = card.querySelector('.au-ml-otype'); if (ot) ot.addEventListener('change', recalc);
-    var ti = card.querySelector('.au-ml-tags'), tp = card.querySelector('.au-ml-tagpills'), td = card.querySelector('.au-ml-tagdd');
+function autoManualRemoveRow(rowId) {
+    if (_atmRows.length <= 1) return;
+    _atmRows = _atmRows.filter(function (r) { return r.rowId !== rowId; });
+    var tr = document.querySelector('#atm-tbody tr[data-rid="' + rowId + '"]');
+    if (tr) tr.remove();
+    delete _atmSymItems[rowId]; delete _atmSymCtrls[rowId]; delete _atmTagCtrls[rowId];
+}
+
+function autoManualRow(rowId) { return _atmRows.find(function (r) { return r.rowId === rowId; }); }
+
+function autoManualWireRow(rowId) {
+    var row = autoManualRow(rowId); if (!row) return;
+    var traderSel = document.querySelector('.atm-trader[data-rid="' + rowId + '"]');
+    var symInput = document.querySelector('.atm-sym[data-rid="' + rowId + '"]');
+    var lotsInput = document.querySelector('.atm-lots[data-rid="' + rowId + '"]');
+    var qtyInput = document.querySelector('.atm-qty[data-rid="' + rowId + '"]');
+    var priceInput = document.querySelector('.atm-price[data-rid="' + rowId + '"]');
+    var dd = document.getElementById('atmSymDd_' + rowId);
+
+    traderSel.addEventListener('change', function () { row.trader_id = traderSel.value || null; autoManualShowBalance(rowId); });
+
+    // --- Symbol search (ported: equity + F&O + Fyers options, LIVE universe) ---
+    _atmSymCtrls[rowId] = wmsDropdown(symInput, dd, {
+        itemSelector: '.wms-dd-item', closeOnSelect: true, blurDelay: 200, escClearsInput: false,
+        onSelect: function (itemEl) { autoManualPickSym(rowId, itemEl); }
+    });
+    var symTimer = null;
+    symInput.addEventListener('input', function () {
+        clearTimeout(symTimer);
+        var q = symInput.value.trim();
+        if (q.length < 2) { _atmSymCtrls[rowId].close(); return; }
+        symTimer = setTimeout(function () { autoManualSearchSym(rowId, q); }, 300);
+    });
+    dd.addEventListener('mousedown', function (e) {
+        var item = e.target.closest('.wms-dd-item'); if (!item || item.dataset.idx === undefined) return;
+        e.preventDefault(); autoManualPickSym(rowId, item); _atmSymCtrls[rowId].close();
+    });
+
+    // --- Lots (F&O) -> qty ---
+    lotsInput.addEventListener('input', function () {
+        var lots = parseInt(lotsInput.value.replace(/,/g, '')) || 0;
+        row.lots = lots;
+        if (row.lot_size > 1) { row.quantity = Math.round(lots * row.lot_size); qtyInput.value = atmFmtQty(row.quantity); }
+        autoManualRecalc(rowId);
+    });
+    // --- Qty (equity, or manual override) ---
+    qtyInput.addEventListener('focus', function () { var raw = parseInt(qtyInput.value.replace(/,/g, '')) || 0; qtyInput.value = raw || ''; });
+    qtyInput.addEventListener('blur', function () { qtyInput.value = atmFmtQty(parseInt(qtyInput.value.replace(/,/g, '')) || 0); });
+    qtyInput.addEventListener('input', function () {
+        var qty = parseInt(qtyInput.value.replace(/,/g, '')) || 0;
+        row.quantity = qty;
+        if (row.lot_size > 1 && qty !== 0) { row.lots = Math.round(qty / row.lot_size); lotsInput.value = row.lots || ''; }
+        autoManualRecalc(rowId);
+    });
+
+    // --- Price (calculator field; disabled unless Limit) ---
+    priceInput.addEventListener('focus', function () { var raw = parseFloat(priceInput.value.replace(/,/g, '')) || 0; priceInput.value = raw || ''; });
+    priceInput.addEventListener('blur', function () {
+        var v = atmEvalNum(priceInput.value);
+        if (isNaN(v)) { priceInput.value = atmFmtPrice(row.price); return; }
+        row.price = v; priceInput.dataset.rawValue = v; priceInput.value = atmFmtPrice(v);
+    });
+    priceInput.addEventListener('input', function () { var v = atmEvalNum(priceInput.value); if (!isNaN(v)) { row.price = v; priceInput.dataset.rawValue = v; } });
+
+    // --- Market/Limit radios (Market disables the price field) ---
+    document.querySelectorAll('.atm-ot[data-rid="' + rowId + '"]').forEach(function (rb) {
+        rb.addEventListener('change', function () {
+            if (!rb.checked) return;
+            row.orderType = rb.value;
+            priceInput.disabled = (rb.value === 'MARKET');
+            if (rb.value === 'MARKET') { /* keep the fetched live price shown but unused */ }
+            else { priceInput.focus(); }
+        });
+    });
+
+    // --- Tags widget ---
+    var ti = document.querySelector('.atm-tags[data-rid="' + rowId + '"]');
+    var tp = document.getElementById('atmTagPills_' + rowId);
+    var td = document.getElementById('atmTagDd_' + rowId);
     if (ti && tp && td && typeof wmsTagInput === 'function') {
-        autoGetExistingTags().then(function (ex) { _auManualLegTagCtrls[rid] = wmsTagInput(ti, tp, td, { tags: [], existingTags: (ex || []).slice(), onChange: function () {} }); })
-            .catch(function () { _auManualLegTagCtrls[rid] = wmsTagInput(ti, tp, td, { tags: [], existingTags: [], onChange: function () {} }); });
+        autoGetExistingTags().then(function (ex) {
+            _atmTagCtrls[rowId] = wmsTagInput(ti, tp, td, { tags: row.tags, existingTags: (ex || []).slice(), onChange: function () {} });
+        }).catch(function () {
+            _atmTagCtrls[rowId] = wmsTagInput(ti, tp, td, { tags: row.tags, existingTags: [], onChange: function () {} });
+        });
     }
 }
 
-// Live Qty (units, signed) + order value. Qty needs the contract lot_size, captured
-// on symbol-select (MCX qty = lots; NSE qty = lots × lot_size). Value = qty × price.
-function autoManualRecalcRow(card) {
-    var symIn = card.querySelector('.au-ml-sym');
-    var lots = Number((card.querySelector('.au-ml-lots') || {}).value);
-    var lotSize = Number(symIn && symIn.dataset.lotsize), exch = symIn && symIn.dataset.exchange;
-    var ot = (card.querySelector('.au-ml-otype') || {}).value, limit = Number((card.querySelector('.au-ml-limit') || {}).value);
-    var qEl = card.querySelector('.au-ml-qty'), vEl = card.querySelector('.au-ml-value');
-    var qty = null;
-    if (Number.isFinite(lots) && lots !== 0 && lotSize && exch) {
-        qty = (exch === 'MCX') ? Math.abs(lots) : Math.abs(lots) * lotSize;
-        if (qEl) qEl.textContent = (lots > 0 ? 'BUY ' : 'SELL ') + qty;
-    } else if (qEl) { qEl.textContent = '—'; }
-    if (qty && (ot === 'LIMIT' || ot === 'SL-LIMIT') && limit > 0) {
-        if (vEl) vEl.textContent = '₹' + Math.round(qty * limit).toLocaleString('en-IN');
-    } else if (vEl) { vEl.textContent = (ot === 'MARKET' || ot === 'SL-MARKET') ? '@ market' : '—'; }
-}
-
-function autoManualRemoveLeg(rid) {
-    var legs = document.getElementById('au-m-legs');
-    var row = legs ? legs.querySelector('.au-ml-row[data-rid="' + rid + '"]') : null;
-    if (row && legs.querySelectorAll('.au-ml-row').length > 1) row.remove();
-}
-
-function autoManualWireRowSymbol(row) {
-    var symInput = row.querySelector('.au-ml-sym');
-    var symDd = row.querySelector('.au-ml-symdd');
-    if (!symInput || !symDd || typeof wmsDropdown !== 'function') return;
-    var items = [];
-    var setSym = function (it) { symInput.value = it.symbol; symInput.dataset.lotsize = it.lot_size || ''; symInput.dataset.exchange = it.exchange || ''; autoManualRecalcRow(row); };
-    var ctrl = wmsDropdown(symInput, symDd, {
-        itemSelector: '.wms-dd-item', closeOnSelect: true, escClearsInput: false,
-        onSelect: function (itemEl) { var it = items[parseInt(itemEl.dataset.idx)]; if (it) setSym(it); }
-    });
-    var t = null;
-    symInput.addEventListener('input', function () {
-        symInput.dataset.lotsize = ''; symInput.dataset.exchange = ''; autoManualRecalcRow(row);   // invalidate until re-selected
-        clearTimeout(t);
-        var q = symInput.value.trim();
-        if (q.length < 2) { ctrl.close(); return; }
-        t = setTimeout(function () { autoManualSearchRowSymbol(symDd, q, function (its) { items = its; }); }, 250);
-    });
-    symDd.addEventListener('mousedown', function (e) {
-        var item = e.target.closest('.wms-dd-item'); if (!item || item.dataset.idx === undefined) return;
-        e.preventDefault();
-        var it = items[parseInt(item.dataset.idx)]; if (it) setSym(it);
-        ctrl.close();
-    });
-}
-
-// LIVE-order universe: only is_active + non-expired contracts. An expired/inactive
-// contract can never be traded, so it must never appear here.
-function _auManualSymUrl(q) {
-    var today = new Date().toISOString().slice(0, 10);
-    var qq = encodeURIComponent(q.toUpperCase());
-    return SUPABASE_URL + '/rest/v1/securities_nfo?or=(symbol.ilike.*' + qq + '*,instrument_name.ilike.*' + qq +
-        '*)&is_active=eq.true&expiry_date=gte.' + today +
-        '&select=symbol,instrument_name,underlying_symbol,exchange,expiry_date,lot_size&order=expiry_date.asc&limit=25';
-}
-
-async function autoManualSearchRowSymbol(symDd, q, setItems) {
+// Ported from searchAddTxnSymbol — options query -> Fyers; else the global
+// wmsRefData cache (equity + F&O). LIVE universe: F&O rows must be active +
+// non-expired (an expired contract can never be traded). Equity always passes.
+async function autoManualSearchSym(rowId, query) {
+    var dd = document.getElementById('atmSymDd_' + rowId);
+    var parsed = (typeof wmsParseOptionsQuery === 'function') ? wmsParseOptionsQuery(query) : null;
+    if (parsed) { await autoManualSearchOptions(rowId, parsed, dd); return; }
     try {
-        var r = await fetch(_auManualSymUrl(q), { headers: wmsHeaders() });
-        var items = r.ok ? await r.json() : [];
-        if (!Array.isArray(items)) items = [];
-        setItems(items);
-        if (items.length === 0) {
-            symDd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">No active contract — type the full Fyers symbol</div>';
-        } else {
-            symDd.innerHTML = items.map(function (it, i) {
-                return '<div class="wms-dd-item" data-idx="' + i + '"><span style="font-family:monospace">' + autoEsc(it.symbol) + '</span>' +
-                    '<span style="color:#6b7280;font-size:11px;margin-left:8px">' + autoEsc(it.instrument_name || it.underlying_symbol || '') + ' · exp ' + autoEsc(it.expiry_date || '') + '</span></div>';
-            }).join('');
+        if (!wmsRefData.securitiesCmReady || !wmsRefData.securitiesNfoReady) {
+            dd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">Loading securities…</div>';
+            dd.classList.add('show');
+            if (!wmsRefData.securitiesCmReady) await wmsLoadSecuritiesCm(0, { all: true });
+            if (!wmsRefData.securitiesNfoReady) await wmsLoadSecuritiesNfo();
         }
-        symDd.classList.add('show');   // no inline display (LESSONS: inline display beats .show)
-    } catch (e) { /* leave as-is */ }
-}
-
-// Confirm the contract is active + non-expired and get its lot_size/exchange.
-async function autoManualLookupContract(symbol) {
-    try {
         var today = new Date().toISOString().slice(0, 10);
-        var url = SUPABASE_URL + '/rest/v1/securities_nfo?symbol=eq.' + encodeURIComponent(symbol) +
-            '&is_active=eq.true&expiry_date=gte.' + today + '&select=lot_size,exchange&limit=1';
-        var r = await fetch(url, { headers: wmsHeaders() });
-        var rows = r.ok ? await r.json() : [];
-        return (Array.isArray(rows) && rows[0]) ? rows[0] : null;
-    } catch (e) { return null; }
+        var cached = wmsSearchSecurities(query) || [];
+        var items = [];
+        cached.forEach(function (sec) {
+            if (sec._isNfo) {
+                // LIVE universe filter
+                if (sec.is_active === false) return;
+                if (sec.expiry_date && sec.expiry_date < today) return;
+                var isOpt = sec.symbol && (sec.symbol.match(/(CE|PE)$/) !== null);
+                items.push({
+                    security_id: sec.id, symbol: sec.symbol, short_symbol: sec.underlying_symbol || sec.symbol,
+                    company_name: sec.instrument_name || sec.symbol, security_type: 'NFO',
+                    asset_class: isOpt ? 'OPTIONS' : 'FUTURES', exchange: sec.exchange || 'NSE',
+                    lot_size: sec.lot_size || 1, broker_tokens: sec.broker_tokens,
+                    _label: sec.symbol, _sub: (sec.instrument_name || sec.underlying_symbol || '') + (sec.expiry_date ? ' · exp ' + sec.expiry_date : ''), _isNfo: true
+                });
+            } else {
+                items.push({
+                    security_id: sec.id, symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
+                    short_symbol: sec.nse_symbol || sec.bse_symbol || sec.symbol,
+                    company_name: sec.company_name || sec.symbol, security_type: sec.security_type || 'EQUITY',
+                    asset_class: sec.asset_class || null, exchange: sec.nse_symbol ? 'NSE' : 'BSE',
+                    lot_size: sec.lot_size || 1, broker_tokens: sec.broker_tokens,
+                    _label: sec.nse_symbol || sec.bse_symbol || sec.symbol, _sub: sec.company_name || '', _isNfo: false
+                });
+            }
+        });
+        _atmSymItems[rowId] = items;
+        dd.innerHTML = items.length ? items.map(function (it, i) {
+            return '<div class="wms-dd-item' + (it._isNfo ? ' nfo' : '') + '" data-idx="' + i + '"><span style="font-family:monospace">' + autoEsc(it._label) + '</span>' +
+                (it._sub ? '<span style="color:#6b7280;font-size:11px;margin-left:8px">' + autoEsc(it._sub) + '</span>' : '') + '</div>';
+        }).join('') : '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">No matches</div>';
+        dd.classList.add('show');
+        _atmSymCtrls[rowId].resetIdx();
+    } catch (e) { console.error('[manual] symbol search', e); }
 }
 
-async function autoManualReview() {
-    var rows = document.querySelectorAll('#au-m-legs .au-ml-row');
-    if (!rows.length) { autoManualStatus('Add at least one leg.', true); return; }
-    autoManualStatus('Checking contracts…', false);
+// Options via Fyers quotes (ported from atSearchOptions).
+async function autoManualSearchOptions(rowId, parsed, dd) {
+    if (!window.fyersToken) {
+        dd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">Fyers not connected — options search needs a live Fyers connection.</div>';
+        dd.classList.add('show'); return;
+    }
+    dd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">Searching options…</div>';
+    dd.classList.add('show');
+    var candidates = wmsBuildOptionsCandidates(parsed.underlying, parsed.strike, parsed.optionType, parsed.expiryHint) || [];
+    if (!candidates.length) { dd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">Could not build option symbols</div>'; return; }
+    try {
+        var data = await window.fyersCall({ action: 'quotes', symbols: candidates });
+        var results = [];
+        if (data && data.d) data.d.forEach(function (item) { if (item.v && item.v.lp > 0) results.push({ symbol: item.v.symbol, lp: item.v.lp, chp: item.v.chp || 0 }); });
+        if (!results.length) { dd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">No active options found</div>'; return; }
+        var items = [];
+        dd.innerHTML = results.map(function (r, i) {
+            var lbl = wmsFormatOptionsDisplay(r.symbol, parsed.underlying, parsed.strike, parsed.optionType);
+            items.push({ _fyersSymbol: r.symbol, _displayLabel: lbl, _parsed: parsed });
+            return '<div class="wms-dd-item nfo" data-idx="' + i + '"><span style="font-family:monospace">' + autoEsc(lbl) + '</span>' +
+                ' <span style="color:#6b7280">₹' + r.lp.toFixed(2) + '</span> <span style="color:' + (r.chp >= 0 ? '#059669' : '#dc2626') + '">' + (r.chp >= 0 ? '+' : '') + r.chp.toFixed(2) + '%</span></div>';
+        }).join('');
+        _atmSymItems[rowId] = items;
+        _atmSymCtrls[rowId].show(); _atmSymCtrls[rowId].resetIdx();
+    } catch (err) { dd.innerHTML = '<div class="wms-dd-item" style="color:#dc2626;cursor:default">Options search failed: ' + autoEsc(err.message || String(err)) + '</div>'; }
+}
+
+function autoManualPickSym(rowId, itemEl) {
+    var idx = parseInt(itemEl.dataset.idx);
+    var it = _atmSymItems[rowId] && _atmSymItems[rowId][idx];
+    if (!it) return;
+    if (it._fyersSymbol) autoManualSelectOptionsContract(rowId, it._fyersSymbol, it._parsed, it._displayLabel);
+    else autoManualSelectSecurity(rowId, it);
+}
+
+// Ported from atSelectOptionsContract — resolve/auto-create the NFO contract so
+// booking has a row to reference, then select it.
+async function autoManualSelectOptionsContract(rowId, fyersSymbol, parsed, displayLabel) {
+    var row = autoManualRow(rowId); if (!row) return;
+    var headers = wmsHeaders();
+    var bareSym = fyersSymbol.split(':')[1] || fyersSymbol;
+    var nfoCheck = SUPABASE_URL + '/rest/v1/securities_nfo?symbol=eq.' + encodeURIComponent(bareSym) +
+        '&select=id,symbol,underlying_symbol,exchange,instrument_type,lot_size,broker_tokens,expiry_date&limit=1';
+    var nfoResp = await fetch(nfoCheck, { headers: headers }).then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; });
+    var lotSize = 1, secId = null, brokerTokens = {};
+    if (nfoResp.length > 0) { lotSize = nfoResp[0].lot_size || 1; secId = nfoResp[0].id; brokerTokens = nfoResp[0].broker_tokens || {}; }
+    else {
+        var lotResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?underlying_symbol=eq.' + encodeURIComponent(parsed.underlying) + '&select=lot_size&limit=1', { headers: headers }).then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; });
+        if (lotResp.length > 0) lotSize = lotResp[0].lot_size || 1;
+        var MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+        var expiryDate = null, m = bareSym.match(/(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)/);
+        if (m) expiryDate = (2000 + parseInt(m[1])) + '-' + String(MONTHS.indexOf(m[2]) + 1).padStart(2, '0') + '-28';
+        var nfoRecord = {
+            symbol: bareSym, instrument_name: displayLabel || (parsed.underlying + ' ' + (parsed.strike ? parsed.strike + ' ' + parsed.optionType : 'FUT')),
+            exchange: fyersSymbol.split(':')[0] || 'NSE', instrument_type: parsed.optionType ? 'OPTIONS' : 'FUTURES',
+            underlying_symbol: parsed.underlying, expiry_date: expiryDate, strike_price: parsed.strike || null,
+            option_type: parsed.optionType || null, lot_size: lotSize, is_active: true, broker_tokens: {}
+        };
+        try {
+            var createResp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo', {
+                method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }), body: JSON.stringify(nfoRecord)
+            });
+            if (createResp.ok) {
+                var created = await createResp.json();
+                if (created && created.length > 0) {
+                    secId = created[0].id;
+                    if (secId && fyersSymbol && typeof wmsUpdateNfoBrokerToken === 'function') wmsUpdateNfoBrokerToken(secId, fyersSymbol);
+                    if (typeof wmsLoadSecuritiesNfo === 'function') wmsLoadSecuritiesNfo();
+                }
+            } else {
+                var errBody = await createResp.json().catch(function () { return {}; });
+                showAlert('Could not register NFO security: ' + (errBody.message || 'DB error'), 'error', 5000); return;
+            }
+        } catch (createErr) { showAlert('Could not register NFO security: ' + createErr.message, 'error', 5000); return; }
+    }
+    autoManualSelectSecurity(rowId, {
+        security_id: secId, symbol: fyersSymbol, short_symbol: parsed.underlying,
+        company_name: displayLabel || (parsed.underlying + ' Option'), security_type: 'NFO',
+        asset_class: parsed.optionType ? 'OPTIONS' : 'FUTURES', exchange: fyersSymbol.split(':')[0] || 'NSE',
+        lot_size: lotSize, broker_tokens: brokerTokens
+    });
+}
+
+function autoManualSelectSecurity(rowId, sec) {
+    var row = autoManualRow(rowId); if (!row) return;
+    row.security_id = sec.security_id; row.symbol = sec.symbol; row.short_symbol = sec.short_symbol;
+    row.company_name = sec.company_name; row.security_type = sec.security_type; row.asset_class = sec.asset_class;
+    row.exchange = sec.exchange; row.lot_size = sec.lot_size || 1; row.broker_tokens = sec.broker_tokens || null;
+
+    var symInput = document.querySelector('.atm-sym[data-rid="' + rowId + '"]');
+    if (symInput) symInput.value = autoManualFyersSymbol(row);
+    var lotsInput = document.querySelector('.atm-lots[data-rid="' + rowId + '"]');
+    var qtyInput = document.querySelector('.atm-qty[data-rid="' + rowId + '"]');
+    if (row.lot_size > 1) { lotsInput.disabled = false; if (qtyInput) qtyInput.readOnly = true; }
+    else { lotsInput.disabled = true; lotsInput.value = ''; row.lots = 0; if (qtyInput) qtyInput.readOnly = false; }
+
+    autoManualFetchLivePrice(rowId);
+    autoManualShowBalance(rowId);
+    setTimeout(function () { if (row.lot_size > 1) lotsInput.focus(); else if (qtyInput) qtyInput.focus(); }, 50);
+}
+
+// Exchange-qualified Fyers symbol for BOTH the live price fetch and the order
+// intent. NFO symbols may already carry a prefix; equity needs NSE:<sym>-EQ.
+function autoManualFyersSymbol(row) {
+    if (!row) return '';
+    if (row.security_type === 'EQUITY') {
+        var ft = row.broker_tokens && (row.broker_tokens.fyers || row.broker_tokens.fyers_nse);
+        if (ft && String(ft).indexOf(':') >= 0) return String(ft);
+        var ex = row.exchange === 'BSE' ? 'BSE' : 'NSE';
+        return ex + ':' + (row.short_symbol || row.symbol) + '-EQ';
+    }
+    if (row.symbol && row.symbol.indexOf(':') >= 0) return row.symbol;
+    return (row.exchange || 'NSE') + ':' + row.symbol;
+}
+
+// Live price on select -> fills the price field (per §2b). Uses the Fyers quotes
+// action (NOT endpoint — see CONTEXT.md app.html note).
+async function autoManualFetchLivePrice(rowId) {
+    var row = autoManualRow(rowId); if (!row) return;
+    var fy = autoManualFyersSymbol(row); if (!fy) return;
+    var priceInput = document.querySelector('.atm-price[data-rid="' + rowId + '"]');
+    try {
+        var data = await window.fyersCall({ action: 'quotes', symbols: [fy] });
+        var lp = 0;
+        if (data && data.d && data.d[0] && data.d[0].v && data.d[0].v.lp > 0) lp = data.d[0].v.lp;
+        if (lp > 0) { row.price = lp; if (priceInput) { priceInput.dataset.rawValue = lp; priceInput.value = atmFmtPrice(lp); } }
+    } catch (e) { /* leave price blank; user can type */ }
+}
+
+function autoManualRecalc(rowId) {
+    var row = autoManualRow(rowId); if (!row) return;
+    autoManualShowBalance(rowId);
+}
+
+// Balance qty label (ported from atShowBalanceQtyTooltip, simplified to the
+// trader+symbol holding). Read-only informational — no bearing on the order.
+function autoManualShowBalance(rowId) {
+    var row = autoManualRow(rowId); if (!row || !row.security_id) return;
+    var bal = document.getElementById('atmBal_' + rowId); if (!bal) return;
+    try {
+        var txns = (typeof trTransactions !== 'undefined') ? trTransactions : [];
+        if (!txns.length) { bal.textContent = ''; return; }
+        var traderId = row.trader_id || null;
+        var sym = (row.symbol || '').replace(/^[A-Z]+:/, '');
+        var filtered = txns.filter(function (t) {
+            return (t.symbol || '').replace(/^[A-Z]+:/, '') === sym && !t.dont_display &&
+                (!traderId || (t.trader_id || t.investor_id) === traderId);
+        });
+        if (!filtered.length) { bal.textContent = ''; return; }
+        var calc = wmsCalcAvgCost(filtered);
+        bal.textContent = calc.netQuantity ? ('Bal: ' + formatQuantity(calc.netQuantity)) : '';
+    } catch (e) { bal.textContent = ''; }
+}
+
+// ---- Bracket SL toggle + panel (§2c: opposite side, same qty, immediate) ----
+function autoManualToggleSl(rowId) {
+    var row = autoManualRow(rowId); if (!row) return;
+    var panel = document.getElementById('atmSlPanel_' + rowId);
+    var toggle = document.querySelector('.atm-sl-toggle[data-rid="' + rowId + '"]');
+    row.sl.on = !row.sl.on;
+    if (row.sl.on) {
+        panel.style.display = '';
+        toggle.textContent = '− SL';
+        panel.innerHTML =
+            '<div style="font-size:10px;color:#9a3412;text-transform:uppercase;margin-bottom:4px">Bracket stop-loss (opposite side, same qty)</div>' +
+            '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-sl-trigger" data-rid="' + rowId + '" placeholder="Trigger" style="width:80px">' +
+                '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-sl-limit" data-rid="' + rowId + '" placeholder="Limit" style="width:80px;display:none">' +
+                '<div class="atm-radios" style="margin-top:0">' +
+                    '<label><input type="radio" name="atmSlOt_' + rowId + '" class="atm-sl-ot" data-rid="' + rowId + '" value="SL-MARKET" checked>Mkt</label>' +
+                    '<label><input type="radio" name="atmSlOt_' + rowId + '" class="atm-sl-ot" data-rid="' + rowId + '" value="SL-LIMIT">Lmt</label>' +
+                '</div>' +
+            '</div>';
+        var trig = panel.querySelector('.atm-sl-trigger'), lim = panel.querySelector('.atm-sl-limit');
+        trig.addEventListener('blur', function () { var v = atmEvalNum(trig.value); row.sl.stopPrice = isNaN(v) ? 0 : v; trig.value = row.sl.stopPrice ? atmFmtPrice(row.sl.stopPrice) : ''; });
+        trig.addEventListener('input', function () { var v = atmEvalNum(trig.value); if (!isNaN(v)) row.sl.stopPrice = v; });
+        lim.addEventListener('blur', function () { var v = atmEvalNum(lim.value); row.sl.limitPrice = isNaN(v) ? 0 : v; lim.value = row.sl.limitPrice ? atmFmtPrice(row.sl.limitPrice) : ''; });
+        lim.addEventListener('input', function () { var v = atmEvalNum(lim.value); if (!isNaN(v)) row.sl.limitPrice = v; });
+        panel.querySelectorAll('.atm-sl-ot[data-rid="' + rowId + '"]').forEach(function (rb) {
+            rb.addEventListener('change', function () { if (!rb.checked) return; row.sl.orderType = rb.value; lim.style.display = (rb.value === 'SL-LIMIT') ? '' : 'none'; });
+        });
+    } else {
+        panel.style.display = 'none'; panel.innerHTML = ''; toggle.textContent = '＋ SL';
+        row.sl = { on: false, orderType: 'SL-MARKET', stopPrice: 0, limitPrice: 0 };
+    }
+}
+
+// ---- Review -> Confirm dialog ----------------------------------------------
+function autoManualReview() {
+    if (!_atmRows.length) { autoManualStatus('Add at least one order.', true); return; }
     var legs = [];
-    for (var idx = 0; idx < rows.length; idx++) {
-        var row = rows[idx], n = idx + 1;
-        var symIn = row.querySelector('.au-ml-sym');
-        var qv = function (sel) { var e = row.querySelector(sel); return e ? String(e.value).trim() : ''; };
-        var symbol = (symIn ? symIn.value.trim().toUpperCase() : '');
-        var lots = Number(qv('.au-ml-lots')), ot = qv('.au-ml-otype'), product = qv('.au-ml-product');
-        var limit = Number(qv('.au-ml-limit')), stop = Number(qv('.au-ml-stop'));
-        if (!/^[A-Z]+:[A-Z0-9]+$/.test(symbol)) { autoManualStatus('Leg ' + n + ': pick an exchange-qualified symbol from the search.', true); return; }
-        if (!Number.isFinite(lots) || lots === 0 || Math.floor(lots) !== lots) { autoManualStatus('Leg ' + n + ': lots must be a non-zero integer (+ buy / − sell).', true); return; }
-        var needLimit = (ot === 'LIMIT' || ot === 'SL-LIMIT'), needStop = (ot === 'SL-MARKET' || ot === 'SL-LIMIT');
-        if (needLimit && !(limit > 0)) { autoManualStatus('Leg ' + n + ': ' + ot + ' needs a limit price.', true); return; }
-        if (needStop && !(stop > 0)) { autoManualStatus('Leg ' + n + ': ' + ot + ' needs a trigger price.', true); return; }
-        var lotSize = Number(symIn && symIn.dataset.lotsize), exch = symIn && symIn.dataset.exchange;
-        if (!lotSize || !exch) {
-            var look = await autoManualLookupContract(symbol);
-            if (!look) { autoManualStatus('Leg ' + n + ': "' + symbol + '" is not an active, non-expired contract. Pick from the search.', true); return; }
-            lotSize = look.lot_size; exch = look.exchange;
+    for (var i = 0; i < _atmRows.length; i++) {
+        var row = _atmRows[i], n = i + 1;
+        var fy = autoManualFyersSymbol(row);
+        if (!row.security_id || !/^[A-Z]+:[A-Z0-9]+(-[A-Z0-9]+)?$/.test(fy)) { autoManualStatus('Order ' + n + ': pick a symbol from the search.', true); return; }
+        // Order qty convention (§A.11.5 — the single biggest correctness trap):
+        // MCX qty = LOTS (Fyers reports/accepts MCX in lots); NSE F&O + equity
+        // qty = UNITS (lots × lot_size). The fill-writer books on this same basis,
+        // so the two must agree. row.quantity holds units; row.lots holds lots.
+        // Key off the EXACT symbol we send the broker (not row.exchange), so the
+        // qty convention can never desync from the symbol prefix.
+        var isMcx = (fy.split(':')[0] === 'MCX');
+        var orderQty = isMcx ? row.lots : row.quantity;
+        var unitName = isMcx ? 'lots' : 'qty';
+        if (!Number.isFinite(orderQty) || orderQty === 0 || Math.floor(orderQty) !== orderQty) { autoManualStatus('Order ' + n + ': ' + unitName + ' must be a non-zero integer (+ buy / − sell).', true); return; }
+        var side = orderQty > 0 ? 'BUY' : 'SELL', absQty = Math.abs(orderQty);
+        var ot = row.orderType;
+        if (ot === 'LIMIT' && !(row.price > 0)) { autoManualStatus('Order ' + n + ': LIMIT needs a positive price.', true); return; }
+        var intent = { symbol: fy, side: side, qty: absQty, orderType: ot };
+        if (ot === 'LIMIT') intent.limitPrice = row.price;
+        // Bracket SL
+        if (row.sl && row.sl.on) {
+            if (!(row.sl.stopPrice > 0)) { autoManualStatus('Order ' + n + ': SL needs a positive trigger.', true); return; }
+            if (row.sl.orderType === 'SL-LIMIT' && !(row.sl.limitPrice > 0)) { autoManualStatus('Order ' + n + ': SL-Limit needs a positive limit.', true); return; }
+            intent.sl = { orderType: row.sl.orderType, stopPrice: row.sl.stopPrice };
+            if (row.sl.orderType === 'SL-LIMIT') intent.sl.limitPrice = row.sl.limitPrice;
         }
-        var side = lots > 0 ? 'BUY' : 'SELL', absLots = Math.abs(lots);
-        var qty = (exch === 'MCX') ? absLots : absLots * lotSize;   // MCX qty = lots; NSE qty = lots × lot_size (A.11.5)
-        var intent = { symbol: symbol, side: side, qty: qty, orderType: ot, productType: product };
-        if (needLimit) intent.limitPrice = limit;
-        if (needStop) intent.stopPrice = stop;
-        var ridv = row.dataset.rid;
-        var legTags = (_auManualLegTagCtrls[ridv] && typeof _auManualLegTagCtrls[ridv].getTags === 'function') ? _auManualLegTagCtrls[ridv].getTags() : [];
-        if (legTags && legTags.length) intent.tags = legTags;
-        var traderSel = row.querySelector('.au-ml-trader');
-        var traderVal = traderSel ? (traderSel.value || '') : '';
-        var traderName = (traderVal && traderSel && traderSel.selectedOptions && traderSel.selectedOptions[0]) ? traderSel.selectedOptions[0].text : '';
-        if (traderVal) intent.trader_id = traderVal;
-        var priceStr = (needStop && needLimit) ? ('trig ' + stop + '/lim ' + limit) : needStop ? ('trig ' + stop) : needLimit ? ('@ ' + limit) : '@ mkt';
-        var extra = (legTags && legTags.length ? '  tags:' + legTags.join('/') : '') + (traderName ? '  trader:' + traderName : '');
-        var label = side + ' ' + absLots + ' lot' + (absLots > 1 ? 's' : '') + ' = ' + qty + 'u  ' + symbol + '  [' + ot + ',' + product + ']  ' + priceStr + extra;
+        // Tags + trader
+        var tags = (_atmTagCtrls[row.rowId] && typeof _atmTagCtrls[row.rowId].getTags === 'function') ? _atmTagCtrls[row.rowId].getTags() : (row.tags || []);
+        if (tags && tags.length) intent.tags = tags;
+        if (row.trader_id) intent.trader_id = row.trader_id;
+        var traderSel = document.querySelector('.atm-trader[data-rid="' + row.rowId + '"]');
+        var traderName = (row.trader_id && traderSel && traderSel.selectedOptions[0]) ? traderSel.selectedOptions[0].text : '';
+        var priceStr = (ot === 'LIMIT') ? ('@ ' + row.price) : '@ market';
+        var slStr = (row.sl && row.sl.on) ? ('  + SL ' + row.sl.orderType + ' trig ' + row.sl.stopPrice + (row.sl.orderType === 'SL-LIMIT' ? '/lim ' + row.sl.limitPrice : '')) : '';
+        var extra = (tags && tags.length ? '  tags:' + tags.join('/') : '') + (traderName ? '  trader:' + traderName : '');
+        var label = side + ' ' + absQty + (isMcx ? ' lot' + (absQty > 1 ? 's' : '') : 'u') + '  ' + fy + '  [' + ot + ']  ' + priceStr + slStr + extra;
         legs.push({ label: label, intent: intent });
     }
     _auManualLegsToPlace = legs;
     var el = document.getElementById('au-manual-status');
     el.innerHTML =
         '<div style="border:2px solid #f59e0b;border-radius:10px;padding:16px;background:#fffbeb">' +
-        '<div style="font-size:13px;color:#92400e;margin-bottom:8px">Confirm ' + legs.length + ' <b>LIVE</b> leg(s) — each is placed as a separate Fyers order:</div>' +
+        '<div style="font-size:13px;color:#92400e;margin-bottom:8px">Confirm ' + legs.length + ' <b>LIVE</b> order(s) — each is a separate Fyers order (an SL is placed with, and linked to, its entry):</div>' +
         legs.map(function (l) { return '<div style="font-family:monospace;font-size:13px;font-weight:600;margin:3px 0">' + autoEsc(l.label) + '</div>'; }).join('') +
-        '<div style="margin-top:14px"><button class="au-btn au-btn-primary" style="background:#dc2626;border-color:#dc2626" onclick="autoManualPlaceAll()">Confirm &amp; Place ' + legs.length + ' leg(s)</button> ' +
-        '<button class="au-btn au-btn-secondary" onclick="autoManualStatus(\'\',false)">Cancel</button></div>' +
+        '<div style="margin-top:14px"><button class="wms-btn wms-btn-primary" style="background:#dc2626" onclick="autoManualPlaceAll()">Confirm &amp; Place ' + legs.length + ' order(s)</button> ' +
+        '<button class="wms-btn wms-btn-secondary" onclick="autoManualStatus(\'\',false)">Cancel</button></div>' +
         '</div>';
 }
 
@@ -357,7 +665,7 @@ async function autoManualPlaceAll() {
     var legs = _auManualLegsToPlace;
     if (!legs || !legs.length) return;
     if (!_auManualPw) { autoManualLock(); return; }
-    autoManualStatus('Placing ' + legs.length + ' leg(s)…', false);
+    autoManualStatus('Placing ' + legs.length + ' order(s)…', false);
     var results = [];
     for (var k = 0; k < legs.length; k++) {
         try {
@@ -367,24 +675,43 @@ async function autoManualPlaceAll() {
             });
             var j = await resp.json().catch(function () { return {}; });
             if (resp.status === 401) { _auManualPw = null; autoManualRenderGate((j.error || 'Unauthorized') + ' — re-enter password.'); return; }
-            results.push({ label: legs[k].label, ok: !!(resp.ok && j.ok), command_id: j.command_id || null, error: (resp.ok && j.ok) ? null : (j.error || ('HTTP ' + resp.status)) });
+            results.push({ label: legs[k].label, ok: !!(resp.ok && j.ok), command_id: j.command_id || null, sl_command_id: j.sl_command_id || null, error: (resp.ok && j.ok) ? null : (j.error || ('HTTP ' + resp.status)) });
         } catch (e) {
-            results.push({ label: legs[k].label, ok: false, command_id: null, error: (e && e.message ? e.message : String(e)) });
+            results.push({ label: legs[k].label, ok: false, command_id: null, sl_command_id: null, error: (e && e.message ? e.message : String(e)) });
         }
     }
     _auManualLegsToPlace = null;
-    var ids = results.filter(function (r) { return r.command_id; }).map(function (r) { return r.command_id; });
+    var ids = [];
+    results.forEach(function (r) { if (r.command_id) ids.push(r.command_id); if (r.sl_command_id) ids.push(r.sl_command_id); });
     var el = document.getElementById('au-manual-status');
     if (el) {
         el.innerHTML = '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px;background:#fff">' +
-            '<div style="font-weight:600;margin-bottom:8px">Placed ' + ids.length + '/' + results.length + ' leg(s)</div>' +
+            '<div style="font-weight:600;margin-bottom:8px">Placed ' + results.filter(function (r) { return r.ok; }).length + '/' + results.length + ' order(s)</div>' +
             results.map(function (r) {
+                var slNote = r.sl_command_id ? '  (+SL ' + r.sl_command_id + ' <button class="wms-btn wms-btn-secondary" style="font-size:10px;padding:1px 6px" onclick="autoManualCancelSl(\'' + r.sl_command_id + '\',this)">Cancel SL</button>)' : '';
                 return '<div style="font-family:monospace;font-size:12px;margin:2px 0;color:' + (r.ok ? '#166534' : '#991b1b') + '">' +
-                    (r.ok ? '✅' : '✗') + ' ' + autoEsc(r.label) + (r.ok ? '  → cmd ' + r.command_id : '  → ' + autoEsc(r.error || '')) + '</div>';
+                    (r.ok ? '✅' : '✗') + ' ' + autoEsc(r.label) + (r.ok ? '  → cmd ' + r.command_id + slNote : '  → ' + autoEsc(r.error || '')) + '</div>';
             }).join('') +
             '<div id="au-m-track" style="margin-top:10px;font-size:12px;color:#374151"></div></div>';
     }
     if (ids.length) autoManualTrackMany(ids);
+}
+
+// Cancel a working bracket SL — via the EF (never a direct queue write). The EF
+// enqueues a KH-style cancel; the Droplet cancels at Fyers and cmd-complete flips
+// the SL row to CANCELLED.
+async function autoManualCancelSl(slCommandId, btn) {
+    if (!_auManualPw) { autoManualLock(); return; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
+    try {
+        var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
+            method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ action: 'cancel_sl', sl_command_id: slCommandId, password: _auManualPw, confirm: true })
+        });
+        var j = await resp.json().catch(function () { return {}; });
+        if (resp.status === 401) { _auManualPw = null; autoManualRenderGate((j.error || 'Unauthorized') + ' — re-enter password.'); return; }
+        if (btn) { btn.textContent = (resp.ok && j.ok) ? 'SL cancel queued' : ('Cancel failed: ' + (j.error || resp.status)); }
+    } catch (e) { if (btn) { btn.disabled = false; btn.textContent = 'Cancel SL'; } }
 }
 
 function autoManualTrackMany(ids) {
@@ -394,43 +721,21 @@ function autoManualTrackMany(ids) {
         tries++;
         try {
             var r = await fetch(SUPABASE_URL + '/rest/v1/wms_live_commands?id=in.(' + ids.map(encodeURIComponent).join(',') +
-                ')&select=id,status,broker_status,broker_order_id,filled_qty,avg_fill_price,error_message', { headers: wmsHeaders() });
+                ')&select=id,status,broker_status,broker_order_id,filled_qty,avg_fill_price,error_message,payload', { headers: wmsHeaders() });
             var rowsx = r.ok ? await r.json() : [];
             var box = document.getElementById('au-m-track');
             if (box && Array.isArray(rowsx)) {
                 box.innerHTML = rowsx.map(function (c) {
-                    return '<div style="font-family:monospace">' + autoEsc(c.broker_status || c.status || '—') +
+                    var role = (c.payload && c.payload._manual_meta && c.payload._manual_meta.leg_role) ? c.payload._manual_meta.leg_role : '';
+                    return '<div style="font-family:monospace">' + (role ? '[' + role + '] ' : '') + autoEsc(c.broker_status || c.status || '—') +
                         (c.broker_order_id ? ' · ' + c.broker_order_id : '') +
                         (c.filled_qty ? ' · filled ' + c.filled_qty + ' @ ' + c.avg_fill_price : '') +
                         (c.error_message ? ' · ' + autoEsc(c.error_message) : '') + '</div>';
                 }).join('');
-                var done = rowsx.length === ids.length && rowsx.every(function (c) {
+                var done = rowsx.length >= ids.length && rowsx.every(function (c) {
                     return ['FILLED', 'CANCELLED', 'REJECTED', 'EXPIRED'].indexOf(c.broker_status) >= 0 || ['rejected', 'error', 'cancelled'].indexOf(c.status) >= 0;
                 });
                 if (done) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
-            }
-        } catch (e) { /* keep polling */ }
-        if (tries > 40) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
-    }, 3000);
-}
-
-function autoManualTrack(cmdId) {
-    if (_auManualPollTimer) clearInterval(_auManualPollTimer);
-    var tries = 0;
-    _auManualPollTimer = setInterval(async function () {
-        tries++;
-        try {
-            var r = await fetch(SUPABASE_URL + '/rest/v1/wms_live_commands?id=eq.' + encodeURIComponent(cmdId) + '&select=status,broker_status,broker_order_id,filled_qty,avg_fill_price,error_message', { headers: wmsHeaders() });
-            var rows = await r.json();
-            var c = Array.isArray(rows) && rows[0] ? rows[0] : null;
-            if (c) {
-                var line = 'status ' + (c.status || '—') + ' · broker ' + (c.broker_status || '—') +
-                    (c.broker_order_id ? ' · order ' + c.broker_order_id : '') +
-                    (c.filled_qty ? ' · filled ' + c.filled_qty + ' @ ' + c.avg_fill_price : '') +
-                    (c.error_message ? ' · ' + c.error_message : '');
-                var terminal = ['FILLED', 'CANCELLED', 'REJECTED', 'EXPIRED'].indexOf(c.broker_status) >= 0 || ['rejected', 'error', 'cancelled'].indexOf(c.status) >= 0;
-                autoManualStatus('Command ' + cmdId + ' — ' + line, false);
-                if (terminal) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
             }
         } catch (e) { /* keep polling */ }
         if (tries > 40) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
