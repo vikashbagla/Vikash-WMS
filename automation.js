@@ -604,28 +604,56 @@ async function autoManualFetchLivePrice(rowId) {
 }
 
 function autoManualRecalc(rowId) {
-    var row = autoManualRow(rowId); if (!row) return;
-    autoManualShowBalance(rowId);
+    // Lots<->qty is handled inline in the input handlers; holdings + tags are
+    // network-loaded on symbol/trader select (not per keystroke), so nothing to
+    // do here. Kept as a stable hook the handlers call.
 }
 
-// Balance qty label (ported from atShowBalanceQtyTooltip, simplified to the
-// trader+symbol holding). Read-only informational — no bearing on the order.
-function autoManualShowBalance(rowId) {
+function autoManualVeinsId() {
+    var v = (_auManualTraders || []).find(function (t) { return (t.short_name || '').toLowerCase() === 'veins'; });
+    return v ? v.id : null;
+}
+
+// On symbol/trader select, load (a) the current Veins holding for this
+// (trader, symbol) as a balance label under Qty, and (b) the tags used on past
+// trades of it, auto-populated + editable — mirroring the Add Transaction row.
+// Reads the BOOKING book (`transactions`, where manual + KH + nightly fills
+// land), NOT `trTransactions` (which isn't loaded on the automation page).
+// Async, best-effort — never blocks or affects the order.
+async function autoManualShowBalance(rowId) {
     var row = autoManualRow(rowId); if (!row || !row.security_id) return;
-    var bal = document.getElementById('atmBal_' + rowId); if (!bal) return;
+    var bal = document.getElementById('atmBal_' + rowId);
+    var veinsId = autoManualVeinsId();
+    if (!veinsId) { if (bal) bal.textContent = ''; return; }
+    var traderId = row.trader_id || veinsId;
+    var bareSym = (row.symbol || '').replace(/^[A-Z]+:/, '');
+    if (!bareSym) { if (bal) bal.textContent = ''; return; }
     try {
-        var txns = (typeof trTransactions !== 'undefined') ? trTransactions : [];
-        if (!txns.length) { bal.textContent = ''; return; }
-        var traderId = row.trader_id || null;
-        var sym = (row.symbol || '').replace(/^[A-Z]+:/, '');
-        var filtered = txns.filter(function (t) {
-            return (t.symbol || '').replace(/^[A-Z]+:/, '') === sym && !t.dont_display &&
-                (!traderId || (t.trader_id || t.investor_id) === traderId);
-        });
-        if (!filtered.length) { bal.textContent = ''; return; }
-        var calc = wmsCalcAvgCost(filtered);
-        bal.textContent = calc.netQuantity ? ('Bal: ' + formatQuantity(calc.netQuantity)) : '';
-    } catch (e) { bal.textContent = ''; }
+        var url = SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + encodeURIComponent(veinsId) +
+            '&symbol=eq.' + encodeURIComponent(bareSym) +
+            '&select=quantity,transaction_type,trader_id,investor_id,symbol,security_type,exchange,dont_display,ignore_for_avg_cost,tags&limit=1000';
+        var r = await fetch(url, { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        if (!Array.isArray(rows)) rows = [];
+        // (a) balance for this trader (or Veins) + symbol
+        if (bal) {
+            var forTrader = rows.filter(function (t) { return !t.dont_display && (t.trader_id || t.investor_id) === traderId; });
+            if (forTrader.length && typeof wmsCalcAvgCost === 'function') {
+                var net = wmsCalcAvgCost(forTrader).netQuantity || 0;
+                var lotTxt = (row.lot_size > 1 && net) ? (' (' + Math.round(net / row.lot_size) + ' lot' + (Math.abs(Math.round(net / row.lot_size)) !== 1 ? 's' : '') + ')') : '';
+                bal.textContent = net ? ('Bal: ' + formatQuantity(net) + lotTxt) : '';
+            } else { bal.textContent = ''; }
+        }
+        // (b) auto-populate tags — only when the row has none yet (never clobber
+        // what the user typed or a copied row already carries)
+        if (row.tags.length === 0 && typeof wmsFindMatchingTags === 'function') {
+            var matched = wmsFindMatchingTags(rows, veinsId, traderId, bareSym) || [];
+            if (matched.length) {
+                matched.forEach(function (t) { if (row.tags.indexOf(t) < 0) row.tags.push(t); });
+                if (_atmTagCtrls[rowId] && typeof _atmTagCtrls[rowId].refresh === 'function') _atmTagCtrls[rowId].refresh();
+            }
+        }
+    } catch (e) { if (bal) bal.textContent = ''; }
 }
 
 // ---- Bracket SL toggle + panel (§2c: opposite side, same qty, immediate) ----
