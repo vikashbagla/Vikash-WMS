@@ -72,6 +72,180 @@ function autoSwitchFamily(fam) {
         autoEnsureSharedRefresh();
     }
 
+    if (fam === 'manual') {
+        autoManualInit();
+    }
+
+}
+
+// ============================================================================
+// ✋ Manual — owner-only Fyers order entry (GOP-C4, 2026-07-14).
+// POSTs to the wms-manual-order EF, which validates + enqueues ONE order and
+// requires the server-side manual-order password (2nd factor over the shared
+// Auto-Trading session). The Confirm dialog gates each order; the password is
+// held in memory for this tab only (once per session). NEVER writes to
+// wms_live_commands directly — that would bypass the vetted-writer rule A.1.9e-i.
+// ============================================================================
+
+var _auManualPw = null;            // in-memory only, this tab, this session
+var _auManualPollTimer = null;
+var _auManualPending = null;
+var _AU_M_INP = 'width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box';
+
+function autoManualInit() {
+    if (!document.getElementById('au-manual-root')) return;
+    if (_auManualPw) autoManualRenderForm(); else autoManualRenderGate();
+}
+
+function autoManualRenderGate(msg) {
+    var root = document.getElementById('au-manual-root');
+    if (!root) return;
+    root.innerHTML =
+        '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:20px;background:#fff">' +
+        '<h3 style="margin:0 0 6px">✋ Manual order — unlock</h3>' +
+        '<div style="font-size:13px;color:#6b7280;margin-bottom:12px">Enter the manual-order password. Held only in this browser tab for this session; sent with every order and verified server-side.</div>' +
+        (msg ? '<div style="color:#cf222e;font-size:13px;margin-bottom:10px">' + autoEsc(msg) + '</div>' : '') +
+        '<input id="au-manual-pw" type="password" autocomplete="off" placeholder="Manual-order password" style="width:100%;max-width:320px;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px" onkeydown="if(event.key===\'Enter\')autoManualUnlock()">' +
+        '<div style="margin-top:12px"><button class="au-btn au-btn-primary" onclick="autoManualUnlock()">Unlock</button></div>' +
+        '</div>';
+    var el = document.getElementById('au-manual-pw'); if (el) el.focus();
+}
+
+function autoManualUnlock() {
+    var el = document.getElementById('au-manual-pw');
+    var v = el ? el.value : '';
+    if (!v) { autoManualRenderGate('Password required.'); return; }
+    _auManualPw = v;
+    autoManualRenderForm();
+}
+
+function autoManualLock() {
+    _auManualPw = null;
+    if (_auManualPollTimer) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
+    autoManualRenderGate('Locked.');
+}
+
+function autoManualField(label, inner) {
+    return '<div style="flex:1;margin-bottom:12px"><label style="display:block;font-size:12px;color:#374151;margin-bottom:4px">' + label + '</label>' + inner + '</div>';
+}
+
+function autoManualRenderForm() {
+    var root = document.getElementById('au-manual-root');
+    if (!root) return;
+    root.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+          '<h3 style="margin:0">✋ Manual Fyers order <span style="font-size:12px;font-weight:400;color:#16a34a">● unlocked</span></h3>' +
+          '<button class="au-btn au-btn-secondary" style="font-size:12px" onclick="autoManualLock()">Lock</button>' +
+        '</div>' +
+        '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ These are <b>LIVE</b> orders on Veins/Fyers. There are no automated risk checks — the Confirm step is the only gate. Check every field.</div>' +
+        '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:18px;background:#fff">' +
+          autoManualField('Symbol (exchange-qualified)', '<input id="au-m-symbol" placeholder="e.g. MCX:GOLDM26AUGFUT" style="' + _AU_M_INP + '">') +
+          '<div style="display:flex;gap:12px">' +
+            autoManualField('Side', '<select id="au-m-side" style="' + _AU_M_INP + '"><option value="BUY">BUY</option><option value="SELL">SELL</option></select>') +
+            autoManualField('Qty', '<input id="au-m-qty" type="number" min="1" step="1" style="' + _AU_M_INP + '">') +
+          '</div>' +
+          '<div style="display:flex;gap:12px">' +
+            autoManualField('Order type', '<select id="au-m-otype" onchange="autoManualTogglePrices()" style="' + _AU_M_INP + '"><option>MARKET</option><option>LIMIT</option><option>SL-MARKET</option><option>SL-LIMIT</option></select>') +
+            autoManualField('Product', '<select id="au-m-product" style="' + _AU_M_INP + '"><option>MARGIN</option><option>INTRADAY</option><option>CNC</option></select>') +
+          '</div>' +
+          '<div style="display:flex;gap:12px">' +
+            '<div id="au-m-limit-wrap" style="flex:1;display:none">' + autoManualField('Limit price', '<input id="au-m-limit" type="number" step="0.05" style="' + _AU_M_INP + '">') + '</div>' +
+            '<div id="au-m-stop-wrap" style="flex:1;display:none">' + autoManualField('Trigger / stop price', '<input id="au-m-stop" type="number" step="0.05" style="' + _AU_M_INP + '">') + '</div>' +
+          '</div>' +
+          '<div style="margin-top:14px"><button class="au-btn au-btn-primary" onclick="autoManualReview()">Review order →</button></div>' +
+        '</div>' +
+        '<div id="au-manual-status" style="margin-top:16px"></div>';
+    autoManualTogglePrices();
+}
+
+function autoManualTogglePrices() {
+    var sel = document.getElementById('au-m-otype');
+    var ot = sel ? sel.value : 'MARKET';
+    var lw = document.getElementById('au-m-limit-wrap'); if (lw) lw.style.display = (ot === 'LIMIT' || ot === 'SL-LIMIT') ? 'block' : 'none';
+    var sw = document.getElementById('au-m-stop-wrap');  if (sw) sw.style.display = (ot === 'SL-MARKET' || ot === 'SL-LIMIT') ? 'block' : 'none';
+}
+
+function autoManualCollect() {
+    var g = function (id) { var e = document.getElementById(id); return e ? String(e.value).trim() : ''; };
+    var ot = g('au-m-otype');
+    var intent = { symbol: g('au-m-symbol').toUpperCase(), side: g('au-m-side'), qty: Number(g('au-m-qty')), orderType: ot, productType: g('au-m-product') };
+    if (ot === 'LIMIT' || ot === 'SL-LIMIT') intent.limitPrice = Number(g('au-m-limit'));
+    if (ot === 'SL-MARKET' || ot === 'SL-LIMIT') intent.stopPrice = Number(g('au-m-stop'));
+    return intent;
+}
+
+function autoManualReview() {
+    var i = autoManualCollect();
+    if (!/^[A-Z]+:[A-Z0-9]+$/.test(i.symbol)) { autoManualStatus('Symbol must be exchange-qualified, e.g. MCX:GOLDM26AUGFUT', true); return; }
+    if (!(i.qty > 0)) { autoManualStatus('Qty must be a positive number', true); return; }
+    if ((i.orderType === 'LIMIT' || i.orderType === 'SL-LIMIT') && !(i.limitPrice > 0)) { autoManualStatus(i.orderType + ' needs a limit price', true); return; }
+    if ((i.orderType === 'SL-MARKET' || i.orderType === 'SL-LIMIT') && !(i.stopPrice > 0)) { autoManualStatus(i.orderType + ' needs a trigger price', true); return; }
+    var priceStr = (i.orderType === 'SL-LIMIT') ? ('trigger ' + i.stopPrice + ' / limit ' + i.limitPrice)
+                 : (i.orderType === 'SL-MARKET') ? ('trigger ' + i.stopPrice)
+                 : (i.orderType === 'LIMIT') ? ('@ ' + i.limitPrice) : '@ market';
+    var summary = i.side + ' ' + i.qty + ' ' + i.symbol + '  [' + i.orderType + ', ' + i.productType + ']  ' + priceStr;
+    _auManualPending = i;
+    var el = document.getElementById('au-manual-status');
+    el.innerHTML =
+        '<div style="border:2px solid #f59e0b;border-radius:10px;padding:16px;background:#fffbeb">' +
+        '<div style="font-size:13px;color:#92400e;margin-bottom:8px">Confirm this <b>LIVE</b> order:</div>' +
+        '<div style="font-family:monospace;font-size:15px;font-weight:600;margin-bottom:14px">' + autoEsc(summary) + '</div>' +
+        '<button class="au-btn au-btn-primary" style="background:#dc2626;border-color:#dc2626" onclick="autoManualPlace()">Confirm &amp; Place</button> ' +
+        '<button class="au-btn au-btn-secondary" onclick="autoManualStatus(\'\',false)">Cancel</button>' +
+        '</div>';
+}
+
+async function autoManualPlace() {
+    var i = _auManualPending;
+    if (!i) return;
+    if (!_auManualPw) { autoManualLock(); return; }
+    autoManualStatus('Placing…', false);
+    try {
+        var body = Object.assign({}, i, { password: _auManualPw, confirm: true });
+        var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
+            method: 'POST',
+            headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify(body)
+        });
+        var j = await resp.json().catch(function () { return {}; });
+        if (resp.status === 401) { _auManualPw = null; autoManualRenderGate((j.error || 'Unauthorized') + ' — re-enter password.'); return; }
+        if (!resp.ok || !j.ok) { autoManualStatus('Rejected: ' + (j.error || ('HTTP ' + resp.status)), true); return; }
+        _auManualPending = null;
+        autoManualStatus('✅ Queued — command ' + j.command_id + '. Tracking fill…', false);
+        autoManualTrack(j.command_id);
+    } catch (e) {
+        autoManualStatus('Network error: ' + (e && e.message ? e.message : e), true);
+    }
+}
+
+function autoManualTrack(cmdId) {
+    if (_auManualPollTimer) clearInterval(_auManualPollTimer);
+    var tries = 0;
+    _auManualPollTimer = setInterval(async function () {
+        tries++;
+        try {
+            var r = await fetch(SUPABASE_URL + '/rest/v1/wms_live_commands?id=eq.' + encodeURIComponent(cmdId) + '&select=status,broker_status,broker_order_id,filled_qty,avg_fill_price,error_message', { headers: wmsHeaders() });
+            var rows = await r.json();
+            var c = Array.isArray(rows) && rows[0] ? rows[0] : null;
+            if (c) {
+                var line = 'status ' + (c.status || '—') + ' · broker ' + (c.broker_status || '—') +
+                    (c.broker_order_id ? ' · order ' + c.broker_order_id : '') +
+                    (c.filled_qty ? ' · filled ' + c.filled_qty + ' @ ' + c.avg_fill_price : '') +
+                    (c.error_message ? ' · ' + c.error_message : '');
+                var terminal = ['FILLED', 'CANCELLED', 'REJECTED', 'EXPIRED'].indexOf(c.broker_status) >= 0 || ['rejected', 'error', 'cancelled'].indexOf(c.status) >= 0;
+                autoManualStatus('Command ' + cmdId + ' — ' + line, false);
+                if (terminal) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
+            }
+        } catch (e) { /* keep polling */ }
+        if (tries > 40) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
+    }, 3000);
+}
+
+function autoManualStatus(msg, isErr) {
+    var el = document.getElementById('au-manual-status');
+    if (!el) return;
+    if (!msg) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div style="border:1px solid ' + (isErr ? '#fca5a5' : '#e5e7eb') + ';border-radius:8px;padding:10px 12px;font-size:13px;color:' + (isErr ? '#991b1b' : '#374151') + ';background:' + (isErr ? '#fef2f2' : '#f9fafb') + '">' + autoEsc(msg) + '</div>';
 }
 
 // ----------------------------------------------------------------------------
