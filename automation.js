@@ -186,21 +186,32 @@ function autoManualRenderForm() {
           '<button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualLock()">Lock</button>' +
         '</div>' +
         '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ <b>LIVE</b> orders on Veins/Fyers. No automated risk checks — the Confirm step is the only gate. One row per order; each is a separate Fyers order. <b>Qty/Lots is signed: + = BUY, − = SELL.</b> Product is derived automatically (F&O → MARGIN, equity → CNC).</div>' +
-        '<div style="overflow-x:auto"><table class="atm-table" style="width:100%;border-collapse:collapse;font-size:12px">' +
-          '<thead><tr style="text-align:left;color:#6b7280;font-size:10px;text-transform:uppercase;border-bottom:1px solid #e5e7eb">' +
-            '<th style="padding:6px 6px">Trader</th><th style="padding:6px 6px;min-width:190px">Symbol</th>' +
-            '<th style="padding:6px 6px;width:70px">Lots</th><th style="padding:6px 6px;width:90px">Qty</th>' +
-            '<th style="padding:6px 6px;width:150px">Price / Type</th>' +
-            '<th style="padding:6px 6px;min-width:150px">Tags</th><th style="padding:6px 6px;width:120px">SL</th><th style="padding:6px 6px;width:34px"></th>' +
-          '</tr></thead>' +
-          '<tbody id="atm-tbody"></tbody>' +
-        '</table></div>' +
+        // Flex rows (NOT a fixed-width <table>) so columns fit the container at
+        // any width — no horizontal scroll (UI-STANDARDS §H.5.4). Symbol flexes;
+        // every other column has a fixed width + flex-shrink:0.
+        '<div class="atm-head">' +
+            '<span class="atm-c-trader">Trader</span><span class="atm-c-sym">Symbol</span>' +
+            '<span class="atm-c-lots">Lots</span><span class="atm-c-qty">Qty</span>' +
+            '<span class="atm-c-price">Price / Type</span><span class="atm-c-tags">Tags</span>' +
+            '<span class="atm-c-sl">SL</span><span class="atm-c-act"></span>' +
+        '</div>' +
+        '<div id="atm-rows"></div>' +
         '<div style="margin-top:10px"><button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualAddRow()">＋ Add order</button></div>' +
         '<div style="margin-top:16px"><button class="wms-btn wms-btn-primary" onclick="autoManualReview()">Review order →</button></div>' +
         '<div id="au-manual-status" style="margin-top:16px"></div>' +
         '<style>' +
-          '.atm-table td{padding:5px 6px;vertical-align:top;border-bottom:1px solid #f1f5f9}' +
-          '.atm-table .wms-input,.atm-table .wms-input-compact{font-size:12px}' +
+          '.atm-head,.atm-main{display:flex;gap:8px;align-items:flex-start}' +
+          '.atm-head{color:#6b7280;font-size:10px;text-transform:uppercase;border-bottom:1px solid #e5e7eb;padding:0 0 6px;margin-bottom:4px}' +
+          '.atm-order{padding:6px 0;border-bottom:1px solid #f1f5f9}' +
+          '.atm-c-trader{flex:0 0 120px;width:120px}' +
+          '.atm-c-sym{flex:1 1 auto;min-width:0;position:relative}' +
+          '.atm-c-lots{flex:0 0 62px;width:62px}' +
+          '.atm-c-qty{flex:0 0 82px;width:82px}' +
+          '.atm-c-price{flex:0 0 150px;width:150px}' +
+          '.atm-c-tags{flex:0 0 160px;width:160px;position:relative}' +
+          '.atm-c-sl{flex:0 0 70px;width:70px}' +
+          '.atm-c-act{flex:0 0 30px;width:30px}' +
+          '.atm-main .wms-input,.atm-main .wms-input-compact{width:100%;font-size:12px}' +
           '.atm-radios{display:flex;gap:8px;font-size:11px;color:#374151;margin-top:3px}' +
           '.atm-radios label{display:flex;align-items:center;gap:3px;cursor:pointer}' +
           '.atm-bal{font-size:10px;color:#2563eb;margin-top:2px}' +
@@ -229,8 +240,7 @@ function autoManualTraderOptions() {
 // symbol (equity + F&O + options), signed lots/qty, calculator price field, plus
 // Market/Limit radios, a bracket-SL toggle, and per-row tags.
 function autoManualAddRow(copyFromId) {
-    var tbody = document.getElementById('atm-tbody');
-    if (!tbody) return;
+    if (!document.getElementById('atm-rows')) return;
     var copyFrom = (copyFromId !== undefined) ? _atmRows.find(function (r) { return r.rowId === copyFromId; }) : null;
     var rowId = ++_atmRowSeq;
     var row = {
@@ -253,39 +263,42 @@ function autoManualAddRow(copyFromId) {
     _atmRows.push(row);
 
     var isNfo = row.lot_size > 1;
-    var tr = document.createElement('tr');
-    tr.dataset.rid = rowId;
-    tr.innerHTML =
-        '<td><select class="wms-input wms-input-compact atm-trader" data-rid="' + rowId + '">' + autoManualTraderOptions() + '</select></td>' +
-        '<td style="position:relative">' +
-            '<input type="text" class="wms-input wms-input-compact atm-sym" data-rid="' + rowId + '" placeholder="Search…" autocomplete="off" value="' + autoEsc(row.symbol || '') + '">' +
-            '<div class="wms-dd atm-symdd" id="atmSymDd_' + rowId + '"></div>' +
-        '</td>' +
-        '<td><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-lots' + (isNfo ? '' : '') + '" data-rid="' + rowId + '" placeholder="±lots"' + (isNfo ? '' : ' disabled') + '></td>' +
-        '<td><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-qty" data-rid="' + rowId + '" placeholder="±qty"><div class="atm-bal" id="atmBal_' + rowId + '"></div></td>' +
-        '<td>' +
-            '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-price" data-rid="' + rowId + '" placeholder="price" disabled>' +
-            '<div class="atm-radios">' +
-                '<label><input type="radio" name="atmOt_' + rowId + '" class="atm-ot" data-rid="' + rowId + '" value="MARKET" checked>Mkt</label>' +
-                '<label><input type="radio" name="atmOt_' + rowId + '" class="atm-ot" data-rid="' + rowId + '" value="LIMIT">Lmt</label>' +
-            '</div>' +
-        '</td>' +
-        '<td style="position:relative">' +
-            '<input type="text" class="wms-input wms-input-compact atm-tags" data-rid="' + rowId + '" placeholder="Tags…" autocomplete="off">' +
-            '<div class="wms-tag-pills atm-tagpills" id="atmTagPills_' + rowId + '" style="margin-top:3px"></div>' +
-            '<div class="wms-tag-dd atm-tagdd" id="atmTagDd_' + rowId + '"></div>' +
-        '</td>' +
-        '<td><button type="button" class="wms-btn wms-btn-secondary atm-sl-toggle" data-rid="' + rowId + '" style="font-size:11px;padding:3px 8px" onclick="autoManualToggleSl(' + rowId + ')">＋ SL</button>' +
-            '<div class="atm-sl-panel" id="atmSlPanel_' + rowId + '" style="display:none"></div></td>' +
-        '<td><button type="button" class="wms-btn wms-btn-secondary" title="Remove" style="font-size:12px;padding:3px 8px" onclick="autoManualRemoveRow(' + rowId + ')">✕</button></td>';
-    tbody.appendChild(tr);
+    var order = document.createElement('div');
+    order.className = 'atm-order';
+    order.dataset.rid = rowId;
+    order.innerHTML =
+        '<div class="atm-main">' +
+            '<span class="atm-c-trader"><select class="wms-input wms-input-compact atm-trader" data-rid="' + rowId + '">' + autoManualTraderOptions() + '</select></span>' +
+            '<span class="atm-c-sym">' +
+                '<input type="text" class="wms-input wms-input-compact atm-sym" data-rid="' + rowId + '" placeholder="Search…" autocomplete="off" value="' + autoEsc(row.symbol || '') + '">' +
+                '<div class="wms-dd atm-symdd" id="atmSymDd_' + rowId + '"></div>' +
+            '</span>' +
+            '<span class="atm-c-lots"><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-lots" data-rid="' + rowId + '" placeholder="±lots"' + (isNfo ? '' : ' disabled') + '></span>' +
+            '<span class="atm-c-qty"><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-qty" data-rid="' + rowId + '" placeholder="±qty"><div class="atm-bal" id="atmBal_' + rowId + '"></div></span>' +
+            '<span class="atm-c-price">' +
+                '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-price" data-rid="' + rowId + '" placeholder="price" disabled>' +
+                '<div class="atm-radios">' +
+                    '<label><input type="radio" name="atmOt_' + rowId + '" class="atm-ot" data-rid="' + rowId + '" value="MARKET" checked>Mkt</label>' +
+                    '<label><input type="radio" name="atmOt_' + rowId + '" class="atm-ot" data-rid="' + rowId + '" value="LIMIT">Lmt</label>' +
+                '</div>' +
+            '</span>' +
+            '<span class="atm-c-tags">' +
+                '<input type="text" class="wms-input wms-input-compact atm-tags" data-rid="' + rowId + '" placeholder="Tags…" autocomplete="off">' +
+                '<div class="wms-tag-pills atm-tagpills" id="atmTagPills_' + rowId + '" style="margin-top:3px"></div>' +
+                '<div class="wms-tag-dd atm-tagdd" id="atmTagDd_' + rowId + '"></div>' +
+            '</span>' +
+            '<span class="atm-c-sl"><button type="button" class="wms-btn wms-btn-secondary atm-sl-toggle" data-rid="' + rowId + '" style="font-size:11px;padding:3px 6px" onclick="autoManualToggleSl(' + rowId + ')">＋ SL</button></span>' +
+            '<span class="atm-c-act"><button type="button" class="wms-btn wms-btn-secondary" title="Remove" style="font-size:12px;padding:3px 7px" onclick="autoManualRemoveRow(' + rowId + ')">✕</button></span>' +
+        '</div>' +
+        '<div class="atm-sl-panel" id="atmSlPanel_' + rowId + '" style="display:none"></div>';
+    document.getElementById('atm-rows').appendChild(order);
     autoManualWireRow(rowId);
 }
 
 function autoManualRemoveRow(rowId) {
     if (_atmRows.length <= 1) return;
     _atmRows = _atmRows.filter(function (r) { return r.rowId !== rowId; });
-    var tr = document.querySelector('#atm-tbody tr[data-rid="' + rowId + '"]');
+    var tr = document.querySelector('#atm-rows .atm-order[data-rid="' + rowId + '"]');
     if (tr) tr.remove();
     delete _atmSymItems[rowId]; delete _atmSymCtrls[rowId]; delete _atmTagCtrls[rowId];
 }
