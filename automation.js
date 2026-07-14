@@ -91,9 +91,9 @@ var _auManualPw = null;            // in-memory only, this tab, this session
 var _auManualPollTimer = null;
 var _auManualPending = null;
 var _AU_M_INP = 'width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box';
-var _auManualSymItems = [];        // last symbol-search results
-var _auManualSymCtrl = null;       // wmsDropdown controller (symbol)
-var _auManualTagCtrl = null;       // wmsTagInput controller (tags)
+var _auManualTagCtrl = null;       // wmsTagInput controller (tags, applied to all legs)
+var _auManualRowSeq = 0;           // leg-row id sequence
+var _auManualLegsToPlace = null;   // legs staged by Review, placed by Confirm
 
 function autoManualInit() {
     if (!document.getElementById('au-manual-root')) return;
@@ -135,30 +135,17 @@ function autoManualField(label, inner) {
 function autoManualRenderForm() {
     var root = document.getElementById('au-manual-root');
     if (!root) return;
+    _auManualRowSeq = 0;
     root.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
           '<h3 style="margin:0">✋ Manual Fyers order <span style="font-size:12px;font-weight:400;color:#16a34a">● unlocked</span></h3>' +
           '<button class="au-btn au-btn-secondary" style="font-size:12px" onclick="autoManualLock()">Lock</button>' +
         '</div>' +
-        '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ These are <b>LIVE</b> orders on Veins/Fyers. There are no automated risk checks — the Confirm step is the only gate. Check every field.</div>' +
-        '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:18px;background:#fff">' +
-          '<div style="margin-bottom:12px;position:relative"><label style="display:block;font-size:12px;color:#374151;margin-bottom:4px">Symbol (search, or type the exchange-qualified Fyers symbol)</label>' +
-            '<input id="au-m-symbol" autocomplete="off" placeholder="Search e.g. GOLDM / BANKNIFTY — or MCX:GOLDM26AUGFUT" style="' + _AU_M_INP + '">' +
-            '<div class="wms-dd" id="au-m-symdd"></div>' +
-          '</div>' +
-          '<div style="display:flex;gap:12px">' +
-            autoManualField('Side', '<select id="au-m-side" style="' + _AU_M_INP + '"><option value="BUY">BUY</option><option value="SELL">SELL</option></select>') +
-            autoManualField('Qty', '<input id="au-m-qty" type="number" min="1" step="1" style="' + _AU_M_INP + '">') +
-          '</div>' +
-          '<div style="display:flex;gap:12px">' +
-            autoManualField('Order type', '<select id="au-m-otype" onchange="autoManualTogglePrices()" style="' + _AU_M_INP + '"><option>MARKET</option><option>LIMIT</option><option>SL-MARKET</option><option>SL-LIMIT</option></select>') +
-            autoManualField('Product', '<select id="au-m-product" style="' + _AU_M_INP + '"><option>MARGIN</option><option>INTRADAY</option><option>CNC</option></select>') +
-          '</div>' +
-          '<div style="display:flex;gap:12px">' +
-            '<div id="au-m-limit-wrap" style="flex:1;display:none">' + autoManualField('Limit price', '<input id="au-m-limit" type="number" step="0.05" style="' + _AU_M_INP + '">') + '</div>' +
-            '<div id="au-m-stop-wrap" style="flex:1;display:none">' + autoManualField('Trigger / stop price', '<input id="au-m-stop" type="number" step="0.05" style="' + _AU_M_INP + '">') + '</div>' +
-          '</div>' +
-          '<div style="margin-top:2px;position:relative"><label style="display:block;font-size:12px;color:#374151;margin-bottom:4px">Tags</label>' +
+        '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ <b>LIVE</b> orders on Veins/Fyers. No automated risk checks — the Confirm step is the only gate. One row per leg; <b>Lots is signed: + = BUY, − = SELL.</b> Qty (units) is computed from the contract lot size.</div>' +
+        '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;background:#fff">' +
+          '<div id="au-m-legs"></div>' +
+          '<button class="au-btn au-btn-secondary" style="font-size:12px;margin-top:4px" onclick="autoManualAddLeg()">＋ Add leg</button>' +
+          '<div style="margin-top:16px;position:relative"><label style="display:block;font-size:12px;color:#374151;margin-bottom:4px">Tags (applied to all legs)</label>' +
             '<input id="au-m-tags" autocomplete="off" placeholder="Type a tag + Enter or comma…" style="' + _AU_M_INP + '">' +
             '<div class="wms-tag-pills" id="au-m-tagpills" style="margin-top:4px"></div>' +
             '<div class="wms-tag-dd" id="au-m-tagdd"></div>' +
@@ -166,130 +153,214 @@ function autoManualRenderForm() {
           '<div style="margin-top:14px"><button class="au-btn au-btn-primary" onclick="autoManualReview()">Review order →</button></div>' +
         '</div>' +
         '<div id="au-manual-status" style="margin-top:16px"></div>';
-    autoManualTogglePrices();
-    autoManualWireWidgets();
-}
-
-// Wire the two standard widgets — searchable symbol dropdown (wmsDropdown over
-// securities_nfo, same behaviour as Add Transaction) + the standard tag widget.
-function autoManualWireWidgets() {
-    var symInput = document.getElementById('au-m-symbol');
-    var symDd = document.getElementById('au-m-symdd');
-    if (symInput && symDd && typeof wmsDropdown === 'function') {
-        _auManualSymCtrl = wmsDropdown(symInput, symDd, {
-            itemSelector: '.wms-dd-item', closeOnSelect: true, escClearsInput: false,
-            onSelect: function (itemEl) {
-                var it = _auManualSymItems[parseInt(itemEl.dataset.idx)];
-                if (it) symInput.value = it.symbol;
-            }
-        });
-        var t = null;
-        symInput.addEventListener('input', function () {
-            clearTimeout(t);
-            var q = symInput.value.trim();
-            if (q.length < 2) { if (_auManualSymCtrl) _auManualSymCtrl.close(); return; }
-            t = setTimeout(function () { autoManualSearchSymbol(q); }, 250);
-        });
-        symDd.addEventListener('mousedown', function (e) {
-            var item = e.target.closest('.wms-dd-item'); if (!item || item.dataset.idx === undefined) return;
-            e.preventDefault();
-            var it = _auManualSymItems[parseInt(item.dataset.idx)];
-            if (it) symInput.value = it.symbol;
-            if (_auManualSymCtrl) _auManualSymCtrl.close();
-        });
-    }
+    autoManualAddLeg();
     var ti = document.getElementById('au-m-tags'), tp = document.getElementById('au-m-tagpills'), td = document.getElementById('au-m-tagdd');
     if (ti && tp && td && typeof wmsTagInput === 'function') {
         autoGetExistingTags().then(function (existing) {
             _auManualTagCtrl = wmsTagInput(ti, tp, td, { tags: [], existingTags: (existing || []).slice(), onChange: function () {} });
-        }).catch(function () {
-            _auManualTagCtrl = wmsTagInput(ti, tp, td, { tags: [], existingTags: [], onChange: function () {} });
-        });
+        }).catch(function () { _auManualTagCtrl = wmsTagInput(ti, tp, td, { tags: [], existingTags: [], onChange: function () {} }); });
     }
 }
 
-async function autoManualSearchSymbol(q) {
-    var symDd = document.getElementById('au-m-symdd');
-    if (!symDd) return;
+// One leg row: searchable symbol (wmsDropdown, ACTIVE + non-expired contracts
+// only) + signed Lots + type/product/prices. Mirrors the Add Transaction row.
+function autoManualAddLeg() {
+    var legs = document.getElementById('au-m-legs');
+    if (!legs) return;
+    var rid = ++_auManualRowSeq;
+    var lbl = 'display:block;font-size:10px;color:#6b7280;margin-bottom:2px';
+    var row = document.createElement('div');
+    row.className = 'au-ml-row';
+    row.dataset.rid = rid;
+    row.style.cssText = 'display:grid;grid-template-columns:2.4fr 0.9fr 1.1fr 1fr 0.9fr 0.9fr 24px;gap:6px;align-items:end;margin-bottom:8px';
+    row.innerHTML =
+        '<div style="position:relative"><label style="' + lbl + '">Symbol</label><input class="au-ml-sym" autocomplete="off" placeholder="search / type" style="' + _AU_M_INP + '"><div class="wms-dd au-ml-symdd"></div></div>' +
+        '<div><label style="' + lbl + '">Lots ±</label><input class="au-ml-lots" type="number" step="1" placeholder="+2 / −1" style="' + _AU_M_INP + '"></div>' +
+        '<div><label style="' + lbl + '">Type</label><select class="au-ml-otype" style="' + _AU_M_INP + '"><option>MARKET</option><option>LIMIT</option><option>SL-MARKET</option><option>SL-LIMIT</option></select></div>' +
+        '<div><label style="' + lbl + '">Product</label><select class="au-ml-product" style="' + _AU_M_INP + '"><option>MARGIN</option><option>INTRADAY</option><option>CNC</option></select></div>' +
+        '<div><label style="' + lbl + '">Limit</label><input class="au-ml-limit" type="number" step="0.05" style="' + _AU_M_INP + '"></div>' +
+        '<div><label style="' + lbl + '">Trigger</label><input class="au-ml-stop" type="number" step="0.05" style="' + _AU_M_INP + '"></div>' +
+        '<button class="au-btn au-btn-secondary" title="Remove leg" style="padding:6px 4px;font-size:15px;line-height:1" onclick="autoManualRemoveLeg(' + rid + ')">×</button>';
+    legs.appendChild(row);
+    autoManualWireRowSymbol(row);
+}
+
+function autoManualRemoveLeg(rid) {
+    var legs = document.getElementById('au-m-legs');
+    var row = legs ? legs.querySelector('.au-ml-row[data-rid="' + rid + '"]') : null;
+    if (row && legs.querySelectorAll('.au-ml-row').length > 1) row.remove();
+}
+
+function autoManualWireRowSymbol(row) {
+    var symInput = row.querySelector('.au-ml-sym');
+    var symDd = row.querySelector('.au-ml-symdd');
+    if (!symInput || !symDd || typeof wmsDropdown !== 'function') return;
+    var items = [];
+    var setSym = function (it) { symInput.value = it.symbol; symInput.dataset.lotsize = it.lot_size || ''; symInput.dataset.exchange = it.exchange || ''; };
+    var ctrl = wmsDropdown(symInput, symDd, {
+        itemSelector: '.wms-dd-item', closeOnSelect: true, escClearsInput: false,
+        onSelect: function (itemEl) { var it = items[parseInt(itemEl.dataset.idx)]; if (it) setSym(it); }
+    });
+    var t = null;
+    symInput.addEventListener('input', function () {
+        symInput.dataset.lotsize = ''; symInput.dataset.exchange = '';   // invalidate until re-selected/looked-up
+        clearTimeout(t);
+        var q = symInput.value.trim();
+        if (q.length < 2) { ctrl.close(); return; }
+        t = setTimeout(function () { autoManualSearchRowSymbol(symDd, q, function (its) { items = its; }); }, 250);
+    });
+    symDd.addEventListener('mousedown', function (e) {
+        var item = e.target.closest('.wms-dd-item'); if (!item || item.dataset.idx === undefined) return;
+        e.preventDefault();
+        var it = items[parseInt(item.dataset.idx)]; if (it) setSym(it);
+        ctrl.close();
+    });
+}
+
+// LIVE-order universe: only is_active + non-expired contracts. An expired/inactive
+// contract can never be traded, so it must never appear here.
+function _auManualSymUrl(q) {
+    var today = new Date().toISOString().slice(0, 10);
+    var qq = encodeURIComponent(q.toUpperCase());
+    return SUPABASE_URL + '/rest/v1/securities_nfo?or=(symbol.ilike.*' + qq + '*,instrument_name.ilike.*' + qq +
+        '*)&is_active=eq.true&expiry_date=gte.' + today +
+        '&select=symbol,instrument_name,underlying_symbol,exchange,expiry_date,lot_size&order=expiry_date.asc&limit=25';
+}
+
+async function autoManualSearchRowSymbol(symDd, q, setItems) {
     try {
-        var qq = encodeURIComponent(q.toUpperCase());
-        var url = SUPABASE_URL + '/rest/v1/securities_nfo?or=(symbol.ilike.*' + qq + '*,instrument_name.ilike.*' + qq +
-            '*)&select=symbol,instrument_name,underlying_symbol,exchange,expiry_date&order=expiry_date.asc&limit=25';
-        var r = await fetch(url, { headers: wmsHeaders() });
-        _auManualSymItems = r.ok ? await r.json() : [];
-        if (!Array.isArray(_auManualSymItems)) _auManualSymItems = [];
-        if (_auManualSymItems.length === 0) {
-            symDd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">No match — type the full Fyers symbol (e.g. MCX:GOLDM26AUGFUT)</div>';
+        var r = await fetch(_auManualSymUrl(q), { headers: wmsHeaders() });
+        var items = r.ok ? await r.json() : [];
+        if (!Array.isArray(items)) items = [];
+        setItems(items);
+        if (items.length === 0) {
+            symDd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">No active contract — type the full Fyers symbol</div>';
         } else {
-            symDd.innerHTML = _auManualSymItems.map(function (it, i) {
+            symDd.innerHTML = items.map(function (it, i) {
                 return '<div class="wms-dd-item" data-idx="' + i + '"><span style="font-family:monospace">' + autoEsc(it.symbol) + '</span>' +
-                    '<span style="color:#6b7280;font-size:11px;margin-left:8px">' + autoEsc(it.instrument_name || it.underlying_symbol || '') + '</span></div>';
+                    '<span style="color:#6b7280;font-size:11px;margin-left:8px">' + autoEsc(it.instrument_name || it.underlying_symbol || '') + ' · exp ' + autoEsc(it.expiry_date || '') + '</span></div>';
             }).join('');
         }
-        symDd.classList.add('show');   // no inline display (AUTOMATION-LESSONS: inline display beats .show)
-    } catch (e) { /* leave dropdown as-is */ }
+        symDd.classList.add('show');   // no inline display (LESSONS: inline display beats .show)
+    } catch (e) { /* leave as-is */ }
 }
 
-function autoManualTogglePrices() {
-    var sel = document.getElementById('au-m-otype');
-    var ot = sel ? sel.value : 'MARKET';
-    var lw = document.getElementById('au-m-limit-wrap'); if (lw) lw.style.display = (ot === 'LIMIT' || ot === 'SL-LIMIT') ? 'block' : 'none';
-    var sw = document.getElementById('au-m-stop-wrap');  if (sw) sw.style.display = (ot === 'SL-MARKET' || ot === 'SL-LIMIT') ? 'block' : 'none';
+// Confirm the contract is active + non-expired and get its lot_size/exchange.
+async function autoManualLookupContract(symbol) {
+    try {
+        var today = new Date().toISOString().slice(0, 10);
+        var url = SUPABASE_URL + '/rest/v1/securities_nfo?symbol=eq.' + encodeURIComponent(symbol) +
+            '&is_active=eq.true&expiry_date=gte.' + today + '&select=lot_size,exchange&limit=1';
+        var r = await fetch(url, { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        return (Array.isArray(rows) && rows[0]) ? rows[0] : null;
+    } catch (e) { return null; }
 }
 
-function autoManualCollect() {
-    var g = function (id) { var e = document.getElementById(id); return e ? String(e.value).trim() : ''; };
-    var ot = g('au-m-otype');
-    var intent = { symbol: g('au-m-symbol').toUpperCase(), side: g('au-m-side'), qty: Number(g('au-m-qty')), orderType: ot, productType: g('au-m-product') };
-    if (ot === 'LIMIT' || ot === 'SL-LIMIT') intent.limitPrice = Number(g('au-m-limit'));
-    if (ot === 'SL-MARKET' || ot === 'SL-LIMIT') intent.stopPrice = Number(g('au-m-stop'));
+async function autoManualReview() {
+    var rows = document.querySelectorAll('#au-m-legs .au-ml-row');
+    if (!rows.length) { autoManualStatus('Add at least one leg.', true); return; }
     var tags = (_auManualTagCtrl && typeof _auManualTagCtrl.getTags === 'function') ? _auManualTagCtrl.getTags() : [];
-    if (tags && tags.length) intent.tags = tags;
-    return intent;
-}
-
-function autoManualReview() {
-    var i = autoManualCollect();
-    if (!/^[A-Z]+:[A-Z0-9]+$/.test(i.symbol)) { autoManualStatus('Symbol must be exchange-qualified, e.g. MCX:GOLDM26AUGFUT', true); return; }
-    if (!(i.qty > 0)) { autoManualStatus('Qty must be a positive number', true); return; }
-    if ((i.orderType === 'LIMIT' || i.orderType === 'SL-LIMIT') && !(i.limitPrice > 0)) { autoManualStatus(i.orderType + ' needs a limit price', true); return; }
-    if ((i.orderType === 'SL-MARKET' || i.orderType === 'SL-LIMIT') && !(i.stopPrice > 0)) { autoManualStatus(i.orderType + ' needs a trigger price', true); return; }
-    var priceStr = (i.orderType === 'SL-LIMIT') ? ('trigger ' + i.stopPrice + ' / limit ' + i.limitPrice)
-                 : (i.orderType === 'SL-MARKET') ? ('trigger ' + i.stopPrice)
-                 : (i.orderType === 'LIMIT') ? ('@ ' + i.limitPrice) : '@ market';
-    var summary = i.side + ' ' + i.qty + ' ' + i.symbol + '  [' + i.orderType + ', ' + i.productType + ']  ' + priceStr + (i.tags && i.tags.length ? '   tags: ' + i.tags.join(', ') : '');
-    _auManualPending = i;
+    autoManualStatus('Checking contracts…', false);
+    var legs = [];
+    for (var idx = 0; idx < rows.length; idx++) {
+        var row = rows[idx], n = idx + 1;
+        var symIn = row.querySelector('.au-ml-sym');
+        var qv = function (sel) { var e = row.querySelector(sel); return e ? String(e.value).trim() : ''; };
+        var symbol = (symIn ? symIn.value.trim().toUpperCase() : '');
+        var lots = Number(qv('.au-ml-lots')), ot = qv('.au-ml-otype'), product = qv('.au-ml-product');
+        var limit = Number(qv('.au-ml-limit')), stop = Number(qv('.au-ml-stop'));
+        if (!/^[A-Z]+:[A-Z0-9]+$/.test(symbol)) { autoManualStatus('Leg ' + n + ': pick an exchange-qualified symbol from the search.', true); return; }
+        if (!Number.isFinite(lots) || lots === 0 || Math.floor(lots) !== lots) { autoManualStatus('Leg ' + n + ': lots must be a non-zero integer (+ buy / − sell).', true); return; }
+        var needLimit = (ot === 'LIMIT' || ot === 'SL-LIMIT'), needStop = (ot === 'SL-MARKET' || ot === 'SL-LIMIT');
+        if (needLimit && !(limit > 0)) { autoManualStatus('Leg ' + n + ': ' + ot + ' needs a limit price.', true); return; }
+        if (needStop && !(stop > 0)) { autoManualStatus('Leg ' + n + ': ' + ot + ' needs a trigger price.', true); return; }
+        var lotSize = Number(symIn && symIn.dataset.lotsize), exch = symIn && symIn.dataset.exchange;
+        if (!lotSize || !exch) {
+            var look = await autoManualLookupContract(symbol);
+            if (!look) { autoManualStatus('Leg ' + n + ': "' + symbol + '" is not an active, non-expired contract. Pick from the search.', true); return; }
+            lotSize = look.lot_size; exch = look.exchange;
+        }
+        var side = lots > 0 ? 'BUY' : 'SELL', absLots = Math.abs(lots);
+        var qty = (exch === 'MCX') ? absLots : absLots * lotSize;   // MCX qty = lots; NSE qty = lots × lot_size (A.11.5)
+        var intent = { symbol: symbol, side: side, qty: qty, orderType: ot, productType: product };
+        if (needLimit) intent.limitPrice = limit;
+        if (needStop) intent.stopPrice = stop;
+        if (tags && tags.length) intent.tags = tags;
+        var priceStr = (needStop && needLimit) ? ('trig ' + stop + '/lim ' + limit) : needStop ? ('trig ' + stop) : needLimit ? ('@ ' + limit) : '@ mkt';
+        var label = side + ' ' + absLots + ' lot' + (absLots > 1 ? 's' : '') + ' = ' + qty + 'u  ' + symbol + '  [' + ot + ',' + product + ']  ' + priceStr;
+        legs.push({ label: label, intent: intent });
+    }
+    _auManualLegsToPlace = legs;
     var el = document.getElementById('au-manual-status');
     el.innerHTML =
         '<div style="border:2px solid #f59e0b;border-radius:10px;padding:16px;background:#fffbeb">' +
-        '<div style="font-size:13px;color:#92400e;margin-bottom:8px">Confirm this <b>LIVE</b> order:</div>' +
-        '<div style="font-family:monospace;font-size:15px;font-weight:600;margin-bottom:14px">' + autoEsc(summary) + '</div>' +
-        '<button class="au-btn au-btn-primary" style="background:#dc2626;border-color:#dc2626" onclick="autoManualPlace()">Confirm &amp; Place</button> ' +
-        '<button class="au-btn au-btn-secondary" onclick="autoManualStatus(\'\',false)">Cancel</button>' +
+        '<div style="font-size:13px;color:#92400e;margin-bottom:8px">Confirm ' + legs.length + ' <b>LIVE</b> leg(s)' + (tags && tags.length ? ' · tags: ' + autoEsc(tags.join(', ')) : '') + ':</div>' +
+        legs.map(function (l) { return '<div style="font-family:monospace;font-size:13px;font-weight:600;margin:3px 0">' + autoEsc(l.label) + '</div>'; }).join('') +
+        '<div style="margin-top:14px"><button class="au-btn au-btn-primary" style="background:#dc2626;border-color:#dc2626" onclick="autoManualPlaceAll()">Confirm &amp; Place ' + legs.length + ' leg(s)</button> ' +
+        '<button class="au-btn au-btn-secondary" onclick="autoManualStatus(\'\',false)">Cancel</button></div>' +
         '</div>';
 }
 
-async function autoManualPlace() {
-    var i = _auManualPending;
-    if (!i) return;
+async function autoManualPlaceAll() {
+    var legs = _auManualLegsToPlace;
+    if (!legs || !legs.length) return;
     if (!_auManualPw) { autoManualLock(); return; }
-    autoManualStatus('Placing…', false);
-    try {
-        var body = Object.assign({}, i, { password: _auManualPw, confirm: true });
-        var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
-            method: 'POST',
-            headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
-            body: JSON.stringify(body)
-        });
-        var j = await resp.json().catch(function () { return {}; });
-        if (resp.status === 401) { _auManualPw = null; autoManualRenderGate((j.error || 'Unauthorized') + ' — re-enter password.'); return; }
-        if (!resp.ok || !j.ok) { autoManualStatus('Rejected: ' + (j.error || ('HTTP ' + resp.status)), true); return; }
-        _auManualPending = null;
-        autoManualStatus('✅ Queued — command ' + j.command_id + '. Tracking fill…', false);
-        autoManualTrack(j.command_id);
-    } catch (e) {
-        autoManualStatus('Network error: ' + (e && e.message ? e.message : e), true);
+    autoManualStatus('Placing ' + legs.length + ' leg(s)…', false);
+    var results = [];
+    for (var k = 0; k < legs.length; k++) {
+        try {
+            var body = Object.assign({}, legs[k].intent, { password: _auManualPw, confirm: true });
+            var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
+                method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body)
+            });
+            var j = await resp.json().catch(function () { return {}; });
+            if (resp.status === 401) { _auManualPw = null; autoManualRenderGate((j.error || 'Unauthorized') + ' — re-enter password.'); return; }
+            results.push({ label: legs[k].label, ok: !!(resp.ok && j.ok), command_id: j.command_id || null, error: (resp.ok && j.ok) ? null : (j.error || ('HTTP ' + resp.status)) });
+        } catch (e) {
+            results.push({ label: legs[k].label, ok: false, command_id: null, error: (e && e.message ? e.message : String(e)) });
+        }
     }
+    _auManualLegsToPlace = null;
+    var ids = results.filter(function (r) { return r.command_id; }).map(function (r) { return r.command_id; });
+    var el = document.getElementById('au-manual-status');
+    if (el) {
+        el.innerHTML = '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px;background:#fff">' +
+            '<div style="font-weight:600;margin-bottom:8px">Placed ' + ids.length + '/' + results.length + ' leg(s)</div>' +
+            results.map(function (r) {
+                return '<div style="font-family:monospace;font-size:12px;margin:2px 0;color:' + (r.ok ? '#166534' : '#991b1b') + '">' +
+                    (r.ok ? '✅' : '✗') + ' ' + autoEsc(r.label) + (r.ok ? '  → cmd ' + r.command_id : '  → ' + autoEsc(r.error || '')) + '</div>';
+            }).join('') +
+            '<div id="au-m-track" style="margin-top:10px;font-size:12px;color:#374151"></div></div>';
+    }
+    if (ids.length) autoManualTrackMany(ids);
+}
+
+function autoManualTrackMany(ids) {
+    if (_auManualPollTimer) clearInterval(_auManualPollTimer);
+    var tries = 0;
+    _auManualPollTimer = setInterval(async function () {
+        tries++;
+        try {
+            var r = await fetch(SUPABASE_URL + '/rest/v1/wms_live_commands?id=in.(' + ids.map(encodeURIComponent).join(',') +
+                ')&select=id,status,broker_status,broker_order_id,filled_qty,avg_fill_price,error_message', { headers: wmsHeaders() });
+            var rowsx = r.ok ? await r.json() : [];
+            var box = document.getElementById('au-m-track');
+            if (box && Array.isArray(rowsx)) {
+                box.innerHTML = rowsx.map(function (c) {
+                    return '<div style="font-family:monospace">' + autoEsc(c.broker_status || c.status || '—') +
+                        (c.broker_order_id ? ' · ' + c.broker_order_id : '') +
+                        (c.filled_qty ? ' · filled ' + c.filled_qty + ' @ ' + c.avg_fill_price : '') +
+                        (c.error_message ? ' · ' + autoEsc(c.error_message) : '') + '</div>';
+                }).join('');
+                var done = rowsx.length === ids.length && rowsx.every(function (c) {
+                    return ['FILLED', 'CANCELLED', 'REJECTED', 'EXPIRED'].indexOf(c.broker_status) >= 0 || ['rejected', 'error', 'cancelled'].indexOf(c.status) >= 0;
+                });
+                if (done) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
+            }
+        } catch (e) { /* keep polling */ }
+        if (tries > 40) { clearInterval(_auManualPollTimer); _auManualPollTimer = null; }
+    }, 3000);
 }
 
 function autoManualTrack(cmdId) {
