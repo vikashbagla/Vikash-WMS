@@ -337,7 +337,7 @@ function autoManualAddOrderFromLast() {
 }
 
 function autoManualRemoveRow(rowId) {
-    if (_atmRows.length <= 1) return;
+    if (_atmRows.length <= 1) { autoManualRenderForm(); return; }   // last row → reset the whole form
     _atmRows = _atmRows.filter(function (r) { return r.rowId !== rowId; });
     var tr = document.querySelector('#atm-rows .atm-order[data-rid="' + rowId + '"]');
     if (tr) tr.remove();
@@ -629,7 +629,11 @@ function autoManualVeinsId() {
 // land), NOT `trTransactions` (which isn't loaded on the automation page).
 // Async, best-effort — never blocks or affects the order.
 async function autoManualShowBalance(rowId) {
-    var row = autoManualRow(rowId); if (!row || !row.security_id) return;
+    // Gate on the SYMBOL (the match key), not security_id — a contract may be
+    // selected without a resolved security_id, but the holding still matches by
+    // symbol. (Both balance + tags were blank for MCX:SILVERMIC because the old
+    // security_id guard aborted the whole load.)
+    var row = autoManualRow(rowId); if (!row || !row.symbol) return;
     var bal = document.getElementById('atmBal_' + rowId);
     var veinsId = autoManualVeinsId();
     if (!veinsId) { if (bal) bal.textContent = ''; return; }
