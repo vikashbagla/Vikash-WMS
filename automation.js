@@ -91,6 +91,9 @@ var _auManualPw = null;            // in-memory only, this tab, this session
 var _auManualPollTimer = null;
 var _auManualPending = null;
 var _AU_M_INP = 'width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box';
+var _auManualSymItems = [];        // last symbol-search results
+var _auManualSymCtrl = null;       // wmsDropdown controller (symbol)
+var _auManualTagCtrl = null;       // wmsTagInput controller (tags)
 
 function autoManualInit() {
     if (!document.getElementById('au-manual-root')) return;
@@ -139,7 +142,10 @@ function autoManualRenderForm() {
         '</div>' +
         '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ These are <b>LIVE</b> orders on Veins/Fyers. There are no automated risk checks — the Confirm step is the only gate. Check every field.</div>' +
         '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:18px;background:#fff">' +
-          autoManualField('Symbol (exchange-qualified)', '<input id="au-m-symbol" placeholder="e.g. MCX:GOLDM26AUGFUT" style="' + _AU_M_INP + '">') +
+          '<div style="margin-bottom:12px;position:relative"><label style="display:block;font-size:12px;color:#374151;margin-bottom:4px">Symbol (search, or type the exchange-qualified Fyers symbol)</label>' +
+            '<input id="au-m-symbol" autocomplete="off" placeholder="Search e.g. GOLDM / BANKNIFTY — or MCX:GOLDM26AUGFUT" style="' + _AU_M_INP + '">' +
+            '<div class="wms-dd" id="au-m-symdd"></div>' +
+          '</div>' +
           '<div style="display:flex;gap:12px">' +
             autoManualField('Side', '<select id="au-m-side" style="' + _AU_M_INP + '"><option value="BUY">BUY</option><option value="SELL">SELL</option></select>') +
             autoManualField('Qty', '<input id="au-m-qty" type="number" min="1" step="1" style="' + _AU_M_INP + '">') +
@@ -152,10 +158,76 @@ function autoManualRenderForm() {
             '<div id="au-m-limit-wrap" style="flex:1;display:none">' + autoManualField('Limit price', '<input id="au-m-limit" type="number" step="0.05" style="' + _AU_M_INP + '">') + '</div>' +
             '<div id="au-m-stop-wrap" style="flex:1;display:none">' + autoManualField('Trigger / stop price', '<input id="au-m-stop" type="number" step="0.05" style="' + _AU_M_INP + '">') + '</div>' +
           '</div>' +
+          '<div style="margin-top:2px;position:relative"><label style="display:block;font-size:12px;color:#374151;margin-bottom:4px">Tags</label>' +
+            '<input id="au-m-tags" autocomplete="off" placeholder="Type a tag + Enter or comma…" style="' + _AU_M_INP + '">' +
+            '<div class="wms-tag-pills" id="au-m-tagpills" style="margin-top:4px"></div>' +
+            '<div class="wms-tag-dd" id="au-m-tagdd"></div>' +
+          '</div>' +
           '<div style="margin-top:14px"><button class="au-btn au-btn-primary" onclick="autoManualReview()">Review order →</button></div>' +
         '</div>' +
         '<div id="au-manual-status" style="margin-top:16px"></div>';
     autoManualTogglePrices();
+    autoManualWireWidgets();
+}
+
+// Wire the two standard widgets — searchable symbol dropdown (wmsDropdown over
+// securities_nfo, same behaviour as Add Transaction) + the standard tag widget.
+function autoManualWireWidgets() {
+    var symInput = document.getElementById('au-m-symbol');
+    var symDd = document.getElementById('au-m-symdd');
+    if (symInput && symDd && typeof wmsDropdown === 'function') {
+        _auManualSymCtrl = wmsDropdown(symInput, symDd, {
+            itemSelector: '.wms-dd-item', closeOnSelect: true, escClearsInput: false,
+            onSelect: function (itemEl) {
+                var it = _auManualSymItems[parseInt(itemEl.dataset.idx)];
+                if (it) symInput.value = it.symbol;
+            }
+        });
+        var t = null;
+        symInput.addEventListener('input', function () {
+            clearTimeout(t);
+            var q = symInput.value.trim();
+            if (q.length < 2) { if (_auManualSymCtrl) _auManualSymCtrl.close(); return; }
+            t = setTimeout(function () { autoManualSearchSymbol(q); }, 250);
+        });
+        symDd.addEventListener('mousedown', function (e) {
+            var item = e.target.closest('.wms-dd-item'); if (!item || item.dataset.idx === undefined) return;
+            e.preventDefault();
+            var it = _auManualSymItems[parseInt(item.dataset.idx)];
+            if (it) symInput.value = it.symbol;
+            if (_auManualSymCtrl) _auManualSymCtrl.close();
+        });
+    }
+    var ti = document.getElementById('au-m-tags'), tp = document.getElementById('au-m-tagpills'), td = document.getElementById('au-m-tagdd');
+    if (ti && tp && td && typeof wmsTagInput === 'function') {
+        autoGetExistingTags().then(function (existing) {
+            _auManualTagCtrl = wmsTagInput(ti, tp, td, { tags: [], existingTags: (existing || []).slice(), onChange: function () {} });
+        }).catch(function () {
+            _auManualTagCtrl = wmsTagInput(ti, tp, td, { tags: [], existingTags: [], onChange: function () {} });
+        });
+    }
+}
+
+async function autoManualSearchSymbol(q) {
+    var symDd = document.getElementById('au-m-symdd');
+    if (!symDd) return;
+    try {
+        var qq = encodeURIComponent(q.toUpperCase());
+        var url = SUPABASE_URL + '/rest/v1/securities_nfo?or=(symbol.ilike.*' + qq + '*,instrument_name.ilike.*' + qq +
+            '*)&select=symbol,instrument_name,underlying_symbol,exchange,expiry_date&order=expiry_date.asc&limit=25';
+        var r = await fetch(url, { headers: wmsHeaders() });
+        _auManualSymItems = r.ok ? await r.json() : [];
+        if (!Array.isArray(_auManualSymItems)) _auManualSymItems = [];
+        if (_auManualSymItems.length === 0) {
+            symDd.innerHTML = '<div class="wms-dd-item" style="color:#9ca3af;cursor:default">No match — type the full Fyers symbol (e.g. MCX:GOLDM26AUGFUT)</div>';
+        } else {
+            symDd.innerHTML = _auManualSymItems.map(function (it, i) {
+                return '<div class="wms-dd-item" data-idx="' + i + '"><span style="font-family:monospace">' + autoEsc(it.symbol) + '</span>' +
+                    '<span style="color:#6b7280;font-size:11px;margin-left:8px">' + autoEsc(it.instrument_name || it.underlying_symbol || '') + '</span></div>';
+            }).join('');
+        }
+        symDd.classList.add('show');   // no inline display (AUTOMATION-LESSONS: inline display beats .show)
+    } catch (e) { /* leave dropdown as-is */ }
 }
 
 function autoManualTogglePrices() {
@@ -171,6 +243,8 @@ function autoManualCollect() {
     var intent = { symbol: g('au-m-symbol').toUpperCase(), side: g('au-m-side'), qty: Number(g('au-m-qty')), orderType: ot, productType: g('au-m-product') };
     if (ot === 'LIMIT' || ot === 'SL-LIMIT') intent.limitPrice = Number(g('au-m-limit'));
     if (ot === 'SL-MARKET' || ot === 'SL-LIMIT') intent.stopPrice = Number(g('au-m-stop'));
+    var tags = (_auManualTagCtrl && typeof _auManualTagCtrl.getTags === 'function') ? _auManualTagCtrl.getTags() : [];
+    if (tags && tags.length) intent.tags = tags;
     return intent;
 }
 
@@ -183,7 +257,7 @@ function autoManualReview() {
     var priceStr = (i.orderType === 'SL-LIMIT') ? ('trigger ' + i.stopPrice + ' / limit ' + i.limitPrice)
                  : (i.orderType === 'SL-MARKET') ? ('trigger ' + i.stopPrice)
                  : (i.orderType === 'LIMIT') ? ('@ ' + i.limitPrice) : '@ market';
-    var summary = i.side + ' ' + i.qty + ' ' + i.symbol + '  [' + i.orderType + ', ' + i.productType + ']  ' + priceStr;
+    var summary = i.side + ' ' + i.qty + ' ' + i.symbol + '  [' + i.orderType + ', ' + i.productType + ']  ' + priceStr + (i.tags && i.tags.length ? '   tags: ' + i.tags.join(', ') : '');
     _auManualPending = i;
     var el = document.getElementById('au-manual-status');
     el.innerHTML =
