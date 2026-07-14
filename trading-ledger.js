@@ -122,6 +122,12 @@ var lgShowFutures = true;
 // not persisted with the view (mirrors lgShowFutures).
 var lgHidePreRecon = true;
 
+// Expandable "Starting Booked P&L" breakdown (§E.15.17). When true, the pre-recon
+// booked-P&L detail rows are shown under the Starting line so past data stays
+// checkable on screen even though pre-recon transactions are hidden. Session-state
+// only; persisted across the summary's price-refresh re-renders via this flag.
+var lgBookedStartExpanded = false;
+
 // Broker-statement split aggregation (LESSONS §E.17.11). Tracks which collapsed
 // split-groups the user has expanded. Keyed by aggKey (date|symbol|price|side|
 // firstTxnId). Session-state only — not persisted with the view.
@@ -1815,22 +1821,24 @@ function lgAnchorReconDate() {
 
 // Split a set of FY booked gains into Starting (realised on/before the recon
 // date) + New (realised after it), per §E.15.17. Returns
-// { split, reconDate, startingGain, newGains, total }. When no reconciliation
-// falls inside the FY window, split=false and newGains = all FY gains, so the
-// Booked P&L section renders exactly as it did before the split feature.
-// `total` is always the full-FY booked P&L (the Potential Tax base).
+// { split, reconDate, startingGain, startingGains, newGains, total }. When no
+// reconciliation falls inside the FY window, split=false and newGains = all FY
+// gains, so the Booked P&L section renders exactly as it did before the split.
+// `startingGains` is the pre-recon gain list (for the expandable Starting
+// breakdown, §E.15.17); `total` is always the full-FY booked P&L (the tax base).
 function lgSplitBookedGains(fyGains, fyStartStr, fyEndStr) {
     var reconDate = lgAnchorReconDate();
     var total = 0;
     fyGains.forEach(function(g) { total += (g.gain || 0); });
     var inFy = reconDate && reconDate >= fyStartStr && reconDate <= fyEndStr;
     if (!inFy) {
-        return { split: false, reconDate: '', startingGain: 0, newGains: fyGains.slice(), total: total };
+        return { split: false, reconDate: '', startingGain: 0, startingGains: [], newGains: fyGains.slice(), total: total };
     }
     var newGains = fyGains.filter(function(g) { return g.sellDate && g.sellDate > reconDate; });
+    var startingGains = fyGains.filter(function(g) { return g.sellDate && g.sellDate <= reconDate; });
     var newSum = 0;
     newGains.forEach(function(g) { newSum += (g.gain || 0); });
-    return { split: true, reconDate: reconDate, startingGain: total - newSum, newGains: newGains, total: total };
+    return { split: true, reconDate: reconDate, startingGain: total - newSum, startingGains: startingGains, newGains: newGains, total: total };
 }
 
 function lgRenderSummary() {
@@ -2163,68 +2171,93 @@ function lgRenderSummary() {
             // a New subtotal below; the header total stays on the FY figure
             // (§E.15.17). Without a recon, newGains === all FY gains → unchanged.
             var lgNewSum = totalBookedGain - lgBookedSplit.startingGain;
+
+            // Reusable by-symbol row builder — shared by the New rows and the
+            // expandable Starting (pre-recon) breakdown. Groups by symbol +
+            // securityType (NFO keyed by prefix-stripped full symbol so distinct
+            // expiries stay distinct; EQ by short_symbol) and decodes the NFO
+            // contract label from the source txn (same as Open Positions).
+            function _lgBookedRowsHtml(gains, rowClass, rowStyle) {
+                var bySym = {};
+                gains.forEach(function(g) {
+                    var isNfo = g.securityType === 'NFO';
+                    var groupKey = isNfo
+                        ? ((g.symbol || g.shortSymbol || '').replace(/^[A-Z]+:/, ''))
+                        : (g.shortSymbol || g.symbol || '');
+                    var k = groupKey + '|' + (g.securityType || 'EQ');
+                    if (!bySym[k]) bySym[k] = {
+                        shortSymbol: g.shortSymbol || g.symbol,
+                        fullSymbol: (g.symbol || '').replace(/^[A-Z]+:/, ''),
+                        securityType: g.securityType || 'EQ',
+                        qty: 0, gain: 0
+                    };
+                    bySym[k].qty += g.qty || 0;
+                    bySym[k].gain += g.gain || 0;
+                });
+                return Object.keys(bySym).sort().map(function(k) {
+                    var b = bySym[k];
+                    var cls = lgAmtClass(b.gain);
+                    var typeL = (b.securityType === 'NFO') ? 'NFO' : 'EQ';
+                    var symHtml = wmsEsc(b.shortSymbol || '');
+                    if (b.securityType === 'NFO' && typeof wmsFormatContract === 'function') {
+                        var srcTxn = sourceLookup[b.fullSymbol];
+                        if (srcTxn) {
+                            var contract = wmsFormatContract(srcTxn);
+                            if (contract && contract !== 'Equity' && contract !== 'NFO') {
+                                symHtml = wmsEsc(b.shortSymbol || '') +
+                                    ' <span style="color:#718096; font-size:10px;">' + wmsEsc(contract) + '</span>';
+                            }
+                        }
+                    }
+                    return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + (rowStyle ? ' style="' + rowStyle + '"' : '') + '>' +
+                        '<td>' + symHtml + '</td>' +
+                        '<td class="lg-col-type">' + typeL + '</td>' +
+                        '<td class="text-right">' + (typeof formatQuantity === 'function' ? formatQuantity(b.qty) : String(Math.round(b.qty))) + '</td>' +
+                        '<td class="text-right ' + cls + '">' + lgFmt(b.gain) + '</td>' +
+                        '</tr>';
+                }).join('');
+            }
+
             var lgStartRowHtml = '';
+            var lgStartDetailHtml = '';
             var lgNewSubtotalHtml = '';
             if (lgBookedSplit.split) {
-                lgStartRowHtml = '<tr class="lg-booked-split-row">' +
-                    '<td colspan="3">Starting Booked P&amp;L ' +
+                // Starting Booked P&L — clickable to expand the pre-recon
+                // breakdown so past booked data stays checkable on screen even
+                // though pre-recon transactions are hidden (§E.15.17).
+                var _caret = lgBookedStartExpanded ? '▼' : '▶';
+                lgStartRowHtml = '<tr class="lg-booked-split-row lg-booked-start-toggle" style="cursor:pointer;">' +
+                    '<td colspan="3"><span class="lg-booked-start-caret" style="display:inline-block; width:12px; color:#718096;">' + _caret + '</span>' +
+                    'Starting Booked P&amp;L ' +
                     '<span style="color:#718096; font-size:10px;">as on ' + wmsEsc(lgFmtDate(lgBookedSplit.reconDate)) + '</span></td>' +
                     '<td class="text-right ' + lgAmtClass(lgBookedSplit.startingGain) + '">' + lgFmt(lgBookedSplit.startingGain) + '</td>' +
                     '</tr>';
+                lgStartDetailHtml = _lgBookedRowsHtml(
+                    lgBookedSplit.startingGains,
+                    'lg-booked-start-detail',
+                    'background:#f9fafb;' + (lgBookedStartExpanded ? '' : ' display:none;'));
                 lgNewSubtotalHtml = '<tr class="lg-booked-split-row" style="font-weight:600; border-top:1px solid #e2e8f0;">' +
                     '<td colspan="3">New Booked P&amp;L ' +
                     '<span style="color:#718096; font-size:10px;">since recon</span></td>' +
                     '<td class="text-right ' + lgAmtClass(lgNewSum) + '">' + lgFmt(lgNewSum) + '</td>' +
                     '</tr>';
             }
-            // Group by symbol+securityType. For NFO, key by the full
-            // prefix-stripped symbol so different expiries of the same
-            // underlying (e.g. MANAPPURAM 28 Apr Fut vs 26 May Fut) are
-            // distinct rows — otherwise the contract identity is lost in
-            // the aggregation. For EQ, group by short_symbol as before.
-            var bySym = {};
-            lgBookedSplit.newGains.forEach(function(g) {
-                var isNfo = g.securityType === 'NFO';
-                var groupKey = isNfo
-                    ? ((g.symbol || g.shortSymbol || '').replace(/^[A-Z]+:/, ''))
-                    : (g.shortSymbol || g.symbol || '');
-                var k = groupKey + '|' + (g.securityType || 'EQ');
-                if (!bySym[k]) bySym[k] = {
-                    shortSymbol: g.shortSymbol || g.symbol,
-                    fullSymbol: (g.symbol || '').replace(/^[A-Z]+:/, ''),
-                    securityType: g.securityType || 'EQ',
-                    qty: 0, gain: 0
-                };
-                bySym[k].qty += g.qty || 0;
-                bySym[k].gain += g.gain || 0;
-            });
-            var bookedHtml = Object.keys(bySym).sort().map(function(k) {
-                var b = bySym[k];
-                var cls = lgAmtClass(b.gain);
-                var typeL = (b.securityType === 'NFO') ? 'NFO' : 'EQ';
-                // Decode NFO contract details from the source transaction
-                // (same pattern as Open Positions). sourceLookup is keyed by
-                // the prefix-stripped full symbol for NFO and by
-                // short_symbol for EQ.
-                var symHtml = wmsEsc(b.shortSymbol || '');
-                if (b.securityType === 'NFO' && typeof wmsFormatContract === 'function') {
-                    var srcTxn = sourceLookup[b.fullSymbol];
-                    if (srcTxn) {
-                        var contract = wmsFormatContract(srcTxn);
-                        if (contract && contract !== 'Equity' && contract !== 'NFO') {
-                            symHtml = wmsEsc(b.shortSymbol || '') +
-                                ' <span style="color:#718096; font-size:10px;">' + wmsEsc(contract) + '</span>';
-                        }
-                    }
-                }
-                return '<tr>' +
-                    '<td>' + symHtml + '</td>' +
-                    '<td class="lg-col-type">' + typeL + '</td>' +
-                    '<td class="text-right">' + (typeof formatQuantity === 'function' ? formatQuantity(b.qty) : String(Math.round(b.qty))) + '</td>' +
-                    '<td class="text-right ' + cls + '">' + lgFmt(b.gain) + '</td>' +
-                    '</tr>';
-            }).join('');
-            bookedRowsEl.innerHTML = lgStartRowHtml + bookedHtml + lgNewSubtotalHtml;
+            var bookedHtml = _lgBookedRowsHtml(lgBookedSplit.newGains, '', '');
+            bookedRowsEl.innerHTML = lgStartRowHtml + lgStartDetailHtml + bookedHtml + lgNewSubtotalHtml;
+
+            // Wire the Starting toggle → expand/collapse the pre-recon detail
+            // rows. State persists in lgBookedStartExpanded across re-renders.
+            var startToggle = bookedRowsEl.querySelector('.lg-booked-start-toggle');
+            if (startToggle) {
+                startToggle.addEventListener('click', function() {
+                    lgBookedStartExpanded = !lgBookedStartExpanded;
+                    var caret = startToggle.querySelector('.lg-booked-start-caret');
+                    if (caret) caret.textContent = lgBookedStartExpanded ? '▼' : '▶';
+                    bookedRowsEl.querySelectorAll('.lg-booked-start-detail').forEach(function(r) {
+                        r.style.display = lgBookedStartExpanded ? '' : 'none';
+                    });
+                });
+            }
         }
     }
 
