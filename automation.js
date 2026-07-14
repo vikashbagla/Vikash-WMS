@@ -200,7 +200,7 @@ function autoManualRenderForm() {
             '<span class="atm-c-sl">SL</span><span class="atm-c-act"></span>' +
         '</div>' +
         '<div id="atm-rows"></div>' +
-        '<div style="margin-top:10px"><button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualAddRow()">＋ Add order</button></div>' +
+        '<div style="margin-top:10px"><button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualAddOrderFromLast()">＋ Add order</button></div>' +
         '<div style="margin-top:16px"><button class="wms-btn wms-btn-primary" onclick="autoManualReview()">Review order →</button></div>' +
         '<div id="au-manual-status" style="margin-top:16px"></div>' +
         '<style>' +
@@ -259,9 +259,12 @@ function autoManualAddRow(copyFromId) {
         exchange: copyFrom ? copyFrom.exchange : 'NSE',
         lot_size: copyFrom ? copyFrom.lot_size : 1,
         broker_tokens: copyFrom ? copyFrom.broker_tokens : null,
-        lots: 0, quantity: 0, price: copyFrom ? copyFrom.price : 0,
-        orderType: 'MARKET',
+        lots: copyFrom ? copyFrom.lots : 0,
+        quantity: copyFrom ? copyFrom.quantity : 0,
+        price: copyFrom ? copyFrom.price : 0,
+        orderType: copyFrom ? copyFrom.orderType : 'MARKET',
         tags: copyFrom ? copyFrom.tags.slice() : [],
+        // SL is per-order and risk-bearing — never copied; add it deliberately per row.
         sl: { on: false, orderType: 'SL-MARKET', stopPrice: 0, limitPrice: 0 }
     };
     _atmRows.push(row);
@@ -297,6 +300,39 @@ function autoManualAddRow(copyFromId) {
         '<div class="atm-sl-panel" id="atmSlPanel_' + rowId + '" style="display:none"></div>';
     document.getElementById('atm-rows').appendChild(order);
     autoManualWireRow(rowId);
+    if (copyFrom) autoManualPopulateRowDom(rowId);   // mirror the copied order into the inputs
+}
+
+// Write a copied row's state into its DOM inputs (symbol, lots/qty, price, the
+// Market/Limit radio + disabled state, balance). Tags render via wmsTagInput's
+// initial `tags`. Ported spirit of the Add Transaction row-copy.
+function autoManualPopulateRowDom(rowId) {
+    var row = autoManualRow(rowId); if (!row) return;
+    var symInput = document.querySelector('.atm-sym[data-rid="' + rowId + '"]');
+    var lotsInput = document.querySelector('.atm-lots[data-rid="' + rowId + '"]');
+    var qtyInput = document.querySelector('.atm-qty[data-rid="' + rowId + '"]');
+    var priceInput = document.querySelector('.atm-price[data-rid="' + rowId + '"]');
+    if (row.security_id && symInput) symInput.value = autoManualFyersSymbol(row);
+    if (row.lot_size > 1) { if (lotsInput) { lotsInput.disabled = false; lotsInput.value = row.lots || ''; } if (qtyInput) qtyInput.readOnly = true; }
+    else { if (lotsInput) { lotsInput.disabled = true; lotsInput.value = ''; } if (qtyInput) qtyInput.readOnly = false; }
+    if (qtyInput) qtyInput.value = atmFmtQty(row.quantity);
+    // Order type radio + price field state
+    var otRadio = document.querySelector('.atm-ot[data-rid="' + rowId + '"][value="' + row.orderType + '"]');
+    if (otRadio) otRadio.checked = true;
+    if (priceInput) {
+        priceInput.disabled = (row.orderType === 'MARKET');
+        priceInput.value = row.price ? atmFmtPrice(row.price) : '';
+        if (row.price) priceInput.dataset.rawValue = row.price;
+    }
+    autoManualShowBalance(rowId);
+}
+
+// "+ Add order" clones the previous order (like the Add Transaction row), so the
+// common case — same symbol/qty, different trader — is one edit away. A blank
+// first row copies nothing.
+function autoManualAddOrderFromLast() {
+    var last = _atmRows.length ? _atmRows[_atmRows.length - 1] : null;
+    autoManualAddRow(last ? last.rowId : undefined);
 }
 
 function autoManualRemoveRow(rowId) {
