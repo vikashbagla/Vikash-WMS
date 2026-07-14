@@ -280,7 +280,7 @@ function autoManualAddRow(copyFromId) {
                 '<input type="text" class="wms-input wms-input-compact atm-sym" data-rid="' + rowId + '" placeholder="Search…" autocomplete="off" value="' + autoEsc(row.symbol || '') + '">' +
                 '<div class="wms-dd atm-symdd" id="atmSymDd_' + rowId + '"></div>' +
             '</span>' +
-            '<span class="atm-c-lots"><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-lots" data-rid="' + rowId + '" placeholder="±lots"' + (lotsBased ? '' : ' disabled') + '></span>' +
+            '<span class="atm-c-lots"><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-lots" data-rid="' + rowId + '" placeholder="±lots"' + (lotsBased ? '' : ' disabled') + '><div class="atm-bal" id="atmBalLots_' + rowId + '"></div></span>' +
             '<span class="atm-c-qty"><input type="text" inputmode="numeric" class="wms-input wms-input-compact wms-input-number atm-qty" data-rid="' + rowId + '" placeholder="±qty"><div class="atm-bal" id="atmBal_' + rowId + '"></div></span>' +
             '<span class="atm-c-price">' +
                 '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-price" data-rid="' + rowId + '" placeholder="price" disabled>' +
@@ -643,14 +643,16 @@ async function autoManualShowBalance(rowId) {
         var r = await fetch(url, { headers: wmsHeaders() });
         var rows = r.ok ? await r.json() : [];
         if (!Array.isArray(rows)) rows = [];
-        // (a) balance for this trader (or Veins) + symbol
-        if (bal) {
-            var forTrader = rows.filter(function (t) { return !t.dont_display && (t.trader_id || t.investor_id) === traderId; });
-            if (forTrader.length && typeof wmsCalcAvgCost === 'function') {
-                var net = wmsCalcAvgCost(forTrader).netQuantity || 0;
-                var lotTxt = (row.lot_size > 1 && net) ? (' (' + Math.round(net / row.lot_size) + ' lot' + (Math.abs(Math.round(net / row.lot_size)) !== 1 ? 's' : '') + ')') : '';
-                bal.textContent = net ? ('Bal: ' + formatQuantity(net) + lotTxt) : '';
-            } else { bal.textContent = ''; }
+        // (a) balance: units under Qty, lots under Lots (lots-based rows only)
+        var lotsBal = document.getElementById('atmBalLots_' + rowId);
+        var forTrader = rows.filter(function (t) { return !t.dont_display && (t.trader_id || t.investor_id) === traderId; });
+        var net = (forTrader.length && typeof wmsCalcAvgCost === 'function') ? (wmsCalcAvgCost(forTrader).netQuantity || 0) : 0;
+        if (bal) bal.textContent = net ? ('Bal: ' + formatQuantity(net)) : '';
+        if (lotsBal) {
+            if (net && autoManualIsLotsBased(row) && row.lot_size > 0) {
+                var nl = Math.round(net / row.lot_size);
+                lotsBal.textContent = 'Bal: ' + nl + ' lot' + (Math.abs(nl) !== 1 ? 's' : '');
+            } else { lotsBal.textContent = ''; }
         }
         // (b) auto-populate tags — only when the row has none yet (never clobber
         // what the user typed or a copied row already carries)
