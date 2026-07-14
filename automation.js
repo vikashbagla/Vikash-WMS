@@ -91,9 +91,10 @@ var _auManualPw = null;            // in-memory only, this tab, this session
 var _auManualPollTimer = null;
 var _auManualPending = null;
 var _AU_M_INP = 'width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box';
-var _auManualTagCtrl = null;       // wmsTagInput controller (tags, applied to all legs)
 var _auManualRowSeq = 0;           // leg-row id sequence
 var _auManualLegsToPlace = null;   // legs staged by Review, placed by Confirm
+var _auManualTraders = [];         // cached investors for the per-leg trader dropdown
+var _auManualLegTagCtrls = {};     // rid -> wmsTagInput controller (per-leg tags)
 
 function autoManualInit() {
     if (!document.getElementById('au-manual-root')) return;
@@ -141,48 +142,92 @@ function autoManualRenderForm() {
           '<h3 style="margin:0">✋ Manual Fyers order <span style="font-size:12px;font-weight:400;color:#16a34a">● unlocked</span></h3>' +
           '<button class="au-btn au-btn-secondary" style="font-size:12px" onclick="autoManualLock()">Lock</button>' +
         '</div>' +
-        '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ <b>LIVE</b> orders on Veins/Fyers. No automated risk checks — the Confirm step is the only gate. One row per leg; <b>Lots is signed: + = BUY, − = SELL.</b> Qty (units) is computed from the contract lot size.</div>' +
-        '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;background:#fff">' +
-          '<div id="au-m-legs"></div>' +
-          '<button class="au-btn au-btn-secondary" style="font-size:12px;margin-top:4px" onclick="autoManualAddLeg()">＋ Add leg</button>' +
-          '<div style="margin-top:16px;position:relative"><label style="display:block;font-size:12px;color:#374151;margin-bottom:4px">Tags (applied to all legs)</label>' +
-            '<input id="au-m-tags" autocomplete="off" placeholder="Type a tag + Enter or comma…" style="' + _AU_M_INP + '">' +
-            '<div class="wms-tag-pills" id="au-m-tagpills" style="margin-top:4px"></div>' +
-            '<div class="wms-tag-dd" id="au-m-tagdd"></div>' +
-          '</div>' +
-          '<div style="margin-top:14px"><button class="au-btn au-btn-primary" onclick="autoManualReview()">Review order →</button></div>' +
-        '</div>' +
+        '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ <b>LIVE</b> orders on Veins/Fyers. No automated risk checks — the Confirm step is the only gate. One card per leg; each leg is a separate Fyers order. <b>Lots is signed: + = BUY, − = SELL.</b></div>' +
+        '<div id="au-m-legs"></div>' +
+        '<button class="au-btn au-btn-secondary" style="font-size:12px" onclick="autoManualAddLeg()">＋ Add leg</button>' +
+        '<div style="margin-top:16px"><button class="au-btn au-btn-primary" onclick="autoManualReview()">Review order →</button></div>' +
         '<div id="au-manual-status" style="margin-top:16px"></div>';
+    autoManualLoadTraders();
     autoManualAddLeg();
-    var ti = document.getElementById('au-m-tags'), tp = document.getElementById('au-m-tagpills'), td = document.getElementById('au-m-tagdd');
-    if (ti && tp && td && typeof wmsTagInput === 'function') {
-        autoGetExistingTags().then(function (existing) {
-            _auManualTagCtrl = wmsTagInput(ti, tp, td, { tags: [], existingTags: (existing || []).slice(), onChange: function () {} });
-        }).catch(function () { _auManualTagCtrl = wmsTagInput(ti, tp, td, { tags: [], existingTags: [], onChange: function () {} }); });
-    }
 }
 
-// One leg row: searchable symbol (wmsDropdown, ACTIVE + non-expired contracts
-// only) + signed Lots + type/product/prices. Mirrors the Add Transaction row.
+async function autoManualLoadTraders() {
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,short_name,name&order=short_name.asc', { headers: wmsHeaders() });
+        var rows = r.ok ? await r.json() : [];
+        _auManualTraders = Array.isArray(rows) ? rows : [];
+    } catch (e) { _auManualTraders = []; }
+    document.querySelectorAll('.au-ml-trader').forEach(function (sel) { var cur = sel.value; sel.innerHTML = autoManualTraderOptions(); sel.value = cur; });
+}
+
+function autoManualTraderOptions() {
+    return '<option value="">(Same as Veins)</option>' + _auManualTraders.map(function (t) {
+        return '<option value="' + t.id + '">' + autoEsc(t.short_name || t.name || t.id) + '</option>';
+    }).join('');
+}
+
+// One leg = a card. Searchable symbol (ACTIVE + non-expired only) + signed Lots
+// (+ buy / − sell) with live Qty, type/product/prices with live order value, a
+// WMS-side Trader dropdown, and its own tag widget. Close to the Add Transaction row.
 function autoManualAddLeg() {
     var legs = document.getElementById('au-m-legs');
     if (!legs) return;
     var rid = ++_auManualRowSeq;
     var lbl = 'display:block;font-size:10px;color:#6b7280;margin-bottom:2px';
-    var row = document.createElement('div');
-    row.className = 'au-ml-row';
-    row.dataset.rid = rid;
-    row.style.cssText = 'display:grid;grid-template-columns:2.4fr 0.9fr 1.1fr 1fr 0.9fr 0.9fr 24px;gap:6px;align-items:end;margin-bottom:8px';
-    row.innerHTML =
-        '<div style="position:relative"><label style="' + lbl + '">Symbol</label><input class="au-ml-sym" autocomplete="off" placeholder="search / type" style="' + _AU_M_INP + '"><div class="wms-dd au-ml-symdd"></div></div>' +
-        '<div><label style="' + lbl + '">Lots ±</label><input class="au-ml-lots" type="number" step="1" placeholder="+2 / −1" style="' + _AU_M_INP + '"></div>' +
-        '<div><label style="' + lbl + '">Type</label><select class="au-ml-otype" style="' + _AU_M_INP + '"><option>MARKET</option><option>LIMIT</option><option>SL-MARKET</option><option>SL-LIMIT</option></select></div>' +
-        '<div><label style="' + lbl + '">Product</label><select class="au-ml-product" style="' + _AU_M_INP + '"><option>MARGIN</option><option>INTRADAY</option><option>CNC</option></select></div>' +
-        '<div><label style="' + lbl + '">Limit</label><input class="au-ml-limit" type="number" step="0.05" style="' + _AU_M_INP + '"></div>' +
-        '<div><label style="' + lbl + '">Trigger</label><input class="au-ml-stop" type="number" step="0.05" style="' + _AU_M_INP + '"></div>' +
-        '<button class="au-btn au-btn-secondary" title="Remove leg" style="padding:6px 4px;font-size:15px;line-height:1" onclick="autoManualRemoveLeg(' + rid + ')">×</button>';
-    legs.appendChild(row);
-    autoManualWireRowSymbol(row);
+    var out = 'padding:8px 4px;font-family:monospace;font-size:13px;color:#111827';
+    var card = document.createElement('div');
+    card.className = 'au-ml-row';
+    card.dataset.rid = rid;
+    card.style.cssText = 'border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:10px;background:#fafafa';
+    card.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:11px;font-weight:600;color:#6b7280">Leg ' + rid + '</span>' +
+          '<button class="au-btn au-btn-secondary" title="Remove leg" style="padding:2px 8px;font-size:12px" onclick="autoManualRemoveLeg(' + rid + ')">× remove</button></div>' +
+        '<div style="display:grid;grid-template-columns:2.6fr 0.9fr 1.2fr 1.1fr 1fr;gap:8px;align-items:end">' +
+          '<div style="position:relative"><label style="' + lbl + '">Symbol</label><input class="au-ml-sym" autocomplete="off" placeholder="search / type" style="' + _AU_M_INP + '"><div class="wms-dd au-ml-symdd"></div></div>' +
+          '<div><label style="' + lbl + '">Lots ±</label><input class="au-ml-lots" type="number" step="1" placeholder="+2 / −1" style="' + _AU_M_INP + '"></div>' +
+          '<div><label style="' + lbl + '">Qty (units)</label><div class="au-ml-qty" style="' + out + '">—</div></div>' +
+          '<div><label style="' + lbl + '">Type</label><select class="au-ml-otype" style="' + _AU_M_INP + '"><option>MARKET</option><option>LIMIT</option><option>SL-MARKET</option><option>SL-LIMIT</option></select></div>' +
+          '<div><label style="' + lbl + '">Product</label><select class="au-ml-product" style="' + _AU_M_INP + '"><option>MARGIN</option><option>INTRADAY</option><option>CNC</option></select></div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1.3fr 1.7fr;gap:8px;align-items:end;margin-top:8px">' +
+          '<div><label style="' + lbl + '">Limit</label><input class="au-ml-limit" type="number" step="0.05" style="' + _AU_M_INP + '"></div>' +
+          '<div><label style="' + lbl + '">Trigger</label><input class="au-ml-stop" type="number" step="0.05" style="' + _AU_M_INP + '"></div>' +
+          '<div><label style="' + lbl + '">Order value</label><div class="au-ml-value" style="' + out + '">—</div></div>' +
+          '<div><label style="' + lbl + '">Trader (WMS only)</label><select class="au-ml-trader" style="' + _AU_M_INP + '">' + autoManualTraderOptions() + '</select></div>' +
+        '</div>' +
+        '<div style="margin-top:8px;position:relative"><label style="' + lbl + '">Tags</label><input class="au-ml-tags" autocomplete="off" placeholder="Type a tag + Enter or comma…" style="' + _AU_M_INP + '"><div class="wms-tag-pills au-ml-tagpills" style="margin-top:4px"></div><div class="wms-tag-dd au-ml-tagdd"></div></div>';
+    legs.appendChild(card);
+    autoManualWireRowSymbol(card);
+    autoManualWireRowExtras(card, rid);
+}
+
+function autoManualWireRowExtras(card, rid) {
+    var recalc = function () { autoManualRecalcRow(card); };
+    ['.au-ml-lots', '.au-ml-limit'].forEach(function (s) { var e = card.querySelector(s); if (e) e.addEventListener('input', recalc); });
+    var ot = card.querySelector('.au-ml-otype'); if (ot) ot.addEventListener('change', recalc);
+    var ti = card.querySelector('.au-ml-tags'), tp = card.querySelector('.au-ml-tagpills'), td = card.querySelector('.au-ml-tagdd');
+    if (ti && tp && td && typeof wmsTagInput === 'function') {
+        autoGetExistingTags().then(function (ex) { _auManualLegTagCtrls[rid] = wmsTagInput(ti, tp, td, { tags: [], existingTags: (ex || []).slice(), onChange: function () {} }); })
+            .catch(function () { _auManualLegTagCtrls[rid] = wmsTagInput(ti, tp, td, { tags: [], existingTags: [], onChange: function () {} }); });
+    }
+}
+
+// Live Qty (units, signed) + order value. Qty needs the contract lot_size, captured
+// on symbol-select (MCX qty = lots; NSE qty = lots × lot_size). Value = qty × price.
+function autoManualRecalcRow(card) {
+    var symIn = card.querySelector('.au-ml-sym');
+    var lots = Number((card.querySelector('.au-ml-lots') || {}).value);
+    var lotSize = Number(symIn && symIn.dataset.lotsize), exch = symIn && symIn.dataset.exchange;
+    var ot = (card.querySelector('.au-ml-otype') || {}).value, limit = Number((card.querySelector('.au-ml-limit') || {}).value);
+    var qEl = card.querySelector('.au-ml-qty'), vEl = card.querySelector('.au-ml-value');
+    var qty = null;
+    if (Number.isFinite(lots) && lots !== 0 && lotSize && exch) {
+        qty = (exch === 'MCX') ? Math.abs(lots) : Math.abs(lots) * lotSize;
+        if (qEl) qEl.textContent = (lots > 0 ? 'BUY ' : 'SELL ') + qty;
+    } else if (qEl) { qEl.textContent = '—'; }
+    if (qty && (ot === 'LIMIT' || ot === 'SL-LIMIT') && limit > 0) {
+        if (vEl) vEl.textContent = '₹' + Math.round(qty * limit).toLocaleString('en-IN');
+    } else if (vEl) { vEl.textContent = (ot === 'MARKET' || ot === 'SL-MARKET') ? '@ market' : '—'; }
 }
 
 function autoManualRemoveLeg(rid) {
@@ -196,14 +241,14 @@ function autoManualWireRowSymbol(row) {
     var symDd = row.querySelector('.au-ml-symdd');
     if (!symInput || !symDd || typeof wmsDropdown !== 'function') return;
     var items = [];
-    var setSym = function (it) { symInput.value = it.symbol; symInput.dataset.lotsize = it.lot_size || ''; symInput.dataset.exchange = it.exchange || ''; };
+    var setSym = function (it) { symInput.value = it.symbol; symInput.dataset.lotsize = it.lot_size || ''; symInput.dataset.exchange = it.exchange || ''; autoManualRecalcRow(row); };
     var ctrl = wmsDropdown(symInput, symDd, {
         itemSelector: '.wms-dd-item', closeOnSelect: true, escClearsInput: false,
         onSelect: function (itemEl) { var it = items[parseInt(itemEl.dataset.idx)]; if (it) setSym(it); }
     });
     var t = null;
     symInput.addEventListener('input', function () {
-        symInput.dataset.lotsize = ''; symInput.dataset.exchange = '';   // invalidate until re-selected/looked-up
+        symInput.dataset.lotsize = ''; symInput.dataset.exchange = ''; autoManualRecalcRow(row);   // invalidate until re-selected
         clearTimeout(t);
         var q = symInput.value.trim();
         if (q.length < 2) { ctrl.close(); return; }
@@ -260,7 +305,6 @@ async function autoManualLookupContract(symbol) {
 async function autoManualReview() {
     var rows = document.querySelectorAll('#au-m-legs .au-ml-row');
     if (!rows.length) { autoManualStatus('Add at least one leg.', true); return; }
-    var tags = (_auManualTagCtrl && typeof _auManualTagCtrl.getTags === 'function') ? _auManualTagCtrl.getTags() : [];
     autoManualStatus('Checking contracts…', false);
     var legs = [];
     for (var idx = 0; idx < rows.length; idx++) {
@@ -286,16 +330,23 @@ async function autoManualReview() {
         var intent = { symbol: symbol, side: side, qty: qty, orderType: ot, productType: product };
         if (needLimit) intent.limitPrice = limit;
         if (needStop) intent.stopPrice = stop;
-        if (tags && tags.length) intent.tags = tags;
+        var ridv = row.dataset.rid;
+        var legTags = (_auManualLegTagCtrls[ridv] && typeof _auManualLegTagCtrls[ridv].getTags === 'function') ? _auManualLegTagCtrls[ridv].getTags() : [];
+        if (legTags && legTags.length) intent.tags = legTags;
+        var traderSel = row.querySelector('.au-ml-trader');
+        var traderVal = traderSel ? (traderSel.value || '') : '';
+        var traderName = (traderVal && traderSel && traderSel.selectedOptions && traderSel.selectedOptions[0]) ? traderSel.selectedOptions[0].text : '';
+        if (traderVal) intent.trader_id = traderVal;
         var priceStr = (needStop && needLimit) ? ('trig ' + stop + '/lim ' + limit) : needStop ? ('trig ' + stop) : needLimit ? ('@ ' + limit) : '@ mkt';
-        var label = side + ' ' + absLots + ' lot' + (absLots > 1 ? 's' : '') + ' = ' + qty + 'u  ' + symbol + '  [' + ot + ',' + product + ']  ' + priceStr;
+        var extra = (legTags && legTags.length ? '  tags:' + legTags.join('/') : '') + (traderName ? '  trader:' + traderName : '');
+        var label = side + ' ' + absLots + ' lot' + (absLots > 1 ? 's' : '') + ' = ' + qty + 'u  ' + symbol + '  [' + ot + ',' + product + ']  ' + priceStr + extra;
         legs.push({ label: label, intent: intent });
     }
     _auManualLegsToPlace = legs;
     var el = document.getElementById('au-manual-status');
     el.innerHTML =
         '<div style="border:2px solid #f59e0b;border-radius:10px;padding:16px;background:#fffbeb">' +
-        '<div style="font-size:13px;color:#92400e;margin-bottom:8px">Confirm ' + legs.length + ' <b>LIVE</b> leg(s)' + (tags && tags.length ? ' · tags: ' + autoEsc(tags.join(', ')) : '') + ':</div>' +
+        '<div style="font-size:13px;color:#92400e;margin-bottom:8px">Confirm ' + legs.length + ' <b>LIVE</b> leg(s) — each is placed as a separate Fyers order:</div>' +
         legs.map(function (l) { return '<div style="font-family:monospace;font-size:13px;font-weight:600;margin:3px 0">' + autoEsc(l.label) + '</div>'; }).join('') +
         '<div style="margin-top:14px"><button class="au-btn au-btn-primary" style="background:#dc2626;border-color:#dc2626" onclick="autoManualPlaceAll()">Confirm &amp; Place ' + legs.length + ' leg(s)</button> ' +
         '<button class="au-btn au-btn-secondary" onclick="autoManualStatus(\'\',false)">Cancel</button></div>' +
