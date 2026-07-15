@@ -364,7 +364,7 @@ function _wmsTxnEnsureDom() {
                     // Flags
                     '<div class="wms-edit-section">' +
                         '<div class="wms-edit-form-flags">' +
-                            '<label class="flag-label"><input type="checkbox" id="wmsEditLocked" disabled> Locked</label>' +
+                            '<label class="flag-label"><input type="checkbox" id="wmsEditLocked"> Locked</label>' +
                             '<label class="flag-label"><input type="checkbox" id="wmsEditDontDisplay"> Don\'t Display</label>' +
                             '<label class="flag-label"><input type="checkbox" id="wmsEditIgnoreAvg"> Ignore for Avg Cost</label>' +
                         '</div>' +
@@ -1444,9 +1444,6 @@ function wmsEditModalOpen(txnId) {
     document.getElementById('wmsEditIgnoreAvg').checked = !!txn.ignore_for_avg_cost;
     document.getElementById('wmsEditDontDisplay').checked = !!txn.dont_display;
 
-    // Lock warning
-    document.getElementById('wmsEditLockWarning').style.display = txn.is_locked ? '' : 'none';
-
     // Reset split
     document.getElementById('wmsSplitSection').style.display = 'none';
     document.getElementById('wmsSplitQty').value = '';
@@ -1458,13 +1455,15 @@ function wmsEditModalOpen(txnId) {
     // so a previously-split-then-closed modal doesn't leak its disabled state.
     document.getElementById('wmsSplitConfirmBtn').disabled = false;
 
-    // Disable if locked
-    var isLocked = !!txn.is_locked;
-    document.querySelectorAll('#wmsEditForm .editable-field, #wmsEditForm select.editable-field, #wmsEditForm input[type="checkbox"]:not(#wmsEditLocked)').forEach(function(f) { f.disabled = isLocked; });
-    document.getElementById('wmsEditSaveBtn').disabled = isLocked;
-    document.getElementById('wmsEditDeleteBtn').disabled = isLocked;
-    document.getElementById('wmsSplitBtn').disabled = isLocked;
-    document.getElementById('wmsEditModalTitle').textContent = isLocked ? 'View Transaction (Locked)' : 'Edit Transaction';
+    // Lock/unlock UI (UI-STANDARDS §D.1.11): the Lock checkbox stays interactive
+    // so a locked trade can be UNLOCKED — uncheck it to re-enable the fields +
+    // Save, then Save persists is_locked=false. Wire the change handler once.
+    var lockEl = document.getElementById('wmsEditLocked');
+    if (lockEl && !lockEl.dataset.wmsLockWired) {
+        lockEl.dataset.wmsLockWired = '1';
+        lockEl.addEventListener('change', wmsEditApplyLockUI);
+    }
+    wmsEditApplyLockUI();
 
     document.getElementById('wmsEditModal').classList.add('show');
 }
@@ -1473,6 +1472,30 @@ function wmsEditModalClose() {
     document.getElementById('wmsEditModal').classList.remove('show');
     wmsEditingTxnId = null;
     _wmsSplitData = null;
+}
+
+// Sync the edit modal's editable/save state to the Lock checkbox (UI-STANDARDS
+// §D.1.11). The Lock checkbox is ALWAYS interactive so a locked trade can be
+// unlocked from the UI. While the lock is checked, the other fields are
+// view-only; unchecking a locked trade re-enables the fields + Save so the user
+// can save the unlock (Save writes is_locked=false). Delete/Split stay gated on
+// the DB lock state until the unlock is actually saved. Checking the lock on an
+// unlocked trade leaves Save enabled so the lock can be persisted.
+function wmsEditApplyLockUI() {
+    var lockEl = document.getElementById('wmsEditLocked');
+    if (!lockEl) return;
+    lockEl.disabled = false;                       // lock toggle is never disabled
+    var lockedNow = lockEl.checked;
+    var t = (wmsTxnCtx && wmsTxnCtx.transactions)
+        ? wmsTxnCtx.transactions.find(function(x) { return x.id === wmsEditingTxnId; })
+        : null;
+    var origLocked = !!(t && t.is_locked);
+    document.querySelectorAll('#wmsEditForm .editable-field, #wmsEditForm select.editable-field, #wmsEditForm input[type="checkbox"]:not(#wmsEditLocked)').forEach(function(f) { f.disabled = lockedNow; });
+    document.getElementById('wmsEditSaveBtn').disabled = (lockedNow && origLocked);
+    document.getElementById('wmsEditDeleteBtn').disabled = origLocked;
+    document.getElementById('wmsSplitBtn').disabled = origLocked;
+    document.getElementById('wmsEditModalTitle').textContent = (lockedNow && origLocked) ? 'View Transaction (Locked)' : 'Edit Transaction';
+    document.getElementById('wmsEditLockWarning').style.display = (lockedNow && origLocked) ? '' : 'none';
 }
 
 // ============================================================================
@@ -1716,7 +1739,13 @@ async function wmsEditSave() {
     if (!wmsEditingTxnId || !wmsTxnCtx) return;
     var txn = wmsTxnCtx.transactions.find(function(t) { return t.id === wmsEditingTxnId; });
     if (!txn) return;
-    if (txn.is_locked) { showAlert('Transaction is locked and cannot be edited.', 'error'); return; }
+    // Locked trades are view-only UNTIL the user unchecks the Lock checkbox —
+    // this save then persists is_locked=false (the unlock). Only block when the
+    // lock is still checked. (UI-STANDARDS §D.1.11)
+    if (txn.is_locked && document.getElementById('wmsEditLocked').checked) {
+        showAlert('Transaction is locked. Uncheck the lock to save changes.', 'error');
+        return;
+    }
 
     // Layer 4: pre-reconciliation edit guard — if this trade's date is on or
     // before a stored RECONCILIATION, warn the user that saving will
@@ -1755,7 +1784,8 @@ async function wmsEditSave() {
         tags: tags,
         notes: document.getElementById('wmsEditNotes').value || null,
         ignore_for_avg_cost: document.getElementById('wmsEditIgnoreAvg').checked,
-        dont_display: document.getElementById('wmsEditDontDisplay').checked
+        dont_display: document.getElementById('wmsEditDontDisplay').checked,
+        is_locked: document.getElementById('wmsEditLocked').checked
     };
 
     // Use return=representation so the server's fresh row (with updated_at)
