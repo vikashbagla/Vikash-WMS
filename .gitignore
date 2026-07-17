@@ -9,3 +9,5 @@ wms-live/.env
 wms-live/*.log
 wms-live/npm-debug.log*
 wms-live/.npm/
+analysis/gs_backtest/node_modules/
+analysis/gs_backtest/__pycache__/
