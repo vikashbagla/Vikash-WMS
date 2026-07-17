@@ -1033,7 +1033,7 @@ async function autoLoadGsFamEvents(filterOverride) {
             var typeColor = s.event_type === 'ENTRY' ? '#047857' :
                            /^EXIT_SL|STOP_HIT/.test(s.event_type) ? '#dc2626' :
                            /^EXIT/.test(s.event_type) ? '#0891b2' :
-                           s.event_type === 'MANUAL_CLOSE' ? '#92400e' : '#6b7280';
+                           /MANUAL/.test(s.event_type) ? '#92400e' : '#6b7280';
             var side = s.direction || (leg.side === 'BUY' ? 'LONG' : leg.side === 'SELL' ? 'SHORT' : '—');
             var contract = leg.symbol ? autoFmtContract(leg.symbol, leg.expiry_date) : '—';
             var qty = m.qty_lots != null ? m.qty_lots + ' lot' + (m.qty_lots == 1 ? '' : 's') : (leg.qty || '—');
@@ -1614,7 +1614,7 @@ async function autoLoadPairsFamEvents(filterOverride) {
                            /STOP_HIT|EXIT_STOP/.test(s.event_type) ? '#dc2626' :
                            /TARGET_HIT|EXIT_TARGET/.test(s.event_type) ? '#0891b2' :
                            s.event_type === 'TIME_STOP' ? '#92400e' :
-                           s.event_type === 'MANUAL_CLOSE' ? '#7c3aed' : '#6b7280';
+                           /MANUAL/.test(s.event_type) ? '#7c3aed' : '#6b7280';
             var emailBadge = s.email_status === 'SENT' ? '<span class="au-badge success" style="font-size:9px">sent</span>'
                           : s.email_status === 'FAILED' ? '<span class="au-badge error" style="font-size:9px">failed</span>'
                           : s.email_status === 'PENDING' ? '<span class="au-badge loading" style="font-size:9px">pending</span>'
@@ -3365,9 +3365,9 @@ async function autoSaveRecipients(name) {
 //
 // v_auto_open_trades closes a trade when net qty per symbol == 0. So a manual
 // close is just a signal row whose legs are the reverse-side of the ENTRY's
-// legs, same qty. event_type='MANUAL_CLOSE' for audit trail; email_status set
-// to PENDING but no email actually sent — chassis is the only thing that calls
-// Resend, and we skip that here. Operator already knows they closed it.
+// legs, same qty. event_type='MANUAL_EXIT' (the value allowed by the
+// auto_signals_event_type_check constraint) for the audit trail; email skipped
+// — chassis is the only thing that calls Resend. Operator already knows.
 
 async function autoManualClose(tradeId) {
     if (!tradeId) return;
@@ -3396,7 +3396,7 @@ async function autoManualClose(tradeId) {
         trade_id: tradeId,
         strategy_name: entry.strategy_name,
         execution_mode: entry.execution_mode || 'PAPER',
-        event_type: 'MANUAL_CLOSE',
+        event_type: 'MANUAL_EXIT',
         direction: 'CLOSE',
         score: 0,
         legs: closeLegs,
