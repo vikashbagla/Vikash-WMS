@@ -976,11 +976,16 @@ async function autoLoadGsFamEvents(filterOverride) {
         : (typeSel ? typeSel.value : 'all');
     if (typeSel && typeFilter !== typeSel.value) typeSel.value = typeFilter;
     var stratFilter = stratSel ? stratSel.value : 'all';
+    var verSel = document.getElementById('au-gs-fam-events-ver');
+    var verFilter = verSel ? verSel.value : 'all';
 
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
 
-    var strats = stratFilter === 'all' ? _AU_GS_STRATS : [stratFilter];
-    var qs = '?strategy_name=in.(' + strats.join(',') + ')' +
+    // LIKE-pattern (not a fixed IN-list) so parallel config variants that share a
+    // plugin — e.g. silver_mini_15m_v3, gold_mini_15m_v23 — are included alongside
+    // the base v2.2 rows. 'all' catches both instruments via *_mini_15m*.
+    var namePat = stratFilter === 'all' ? '*_mini_15m*' : (stratFilter + '*');
+    var qs = '?strategy_name=like.' + encodeURIComponent(namePat) +
              '&order=fired_at.desc&limit=200' +
              '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata,source,email_status';
     if (typeFilter === 'ENTRY')      qs += '&event_type=eq.ENTRY';
@@ -993,6 +998,15 @@ async function autoLoadGsFamEvents(filterOverride) {
     try {
         var r = await fetch(SUPABASE_URL + '/rest/v1/auto_signals' + qs, { headers: wmsHeaders() });
         var rows = r.ok ? await r.json() : [];
+        // Version filter applied client-side: version lives in metadata (key is
+        // strategy_version, older rows used version), so a jsonb server filter would
+        // miss the fallback key. The list is capped at 200, so this is cheap.
+        if (verFilter !== 'all' && Array.isArray(rows)) {
+            rows = rows.filter(function (s) {
+                var m = s.metadata || {};
+                return (m.strategy_version || m.version) === verFilter;
+            });
+        }
         if (!Array.isArray(rows) || rows.length === 0) {
             el.innerHTML = '<div class="au-soon" style="padding:20px">No events match this filter.</div>';
             if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 events'; }
@@ -1170,6 +1184,9 @@ async function autoLoadGsFamAdmin() {
         }
     }
 
+    // 1b. Strategy Parameters editor (metadata.params → runner).
+    autoLoadGsParams();
+
     // 2. Scheduling — external cron-job.org cron topology. auto_strategies.cron_schedule
     //    is null for GS by design (strategies don't own their cadence); reads
     //    latest auto_runs row to display "last run" freshness per cron.
@@ -1281,6 +1298,120 @@ async function autoLoadGsFamAdmin() {
         });
         html += '</tbody></table>';
         catEl.innerHTML = html;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// GS Strategy Parameters editor (metadata.params → runner)
+//
+// Writes auto_strategies.metadata.params, which the automation-runner threads
+// into the strategy plugin (index.ts runOne → fetchData/scan). These are the
+// UI-editable risk/exit knobs — changing them needs NO code deploy. One block
+// per GS-family config row, so v2.2 / v2.3 / v3 each get their own params.
+// ----------------------------------------------------------------------------
+var _AU_GS_PARAM_SPEC = [
+    { key: 'stop_mode',          label: 'stop_mode',          type: 'select', opts: ['drift', 'fixed'], def: 'drift' },
+    { key: 'stop_mult',          label: 'stop_mult (×ATR)',   type: 'number', step: '0.1',  def: 1.8 },
+    { key: 'risk_per_trade',     label: 'risk_per_trade (₹)', type: 'number', step: '1000', def: 50000 },
+    { key: 'entry_roll_days',    label: 'entry_roll_days',    type: 'number', step: '1',    def: 6 },
+    { key: 'position_roll_days', label: 'position_roll_days', type: 'number', step: '1',    def: 3 }
+];
+
+async function autoLoadGsParams() {
+    var el = document.getElementById('au-gs-fam-params');
+    if (!el) return;
+    try {
+        // GS-family rows only (family='gs'), so v2.3/v3 config rows appear here
+        // automatically once created — no hardcoded name list to maintain.
+        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=name,display_name,version,enabled,execution_mode,metadata&order=version.asc,name.asc',
+            { headers: wmsHeaders() });
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()));
+        var rows = await r.json();
+        if (!rows.length) { el.innerHTML = '<div class="au-soon">No GS strategy rows found.</div>'; return; }
+
+        var html = '';
+        rows.forEach(function (s) {
+            var params = (s.metadata && s.metadata.params) ? s.metadata.params : {};
+            var idBase = 'au-gsp-' + s.name;
+            var modeBadge = s.execution_mode === 'LIVE'
+                ? '<span class="au-badge error" style="font-size:10px">LIVE</span>'
+                : '<span class="au-badge idle" style="font-size:10px">' + autoEsc(s.execution_mode || 'PAPER') + '</span>';
+            html += '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#fafafa">';
+            html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">' +
+                    '<code style="font-weight:600">' + autoEsc(s.name) + '</code>' +
+                    '<span style="font-family:monospace;font-size:11px;color:#1e40af">' + autoEsc(s.version || '—') + '</span>' +
+                    modeBadge +
+                    (s.enabled ? '' : '<span class="au-badge idle" style="font-size:10px">paused</span>') +
+                    '</div>';
+            html += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">';
+            _AU_GS_PARAM_SPEC.forEach(function (f) {
+                var cur = (params[f.key] !== undefined && params[f.key] !== null) ? params[f.key] : f.def;
+                var inputId = idBase + '-' + f.key;
+                html += '<div style="display:flex;flex-direction:column;gap:2px">' +
+                        '<label for="' + inputId + '" style="font-size:10px;color:#6b7280">' + autoEsc(f.label) + '</label>';
+                if (f.type === 'select') {
+                    html += '<select id="' + inputId + '" style="font-size:12px;padding:3px 6px;border:1px solid #d1d5db;border-radius:4px">';
+                    f.opts.forEach(function (o) {
+                        html += '<option value="' + o + '"' + (String(cur) === o ? ' selected' : '') + '>' + o + '</option>';
+                    });
+                    html += '</select>';
+                } else {
+                    html += '<input id="' + inputId + '" type="number" step="' + f.step + '" value="' + autoEsc(String(cur)) +
+                            '" style="width:120px;font-size:12px;padding:3px 6px;border:1px solid #d1d5db;border-radius:4px">';
+                }
+                html += '</div>';
+            });
+            html += '<button class="au-btn au-btn-primary" style="font-size:12px;padding:5px 14px" onclick="autoSaveGsParams(\'' + autoEsc(s.name) + '\')">Save</button>';
+            html += '<span id="' + idBase + '-msg" style="font-size:11px;color:#6b7280"></span>';
+            html += '</div></div>';
+        });
+        el.innerHTML = html;
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load params: ' + autoEsc(String(e.message || e)) + '</span>';
+    }
+}
+
+async function autoSaveGsParams(name) {
+    var idBase = 'au-gsp-' + name;
+    var msg = document.getElementById(idBase + '-msg');
+    if (msg) { msg.style.color = '#6b7280'; msg.textContent = 'Saving…'; }
+    try {
+        // Read-modify-write: metadata also carries driver/family/plugin/version, and
+        // PostgREST PATCH replaces the whole jsonb — so merge, never overwrite.
+        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name) + '&select=metadata',
+            { headers: wmsHeaders() });
+        if (!r.ok) throw new Error('read HTTP ' + r.status + ' ' + (await r.text()));
+        var cur = (await r.json())[0];
+        if (!cur) throw new Error('strategy row ' + name + ' not found');
+        var meta = Object.assign({}, cur.metadata || {});
+        if (!meta.driver || !meta.family) throw new Error('refusing to save: row is missing driver/family');
+
+        var params = Object.assign({}, meta.params || {});
+        for (var i = 0; i < _AU_GS_PARAM_SPEC.length; i++) {
+            var f = _AU_GS_PARAM_SPEC[i];
+            var inp = document.getElementById(idBase + '-' + f.key);
+            if (!inp) continue;
+            if (f.type === 'select') {
+                params[f.key] = inp.value;
+            } else {
+                var v = parseFloat(inp.value);
+                if (!isFinite(v)) throw new Error(f.label + ' must be a number');
+                if (v < 0) throw new Error(f.label + ' cannot be negative');
+                params[f.key] = v;
+            }
+        }
+        meta.params = params;
+
+        var pr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name), {
+            method: 'PATCH',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+            body: JSON.stringify({ metadata: meta })
+        });
+        if (!pr.ok) throw new Error('save HTTP ' + pr.status + ' ' + (await pr.text()));
+        if (msg) { msg.style.color = '#16a34a'; msg.textContent = '✓ Saved — applies to the next scan.'; }
+        autoLoadGsParams();   // re-read — never claim success from the local copy
+    } catch (e) {
+        if (msg) { msg.style.color = '#dc2626'; msg.textContent = 'Failed: ' + String(e.message || e); }
     }
 }
 

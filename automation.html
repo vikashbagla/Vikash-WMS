@@ -709,6 +709,16 @@ details summary {
                   <option value="gold_mini_15m">Gold Mini only</option>
                 </select>
               </label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+                <span>Version:</span>
+                <select id="au-gs-fam-events-ver" onchange="autoLoadGsFamEvents()"
+                        style="padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:#fff">
+                  <option value="all">All versions</option>
+                  <option value="MS007-v2.2">v2.2</option>
+                  <option value="MS007-v2.3">v2.3</option>
+                  <option value="MS007-v3">v3</option>
+                </select>
+              </label>
               <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px" onclick="autoLoadGsFamEvents()">↻</button>
               <span id="au-gs-fam-events-status" class="au-badge idle" style="margin-left:auto">…</span>
             </div>
@@ -742,6 +752,17 @@ details summary {
                 <h3>Strategy Configuration <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
                 <div class="au-sub">Rows from <code>auto_strategies</code> for silver_mini_15m + gold_mini_15m. Edit via SQL / Studio for now — a UI editor ships later.</div>
                 <div id="au-gs-fam-strategies" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <div class="au-card">
+                <h3>Strategy Parameters <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsParams()">↻</button></h3>
+                <div class="au-sub">Risk &amp; exit knobs sent to the runner via <code>auto_strategies.metadata.params</code> — no code change needed. One block per config row (v2.2 / v2.3 / v3). <b>Save</b> applies to the next scan onward; open trades keep the stop they were opened with.</div>
+                <div id="au-gs-fam-params" style="margin-top:12px" class="au-meta">Loading…</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:8px;line-height:1.5">
+                  • <b>stop_mode</b> — <code>drift</code> recomputes the hard stop each bar (v2.2/v2.3); <code>fixed</code> pins it at entry (v3).<br>
+                  • <b>stop_mult</b> — hard-stop distance = stop_mult × ATR. <b>risk_per_trade</b> — ₹ risk budget that sizes the position.<br>
+                  • <b>entry_roll_days</b> — no NEW entry within N days of expiry → use next contract. <b>position_roll_days</b> — roll an OPEN position ≤ N days to expiry.
+                </div>
               </div>
 
               <div class="au-card">
