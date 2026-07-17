@@ -1149,9 +1149,17 @@ async function autoLoadGsFamAdmin() {
         try {
             // ALL GS-family rows (family=gs) — base v2.2 + every variant (v2.3/v3),
             // so new config rows appear automatically. Params edit inline, one row each.
-            var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=*&order=enabled.desc,version.asc,name.asc',
-                { headers: wmsHeaders() });
-            var rows = r.ok ? await r.json() : [];
+            // In parallel, pull the latest auto_run per name for the per-row "Last run".
+            var stratReq = fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=*&order=enabled.desc,version.asc,name.asc',
+                { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
+            var runReq = fetch(SUPABASE_URL + '/rest/v1/auto_runs?strategy_name=like.' + encodeURIComponent('*mini_15m*') + '&order=finished_at.desc&limit=120&select=strategy_name,finished_at,status,metadata',
+                { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
+            var _both = await Promise.all([stratReq, runReq]);
+            var rows = _both[0];
+            var runList = _both[1] || [];
+            // Ordered desc → first sighting of each name is its latest run.
+            var latestRun = {};
+            runList.forEach(function (r2) { if (!latestRun[r2.strategy_name]) latestRun[r2.strategy_name] = r2; });
             _auCacheStrategies(rows);
             if (rows.length === 0) {
                 stratsEl.innerHTML = '<div class="au-soon">No matching auto_strategies rows.</div>';
@@ -1160,14 +1168,12 @@ async function autoLoadGsFamAdmin() {
                 html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
                         '<th style="padding:6px 8px">Strategy</th>' +
                         '<th style="padding:6px 8px">Enabled</th>' +
-                        '<th style="padding:6px 8px">stop_mode</th>' +
-                        '<th style="padding:6px 8px">stop_mult</th>' +
-                        '<th style="padding:6px 8px">risk_per_trade</th>' +
-                        '<th style="padding:6px 8px">entry_roll</th>' +
-                        '<th style="padding:6px 8px">pos_roll</th>' +
-                        '<th style="padding:6px 8px"></th>' +
+                        '<th style="padding:6px 8px">Last run</th>';
+                _AU_GS_PARAM_SPEC.forEach(function (f) { html += '<th style="padding:6px 8px">' + autoEsc(f.col) + '</th>'; });
+                html += '<th style="padding:6px 8px"></th>' +
                         '<th style="padding:6px 8px">Actions</th>' +
                         '</tr></thead><tbody>';
+                var nowMs = Date.now();
                 rows.forEach(function (s) {
                     var params = (s.metadata && s.metadata.params) ? s.metadata.params : {};
                     var idBase = 'au-gsp-' + s.name;
@@ -1176,8 +1182,23 @@ async function autoLoadGsFamAdmin() {
                             '<div><code style="font-weight:600">' + autoEsc(s.name) + '</code></div>' +
                             '<div style="font-size:10px;color:#6b7280"><span style="font-family:monospace;color:#1e40af">' + autoEsc(s.version || '—') + '</span> · ' + autoEsc(s.execution_mode || '—') + '</div></td>';
                     html += '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge idle">paused</span>') + '</td>';
+                    // Last run — latest auto_run for THIS row's name, with the version it stamped.
+                    var lr = latestRun[s.name];
+                    var lrCell;
+                    if (!lr || !lr.finished_at) {
+                        lrCell = '<span style="color:#9ca3af">never</span>';
+                    } else {
+                        var ageMin = Math.round((nowMs - new Date(lr.finished_at).getTime()) / 60000);
+                        var ago = ageMin < 60 ? (ageMin + 'm ago') : ageMin < 1440 ? (Math.round(ageMin / 60) + 'h ago') : (Math.round(ageMin / 1440) + 'd ago');
+                        var rv = (lr.metadata && (lr.metadata.strategy_version || lr.metadata.version)) || '';
+                        var okStatus = /^(success|ok)$/i.test(lr.status || '');
+                        lrCell = '<span title="' + autoEsc(autoFmtIST(lr.finished_at)) + (rv ? ' · ' + autoEsc(rv) : '') + '" style="font-size:11px;color:' + (okStatus ? '#16a34a' : '#dc2626') + '">' + ago + '</span>' +
+                                 (rv ? '<div style="font-size:10px;color:#6b7280;font-family:monospace">' + autoEsc(rv) + '</div>' : '');
+                    }
+                    html += '<td style="padding:6px 8px">' + lrCell + '</td>';
                     _AU_GS_PARAM_SPEC.forEach(function (f) {
-                        var cur = (params[f.key] !== undefined && params[f.key] !== null) ? params[f.key] : f.def;
+                        var dflt = f.defFor ? f.defFor(s) : f.def;
+                        var cur = (params[f.key] !== undefined && params[f.key] !== null) ? params[f.key] : dflt;
                         var inputId = idBase + '-' + f.key;
                         html += '<td style="padding:6px 8px">';
                         if (f.type === 'select') {
@@ -1185,7 +1206,7 @@ async function autoLoadGsFamAdmin() {
                             f.opts.forEach(function (o) { html += '<option value="' + o + '"' + (String(cur) === o ? ' selected' : '') + '>' + o + '</option>'; });
                             html += '</select>';
                         } else {
-                            var w = f.key === 'risk_per_trade' ? '80px' : (f.key === 'stop_mult' ? '56px' : '46px');
+                            var w = f.key === 'risk_per_trade' ? '80px' : (f.key === 'stop_mult' ? '56px' : '52px');
                             html += '<input id="' + inputId + '" type="number" step="' + f.step + '" value="' + autoEsc(String(cur)) +
                                     '" class="wms-input-compact wms-input-number" style="width:' + w + '">';
                         }
@@ -1309,11 +1330,16 @@ async function autoLoadGsFamAdmin() {
 // per GS-family config row, so v2.2 / v2.3 / v3 each get their own params.
 // ----------------------------------------------------------------------------
 var _AU_GS_PARAM_SPEC = [
-    { key: 'stop_mode',          label: 'stop_mode',          type: 'select', opts: ['drift', 'fixed'], def: 'drift' },
-    { key: 'stop_mult',          label: 'stop_mult (×ATR)',   type: 'number', step: '0.1',  def: 1.8 },
-    { key: 'risk_per_trade',     label: 'risk_per_trade (₹)', type: 'number', step: '1000', def: 50000 },
-    { key: 'entry_roll_days',    label: 'entry_roll_days',    type: 'number', step: '1',    def: 6 },
-    { key: 'position_roll_days', label: 'position_roll_days', type: 'number', step: '1',    def: 3 }
+    { key: 'stop_mode',          col: 'stop_mode',  label: 'stop_mode',          type: 'select', opts: ['drift', 'fixed'], def: 'drift' },
+    { key: 'stop_mult',          col: 'stop_mult',  label: 'stop_mult (×ATR)',   type: 'number', step: '0.1',  def: 1.8 },
+    { key: 'risk_per_trade',     col: 'risk (₹)',   label: 'risk_per_trade (₹)', type: 'number', step: '1000', def: 50000 },
+    { key: 'entry_roll_days',    col: 'entry_roll', label: 'entry_roll_days',    type: 'number', step: '1',    def: 6 },
+    { key: 'position_roll_days', col: 'pos_roll',   label: 'position_roll_days', type: 'number', step: '1',    def: 3 },
+    // Placeholder — saved to metadata.params.lot_cap but NOT yet enforced by the
+    // runner sizing logic. Instrument-aware default (gold 20 / silver 12) per the
+    // go-live plan; wire into qty sizing when the cap is implemented.
+    { key: 'lot_cap',            col: 'lot_cap',    label: 'lot_cap (#lots)',    type: 'number', step: '1',    def: 12,
+      defFor: function (s) { return /gold/i.test(s.name || '') ? 20 : 12; } }
 ];
 
 async function autoSaveGsParams(name) {
