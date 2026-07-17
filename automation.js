@@ -932,8 +932,135 @@ function autoGsSetClosedSourceFilter(value) {
     _auGsClosedSourceFilter = value || 'all';
     var _sf = document.getElementById('au-gs-fam-closed-source-filter');
     if (_sf && _sf.value !== _auGsClosedSourceFilter) _sf.value = _auGsClosedSourceFilter;
+    if (typeof _auGsClosedSave === 'function') _auGsClosedSave();   // persist selection
     // Peak recomputes inside autoLoadGsClosedTrades. Re-run + re-render metrics.
     if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+}
+
+// ----------------------------------------------------------------------------
+// GS closed-trades filters + sort (2026-07-17). Radio/checkbox blocks on the
+// Closed Trades tab; all applied client-side over the already-fetched rows.
+//   instr   : all | gold | silver           (radio)
+//   result  : all | win  | loss             (radio)
+//   versions: [] = all, else tokens to keep  (checkbox, multi-select)
+//   exits   : [] = all, else event_types     (checkbox, multi-select)
+//   source  : all | chassis | tv_webhook     (radio)
+//   sort    : {key,dir} — click a header to toggle (entry|exit|contract|qty|pnl)
+// Persisted to localStorage so the selection survives a reload / new session.
+// ----------------------------------------------------------------------------
+var _AU_GSCLOSED_LSKEY  = 'wms.gsClosedFilters.v1';
+var _auGsClosedInstr    = 'all';
+var _auGsClosedResult   = 'all';
+var _auGsClosedVersions = [];
+var _auGsClosedExits    = [];
+var _auGsClosedSort     = { key: 'exit', dir: 'desc' };
+
+function _auGsClosedSave() {
+    try {
+        localStorage.setItem(_AU_GSCLOSED_LSKEY, JSON.stringify({
+            instr: _auGsClosedInstr, result: _auGsClosedResult,
+            versions: _auGsClosedVersions, exits: _auGsClosedExits,
+            source: _auGsClosedSourceFilter, sort: _auGsClosedSort
+        }));
+    } catch (e) { /* private mode / storage disabled — filters just won't persist */ }
+}
+function _auGsClosedRestore() {
+    try {
+        var s = JSON.parse(localStorage.getItem(_AU_GSCLOSED_LSKEY) || '{}');
+        if (s.instr)  _auGsClosedInstr  = s.instr;
+        if (s.result) _auGsClosedResult = s.result;
+        if (Array.isArray(s.versions)) _auGsClosedVersions = s.versions;
+        if (Array.isArray(s.exits))    _auGsClosedExits    = s.exits;
+        if (s.source) _auGsClosedSourceFilter = s.source;
+        if (s.sort && s.sort.key) _auGsClosedSort = s.sort;
+    } catch (e) { /* ignore malformed */ }
+}
+_auGsClosedRestore();   // hydrate from last session on load
+
+// Push the restored/live state into the toolbar's radio + checkbox controls so
+// the UI reflects persisted selections. Called each time the table renders.
+function autoGsClosedSyncControls() {
+    function setRadio(name, val) {
+        var els = document.getElementsByName(name);
+        for (var i = 0; i < els.length; i++) els[i].checked = (els[i].value === val);
+    }
+    function setChecks(name, arr) {
+        var els = document.getElementsByName(name);
+        for (var i = 0; i < els.length; i++) els[i].checked = arr.indexOf(els[i].value) >= 0;
+    }
+    setRadio('augsc-instr', _auGsClosedInstr);
+    setRadio('augsc-result', _auGsClosedResult);
+    setRadio('augsc-source', _auGsClosedSourceFilter);
+    setChecks('augsc-ver', _auGsClosedVersions);
+    setChecks('augsc-exit', _auGsClosedExits);
+}
+
+function autoGsClosedSetFilter(kind, value) {
+    if (kind === 'instr')       _auGsClosedInstr = value;
+    else if (kind === 'result') _auGsClosedResult = value;
+    _auGsClosedSave();
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+}
+
+function autoGsClosedToggleVersion(token, on) {
+    var i = _auGsClosedVersions.indexOf(token);
+    if (on && i < 0) _auGsClosedVersions.push(token);
+    else if (!on && i >= 0) _auGsClosedVersions.splice(i, 1);
+    _auGsClosedSave();
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+}
+
+function autoGsClosedToggleExit(evt, on) {
+    var i = _auGsClosedExits.indexOf(evt);
+    if (on && i < 0) _auGsClosedExits.push(evt);
+    else if (!on && i >= 0) _auGsClosedExits.splice(i, 1);
+    _auGsClosedSave();
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+}
+
+function autoGsClosedSort(key) {
+    if (_auGsClosedSort.key === key) {
+        _auGsClosedSort.dir = _auGsClosedSort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+        _auGsClosedSort.key = key;
+        _auGsClosedSort.dir = (key === 'contract') ? 'asc' : 'desc';   // dates/pnl newest/biggest first; contract A→Z
+    }
+    _auGsClosedSave();
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+}
+
+// Normalizes an exit signal to a canonical reason category. event_type is coarse
+// (STOP_HIT / TARGET_HIT / MANUAL_EXIT); the specific reason lives in
+// metadata.exit_reason (Trail-Stop, SL-Long/Short, EMA-Exit). This maps both to
+// one of: STOP (hard SL) · TRAIL (trailing SL) · EMA · TARGET · MANUAL · TIME.
+function _auGsExitCategory(exit) {
+    if (!exit) return '';
+    var et = exit.event_type || '';
+    var r = (exit.metadata && exit.metadata.exit_reason) ? String(exit.metadata.exit_reason) : '';
+    if (et === 'MANUAL_EXIT') return 'MANUAL';
+    if (et === 'TIME_STOP')   return 'TIME';
+    if (/trail/i.test(r))     return 'TRAIL';
+    if (/ema/i.test(r))       return 'EMA';
+    if (et === 'STOP_HIT')    return 'STOP';    // SL-Long / SL-Short / unlabelled hard stop
+    if (et === 'TARGET_HIT')  return 'TARGET';  // profitable exit, non-trail/non-EMA
+    return et;
+}
+function _auGsExitLabel(cat) {
+    return ({ STOP: 'Hard SL', TRAIL: 'Trail SL', EMA: 'EMA exit', TARGET: 'Target', MANUAL: 'Manual', TIME: 'Time stop' })[cat] || cat || '—';
+}
+function _auGsExitColor(cat) {
+    return ({ STOP: '#dc2626', TRAIL: '#0891b2', EMA: '#7c3aed', TARGET: '#047857', MANUAL: '#92400e', TIME: '#b45309' })[cat] || '#6b7280';
+}
+
+// Renders a clickable, sortable <th> with an active-column direction arrow.
+function _gsClosedTh(label, key, align, sub) {
+    var arrow = _auGsClosedSort.key === key ? (_auGsClosedSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    var alignStyle = align === 'right' ? 'text-align:right' : 'text-align:left';
+    return '<th onclick="autoGsClosedSort(\'' + key + '\')" title="Sort by ' + label.replace(/&amp;/g, '&') + '"' +
+           ' style="padding:6px 8px;' + alignStyle + ';cursor:pointer;user-select:none;white-space:nowrap">' +
+           label + arrow +
+           (sub ? '<br><span style="font-weight:400;color:#6b7280;font-size:10px">' + sub + '</span>' : '') +
+           '</th>';
 }
 
 // ----------------------------------------------------------------------------
@@ -976,11 +1103,16 @@ async function autoLoadGsFamEvents(filterOverride) {
         : (typeSel ? typeSel.value : 'all');
     if (typeSel && typeFilter !== typeSel.value) typeSel.value = typeFilter;
     var stratFilter = stratSel ? stratSel.value : 'all';
+    var verSel = document.getElementById('au-gs-fam-events-ver');
+    var verFilter = verSel ? verSel.value : 'all';
 
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
 
-    var strats = stratFilter === 'all' ? _AU_GS_STRATS : [stratFilter];
-    var qs = '?strategy_name=in.(' + strats.join(',') + ')' +
+    // LIKE-pattern (not a fixed IN-list) so parallel config variants that share a
+    // plugin — e.g. silver_mini_15m_v3, gold_mini_15m_v23 — are included alongside
+    // the base v2.2 rows. 'all' catches both instruments via *_mini_15m*.
+    var namePat = stratFilter === 'all' ? '*_mini_15m*' : (stratFilter + '*');
+    var qs = '?strategy_name=like.' + encodeURIComponent(namePat) +
              '&order=fired_at.desc&limit=200' +
              '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata,source,email_status';
     if (typeFilter === 'ENTRY')      qs += '&event_type=eq.ENTRY';
@@ -993,6 +1125,15 @@ async function autoLoadGsFamEvents(filterOverride) {
     try {
         var r = await fetch(SUPABASE_URL + '/rest/v1/auto_signals' + qs, { headers: wmsHeaders() });
         var rows = r.ok ? await r.json() : [];
+        // Version filter applied client-side: version lives in metadata (key is
+        // strategy_version, older rows used version), so a jsonb server filter would
+        // miss the fallback key. The list is capped at 200, so this is cheap.
+        if (verFilter !== 'all' && Array.isArray(rows)) {
+            rows = rows.filter(function (s) {
+                var m = s.metadata || {};
+                return (m.strategy_version || m.version) === verFilter;
+            });
+        }
         if (!Array.isArray(rows) || rows.length === 0) {
             el.innerHTML = '<div class="au-soon" style="padding:20px">No events match this filter.</div>';
             if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 events'; }
@@ -1019,7 +1160,7 @@ async function autoLoadGsFamEvents(filterOverride) {
             var typeColor = s.event_type === 'ENTRY' ? '#047857' :
                            /^EXIT_SL|STOP_HIT/.test(s.event_type) ? '#dc2626' :
                            /^EXIT/.test(s.event_type) ? '#0891b2' :
-                           s.event_type === 'MANUAL_CLOSE' ? '#92400e' : '#6b7280';
+                           /MANUAL/.test(s.event_type) ? '#92400e' : '#6b7280';
             var side = s.direction || (leg.side === 'BUY' ? 'LONG' : leg.side === 'SELL' ? 'SHORT' : '—');
             var contract = leg.symbol ? autoFmtContract(leg.symbol, leg.expiry_date) : '—';
             var qty = m.qty_lots != null ? m.qty_lots + ' lot' + (m.qty_lots == 1 ? '' : 's') : (leg.qty || '—');
@@ -1133,36 +1274,82 @@ async function autoLoadGsFamAdmin() {
     var stratsEl = document.getElementById('au-gs-fam-strategies');
     if (stratsEl) {
         try {
-            var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=in.(' + _AU_GS_STRATS.join(',') + ')&select=*',
-                { headers: wmsHeaders() });
-            var rows = r.ok ? await r.json() : [];
+            // ALL GS-family rows (family=gs) — base v2.2 + every variant (v2.3/v3),
+            // so new config rows appear automatically. Params edit inline, one row each.
+            // In parallel, pull the latest auto_run per name for the per-row "Last run".
+            var stratReq = fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=*&order=enabled.desc,version.asc,name.asc',
+                { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
+            var runReq = fetch(SUPABASE_URL + '/rest/v1/auto_runs?strategy_name=like.' + encodeURIComponent('*mini_15m*') + '&order=finished_at.desc&limit=120&select=strategy_name,finished_at,status,metadata',
+                { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
+            var _both = await Promise.all([stratReq, runReq]);
+            var rows = _both[0];
+            var runList = _both[1] || [];
+            // Ordered desc → first sighting of each name is its latest run.
+            var latestRun = {};
+            runList.forEach(function (r2) { if (!latestRun[r2.strategy_name]) latestRun[r2.strategy_name] = r2; });
             _auCacheStrategies(rows);
+            _auGsRowNames = rows.map(function (s) { return s.name; });   // for Save-all
             if (rows.length === 0) {
                 stratsEl.innerHTML = '<div class="au-soon">No matching auto_strategies rows.</div>';
             } else {
-                // Cron column dropped — scheduling isn't per-strategy for GS;
-                // see the Scheduling card below for the actual cron topology.
-                var html = '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+                var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse;white-space:nowrap">';
                 html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
-                        '<th style="padding:6px 8px">Name</th>' +
+                        '<th style="padding:6px 8px">Strategy</th>' +
                         '<th style="padding:6px 8px">Enabled</th>' +
-                        '<th style="padding:6px 8px">Mode</th>' +
-                        '<th style="padding:6px 8px">Version</th>' +
-                        '<th style="padding:6px 8px">Metadata</th>' +
-                        '<th style="padding:6px 8px">Actions</th>' +
+                        '<th style="padding:6px 8px">Last run</th>';
+                _AU_GS_PARAM_SPEC.forEach(function (f) { html += '<th style="padding:6px 8px">' + autoEsc(f.col) + '</th>'; });
+                html += '<th style="padding:6px 8px">Actions</th>' +
                         '</tr></thead><tbody>';
+                var nowMs = Date.now();
                 rows.forEach(function (s) {
-                    var meta = s.metadata ? JSON.stringify(s.metadata) : '—';
-                    html += '<tr style="border-top:1px solid #e5e7eb">' +
-                            '<td style="padding:6px 8px"><code>' + autoEsc(s.name) + '</code></td>' +
-                            '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge error">no</span>') + '</td>' +
-                            '<td style="padding:6px 8px"><b>' + autoEsc(s.execution_mode || '—') + '</b></td>' +
-                            '<td style="padding:6px 8px;font-family:monospace">' + autoEsc(s.version || '—') + '</td>' +
-                            '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280;max-width:500px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(meta) + '">' + autoEsc(meta.slice(0, 120)) + (meta.length > 120 ? '…' : '') + '</td>' +
-                            '<td style="padding:6px 8px">' + autoStrategyActionCell(s) + '</td>' +
-                            '</tr>';
+                    var params = (s.metadata && s.metadata.params) ? s.metadata.params : {};
+                    var idBase = 'au-gsp-' + s.name;
+                    html += '<tr style="border-top:1px solid #e5e7eb">';
+                    html += '<td style="padding:6px 8px">' +
+                            '<div><code style="font-weight:600">' + autoEsc(s.name) + '</code></div>' +
+                            '<div style="font-size:10px;color:#6b7280"><span style="font-family:monospace;color:#1e40af">' + autoEsc(s.version || '—') + '</span> · ' + autoEsc(s.execution_mode || '—') + '</div></td>';
+                    html += '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge idle">paused</span>') + '</td>';
+                    // Last run — latest auto_run for THIS row's name, with the version it stamped.
+                    var lr = latestRun[s.name];
+                    var lrCell;
+                    if (!lr || !lr.finished_at) {
+                        lrCell = '<span style="color:#9ca3af">never</span>';
+                    } else {
+                        var ageMin = Math.round((nowMs - new Date(lr.finished_at).getTime()) / 60000);
+                        var ago = ageMin < 60 ? (ageMin + 'm ago') : ageMin < 1440 ? (Math.round(ageMin / 60) + 'h ago') : (Math.round(ageMin / 1440) + 'd ago');
+                        var rv = (lr.metadata && (lr.metadata.strategy_version || lr.metadata.version)) || '';
+                        var okStatus = /^(success|ok)$/i.test(lr.status || '');
+                        lrCell = '<span title="' + autoEsc(autoFmtIST(lr.finished_at)) + (rv ? ' · ' + autoEsc(rv) : '') + '" style="font-size:11px;color:' + (okStatus ? '#16a34a' : '#dc2626') + '">' + ago + '</span>' +
+                                 (rv ? '<div style="font-size:10px;color:#6b7280;font-family:monospace">' + autoEsc(rv) + '</div>' : '');
+                    }
+                    html += '<td style="padding:6px 8px">' + lrCell + '</td>';
+                    _AU_GS_PARAM_SPEC.forEach(function (f) {
+                        var dflt = f.defFor ? f.defFor(s) : f.def;
+                        var cur = (params[f.key] !== undefined && params[f.key] !== null) ? params[f.key] : dflt;
+                        var inputId = idBase + '-' + f.key;
+                        html += '<td style="padding:6px 8px">';
+                        if (f.type === 'select') {
+                            html += '<select id="' + inputId + '" class="wms-df-select">';
+                            f.opts.forEach(function (o) { html += '<option value="' + o + '"' + (String(cur) === o ? ' selected' : '') + '>' + o + '</option>'; });
+                            html += '</select>';
+                        } else if (f.fmt === 'comma') {
+                            // Text input (number inputs can't show separators); reformats on blur.
+                            html += '<input id="' + inputId + '" type="text" inputmode="numeric" value="' + autoEsc(_auFmtIntComma(cur)) +
+                                    '" onblur="this.value=_auFmtIntComma(this.value)" class="wms-input-compact wms-input-number" style="width:90px">';
+                        } else {
+                            var w = f.key === 'stop_mult' ? '56px' : '52px';
+                            html += '<input id="' + inputId + '" type="number" step="' + f.step + '" value="' + autoEsc(String(cur)) +
+                                    '" class="wms-input-compact wms-input-number" style="width:' + w + '">';
+                        }
+                        html += '</td>';
+                    });
+                    html += '<td style="padding:6px 8px">' + autoStrategyActionCell(s) + '</td>';
+                    html += '</tr>';
                 });
-                html += '</tbody></table>';
+                html += '</tbody></table></div>';
+                html += '<div style="margin-top:10px;display:flex;align-items:center;gap:10px">' +
+                        '<button class="au-btn au-btn-primary" style="font-size:12px;padding:6px 16px" onclick="autoSaveGsParamsAll()">Save all</button>' +
+                        '<span id="au-gsp-allmsg" style="font-size:11px;color:#6b7280"></span></div>';
                 stratsEl.innerHTML = html;
             }
         } catch (e) {
@@ -1175,14 +1362,18 @@ async function autoLoadGsFamAdmin() {
     //    latest auto_runs row to display "last run" freshness per cron.
     var schedEl = document.getElementById('au-gs-fam-scheduling');
     if (schedEl) {
+        // `runFilter` is a PostgREST predicate. The cron still hits ?strategy=<base>,
+        // but the runner fans out and records auto_runs under the VARIANT names
+        // (…_v23 / …_v3) — the disabled base rows no longer run — so freshness must
+        // match the variants via a name pattern, not the exact base name.
         var schedJobs = [
-            { key: 'silver_mini_15m', label: 'Silver signal scan', endpoint: 'automation-runner?strategy=silver_mini_15m', cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
-            { key: 'gold_mini_15m',   label: 'Gold signal scan',   endpoint: 'automation-runner?strategy=gold_mini_15m',   cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
-            { key: '_eod_ingest',     label: 'EOD prices ingest',  endpoint: 'eod-prices-ingest',                          cadence: 'daily · after MCX close (~23:35 IST)',      staleMinutes: 60 * 30 }
+            { runFilter: 'strategy_name=like.silver_mini_15m*', label: 'Silver signal scan', endpoint: 'automation-runner?strategy=silver_mini_15m', cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
+            { runFilter: 'strategy_name=like.gold_mini_15m*',   label: 'Gold signal scan',   endpoint: 'automation-runner?strategy=gold_mini_15m',   cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
+            { runFilter: 'strategy_name=eq._eod_ingest',        label: 'EOD prices ingest',  endpoint: 'eod-prices-ingest',                          cadence: 'daily · after MCX close (~23:35 IST)',      staleMinutes: 60 * 30 }
         ];
         try {
             var results = await Promise.all(schedJobs.map(function (j) {
-                return fetch(SUPABASE_URL + '/rest/v1/auto_runs?strategy_name=eq.' + encodeURIComponent(j.key) + '&order=finished_at.desc&limit=1&select=finished_at,status',
+                return fetch(SUPABASE_URL + '/rest/v1/auto_runs?' + j.runFilter + '&order=finished_at.desc&limit=1&select=finished_at,status',
                     { headers: wmsHeaders() }).then(function (r) { return r.ok ? r.json() : []; });
             }));
             var now = Date.now();
@@ -1230,32 +1421,10 @@ async function autoLoadGsFamAdmin() {
         }
     }
 
-    // 3. Plugin version — most-recent auto_signals row's metadata.strategy_version wins
-    //    (that's the source-of-truth for what's currently running). Falls back to
-    //    auto_strategies.version if no recent signal.
-    var vEl = document.getElementById('au-gs-fam-plugin-version');
-    if (vEl) {
-        try {
-            var r = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(' + _AU_GS_STRATS.join(',') + ')&source=eq.chassis&order=fired_at.desc&limit=1&select=metadata,fired_at',
-                { headers: wmsHeaders() });
-            var rows = r.ok ? await r.json() : [];
-            var version = null, since = null;
-            if (rows[0] && rows[0].metadata) {
-                version = rows[0].metadata.strategy_version || rows[0].metadata.version;
-                since = rows[0].fired_at;
-            }
-            if (version) {
-                vEl.innerHTML = autoEsc(version) +
-                    (since ? ' <span style="color:#6b7280;font-size:11px;font-weight:400;font-family:sans-serif"> (last observed ' + autoEsc(autoFmtIST(since)) + ')</span>' : '');
-            } else {
-                vEl.textContent = 'not yet observed in signals';
-            }
-        } catch (e) {
-            vEl.innerHTML = '<span style="color:#dc2626">' + autoEsc(String(e)) + '</span>';
-        }
-    }
+    // (Plugin Version card removed — the per-row version now lives in the
+    //  Strategy Configuration table above.)
 
-    // 4. gs_catalogue — hard-coded in the plugin, so we compute from helper fns
+    // 3. gs_catalogue — hard-coded in the plugin, so we compute from helper fns
     var catEl = document.getElementById('au-gs-fam-catalogue');
     if (catEl && typeof autoGsPointValue === 'function') {
         var instruments = [
@@ -1281,6 +1450,96 @@ async function autoLoadGsFamAdmin() {
         });
         html += '</tbody></table>';
         catEl.innerHTML = html;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// GS Strategy Parameters editor (metadata.params → runner)
+//
+// Writes auto_strategies.metadata.params, which the automation-runner threads
+// into the strategy plugin (index.ts runOne → fetchData/scan). These are the
+// UI-editable risk/exit knobs — changing them needs NO code deploy. One block
+// per GS-family config row, so v2.2 / v2.3 / v3 each get their own params.
+// ----------------------------------------------------------------------------
+var _AU_GS_PARAM_SPEC = [
+    { key: 'stop_mode',          col: 'stop_mode',  label: 'stop_mode',          type: 'select', opts: ['drift', 'fixed'], def: 'drift' },
+    { key: 'stop_mult',          col: 'stop_mult',  label: 'stop_mult (×ATR)',   type: 'number', step: '0.1',  def: 1.8 },
+    { key: 'risk_per_trade',     col: 'risk (₹)',   label: 'risk_per_trade (₹)', type: 'number', step: '1000', def: 50000, fmt: 'comma' },
+    { key: 'entry_roll_days',    col: 'entry_roll', label: 'entry_roll_days',    type: 'number', step: '1',    def: 6 },
+    { key: 'position_roll_days', col: 'pos_roll',   label: 'position_roll_days', type: 'number', step: '1',    def: 3 },
+    // Enforced in gs_state.calcQty as a hard ceiling on lots/entry. Instrument-aware
+    // default (gold 20 / silver 12) per the go-live plan; 0 = no cap.
+    { key: 'lot_cap',            col: 'lot_cap',    label: 'lot_cap (#lots)',    type: 'number', step: '1',    def: 12,
+      defFor: function (s) { return /gold/i.test(s.name || '') ? 20 : 12; } }
+];
+
+// Row names in the currently-rendered config table — the Save-all button iterates these.
+var _auGsRowNames = [];
+
+// Indian-grouping thousands formatter for ₹ inputs (e.g. 75000 → "75,000",
+// 150000 → "1,50,000"). Strips any existing separators first so it's idempotent.
+function _auFmtIntComma(v) {
+    var n = parseFloat(String(v).replace(/[^0-9.]/g, ''));
+    if (!isFinite(n)) return '';
+    return Math.round(n).toLocaleString('en-IN');
+}
+
+// Reads the inline inputs for one row and returns a merged params object.
+// Throws (with the row name) on any invalid field.
+function _auGsCollectParams(name, baseMeta) {
+    var idBase = 'au-gsp-' + name;
+    var params = Object.assign({}, (baseMeta && baseMeta.params) || {});
+    _AU_GS_PARAM_SPEC.forEach(function (f) {
+        var inp = document.getElementById(idBase + '-' + f.key);
+        if (!inp) return;
+        if (f.type === 'select') {
+            params[f.key] = inp.value;
+        } else {
+            // Strip thousands separators (comma-formatted ₹ fields) before parsing.
+            var v = parseFloat(String(inp.value).replace(/,/g, ''));
+            if (!isFinite(v)) throw new Error(name + ' · ' + f.label + ' must be a number');
+            if (v < 0) throw new Error(name + ' · ' + f.label + ' cannot be negative');
+            params[f.key] = v;
+        }
+    });
+    return params;
+}
+
+// Single "Save all" — commits every row in the table. Each row is an independent
+// read-modify-write PATCH (metadata also carries driver/family/plugin/version, and
+// PostgREST PATCH replaces the whole jsonb — so merge, never overwrite).
+async function autoSaveGsParamsAll() {
+    var msg = document.getElementById('au-gsp-allmsg');
+    if (msg) { msg.style.color = '#6b7280'; msg.textContent = 'Saving…'; }
+    try {
+        var names = _auGsRowNames || [];
+        if (!names.length) { if (msg) msg.textContent = 'Nothing to save.'; return; }
+
+        // One read of all GS metadata as the merge base, then PATCH each row.
+        var rr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=name,metadata',
+            { headers: wmsHeaders() });
+        if (!rr.ok) throw new Error('read HTTP ' + rr.status + ' ' + (await rr.text()));
+        var metaByName = {};
+        (await rr.json()).forEach(function (row) { metaByName[row.name] = row.metadata || {}; });
+
+        var saved = 0;
+        for (var n = 0; n < names.length; n++) {
+            var name = names[n];
+            var meta = Object.assign({}, metaByName[name] || {});
+            if (!meta.driver || !meta.family) throw new Error(name + ': row missing driver/family');
+            meta.params = _auGsCollectParams(name, meta);
+            var pr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name), {
+                method: 'PATCH',
+                headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+                body: JSON.stringify({ metadata: meta })
+            });
+            if (!pr.ok) throw new Error(name + ': save HTTP ' + pr.status + ' ' + (await pr.text()));
+            saved++;
+        }
+        if (msg) { msg.style.color = '#16a34a'; msg.textContent = '✓ Saved ' + saved + ' row' + (saved === 1 ? '' : 's') + ' — applies to the next scan.'; }
+        autoLoadGsFamAdmin();   // re-read the unified table — never claim success from the local copy
+    } catch (e) {
+        if (msg) { msg.style.color = '#dc2626'; msg.textContent = 'Failed: ' + String(e.message || e); }
     }
 }
 
@@ -1482,7 +1741,7 @@ async function autoLoadPairsFamEvents(filterOverride) {
                            /STOP_HIT|EXIT_STOP/.test(s.event_type) ? '#dc2626' :
                            /TARGET_HIT|EXIT_TARGET/.test(s.event_type) ? '#0891b2' :
                            s.event_type === 'TIME_STOP' ? '#92400e' :
-                           s.event_type === 'MANUAL_CLOSE' ? '#7c3aed' : '#6b7280';
+                           /MANUAL/.test(s.event_type) ? '#7c3aed' : '#6b7280';
             var emailBadge = s.email_status === 'SENT' ? '<span class="au-badge success" style="font-size:9px">sent</span>'
                           : s.email_status === 'FAILED' ? '<span class="au-badge error" style="font-size:9px">failed</span>'
                           : s.email_status === 'PENDING' ? '<span class="au-badge loading" style="font-size:9px">pending</span>'
@@ -3233,9 +3492,9 @@ async function autoSaveRecipients(name) {
 //
 // v_auto_open_trades closes a trade when net qty per symbol == 0. So a manual
 // close is just a signal row whose legs are the reverse-side of the ENTRY's
-// legs, same qty. event_type='MANUAL_CLOSE' for audit trail; email_status set
-// to PENDING but no email actually sent — chassis is the only thing that calls
-// Resend, and we skip that here. Operator already knows they closed it.
+// legs, same qty. event_type='MANUAL_EXIT' (the value allowed by the
+// auto_signals_event_type_check constraint) for the audit trail; email skipped
+// — chassis is the only thing that calls Resend. Operator already knows.
 
 async function autoManualClose(tradeId) {
     if (!tradeId) return;
@@ -3264,7 +3523,7 @@ async function autoManualClose(tradeId) {
         trade_id: tradeId,
         strategy_name: entry.strategy_name,
         execution_mode: entry.execution_mode || 'PAPER',
-        event_type: 'MANUAL_CLOSE',
+        event_type: 'MANUAL_EXIT',
         direction: 'CLOSE',
         score: 0,
         legs: closeLegs,
@@ -4159,6 +4418,7 @@ async function autoLoadGsClosedTrades() {
     var el = autoTarget(['au-gs-fam-closed-content']);
     var statusEl = autoBadgeTarget(['au-gs-fam-closed-badge']);
     if (!el) return;
+    autoGsClosedSyncControls();   // reflect persisted/live filter state in the toolbar
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
     el.innerHTML = '<div class="au-meta">⏳ Loading GS closed trades…</div>';
 
@@ -4308,25 +4568,50 @@ async function autoLoadGsClosedTrades() {
             });
         });
 
-        // Sort most-recently-closed first
-        closedRows.sort(function (a, b) {
-            var aT = a.exit ? a.exit.fired_at : a.entry.fired_at;
-            var bT = b.exit ? b.exit.fired_at : b.entry.fired_at;
-            return bT < aT ? -1 : bT > aT ? 1 : 0;
-        });
-
-        // Apply the source filter now (after we've built the totals bar's peak
-        // exposure / peak margin — those figures reflect ALL closed trades so
-        // filter changes don't distort the sticky-totals values).
+        // Apply ALL filters now (after the totals bar's peak exposure / peak margin,
+        // which reflect ALL closed trades so filter changes don't distort them).
+        // Instrument / result / version are client-side over the built rows.
         var _closedTotal = closedRows.length;
-        if (_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') {
-            closedRows = closedRows.filter(function (ct) { return ct.source === _srcFilter; });
+        closedRows = closedRows.filter(function (ct) {
+            if ((_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') && ct.source !== _srcFilter) return false;
+            if (_auGsClosedInstr === 'gold'   && ct.short_symbol !== 'GOLDM')   return false;
+            if (_auGsClosedInstr === 'silver' && ct.short_symbol !== 'SILVERM') return false;
+            if (_auGsClosedResult === 'win'  && !(ct.pnl != null && ct.pnl >= 0)) return false;
+            if (_auGsClosedResult === 'loss' && !(ct.pnl != null && ct.pnl < 0))  return false;
+            if (_auGsClosedVersions.length) {
+                var _v = ct.version || '';
+                if (!_auGsClosedVersions.some(function (tok) { return _v.indexOf(tok) >= 0; })) return false;
+            }
+            if (_auGsClosedExits.length) {
+                if (_auGsClosedExits.indexOf(_auGsExitCategory(ct.exit)) < 0) return false;
+            }
+            return true;
+        });
+        var _anyFilter = _srcFilter !== 'all' || _auGsClosedInstr !== 'all' ||
+                         _auGsClosedResult !== 'all' || _auGsClosedVersions.length > 0 ||
+                         _auGsClosedExits.length > 0;
+
+        // Sort — click-to-sort on headers (default: exit date, newest first).
+        var _sortDir = _auGsClosedSort.dir === 'asc' ? 1 : -1;
+        function _gsClosedSortVal(ct, key) {
+            if (key === 'entry')    return ct.entry ? ct.entry.fired_at : '';
+            if (key === 'exit')     return ct.exit ? ct.exit.fired_at : (ct.entry ? ct.entry.fired_at : '');
+            if (key === 'contract') return (ct.short_symbol || '') + '|' + (ct.expiry_date || '');
+            if (key === 'qty')      return Number(ct.qty_lots) || 0;
+            if (key === 'pnl')      return ct.pnl == null ? -Infinity : ct.pnl;
+            return '';
         }
+        closedRows.sort(function (a, b) {
+            var av = _gsClosedSortVal(a, _auGsClosedSort.key), bv = _gsClosedSortVal(b, _auGsClosedSort.key);
+            if (av < bv) return -1 * _sortDir;
+            if (av > bv) return  1 * _sortDir;
+            return 0;
+        });
 
         if (closedRows.length === 0) {
             var _emptyMsg = _closedTotal === 0
                 ? 'No closed GS trades yet.'
-                : 'No closed GS trades match filter "' + autoEsc(_srcFilter) + '" (' + _closedTotal + ' hidden). Change filter above to see them.';
+                : 'No closed GS trades match the current filters (' + _closedTotal + ' hidden). Adjust the filters above to see them.';
             el.innerHTML = '<div class="au-soon" style="padding:20px">' + _emptyMsg + '</div>';
             if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 / ' + _closedTotal + ' closed'; }
             return;
@@ -4360,7 +4645,7 @@ async function autoLoadGsClosedTrades() {
                         _tPctSign + Math.abs(_tPct).toFixed(2) + '%</div>';
         }
         var _totalLabel = 'Total (' + closedRows.length + ' closed — ' + _wins + 'W / ' + _losses + 'L' +
-                         (_srcFilter !== 'all' ? ' — filtered from ' + _closedTotal : '') + ')';
+                         (_anyFilter ? ' — filtered from ' + _closedTotal : '') + ')';
 
         var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
         html += '<thead>' +
@@ -4371,18 +4656,19 @@ async function autoLoadGsClosedTrades() {
                 '<span style="color:' + _tCol + '">' + _tSign + '₹' + _tAbs + '</span>' + _tPctSub +
                 '</td>' +
                 '</tr>' +
-                // Row 2 — column headers
+                // Row 2 — column headers. Entry / Exit / Contract / Qty / P&L are
+                // click-to-sort (arrow marks the active column + direction).
                 '<tr style="background:#f3f4f6;text-align:left">' +
                 '<th style="padding:6px 8px">Strategy<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ source · version</span></th>' +
                 '<th style="padding:6px 8px">Side</th>' +
-                '<th style="padding:6px 8px">Entry</th>' +
-                '<th style="padding:6px 8px">Exit<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>' +
-                '<th style="padding:6px 8px">Contract</th>' +
-                '<th style="padding:6px 8px;text-align:right">Qty</th>' +
+                _gsClosedTh('Entry', 'entry', 'left') +
+                _gsClosedTh('Exit', 'exit', 'left', '/ days held') +
+                _gsClosedTh('Contract', 'contract', 'left') +
+                _gsClosedTh('Qty', 'qty', 'right') +
                 '<th style="padding:6px 8px;text-align:right">Entry Px</th>' +
                 '<th style="padding:6px 8px;text-align:right">Exit Px</th>' +
                 '<th style="padding:6px 8px">Exit Reason</th>' +
-                '<th style="padding:6px 8px;text-align:right">Realised P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>' +
+                _gsClosedTh('Realised P&amp;L', 'pnl', 'right', '/ % of exp') +
                 '</tr></thead><tbody>';
 
         var totalPnl = 0, wins = 0, losses = 0;
@@ -4401,8 +4687,9 @@ async function autoLoadGsClosedTrades() {
             var daysSub = daysHeld != null
                 ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + daysHeld + ' day' + (daysHeld === 1 ? '' : 's') + '</div>'
                 : '';
-            var exitType = ct.exit ? ct.exit.event_type : '—';
-            var exitTypeColor = _autoExitTypeColor(exitType);
+            var _exitCat = _auGsExitCategory(ct.exit);
+            var exitReasonLabel = ct.exit ? _auGsExitLabel(_exitCat) : '—';
+            var exitReasonColor = _auGsExitColor(_exitCat);
             var entryPxStr = autoFmtPrice0(ct.entry_price);
             var exitPxStr = autoFmtPrice0(ct.exit_price);
             var contractStr = autoFmtContract(ct.contract, ct.expiry_date);
@@ -4465,7 +4752,7 @@ async function autoLoadGsClosedTrades() {
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + qtyCell + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(entryPxStr) + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(exitPxStr) + '</td>' +
-                    '<td style="padding:6px 8px;vertical-align:top"><span style="color:' + exitTypeColor + ';font-weight:600">' + autoEsc(_autoExitTypeLabel(exitType)) + '</span></td>' +
+                    '<td style="padding:6px 8px;vertical-align:top"><span style="color:' + exitReasonColor + ';font-weight:600">' + autoEsc(exitReasonLabel) + '</span></td>' +
                     '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + pnlCell + '</td>' +
                     '</tr>';
         });
@@ -4475,7 +4762,7 @@ async function autoLoadGsClosedTrades() {
         // are still used to populate _auGsTotals for the sticky totals bar.
         html += '</tbody></table></div>';
         el.innerHTML = html;
-        var _statusLabel = _srcFilter === 'all'
+        var _statusLabel = !_anyFilter
             ? closedRows.length + ' closed'
             : closedRows.length + ' / ' + _closedTotal + ' closed';
         if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = _statusLabel; }
