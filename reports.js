@@ -285,13 +285,16 @@ async function rptLoadData() {
     // CAPITAL_REDUCTION (cost reduction), DIVIDEND/INTEREST/OTHER_INCOME (skipped by FIFO),
     // HISTORICAL_PL (skipped by FIFO). No query-level filtering needed.
     // Uses wmsFetchAllRaw() to paginate past Supabase's 1000-row default limit.
-    var txnData = await wmsFetchAllRaw(
-        SUPABASE_URL + '/rest/v1/transactions?select=id,investor_id,broker_id,security_id,symbol,short_symbol,company_name,exchange,security_type,transaction_type,transaction_date,transaction_time,quantity,price,gross_amount,net_amount,stt,tags,dont_display&dont_display=eq.false&order=transaction_date.asc,transaction_time.asc.nullsfirst,id.asc'
-    );
+    // Read from the ONE shared transactions cache (wms-shared.js, §A.9.6) — no
+    // separate fetch. Map the shared snake_case rows into Reports' camelCase
+    // view, excluding dont_display (hidden) trades exactly as the old
+    // dont_display=eq.false query did. The shared cache is already sorted by
+    // (transaction_date, transaction_time, id), which Reports relies on.
+    await wmsLoadTransactions();
+    var rptRows = window._wmsTxnCache.rows.filter(function(t) { return !t.dont_display; });
+    console.log('✅ Reports: using ' + rptRows.length + ' shared transactions');
 
-    console.log('✅ Reports: loaded ' + txnData.length + ' transactions');
-
-    rptTransactions = txnData.map(function(txn) {
+    rptTransactions = rptRows.map(function(txn) {
         return {
             id: txn.id,
             investorId: txn.investor_id,
@@ -797,24 +800,19 @@ function rptCloseAllActionMenus() {
 
 // Open shared transaction modal for a symbol (stays in Reports)
 async function rptShowTransactions(shortSymbol, investorId) {
-    // Fetch ALL transactions for this symbol (full fields for edit modal)
-    var filter = shortSymbol === '__ALL__'
-        ? ''
-        : '&short_symbol=eq.' + encodeURIComponent(shortSymbol);
-    var resp = await fetchWithTimeout(
-        SUPABASE_URL + '/rest/v1/transactions?select=*' + filter + '&order=transaction_date.asc',
-        { headers: wmsHeaders() }
-    );
-    if (!resp.ok) {
-        showAlert('Failed to load transactions', 'error');
-        return;
-    }
-    var allTxns = await resp.json();
+    // Full snake_case rows for the edit modal come straight from the shared
+    // cache (§A.9.6) — no separate fetch. Filter to the symbol (or all).
+    var allShared = (window._wmsTxnCache && window._wmsTxnCache.rows) || [];
+    var allTxns = (shortSymbol === '__ALL__')
+        ? allShared.slice()
+        : allShared.filter(function(t) { return t.short_symbol === shortSymbol; });
 
-    // Compute display_net_amount for each txn
+    // display_net_amount is already set by the shared load's sanitize; fill only if missing.
     allTxns.forEach(function(t) {
-        t.display_net_amount = (typeof wmsComputeDisplayNetAmount === 'function')
-            ? wmsComputeDisplayNetAmount(t) : t.net_amount;
+        if (t.display_net_amount === undefined) {
+            t.display_net_amount = (typeof wmsComputeDisplayNetAmount === 'function')
+                ? wmsComputeDisplayNetAmount(t) : t.net_amount;
+        }
     });
 
     // Set shared modal context with Reports' data

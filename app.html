@@ -569,8 +569,16 @@
                 wmsLoadSecuritiesNfo()
             ]);
             console.log('All master data loaded — activating app');
+
+            // Preload the ONE shared transactions cache (LESSONS §A.9.6) now that
+            // securities are available (search-text enrichment needs the CM cache).
+            // Every module reads this same cache — Trading, Reports, etc. — so they
+            // can never diverge, and no module fetches transactions itself. Loaded
+            // AFTER auth + master data so RLS + enrichment are in place.
+            loaderMsg.textContent = 'Loading transactions...';
+            await wmsLoadTransactions();
         } catch (e) {
-            console.error('Master data load error (activating anyway):', e);
+            console.error('Startup load error (activating anyway; modules will load on demand):', e);
         }
 
         // Fade out and remove startup loader
