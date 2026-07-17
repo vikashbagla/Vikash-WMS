@@ -1147,45 +1147,62 @@ async function autoLoadGsFamAdmin() {
     var stratsEl = document.getElementById('au-gs-fam-strategies');
     if (stratsEl) {
         try {
-            var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=in.(' + _AU_GS_STRATS.join(',') + ')&select=*',
+            // ALL GS-family rows (family=gs) — base v2.2 + every variant (v2.3/v3),
+            // so new config rows appear automatically. Params edit inline, one row each.
+            var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=*&order=enabled.desc,version.asc,name.asc',
                 { headers: wmsHeaders() });
             var rows = r.ok ? await r.json() : [];
             _auCacheStrategies(rows);
             if (rows.length === 0) {
                 stratsEl.innerHTML = '<div class="au-soon">No matching auto_strategies rows.</div>';
             } else {
-                // Cron column dropped — scheduling isn't per-strategy for GS;
-                // see the Scheduling card below for the actual cron topology.
-                var html = '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+                var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse;white-space:nowrap">';
                 html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
-                        '<th style="padding:6px 8px">Name</th>' +
+                        '<th style="padding:6px 8px">Strategy</th>' +
                         '<th style="padding:6px 8px">Enabled</th>' +
-                        '<th style="padding:6px 8px">Mode</th>' +
-                        '<th style="padding:6px 8px">Version</th>' +
-                        '<th style="padding:6px 8px">Metadata</th>' +
+                        '<th style="padding:6px 8px">stop_mode</th>' +
+                        '<th style="padding:6px 8px">stop_mult</th>' +
+                        '<th style="padding:6px 8px">risk_per_trade</th>' +
+                        '<th style="padding:6px 8px">entry_roll</th>' +
+                        '<th style="padding:6px 8px">pos_roll</th>' +
+                        '<th style="padding:6px 8px"></th>' +
                         '<th style="padding:6px 8px">Actions</th>' +
                         '</tr></thead><tbody>';
                 rows.forEach(function (s) {
-                    var meta = s.metadata ? JSON.stringify(s.metadata) : '—';
-                    html += '<tr style="border-top:1px solid #e5e7eb">' +
-                            '<td style="padding:6px 8px"><code>' + autoEsc(s.name) + '</code></td>' +
-                            '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge error">no</span>') + '</td>' +
-                            '<td style="padding:6px 8px"><b>' + autoEsc(s.execution_mode || '—') + '</b></td>' +
-                            '<td style="padding:6px 8px;font-family:monospace">' + autoEsc(s.version || '—') + '</td>' +
-                            '<td style="padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280;max-width:500px;overflow:hidden;text-overflow:ellipsis" title="' + autoEsc(meta) + '">' + autoEsc(meta.slice(0, 120)) + (meta.length > 120 ? '…' : '') + '</td>' +
-                            '<td style="padding:6px 8px">' + autoStrategyActionCell(s) + '</td>' +
-                            '</tr>';
+                    var params = (s.metadata && s.metadata.params) ? s.metadata.params : {};
+                    var idBase = 'au-gsp-' + s.name;
+                    html += '<tr style="border-top:1px solid #e5e7eb">';
+                    html += '<td style="padding:6px 8px">' +
+                            '<div><code style="font-weight:600">' + autoEsc(s.name) + '</code></div>' +
+                            '<div style="font-size:10px;color:#6b7280"><span style="font-family:monospace;color:#1e40af">' + autoEsc(s.version || '—') + '</span> · ' + autoEsc(s.execution_mode || '—') + '</div></td>';
+                    html += '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge idle">paused</span>') + '</td>';
+                    _AU_GS_PARAM_SPEC.forEach(function (f) {
+                        var cur = (params[f.key] !== undefined && params[f.key] !== null) ? params[f.key] : f.def;
+                        var inputId = idBase + '-' + f.key;
+                        html += '<td style="padding:6px 8px">';
+                        if (f.type === 'select') {
+                            html += '<select id="' + inputId + '" class="wms-df-select">';
+                            f.opts.forEach(function (o) { html += '<option value="' + o + '"' + (String(cur) === o ? ' selected' : '') + '>' + o + '</option>'; });
+                            html += '</select>';
+                        } else {
+                            var w = f.key === 'risk_per_trade' ? '80px' : (f.key === 'stop_mult' ? '56px' : '46px');
+                            html += '<input id="' + inputId + '" type="number" step="' + f.step + '" value="' + autoEsc(String(cur)) +
+                                    '" class="wms-input-compact wms-input-number" style="width:' + w + '">';
+                        }
+                        html += '</td>';
+                    });
+                    html += '<td style="padding:6px 8px"><button class="au-btn au-btn-primary" style="font-size:11px;padding:4px 10px" onclick="autoSaveGsParams(\'' + autoEsc(s.name) + '\')">Save</button>' +
+                            ' <span id="' + idBase + '-msg" style="font-size:10px;color:#6b7280"></span></td>';
+                    html += '<td style="padding:6px 8px">' + autoStrategyActionCell(s) + '</td>';
+                    html += '</tr>';
                 });
-                html += '</tbody></table>';
+                html += '</tbody></table></div>';
                 stratsEl.innerHTML = html;
             }
         } catch (e) {
             stratsEl.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
         }
     }
-
-    // 1b. Strategy Parameters editor (metadata.params → runner).
-    autoLoadGsParams();
 
     // 2. Scheduling — external cron-job.org cron topology. auto_strategies.cron_schedule
     //    is null for GS by design (strategies don't own their cadence); reads
@@ -1317,60 +1334,6 @@ var _AU_GS_PARAM_SPEC = [
     { key: 'position_roll_days', label: 'position_roll_days', type: 'number', step: '1',    def: 3 }
 ];
 
-async function autoLoadGsParams() {
-    var el = document.getElementById('au-gs-fam-params');
-    if (!el) return;
-    try {
-        // GS-family rows only (family='gs'), so v2.3/v3 config rows appear here
-        // automatically once created — no hardcoded name list to maintain.
-        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=name,display_name,version,enabled,execution_mode,metadata&order=version.asc,name.asc',
-            { headers: wmsHeaders() });
-        if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()));
-        var rows = await r.json();
-        if (!rows.length) { el.innerHTML = '<div class="au-soon">No GS strategy rows found.</div>'; return; }
-
-        var html = '';
-        rows.forEach(function (s) {
-            var params = (s.metadata && s.metadata.params) ? s.metadata.params : {};
-            var idBase = 'au-gsp-' + s.name;
-            var modeBadge = s.execution_mode === 'LIVE'
-                ? '<span class="au-badge error" style="font-size:10px">LIVE</span>'
-                : '<span class="au-badge idle" style="font-size:10px">' + autoEsc(s.execution_mode || 'PAPER') + '</span>';
-            html += '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#fafafa">';
-            html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">' +
-                    '<code style="font-weight:600">' + autoEsc(s.name) + '</code>' +
-                    '<span style="font-family:monospace;font-size:11px;color:#1e40af">' + autoEsc(s.version || '—') + '</span>' +
-                    modeBadge +
-                    (s.enabled ? '' : '<span class="au-badge idle" style="font-size:10px">paused</span>') +
-                    '</div>';
-            html += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">';
-            _AU_GS_PARAM_SPEC.forEach(function (f) {
-                var cur = (params[f.key] !== undefined && params[f.key] !== null) ? params[f.key] : f.def;
-                var inputId = idBase + '-' + f.key;
-                html += '<div style="display:flex;flex-direction:column;gap:2px">' +
-                        '<label for="' + inputId + '" style="font-size:10px;color:#6b7280">' + autoEsc(f.label) + '</label>';
-                if (f.type === 'select') {
-                    html += '<select id="' + inputId + '" style="font-size:12px;padding:3px 6px;border:1px solid #d1d5db;border-radius:4px">';
-                    f.opts.forEach(function (o) {
-                        html += '<option value="' + o + '"' + (String(cur) === o ? ' selected' : '') + '>' + o + '</option>';
-                    });
-                    html += '</select>';
-                } else {
-                    html += '<input id="' + inputId + '" type="number" step="' + f.step + '" value="' + autoEsc(String(cur)) +
-                            '" style="width:120px;font-size:12px;padding:3px 6px;border:1px solid #d1d5db;border-radius:4px">';
-                }
-                html += '</div>';
-            });
-            html += '<button class="au-btn au-btn-primary" style="font-size:12px;padding:5px 14px" onclick="autoSaveGsParams(\'' + autoEsc(s.name) + '\')">Save</button>';
-            html += '<span id="' + idBase + '-msg" style="font-size:11px;color:#6b7280"></span>';
-            html += '</div></div>';
-        });
-        el.innerHTML = html;
-    } catch (e) {
-        el.innerHTML = '<span style="color:#dc2626">Failed to load params: ' + autoEsc(String(e.message || e)) + '</span>';
-    }
-}
-
 async function autoSaveGsParams(name) {
     var idBase = 'au-gsp-' + name;
     var msg = document.getElementById(idBase + '-msg');
@@ -1409,7 +1372,7 @@ async function autoSaveGsParams(name) {
         });
         if (!pr.ok) throw new Error('save HTTP ' + pr.status + ' ' + (await pr.text()));
         if (msg) { msg.style.color = '#16a34a'; msg.textContent = '✓ Saved — applies to the next scan.'; }
-        autoLoadGsParams();   // re-read — never claim success from the local copy
+        autoLoadGsFamAdmin();   // re-read the unified table — never claim success from the local copy
     } catch (e) {
         if (msg) { msg.style.color = '#dc2626'; msg.textContent = 'Failed: ' + String(e.message || e); }
     }
