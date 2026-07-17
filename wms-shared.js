@@ -2587,6 +2587,19 @@ function _wmsTabOnMessage(e) {
         console.log('wmsTabSync: leader resigned → promoting self');
         _wmsPromoteToLeader();
     }
+
+    if (msg.type === 'txn-changed') {
+        // Another tab changed the transactions — bring THIS tab's shared cache
+        // current (its own cheap checksum→delta) and re-render if visible, so
+        // every open tab stays in sync. (§A.9.7)
+        if (typeof wmsTxnSyncNow === 'function') {
+            wmsTxnSyncNow().then(function(changed) {
+                if (changed && !document.hidden && typeof wmsRenderActiveModuleAfterTxn === 'function') {
+                    wmsRenderActiveModuleAfterTxn();
+                }
+            }).catch(function() {});
+        }
+    }
 }
 
 function _wmsPromoteToLeader() {
@@ -3024,6 +3037,96 @@ document.addEventListener('visibilitychange', function() {
         }
     }
 });
+
+// ============================================================================
+// BACKGROUND TRANSACTIONS AUTO-SYNC (LESSONS §A.9.7)
+// A 2-minute background poll — SEPARATE from the 10s price ticker so it never
+// disturbs it, but reusing the same gates (market window + visibility) + the
+// tab channel. The VISIBLE tab polls; on a real change (checksum moved) it
+// re-renders the active module AND broadcasts a `txn-changed` ping so every
+// other open tab brings its own cache current. Switching to a tab
+// (visibilitychange) also syncs immediately — so whichever tab the user is on
+// is always up to date, however many tabs are open. Cheap when idle (one small
+// checksum RPC every 2 min); a delta fetch happens only on a real change.
+// ============================================================================
+var wmsTxnAutoSyncTimer = null;
+var WMS_TXN_SYNC_INTERVAL = 120000; // 2 minutes
+var _wmsTxnRenderInFlight = false;
+
+// True while an edit / transaction-list modal is open — never disturb it.
+function _wmsTxnModalIsOpen() {
+    var em = document.getElementById('wmsEditModal');
+    var tm = document.getElementById('wmsTxnModal');
+    return (em && em.classList.contains('show')) || (tm && tm.classList.contains('show'));
+}
+
+// Re-render whatever module is currently showing transaction-derived data,
+// mirroring each module's post-write afterChange. No-op while a modal is open.
+function wmsRenderActiveModuleAfterTxn() {
+    if (_wmsTxnModalIsOpen() || _wmsTxnRenderInFlight) return;
+    _wmsTxnRenderInFlight = true;
+    try {
+        if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+        if (document.getElementById('tr-portfolio')) {
+            // Trading active — same re-render the edit modal's afterChange uses.
+            if (typeof trRefreshAllViews === 'function') trRefreshAllViews();
+            var lg = document.getElementById('tr-ledger');
+            if (lg && lg.classList.contains('active') && typeof lgRefresh === 'function') {
+                try { lgRefresh(); } catch (e) { /* ignore */ }
+            }
+        } else if (document.getElementById('rptPortfolioBody')) {
+            // Reports active — re-map from the shared cache, then re-render.
+            if (typeof rptLoadData === 'function') {
+                rptLoadData().then(function() {
+                    if (typeof rptRenderPortfolio === 'function') rptRenderPortfolio();
+                }).catch(function() {});
+            }
+        }
+    } finally {
+        _wmsTxnRenderInFlight = false;
+    }
+}
+
+// Bring the shared cache current (cheap checksum gate → delta only on change).
+// Returns true if the cache changed. Skipped while the cache isn't ready or a
+// modal is open.
+async function wmsTxnSyncNow() {
+    if (!window._wmsTxnCache || _wmsTxnModalIsOpen()) return false;
+    var before = window._wmsTxnCache.checksum;
+    try { await wmsLoadTransactions(); } catch (e) { return false; }
+    return !!(window._wmsTxnCache && window._wmsTxnCache.checksum !== before);
+}
+
+function wmsTxnAutoSyncStart() {
+    if (wmsTxnAutoSyncTimer) return;
+    wmsTxnAutoSyncTimer = setInterval(async function() {
+        if (document.hidden) return;                                                    // only the visible tab polls
+        if (typeof wmsIsRefreshWindow === 'function' && !wmsIsRefreshWindow()) return;  // market window (same gate as prices)
+        var changed = await wmsTxnSyncNow();
+        if (changed) {
+            if (wmsTabChannel) { try { wmsTabChannel.postMessage({ type: 'txn-changed', tabId: wmsTabId }); } catch (e) {} }
+            wmsRenderActiveModuleAfterTxn();
+        }
+    }, WMS_TXN_SYNC_INTERVAL);
+}
+
+function wmsTxnAutoSyncStop() {
+    if (wmsTxnAutoSyncTimer) { clearInterval(wmsTxnAutoSyncTimer); wmsTxnAutoSyncTimer = null; }
+}
+
+// On becoming visible, sync immediately (regardless of market hours — a manual
+// entry made in another tab should show the moment you switch back) + render on change.
+document.addEventListener('visibilitychange', function() {
+    if (document.hidden) return;
+    wmsTxnSyncNow().then(function(changed) {
+        if (changed) wmsRenderActiveModuleAfterTxn();
+    }).catch(function() {});
+});
+
+// Start the 2-min background poll once, at module load. The tick self-gates on
+// visibility + market hours, and wmsTxnSyncNow no-ops until the shared cache +
+// auth are ready — so this is safe to arm before the first startup load finishes.
+wmsTxnAutoSyncStart();
 
 // ============================================================================
 // VIEW-FILTER EVALUATION (LESSONS §E.17.8)
