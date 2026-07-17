@@ -1045,6 +1045,12 @@ function _auGsExitCategory(exit) {
     if (et === 'TARGET_HIT')  return 'TARGET';  // profitable exit, non-trail/non-EMA
     return et;
 }
+function _auGsExitLabel(cat) {
+    return ({ STOP: 'Hard SL', TRAIL: 'Trail SL', EMA: 'EMA exit', TARGET: 'Target', MANUAL: 'Manual', TIME: 'Time stop' })[cat] || cat || '—';
+}
+function _auGsExitColor(cat) {
+    return ({ STOP: '#dc2626', TRAIL: '#0891b2', EMA: '#7c3aed', TARGET: '#047857', MANUAL: '#92400e', TIME: '#b45309' })[cat] || '#6b7280';
+}
 
 // Renders a clickable, sortable <th> with an active-column direction arrow.
 function _gsClosedTh(label, key, align, sub) {
@@ -4681,8 +4687,9 @@ async function autoLoadGsClosedTrades() {
             var daysSub = daysHeld != null
                 ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + daysHeld + ' day' + (daysHeld === 1 ? '' : 's') + '</div>'
                 : '';
-            var exitType = ct.exit ? ct.exit.event_type : '—';
-            var exitTypeColor = _autoExitTypeColor(exitType);
+            var _exitCat = _auGsExitCategory(ct.exit);
+            var exitReasonLabel = ct.exit ? _auGsExitLabel(_exitCat) : '—';
+            var exitReasonColor = _auGsExitColor(_exitCat);
             var entryPxStr = autoFmtPrice0(ct.entry_price);
             var exitPxStr = autoFmtPrice0(ct.exit_price);
             var contractStr = autoFmtContract(ct.contract, ct.expiry_date);
@@ -4745,7 +4752,7 @@ async function autoLoadGsClosedTrades() {
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + qtyCell + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(entryPxStr) + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(exitPxStr) + '</td>' +
-                    '<td style="padding:6px 8px;vertical-align:top"><span style="color:' + exitTypeColor + ';font-weight:600">' + autoEsc(_autoExitTypeLabel(exitType)) + '</span></td>' +
+                    '<td style="padding:6px 8px;vertical-align:top"><span style="color:' + exitReasonColor + ';font-weight:600">' + autoEsc(exitReasonLabel) + '</span></td>' +
                     '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + pnlCell + '</td>' +
                     '</tr>';
         });
