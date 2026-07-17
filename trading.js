@@ -425,9 +425,11 @@ async function initTrading() {
     trRestoreTab();
 
     try {
-        // Probe-aware: reuse the in-memory transactions cache when the DB is
-        // unchanged since the last full load (see trLoadDataIfChanged). The
-        // Refresh button still calls trLoadData() directly for a forced reload.
+        // Checksum-gated delta sync (§A.9.6): reuse the cache when unchanged,
+        // reconcile only the delta when changed, full-reload as the fallback.
+        // The Refresh button + all post-write refreshes route through here too
+        // (via trRefresh). A hard full reload only happens on first load or an
+        // integrity mismatch.
         await trLoadDataIfChanged();
     } catch (error) {
         console.error('Trading: Error loading data:', error);
@@ -1102,7 +1104,12 @@ async function trLoadDataIfChanged() {
 async function trRefresh() {
     showLoading(true);
     try {
-        await trLoadData();
+        // Delta sync (checksum gate + manifest reconcile, §A.9.6) — fast when
+        // only a few rows changed (the live-trading case), and self-falls-back
+        // to a full reload on any integrity mismatch. Used by the Refresh button
+        // AND every post-write refresh (add / edit / split / income / rights /
+        // bonus / expiry / demerger / hist-P&L all call trRefresh).
+        await trLoadDataIfChanged();
     } catch (error) {
         showAlert('Failed to refresh: ' + error.message, 'error');
         showLoading(false);
