@@ -1205,8 +1205,12 @@ async function autoLoadGsFamAdmin() {
                             html += '<select id="' + inputId + '" class="wms-df-select">';
                             f.opts.forEach(function (o) { html += '<option value="' + o + '"' + (String(cur) === o ? ' selected' : '') + '>' + o + '</option>'; });
                             html += '</select>';
+                        } else if (f.fmt === 'comma') {
+                            // Text input (number inputs can't show separators); reformats on blur.
+                            html += '<input id="' + inputId + '" type="text" inputmode="numeric" value="' + autoEsc(_auFmtIntComma(cur)) +
+                                    '" onblur="this.value=_auFmtIntComma(this.value)" class="wms-input-compact wms-input-number" style="width:90px">';
                         } else {
-                            var w = f.key === 'risk_per_trade' ? '80px' : (f.key === 'stop_mult' ? '56px' : '52px');
+                            var w = f.key === 'stop_mult' ? '56px' : '52px';
                             html += '<input id="' + inputId + '" type="number" step="' + f.step + '" value="' + autoEsc(String(cur)) +
                                     '" class="wms-input-compact wms-input-number" style="width:' + w + '">';
                         }
@@ -1332,7 +1336,7 @@ async function autoLoadGsFamAdmin() {
 var _AU_GS_PARAM_SPEC = [
     { key: 'stop_mode',          col: 'stop_mode',  label: 'stop_mode',          type: 'select', opts: ['drift', 'fixed'], def: 'drift' },
     { key: 'stop_mult',          col: 'stop_mult',  label: 'stop_mult (×ATR)',   type: 'number', step: '0.1',  def: 1.8 },
-    { key: 'risk_per_trade',     col: 'risk (₹)',   label: 'risk_per_trade (₹)', type: 'number', step: '1000', def: 50000 },
+    { key: 'risk_per_trade',     col: 'risk (₹)',   label: 'risk_per_trade (₹)', type: 'number', step: '1000', def: 50000, fmt: 'comma' },
     { key: 'entry_roll_days',    col: 'entry_roll', label: 'entry_roll_days',    type: 'number', step: '1',    def: 6 },
     { key: 'position_roll_days', col: 'pos_roll',   label: 'position_roll_days', type: 'number', step: '1',    def: 3 },
     // Placeholder — saved to metadata.params.lot_cap but NOT yet enforced by the
@@ -1341,6 +1345,14 @@ var _AU_GS_PARAM_SPEC = [
     { key: 'lot_cap',            col: 'lot_cap',    label: 'lot_cap (#lots)',    type: 'number', step: '1',    def: 12,
       defFor: function (s) { return /gold/i.test(s.name || '') ? 20 : 12; } }
 ];
+
+// Indian-grouping thousands formatter for ₹ inputs (e.g. 75000 → "75,000",
+// 150000 → "1,50,000"). Strips any existing separators first so it's idempotent.
+function _auFmtIntComma(v) {
+    var n = parseFloat(String(v).replace(/[^0-9.]/g, ''));
+    if (!isFinite(n)) return '';
+    return Math.round(n).toLocaleString('en-IN');
+}
 
 async function autoSaveGsParams(name) {
     var idBase = 'au-gsp-' + name;
@@ -1365,7 +1377,8 @@ async function autoSaveGsParams(name) {
             if (f.type === 'select') {
                 params[f.key] = inp.value;
             } else {
-                var v = parseFloat(inp.value);
+                // Strip thousands separators (comma-formatted ₹ fields) before parsing.
+                var v = parseFloat(String(inp.value).replace(/,/g, ''));
                 if (!isFinite(v)) throw new Error(f.label + ' must be a number');
                 if (v < 0) throw new Error(f.label + ' cannot be negative');
                 params[f.key] = v;
