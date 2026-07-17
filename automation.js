@@ -1209,14 +1209,18 @@ async function autoLoadGsFamAdmin() {
     //    latest auto_runs row to display "last run" freshness per cron.
     var schedEl = document.getElementById('au-gs-fam-scheduling');
     if (schedEl) {
+        // `runFilter` is a PostgREST predicate. The cron still hits ?strategy=<base>,
+        // but the runner fans out and records auto_runs under the VARIANT names
+        // (…_v23 / …_v3) — the disabled base rows no longer run — so freshness must
+        // match the variants via a name pattern, not the exact base name.
         var schedJobs = [
-            { key: 'silver_mini_15m', label: 'Silver signal scan', endpoint: 'automation-runner?strategy=silver_mini_15m', cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
-            { key: 'gold_mini_15m',   label: 'Gold signal scan',   endpoint: 'automation-runner?strategy=gold_mini_15m',   cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
-            { key: '_eod_ingest',     label: 'EOD prices ingest',  endpoint: 'eod-prices-ingest',                          cadence: 'daily · after MCX close (~23:35 IST)',      staleMinutes: 60 * 30 }
+            { runFilter: 'strategy_name=like.silver_mini_15m*', label: 'Silver signal scan', endpoint: 'automation-runner?strategy=silver_mini_15m', cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
+            { runFilter: 'strategy_name=like.gold_mini_15m*',   label: 'Gold signal scan',   endpoint: 'automation-runner?strategy=gold_mini_15m',   cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
+            { runFilter: 'strategy_name=eq._eod_ingest',        label: 'EOD prices ingest',  endpoint: 'eod-prices-ingest',                          cadence: 'daily · after MCX close (~23:35 IST)',      staleMinutes: 60 * 30 }
         ];
         try {
             var results = await Promise.all(schedJobs.map(function (j) {
-                return fetch(SUPABASE_URL + '/rest/v1/auto_runs?strategy_name=eq.' + encodeURIComponent(j.key) + '&order=finished_at.desc&limit=1&select=finished_at,status',
+                return fetch(SUPABASE_URL + '/rest/v1/auto_runs?' + j.runFilter + '&order=finished_at.desc&limit=1&select=finished_at,status',
                     { headers: wmsHeaders() }).then(function (r) { return r.ok ? r.json() : []; });
             }));
             var now = Date.now();
@@ -1264,32 +1268,10 @@ async function autoLoadGsFamAdmin() {
         }
     }
 
-    // 3. Plugin version — most-recent auto_signals row's metadata.strategy_version wins
-    //    (that's the source-of-truth for what's currently running). Falls back to
-    //    auto_strategies.version if no recent signal.
-    var vEl = document.getElementById('au-gs-fam-plugin-version');
-    if (vEl) {
-        try {
-            var r = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(' + _AU_GS_STRATS.join(',') + ')&source=eq.chassis&order=fired_at.desc&limit=1&select=metadata,fired_at',
-                { headers: wmsHeaders() });
-            var rows = r.ok ? await r.json() : [];
-            var version = null, since = null;
-            if (rows[0] && rows[0].metadata) {
-                version = rows[0].metadata.strategy_version || rows[0].metadata.version;
-                since = rows[0].fired_at;
-            }
-            if (version) {
-                vEl.innerHTML = autoEsc(version) +
-                    (since ? ' <span style="color:#6b7280;font-size:11px;font-weight:400;font-family:sans-serif"> (last observed ' + autoEsc(autoFmtIST(since)) + ')</span>' : '');
-            } else {
-                vEl.textContent = 'not yet observed in signals';
-            }
-        } catch (e) {
-            vEl.innerHTML = '<span style="color:#dc2626">' + autoEsc(String(e)) + '</span>';
-        }
-    }
+    // (Plugin Version card removed — the per-row version now lives in the
+    //  Strategy Configuration table above.)
 
-    // 4. gs_catalogue — hard-coded in the plugin, so we compute from helper fns
+    // 3. gs_catalogue — hard-coded in the plugin, so we compute from helper fns
     var catEl = document.getElementById('au-gs-fam-catalogue');
     if (catEl && typeof autoGsPointValue === 'function') {
         var instruments = [
