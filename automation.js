@@ -937,6 +937,53 @@ function autoGsSetClosedSourceFilter(value) {
 }
 
 // ----------------------------------------------------------------------------
+// GS closed-trades filters + sort (2026-07-17). Radio/checkbox blocks on the
+// Closed Trades tab; all applied client-side over the already-fetched rows.
+//   instr   : all | gold | silver          (radio)
+//   result  : all | win  | loss            (radio)
+//   versions: [] = all, else tokens to keep (checkbox, multi-select)
+//   sort    : {key,dir} — click a header to toggle (entry|exit|contract|qty|pnl)
+// ----------------------------------------------------------------------------
+var _auGsClosedInstr    = 'all';
+var _auGsClosedResult   = 'all';
+var _auGsClosedVersions = [];
+var _auGsClosedSort     = { key: 'exit', dir: 'desc' };
+
+function autoGsClosedSetFilter(kind, value) {
+    if (kind === 'instr')       _auGsClosedInstr = value;
+    else if (kind === 'result') _auGsClosedResult = value;
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+}
+
+function autoGsClosedToggleVersion(token, on) {
+    var i = _auGsClosedVersions.indexOf(token);
+    if (on && i < 0) _auGsClosedVersions.push(token);
+    else if (!on && i >= 0) _auGsClosedVersions.splice(i, 1);
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+}
+
+function autoGsClosedSort(key) {
+    if (_auGsClosedSort.key === key) {
+        _auGsClosedSort.dir = _auGsClosedSort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+        _auGsClosedSort.key = key;
+        _auGsClosedSort.dir = (key === 'contract') ? 'asc' : 'desc';   // dates/pnl newest/biggest first; contract A→Z
+    }
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+}
+
+// Renders a clickable, sortable <th> with an active-column direction arrow.
+function _gsClosedTh(label, key, align, sub) {
+    var arrow = _auGsClosedSort.key === key ? (_auGsClosedSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    var alignStyle = align === 'right' ? 'text-align:right' : 'text-align:left';
+    return '<th onclick="autoGsClosedSort(\'' + key + '\')" title="Sort by ' + label.replace(/&amp;/g, '&') + '"' +
+           ' style="padding:6px 8px;' + alignStyle + ';cursor:pointer;user-select:none;white-space:nowrap">' +
+           label + arrow +
+           (sub ? '<br><span style="font-weight:400;color:#6b7280;font-size:10px">' + sub + '</span>' : '') +
+           '</th>';
+}
+
+// ----------------------------------------------------------------------------
 // GS family page (Phase B — 2026-07-09; de-mirrored Phase E.1a — 2026-07-10)
 //
 // The Open Trades + Closed Trades renderers (autoLoadGsOpenTrades /
@@ -4440,25 +4487,46 @@ async function autoLoadGsClosedTrades() {
             });
         });
 
-        // Sort most-recently-closed first
-        closedRows.sort(function (a, b) {
-            var aT = a.exit ? a.exit.fired_at : a.entry.fired_at;
-            var bT = b.exit ? b.exit.fired_at : b.entry.fired_at;
-            return bT < aT ? -1 : bT > aT ? 1 : 0;
-        });
-
-        // Apply the source filter now (after we've built the totals bar's peak
-        // exposure / peak margin — those figures reflect ALL closed trades so
-        // filter changes don't distort the sticky-totals values).
+        // Apply ALL filters now (after the totals bar's peak exposure / peak margin,
+        // which reflect ALL closed trades so filter changes don't distort them).
+        // Instrument / result / version are client-side over the built rows.
         var _closedTotal = closedRows.length;
-        if (_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') {
-            closedRows = closedRows.filter(function (ct) { return ct.source === _srcFilter; });
+        closedRows = closedRows.filter(function (ct) {
+            if ((_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') && ct.source !== _srcFilter) return false;
+            if (_auGsClosedInstr === 'gold'   && ct.short_symbol !== 'GOLDM')   return false;
+            if (_auGsClosedInstr === 'silver' && ct.short_symbol !== 'SILVERM') return false;
+            if (_auGsClosedResult === 'win'  && !(ct.pnl != null && ct.pnl >= 0)) return false;
+            if (_auGsClosedResult === 'loss' && !(ct.pnl != null && ct.pnl < 0))  return false;
+            if (_auGsClosedVersions.length) {
+                var _v = ct.version || '';
+                if (!_auGsClosedVersions.some(function (tok) { return _v.indexOf(tok) >= 0; })) return false;
+            }
+            return true;
+        });
+        var _anyFilter = _srcFilter !== 'all' || _auGsClosedInstr !== 'all' ||
+                         _auGsClosedResult !== 'all' || _auGsClosedVersions.length > 0;
+
+        // Sort — click-to-sort on headers (default: exit date, newest first).
+        var _sortDir = _auGsClosedSort.dir === 'asc' ? 1 : -1;
+        function _gsClosedSortVal(ct, key) {
+            if (key === 'entry')    return ct.entry ? ct.entry.fired_at : '';
+            if (key === 'exit')     return ct.exit ? ct.exit.fired_at : (ct.entry ? ct.entry.fired_at : '');
+            if (key === 'contract') return (ct.short_symbol || '') + '|' + (ct.expiry_date || '');
+            if (key === 'qty')      return Number(ct.qty_lots) || 0;
+            if (key === 'pnl')      return ct.pnl == null ? -Infinity : ct.pnl;
+            return '';
         }
+        closedRows.sort(function (a, b) {
+            var av = _gsClosedSortVal(a, _auGsClosedSort.key), bv = _gsClosedSortVal(b, _auGsClosedSort.key);
+            if (av < bv) return -1 * _sortDir;
+            if (av > bv) return  1 * _sortDir;
+            return 0;
+        });
 
         if (closedRows.length === 0) {
             var _emptyMsg = _closedTotal === 0
                 ? 'No closed GS trades yet.'
-                : 'No closed GS trades match filter "' + autoEsc(_srcFilter) + '" (' + _closedTotal + ' hidden). Change filter above to see them.';
+                : 'No closed GS trades match the current filters (' + _closedTotal + ' hidden). Adjust the filters above to see them.';
             el.innerHTML = '<div class="au-soon" style="padding:20px">' + _emptyMsg + '</div>';
             if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 / ' + _closedTotal + ' closed'; }
             return;
@@ -4492,7 +4560,7 @@ async function autoLoadGsClosedTrades() {
                         _tPctSign + Math.abs(_tPct).toFixed(2) + '%</div>';
         }
         var _totalLabel = 'Total (' + closedRows.length + ' closed — ' + _wins + 'W / ' + _losses + 'L' +
-                         (_srcFilter !== 'all' ? ' — filtered from ' + _closedTotal : '') + ')';
+                         (_anyFilter ? ' — filtered from ' + _closedTotal : '') + ')';
 
         var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
         html += '<thead>' +
@@ -4503,18 +4571,19 @@ async function autoLoadGsClosedTrades() {
                 '<span style="color:' + _tCol + '">' + _tSign + '₹' + _tAbs + '</span>' + _tPctSub +
                 '</td>' +
                 '</tr>' +
-                // Row 2 — column headers
+                // Row 2 — column headers. Entry / Exit / Contract / Qty / P&L are
+                // click-to-sort (arrow marks the active column + direction).
                 '<tr style="background:#f3f4f6;text-align:left">' +
                 '<th style="padding:6px 8px">Strategy<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ source · version</span></th>' +
                 '<th style="padding:6px 8px">Side</th>' +
-                '<th style="padding:6px 8px">Entry</th>' +
-                '<th style="padding:6px 8px">Exit<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>' +
-                '<th style="padding:6px 8px">Contract</th>' +
-                '<th style="padding:6px 8px;text-align:right">Qty</th>' +
+                _gsClosedTh('Entry', 'entry', 'left') +
+                _gsClosedTh('Exit', 'exit', 'left', '/ days held') +
+                _gsClosedTh('Contract', 'contract', 'left') +
+                _gsClosedTh('Qty', 'qty', 'right') +
                 '<th style="padding:6px 8px;text-align:right">Entry Px</th>' +
                 '<th style="padding:6px 8px;text-align:right">Exit Px</th>' +
                 '<th style="padding:6px 8px">Exit Reason</th>' +
-                '<th style="padding:6px 8px;text-align:right">Realised P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>' +
+                _gsClosedTh('Realised P&amp;L', 'pnl', 'right', '/ % of exp') +
                 '</tr></thead><tbody>';
 
         var totalPnl = 0, wins = 0, losses = 0;
@@ -4607,7 +4676,7 @@ async function autoLoadGsClosedTrades() {
         // are still used to populate _auGsTotals for the sticky totals bar.
         html += '</tbody></table></div>';
         el.innerHTML = html;
-        var _statusLabel = _srcFilter === 'all'
+        var _statusLabel = !_anyFilter
             ? closedRows.length + ' closed'
             : closedRows.length + ' / ' + _closedTotal + ' closed';
         if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = _statusLabel; }
