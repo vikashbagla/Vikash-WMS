@@ -750,8 +750,16 @@ details summary {
               <!-- Admin: strategy config + scheduling + version + gs_catalogue snapshot -->
               <div class="au-card">
                 <h3>Strategy Configuration <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
-                <div class="au-sub">Every GS config row (v2.2 / v2.3 / v3). Risk &amp; exit knobs edit inline — <code>Save</code> writes <code>auto_strategies.metadata.params</code> (no code change) and applies from the next scan; open trades keep the stop they were opened with. <b>stop_mode:</b> <code>drift</code> recomputes the hard stop each bar, <code>fixed</code> pins it at entry. <b>stop_mult</b> = ×ATR stop distance · <b>entry_roll</b> = no new entry within N days of expiry · <b>pos_roll</b> = roll open position ≤ N days to expiry · <b>lot_cap</b> = max lots per entry (<code>0 = no cap</code>).</div>
+                <div class="au-sub">Every GS config row (v2.2 / v2.3 / v3). Edit the risk &amp; exit knobs inline, then <b>Save all</b> — this writes <code>auto_strategies.metadata.params</code> (no code change) and applies from the next scan. Open trades keep the stop they were opened with.</div>
                 <div id="au-gs-fam-strategies" style="margin-top:12px" class="au-meta">Loading…</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:12px;line-height:1.8;border-top:1px solid #eef0f2;padding-top:8px">
+                  <div><b>stop_mode</b> — <code>drift</code> recomputes the hard stop each bar; <code>fixed</code> pins it at entry.</div>
+                  <div><b>stop_mult</b> — hard-stop distance = stop_mult × ATR.</div>
+                  <div><b>risk (₹)</b> — risk budget per trade that sizes the position.</div>
+                  <div><b>entry_roll</b> — no new entry within N days of expiry → use the next contract.</div>
+                  <div><b>pos_roll</b> — roll an open position ≤ N days to its expiry.</div>
+                  <div><b>lot_cap</b> — max lots per entry (<code>0 = no cap</code>).</div>
+                </div>
               </div>
 
               <div class="au-card">

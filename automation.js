@@ -1161,6 +1161,7 @@ async function autoLoadGsFamAdmin() {
             var latestRun = {};
             runList.forEach(function (r2) { if (!latestRun[r2.strategy_name]) latestRun[r2.strategy_name] = r2; });
             _auCacheStrategies(rows);
+            _auGsRowNames = rows.map(function (s) { return s.name; });   // for Save-all
             if (rows.length === 0) {
                 stratsEl.innerHTML = '<div class="au-soon">No matching auto_strategies rows.</div>';
             } else {
@@ -1170,8 +1171,7 @@ async function autoLoadGsFamAdmin() {
                         '<th style="padding:6px 8px">Enabled</th>' +
                         '<th style="padding:6px 8px">Last run</th>';
                 _AU_GS_PARAM_SPEC.forEach(function (f) { html += '<th style="padding:6px 8px">' + autoEsc(f.col) + '</th>'; });
-                html += '<th style="padding:6px 8px"></th>' +
-                        '<th style="padding:6px 8px">Actions</th>' +
+                html += '<th style="padding:6px 8px">Actions</th>' +
                         '</tr></thead><tbody>';
                 var nowMs = Date.now();
                 rows.forEach(function (s) {
@@ -1216,12 +1216,13 @@ async function autoLoadGsFamAdmin() {
                         }
                         html += '</td>';
                     });
-                    html += '<td style="padding:6px 8px"><button class="au-btn au-btn-primary" style="font-size:11px;padding:4px 10px" onclick="autoSaveGsParams(\'' + autoEsc(s.name) + '\')">Save</button>' +
-                            ' <span id="' + idBase + '-msg" style="font-size:10px;color:#6b7280"></span></td>';
                     html += '<td style="padding:6px 8px">' + autoStrategyActionCell(s) + '</td>';
                     html += '</tr>';
                 });
                 html += '</tbody></table></div>';
+                html += '<div style="margin-top:10px;display:flex;align-items:center;gap:10px">' +
+                        '<button class="au-btn au-btn-primary" style="font-size:12px;padding:6px 16px" onclick="autoSaveGsParamsAll()">Save all</button>' +
+                        '<span id="au-gsp-allmsg" style="font-size:11px;color:#6b7280"></span></div>';
                 stratsEl.innerHTML = html;
             }
         } catch (e) {
@@ -1339,12 +1340,14 @@ var _AU_GS_PARAM_SPEC = [
     { key: 'risk_per_trade',     col: 'risk (₹)',   label: 'risk_per_trade (₹)', type: 'number', step: '1000', def: 50000, fmt: 'comma' },
     { key: 'entry_roll_days',    col: 'entry_roll', label: 'entry_roll_days',    type: 'number', step: '1',    def: 6 },
     { key: 'position_roll_days', col: 'pos_roll',   label: 'position_roll_days', type: 'number', step: '1',    def: 3 },
-    // Placeholder — saved to metadata.params.lot_cap but NOT yet enforced by the
-    // runner sizing logic. Instrument-aware default (gold 20 / silver 12) per the
-    // go-live plan; wire into qty sizing when the cap is implemented.
+    // Enforced in gs_state.calcQty as a hard ceiling on lots/entry. Instrument-aware
+    // default (gold 20 / silver 12) per the go-live plan; 0 = no cap.
     { key: 'lot_cap',            col: 'lot_cap',    label: 'lot_cap (#lots)',    type: 'number', step: '1',    def: 12,
       defFor: function (s) { return /gold/i.test(s.name || '') ? 20 : 12; } }
 ];
+
+// Row names in the currently-rendered config table — the Save-all button iterates these.
+var _auGsRowNames = [];
 
 // Indian-grouping thousands formatter for ₹ inputs (e.g. 75000 → "75,000",
 // 150000 → "1,50,000"). Strips any existing separators first so it's idempotent.
@@ -1354,45 +1357,59 @@ function _auFmtIntComma(v) {
     return Math.round(n).toLocaleString('en-IN');
 }
 
-async function autoSaveGsParams(name) {
+// Reads the inline inputs for one row and returns a merged params object.
+// Throws (with the row name) on any invalid field.
+function _auGsCollectParams(name, baseMeta) {
     var idBase = 'au-gsp-' + name;
-    var msg = document.getElementById(idBase + '-msg');
+    var params = Object.assign({}, (baseMeta && baseMeta.params) || {});
+    _AU_GS_PARAM_SPEC.forEach(function (f) {
+        var inp = document.getElementById(idBase + '-' + f.key);
+        if (!inp) return;
+        if (f.type === 'select') {
+            params[f.key] = inp.value;
+        } else {
+            // Strip thousands separators (comma-formatted ₹ fields) before parsing.
+            var v = parseFloat(String(inp.value).replace(/,/g, ''));
+            if (!isFinite(v)) throw new Error(name + ' · ' + f.label + ' must be a number');
+            if (v < 0) throw new Error(name + ' · ' + f.label + ' cannot be negative');
+            params[f.key] = v;
+        }
+    });
+    return params;
+}
+
+// Single "Save all" — commits every row in the table. Each row is an independent
+// read-modify-write PATCH (metadata also carries driver/family/plugin/version, and
+// PostgREST PATCH replaces the whole jsonb — so merge, never overwrite).
+async function autoSaveGsParamsAll() {
+    var msg = document.getElementById('au-gsp-allmsg');
     if (msg) { msg.style.color = '#6b7280'; msg.textContent = 'Saving…'; }
     try {
-        // Read-modify-write: metadata also carries driver/family/plugin/version, and
-        // PostgREST PATCH replaces the whole jsonb — so merge, never overwrite.
-        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name) + '&select=metadata',
+        var names = _auGsRowNames || [];
+        if (!names.length) { if (msg) msg.textContent = 'Nothing to save.'; return; }
+
+        // One read of all GS metadata as the merge base, then PATCH each row.
+        var rr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=name,metadata',
             { headers: wmsHeaders() });
-        if (!r.ok) throw new Error('read HTTP ' + r.status + ' ' + (await r.text()));
-        var cur = (await r.json())[0];
-        if (!cur) throw new Error('strategy row ' + name + ' not found');
-        var meta = Object.assign({}, cur.metadata || {});
-        if (!meta.driver || !meta.family) throw new Error('refusing to save: row is missing driver/family');
+        if (!rr.ok) throw new Error('read HTTP ' + rr.status + ' ' + (await rr.text()));
+        var metaByName = {};
+        (await rr.json()).forEach(function (row) { metaByName[row.name] = row.metadata || {}; });
 
-        var params = Object.assign({}, meta.params || {});
-        for (var i = 0; i < _AU_GS_PARAM_SPEC.length; i++) {
-            var f = _AU_GS_PARAM_SPEC[i];
-            var inp = document.getElementById(idBase + '-' + f.key);
-            if (!inp) continue;
-            if (f.type === 'select') {
-                params[f.key] = inp.value;
-            } else {
-                // Strip thousands separators (comma-formatted ₹ fields) before parsing.
-                var v = parseFloat(String(inp.value).replace(/,/g, ''));
-                if (!isFinite(v)) throw new Error(f.label + ' must be a number');
-                if (v < 0) throw new Error(f.label + ' cannot be negative');
-                params[f.key] = v;
-            }
+        var saved = 0;
+        for (var n = 0; n < names.length; n++) {
+            var name = names[n];
+            var meta = Object.assign({}, metaByName[name] || {});
+            if (!meta.driver || !meta.family) throw new Error(name + ': row missing driver/family');
+            meta.params = _auGsCollectParams(name, meta);
+            var pr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name), {
+                method: 'PATCH',
+                headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+                body: JSON.stringify({ metadata: meta })
+            });
+            if (!pr.ok) throw new Error(name + ': save HTTP ' + pr.status + ' ' + (await pr.text()));
+            saved++;
         }
-        meta.params = params;
-
-        var pr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name), {
-            method: 'PATCH',
-            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
-            body: JSON.stringify({ metadata: meta })
-        });
-        if (!pr.ok) throw new Error('save HTTP ' + pr.status + ' ' + (await pr.text()));
-        if (msg) { msg.style.color = '#16a34a'; msg.textContent = '✓ Saved — applies to the next scan.'; }
+        if (msg) { msg.style.color = '#16a34a'; msg.textContent = '✓ Saved ' + saved + ' row' + (saved === 1 ? '' : 's') + ' — applies to the next scan.'; }
         autoLoadGsFamAdmin();   // re-read the unified table — never claim success from the local copy
     } catch (e) {
         if (msg) { msg.style.color = '#dc2626'; msg.textContent = 'Failed: ' + String(e.message || e); }
