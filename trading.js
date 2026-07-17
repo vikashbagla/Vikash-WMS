@@ -801,212 +801,6 @@ function trRestoreTab() {
 // DATA LOADING
 // ============================================================================
 
-// ----------------------------------------------------------------------------
-// TRANSACTIONS LOAD + INCREMENTAL-LOAD PROBE
-// ----------------------------------------------------------------------------
-// On module entry we cheaply PROBE the DB (exact row COUNT + MAX(updated_at)) and
-// skip the heavy full fetch when both match what we captured at the last full
-// load. Fail-safe by design: any mismatch, NaN, or error → full reload. Deletes
-// are caught by the count drop; edits/inserts by max(updated_at) advancing —
-// guaranteed by the BEFORE UPDATE trigger (migration 47 / LESSONS A.9.5). The
-// Refresh button ALWAYS full-loads.
-//
-// IMPORTANT: trading.js is RE-EXECUTED on every module entry (app.html loadScript
-// removes + re-injects it with a fresh cache-bust), so module-level vars reset to
-// their initializers each time. The cache must therefore live on `window`, which
-// survives the re-execution. Shape:
-//   window._wmsTxnCache = { rows: [...sanitized txns...], count: <server rows>, maxUpdated: <str> }
-window._wmsTxnCache = window._wmsTxnCache || null;
-
-function trMaxUpdatedAt(rows) {
-    var max = null, maxT = -Infinity;
-    for (var i = 0; i < rows.length; i++) {
-        var u = rows[i] && rows[i].updated_at;
-        if (!u) continue;
-        var t = new Date(u).getTime();
-        if (t > maxT) { maxT = t; max = u; }
-    }
-    return max;
-}
-
-// Two tiny queries: exact row count (HEAD + Content-Range) and latest
-// updated_at. Both pass through the dev/prod fetch interceptor (→ _dev on dev).
-async function trProbeTransactions() {
-    var headers = wmsHeaders();
-    var countP = fetch(SUPABASE_URL + '/rest/v1/transactions?select=id', {
-        method: 'HEAD',
-        headers: Object.assign({}, headers, { 'Prefer': 'count=exact', 'Range-Unit': 'items', 'Range': '0-0' })
-    });
-    var maxP = fetch(SUPABASE_URL + '/rest/v1/transactions?select=updated_at&order=updated_at.desc.nullslast&limit=1', { headers: headers });
-    var res = await Promise.all([countP, maxP]);
-    var cr = res[0].headers.get('content-range') || '';
-    var count = cr.indexOf('/') >= 0 ? parseInt(cr.split('/')[1], 10) : NaN;
-    var maxRows = await res[1].json();
-    var maxUpdated = (maxRows && maxRows[0]) ? maxRows[0].updated_at : null;
-    return { count: count, maxUpdated: maxUpdated };
-}
-
-// Column list for a full transaction row — shared by the full load and the
-// delta by-id fetch so the two paths return byte-identical rows.
-var TR_TXN_SELECT = 'id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,product,transaction_type,transaction_date,transaction_time,quantity,lots,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display,created_at,updated_at';
-
-// Cheap sync-state probe via the txn_sync_state RPC (migration 2026-07-17).
-// Returns { count, checksum, maxUpdated }. `checksum` is an OPAQUE token: it
-// changes iff ANY row is inserted / edited (updated_at bumped by the
-// migration-47 trigger) / deleted. The client only ever COMPARES it to the
-// previously-stored token — never recomputes it — so there is no timestamp
-// serialization to match. Throws if the RPC is absent (→ callers fall back to
-// the legacy count+max probe / full load). See LESSONS §A.9.6.
-async function trSyncState() {
-    var isDev = (window.WMS_ENV === 'dev');
-    var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/txn_sync_state', {
-        method: 'POST',
-        headers: wmsHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ p_dev: isDev })
-    });
-    if (!resp.ok) throw new Error('txn_sync_state ' + resp.status);
-    var rows = await resp.json();
-    var r = Array.isArray(rows) ? rows[0] : rows;
-    return {
-        count: r ? Number(r.row_count) : NaN,
-        checksum: r ? r.checksum : null,
-        maxUpdated: r ? r.max_updated : null
-    };
-}
-
-// Fetch full rows for a specific set of ids (delta heavy-fetch). Batched to keep
-// the URL under length limits. Auto-routed to _dev by the app.html interceptor.
-async function trFetchByIds(ids) {
-    var out = [];
-    var BATCH = 100;
-    for (var i = 0; i < ids.length; i += BATCH) {
-        var slice = ids.slice(i, i + BATCH);
-        var url = SUPABASE_URL + '/rest/v1/transactions?select=' + TR_TXN_SELECT + '&id=in.(' + slice.join(',') + ')';
-        var resp = await fetch(url, { headers: wmsHeaders() });
-        if (!resp.ok) throw new Error('trFetchByIds ' + resp.status);
-        var rows = await resp.json();
-        for (var j = 0; j < rows.length; j++) out.push(rows[j]);
-    }
-    return out;
-}
-
-// Process one freshly-fetched row exactly as a full load does (Rule E.14
-// sanitize + Rule B.9.2 search text) so delta rows are indistinguishable from
-// full-load rows.
-function trProcessRow(txn) {
-    txn = wmsSanitizeTransactions([txn])[0];
-    txn._searchText = wmsBuildSecuritySearchText({
-        securityId: txn.security_id, symbol: txn.symbol,
-        shortSymbol: txn.short_symbol, companyName: txn.company_name
-    });
-    return txn;
-}
-
-// Manifest-reconcile delta (LESSONS §A.9.6). Brings the in-memory cache to
-// EXACTLY match the server while heavy-fetching only changed rows:
-//   1. fetch the lightweight (id, updated_at) manifest for ALL rows;
-//   2. diff vs the in-memory versions → new/edited ids + deleted ids;
-//   3. heavy-fetch + process only the new/edited rows;
-//   4. merge IN PLACE into cache.rows (=== trTransactions) so every consumer
-//      keeps its array reference — remove deletes, replace edits, append new;
-//   5. INTEGRITY: assert the cache id-set now equals the manifest id-set.
-// Returns true on verified success; false => caller MUST full-reload. Drift is
-// impossible to persist: the whole id set is reconciled every cycle and any
-// mismatch forces a full reload.
-async function trDeltaSyncTransactions() {
-    var cache = window._wmsTxnCache;
-    if (!cache || !Array.isArray(cache.rows)) return false;
-    var arr = cache.rows;
-
-    var manifest = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/transactions?select=id,updated_at&order=id.asc');
-    var serverUpd = Object.create(null);
-    for (var i = 0; i < manifest.length; i++) serverUpd[manifest[i].id] = manifest[i].updated_at;
-
-    var memUpd = Object.create(null);
-    for (var m = 0; m < arr.length; m++) memUpd[arr[m].id] = arr[m].updated_at;
-
-    var changedIds = [];
-    for (var s = 0; s < manifest.length; s++) {
-        var sid = manifest[s].id;
-        if (memUpd[sid] === undefined || memUpd[sid] !== manifest[s].updated_at) changedIds.push(sid);
-    }
-    var deleted = Object.create(null);
-    var delCount = 0;
-    for (var d = 0; d < arr.length; d++) {
-        if (serverUpd[arr[d].id] === undefined) { deleted[arr[d].id] = true; delCount++; }
-    }
-
-    var changedRows = changedIds.length ? await trFetchByIds(changedIds) : [];
-    var changedMap = Object.create(null);
-    for (var c = 0; c < changedRows.length; c++) {
-        var pr = trProcessRow(changedRows[c]);
-        changedMap[pr.id] = pr;
-    }
-
-    if (delCount) {
-        for (var r = arr.length - 1; r >= 0; r--) { if (deleted[arr[r].id]) arr.splice(r, 1); }
-    }
-    for (var p = 0; p < arr.length; p++) {
-        var rep = changedMap[arr[p].id];
-        if (rep) { arr[p] = rep; delete changedMap[arr[p].id]; }
-    }
-    for (var nid in changedMap) { arr.push(changedMap[nid]); }
-
-    // Integrity: cache id-set must equal the manifest id-set (catches any missed
-    // insert/delete). Edits are covered because every changed id was heavy-fetched
-    // to its latest version. A concurrent write during the sync is caught next
-    // cycle by the checksum. Any failure here → false → full reload.
-    if (arr.length !== manifest.length) {
-        console.warn('Trading delta: count ' + arr.length + ' != manifest ' + manifest.length);
-        return false;
-    }
-    var memIds = Object.create(null);
-    for (var q = 0; q < arr.length; q++) memIds[arr[q].id] = true;
-    for (var v = 0; v < manifest.length; v++) {
-        if (!memIds[manifest[v].id]) { console.warn('Trading delta: missing id ' + manifest[v].id); return false; }
-    }
-    console.log('Trading: delta reconciled (' + changedIds.length + ' changed, ' + delCount + ' deleted)');
-    return true;
-}
-
-// Full fetch of ALL transactions (every type), sanitize, build search text,
-// and capture the probe baseline. Heavy — paginates the whole table.
-async function trFetchTransactions() {
-    // Capture the sync-state checksum BEFORE the heavy fetch so the stored token
-    // represents a server state <= what we load (safe direction: the cache is a
-    // superset of the checksum's state, so the next probe can never skip a needed
-    // reconcile). Degrades gracefully if the RPC isn't deployed yet.
-    var syncBaseline = null;
-    try { syncBaseline = await trSyncState(); } catch (e) { console.warn('trSyncState unavailable (legacy probe):', e.message); }
-
-    // Load ALL transactions (no transaction_type filter — includes DIVIDEND, etc.)
-    // Uses wmsFetchAllRaw() to paginate past Supabase's 1000-row default limit.
-    var txnData = await wmsFetchAllRaw(
-        SUPABASE_URL + '/rest/v1/transactions?select=' + TR_TXN_SELECT + '&order=transaction_date.asc,transaction_time.asc.nullsfirst,id.asc'
-    );
-    console.log('Trading: Loaded ' + txnData.length + ' transactions (all types)');
-
-    trTransactions = wmsSanitizeTransactions(txnData);
-
-    // Build comprehensive search text for each transaction (Rule B.9.2)
-    trTransactions.forEach(function(txn) {
-        txn._searchText = wmsBuildSecuritySearchText({
-            securityId: txn.security_id, symbol: txn.symbol,
-            shortSymbol: txn.short_symbol, companyName: txn.company_name
-        });
-    });
-
-    // Persist the cache + probe baseline on window so it survives the next
-    // trading.js re-execution (module switch). Baseline count/maxUpdated come
-    // from the RAW server rows (NOT the sanitized array — sanitize could
-    // drop/merge rows, which would desync the count comparison against the probe).
-    window._wmsTxnCache = {
-        rows: trTransactions,
-        count: txnData.length,
-        checksum: syncBaseline ? syncBaseline.checksum : null,
-        maxUpdated: (syncBaseline && syncBaseline.maxUpdated) || trMaxUpdatedAt(txnData)
-    };
-}
 
 // In-memory derivations that must run on EVERY module entry — including the
 // cache-reuse path — because the DOM is re-injected fresh each time (filter
@@ -1047,58 +841,25 @@ async function trDeriveAfterLoad() {
     window._trDataReadyResolved = true;
 }
 
-// Full load = fetch + derive. Used by the Refresh button and on first entry.
+// Transaction loading is now the SHARED, startup-loaded cache + delta sync in
+// wms-shared.js (wmsLoadTransactions, LESSONS §A.9.6). Trading just points its
+// working array at the shared rows and runs its own derivations. Every module
+// reads the same cache, so they can never diverge.
+
+// Forced full load — the integrity fallback + Master Data bulk ops.
 async function trLoadData() {
-    await trFetchTransactions();
+    await wmsLoadTransactions({ force: true });
+    trTransactions = window._wmsTxnCache.rows;
     await trDeriveAfterLoad();
 }
 
-// Module-entry loader: reuse the in-memory cache when the probe proves it's
-// still current; otherwise full-load. Fail-safe — anything unexpected → full load.
+// Module-entry / Refresh loader. The shared checksum gate decides skip / delta
+// / full-reload; the cache is preloaded at app startup so it always exists.
 async function trLoadDataIfChanged() {
-    var cache = window._wmsTxnCache;
-    var haveCache = cache && Array.isArray(cache.rows) && cache.rows.length > 0;
-    if (haveCache) {
-        try {
-            // Preferred path: checksum gate + manifest-delta (migration 2026-07-17,
-            // LESSONS §A.9.6). The checksum flips on ANY insert/edit/delete; on a
-            // change we reconcile just the delta instead of reloading the table.
-            if (cache.checksum != null) {
-                var sync = await trSyncState();
-                if (sync.checksum && sync.checksum === cache.checksum) {
-                    console.log('Trading: transactions unchanged (checksum ' + sync.checksum.slice(0, 8) + '…) — no reload');
-                    trTransactions = cache.rows;
-                    await trDeriveAfterLoad();
-                    return true;
-                }
-                // Changed → delta reconcile (mutates cache.rows === trTransactions in place).
-                trTransactions = cache.rows;
-                var ok = await trDeltaSyncTransactions();
-                if (ok) {
-                    cache.count = cache.rows.length;
-                    cache.checksum = sync.checksum;   // pre-manifest token → cache is a superset (safe)
-                    cache.maxUpdated = sync.maxUpdated;
-                    await trDeriveAfterLoad();
-                    return true;
-                }
-                console.warn('Trading: delta integrity failed → full reload');
-            } else {
-                // Legacy gate (RPC not deployed / cache pre-dates checksum): count+max probe.
-                var probe = await trProbeTransactions();
-                if (!isNaN(probe.count) && probe.count === cache.count && probe.maxUpdated === cache.maxUpdated) {
-                    console.log('Trading: transactions cache current (legacy probe) — skipping full DB load');
-                    trTransactions = cache.rows;
-                    await trDeriveAfterLoad();
-                    return true;
-                }
-                console.log('Trading: transactions changed (legacy probe) — full reload');
-            }
-        } catch (e) {
-            console.warn('Trading: sync/delta failed → full load', e);
-        }
-    }
-    await trLoadData();
-    return false; // full load
+    await wmsLoadTransactions();
+    trTransactions = window._wmsTxnCache.rows;
+    await trDeriveAfterLoad();
+    return true;
 }
 
 async function trRefresh() {

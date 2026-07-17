@@ -467,6 +467,155 @@ async function wmsEnsureNfoContracts(transactions) {
 }
 
 // ============================================================================
+// SHARED TRANSACTIONS CACHE + DRIFT-PROOF DELTA SYNC (LESSONS §A.9.6)
+// ----------------------------------------------------------------------------
+// ONE cache for the whole app: window._wmsTxnCache = { rows, count, checksum,
+// maxUpdated }. Loaded once at app startup (app.html Promise.all) and read by
+// every module — Trading (trTransactions = the shared rows), Reports (derives
+// its camelCase view + edit-modal rows from the same cache). No module fetches
+// transactions itself, so the modules can never diverge. wmsLoadTransactions()
+// is checksum-gated: unchanged → reuse; changed → reconcile only the delta;
+// any integrity miss or opts.force → full reload. Lives in wms-shared.js (not
+// trading.js) so it is available at startup before any feature module loads.
+// ============================================================================
+
+// Full column list for a transaction row (shared by the full load + by-id fetch).
+var WMS_TXN_SELECT = 'id,investor_id,trader_id,broker_id,security_id,security_type,symbol,short_symbol,company_name,exchange,product,transaction_type,transaction_date,transaction_time,quantity,lots,price,gross_amount,net_amount,brokerage,stt,other_charges,gst,tds,total_charges,trader_charges,margin_blocked,broker_contract_note_no,broker_trade_id,tags,notes,is_locked,ignore_for_avg_cost,dont_display,created_at,updated_at';
+
+// Opaque change token via the txn_sync_state RPC (migration 2026-07-17). Returns
+// { count, checksum, maxUpdated }. The checksum flips iff any row is inserted /
+// edited / deleted; the client only compares it to the stored token.
+async function wmsTxnSyncState() {
+    var isDev = (window.WMS_ENV === 'dev');
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/txn_sync_state', {
+        method: 'POST',
+        headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ p_dev: isDev })
+    });
+    if (!resp.ok) throw new Error('txn_sync_state ' + resp.status);
+    var rows = await resp.json();
+    var r = Array.isArray(rows) ? rows[0] : rows;
+    return { count: r ? Number(r.row_count) : NaN, checksum: r ? r.checksum : null, maxUpdated: r ? r.max_updated : null };
+}
+
+// Full rows for a set of ids (delta heavy-fetch), batched under URL limits.
+async function wmsTxnFetchByIds(ids) {
+    var out = [];
+    var BATCH = 100;
+    for (var i = 0; i < ids.length; i += BATCH) {
+        var slice = ids.slice(i, i + BATCH);
+        var url = SUPABASE_URL + '/rest/v1/transactions?select=' + WMS_TXN_SELECT + '&id=in.(' + slice.join(',') + ')';
+        var resp = await fetch(url, { headers: wmsHeaders() });
+        if (!resp.ok) throw new Error('wmsTxnFetchByIds ' + resp.status);
+        var rows = await resp.json();
+        for (var j = 0; j < rows.length; j++) out.push(rows[j]);
+    }
+    return out;
+}
+
+// Process one row exactly as a full load does (Rule E.14 sanitize + B.9.2 search text).
+function wmsTxnProcessRow(txn) {
+    txn = wmsSanitizeTransactions([txn])[0];
+    txn._searchText = wmsBuildSecuritySearchText({
+        securityId: txn.security_id, symbol: txn.symbol,
+        shortSymbol: txn.short_symbol, companyName: txn.company_name
+    });
+    return txn;
+}
+
+// Full paginated fetch → sanitize + search-text every row → set the shared cache.
+async function wmsTxnFullFetch() {
+    var syncBaseline = null;
+    try { syncBaseline = await wmsTxnSyncState(); } catch (e) { console.warn('wmsTxnSyncState unavailable:', e.message); }
+    var rows = await wmsFetchAllRaw(
+        SUPABASE_URL + '/rest/v1/transactions?select=' + WMS_TXN_SELECT + '&order=transaction_date.asc,transaction_time.asc.nullsfirst,id.asc'
+    );
+    wmsSanitizeTransactions(rows);
+    rows.forEach(function(t) {
+        t._searchText = wmsBuildSecuritySearchText({ securityId: t.security_id, symbol: t.symbol, shortSymbol: t.short_symbol, companyName: t.company_name });
+    });
+    window._wmsTxnCache = {
+        rows: rows,
+        count: rows.length,
+        checksum: syncBaseline ? syncBaseline.checksum : null,
+        maxUpdated: syncBaseline ? syncBaseline.maxUpdated : null
+    };
+    console.log('Transactions: full load — ' + rows.length + ' rows');
+    return rows;
+}
+
+// Manifest-reconcile delta on the shared cache. Mutates cache.rows IN PLACE
+// (so Trading's trTransactions reference stays valid). Returns true on verified
+// integrity; false => caller must full-reload.
+async function wmsTxnDeltaSync() {
+    var cache = window._wmsTxnCache;
+    if (!cache || !Array.isArray(cache.rows)) return false;
+    var arr = cache.rows;
+
+    var manifest = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/transactions?select=id,updated_at&order=id.asc');
+    var serverUpd = Object.create(null);
+    for (var i = 0; i < manifest.length; i++) serverUpd[manifest[i].id] = manifest[i].updated_at;
+
+    var memUpd = Object.create(null);
+    for (var m = 0; m < arr.length; m++) memUpd[arr[m].id] = arr[m].updated_at;
+
+    var changedIds = [];
+    for (var s = 0; s < manifest.length; s++) {
+        var sid = manifest[s].id;
+        if (memUpd[sid] === undefined || memUpd[sid] !== manifest[s].updated_at) changedIds.push(sid);
+    }
+    var deleted = Object.create(null);
+    var delCount = 0;
+    for (var d = 0; d < arr.length; d++) {
+        if (serverUpd[arr[d].id] === undefined) { deleted[arr[d].id] = true; delCount++; }
+    }
+
+    var changedRows = changedIds.length ? await wmsTxnFetchByIds(changedIds) : [];
+    var changedMap = Object.create(null);
+    for (var c = 0; c < changedRows.length; c++) { var pr = wmsTxnProcessRow(changedRows[c]); changedMap[pr.id] = pr; }
+
+    if (delCount) { for (var r = arr.length - 1; r >= 0; r--) { if (deleted[arr[r].id]) arr.splice(r, 1); } }
+    for (var p = 0; p < arr.length; p++) { var rep = changedMap[arr[p].id]; if (rep) { arr[p] = rep; delete changedMap[arr[p].id]; } }
+    for (var nid in changedMap) { arr.push(changedMap[nid]); }
+
+    if (arr.length !== manifest.length) { console.warn('wmsTxnDeltaSync: count ' + arr.length + ' != manifest ' + manifest.length); return false; }
+    var memIds = Object.create(null);
+    for (var q = 0; q < arr.length; q++) memIds[arr[q].id] = true;
+    for (var v = 0; v < manifest.length; v++) { if (!memIds[manifest[v].id]) { console.warn('wmsTxnDeltaSync: missing id ' + manifest[v].id); return false; } }
+    console.log('Transactions: delta reconciled (' + changedIds.length + ' changed, ' + delCount + ' deleted)');
+    return true;
+}
+
+// SINGLE ENTRY POINT for loading transactions app-wide. Populates
+// window._wmsTxnCache and returns cache.rows. opts.force = skip the checksum
+// gate and full-reload. Callers (Trading, Reports, startup) do their own
+// module-specific derivation on the returned rows.
+async function wmsLoadTransactions(opts) {
+    opts = opts || {};
+    var cache = window._wmsTxnCache;
+    var haveCache = cache && Array.isArray(cache.rows) && cache.rows.length > 0 && cache.checksum != null;
+    if (!opts.force && haveCache) {
+        try {
+            var sync = await wmsTxnSyncState();
+            if (sync.checksum && sync.checksum === cache.checksum) {
+                return cache.rows;  // unchanged
+            }
+            var ok = await wmsTxnDeltaSync();
+            if (ok) {
+                cache.count = cache.rows.length;
+                cache.checksum = sync.checksum;   // pre-manifest token → cache is a superset (safe)
+                cache.maxUpdated = sync.maxUpdated;
+                return cache.rows;
+            }
+            console.warn('Transactions: delta integrity failed → full reload');
+        } catch (e) {
+            console.warn('Transactions: sync/delta failed → full reload', e);
+        }
+    }
+    return await wmsTxnFullFetch();
+}
+
+// ============================================================================
 // MULTI-TOKEN SEARCH HELPER (Rule B.9.2)
 // Splits query into tokens, returns true if ALL tokens match at least one field.
 // Used by ALL search/filter across the app — single source of truth.
