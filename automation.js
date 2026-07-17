@@ -932,6 +932,7 @@ function autoGsSetClosedSourceFilter(value) {
     _auGsClosedSourceFilter = value || 'all';
     var _sf = document.getElementById('au-gs-fam-closed-source-filter');
     if (_sf && _sf.value !== _auGsClosedSourceFilter) _sf.value = _auGsClosedSourceFilter;
+    if (typeof _auGsClosedSave === 'function') _auGsClosedSave();   // persist selection
     // Peak recomputes inside autoLoadGsClosedTrades. Re-run + re-render metrics.
     if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
 }
@@ -939,19 +940,65 @@ function autoGsSetClosedSourceFilter(value) {
 // ----------------------------------------------------------------------------
 // GS closed-trades filters + sort (2026-07-17). Radio/checkbox blocks on the
 // Closed Trades tab; all applied client-side over the already-fetched rows.
-//   instr   : all | gold | silver          (radio)
-//   result  : all | win  | loss            (radio)
-//   versions: [] = all, else tokens to keep (checkbox, multi-select)
+//   instr   : all | gold | silver           (radio)
+//   result  : all | win  | loss             (radio)
+//   versions: [] = all, else tokens to keep  (checkbox, multi-select)
+//   exits   : [] = all, else event_types     (checkbox, multi-select)
+//   source  : all | chassis | tv_webhook     (radio)
 //   sort    : {key,dir} — click a header to toggle (entry|exit|contract|qty|pnl)
+// Persisted to localStorage so the selection survives a reload / new session.
 // ----------------------------------------------------------------------------
+var _AU_GSCLOSED_LSKEY  = 'wms.gsClosedFilters.v1';
 var _auGsClosedInstr    = 'all';
 var _auGsClosedResult   = 'all';
 var _auGsClosedVersions = [];
+var _auGsClosedExits    = [];
 var _auGsClosedSort     = { key: 'exit', dir: 'desc' };
+
+function _auGsClosedSave() {
+    try {
+        localStorage.setItem(_AU_GSCLOSED_LSKEY, JSON.stringify({
+            instr: _auGsClosedInstr, result: _auGsClosedResult,
+            versions: _auGsClosedVersions, exits: _auGsClosedExits,
+            source: _auGsClosedSourceFilter, sort: _auGsClosedSort
+        }));
+    } catch (e) { /* private mode / storage disabled — filters just won't persist */ }
+}
+function _auGsClosedRestore() {
+    try {
+        var s = JSON.parse(localStorage.getItem(_AU_GSCLOSED_LSKEY) || '{}');
+        if (s.instr)  _auGsClosedInstr  = s.instr;
+        if (s.result) _auGsClosedResult = s.result;
+        if (Array.isArray(s.versions)) _auGsClosedVersions = s.versions;
+        if (Array.isArray(s.exits))    _auGsClosedExits    = s.exits;
+        if (s.source) _auGsClosedSourceFilter = s.source;
+        if (s.sort && s.sort.key) _auGsClosedSort = s.sort;
+    } catch (e) { /* ignore malformed */ }
+}
+_auGsClosedRestore();   // hydrate from last session on load
+
+// Push the restored/live state into the toolbar's radio + checkbox controls so
+// the UI reflects persisted selections. Called each time the table renders.
+function autoGsClosedSyncControls() {
+    function setRadio(name, val) {
+        var els = document.getElementsByName(name);
+        for (var i = 0; i < els.length; i++) els[i].checked = (els[i].value === val);
+    }
+    function setChecks(name, arr) {
+        var els = document.getElementsByName(name);
+        for (var i = 0; i < els.length; i++) els[i].checked = arr.indexOf(els[i].value) >= 0;
+    }
+    setRadio('augsc-instr', _auGsClosedInstr);
+    setRadio('augsc-result', _auGsClosedResult);
+    setRadio('augsc-source', _auGsClosedSourceFilter);
+    setChecks('augsc-ver', _auGsClosedVersions);
+    setChecks('augsc-exit', _auGsClosedExits);
+}
 
 function autoGsClosedSetFilter(kind, value) {
     if (kind === 'instr')       _auGsClosedInstr = value;
     else if (kind === 'result') _auGsClosedResult = value;
+    _auGsClosedSave();
     if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
 }
 
@@ -959,6 +1006,15 @@ function autoGsClosedToggleVersion(token, on) {
     var i = _auGsClosedVersions.indexOf(token);
     if (on && i < 0) _auGsClosedVersions.push(token);
     else if (!on && i >= 0) _auGsClosedVersions.splice(i, 1);
+    _auGsClosedSave();
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+}
+
+function autoGsClosedToggleExit(evt, on) {
+    var i = _auGsClosedExits.indexOf(evt);
+    if (on && i < 0) _auGsClosedExits.push(evt);
+    else if (!on && i >= 0) _auGsClosedExits.splice(i, 1);
+    _auGsClosedSave();
     if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
 }
 
@@ -969,7 +1025,25 @@ function autoGsClosedSort(key) {
         _auGsClosedSort.key = key;
         _auGsClosedSort.dir = (key === 'contract') ? 'asc' : 'desc';   // dates/pnl newest/biggest first; contract A→Z
     }
+    _auGsClosedSave();
     if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+}
+
+// Normalizes an exit signal to a canonical reason category. event_type is coarse
+// (STOP_HIT / TARGET_HIT / MANUAL_EXIT); the specific reason lives in
+// metadata.exit_reason (Trail-Stop, SL-Long/Short, EMA-Exit). This maps both to
+// one of: STOP (hard SL) · TRAIL (trailing SL) · EMA · TARGET · MANUAL · TIME.
+function _auGsExitCategory(exit) {
+    if (!exit) return '';
+    var et = exit.event_type || '';
+    var r = (exit.metadata && exit.metadata.exit_reason) ? String(exit.metadata.exit_reason) : '';
+    if (et === 'MANUAL_EXIT') return 'MANUAL';
+    if (et === 'TIME_STOP')   return 'TIME';
+    if (/trail/i.test(r))     return 'TRAIL';
+    if (/ema/i.test(r))       return 'EMA';
+    if (et === 'STOP_HIT')    return 'STOP';    // SL-Long / SL-Short / unlabelled hard stop
+    if (et === 'TARGET_HIT')  return 'TARGET';  // profitable exit, non-trail/non-EMA
+    return et;
 }
 
 // Renders a clickable, sortable <th> with an active-column direction arrow.
@@ -4338,6 +4412,7 @@ async function autoLoadGsClosedTrades() {
     var el = autoTarget(['au-gs-fam-closed-content']);
     var statusEl = autoBadgeTarget(['au-gs-fam-closed-badge']);
     if (!el) return;
+    autoGsClosedSyncControls();   // reflect persisted/live filter state in the toolbar
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
     el.innerHTML = '<div class="au-meta">⏳ Loading GS closed trades…</div>';
 
@@ -4501,10 +4576,14 @@ async function autoLoadGsClosedTrades() {
                 var _v = ct.version || '';
                 if (!_auGsClosedVersions.some(function (tok) { return _v.indexOf(tok) >= 0; })) return false;
             }
+            if (_auGsClosedExits.length) {
+                if (_auGsClosedExits.indexOf(_auGsExitCategory(ct.exit)) < 0) return false;
+            }
             return true;
         });
         var _anyFilter = _srcFilter !== 'all' || _auGsClosedInstr !== 'all' ||
-                         _auGsClosedResult !== 'all' || _auGsClosedVersions.length > 0;
+                         _auGsClosedResult !== 'all' || _auGsClosedVersions.length > 0 ||
+                         _auGsClosedExits.length > 0;
 
         // Sort — click-to-sort on headers (default: exit date, newest first).
         var _sortDir = _auGsClosedSort.dir === 'asc' ? 1 : -1;

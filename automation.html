@@ -686,10 +686,18 @@ details summary {
                 <label class="radio-label" style="font-size:12px"><input type="radio" name="augsc-result" value="loss" onchange="autoGsClosedSetFilter('result','loss')"> Losing</label>
               </div>
               <div style="display:flex;flex-direction:column;gap:4px">
+                <span style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em">Exit reason <span style="font-weight:400;color:#9ca3af;text-transform:none">(tick to filter)</span></span>
+                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-exit" value="STOP" onchange="autoGsClosedToggleExit('STOP', this.checked)"> Hard SL</label>
+                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-exit" value="TRAIL" onchange="autoGsClosedToggleExit('TRAIL', this.checked)"> Trail SL</label>
+                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-exit" value="EMA" onchange="autoGsClosedToggleExit('EMA', this.checked)"> EMA exit</label>
+                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-exit" value="TARGET" onchange="autoGsClosedToggleExit('TARGET', this.checked)"> Target</label>
+                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-exit" value="MANUAL" onchange="autoGsClosedToggleExit('MANUAL', this.checked)"> Manual</label>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:4px">
                 <span style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em">Version <span style="font-weight:400;color:#9ca3af;text-transform:none">(tick to filter)</span></span>
-                <label class="radio-label" style="font-size:12px"><input type="checkbox" value="v2.2" onchange="autoGsClosedToggleVersion('v2.2', this.checked)"> v2.2</label>
-                <label class="radio-label" style="font-size:12px"><input type="checkbox" value="v2.3" onchange="autoGsClosedToggleVersion('v2.3', this.checked)"> v2.3</label>
-                <label class="radio-label" style="font-size:12px"><input type="checkbox" value="v3" onchange="autoGsClosedToggleVersion('v3', this.checked)"> v3</label>
+                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-ver" value="v2.2" onchange="autoGsClosedToggleVersion('v2.2', this.checked)"> v2.2</label>
+                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-ver" value="v2.3" onchange="autoGsClosedToggleVersion('v2.3', this.checked)"> v2.3</label>
+                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-ver" value="v3" onchange="autoGsClosedToggleVersion('v3', this.checked)"> v3</label>
               </div>
               <div style="display:flex;flex-direction:column;gap:4px">
                 <span style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em">Source</span>
