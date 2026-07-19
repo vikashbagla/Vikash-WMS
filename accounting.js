@@ -320,9 +320,7 @@ var acctFinCollapsed = {};   // nodeKey -> true (default expanded)
 var acctLedCollapsed = null;
 var acctLedSearch = '';
 var acctFinShowZero = false;
-var acctFinSearch = '';
 
-function acctFinMatch(name) { return !acctFinSearch || String(name).toLowerCase().indexOf(acctFinSearch.toLowerCase()) >= 0; }
 function acctLedgerDisp(net, lg, negate) {
     var nature = acctRootName(lg.group_id);
     var crNormal = (nature === 'Liabilities' || nature === 'Income' || nature === 'Capital');
@@ -341,17 +339,14 @@ function acctSideTree(net, rootName, negate) {
     }
     acctLedgers.filter(function (l) { return l.group_id === root.id; })
         .sort(function (a, b) { return a.name.localeCompare(b.name); })
-        .forEach(function (l) { if (acctFinMatch(l.name)) { var n = ledgerNode(l); if (n) nodes.push(n); } });
+        .forEach(function (l) { var n = ledgerNode(l); if (n) nodes.push(n); });
     acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
         .sort(function (a, b) { return a.name.localeCompare(b.name); })
         .forEach(function (cg) {
             var children = [];
             acctLedgers.filter(function (l) { return l.group_id === cg.id; })
                 .sort(function (a, b) { return a.name.localeCompare(b.name); })
-                .forEach(function (l) {
-                    if (!acctFinMatch(l.name) && !acctFinMatch(cg.name)) return;
-                    var n = ledgerNode(l); if (n) children.push(n);
-                });
+                .forEach(function (l) { var n = ledgerNode(l); if (n) children.push(n); });
             if (!children.length && !acctFinShowZero) return;
             var total = children.reduce(function (a, n) { return a + n.amount; }, 0);
             nodes.push({ key: 'g:' + cg.id, label: cg.name, amount: total, children: children });
@@ -431,7 +426,6 @@ function acctRenderFinancials() {
         '<button class="wms-btn wms-btn-secondary" id="acctFinExpandAll">Expand all</button>' +
         '<button class="wms-btn wms-btn-secondary" id="acctFinCollapseAll">Collapse all</button>' +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctFinShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
-        '<input type="text" id="acctFinSearch" class="wms-input" placeholder="Search ledgers & groups" value="' + wmsEsc(acctFinSearch) + '">' +
         '</div>';
     html += '<div class="acct-fin-cols">' +
         acctFinColumnHtml('Liabilities', asOn, leftNodes) +
@@ -455,12 +449,6 @@ function acctRenderFinancials() {
     };
     var sz = document.getElementById('acctFinShowZeroChk');
     if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderFinancials(); };
-    var srch = document.getElementById('acctFinSearch');
-    if (srch) srch.oninput = function () {
-        acctFinSearch = srch.value; acctRenderFinancials();
-        var s2 = document.getElementById('acctFinSearch');
-        if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); }
-    };
 }
 
 // ── Profit & Loss — T-format (Expenses | Income), same style as the BS ───────
@@ -483,7 +471,7 @@ function acctRenderPL() {
         '<button class="wms-btn wms-btn-secondary" id="acctPLExpandAll">Expand all</button>' +
         '<button class="wms-btn wms-btn-secondary" id="acctPLCollapseAll">Collapse all</button>' +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctPLShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
-        '<input type="text" id="acctPLSearch" class="wms-input" placeholder="Search ledgers & groups" value="' + wmsEsc(acctFinSearch) + '"></div>';
+        '</div>';
     html += '<div class="acct-fin-cols">' +
         acctFinColumnHtml('Expenses', asOn, leftNodes) +
         acctFinColumnHtml('Income', asOn, rightNodes) + '</div>';
@@ -499,7 +487,6 @@ function acctRenderPL() {
     var ea = document.getElementById('acctPLExpandAll'); if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderPL(); };
     var ca = document.getElementById('acctPLCollapseAll'); if (ca) ca.onclick = function () { var keys = acctFinAllGroupKeys(leftNodes.concat(rightNodes), []); acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; }); acctRenderPL(); };
     var sz = document.getElementById('acctPLShowZeroChk'); if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderPL(); };
-    var srch = document.getElementById('acctPLSearch'); if (srch) srch.oninput = function () { acctFinSearch = srch.value; acctRenderPL(); var s2 = document.getElementById('acctPLSearch'); if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); } };
 }
 
 // ── Trial Balance — grouped collapsible tree with Debit/Credit columns ───────
@@ -516,14 +503,14 @@ function acctTbBuild(net) {
         }
         acctLedgers.filter(function (l) { return l.group_id === root.id; })
             .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (l) { if (!acctFinMatch(l.name)) return; var n = ledNode(l); if (n) { rootNode.children.push(n); rootNode.dr += n.dr; rootNode.cr += n.cr; } });
+            .forEach(function (l) { var n = ledNode(l); if (n) { rootNode.children.push(n); rootNode.dr += n.dr; rootNode.cr += n.cr; } });
         acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
             .sort(function (a, b) { return a.name.localeCompare(b.name); })
             .forEach(function (cg) {
                 var gnode = { key: 'tg:' + cg.id, label: cg.name, dr: 0, cr: 0, children: [] };
                 acctLedgers.filter(function (l) { return l.group_id === cg.id; })
                     .sort(function (a, b) { return a.name.localeCompare(b.name); })
-                    .forEach(function (l) { if (!acctFinMatch(l.name) && !acctFinMatch(cg.name)) return; var n = ledNode(l); if (n) { gnode.children.push(n); gnode.dr += n.dr; gnode.cr += n.cr; } });
+                    .forEach(function (l) { var n = ledNode(l); if (n) { gnode.children.push(n); gnode.dr += n.dr; gnode.cr += n.cr; } });
                 if (!gnode.children.length && !acctFinShowZero) return;
                 rootNode.children.push(gnode); rootNode.dr += gnode.dr; rootNode.cr += gnode.cr;
             });
@@ -559,7 +546,7 @@ function acctRenderTrialBalance() {
         '<button class="wms-btn wms-btn-secondary" id="acctTbExpandAll">Expand all</button>' +
         '<button class="wms-btn wms-btn-secondary" id="acctTbCollapseAll">Collapse all</button>' +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctTbShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
-        '<input type="text" id="acctTbSearch" class="wms-input" placeholder="Search ledgers & groups" value="' + wmsEsc(acctFinSearch) + '"></div>';
+        '</div>';
     html += '<div class="acct-tb-wrap"><div class="acct-fin-hdr"><span class="acct-fin-toggle-sp"></span><span class="acct-fin-name">Ledger</span><span class="acct-tb-dr">Debit</span><span class="acct-tb-cr">Credit</span></div>';
     nodes.forEach(function (n) { html += acctTbNodeHtml(n, 0); });
     html += '</div>';
@@ -576,7 +563,6 @@ function acctRenderTrialBalance() {
     var ea = document.getElementById('acctTbExpandAll'); if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderTrialBalance(); };
     var ca = document.getElementById('acctTbCollapseAll'); if (ca) ca.onclick = function () { var keys = acctFinAllGroupKeys(nodes, []); acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; }); acctRenderTrialBalance(); };
     var sz = document.getElementById('acctTbShowZeroChk'); if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderTrialBalance(); };
-    var srch = document.getElementById('acctTbSearch'); if (srch) srch.oninput = function () { acctFinSearch = srch.value; acctRenderTrialBalance(); var s2 = document.getElementById('acctTbSearch'); if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); } };
 }
 
 function acctRenderDayBook() {
