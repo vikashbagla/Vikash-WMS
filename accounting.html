@@ -17,10 +17,14 @@
 
 /* ---- Books tab strip ---- */
 .acct-books {
-    display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+    display: flex; align-items: center; gap: 10px;
     padding: 5px 10px; background: #fff; border-bottom: 1px solid #e2e8f0;
     flex-shrink: 0;
 }
+.acct-books-tabs { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+/* Period + display unit apply to every view in the module, so they are stated
+   once here rather than repeated above each table. */
+.acct-context { margin-left: auto; font-size: 11px; color: #718096; white-space: nowrap; }
 .acct-book-tab {
     border: 1px solid transparent; background: transparent; cursor: pointer;
     padding: 3px 12px; border-radius: 20px;
@@ -146,7 +150,13 @@
    `.table-container > table` scoping UI-STANDARDS D.8.5 describes — so every table
    in a modal is forced to 940px and overflows its ~720px dialog, pushing the
    right-hand columns out of view. Opt these two modal tables out. */
+/* D.8.6 — app-styles.css has a bare `table { min-width: 940px }`, so ANY table
+   inside a ~720-760px dialog overflows it. Opt every accounting modal table out. */
+.wms-modal-dialog .acct-table, .wms-modal-dialog .acct-lines-table { min-width: 0; }
 .acct-lines-table { width: 100%; min-width: 0; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.acct-vch-row { cursor: pointer; }
+.acct-vch-row:hover { background: #f0f4ff; }
+.acct-vch-auto { color: #a0aec0; }
 /* NOT overflow:hidden — the ledger autocomplete is absolutely positioned inside a
    cell and would be clipped by it. */
 .acct-lines-table td { overflow: visible; }
@@ -243,12 +253,25 @@
 .acct-fin-diff { font-weight: 700; color: #dc2626; background: #fff5f5; }
 /* Trial Balance Dr/Cr columns */
 .acct-tb-wrap { border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
-.acct-tb-open, .acct-tb-dr, .acct-tb-cr, .acct-tb-close {
-    width: 118px; flex-shrink: 0; padding-left: 10px; text-align: right;
+/* Trial Balance: three blocks (Opening | During the period | Closing), each a
+   Dr/Cr pair. A left border opens each block so the grouping is visible without
+   relying on the header alone. */
+.acct-tb-c {
+    width: 92px; flex-shrink: 0; padding-left: 8px; text-align: right;
     font-variant-numeric: tabular-nums; white-space: nowrap;
 }
-.acct-tb-close { font-weight: 600; }
-.acct-tb-period-hdr { font-size: 11px; color: #718096; margin: 0 0 6px; }
+.acct-tb-blockstart { border-left: 1px solid #cbd5e0; margin-left: 6px; padding-left: 10px; }
+.acct-fin-hdr .acct-tb-blockstart { border-left-color: rgba(255,255,255,.35); }
+.acct-fin-total .acct-tb-blockstart { border-left-color: rgba(255,255,255,.35); }
+.acct-tb-close-c { font-weight: 600; }
+/* Two-tier header: block names on top, Dr/Cr beneath. */
+.acct-tb-hdr2 {
+    display: flex; align-items: center; background: #2c3a5e; color: #fff;
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+    padding: 5px 12px;
+}
+.acct-tb-hdr2 .acct-tb-grp { text-align: center; flex-shrink: 0; }
+.acct-tb-sub { font-weight: 600; opacity: .85; }
 .acct-report-h { font-size: 11px; font-weight: 600; color: #718096; text-transform: uppercase; margin-bottom: 4px; }
 .acct-report-ul { margin: 0; padding-left: 18px; font-size: 12px; color: #4a5568; }
 .acct-report-ul li { margin: 2px 0; }
@@ -260,7 +283,10 @@
     <!-- ===== Books (tab strip) =====
          Books are tabs, not a dropdown: the book is the primary axis of this
          module, so switching it should be one click and always visible. -->
-    <div class="acct-books" id="acctBookTabs"></div>
+    <div class="acct-books">
+        <div class="acct-books-tabs" id="acctBookTabs"></div>
+        <span class="acct-context" id="acctContextInfo"></span>
+    </div>
 
     <!-- ===== Views + actions on ONE row =====
          Deliberately a single row. Only the primary action is exposed; the rest
