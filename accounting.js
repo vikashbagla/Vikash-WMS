@@ -91,6 +91,46 @@ function acctViewTitle() {
     var ids = acctViewBookIds();
     return ids.length ? acctInvName(ids[0]) : '—';
 }
+function acctRenderBookTabs() {
+    var el = document.getElementById('acctBookTabs');
+    if (!el) return;
+    var books = acctOwnBooks();
+    if (!books.length) {
+        el.innerHTML = '<span class="acct-books-empty">No books yet — enable accounting on an investor in Master Data.</span>';
+        acctBookId = null;
+        return;
+    }
+    if (!acctBookId || !books.some(function (b) { return b.id === acctBookId; })) acctBookId = books[0].id;
+    var consol = acctIsConsolidated();
+    el.innerHTML = books.map(function (b) {
+        var on = !consol && b.id === acctBookId;
+        return '<button class="acct-book-tab' + (on ? ' active' : '') + '" data-book="' + b.id + '">' +
+            wmsEsc(b.short_name || b.name) + '</button>';
+    }).join('') + '<span id="acctConsolidateChip" class="acct-consol-chip" style="display:none;margin-left:8px;"></span>';
+
+    el.querySelectorAll('.acct-book-tab').forEach(function (t) {
+        t.onclick = async function () {
+            if (acctBookId === t.dataset.book && !acctIsConsolidated()) return;
+            acctBookId = t.dataset.book;
+            acctBookIds = null;                 // picking a single book clears consolidation
+            acctLoading(true);
+            try {
+                await acctLoadBook();
+                acctRenderBookTabs();
+                acctRenderActiveTab();
+                acctSyncActionButtons();
+            } finally { acctLoading(false); }
+        };
+    });
+    acctSyncConsolChip();
+}
+
+async function acctRefreshAll() {
+    acctLoading(true);
+    try { await acctLoadCatalogue(); await acctLoadBook(); acctRenderActiveTab(); }
+    finally { acctLoading(false); }
+}
+
 function acctSyncConsolChip() {
     var chip = document.getElementById('acctConsolidateChip');
     if (!chip) return;
@@ -102,10 +142,14 @@ function acctSyncConsolChip() {
     } else { chip.style.display = 'none'; chip.innerHTML = ''; }
 }
 function acctSyncActionButtons() {
+    // Book-specific actions are meaningless across a consolidated view.
     var consol = acctIsConsolidated();
-    ['acctNewVoucherBtn', 'acctRebuildBtn'].forEach(function (id) {
-        var b = document.getElementById(id);
-        if (b) b.disabled = consol;
+    var nv = document.getElementById('acctNewVoucherBtn');
+    if (nv) nv.disabled = consol;
+    var dd = document.getElementById('acctMenuDd');
+    if (dd) ['opening', 'rebuild'].forEach(function (a) {
+        var it = dd.querySelector('[data-act="' + a + '"]');
+        if (it) it.classList.toggle('disabled', consol);
     });
 }
 function acctOpenConsolidate() {
@@ -130,19 +174,19 @@ async function acctApplyConsolidate() {
     if (acctConsolidateModalCtrl) acctConsolidateModalCtrl.close();
     if (ids.length <= 1) {
         acctBookIds = null;
-        if (ids.length === 1) { acctBookId = ids[0]; var s = document.getElementById('acctBookSelect'); if (s) s.value = ids[0]; }
+        if (ids.length === 1) acctBookId = ids[0];
     } else {
         acctBookIds = ids;
     }
     acctLoading(true);
-    try { await acctLoadBook(); acctRenderActiveTab(); acctSyncConsolChip(); acctSyncActionButtons(); }
+    try { await acctLoadBook(); acctRenderBookTabs(); acctRenderActiveTab(); acctSyncActionButtons(); }
     finally { acctLoading(false); }
 }
 async function acctClearConsolidate() {
     acctBookIds = null;
     if (acctConsolidateModalCtrl) acctConsolidateModalCtrl.close();
     acctLoading(true);
-    try { await acctLoadBook(); acctRenderActiveTab(); acctSyncConsolChip(); acctSyncActionButtons(); }
+    try { await acctLoadBook(); acctRenderBookTabs(); acctRenderActiveTab(); acctSyncActionButtons(); }
     finally { acctLoading(false); }
 }
 function acctInvName(id) {
@@ -184,23 +228,7 @@ async function initAccounting() {
     try {
         await acctLoadCatalogue();
 
-        // Book selector
-        var books = acctOwnBooks();
-        var sel = document.getElementById('acctBookSelect');
-        if (sel) {
-            if (!books.length) {
-                sel.innerHTML = '<option value="">— No books enabled —</option>';
-                acctBookId = null;
-            } else {
-                if (!acctBookId || !books.some(function (b) { return b.id === acctBookId; })) {
-                    acctBookId = books[0].id;
-                }
-                sel.innerHTML = books.map(function (b) {
-                    return '<option value="' + b.id + '"' + (b.id === acctBookId ? ' selected' : '') + '>' +
-                        wmsEsc(b.short_name || b.name) + '</option>';
-                }).join('');
-            }
-        }
+        acctRenderBookTabs();
 
         await acctLoadBook();
         acctWireUI();
@@ -216,17 +244,6 @@ async function initAccounting() {
 }
 
 function acctWireUI() {
-    // Book select
-    var sel = document.getElementById('acctBookSelect');
-    if (sel) sel.onchange = async function () {
-        acctBookId = sel.value || null;
-        acctBookIds = null;   // picking a single book clears consolidation
-        acctLoading(true);
-        try { await acctLoadBook(); acctRenderActiveTab(); acctSyncConsolChip(); acctSyncActionButtons(); }
-        finally { acctLoading(false); }
-    };
-    var cb = document.getElementById('acctConsolidateBtn');
-    if (cb) cb.onclick = acctOpenConsolidate;
 
     // Tabs
     document.querySelectorAll('.acct-tab').forEach(function (t) {
@@ -240,25 +257,35 @@ function acctWireUI() {
         };
     });
 
-    // Header actions
+    // Primary action stays inline; everything else lives behind the ⋮ menu.
     var nv = document.getElementById('acctNewVoucherBtn');
     if (nv) nv.onclick = acctOpenVoucherModal;
-    var rf = document.getElementById('acctRefreshBtn');
-    if (rf) rf.onclick = async function () {
-        acctLoading(true);
-        try { await acctLoadCatalogue(); await acctLoadBook(); acctRenderActiveTab(); }
-        finally { acctLoading(false); }
-    };
-    var rb = document.getElementById('acctRebuildBtn');
-    if (rb) rb.onclick = acctRebuildBooks;
-    var rba = document.getElementById('acctRebuildAllBtn');
-    if (rba) rba.onclick = acctRebuildAll;
 
-    // Ledger tab toolbar
-    var al = document.getElementById('acctAddLedgerBtn');
-    if (al) al.onclick = acctOpenAddLedger;
-    var ag = document.getElementById('acctAddGroupBtn');
-    if (ag) ag.onclick = acctOpenAddGroup;
+    var mb = document.getElementById('acctMenuBtn');
+    var mdd = document.getElementById('acctMenuDd');
+    if (mb && mdd) {
+        mb.onclick = function (e) {
+            e.stopPropagation();
+            var open = mdd.classList.contains('show');
+            acctSyncActionButtons();
+            mdd.classList.toggle('show', !open);
+        };
+        mdd.addEventListener('mousedown', function (e) {
+            var it = e.target.closest ? e.target.closest('.wms-dd-item') : null;
+            if (!it || it.classList.contains('disabled')) return;
+            e.preventDefault();
+            mdd.classList.remove('show');
+            var act = it.dataset.act;
+            if (act === 'opening') acctOpenOpeningModal();
+            else if (act === 'consolidate') acctOpenConsolidate();
+            else if (act === 'rebuild') acctRebuildBooks();
+            else if (act === 'rebuildAll') acctRebuildAll();
+            else if (act === 'refresh') acctRefreshAll();
+        });
+        document.addEventListener('mousedown', function (e) {
+            if (mdd.classList.contains('show') && !mdd.contains(e.target) && e.target !== mb) mdd.classList.remove('show');
+        });
+    }
 
     acctWireModals();
 }
@@ -682,7 +709,12 @@ function acctRenderLedgers() {
     var searching = !!acctLedSearch;
     function isOpen(k) { return searching || !acctLedCollapsed[k]; }
 
+    // Single controls row — the standalone Add Ledger / Add Group toolbar was folded
+    // in here so the Ledgers tab spends one row on chrome instead of two.
     var html = '<div class="acct-led-controls">' +
+        '<button class="wms-btn wms-btn-secondary" id="acctLedAddLedger">➕ Ledger</button>' +
+        '<button class="wms-btn wms-btn-secondary" id="acctLedAddGroup">➕ Group</button>' +
+        '<span style="width:10px;"></span>' +
         '<button class="wms-btn wms-btn-secondary" id="acctLedExpandAll">Expand all</button>' +
         '<button class="wms-btn wms-btn-secondary" id="acctLedCollapseAll">Collapse all</button>' +
         '<input type="text" id="acctLedSearchInput" class="wms-input" placeholder="Search ledgers &amp; groups" value="' + wmsEsc(acctLedSearch) + '"></div>';
@@ -732,6 +764,10 @@ function acctRenderLedgers() {
         b.onclick = function (e) { e.stopPropagation(); acctOpenEditGroup(b.dataset.editGroup); };
     });
 
+    var alBtn = document.getElementById('acctLedAddLedger');
+    if (alBtn) alBtn.onclick = acctOpenAddLedger;
+    var agBtn = document.getElementById('acctLedAddGroup');
+    if (agBtn) agBtn.onclick = acctOpenAddGroup;
     var ea = document.getElementById('acctLedExpandAll');
     if (ea) ea.onclick = function () { acctLedCollapsed = {}; acctRenderLedgers(); };
     var ca = document.getElementById('acctLedCollapseAll');
@@ -878,6 +914,7 @@ function acctRenderOpeningLines() {
     }
 
     tb.querySelectorAll('.acct-ob-amt').forEach(function (inp) {
+        if (typeof wmsAttachAmountInput === 'function') wmsAttachAmountInput(inp, { allowNegative: false });
         inp.oninput = function () {
             var i = Number(inp.dataset.idx);
             acctOpeningLines[i][inp.dataset.field] = inp.value;
@@ -981,53 +1018,200 @@ async function acctSaveOpening() {
 // ============================================================================
 // Voucher modal
 // ============================================================================
-function acctLedgerOptionsHtml(selectedId) {
-    var avail = acctAvailableLedgers(acctBookId);
-    var byNature = {};
-    avail.forEach(function (l) {
-        var nature = acctRootName(l.group_id);
-        (byNature[nature] = byNature[nature] || []).push(l);
+
+var acctVoucherDdCtrls = {};        // row idx -> wmsDropdown controller
+var acctLedgerPickTarget = null;    // {idx} when Add Ledger was launched from a row
+
+function acctVoucherIsBalanced() {
+    var d = 0, c = 0, nonEmpty = 0, valid = true;
+    acctVoucherLines.forEach(function (l) {
+        var dd = acctParse(l.debit), cc = acctParse(l.credit);
+        if (dd > 0 && cc > 0) valid = false;                    // a line is Dr or Cr, never both
+        d += dd; c += cc;
+        if (dd > 0 || cc > 0) { nonEmpty++; if (!l.ledgerId) valid = false; }
     });
-    var html = '<option value="">— select ledger —</option>';
-    acctNatureOrder.forEach(function (nature) {
-        if (!byNature[nature]) return;
-        html += '<optgroup label="' + wmsEsc(nature) + '">';
-        byNature[nature].forEach(function (l) {
-            html += '<option value="' + l.id + '"' + (l.id === selectedId ? ' selected' : '') + '>' + wmsEsc(l.name) + '</option>';
-        });
-        html += '</optgroup>';
+    return valid && nonEmpty >= 2 && Math.round(d * 100) === Math.round(c * 100) && d > 0;
+}
+
+/* Keep the trailing auto-filled line at whatever balances the voucher, until the
+   user types over it. This is what makes line 2+ open pre-populated and stay
+   correct when an earlier line is edited. */
+function acctSyncAutoLine() {
+    if (acctVoucherLines.length < 2) return;
+    var last = acctVoucherLines[acctVoucherLines.length - 1];
+    if (!last._auto) return;
+    var d = 0, c = 0;
+    acctVoucherLines.slice(0, -1).forEach(function (l) { d += acctParse(l.debit); c += acctParse(l.credit); });
+    var diff = Math.round((d - c) * 100) / 100;
+    last.debit = ''; last.credit = '';
+    if (diff > 0) last.credit = String(diff);
+    else if (diff < 0) last.debit = String(-diff);
+}
+
+function acctAddVoucherLine(focusIt) {
+    // Every line after the first opens pre-filled with the balancing amount.
+    acctVoucherLines.push({ ledgerId: '', ledgerName: '', debit: '', credit: '', _auto: acctVoucherLines.length >= 1 });
+    acctRenderVoucherLines();
+    if (focusIt) {
+        var el = document.querySelector('#acctVoucherLines tr:last-child .acct-line-ledger');
+        if (el) el.focus();
+    }
+}
+
+function acctVoucherLedgerMatches(q) {
+    var needle = String(q || '').trim().toLowerCase();
+    var list = acctAvailableLedgers(acctBookId);
+    if (needle) list = list.filter(function (l) { return l.name.toLowerCase().indexOf(needle) >= 0; });
+    return list.slice(0, 50);
+}
+
+/* Ledger cell = the app's standard search-suggest field (wmsDropdown, H.3.2),
+   same shape as the symbol pickers — NOT a fixed <select>. Includes an inline
+   "Create ledger" escape hatch so you never have to leave the voucher. */
+function acctWireLedgerCell(input) {
+    var idx = Number(input.dataset.idx);
+    var dd = input.parentElement.querySelector('.acct-line-dd');
+
+    function render() {
+        var list = acctVoucherLedgerMatches(input.value);
+        dd._acctResults = list;
+        var html = list.map(function (l, i) {
+            return '<div class="wms-dd-item" data-i="' + i + '">' + wmsEsc(l.name) +
+                '<span class="acct-dd-grp">' + wmsEsc(acctRootName(l.group_id)) + '</span></div>';
+        }).join('');
+        var typed = String(input.value || '').trim();
+        if (typed && !list.some(function (l) { return l.name.toLowerCase() === typed.toLowerCase(); })) {
+            html += '<div class="wms-dd-item acct-dd-create" data-create="1">➕ Create ledger “' + wmsEsc(typed) + '”…</div>';
+        }
+        dd.innerHTML = html || '<div class="wms-dd-no-results">No ledgers</div>';
+        ctrl.show();
+    }
+
+    function pick(itemEl) {
+        if (!itemEl) return;
+        if (itemEl.dataset.create) {
+            acctLedgerPickTarget = { idx: idx };
+            ctrl.close();
+            acctOpenAddLedger();
+            var nameEl = document.getElementById('acctNewLedgerName');
+            if (nameEl) nameEl.value = String(input.value || '').trim();
+            return;
+        }
+        var l = (dd._acctResults || [])[Number(itemEl.dataset.i)];
+        if (!l) return;
+        acctVoucherLines[idx].ledgerId = l.id;
+        acctVoucherLines[idx].ledgerName = l.name;
+        input.value = l.name;
+        ctrl.close();
+        var amt = document.querySelector('#acctVoucherLines .acct-line-amt[data-idx="' + idx + '"][data-field="debit"]');
+        if (amt) { amt.focus(); amt.select(); }
+        acctUpdateBalance();
+    }
+
+    var ctrl = wmsDropdown(input, dd, {
+        itemSelector: '.wms-dd-item', closeOnSelect: true, blurDelay: 180,
+        escClearsInput: false, onSelect: pick
     });
-    return html;
+    acctVoucherDdCtrls[idx] = ctrl;
+
+    input.addEventListener('input', function () {
+        // Typing invalidates the chosen ledger until something is re-picked.
+        acctVoucherLines[idx].ledgerId = '';
+        acctVoucherLines[idx].ledgerName = input.value;
+        render();
+        acctUpdateBalance();
+    });
+    input.addEventListener('focus', render);
+    // wmsDropdown owns the keyboard; clicks are the module's own responsibility.
+    dd.addEventListener('mousedown', function (e) {
+        var it = e.target.closest ? e.target.closest('.wms-dd-item') : null;
+        if (!it) return;
+        e.preventDefault();
+        pick(it);
+    });
+}
+
+/* Amounts use the global amount widget (wmsAttachAmountInput) so grouping and
+   parsing match the rest of the app instead of being hand-rolled here. */
+function acctWireAmountCell(inp) {
+    var idx = Number(inp.dataset.idx), field = inp.dataset.field;
+    if (typeof wmsAttachAmountInput === 'function') wmsAttachAmountInput(inp, { allowNegative: false });
+
+    inp.addEventListener('input', function () {
+        acctVoucherLines[idx]._auto = false;                    // user took ownership of this line
+        inp.classList.remove('acct-auto');
+        acctVoucherLines[idx][field] = inp.value;
+        if (acctParse(inp.value) > 0) {
+            var other = field === 'debit' ? 'credit' : 'debit';
+            acctVoucherLines[idx][other] = '';
+            var oEl = document.querySelector('#acctVoucherLines .acct-line-amt[data-idx="' + idx + '"][data-field="' + other + '"]');
+            if (oEl) oEl.value = '';
+        }
+        acctUpdateBalance();
+    });
+
+    // Enter/Tab on an amount: if the voucher ties, jump to narration (which then
+    // tabs to Save). If it doesn't, Enter opens the next line pre-filled.
+    inp.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== 'Tab') return;
+        if (e.key === 'Tab' && e.shiftKey) return;
+        if (acctVoucherIsBalanced()) {
+            e.preventDefault();
+            var n = document.getElementById('acctVoucherNarration');
+            if (n) { n.focus(); n.select(); }
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            acctAddVoucherLine(true);
+        }
+    });
 }
 
 function acctRenderVoucherLines() {
     var tb = document.getElementById('acctVoucherLines');
     if (!tb) return;
+    acctSyncAutoLine();
+    acctVoucherDdCtrls = {};
+
     tb.innerHTML = acctVoucherLines.map(function (ln, idx) {
+        var nm = ln.ledgerId ? acctLedgerName(ln.ledgerId) : (ln.ledgerName || '');
+        var autoCls = ln._auto ? ' acct-auto' : '';
         return '<tr data-idx="' + idx + '">' +
-            '<td><select class="wms-input acct-line-ledger" data-idx="' + idx + '">' + acctLedgerOptionsHtml(ln.ledgerId) + '</select></td>' +
-            '<td class="text-right"><input type="text" class="wms-input acct-line-amt" data-idx="' + idx + '" data-field="debit" value="' + (ln.debit || '') + '" inputmode="decimal"></td>' +
-            '<td class="text-right"><input type="text" class="wms-input acct-line-amt" data-idx="' + idx + '" data-field="credit" value="' + (ln.credit || '') + '" inputmode="decimal"></td>' +
+            '<td><div class="acct-line-pick">' +
+                '<input type="text" class="acct-line-ledger" data-idx="' + idx + '" value="' + wmsEsc(nm) + '" placeholder="Search ledger…" autocomplete="off">' +
+                '<div class="wms-dd acct-line-dd" data-idx="' + idx + '"></div>' +
+            '</div></td>' +
+            '<td class="text-right"><input type="text" class="acct-line-amt' + autoCls + '" data-idx="' + idx + '" data-field="debit" value="' + wmsEsc(ln.debit || '') + '"></td>' +
+            '<td class="text-right"><input type="text" class="acct-line-amt' + autoCls + '" data-idx="' + idx + '" data-field="credit" value="' + wmsEsc(ln.credit || '') + '"></td>' +
             '<td><button class="acct-line-del" data-idx="' + idx + '" title="Remove line">✕</button></td></tr>';
     }).join('');
+
+    tb.querySelectorAll('.acct-line-ledger').forEach(acctWireLedgerCell);
+    tb.querySelectorAll('.acct-line-amt').forEach(acctWireAmountCell);
+    tb.querySelectorAll('.acct-line-del').forEach(function (b) {
+        b.onclick = function () {
+            if (acctVoucherLines.length <= 1) return;
+            acctVoucherLines.splice(Number(b.dataset.idx), 1);
+            acctRenderVoucherLines();
+        };
+    });
     acctUpdateBalance();
 }
 
 function acctUpdateBalance() {
-    var td = 0, tc = 0, nonEmpty = 0, valid = true;
-    acctVoucherLines.forEach(function (l) {
-        var d = acctParse(l.debit), c = acctParse(l.credit);
-        if (d > 0 && c > 0) valid = false;          // a line can't be both
-        td += d; tc += c;
-        if (d > 0 || c > 0) { nonEmpty++; if (!l.ledgerId) valid = false; }
-    });
-    var balanced = valid && nonEmpty >= 2 && Math.round(td * 100) === Math.round(tc * 100) && td > 0;
+    var td = 0, tc = 0;
+    acctVoucherLines.forEach(function (l) { td += acctParse(l.debit); tc += acctParse(l.credit); });
+    var balanced = acctVoucherIsBalanced();
     var bar = document.getElementById('acctBalanceBar');
     var msg = document.getElementById('acctBalanceMsg');
-    document.getElementById('acctTotalDebit').textContent = acctNum(td);
-    document.getElementById('acctTotalCredit').textContent = acctNum(tc);
+    var dEl = document.getElementById('acctTotalDebit'); if (dEl) dEl.textContent = acctNum(td);
+    var cEl = document.getElementById('acctTotalCredit'); if (cEl) cEl.textContent = acctNum(tc);
     if (bar) bar.className = 'acct-balance-bar ' + (balanced ? 'ok' : 'bad');
-    if (msg) msg.textContent = balanced ? 'Balanced' : (Math.round(td * 100) === Math.round(tc * 100) ? 'Add at least two lines' : 'Not balanced');
+    if (msg) {
+        var diff = Math.round((td - tc) * 100) / 100;
+        msg.textContent = balanced ? 'Balanced'
+            : (Math.abs(diff) >= 0.005 ? 'Out by ' + acctNum(Math.abs(diff))
+                                       : 'Add at least two lines with a ledger');
+    }
     var save = document.getElementById('acctVoucherSave');
     if (save) save.disabled = !balanced;
 }
@@ -1036,7 +1220,11 @@ function acctOpenVoucherModal() {
     if (!acctBookId) { acctToast('Select a book first (enable accounting on an investor).', true); return; }
     acctVoucherType = 'JOURNAL';
     acctVoucherDateYmd = acctTodayYmd();
-    acctVoucherLines = [{ ledgerId: '', debit: '', credit: '' }, { ledgerId: '', debit: '', credit: '' }];
+    acctVoucherLines = [
+        { ledgerId: '', ledgerName: '', debit: '', credit: '', _auto: false },
+        { ledgerId: '', ledgerName: '', debit: '', credit: '', _auto: true }
+    ];
+    acctLedgerPickTarget = null;
 
     document.getElementById('acctVoucherTitle').textContent = 'New Voucher — ' + acctInvName(acctBookId);
     document.querySelectorAll('#acctVoucherTypeToggle .acct-type-btn').forEach(function (b) {
@@ -1051,14 +1239,12 @@ function acctOpenVoucherModal() {
     }
 
     acctRenderVoucherLines();
-    // Auto-balance ledger picker (default Capital Account) — used mainly for opening balances
-    var balSel = document.getElementById('acctBalanceLedger');
-    if (balSel) {
-        var avail = acctAvailableLedgers(acctBookId);
-        var cap = avail.find(function (l) { return l.name === 'Capital Account'; });
-        balSel.innerHTML = avail.map(function (l) { return '<option value="' + l.id + '"' + (cap && l.id === cap.id ? ' selected' : '') + '>' + wmsEsc(l.name) + '</option>'; }).join('');
-    }
     if (acctVoucherModalCtrl) acctVoucherModalCtrl.open();
+    // Land the caret on the first ledger field — the voucher is typed top-down.
+    setTimeout(function () {
+        var first = document.querySelector('#acctVoucherLines .acct-line-ledger');
+        if (first) first.focus();
+    }, 60);
 }
 
 // Add a balancing line to the chosen ledger so the voucher ties (opening balances).
@@ -1224,8 +1410,22 @@ async function acctSaveLedger() {
         }
         if (!resp.ok) throw new Error(await resp.text() || ('HTTP ' + resp.status));
         if (acctAddLedgerModalCtrl) acctAddLedgerModalCtrl.close();
+        var wasCreate = !acctEditingLedgerId;
         acctToast('Ledger "' + name + '" ' + (acctEditingLedgerId ? 'updated' : 'added') + '.');
         await acctLoadCatalogue();
+        // Created from a voucher row's "Create ledger…" — drop it straight into that row.
+        if (wasCreate && acctLedgerPickTarget) {
+            var made = acctLedgers.find(function (l) { return l.name === name; });
+            var tgt = acctVoucherLines[acctLedgerPickTarget.idx];
+            if (made && tgt) {
+                tgt.ledgerId = made.id;
+                tgt.ledgerName = made.name;
+                acctRenderVoucherLines();
+                var amt = document.querySelector('#acctVoucherLines .acct-line-amt[data-idx="' + acctLedgerPickTarget.idx + '"][data-field="debit"]');
+                if (amt) amt.focus();
+            }
+            acctLedgerPickTarget = null;
+        }
         acctRenderActiveTab();
     } catch (e) {
         console.error('[accounting] save ledger failed', e);
@@ -1317,10 +1517,16 @@ function acctWireModals() {
             } else if (e.key === 'Escape') { acctOpeningHideResults(); }
         };
     }
-    document.getElementById('acctAddLineBtn').onclick = function () {
-        acctVoucherLines.push({ ledgerId: '', debit: '', credit: '' });
-        acctRenderVoucherLines();
-    };
+    document.getElementById('acctAddLineBtn').onclick = function () { acctAddVoucherLine(true); };
+
+    // Narration is the last field typed: Tab or Enter from here goes to Save.
+    var narEl = document.getElementById('acctVoucherNarration');
+    if (narEl) narEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
+            var save = document.getElementById('acctVoucherSave');
+            if (save && !save.disabled) { e.preventDefault(); save.focus(); }
+        }
+    });
     var abBtn = document.getElementById('acctAutoBalanceBtn');
     if (abBtn) abBtn.onclick = acctAutoBalance;
     document.querySelectorAll('#acctVoucherTypeToggle .acct-type-btn').forEach(function (b) {

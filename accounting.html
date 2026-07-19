@@ -15,17 +15,20 @@
     display: flex; flex-direction: column; height: 100%; overflow: hidden;
 }
 
-/* ---- Header bar (book selector + actions) ---- */
-.acct-headerbar {
-    display: flex; align-items: center; gap: 12px;
-    padding: 10px 14px; border-bottom: 1px solid #e2e8f0; background: #fff;
-    flex-wrap: wrap; flex-shrink: 0;
+/* ---- Books tab strip ---- */
+.acct-books {
+    display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+    padding: 5px 10px; background: #fff; border-bottom: 1px solid #e2e8f0;
+    flex-shrink: 0;
 }
-.acct-headerbar .acct-title { font-size: 15px; font-weight: 700; color: #1a202c; }
-.acct-headerbar .acct-book-wrap { display: flex; align-items: center; gap: 6px; }
-.acct-headerbar .acct-book-wrap label { font-size: 11px; font-weight: 600; color: #718096; text-transform: uppercase; }
-.acct-book-select { min-width: 200px; }
-.acct-headerbar .acct-actions { margin-left: auto; display: flex; gap: 8px; }
+.acct-book-tab {
+    border: 1px solid transparent; background: transparent; cursor: pointer;
+    padding: 3px 12px; border-radius: 20px;
+    font-size: 12px; font-weight: 600; color: #718096;
+}
+.acct-book-tab:hover { background: #f1f5f9; color: #4a5568; }
+.acct-book-tab.active { background: #667eea; border-color: #667eea; color: #fff; }
+.acct-books-empty { font-size: 12px; color: #a0aec0; padding: 2px 4px; }
 
 /* ---- Tabs ---- */
 .acct-tabs {
@@ -41,6 +44,12 @@
 }
 .acct-tab:hover { color: #4a5568; background: #edf2f7; }
 .acct-tab.active { color: #667eea; border-bottom-color: #667eea; }
+.acct-tabs-spacer { flex: 1; }
+.acct-tab-action { font-size: 11px; padding: 3px 10px; }
+.acct-menu-wrap { position: relative; }
+.acct-menu-dd { left: auto; right: 0; min-width: 210px; }
+.acct-menu-dd .wms-dd-item { padding: 7px 12px; font-size: 12px; }
+.acct-menu-dd .wms-dd-item.disabled { color: #cbd5e0; cursor: not-allowed; }
 
 .acct-tabpanel { display: none; padding: 14px; }
 /* The scroll container. min-height:0 is required - without it a flex child
@@ -136,8 +145,28 @@
    in a modal is forced to 940px and overflows its ~720px dialog, pushing the
    right-hand columns out of view. Opt these two modal tables out. */
 .acct-lines-table { width: 100%; min-width: 0; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
-.acct-lines-table td, .acct-lines-table th { overflow: hidden; text-overflow: ellipsis; }
-.acct-lines-table .acct-ob-amt { width: 100%; max-width: 130px; }
+/* NOT overflow:hidden — the ledger autocomplete is absolutely positioned inside a
+   cell and would be clipped by it. */
+.acct-lines-table td { overflow: visible; }
+.acct-lines-table .acct-ob-amt { width: 100%; }
+
+/* Row-entry inputs — matches the Add Transaction row table (.addTxn-table). */
+.acct-lines-table input[type="text"] {
+    padding: 4px 6px; border: 1px solid #e2e8f0; border-radius: 3px;
+    font-size: 11px; color: #2d3748; outline: none; width: 100%; box-sizing: border-box;
+}
+.acct-lines-table input[type="text"]:focus {
+    border-color: #667eea; box-shadow: 0 0 0 1px rgba(102,126,234,0.2);
+}
+.acct-lines-table .acct-line-amt { text-align: right; font-variant-numeric: tabular-nums; }
+/* An amount that was auto-filled to balance the voucher reads as a suggestion
+   until the user types over it. */
+.acct-lines-table .acct-line-amt.acct-auto { color: #667eea; font-style: italic; }
+.acct-line-pick { position: relative; }
+.acct-line-pick .wms-dd { text-align: left; }
+.acct-dd-create { color: #667eea; font-weight: 600; }
+.acct-dd-grp { float: right; font-size: 10px; color: #a0aec0; font-weight: 400; }
+.acct-lines-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
 .acct-lines-table th {
     font-size: 10px; font-weight: 600; text-transform: uppercase; color: #718096;
     text-align: left; padding: 5px 6px; border-bottom: 1px solid #e2e8f0;
@@ -203,31 +232,32 @@
 <body>
 <div class="acct-container">
 
-    <!-- ===== Header bar ===== -->
-    <div class="acct-headerbar">
-        <span class="acct-title">📒 Accounting</span>
-        <div class="acct-book-wrap">
-            <label for="acctBookSelect">Book</label>
-            <select id="acctBookSelect" class="wms-input acct-book-select"></select>
-            <button id="acctConsolidateBtn" class="wms-btn wms-btn-secondary" title="View consolidated across multiple books">📑 Consolidate</button>
-            <span id="acctConsolidateChip" class="acct-consol-chip" style="display:none;"></span>
-        </div>
-        <div class="acct-actions">
-            <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary">➕ New Voucher</button>
-            <button id="acctOpeningBtn" class="wms-btn wms-btn-secondary" title="Enter this book's opening balances">⚖ Opening Balances</button>
-            <button id="acctRebuildBtn" class="wms-btn wms-btn-secondary" title="Regenerate auto-vouchers for this book from its transactions">↻ Rebuild from trades</button>
-            <button id="acctRebuildAllBtn" class="wms-btn wms-btn-secondary" title="Regenerate auto-vouchers for ALL books">↻↻ Rebuild all</button>
-            <button id="acctRefreshBtn" class="wms-btn wms-btn-secondary" title="Refresh">🔄</button>
-        </div>
-    </div>
+    <!-- ===== Books (tab strip) =====
+         Books are tabs, not a dropdown: the book is the primary axis of this
+         module, so switching it should be one click and always visible. -->
+    <div class="acct-books" id="acctBookTabs"></div>
 
-    <!-- ===== Tabs ===== -->
+    <!-- ===== Views + actions on ONE row =====
+         Deliberately a single row. Only the primary action is exposed; the rest
+         live behind the ⋮ menu (D.9.1) so the chrome stays out of the content's way. -->
     <div class="acct-tabs">
         <button class="acct-tab active" data-acct-tab="balance-sheet">Balance Sheet</button>
         <button class="acct-tab" data-acct-tab="profit-loss">Profit &amp; Loss</button>
         <button class="acct-tab" data-acct-tab="trial-balance">Trial Balance</button>
         <button class="acct-tab" data-acct-tab="day-book">Day Book</button>
         <button class="acct-tab" data-acct-tab="ledgers">Ledgers</button>
+        <span class="acct-tabs-spacer"></span>
+        <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary acct-tab-action">➕ New Voucher</button>
+        <div class="acct-menu-wrap">
+            <button id="acctMenuBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="More actions">⋮</button>
+            <div class="wms-dd acct-menu-dd" id="acctMenuDd">
+                <div class="wms-dd-item" data-act="opening">⚖ Opening Balances</div>
+                <div class="wms-dd-item" data-act="consolidate">📑 Consolidate…</div>
+                <div class="wms-dd-item" data-act="rebuild">↻ Rebuild from trades</div>
+                <div class="wms-dd-item" data-act="rebuildAll">↻↻ Rebuild all books</div>
+                <div class="wms-dd-item" data-act="refresh">🔄 Refresh</div>
+            </div>
+        </div>
     </div>
 
     <!-- Balance Sheet -->
@@ -252,10 +282,6 @@
 
     <!-- Ledgers (chart of accounts) -->
     <div class="acct-tabpanel" id="acctPanel-ledgers">
-        <div class="acct-toolbar">
-            <button id="acctAddLedgerBtn" class="wms-btn wms-btn-secondary">➕ Add Ledger</button>
-            <button id="acctAddGroupBtn" class="wms-btn wms-btn-secondary">➕ Add Group</button>
-        </div>
         <div id="acctLedgersBody"><div class="acct-empty">Loading ledger catalogue…</div></div>
     </div>
 
@@ -283,16 +309,12 @@
                         <label>Date</label>
                         <div id="acctVoucherDate"></div>
                     </div>
-                    <div class="acct-field" style="flex:1;min-width:240px;">
-                        <label>Narration</label>
-                        <input type="text" id="acctVoucherNarration" class="wms-input" placeholder="Voucher narration">
-                    </div>
                 </div>
 
                 <table class="acct-lines-table">
                     <thead>
                         <tr>
-                            <th style="width:50%;">Ledger</th>
+                            <th style="width:52%;">Ledger</th>
                             <th class="text-right">Debit</th>
                             <th class="text-right">Credit</th>
                             <th style="width:28px;"></th>
@@ -300,12 +322,8 @@
                     </thead>
                     <tbody id="acctVoucherLines"></tbody>
                 </table>
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <div class="acct-lines-actions">
                     <button id="acctAddLineBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;">➕ Add line</button>
-                    <span style="flex:1;"></span>
-                    <span style="font-size:11px;color:#718096;">Balance to</span>
-                    <select id="acctBalanceLedger" class="wms-input" style="max-width:200px;"></select>
-                    <button id="acctAutoBalanceBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;" title="Add a balancing line to the selected ledger">⚖ Auto-balance</button>
                 </div>
 
                 <div class="acct-balance-bar bad" id="acctBalanceBar">
@@ -313,6 +331,13 @@
                     <span class="acct-bal-spacer"></span>
                     <span>Dr <span id="acctTotalDebit">0.00</span></span>
                     <span>Cr <span id="acctTotalCredit">0.00</span></span>
+                </div>
+
+                <!-- Narration sits AFTER the amounts: it is the last thing typed,
+                     and the keyboard flow lands here once the voucher balances. -->
+                <div class="acct-field" style="margin-top:2px;">
+                    <label>Narration</label>
+                    <input type="text" id="acctVoucherNarration" class="wms-input" placeholder="Voucher narration">
                 </div>
             </div>
         </div>
