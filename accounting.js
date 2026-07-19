@@ -609,10 +609,13 @@ function acctRenderTrialBalance() {
 
     var fyStart = acctTbPeriodStart();
     var nodes = acctTbBuild(acctTbAggregate(fyStart));
-    var tOpen = nodes.reduce(function (a, n) { return a + n.open; }, 0);
-    var tDr   = nodes.reduce(function (a, n) { return a + n.dr; }, 0);
-    var tCr   = nodes.reduce(function (a, n) { return a + n.cr; }, 0);
-    var tClose= nodes.reduce(function (a, n) { return a + n.close; }, 0);
+    // Snap float dust to zero — summing signed nets leaves values like -1e-10,
+    // which render as "(0.00)" and read as a negative zero.
+    function acctZ(x) { var v = Math.round(x * 100) / 100; return Math.abs(v) < 0.005 ? 0 : v; }
+    var tOpen = acctZ(nodes.reduce(function (a, n) { return a + n.open; }, 0));
+    var tDr   = acctZ(nodes.reduce(function (a, n) { return a + n.dr; }, 0));
+    var tCr   = acctZ(nodes.reduce(function (a, n) { return a + n.cr; }, 0));
+    var tClose= acctZ(nodes.reduce(function (a, n) { return a + n.close; }, 0));
 
     var html = '<div class="acct-fin-controls">' +
         '<button class="wms-btn wms-btn-secondary" id="acctTbExpandAll">Expand all</button>' +
