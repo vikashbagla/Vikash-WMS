@@ -131,7 +131,13 @@
 .acct-field { display: flex; flex-direction: column; gap: 4px; }
 .acct-field label { font-size: 10px; font-weight: 600; color: #718096; text-transform: uppercase; }
 
-.acct-lines-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+/* app-styles.css carries a BARE `table { min-width: 940px }` — broader than the
+   `.table-container > table` scoping UI-STANDARDS D.8.5 describes — so every table
+   in a modal is forced to 940px and overflows its ~720px dialog, pushing the
+   right-hand columns out of view. Opt these two modal tables out. */
+.acct-lines-table { width: 100%; min-width: 0; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.acct-lines-table td, .acct-lines-table th { overflow: hidden; text-overflow: ellipsis; }
+.acct-lines-table .acct-ob-amt { width: 100%; max-width: 130px; }
 .acct-lines-table th {
     font-size: 10px; font-weight: 600; text-transform: uppercase; color: #718096;
     text-align: left; padding: 5px 6px; border-bottom: 1px solid #e2e8f0;
