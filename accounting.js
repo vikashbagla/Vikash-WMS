@@ -363,17 +363,35 @@ function acctFinNodeHtml(node, depth) {
     var cls = node.isDiff ? 'acct-fin-row acct-fin-diff'
         : 'acct-fin-row ' + (isGroup ? 'acct-fin-group' : 'acct-fin-ledger acct-clickable');
     var attr = node.isDiff ? '' : (isGroup ? ('data-node="' + node.key + '"') : ('data-ledger="' + node.ledgerId + '"'));
+    // Which amount column the figure belongs in: ledger detail innermost,
+    // intermediate group subtotals next, section (depth-0) totals outermost.
+    var col = node.isLedger ? 1 : (depth === 0 || node.isDiff ? 3 : 2);
+    var amt = acctAmt(node.amount);
     var h = '<div class="' + cls + '" ' + attr + ' style="padding-left:' + pad + 'px;">' +
         icon + '<span class="acct-fin-name">' + wmsEsc(node.label) + '</span>' +
-        '<span class="acct-fin-amt">' + acctAmt(node.amount) + '</span></div>';
+        '<span class="acct-fin-amt">'  + (col === 1 ? amt : '') + '</span>' +
+        '<span class="acct-fin-amt2">' + (col === 2 ? amt : '') + '</span>' +
+        '<span class="acct-fin-amt3">' + (col === 3 ? amt : '') + '</span></div>';
     if (isGroup && node.children && !collapsed) {
         node.children.forEach(function (c) { h += acctFinNodeHtml(c, depth + 1); });
     }
     return h;
 }
-function acctFinColumnHtml(title, asOn, nodes) {
-    var h = '<div class="acct-fin-col"><div class="acct-fin-hdr"><span>' + wmsEsc(title) + '</span><span>Bal. as on ' + wmsEsc(asOn) + '</span></div>';
+function acctUnitLabel() {
+    // The whole app scales amounts by the user's display-unit preference; say so,
+    // otherwise a figure in '000 is indistinguishable from one in rupees.
+    try { if (typeof getUnitDescription === 'function') return getUnitDescription(); } catch (e) {}
+    try { if (typeof getUnitLabel === 'function') return '\u20B9 ' + getUnitLabel(); } catch (e) {}
+    return '';
+}
+function acctFinColumnHtml(title, asOn, nodes, total, flag) {
+    var unit = acctUnitLabel();
+    var h = '<div class="acct-fin-col"><div class="acct-fin-hdr"><span>' + wmsEsc(title) + '</span>' +
+        '<span>Bal. as on ' + wmsEsc(asOn) + (unit ? ' <span class="acct-fin-unit">' + wmsEsc(unit) + '</span>' : '') + '</span></div>';
     nodes.forEach(function (n) { h += acctFinNodeHtml(n, 0); });
+    h += '<div class="acct-fin-coltotal"><span class="acct-fin-name">Total' + (flag || '') + '</span>' +
+        '<span class="acct-fin-amt"></span><span class="acct-fin-amt2"></span>' +
+        '<span class="acct-fin-amt3">' + acctAmt(total) + '</span></div>';
     return h + '</div>';
 }
 function acctFinAllGroupKeys(nodes, acc) {
@@ -427,10 +445,10 @@ function acctRenderFinancials() {
         '<button class="wms-btn wms-btn-secondary" id="acctFinCollapseAll">Collapse all</button>' +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctFinShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
         '</div>';
+    var flag = balanced ? '' : ' ⚠ out of balance';
     html += '<div class="acct-fin-cols">' +
-        acctFinColumnHtml('Liabilities', asOn, leftNodes) +
-        acctFinColumnHtml('Assets', asOn, assets.nodes) + '</div>';
-    html += '<div class="acct-fin-total"><span>Total' + (balanced ? '' : ' ⚠ out of balance') + '</span><span>' + acctAmt(assets.total) + '</span></div>';
+        acctFinColumnHtml('Liabilities', asOn, leftNodes, leftTotal, flag) +
+        acctFinColumnHtml('Assets', asOn, assets.nodes, assets.total, flag) + '</div>';
     el.innerHTML = html;
 
     el.querySelectorAll('.acct-fin-group[data-node]').forEach(function (r) {
@@ -473,9 +491,8 @@ function acctRenderPL() {
         '<label class="acct-fin-zero"><input type="checkbox" id="acctPLShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
         '</div>';
     html += '<div class="acct-fin-cols">' +
-        acctFinColumnHtml('Expenses', asOn, leftNodes) +
-        acctFinColumnHtml('Income', asOn, rightNodes) + '</div>';
-    html += '<div class="acct-fin-total"><span>Total</span><span>' + acctAmt(rightTotal) + '</span></div>';
+        acctFinColumnHtml('Expenses', asOn, leftNodes, leftTotal) +
+        acctFinColumnHtml('Income', asOn, rightNodes, rightTotal) + '</div>';
     el.innerHTML = html;
 
     el.querySelectorAll('.acct-fin-group[data-node]').forEach(function (r) {
@@ -490,68 +507,136 @@ function acctRenderPL() {
 }
 
 // ── Trial Balance — grouped collapsible tree with Debit/Credit columns ───────
-function acctTbBuild(net) {
+/* ── Trial Balance — conventional format ───────────────────────────────────────
+   Opening balance | period Debit | period Credit | Closing balance.
+
+   Opening = the OPENING_BALANCE voucher plus anything dated before the period
+   start; movements = everything else in the period. Closing = opening + Dr - Cr.
+   Opening and closing are shown signed (debit positive, credit in brackets) so
+   each is one column rather than two; the period Dr/Cr stay separate because
+   that is the pair that must agree. */
+
+function acctTbPeriodStart() {
+    // FY containing the latest posting, per the book's financial_year_start month.
+    var ids = acctViewBookIds();
+    var inv = (wmsRefData.investors || []).find(function (i) { return i.id === ids[0]; }) || {};
+    var m = Number(inv.financial_year_start) || 4;
+    var maxD = '';
+    acctVoucherRows.forEach(function (r) { if (r.voucher_date > maxD) maxD = r.voucher_date; });
+    var ref = maxD ? new Date(maxD + 'T00:00:00') : new Date();
+    var y = (ref.getMonth() + 1) >= m ? ref.getFullYear() : ref.getFullYear() - 1;
+    return y + '-' + String(m).padStart(2, '0') + '-01';
+}
+
+function acctTbAggregate(fyStart) {
+    var agg = {};
+    acctVoucherRows.forEach(function (r) {
+        if (!r.ledger_id) return;
+        var a = agg[r.ledger_id] || (agg[r.ledger_id] = { open: 0, dr: 0, cr: 0 });
+        var d = Number(r.debit_amount) || 0, c = Number(r.credit_amount) || 0;
+        if (r.voucher_type === 'OPENING_BALANCE' || r.voucher_date < fyStart) a.open += d - c;
+        else { a.dr += d; a.cr += c; }
+    });
+    return agg;
+}
+
+function acctTbBuild(agg) {
     var nodes = [];
+    function blank() { return { open: 0, dr: 0, cr: 0, close: 0 }; }
+    function add(t, n) { t.open += n.open; t.dr += n.dr; t.cr += n.cr; t.close += n.close; }
+    function ledNode(l) {
+        var a = agg[l.id] || { open: 0, dr: 0, cr: 0 };
+        var close = a.open + a.dr - a.cr;
+        var empty = !Math.round(a.open * 100) && !Math.round(a.dr * 100) &&
+                    !Math.round(a.cr * 100) && !Math.round(close * 100);
+        if (!acctFinShowZero && empty) return null;
+        return { key: 'l:' + l.id, label: l.name, isLedger: true, ledgerId: l.id,
+                 open: a.open, dr: a.dr, cr: a.cr, close: close };
+    }
     acctNatureOrder.forEach(function (nm) {
         var root = acctGroups.find(function (g) { return !g.parent_group_id && g.name === nm; });
         if (!root) return;
-        var rootNode = { key: 'tg:' + root.id, label: root.name, dr: 0, cr: 0, children: [] };
-        function ledNode(l) {
-            var b = net[l.id] || 0;
-            if (!acctFinShowZero && Math.round(b * 100) === 0) return null;
-            return { key: 'l:' + l.id, label: l.name, dr: b > 0 ? b : 0, cr: b < 0 ? -b : 0, isLedger: true, ledgerId: l.id };
-        }
+        var rootNode = { key: 'tg:' + root.id, label: root.name, children: [] };
+        add(rootNode, blank());
+        rootNode.open = rootNode.dr = rootNode.cr = rootNode.close = 0;
+
         acctLedgers.filter(function (l) { return l.group_id === root.id; })
             .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (l) { var n = ledNode(l); if (n) { rootNode.children.push(n); rootNode.dr += n.dr; rootNode.cr += n.cr; } });
+            .forEach(function (l) { var n = ledNode(l); if (n) { rootNode.children.push(n); add(rootNode, n); } });
+
         acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
             .sort(function (a, b) { return a.name.localeCompare(b.name); })
             .forEach(function (cg) {
-                var gnode = { key: 'tg:' + cg.id, label: cg.name, dr: 0, cr: 0, children: [] };
+                var g = { key: 'tg:' + cg.id, label: cg.name, children: [], open: 0, dr: 0, cr: 0, close: 0 };
                 acctLedgers.filter(function (l) { return l.group_id === cg.id; })
                     .sort(function (a, b) { return a.name.localeCompare(b.name); })
-                    .forEach(function (l) { var n = ledNode(l); if (n) { gnode.children.push(n); gnode.dr += n.dr; gnode.cr += n.cr; } });
-                if (!gnode.children.length && !acctFinShowZero) return;
-                rootNode.children.push(gnode); rootNode.dr += gnode.dr; rootNode.cr += gnode.cr;
+                    .forEach(function (l) { var n = ledNode(l); if (n) { g.children.push(n); add(g, n); } });
+                if (!g.children.length && !acctFinShowZero) return;
+                rootNode.children.push(g); add(rootNode, g);
             });
+
         if (rootNode.children.length || acctFinShowZero) nodes.push(rootNode);
     });
     return nodes;
 }
+
 function acctTbNodeHtml(node, depth) {
     var pad = 12 + depth * 18;
     var isGroup = !node.isLedger;
     var collapsed = isGroup && acctFinCollapsed[node.key];
-    var icon = isGroup ? '<span class="acct-fin-toggle' + (collapsed ? ' collapsed' : '') + '">▼</span>' : '<span class="acct-fin-toggle-sp"></span>';
+    var icon = isGroup
+        ? '<span class="acct-fin-toggle' + (collapsed ? ' collapsed' : '') + '">▼</span>'
+        : '<span class="acct-fin-toggle-sp"></span>';
     var cls = 'acct-fin-row ' + (isGroup ? 'acct-fin-group' : 'acct-fin-ledger acct-clickable');
     var attr = isGroup ? ('data-node="' + node.key + '"') : ('data-ledger="' + node.ledgerId + '"');
     var h = '<div class="' + cls + '" ' + attr + ' style="padding-left:' + pad + 'px;">' + icon +
         '<span class="acct-fin-name">' + wmsEsc(node.label) + '</span>' +
-        '<span class="acct-tb-dr">' + (node.dr ? acctAmt(node.dr) : '') + '</span>' +
-        '<span class="acct-tb-cr">' + (node.cr ? acctAmt(node.cr) : '') + '</span></div>';
-    if (isGroup && node.children && !collapsed) { node.children.forEach(function (c) { h += acctTbNodeHtml(c, depth + 1); }); }
+        '<span class="acct-tb-open">'  + (Math.round(node.open  * 100) ? acctAmt(node.open)  : '') + '</span>' +
+        '<span class="acct-tb-dr">'    + (Math.round(node.dr    * 100) ? acctAmt(node.dr)    : '') + '</span>' +
+        '<span class="acct-tb-cr">'    + (Math.round(node.cr    * 100) ? acctAmt(node.cr)    : '') + '</span>' +
+        '<span class="acct-tb-close">' + (Math.round(node.close * 100) ? acctAmt(node.close) : '') + '</span></div>';
+    if (isGroup && node.children && !collapsed) {
+        node.children.forEach(function (c) { h += acctTbNodeHtml(c, depth + 1); });
+    }
     return h;
 }
+
 function acctRenderTrialBalance() {
     var el = document.getElementById('acctTBBody');
     if (!el) return;
     if (!acctViewBookIds().length) { el.innerHTML = '<div class="acct-empty">No book selected. Enable accounting on an investor first.</div>'; return; }
     if (!acctVoucherRows.length) { el.innerHTML = '<div class="acct-empty">No postings yet for ' + wmsEsc(acctViewTitle()) + '.</div>'; return; }
-    var net = acctComputeBalances();
-    var nodes = acctTbBuild(net);
-    var totDr = nodes.reduce(function (a, n) { return a + n.dr; }, 0);
-    var totCr = nodes.reduce(function (a, n) { return a + n.cr; }, 0);
+
+    var fyStart = acctTbPeriodStart();
+    var nodes = acctTbBuild(acctTbAggregate(fyStart));
+    var tOpen = nodes.reduce(function (a, n) { return a + n.open; }, 0);
+    var tDr   = nodes.reduce(function (a, n) { return a + n.dr; }, 0);
+    var tCr   = nodes.reduce(function (a, n) { return a + n.cr; }, 0);
+    var tClose= nodes.reduce(function (a, n) { return a + n.close; }, 0);
 
     var html = '<div class="acct-fin-controls">' +
         '<button class="wms-btn wms-btn-secondary" id="acctTbExpandAll">Expand all</button>' +
         '<button class="wms-btn wms-btn-secondary" id="acctTbCollapseAll">Collapse all</button>' +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctTbShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
         '</div>';
-    html += '<div class="acct-tb-wrap"><div class="acct-fin-hdr"><span class="acct-fin-toggle-sp"></span><span class="acct-fin-name">Ledger</span><span class="acct-tb-dr">Debit</span><span class="acct-tb-cr">Credit</span></div>';
+    var unit = acctUnitLabel();
+    html += '<div class="acct-tb-period-hdr">Period ' + wmsEsc(acctFmtDate(fyStart)) + ' to ' + wmsEsc(acctFinAsOn()) +
+            (unit ? ' · ' + wmsEsc(unit) : '') + '</div>';
+    html += '<div class="acct-tb-wrap"><div class="acct-fin-hdr">' +
+        '<span class="acct-fin-toggle-sp"></span><span class="acct-fin-name">Ledger</span>' +
+        '<span class="acct-tb-open">Opening</span><span class="acct-tb-dr">Debit</span>' +
+        '<span class="acct-tb-cr">Credit</span><span class="acct-tb-close">Closing</span></div>';
     nodes.forEach(function (n) { html += acctTbNodeHtml(n, 0); });
     html += '</div>';
-    var bal = Math.round(totDr * 100) === Math.round(totCr * 100);
-    html += '<div class="acct-fin-total"><span class="acct-fin-name">Total' + (bal ? '' : ' ⚠ Dr ≠ Cr') + '</span><span class="acct-tb-dr">' + acctAmt(totDr) + '</span><span class="acct-tb-cr">' + acctAmt(totCr) + '</span></div>';
+
+    // The period Dr/Cr pair is the one that must agree; opening and closing are
+    // signed nets and should each come to zero on a clean set of books.
+    var bal = Math.round(tDr * 100) === Math.round(tCr * 100);
+    html += '<div class="acct-fin-total"><span class="acct-fin-name">Total' + (bal ? '' : ' ⚠ Dr ≠ Cr') + '</span>' +
+        '<span class="acct-tb-open">'  + acctAmt(tOpen)  + '</span>' +
+        '<span class="acct-tb-dr">'    + acctAmt(tDr)    + '</span>' +
+        '<span class="acct-tb-cr">'    + acctAmt(tCr)    + '</span>' +
+        '<span class="acct-tb-close">' + acctAmt(tClose) + '</span></div>';
     el.innerHTML = html;
 
     el.querySelectorAll('.acct-fin-group[data-node]').forEach(function (r) {
