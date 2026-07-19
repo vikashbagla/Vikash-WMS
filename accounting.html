@@ -5,15 +5,14 @@
      ============================================================================ -->
 <head>
 <style id="accounting-styles">
-/* The app shell never scrolls (body / .main-content / .content-container are all
-   height-capped + overflow:hidden - see app-styles.css). Every module must supply
-   its OWN internal scroll container, exactly as .portfolio-container does.
-   Accounting supplied none, so ALL FIVE tab panels were clipped at the viewport
-   and the sticky `.acct-table th` below could never engage. This chain fixes all
-   five at once: container flexes to fill, header/tabs stay put, active panel scrolls. */
+/* Module root scroll chain - the app shell never scrolls, every module owns its
+   own scroller. Same idiom as .trading-container / .reports-container /
+   .automation-container / .md-container. See UI-STANDARDS D.16.
+   Accounting shipped without this, so all five tab panels were clipped at the
+   viewport and the sticky `.acct-table th` below could never engage. */
 .acct-container {
     padding: 0; font-size: 12px; color: #2d3748;
-    flex: 1; min-height: 0; display: flex; flex-direction: column;
+    display: flex; flex-direction: column; height: 100%; overflow: hidden;
 }
 
 /* ---- Header bar (book selector + actions) ---- */
