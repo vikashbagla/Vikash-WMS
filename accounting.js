@@ -86,6 +86,13 @@ function acctViewBookIds() {
     return acctBookId ? [acctBookId] : [];
 }
 function acctIsConsolidated() { return !!(acctBookIds && acctBookIds.length > 1); }
+
+/* A cancelled voucher keeps its number and stays visible for audit, but must not
+   affect a single balance. `is_cancelled` is undefined until migration 50 has
+   been run, and !undefined === true, so this reads as "everything is live" on an
+   un-migrated database — correct either way. */
+function acctIsLive(r) { return !r.is_cancelled; }
+function acctLiveRows() { return acctVoucherRows.filter(acctIsLive); }
 function acctViewTitle() {
     if (acctIsConsolidated()) return 'Consolidated (' + acctBookIds.length + ' books)';
     var ids = acctViewBookIds();
@@ -305,6 +312,7 @@ function acctRenderActiveTab() {
 function acctComputeBalances() {
     var net = {};
     acctVoucherRows.forEach(function (r) {
+        if (!acctIsLive(r)) return;
         net[r.ledger_id] = (net[r.ledger_id] || 0) + (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
     });
     return net;
@@ -415,7 +423,7 @@ function acctFinAllGroupKeys(nodes, acc) {
 }
 function acctFinAsOn() {
     var max = '';
-    acctVoucherRows.forEach(function (r) { if (r.voucher_date > max) max = r.voucher_date; });
+    acctVoucherRows.forEach(function (r) { if (acctIsLive(r) && r.voucher_date > max) max = r.voucher_date; });
     return acctFmtDate(max || acctTodayYmd());
 }
 function acctRenderFinancials() {
@@ -541,7 +549,7 @@ function acctTbPeriodStart() {
     var inv = (wmsRefData.investors || []).find(function (i) { return i.id === ids[0]; }) || {};
     var m = Number(inv.financial_year_start) || 4;
     var maxD = '';
-    acctVoucherRows.forEach(function (r) { if (r.voucher_date > maxD) maxD = r.voucher_date; });
+    acctVoucherRows.forEach(function (r) { if (acctIsLive(r) && r.voucher_date > maxD) maxD = r.voucher_date; });
     var ref = maxD ? new Date(maxD + 'T00:00:00') : new Date();
     var y = (ref.getMonth() + 1) >= m ? ref.getFullYear() : ref.getFullYear() - 1;
     return y + '-' + String(m).padStart(2, '0') + '-01';
@@ -553,7 +561,7 @@ function acctTbPeriodStart() {
 function acctActiveLedgerIds(sinceYmd) {
     var set = {};
     acctVoucherRows.forEach(function (r) {
-        if (!r.ledger_id) return;
+        if (!r.ledger_id || !acctIsLive(r)) return;
         if (sinceYmd && r.voucher_type !== 'OPENING_BALANCE' && r.voucher_date < sinceYmd) return;
         set[r.ledger_id] = true;
     });
@@ -563,7 +571,7 @@ function acctActiveLedgerIds(sinceYmd) {
 function acctTbAggregate(fyStart) {
     var agg = {};
     acctVoucherRows.forEach(function (r) {
-        if (!r.ledger_id) return;
+        if (!r.ledger_id || !acctIsLive(r)) return;
         var a = agg[r.ledger_id] || (agg[r.ledger_id] = { open: 0, dr: 0, cr: 0 });
         var d = Number(r.debit_amount) || 0, c = Number(r.credit_amount) || 0;
         if (r.voucher_type === 'OPENING_BALANCE' || r.voucher_date < fyStart) a.open += d - c;
@@ -1444,6 +1452,25 @@ async function acctSaveVoucher() {
                mode is a visibly empty voucher that can be re-saved, rather than
                duplicated lines which would silently corrupt every balance. */
             var vid = acctEditingVoucherId;
+
+            // Prefer the atomic RPC (migration 50). Fall back to the three-call
+            // path only while that migration has not been run — PostgREST answers
+            // 404 for an unknown function.
+            var rpc = await fetch(acctUrl('rpc/acct_update_voucher'), {
+                method: 'POST',
+                headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ p_voucher_id: vid, p_header: header, p_lines: lines })
+            });
+            if (rpc.ok) {
+                acctEditingVoucherId = null;
+                if (acctVoucherModalCtrl) acctVoucherModalCtrl.close();
+                acctToast('Voucher updated.');
+                await acctLoadBook();
+                acctRenderActiveTab();
+                return;
+            }
+            if (rpc.status !== 404) throw new Error((await rpc.text()) || ('HTTP ' + rpc.status));
+
             var delR = await fetch(acctUrl('acct_voucher_lines?voucher_id=eq.' + vid),
                 { method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' }) });
             if (!delR.ok) throw new Error('Could not clear old lines: ' + (await delR.text()));
@@ -1524,15 +1551,21 @@ function acctOpenLedgerDetail(ledgerId) {
     } else {
         html += '<table class="acct-table"><thead><tr><th>Date</th><th>Voucher #</th><th>Narration</th><th class="text-right">Debit</th><th class="text-right">Credit</th><th class="text-right">Balance</th></tr></thead><tbody>';
         rows.forEach(function (r) {
-            running += (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
-            var balLabel = acctNum(Math.abs(running)) + (running >= 0 ? ' Dr' : ' Cr');
+            var live = acctIsLive(r);
+            if (live) running += (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
+            var balLabel = live ? acctNum(Math.abs(running)) + (running >= 0 ? ' Dr' : ' Cr') : '—';
             // Auto (PMS / rebuild-from-trades) vouchers are owned by the posting
             // engine — editing them here would be overwritten on the next rebuild.
             var auto = !!r.is_auto;
-            html += '<tr class="acct-vch-row' + (auto ? ' acct-vch-auto' : '') + '" data-voucher="' + r.voucher_id + '"' +
-                (auto ? ' title="Auto-posted from trades — edit the trade, not the voucher"' : ' title="Click to edit this voucher"') + '>' +
+            var tip = !live ? 'Cancelled' + (r.cancel_reason ? ' — ' + r.cancel_reason : '') + ' · excluded from balances'
+                    : auto ? 'Auto-posted from trades — edit the trade, not the voucher'
+                           : 'Click to edit this voucher';
+            html += '<tr class="acct-vch-row' + (auto ? ' acct-vch-auto' : '') + (live ? '' : ' acct-vch-cancelled') +
+                '" data-voucher="' + r.voucher_id + '" title="' + wmsEsc(tip) + '">' +
                 '<td>' + wmsEsc(acctFmtDate(r.voucher_date)) + '</td>' +
-                '<td>' + wmsEsc(r.voucher_number) + (auto ? ' <span class="acct-kind-badge">auto</span>' : '') + '</td>' +
+                '<td>' + wmsEsc(r.voucher_number) +
+                    (auto ? ' <span class="acct-kind-badge">auto</span>' : '') +
+                    (live ? '' : ' <span class="acct-scope-badge">cancelled</span>') + '</td>' +
                 '<td>' + wmsEsc(r.line_narration || r.voucher_narration || '') + '</td>' +
                 '<td class="text-right">' + (Number(r.debit_amount) ? acctAmt(Number(r.debit_amount)) : '-') + '</td>' +
                 '<td class="text-right">' + (Number(r.credit_amount) ? acctAmt(Number(r.credit_amount)) : '-') + '</td>' +
@@ -1552,6 +1585,10 @@ function acctOpenLedgerDetail(ledgerId) {
 function acctOpenEditVoucher(voucherId) {
     var rows = acctVoucherRows.filter(function (r) { return r.voucher_id === voucherId; });
     if (!rows.length) return;
+    if (!acctIsLive(rows[0])) {
+        acctToast('“' + rows[0].voucher_number + '” is cancelled. It is kept for the audit trail and cannot be edited.', true);
+        return;
+    }
     if (rows[0].is_auto) {
         acctToast('“' + rows[0].voucher_number + '” was auto-posted from trades. Edit the underlying trade, then Rebuild.', true);
         return;

@@ -157,6 +157,9 @@
 .acct-vch-row { cursor: pointer; }
 .acct-vch-row:hover { background: #f0f4ff; }
 .acct-vch-auto { color: #a0aec0; }
+/* Cancelled: kept visible for audit, struck through, excluded from balances. */
+.acct-vch-cancelled td { text-decoration: line-through; color: #a0aec0; }
+.acct-vch-cancelled:hover { background: #fff5f5; }
 /* NOT overflow:hidden — the ledger autocomplete is absolutely positioned inside a
    cell and would be clipped by it. */
 .acct-lines-table td { overflow: visible; }
