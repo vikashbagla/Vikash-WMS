@@ -29,6 +29,7 @@ var acctAddLedgerModalCtrl = null;
 var acctAddGroupModalCtrl = null;
 var acctReportModalCtrl = null;
 var acctConsolidateModalCtrl = null;
+var acctOpeningModalCtrl = null;
 
 var acctNatureOrder = ['Assets', 'Liabilities', 'Income', 'Expenses', 'Capital'];
 
@@ -335,7 +336,7 @@ function acctFinNodeHtml(node, depth) {
     var isGroup = !node.isLedger && !node.isDiff;
     var collapsed = isGroup && acctFinCollapsed[node.key];
     var icon = isGroup
-        ? '<span class="acct-fin-toggle">' + (collapsed ? '⊕' : '⊖') + '</span>'
+        ? '<span class="acct-fin-toggle' + (collapsed ? ' collapsed' : '') + '">▼</span>'
         : '<span class="acct-fin-toggle-sp"></span>';
     var cls = node.isDiff ? 'acct-fin-row acct-fin-diff'
         : 'acct-fin-row ' + (isGroup ? 'acct-fin-group' : 'acct-fin-ledger acct-clickable');
@@ -509,7 +510,7 @@ function acctTbNodeHtml(node, depth) {
     var pad = 12 + depth * 18;
     var isGroup = !node.isLedger;
     var collapsed = isGroup && acctFinCollapsed[node.key];
-    var icon = isGroup ? '<span class="acct-fin-toggle">' + (collapsed ? '⊕' : '⊖') + '</span>' : '<span class="acct-fin-toggle-sp"></span>';
+    var icon = isGroup ? '<span class="acct-fin-toggle' + (collapsed ? ' collapsed' : '') + '">▼</span>' : '<span class="acct-fin-toggle-sp"></span>';
     var cls = 'acct-fin-row ' + (isGroup ? 'acct-fin-group' : 'acct-fin-ledger acct-clickable');
     var attr = isGroup ? ('data-node="' + node.key + '"') : ('data-ledger="' + node.ledgerId + '"');
     var h = '<div class="' + cls + '" ' + attr + ' style="padding-left:' + pad + 'px;">' + icon +
@@ -695,7 +696,7 @@ function acctRenderLedgers() {
     roots.forEach(function (r) {
         var open = isOpen(r.key);
         html += '<tr class="acct-tb-group acct-led-grp" data-node="' + r.key + '"><td colspan="3">' +
-            '<span class="acct-led-toggle">' + (open ? '\u2296' : '\u2295') + '</span>' + wmsEsc(r.label) +
+            '<span class="acct-led-toggle' + (open ? '' : ' collapsed') + '">▼</span>' + wmsEsc(r.label) +
             '<span class="acct-led-count">' + r.count + '</span></td><td></td></tr>';
         if (!open) return;
 
@@ -706,7 +707,7 @@ function acctRenderLedgers() {
             var sopen = isOpen(sg.key);
             html += '<tr class="acct-subgroup-row acct-led-grp" data-node="' + sg.key + '">' +
                 '<td style="padding-left:20px;font-weight:600;color:#475569;">' +
-                '<span class="acct-led-toggle">' + (sopen ? '\u2296' : '\u2295') + '</span>' + wmsEsc(sg.label) +
+                '<span class="acct-led-toggle' + (sopen ? '' : ' collapsed') + '">▼</span>' + wmsEsc(sg.label) +
                 '<span class="acct-led-count">' + sg.ledgers.length + '</span></td>' +
                 '<td colspan="2"></td>' +
                 '<td class="text-right"><button class="acct-edit-btn" data-edit-group="' + sg.id + '" title="Edit group">\u270F\uFE0F</button></td></tr>';
@@ -742,6 +743,239 @@ function acctRenderLedgers() {
         var s2 = document.getElementById('acctLedSearchInput');
         if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); }
     };
+}
+
+// ============================================================================
+// Opening balances — search-and-add entry for the book's single OPENING_BALANCE
+// voucher. PLAN §7.2: one per book, dated at the book's start. Saving REPLACES
+// the existing one, so the modal must prefill from it or reopening would wipe it.
+// ============================================================================
+
+var acctOpeningLines = [];        // [{ ledgerId, debit, credit }]
+var acctOpeningDateYmd = null;
+var acctOpeningActiveIdx = -1;    // highlighted row in the search results
+
+var ACCT_OB_SUSPENSE = 'Difference in Opening Balance';
+
+/** FY start for the book, per investors.financial_year_start (month, default 4 = April). */
+function acctOpeningDefaultYmd() {
+    var inv = (wmsRefData && wmsRefData.investors || []).find(function (i) { return i.id === acctBookId; });
+    var m = (inv && Number(inv.financial_year_start)) || 4;
+    var today = new Date();
+    // The FY containing today starts in month m of this year, or last year if we
+    // haven't reached month m yet.
+    var y = (today.getMonth() + 1) >= m ? today.getFullYear() : today.getFullYear() - 1;
+    return y + '-' + String(m).padStart(2, '0') + '-01';
+}
+
+function acctOpeningExistingRows() {
+    return acctVoucherRows.filter(function (r) { return r.voucher_type === 'OPENING_BALANCE'; });
+}
+
+function acctOpenOpeningModal() {
+    if (!acctBookId) { acctToast('Select a book first (enable accounting on an investor).', true); return; }
+    if (acctViewBookIds().length > 1) { acctToast('Opening balances are per book — exit the consolidated view first.', true); return; }
+
+    // Prefill from the existing voucher; saving replaces it, so anything not shown
+    // here would be silently dropped.
+    var rows = acctOpeningExistingRows();
+    acctOpeningLines = rows.map(function (r) {
+        var dr = Number(r.debit_amount) || 0, cr = Number(r.credit_amount) || 0;
+        return { ledgerId: r.ledger_id, debit: dr ? String(dr) : '', credit: cr ? String(cr) : '' };
+    }).filter(function (l) { return l.ledgerId; });
+
+    acctOpeningDateYmd = rows.length ? rows[0].voucher_date : acctOpeningDefaultYmd();
+
+    document.getElementById('acctOpeningTitle').textContent =
+        (rows.length ? 'Opening Balances (editing) — ' : 'Opening Balances — ') + acctInvName(acctBookId);
+
+    // wmsDateInput self-initialises to today with a silent render, so an explicit
+    // setValue is required to land on the FY start / the saved voucher's date.
+    var dc = document.getElementById('acctOpeningDate');
+    if (dc && typeof wmsDateInput === 'function') {
+        var ctrl = wmsDateInput(dc, { compact: true, onChange: function (ymd) { acctOpeningDateYmd = ymd; } });
+        if (ctrl && ctrl.setValue) ctrl.setValue(acctOpeningDateYmd);
+    }
+    var sb = document.getElementById('acctOpeningSearch');
+    if (sb) sb.value = '';
+    acctOpeningHideResults();
+    acctRenderOpeningLines();
+    if (acctOpeningModalCtrl) acctOpeningModalCtrl.open();
+    if (sb) setTimeout(function () { sb.focus(); }, 50);
+}
+
+function acctOpeningCandidates(q) {
+    var used = {};
+    acctOpeningLines.forEach(function (l) { used[l.ledgerId] = true; });
+    var needle = String(q || '').toLowerCase();
+    return acctAvailableLedgers(acctBookId)
+        .filter(function (l) { return !used[l.id] && (!needle || l.name.toLowerCase().indexOf(needle) >= 0); })
+        .slice(0, 12);
+}
+
+function acctOpeningHideResults() {
+    var box = document.getElementById('acctOpeningResults');
+    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+    acctOpeningActiveIdx = -1;
+}
+
+function acctOpeningRenderResults() {
+    var box = document.getElementById('acctOpeningResults');
+    var sb = document.getElementById('acctOpeningSearch');
+    if (!box || !sb) return;
+    var list = acctOpeningCandidates(sb.value);
+    if (!sb.value && !list.length) { acctOpeningHideResults(); return; }
+    if (!list.length) {
+        box.innerHTML = '<div class="acct-ob-empty">No matching ledger. Use Ledgers → Add Ledger to create one.</div>';
+        box.style.display = 'block';
+        return;
+    }
+    box.innerHTML = list.map(function (l, i) {
+        return '<div class="acct-ob-result' + (i === acctOpeningActiveIdx ? ' active' : '') + '" data-lid="' + l.id + '">' +
+            '<span class="acct-ob-name">' + wmsEsc(l.name) + '</span>' +
+            '<span class="acct-ob-grp">' + wmsEsc(acctRootName(l.group_id)) + '</span></div>';
+    }).join('');
+    box.style.display = 'block';
+    box.querySelectorAll('.acct-ob-result').forEach(function (el) {
+        el.onmousedown = function (e) { e.preventDefault(); acctOpeningAdd(el.dataset.lid); };
+    });
+}
+
+function acctOpeningAdd(ledgerId) {
+    if (!ledgerId) return;
+    if (acctOpeningLines.some(function (l) { return l.ledgerId === ledgerId; })) return;
+    acctOpeningLines.push({ ledgerId: ledgerId, debit: '', credit: '' });
+    var sb = document.getElementById('acctOpeningSearch');
+    if (sb) { sb.value = ''; sb.focus(); }
+    acctOpeningHideResults();
+    acctRenderOpeningLines();
+    // focus the debit cell of the row just added
+    var inp = document.querySelector('#acctOpeningLines tr:last-child .acct-ob-amt[data-field="debit"]');
+    if (inp) inp.focus();
+}
+
+function acctLedgerName(id) {
+    var l = acctLedgers.find(function (x) { return x.id === id; });
+    return l ? l.name : '(unknown ledger)';
+}
+
+function acctRenderOpeningLines() {
+    var tb = document.getElementById('acctOpeningLines');
+    if (!tb) return;
+    if (!acctOpeningLines.length) {
+        tb.innerHTML = '<tr><td colspan="4" style="padding:14px;color:#a0aec0;font-size:12px;">' +
+            'No ledgers yet — search above to add the accounts this book opens with ' +
+            '(bank/broker balances, investments at cost, capital, client accounts).</td></tr>';
+    } else {
+        tb.innerHTML = acctOpeningLines.map(function (ln, idx) {
+            return '<tr data-idx="' + idx + '">' +
+                '<td><span class="acct-ob-name">' + wmsEsc(acctLedgerName(ln.ledgerId)) + '</span>' +
+                '<span class="acct-ob-grp" style="margin-left:8px;">' + wmsEsc(acctRootName((acctLedgers.find(function (x) { return x.id === ln.ledgerId; }) || {}).group_id)) + '</span></td>' +
+                '<td class="text-right"><input type="text" class="wms-input acct-ob-amt" data-idx="' + idx + '" data-field="debit" value="' + wmsEsc(ln.debit || '') + '" inputmode="decimal" style="width:120px;text-align:right;"></td>' +
+                '<td class="text-right"><input type="text" class="wms-input acct-ob-amt" data-idx="' + idx + '" data-field="credit" value="' + wmsEsc(ln.credit || '') + '" inputmode="decimal" style="width:120px;text-align:right;"></td>' +
+                '<td><button class="acct-line-del" data-del="' + idx + '" title="Remove">✕</button></td></tr>';
+        }).join('');
+    }
+
+    tb.querySelectorAll('.acct-ob-amt').forEach(function (inp) {
+        inp.oninput = function () {
+            var i = Number(inp.dataset.idx);
+            acctOpeningLines[i][inp.dataset.field] = inp.value;
+            // A line is Dr or Cr, never both — clear the opposite as you type.
+            if (acctParse(inp.value) > 0) {
+                var other = inp.dataset.field === 'debit' ? 'credit' : 'debit';
+                acctOpeningLines[i][other] = '';
+                var otherEl = tb.querySelector('.acct-ob-amt[data-idx="' + i + '"][data-field="' + other + '"]');
+                if (otherEl) otherEl.value = '';
+            }
+            acctOpeningUpdateBalance();
+        };
+    });
+    tb.querySelectorAll('[data-del]').forEach(function (b) {
+        b.onclick = function () { acctOpeningLines.splice(Number(b.dataset.del), 1); acctRenderOpeningLines(); };
+    });
+    acctOpeningUpdateBalance();
+}
+
+function acctOpeningTotals() {
+    var dr = 0, cr = 0;
+    acctOpeningLines.forEach(function (l) { dr += acctParse(l.debit); cr += acctParse(l.credit); });
+    return { dr: dr, cr: cr, diff: Math.round((dr - cr) * 100) / 100 };
+}
+
+function acctOpeningUpdateBalance() {
+    var t = acctOpeningTotals();
+    var nonEmpty = acctOpeningLines.filter(function (l) { return acctParse(l.debit) > 0 || acctParse(l.credit) > 0; }).length;
+    document.getElementById('acctOpeningTotalDr').textContent = acctNum(t.dr);
+    document.getElementById('acctOpeningTotalCr').textContent = acctNum(t.cr);
+    document.getElementById('acctOpeningDiff').textContent = acctNum(Math.abs(t.diff));
+
+    var balanced = Math.abs(t.diff) < 0.005;
+    var bar = document.getElementById('acctOpeningBar');
+    var msg = document.getElementById('acctOpeningMsg');
+    var note = document.getElementById('acctOpeningNote');
+    if (bar) bar.className = 'acct-balance-bar ' + (nonEmpty && balanced ? 'ok' : 'bad');
+    if (msg) msg.textContent = !nonEmpty ? 'Nothing entered' : (balanced ? 'Balanced' : 'Out by ' + acctNum(Math.abs(t.diff)));
+    if (note) {
+        note.textContent = (nonEmpty && !balanced)
+            ? 'On save the ' + acctNum(Math.abs(t.diff)) + ' difference is posted to “' + ACCT_OB_SUSPENSE + '” (' +
+              (t.diff > 0 ? 'credit' : 'debit') + ') so the voucher ties. It stays on the Balance Sheet until you clear it.'
+            : '';
+    }
+    var save = document.getElementById('acctOpeningSave');
+    if (save) save.disabled = !nonEmpty;   // unbalanced is allowed — it gets plugged
+}
+
+async function acctSaveOpening() {
+    var t = acctOpeningTotals();
+    var lines = acctOpeningLines
+        .filter(function (l) { return acctParse(l.debit) > 0 || acctParse(l.credit) > 0; })
+        .map(function (l) {
+            return { ledger_id: l.ledgerId, debit_amount: acctParse(l.debit), credit_amount: acctParse(l.credit) };
+        });
+    if (!lines.length) { acctToast('Enter at least one amount.', true); return; }
+
+    var btn = document.getElementById('acctOpeningSave');
+    if (btn) btn.disabled = true;
+    try {
+        // Plug any difference to the suspense ledger so the voucher always ties.
+        if (Math.abs(t.diff) >= 0.005) {
+            var map = {};
+            await acctResolveLedgers([{
+                key: 'susp', name: ACCT_OB_SUSPENSE, group: 'Current Assets', kind: 'GENERAL', isGlobal: true
+            }], map);
+            lines.push({
+                ledger_id: map.susp,
+                debit_amount: t.diff < 0 ? Math.abs(t.diff) : 0,
+                credit_amount: t.diff > 0 ? t.diff : 0
+            });
+        }
+
+        var header = {
+            investor_id: acctBookId,
+            voucher_type: 'OPENING_BALANCE',
+            voucher_date: acctOpeningDateYmd || acctOpeningDefaultYmd(),
+            narration: 'Opening balances'
+        };
+        // One OPENING_BALANCE voucher per book — drop the old one first (PLAN §7.2).
+        await fetch(acctUrl('acct_vouchers?investor_id=eq.' + acctBookId + '&voucher_type=eq.OPENING_BALANCE'),
+            { method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' }) });
+
+        var resp = await fetch(acctUrl('rpc/acct_post_voucher'), {
+            method: 'POST',
+            headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ p_header: header, p_lines: lines })
+        });
+        if (!resp.ok) throw new Error((await resp.text()) || ('HTTP ' + resp.status));
+
+        if (acctOpeningModalCtrl) acctOpeningModalCtrl.close();
+        acctToast('Opening balances saved (' + lines.length + ' lines).');
+        await acctLoadBook();
+        acctRenderActiveTab();
+    } catch (e) {
+        acctToast('Save failed: ' + (e && e.message ? e.message : e), true);
+        if (btn) btn.disabled = false;
+    }
 }
 
 // ============================================================================
@@ -1054,6 +1288,35 @@ function acctWireModals() {
     document.getElementById('acctVoucherClose').onclick = function () { acctVoucherModalCtrl && acctVoucherModalCtrl.close(); };
     document.getElementById('acctVoucherCancel').onclick = function () { acctVoucherModalCtrl && acctVoucherModalCtrl.close(); };
     document.getElementById('acctVoucherSave').onclick = acctSaveVoucher;
+
+    // Opening-balances modal
+    var obOverlay = document.getElementById('acctOpeningModal');
+    if (obOverlay && typeof wmsModal === 'function') acctOpeningModalCtrl = wmsModal(obOverlay, {});
+    var obClose = document.getElementById('acctOpeningClose');
+    if (obClose) obClose.onclick = function () { acctOpeningModalCtrl && acctOpeningModalCtrl.close(); };
+    var obCancel = document.getElementById('acctOpeningCancel');
+    if (obCancel) obCancel.onclick = function () { acctOpeningModalCtrl && acctOpeningModalCtrl.close(); };
+    var obSave = document.getElementById('acctOpeningSave');
+    if (obSave) obSave.onclick = acctSaveOpening;
+    var obBtn = document.getElementById('acctOpeningBtn');
+    if (obBtn) obBtn.onclick = acctOpenOpeningModal;
+    var obSearch = document.getElementById('acctOpeningSearch');
+    if (obSearch) {
+        obSearch.oninput = function () { acctOpeningActiveIdx = -1; acctOpeningRenderResults(); };
+        obSearch.onfocus = acctOpeningRenderResults;
+        // mousedown on a result fires before blur, so the click still lands.
+        obSearch.onblur = function () { setTimeout(acctOpeningHideResults, 120); };
+        obSearch.onkeydown = function (e) {
+            var list = acctOpeningCandidates(obSearch.value);
+            if (e.key === 'ArrowDown') { e.preventDefault(); acctOpeningActiveIdx = Math.min(acctOpeningActiveIdx + 1, list.length - 1); acctOpeningRenderResults(); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); acctOpeningActiveIdx = Math.max(acctOpeningActiveIdx - 1, 0); acctOpeningRenderResults(); }
+            else if (e.key === 'Enter') {
+                e.preventDefault();
+                var pick = list[acctOpeningActiveIdx >= 0 ? acctOpeningActiveIdx : 0];
+                if (pick) acctOpeningAdd(pick.id);
+            } else if (e.key === 'Escape') { acctOpeningHideResults(); }
+        };
+    }
     document.getElementById('acctAddLineBtn').onclick = function () {
         acctVoucherLines.push({ ledgerId: '', debit: '', credit: '' });
         acctRenderVoucherLines();

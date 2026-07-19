@@ -86,13 +86,35 @@
 .acct-led-controls .wms-input { max-width: 240px; margin-left: auto; }
 .acct-led-grp td { cursor: pointer; }
 .acct-led-grp:hover td { background: #eef2ff; }
-.acct-led-toggle { display: inline-block; width: 16px; color: #667eea; font-size: 11px; }
+.acct-led-toggle {
+    display: inline-block; width: 16px; color: #667eea; font-size: 9px;
+    transition: transform .12s ease;
+}
+.acct-led-toggle.collapsed { transform: rotate(-90deg); }
 .acct-led-count { font-size: 10px; font-weight: 600; color: #a0aec0; margin-left: 6px; }
 .acct-consol-chip { display: inline-flex; align-items: center; gap: 6px; background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
 .acct-consol-chip .acct-consol-x { cursor: pointer; font-weight: 700; }
 .acct-consol-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #2d3748; padding: 5px 0; cursor: pointer; }
 .acct-consol-item input { width: auto; }
 .acct-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+
+/* ---- Opening balances: search-and-add picker ---- */
+.acct-ob-search-wrap { position: relative; }
+.acct-ob-results {
+    position: absolute; z-index: 30; left: 0; right: 0; top: 100%;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.10); max-height: 240px; overflow-y: auto;
+}
+.acct-ob-result {
+    padding: 6px 10px; font-size: 12px; cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+}
+.acct-ob-result:hover, .acct-ob-result.active { background: #eef2ff; }
+.acct-ob-result .acct-ob-grp { margin-left: auto; font-size: 10px; color: #a0aec0; }
+.acct-ob-empty { padding: 10px; font-size: 12px; color: #a0aec0; }
+.acct-ob-name { font-weight: 600; color: #2d3748; }
+.acct-ob-diff { font-weight: 700; }
+.acct-ob-note { font-size: 11px; color: #718096; margin-top: 6px; }
 
 /* ---- Voucher modal: line table ---- */
 .acct-type-toggle { display: inline-flex; gap: 1px; margin-bottom: 12px; }
@@ -146,7 +168,14 @@
 .acct-fin-col { flex: 1; min-width: 0; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
 .acct-fin-hdr { display: flex; justify-content: space-between; background: #1e2a4a; color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 8px 12px; }
 .acct-fin-row { display: flex; align-items: center; padding: 5px 12px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: #4a5568; }
-.acct-fin-toggle { width: 16px; flex-shrink: 0; color: #667eea; font-size: 11px; }
+/* D.2.2 / D.9.1: one arrow glyph, rotated by CSS when collapsed. Never swap the
+   character - the rotation is what makes the state read as a disclosure triangle. */
+.acct-fin-toggle {
+    width: 16px; flex-shrink: 0; color: #667eea; font-size: 9px;
+    display: inline-block; text-align: left;
+    transition: transform .12s ease;
+}
+.acct-fin-toggle.collapsed { transform: rotate(-90deg); }
 .acct-fin-toggle-sp { width: 16px; flex-shrink: 0; }
 .acct-fin-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acct-fin-amt { padding-left: 10px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -179,6 +208,7 @@
         </div>
         <div class="acct-actions">
             <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary">➕ New Voucher</button>
+            <button id="acctOpeningBtn" class="wms-btn wms-btn-secondary" title="Enter this book's opening balances">⚖ Opening Balances</button>
             <button id="acctRebuildBtn" class="wms-btn wms-btn-secondary" title="Regenerate auto-vouchers for this book from its transactions">↻ Rebuild from trades</button>
             <button id="acctRebuildAllBtn" class="wms-btn wms-btn-secondary" title="Regenerate auto-vouchers for ALL books">↻↻ Rebuild all</button>
             <button id="acctRefreshBtn" class="wms-btn wms-btn-secondary" title="Refresh">🔄</button>
@@ -283,6 +313,56 @@
         <div class="wms-modal-footer">
             <button class="wms-btn wms-btn-secondary" id="acctVoucherCancel">Cancel</button>
             <button class="wms-btn wms-btn-primary" id="acctVoucherSave" disabled>Save Voucher</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== Opening balances modal ===================== -->
+<div class="wms-modal-overlay" id="acctOpeningModal">
+    <div class="wms-modal-dialog" style="max-width: 720px; width: 92%;">
+        <div class="wms-modal-header">
+            <span id="acctOpeningTitle" style="font-size:15px;font-weight:700;">Opening Balances</span>
+            <button class="wms-btn-close" id="acctOpeningClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
+            <div class="acct-voucher-grid">
+                <div class="acct-field-row">
+                    <div class="acct-field">
+                        <label>As on</label>
+                        <div id="acctOpeningDate"></div>
+                    </div>
+                    <div class="acct-field acct-ob-search-wrap" style="flex:1;min-width:260px;">
+                        <label>Add ledger</label>
+                        <input type="text" id="acctOpeningSearch" class="wms-input" placeholder="Search a ledger to add…" autocomplete="off">
+                        <div id="acctOpeningResults" class="acct-ob-results" style="display:none;"></div>
+                    </div>
+                </div>
+
+                <table class="acct-lines-table">
+                    <thead>
+                        <tr>
+                            <th style="width:50%;">Ledger</th>
+                            <th class="text-right">Debit</th>
+                            <th class="text-right">Credit</th>
+                            <th style="width:28px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="acctOpeningLines"></tbody>
+                </table>
+
+                <div class="acct-balance-bar bad" id="acctOpeningBar">
+                    <span id="acctOpeningMsg">Nothing entered</span>
+                    <span class="acct-bal-spacer"></span>
+                    <span>Dr <span id="acctOpeningTotalDr">0.00</span></span>
+                    <span>Cr <span id="acctOpeningTotalCr">0.00</span></span>
+                    <span class="acct-ob-diff">Diff <span id="acctOpeningDiff">0.00</span></span>
+                </div>
+                <div class="acct-ob-note" id="acctOpeningNote"></div>
+            </div>
+        </div>
+        <div class="wms-modal-footer">
+            <button class="wms-btn wms-btn-secondary" id="acctOpeningCancel">Cancel</button>
+            <button class="wms-btn wms-btn-primary" id="acctOpeningSave" disabled>Save Opening Balances</button>
         </div>
     </div>
 </div>
