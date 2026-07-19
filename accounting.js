@@ -433,7 +433,6 @@ function acctRenderFinancials() {
         '<label class="acct-fin-zero"><input type="checkbox" id="acctFinShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
         '<input type="text" id="acctFinSearch" class="wms-input" placeholder="Search ledgers & groups" value="' + wmsEsc(acctFinSearch) + '">' +
         '</div>';
-    html += '<div class="acct-fin-scope">' + wmsEsc(acctViewTitle()) + '</div>';
     html += '<div class="acct-fin-cols">' +
         acctFinColumnHtml('Liabilities', asOn, leftNodes) +
         acctFinColumnHtml('Assets', asOn, assets.nodes) + '</div>';
@@ -485,7 +484,6 @@ function acctRenderPL() {
         '<button class="wms-btn wms-btn-secondary" id="acctPLCollapseAll">Collapse all</button>' +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctPLShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
         '<input type="text" id="acctPLSearch" class="wms-input" placeholder="Search ledgers & groups" value="' + wmsEsc(acctFinSearch) + '"></div>';
-    html += '<div class="acct-fin-scope">' + wmsEsc(acctViewTitle()) + ' · Profit &amp; Loss</div>';
     html += '<div class="acct-fin-cols">' +
         acctFinColumnHtml('Expenses', asOn, leftNodes) +
         acctFinColumnHtml('Income', asOn, rightNodes) + '</div>';
@@ -562,7 +560,6 @@ function acctRenderTrialBalance() {
         '<button class="wms-btn wms-btn-secondary" id="acctTbCollapseAll">Collapse all</button>' +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctTbShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
         '<input type="text" id="acctTbSearch" class="wms-input" placeholder="Search ledgers & groups" value="' + wmsEsc(acctFinSearch) + '"></div>';
-    html += '<div class="acct-fin-scope">' + wmsEsc(acctViewTitle()) + ' · Trial Balance</div>';
     html += '<div class="acct-tb-wrap"><div class="acct-fin-hdr"><span class="acct-fin-toggle-sp"></span><span class="acct-fin-name">Ledger</span><span class="acct-tb-dr">Debit</span><span class="acct-tb-cr">Credit</span></div>';
     nodes.forEach(function (n) { html += acctTbNodeHtml(n, 0); });
     html += '</div>';
