@@ -818,7 +818,12 @@ function acctOpenOpeningModal() {
     acctOpeningLines = rows.map(function (r) {
         var dr = Number(r.debit_amount) || 0, cr = Number(r.credit_amount) || 0;
         return { ledgerId: r.ledger_id, debit: dr ? String(dr) : '', credit: cr ? String(cr) : '' };
-    }).filter(function (l) { return l.ledgerId; });
+    }).filter(function (l) {
+        // The suspense plug is DERIVED, never user input. Restoring it as an editable
+        // row would double-count it the moment a real line is corrected and re-saved,
+        // so drop it and let the difference recompute from the real lines.
+        return l.ledgerId && acctLedgerName(l.ledgerId) !== ACCT_OB_SUSPENSE;
+    });
 
     acctOpeningDateYmd = rows.length ? rows[0].voucher_date : acctOpeningDefaultYmd();
 
