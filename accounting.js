@@ -1197,7 +1197,25 @@ function acctRenderVoucherLines() {
     acctUpdateBalance();
 }
 
+/* Push the recomputed auto-balance amount into the DOM. acctSyncAutoLine only
+   updates the model; without this the pre-filled line stays blank until the next
+   full re-render. Never touches the field the user is currently typing in. */
+function acctPaintAutoLine() {
+    if (acctVoucherLines.length < 2) return;
+    var idx = acctVoucherLines.length - 1;
+    var last = acctVoucherLines[idx];
+    if (!last._auto) return;
+    ['debit', 'credit'].forEach(function (f) {
+        var el = document.querySelector('#acctVoucherLines .acct-line-amt[data-idx="' + idx + '"][data-field="' + f + '"]');
+        if (!el || el === document.activeElement) return;
+        el.value = last[f] ? acctNum(acctParse(last[f])) : '';
+        el.classList.add('acct-auto');
+    });
+}
+
 function acctUpdateBalance() {
+    acctSyncAutoLine();
+    acctPaintAutoLine();
     var td = 0, tc = 0;
     acctVoucherLines.forEach(function (l) { td += acctParse(l.debit); tc += acctParse(l.credit); });
     var balanced = acctVoucherIsBalanced();
