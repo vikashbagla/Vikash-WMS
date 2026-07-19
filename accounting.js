@@ -285,6 +285,12 @@ function acctComputeBalances() {
 // Collapsible group->ledger tree; P&L embedded under Liabilities (Profit & Loss
 // -> Income / Expenses); balanced Total. Models MProfit's accounting view.
 var acctFinCollapsed = {};   // nodeKey -> true (default expanded)
+// Ledgers catalogue keeps its OWN collapse state - deliberately NOT acctFinCollapsed.
+// Both would key groups by the same ids, so sharing means collapsing a group in the
+// catalogue silently collapses it on the Balance Sheet. null = not yet initialised;
+// first render seeds every group collapsed per UI-STANDARDS D.2.2.
+var acctLedCollapsed = null;
+var acctLedSearch = '';
 var acctFinShowZero = false;
 var acctFinSearch = '';
 
@@ -618,37 +624,124 @@ function acctLedgerRowHtml(lg) {
         '<td>' + avail + '</td>' +
         '<td class="text-right"><button class="acct-edit-btn" data-edit-ledger="' + lg.id + '" title="Edit ledger">✏️</button></td></tr>';
 }
+function acctLedMatch(name) {
+    return !acctLedSearch || String(name).toLowerCase().indexOf(acctLedSearch.toLowerCase()) >= 0;
+}
+function acctLedByName(a, b) { return a.name.localeCompare(b.name); }
+
+// Build the nature -> sub-group -> ledger model once, so the row renderer, the
+// counts and Collapse-all all read off the same shape (and stay in agreement).
+function acctLedBuild() {
+    var roots = [];
+    acctNatureOrder.forEach(function (nature) {
+        var root = acctGroups.find(function (g) { return !g.parent_group_id && g.name === nature; });
+        if (!root) return;
+        var natureHit = acctLedMatch(nature);
+        var node = { key: 'n:' + root.id, label: nature, ledgers: [], subs: [], count: 0 };
+
+        acctLedgers.filter(function (l) { return l.group_id === root.id; })
+            .sort(acctLedByName)
+            .forEach(function (l) { if (natureHit || acctLedMatch(l.name)) node.ledgers.push(l); });
+
+        acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
+            .sort(acctLedByName)
+            .forEach(function (cg) {
+                var groupHit = natureHit || acctLedMatch(cg.name);
+                var kids = acctLedgers.filter(function (l) { return l.group_id === cg.id; })
+                    .sort(acctLedByName)
+                    .filter(function (l) { return groupHit || acctLedMatch(l.name); });
+                if (!kids.length && !groupHit) return;          // no match anywhere in this sub-group
+                node.subs.push({ key: 'g:' + cg.id, id: cg.id, label: cg.name, ledgers: kids });
+            });
+
+        node.count = node.ledgers.length + node.subs.reduce(function (a, sg) { return a + sg.ledgers.length; }, 0);
+        // Unsearched: always show the nature header (empty or not). Searching: only if it matched.
+        if (!acctLedSearch || node.count || node.subs.length) roots.push(node);
+    });
+    return roots;
+}
+
 function acctRenderLedgers() {
     var el = document.getElementById('acctLedgersBody');
     if (!el) return;
     if (!acctLedgers.length) { el.innerHTML = '<div class="acct-empty">No ledgers in the catalogue.</div>'; return; }
 
-    var html = '<table class="acct-table"><thead><tr><th>Ledger / Group</th><th>Kind</th><th>Availability</th><th style="width:44px;"></th></tr></thead><tbody>';
-    acctNatureOrder.forEach(function (nature) {
-        var root = acctGroups.find(function (g) { return !g.parent_group_id && g.name === nature; });
-        if (!root) return;
-        html += '<tr class="acct-tb-group"><td colspan="4">' + wmsEsc(nature) + '</td></tr>';
-        // ledgers directly under the root
-        acctLedgers.filter(function (l) { return l.group_id === root.id; })
-            .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (lg) { html += acctLedgerRowHtml(lg); });
-        // sub-groups (editable) -> their ledgers
-        acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
-            .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (cg) {
-                html += '<tr class="acct-subgroup-row"><td style="padding-left:20px;font-weight:600;color:#475569;">' + wmsEsc(cg.name) + '</td>' +
-                    '<td colspan="2"></td>' +
-                    '<td class="text-right"><button class="acct-edit-btn" data-edit-group="' + cg.id + '" title="Edit group">✏️</button></td></tr>';
-                acctLedgers.filter(function (l) { return l.group_id === cg.id; })
-                    .sort(function (a, b) { return a.name.localeCompare(b.name); })
-                    .forEach(function (lg) { html += acctLedgerRowHtml(lg); });
-            });
+    var roots = acctLedBuild();
+    var allKeys = [];
+    roots.forEach(function (r) { allKeys.push(r.key); r.subs.forEach(function (sg) { allKeys.push(sg.key); }); });
+
+    // UI-STANDARDS D.2.2 - collapsible groups start collapsed. Seed once per session.
+    if (acctLedCollapsed === null) {
+        acctLedCollapsed = {};
+        allKeys.forEach(function (k) { acctLedCollapsed[k] = true; });
+    }
+    // While a search is active, force everything open - otherwise a default-collapsed
+    // tree shows nothing for a hit. The user's collapse state is untouched underneath
+    // and comes back the moment the box is cleared.
+    var searching = !!acctLedSearch;
+    function isOpen(k) { return searching || !acctLedCollapsed[k]; }
+
+    var html = '<div class="acct-led-controls">' +
+        '<button class="wms-btn wms-btn-secondary" id="acctLedExpandAll">Expand all</button>' +
+        '<button class="wms-btn wms-btn-secondary" id="acctLedCollapseAll">Collapse all</button>' +
+        '<input type="text" id="acctLedSearchInput" class="wms-input" placeholder="Search ledgers &amp; groups" value="' + wmsEsc(acctLedSearch) + '"></div>';
+
+    html += '<table class="acct-table"><thead><tr><th>Ledger / Group</th><th>Kind</th><th>Availability</th><th style="width:44px;"></th></tr></thead><tbody>';
+
+    if (!roots.length) {
+        html += '<tr><td colspan="4"><div class="acct-empty">Nothing matches &ldquo;' + wmsEsc(acctLedSearch) + '&rdquo;.</div></td></tr>';
+    }
+
+    roots.forEach(function (r) {
+        var open = isOpen(r.key);
+        html += '<tr class="acct-tb-group acct-led-grp" data-node="' + r.key + '"><td colspan="3">' +
+            '<span class="acct-led-toggle">' + (open ? '\u2296' : '\u2295') + '</span>' + wmsEsc(r.label) +
+            '<span class="acct-led-count">' + r.count + '</span></td><td></td></tr>';
+        if (!open) return;
+
+        // ledgers hanging directly off the nature root
+        r.ledgers.forEach(function (lg) { html += acctLedgerRowHtml(lg); });
+
+        r.subs.forEach(function (sg) {
+            var sopen = isOpen(sg.key);
+            html += '<tr class="acct-subgroup-row acct-led-grp" data-node="' + sg.key + '">' +
+                '<td style="padding-left:20px;font-weight:600;color:#475569;">' +
+                '<span class="acct-led-toggle">' + (sopen ? '\u2296' : '\u2295') + '</span>' + wmsEsc(sg.label) +
+                '<span class="acct-led-count">' + sg.ledgers.length + '</span></td>' +
+                '<td colspan="2"></td>' +
+                '<td class="text-right"><button class="acct-edit-btn" data-edit-group="' + sg.id + '" title="Edit group">\u270F\uFE0F</button></td></tr>';
+            if (sopen) sg.ledgers.forEach(function (lg) { html += acctLedgerRowHtml(lg); });
+        });
     });
     html += '</tbody></table>';
     el.innerHTML = html;
 
-    el.querySelectorAll('[data-edit-ledger]').forEach(function (b) { b.onclick = function () { acctOpenEditLedger(b.dataset.editLedger); }; });
-    el.querySelectorAll('[data-edit-group]').forEach(function (b) { b.onclick = function () { acctOpenEditGroup(b.dataset.editGroup); }; });
+    el.querySelectorAll('.acct-led-grp[data-node]').forEach(function (row) {
+        row.onclick = function () {
+            acctLedCollapsed[row.dataset.node] = !acctLedCollapsed[row.dataset.node];
+            acctRenderLedgers();
+        };
+    });
+    // The edit pencils now sit INSIDE a clickable group row - without stopPropagation
+    // opening the edit modal would also toggle the group underneath it.
+    el.querySelectorAll('[data-edit-ledger]').forEach(function (b) {
+        b.onclick = function (e) { e.stopPropagation(); acctOpenEditLedger(b.dataset.editLedger); };
+    });
+    el.querySelectorAll('[data-edit-group]').forEach(function (b) {
+        b.onclick = function (e) { e.stopPropagation(); acctOpenEditGroup(b.dataset.editGroup); };
+    });
+
+    var ea = document.getElementById('acctLedExpandAll');
+    if (ea) ea.onclick = function () { acctLedCollapsed = {}; acctRenderLedgers(); };
+    var ca = document.getElementById('acctLedCollapseAll');
+    if (ca) ca.onclick = function () { acctLedCollapsed = {}; allKeys.forEach(function (k) { acctLedCollapsed[k] = true; }); acctRenderLedgers(); };
+    var srch = document.getElementById('acctLedSearchInput');
+    if (srch) srch.oninput = function () {
+        acctLedSearch = srch.value;
+        acctRenderLedgers();
+        var s2 = document.getElementById('acctLedSearchInput');
+        if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); }
+    };
 }
 
 // ============================================================================

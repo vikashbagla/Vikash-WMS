@@ -5,13 +5,22 @@
      ============================================================================ -->
 <head>
 <style id="accounting-styles">
-.acct-container { padding: 0; font-size: 12px; color: #2d3748; }
+/* The app shell never scrolls (body / .main-content / .content-container are all
+   height-capped + overflow:hidden - see app-styles.css). Every module must supply
+   its OWN internal scroll container, exactly as .portfolio-container does.
+   Accounting supplied none, so ALL FIVE tab panels were clipped at the viewport
+   and the sticky `.acct-table th` below could never engage. This chain fixes all
+   five at once: container flexes to fill, header/tabs stay put, active panel scrolls. */
+.acct-container {
+    padding: 0; font-size: 12px; color: #2d3748;
+    flex: 1; min-height: 0; display: flex; flex-direction: column;
+}
 
 /* ---- Header bar (book selector + actions) ---- */
 .acct-headerbar {
     display: flex; align-items: center; gap: 12px;
     padding: 10px 14px; border-bottom: 1px solid #e2e8f0; background: #fff;
-    flex-wrap: wrap;
+    flex-wrap: wrap; flex-shrink: 0;
 }
 .acct-headerbar .acct-title { font-size: 15px; font-weight: 700; color: #1a202c; }
 .acct-headerbar .acct-book-wrap { display: flex; align-items: center; gap: 6px; }
@@ -23,6 +32,7 @@
 .acct-tabs {
     display: flex; gap: 0; background: #f8fafc;
     border-bottom: 1px solid #e2e8f0; padding: 0 8px; min-height: 36px;
+    flex-shrink: 0;
 }
 .acct-tab {
     display: inline-flex; align-items: center; padding: 8px 16px;
@@ -34,7 +44,9 @@
 .acct-tab.active { color: #667eea; border-bottom-color: #667eea; }
 
 .acct-tabpanel { display: none; padding: 14px; }
-.acct-tabpanel.active { display: block; }
+/* The scroll container. min-height:0 is required - without it a flex child
+   refuses to shrink below its content height and overflow-y never engages. */
+.acct-tabpanel.active { display: block; flex: 1; min-height: 0; overflow-y: auto; }
 
 /* ---- Generic table ---- */
 .acct-table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -66,6 +78,17 @@
 .acct-edit-btn { border: 1px solid #e2e8f0; background: #f7fafc; border-radius: 5px; cursor: pointer; font-size: 11px; padding: 1px 6px; }
 .acct-edit-btn:hover { background: #edf2f7; }
 .acct-subgroup-row td { background: #fbfcfe; }
+
+/* ---- Ledgers catalogue: collapsible group tree ----
+   Own collapse state (acctLedCollapsed), NOT the acctFinCollapsed shared by
+   BS/P&L/TB - those key groups as 'tg:<id>' and would collide exactly, so a
+   collapse here would silently collapse the same group on the Balance Sheet. */
+.acct-led-controls { display: flex; align-items: center; gap: 8px; padding: 2px 0 10px; }
+.acct-led-controls .wms-input { max-width: 240px; margin-left: auto; }
+.acct-led-grp td { cursor: pointer; }
+.acct-led-grp:hover td { background: #eef2ff; }
+.acct-led-toggle { display: inline-block; width: 16px; color: #667eea; font-size: 11px; }
+.acct-led-count { font-size: 10px; font-weight: 600; color: #a0aec0; margin-left: 6px; }
 .acct-consol-chip { display: inline-flex; align-items: center; gap: 6px; background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
 .acct-consol-chip .acct-consol-x { cursor: pointer; font-weight: 700; }
 .acct-consol-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #2d3748; padding: 5px 0; cursor: pointer; }
