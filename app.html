@@ -216,6 +216,55 @@
         return null;
     }
 
+    // Run the Fyers login SERVER-SIDE via the fyers-auto-login Edge Function —
+    // the exact same path the daily cron uses. The EF owns FYERS_APP_ID /
+    // FYERS_SECRET / FYERS_TOTP_SECRET and writes api_access_token +
+    // api_token_date into investor_broker_accounts itself, so the browser never
+    // handles an app id or a secret.
+    //
+    // Deliberately NOT a second copy of the OAuth flow: the old fyers-oauth.html
+    // replicated it, kept its own hardcoded APP_ID, missed the -100 → -200 SEBI
+    // App-ID migration, and failed silently (2026-07-20 — live order rejected
+    // with NO_BROKER_TOKEN). One owning implementation, no drift. LESSONS §B.4.9.
+    window.wmsFyersRefresh = async function () {
+        const statusEl = document.getElementById('fyers-status');
+        const prevHtml = statusEl ? statusEl.innerHTML : '';
+        if (statusEl) {
+            statusEl.innerHTML = '⏳ Fyers…';
+            statusEl.style.color = '#b45309';
+        }
+        try {
+            const res = await fetch(`${window.SUPABASE_URL}/functions/v1/fyers-auto-login`, {
+                method: 'POST',
+                headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ action: 'auto_login' })
+            });
+            let out = {};
+            try { out = await res.json(); } catch (_e) { /* non-JSON error body */ }
+
+            // Never report success without checking the response — the retired page
+            // logged "✅ saved" unconditionally, which is exactly why a failed login
+            // looked like it had worked. LESSONS §A.1.9f.
+            if (!res.ok || out.success !== true) {
+                const msg = out.error || `HTTP ${res.status} ${res.statusText || ''}`.trim();
+                console.error('Fyers auto-login failed:', msg);
+                if (statusEl) { statusEl.innerHTML = prevHtml; statusEl.style.color = '#dc2626'; }
+                alert('Fyers auto-login FAILED.\n\n' + msg +
+                      '\n\nThe token was NOT refreshed — live order placement will be ' +
+                      'rejected with NO_BROKER_TOKEN until this succeeds.');
+                return false;
+            }
+            console.log('✅ Fyers auto-login succeeded:', out.message || '');
+        } catch (e) {
+            console.error('Fyers auto-login request failed:', e);
+            if (statusEl) { statusEl.innerHTML = prevHtml; statusEl.style.color = '#dc2626'; }
+            alert('Fyers auto-login request failed.\n\n' + (e && e.message ? e.message : e));
+            return false;
+        }
+        await checkFyersAuth();   // re-read from the DB and repaint the indicator
+        return false;             // stay on the page
+    };
+
     // Check Fyers token on app load
     // Priority: localStorage (manual OAuth) → DB (auto-login) → not connected
     async function checkFyersAuth() {
@@ -243,10 +292,12 @@
             return;
         }
 
-        // 3. No token available
+        // 3. No token available — one click runs the same server-side login the
+        //    daily cron runs (fyers-auto-login EF). No credentials in the browser.
         window.fyersToken = null;
         statusEl.innerHTML =
-            '🔴 <a href="fyers-oauth.html" style="color:#dc2626;font-weight:600;">Fyers</a>';
+            '🔴 <a href="#" onclick="return wmsFyersRefresh()" title="Run Fyers auto-login now" style="color:#dc2626;font-weight:600;">Fyers</a>';
+        statusEl.style.color = '#dc2626';
         console.log('⚠️ Fyers token missing or expired');
     }
 
