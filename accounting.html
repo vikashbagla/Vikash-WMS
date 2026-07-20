@@ -5,24 +5,40 @@
      ============================================================================ -->
 <head>
 <style id="accounting-styles">
-.acct-container { padding: 0; font-size: 12px; color: #2d3748; }
-
-/* ---- Header bar (book selector + actions) ---- */
-.acct-headerbar {
-    display: flex; align-items: center; gap: 12px;
-    padding: 10px 14px; border-bottom: 1px solid #e2e8f0; background: #fff;
-    flex-wrap: wrap;
+/* Module root scroll chain - the app shell never scrolls, every module owns its
+   own scroller. Same idiom as .trading-container / .reports-container /
+   .automation-container / .md-container. See UI-STANDARDS D.16.
+   Accounting shipped without this, so all five tab panels were clipped at the
+   viewport and the sticky `.acct-table th` below could never engage. */
+.acct-container {
+    padding: 0; font-size: 12px; color: #2d3748;
+    display: flex; flex-direction: column; height: 100%; overflow: hidden;
 }
-.acct-headerbar .acct-title { font-size: 15px; font-weight: 700; color: #1a202c; }
-.acct-headerbar .acct-book-wrap { display: flex; align-items: center; gap: 6px; }
-.acct-headerbar .acct-book-wrap label { font-size: 11px; font-weight: 600; color: #718096; text-transform: uppercase; }
-.acct-book-select { min-width: 200px; }
-.acct-headerbar .acct-actions { margin-left: auto; display: flex; gap: 8px; }
+
+/* ---- Books tab strip ---- */
+.acct-books {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 10px; background: #fff; border-bottom: 1px solid #e2e8f0;
+    flex-shrink: 0;
+}
+.acct-books-tabs { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+/* Period + display unit apply to every view in the module, so they are stated
+   once here rather than repeated above each table. */
+.acct-context { margin-left: auto; font-size: 11px; color: #718096; white-space: nowrap; }
+.acct-book-tab {
+    border: 1px solid transparent; background: transparent; cursor: pointer;
+    padding: 3px 12px; border-radius: 20px;
+    font-size: 12px; font-weight: 600; color: #718096;
+}
+.acct-book-tab:hover { background: #f1f5f9; color: #4a5568; }
+.acct-book-tab.active { background: #667eea; border-color: #667eea; color: #fff; }
+.acct-books-empty { font-size: 12px; color: #a0aec0; padding: 2px 4px; }
 
 /* ---- Tabs ---- */
 .acct-tabs {
     display: flex; gap: 0; background: #f8fafc;
     border-bottom: 1px solid #e2e8f0; padding: 0 8px; min-height: 36px;
+    flex-shrink: 0;
 }
 .acct-tab {
     display: inline-flex; align-items: center; padding: 8px 16px;
@@ -32,9 +48,17 @@
 }
 .acct-tab:hover { color: #4a5568; background: #edf2f7; }
 .acct-tab.active { color: #667eea; border-bottom-color: #667eea; }
+.acct-tabs-spacer { flex: 1; }
+.acct-tab-action { font-size: 11px; padding: 3px 10px; }
+.acct-menu-wrap { position: relative; }
+.acct-menu-dd { left: auto; right: 0; min-width: 210px; }
+.acct-menu-dd .wms-dd-item { padding: 7px 12px; font-size: 12px; }
+.acct-menu-dd .wms-dd-item.disabled { color: #cbd5e0; cursor: not-allowed; }
 
 .acct-tabpanel { display: none; padding: 14px; }
-.acct-tabpanel.active { display: block; }
+/* The scroll container. min-height:0 is required - without it a flex child
+   refuses to shrink below its content height and overflow-y never engages. */
+.acct-tabpanel.active { display: block; flex: 1; min-height: 0; overflow-y: auto; }
 
 /* ---- Generic table ---- */
 .acct-table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -66,11 +90,46 @@
 .acct-edit-btn { border: 1px solid #e2e8f0; background: #f7fafc; border-radius: 5px; cursor: pointer; font-size: 11px; padding: 1px 6px; }
 .acct-edit-btn:hover { background: #edf2f7; }
 .acct-subgroup-row td { background: #fbfcfe; }
+
+/* ---- Ledgers catalogue: collapsible group tree ----
+   Own collapse state (acctLedCollapsed), NOT the acctFinCollapsed shared by
+   BS/P&L/TB - those key groups as 'tg:<id>' and would collide exactly, so a
+   collapse here would silently collapse the same group on the Balance Sheet. */
+.acct-led-controls { display: flex; align-items: center; gap: 8px; padding: 2px 0 10px; }
+.acct-led-controls .wms-input { max-width: 240px; margin-left: auto; }
+.acct-led-grp td { cursor: pointer; }
+.acct-led-grp:hover td { background: #eef2ff; }
+.acct-led-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; color: #667eea; font-size: 10px;
+    line-height: 1; transform-origin: 50% 50%; vertical-align: middle;
+    transition: transform .12s ease;
+}
+.acct-led-toggle.collapsed { transform: rotate(-90deg); }
+.acct-led-count { font-size: 10px; font-weight: 600; color: #a0aec0; margin-left: 6px; }
 .acct-consol-chip { display: inline-flex; align-items: center; gap: 6px; background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
 .acct-consol-chip .acct-consol-x { cursor: pointer; font-weight: 700; }
 .acct-consol-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #2d3748; padding: 5px 0; cursor: pointer; }
 .acct-consol-item input { width: auto; }
 .acct-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+
+/* ---- Opening balances: search-and-add picker ---- */
+.acct-ob-search-wrap { position: relative; }
+.acct-ob-results {
+    position: absolute; z-index: 30; left: 0; right: 0; top: 100%;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.10); max-height: 240px; overflow-y: auto;
+}
+.acct-ob-result {
+    padding: 6px 10px; font-size: 12px; cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+}
+.acct-ob-result:hover, .acct-ob-result.active { background: #eef2ff; }
+.acct-ob-result .acct-ob-grp { margin-left: auto; font-size: 10px; color: #a0aec0; }
+.acct-ob-empty { padding: 10px; font-size: 12px; color: #a0aec0; }
+.acct-ob-name { font-weight: 600; color: #2d3748; }
+.acct-ob-diff { font-weight: 700; }
+.acct-ob-note { font-size: 11px; color: #718096; margin-top: 6px; }
 
 /* ---- Voucher modal: line table ---- */
 .acct-type-toggle { display: inline-flex; gap: 1px; margin-bottom: 12px; }
@@ -87,7 +146,42 @@
 .acct-field { display: flex; flex-direction: column; gap: 4px; }
 .acct-field label { font-size: 10px; font-weight: 600; color: #718096; text-transform: uppercase; }
 
-.acct-lines-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+/* app-styles.css carries a BARE `table { min-width: 940px }` — broader than the
+   `.table-container > table` scoping UI-STANDARDS D.8.5 describes — so every table
+   in a modal is forced to 940px and overflows its ~720px dialog, pushing the
+   right-hand columns out of view. Opt these two modal tables out. */
+/* D.8.6 — app-styles.css has a bare `table { min-width: 940px }`, so ANY table
+   inside a ~720-760px dialog overflows it. Opt every accounting modal table out. */
+.wms-modal-dialog .acct-table, .wms-modal-dialog .acct-lines-table { min-width: 0; }
+.acct-lines-table { width: 100%; min-width: 0; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.acct-vch-row { cursor: pointer; }
+.acct-vch-row:hover { background: #f0f4ff; }
+.acct-vch-auto { color: #a0aec0; }
+/* Cancelled: kept visible for audit, struck through, excluded from balances. */
+.acct-vch-cancelled td { text-decoration: line-through; color: #a0aec0; }
+.acct-vch-cancelled:hover { background: #fff5f5; }
+/* NOT overflow:hidden — the ledger autocomplete is absolutely positioned inside a
+   cell and would be clipped by it. */
+.acct-lines-table td { overflow: visible; }
+.acct-lines-table .acct-ob-amt { width: 100%; }
+
+/* Row-entry inputs — matches the Add Transaction row table (.addTxn-table). */
+.acct-lines-table input[type="text"] {
+    padding: 4px 6px; border: 1px solid #e2e8f0; border-radius: 3px;
+    font-size: 11px; color: #2d3748; outline: none; width: 100%; box-sizing: border-box;
+}
+.acct-lines-table input[type="text"]:focus {
+    border-color: #667eea; box-shadow: 0 0 0 1px rgba(102,126,234,0.2);
+}
+.acct-lines-table .acct-line-amt { text-align: right; font-variant-numeric: tabular-nums; }
+/* An amount that was auto-filled to balance the voucher reads as a suggestion
+   until the user types over it. */
+.acct-lines-table .acct-line-amt.acct-auto { color: #667eea; font-style: italic; }
+.acct-line-pick { position: relative; }
+.acct-line-pick .wms-dd { text-align: left; }
+.acct-dd-create { color: #667eea; font-weight: 600; }
+.acct-dd-grp { float: right; font-size: 10px; color: #a0aec0; font-weight: 400; }
+.acct-lines-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
 .acct-lines-table th {
     font-size: 10px; font-weight: 600; text-transform: uppercase; color: #718096;
     text-align: left; padding: 5px 6px; border-bottom: 1px solid #e2e8f0;
@@ -119,15 +213,40 @@
 .acct-fin-controls .wms-input { max-width: 240px; margin-left: auto; }
 .acct-fin-zero { font-size: 12px; color: #4a5568; display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
 .acct-fin-zero input { width: auto; }
-.acct-fin-scope { font-size: 13px; font-weight: 700; color: #1a202c; margin: 0 0 8px; }
 .acct-fin-cols { display: flex; gap: 18px; align-items: flex-start; }
 .acct-fin-col { flex: 1; min-width: 0; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
 .acct-fin-hdr { display: flex; justify-content: space-between; background: #1e2a4a; color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 8px 12px; }
 .acct-fin-row { display: flex; align-items: center; padding: 5px 12px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: #4a5568; }
-.acct-fin-toggle { width: 16px; flex-shrink: 0; color: #667eea; font-size: 11px; }
+/* D.2.2 / D.9.1: one arrow glyph, rotated by CSS when collapsed. Never swap the
+   character - the rotation is what makes the state read as a disclosure triangle.
+   inline-FLEX + centring is required: as an inline-block with text-align:left the
+   glyph sat at the left of a 16px box while transform-origin stayed at the box
+   centre, so the rotated arrow pivoted around empty space and rendered offset. */
+.acct-fin-toggle {
+    width: 16px; height: 16px; flex-shrink: 0; color: #667eea; font-size: 10px;
+    display: inline-flex; align-items: center; justify-content: center;
+    line-height: 1; transform-origin: 50% 50%;
+    transition: transform .12s ease;
+}
+.acct-fin-toggle.collapsed { transform: rotate(-90deg); }
 .acct-fin-toggle-sp { width: 16px; flex-shrink: 0; }
 .acct-fin-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acct-fin-amt { padding-left: 10px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Three amount columns so the hierarchy reads like a printed statement:
+   ledger detail innermost, group subtotals next, section totals outermost. */
+.acct-fin-amt, .acct-fin-amt2, .acct-fin-amt3 {
+    padding-left: 10px; text-align: right; font-variant-numeric: tabular-nums;
+    white-space: nowrap; flex-shrink: 0;
+}
+.acct-fin-amt  { width: 92px; }
+.acct-fin-amt2 { width: 92px; }
+.acct-fin-amt3 { width: 104px; font-weight: 600; }
+.acct-fin-unit { font-weight: 400; opacity: .75; }
+/* Per-column total strip, inside each column so both sides show their own total. */
+.acct-fin-coltotal {
+    display: flex; align-items: center; padding: 8px 12px;
+    background: #1e2a4a; color: #fff; font-weight: 700; font-size: 12px;
+}
+.acct-fin-coltotal .acct-fin-name { flex: 1; }
 .acct-fin-group { font-weight: 700; color: #1f2937; cursor: pointer; background: #f8fafc; }
 .acct-fin-group:hover { background: #eef2ff; }
 .acct-fin-ledger { cursor: pointer; }
@@ -137,7 +256,25 @@
 .acct-fin-diff { font-weight: 700; color: #dc2626; background: #fff5f5; }
 /* Trial Balance Dr/Cr columns */
 .acct-tb-wrap { border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
-.acct-tb-dr, .acct-tb-cr { width: 150px; flex-shrink: 0; padding-left: 10px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Trial Balance: three blocks (Opening | During the period | Closing), each a
+   Dr/Cr pair. A left border opens each block so the grouping is visible without
+   relying on the header alone. */
+.acct-tb-c {
+    width: 92px; flex-shrink: 0; padding-left: 8px; text-align: right;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.acct-tb-blockstart { border-left: 1px solid #cbd5e0; margin-left: 6px; padding-left: 10px; }
+.acct-fin-hdr .acct-tb-blockstart { border-left-color: rgba(255,255,255,.35); }
+.acct-fin-total .acct-tb-blockstart { border-left-color: rgba(255,255,255,.35); }
+.acct-tb-close-c { font-weight: 600; }
+/* Two-tier header: block names on top, Dr/Cr beneath. */
+.acct-tb-hdr2 {
+    display: flex; align-items: center; background: #2c3a5e; color: #fff;
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+    padding: 5px 12px;
+}
+.acct-tb-hdr2 .acct-tb-grp { text-align: center; flex-shrink: 0; }
+.acct-tb-sub { font-weight: 600; opacity: .85; }
 .acct-report-h { font-size: 11px; font-weight: 600; color: #718096; text-transform: uppercase; margin-bottom: 4px; }
 .acct-report-ul { margin: 0; padding-left: 18px; font-size: 12px; color: #4a5568; }
 .acct-report-ul li { margin: 2px 0; }
@@ -146,30 +283,35 @@
 <body>
 <div class="acct-container">
 
-    <!-- ===== Header bar ===== -->
-    <div class="acct-headerbar">
-        <span class="acct-title">📒 Accounting</span>
-        <div class="acct-book-wrap">
-            <label for="acctBookSelect">Book</label>
-            <select id="acctBookSelect" class="wms-input acct-book-select"></select>
-            <button id="acctConsolidateBtn" class="wms-btn wms-btn-secondary" title="View consolidated across multiple books">📑 Consolidate</button>
-            <span id="acctConsolidateChip" class="acct-consol-chip" style="display:none;"></span>
-        </div>
-        <div class="acct-actions">
-            <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary">➕ New Voucher</button>
-            <button id="acctRebuildBtn" class="wms-btn wms-btn-secondary" title="Regenerate auto-vouchers for this book from its transactions">↻ Rebuild from trades</button>
-            <button id="acctRebuildAllBtn" class="wms-btn wms-btn-secondary" title="Regenerate auto-vouchers for ALL books">↻↻ Rebuild all</button>
-            <button id="acctRefreshBtn" class="wms-btn wms-btn-secondary" title="Refresh">🔄</button>
-        </div>
+    <!-- ===== Books (tab strip) =====
+         Books are tabs, not a dropdown: the book is the primary axis of this
+         module, so switching it should be one click and always visible. -->
+    <div class="acct-books">
+        <div class="acct-books-tabs" id="acctBookTabs"></div>
+        <span class="acct-context" id="acctContextInfo"></span>
     </div>
 
-    <!-- ===== Tabs ===== -->
+    <!-- ===== Views + actions on ONE row =====
+         Deliberately a single row. Only the primary action is exposed; the rest
+         live behind the ⋮ menu (D.9.1) so the chrome stays out of the content's way. -->
     <div class="acct-tabs">
         <button class="acct-tab active" data-acct-tab="balance-sheet">Balance Sheet</button>
         <button class="acct-tab" data-acct-tab="profit-loss">Profit &amp; Loss</button>
         <button class="acct-tab" data-acct-tab="trial-balance">Trial Balance</button>
         <button class="acct-tab" data-acct-tab="day-book">Day Book</button>
         <button class="acct-tab" data-acct-tab="ledgers">Ledgers</button>
+        <span class="acct-tabs-spacer"></span>
+        <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary acct-tab-action">➕ New Voucher</button>
+        <div class="acct-menu-wrap">
+            <button id="acctMenuBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="More actions">⋮</button>
+            <div class="wms-dd acct-menu-dd" id="acctMenuDd">
+                <div class="wms-dd-item" data-act="opening">⚖ Opening Balances</div>
+                <div class="wms-dd-item" data-act="consolidate">📑 Consolidate…</div>
+                <div class="wms-dd-item" data-act="rebuild">↻ Rebuild from trades</div>
+                <div class="wms-dd-item" data-act="rebuildAll">↻↻ Rebuild all books</div>
+                <div class="wms-dd-item" data-act="refresh">🔄 Refresh</div>
+            </div>
+        </div>
     </div>
 
     <!-- Balance Sheet -->
@@ -194,10 +336,6 @@
 
     <!-- Ledgers (chart of accounts) -->
     <div class="acct-tabpanel" id="acctPanel-ledgers">
-        <div class="acct-toolbar">
-            <button id="acctAddLedgerBtn" class="wms-btn wms-btn-secondary">➕ Add Ledger</button>
-            <button id="acctAddGroupBtn" class="wms-btn wms-btn-secondary">➕ Add Group</button>
-        </div>
         <div id="acctLedgersBody"><div class="acct-empty">Loading ledger catalogue…</div></div>
     </div>
 
@@ -225,9 +363,63 @@
                         <label>Date</label>
                         <div id="acctVoucherDate"></div>
                     </div>
-                    <div class="acct-field" style="flex:1;min-width:240px;">
-                        <label>Narration</label>
-                        <input type="text" id="acctVoucherNarration" class="wms-input" placeholder="Voucher narration">
+                </div>
+
+                <table class="acct-lines-table">
+                    <thead>
+                        <tr>
+                            <th style="width:52%;">Ledger</th>
+                            <th class="text-right">Debit</th>
+                            <th class="text-right">Credit</th>
+                            <th style="width:28px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="acctVoucherLines"></tbody>
+                </table>
+                <div class="acct-lines-actions">
+                    <button id="acctAddLineBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;">➕ Add line</button>
+                </div>
+
+                <div class="acct-balance-bar bad" id="acctBalanceBar">
+                    <span id="acctBalanceMsg">Not balanced</span>
+                    <span class="acct-bal-spacer"></span>
+                    <span>Dr <span id="acctTotalDebit">0.00</span></span>
+                    <span>Cr <span id="acctTotalCredit">0.00</span></span>
+                </div>
+
+                <!-- Narration sits AFTER the amounts: it is the last thing typed,
+                     and the keyboard flow lands here once the voucher balances. -->
+                <div class="acct-field" style="margin-top:2px;">
+                    <label>Narration</label>
+                    <input type="text" id="acctVoucherNarration" class="wms-input" placeholder="Voucher narration">
+                </div>
+            </div>
+        </div>
+        <div class="wms-modal-footer">
+            <button class="wms-btn wms-btn-secondary" id="acctVoucherCancel">Cancel</button>
+            <button class="wms-btn wms-btn-primary" id="acctVoucherSave" disabled>Save Voucher</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== Opening balances modal ===================== -->
+<div class="wms-modal-overlay" id="acctOpeningModal">
+    <div class="wms-modal-dialog" style="max-width: 720px; width: 92%;">
+        <div class="wms-modal-header">
+            <span id="acctOpeningTitle" style="font-size:15px;font-weight:700;">Opening Balances</span>
+            <button class="wms-btn-close" id="acctOpeningClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
+            <div class="acct-voucher-grid">
+                <div class="acct-field-row">
+                    <div class="acct-field">
+                        <label>As on</label>
+                        <div id="acctOpeningDate"></div>
+                    </div>
+                    <div class="acct-field acct-ob-search-wrap" style="flex:1;min-width:260px;">
+                        <label>Add ledger</label>
+                        <input type="text" id="acctOpeningSearch" class="wms-input" placeholder="Search a ledger to add…" autocomplete="off">
+                        <div id="acctOpeningResults" class="acct-ob-results" style="display:none;"></div>
                     </div>
                 </div>
 
@@ -240,27 +432,22 @@
                             <th style="width:28px;"></th>
                         </tr>
                     </thead>
-                    <tbody id="acctVoucherLines"></tbody>
+                    <tbody id="acctOpeningLines"></tbody>
                 </table>
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                    <button id="acctAddLineBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;">➕ Add line</button>
-                    <span style="flex:1;"></span>
-                    <span style="font-size:11px;color:#718096;">Balance to</span>
-                    <select id="acctBalanceLedger" class="wms-input" style="max-width:200px;"></select>
-                    <button id="acctAutoBalanceBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;" title="Add a balancing line to the selected ledger">⚖ Auto-balance</button>
-                </div>
 
-                <div class="acct-balance-bar bad" id="acctBalanceBar">
-                    <span id="acctBalanceMsg">Not balanced</span>
+                <div class="acct-balance-bar bad" id="acctOpeningBar">
+                    <span id="acctOpeningMsg">Nothing entered</span>
                     <span class="acct-bal-spacer"></span>
-                    <span>Dr <span id="acctTotalDebit">0.00</span></span>
-                    <span>Cr <span id="acctTotalCredit">0.00</span></span>
+                    <span>Dr <span id="acctOpeningTotalDr">0.00</span></span>
+                    <span>Cr <span id="acctOpeningTotalCr">0.00</span></span>
+                    <span class="acct-ob-diff">Diff <span id="acctOpeningDiff">0.00</span></span>
                 </div>
+                <div class="acct-ob-note" id="acctOpeningNote"></div>
             </div>
         </div>
         <div class="wms-modal-footer">
-            <button class="wms-btn wms-btn-secondary" id="acctVoucherCancel">Cancel</button>
-            <button class="wms-btn wms-btn-primary" id="acctVoucherSave" disabled>Save Voucher</button>
+            <button class="wms-btn wms-btn-secondary" id="acctOpeningCancel">Cancel</button>
+            <button class="wms-btn wms-btn-primary" id="acctOpeningSave" disabled>Save Opening Balances</button>
         </div>
     </div>
 </div>
