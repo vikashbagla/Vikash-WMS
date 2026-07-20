@@ -2003,10 +2003,33 @@ async function wmsExecuteSplit() {
     document.getElementById('wmsSplitConfirmBtn').disabled = true;
 
     try {
+        // split_seq — claim the next free sequence for this broker order.
+        //
+        // uq_txn_one_row_per_broker_order is (broker_id, broker_trade_id, split_seq)
+        // WHERE broker_trade_id IS NOT NULL. Machine writers (fill-writer, tradebook
+        // import) always leave split_seq at its DB default of 0, so their one-row-per-
+        // order duplicate protection is unchanged. A split-off row carries the PARENT's
+        // broker_trade_id on purpose (see wmsPreviewSplit — keeps both halves auditable
+        // to the broker fill, and fyCheckDuplicates' aggregate matcher relies on it), so
+        // without a distinct seq it would collide with its parent.
+        // Rows with no broker_trade_id are outside the partial index — leave the default.
+        var newRow = _wmsSplitData.newTxn;
+        if (newRow.broker_trade_id) {
+            var seqUrl = SUPABASE_URL + '/rest/v1/transactions?select=split_seq'
+                + '&broker_id=eq.' + encodeURIComponent(newRow.broker_id)
+                + '&broker_trade_id=eq.' + encodeURIComponent(newRow.broker_trade_id)
+                + '&order=split_seq.desc&limit=1';
+            var seqResp = await fetch(seqUrl, { headers: wmsHeaders() });
+            if (!seqResp.ok) throw new Error('split_seq lookup failed: ' + (await seqResp.text()));
+            var seqRows = await seqResp.json();
+            var maxSeq = (Array.isArray(seqRows) && seqRows.length) ? (Number(seqRows[0].split_seq) || 0) : 0;
+            newRow.split_seq = maxSeq + 1;
+        }
+
         var insertResp = await fetch(SUPABASE_URL + '/rest/v1/transactions', {
             method: 'POST',
             headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
-            body: JSON.stringify(_wmsSplitData.newTxn)
+            body: JSON.stringify(newRow)
         });
         if (!insertResp.ok) throw new Error('Insert failed: ' + (await insertResp.text()));
         var insertedRows = await insertResp.json();
