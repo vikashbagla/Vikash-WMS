@@ -1090,7 +1090,36 @@ function autoLoadGsFamRefresh() {
 // ----------------------------------------------------------------------------
 // GS Signals & Events tab (Phase B.2) — auto_signals scoped to GS strategies
 // ----------------------------------------------------------------------------
-var _AU_GS_STRATS = ['silver_mini_15m', 'gold_mini_15m'];
+// ── GS family membership — ONE source of truth ──────────────────────────────
+// Base plugin names. Config variants carry a suffix (gold_mini_15m_v3), so name
+// matching is by STEM, never by exact list. Adding an instrument to the family
+// means editing the two arrays below and nothing else.
+//
+// Before 2026-07-21 this list was duplicated in SIX places (events tab, run
+// history, admin last-run, family header ×2, health-page matcher) plus two
+// schedule strings. Adding the CoinDCX perpetuals would have meant finding all
+// eight — and the same class of duplication is what produced the variant
+// re-entry bug on 2026-07-17, where a hardcoded name made every shared-plugin
+// variant look permanently flat. Consolidated rather than extended.
+var _AU_GS_STRATS = ['silver_mini_15m', 'gold_mini_15m', 'silver_perp_15m', 'gold_perp_15m'];
+var _AU_GS_STEMS  = ['_mini_15m', '_perp_15m'];   // MCX minis · CoinDCX perpetuals
+
+/** Does this strategy_name belong to the GS family (base row or any variant)? */
+function auGsIsFamilyName(n) {
+    if (!n) return false;
+    for (var i = 0; i < _AU_GS_STEMS.length; i++) {
+        if (n.indexOf(_AU_GS_STEMS[i]) !== -1) return true;
+    }
+    return false;
+}
+
+/** PostgREST `or=(…)` matching every family stem, variants included.
+ *  Used instead of `name=in.(…)`, which silently omits variant rows. */
+function auGsNameFilter(col) {
+    col = col || 'strategy_name';
+    var parts = _AU_GS_STEMS.map(function (s) { return col + '.like.*' + s + '*'; });
+    return 'or=(' + parts.join(',') + ')';
+}
 
 async function autoLoadGsFamEvents(filterOverride) {
     var el = document.getElementById('au-gs-fam-events-content');
@@ -1110,10 +1139,12 @@ async function autoLoadGsFamEvents(filterOverride) {
 
     // LIKE-pattern (not a fixed IN-list) so parallel config variants that share a
     // plugin — e.g. silver_mini_15m_v3, gold_mini_15m_v23 — are included alongside
-    // the base v2.2 rows. 'all' catches both instruments via *_mini_15m*.
-    var namePat = stratFilter === 'all' ? '*_mini_15m*' : (stratFilter + '*');
-    var qs = '?strategy_name=like.' + encodeURIComponent(namePat) +
-             '&order=fired_at.desc&limit=200' +
+    // the base v2.2 rows. 'all' uses auGsNameFilter(), which covers every family
+    // stem (MCX *_mini_15m* and CoinDCX *_perp_15m*) — see _AU_GS_STEMS.
+    var qs = stratFilter === 'all'
+        ? '?' + auGsNameFilter()
+        : '?strategy_name=like.' + encodeURIComponent(stratFilter + '*');
+    qs += '&order=fired_at.desc&limit=200' +
              '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata,source,email_status';
     if (typeFilter === 'ENTRY')      qs += '&event_type=eq.ENTRY';
     else if (typeFilter === 'EXIT')  qs += '&event_type=neq.ENTRY';
@@ -1212,7 +1243,7 @@ async function autoLoadGsFamRuns(filterOverride) {
 
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
 
-    var qs = '?strategy_name=in.(' + _AU_GS_STRATS.join(',') + ')' +
+    var qs = '?' + auGsNameFilter() +
              '&order=started_at.desc&limit=100' +
              '&select=id,strategy_name,started_at,finished_at,duration_ms,status,signals_generated,emails_sent,emails_failed,error';
     if (filter === 'failed')            qs += '&status=eq.FAILED';
@@ -1279,7 +1310,7 @@ async function autoLoadGsFamAdmin() {
             // In parallel, pull the latest auto_run per name for the per-row "Last run".
             var stratReq = fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=*&order=enabled.desc,version.asc,name.asc',
                 { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
-            var runReq = fetch(SUPABASE_URL + '/rest/v1/auto_runs?strategy_name=like.' + encodeURIComponent('*mini_15m*') + '&order=finished_at.desc&limit=120&select=strategy_name,finished_at,status,metadata',
+            var runReq = fetch(SUPABASE_URL + '/rest/v1/auto_runs?' + auGsNameFilter() + '&order=finished_at.desc&limit=120&select=strategy_name,finished_at,status,metadata',
                 { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
             var _both = await Promise.all([stratReq, runReq]);
             var rows = _both[0];
@@ -1308,6 +1339,20 @@ async function autoLoadGsFamAdmin() {
                     html += '<td style="padding:6px 8px">' +
                             '<div><code style="font-weight:600">' + autoEsc(s.name) + '</code></div>' +
                             '<div style="font-size:10px;color:#6b7280"><span style="font-family:monospace;color:#1e40af">' + autoEsc(s.version || '—') + '</span> · ' + autoEsc(s.execution_mode || '—') + '</div></td>';
+                    // Venue + placeholder-params flags. A row whose params are
+                    // carried-over placeholders must SAY so here — otherwise the
+                    // numbers in the editable cells to the right read as settled
+                    // configuration, which is how a placeholder quietly becomes a
+                    // decision nobody made.
+                    var _md = s.metadata || {};
+                    var _venue = _md.venue ? String(_md.venue) : null;
+                    var _pending = _md.params_status ? String(_md.params_status) : null;
+                    if (_venue || _pending) {
+                        var _flags = '';
+                        if (_venue) _flags += '<span class="au-badge" style="background:#eef2ff;color:#3730a3">' + autoEsc(_venue) + '</span> ';
+                        if (_pending) _flags += '<span class="au-badge warn" title="' + autoEsc(_pending) + '">placeholder params</span>';
+                        html = html.replace(/(<\/td>)$/, '<div style="margin-top:3px">' + _flags + '</div>$1');
+                    }
                     html += '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge idle">paused</span>') + '</td>';
                     // Last run — latest auto_run for THIS row's name, with the version it stamped.
                     var lr = latestRun[s.name];
@@ -1369,6 +1414,10 @@ async function autoLoadGsFamAdmin() {
         var schedJobs = [
             { runFilter: 'strategy_name=like.silver_mini_15m*', label: 'Silver signal scan', endpoint: 'automation-runner?strategy=silver_mini_15m', cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
             { runFilter: 'strategy_name=like.gold_mini_15m*',   label: 'Gold signal scan',   endpoint: 'automation-runner?strategy=gold_mini_15m',   cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
+            // CoinDCX perpetuals — listed so the card shows the whole family and makes
+            // their dormancy visible, rather than them being silently absent.
+            { runFilter: 'strategy_name=like.silver_perp_15m*', label: 'Silver Perp scan (CoinDCX)', endpoint: 'automation-runner?strategy=silver_perp_15m', cadence: 'not scheduled — dormant' },
+            { runFilter: 'strategy_name=like.gold_perp_15m*',   label: 'Gold Perp scan (CoinDCX)',   endpoint: 'automation-runner?strategy=gold_perp_15m',   cadence: 'not scheduled — dormant' },
             { runFilter: 'strategy_name=eq._eod_ingest',        label: 'EOD prices ingest',  endpoint: 'eod-prices-ingest',                          cadence: 'daily · after MCX close (~23:35 IST)',      staleMinutes: 60 * 30 }
         ];
         try {
@@ -2414,7 +2463,7 @@ async function autoLoadKhFamRejections() {
 async function autoLoadGsFamHeader() {
     try {
         // Mode: read auto_strategies.execution_mode for silver + gold
-        var sr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=in.(silver_mini_15m,gold_mini_15m)&select=name,enabled,execution_mode,version',
+        var sr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=name,enabled,execution_mode,version,metadata',
             { headers: wmsHeaders() });
         var strategies = sr.ok ? await sr.json() : [];
         var pill = document.getElementById('au-gs-fam-mode');
@@ -2432,7 +2481,7 @@ async function autoLoadGsFamHeader() {
             vEl.textContent = versions.join(' / ');
         }
         // Last activity: most recent auto_signals row for GS strategies
-        var ar = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(silver_mini_15m,gold_mini_15m)&order=fired_at.desc&limit=1&select=fired_at,event_type,strategy_name',
+        var ar = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?' + auGsNameFilter() + '&order=fired_at.desc&limit=1&select=fired_at,event_type,strategy_name',
             { headers: wmsHeaders() });
         var last = ar.ok ? (await ar.json())[0] : null;
         var laEl = document.getElementById('au-gs-fam-lastact');
@@ -2610,9 +2659,8 @@ async function autoHealthLoadFamilies() {
         var state = (stateRows && stateRows[0]) || { kill_switch: false, paused_sources: [] };
         var paused = state.paused_sources || [];
 
-        var GS_NAMES = ['silver_mini_15m', 'gold_mini_15m'];
         var families = [
-            { key: 'gs',    label: '🥈🥇 GS — Silver & Gold Mini', matcher: function (n) { return GS_NAMES.indexOf(n) !== -1; }, sources: ['chassis', 'tv_webhook'] },
+            { key: 'gs',    label: '🥈🥇 GS — Silver & Gold', matcher: auGsIsFamilyName, sources: ['chassis', 'tv_webhook'] },
             { key: 'kh',    label: '🐦 Katalysthive — sharanaga_v1', matcher: null, sources: ['katalysthive'], external: true },
             { key: 'pairs', label: '🔗 Pairs Scanner',              matcher: function (n) { return n && n.indexOf('pairs') === 0; }, sources: ['chassis'] }
         ];
@@ -3333,6 +3381,11 @@ async function autoLoadMarketPricesStats() {
 var _AU_RESUME_CADENCE = {
     silver_mini_15m: 'every 15 minutes during MCX hours (9:00–23:30 IST, Mon–Fri)',
     gold_mini_15m:   'every 15 minutes during MCX hours (9:00–23:30 IST, Mon–Fri)',
+    // CoinDCX perpetuals: no cron yet. Cadence depends on decision A2 (trade 24/5
+    // vs gate to active hours), which is the analyst's — so this is deliberately
+    // NOT a copy of the MCX schedule.
+    silver_perp_15m: 'not scheduled — dormant pending analyst decisions',
+    gold_perp_15m:   'not scheduled — dormant pending analyst decisions',
     pairs:           'at the next scheduled scan (weekdays 9:30 / 11:30 / 13:30 / 15:15 / 18:05 IST)'
 };
 
@@ -4105,8 +4158,36 @@ async function autoLoadClosedTrades() {
 var AU_GS_POINT_VALUES = {
     SILVERM: 5.0,
     GOLDM:   10.0,
+    // CoinDCX perpetuals: 1 contract = 1 troy oz quoted in USDT, so a 1-point
+    // move is 1 USDT per contract. ⚠️ This value is in USDT, NOT rupees — see
+    // AU_GS_QUOTE_CCY below and mirror gs_catalogue.ts if either changes.
+    XAU_PERP: 1.0,
+    XAG_PERP: 1.0,
     // Add more when needed; trades for instruments not listed show P&L as "—".
 };
+
+// 🚨 Quote currency per instrument. Exposure, margin and P&L are ALL denominated
+// in this, and MUST NOT be summed across currencies.
+//
+// This exists because the GS page was built when every instrument was MCX and
+// '₹' could be hardcoded. The CoinDCX perpetuals are USDT-denominated, so a
+// naive total would add rupees to dollars and render a confident wrong number —
+// the exact failure mode LESSONS §A.11.6 was written about (a contract-size
+// error that produced a plausible headline nobody questioned).
+//
+// No FX conversion is applied deliberately: a rate frozen in the UI is wrong the
+// day after it is written, and wrong silently. Totals are kept per-currency and
+// rendered side by side instead.
+var AU_GS_QUOTE_CCY = {
+    SILVERM: 'INR', GOLDM: 'INR',
+    XAU_PERP: 'USDT', XAG_PERP: 'USDT',
+};
+function auGsCcy(shortSymbol) { return AU_GS_QUOTE_CCY[shortSymbol] || 'INR'; }
+function auGsCcySym(ccy) { return ccy === 'USDT' ? 'USDT ' : '₹'; }
+function auGsFmtMoney(v, ccy) {
+    if (v == null || !isFinite(v)) return '—';
+    return auGsCcySym(ccy) + Math.round(v).toLocaleString(ccy === 'USDT' ? 'en-US' : 'en-IN');
+}
 
 // Physical lot size for display (so "5 lots" can be enriched as "= 25 kg").
 // SILVERM: 1 lot = 5 kg of silver.
@@ -4124,6 +4205,11 @@ var AU_GS_PHYSICAL_LOT = {
 var AU_GS_MARGIN_PCT = {
     SILVERM: 20,
     GOLDM:   10,
+    // CoinDCX perpetuals deliberately ABSENT. Their margin is not a flat SPAN
+    // percentage — it steps by notional tier (30x <=50k USDT, 20x <=75k, 15x
+    // <=100k …), so any single number here would be wrong at most position
+    // sizes. autoGsMarginPct() returns null for them and the UI shows "—",
+    // which is honest. Modelling it properly is decision B4/B5.
 };
 
 function autoGsPointValue(shortSymbol) {
@@ -4261,6 +4347,7 @@ async function autoLoadGsOpenTrades(silent) {
 
         var totalPnl = 0, anyPnl = false;
         var totalExposure = 0, totalMargin = 0, anyExposure = false;
+        var totalExposureAlt = {};   // non-INR exposure, kept per currency — never cross-summed
         openRows.forEach(function (ot) {
             var sig = byTrade[ot.trade_id];
             var leg = sig && sig.legs && sig.legs[0];
@@ -4301,11 +4388,18 @@ async function autoLoadGsOpenTrades(silent) {
             // Exposure = qty_lots × point_value × entry_price  (₹ notional).
             // For SILVERM 7 lots @ ₹273,000: 7 × 5 × 273,000 = ₹95,55,000.
             var pv = shortSym ? autoGsPointValue(shortSym) : null;
+            var ccy = auGsCcy(shortSym);
             var exposure = (qtyLots != null && pv && entryPriceNum != null) ? (qtyLots * pv * entryPriceNum) : null;
             var exposureCell = exposure != null
-                ? '₹' + Math.round(exposure).toLocaleString('en-IN')
+                ? auGsFmtMoney(exposure, ccy)
                 : '<span style="color:#9ca3af">—</span>';
-            if (exposure != null) { totalExposure += exposure; anyExposure = true; }
+            // Per-currency totals. Adding USDT exposure to a rupee total would
+            // produce a confident wrong number — see AU_GS_QUOTE_CCY.
+            if (exposure != null) {
+                if (ccy === 'INR') { totalExposure += exposure; }
+                else { totalExposureAlt[ccy] = (totalExposureAlt[ccy] || 0) + exposure; }
+                anyExposure = true;
+            }
 
             // Margin = exposure × margin_pct/100. Per-instrument %, see
             // AU_GS_MARGIN_PCT. Sub-row shows the % used.
@@ -4361,8 +4455,16 @@ async function autoLoadGsOpenTrades(silent) {
         });
 
         if (anyExposure || anyPnl) {
+            // Rupee total, plus any non-INR totals shown SEPARATELY on their own
+            // line. Never one blended figure — see AU_GS_QUOTE_CCY.
+            var _altParts = Object.keys(totalExposureAlt).map(function (c) {
+                return auGsFmtMoney(totalExposureAlt[c], c);
+            });
             var expCell = anyExposure
-                ? '₹' + Math.round(totalExposure).toLocaleString('en-IN')
+                ? (auGsFmtMoney(totalExposure, 'INR')
+                   + (_altParts.length
+                      ? '<div style="font-size:11px;color:#6b7280">+ ' + _altParts.join(' + ') + '</div>'
+                      : ''))
                 : '<span style="color:#9ca3af">—</span>';
             var mgnCell = anyExposure
                 ? '₹' + Math.round(totalMargin).toLocaleString('en-IN')
