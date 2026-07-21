@@ -318,7 +318,15 @@ async function wmsFetchAllRows(table, select, orderCol, filterFn) {
         var query = window.supabaseClient
             .from(table)
             .select(select)
-            .order(orderCol, { ascending: true });
+            .order(orderCol, { ascending: true })
+            // Tie-breaker — REQUIRED, not cosmetic. Paging with .range() over a
+            // non-unique orderCol is undefined behaviour: rows sharing a value can
+            // come back in a different order per request, so some are returned twice
+            // and others never at all. securities_nfo pages by expiry_date, where
+            // thousands of contracts share a handful of monthly expiries — measured
+            // 2026-07-20 on live data: 2,104 rows fetched, only 2,083 distinct,
+            // 21 silently lost. Ordering by (orderCol, id) makes paging total.
+            .order('id', { ascending: true });
         if (filterFn) query = filterFn(query);
         query = query.range(from, from + BATCH - 1);
         var result = await query;
