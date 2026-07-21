@@ -1090,7 +1090,40 @@ function autoLoadGsFamRefresh() {
 // ----------------------------------------------------------------------------
 // GS Signals & Events tab (Phase B.2) — auto_signals scoped to GS strategies
 // ----------------------------------------------------------------------------
+// ── GS family membership — ONE source of truth ──────────────────────────────
+// Base plugin names. Config variants carry a suffix (gold_mini_15m_v3), so name
+// matching is by STEM, never by exact list. Adding an instrument to the family
+// means editing the two arrays below and nothing else.
+//
+// Before 2026-07-21 this list was duplicated in SIX places (events tab, run
+// history, admin last-run, family header ×2, health-page matcher). Worse, three
+// of them used `name=in.(silver_mini_15m,gold_mini_15m)`, which silently
+// EXCLUDED variant rows — so gold_mini_15m_v3 runs never appeared in Run
+// History. Consolidated to a stem match, which fixes that.
+//
+// CoinDCX is deliberately NOT here: it has its own cdx_* tables, its own runner
+// and its own family tab, because the app is INR-denominated end to end and
+// mixing a USDT venue into these shared views is the quagmire we chose to
+// avoid. See automation/CDX-PLAN.md.
 var _AU_GS_STRATS = ['silver_mini_15m', 'gold_mini_15m'];
+var _AU_GS_STEMS  = ['_mini_15m'];   // MCX minis. CoinDCX lives in its own cdx_* stack.
+
+/** Does this strategy_name belong to the GS family (base row or any variant)? */
+function auGsIsFamilyName(n) {
+    if (!n) return false;
+    for (var i = 0; i < _AU_GS_STEMS.length; i++) {
+        if (n.indexOf(_AU_GS_STEMS[i]) !== -1) return true;
+    }
+    return false;
+}
+
+/** PostgREST `or=(…)` matching every family stem, variants included.
+ *  Used instead of `name=in.(…)`, which silently omits variant rows. */
+function auGsNameFilter(col) {
+    col = col || 'strategy_name';
+    var parts = _AU_GS_STEMS.map(function (s) { return col + '.like.*' + s + '*'; });
+    return 'or=(' + parts.join(',') + ')';
+}
 
 async function autoLoadGsFamEvents(filterOverride) {
     var el = document.getElementById('au-gs-fam-events-content');
@@ -1110,10 +1143,12 @@ async function autoLoadGsFamEvents(filterOverride) {
 
     // LIKE-pattern (not a fixed IN-list) so parallel config variants that share a
     // plugin — e.g. silver_mini_15m_v3, gold_mini_15m_v23 — are included alongside
-    // the base v2.2 rows. 'all' catches both instruments via *_mini_15m*.
-    var namePat = stratFilter === 'all' ? '*_mini_15m*' : (stratFilter + '*');
-    var qs = '?strategy_name=like.' + encodeURIComponent(namePat) +
-             '&order=fired_at.desc&limit=200' +
+    // the base v2.2 rows. 'all' uses auGsNameFilter(), which covers every family
+    // stem — see _AU_GS_STEMS.
+    var qs = stratFilter === 'all'
+        ? '?' + auGsNameFilter()
+        : '?strategy_name=like.' + encodeURIComponent(stratFilter + '*');
+    qs += '&order=fired_at.desc&limit=200' +
              '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata,source,email_status';
     if (typeFilter === 'ENTRY')      qs += '&event_type=eq.ENTRY';
     else if (typeFilter === 'EXIT')  qs += '&event_type=neq.ENTRY';
@@ -1212,7 +1247,7 @@ async function autoLoadGsFamRuns(filterOverride) {
 
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
 
-    var qs = '?strategy_name=in.(' + _AU_GS_STRATS.join(',') + ')' +
+    var qs = '?' + auGsNameFilter() +
              '&order=started_at.desc&limit=100' +
              '&select=id,strategy_name,started_at,finished_at,duration_ms,status,signals_generated,emails_sent,emails_failed,error';
     if (filter === 'failed')            qs += '&status=eq.FAILED';
@@ -1279,7 +1314,7 @@ async function autoLoadGsFamAdmin() {
             // In parallel, pull the latest auto_run per name for the per-row "Last run".
             var stratReq = fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=*&order=enabled.desc,version.asc,name.asc',
                 { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
-            var runReq = fetch(SUPABASE_URL + '/rest/v1/auto_runs?strategy_name=like.' + encodeURIComponent('*mini_15m*') + '&order=finished_at.desc&limit=120&select=strategy_name,finished_at,status,metadata',
+            var runReq = fetch(SUPABASE_URL + '/rest/v1/auto_runs?' + auGsNameFilter() + '&order=finished_at.desc&limit=120&select=strategy_name,finished_at,status,metadata',
                 { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
             var _both = await Promise.all([stratReq, runReq]);
             var rows = _both[0];
@@ -1369,6 +1404,7 @@ async function autoLoadGsFamAdmin() {
         var schedJobs = [
             { runFilter: 'strategy_name=like.silver_mini_15m*', label: 'Silver signal scan', endpoint: 'automation-runner?strategy=silver_mini_15m', cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
             { runFilter: 'strategy_name=like.gold_mini_15m*',   label: 'Gold signal scan',   endpoint: 'automation-runner?strategy=gold_mini_15m',   cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
+
             { runFilter: 'strategy_name=eq._eod_ingest',        label: 'EOD prices ingest',  endpoint: 'eod-prices-ingest',                          cadence: 'daily · after MCX close (~23:35 IST)',      staleMinutes: 60 * 30 }
         ];
         try {
@@ -2414,7 +2450,7 @@ async function autoLoadKhFamRejections() {
 async function autoLoadGsFamHeader() {
     try {
         // Mode: read auto_strategies.execution_mode for silver + gold
-        var sr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=in.(silver_mini_15m,gold_mini_15m)&select=name,enabled,execution_mode,version',
+        var sr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&select=name,enabled,execution_mode,version,metadata',
             { headers: wmsHeaders() });
         var strategies = sr.ok ? await sr.json() : [];
         var pill = document.getElementById('au-gs-fam-mode');
@@ -2432,7 +2468,7 @@ async function autoLoadGsFamHeader() {
             vEl.textContent = versions.join(' / ');
         }
         // Last activity: most recent auto_signals row for GS strategies
-        var ar = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(silver_mini_15m,gold_mini_15m)&order=fired_at.desc&limit=1&select=fired_at,event_type,strategy_name',
+        var ar = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?' + auGsNameFilter() + '&order=fired_at.desc&limit=1&select=fired_at,event_type,strategy_name',
             { headers: wmsHeaders() });
         var last = ar.ok ? (await ar.json())[0] : null;
         var laEl = document.getElementById('au-gs-fam-lastact');
@@ -2610,9 +2646,8 @@ async function autoHealthLoadFamilies() {
         var state = (stateRows && stateRows[0]) || { kill_switch: false, paused_sources: [] };
         var paused = state.paused_sources || [];
 
-        var GS_NAMES = ['silver_mini_15m', 'gold_mini_15m'];
         var families = [
-            { key: 'gs',    label: '🥈🥇 GS — Silver & Gold Mini', matcher: function (n) { return GS_NAMES.indexOf(n) !== -1; }, sources: ['chassis', 'tv_webhook'] },
+            { key: 'gs',    label: '🥈🥇 GS — Silver & Gold', matcher: auGsIsFamilyName, sources: ['chassis', 'tv_webhook'] },
             { key: 'kh',    label: '🐦 Katalysthive — sharanaga_v1', matcher: null, sources: ['katalysthive'], external: true },
             { key: 'pairs', label: '🔗 Pairs Scanner',              matcher: function (n) { return n && n.indexOf('pairs') === 0; }, sources: ['chassis'] }
         ];
@@ -4107,6 +4142,7 @@ var AU_GS_POINT_VALUES = {
     GOLDM:   10.0,
     // Add more when needed; trades for instruments not listed show P&L as "—".
 };
+
 
 // Physical lot size for display (so "5 lots" can be enriched as "= 25 kg").
 // SILVERM: 1 lot = 5 kg of silver.
