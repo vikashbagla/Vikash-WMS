@@ -1096,13 +1096,17 @@ function autoLoadGsFamRefresh() {
 // means editing the two arrays below and nothing else.
 //
 // Before 2026-07-21 this list was duplicated in SIX places (events tab, run
-// history, admin last-run, family header ×2, health-page matcher) plus two
-// schedule strings. Adding the CoinDCX perpetuals would have meant finding all
-// eight — and the same class of duplication is what produced the variant
-// re-entry bug on 2026-07-17, where a hardcoded name made every shared-plugin
-// variant look permanently flat. Consolidated rather than extended.
-var _AU_GS_STRATS = ['silver_mini_15m', 'gold_mini_15m', 'silver_perp_15m', 'gold_perp_15m'];
-var _AU_GS_STEMS  = ['_mini_15m', '_perp_15m'];   // MCX minis · CoinDCX perpetuals
+// history, admin last-run, family header ×2, health-page matcher). Worse, three
+// of them used `name=in.(silver_mini_15m,gold_mini_15m)`, which silently
+// EXCLUDED variant rows — so gold_mini_15m_v3 runs never appeared in Run
+// History. Consolidated to a stem match, which fixes that.
+//
+// CoinDCX is deliberately NOT here: it has its own cdx_* tables, its own runner
+// and its own family tab, because the app is INR-denominated end to end and
+// mixing a USDT venue into these shared views is the quagmire we chose to
+// avoid. See automation/CDX-PLAN.md.
+var _AU_GS_STRATS = ['silver_mini_15m', 'gold_mini_15m'];
+var _AU_GS_STEMS  = ['_mini_15m'];   // MCX minis. CoinDCX lives in its own cdx_* stack.
 
 /** Does this strategy_name belong to the GS family (base row or any variant)? */
 function auGsIsFamilyName(n) {
@@ -1140,7 +1144,7 @@ async function autoLoadGsFamEvents(filterOverride) {
     // LIKE-pattern (not a fixed IN-list) so parallel config variants that share a
     // plugin — e.g. silver_mini_15m_v3, gold_mini_15m_v23 — are included alongside
     // the base v2.2 rows. 'all' uses auGsNameFilter(), which covers every family
-    // stem (MCX *_mini_15m* and CoinDCX *_perp_15m*) — see _AU_GS_STEMS.
+    // stem — see _AU_GS_STEMS.
     var qs = stratFilter === 'all'
         ? '?' + auGsNameFilter()
         : '?strategy_name=like.' + encodeURIComponent(stratFilter + '*');
@@ -1339,20 +1343,6 @@ async function autoLoadGsFamAdmin() {
                     html += '<td style="padding:6px 8px">' +
                             '<div><code style="font-weight:600">' + autoEsc(s.name) + '</code></div>' +
                             '<div style="font-size:10px;color:#6b7280"><span style="font-family:monospace;color:#1e40af">' + autoEsc(s.version || '—') + '</span> · ' + autoEsc(s.execution_mode || '—') + '</div></td>';
-                    // Venue + placeholder-params flags. A row whose params are
-                    // carried-over placeholders must SAY so here — otherwise the
-                    // numbers in the editable cells to the right read as settled
-                    // configuration, which is how a placeholder quietly becomes a
-                    // decision nobody made.
-                    var _md = s.metadata || {};
-                    var _venue = _md.venue ? String(_md.venue) : null;
-                    var _pending = _md.params_status ? String(_md.params_status) : null;
-                    if (_venue || _pending) {
-                        var _flags = '';
-                        if (_venue) _flags += '<span class="au-badge" style="background:#eef2ff;color:#3730a3">' + autoEsc(_venue) + '</span> ';
-                        if (_pending) _flags += '<span class="au-badge warn" title="' + autoEsc(_pending) + '">placeholder params</span>';
-                        html = html.replace(/(<\/td>)$/, '<div style="margin-top:3px">' + _flags + '</div>$1');
-                    }
                     html += '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge idle">paused</span>') + '</td>';
                     // Last run — latest auto_run for THIS row's name, with the version it stamped.
                     var lr = latestRun[s.name];
@@ -1414,10 +1404,7 @@ async function autoLoadGsFamAdmin() {
         var schedJobs = [
             { runFilter: 'strategy_name=like.silver_mini_15m*', label: 'Silver signal scan', endpoint: 'automation-runner?strategy=silver_mini_15m', cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
             { runFilter: 'strategy_name=like.gold_mini_15m*',   label: 'Gold signal scan',   endpoint: 'automation-runner?strategy=gold_mini_15m',   cadence: 'every 15 min · MCX hours (9:00–23:30 IST)', staleMinutes: 45 },
-            // CoinDCX perpetuals — listed so the card shows the whole family and makes
-            // their dormancy visible, rather than them being silently absent.
-            { runFilter: 'strategy_name=like.silver_perp_15m*', label: 'Silver Perp scan (CoinDCX)', endpoint: 'automation-runner?strategy=silver_perp_15m', cadence: 'not scheduled — dormant' },
-            { runFilter: 'strategy_name=like.gold_perp_15m*',   label: 'Gold Perp scan (CoinDCX)',   endpoint: 'automation-runner?strategy=gold_perp_15m',   cadence: 'not scheduled — dormant' },
+
             { runFilter: 'strategy_name=eq._eod_ingest',        label: 'EOD prices ingest',  endpoint: 'eod-prices-ingest',                          cadence: 'daily · after MCX close (~23:35 IST)',      staleMinutes: 60 * 30 }
         ];
         try {
@@ -3381,11 +3368,6 @@ async function autoLoadMarketPricesStats() {
 var _AU_RESUME_CADENCE = {
     silver_mini_15m: 'every 15 minutes during MCX hours (9:00–23:30 IST, Mon–Fri)',
     gold_mini_15m:   'every 15 minutes during MCX hours (9:00–23:30 IST, Mon–Fri)',
-    // CoinDCX perpetuals: no cron yet. Cadence depends on decision A2 (trade 24/5
-    // vs gate to active hours), which is the analyst's — so this is deliberately
-    // NOT a copy of the MCX schedule.
-    silver_perp_15m: 'not scheduled — dormant pending analyst decisions',
-    gold_perp_15m:   'not scheduled — dormant pending analyst decisions',
     pairs:           'at the next scheduled scan (weekdays 9:30 / 11:30 / 13:30 / 15:15 / 18:05 IST)'
 };
 
@@ -3414,9 +3396,6 @@ function _auCacheStrategies(rows) {
 }
 
 function autoRefreshStrategySurfaces() {
-    // Warm the USDT→INR rate so CoinDCX figures can show an INR equivalent.
-    // Fire-and-forget: a missing rate degrades to USDT-only, never to a guess.
-    auGetUsdtInr();
     if (document.getElementById('au-gs-fam-strategies'))    autoLoadGsFamAdmin();
     if (document.getElementById('au-gs-fam-mode'))          autoLoadGsFamHeader();
     if (document.getElementById('au-pairs-fam-strategies')) autoLoadPairsFamAdmin();
@@ -4161,91 +4140,9 @@ async function autoLoadClosedTrades() {
 var AU_GS_POINT_VALUES = {
     SILVERM: 5.0,
     GOLDM:   10.0,
-    // CoinDCX perpetuals: 1 contract = 1 troy oz quoted in USDT, so a 1-point
-    // move is 1 USDT per contract. ⚠️ This value is in USDT, NOT rupees — see
-    // AU_GS_QUOTE_CCY below and mirror gs_catalogue.ts if either changes.
-    XAU_PERP: 1.0,
-    XAG_PERP: 1.0,
     // Add more when needed; trades for instruments not listed show P&L as "—".
 };
 
-// 🚨 Quote currency per instrument. Exposure, margin and P&L are ALL denominated
-// in this, and MUST NOT be summed across currencies.
-//
-// This exists because the GS page was built when every instrument was MCX and
-// '₹' could be hardcoded. The CoinDCX perpetuals are USDT-denominated, so a
-// naive total would add rupees to dollars and render a confident wrong number —
-// the exact failure mode LESSONS §A.11.6 was written about (a contract-size
-// error that produced a plausible headline nobody questioned).
-//
-// No FX conversion is applied deliberately: a rate frozen in the UI is wrong the
-// day after it is written, and wrong silently. Totals are kept per-currency and
-// rendered side by side instead.
-var AU_GS_QUOTE_CCY = {
-    SILVERM: 'INR', GOLDM: 'INR',
-    XAU_PERP: 'USDT', XAG_PERP: 'USDT',
-};
-function auGsCcy(shortSymbol) { return AU_GS_QUOTE_CCY[shortSymbol] || 'INR'; }
-
-// ── USDT → INR, for DISPLAY ONLY ────────────────────────────────────────────
-// Fetched live from CoinDCX spot `I-USDT_INR` (public, no auth, same
-// /market_data/candlesticks endpoint the strategy already uses, so one verified
-// response shape rather than two).
-//
-// WHY NOT FYERS USDINR — the obvious alternative, rejected on two grounds:
-//   1. It is not available without new plumbing. securities-fno-sync pulls
-//      NSE_FO / BSE_FO / MCX_COM; currency derivatives live in NSE_CD, which we
-//      do not sync. securities_nfo contains zero USDINR rows today.
-//   2. More importantly it is the WRONG RATE. NSE USDINR is the official FX
-//      reference; what matters here is the rate at which USDT actually converts
-//      to rupees on the venue the money is sitting in. Those differ by the
-//      Indian crypto premium. For a P&L that must eventually be reported in
-//      INR, the realisable rate is the honest one.
-//
-// ⚠️ DISPLAY ONLY, and that boundary is deliberate. Trades stay USDT-native in
-// the database. Converting at scan/trade time would freeze one day's FX rate
-// into the permanent record and make historical P&L unreproducible; converting
-// at render time leaves the underlying honest and lets any rate be applied
-// later. If you find yourself wanting this value inside a strategy, stop.
-//
-// A stale-but-real rate beats a hardcoded one, so the last good value is cached
-// and reused on failure; if we have never had one, the UI shows USDT unconverted
-// rather than inventing a number.
-var _AU_USDTINR = { rate: null, at: 0 };
-var _AU_USDTINR_TTL_MS = 15 * 60 * 1000;
-
-async function auGetUsdtInr() {
-    var now = Date.now();
-    if (_AU_USDTINR.rate && (now - _AU_USDTINR.at) < _AU_USDTINR_TTL_MS) return _AU_USDTINR.rate;
-    try {
-        var to = Math.floor(now / 1000), from = to - 6 * 3600;
-        var r = await fetch('https://public.coindcx.com/market_data/candlesticks'
-            + '?pair=I-USDT_INR&from=' + from + '&to=' + to + '&resolution=60&pcode=s');
-        if (r.ok) {
-            var j = await r.json();
-            if (j && j.s === 'ok' && Array.isArray(j.data) && j.data.length) {
-                var last = j.data[j.data.length - 1];
-                var px = Number(last && last.close);
-                if (isFinite(px) && px > 0) { _AU_USDTINR = { rate: px, at: now }; return px; }
-            }
-        }
-    } catch (e) { /* fall through to the cached value */ }
-    return _AU_USDTINR.rate;   // may be null — callers must handle that
-}
-
-/** Format a USDT amount with its INR equivalent alongside, when a rate is known.
- *  Never fabricates: no rate → USDT only. */
-function auGsFmtUsdtWithInr(v, rate) {
-    if (v == null || !isFinite(v)) return '—';
-    var usdt = 'USDT ' + Math.round(v).toLocaleString('en-US');
-    if (!rate) return usdt;
-    return usdt + ' <span style="color:#6b7280">(≈₹' + Math.round(v * rate).toLocaleString('en-IN') + ')</span>';
-}
-function auGsCcySym(ccy) { return ccy === 'USDT' ? 'USDT ' : '₹'; }
-function auGsFmtMoney(v, ccy) {
-    if (v == null || !isFinite(v)) return '—';
-    return auGsCcySym(ccy) + Math.round(v).toLocaleString(ccy === 'USDT' ? 'en-US' : 'en-IN');
-}
 
 // Physical lot size for display (so "5 lots" can be enriched as "= 25 kg").
 // SILVERM: 1 lot = 5 kg of silver.
@@ -4263,11 +4160,6 @@ var AU_GS_PHYSICAL_LOT = {
 var AU_GS_MARGIN_PCT = {
     SILVERM: 20,
     GOLDM:   10,
-    // CoinDCX perpetuals deliberately ABSENT. Their margin is not a flat SPAN
-    // percentage — it steps by notional tier (30x <=50k USDT, 20x <=75k, 15x
-    // <=100k …), so any single number here would be wrong at most position
-    // sizes. autoGsMarginPct() returns null for them and the UI shows "—",
-    // which is honest. Modelling it properly is decision B4/B5.
 };
 
 function autoGsPointValue(shortSymbol) {
@@ -4405,7 +4297,6 @@ async function autoLoadGsOpenTrades(silent) {
 
         var totalPnl = 0, anyPnl = false;
         var totalExposure = 0, totalMargin = 0, anyExposure = false;
-        var totalExposureAlt = {};   // non-INR exposure, kept per currency — never cross-summed
         openRows.forEach(function (ot) {
             var sig = byTrade[ot.trade_id];
             var leg = sig && sig.legs && sig.legs[0];
@@ -4446,18 +4337,11 @@ async function autoLoadGsOpenTrades(silent) {
             // Exposure = qty_lots × point_value × entry_price  (₹ notional).
             // For SILVERM 7 lots @ ₹273,000: 7 × 5 × 273,000 = ₹95,55,000.
             var pv = shortSym ? autoGsPointValue(shortSym) : null;
-            var ccy = auGsCcy(shortSym);
             var exposure = (qtyLots != null && pv && entryPriceNum != null) ? (qtyLots * pv * entryPriceNum) : null;
             var exposureCell = exposure != null
-                ? auGsFmtMoney(exposure, ccy)
+                ? '₹' + Math.round(exposure).toLocaleString('en-IN')
                 : '<span style="color:#9ca3af">—</span>';
-            // Per-currency totals. Adding USDT exposure to a rupee total would
-            // produce a confident wrong number — see AU_GS_QUOTE_CCY.
-            if (exposure != null) {
-                if (ccy === 'INR') { totalExposure += exposure; }
-                else { totalExposureAlt[ccy] = (totalExposureAlt[ccy] || 0) + exposure; }
-                anyExposure = true;
-            }
+            if (exposure != null) { totalExposure += exposure; anyExposure = true; }
 
             // Margin = exposure × margin_pct/100. Per-instrument %, see
             // AU_GS_MARGIN_PCT. Sub-row shows the % used.
@@ -4513,18 +4397,8 @@ async function autoLoadGsOpenTrades(silent) {
         });
 
         if (anyExposure || anyPnl) {
-            // Rupee total, plus any non-INR totals shown SEPARATELY on their own
-            // line. Never one blended figure — see AU_GS_QUOTE_CCY.
-            var _fx = _AU_USDTINR.rate;   // cached; refreshed by the family loader
-            var _altParts = Object.keys(totalExposureAlt).map(function (c) {
-                return c === 'USDT' ? auGsFmtUsdtWithInr(totalExposureAlt[c], _fx)
-                                    : auGsFmtMoney(totalExposureAlt[c], c);
-            });
             var expCell = anyExposure
-                ? (auGsFmtMoney(totalExposure, 'INR')
-                   + (_altParts.length
-                      ? '<div style="font-size:11px;color:#6b7280">+ ' + _altParts.join(' + ') + '</div>'
-                      : ''))
+                ? '₹' + Math.round(totalExposure).toLocaleString('en-IN')
                 : '<span style="color:#9ca3af">—</span>';
             var mgnCell = anyExposure
                 ? '₹' + Math.round(totalMargin).toLocaleString('en-IN')
