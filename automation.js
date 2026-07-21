@@ -3414,6 +3414,9 @@ function _auCacheStrategies(rows) {
 }
 
 function autoRefreshStrategySurfaces() {
+    // Warm the USDT→INR rate so CoinDCX figures can show an INR equivalent.
+    // Fire-and-forget: a missing rate degrades to USDT-only, never to a guess.
+    auGetUsdtInr();
     if (document.getElementById('au-gs-fam-strategies'))    autoLoadGsFamAdmin();
     if (document.getElementById('au-gs-fam-mode'))          autoLoadGsFamHeader();
     if (document.getElementById('au-pairs-fam-strategies')) autoLoadPairsFamAdmin();
@@ -4183,6 +4186,61 @@ var AU_GS_QUOTE_CCY = {
     XAU_PERP: 'USDT', XAG_PERP: 'USDT',
 };
 function auGsCcy(shortSymbol) { return AU_GS_QUOTE_CCY[shortSymbol] || 'INR'; }
+
+// ── USDT → INR, for DISPLAY ONLY ────────────────────────────────────────────
+// Fetched live from CoinDCX spot `I-USDT_INR` (public, no auth, same
+// /market_data/candlesticks endpoint the strategy already uses, so one verified
+// response shape rather than two).
+//
+// WHY NOT FYERS USDINR — the obvious alternative, rejected on two grounds:
+//   1. It is not available without new plumbing. securities-fno-sync pulls
+//      NSE_FO / BSE_FO / MCX_COM; currency derivatives live in NSE_CD, which we
+//      do not sync. securities_nfo contains zero USDINR rows today.
+//   2. More importantly it is the WRONG RATE. NSE USDINR is the official FX
+//      reference; what matters here is the rate at which USDT actually converts
+//      to rupees on the venue the money is sitting in. Those differ by the
+//      Indian crypto premium. For a P&L that must eventually be reported in
+//      INR, the realisable rate is the honest one.
+//
+// ⚠️ DISPLAY ONLY, and that boundary is deliberate. Trades stay USDT-native in
+// the database. Converting at scan/trade time would freeze one day's FX rate
+// into the permanent record and make historical P&L unreproducible; converting
+// at render time leaves the underlying honest and lets any rate be applied
+// later. If you find yourself wanting this value inside a strategy, stop.
+//
+// A stale-but-real rate beats a hardcoded one, so the last good value is cached
+// and reused on failure; if we have never had one, the UI shows USDT unconverted
+// rather than inventing a number.
+var _AU_USDTINR = { rate: null, at: 0 };
+var _AU_USDTINR_TTL_MS = 15 * 60 * 1000;
+
+async function auGetUsdtInr() {
+    var now = Date.now();
+    if (_AU_USDTINR.rate && (now - _AU_USDTINR.at) < _AU_USDTINR_TTL_MS) return _AU_USDTINR.rate;
+    try {
+        var to = Math.floor(now / 1000), from = to - 6 * 3600;
+        var r = await fetch('https://public.coindcx.com/market_data/candlesticks'
+            + '?pair=I-USDT_INR&from=' + from + '&to=' + to + '&resolution=60&pcode=s');
+        if (r.ok) {
+            var j = await r.json();
+            if (j && j.s === 'ok' && Array.isArray(j.data) && j.data.length) {
+                var last = j.data[j.data.length - 1];
+                var px = Number(last && last.close);
+                if (isFinite(px) && px > 0) { _AU_USDTINR = { rate: px, at: now }; return px; }
+            }
+        }
+    } catch (e) { /* fall through to the cached value */ }
+    return _AU_USDTINR.rate;   // may be null — callers must handle that
+}
+
+/** Format a USDT amount with its INR equivalent alongside, when a rate is known.
+ *  Never fabricates: no rate → USDT only. */
+function auGsFmtUsdtWithInr(v, rate) {
+    if (v == null || !isFinite(v)) return '—';
+    var usdt = 'USDT ' + Math.round(v).toLocaleString('en-US');
+    if (!rate) return usdt;
+    return usdt + ' <span style="color:#6b7280">(≈₹' + Math.round(v * rate).toLocaleString('en-IN') + ')</span>';
+}
 function auGsCcySym(ccy) { return ccy === 'USDT' ? 'USDT ' : '₹'; }
 function auGsFmtMoney(v, ccy) {
     if (v == null || !isFinite(v)) return '—';
@@ -4457,8 +4515,10 @@ async function autoLoadGsOpenTrades(silent) {
         if (anyExposure || anyPnl) {
             // Rupee total, plus any non-INR totals shown SEPARATELY on their own
             // line. Never one blended figure — see AU_GS_QUOTE_CCY.
+            var _fx = _AU_USDTINR.rate;   // cached; refreshed by the family loader
             var _altParts = Object.keys(totalExposureAlt).map(function (c) {
-                return auGsFmtMoney(totalExposureAlt[c], c);
+                return c === 'USDT' ? auGsFmtUsdtWithInr(totalExposureAlt[c], _fx)
+                                    : auGsFmtMoney(totalExposureAlt[c], c);
             });
             var expCell = anyExposure
                 ? (auGsFmtMoney(totalExposure, 'INR')
