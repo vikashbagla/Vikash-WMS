@@ -1085,6 +1085,7 @@ function autoLoadGsFamRefresh() {
     autoLoadGsFamEvents();
     autoLoadGsFamRuns();
     autoLoadGsFamAdmin();
+    if (typeof autoGsLoadLive === 'function') autoGsLoadLive();
 }
 
 // ----------------------------------------------------------------------------
@@ -3404,6 +3405,7 @@ function _auCacheStrategies(rows) {
 
 function autoRefreshStrategySurfaces() {
     if (document.getElementById('au-gs-fam-strategies'))    autoLoadGsFamAdmin();
+    if (document.getElementById('au-gs-fam-live'))          autoGsLoadLive();
     if (document.getElementById('au-gs-fam-mode'))          autoLoadGsFamHeader();
     if (document.getElementById('au-pairs-fam-strategies')) autoLoadPairsFamAdmin();
     if (document.getElementById('au-pairs-fam-mode'))       autoLoadPairsFamHeader();
@@ -5153,4 +5155,133 @@ async function _auUpsertLimit(existing, scope, type, value, enabled, breach) {
     }
     var resp = await fetch(url, { method: method, headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: body });
     if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+}
+
+// ============================================================================
+// GS live-risk Controls + arming toggle (GS-LIVE-BUILD-SEQUENCE.md Stage 1B).
+// Mirrors the KH live controls (_auFindLimit / _auUpsertLimit / _auLiveLimits) but
+// with its OWN element IDs (au-gs-*) — NEVER reuse the au-kh-* IDs (F.11 duplicate-ID
+// bug). Per-instrument (gs_goldmini / gs_silvermini): max open lots + look-back, plus
+// the PAPER→LIVE arming toggle (metadata.live_armed) which reuses the manual-order
+// password session-lock (_auManualPw). Nothing places until the Stage-2 enqueuer ships
+// AND a row is enabled AND armed AND the kill switch is off.
+// ============================================================================
+var _AU_GS_LIVE_INSTR = [
+    { key: 'gs_goldmini',   label: 'Gold Mini',   und: 'GOLDM',   row: 'gold_mini_15m_v3_live' },
+    { key: 'gs_silvermini', label: 'Silver Mini', und: 'SILVERM', row: 'silver_mini_15m_v3_live' }
+];
+
+async function autoGsLoadLive() {
+    var el = document.getElementById('au-gs-fam-live'); if (!el) return;
+    el.innerHTML = 'Loading…';
+    try {
+        var res = await Promise.all([
+            fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits?select=*', { headers: wmsHeaders() }),
+            fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&execution_mode=eq.LIVE&select=name,enabled,metadata&order=name.asc', { headers: wmsHeaders() }),
+            fetch(SUPABASE_URL + '/rest/v1/app_state?id=eq.1&select=kill_switch', { headers: wmsHeaders() })
+        ]);
+        _auLiveLimits = await res[0].json(); if (!Array.isArray(_auLiveLimits)) _auLiveLimits = [];
+        var liveRows = await res[1].json(); if (!Array.isArray(liveRows)) liveRows = [];
+        var st = await res[2].json(); var kill = !!(Array.isArray(st) && st[0] && st[0].kill_switch);
+        autoGsRenderLive(liveRows, kill);
+    } catch (e) {
+        el.innerHTML = '<span style="color:#dc2626">Failed to load GS live controls: ' + autoEsc(String(e)) + '</span>';
+    }
+}
+
+function autoGsRenderLive(liveRows, kill) {
+    var el = document.getElementById('au-gs-fam-live'); if (!el) return;
+    var unlocked = !!_auManualPw;
+    var byName = {}; (liveRows || []).forEach(function (r) { byName[r.name] = r; });
+    var head =
+        '<div style="display:flex;gap:22px;flex-wrap:wrap;align-items:center;margin-bottom:14px;font-size:12px">' +
+            '<span>Global kill switch: ' + (kill ? '<b style="color:#dc2626">ON — all placement halted</b>' : '<b style="color:#16a34a">off</b>') + ' <span style="color:#9ca3af">(toggle on 🐦 KH · Controls)</span></span>' +
+            '<span>Manual password: ' + (unlocked ? '<b style="color:#16a34a">unlocked</b>' : '<b style="color:#b45309">locked</b> — unlock on the Manual order tab to arm') + '</span>' +
+        '</div>';
+    var blocks = _AU_GS_LIVE_INSTR.map(function (it) {
+        var s = it.key;
+        var cap = _auFindLimit(s, null, null, 'max_open_exposure_lots');
+        var lb  = _auFindLimit(s, null, null, 'exposure_lookback_days');
+        var und = _auFindLimit(s, null, null, 'allowed_underlyings');
+        var capVal = (cap && cap.limit_value && cap.limit_value.value != null) ? cap.limit_value.value : '';
+        var capOn  = cap ? cap.enabled : true;
+        var lbVal  = (lb && lb.limit_value && lb.limit_value.value != null) ? lb.limit_value.value : 3;
+        var undVals = (und && und.limit_value && Array.isArray(und.limit_value.values)) ? und.limit_value.values.join(', ') : it.und;
+        var row = byName[it.row];
+        var armed   = !!(row && row.metadata && row.metadata.live_armed);
+        var enabled = !!(row && row.enabled);
+        var booking = !!(row && row.metadata && row.metadata.booking && row.metadata.booking.enabled);
+        var lotcap  = (row && row.metadata && row.metadata.params && row.metadata.params.lot_cap != null) ? row.metadata.params.lot_cap : '—';
+        var missing = row ? '' : ' <span style="color:#dc2626">— live row not found (run GS-live-rows-seed.sql)</span>';
+        return '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:12px">' +
+            '<div style="font-weight:600;font-size:13px;margin-bottom:2px">' + autoEsc(it.label) +
+                ' <span style="color:#9ca3af;font-weight:400;font-size:11px">' + autoEsc(it.row) + '</span>' + missing + '</div>' +
+            '<div style="font-size:11px;color:#6b7280;margin-bottom:10px">Allowed underlying <b>' + autoEsc(undVals) + '</b> · row lot_cap <b>' + autoEsc(String(lotcap)) + '</b></div>' +
+            '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+                '<span style="font-size:12px;width:140px">Max open lots</span>' +
+                '<input id="au-gs-cap-' + s + '" type="number" min="0" step="1" value="' + autoEsc(String(capVal)) + '" style="' + _AU_INP + ';width:100px">' +
+                '<label style="font-size:12px;color:#374151"><input type="checkbox" id="au-gs-cap-on-' + s + '" ' + (capOn ? 'checked' : '') + '> enforce</label>' +
+                '<button class="au-btn au-btn-primary" onclick="autoGsSaveCap(\'' + s + '\')">Save</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">' +
+                '<span style="font-size:12px;width:140px">Look-back (days)</span>' +
+                '<input id="au-gs-lb-' + s + '" type="number" min="1" max="90" value="' + autoEsc(String(lbVal)) + '" style="' + _AU_INP + ';width:100px">' +
+                '<button class="au-btn au-btn-primary" onclick="autoGsSaveLookback(\'' + s + '\')">Save</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;border-top:1px solid #f0f0f0;padding-top:10px">' +
+                '<span style="font-size:12px;font-weight:600">Live placement</span>' +
+                '<span class="au-badge ' + (armed ? 'error' : 'idle') + '">' + (armed ? 'ARMED' : 'disarmed') + '</span>' +
+                (row ? ('<button class="au-btn ' + (armed ? 'au-btn-danger' : 'au-btn-secondary') + '" ' + (unlocked ? '' : 'disabled title="Unlock the Manual order tab first"') + ' onclick="autoGsToggleArm(\'' + it.row + '\',' + (armed ? 'true' : 'false') + ')">' + (armed ? 'Disarm' : 'Arm for LIVE') + '</button>') : '') +
+                '<span style="font-size:11px;color:#9ca3af">row ' + (enabled ? 'enabled' : 'disabled') + ' · booking ' + (booking ? 'on' : 'off') + '</span>' +
+            '</div>' +
+        '</div>';
+    }).join('');
+    el.innerHTML = head + blocks +
+        '<div style="font-size:11px;color:#9ca3af;margin-top:4px">Arming sets <code>metadata.live_armed</code>. The Stage-2 enqueuer refuses to place unless the row is <b>enabled</b> AND <b>armed</b> AND the kill switch is off. Until the enqueuer ships, arming has no effect.</div>';
+}
+
+async function autoGsSaveCap(source) {
+    var v = document.getElementById('au-gs-cap-' + source).value;
+    var on = document.getElementById('au-gs-cap-on-' + source).checked;
+    if (v === '' || isNaN(Number(v)) || Number(v) < 0) { alert('Enter a non-negative number of lots (0 blocks everything).'); return; }
+    try {
+        var ex = _auFindLimit(source, null, null, 'max_open_exposure_lots');
+        await _auUpsertLimit(ex, { source: source, strategy: null }, 'max_open_exposure_lots', { value: Number(v) }, on, 'reject');
+        autoGsLoadLive();
+    } catch (e) { alert('Failed to save cap: ' + (e.message || e)); }
+}
+
+async function autoGsSaveLookback(source) {
+    var v = Number(document.getElementById('au-gs-lb-' + source).value);
+    if (!v || v < 1 || v > 90) { alert('Enter a look-back between 1 and 90 days.'); return; }
+    try {
+        var ex = _auFindLimit(source, null, null, 'exposure_lookback_days');
+        await _auUpsertLimit(ex, { source: source, strategy: null }, 'exposure_lookback_days', { value: v }, true, 'log_only');
+        autoGsLoadLive();
+    } catch (e) { alert('Failed to save look-back: ' + (e.message || e)); }
+}
+
+// Arming toggle — reuses the manual-order password session-lock (_auManualPw). Requires
+// the Manual order tab to have been unlocked this session. Sets metadata.live_armed.
+// NOTE (Stage 2): the *server-side* password verification for arming (routing the write
+// through the wms-manual-order password check, §A.1.9h) lands with the enqueuer; in Stage 1
+// arming is inert (no enqueuer places), so the session-lock gate is sufficient here.
+async function autoGsToggleArm(rowName, cur) {
+    if (!_auManualPw) { alert('Unlock the Manual order tab first (same manual-order password) — then arming is available here.'); return; }
+    var next = !cur;
+    var msg = next
+        ? '⚠️ ARM ' + rowName + ' for LIVE placement?\n\nOnce the live enqueuer is active (Stage 2) and this row is ENABLED, a signal from this strategy will place a REAL order (size = lot_cap). Until the enqueuer ships, this flag has no effect.'
+        : 'Disarm ' + rowName + ' — stop live placement for this strategy?';
+    if (!confirm(msg)) return;
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(rowName) + '&select=metadata', { headers: wmsHeaders() });
+        var rows = await r.json();
+        if (!Array.isArray(rows) || !rows[0]) throw new Error('row not found');
+        var md = rows[0].metadata || {};
+        md.live_armed = next;
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(rowName),
+            { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ metadata: md }) });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+        autoGsLoadLive();
+    } catch (e) { alert('Failed to change arming: ' + (e.message || e)); }
 }
