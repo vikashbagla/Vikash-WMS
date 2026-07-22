@@ -770,13 +770,6 @@ details summary {
           <div id="au-gs-fam-controls-panel" class="au-subtab-panel">
             <div id="au-gs-fam-controls-content">
 
-              <!-- Live trading — v3 (Veins/Fyers): per-instrument risk limits + PAPER→LIVE arming (Stage 1B) -->
-              <div class="au-card" style="border:1px solid #fca5a5">
-                <h3>⚡ Live trading — v3 (Veins/Fyers) <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoGsLoadLive()">↻</button></h3>
-                <div class="au-sub">One row per live strategy — max open lots + look-back (enforced by the Stage-2 enqueuer <b>before</b> any order), <b>Beneficiaries</b> (the trader the position books to; executor is always Veins/Fyers — one order per enabled beneficiary at its own risk/lot-cap), and the PAPER→LIVE arming toggle (reuses the <b>manual-order password</b>). <b>Nothing places until the enqueuer ships AND a row is enabled and armed AND the kill switch is off.</b></div>
-                <div id="au-gs-fam-live" style="margin-top:12px" class="au-meta">Loading…</div>
-              </div>
-
               <!-- Admin: strategy config + scheduling + version + gs_catalogue snapshot -->
               <div class="au-card">
                 <h3>Strategy Configuration <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
