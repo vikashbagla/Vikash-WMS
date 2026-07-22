@@ -1602,6 +1602,7 @@ async function autoSaveGsParamsAll() {
 // Pause/Resume reuses the manual-order password (_auManualPw; server-side check @ Stage 2).
 // ============================================================================
 var _auGsLiveRowNames = [];
+var _auGsLiveTagCtrls = {};   // strategy_name -> wmsTagInput controller (per-row tags)
 var _AU_GS_LIVE_BASES = [
     { name: 'gold_mini_15m_v3_live',   label: 'Gold Mini v3 (clone)' },
     { name: 'silver_mini_15m_v3_live', label: 'Silver Mini v3 (clone)' }
@@ -1631,9 +1632,10 @@ function autoGsAcctRowHtml(acct) {
     var on = acct.enforce !== false;
     var h = '<tr style="border-top:2px solid #f3a0a0;background:#fff2f2">';
     h += '<td style="padding:6px 8px;white-space:normal;max-width:150px"><b>🏦 Account ceiling</b><div style="font-size:10px;color:#6b7280">all traders + both instruments</div></td>';
-    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';
-    h += '<td style="padding:6px 8px"><label style="font-size:11px"><input type="checkbox" id="au-gsl-acct-enforce" ' + (on ? 'checked' : '') + '> enforce</label></td>';
-    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';
+    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';   // trader
+    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';   // tags
+    h += '<td style="padding:6px 8px"><label style="font-size:11px"><input type="checkbox" id="au-gsl-acct-enforce" ' + (on ? 'checked' : '') + '> enforce</label></td>';   // Live col → enforce
+    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';   // last run
     _AU_GS_PARAM_SPEC.forEach(function (f) {
         h += '<td style="padding:6px 8px">';
         if (f.key === 'lot_cap') h += '<input id="au-gsl-acct-lots" type="number" min="0" step="1" value="' + (lots === '' ? '' : autoEsc(String(lots))) + '" placeholder="max lots" class="wms-input-compact wms-input-number" style="width:60px" title="Max total open lots across all traders + both instruments. Enforce off, or blank/0 = no limit.">';
@@ -1664,10 +1666,10 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
     liveRows = liveRows || [];
     _auGsLiveRowNames = liveRows.map(function (s) { return s.name; });
     var nowMs = Date.now();
-    var ncols = 5 + _AU_GS_PARAM_SPEC.length;
+    var ncols = 6 + _AU_GS_PARAM_SPEC.length;
     var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse;white-space:nowrap">';
     html += '<thead><tr style="background:#fde8e8;text-align:left">' +
-        '<th style="padding:6px 8px">Strategy</th><th style="padding:6px 8px">Trader</th><th style="padding:6px 8px">Enabled</th><th style="padding:6px 8px">Last run</th>';
+        '<th style="padding:6px 8px">Strategy</th><th style="padding:6px 8px">Trader</th><th style="padding:6px 8px">Tags</th><th style="padding:6px 8px" title="enabled / paused">Live</th><th style="padding:6px 8px">Last run</th>';
     _AU_GS_PARAM_SPEC.forEach(function (f) { html += '<th style="padding:6px 8px">' + autoEsc(f.col) + '</th>'; });
     html += '<th style="padding:6px 8px">Actions</th></tr></thead><tbody>';
     html += autoGsAcctRowHtml(acct);
@@ -1678,11 +1680,18 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
             var params = (s.metadata && s.metadata.params) ? s.metadata.params : {};
             var idB = 'au-gsl-' + s.name;
             var tid = (s.metadata && s.metadata.trader_id) || '';
+            var tname = tid ? (_auGsTraderName(tid) || tid) : '';
             html += '<tr style="border-top:1px solid #f0d0d0">';
             html += '<td style="padding:6px 8px;white-space:normal;max-width:150px"><code style="font-weight:600;word-break:break-all">' + autoEsc(s.name) + '</code><div style="font-size:10px;color:#6b7280">' + autoEsc(s.version || '') + ' · LIVE</div></td>';
-            html += '<td style="padding:6px 8px"><select id="' + idB + '-trader" class="wms-df-select"><option value="">(select)</option>' +
-                (_auManualTraders || []).map(function (t) { return '<option value="' + t.id + '"' + (tid === t.id ? ' selected' : '') + '>' + autoEsc(t.short_name || t.name || t.id) + '</option>'; }).join('') + '</select></td>';
-            html += '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge idle">paused</span>') + '</td>';
+            // Trader — fixed at Add-trader time; shown as text, not editable
+            html += '<td style="padding:6px 8px">' + (tname ? autoEsc(tname) : '<span style="color:#9ca3af">—</span>') + '</td>';
+            // Tags — global tag widget (wmsTagInput), initialised after render, → metadata.transaction_tags
+            html += '<td style="padding:6px 8px"><div style="min-width:150px">' +
+                '<input id="' + idB + '-tags-input" type="text" placeholder="tags…" autocomplete="off" style="padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:11px;width:100%;box-sizing:border-box">' +
+                '<div class="wms-tag-pills" id="' + idB + '-tags-pills"></div>' +
+                '<div class="wms-tag-dd" id="' + idB + '-tags-dd"></div></div></td>';
+            // Live status dot (green = enabled, red = paused)
+            html += '<td style="padding:6px 8px;text-align:center"><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:' + (s.enabled ? '#16a34a' : '#dc2626') + '" title="' + (s.enabled ? 'enabled (live)' : 'paused') + '"></span></td>';
             var lr = latestRun ? latestRun[s.name] : null;
             html += '<td style="padding:6px 8px">' + ((!lr || !lr.finished_at) ? '<span style="color:#9ca3af">never</span>' : (Math.round((nowMs - new Date(lr.finished_at).getTime()) / 60000) + 'm ago')) + '</td>';
             _AU_GS_PARAM_SPEC.forEach(function (f) {
@@ -1702,9 +1711,10 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
                 }
                 html += '</td>';
             });
+            // Actions — small icons (pause/resume password-gated + delete), like the ✕
             html += '<td style="padding:6px 8px;white-space:nowrap">' +
-                '<button class="au-btn ' + (s.enabled ? 'au-btn-secondary' : 'au-btn-primary') + '" style="padding:4px 8px;font-size:11px" onclick="autoGsLiveTogglePw(\'' + s.name + '\',' + (s.enabled ? 'true' : 'false') + ')">' + (s.enabled ? '⏸ Pause 🔒' : '▶ Resume 🔒') + '</button> ' +
-                '<button class="au-btn au-btn-danger" style="padding:4px 8px;font-size:11px" onclick="autoGsLiveRemoveRow(\'' + s.name + '\')" title="Delete this live row">✕</button></td>';
+                '<button class="au-btn ' + (s.enabled ? 'au-btn-secondary' : 'au-btn-primary') + '" style="padding:3px 7px;font-size:12px" title="' + (s.enabled ? 'Pause (password)' : 'Resume (password)') + '" onclick="autoGsLiveTogglePw(\'' + s.name + '\',' + (s.enabled ? 'true' : 'false') + ')">' + (s.enabled ? '⏸' : '▶') + '🔒</button> ' +
+                '<button class="au-btn au-btn-danger" style="padding:3px 7px;font-size:12px" title="Delete this live row" onclick="autoGsLiveRemoveRow(\'' + s.name + '\')">✕</button></td>';
             html += '</tr>';
         });
     }
@@ -1721,6 +1731,25 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
         '<button class="au-btn au-btn-primary" style="font-size:12px;padding:6px 14px" onclick="autoGsLiveAddTrader()">+ Add trader</button>' +
     '</div>';
     el.innerHTML = html;
+    autoGsInitLiveTags(liveRows);   // wire the per-row global tag widgets (async, fire-and-forget)
+}
+
+// Per-row tag widgets (wmsTagInput) → auto_strategies.metadata.transaction_tags. Same field
+// the fill-writer will apply to each booked GS fill (like KH's transaction_tags).
+async function autoGsInitLiveTags(liveRows) {
+    if (typeof wmsTagInput !== 'function') return;
+    var existing = [];
+    try { existing = await autoGetExistingTags(); } catch (e) {}
+    _auGsLiveTagCtrls = {};
+    (liveRows || []).forEach(function (s) {
+        var idB = 'au-gsl-' + s.name;
+        var input = document.getElementById(idB + '-tags-input');
+        var pills = document.getElementById(idB + '-tags-pills');
+        var dd = document.getElementById(idB + '-tags-dd');
+        if (!input || !pills || !dd) return;
+        var tags = (s.metadata && Array.isArray(s.metadata.transaction_tags)) ? s.metadata.transaction_tags.slice() : [];
+        _auGsLiveTagCtrls[s.name] = wmsTagInput(input, pills, dd, { tags: tags, existingTags: existing, onChange: function () {} });
+    });
 }
 
 async function autoGsLiveTogglePw(name, enabled) {
@@ -1791,8 +1820,12 @@ async function autoSaveGsLiveAll() {
         for (var i = 0; i < names.length; i++) {
             var name = names[i], idB = 'au-gsl-' + name, meta = Object.assign({}, metaByName[name] || {});
             meta.params = _auGsCollectLiveParams(idB, meta);
-            var tsel = document.getElementById(idB + '-trader');
-            if (tsel) meta.trader_id = tsel.value || null;
+            // Trader is fixed (set at Add-trader time) — not editable here. Tags → transaction_tags.
+            var _tc = _auGsLiveTagCtrls[name];
+            if (_tc && typeof _tc.getTags === 'function') {
+                var _tg = _tc.getTags().map(function (x) { return String(x).trim(); }).filter(Boolean);
+                if (_tg.length) meta.transaction_tags = _tg; else delete meta.transaction_tags;
+            }
             var pr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
                 { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ metadata: meta }) });
             if (!pr.ok) throw new Error(name + ': HTTP ' + pr.status + ' ' + (await pr.text()));
