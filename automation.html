@@ -770,6 +770,13 @@ details summary {
           <div id="au-gs-fam-controls-panel" class="au-subtab-panel">
             <div id="au-gs-fam-controls-content">
 
+              <!-- Strategy config — Live Trading (comes FIRST; flat table = paper shape + Trader col + pw pause + add-trader) -->
+              <div class="au-card" style="border:1px solid #fca5a5;background:linear-gradient(to bottom,#fef2f2,#ffffff)">
+                <h3>⚡ Strategy Configuration — Live Trading <span class="au-badge" style="background:#fee2e2;color:#b91c1c">LIVE · real orders</span> <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
+                <div class="au-sub">Same table as Paper Trading, plus a <b>Trader</b> column (the beneficiary the position books to; executor is Veins/Fyers). Edit the knobs inline + <b>Save all (live)</b>. <b>Pause / Resume is password-gated</b> (manual-order password). Use <b>Add trader</b> to clone a strategy into a new row for another beneficiary — added <b>paused</b>. Nothing places until the Stage-2 enqueuer ships.</div>
+                <div id="au-gs-fam-strategies-live" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
               <!-- Strategy config — Paper Trading -->
               <div class="au-card">
                 <h3>📄 Strategy Configuration — Paper Trading <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
@@ -783,13 +790,6 @@ details summary {
                   <div><b>pos_roll</b> — roll an open position ≤ N days to its expiry.</div>
                   <div><b>lot_cap</b> — max lots per entry (<code>0 = no cap</code>).</div>
                 </div>
-              </div>
-
-              <!-- Strategy config — Live Trading (real orders; per-strategy traders; pw-gated pause/resume) -->
-              <div class="au-card" style="border:1px solid #fca5a5;background:linear-gradient(to bottom,#fef2f2,#ffffff)">
-                <h3>⚡ Strategy Configuration — Live Trading <span class="au-badge" style="background:#fee2e2;color:#b91c1c">LIVE · real orders</span> <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
-                <div class="au-sub">Live GS strategies on the single Veins/Fyers account. The exit knobs (<code>stop_mode/stop_mult/entry_roll/pos_roll</code>) are shared per strategy; add <b>beneficiary traders</b> — each with its own <b>risk + lot cap</b> — that the position books to (executor is Veins). <b>Pause / Resume is password-gated</b> (manual-order password), at both strategy and per-trader level. New traders are added <b>paused</b>. Nothing places until the Stage-2 enqueuer ships.</div>
-                <div id="au-gs-fam-strategies-live" style="margin-top:12px" class="au-meta">Loading…</div>
               </div>
 
               <div class="au-card">
