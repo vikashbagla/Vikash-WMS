@@ -1318,11 +1318,20 @@ async function autoLoadGsFamAdmin() {
                 { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
             var runReq = fetch(SUPABASE_URL + '/rest/v1/auto_runs?' + auGsNameFilter() + '&order=finished_at.desc&limit=120&select=strategy_name,finished_at,status,metadata',
                 { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
-            var _both = await Promise.all([stratReq, runReq]);
+            var limReq = fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits?signal_source=eq.gs&strategy_name=is.null&select=*', { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
+            var _both = await Promise.all([stratReq, runReq, limReq]);
             var _allRows = _both[0] || [];
             var _liveRows = _allRows.filter(function (r) { return r.execution_mode === 'LIVE'; });
             var rows = _allRows.filter(function (r) { return r.execution_mode !== 'LIVE'; });   // paper only in this table
             var runList = _both[1] || [];
+            var _gsLims = _both[2] || [];   // account-level ceilings (wms_live_risk_limits, signal_source='gs')
+            var _findGsLim = function (t) { return _gsLims.find(function (r) { return r.limit_type === t; }); };
+            var _llots = _findGsLim('max_total_open_lots'), _lrisk = _findGsLim('max_total_risk_inr');
+            var _acct = {
+                lots:    (_llots && _llots.limit_value && _llots.limit_value.value != null) ? _llots.limit_value.value : '',
+                risk:    (_lrisk && _lrisk.limit_value && _lrisk.limit_value.value != null) ? _lrisk.limit_value.value : '',
+                enforce: _llots ? _llots.enabled : (_lrisk ? _lrisk.enabled : true)
+            };
             // Ordered desc → first sighting of each name is its latest run.
             var latestRun = {};
             runList.forEach(function (r2) { if (!latestRun[r2.strategy_name]) latestRun[r2.strategy_name] = r2; });
@@ -1391,7 +1400,7 @@ async function autoLoadGsFamAdmin() {
                         '<span id="au-gsp-allmsg" style="font-size:11px;color:#6b7280"></span></div>';
                 stratsEl.innerHTML = html;
             }
-            if (typeof autoGsRenderLiveTable === 'function') autoGsRenderLiveTable(_liveRows, latestRun);
+            if (typeof autoGsRenderLiveTable === 'function') autoGsRenderLiveTable(_liveRows, latestRun, _acct);
         } catch (e) {
             stratsEl.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
         }
@@ -1613,7 +1622,46 @@ function _auGsLivePwGate() {
     return true;
 }
 
-function autoGsRenderLiveTable(liveRows, latestRun) {
+// The account-ceiling row (first row of the Live table): total open-lots + total ₹-risk
+// ACROSS all traders + both instruments. Backed by wms_live_risk_limits (signal_source='gs').
+// The per-instrument caps are superseded by this single account ceiling.
+function autoGsAcctRowHtml(acct) {
+    acct = acct || {};
+    var lots = (acct.lots != null && acct.lots !== '') ? acct.lots : '';
+    var risk = (acct.risk != null && acct.risk !== '') ? acct.risk : '';
+    var on = acct.enforce !== false;
+    var h = '<tr style="border-top:2px solid #f3a0a0;background:#fff2f2">';
+    h += '<td style="padding:6px 8px"><b>🏦 Account ceiling</b><div style="font-size:10px;color:#6b7280">Veins/Fyers — all traders + both instruments</div></td>';
+    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';
+    h += '<td style="padding:6px 8px"><label style="font-size:11px"><input type="checkbox" id="au-gsl-acct-enforce" ' + (on ? 'checked' : '') + '> enforce</label></td>';
+    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';
+    _AU_GS_PARAM_SPEC.forEach(function (f) {
+        h += '<td style="padding:6px 8px">';
+        if (f.key === 'risk_per_trade') h += '<input id="au-gsl-acct-risk" type="text" inputmode="numeric" value="' + (risk === '' ? '' : autoEsc(_auFmtIntComma(risk))) + '" onblur="this.value=_auFmtIntComma(this.value)" placeholder="total ₹" class="wms-input-compact wms-input-number" style="width:90px" title="Max total risk (₹) deployed across all traders (0/blank = no limit)">';
+        else if (f.key === 'lot_cap') h += '<input id="au-gsl-acct-lots" type="number" min="0" step="1" value="' + (lots === '' ? '' : autoEsc(String(lots))) + '" placeholder="total lots" class="wms-input-compact wms-input-number" style="width:70px" title="Max total open lots across all traders + both instruments (0/blank = no limit)">';
+        else h += '<span style="color:#d0b0b0">—</span>';
+        h += '</td>';
+    });
+    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';
+    h += '</tr>';
+    return h;
+}
+
+// Upsert one account-level limit into wms_live_risk_limits (signal_source='gs').
+async function _auGsUpsertAcctLimit(type, valueObj, enabled) {
+    var ex = await fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits?signal_source=eq.gs&strategy_name=is.null&limit_type=eq.' + encodeURIComponent(type) + '&select=id', { headers: wmsHeaders() }).then(function (r) { return r.json(); });
+    if (ex && ex[0]) {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits?id=eq.' + ex[0].id,
+            { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ limit_value: valueObj, enabled: enabled, breach_action: 'reject' }) });
+        if (!resp.ok) throw new Error('account limit ' + type + ': HTTP ' + resp.status + ' ' + (await resp.text()));
+    } else {
+        var resp2 = await fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits',
+            { method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ signal_source: 'gs', strategy_name: null, iba_id: null, limit_type: type, limit_value: valueObj, enabled: enabled, breach_action: 'reject' }) });
+        if (!resp2.ok) throw new Error('account limit ' + type + ': HTTP ' + resp2.status + ' ' + (await resp2.text()));
+    }
+}
+
+function autoGsRenderLiveTable(liveRows, latestRun, acct) {
     var el = document.getElementById('au-gs-fam-strategies-live'); if (!el) return;
     liveRows = liveRows || [];
     _auGsLiveRowNames = liveRows.map(function (s) { return s.name; });
@@ -1624,6 +1672,7 @@ function autoGsRenderLiveTable(liveRows, latestRun) {
         '<th style="padding:6px 8px">Strategy</th><th style="padding:6px 8px">Trader</th><th style="padding:6px 8px">Enabled</th><th style="padding:6px 8px">Last run</th>';
     _AU_GS_PARAM_SPEC.forEach(function (f) { html += '<th style="padding:6px 8px">' + autoEsc(f.col) + '</th>'; });
     html += '<th style="padding:6px 8px">Actions</th></tr></thead><tbody>';
+    html += autoGsAcctRowHtml(acct);
     if (!liveRows.length) {
         html += '<tr><td colspan="' + ncols + '" style="padding:10px;color:#9ca3af">No live strategies yet — add a trader below (or run <code>GS-live-rows-seed.sql</code>).</td></tr>';
     } else {
@@ -1751,7 +1800,18 @@ async function autoSaveGsLiveAll() {
             if (!pr.ok) throw new Error(name + ': HTTP ' + pr.status + ' ' + (await pr.text()));
             saved++;
         }
-        if (msg) { msg.style.color = '#16a34a'; msg.textContent = '✓ Saved ' + saved + ' live row(s).'; }
+        // Account ceiling → wms_live_risk_limits (signal_source='gs'). 0 / blank = no limit.
+        var acctEnf = document.getElementById('au-gsl-acct-enforce');
+        var acctLotsEl = document.getElementById('au-gsl-acct-lots');
+        var acctRiskEl = document.getElementById('au-gsl-acct-risk');
+        if (acctLotsEl || acctRiskEl) {
+            var on = acctEnf ? acctEnf.checked : true;
+            var lotsV = acctLotsEl ? parseInt(acctLotsEl.value, 10) : 0; if (!isFinite(lotsV)) lotsV = 0;
+            var riskV = acctRiskEl ? parseFloat(String(acctRiskEl.value).replace(/,/g, '')) : 0; if (!isFinite(riskV)) riskV = 0;
+            await _auGsUpsertAcctLimit('max_total_open_lots', { value: lotsV }, on && lotsV > 0);
+            await _auGsUpsertAcctLimit('max_total_risk_inr', { value: riskV }, on && riskV > 0);
+        }
+        if (msg) { msg.style.color = '#16a34a'; msg.textContent = '✓ Saved ' + saved + ' live row(s) + account ceiling.'; }
         autoLoadGsFamAdmin();
     } catch (e) { if (msg) { msg.style.color = '#dc2626'; msg.textContent = 'Failed: ' + String(e.message || e); } }
 }
