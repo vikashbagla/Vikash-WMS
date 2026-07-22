@@ -1305,8 +1305,9 @@ async function autoLoadGsFamRuns(filterOverride) {
 // Renders: strategy config, plugin version, gs_catalogue snapshot.
 // ----------------------------------------------------------------------------
 async function autoLoadGsFamAdmin() {
-    // 1. auto_strategies rows for silver + gold
-    var stratsEl = document.getElementById('au-gs-fam-strategies');
+    // 1. auto_strategies rows for silver + gold — PAPER rows here; LIVE rows render
+    //    into the separate Live Trading table (autoGsRenderLiveTable).
+    var stratsEl = document.getElementById('au-gs-fam-strategies-paper');
     if (stratsEl) {
         try {
             if (!_auManualTraders || !_auManualTraders.length) { try { await autoManualLoadTraders(); } catch (e) {} }   // populate the Trader dropdowns (LIVE rows)
@@ -1318,7 +1319,9 @@ async function autoLoadGsFamAdmin() {
             var runReq = fetch(SUPABASE_URL + '/rest/v1/auto_runs?' + auGsNameFilter() + '&order=finished_at.desc&limit=120&select=strategy_name,finished_at,status,metadata',
                 { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
             var _both = await Promise.all([stratReq, runReq]);
-            var rows = _both[0];
+            var _allRows = _both[0] || [];
+            var _liveRows = _allRows.filter(function (r) { return r.execution_mode === 'LIVE'; });
+            var rows = _allRows.filter(function (r) { return r.execution_mode !== 'LIVE'; });   // paper only in this table
             var runList = _both[1] || [];
             // Ordered desc → first sighting of each name is its latest run.
             var latestRun = {};
@@ -1334,8 +1337,7 @@ async function autoLoadGsFamAdmin() {
                         '<th style="padding:6px 8px">Enabled</th>' +
                         '<th style="padding:6px 8px">Last run</th>';
                 _AU_GS_PARAM_SPEC.forEach(function (f) { html += '<th style="padding:6px 8px">' + autoEsc(f.col) + '</th>'; });
-                html += '<th style="padding:6px 8px">Trader</th>' +
-                        '<th style="padding:6px 8px">Actions</th>' +
+                html += '<th style="padding:6px 8px">Actions</th>' +
                         '</tr></thead><tbody>';
                 var nowMs = Date.now();
                 rows.forEach(function (s) {
@@ -1380,21 +1382,6 @@ async function autoLoadGsFamAdmin() {
                         }
                         html += '</td>';
                     });
-                    // Trader (beneficiary) — LIVE rows book to this trader_id (executor is always
-                    // Veins/Fyers). Paper rows don't book to a beneficiary → shown as —.
-                    html += '<td style="padding:6px 8px">';
-                    if (s.execution_mode === 'LIVE') {
-                        var tid = (s.metadata && s.metadata.trader_id) || '';
-                        html += '<select id="' + idBase + '-trader" class="wms-df-select">';
-                        html += '<option value="">(select)</option>';
-                        (_auManualTraders || []).forEach(function (t) {
-                            html += '<option value="' + t.id + '"' + (tid === t.id ? ' selected' : '') + '>' + autoEsc(t.short_name || t.name || t.id) + '</option>';
-                        });
-                        html += '</select>';
-                    } else {
-                        html += '<span style="color:#9ca3af;font-size:11px">—</span>';
-                    }
-                    html += '</td>';
                     html += '<td style="padding:6px 8px">' + autoStrategyActionCell(s) + '</td>';
                     html += '</tr>';
                 });
@@ -1404,6 +1391,7 @@ async function autoLoadGsFamAdmin() {
                         '<span id="au-gsp-allmsg" style="font-size:11px;color:#6b7280"></span></div>';
                 stratsEl.innerHTML = html;
             }
+            if (typeof autoGsRenderLiveTable === 'function') autoGsRenderLiveTable(_liveRows, latestRun);
         } catch (e) {
             stratsEl.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
         }
@@ -1581,8 +1569,6 @@ async function autoSaveGsParamsAll() {
             var meta = Object.assign({}, metaByName[name] || {});
             if (!meta.driver || !meta.family) throw new Error(name + ': row missing driver/family');
             meta.params = _auGsCollectParams(name, meta);
-            var _tsel = document.getElementById('au-gsp-' + name + '-trader');   // Trader column (LIVE rows) → metadata.trader_id (beneficiary)
-            if (_tsel) meta.trader_id = _tsel.value || null;
             var pr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name), {
                 method: 'PATCH',
                 headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
@@ -1596,6 +1582,187 @@ async function autoSaveGsParamsAll() {
     } catch (e) {
         if (msg) { msg.style.color = '#dc2626'; msg.textContent = 'Failed: ' + String(e.message || e); }
     }
+}
+
+// ============================================================================
+// GS — Live Trading table (separate from Paper). Row per live strategy with shared
+// exit params + a beneficiary-trader sub-table (each trader = own risk_per_trade +
+// lot_cap, stored in metadata.beneficiaries). Pause/Resume (strategy + per-trader) is
+// gated by the manual-order password (_auManualPw; server-side verification lands with
+// the Stage-2 enqueuer). New traders are added PAUSED (enabled:false).
+// ============================================================================
+var _auGsLiveRowNames = [];
+
+function autoGsTraderOptions() {
+    return '<option value="">(select trader)</option>' + (_auManualTraders || []).map(function (t) {
+        return '<option value="' + t.id + '">' + autoEsc(t.short_name || t.name || t.id) + '</option>';
+    }).join('');
+}
+function _auGsTraderName(id) { var t = (_auManualTraders || []).find(function (x) { return x.id === id; }); return t ? (t.short_name || t.name) : ''; }
+
+// Ensure the manual-order password is captured this session (reused from the Manual tab).
+function _auGsLivePwGate() {
+    if (_auManualPw) return true;
+    var v = prompt('Enter the manual-order password to change LIVE trading:');
+    if (!v) return false;
+    _auManualPw = v;   // held this tab/session; verified server-side when the enqueuer places (Stage 2)
+    return true;
+}
+
+async function _auGsPatchMeta(rowName, mutate) {
+    var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(rowName) + '&select=metadata', { headers: wmsHeaders() });
+    var rows = await r.json();
+    if (!Array.isArray(rows) || !rows[0]) throw new Error('row not found');
+    var md = rows[0].metadata || {};
+    mutate(md);
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(rowName),
+        { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ metadata: md }) });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+}
+
+function autoGsRenderLiveTable(liveRows, latestRun) {
+    var el = document.getElementById('au-gs-fam-strategies-live'); if (!el) return;
+    if (!liveRows || !liveRows.length) {
+        el.innerHTML = '<div class="au-soon" style="padding:14px">No live strategy rows. Run <code>GS-live-rows-seed.sql</code> in Studio to create them.</div>';
+        return;
+    }
+    _auGsLiveRowNames = liveRows.map(function (s) { return s.name; });
+    var nowMs = Date.now();
+    var groups = liveRows.map(function (s) {
+        var p = (s.metadata && s.metadata.params) ? s.metadata.params : {};
+        var benef = (s.metadata && Array.isArray(s.metadata.beneficiaries)) ? s.metadata.beneficiaries : [];
+        var idB = 'au-gsl-' + s.name;
+        var numInp = function (key, val, w) {
+            return '<input id="' + idB + '-' + key + '" type="number" step="' + (key === 'stop_mult' ? '0.1' : '1') + '" value="' + autoEsc(String(val)) +
+                   '" class="wms-input-compact wms-input-number" style="width:' + (w || '54px') + '">';
+        };
+        var stopModeSel = '<select id="' + idB + '-stop_mode" class="wms-df-select">' +
+            '<option value="drift"' + (p.stop_mode === 'drift' ? ' selected' : '') + '>drift</option>' +
+            '<option value="fixed"' + (p.stop_mode === 'fixed' ? ' selected' : '') + '>fixed</option></select>';
+        var brows = benef.length ? benef.map(function (b) {
+            return '<tr style="border-top:1px solid #f0e0e0">' +
+                '<td style="padding:4px 8px">' + autoEsc(b.trader_name || _auGsTraderName(b.trader_id) || b.trader_id) + '</td>' +
+                '<td style="padding:4px 8px"><input id="' + idB + '-brisk-' + b.trader_id + '" type="text" inputmode="numeric" value="' + autoEsc(_auFmtIntComma(b.risk_per_trade)) + '" onblur="this.value=_auFmtIntComma(this.value)" class="wms-input-compact wms-input-number" style="width:90px"></td>' +
+                '<td style="padding:4px 8px"><input id="' + idB + '-blot-' + b.trader_id + '" type="number" min="1" step="1" value="' + autoEsc(String(b.lot_cap)) + '" class="wms-input-compact wms-input-number" style="width:60px"></td>' +
+                '<td style="padding:4px 8px"><span class="au-badge ' + (b.enabled ? 'success' : 'idle') + '">' + (b.enabled ? 'live' : 'paused') + '</span> ' +
+                    '<button class="au-btn ' + (b.enabled ? 'au-btn-secondary' : 'au-btn-primary') + '" style="font-size:11px;padding:3px 8px" onclick="autoGsBenefTogglePw(\'' + s.name + '\',\'' + b.trader_id + '\',' + (b.enabled ? 'true' : 'false') + ')">' + (b.enabled ? '⏸ Pause 🔒' : '▶ Resume 🔒') + '</button></td>' +
+                '<td style="padding:4px 8px"><button class="au-btn au-btn-danger" style="font-size:11px;padding:2px 8px" onclick="autoGsBenefRemove(\'' + s.name + '\',\'' + b.trader_id + '\')">✕</button></td>' +
+            '</tr>';
+        }).join('') : '<tr><td colspan="5" style="padding:6px 8px;color:#9ca3af">No traders yet — add a beneficiary trader below.</td></tr>';
+        var lr = latestRun ? latestRun[s.name] : null;
+        var lrTxt = (!lr || !lr.finished_at) ? 'never' : (Math.round((nowMs - new Date(lr.finished_at).getTime()) / 60000) + 'm ago');
+        return '<div style="border:1px solid #f3c0c0;border-radius:8px;padding:12px;margin-bottom:14px;background:#fff">' +
+            '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">' +
+                '<div style="font-weight:600"><code>' + autoEsc(s.name) + '</code> <span style="font-size:10px;color:#6b7280;font-family:monospace">' + autoEsc(s.version || '') + ' · ' + autoEsc(lrTxt) + '</span></div>' +
+                '<span class="au-badge ' + (s.enabled ? 'success' : 'idle') + '">' + (s.enabled ? 'enabled' : 'paused') + '</span>' +
+                '<button class="au-btn ' + (s.enabled ? 'au-btn-secondary' : 'au-btn-primary') + '" style="font-size:11px;padding:4px 10px" onclick="autoGsLiveTogglePw(\'' + s.name + '\',' + (s.enabled ? 'true' : 'false') + ')">' + (s.enabled ? '⏸ Pause 🔒' : '▶ Resume 🔒') + '</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:11px;color:#374151;margin-bottom:10px">' +
+                '<label>stop_mode ' + stopModeSel + '</label>' +
+                '<label>stop_mult ' + numInp('stop_mult', p.stop_mult != null ? p.stop_mult : 2.7) + '</label>' +
+                '<label>entry_roll ' + numInp('entry_roll_days', p.entry_roll_days != null ? p.entry_roll_days : 6) + '</label>' +
+                '<label>pos_roll ' + numInp('position_roll_days', p.position_roll_days != null ? p.position_roll_days : 3) + '</label>' +
+                '<span style="color:#9ca3af">(shared across this strategy\'s traders)</span>' +
+            '</div>' +
+            '<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="color:#6b7280;font-size:10px;text-transform:uppercase">' +
+                '<th style="text-align:left;padding:0 8px">Trader (beneficiary)</th><th style="text-align:left;padding:0 8px">Risk ₹</th><th style="text-align:left;padding:0 8px">Lot cap</th><th style="text-align:left;padding:0 8px">Live</th><th style="padding:0 8px"></th>' +
+            '</tr></thead><tbody>' + brows + '</tbody></table>' +
+            '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;border-top:1px solid #f0e0e0;padding-top:8px">' +
+                '<select id="' + idB + '-addtrader" class="wms-df-select" style="min-width:150px">' + autoGsTraderOptions() + '</select>' +
+                '<input id="' + idB + '-addrisk" type="text" inputmode="numeric" placeholder="risk ₹ (75,000)" onblur="this.value=_auFmtIntComma(this.value)" class="wms-input-compact" style="width:130px;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:12px">' +
+                '<input id="' + idB + '-addlot" type="number" min="1" step="1" placeholder="lot cap" class="wms-input-compact" style="width:80px;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:12px">' +
+                '<button class="au-btn au-btn-primary" style="font-size:11px;padding:3px 10px" onclick="autoGsBenefAdd(\'' + s.name + '\')">+ Add trader (paused)</button>' +
+            '</div>' +
+        '</div>';
+    }).join('');
+    el.innerHTML = groups +
+        '<div style="display:flex;align-items:center;gap:10px">' +
+            '<button class="au-btn au-btn-primary" style="font-size:12px;padding:6px 16px" onclick="autoSaveGsLiveAll()">Save all (live)</button>' +
+            '<span id="au-gsl-allmsg" style="font-size:11px;color:#6b7280">Saves the shared params + each trader\'s risk/lot-cap. Pause/Resume + add/remove apply immediately.</span></div>';
+}
+
+async function autoGsLiveTogglePw(name, enabled) {
+    if (!_auGsLivePwGate()) return;
+    if (!confirm((enabled ? 'Pause' : 'Resume') + ' LIVE strategy "' + name + '"?' + (enabled ? '' : '\n\nOnce the enqueuer ships, resuming will place REAL orders for its enabled traders.'))) return;
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
+            { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ enabled: !enabled }) });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+        autoLoadGsFamAdmin();
+    } catch (e) { alert('Failed to update: ' + (e.message || e)); }
+}
+
+async function autoGsBenefTogglePw(name, tid, enabled) {
+    if (!_auGsLivePwGate()) return;
+    try {
+        await _auGsPatchMeta(name, function (md) { (md.beneficiaries || []).forEach(function (x) { if (x.trader_id === tid) x.enabled = !enabled; }); });
+        autoLoadGsFamAdmin();
+    } catch (e) { alert('Failed: ' + (e.message || e)); }
+}
+
+async function autoGsBenefAdd(name) {
+    var idB = 'au-gsl-' + name;
+    var tid = document.getElementById(idB + '-addtrader').value;
+    var risk = parseFloat(String(document.getElementById(idB + '-addrisk').value).replace(/,/g, ''));
+    var lot = parseInt(document.getElementById(idB + '-addlot').value, 10);
+    if (!tid) { alert('Pick a beneficiary trader.'); return; }
+    if (!isFinite(risk) || risk <= 0) { alert('Enter a positive risk per trade (₹).'); return; }
+    if (!isFinite(lot) || lot < 1) { alert('Enter a lot cap ≥ 1.'); return; }
+    var tname = _auGsTraderName(tid);
+    try {
+        await _auGsPatchMeta(name, function (md) {
+            var b = Array.isArray(md.beneficiaries) ? md.beneficiaries : [];
+            if (b.some(function (x) { return x.trader_id === tid; })) throw new Error('That trader is already added.');
+            b.push({ trader_id: tid, trader_name: tname, risk_per_trade: risk, lot_cap: lot, enabled: false });   // added PAUSED
+            md.beneficiaries = b;
+        });
+        autoLoadGsFamAdmin();
+    } catch (e) { alert('Failed to add trader: ' + (e.message || e)); }
+}
+
+async function autoGsBenefRemove(name, tid) {
+    if (!confirm('Remove this trader from ' + name + '?')) return;
+    try {
+        await _auGsPatchMeta(name, function (md) { md.beneficiaries = (md.beneficiaries || []).filter(function (x) { return x.trader_id !== tid; }); });
+        autoLoadGsFamAdmin();
+    } catch (e) { alert('Failed to remove: ' + (e.message || e)); }
+}
+
+// Save all (live) — shared params + each trader's risk/lot_cap for every live row.
+async function autoSaveGsLiveAll() {
+    var msg = document.getElementById('au-gsl-allmsg');
+    if (msg) { msg.style.color = '#6b7280'; msg.textContent = 'Saving…'; }
+    try {
+        var names = _auGsLiveRowNames || [];
+        var rr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&execution_mode=eq.LIVE&select=name,metadata', { headers: wmsHeaders() });
+        var metaByName = {};
+        (await rr.json()).forEach(function (row) { metaByName[row.name] = row.metadata || {}; });
+        var saved = 0;
+        for (var i = 0; i < names.length; i++) {
+            var name = names[i], idB = 'au-gsl-' + name, meta = Object.assign({}, metaByName[name] || {});
+            var pp = Object.assign({}, meta.params || {});
+            var sm = document.getElementById(idB + '-stop_mode'); if (sm) pp.stop_mode = sm.value;
+            ['stop_mult', 'entry_roll_days', 'position_roll_days'].forEach(function (k) {
+                var e = document.getElementById(idB + '-' + k);
+                if (e) { var v = parseFloat(String(e.value).replace(/,/g, '')); if (isFinite(v)) pp[k] = v; }
+            });
+            meta.params = pp;
+            var benef = Array.isArray(meta.beneficiaries) ? meta.beneficiaries : [];
+            benef.forEach(function (b) {
+                var re = document.getElementById(idB + '-brisk-' + b.trader_id);
+                if (re) { var rv = parseFloat(String(re.value).replace(/,/g, '')); if (isFinite(rv) && rv > 0) b.risk_per_trade = rv; }
+                var le = document.getElementById(idB + '-blot-' + b.trader_id);
+                if (le) { var lv = parseInt(le.value, 10); if (isFinite(lv) && lv >= 1) b.lot_cap = lv; }
+            });
+            meta.beneficiaries = benef;
+            var pr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
+                { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ metadata: meta }) });
+            if (!pr.ok) throw new Error(name + ': HTTP ' + pr.status + ' ' + (await pr.text()));
+            saved++;
+        }
+        if (msg) { msg.style.color = '#16a34a'; msg.textContent = '✓ Saved ' + saved + ' live row(s).'; }
+        autoLoadGsFamAdmin();
+    } catch (e) { if (msg) { msg.style.color = '#dc2626'; msg.textContent = 'Failed: ' + String(e.message || e); } }
 }
 
 // ============================================================================
@@ -3422,7 +3589,7 @@ function _auCacheStrategies(rows) {
 }
 
 function autoRefreshStrategySurfaces() {
-    if (document.getElementById('au-gs-fam-strategies'))    autoLoadGsFamAdmin();
+    if (document.getElementById('au-gs-fam-strategies-paper')) autoLoadGsFamAdmin();
     if (document.getElementById('au-gs-fam-mode'))          autoLoadGsFamHeader();
     if (document.getElementById('au-pairs-fam-strategies')) autoLoadPairsFamAdmin();
     if (document.getElementById('au-pairs-fam-mode'))       autoLoadPairsFamHeader();
