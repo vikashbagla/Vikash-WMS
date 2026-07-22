@@ -1717,7 +1717,7 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
             });
             // Actions — small icons (pause/resume password-gated + delete), like the ✕
             html += '<td style="padding:6px 8px;white-space:nowrap">' +
-                '<button class="au-btn ' + (s.enabled ? 'au-btn-secondary' : 'au-btn-primary') + '" style="padding:3px 7px;font-size:12px" title="' + (s.enabled ? 'Pause (password)' : 'Resume (password)') + '" onclick="autoGsLiveTogglePw(\'' + s.name + '\',' + (s.enabled ? 'true' : 'false') + ')">' + (s.enabled ? '⏸' : '▶') + '🔒</button> ' +
+                '<button class="au-btn ' + (s.enabled ? 'au-btn-secondary' : 'au-btn-primary') + '" style="padding:3px 7px;font-size:12px" title="' + (s.enabled ? 'Pause (no password — safety stop)' : 'Resume (password required)') + '" onclick="autoGsLiveTogglePw(\'' + s.name + '\',' + (s.enabled ? 'true' : 'false') + ')">' + (s.enabled ? '⏸' : '▶') + '🔒</button> ' +
                 '<button class="au-btn au-btn-danger" style="padding:3px 7px;font-size:12px" title="Delete this live row" onclick="autoGsLiveRemoveRow(\'' + s.name + '\')">✕</button></td>';
             html += '</tr>';
         });
