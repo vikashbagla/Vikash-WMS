@@ -1628,17 +1628,15 @@ function _auGsLivePwGate() {
 function autoGsAcctRowHtml(acct) {
     acct = acct || {};
     var lots = (acct.lots != null && acct.lots !== '') ? acct.lots : '';
-    var risk = (acct.risk != null && acct.risk !== '') ? acct.risk : '';
     var on = acct.enforce !== false;
     var h = '<tr style="border-top:2px solid #f3a0a0;background:#fff2f2">';
-    h += '<td style="padding:6px 8px"><b>🏦 Account ceiling</b><div style="font-size:10px;color:#6b7280">Veins/Fyers — all traders + both instruments</div></td>';
+    h += '<td style="padding:6px 8px;white-space:normal;max-width:150px"><b>🏦 Account ceiling</b><div style="font-size:10px;color:#6b7280">all traders + both instruments</div></td>';
     h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';
     h += '<td style="padding:6px 8px"><label style="font-size:11px"><input type="checkbox" id="au-gsl-acct-enforce" ' + (on ? 'checked' : '') + '> enforce</label></td>';
     h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';
     _AU_GS_PARAM_SPEC.forEach(function (f) {
         h += '<td style="padding:6px 8px">';
-        if (f.key === 'risk_per_trade') h += '<input id="au-gsl-acct-risk" type="text" inputmode="numeric" value="' + (risk === '' ? '' : autoEsc(_auFmtIntComma(risk))) + '" onblur="this.value=_auFmtIntComma(this.value)" placeholder="total ₹" class="wms-input-compact wms-input-number" style="width:90px" title="Max total risk (₹) deployed across all traders (0/blank = no limit)">';
-        else if (f.key === 'lot_cap') h += '<input id="au-gsl-acct-lots" type="number" min="0" step="1" value="' + (lots === '' ? '' : autoEsc(String(lots))) + '" placeholder="total lots" class="wms-input-compact wms-input-number" style="width:70px" title="Max total open lots across all traders + both instruments (0/blank = no limit)">';
+        if (f.key === 'lot_cap') h += '<input id="au-gsl-acct-lots" type="number" min="0" step="1" value="' + (lots === '' ? '' : autoEsc(String(lots))) + '" placeholder="max lots" class="wms-input-compact wms-input-number" style="width:60px" title="Max total open lots across all traders + both instruments. Enforce off, or blank/0 = no limit.">';
         else h += '<span style="color:#d0b0b0">—</span>';
         h += '</td>';
     });
@@ -1681,7 +1679,7 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
             var idB = 'au-gsl-' + s.name;
             var tid = (s.metadata && s.metadata.trader_id) || '';
             html += '<tr style="border-top:1px solid #f0d0d0">';
-            html += '<td style="padding:6px 8px"><code style="font-weight:600">' + autoEsc(s.name) + '</code><div style="font-size:10px;color:#6b7280">' + autoEsc(s.version || '') + ' · LIVE</div></td>';
+            html += '<td style="padding:6px 8px;white-space:normal;max-width:150px"><code style="font-weight:600;word-break:break-all">' + autoEsc(s.name) + '</code><div style="font-size:10px;color:#6b7280">' + autoEsc(s.version || '') + ' · LIVE</div></td>';
             html += '<td style="padding:6px 8px"><select id="' + idB + '-trader" class="wms-df-select"><option value="">(select)</option>' +
                 (_auManualTraders || []).map(function (t) { return '<option value="' + t.id + '"' + (tid === t.id ? ' selected' : '') + '>' + autoEsc(t.short_name || t.name || t.id) + '</option>'; }).join('') + '</select></td>';
             html += '<td style="padding:6px 8px">' + (s.enabled ? '<span class="au-badge success">yes</span>' : '<span class="au-badge idle">paused</span>') + '</td>';
@@ -1699,7 +1697,7 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
                 } else if (f.fmt === 'comma') {
                     html += '<input id="' + inputId + '" type="text" inputmode="numeric" value="' + autoEsc(_auFmtIntComma(cur)) + '" onblur="this.value=_auFmtIntComma(this.value)" class="wms-input-compact wms-input-number" style="width:90px">';
                 } else {
-                    var w = f.key === 'stop_mult' ? '56px' : '52px';
+                    var w = f.key === 'lot_cap' ? '60px' : (f.key === 'stop_mult' ? '56px' : '52px');
                     html += '<input id="' + inputId + '" type="number" step="' + f.step + '" value="' + autoEsc(String(cur)) + '" class="wms-input-compact wms-input-number" style="width:' + w + '">';
                 }
                 html += '</td>';
@@ -1800,16 +1798,15 @@ async function autoSaveGsLiveAll() {
             if (!pr.ok) throw new Error(name + ': HTTP ' + pr.status + ' ' + (await pr.text()));
             saved++;
         }
-        // Account ceiling → wms_live_risk_limits (signal_source='gs'). 0 / blank = no limit.
+        // Account ceiling → wms_live_risk_limits (signal_source='gs'). Lot-cap ONLY (owner).
+        // Enforce off OR blank/0 lots = no limit. Legacy total-risk row is dropped.
         var acctEnf = document.getElementById('au-gsl-acct-enforce');
         var acctLotsEl = document.getElementById('au-gsl-acct-lots');
-        var acctRiskEl = document.getElementById('au-gsl-acct-risk');
-        if (acctLotsEl || acctRiskEl) {
-            var on = acctEnf ? acctEnf.checked : true;
-            var lotsV = acctLotsEl ? parseInt(acctLotsEl.value, 10) : 0; if (!isFinite(lotsV)) lotsV = 0;
-            var riskV = acctRiskEl ? parseFloat(String(acctRiskEl.value).replace(/,/g, '')) : 0; if (!isFinite(riskV)) riskV = 0;
+        if (acctLotsEl) {
+            var on = acctEnf ? acctEnf.checked : false;
+            var lotsV = parseInt(acctLotsEl.value, 10); if (!isFinite(lotsV)) lotsV = 0;
             await _auGsUpsertAcctLimit('max_total_open_lots', { value: lotsV }, on && lotsV > 0);
-            await _auGsUpsertAcctLimit('max_total_risk_inr', { value: riskV }, on && riskV > 0);
+            try { await fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits?signal_source=eq.gs&strategy_name=is.null&limit_type=eq.max_total_risk_inr', { method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' }) }); } catch (e) {}
         }
         if (msg) { msg.style.color = '#16a34a'; msg.textContent = '✓ Saved ' + saved + ' live row(s) + account ceiling.'; }
         autoLoadGsFamAdmin();
