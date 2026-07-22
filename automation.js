@@ -1305,10 +1305,12 @@ async function autoLoadGsFamRuns(filterOverride) {
 // Renders: strategy config, plugin version, gs_catalogue snapshot.
 // ----------------------------------------------------------------------------
 async function autoLoadGsFamAdmin() {
-    // 1. auto_strategies rows for silver + gold
-    var stratsEl = document.getElementById('au-gs-fam-strategies');
+    // 1. auto_strategies rows for silver + gold — PAPER rows here; LIVE rows render
+    //    into the separate Live Trading table (autoGsRenderLiveTable).
+    var stratsEl = document.getElementById('au-gs-fam-strategies-paper');
     if (stratsEl) {
         try {
+            if (!_auManualTraders || !_auManualTraders.length) { try { await autoManualLoadTraders(); } catch (e) {} }   // populate the Trader dropdowns (LIVE rows)
             // ALL GS-family rows (family=gs) — base v2.2 + every variant (v2.3/v3),
             // so new config rows appear automatically. Params edit inline, one row each.
             // In parallel, pull the latest auto_run per name for the per-row "Last run".
@@ -1316,9 +1318,20 @@ async function autoLoadGsFamAdmin() {
                 { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
             var runReq = fetch(SUPABASE_URL + '/rest/v1/auto_runs?' + auGsNameFilter() + '&order=finished_at.desc&limit=120&select=strategy_name,finished_at,status,metadata',
                 { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
-            var _both = await Promise.all([stratReq, runReq]);
-            var rows = _both[0];
+            var limReq = fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits?signal_source=eq.gs&strategy_name=is.null&select=*', { headers: wmsHeaders() }).then(function (x) { return x.ok ? x.json() : []; });
+            var _both = await Promise.all([stratReq, runReq, limReq]);
+            var _allRows = _both[0] || [];
+            var _liveRows = _allRows.filter(function (r) { return r.execution_mode === 'LIVE'; });
+            var rows = _allRows.filter(function (r) { return r.execution_mode !== 'LIVE'; });   // paper only in this table
             var runList = _both[1] || [];
+            var _gsLims = _both[2] || [];   // account-level ceilings (wms_live_risk_limits, signal_source='gs')
+            var _findGsLim = function (t) { return _gsLims.find(function (r) { return r.limit_type === t; }); };
+            var _llots = _findGsLim('max_total_open_lots'), _lrisk = _findGsLim('max_total_risk_inr');
+            var _acct = {
+                lots:    (_llots && _llots.limit_value && _llots.limit_value.value != null) ? _llots.limit_value.value : '',
+                risk:    (_lrisk && _lrisk.limit_value && _lrisk.limit_value.value != null) ? _lrisk.limit_value.value : '',
+                enforce: _llots ? _llots.enabled : (_lrisk ? _lrisk.enabled : true)
+            };
             // Ordered desc → first sighting of each name is its latest run.
             var latestRun = {};
             runList.forEach(function (r2) { if (!latestRun[r2.strategy_name]) latestRun[r2.strategy_name] = r2; });
@@ -1387,6 +1400,7 @@ async function autoLoadGsFamAdmin() {
                         '<span id="au-gsp-allmsg" style="font-size:11px;color:#6b7280"></span></div>';
                 stratsEl.innerHTML = html;
             }
+            if (typeof autoGsRenderLiveTable === 'function') autoGsRenderLiveTable(_liveRows, latestRun, _acct);
         } catch (e) {
             stratsEl.innerHTML = '<span style="color:#dc2626">Failed: ' + autoEsc(String(e)) + '</span>';
         }
@@ -1577,6 +1591,287 @@ async function autoSaveGsParamsAll() {
     } catch (e) {
         if (msg) { msg.style.color = '#dc2626'; msg.textContent = 'Failed: ' + String(e.message || e); }
     }
+}
+
+// ============================================================================
+// GS — Live Trading table: a FLAT table with the SAME shape as the Paper table, plus a
+// Trader column, password-gated Pause/Resume, per-row Remove, and an Add-trader control
+// that CLONES a base strategy into a new LIVE auto_strategies row for a beneficiary.
+// Each live row is its own independent row (own params + one trader_id = beneficiary);
+// executor is always Veins/Fyers; multiple traders on an instrument = multiple rows.
+// Pause/Resume reuses the manual-order password (_auManualPw; server-side check @ Stage 2).
+// ============================================================================
+var _auGsLiveRowNames = [];
+var _auGsLiveTagCtrls = {};   // strategy_name -> wmsTagInput controller (per-row tags)
+var _AU_GS_LIVE_BASES = [
+    { name: 'gold_mini_15m_v3_live',   label: 'Gold Mini v3 (clone)' },
+    { name: 'silver_mini_15m_v3_live', label: 'Silver Mini v3 (clone)' }
+];
+
+function autoGsTraderOptions() {
+    return '<option value="">(select trader)</option>' + (_auManualTraders || []).map(function (t) {
+        return '<option value="' + t.id + '">' + autoEsc(t.short_name || t.name || t.id) + '</option>';
+    }).join('');
+}
+function _auGsTraderName(id) { var t = (_auManualTraders || []).find(function (x) { return x.id === id; }); return t ? (t.short_name || t.name) : ''; }
+
+// Arming/removing a LIVE algo row is higher-stakes than one manual trade, so — unlike the
+// manual form — this NEVER reuses the session-cached password. Prompts on EVERY Resume/Remove
+// click and returns the value (not cached) to POST to wms-manual-order, which verifies it
+// server-side (MANUAL_ORDER_PW_SHA256) — the same second factor as manual orders. This is a
+// ONE-TIME gate at the click; it does NOT gate order placement or SL shifts. Owner, 2026-07-22.
+function _auGsLivePw() {
+    var v = prompt('Enter the manual-order password to arm/remove this LIVE row (required every time):');
+    return (v && v.length) ? v : null;
+}
+
+// The account-ceiling row (first row of the Live table): total open-lots + total ₹-risk
+// ACROSS all traders + both instruments. Backed by wms_live_risk_limits (signal_source='gs').
+// The per-instrument caps are superseded by this single account ceiling.
+function autoGsAcctRowHtml(acct) {
+    acct = acct || {};
+    var lots = (acct.lots != null && acct.lots !== '') ? acct.lots : '';
+    var on = acct.enforce !== false;
+    var h = '<tr style="border-top:2px solid #f3a0a0;background:#fff2f2">';
+    h += '<td style="padding:6px 8px;white-space:normal;max-width:150px"><b>🏦 Account ceiling</b><div style="font-size:10px;color:#6b7280">all traders + both instruments</div></td>';
+    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';   // trader
+    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';   // tags
+    h += '<td style="padding:6px 8px"><label style="font-size:11px"><input type="checkbox" id="au-gsl-acct-enforce" ' + (on ? 'checked' : '') + '> enforce</label></td>';   // Live col → enforce
+    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';   // last run
+    _AU_GS_PARAM_SPEC.forEach(function (f) {
+        h += '<td style="padding:6px 8px">';
+        if (f.key === 'lot_cap') h += '<input id="au-gsl-acct-lots" type="number" min="0" step="1" value="' + (lots === '' ? '' : autoEsc(String(lots))) + '" placeholder="max lots" class="wms-input-compact wms-input-number" style="width:60px" title="Max total open lots across all traders + both instruments. Enforce off, or blank/0 = no limit.">';
+        else h += '<span style="color:#d0b0b0">—</span>';
+        h += '</td>';
+    });
+    h += '<td style="padding:6px 8px;color:#c0a0a0">—</td>';
+    h += '</tr>';
+    return h;
+}
+
+// Upsert one account-level limit into wms_live_risk_limits (signal_source='gs').
+async function _auGsUpsertAcctLimit(type, valueObj, enabled) {
+    var ex = await fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits?signal_source=eq.gs&strategy_name=is.null&limit_type=eq.' + encodeURIComponent(type) + '&select=id', { headers: wmsHeaders() }).then(function (r) { return r.json(); });
+    if (ex && ex[0]) {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits?id=eq.' + ex[0].id,
+            { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ limit_value: valueObj, enabled: enabled, breach_action: 'reject' }) });
+        if (!resp.ok) throw new Error('account limit ' + type + ': HTTP ' + resp.status + ' ' + (await resp.text()));
+    } else {
+        var resp2 = await fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits',
+            { method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ signal_source: 'gs', strategy_name: null, iba_id: null, limit_type: type, limit_value: valueObj, enabled: enabled, breach_action: 'reject' }) });
+        if (!resp2.ok) throw new Error('account limit ' + type + ': HTTP ' + resp2.status + ' ' + (await resp2.text()));
+    }
+}
+
+function autoGsRenderLiveTable(liveRows, latestRun, acct) {
+    var el = document.getElementById('au-gs-fam-strategies-live'); if (!el) return;
+    liveRows = liveRows || [];
+    _auGsLiveRowNames = liveRows.map(function (s) { return s.name; });
+    var nowMs = Date.now();
+    var ncols = 6 + _AU_GS_PARAM_SPEC.length;
+    var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse;white-space:nowrap">';
+    html += '<thead><tr style="background:#fde8e8;text-align:left">' +
+        '<th style="padding:6px 8px">Strategy</th><th style="padding:6px 8px">Trader</th><th style="padding:6px 8px">Tags</th><th style="padding:6px 8px" title="enabled / paused">Live</th><th style="padding:6px 8px">Last run</th>';
+    _AU_GS_PARAM_SPEC.forEach(function (f) { html += '<th style="padding:6px 8px">' + autoEsc(f.col) + '</th>'; });
+    html += '<th style="padding:6px 8px">Actions</th></tr></thead><tbody>';
+    html += autoGsAcctRowHtml(acct);
+    if (!liveRows.length) {
+        html += '<tr><td colspan="' + ncols + '" style="padding:10px;color:#9ca3af">No live strategies yet — add a trader below (or run <code>GS-live-rows-seed.sql</code>).</td></tr>';
+    } else {
+        liveRows.forEach(function (s) {
+            var params = (s.metadata && s.metadata.params) ? s.metadata.params : {};
+            var idB = 'au-gsl-' + s.name;
+            var tid = (s.metadata && s.metadata.trader_id) || '';
+            var tname = tid ? (_auGsTraderName(tid) || tid) : '';
+            html += '<tr style="border-top:1px solid #f0d0d0">';
+            html += '<td style="padding:6px 8px;white-space:normal;max-width:150px"><code style="font-weight:600;word-break:break-all">' + autoEsc(s.name) + '</code><div style="font-size:10px;color:#6b7280">' + autoEsc(s.version || '') + ' · LIVE</div></td>';
+            // Trader — fixed at Add-trader time; shown as text, not editable
+            // No explicit trader_id → the executor Veins is the beneficiary (booking defaults
+            // trader→Veins, same as KH). Show that instead of a bare dash.
+            html += '<td style="padding:6px 8px">' + (tname ? autoEsc(tname) : 'Veins <span style="color:#9ca3af;font-size:10px" title="no explicit beneficiary — trades and books to the executor, Veins">(default)</span>') + '</td>';
+            // Tags — global tag widget (wmsTagInput), initialised after render, → metadata.transaction_tags
+            html += '<td style="padding:6px 8px"><div style="min-width:150px">' +
+                '<input id="' + idB + '-tags-input" type="text" placeholder="tags…" autocomplete="off" style="padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:11px;width:100%;box-sizing:border-box">' +
+                '<div class="wms-tag-pills" id="' + idB + '-tags-pills"></div>' +
+                '<div class="wms-tag-dd" id="' + idB + '-tags-dd"></div></div></td>';
+            // Live status dot (green = enabled, red = paused)
+            html += '<td style="padding:6px 8px;text-align:center"><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:' + (s.enabled ? '#16a34a' : '#dc2626') + '" title="' + (s.enabled ? 'enabled (live)' : 'paused') + '"></span></td>';
+            var lr = latestRun ? latestRun[s.name] : null;
+            html += '<td style="padding:6px 8px">' + ((!lr || !lr.finished_at) ? '<span style="color:#9ca3af">never</span>' : (Math.round((nowMs - new Date(lr.finished_at).getTime()) / 60000) + 'm ago')) + '</td>';
+            _AU_GS_PARAM_SPEC.forEach(function (f) {
+                var dflt = f.defFor ? f.defFor(s) : f.def;
+                var cur = (params[f.key] !== undefined && params[f.key] !== null) ? params[f.key] : dflt;
+                var inputId = idB + '-' + f.key;
+                html += '<td style="padding:6px 8px">';
+                if (f.type === 'select') {
+                    html += '<select id="' + inputId + '" class="wms-df-select">';
+                    f.opts.forEach(function (o) { html += '<option value="' + o + '"' + (String(cur) === o ? ' selected' : '') + '>' + o + '</option>'; });
+                    html += '</select>';
+                } else if (f.fmt === 'comma') {
+                    html += '<input id="' + inputId + '" type="text" inputmode="numeric" value="' + autoEsc(_auFmtIntComma(cur)) + '" onblur="this.value=_auFmtIntComma(this.value)" class="wms-input-compact wms-input-number" style="width:90px">';
+                } else {
+                    var w = f.key === 'lot_cap' ? '60px' : (f.key === 'stop_mult' ? '56px' : '52px');
+                    html += '<input id="' + inputId + '" type="number" step="' + f.step + '" value="' + autoEsc(String(cur)) + '" class="wms-input-compact wms-input-number" style="width:' + w + '">';
+                }
+                html += '</td>';
+            });
+            // Actions — small icons (pause/resume password-gated + delete), like the ✕
+            html += '<td style="padding:6px 8px;white-space:nowrap">' +
+                '<button class="au-btn ' + (s.enabled ? 'au-btn-secondary' : 'au-btn-primary') + '" style="padding:3px 7px;font-size:12px" title="' + (s.enabled ? 'Pause (no password — safety stop)' : 'Resume (password required)') + '" onclick="autoGsLiveTogglePw(\'' + s.name + '\',' + (s.enabled ? 'true' : 'false') + ')">' + (s.enabled ? '⏸' : '▶') + '🔒</button> ' +
+                '<button class="au-btn au-btn-danger" style="padding:3px 7px;font-size:12px" title="Delete this live row" onclick="autoGsLiveRemoveRow(\'' + s.name + '\')">✕</button></td>';
+            html += '</tr>';
+        });
+    }
+    html += '</tbody></table></div>';
+    // One aligned footer row: Save all (live) + a divider + the Add-trader controls.
+    // Both primary buttons share the same size so nothing looks mismatched.
+    html += '<div style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+        '<button class="au-btn au-btn-primary" style="font-size:12px;padding:6px 14px" onclick="autoSaveGsLiveAll()">Save all (live)</button>' +
+        '<span id="au-gsl-allmsg" style="font-size:11px;color:#6b7280"></span>' +
+        '<span style="width:1px;align-self:stretch;background:#f0c0c0;margin:0 4px"></span>' +
+        '<span style="font-size:12px;color:#374151;font-weight:600">Add trader:</span>' +
+        '<select id="au-gsl-add-strat" class="wms-df-select" style="min-width:160px">' + _AU_GS_LIVE_BASES.map(function (b) { return '<option value="' + b.name + '">' + autoEsc(b.label) + '</option>'; }).join('') + '</select>' +
+        '<select id="au-gsl-add-trader" class="wms-df-select" style="min-width:140px">' + autoGsTraderOptions() + '</select>' +
+        '<button class="au-btn au-btn-primary" style="font-size:12px;padding:6px 14px" onclick="autoGsLiveAddTrader()">+ Add trader</button>' +
+    '</div>';
+    el.innerHTML = html;
+    autoGsInitLiveTags(liveRows);   // wire the per-row global tag widgets (async, fire-and-forget)
+}
+
+// Per-row tag widgets (wmsTagInput) → auto_strategies.metadata.transaction_tags. Same field
+// the fill-writer will apply to each booked GS fill (like KH's transaction_tags).
+async function autoGsInitLiveTags(liveRows) {
+    if (typeof wmsTagInput !== 'function') return;
+    var existing = [];
+    try { existing = await autoGetExistingTags(); } catch (e) {}
+    _auGsLiveTagCtrls = {};
+    (liveRows || []).forEach(function (s) {
+        var idB = 'au-gsl-' + s.name;
+        var input = document.getElementById(idB + '-tags-input');
+        var pills = document.getElementById(idB + '-tags-pills');
+        var dd = document.getElementById(idB + '-tags-dd');
+        if (!input || !pills || !dd) return;
+        var tags = (s.metadata && Array.isArray(s.metadata.transaction_tags)) ? s.metadata.transaction_tags.slice() : [];
+        _auGsLiveTagCtrls[s.name] = wmsTagInput(input, pills, dd, { tags: tags, existingTags: existing, onChange: function () {} });
+    });
+}
+
+async function autoGsLiveTogglePw(name, enabled) {
+    // 'enabled' is the CURRENT state. Resuming (currently paused) ARMS the row → server-verified
+    // password every click (via wms-manual-order). Pausing is a free safety stop (direct PATCH,
+    // no password) so it can be hit fast, like the kill switch.
+    if (enabled) {
+        if (!confirm('Pause LIVE row "' + name + '"?')) return;
+        try {
+            var presp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
+                { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ enabled: false }) });
+            if (!presp.ok) throw new Error('HTTP ' + presp.status + ' ' + (await presp.text()));
+            autoLoadGsFamAdmin();
+        } catch (e) { alert('Failed to pause: ' + (e.message || e)); }
+        return;
+    }
+    // Resume — arm the row. Password verified server-side.
+    var pw = _auGsLivePw();
+    if (!pw) return;
+    if (!confirm('Resume LIVE row "' + name + '"?\n\nResuming ARMS this row — the next entry places a REAL order for its beneficiary.')) return;
+    try {
+        var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
+            method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ action: 'set_live_enabled', strategy_name: name, enabled: true, password: pw, confirm: true })
+        });
+        var j = await resp.json().catch(function () { return {}; });
+        if (resp.status === 401) { alert((j.error || 'Invalid password') + ' — not armed.'); return; }
+        if (!resp.ok || !j.ok) throw new Error(j.error || ('HTTP ' + resp.status));
+        autoLoadGsFamAdmin();
+    } catch (e) { alert('Failed to resume: ' + (e.message || e)); }
+}
+
+async function autoGsLiveRemoveRow(name) {
+    var pw = _auGsLivePw();
+    if (!pw) return;
+    if (!confirm('Delete the LIVE row "' + name + '"? This removes the strategy row entirely.')) return;
+    try {
+        var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
+            method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ action: 'delete_live_row', strategy_name: name, password: pw, confirm: true })
+        });
+        var j = await resp.json().catch(function () { return {}; });
+        if (resp.status === 401) { alert((j.error || 'Invalid password') + ' — not deleted.'); return; }
+        if (!resp.ok || !j.ok) throw new Error(j.error || ('HTTP ' + resp.status));
+        autoLoadGsFamAdmin();
+    } catch (e) { alert('Failed to delete: ' + (e.message || e)); }
+}
+
+async function autoGsLiveAddTrader() {
+    var base = document.getElementById('au-gsl-add-strat').value;
+    var tid = document.getElementById('au-gsl-add-trader').value;
+    if (!base) { alert('Pick a strategy.'); return; }
+    if (!tid) { alert('Pick a trader.'); return; }
+    var tname = _auGsTraderName(tid);
+    var slug = (tname || 'trader').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    var newName = base + '_' + slug;
+    try {
+        var br = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(base) + '&select=display_name,version,owner,recipients,metadata', { headers: wmsHeaders() }).then(function (r) { return r.json(); });
+        if (!br || !br[0]) throw new Error('base strategy not found');
+        var exists = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(newName) + '&select=name', { headers: wmsHeaders() }).then(function (r) { return r.json(); });
+        if (exists && exists.length) { alert('A row for that strategy + trader already exists (' + newName + ').'); return; }
+        var md = Object.assign({}, br[0].metadata || {});
+        md.trader_id = tid; delete md.beneficiaries; delete md.live_armed;
+        var body = { name: newName, display_name: (br[0].display_name || base) + ' · ' + (tname || ''), owner: br[0].owner || 'Vikash', version: br[0].version || null, execution_mode: 'LIVE', enabled: false, recipients: br[0].recipients || [], metadata: md };
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies', { method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify(body) });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+        autoLoadGsFamAdmin();
+    } catch (e) { alert('Failed to add trader: ' + (e.message || e)); }
+}
+
+function _auGsCollectLiveParams(idB, baseMeta) {
+    var params = Object.assign({}, (baseMeta && baseMeta.params) || {});
+    _AU_GS_PARAM_SPEC.forEach(function (f) {
+        var inp = document.getElementById(idB + '-' + f.key);
+        if (!inp) return;
+        if (f.type === 'select') { params[f.key] = inp.value; }
+        else { var v = parseFloat(String(inp.value).replace(/,/g, '')); if (isFinite(v) && v >= 0) params[f.key] = v; }
+    });
+    return params;
+}
+
+async function autoSaveGsLiveAll() {
+    var msg = document.getElementById('au-gsl-allmsg');
+    if (msg) { msg.style.color = '#6b7280'; msg.textContent = 'Saving…'; }
+    try {
+        var names = _auGsLiveRowNames || [];
+        if (!names.length) { if (msg) msg.textContent = 'Nothing to save.'; return; }
+        var rr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&execution_mode=eq.LIVE&select=name,metadata', { headers: wmsHeaders() });
+        var metaByName = {};
+        (await rr.json()).forEach(function (row) { metaByName[row.name] = row.metadata || {}; });
+        var saved = 0;
+        for (var i = 0; i < names.length; i++) {
+            var name = names[i], idB = 'au-gsl-' + name, meta = Object.assign({}, metaByName[name] || {});
+            meta.params = _auGsCollectLiveParams(idB, meta);
+            // Trader is fixed (set at Add-trader time) — not editable here. Tags → transaction_tags.
+            var _tc = _auGsLiveTagCtrls[name];
+            if (_tc && typeof _tc.getTags === 'function') {
+                var _tg = _tc.getTags().map(function (x) { return String(x).trim(); }).filter(Boolean);
+                if (_tg.length) meta.transaction_tags = _tg; else delete meta.transaction_tags;
+            }
+            var pr = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
+                { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ metadata: meta }) });
+            if (!pr.ok) throw new Error(name + ': HTTP ' + pr.status + ' ' + (await pr.text()));
+            saved++;
+        }
+        // Account ceiling → wms_live_risk_limits (signal_source='gs'). Lot-cap ONLY (owner).
+        // Enforce off OR blank/0 lots = no limit. Legacy total-risk row is dropped.
+        var acctEnf = document.getElementById('au-gsl-acct-enforce');
+        var acctLotsEl = document.getElementById('au-gsl-acct-lots');
+        if (acctLotsEl) {
+            var on = acctEnf ? acctEnf.checked : false;
+            var lotsV = parseInt(acctLotsEl.value, 10); if (!isFinite(lotsV)) lotsV = 0;
+            await _auGsUpsertAcctLimit('max_total_open_lots', { value: lotsV }, on && lotsV > 0);
+            try { await fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits?signal_source=eq.gs&strategy_name=is.null&limit_type=eq.max_total_risk_inr', { method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' }) }); } catch (e) {}
+        }
+        if (msg) { msg.style.color = '#16a34a'; msg.textContent = '✓ Saved ' + saved + ' live row(s) + account ceiling.'; }
+        autoLoadGsFamAdmin();
+    } catch (e) { if (msg) { msg.style.color = '#dc2626'; msg.textContent = 'Failed: ' + String(e.message || e); } }
 }
 
 // ============================================================================
@@ -3403,7 +3698,7 @@ function _auCacheStrategies(rows) {
 }
 
 function autoRefreshStrategySurfaces() {
-    if (document.getElementById('au-gs-fam-strategies'))    autoLoadGsFamAdmin();
+    if (document.getElementById('au-gs-fam-strategies-paper')) autoLoadGsFamAdmin();
     if (document.getElementById('au-gs-fam-mode'))          autoLoadGsFamHeader();
     if (document.getElementById('au-pairs-fam-strategies')) autoLoadPairsFamAdmin();
     if (document.getElementById('au-pairs-fam-mode'))       autoLoadPairsFamHeader();
@@ -5154,3 +5449,4 @@ async function _auUpsertLimit(existing, scope, type, value, enabled, breach) {
     var resp = await fetch(url, { method: method, headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: body });
     if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
 }
+

@@ -770,11 +770,18 @@ details summary {
           <div id="au-gs-fam-controls-panel" class="au-subtab-panel">
             <div id="au-gs-fam-controls-content">
 
-              <!-- Admin: strategy config + scheduling + version + gs_catalogue snapshot -->
+              <!-- Strategy config — Live Trading (comes FIRST; flat table = paper shape + Trader col + pw pause + add-trader) -->
+              <div class="au-card" style="border:1px solid #fca5a5;background:linear-gradient(to bottom,#fef2f2,#ffffff)">
+                <h3>⚡ Strategy Configuration — Live Trading <span class="au-badge" style="background:#fee2e2;color:#b91c1c">LIVE · real orders</span> <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
+                <div class="au-sub">Same table as Paper Trading, plus a <b>Trader</b> column (the beneficiary the position books to; executor is Veins/Fyers). Edit the knobs inline + <b>Save all (live)</b>. <b>Pause / Resume is password-gated</b> (manual-order password). Use <b>Add trader</b> to clone a strategy into a new row for another beneficiary — added <b>paused</b>. Nothing places until the Stage-2 enqueuer ships.</div>
+                <div id="au-gs-fam-strategies-live" style="margin-top:12px" class="au-meta">Loading…</div>
+              </div>
+
+              <!-- Strategy config — Paper Trading -->
               <div class="au-card">
-                <h3>Strategy Configuration <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
-                <div class="au-sub">Every GS config row (v2.2 / v2.3 / v3). Edit the risk &amp; exit knobs inline, then <b>Save all</b> — this writes <code>auto_strategies.metadata.params</code> (no code change) and applies from the next scan. Open trades keep the stop they were opened with.</div>
-                <div id="au-gs-fam-strategies" style="margin-top:12px" class="au-meta">Loading…</div>
+                <h3>📄 Strategy Configuration — Paper Trading <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
+                <div class="au-sub">Paper GS config rows (v2.2 / v2.3 / v3). Edit the risk &amp; exit knobs inline, then <b>Save all</b> — writes <code>auto_strategies.metadata.params</code> (no code change), applies from the next scan.</div>
+                <div id="au-gs-fam-strategies-paper" style="margin-top:12px" class="au-meta">Loading…</div>
                 <div style="font-size:11px;color:#6b7280;margin-top:12px;line-height:1.8;border-top:1px solid #eef0f2;padding-top:8px">
                   <div><b>stop_mode</b> — <code>drift</code> recomputes the hard stop each bar; <code>fixed</code> pins it at entry.</div>
                   <div><b>stop_mult</b> — hard-stop distance = stop_mult × ATR.</div>
@@ -803,13 +810,6 @@ details summary {
                 <div class="au-actions" style="margin-top:8px">
                   <button class="au-btn au-btn-secondary" onclick="autoSwitchFamily('health')">→ Open Health &amp; Global page</button>
                 </div>
-              </div>
-
-              <!-- Controls: pause + PAPER↔LIVE (Phase B.3) -->
-              <div class="au-card" style="border-color:#fde68a;background:linear-gradient(to bottom, #fffbeb, #fff)">
-                <h3>PAPER ↔ LIVE toggle <span class="au-badge idle" style="background:#fef3c7;color:#78350f">Phase B.3</span></h3>
-                <div class="au-sub">Ships after the GS→LIVE cutover discussion — the toggle needs to know what LIVE actually means for GS first.</div>
-                <div style="margin-top:12px;font-size:12px;color:#6b7280">Per-strategy <b>Pause / Resume</b> already shipped — see the <b>Strategy Configuration</b> card above. KH's LIVE controls (kill switch, risk wrappers, lot sizes) live on the <b>🐦 KH</b> page under Controls &amp; Admin.</div>
               </div>
 
             </div>
