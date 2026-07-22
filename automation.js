@@ -1615,11 +1615,14 @@ function autoGsTraderOptions() {
 }
 function _auGsTraderName(id) { var t = (_auManualTraders || []).find(function (x) { return x.id === id; }); return t ? (t.short_name || t.name) : ''; }
 
+// Arming a LIVE algo row is higher-stakes than one manual trade, so — unlike the manual
+// form — this gate NEVER reuses the session-cached password. It prompts on EVERY Resume /
+// Remove click and discards the value (does not touch _auManualPw). Owner, 2026-07-22.
+// NOTE: still client-side only — the enable-flip is a direct PATCH and is not yet
+// server-verified (see autoGsLiveTogglePw). Server-side verify is the pending hardening.
 function _auGsLivePwGate() {
-    if (_auManualPw) return true;
-    var v = prompt('Enter the manual-order password to change LIVE trading:');
+    var v = prompt('Enter the manual-order password to arm/change LIVE trading (required every time):');
     if (!v) return false;
-    _auManualPw = v;   // held this tab/session; verified server-side when the enqueuer places (Stage 2)
     return true;
 }
 
@@ -1684,7 +1687,9 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
             html += '<tr style="border-top:1px solid #f0d0d0">';
             html += '<td style="padding:6px 8px;white-space:normal;max-width:150px"><code style="font-weight:600;word-break:break-all">' + autoEsc(s.name) + '</code><div style="font-size:10px;color:#6b7280">' + autoEsc(s.version || '') + ' · LIVE</div></td>';
             // Trader — fixed at Add-trader time; shown as text, not editable
-            html += '<td style="padding:6px 8px">' + (tname ? autoEsc(tname) : '<span style="color:#9ca3af">—</span>') + '</td>';
+            // No explicit trader_id → the executor Veins is the beneficiary (booking defaults
+            // trader→Veins, same as KH). Show that instead of a bare dash.
+            html += '<td style="padding:6px 8px">' + (tname ? autoEsc(tname) : 'Veins <span style="color:#9ca3af;font-size:10px" title="no explicit beneficiary — trades and books to the executor, Veins">(default)</span>') + '</td>';
             // Tags — global tag widget (wmsTagInput), initialised after render, → metadata.transaction_tags
             html += '<td style="padding:6px 8px"><div style="min-width:150px">' +
                 '<input id="' + idB + '-tags-input" type="text" placeholder="tags…" autocomplete="off" style="padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:11px;width:100%;box-sizing:border-box">' +
@@ -1753,8 +1758,11 @@ async function autoGsInitLiveTags(liveRows) {
 }
 
 async function autoGsLiveTogglePw(name, enabled) {
-    if (!_auGsLivePwGate()) return;
-    if (!confirm((enabled ? 'Pause' : 'Resume') + ' LIVE row "' + name + '"?' + (enabled ? '' : '\n\nOnce the enqueuer ships, resuming places REAL orders for its trader.'))) return;
+    // 'enabled' is the CURRENT state. Resuming (currently paused) ARMS the row → password every
+    // time. Pausing is a free safety stop (no password) so it can be hit fast, like the kill switch.
+    var resuming = !enabled;
+    if (resuming && !_auGsLivePwGate()) return;
+    if (!confirm((enabled ? 'Pause' : 'Resume') + ' LIVE row "' + name + '"?' + (enabled ? '' : '\n\nResuming ARMS this row — the next entry places a REAL order for its beneficiary.'))) return;
     try {
         var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
             { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ enabled: !enabled }) });
