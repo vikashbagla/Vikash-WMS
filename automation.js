@@ -1662,15 +1662,17 @@ function autoGsRenderLiveTable(liveRows, latestRun) {
         });
     }
     html += '</tbody></table></div>';
-    html += '<div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
-        '<button class="au-btn au-btn-primary" style="font-size:12px;padding:6px 16px" onclick="autoSaveGsLiveAll()">Save all (live)</button>' +
-        '<span id="au-gsl-allmsg" style="font-size:11px;color:#6b7280"></span></div>';
-    html += '<div style="margin-top:12px;border-top:1px dashed #f0c0c0;padding-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+    // One aligned footer row: Save all (live) + a divider + the Add-trader controls.
+    // Both primary buttons share the same size so nothing looks mismatched.
+    html += '<div style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+        '<button class="au-btn au-btn-primary" style="font-size:12px;padding:6px 14px" onclick="autoSaveGsLiveAll()">Save all (live)</button>' +
+        '<span id="au-gsl-allmsg" style="font-size:11px;color:#6b7280"></span>' +
+        '<span style="width:1px;align-self:stretch;background:#f0c0c0;margin:0 4px"></span>' +
         '<span style="font-size:12px;color:#374151;font-weight:600">Add trader:</span>' +
-        '<select id="au-gsl-add-strat" class="wms-df-select" style="min-width:170px">' + _AU_GS_LIVE_BASES.map(function (b) { return '<option value="' + b.name + '">' + autoEsc(b.label) + '</option>'; }).join('') + '</select>' +
-        '<select id="au-gsl-add-trader" class="wms-df-select" style="min-width:150px">' + autoGsTraderOptions() + '</select>' +
-        '<button class="au-btn au-btn-primary" style="font-size:11px;padding:4px 10px" onclick="autoGsLiveAddTrader()">+ Add trader (paused)</button>' +
-        '<span style="font-size:11px;color:#9ca3af">clones the chosen strategy into a new paused live row for that trader</span></div>';
+        '<select id="au-gsl-add-strat" class="wms-df-select" style="min-width:160px">' + _AU_GS_LIVE_BASES.map(function (b) { return '<option value="' + b.name + '">' + autoEsc(b.label) + '</option>'; }).join('') + '</select>' +
+        '<select id="au-gsl-add-trader" class="wms-df-select" style="min-width:140px">' + autoGsTraderOptions() + '</select>' +
+        '<button class="au-btn au-btn-primary" style="font-size:12px;padding:6px 14px" onclick="autoGsLiveAddTrader()">+ Add trader</button>' +
+    '</div>';
     el.innerHTML = html;
 }
 
