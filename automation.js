@@ -5170,11 +5170,15 @@ var _AU_GS_LIVE_INSTR = [
     { key: 'gs_goldmini',   label: 'Gold Mini',   und: 'GOLDM',   row: 'gold_mini_15m_v3_live' },
     { key: 'gs_silvermini', label: 'Silver Mini', und: 'SILVERM', row: 'silver_mini_15m_v3_live' }
 ];
+var _auGsLiveRows = [];        // cached live strategy rows (incl. metadata.beneficiaries)
+var _auGsLiveKill = false;
+var _auGsBenefOpen = null;     // strategy_name whose beneficiary editor is expanded
 
 async function autoGsLoadLive() {
     var el = document.getElementById('au-gs-fam-live'); if (!el) return;
     el.innerHTML = 'Loading…';
     try {
+        if (!_auManualTraders || !_auManualTraders.length) { try { await autoManualLoadTraders(); } catch (e) {} }
         var res = await Promise.all([
             fetch(SUPABASE_URL + '/rest/v1/wms_live_risk_limits?select=*', { headers: wmsHeaders() }),
             fetch(SUPABASE_URL + '/rest/v1/auto_strategies?metadata->>family=eq.gs&execution_mode=eq.LIVE&select=name,enabled,metadata&order=name.asc', { headers: wmsHeaders() }),
@@ -5189,55 +5193,138 @@ async function autoGsLoadLive() {
     }
 }
 
+function autoGsTraderOptions() {
+    return '<option value="">(select trader)</option>' + (_auManualTraders || []).map(function (t) {
+        return '<option value="' + t.id + '">' + autoEsc(t.short_name || t.name || t.id) + '</option>';
+    }).join('');
+}
+function _auGsTraderName(id) { var t = (_auManualTraders || []).find(function (x) { return x.id === id; }); return t ? (t.short_name || t.name) : ''; }
+
+// Render the GS live controls as a TABLE (row per live strategy — same feel as the
+// paper Strategy Configuration table) + an inline beneficiary manager. Beneficiaries
+// live in auto_strategies.metadata.beneficiaries: [{trader_id, trader_name, risk_per_trade,
+// lot_cap, enabled}]. The executor is always Veins/Fyers; each beneficiary = one booked
+// position under its own trader_id (§2C fan-out on the single account).
 function autoGsRenderLive(liveRows, kill) {
+    _auGsLiveRows = liveRows || []; _auGsLiveKill = !!kill;
     var el = document.getElementById('au-gs-fam-live'); if (!el) return;
     var unlocked = !!_auManualPw;
-    var byName = {}; (liveRows || []).forEach(function (r) { byName[r.name] = r; });
+    var byName = {}; _auGsLiveRows.forEach(function (r) { byName[r.name] = r; });
     var head =
-        '<div style="display:flex;gap:22px;flex-wrap:wrap;align-items:center;margin-bottom:14px;font-size:12px">' +
+        '<div style="display:flex;gap:22px;flex-wrap:wrap;align-items:center;margin-bottom:12px;font-size:12px">' +
             '<span>Global kill switch: ' + (kill ? '<b style="color:#dc2626">ON — all placement halted</b>' : '<b style="color:#16a34a">off</b>') + ' <span style="color:#9ca3af">(toggle on 🐦 KH · Controls)</span></span>' +
-            '<span>Manual password: ' + (unlocked ? '<b style="color:#16a34a">unlocked</b>' : '<b style="color:#b45309">locked</b> — unlock on the Manual order tab to arm') + '</span>' +
+            '<span>Manual password: ' + (unlocked ? '<b style="color:#16a34a">unlocked</b>' : '<b style="color:#b45309">locked</b> — unlock on Manual order tab to arm') + '</span>' +
         '</div>';
-    var blocks = _AU_GS_LIVE_INSTR.map(function (it) {
-        var s = it.key;
+    var rowsHtml = _AU_GS_LIVE_INSTR.map(function (it) {
+        var s = it.key, row = byName[it.row];
         var cap = _auFindLimit(s, null, null, 'max_open_exposure_lots');
         var lb  = _auFindLimit(s, null, null, 'exposure_lookback_days');
-        var und = _auFindLimit(s, null, null, 'allowed_underlyings');
         var capVal = (cap && cap.limit_value && cap.limit_value.value != null) ? cap.limit_value.value : '';
         var capOn  = cap ? cap.enabled : true;
         var lbVal  = (lb && lb.limit_value && lb.limit_value.value != null) ? lb.limit_value.value : 3;
-        var undVals = (und && und.limit_value && Array.isArray(und.limit_value.values)) ? und.limit_value.values.join(', ') : it.und;
-        var row = byName[it.row];
         var armed   = !!(row && row.metadata && row.metadata.live_armed);
         var enabled = !!(row && row.enabled);
-        var booking = !!(row && row.metadata && row.metadata.booking && row.metadata.booking.enabled);
-        var lotcap  = (row && row.metadata && row.metadata.params && row.metadata.params.lot_cap != null) ? row.metadata.params.lot_cap : '—';
-        var missing = row ? '' : ' <span style="color:#dc2626">— live row not found (run GS-live-rows-seed.sql)</span>';
-        return '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:12px">' +
-            '<div style="font-weight:600;font-size:13px;margin-bottom:2px">' + autoEsc(it.label) +
-                ' <span style="color:#9ca3af;font-weight:400;font-size:11px">' + autoEsc(it.row) + '</span>' + missing + '</div>' +
-            '<div style="font-size:11px;color:#6b7280;margin-bottom:10px">Allowed underlying <b>' + autoEsc(undVals) + '</b> · row lot_cap <b>' + autoEsc(String(lotcap)) + '</b></div>' +
-            '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
-                '<span style="font-size:12px;width:140px">Max open lots</span>' +
-                '<input id="au-gs-cap-' + s + '" type="number" min="0" step="1" value="' + autoEsc(String(capVal)) + '" style="' + _AU_INP + ';width:100px">' +
-                '<label style="font-size:12px;color:#374151"><input type="checkbox" id="au-gs-cap-on-' + s + '" ' + (capOn ? 'checked' : '') + '> enforce</label>' +
-                '<button class="au-btn au-btn-primary" onclick="autoGsSaveCap(\'' + s + '\')">Save</button>' +
-            '</div>' +
-            '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">' +
-                '<span style="font-size:12px;width:140px">Look-back (days)</span>' +
-                '<input id="au-gs-lb-' + s + '" type="number" min="1" max="90" value="' + autoEsc(String(lbVal)) + '" style="' + _AU_INP + ';width:100px">' +
-                '<button class="au-btn au-btn-primary" onclick="autoGsSaveLookback(\'' + s + '\')">Save</button>' +
-            '</div>' +
-            '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;border-top:1px solid #f0f0f0;padding-top:10px">' +
-                '<span style="font-size:12px;font-weight:600">Live placement</span>' +
-                '<span class="au-badge ' + (armed ? 'error' : 'idle') + '">' + (armed ? 'ARMED' : 'disarmed') + '</span>' +
-                (row ? ('<button class="au-btn ' + (armed ? 'au-btn-danger' : 'au-btn-secondary') + '" ' + (unlocked ? '' : 'disabled title="Unlock the Manual order tab first"') + ' onclick="autoGsToggleArm(\'' + it.row + '\',' + (armed ? 'true' : 'false') + ')">' + (armed ? 'Disarm' : 'Arm for LIVE') + '</button>') : '') +
-                '<span style="font-size:11px;color:#9ca3af">row ' + (enabled ? 'enabled' : 'disabled') + ' · booking ' + (booking ? 'on' : 'off') + '</span>' +
-            '</div>' +
-        '</div>';
+        var benef   = (row && row.metadata && Array.isArray(row.metadata.beneficiaries)) ? row.metadata.beneficiaries : [];
+        var benefOn = benef.filter(function (b) { return b.enabled; }).length;
+        var missing = row ? '' : ' <span style="color:#dc2626">(seed row missing)</span>';
+        return '<tr style="border-top:1px solid #e5e7eb">' +
+            '<td style="padding:6px 8px"><b>' + autoEsc(it.label) + '</b><div style="font-size:10px;color:#9ca3af">' + autoEsc(it.row) + '</div>' + missing + '</td>' +
+            '<td style="padding:6px 8px"><span class="au-badge ' + (enabled ? 'success' : 'idle') + '">' + (enabled ? 'enabled' : 'disabled') + '</span></td>' +
+            '<td style="padding:6px 8px;white-space:nowrap"><input id="au-gs-cap-' + s + '" type="number" min="0" step="1" value="' + autoEsc(String(capVal)) + '" style="' + _AU_INP + ';width:66px">' +
+                ' <label style="font-size:11px"><input type="checkbox" id="au-gs-cap-on-' + s + '" ' + (capOn ? 'checked' : '') + '>on</label>' +
+                ' <button class="au-btn au-btn-primary" style="font-size:11px;padding:3px 8px" onclick="autoGsSaveCap(\'' + s + '\')">✓</button></td>' +
+            '<td style="padding:6px 8px;white-space:nowrap"><input id="au-gs-lb-' + s + '" type="number" min="1" max="90" value="' + autoEsc(String(lbVal)) + '" style="' + _AU_INP + ';width:56px">' +
+                ' <button class="au-btn au-btn-primary" style="font-size:11px;padding:3px 8px" onclick="autoGsSaveLookback(\'' + s + '\')">✓</button></td>' +
+            '<td style="padding:6px 8px;white-space:nowrap">' + benefOn + ' of ' + benef.length +
+                (row ? (' <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 8px" onclick="autoGsManageBenef(\'' + it.row + '\')">' + (_auGsBenefOpen === it.row ? 'Close' : 'Manage') + '</button>') : '') + '</td>' +
+            '<td style="padding:6px 8px;white-space:nowrap"><span class="au-badge ' + (armed ? 'error' : 'idle') + '">' + (armed ? 'ARMED' : 'off') + '</span> ' +
+                (row ? ('<button class="au-btn ' + (armed ? 'au-btn-danger' : 'au-btn-secondary') + '" style="font-size:11px;padding:3px 8px" ' + (unlocked ? '' : 'disabled title="Unlock Manual order tab first"') + ' onclick="autoGsToggleArm(\'' + it.row + '\',' + (armed ? 'true' : 'false') + ')">' + (armed ? 'Disarm' : 'Arm') + '</button>') : '') + '</td>' +
+        '</tr>';
     }).join('');
-    el.innerHTML = head + blocks +
-        '<div style="font-size:11px;color:#9ca3af;margin-top:4px">Arming sets <code>metadata.live_armed</code>. The Stage-2 enqueuer refuses to place unless the row is <b>enabled</b> AND <b>armed</b> AND the kill switch is off. Until the enqueuer ships, arming has no effect.</div>';
+    var table = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse;white-space:nowrap">' +
+        '<thead><tr style="background:#f3f4f6;text-align:left">' +
+        '<th style="padding:6px 8px">Strategy</th><th style="padding:6px 8px">Row</th><th style="padding:6px 8px">Max open lots</th><th style="padding:6px 8px">Look-back</th><th style="padding:6px 8px">Beneficiaries</th><th style="padding:6px 8px">Live</th>' +
+        '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
+    var editor = _auGsBenefOpen ? autoGsBenefEditorHtml(_auGsBenefOpen, byName[_auGsBenefOpen]) : '';
+    el.innerHTML = head + table + editor +
+        '<div style="font-size:11px;color:#9ca3af;margin-top:10px">Arming sets <code>metadata.live_armed</code>; beneficiaries live in <code>metadata.beneficiaries</code>. The Stage-2 enqueuer fans out one order per <b>enabled</b> beneficiary (own risk unit + lot cap), books each under its <code>trader_id</code>, and refuses to place unless the row is enabled, armed, and the kill switch is off.</div>';
+}
+
+function autoGsManageBenef(rowName) {
+    _auGsBenefOpen = (_auGsBenefOpen === rowName) ? null : rowName;
+    autoGsRenderLive(_auGsLiveRows, _auGsLiveKill);
+}
+
+function autoGsBenefEditorHtml(rowName, row) {
+    var benef = (row && row.metadata && Array.isArray(row.metadata.beneficiaries)) ? row.metadata.beneficiaries : [];
+    var list = benef.length ? benef.map(function (b) {
+        return '<tr style="border-top:1px solid #eef0f2">' +
+            '<td style="padding:4px 8px">' + autoEsc(b.trader_name || _auGsTraderName(b.trader_id) || b.trader_id) + '</td>' +
+            '<td style="padding:4px 8px;text-align:right">₹' + autoEsc(String(b.risk_per_trade)) + '</td>' +
+            '<td style="padding:4px 8px;text-align:right">' + autoEsc(String(b.lot_cap)) + '</td>' +
+            '<td style="padding:4px 8px"><label style="font-size:11px"><input type="checkbox" ' + (b.enabled ? 'checked' : '') + ' onclick="autoGsBenefToggle(\'' + rowName + '\',\'' + b.trader_id + '\')"> ' + (b.enabled ? 'on' : 'off') + '</label></td>' +
+            '<td style="padding:4px 8px"><button class="au-btn au-btn-danger" style="font-size:11px;padding:2px 8px" onclick="autoGsBenefRemove(\'' + rowName + '\',\'' + b.trader_id + '\')">✕</button></td>' +
+        '</tr>';
+    }).join('') : '<tr><td colspan="5" style="padding:6px 8px;color:#9ca3af">No beneficiaries yet. The executor is always Veins/Fyers; add the beneficiary trader(s) the position books to.</td></tr>';
+    return '<div style="border:1px solid #d1d5db;border-radius:8px;padding:12px;margin-top:10px;background:#fafafa">' +
+        '<div style="font-weight:600;font-size:12px;margin-bottom:8px">Beneficiaries — ' + autoEsc(rowName) + ' <span style="font-weight:400;color:#9ca3af">(executor: Veins/Fyers; each beneficiary = one booked position with its trader_id)</span></div>' +
+        '<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="color:#6b7280;font-size:10px;text-transform:uppercase">' +
+            '<th style="text-align:left;padding:0 8px">Trader (beneficiary)</th><th style="text-align:right;padding:0 8px">Risk ₹</th><th style="text-align:right;padding:0 8px">Lot cap</th><th style="text-align:left;padding:0 8px">Enabled</th><th style="padding:0 8px"></th>' +
+        '</tr></thead><tbody>' + list + '</tbody></table>' +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;border-top:1px solid #e5e7eb;padding-top:10px">' +
+            '<select id="au-gs-benef-add-trader-' + rowName + '" style="' + _AU_INP + ';min-width:160px">' + autoGsTraderOptions() + '</select>' +
+            '<input id="au-gs-benef-add-risk-' + rowName + '" type="number" min="0" step="1000" placeholder="risk ₹ (e.g. 75000)" style="' + _AU_INP + ';width:150px">' +
+            '<input id="au-gs-benef-add-lotcap-' + rowName + '" type="number" min="1" step="1" placeholder="lot cap" style="' + _AU_INP + ';width:90px">' +
+            '<button class="au-btn au-btn-primary" onclick="autoGsBenefAdd(\'' + rowName + '\')">Add beneficiary</button>' +
+        '</div>' +
+    '</div>';
+}
+
+// Read-modify-write metadata for a strategy row (owner session, RLS). Used by the
+// beneficiary editor + arming toggle.
+async function _auGsPatchMeta(rowName, mutate) {
+    var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(rowName) + '&select=metadata', { headers: wmsHeaders() });
+    var rows = await r.json();
+    if (!Array.isArray(rows) || !rows[0]) throw new Error('row not found');
+    var md = rows[0].metadata || {};
+    mutate(md);
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(rowName),
+        { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ metadata: md }) });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+}
+
+async function autoGsBenefAdd(rowName) {
+    var tid = document.getElementById('au-gs-benef-add-trader-' + rowName).value;
+    var risk = Number(document.getElementById('au-gs-benef-add-risk-' + rowName).value);
+    var capv = Number(document.getElementById('au-gs-benef-add-lotcap-' + rowName).value);
+    if (!tid) { alert('Pick a beneficiary (trader).'); return; }
+    if (!risk || risk <= 0) { alert('Enter a positive risk per trade (₹).'); return; }
+    if (!capv || capv < 1) { alert('Enter a lot cap ≥ 1.'); return; }
+    var tname = _auGsTraderName(tid);
+    try {
+        await _auGsPatchMeta(rowName, function (md) {
+            var b = Array.isArray(md.beneficiaries) ? md.beneficiaries : [];
+            if (b.some(function (x) { return x.trader_id === tid; })) throw new Error('That beneficiary is already added.');
+            b.push({ trader_id: tid, trader_name: tname, risk_per_trade: risk, lot_cap: capv, enabled: true });
+            md.beneficiaries = b;
+        });
+        autoGsLoadLive();
+    } catch (e) { alert('Failed to add beneficiary: ' + (e.message || e)); }
+}
+
+async function autoGsBenefRemove(rowName, tid) {
+    if (!confirm('Remove this beneficiary from ' + rowName + '?')) return;
+    try {
+        await _auGsPatchMeta(rowName, function (md) { md.beneficiaries = (md.beneficiaries || []).filter(function (x) { return x.trader_id !== tid; }); });
+        autoGsLoadLive();
+    } catch (e) { alert('Failed to remove beneficiary: ' + (e.message || e)); }
+}
+
+async function autoGsBenefToggle(rowName, tid) {
+    try {
+        await _auGsPatchMeta(rowName, function (md) { (md.beneficiaries || []).forEach(function (x) { if (x.trader_id === tid) x.enabled = !x.enabled; }); });
+        autoGsLoadLive();
+    } catch (e) { alert('Failed to toggle beneficiary: ' + (e.message || e)); }
 }
 
 async function autoGsSaveCap(source) {
