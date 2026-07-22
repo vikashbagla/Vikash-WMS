@@ -2461,12 +2461,11 @@ async function autoLoadGsFamHeader() {
             else if (allEnabled) { pill.className = 'status-pill paper';   pill.textContent = '🟡 PAPER'; }
             else                 { pill.className = 'status-pill stopped'; pill.textContent = '⏹ DISABLED'; }
         }
-        // Version: use the max version across strategies (they should all be v2.2).
-        var vEl = document.getElementById('au-gs-fam-metric-version');
-        if (vEl && strategies.length > 0) {
-            var versions = Array.from(new Set(strategies.map(function (s) { return s.version || 'unknown'; })));
-            vEl.textContent = versions.join(' / ');
-        }
+        // Version card is now driven by the FILTERED closed trades (owner request,
+        // 2026-07-22): it shows the distinct strategy versions present in the rows the
+        // Closed-Trades filter bar currently selects. Written solely in
+        // autoRenderGsFamMetrics from _auGsTotals.filteredVersions — the header no longer
+        // writes it (it would race the filtered value with the deployed-config version).
         // Last activity: most recent auto_signals row for GS strategies
         var ar = await fetch(SUPABASE_URL + '/rest/v1/auto_signals?' + auGsNameFilter() + '&order=fired_at.desc&limit=1&select=fired_at,event_type,strategy_name',
             { headers: wmsHeaders() });
@@ -2527,14 +2526,21 @@ function autoRenderGsFamMetrics() {
         var w = t.closedWins || 0, l = t.closedLosses || 0, tot = w + l;
         setSub('au-gs-fam-metric-realised-sub', tot > 0 ? (w + ' wins · ' + l + ' losses · ' + tot + ' closed') : '');
     }
-    // Peak exposure — respects the source filter (chassis-only / tv_webhook-only / all)
+    // Peak exposure — now respects ALL the closed-trade filters (source, instrument,
+    // version, result, exit). The sub-label flags when it is scoped rather than whole-book.
     if (t.peakExposure != null) {
         setText('au-gs-fam-metric-peak', fmt(t.peakExposure), '');
         var srcLabel = '';
         if (t.peakSourceFilter === 'chassis')    srcLabel = ' · runner only';
         else if (t.peakSourceFilter === 'tv_webhook') srcLabel = ' · TV webhook only';
+        if (t.peakFiltered) srcLabel += ' · filtered';
         setSub('au-gs-fam-metric-peak-sub',
             (t.peakMargin != null ? ('peak margin ' + fmt(t.peakMargin)) : '') + srcLabel);
+    }
+    // Plugin version — distinct strategy versions present in the FILTERED closed trades
+    // (owner request, 2026-07-22). autoLoadGsFamHeader no longer writes this card.
+    if (t.filteredVersions != null) {
+        setText('au-gs-fam-metric-version', t.filteredVersions.length ? t.filteredVersions.join(' / ') : '—', '');
     }
 }
 
@@ -2917,7 +2923,8 @@ function autoOnSharedRefresh() {
 var _auGsTotals = {
     openCount: null, openExposure: null, openMargin: null, openLivePnl: null,
     closedCount: null, closedWins: null, closedLosses: null, closedRealisedPnl: null,
-    peakExposure: null, peakMargin: null,
+    peakExposure: null, peakMargin: null, peakSourceFilter: 'all', peakFiltered: false,
+    filteredVersions: null,
 };
 
 // Single "GS totals changed → repaint everything that reads them" chokepoint.
@@ -4529,15 +4536,51 @@ async function autoLoadGsClosedTrades() {
             var mgn = mP ? (exp * mP / 100) : 0;
             return { exp: exp, mgn: mgn };
         }
-        // Apply source filter to the peak walk. 'all' → walk everything;
-        // 'chassis' / 'tv_webhook' → only signals whose ENTRY row matches.
-        var peakSigs = sigsAsc;
-        if (_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') {
-            peakSigs = sigsAsc.filter(function (s) {
-                var e = entryByTrade[s.trade_id];
-                return e && e.source === _srcFilter;
-            });
-        }
+        // Apply the FULL closed-trade filter set to the peak walk (owner request,
+        // 2026-07-22): source, instrument, version, result (win/loss) and exit category —
+        // the same bar that scopes the Realised card. A trade is included in the walk only
+        // if it passes every active filter. Result/exit are outcome-derived: a still-open
+        // trade (no exit yet) has no result, so it is treated as non-matching whenever the
+        // Result or Exit filter is active.
+        var _gsExitOf = function (tid) {
+            var ev = byTrade[tid] || [], ex = null;
+            ev.forEach(function (s) { if (s.event_type !== 'ENTRY' && (!ex || s.fired_at > ex.fired_at)) ex = s; });
+            return ex;
+        };
+        var _gsPnlOf = function (entrySig, exitSig) {
+            var leg = entrySig && entrySig.legs && entrySig.legs[0];
+            var xLeg = exitSig && exitSig.legs && exitSig.legs[0];
+            if (!leg || !xLeg) return null;   // open trade (no exit) → no realised result. NOTE: isFinite(null)===true, so an explicit null-guard is required here, not isFinite alone.
+            var em = entrySig.metadata || {};
+            var qLots = em.qty_lots != null ? em.qty_lots : leg.qty;
+            var pv = autoGsPointValue(leg.short_symbol);
+            var ePx = Number(leg.price);
+            var xPx = Number(xLeg.price);
+            if (pv && isFinite(ePx) && isFinite(xPx)) {
+                return ((leg.side || '').toUpperCase() === 'BUY' ? 1 : -1) * (xPx - ePx) * qLots * pv;
+            }
+            return null;
+        };
+        var _gsTradePassesFilters = function (tid) {
+            var e = entryByTrade[tid];
+            if (!e) return false;
+            var leg = e.legs && e.legs[0];
+            var short = leg ? leg.short_symbol : null;
+            var ver = (e.metadata && (e.metadata.strategy_version || e.metadata.version)) || '';
+            if ((_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') && e.source !== _srcFilter) return false;
+            if (_auGsClosedInstr === 'gold'   && short !== 'GOLDM')   return false;
+            if (_auGsClosedInstr === 'silver' && short !== 'SILVERM') return false;
+            if (_auGsClosedVersions.length && !_auGsClosedVersions.some(function (tok) { return ver.indexOf(tok) >= 0; })) return false;
+            if (_auGsClosedResult === 'win' || _auGsClosedResult === 'loss') {
+                var pnl = _gsPnlOf(e, _gsExitOf(tid));
+                if (pnl == null) return false;
+                if (_auGsClosedResult === 'win'  && !(pnl >= 0)) return false;
+                if (_auGsClosedResult === 'loss' && !(pnl <  0)) return false;
+            }
+            if (_auGsClosedExits.length && _auGsClosedExits.indexOf(_auGsExitCategory(_gsExitOf(tid))) < 0) return false;
+            return true;
+        };
+        var peakSigs = sigsAsc.filter(function (s) { return _gsTradePassesFilters(s.trade_id); });
         var _runExp = 0, _runMgn = 0;
         var _peakExp = 0, _peakMgn = 0;
         peakSigs.forEach(function (s) {
@@ -4551,6 +4594,10 @@ async function autoLoadGsClosedTrades() {
         _auGsTotals.peakExposure = _peakExp > 0 ? _peakExp : null;
         _auGsTotals.peakMargin   = _peakMgn > 0 ? _peakMgn : null;
         _auGsTotals.peakSourceFilter = _srcFilter;  // for label rendering
+        // Peak now honours instrument/version/result/exit too — flag any non-source filter
+        // so the sub-label can show it's scoped, not the whole-book high-water mark.
+        _auGsTotals.peakFiltered = (_auGsClosedInstr !== 'all' || _auGsClosedResult !== 'all' ||
+                                    _auGsClosedVersions.length > 0 || _auGsClosedExits.length > 0);
 
         var closedRows = [];
         Object.keys(byTrade).forEach(function (tradeId) {
@@ -4808,6 +4855,9 @@ async function autoLoadGsClosedTrades() {
         _auGsTotals.closedWins = wins;
         _auGsTotals.closedLosses = losses;
         _auGsTotals.closedRealisedPnl = totalPnl;
+        // Version card: distinct strategy versions present in the FILTERED closed trades
+        // (owner request, 2026-07-22). Sole source for au-gs-fam-metric-version.
+        _auGsTotals.filteredVersions = Array.from(new Set(closedRows.map(function (ct) { return ct.version; }).filter(Boolean)));
         autoGsTotalsChanged();
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load GS closed trades: ' + autoEsc(String(e)) + '</span>';
