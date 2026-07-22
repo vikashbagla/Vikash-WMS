@@ -1615,15 +1615,14 @@ function autoGsTraderOptions() {
 }
 function _auGsTraderName(id) { var t = (_auManualTraders || []).find(function (x) { return x.id === id; }); return t ? (t.short_name || t.name) : ''; }
 
-// Arming a LIVE algo row is higher-stakes than one manual trade, so — unlike the manual
-// form — this gate NEVER reuses the session-cached password. It prompts on EVERY Resume /
-// Remove click and discards the value (does not touch _auManualPw). Owner, 2026-07-22.
-// NOTE: still client-side only — the enable-flip is a direct PATCH and is not yet
-// server-verified (see autoGsLiveTogglePw). Server-side verify is the pending hardening.
-function _auGsLivePwGate() {
-    var v = prompt('Enter the manual-order password to arm/change LIVE trading (required every time):');
-    if (!v) return false;
-    return true;
+// Arming/removing a LIVE algo row is higher-stakes than one manual trade, so — unlike the
+// manual form — this NEVER reuses the session-cached password. Prompts on EVERY Resume/Remove
+// click and returns the value (not cached) to POST to wms-manual-order, which verifies it
+// server-side (MANUAL_ORDER_PW_SHA256) — the same second factor as manual orders. This is a
+// ONE-TIME gate at the click; it does NOT gate order placement or SL shifts. Owner, 2026-07-22.
+function _auGsLivePw() {
+    var v = prompt('Enter the manual-order password to arm/remove this LIVE row (required every time):');
+    return (v && v.length) ? v : null;
 }
 
 // The account-ceiling row (first row of the Live table): total open-lots + total ₹-risk
@@ -1758,26 +1757,47 @@ async function autoGsInitLiveTags(liveRows) {
 }
 
 async function autoGsLiveTogglePw(name, enabled) {
-    // 'enabled' is the CURRENT state. Resuming (currently paused) ARMS the row → password every
-    // time. Pausing is a free safety stop (no password) so it can be hit fast, like the kill switch.
-    var resuming = !enabled;
-    if (resuming && !_auGsLivePwGate()) return;
-    if (!confirm((enabled ? 'Pause' : 'Resume') + ' LIVE row "' + name + '"?' + (enabled ? '' : '\n\nResuming ARMS this row — the next entry places a REAL order for its beneficiary.'))) return;
+    // 'enabled' is the CURRENT state. Resuming (currently paused) ARMS the row → server-verified
+    // password every click (via wms-manual-order). Pausing is a free safety stop (direct PATCH,
+    // no password) so it can be hit fast, like the kill switch.
+    if (enabled) {
+        if (!confirm('Pause LIVE row "' + name + '"?')) return;
+        try {
+            var presp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
+                { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ enabled: false }) });
+            if (!presp.ok) throw new Error('HTTP ' + presp.status + ' ' + (await presp.text()));
+            autoLoadGsFamAdmin();
+        } catch (e) { alert('Failed to pause: ' + (e.message || e)); }
+        return;
+    }
+    // Resume — arm the row. Password verified server-side.
+    var pw = _auGsLivePw();
+    if (!pw) return;
+    if (!confirm('Resume LIVE row "' + name + '"?\n\nResuming ARMS this row — the next entry places a REAL order for its beneficiary.')) return;
     try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
-            { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ enabled: !enabled }) });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+        var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
+            method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ action: 'set_live_enabled', strategy_name: name, enabled: true, password: pw, confirm: true })
+        });
+        var j = await resp.json().catch(function () { return {}; });
+        if (resp.status === 401) { alert((j.error || 'Invalid password') + ' — not armed.'); return; }
+        if (!resp.ok || !j.ok) throw new Error(j.error || ('HTTP ' + resp.status));
         autoLoadGsFamAdmin();
-    } catch (e) { alert('Failed: ' + (e.message || e)); }
+    } catch (e) { alert('Failed to resume: ' + (e.message || e)); }
 }
 
 async function autoGsLiveRemoveRow(name) {
-    if (!_auGsLivePwGate()) return;
+    var pw = _auGsLivePw();
+    if (!pw) return;
     if (!confirm('Delete the LIVE row "' + name + '"? This removes the strategy row entirely.')) return;
     try {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
-            { method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' }) });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
+        var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
+            method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ action: 'delete_live_row', strategy_name: name, password: pw, confirm: true })
+        });
+        var j = await resp.json().catch(function () { return {}; });
+        if (resp.status === 401) { alert((j.error || 'Invalid password') + ' — not deleted.'); return; }
+        if (!resp.ok || !j.ok) throw new Error(j.error || ('HTTP ' + resp.status));
         autoLoadGsFamAdmin();
     } catch (e) { alert('Failed to delete: ' + (e.message || e)); }
 }
