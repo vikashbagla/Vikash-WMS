@@ -57,6 +57,17 @@
 .au-subtab-panel { display: none; }
 .au-subtab-panel.active { display: block; }
 
+/* Collapsible Open/Closed blocks on the GS Live/Paper pages (2026-07-23). Header
+   shows title + count badge + a right-aligned totals summary + a chevron. */
+.au-gs-block { border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; margin-bottom: 12px; padding: 0 12px; }
+.au-gs-block > summary { cursor: pointer; padding: 10px 0; font-weight: 700; font-size: 13px; color: #1f2937; list-style: none; display: flex; align-items: center; gap: 8px; }
+.au-gs-block > summary::-webkit-details-marker { display: none; }
+.au-gs-block > summary::before { content: '\25B8'; color: #6b7280; font-size: 11px; }
+.au-gs-block[open] > summary::before { content: '\25BE'; }
+.au-gs-block-sum { font-weight: 500; font-size: 12px; color: #6b7280; margin-left: auto; text-align: right; }
+.au-gs-block > div { padding-bottom: 12px; }
+.au-gs-page-note { font-size: 11px; color: #6b7280; margin: -2px 0 12px; }
+
 /* (The floating GS totals bar and its refresh-tick lived here. Both were Legacy-only
    markup, deleted with the Legacy panel in Phase E.3, 2026-07-10. The GS family metrics
    strip replaces the bar; the live/paused tick is not yet ported — see UI-REIMAGINE §6a.) */
@@ -622,92 +633,27 @@ details summary {
             </div>
           </div>
 
-          <!-- Metrics strip -->
-          <div class="fam-metrics">
-            <div class="fam-metric-tile">
-              <div class="metric-label">Open positions</div>
-              <div class="metric-value" id="au-gs-fam-metric-open">—</div>
-              <div class="metric-sub" id="au-gs-fam-metric-open-sub"></div>
-            </div>
-            <div class="fam-metric-tile">
-              <div class="metric-label">Live P&amp;L (open)</div>
-              <div class="metric-value" id="au-gs-fam-metric-livepnl">—</div>
-              <div class="metric-sub" id="au-gs-fam-metric-livepnl-sub"></div>
-            </div>
-            <div class="fam-metric-tile">
-              <div class="metric-label">Realised (all-time)</div>
-              <div class="metric-value" id="au-gs-fam-metric-realised">—</div>
-              <div class="metric-sub" id="au-gs-fam-metric-realised-sub"></div>
-            </div>
-            <div class="fam-metric-tile">
-              <div class="metric-label">Peak exposure</div>
-              <div class="metric-value" id="au-gs-fam-metric-peak">—</div>
-              <div class="metric-sub" id="au-gs-fam-metric-peak-sub"></div>
-            </div>
-            <div class="fam-metric-tile">
-              <div class="metric-label">Plugin version</div>
-              <div class="metric-value" id="au-gs-fam-metric-version">MS007-v2.2</div>
-              <div class="metric-sub">from plugin VERSION constant</div>
-            </div>
-          </div>
-
-          <!-- Sub-tabs (5) — Admin merged into Controls & Admin per owner 2026-07-09 -->
+          <!-- Sub-tabs — Live / Paper split (2026-07-23). Each page is self-contained:
+               its own cards, filter bar, and collapsible Open/Closed blocks are built
+               into the panel by JS (autoGsRenderPageShell). The old shared metrics strip
+               was removed — the cards now live inside each page, scoped to that page. -->
           <div class="au-subtabs">
-            <button class="au-subtab-btn active" data-subtab="au-gs-fam-open-panel">
-              Open Trades <span id="au-gs-fam-open-badge" class="au-badge idle">…</span>
-            </button>
-            <button class="au-subtab-btn" data-subtab="au-gs-fam-closed-panel">
-              Closed Trades <span id="au-gs-fam-closed-badge" class="au-badge idle">…</span>
-            </button>
+            <button class="au-subtab-btn active" data-subtab="au-gs-live-panel">🟢 Live</button>
+            <button class="au-subtab-btn" data-subtab="au-gs-paper-panel">📄 Paper</button>
             <button class="au-subtab-btn" data-subtab="au-gs-fam-events-panel">Signals &amp; Events</button>
             <button class="au-subtab-btn" data-subtab="au-gs-fam-runs-panel">Run History</button>
             <button class="au-subtab-btn" data-subtab="au-gs-fam-controls-panel">Controls &amp; Admin</button>
             <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px" onclick="autoLoadGsFamRefresh()">↻ Refresh</button>
           </div>
 
-          <!-- Open Trades panel (mirrors Legacy au-gs-open-content) -->
-          <div id="au-gs-fam-open-panel" class="au-subtab-panel active">
-            <div id="au-gs-fam-open-content" class="au-meta">Loading GS open trades…</div>
+          <!-- Live page — LIVE strategies (real broker fills). Built by autoGsRenderPageShell('live'). -->
+          <div id="au-gs-live-panel" class="au-subtab-panel active">
+            <div class="au-meta">Loading Live page…</div>
           </div>
 
-          <!-- Closed Trades panel (mirrors Legacy au-gs-closed-content) -->
-          <div id="au-gs-fam-closed-panel" class="au-subtab-panel">
-            <div style="display:flex;align-items:flex-start;gap:22px;flex-wrap:wrap;margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">
-              <div style="display:flex;flex-direction:column;gap:4px">
-                <span style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em">Instrument</span>
-                <label class="radio-label" style="font-size:12px"><input type="radio" name="augsc-instr" value="all" checked onchange="autoGsClosedSetFilter('instr','all')"> All</label>
-                <label class="radio-label" style="font-size:12px"><input type="radio" name="augsc-instr" value="gold" onchange="autoGsClosedSetFilter('instr','gold')"> Gold</label>
-                <label class="radio-label" style="font-size:12px"><input type="radio" name="augsc-instr" value="silver" onchange="autoGsClosedSetFilter('instr','silver')"> Silver</label>
-              </div>
-              <div style="display:flex;flex-direction:column;gap:4px">
-                <span style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em">Result</span>
-                <label class="radio-label" style="font-size:12px"><input type="radio" name="augsc-result" value="all" checked onchange="autoGsClosedSetFilter('result','all')"> All</label>
-                <label class="radio-label" style="font-size:12px"><input type="radio" name="augsc-result" value="win" onchange="autoGsClosedSetFilter('result','win')"> Winning</label>
-                <label class="radio-label" style="font-size:12px"><input type="radio" name="augsc-result" value="loss" onchange="autoGsClosedSetFilter('result','loss')"> Losing</label>
-              </div>
-              <div style="display:flex;flex-direction:column;gap:4px">
-                <span style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em">Exit reason <span style="font-weight:400;color:#9ca3af;text-transform:none">(tick to filter)</span></span>
-                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-exit" value="STOP" onchange="autoGsClosedToggleExit('STOP', this.checked)"> Hard SL</label>
-                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-exit" value="TRAIL" onchange="autoGsClosedToggleExit('TRAIL', this.checked)"> Trail SL</label>
-                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-exit" value="EMA" onchange="autoGsClosedToggleExit('EMA', this.checked)"> EMA exit</label>
-                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-exit" value="TARGET" onchange="autoGsClosedToggleExit('TARGET', this.checked)"> Target</label>
-                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-exit" value="MANUAL" onchange="autoGsClosedToggleExit('MANUAL', this.checked)"> Manual</label>
-              </div>
-              <div style="display:flex;flex-direction:column;gap:4px">
-                <span style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em">Version <span style="font-weight:400;color:#9ca3af;text-transform:none">(tick to filter)</span></span>
-                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-ver" value="v2.2" onchange="autoGsClosedToggleVersion('v2.2', this.checked)"> v2.2</label>
-                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-ver" value="v2.3" onchange="autoGsClosedToggleVersion('v2.3', this.checked)"> v2.3</label>
-                <label class="radio-label" style="font-size:12px"><input type="checkbox" name="augsc-ver" value="v3" onchange="autoGsClosedToggleVersion('v3', this.checked)"> v3</label>
-              </div>
-              <div style="display:flex;flex-direction:column;gap:4px">
-                <span style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em">Source</span>
-                <label class="radio-label" style="font-size:12px"><input type="radio" name="augsc-source" value="all" checked onchange="autoGsSetClosedSourceFilter('all')"> All</label>
-                <label class="radio-label" style="font-size:12px"><input type="radio" name="augsc-source" value="chassis" onchange="autoGsSetClosedSourceFilter('chassis')"> Automation Runner</label>
-                <label class="radio-label" style="font-size:12px"><input type="radio" name="augsc-source" value="tv_webhook" onchange="autoGsSetClosedSourceFilter('tv_webhook')"> TV Webhook (legacy)</label>
-              </div>
-              <div style="font-size:11px;color:#6b7280;max-width:190px;line-height:1.5">Version unticked = all. Click <b>Entry / Exit / Contract / Qty / P&amp;L</b> headers to sort. Peak exposure &amp; margin and the Plugin version card respect these filters. (Open positions &amp; Live P&amp;L always show the whole GS book.)</div>
-            </div>
-            <div id="au-gs-fam-closed-content" class="au-meta">Loading GS closed trades…</div>
+          <!-- Paper page — PAPER strategies (modelled prices). Built by autoGsRenderPageShell('paper'). -->
+          <div id="au-gs-paper-panel" class="au-subtab-panel">
+            <div class="au-meta">Loading Paper page…</div>
           </div>
 
           <!-- Signals & Events (Phase B.2) — auto_signals scoped to GS -->

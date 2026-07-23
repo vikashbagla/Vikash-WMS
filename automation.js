@@ -65,8 +65,9 @@ function autoSwitchFamily(fam) {
             autoLoadGsFamRefresh();
             window._auGsFamLoaded = true;
         } else {
-            // Refresh metrics from the last-known _auGsTotals in case they've drifted.
-            autoRenderGsFamMetrics();
+            // Repaint both pages' cards from the last-known per-mode totals.
+            autoRenderGsFamMetrics('live');
+            autoRenderGsFamMetrics('paper');
         }
         // GS Open Trades live P&L uses the shared refresh timer; make sure it's armed.
         autoEnsureSharedRefresh();
@@ -926,107 +927,82 @@ function autoBadgeTarget(ids) {
 // as the table. Read by autoLoadGsClosedTrades via _srcFilter. (Pre-E.3 this also
 // kept a second, Legacy-side dropdown in sync.)
 // ----------------------------------------------------------------------------
-var _auGsClosedSourceFilter = 'all';
-
-function autoGsSetClosedSourceFilter(value) {
-    _auGsClosedSourceFilter = value || 'all';
-    var _sf = document.getElementById('au-gs-fam-closed-source-filter');
-    if (_sf && _sf.value !== _auGsClosedSourceFilter) _sf.value = _auGsClosedSourceFilter;
-    if (typeof _auGsClosedSave === 'function') _auGsClosedSave();   // persist selection
-    // Peak recomputes inside autoLoadGsClosedTrades. Re-run + re-render metrics.
-    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
-}
-
 // ----------------------------------------------------------------------------
-// GS closed-trades filters + sort (2026-07-17). Radio/checkbox blocks on the
-// Closed Trades tab; all applied client-side over the already-fetched rows.
+// GS closed-trades filters + sort — PER PAGE (Live / Paper split, 2026-07-23).
+// Each page owns an independent filter object so the two pages never cross-drive
+// each other's re-renders. All applied client-side over the already-fetched rows.
 //   instr   : all | gold | silver           (radio)
 //   result  : all | win  | loss             (radio)
 //   versions: [] = all, else tokens to keep  (checkbox, multi-select)
 //   exits   : [] = all, else event_types     (checkbox, multi-select)
 //   source  : all | chassis | tv_webhook     (radio)
 //   sort    : {key,dir} — click a header to toggle (entry|exit|contract|qty|pnl)
-// Persisted to localStorage so the selection survives a reload / new session.
+// Persisted to localStorage under a per-mode key so selections survive a reload.
 // ----------------------------------------------------------------------------
-var _AU_GSCLOSED_LSKEY  = 'wms.gsClosedFilters.v1';
-var _auGsClosedInstr    = 'all';
-var _auGsClosedResult   = 'all';
-var _auGsClosedVersions = [];
-var _auGsClosedExits    = [];
-var _auGsClosedSort     = { key: 'exit', dir: 'desc' };
-
-function _auGsClosedSave() {
-    try {
-        localStorage.setItem(_AU_GSCLOSED_LSKEY, JSON.stringify({
-            instr: _auGsClosedInstr, result: _auGsClosedResult,
-            versions: _auGsClosedVersions, exits: _auGsClosedExits,
-            source: _auGsClosedSourceFilter, sort: _auGsClosedSort
-        }));
-    } catch (e) { /* private mode / storage disabled — filters just won't persist */ }
+function _auGsBlankFilters() {
+    return { instr: 'all', result: 'all', versions: [], exits: [], source: 'all', sort: { key: 'exit', dir: 'desc' } };
 }
-function _auGsClosedRestore() {
+var _auGsFilters = { live: _auGsBlankFilters(), paper: _auGsBlankFilters() };
+function _auGsFiltersKey(mode) { return 'wms.gsFilters.' + String(mode).toUpperCase() + '.v1'; }
+function _auGsFiltersSave(mode) {
+    try { localStorage.setItem(_auGsFiltersKey(mode), JSON.stringify(_auGsFilters[mode])); }
+    catch (e) { /* private mode / storage disabled — filters just won't persist */ }
+}
+function _auGsFiltersRestore(mode) {
     try {
-        var s = JSON.parse(localStorage.getItem(_AU_GSCLOSED_LSKEY) || '{}');
-        if (s.instr)  _auGsClosedInstr  = s.instr;
-        if (s.result) _auGsClosedResult = s.result;
-        if (Array.isArray(s.versions)) _auGsClosedVersions = s.versions;
-        if (Array.isArray(s.exits))    _auGsClosedExits    = s.exits;
-        if (s.source) _auGsClosedSourceFilter = s.source;
-        if (s.sort && s.sort.key) _auGsClosedSort = s.sort;
+        var s = JSON.parse(localStorage.getItem(_auGsFiltersKey(mode)) || '{}');
+        var f = _auGsFilters[mode];
+        if (s.instr)  f.instr  = s.instr;
+        if (s.result) f.result = s.result;
+        if (Array.isArray(s.versions)) f.versions = s.versions;
+        if (Array.isArray(s.exits))    f.exits    = s.exits;
+        if (s.source) f.source = s.source;
+        if (s.sort && s.sort.key) f.sort = s.sort;
     } catch (e) { /* ignore malformed */ }
 }
-_auGsClosedRestore();   // hydrate from last session on load
+_auGsFiltersRestore('live');
+_auGsFiltersRestore('paper');   // hydrate both pages from last session on load
 
-// Push the restored/live state into the toolbar's radio + checkbox controls so
-// the UI reflects persisted selections. Called each time the table renders.
-function autoGsClosedSyncControls() {
-    function setRadio(name, val) {
-        var els = document.getElementsByName(name);
-        for (var i = 0; i < els.length; i++) els[i].checked = (els[i].value === val);
-    }
-    function setChecks(name, arr) {
-        var els = document.getElementsByName(name);
-        for (var i = 0; i < els.length; i++) els[i].checked = arr.indexOf(els[i].value) >= 0;
-    }
-    setRadio('augsc-instr', _auGsClosedInstr);
-    setRadio('augsc-result', _auGsClosedResult);
-    setRadio('augsc-source', _auGsClosedSourceFilter);
-    setChecks('augsc-ver', _auGsClosedVersions);
-    setChecks('augsc-exit', _auGsClosedExits);
+function autoGsSetClosedSourceFilter(mode, value) {
+    _auGsFilters[mode].source = value || 'all';
+    _auGsFiltersSave(mode);
+    // Peak recomputes inside autoLoadGsClosedTrades. Re-run + re-render metrics.
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades(mode);
 }
 
-function autoGsClosedSetFilter(kind, value) {
-    if (kind === 'instr')       _auGsClosedInstr = value;
-    else if (kind === 'result') _auGsClosedResult = value;
-    _auGsClosedSave();
-    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+function autoGsClosedSetFilter(mode, kind, value) {
+    if (kind === 'instr')       _auGsFilters[mode].instr = value;
+    else if (kind === 'result') _auGsFilters[mode].result = value;
+    _auGsFiltersSave(mode);
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades(mode);
 }
 
-function autoGsClosedToggleVersion(token, on) {
-    var i = _auGsClosedVersions.indexOf(token);
-    if (on && i < 0) _auGsClosedVersions.push(token);
-    else if (!on && i >= 0) _auGsClosedVersions.splice(i, 1);
-    _auGsClosedSave();
-    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+function autoGsClosedToggleVersion(mode, token, on) {
+    var arr = _auGsFilters[mode].versions, i = arr.indexOf(token);
+    if (on && i < 0) arr.push(token);
+    else if (!on && i >= 0) arr.splice(i, 1);
+    _auGsFiltersSave(mode);
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades(mode);
 }
 
-function autoGsClosedToggleExit(evt, on) {
-    var i = _auGsClosedExits.indexOf(evt);
-    if (on && i < 0) _auGsClosedExits.push(evt);
-    else if (!on && i >= 0) _auGsClosedExits.splice(i, 1);
-    _auGsClosedSave();
-    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+function autoGsClosedToggleExit(mode, evt, on) {
+    var arr = _auGsFilters[mode].exits, i = arr.indexOf(evt);
+    if (on && i < 0) arr.push(evt);
+    else if (!on && i >= 0) arr.splice(i, 1);
+    _auGsFiltersSave(mode);
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades(mode);
 }
 
-function autoGsClosedSort(key) {
-    if (_auGsClosedSort.key === key) {
-        _auGsClosedSort.dir = _auGsClosedSort.dir === 'asc' ? 'desc' : 'asc';
+function autoGsClosedSort(mode, key) {
+    var srt = _auGsFilters[mode].sort;
+    if (srt.key === key) {
+        srt.dir = srt.dir === 'asc' ? 'desc' : 'asc';
     } else {
-        _auGsClosedSort.key = key;
-        _auGsClosedSort.dir = (key === 'contract') ? 'asc' : 'desc';   // dates/pnl newest/biggest first; contract A→Z
+        srt.key = key;
+        srt.dir = (key === 'contract') ? 'asc' : 'desc';   // dates/pnl newest/biggest first; contract A→Z
     }
-    _auGsClosedSave();
-    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+    _auGsFiltersSave(mode);
+    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades(mode);
 }
 
 // Normalizes an exit signal to a canonical reason category. event_type is coarse
@@ -1053,10 +1029,11 @@ function _auGsExitColor(cat) {
 }
 
 // Renders a clickable, sortable <th> with an active-column direction arrow.
-function _gsClosedTh(label, key, align, sub) {
-    var arrow = _auGsClosedSort.key === key ? (_auGsClosedSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+function _gsClosedTh(mode, label, key, align, sub) {
+    var srt = _auGsFilters[mode].sort;
+    var arrow = srt.key === key ? (srt.dir === 'asc' ? ' ▲' : ' ▼') : '';
     var alignStyle = align === 'right' ? 'text-align:right' : 'text-align:left';
-    return '<th onclick="autoGsClosedSort(\'' + key + '\')" title="Sort by ' + label.replace(/&amp;/g, '&') + '"' +
+    return '<th onclick="autoGsClosedSort(\'' + mode + '\',\'' + key + '\')" title="Sort by ' + label.replace(/&amp;/g, '&') + '"' +
            ' style="padding:6px 8px;' + alignStyle + ';cursor:pointer;user-select:none;white-space:nowrap">' +
            label + arrow +
            (sub ? '<br><span style="font-weight:400;color:#6b7280;font-size:10px">' + sub + '</span>' : '') +
@@ -1074,17 +1051,155 @@ function _gsClosedTh(label, key, align, sub) {
 // ----------------------------------------------------------------------------
 
 function autoLoadGsFamRefresh() {
-    // Keep the source-filter dropdown showing the current state.
-    var _sf = document.getElementById('au-gs-fam-closed-source-filter');
-    if (_sf && _sf.value !== _auGsClosedSourceFilter) _sf.value = _auGsClosedSourceFilter;
-    // The renderers write to this page's targets directly (Phase E.1a).
-    if (typeof autoLoadGsOpenTrades === 'function') autoLoadGsOpenTrades();
-    if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades();
+    // Live / Paper split (2026-07-23): drop the strategy-mode cache so a config
+    // change (paper→live etc.) reflects on the next full refresh, then rebuild
+    // both page shells and render each page's open + closed blocks independently.
+    window._auStrategyModes = null;
+    autoGsRenderPageShell('live');
+    autoGsRenderPageShell('paper');
+    if (typeof autoLoadGsOpenTrades === 'function')   { autoLoadGsOpenTrades('live');   autoLoadGsOpenTrades('paper'); }
+    if (typeof autoLoadGsClosedTrades === 'function') { autoLoadGsClosedTrades('live'); autoLoadGsClosedTrades('paper'); }
     // Header metadata + Phase B.2 tabs
     autoLoadGsFamHeader();
     autoLoadGsFamEvents();
     autoLoadGsFamRuns();
     autoLoadGsFamAdmin();
+}
+
+// ── GS strategy execution-mode classifier (Live / Paper split, 2026-07-23) ──
+// Map<strategy_name, 'LIVE'|'PAPER'> from auto_strategies. The Live page shows
+// trades whose strategy is LIVE (the *_live clones); the Paper page shows PAPER
+// (v2.2/v2.3/v3 base). A trade whose strategy is unknown → treated as PAPER
+// (legacy TV-webhook rows). Cached on window; cleared by autoLoadGsFamRefresh.
+async function autoGetStrategyModes() {
+    if (window._auStrategyModes instanceof Map && window._auStrategyModes.size) return window._auStrategyModes;
+    var map = new Map();
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?select=name,execution_mode', { headers: wmsHeaders() });
+        if (resp.ok) {
+            (await resp.json() || []).forEach(function (r) { map.set(r.name, r.execution_mode); });
+            window._auStrategyModes = map;
+        }
+    } catch (e) {
+        // Do NOT cache a failure — an empty map would send every trade to Paper.
+        console.error('[autoGetStrategyModes] failed:', e);
+    }
+    return map;
+}
+/** 'live' | 'paper' for a strategy name (unknown → 'paper'). */
+function autoGsModeOf(modeMap, name) { return modeMap.get(name) === 'LIVE' ? 'live' : 'paper'; }
+
+// Fetch real broker fills for a set of broker_order_ids → Map<id,{price,qty}>.
+// Read-only, fail-soft (any error → empty map so the page falls back to modelled).
+// transactions.quantity is already qty_lots × point_value (the traded "units").
+async function autoGsFetchFillMap(brokerOrderIds) {
+    var out = new Map();
+    var ids = (brokerOrderIds || []).filter(Boolean).map(String);
+    if (!ids.length) return out;
+    try {
+        var CH = 40;
+        for (var i = 0; i < ids.length; i += CH) {
+            var chunk = ids.slice(i, i + CH).map(function (x) { return '"' + x.replace(/"/g, '') + '"'; }).join(',');
+            var resp = await fetch(
+                SUPABASE_URL + '/rest/v1/transactions?broker_trade_id=in.(' + encodeURIComponent(chunk) +
+                ')&select=broker_trade_id,price,quantity',
+                { headers: wmsHeaders() }
+            );
+            if (!resp.ok) continue;
+            (await resp.json() || []).forEach(function (t) {
+                if (t.broker_trade_id != null) out.set(String(t.broker_trade_id), { price: Number(t.price), qty: Math.abs(Number(t.quantity)) });
+            });
+        }
+    } catch (e) { console.warn('[autoGsFetchFillMap] fail-soft:', e); }
+    return out;
+}
+
+// Build the 5 summary-card tiles for a page (ids namespaced by mode).
+function autoGsCardTiles(mode) {
+    var p = 'au-gs-' + mode + '-metric-';
+    return '<div class="fam-metric-tile"><div class="metric-label">Open positions</div>' +
+             '<div class="metric-value" id="' + p + 'open">—</div><div class="metric-sub" id="' + p + 'open-sub"></div></div>' +
+           '<div class="fam-metric-tile"><div class="metric-label">Live P&amp;L (open)</div>' +
+             '<div class="metric-value" id="' + p + 'livepnl">—</div><div class="metric-sub" id="' + p + 'livepnl-sub"></div></div>' +
+           '<div class="fam-metric-tile"><div class="metric-label">Realised (all-time)</div>' +
+             '<div class="metric-value" id="' + p + 'realised">—</div><div class="metric-sub" id="' + p + 'realised-sub"></div></div>' +
+           '<div class="fam-metric-tile"><div class="metric-label">Peak exposure</div>' +
+             '<div class="metric-value" id="' + p + 'peak">—</div><div class="metric-sub" id="' + p + 'peak-sub"></div></div>' +
+           '<div class="fam-metric-tile"><div class="metric-label">Version</div>' +
+             '<div class="metric-value" id="' + p + 'version">—</div><div class="metric-sub">from filtered closed trades</div></div>';
+}
+
+// Build the closed-trade filter bar for a page. Radios/checkboxes carry per-mode
+// names + mode-baked handlers, and reflect the restored filter state via `checked`.
+function autoGsFilterBar(mode, f) {
+    var lbl = 'font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em';
+    function radio(name, val, cur, handler, text) {
+        return '<label class="radio-label" style="font-size:12px"><input type="radio" name="' + name + '" value="' + val + '"' +
+               (cur === val ? ' checked' : '') + ' onchange="' + handler + '"> ' + text + '</label>';
+    }
+    function check(name, val, on, handler, text) {
+        return '<label class="radio-label" style="font-size:12px"><input type="checkbox" name="' + name + '" value="' + val + '"' +
+               (on ? ' checked' : '') + ' onchange="' + handler + '"> ' + text + '</label>';
+    }
+    var m = mode, nm = '-' + mode;
+    return '<div style="display:flex;align-items:flex-start;gap:22px;flex-wrap:wrap;margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">' +
+        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Instrument</span>' +
+            radio('augsc-instr' + nm, 'all',    f.instr,  "autoGsClosedSetFilter('" + m + "','instr','all')",    'All') +
+            radio('augsc-instr' + nm, 'gold',   f.instr,  "autoGsClosedSetFilter('" + m + "','instr','gold')",   'Gold') +
+            radio('augsc-instr' + nm, 'silver', f.instr,  "autoGsClosedSetFilter('" + m + "','instr','silver')", 'Silver') +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Result</span>' +
+            radio('augsc-result' + nm, 'all',  f.result, "autoGsClosedSetFilter('" + m + "','result','all')",  'All') +
+            radio('augsc-result' + nm, 'win',  f.result, "autoGsClosedSetFilter('" + m + "','result','win')",  'Winning') +
+            radio('augsc-result' + nm, 'loss', f.result, "autoGsClosedSetFilter('" + m + "','result','loss')", 'Losing') +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Exit reason <span style="font-weight:400;color:#9ca3af;text-transform:none">(tick to filter)</span></span>' +
+            check('augsc-exit' + nm, 'STOP',   f.exits.indexOf('STOP') >= 0,   "autoGsClosedToggleExit('" + m + "','STOP', this.checked)",   'Hard SL') +
+            check('augsc-exit' + nm, 'TRAIL',  f.exits.indexOf('TRAIL') >= 0,  "autoGsClosedToggleExit('" + m + "','TRAIL', this.checked)",  'Trail SL') +
+            check('augsc-exit' + nm, 'EMA',    f.exits.indexOf('EMA') >= 0,    "autoGsClosedToggleExit('" + m + "','EMA', this.checked)",    'EMA exit') +
+            check('augsc-exit' + nm, 'TARGET', f.exits.indexOf('TARGET') >= 0, "autoGsClosedToggleExit('" + m + "','TARGET', this.checked)", 'Target') +
+            check('augsc-exit' + nm, 'MANUAL', f.exits.indexOf('MANUAL') >= 0, "autoGsClosedToggleExit('" + m + "','MANUAL', this.checked)", 'Manual') +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Version <span style="font-weight:400;color:#9ca3af;text-transform:none">(tick to filter)</span></span>' +
+            check('augsc-ver' + nm, 'v2.2', f.versions.indexOf('v2.2') >= 0, "autoGsClosedToggleVersion('" + m + "','v2.2', this.checked)", 'v2.2') +
+            check('augsc-ver' + nm, 'v2.3', f.versions.indexOf('v2.3') >= 0, "autoGsClosedToggleVersion('" + m + "','v2.3', this.checked)", 'v2.3') +
+            check('augsc-ver' + nm, 'v3',   f.versions.indexOf('v3') >= 0,   "autoGsClosedToggleVersion('" + m + "','v3', this.checked)",   'v3') +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Source</span>' +
+            radio('augsc-source' + nm, 'all',        f.source, "autoGsSetClosedSourceFilter('" + m + "','all')",        'All') +
+            radio('augsc-source' + nm, 'chassis',    f.source, "autoGsSetClosedSourceFilter('" + m + "','chassis')",    'Automation Runner') +
+            radio('augsc-source' + nm, 'tv_webhook', f.source, "autoGsSetClosedSourceFilter('" + m + "','tv_webhook')", 'TV Webhook (legacy)') +
+        '</div>' +
+        '<div style="font-size:11px;color:#6b7280;max-width:190px;line-height:1.5">Version unticked = all. Click <b>Entry / Exit / Contract / Qty / P&amp;L</b> headers to sort. All cards on this page respect these filters (except Open positions &amp; Live P&amp;L, which always show this page\'s whole open book).</div>' +
+    '</div>';
+}
+
+// Build a page's self-contained shell ONCE: card strip + filter bar + collapsible
+// Open/Closed blocks. Guarded by dataset.built so re-renders don't reset filters.
+function autoGsRenderPageShell(mode) {
+    var panel = document.getElementById('au-gs-' + mode + '-panel');
+    if (!panel || panel.dataset.built === '1') return;
+    var m = mode;
+    var note = mode === 'live'
+        ? 'LIVE strategies (the <code>*_live</code> clones) · P&amp;L from <b>real broker fills</b> (joined via <code>transactions</code>).'
+        : 'PAPER strategies (v2.2 / v2.3 / v3) · P&amp;L from <b>modelled signal prices</b>.';
+    panel.innerHTML =
+        '<div class="au-gs-page-note">' + note + '</div>' +
+        '<div class="fam-metrics">' + autoGsCardTiles(mode) + '</div>' +
+        autoGsFilterBar(mode, _auGsFilters[mode]) +
+        '<details id="au-gs-' + m + '-open-block" class="au-gs-block" open>' +
+            '<summary class="au-gs-block-summary">Open trades ' +
+                '<span id="au-gs-' + m + '-open-badge" class="au-badge idle">…</span>' +
+                '<span id="au-gs-' + m + '-open-summary" class="au-gs-block-sum"></span></summary>' +
+            '<div id="au-gs-' + m + '-open-content" class="au-meta">Loading…</div>' +
+        '</details>' +
+        '<details id="au-gs-' + m + '-closed-block" class="au-gs-block">' +
+            '<summary class="au-gs-block-summary">Closed trades ' +
+                '<span id="au-gs-' + m + '-closed-badge" class="au-badge idle">…</span>' +
+                '<span id="au-gs-' + m + '-closed-summary" class="au-gs-block-sum"></span></summary>' +
+            '<div id="au-gs-' + m + '-closed-content" class="au-meta">Loading…</div>' +
+        '</details>';
+    panel.dataset.built = '1';
 }
 
 // ----------------------------------------------------------------------------
@@ -2780,8 +2895,9 @@ async function autoLoadGsFamHeader() {
     }
 }
 
-function autoRenderGsFamMetrics() {
-    var t = _auGsTotals || {};
+function autoRenderGsFamMetrics(mode) {
+    var t = (_auGsTotals && _auGsTotals[mode]) || {};
+    var p = 'au-gs-' + mode + '-metric-';
     var fmt = function (n) { if (n == null) return '—'; return '₹' + Math.round(n).toLocaleString('en-IN'); };
     var fmtSigned = function (n) {
         if (n == null) return '—';
@@ -2801,41 +2917,40 @@ function autoRenderGsFamMetrics() {
 
     // Open positions
     if (t.openCount != null) {
-        setText('au-gs-fam-metric-open', t.openCount + (t.openCount === 1 ? ' trade' : ' trades'), '');
-        setSub('au-gs-fam-metric-open-sub', t.openExposure != null ? ('exposure ' + fmt(t.openExposure)) : '');
+        setText(p + 'open', t.openCount + (t.openCount === 1 ? ' trade' : ' trades'), '');
+        setSub(p + 'open-sub', t.openExposure != null ? ('exposure ' + fmt(t.openExposure)) : '');
     }
     // Live P&L on open
     if (t.openLivePnl != null) {
         var pnl = t.openLivePnl;
-        setText('au-gs-fam-metric-livepnl', fmtSigned(pnl), pnl >= 0 ? 'pos' : 'neg');
+        setText(p + 'livepnl', fmtSigned(pnl), pnl >= 0 ? 'pos' : 'neg');
         var pct = null;
         if (t.openExposure && t.openExposure !== 0) pct = (pnl / t.openExposure) * 100;
-        setSub('au-gs-fam-metric-livepnl-sub', pct != null ? ((pct >= 0 ? '+' : '−') + Math.abs(pct).toFixed(2) + '% of exposure') : '');
+        setSub(p + 'livepnl-sub', pct != null ? ((pct >= 0 ? '+' : '−') + Math.abs(pct).toFixed(2) + '% of exposure') : '');
     } else if (t.openCount === 0) {
-        setText('au-gs-fam-metric-livepnl', '—', '');
-        setSub('au-gs-fam-metric-livepnl-sub', 'no open positions');
+        setText(p + 'livepnl', '—', '');
+        setSub(p + 'livepnl-sub', 'no open positions');
     }
     // Realised (all-time closed)
     if (t.closedRealisedPnl != null) {
-        setText('au-gs-fam-metric-realised', fmtSigned(t.closedRealisedPnl), t.closedRealisedPnl >= 0 ? 'pos' : 'neg');
+        setText(p + 'realised', fmtSigned(t.closedRealisedPnl), t.closedRealisedPnl >= 0 ? 'pos' : 'neg');
         var w = t.closedWins || 0, l = t.closedLosses || 0, tot = w + l;
-        setSub('au-gs-fam-metric-realised-sub', tot > 0 ? (w + ' wins · ' + l + ' losses · ' + tot + ' closed') : '');
+        setSub(p + 'realised-sub', tot > 0 ? (w + ' wins · ' + l + ' losses · ' + tot + ' closed') : '');
     }
-    // Peak exposure — now respects ALL the closed-trade filters (source, instrument,
+    // Peak exposure — respects ALL the closed-trade filters (source, instrument,
     // version, result, exit). The sub-label flags when it is scoped rather than whole-book.
     if (t.peakExposure != null) {
-        setText('au-gs-fam-metric-peak', fmt(t.peakExposure), '');
+        setText(p + 'peak', fmt(t.peakExposure), '');
         var srcLabel = '';
         if (t.peakSourceFilter === 'chassis')    srcLabel = ' · runner only';
         else if (t.peakSourceFilter === 'tv_webhook') srcLabel = ' · TV webhook only';
         if (t.peakFiltered) srcLabel += ' · filtered';
-        setSub('au-gs-fam-metric-peak-sub',
+        setSub(p + 'peak-sub',
             (t.peakMargin != null ? ('peak margin ' + fmt(t.peakMargin)) : '') + srcLabel);
     }
-    // Plugin version — distinct strategy versions present in the FILTERED closed trades
-    // (owner request, 2026-07-22). autoLoadGsFamHeader no longer writes this card.
+    // Version — distinct strategy versions present in the FILTERED closed trades.
     if (t.filteredVersions != null) {
-        setText('au-gs-fam-metric-version', t.filteredVersions.length ? t.filteredVersions.join(' / ') : '—', '');
+        setText(p + 'version', t.filteredVersions.length ? t.filteredVersions.join(' / ') : '—', '');
     }
 }
 
@@ -3171,9 +3286,9 @@ function autoHealthFmtIst(iso) {
 
 // Symbols the open-trade views need priced; merged into the shared refresh list
 // via wmsRegisterRefreshSymbolProvider. Updated whenever GS open trades load.
-var _auGsSyms = [];     // GS (commodity) open-trade symbols [{ fyersKey, cacheKey }]
+var _auGsSyms = { live: [], paper: [] };  // GS open-trade symbols per page [{ fyersKey, cacheKey }]
 var _auPairsSyms = [];  // Pairs (equity) open-trade symbols
-function autoGetRefreshSymbols() { return _auGsSyms.concat(_auPairsSyms); }
+function autoGetRefreshSymbols() { return _auGsSyms.live.concat(_auGsSyms.paper).concat(_auPairsSyms); }
 
 // Register the provider (idempotent) + make sure the single shared timer runs
 // while the user is on an Open Trades sub-tab. Called from autoSwitchSubTab.
@@ -3196,10 +3311,14 @@ function autoOnSharedRefresh() {
     // Phase E.3: the Legacy Open Trades tab is gone — the family pages are the
     // only surfaces. Re-render only the open-trades panel the user is looking at.
     var famGs        = document.getElementById('au-fam-gs')?.classList.contains('active');
-    var famOpenTab   = document.getElementById('au-gs-fam-open-panel')?.classList.contains('active');
+    var famLive      = document.getElementById('au-gs-live-panel')?.classList.contains('active');
+    var famPaper     = document.getElementById('au-gs-paper-panel')?.classList.contains('active');
     var famPairs     = document.getElementById('au-fam-pairs')?.classList.contains('active');
     var famPairsOpen = document.getElementById('au-pairs-fam-open-panel')?.classList.contains('active');
-    if (famGs && famOpenTab)       autoLoadGsOpenTrades(true /* silent — flicker-free */);
+    // Re-render only the open block of whichever GS page the user is viewing (its
+    // open <details> is inside the active Live/Paper panel — see autoGsRenderPageShell).
+    if (famGs && famLive)          autoLoadGsOpenTrades('live', true  /* silent — flicker-free */);
+    if (famGs && famPaper)         autoLoadGsOpenTrades('paper', true /* silent — flicker-free */);
     if (famPairs && famPairsOpen)  autoLoadOpenTrades(true /* silent — flicker-free */);
     // NOTE: the live/paused/"mkt closed" refresh-tick indicator lived in the Legacy
     // totals bar and was NOT ported (owner call 2026-07-10 — defer to the next round
@@ -3215,20 +3334,23 @@ function autoOnSharedRefresh() {
 // the MAX simultaneous capital at risk at any point since the first trade.
 // Recomputed every time autoLoadGsClosedTrades runs (since it already pulls
 // every webhook signal — closed AND still-open).
-var _auGsTotals = {
-    openCount: null, openExposure: null, openMargin: null, openLivePnl: null,
-    closedCount: null, closedWins: null, closedLosses: null, closedRealisedPnl: null,
-    peakExposure: null, peakMargin: null, peakSourceFilter: 'all', peakFiltered: false,
-    filteredVersions: null,
-};
+// Per-page GS totals (Live / Paper split, 2026-07-23). Each page's cards read
+// _auGsTotals[mode]; the two pages never share state so filter changes on one
+// can't distort the other's cards.
+function _auGsBlankTotals() {
+    return {
+        openCount: null, openExposure: null, openMargin: null, openLivePnl: null,
+        closedCount: null, closedWins: null, closedLosses: null, closedRealisedPnl: null,
+        peakExposure: null, peakMargin: null, peakSourceFilter: 'all', peakFiltered: false,
+        filteredVersions: null,
+    };
+}
+var _auGsTotals = { live: _auGsBlankTotals(), paper: _auGsBlankTotals() };
 
-// Single "GS totals changed → repaint everything that reads them" chokepoint.
-// Phase E.3 deleted the Legacy floating totals bar, so the GS family metrics strip
-// is now the only reader of _auGsTotals. The indirection stays: it is the one place
-// to hook any future totals consumer — e.g. the combined Net P&L figure the old bar
-// showed and the strip does not yet (deferred 2026-07-10).
-function autoGsTotalsChanged() {
-    if (typeof autoRenderGsFamMetrics === 'function') autoRenderGsFamMetrics();
+// Single "GS totals changed → repaint that page's cards" chokepoint. Keyed by
+// mode so only the affected page repaints.
+function autoGsTotalsChanged(mode) {
+    if (typeof autoRenderGsFamMetrics === 'function') autoRenderGsFamMetrics(mode);
 }
 
 function autoSwitchSubTab(subtabId) {
@@ -3245,7 +3367,7 @@ function autoSwitchSubTab(subtabId) {
     // Arm the shared price timer whenever an Open Trades panel becomes visible.
     // (Phase E.3 removed the Legacy au-ot-gs / au-ot-pairs sub-tabs and the fixed
     // totals bar that used to be toggled here.)
-    if (subtabId === 'au-gs-fam-open-panel' || subtabId === 'au-pairs-fam-open-panel') {
+    if (subtabId === 'au-gs-live-panel' || subtabId === 'au-gs-paper-panel' || subtabId === 'au-pairs-fam-open-panel') {
         autoEnsureSharedRefresh();
     }
 }
@@ -4495,13 +4617,16 @@ function autoFetchLtpForSymbols(symbols) {
 
 // Compute live P&L for one GS trade. Returns { pnl, breakdown } or null if
 // we can't compute (missing LTP or unknown point_value).
-function autoGsComputeLivePnl(entry, ltpMap) {
+// entryPxOverride (optional): the REAL broker-fill entry price for a LIVE trade
+// (joined via transactions). When supplied it replaces the modelled leg price so
+// the Live page's open P&L reflects the actual entry (owner decision 2026-07-23).
+function autoGsComputeLivePnl(entry, ltpMap, entryPxOverride) {
     if (!entry || !Array.isArray(entry.legs) || entry.legs.length === 0) return null;
     var leg = entry.legs[0];
     var sym = leg.symbol;
     var shortSym = leg.short_symbol;
     var side = (leg.side || '').toUpperCase();
-    var entryPrice = Number(leg.price);
+    var entryPrice = (entryPxOverride != null && isFinite(entryPxOverride)) ? Number(entryPxOverride) : Number(leg.price);
     var qtyLots = (entry.metadata && Number(entry.metadata.qty_lots)) || 1;
     var pv = autoGsPointValue(shortSym);
     var ltp = ltpMap.get(sym);
@@ -4513,10 +4638,12 @@ function autoGsComputeLivePnl(entry, ltpMap) {
     return { pnl: pnl, ltp: ltp, breakdown: breakdown };
 }
 
-async function autoLoadGsOpenTrades(silent) {
-    // Family target first (reads prefer it); Legacy target drops out at Phase E.3.
-    var el = autoTarget(['au-gs-fam-open-content']);
-    var statusEl = autoBadgeTarget(['au-gs-fam-open-badge']);
+async function autoLoadGsOpenTrades(mode, silent) {
+    mode = mode || 'paper';
+    var isLive = mode === 'live';
+    var el = document.getElementById('au-gs-' + mode + '-open-content');
+    var statusEl = document.getElementById('au-gs-' + mode + '-open-badge');
+    var sumEl = document.getElementById('au-gs-' + mode + '-open-summary');
     if (!el) return;
     if (!silent) {
         if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
@@ -4529,23 +4656,24 @@ async function autoLoadGsOpenTrades(silent) {
 
     try {
         var fam = await autoGetStrategyFamilies();
+        var modeMap = await autoGetStrategyModes();
 
-        // 1. Open trades from v_auto_open_trades, filtered to webhook strategies
+        // 1. Open trades from v_auto_open_trades → GS family AND this page's mode.
         var openResp = await fetch(SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=*', { headers: wmsHeaders() });
         var openAll = await openResp.json();
-        var openRows = (openAll || []).filter(function (r) { return autoIsGs(fam, r.strategy_name); });
+        var openRows = (openAll || []).filter(function (r) {
+            return autoIsGs(fam, r.strategy_name) && autoGsModeOf(modeMap, r.strategy_name) === mode;
+        });
 
         if (openRows.length === 0) {
-            el.innerHTML = '<div class="au-soon" style="padding:20px">No open GS trades. When the analyst\'s MS007 fires an ENTRY alert, a row will appear here.</div>';
+            el.innerHTML = '<div class="au-soon" style="padding:20px">No open ' + (isLive ? 'LIVE' : 'PAPER') + ' GS trades.</div>';
             if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 open'; }
-            // Zero out the shared totals + repaint. (Pre-E.1a this path skipped the
-            // update and the mirror's observer repainted the metrics strip from
-            // STALE totals — the strip could still show the last non-zero open count.)
-            _auGsTotals.openCount = 0;
-            _auGsTotals.openExposure = null;
-            _auGsTotals.openMargin = null;
-            _auGsTotals.openLivePnl = null;
-            autoGsTotalsChanged();
+            if (sumEl) sumEl.textContent = '';
+            _auGsSyms[mode] = [];
+            if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+            var _tz = _auGsTotals[mode];
+            _tz.openCount = 0; _tz.openExposure = null; _tz.openMargin = null; _tz.openLivePnl = null;
+            autoGsTotalsChanged(mode);
             return;
         }
 
@@ -4560,14 +4688,22 @@ async function autoLoadGsOpenTrades(silent) {
         var byTrade = {};
         sigRows.forEach(function (s) { byTrade[s.trade_id] = s; });
 
+        // 2b. LIVE page only — real broker fills for the entry orders (owner decision
+        //     2026-07-23). Join auto_signals.metadata.broker_order_id → transactions.
+        //     Fail-soft: any signal without a matching fill falls back to modelled.
+        var fillMap = new Map();
+        if (isLive) {
+            var entryOrderIds = sigRows.map(function (s) { return s.metadata && s.metadata.broker_order_id; }).filter(Boolean);
+            fillMap = await autoGsFetchFillMap(entryOrderIds);
+        }
+
         // 3. Live LTP for unique executed symbols — sourced from the shared price
         //    cache (wmsLivePrices), kept warm by the single app-wide refresh timer.
         var uniqSyms = Array.from(new Set(sigRows.map(function (s) {
             return (s.legs && s.legs[0] && s.legs[0].symbol) || null;
         }).filter(Boolean)));
-        // Register these symbols with the shared refresh list so the app-wide
-        // timer fetches them every cycle (E.11.10).
-        _auGsSyms = uniqSyms.map(function (s) { return { fyersKey: s, cacheKey: s.replace(/^[A-Z]+:/, '') }; });
+        // Register this page's symbols with the shared refresh list (E.11.10).
+        _auGsSyms[mode] = uniqSyms.map(function (s) { return { fyersKey: s, cacheKey: s.replace(/^[A-Z]+:/, '') }; });
         if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
         // On a user-initiated (non-silent) load, warm the cache once if these
         // symbols aren't priced yet — the silent shared-refresh cycles just read.
@@ -4582,8 +4718,7 @@ async function autoLoadGsOpenTrades(silent) {
         var ltpMap = autoFetchLtpForSymbols(uniqSyms);
 
         var now = Date.now();
-        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
-        html += '<thead><tr style="background:#f3f4f6;text-align:left">' +
+        var headerRow = '<tr style="background:#f3f4f6;text-align:left">' +
                 '<th style="padding:6px 8px">Strategy</th>' +
                 '<th style="padding:6px 8px">Side</th>' +
                 '<th style="padding:6px 8px">Entry<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>' +
@@ -4595,10 +4730,11 @@ async function autoLoadGsOpenTrades(silent) {
                 '<th style="padding:6px 8px;text-align:right">Margin<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ %</span></th>' +
                 '<th style="padding:6px 8px;text-align:right">Live P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>' +
                 '<th style="padding:6px 8px">Action</th>' +
-                '</tr></thead><tbody>';
+                '</tr>';
 
         var totalPnl = 0, anyPnl = false;
         var totalExposure = 0, totalMargin = 0, anyExposure = false;
+        var body = '';
         openRows.forEach(function (ot) {
             var sig = byTrade[ot.trade_id];
             var leg = sig && sig.legs && sig.legs[0];
@@ -4616,7 +4752,13 @@ async function autoLoadGsOpenTrades(silent) {
                 : '';
             var contract = leg ? autoFmtContract(leg.symbol, leg.expiry_date) : '—';
             var shortSym = leg ? leg.short_symbol : null;
-            var entryPriceNum = leg && leg.price != null ? Number(leg.price) : null;
+
+            // LIVE: prefer the REAL broker-fill entry price; fall back to modelled if
+            // the signal has no broker_order_id yet or the transaction isn't linked.
+            var modelledEntry = leg && leg.price != null ? Number(leg.price) : null;
+            var fill = isLive ? fillMap.get(String(m.broker_order_id || '')) : null;
+            var usingReal = !!(fill && isFinite(fill.price));
+            var entryPriceNum = usingReal ? fill.price : modelledEntry;
             var stopPriceNum = m.stop_price != null ? Number(m.stop_price) : null;
 
             // Qty cell: "5 lots" + sub-row "25 kg" (physical size if known).
@@ -4630,14 +4772,17 @@ async function autoLoadGsOpenTrades(silent) {
             }
             var qtyCell = autoEsc(qtyMain) + qtySub;
 
-            // Entry Px cell: main = entry price (zero decimals); sub = "SL: 272,661" rounded to 0 decimals.
+            // Entry Px cell: main = entry price (zero decimals); sub = "SL: 272,661".
+            // LIVE fallback rows are marked "~modelled" so nothing blanks out silently.
             var entryPxMain = autoFmtPrice0(entryPriceNum);
             var stopSub = stopPriceNum != null
                 ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">SL: ' + autoFmtPrice0(stopPriceNum) + '</div>'
                 : '';
+            if (isLive && !usingReal) {
+                stopSub += '<div style="color:#b45309;font-size:10px;margin-top:1px" title="No linked broker fill yet — showing the modelled signal price.">~modelled</div>';
+            }
 
             // Exposure = qty_lots × point_value × entry_price  (₹ notional).
-            // For SILVERM 7 lots @ ₹273,000: 7 × 5 × 273,000 = ₹95,55,000.
             var pv = shortSym ? autoGsPointValue(shortSym) : null;
             var exposure = (qtyLots != null && pv && entryPriceNum != null) ? (qtyLots * pv * entryPriceNum) : null;
             var exposureCell = exposure != null
@@ -4645,8 +4790,7 @@ async function autoLoadGsOpenTrades(silent) {
                 : '<span style="color:#9ca3af">—</span>';
             if (exposure != null) { totalExposure += exposure; anyExposure = true; }
 
-            // Margin = exposure × margin_pct/100. Per-instrument %, see
-            // AU_GS_MARGIN_PCT. Sub-row shows the % used.
+            // Margin = exposure × margin_pct/100. Per-instrument %, see AU_GS_MARGIN_PCT.
             var marginPct = shortSym ? autoGsMarginPct(shortSym) : null;
             var margin = (exposure != null && marginPct != null) ? (exposure * marginPct / 100) : null;
             var marginCell;
@@ -4658,7 +4802,8 @@ async function autoLoadGsOpenTrades(silent) {
                 marginCell = '<span style="color:#9ca3af">—</span>';
             }
 
-            var pnlInfo = sig ? autoGsComputeLivePnl(sig, ltpMap) : null;
+            // P&L vs LTP — LIVE uses the real entry price override.
+            var pnlInfo = sig ? autoGsComputeLivePnl(sig, ltpMap, usingReal ? fill.price : null) : null;
             var ltpCell, pnlCell, pnlTooltip;
             if (pnlInfo) {
                 anyPnl = true;
@@ -4675,14 +4820,14 @@ async function autoLoadGsOpenTrades(silent) {
                              pctSign + Math.abs(pct).toFixed(2) + '%</div>';
                 }
                 pnlCell = '<span style="color:' + col + ';font-weight:600">' + sign + '₹' + abs + '</span>' + pctSub;
-                pnlTooltip = pnlInfo.breakdown;
+                pnlTooltip = pnlInfo.breakdown + (isLive ? (usingReal ? ' · real fill' : ' · modelled (no linked fill)') : '');
             } else {
                 ltpCell = '<span style="color:#9ca3af">—</span>';
                 pnlCell = '<span style="color:#9ca3af">—</span>';
                 pnlTooltip = 'Live P&L needs (a) Fyers connection for LTP and (b) a known point_value for the underlying.';
             }
 
-            html += '<tr style="border-top:1px solid #e5e7eb">' +
+            body += '<tr style="border-top:1px solid #e5e7eb">' +
                     '<td style="padding:6px 8px;vertical-align:top"><code>' + autoEsc(ot.strategy_name) + '</code></td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(entryStr) + daysSub + '</td>' +
@@ -4698,6 +4843,8 @@ async function autoLoadGsOpenTrades(silent) {
                     '</tr>';
         });
 
+        // Totals row — rendered at the TOP of the table (owner ask; matches Closed).
+        var totalsRowTop = '';
         if (anyExposure || anyPnl) {
             var expCell = anyExposure
                 ? '₹' + Math.round(totalExposure).toLocaleString('en-IN')
@@ -4721,58 +4868,75 @@ async function autoLoadGsOpenTrades(silent) {
             } else {
                 pnlTotalCell = '<span style="color:#9ca3af">—</span>';
             }
-            html += '<tfoot><tr style="border-top:2px solid #cbd5e0;background:#f7fafc;font-weight:700">' +
+            totalsRowTop = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700;position:sticky;top:0">' +
                     '<td colspan="7" style="padding:8px;text-align:right">Totals (' + openRows.length + ' open):</td>' +
                     '<td style="padding:8px;text-align:right;vertical-align:top">' + expCell + '</td>' +
                     '<td style="padding:8px;text-align:right;vertical-align:top">' + mgnCell + '</td>' +
                     '<td style="padding:8px;text-align:right;vertical-align:top">' + pnlTotalCell + '</td>' +
                     '<td style="padding:8px"></td>' +
-                    '</tr></tfoot>';
+                    '</tr>';
         }
-        html += '</table></div>';
+
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">' +
+                   '<thead>' + totalsRowTop + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
         html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6">' +
                 '• LTP via Fyers /quotes (needs active Fyers connection).<br>' +
                 '• Lot sizes: SILVERM 1 lot = 5 kg · GOLDM 1 lot = 100 g.<br>' +
                 '• Exposure = lots × point_value × entry price.<br>' +
                 '• Margin: SILVERM 20% · GOLDM 10% (Fyers SPAN+exposure, rounded up).<br>' +
-                '• P&amp;L = side × (LTP − entry) × lots × point_value.' +
+                (isLive
+                    ? '• Entry Px + P&amp;L use REAL broker fills (via transactions); ~modelled = no linked fill yet.'
+                    : '• P&amp;L = side × (LTP − entry) × lots × point_value (modelled prices).') +
                 '</div>';
         el.innerHTML = html;
         if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = openRows.length + ' open'; }
+        if (sumEl) {
+            var sumBits = [openRows.length + ' open'];
+            if (anyExposure) sumBits.push('exposure ₹' + Math.round(totalExposure).toLocaleString('en-IN'));
+            if (anyPnl) sumBits.push('P&L ' + (totalPnl >= 0 ? '+' : '−') + '₹' + Math.abs(Math.round(totalPnl)).toLocaleString('en-IN'));
+            sumEl.textContent = sumBits.join(' · ');
+        }
 
-        // Populate shared totals state for the sticky bar
-        _auGsTotals.openCount = openRows.length;
-        _auGsTotals.openExposure = anyExposure ? totalExposure : null;
-        _auGsTotals.openMargin = anyExposure ? totalMargin : null;
-        _auGsTotals.openLivePnl = anyPnl ? totalPnl : null;
-        autoGsTotalsChanged();
+        // Populate this page's totals for its card strip.
+        var _t = _auGsTotals[mode];
+        _t.openCount = openRows.length;
+        _t.openExposure = anyExposure ? totalExposure : null;
+        _t.openMargin = anyExposure ? totalMargin : null;
+        _t.openLivePnl = anyPnl ? totalPnl : null;
+        autoGsTotalsChanged(mode);
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load GS open trades: ' + autoEsc(String(e)) + '</span>';
         if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
     }
 }
 
-async function autoLoadGsClosedTrades() {
-    var el = autoTarget(['au-gs-fam-closed-content']);
-    var statusEl = autoBadgeTarget(['au-gs-fam-closed-badge']);
+async function autoLoadGsClosedTrades(mode) {
+    mode = mode || 'paper';
+    var isLive = mode === 'live';
+    var f = _auGsFilters[mode];
+    var el = document.getElementById('au-gs-' + mode + '-closed-content');
+    var statusEl = document.getElementById('au-gs-' + mode + '-closed-badge');
+    var sumEl = document.getElementById('au-gs-' + mode + '-closed-summary');
     if (!el) return;
-    autoGsClosedSyncControls();   // reflect persisted/live filter state in the toolbar
     if (statusEl) { statusEl.className = 'au-badge loading'; statusEl.textContent = 'loading'; }
     el.innerHTML = '<div class="au-meta">⏳ Loading GS closed trades…</div>';
 
     try {
         var fam = await autoGetStrategyFamilies();
+        var modeMap = await autoGetStrategyModes();
 
-        // Fetch GS auto_signals (last _AU_CLOSED_LIMIT events). Group by trade_id,
-        // include only trades that have at least one EXIT/MANUAL_CLOSE and net to
-        // zero qty.
+        // Fetch GS auto_signals (last _AU_CLOSED_LIMIT events) for THIS page's mode.
+        // Group by trade_id; include only trades that have at least one EXIT and net
+        // to zero qty.
         //
         // Filter by strategy_name — NOT by source. The GS strategies migrated from
         // tv-webhook execution to the automation-runner (chassis) in Jun 2026, so
         // pre-migration signals have `source='tv_webhook'` and post-migration ones
-        // have `source='chassis'` (the auto_signals.source default from migration 41).
-        // A strategy-name filter cleanly covers both eras.
-        var stratList = [...fam.keys()].filter(function (n) { return autoIsGs(fam, n); }).map(function (n) { return '"' + n + '"'; }).join(',');
+        // have `source='chassis'`. A strategy-name filter cleanly covers both eras.
+        // Restricting names to this page's execution_mode is what splits Live/Paper.
+        var stratList = [...fam.keys()].filter(function (n) {
+            return autoIsGs(fam, n) && autoGsModeOf(modeMap, n) === mode;
+        }).map(function (n) { return '"' + n + '"'; }).join(',');
         var sigs = [];
         if (stratList) {
             var resp = await fetch(
@@ -4786,14 +4950,27 @@ async function autoLoadGsClosedTrades() {
             if (!Array.isArray(sigs)) sigs = [];
         }
 
-        // Source filter — shared state variable so BOTH the Legacy dropdown
-        // (deleted with Legacy in E.3) and the GS family page dropdown
-        // (au-gs-fam-closed-source-filter) stay in sync. Updated via
-        // autoGsSetClosedSourceFilter() which is wired to both onchange handlers.
-        // Values: 'all' (default), 'chassis' (automation-runner), 'tv_webhook' (legacy Pine).
-        // The trade's source is the ENTRY row's source; EXIT can differ (e.g. legacy
-        // tv_webhook entry + a MANUAL_CLOSE chassis exit) but ENTRY defines origin.
-        var _srcFilter = _auGsClosedSourceFilter || 'all';
+        // LIVE page only — real broker fills for every order in these signals (owner
+        // decision 2026-07-23). _gsRealPx() resolves each signal's price to its real
+        // fill when linked, else falls back to the modelled leg price (fail-soft).
+        var fillMap = new Map();
+        if (isLive) {
+            var _allOrderIds = sigs.map(function (s) { return s.metadata && s.metadata.broker_order_id; }).filter(Boolean);
+            fillMap = await autoGsFetchFillMap(_allOrderIds);
+        }
+        var _gsRealPx = function (sig) {
+            if (isLive && sig && sig.metadata) {
+                var fx = fillMap.get(String(sig.metadata.broker_order_id || ''));
+                if (fx && isFinite(fx.price)) return fx.price;
+            }
+            var lg = sig && sig.legs && sig.legs[0];
+            return lg && lg.price != null ? Number(lg.price) : null;
+        };
+
+        // Source filter (per page). Values: 'all' (default), 'chassis'
+        // (automation-runner), 'tv_webhook' (legacy Pine). The trade's source is the
+        // ENTRY row's source; EXIT can differ but ENTRY defines origin.
+        var _srcFilter = f.source || 'all';
 
         var byTrade = {};
         sigs.forEach(function (s) {
@@ -4827,7 +5004,8 @@ async function autoLoadGsClosedTrades() {
             var qLots = em.qty_lots != null ? Number(em.qty_lots) : Number(leg.qty || 0);
             var pv  = autoGsPointValue(leg.short_symbol);
             var mP  = autoGsMarginPct(leg.short_symbol);
-            var exp = (qLots && pv && leg.price != null) ? (qLots * pv * Number(leg.price)) : 0;
+            var _px = _gsRealPx(entrySig);   // LIVE → real fill; else modelled leg price
+            var exp = (qLots && pv && _px != null) ? (qLots * pv * Number(_px)) : 0;
             var mgn = mP ? (exp * mP / 100) : 0;
             return { exp: exp, mgn: mgn };
         }
@@ -4849,8 +5027,8 @@ async function autoLoadGsClosedTrades() {
             var em = entrySig.metadata || {};
             var qLots = em.qty_lots != null ? em.qty_lots : leg.qty;
             var pv = autoGsPointValue(leg.short_symbol);
-            var ePx = Number(leg.price);
-            var xPx = Number(xLeg.price);
+            var ePx = Number(_gsRealPx(entrySig));   // LIVE → real fills; else modelled
+            var xPx = Number(_gsRealPx(exitSig));
             if (pv && isFinite(ePx) && isFinite(xPx)) {
                 return ((leg.side || '').toUpperCase() === 'BUY' ? 1 : -1) * (xPx - ePx) * qLots * pv;
             }
@@ -4863,16 +5041,16 @@ async function autoLoadGsClosedTrades() {
             var short = leg ? leg.short_symbol : null;
             var ver = (e.metadata && (e.metadata.strategy_version || e.metadata.version)) || '';
             if ((_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') && e.source !== _srcFilter) return false;
-            if (_auGsClosedInstr === 'gold'   && short !== 'GOLDM')   return false;
-            if (_auGsClosedInstr === 'silver' && short !== 'SILVERM') return false;
-            if (_auGsClosedVersions.length && !_auGsClosedVersions.some(function (tok) { return ver.indexOf(tok) >= 0; })) return false;
-            if (_auGsClosedResult === 'win' || _auGsClosedResult === 'loss') {
+            if (f.instr === 'gold'   && short !== 'GOLDM')   return false;
+            if (f.instr === 'silver' && short !== 'SILVERM') return false;
+            if (f.versions.length && !f.versions.some(function (tok) { return ver.indexOf(tok) >= 0; })) return false;
+            if (f.result === 'win' || f.result === 'loss') {
                 var pnl = _gsPnlOf(e, _gsExitOf(tid));
                 if (pnl == null) return false;
-                if (_auGsClosedResult === 'win'  && !(pnl >= 0)) return false;
-                if (_auGsClosedResult === 'loss' && !(pnl <  0)) return false;
+                if (f.result === 'win'  && !(pnl >= 0)) return false;
+                if (f.result === 'loss' && !(pnl <  0)) return false;
             }
-            if (_auGsClosedExits.length && _auGsClosedExits.indexOf(_auGsExitCategory(_gsExitOf(tid))) < 0) return false;
+            if (f.exits.length && f.exits.indexOf(_auGsExitCategory(_gsExitOf(tid))) < 0) return false;
             return true;
         };
         var peakSigs = sigsAsc.filter(function (s) { return _gsTradePassesFilters(s.trade_id); });
@@ -4886,13 +5064,13 @@ async function autoLoadGsClosedTrades() {
             if (_runExp > _peakExp) _peakExp = _runExp;
             if (_runMgn > _peakMgn) _peakMgn = _runMgn;
         });
-        _auGsTotals.peakExposure = _peakExp > 0 ? _peakExp : null;
-        _auGsTotals.peakMargin   = _peakMgn > 0 ? _peakMgn : null;
-        _auGsTotals.peakSourceFilter = _srcFilter;  // for label rendering
+        _auGsTotals[mode].peakExposure = _peakExp > 0 ? _peakExp : null;
+        _auGsTotals[mode].peakMargin   = _peakMgn > 0 ? _peakMgn : null;
+        _auGsTotals[mode].peakSourceFilter = _srcFilter;  // for label rendering
         // Peak now honours instrument/version/result/exit too — flag any non-source filter
         // so the sub-label can show it's scoped, not the whole-book high-water mark.
-        _auGsTotals.peakFiltered = (_auGsClosedInstr !== 'all' || _auGsClosedResult !== 'all' ||
-                                    _auGsClosedVersions.length > 0 || _auGsClosedExits.length > 0);
+        _auGsTotals[mode].peakFiltered = (f.instr !== 'all' || f.result !== 'all' ||
+                                    f.versions.length > 0 || f.exits.length > 0);
 
         var closedRows = [];
         Object.keys(byTrade).forEach(function (tradeId) {
@@ -4916,14 +5094,17 @@ async function autoLoadGsClosedTrades() {
             if (!hasExit || !entry) return;
             if (Math.abs(netQty) > 1e-6) return;
 
-            // Compute realised P&L: side_sign × (exit_price − entry_price) × qty_lots × point_value
+            // Compute realised P&L: side_sign × (exit_price − entry_price) × qty_lots × point_value.
+            // LIVE page uses REAL broker fills (via _gsRealPx); Paper uses modelled prices.
             var leg = entry.legs && entry.legs[0];
             var em = entry.metadata || {};
             var qtyLots = em.qty_lots != null ? em.qty_lots : (leg ? leg.qty : 1);
             var pv = leg ? autoGsPointValue(leg.short_symbol) : null;
-            var entryPx = leg ? Number(leg.price) : null;
-            var exitLeg = exit && exit.legs && exit.legs[0];
-            var exitPx = exitLeg ? Number(exitLeg.price) : null;
+            var entryPx = _gsRealPx(entry);
+            var exitPx = _gsRealPx(exit);
+            // On the Live page, flag rows that fell back to modelled (no linked fill).
+            var _entryReal = !isLive || (entry.metadata && fillMap.has(String(entry.metadata.broker_order_id || '')));
+            var _exitReal  = !isLive || (exit && exit.metadata && fillMap.has(String(exit.metadata.broker_order_id || '')));
             var pnl = null;
             if (pv && isFinite(entryPx) && isFinite(exitPx)) {
                 var sideSign = (leg.side || '').toUpperCase() === 'BUY' ? 1 : -1;
@@ -4937,6 +5118,7 @@ async function autoLoadGsClosedTrades() {
                 strategy_name: entry.strategy_name,
                 entry: entry, exit: exit,
                 entry_price: entryPx, exit_price: exitPx, qty_lots: qtyLots,
+                entry_real: _entryReal, exit_real: _exitReal,
                 pnl: pnl,
                 contract: leg ? leg.symbol : '—',
                 expiry_date: leg ? leg.expiry_date : null,
@@ -4952,25 +5134,25 @@ async function autoLoadGsClosedTrades() {
         var _closedTotal = closedRows.length;
         closedRows = closedRows.filter(function (ct) {
             if ((_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') && ct.source !== _srcFilter) return false;
-            if (_auGsClosedInstr === 'gold'   && ct.short_symbol !== 'GOLDM')   return false;
-            if (_auGsClosedInstr === 'silver' && ct.short_symbol !== 'SILVERM') return false;
-            if (_auGsClosedResult === 'win'  && !(ct.pnl != null && ct.pnl >= 0)) return false;
-            if (_auGsClosedResult === 'loss' && !(ct.pnl != null && ct.pnl < 0))  return false;
-            if (_auGsClosedVersions.length) {
+            if (f.instr === 'gold'   && ct.short_symbol !== 'GOLDM')   return false;
+            if (f.instr === 'silver' && ct.short_symbol !== 'SILVERM') return false;
+            if (f.result === 'win'  && !(ct.pnl != null && ct.pnl >= 0)) return false;
+            if (f.result === 'loss' && !(ct.pnl != null && ct.pnl < 0))  return false;
+            if (f.versions.length) {
                 var _v = ct.version || '';
-                if (!_auGsClosedVersions.some(function (tok) { return _v.indexOf(tok) >= 0; })) return false;
+                if (!f.versions.some(function (tok) { return _v.indexOf(tok) >= 0; })) return false;
             }
-            if (_auGsClosedExits.length) {
-                if (_auGsClosedExits.indexOf(_auGsExitCategory(ct.exit)) < 0) return false;
+            if (f.exits.length) {
+                if (f.exits.indexOf(_auGsExitCategory(ct.exit)) < 0) return false;
             }
             return true;
         });
-        var _anyFilter = _srcFilter !== 'all' || _auGsClosedInstr !== 'all' ||
-                         _auGsClosedResult !== 'all' || _auGsClosedVersions.length > 0 ||
-                         _auGsClosedExits.length > 0;
+        var _anyFilter = _srcFilter !== 'all' || f.instr !== 'all' ||
+                         f.result !== 'all' || f.versions.length > 0 ||
+                         f.exits.length > 0;
 
         // Sort — click-to-sort on headers (default: exit date, newest first).
-        var _sortDir = _auGsClosedSort.dir === 'asc' ? 1 : -1;
+        var _sortDir = f.sort.dir === 'asc' ? 1 : -1;
         function _gsClosedSortVal(ct, key) {
             if (key === 'entry')    return ct.entry ? ct.entry.fired_at : '';
             if (key === 'exit')     return ct.exit ? ct.exit.fired_at : (ct.entry ? ct.entry.fired_at : '');
@@ -4980,7 +5162,7 @@ async function autoLoadGsClosedTrades() {
             return '';
         }
         closedRows.sort(function (a, b) {
-            var av = _gsClosedSortVal(a, _auGsClosedSort.key), bv = _gsClosedSortVal(b, _auGsClosedSort.key);
+            var av = _gsClosedSortVal(a, f.sort.key), bv = _gsClosedSortVal(b, f.sort.key);
             if (av < bv) return -1 * _sortDir;
             if (av > bv) return  1 * _sortDir;
             return 0;
@@ -4988,10 +5170,16 @@ async function autoLoadGsClosedTrades() {
 
         if (closedRows.length === 0) {
             var _emptyMsg = _closedTotal === 0
-                ? 'No closed GS trades yet.'
+                ? 'No closed ' + (isLive ? 'LIVE' : 'PAPER') + ' GS trades yet.'
                 : 'No closed GS trades match the current filters (' + _closedTotal + ' hidden). Adjust the filters above to see them.';
             el.innerHTML = '<div class="au-soon" style="padding:20px">' + _emptyMsg + '</div>';
             if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 / ' + _closedTotal + ' closed'; }
+            if (sumEl) sumEl.textContent = _closedTotal ? (_closedTotal + ' hidden by filters') : '';
+            // Reset this page's closed-derived cards so a filtered-empty page shows zeros.
+            var _tc = _auGsTotals[mode];
+            _tc.closedCount = 0; _tc.closedWins = 0; _tc.closedLosses = 0; _tc.closedRealisedPnl = null;
+            _tc.filteredVersions = [];
+            autoGsTotalsChanged(mode);
             return;
         }
 
@@ -5039,14 +5227,14 @@ async function autoLoadGsClosedTrades() {
                 '<tr style="background:#f3f4f6;text-align:left">' +
                 '<th style="padding:6px 8px">Strategy<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ source · version</span></th>' +
                 '<th style="padding:6px 8px">Side</th>' +
-                _gsClosedTh('Entry', 'entry', 'left') +
-                _gsClosedTh('Exit', 'exit', 'left', '/ days held') +
-                _gsClosedTh('Contract', 'contract', 'left') +
-                _gsClosedTh('Qty', 'qty', 'right') +
+                _gsClosedTh(mode, 'Entry', 'entry', 'left') +
+                _gsClosedTh(mode, 'Exit', 'exit', 'left', '/ days held') +
+                _gsClosedTh(mode, 'Contract', 'contract', 'left') +
+                _gsClosedTh(mode, 'Qty', 'qty', 'right') +
                 '<th style="padding:6px 8px;text-align:right">Entry Px</th>' +
                 '<th style="padding:6px 8px;text-align:right">Exit Px</th>' +
                 '<th style="padding:6px 8px">Exit Reason</th>' +
-                _gsClosedTh('Realised P&amp;L', 'pnl', 'right', '/ % of exp') +
+                _gsClosedTh(mode, 'Realised P&amp;L', 'pnl', 'right', '/ % of exp') +
                 '</tr></thead><tbody>';
 
         var totalPnl = 0, wins = 0, losses = 0;
@@ -5068,8 +5256,11 @@ async function autoLoadGsClosedTrades() {
             var _exitCat = _auGsExitCategory(ct.exit);
             var exitReasonLabel = ct.exit ? _auGsExitLabel(_exitCat) : '—';
             var exitReasonColor = _auGsExitColor(_exitCat);
+            var _mdl = '<div style="color:#b45309;font-size:9px;margin-top:1px" title="No linked broker fill — modelled price.">~modelled</div>';
             var entryPxStr = autoFmtPrice0(ct.entry_price);
             var exitPxStr = autoFmtPrice0(ct.exit_price);
+            var entryPxMark = (isLive && !ct.entry_real) ? _mdl : '';
+            var exitPxMark = (isLive && !ct.exit_real) ? _mdl : '';
             var contractStr = autoFmtContract(ct.contract, ct.expiry_date);
 
             // Qty cell: lots + physical sub-row
@@ -5128,8 +5319,8 @@ async function autoLoadGsClosedTrades() {
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(exitStr) + daysSub + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(contractStr) + '</td>' +
                     '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + qtyCell + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(entryPxStr) + '</td>' +
-                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(exitPxStr) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(entryPxStr) + entryPxMark + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + autoEsc(exitPxStr) + exitPxMark + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top"><span style="color:' + exitReasonColor + ';font-weight:600">' + autoEsc(exitReasonLabel) + '</span></td>' +
                     '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + pnlCell + '</td>' +
                     '</tr>';
@@ -5145,15 +5336,21 @@ async function autoLoadGsClosedTrades() {
             : closedRows.length + ' / ' + _closedTotal + ' closed';
         if (statusEl) { statusEl.className = 'au-badge success'; statusEl.textContent = _statusLabel; }
 
-        // Populate shared totals state for the sticky bar
-        _auGsTotals.closedCount = closedRows.length;
-        _auGsTotals.closedWins = wins;
-        _auGsTotals.closedLosses = losses;
-        _auGsTotals.closedRealisedPnl = totalPnl;
-        // Version card: distinct strategy versions present in the FILTERED closed trades
-        // (owner request, 2026-07-22). Sole source for au-gs-fam-metric-version.
-        _auGsTotals.filteredVersions = Array.from(new Set(closedRows.map(function (ct) { return ct.version; }).filter(Boolean)));
-        autoGsTotalsChanged();
+        // Populate this page's closed-derived cards.
+        var _tc = _auGsTotals[mode];
+        _tc.closedCount = closedRows.length;
+        _tc.closedWins = wins;
+        _tc.closedLosses = losses;
+        _tc.closedRealisedPnl = totalPnl;
+        // Version card: distinct strategy versions present in the FILTERED closed trades.
+        _tc.filteredVersions = Array.from(new Set(closedRows.map(function (ct) { return ct.version; }).filter(Boolean)));
+        autoGsTotalsChanged(mode);
+
+        if (sumEl) {
+            var cSign = totalPnl >= 0 ? '+' : '−';
+            sumEl.textContent = closedRows.length + ' closed · ' + wins + 'W/' + losses + 'L · realised ' +
+                                cSign + '₹' + Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
+        }
     } catch (e) {
         el.innerHTML = '<span style="color:#dc2626">Failed to load GS closed trades: ' + autoEsc(String(e)) + '</span>';
         if (statusEl) { statusEl.className = 'au-badge error'; statusEl.textContent = 'error'; }
