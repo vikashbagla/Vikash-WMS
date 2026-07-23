@@ -4915,8 +4915,10 @@ function wmsModal(overlayEl, opts) {
  */
 function wmsFormatContract(txn) {
     if (!txn) return '';
-    // Non-NFO → Equity
-    if (txn.security_type !== 'NFO') return 'Equity';
+    // Only F&O instruments get a contract/expiry label; everything else is "Equity".
+    // MCX commodity futures/options are F&O too (2026-07-23) — without this they were
+    // labelled "Equity" and dropped from the F&O page (its views hide the "Equity" bucket).
+    if (txn.security_type !== 'NFO' && txn.security_type !== 'MCX') return 'Equity';
     if (txn.symbol === txn.short_symbol) return 'Equity';
 
     // Try NFO lookup by security_id for structured data
@@ -4934,8 +4936,10 @@ function wmsFormatContract(txn) {
         }
     }
 
-    // Fallback: parse from symbol string
-    var suffix = txn.symbol || '';
+    // Fallback: parse from symbol string. Strip an optional exchange prefix first
+    // (e.g. "MCX:" / "NSE:") so the short-symbol offset + expiry regex line up for
+    // both NSE F&O and MCX commodity symbols.
+    var suffix = (txn.symbol || '').replace(/^[A-Z]+:/, '');
     var short = (txn.short_symbol || '').toUpperCase();
     if (short && suffix.toUpperCase().indexOf(short) === 0) {
         suffix = suffix.substring(short.length);
