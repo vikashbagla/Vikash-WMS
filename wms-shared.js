@@ -3257,7 +3257,7 @@ function wmsGetBrokerage(ibaRatesMap, investorId, brokerId, grossAmount, securit
     // it as undefined / null / ''. Single resolution point; every caller
     // (current and future) gets the right pricing branch automatically.
     var effAssetClass = assetClass;
-    if (!effAssetClass && securityType === 'NFO') {
+    if (!effAssetClass && (securityType === 'NFO' || securityType === 'MCX')) {
         var nfo = (typeof wmsRefData !== 'undefined' && wmsRefData && wmsRefData.securitiesNfoMap && securityId)
             ? wmsRefData.securitiesNfoMap[securityId] : null;
         if (nfo) {
@@ -3273,9 +3273,10 @@ function wmsGetBrokerage(ibaRatesMap, investorId, brokerId, grossAmount, securit
         }
     }
 
-    // Navigate the rates JSONB: equity.delivery for EQUITY/ETF, derivatives.futures/options for NFO
+    // Navigate the rates JSONB: equity.delivery for EQUITY/ETF, derivatives.futures/options
+    // for NFO and MCX (commodity futures/options price off the same derivatives segment).
     var segment = null;
-    if (securityType === 'NFO') {
+    if (securityType === 'NFO' || securityType === 'MCX') {
         if (effAssetClass === 'OPTIONS' && rates.derivatives && rates.derivatives.options) {
             segment = rates.derivatives.options;
         } else {
@@ -3466,6 +3467,17 @@ function wmsAutoCalcCharges(row, opts) {
         } else {
             txnCat = 'EQUITY_FUTURES';
         }
+    } else if (row.security_type === 'MCX') {
+        // MCX commodities use the COMMODITY_* config categories (2026-07-23). Additive:
+        // only this branch is new; EQUITY/NFO paths above are unchanged. `exchange`
+        // below already resolves to 'MCX' from row.exchange, so the commodity rows
+        // (STT/CTT, exchange, sebi, stamp) are picked up instead of the NSE fallback.
+        var symUpMcx = (row.symbol || '').toUpperCase();
+        if (symUpMcx.match(/(CE|PE)$/) || (row.asset_class && row.asset_class === 'OPTIONS')) {
+            txnCat = 'COMMODITY_OPTIONS';
+        } else {
+            txnCat = 'COMMODITY_FUTURES';
+        }
     }
     var exchange = (row.exchange === 'NFO' || !row.exchange) ? 'NSE' : row.exchange;
     var txnType = row.transaction_type || 'BUY';
@@ -3517,8 +3529,11 @@ function wmsAutoCalcCharges(row, opts) {
         if (shouldCalcStt) {
             // STT eligibility: only EQUITY stocks attract STT (Rule G.8.5)
             var secTypeForStt = row._db_security_type || row.security_type || '';
-            if (!wmsIsSTTEligible(secTypeForStt) && row.security_type !== 'NFO') {
-                // Non-equity cash market instruments (ETF, MF, debt, SGB) — no STT
+            if (!wmsIsSTTEligible(secTypeForStt) && row.security_type !== 'NFO' && row.security_type !== 'MCX') {
+                // Non-equity cash market instruments (ETF, MF, debt, SGB) — no STT.
+                // MCX is excluded from this force-zero (2026-07-23): a commodity's
+                // transaction tax (CTT) lives in the COMMODITY_* config under charge_type
+                // 'STT', so let the rate lookup decide (0 today for futures; CTT when added).
                 row.stt = 0;
             } else if (sttRate > 0) {
                 var sttRaw = gross * (sttRate / 100);
@@ -3546,7 +3561,7 @@ function wmsAutoCalcCharges(row, opts) {
             row._sebi_charges = wmsRoundMoney(gross * (sebiRate / 100));
             // Stamp duty: same STT eligibility check for cash market instruments
             var secTypeForStamp = row._db_security_type || row.security_type || '';
-            if (!wmsIsSTTEligible(secTypeForStamp) && row.security_type !== 'NFO') {
+            if (!wmsIsSTTEligible(secTypeForStamp) && row.security_type !== 'NFO' && row.security_type !== 'MCX') {
                 row._stamp_duty = 0;
             } else {
                 row._stamp_duty = wmsRoundMoney(gross * (stampRate / 100));
