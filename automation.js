@@ -1114,6 +1114,39 @@ async function autoGsFetchFillMap(brokerOrderIds) {
     return out;
 }
 
+// LIVE-page fill-awareness (owner decision 2026-07-24). The dashboard's open/closed
+// state comes from v_auto_open_trades, which is derived ONLY from engine signals
+// (auto_signals legs) — so a live trade keeps showing "open" until the engine fires
+// its bar-close CLOSE signal, which can lag the broker's intrabar SL fill by several
+// candles (23-Jul: broker covered 21:09, engine booked 22:00). The broker's real fills
+// ARE already in `transactions` by then. This returns the broker's true net signed
+// position per core symbol (atGS-tagged) so the Live page can drop engine-open trades
+// the broker has already closed. Closed round-trips net to zero, so the running sum ==
+// the current open lot. Fail-soft: on any error return null → caller keeps engine truth
+// (never hide a position because a query failed). PAPER is untouched (no broker fills).
+async function autoGsFetchNetBySymbol(coreSymbols) {
+    var syms = Array.from(new Set((coreSymbols || []).filter(Boolean).map(String)));
+    if (!syms.length) return new Map();
+    try {
+        var net = new Map();
+        var CH = 40;
+        for (var i = 0; i < syms.length; i += CH) {
+            var chunk = syms.slice(i, i + CH).map(function (x) { return '"' + x.replace(/"/g, '') + '"'; }).join(',');
+            var resp = await fetch(
+                SUPABASE_URL + '/rest/v1/transactions?symbol=in.(' + encodeURIComponent(chunk) +
+                ')&tags=cs.{atGS}&select=symbol,quantity',
+                { headers: wmsHeaders() }
+            );
+            if (!resp.ok) return null;   // fail-soft → caller falls back to engine truth
+            (await resp.json() || []).forEach(function (t) {
+                var k = String(t.symbol);
+                net.set(k, (net.get(k) || 0) + Number(t.quantity || 0));
+            });
+        }
+        return net;
+    } catch (e) { console.warn('[autoGsFetchNetBySymbol] fail-soft:', e); return null; }
+}
+
 // Build the 5 summary-card tiles for a page (ids namespaced by mode).
 function autoGsCardTiles(mode) {
     var p = 'au-gs-' + mode + '-metric-';
@@ -3346,6 +3379,9 @@ function _auGsBlankTotals() {
     };
 }
 var _auGsTotals = { live: _auGsBlankTotals(), paper: _auGsBlankTotals() };
+// How many engine-open LIVE trades were hidden this render because the broker has
+// already closed them (fill-awareness, 2026-07-24). Surfaced in the open-trades summary.
+var _auGsFillSettled = 0;
 
 // Single "GS totals changed → repaint that page's cards" chokepoint. Keyed by
 // mode so only the affected page repaints.
@@ -4695,6 +4731,45 @@ async function autoLoadGsOpenTrades(mode, silent) {
         if (isLive) {
             var entryOrderIds = sigRows.map(function (s) { return s.metadata && s.metadata.broker_order_id; }).filter(Boolean);
             fillMap = await autoGsFetchFillMap(entryOrderIds);
+
+            // Fill-awareness (2026-07-24): the engine may still show a trade "open"
+            // for several candles after the broker's resting-SL has already covered
+            // it (bar-close CLOSE signal lags the intrabar fill). Cross-check each
+            // engine-open trade against the broker's real net position; drop the ones
+            // the broker has already closed. Fail-soft: null → keep engine truth.
+            var coreOf = function (ot) {
+                var s = byTrade[ot.trade_id];
+                var sym = s && s.legs && s.legs[0] && s.legs[0].symbol;
+                return sym ? sym.replace(/^[A-Z]+:/, '') : null;
+            };
+            var netBySym = await autoGsFetchNetBySymbol(openRows.map(coreOf).filter(Boolean));
+            if (netBySym) {
+                var settled = 0;
+                openRows = openRows.filter(function (ot) {
+                    var core = coreOf(ot);
+                    if (!core || !netBySym.has(core)) return true;   // unknown symbol → keep (engine truth)
+                    if (Math.round(netBySym.get(core)) !== 0) return true;   // broker still holds → keep
+                    settled++; return false;                          // broker flat → already closed, drop
+                });
+                _auGsFillSettled = settled;   // surfaced in the summary line below
+            } else {
+                _auGsFillSettled = 0;
+            }
+
+            // All engine-open live trades are already closed at the broker.
+            if (openRows.length === 0) {
+                el.innerHTML = '<div class="au-soon" style="padding:20px">No open LIVE GS trades.' +
+                    (_auGsFillSettled ? ' <span style="color:#6b7280">(' + _auGsFillSettled +
+                    ' just closed at broker — engine settling)</span>' : '') + '</div>';
+                if (statusEl) { statusEl.className = 'au-badge idle'; statusEl.textContent = '0 open'; }
+                if (sumEl) sumEl.textContent = '';
+                _auGsSyms[mode] = [];
+                if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+                var _tzl = _auGsTotals[mode];
+                _tzl.openCount = 0; _tzl.openExposure = null; _tzl.openMargin = null; _tzl.openLivePnl = null;
+                autoGsTotalsChanged(mode);
+                return;
+            }
         }
 
         // 3. Live LTP for unique executed symbols — sourced from the shared price
@@ -4886,6 +4961,7 @@ async function autoLoadGsOpenTrades(mode, silent) {
                 '• Margin: SILVERM 20% · GOLDM 10% (Fyers SPAN+exposure, rounded up).<br>' +
                 (isLive
                     ? '• Entry Px + P&amp;L use REAL broker fills (via transactions); ~modelled = no linked fill yet.'
+                    + (_auGsFillSettled ? '<br>• ' + _auGsFillSettled + ' engine-open trade(s) hidden — already closed at broker, engine settling.' : '')
                     : '• P&amp;L = side × (LTP − entry) × lots × point_value (modelled prices).') +
                 '</div>';
         el.innerHTML = html;
