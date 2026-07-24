@@ -471,6 +471,78 @@
         }
     }
 
+    // ============================================================
+    // ACCESS CONTROL (Phase 1) — load the signed-in user's capabilities and gate the nav.
+    // The DATABASE is the real gate (RLS: owner OR wms_has(cap)); this only hides tabs the
+    // user can't use. Owner (by email) always sees everything. See migration 57 + ACCESS-CONTROL-PLAN.md.
+    // ============================================================
+    var WMS_OWNER_EMAIL = 'vikash.bagla@gmail.com';
+    var WMS_MODULE_CAP = {
+        'trading':             'trading:read',
+        'automation':          'auto_trading:read',
+        'reports':             'reports:read',
+        'accounting':          'accounting:read',
+        'import-transactions': 'trading:write',
+        'master-data':         'master:read'
+    };
+    window.wmsAccess = { isOwner: true, caps: null, scopes: {} };   // safe default until loaded
+
+    // Load the current user's grants (RLS self_read returns only their own rows).
+    async function wmsLoadAccess() {
+        var email = (window.currentUser && window.currentUser.email) || '';
+        if (email === WMS_OWNER_EMAIL) { window.wmsAccess = { isOwner: true, caps: null, scopes: {} }; return; }
+        var caps = {}, scopes = {};
+        try {
+            var res = await fetch(window.SUPABASE_URL + '/rest/v1/app_grants?email=eq.' +
+                encodeURIComponent(email) + '&select=capability,scope', { headers: wmsHeaders() });
+            var rows = res.ok ? await res.json() : [];
+            (rows || []).forEach(function (r) { caps[r.capability] = true; scopes[r.capability] = r.scope || {}; });
+        } catch (e) { console.warn('[access] grant load failed — fail-closed to no access:', e); }
+        window.wmsAccess = { isOwner: false, caps: caps, scopes: scopes };
+    }
+
+    function wmsHasModule(moduleName) {
+        if (window.wmsAccess && window.wmsAccess.isOwner) return true;
+        var cap = WMS_MODULE_CAP[moduleName];
+        return !!(cap && window.wmsAccess && window.wmsAccess.caps && window.wmsAccess.caps[cap]);
+    }
+
+    // Hide nav entries the user isn't granted. Returns the de-duplicated list of allowed modules.
+    function wmsApplyAccessGating() {
+        if (window.wmsAccess && window.wmsAccess.isOwner) {
+            return ['trading', 'automation', 'reports', 'accounting', 'import-transactions', 'master-data'];
+        }
+        var allowed = [];
+        document.querySelectorAll('.nav-btn[data-module]').forEach(function (btn) {
+            var mod = btn.dataset.module;
+            if (wmsHasModule(mod)) { if (allowed.indexOf(mod) === -1) allowed.push(mod); btn.style.display = ''; }
+            else { btn.style.display = 'none'; btn.classList.add('disabled'); }
+        });
+        document.querySelectorAll('#wmsBottomNav .bnav-item[data-module]').forEach(function (btn) {
+            if (!wmsHasModule(btn.dataset.module)) btn.style.display = 'none';
+        });
+        if (allowed.length === 0) wmsShowNoAccess();
+        return allowed;
+    }
+
+    function wmsShowNoAccess() {
+        document.querySelectorAll('.top-nav, .wms-bottom-nav').forEach(function (n) { n.style.display = 'none'; });
+        var name = (window.currentUser && (window.currentUser.display_name || window.currentUser.email)) || 'You';
+        var overlay = document.createElement('div');
+        overlay.id = 'wmsNoAccess';
+        overlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:99999;overflow:auto;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+        overlay.innerHTML = '<div style="max-width:520px;margin:14vh auto;text-align:center;color:#374151;padding:0 20px">' +
+            '<div style="font-size:44px">🔒</div>' +
+            '<h2 style="margin:14px 0 6px">Access not set up</h2>' +
+            '<p style="color:#6b7280;line-height:1.5">' + name + ', your sign-in worked, but no modules have been granted to your account yet. ' +
+            'Please contact the owner to be given access.</p>' +
+            '<button id="wmsNoAccessSignout" style="margin-top:18px;padding:9px 22px;border:0;border-radius:8px;background:#111827;color:#fff;cursor:pointer;font-size:14px">Sign out</button>' +
+            '</div>';
+        document.body.appendChild(overlay);
+        var b = document.getElementById('wmsNoAccessSignout');
+        if (b) b.addEventListener('click', function () { logout(); });
+    }
+
     // Logout — uses Supabase Auth signOut
     async function logout() {
         if (confirm('Logout?')) {
@@ -510,6 +582,12 @@
 
     // Load module
     async function loadModule(moduleName) {
+        // Access guard (defense-in-depth; the DB RLS is the real gate). A non-owner can never
+        // load a module they aren't granted, even via a stale saved preference.
+        if (typeof wmsHasModule === 'function' && !wmsHasModule(moduleName)) {
+            console.warn('[access] blocked module load (not granted):', moduleName);
+            return;
+        }
         if (currentModule === moduleName) return;
         currentModule = moduleName;
         localStorage.setItem('wms_last_module', moduleName);  // Remember current module
@@ -602,7 +680,17 @@
         // checkAuth is now async — must await before loading data
         var authOk = await checkAuth();
         if (!authOk) return;
-        checkFyersAuth();
+
+        // Access control (Phase 1): load the user's grants and gate the nav. No grants → stop.
+        await wmsLoadAccess();
+        var wmsAllowed = wmsApplyAccessGating();
+        if (wmsAllowed.length === 0) {
+            var _sl = document.getElementById('startupLoader'); if (_sl) _sl.remove();
+            var _lo = document.getElementById('logoutBtn'); if (_lo) _lo.addEventListener('click', logout);
+            return;   // wmsShowNoAccess() already displayed the "access not set up" screen
+        }
+
+        if (window.wmsAccess.isOwner) checkFyersAuth();   // Fyers connection indicator is owner-only
 
         // Show startup loader while master data loads
         var loaderEl = document.getElementById('startupLoader');
@@ -673,13 +761,14 @@
             });
         });
 
-        // Load last active module or default to portfolio
-        var lastModule = localStorage.getItem('wms_last_module') || 'reports';
+        // Load last active module or default. Non-owners fall back to their first granted module,
+        // and a saved preference the user can no longer access is ignored.
+        var lastModule = localStorage.getItem('wms_last_module') || (window.wmsAccess.isOwner ? 'reports' : wmsAllowed[0]);
         if (lastModule === 'portfolio') lastModule = 'reports'; // migrate old preference
+        if (wmsAllowed.indexOf(lastModule) === -1) lastModule = wmsAllowed[0];
 
-        // Phone (≤480px) is review-first: always open Trading → Portfolio,
-        // ignoring the last-used module. Desktop/tablet keep last-module behaviour.
-        if (window.matchMedia('(max-width:480px)').matches) {
+        // Phone (≤480px) is review-first: open Trading → Portfolio when granted; else the default.
+        if (window.matchMedia('(max-width:480px)').matches && wmsHasModule('trading')) {
             Promise.resolve(loadModule('trading')).then(function() {
                 if (typeof trSwitchTab === 'function') trSwitchTab('tr-portfolio');
                 document.querySelectorAll('#wmsBottomNav .bnav-item').forEach(function(b) { b.classList.remove('active'); });
