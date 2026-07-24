@@ -4694,11 +4694,16 @@ async function autoLoadGsOpenTrades(mode, silent) {
         var fam = await autoGetStrategyFamilies();
         var modeMap = await autoGetStrategyModes();
 
-        // 1. Open trades from v_auto_open_trades → GS family AND this page's mode.
+        // 1. Open trades from v_auto_open_trades → GS family AND this page's channel/mode.
+        //    Channel-authoritative (single-scan fan-out): a canonical strategy holds BOTH books,
+        //    so the open row's own `channel` decides the page. Falls back to the strategy mode
+        //    classifier only for rows without a channel (pre-migration legacy).
         var openResp = await fetch(SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=*', { headers: wmsHeaders() });
         var openAll = await openResp.json();
         var openRows = (openAll || []).filter(function (r) {
-            return autoIsGs(fam, r.strategy_name) && autoGsModeOf(modeMap, r.strategy_name) === mode;
+            if (!autoIsGs(fam, r.strategy_name)) return false;
+            if (r.channel) return r.channel === mode;
+            return autoGsModeOf(modeMap, r.strategy_name) === mode;
         });
 
         if (openRows.length === 0) {
@@ -5009,21 +5014,27 @@ async function autoLoadGsClosedTrades(mode) {
         // tv-webhook execution to the automation-runner (chassis) in Jun 2026, so
         // pre-migration signals have `source='tv_webhook'` and post-migration ones
         // have `source='chassis'`. A strategy-name filter cleanly covers both eras.
-        // Restricting names to this page's execution_mode is what splits Live/Paper.
+        // Channel-authoritative Live/Paper split (single-scan fan-out): fetch ALL GS-family
+        // signals, then keep this page's channel. A canonical strategy holds both books, so
+        // filtering by strategy mode would mix them — the signal's own `channel` is the split.
+        // Legacy signals (no channel) fall back to the strategy mode classifier.
         var stratList = [...fam.keys()].filter(function (n) {
-            return autoIsGs(fam, n) && autoGsModeOf(modeMap, n) === mode;
+            return autoIsGs(fam, n);
         }).map(function (n) { return '"' + n + '"'; }).join(',');
         var sigs = [];
         if (stratList) {
             var resp = await fetch(
                 SUPABASE_URL + '/rest/v1/auto_signals?strategy_name=in.(' + encodeURIComponent(stratList) +
                 ')&order=fired_at.desc&limit=' + _AU_CLOSED_LIMIT +
-                '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata,source',
+                '&select=id,trade_id,strategy_name,fired_at,event_type,direction,legs,metadata,source,channel',
                 { headers: wmsHeaders() }
             );
             if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()).slice(0, 200));
             sigs = await resp.json();
             if (!Array.isArray(sigs)) sigs = [];
+            sigs = sigs.filter(function (s) {
+                return s.channel ? (s.channel === mode) : (autoGsModeOf(modeMap, s.strategy_name) === mode);
+            });
         }
 
         // LIVE page only — real broker fills for every order in these signals (owner
