@@ -560,7 +560,7 @@ function wmsTxnModalOpen(companyKey, investorId) {
         companyName = 'All Transactions';
     } else {
         for (var i = 0; i < txns.length; i++) {
-            if (txns[i].company_name && txns[i].security_type !== 'NFO') {
+            if (txns[i].company_name && !wmsIsDerivativeSecurity(txns[i].security_type)) {
                 companyName = txns[i].company_name; break;
             }
         }

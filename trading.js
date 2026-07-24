@@ -281,9 +281,9 @@ function trComputeBannerStats() {
 
     // View mode filter
     if (viewMode === 'holdings') {
-        filtered = filtered.filter(function(t) { return t.security_type !== 'NFO'; });
+        filtered = filtered.filter(function(t) { return !wmsIsDerivativeSecurity(t.security_type); });
     } else if (viewMode === 'fno') {
-        filtered = filtered.filter(function(t) { return t.security_type === 'NFO'; });
+        filtered = filtered.filter(function(t) { return wmsIsDerivativeSecurity(t.security_type); });
     }
 
     // Group by short_symbol and calculate holdings (lightweight version of trCalcHoldings)
@@ -1166,10 +1166,10 @@ function trCalcHoldings() {
     // View Mode filter — use security_type (not exchange, which is always 'NSE' for NFO)
     if (trViewMode === 'holdings') {
         // Exclude F&O transactions
-        filtered = filtered.filter(function(t) { return t.security_type !== 'NFO'; });
+        filtered = filtered.filter(function(t) { return !wmsIsDerivativeSecurity(t.security_type); });
     } else if (trViewMode === 'fno') {
         // Only F&O transactions
-        filtered = filtered.filter(function(t) { return t.security_type === 'NFO'; });
+        filtered = filtered.filter(function(t) { return wmsIsDerivativeSecurity(t.security_type); });
     }
 
     // Group by short_symbol (underlying) — combines equity + F&O
@@ -1181,7 +1181,7 @@ function trCalcHoldings() {
         if (!groups[key]) {
             // Only use company_name from equity txns (NFO names are contract names like "MANAPPURAM 26 Feb 24 FUT")
             // Check security_type (not exchange) — NFO txns can have exchange='NSE'
-            var isNFO = txn.security_type === 'NFO';
+            var isNFO = wmsIsDerivativeSecurity(txn.security_type);
             var initName = (!isNFO && txn.company_name) ? txn.company_name : null;
             groups[key] = {
                 symbol: txn.symbol,
@@ -1203,7 +1203,7 @@ function trCalcHoldings() {
             groups[key].exchange = 'NSE';
         }
         // Use company_name from equity txn (not F&O contract name)
-        if (txn.company_name && txn.security_type !== 'NFO' && !groups[key].companyName) {
+        if (txn.company_name && !wmsIsDerivativeSecurity(txn.security_type) && !groups[key].companyName) {
             groups[key].companyName = txn.company_name;
         }
 
@@ -1245,7 +1245,7 @@ function trCalcHoldings() {
         // Compute non-NFO net quantity (for Stocks Day's P&L banner)
         var stockQty = 0;
         g.txns.forEach(function(t) {
-            if (t.security_type !== 'NFO' && !wmsIsQtyExcluded(t.transaction_type)) {
+            if (!wmsIsDerivativeSecurity(t.security_type) && !wmsIsQtyExcluded(t.transaction_type)) {
                 stockQty += t.quantity;
             }
         });
@@ -1967,9 +1967,9 @@ function trInvestorBreakdown(h, price, md) {
     }
     // View Mode filter — use security_type (not exchange)
     if (trViewMode === 'holdings') {
-        symbolTxns = symbolTxns.filter(function(t) { return t.security_type !== 'NFO'; });
+        symbolTxns = symbolTxns.filter(function(t) { return !wmsIsDerivativeSecurity(t.security_type); });
     } else if (trViewMode === 'fno') {
-        symbolTxns = symbolTxns.filter(function(t) { return t.security_type === 'NFO'; });
+        symbolTxns = symbolTxns.filter(function(t) { return wmsIsDerivativeSecurity(t.security_type); });
     }
 
     // Group transactions by investor, then use wmsCalcAvgCost per investor

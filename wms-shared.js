@@ -5841,6 +5841,32 @@ function wmsIsDerivativeSecurity(securityType) {
 }
 
 /**
+ * Is this transaction an F&O (derivative) trade? The canonical predicate for
+ * every "is this F&O vs cash" decision (ledger cash treatment, margin engine,
+ * portfolio F&O/holdings split). Checks BOTH security_type AND the legacy
+ * `product` string — imported rows can carry the F&O signal in `product` while
+ * security_type is blank. Includes MCX commodity F&O (NSE NFO + MCX are both
+ * derivatives; MCX rows carry security_type='MCX' with product=null). Prefer
+ * this over hand-rolled `security_type === 'NFO'` / `/F&O|FNO|NFO/` checks so a
+ * new security type is handled in ONE place. See LESSONS §E.15 / wmsIsDerivativeSecurity.
+ */
+function wmsIsDerivativeTxn(t) {
+    if (!t) return false;
+    if (wmsIsDerivativeSecurity(t.security_type)) return true;
+    var product = (t.product || '').toUpperCase();
+    return /F&O|FNO|NFO|MCX|COMMODIT/.test(product);
+}
+
+/**
+ * Short type label for a security_type: 'NFO' / 'MCX' / 'EQ'. Used by ledger
+ * holdings + booked-P&L tables so an MCX row reads 'MCX', not the old 'EQ'.
+ */
+function wmsSecTypeShortLabel(securityType) {
+    var t = (securityType || '').toUpperCase();
+    return t === 'NFO' ? 'NFO' : (t === 'MCX' ? 'MCX' : 'EQ');
+}
+
+/**
  * Calculate CASH-MARKET holdings for a symbol as of a given date, grouped by
  * inv>trader>broker. F&O / MCX positions in the same underlying are EXCLUDED —
  * corporate actions never accrue to a derivative position, and including them
@@ -6158,12 +6184,11 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
         return true;
     };
 
-    // Helper: check if transaction is an NFO trade (contains 'F&O', 'FNO', or 'NFO' in product or security_type)
-    var _isNFO = function(t) {
-        var product = (t.product || '').toUpperCase();
-        var secType = (t.security_type || '').toUpperCase();
-        return /F&O|FNO|NFO/.test(product) || /F&O|FNO|NFO/.test(secType);
-    };
+    // Helper: is this an F&O (derivative) trade? Canonical predicate — includes
+    // MCX commodity F&O (LESSONS §E.15). For futures, notional is NOT a cash flow
+    // (only P&L + margin hit the ledger); MCX was previously missed here and its
+    // full notional leaked into the cash balance.
+    var _isNFO = function(t) { return wmsIsDerivativeTxn(t); };
 
     // Helper: check if an NFO transaction is an option contract (CE/PE suffix).
     // Options have cash impact (premium is real cash), unlike futures where the
@@ -6954,10 +6979,8 @@ function wmsCalcMarginFIFO(transactions, opts) {
     var runningMargin = 0;
 
     (transactions || []).forEach(function(t) {
-        // Skip if not NFO
-        var product = (t.product || '').toUpperCase();
-        var secType = (t.security_type || '').toUpperCase();
-        if (!/F&O|FNO|NFO/.test(product) && !/F&O|FNO|NFO/.test(secType)) return;
+        // Skip if not a derivative (F&O). Includes MCX commodity F&O (§E.15).
+        if (!wmsIsDerivativeTxn(t)) return;
 
         // Strip exchange prefix (NSE:, BSE:, etc.) so trades from different
         // import sources (Fyers tradebook with prefix, CN/Excel without) match

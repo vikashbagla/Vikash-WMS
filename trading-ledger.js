@@ -730,7 +730,7 @@ function lgFormatSymbol(row) {
 
     var inner;
     // For NFO, show decoded contract: e.g. "MANAPPURAM 30 Mar 26 Fut"
-    if (source.security_type === 'NFO' || (source.product && /NFO|F&O|FNO/i.test(source.product))) {
+    if (wmsIsDerivativeTxn(source)) {
         var contract = typeof wmsFormatContract === 'function' ? wmsFormatContract(source) : '';
         if (contract && contract !== 'Equity' && contract !== 'NFO') {
             inner = wmsEsc(sym) + ' <span style="color:#718096; font-size:10px;">' + wmsEsc(contract) + '</span>';
@@ -968,11 +968,10 @@ async function lgRefresh() {
             }
             var today = new Date().toISOString().slice(0, 10);
             if (genFrom <= today) {
-                // Compute margin events from NFO transactions (full history)
+                // Compute margin events from F&O transactions (full history).
+                // Includes MCX commodity F&O via the shared predicate (§E.15).
                 var nfoTxns = txnFiltered.filter(function(t) {
-                    var p = (t.product || '').toUpperCase();
-                    var s = (t.security_type || '').toUpperCase();
-                    return /F&O|FNO|NFO/.test(p) || /F&O|FNO|NFO/.test(s);
+                    return wmsIsDerivativeTxn(t);
                 }).sort(function(a, b) {
                     return (a.transaction_date || '').localeCompare(b.transaction_date || '');
                 });
@@ -1886,7 +1885,7 @@ function lgRenderSummary() {
     for (var si = 0; si < sorted.length; si++) {
         var st = sorted[si];
         var sKey;
-        if (st.security_type === 'NFO') {
+        if (wmsIsDerivativeSecurity(st.security_type)) {
             sKey = (st.symbol || '').replace(/^[A-Z]+:/, '');
         } else {
             sKey = st.short_symbol || st.symbol || '';
@@ -1894,11 +1893,10 @@ function lgRenderSummary() {
         if (!sourceLookup[sKey]) sourceLookup[sKey] = st;
     }
 
-    // Compute NFO running margin (final value = current open margin)
+    // Compute F&O running margin (final value = current open margin).
+    // Includes MCX commodity F&O via the shared predicate (§E.15).
     var nfoTxnsForMargin = sorted.filter(function(t) {
-        var p = (t.product || '').toUpperCase();
-        var s = (t.security_type || '').toUpperCase();
-        return /F&O|FNO|NFO/.test(p) || /F&O|FNO|NFO/.test(s);
+        return wmsIsDerivativeTxn(t);
     });
     var marginEvents = wmsCalcMarginFIFO(nfoTxnsForMargin);
     var currentNfoMargin = marginEvents.length > 0 ? marginEvents[marginEvents.length - 1].runningMargin : 0;
@@ -1935,7 +1933,7 @@ function lgRenderSummary() {
         var qty = h.quantity;
         var cost = h.totalCost;
         var avgCost = h.avgCost;
-        var isNfo = (h.securityType === 'NFO');
+        var isNfo = wmsIsDerivativeSecurity(h.securityType);
 
         // CMP from shared live price cache. For NFO contracts (options + futures)
         // the live-price lookup MUST use the full contract symbol — e.g.
@@ -1965,7 +1963,7 @@ function lgRenderSummary() {
         }
 
         var mtmClass = lgAmtClass(mtm);
-        var typeLabel = isNfo ? 'NFO' : 'EQ';
+        var typeLabel = wmsSecTypeShortLabel(h.securityType);
 
         // Symbol display — decode NFO contracts via shared formatter
         var symHtml;
@@ -2180,7 +2178,7 @@ function lgRenderSummary() {
             function _lgBookedRowsHtml(gains, rowClass, rowStyle) {
                 var bySym = {};
                 gains.forEach(function(g) {
-                    var isNfo = g.securityType === 'NFO';
+                    var isNfo = wmsIsDerivativeSecurity(g.securityType);
                     var groupKey = isNfo
                         ? ((g.symbol || g.shortSymbol || '').replace(/^[A-Z]+:/, ''))
                         : (g.shortSymbol || g.symbol || '');
@@ -2197,9 +2195,9 @@ function lgRenderSummary() {
                 return Object.keys(bySym).sort().map(function(k) {
                     var b = bySym[k];
                     var cls = lgAmtClass(b.gain);
-                    var typeL = (b.securityType === 'NFO') ? 'NFO' : 'EQ';
+                    var typeL = wmsSecTypeShortLabel(b.securityType);
                     var symHtml = wmsEsc(b.shortSymbol || '');
-                    if (b.securityType === 'NFO' && typeof wmsFormatContract === 'function') {
+                    if (wmsIsDerivativeSecurity(b.securityType) && typeof wmsFormatContract === 'function') {
                         var srcTxn = sourceLookup[b.fullSymbol];
                         if (srcTxn) {
                             var contract = wmsFormatContract(srcTxn);
@@ -3363,9 +3361,7 @@ async function lgShowInterestDetail(entryId) {
         var full = wmsBuildLedger(entriesExSelf, txnFiltered, buildOpts);
 
         var nfoTxns = txnFiltered.filter(function(t) {
-            var p = (t.product || '').toUpperCase();
-            var s = (t.security_type || '').toUpperCase();
-            return /F&O|FNO|NFO/.test(p) || /F&O|FNO|NFO/.test(s);
+            return wmsIsDerivativeTxn(t);
         }).sort(function(a, b) {
             var dc = (a.transaction_date || '').localeCompare(b.transaction_date || '');
             if (dc !== 0) return dc;
@@ -3666,11 +3662,9 @@ function lgGatherExportData(opts) {
         if (!sourceLookup[sKey]) sourceLookup[sKey] = st;
     }
 
-    // NFO margin
+    // F&O margin (includes MCX commodity F&O via the shared predicate, §E.15)
     var nfoTxns = sortedAll.filter(function(t) {
-        var p = (t.product || '').toUpperCase();
-        var s = (t.security_type || '').toUpperCase();
-        return /F&O|FNO|NFO/.test(p) || /F&O|FNO|NFO/.test(s);
+        return wmsIsDerivativeTxn(t);
     });
     var marginEvents = wmsCalcMarginFIFO(nfoTxns);
     var currentNfoMargin = marginEvents.length > 0 ? marginEvents[marginEvents.length - 1].runningMargin : 0;
@@ -3689,7 +3683,7 @@ function lgGatherExportData(opts) {
         if (h.quantity === 0) return;
         var qty2 = h.quantity;
         var avgCost = h.avgCost;
-        var isNfo = (h.securityType === 'NFO');
+        var isNfo = wmsIsDerivativeSecurity(h.securityType);
         var shortSym = h.shortSymbol || h.symbol;
 
         // Decode NFO symbol
@@ -3721,7 +3715,7 @@ function lgGatherExportData(opts) {
             totalEqMtm += mtm;
         }
 
-        holdingRows.push([displaySym, isNfo ? 'NFO' : 'EQ', qty2, avgCost, cmp, mtm, value]);
+        holdingRows.push([displaySym, wmsSecTypeShortLabel(h.securityType), qty2, avgCost, cmp, mtm, value]);
     });
 
     // 5. Summary card values (same formulas as lgRenderSummary — raw cash
@@ -3773,7 +3767,7 @@ function lgGatherExportData(opts) {
     });
     var bookedRows = Object.keys(bySym).sort().map(function(k) {
         var b = bySym[k];
-        return [b.shortSymbol, b.securityType === 'NFO' ? 'NFO' : 'EQ', b.qty, b.gain];
+        return [b.shortSymbol, wmsSecTypeShortLabel(b.securityType), b.qty, b.gain];
     });
 
     // Counterparty-POV display values (LESSONS §E.15.13). Balance-like values
@@ -3814,7 +3808,7 @@ function _lgExportSymbol(row) {
     if (row._rowType !== 'trade' && row._rowType !== 'nfo_pnl') return '';
     var source = row._source;
     var sym = source.short_symbol || source.symbol || '';
-    if (source.security_type === 'NFO' || (source.product && /NFO|F&O|FNO/i.test(source.product))) {
+    if (wmsIsDerivativeTxn(source)) {
         var contract = typeof wmsFormatContract === 'function' ? wmsFormatContract(source) : '';
         if (contract && contract !== 'Equity' && contract !== 'NFO') return sym + ' ' + contract;
     }
@@ -3995,7 +3989,7 @@ function lgExportExcel(d) {
     var holdRowsWithFormulas = (flags.openPos ? d.holdingRows : []).map(function(row, idx) {
         var r = holdFirstData + idx;       // ABSOLUTE Excel row (offsets pre-computed)
         var newRow = row.slice();
-        var isNfo = (row[1] === 'NFO');
+        var isNfo = (row[1] === 'NFO' || row[1] === 'MCX');
 
         // MTM (col F) = (CMP - AvgCost) * Qty
         newRow[5] = {
