@@ -1095,8 +1095,12 @@ async function atSelectOptionsContract(rowId, fyersSymbol, parsed, displayLabel)
                     if (secId && fyersSymbol && typeof wmsUpdateNfoBrokerToken === 'function') {
                         wmsUpdateNfoBrokerToken(secId, fyersSymbol);
                     }
-                    // Refresh local NFO cache in background
-                    if (typeof wmsLoadSecuritiesNfo === 'function') wmsLoadSecuritiesNfo();
+                    // Seed the just-created contract into the in-memory master
+                    // synchronously so it resolves immediately (structured expiry /
+                    // lot_size / strike) with no reload round-trip or perceived
+                    // latency. wmsEnsureNfoContracts backfills as a safety-net for
+                    // any path that skips this. §A.4.4.
+                    if (typeof wmsSeedNfoContract === 'function') wmsSeedNfoContract(created[0]);
                 }
             } else {
                 var errBody = await createResp.json().catch(function() { return {}; });
