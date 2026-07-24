@@ -412,6 +412,9 @@ async function wmsLoadSecuritiesDebt() {
     }
 }
 
+// Shared column list for securities_nfo fetches (full loader + surgical backfill)
+var WMS_SECURITIES_NFO_SELECT = 'id,symbol,instrument_name,exchange,instrument_type,underlying_symbol,expiry_date,strike_price,option_type,lot_size,is_active,broker_tokens';
+
 /**
  * Load all F&O (Futures & Options) securities into wmsRefData.securitiesNfo.
  * Called at app startup (background) and after F&O Sync.
@@ -420,9 +423,7 @@ async function wmsLoadSecuritiesDebt() {
 async function wmsLoadSecuritiesNfo(retryCount) {
     retryCount = retryCount || 0;
     try {
-        var rows = await wmsFetchAllRows('securities_nfo',
-            'id,symbol,instrument_name,exchange,instrument_type,underlying_symbol,expiry_date,strike_price,option_type,lot_size,is_active,broker_tokens',
-            'expiry_date');
+        var rows = await wmsFetchAllRows('securities_nfo', WMS_SECURITIES_NFO_SELECT, 'expiry_date');
         wmsRefData.securitiesNfo = rows;
         wmsRefData.securitiesNfoMap = {};
         rows.forEach(function(r) { wmsRefData.securitiesNfoMap[r.id] = r; });
@@ -439,39 +440,93 @@ async function wmsLoadSecuritiesNfo(retryCount) {
     }
 }
 
-// Session guard (Rule A.1.2 → var): NFO security_ids we've already triggered a
-// reload for, so a contract genuinely absent from securities_nfo can't cause a
-// reload loop on every render pass.
-var _wmsNfoReloadAttempted = {};
+// security_ids referenced by a trade but STILL absent from securities_nfo after
+// a fresh by-id fetch. Per the master-DB invariant — a fill cannot be booked
+// without its contract row (supabase/functions/_shared/nfo-contract.ts throws
+// otherwise; Add Transaction / imports create the row before booking) — this
+// set should stay empty. A populated entry means a genuinely-orphaned trade; we
+// record it ONLY so we don't re-query the same absent id on every render. This
+// is NOT a latch: it never suppresses a contract that actually exists, and any
+// id is picked up the instant a later fetch/seed returns its row. (Rule A.1.2 → var.)
+var _wmsNfoConfirmedAbsent = {};
 
-// Ensure the in-memory NFO master (securitiesNfoMap) covers every NFO contract
+// Surgically fetch specific securities_nfo rows by id and merge them into the
+// in-memory master (securitiesNfoMap + securitiesNfo). Used to cover a contract
+// created AFTER this session loaded the master — instead of reloading the whole
+// ~2k-row master, pull ONLY the missing ids. Cheap enough to run on demand, so
+// there is no "give up" latch. Returns rows merged, or -1 on a fetch error (so
+// the caller can retry rather than mistake a network blip for a missing row).
+// See LESSONS §A.4.4.
+async function wmsBackfillNfoContracts(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) return 0;
+    var result = await window.supabaseClient
+        .from('securities_nfo')
+        .select(WMS_SECURITIES_NFO_SELECT)
+        .in('id', ids);
+    if (result.error) { console.error('wmsBackfillNfoContracts error:', result.error); return -1; }
+    var rows = result.data || [];
+    if (!wmsRefData.securitiesNfoMap) wmsRefData.securitiesNfoMap = {};
+    rows.forEach(function(r) {
+        if (!wmsRefData.securitiesNfoMap[r.id]) {
+            wmsRefData.securitiesNfoMap[r.id] = r;
+            if (Array.isArray(wmsRefData.securitiesNfo)) wmsRefData.securitiesNfo.push(r);
+        }
+    });
+    return rows.length;
+}
+
+// Insert a single freshly-created securities_nfo row into the in-memory master
+// synchronously, so a just-booked contract resolves immediately (structured
+// expiry / lot_size / strike) with no reload round-trip or perceived latency.
+// The producer already holds the DB row (POST return=representation). §A.4.4.
+function wmsSeedNfoContract(row) {
+    if (!row || !row.id) return;
+    if (!wmsRefData.securitiesNfoMap) wmsRefData.securitiesNfoMap = {};
+    if (!wmsRefData.securitiesNfoMap[row.id]) {
+        wmsRefData.securitiesNfoMap[row.id] = row;
+        if (Array.isArray(wmsRefData.securitiesNfo)) wmsRefData.securitiesNfo.push(row);
+    }
+    delete _wmsNfoConfirmedAbsent[row.id];
+}
+
+// Ensure the in-memory NFO master (securitiesNfoMap) covers every F&O contract
 // referenced by `transactions`. The master is loaded ONCE at app startup, but a
 // contract can be written to securities_nfo mid-session — a trade cannot be
-// booked without its contract existing there (the import creates it). Such a
-// contract is missing from the pre-loaded map, so structured lookups
-// (wmsFormatContract → expiry label / lot size / strike, margin FIFO, etc.)
-// silently fall back to fuzzy symbol parsing and mis-format. When we spot a
-// referenced contract that isn't in the map, reload the master ONCE per
-// newly-seen id; never loop on a truly-absent contract. Returns true if a
-// reload was performed. Await this before rendering anything that decodes NFO
-// contracts. See LESSONS §A.4.4.
+// booked without its contract row existing (nfo-contract.ts). A contract missing
+// from the pre-loaded map makes structured lookups (wmsFormatContract → expiry
+// label / lot size / strike, margin FIFO, etc.) fall back to fuzzy symbol
+// parsing and mis-format — e.g. an option leaking into the F&O expiry filter as
+// its full contract name. When we spot referenced contracts that aren't cached,
+// backfill exactly those ids (cheap, targeted). Covers NFO and MCX (both live in
+// securities_nfo). Returns true if a backfill ran. Await before rendering
+// anything that decodes F&O contracts. See LESSONS §A.4.4.
 async function wmsEnsureNfoContracts(transactions) {
     if (!Array.isArray(transactions)) return false;
     var map = wmsRefData.securitiesNfoMap || {};
-    var sawNew = false;
+    var missing = [], seen = {};
     for (var i = 0; i < transactions.length; i++) {
         var t = transactions[i];
-        if (!t || t.security_type !== 'NFO' || !t.security_id) continue;
-        if (map[t.security_id]) continue;                     // already in cache
-        if (_wmsNfoReloadAttempted[t.security_id]) continue;  // tried once — don't loop
-        _wmsNfoReloadAttempted[t.security_id] = true;
-        sawNew = true;
+        if (!t || !t.security_id) continue;
+        if (t.security_type !== 'NFO' && t.security_type !== 'MCX') continue;
+        var id = t.security_id;
+        if (map[id]) continue;                    // already cached
+        if (_wmsNfoConfirmedAbsent[id]) continue; // known-orphan — don't re-query
+        if (seen[id]) continue;
+        seen[id] = true;
+        missing.push(id);
     }
-    if (sawNew) {
-        console.log('wmsEnsureNfoContracts: a trade references an NFO contract not in the cache — reloading securities_nfo');
-        await wmsLoadSecuritiesNfo();
+    if (missing.length === 0) return false;
+    console.log('wmsEnsureNfoContracts: backfilling ' + missing.length + ' F&O contract(s) not in cache');
+    var merged = await wmsBackfillNfoContracts(missing);
+    if (merged < 0) return true; // fetch failed — retry next render, don't mark absent
+    // Anything still missing after a successful by-id fetch is genuinely absent
+    // from the master (invariant violation) — record so we don't re-query it
+    // every render. Self-clears if the row later appears (seed / next fetch).
+    map = wmsRefData.securitiesNfoMap || {};
+    for (var j = 0; j < missing.length; j++) {
+        if (!map[missing[j]]) _wmsNfoConfirmedAbsent[missing[j]] = true;
     }
-    return sawNew;
+    return true;
 }
 
 // ============================================================================
