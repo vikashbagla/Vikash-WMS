@@ -1092,23 +1092,27 @@ function autoGsModeOf(modeMap, name) { return modeMap.get(name) === 'LIVE' ? 'li
 // Fetch real broker fills for a set of broker_order_ids → Map<id,{price,qty}>.
 // Read-only, fail-soft (any error → empty map so the page falls back to modelled).
 // transactions.quantity is already qty_lots × point_value (the traded "units").
+// Reads the app-wide SHARED transaction cache (window._wmsTxnCache.rows, kept current by
+// wmsLoadTransactions — the single entry point every module uses) rather than issuing its own
+// transactions fetch. One source of truth ⇒ the GS Live P&L can never drift from what the
+// Trading table shows, and there's no second query that can lag or miss rows. (2026-07-24 —
+// replaced a standalone broker_trade_id fetch that returned stale/empty in some sessions.)
+async function autoGsSharedTxnRows() {
+    if (typeof wmsLoadTransactions === 'function') { try { return await wmsLoadTransactions() || []; } catch (_e) {} }
+    return (window._wmsTxnCache && Array.isArray(window._wmsTxnCache.rows)) ? window._wmsTxnCache.rows : null;
+}
+
 async function autoGsFetchFillMap(brokerOrderIds) {
     var out = new Map();
-    var ids = (brokerOrderIds || []).filter(Boolean).map(String);
-    if (!ids.length) return out;
+    var ids = new Set((brokerOrderIds || []).filter(Boolean).map(String));
+    if (!ids.size) return out;
     try {
-        var CH = 40;
-        for (var i = 0; i < ids.length; i += CH) {
-            var chunk = ids.slice(i, i + CH).map(function (x) { return '"' + x.replace(/"/g, '') + '"'; }).join(',');
-            var resp = await fetch(
-                SUPABASE_URL + '/rest/v1/transactions?broker_trade_id=in.(' + encodeURIComponent(chunk) +
-                ')&select=broker_trade_id,price,quantity',
-                { headers: wmsHeaders() }
-            );
-            if (!resp.ok) continue;
-            (await resp.json() || []).forEach(function (t) {
-                if (t.broker_trade_id != null) out.set(String(t.broker_trade_id), { price: Number(t.price), qty: Math.abs(Number(t.quantity)) });
-            });
+        var rows = await autoGsSharedTxnRows();
+        if (!rows) return out;   // no shared cache yet → fail-soft to ~modelled
+        for (var i = 0; i < rows.length; i++) {
+            var t = rows[i];
+            var bid = (t && t.broker_trade_id != null) ? String(t.broker_trade_id) : null;
+            if (bid && ids.has(bid)) out.set(bid, { price: Number(t.price), qty: Math.abs(Number(t.quantity)) });
         }
     } catch (e) { console.warn('[autoGsFetchFillMap] fail-soft:', e); }
     return out;
@@ -1125,23 +1129,18 @@ async function autoGsFetchFillMap(brokerOrderIds) {
 // the current open lot. Fail-soft: on any error return null → caller keeps engine truth
 // (never hide a position because a query failed). PAPER is untouched (no broker fills).
 async function autoGsFetchNetBySymbol(coreSymbols) {
-    var syms = Array.from(new Set((coreSymbols || []).filter(Boolean).map(String)));
-    if (!syms.length) return new Map();
+    var syms = new Set((coreSymbols || []).filter(Boolean).map(String));
+    if (!syms.size) return new Map();
     try {
+        var rows = await autoGsSharedTxnRows();
+        if (!rows) return null;   // no shared cache → fail-soft, caller keeps engine truth
         var net = new Map();
-        var CH = 40;
-        for (var i = 0; i < syms.length; i += CH) {
-            var chunk = syms.slice(i, i + CH).map(function (x) { return '"' + x.replace(/"/g, '') + '"'; }).join(',');
-            var resp = await fetch(
-                SUPABASE_URL + '/rest/v1/transactions?symbol=in.(' + encodeURIComponent(chunk) +
-                ')&tags=cs.{atGS}&select=symbol,quantity',
-                { headers: wmsHeaders() }
-            );
-            if (!resp.ok) return null;   // fail-soft → caller falls back to engine truth
-            (await resp.json() || []).forEach(function (t) {
-                var k = String(t.symbol);
-                net.set(k, (net.get(k) || 0) + Number(t.quantity || 0));
-            });
+        for (var i = 0; i < rows.length; i++) {
+            var t = rows[i];
+            if (!t || !Array.isArray(t.tags) || t.tags.indexOf('atGS') < 0) continue;
+            var k = String(t.symbol);
+            if (!syms.has(k)) continue;
+            net.set(k, (net.get(k) || 0) + Number(t.quantity || 0));
         }
         return net;
     } catch (e) { console.warn('[autoGsFetchNetBySymbol] fail-soft:', e); return null; }
