@@ -719,7 +719,7 @@ details summary {
               <!-- Strategy config — Live Trading (comes FIRST; flat table = paper shape + Trader col + pw pause + add-trader) -->
               <div class="au-card" style="border:1px solid #fca5a5;background:linear-gradient(to bottom,#fef2f2,#ffffff)">
                 <h3>⚡ Strategy Configuration — Live Trading <span class="au-badge" style="background:#fee2e2;color:#b91c1c">LIVE · real orders</span> <button class="au-btn au-btn-secondary" style="font-size:11px;padding:3px 10px;float:right" onclick="autoLoadGsFamAdmin()">↻</button></h3>
-                <div class="au-sub">Same table as Paper Trading, plus a <b>Trader</b> column (the beneficiary the position books to; executor is Veins/Fyers). Edit the knobs inline + <b>Save all (live)</b>. <b>Pause / Resume is password-gated</b> (manual-order password). Use <b>Add trader</b> to clone a strategy into a new row for another beneficiary — added <b>paused</b>. Nothing places until the Stage-2 enqueuer ships.</div>
+                <div class="au-sub">Same table as Paper Trading, plus a <b>Trader</b> column (the beneficiary the position books to; executor is Veins/Fyers). Each live row is its own strategy with its own settings, size and trader. Edit the knobs inline + <b>Save all (live)</b>. <b>Pause / Resume is password-gated</b> (manual-order password). Use <b>Add trader</b> to clone a strategy into a new row for another beneficiary — added <b>paused</b>. <b>⚠️ A Resumed row is LIVE:</b> its next entry signal places a REAL order for its trader, sized by that row's own <b>lot_cap</b>. (Practice rows never place live.)</div>
                 <div id="au-gs-fam-strategies-live" style="margin-top:12px" class="au-meta">Loading…</div>
               </div>
 
