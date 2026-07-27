@@ -690,7 +690,8 @@
             return;   // wmsShowNoAccess() already displayed the "access not set up" screen
         }
 
-        if (window.wmsAccess.isOwner) checkFyersAuth();   // Fyers connection indicator is owner-only
+        if (window.wmsAccess.isOwner) checkFyersAuth();   // owner: real Fyers indicator + token from the IBA
+        else { window.fyersToken = 'db'; }   // read-only users: LTP/P&L come from the server-side fyers-market-data EF (which now allows authorized users). 'db' = truthy flag so the shared price refresh runs; no client Fyers token needed.
 
         // Show startup loader while master data loads
         var loaderEl = document.getElementById('startupLoader');
