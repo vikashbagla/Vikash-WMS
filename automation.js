@@ -1750,9 +1750,12 @@ async function autoSaveGsParamsAll() {
 // ============================================================================
 var _auGsLiveRowNames = [];
 var _auGsLiveTagCtrls = {};   // strategy_name -> wmsTagInput controller (per-row tags)
+// Clone from the v3 PAPER canonical rows — they always exist for both instruments and carry the
+// v3 params. (The old bases pointed at gold_mini_15m_v3_live / silver_mini_15m_v3_live; the silver
+// one was never created, so "Add trader" for silver failed with "base strategy not found".)
 var _AU_GS_LIVE_BASES = [
-    { name: 'gold_mini_15m_v3_live',   label: 'Gold Mini v3 (clone)' },
-    { name: 'silver_mini_15m_v3_live', label: 'Silver Mini v3 (clone)' }
+    { name: 'gold_mini_15m_v3',   label: 'Gold Mini v3 (clone)' },
+    { name: 'silver_mini_15m_v3', label: 'Silver Mini v3 (clone)' }
 ];
 
 function autoGsTraderOptions() {
@@ -1956,15 +1959,19 @@ async function autoGsLiveAddTrader() {
     if (!tid) { alert('Pick a trader.'); return; }
     var tname = _auGsTraderName(tid);
     var slug = (tname || 'trader').toLowerCase().replace(/[^a-z0-9]+/g, '');
-    var newName = base + '_' + slug;
+    // base is the paper canonical (e.g. silver_mini_15m_v3) → live row is <canonical>_live_<slug>.
+    var newName = base + '_live_' + slug;
     try {
         var br = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(base) + '&select=display_name,version,owner,recipients,metadata', { headers: wmsHeaders() }).then(function (r) { return r.json(); });
         if (!br || !br[0]) throw new Error('base strategy not found');
         var exists = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(newName) + '&select=name', { headers: wmsHeaders() }).then(function (r) { return r.json(); });
         if (exists && exists.length) { alert('A row for that strategy + trader already exists (' + newName + ').'); return; }
         var md = Object.assign({}, br[0].metadata || {});
-        md.trader_id = tid; delete md.beneficiaries; delete md.live_armed;
-        var body = { name: newName, display_name: (br[0].display_name || base) + ' · ' + (tname || ''), owner: br[0].owner || 'Vikash', version: br[0].version || null, execution_mode: 'LIVE', enabled: false, recipients: br[0].recipients || [], metadata: md };
+        // CRITICAL: strip `channels` — the paper canonical carries channels:{paper}, but a LIVE row
+        // MUST have no channels object or the engine's resolver treats it as a paper row and never
+        // places live orders (gs_channels.ts: a row carrying metadata.channels is paper-only).
+        md.trader_id = tid; delete md.beneficiaries; delete md.live_armed; delete md.channels;
+        var body = { name: newName, display_name: (br[0].display_name || base) + ' LIVE · ' + (tname || ''), owner: br[0].owner || 'Vikash', version: br[0].version || null, execution_mode: 'LIVE', enabled: false, recipients: br[0].recipients || [], metadata: md };
         var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies', { method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify(body) });
         if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
         autoLoadGsFamAdmin();
