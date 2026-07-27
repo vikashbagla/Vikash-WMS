@@ -1451,6 +1451,58 @@ async function autoLoadGsFamRuns(filterOverride) {
 // GS Controls & Admin tab (Phase B.2 — admin bits only; controls in B.3)
 // Renders: strategy config, plugin version, gs_catalogue snapshot.
 // ----------------------------------------------------------------------------
+// name → display_name (cached), so the dashboard can show friendly labels while the engine keeps
+// using the stable internal `name`. Cleared by autoLoadGsFamRefresh alongside the mode cache.
+async function autoGetStrategyDisplayNames() {
+    if (window._auStrategyDisp instanceof Map && window._auStrategyDisp.size) return window._auStrategyDisp;
+    var map = new Map();
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?select=name,display_name', { headers: wmsHeaders() });
+        if (resp.ok) { (await resp.json() || []).forEach(function (r) { if (r.display_name) map.set(r.name, r.display_name); }); window._auStrategyDisp = map; }
+    } catch (e) { /* fall back to raw names */ }
+    return map;
+}
+function autoGsDispLabel(dispMap, name) { var d = dispMap && dispMap.get ? dispMap.get(name) : null; return d || name; }
+
+// Double-click a strategy label → rename its display_name only. The internal `name` (and every
+// signal / run / live-command / cron keyed to it) is untouched. Prompt-based (robust against the
+// table's 10s auto-refresh, which would interrupt an inline input).
+async function autoGsEditDisplayName(elm) {
+    var name = elm.getAttribute('data-name'); if (!name) return;
+    var cur = elm.getAttribute('data-disp') || (elm.textContent || '').trim();
+    var next = window.prompt('Rename display label (internal name "' + name + '" stays unchanged):', cur);
+    if (next == null) return; next = next.trim();
+    if (!next || next === cur) return;
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
+            { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ display_name: next }) });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        if (window._auStrategyDisp instanceof Map) window._auStrategyDisp.set(name, next);
+        elm.textContent = next; elm.setAttribute('data-disp', next); elm.setAttribute('title', name + ' — double-click to rename');
+    } catch (e) { alert('Rename failed: ' + (e.message || e)); }
+}
+
+// strategy → current resting-SL (the live trail stop, on the real broker scale). Latest OPEN
+// sl/sl_rearm command's stopPrice. Fail-soft → empty map (SL falls back to stop_at_entry).
+async function autoGsFetchSlMap(strategyNames) {
+    var map = new Map();
+    var names = (strategyNames || []).filter(Boolean);
+    if (!names.length) return map;
+    try {
+        var inList = names.map(encodeURIComponent).join(',');
+        var url = SUPABASE_URL + '/rest/v1/wms_live_commands?strategy_name=in.(' + inList + ')' +
+            '&payload->_gs_meta->>leg_role=in.(sl,sl_rearm)&broker_status=eq.OPEN' +
+            '&select=strategy_name,payload,created_at&order=created_at.desc';
+        var r = await fetch(url, { headers: wmsHeaders() });
+        if (r.ok) (await r.json() || []).forEach(function (row) {
+            if (!map.has(row.strategy_name) && row.payload && row.payload.stopPrice != null) {
+                map.set(row.strategy_name, Number(row.payload.stopPrice));   // first = latest (desc)
+            }
+        });
+    } catch (e) { /* fail-soft */ }
+    return map;
+}
+
 async function autoLoadGsFamAdmin() {
     // 1. auto_strategies rows for silver + gold — PAPER rows here; LIVE rows render
     //    into the separate Live Trading table (autoGsRenderLiveTable).
@@ -1834,7 +1886,10 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
             var tid = (s.metadata && s.metadata.trader_id) || '';
             var tname = tid ? (_auGsTraderName(tid) || tid) : '';
             html += '<tr style="border-top:1px solid #f0d0d0">';
-            html += '<td style="padding:6px 8px;white-space:normal;max-width:150px"><code style="font-weight:600;word-break:break-all">' + autoEsc(s.name) + '</code><div style="font-size:10px;color:#6b7280">' + autoEsc(s.version || '') + ' · LIVE</div></td>';
+            var _disp = s.display_name || s.name;
+            html += '<td style="padding:6px 8px;white-space:normal;max-width:180px">' +
+                '<div data-name="' + autoEsc(s.name) + '" data-disp="' + autoEsc(_disp) + '" title="' + autoEsc(s.name) + ' — double-click to rename" ondblclick="autoGsEditDisplayName(this)" style="font-weight:600;cursor:text">' + autoEsc(_disp) + '</div>' +
+                '<div style="font-size:10px;color:#6b7280"><code style="word-break:break-all">' + autoEsc(s.name) + '</code> · ' + autoEsc(s.version || '') + ' · LIVE</div></td>';
             // Trader — fixed at Add-trader time; shown as text, not editable
             // No explicit trader_id → the executor Veins is the beneficiary (booking defaults
             // trader→Veins, same as KH). Show that instead of a bare dash.
@@ -4790,7 +4845,10 @@ async function autoLoadGsOpenTrades(mode, silent) {
         }).filter(Boolean)));
         // Register this page's symbols with the shared refresh list (E.11.10).
         _auGsSyms[mode] = uniqSyms.map(function (s) { return { fyersKey: s, cacheKey: s.replace(/^[A-Z]+:/, '') }; });
-        if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+        // Register the provider + start the shared 10s timer so these MCX symbols are kept warm
+        // (without this, wmsBuildRefreshSymbols may not include them → LTP stops updating = the lag).
+        if (typeof autoEnsureSharedRefresh === 'function') autoEnsureSharedRefresh();
+        else if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
         // On a user-initiated (non-silent) load, warm the cache once if these
         // symbols aren't priced yet — the silent shared-refresh cycles just read.
         if (!silent && typeof wmsStandardRefresh === 'function' && window.fyersToken) {
@@ -4802,8 +4860,14 @@ async function autoLoadGsOpenTrades(mode, silent) {
             if (cold) { try { await wmsStandardRefresh(true); } catch (_e) {} }
         }
         var ltpMap = autoFetchLtpForSymbols(uniqSyms);
+        // Friendly labels + current trail SL (live only) for the render below.
+        var dispMap = await autoGetStrategyDisplayNames();
+        var slMap = isLive ? await autoGsFetchSlMap(Array.from(new Set(openRows.map(function (o) { return o.strategy_name; })))) : new Map();
 
         var now = Date.now();
+        // Current amount display unit suffix ('000 / L / M / Cr) for the ₹ column headers.
+        var _uSfx = (typeof getUnitConfig === 'function' && typeof getDisplayUnit === 'function')
+            ? (getUnitConfig(getDisplayUnit()).suffix || '') : '';
         var headerRow = '<tr style="background:#f3f4f6;text-align:left">' +
                 '<th style="padding:6px 8px">Strategy</th>' +
                 '<th style="padding:6px 8px">Side</th>' +
@@ -4812,8 +4876,8 @@ async function autoLoadGsOpenTrades(mode, silent) {
                 '<th style="padding:6px 8px;text-align:right">Qty</th>' +
                 '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ SL</span></th>' +
                 '<th style="padding:6px 8px;text-align:right">LTP</th>' +
-                '<th style="padding:6px 8px;text-align:right">Exposure</th>' +
-                '<th style="padding:6px 8px;text-align:right">Margin<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ %</span></th>' +
+                '<th style="padding:6px 8px;text-align:right">Exposure<br><span style="font-weight:400;color:#6b7280;font-size:10px">₹ ' + _uSfx + '</span></th>' +
+                '<th style="padding:6px 8px;text-align:right">Margin<br><span style="font-weight:400;color:#6b7280;font-size:10px">₹ ' + _uSfx + ' / %</span></th>' +
                 '<th style="padding:6px 8px;text-align:right">Live P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>' +
                 '<th style="padding:6px 8px">Action</th>' +
                 '</tr>';
@@ -4845,7 +4909,13 @@ async function autoLoadGsOpenTrades(mode, silent) {
             var fill = isLive ? fillMap.get(String(m.broker_order_id || '')) : null;
             var usingReal = !!(fill && isFinite(fill.price));
             var entryPriceNum = usingReal ? fill.price : modelledEntry;
-            var stopPriceNum = m.stop_price != null ? Number(m.stop_price) : null;
+            // Trail SL: prefer the live resting-SL level (the moving broker stop), then the entry
+            // stop, then the legacy metadata.stop_price. (The old code read only stop_price, which
+            // these v3 signals don't carry → the SL sub-row was always blank.)
+            var trailSl = isLive ? slMap.get(ot.strategy_name) : null;
+            var stopPriceNum = (trailSl != null) ? Number(trailSl)
+                : (m.stop_at_entry != null ? Number(m.stop_at_entry)
+                : (m.stop_price != null ? Number(m.stop_price) : null));
 
             // Qty cell: "5 lots" + sub-row "25 kg" (physical size if known).
             var qtyLots = m.qty_lots != null ? Number(m.qty_lots) : (leg ? Number(leg.qty) : null);
@@ -4872,7 +4942,7 @@ async function autoLoadGsOpenTrades(mode, silent) {
             var pv = shortSym ? autoGsPointValue(shortSym) : null;
             var exposure = (qtyLots != null && pv && entryPriceNum != null) ? (qtyLots * pv * entryPriceNum) : null;
             var exposureCell = exposure != null
-                ? '₹' + Math.round(exposure).toLocaleString('en-IN')
+                ? formatAmount(exposure)   // app display-unit ('000/L/…), ₹ full amount in tooltip
                 : '<span style="color:#9ca3af">—</span>';
             if (exposure != null) { totalExposure += exposure; anyExposure = true; }
 
@@ -4882,7 +4952,7 @@ async function autoLoadGsOpenTrades(mode, silent) {
             var marginCell;
             if (margin != null) {
                 totalMargin += margin;
-                marginCell = '₹' + Math.round(margin).toLocaleString('en-IN') +
+                marginCell = formatAmount(margin) +
                              '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + marginPct + '%</div>';
             } else {
                 marginCell = '<span style="color:#9ca3af">—</span>';
@@ -4914,7 +4984,7 @@ async function autoLoadGsOpenTrades(mode, silent) {
             }
 
             body += '<tr style="border-top:1px solid #e5e7eb">' +
-                    '<td style="padding:6px 8px;vertical-align:top"><code>' + autoEsc(ot.strategy_name) + '</code></td>' +
+                    '<td style="padding:6px 8px;vertical-align:top"><div title="' + autoEsc(ot.strategy_name) + '" style="font-weight:600">' + autoEsc(autoGsDispLabel(dispMap, ot.strategy_name)) + '</div><div style="font-size:10px;color:#6b7280"><code>' + autoEsc(ot.strategy_name) + '</code></div></td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(entryStr) + daysSub + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(contract) + '</td>' +
@@ -4933,10 +5003,10 @@ async function autoLoadGsOpenTrades(mode, silent) {
         var totalsRowTop = '';
         if (anyExposure || anyPnl) {
             var expCell = anyExposure
-                ? '₹' + Math.round(totalExposure).toLocaleString('en-IN')
+                ? formatAmount(totalExposure)
                 : '<span style="color:#9ca3af">—</span>';
             var mgnCell = anyExposure
-                ? '₹' + Math.round(totalMargin).toLocaleString('en-IN')
+                ? formatAmount(totalMargin)
                 : '<span style="color:#9ca3af">—</span>';
             var pnlTotalCell;
             if (anyPnl) {
