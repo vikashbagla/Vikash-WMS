@@ -6,10 +6,10 @@ The project is split across **two** repositories to keep the strategy engine and
 
 | Repo | Visibility | Contains | Deploys to |
 |---|---|---|---|
-| **`Vikash-WMS`** (this one) | **PUBLIC** | Browser **frontend only** — `*.html`, `*.js`, `*.css`, `icons/`, `mockups/` | GitHub Pages (main → prod) + Cloudflare (dev) |
-| **`Vikash-WMS-backend`** | **PRIVATE** | `supabase/` (Edge Functions incl. the **MS007 GS engine** + migrations), `wms-live/` (Droplet order service), `tests/`, `analysis/`, `automation-validation/`, **`Documentation/`** | Manually (see below) |
+| **`Vikash-WMS`** (this one) | **PUBLIC** | Browser **frontend** (`*.html`, `*.js`, `*.css`, `icons/`, `mockups/`) **+ `wms-live/`** (Droplet order-placement service — auto-deployed from here) | GitHub Pages (`main` → prod, `dev` → Cloudflare); Droplet pulls `wms-live/` from `origin/dev` |
+| **`Vikash-WMS-backend`** | **PRIVATE** | `supabase/` (Edge Functions incl. the **MS007 GS engine** + migrations), `tests/`, `analysis/`, `automation-validation/`, **`Documentation/`** | Manually (see below) |
 
-**HARD RULE — never put server-side code in this public repo.** The MS007 engine, Edge Functions, migrations, live-order logic, tests, backtests, and all docs live **only** in the private `Vikash-WMS-backend` repo. This public repo must stay public (GitHub Pages requires it), so anything with strategy edge, infra detail, or secrets goes in the private repo. Both repos are cloned side-by-side under OneDrive `WMS Claude/`.
+**HARD RULE — never put the strategy engine, Edge Functions, migrations, secrets, or docs in this public repo.** The MS007 engine, all Edge Functions, migrations, tests, backtests, and docs live **only** in the private `Vikash-WMS-backend` repo. The **one deliberate exception** is `wms-live/` (the Droplet order service): it stays here because the Droplet auto-deploys it via `git pull` from this repo, and it holds no strategy edge (its secrets live in the Droplet's gitignored `.env`, never committed). This public repo must stay public (GitHub Pages requires it). Both repos are cloned side-by-side under OneDrive `WMS Claude/`.
 
 **Where to do what:**
 - **Frontend change** → edit here (`Vikash-WMS`), follow the dev→main workflow below, GitHub Pages redeploys prod.
