@@ -940,7 +940,7 @@ function autoBadgeTarget(ids) {
 // Persisted to localStorage under a per-mode key so selections survive a reload.
 // ----------------------------------------------------------------------------
 function _auGsBlankFilters() {
-    return { instr: 'all', result: 'all', versions: [], exits: [], source: 'all', sort: { key: 'exit', dir: 'desc' } };
+    return { instr: 'all', result: 'all', versions: [], exits: [], source: 'all', trader: 'all', sort: { key: 'exit', dir: 'desc' } };
 }
 var _auGsFilters = { live: _auGsBlankFilters(), paper: _auGsBlankFilters() };
 function _auGsFiltersKey(mode) { return 'wms.gsFilters.' + String(mode).toUpperCase() + '.v1'; }
@@ -957,6 +957,7 @@ function _auGsFiltersRestore(mode) {
         if (Array.isArray(s.versions)) f.versions = s.versions;
         if (Array.isArray(s.exits))    f.exits    = s.exits;
         if (s.source) f.source = s.source;
+        if (s.trader) f.trader = s.trader;
         if (s.sort && s.sort.key) f.sort = s.sort;
     } catch (e) { /* ignore malformed */ }
 }
@@ -973,6 +974,7 @@ function autoGsSetClosedSourceFilter(mode, value) {
 function autoGsClosedSetFilter(mode, kind, value) {
     if (kind === 'instr')       _auGsFilters[mode].instr = value;
     else if (kind === 'result') _auGsFilters[mode].result = value;
+    else if (kind === 'trader') _auGsFilters[mode].trader = value;
     _auGsFiltersSave(mode);
     if (typeof autoLoadGsClosedTrades === 'function') autoLoadGsClosedTrades(mode);
 }
@@ -1185,6 +1187,11 @@ function autoGsFilterBar(mode, f) {
             radio('augsc-result' + nm, 'win',  f.result, "autoGsClosedSetFilter('" + m + "','result','win')",  'Winning') +
             radio('augsc-result' + nm, 'loss', f.result, "autoGsClosedSetFilter('" + m + "','result','loss')", 'Losing') +
         '</div>' +
+        (m === 'live' ? '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Trader</span>' +
+            radio('augsc-trader' + nm, 'all',   f.trader, "autoGsClosedSetFilter('" + m + "','trader','all')",   'All') +
+            radio('augsc-trader' + nm, 'Veins', f.trader, "autoGsClosedSetFilter('" + m + "','trader','Veins')", 'Veins') +
+            radio('augsc-trader' + nm, 'T3a',   f.trader, "autoGsClosedSetFilter('" + m + "','trader','T3a')",   'T3a') +
+        '</div>' : '') +
         '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Exit reason <span style="font-weight:400;color:#9ca3af;text-transform:none">(tick to filter)</span></span>' +
             check('augsc-exit' + nm, 'STOP',   f.exits.indexOf('STOP') >= 0,   "autoGsClosedToggleExit('" + m + "','STOP', this.checked)",   'Hard SL') +
             check('augsc-exit' + nm, 'TRAIL',  f.exits.indexOf('TRAIL') >= 0,  "autoGsClosedToggleExit('" + m + "','TRAIL', this.checked)",  'Trail SL') +
@@ -1889,7 +1896,11 @@ async function _auGsUpsertAcctLimit(type, valueObj, enabled) {
 function autoGsRenderLiveTable(liveRows, latestRun, acct) {
     var el = document.getElementById('au-gs-fam-strategies-live'); if (!el) return;
     liveRows = liveRows || [];
-    _auGsLiveRowNames = liveRows.map(function (s) { return s.name; });
+    // Hidden rows (metadata.hidden) are kept in the DB but tucked out of the panel so a
+    // retired/paused row can't be resumed or edited by accident. Reveal with "Show hidden".
+    var _hiddenCount = liveRows.filter(function (s) { return s.metadata && s.metadata.hidden; }).length;
+    var _visibleRows = _auGsShowHidden ? liveRows : liveRows.filter(function (s) { return !(s.metadata && s.metadata.hidden); });
+    _auGsLiveRowNames = _visibleRows.map(function (s) { return s.name; });   // Save-all only touches shown rows
     var nowMs = Date.now();
     var ncols = 6 + _AU_GS_PARAM_SPEC.length;
     var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse;white-space:nowrap">';
@@ -1898,11 +1909,13 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
     _AU_GS_PARAM_SPEC.forEach(function (f) { html += '<th style="padding:6px 8px">' + autoEsc(f.col) + '</th>'; });
     html += '<th style="padding:6px 8px">Actions</th></tr></thead><tbody>';
     html += autoGsAcctRowHtml(acct);
-    if (!liveRows.length) {
-        html += '<tr><td colspan="' + ncols + '" style="padding:10px;color:#9ca3af">No live strategies yet — add a trader below (or run <code>GS-live-rows-seed.sql</code>).</td></tr>';
+    if (!_visibleRows.length) {
+        html += '<tr><td colspan="' + ncols + '" style="padding:10px;color:#9ca3af">' +
+            (liveRows.length ? 'All live rows are hidden — tick “Show hidden (' + _hiddenCount + ')” below to reveal.' : 'No live strategies yet — add a trader below (or run <code>GS-live-rows-seed.sql</code>).') + '</td></tr>';
     } else {
-        liveRows.forEach(function (s) {
+        _visibleRows.forEach(function (s) {
             var params = (s.metadata && s.metadata.params) ? s.metadata.params : {};
+            var _isHidden = !!(s.metadata && s.metadata.hidden);
             var idB = 'au-gsl-' + s.name;
             var tid = (s.metadata && s.metadata.trader_id) || '';
             var tname = tid ? (_auGsTraderName(tid) || tid) : '';
@@ -1910,7 +1923,7 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
             var _disp = s.display_name || s.name;
             html += '<td style="padding:6px 8px;white-space:normal;max-width:190px">' +
                 '<div data-name="' + autoEsc(s.name) + '" data-disp="' + autoEsc(_disp) + '" title="' + autoEsc(s.name) + ' — double-click to rename" ondblclick="autoGsEditDisplayName(this)" style="font-weight:700;color:#1d4ed8;cursor:text">' + autoEsc(_disp) + '</div>' +
-                '<div style="margin-top:2px"><code style="font-size:9.5px;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;padding:1px 5px;word-break:break-all">' + autoEsc(s.name) + '</code> <span style="font-size:10px;color:#9ca3af">' + autoEsc(s.version || '') + ' · LIVE</span></div></td>';
+                '<div style="margin-top:2px"><code style="font-size:9.5px;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;padding:1px 5px;word-break:break-all">' + autoEsc(s.name) + '</code> <span style="font-size:10px;color:#9ca3af">' + autoEsc(s.version || '') + ' · LIVE</span>' + (_isHidden ? ' <span style="font-size:10px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:4px;padding:1px 5px">hidden</span>' : '') + '</div></td>';
             // Trader — fixed at Add-trader time; shown as text, not editable
             // No explicit trader_id → the executor Veins is the beneficiary (booking defaults
             // trader→Veins, same as KH). Show that instead of a bare dash.
@@ -1942,8 +1955,14 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
                 html += '</td>';
             });
             // Actions — small icons (pause/resume password-gated + delete), like the ✕
+            var _hideBtn = _isHidden
+                ? '<button class="au-btn au-btn-secondary" style="padding:3px 7px;font-size:12px" title="Unhide — show this row in the panel again" onclick="autoGsLiveToggleHidden(\'' + s.name + '\',false)">👁</button> '
+                : (!s.enabled
+                    ? '<button class="au-btn au-btn-secondary" style="padding:3px 7px;font-size:12px" title="Hide — tuck this paused row out of the panel (kept in DB, stays paused, reversible via Show hidden)" onclick="autoGsLiveToggleHidden(\'' + s.name + '\',true)">🙈</button> '
+                    : '');   // enabled rows can\'t be hidden — pause first, so a live-trading row is never out of sight
             html += '<td style="padding:6px 8px;white-space:nowrap">' +
                 '<button class="au-btn ' + (s.enabled ? 'au-btn-secondary' : 'au-btn-primary') + '" style="padding:3px 7px;font-size:12px" title="' + (s.enabled ? 'Pause (no password — safety stop)' : 'Resume (password required)') + '" onclick="autoGsLiveTogglePw(\'' + s.name + '\',' + (s.enabled ? 'true' : 'false') + ')">' + (s.enabled ? '⏸' : '▶') + '🔒</button> ' +
+                _hideBtn +
                 '<button class="au-btn au-btn-danger" style="padding:3px 7px;font-size:12px" title="Delete this live row" onclick="autoGsLiveRemoveRow(\'' + s.name + '\')">✕</button></td>';
             html += '</tr>';
         });
@@ -1959,9 +1978,29 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
         '<select id="au-gsl-add-strat" class="wms-df-select" style="min-width:160px">' + _AU_GS_LIVE_BASES.map(function (b) { return '<option value="' + b.name + '">' + autoEsc(b.label) + '</option>'; }).join('') + '</select>' +
         '<select id="au-gsl-add-trader" class="wms-df-select" style="min-width:140px">' + autoGsTraderOptions() + '</select>' +
         '<button class="au-btn au-btn-primary" style="font-size:12px;padding:6px 14px" onclick="autoGsLiveAddTrader()">+ Add trader</button>' +
+        (_hiddenCount ? '<label style="font-size:11px;color:#6b7280;margin-left:auto;cursor:pointer" title="Reveal rows hidden with the 🙈 button">' +
+            '<input type="checkbox" ' + (_auGsShowHidden ? 'checked' : '') + ' onchange="autoGsToggleShowHidden(this.checked)"> Show hidden (' + _hiddenCount + ')</label>' : '') +
     '</div>';
     el.innerHTML = html;
-    autoGsInitLiveTags(liveRows);   // wire the per-row global tag widgets (async, fire-and-forget)
+    autoGsInitLiveTags(_visibleRows);   // wire the per-row global tag widgets for shown rows only
+}
+
+// Show/hide the hidden (retired/paused) live rows. UI-only flag; re-renders the panel.
+var _auGsShowHidden = false;
+function autoGsToggleShowHidden(on) { _auGsShowHidden = !!on; if (typeof autoLoadGsFamAdmin === 'function') autoLoadGsFamAdmin(); }
+
+// Hide / unhide a live row via metadata.hidden (non-destructive; keeps name, history, params,
+// and paused state intact). Read-modify-write so no other metadata key is disturbed.
+async function autoGsLiveToggleHidden(name, hide) {
+    try {
+        var cur = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name) + '&select=metadata', { headers: wmsHeaders() }).then(function (r) { return r.json(); });
+        var md = (cur && cur[0] && cur[0].metadata) ? cur[0].metadata : {};
+        if (hide) md.hidden = true; else delete md.hidden;
+        var r = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?name=eq.' + encodeURIComponent(name),
+            { method: 'PATCH', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }), body: JSON.stringify({ metadata: md }) });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        if (typeof autoLoadGsFamAdmin === 'function') autoLoadGsFamAdmin();
+    } catch (e) { alert('Hide/unhide failed: ' + (e.message || e)); }
 }
 
 // Per-row tag widgets (wmsTagInput) → auto_strategies.metadata.transaction_tags. Same field
@@ -5130,6 +5169,9 @@ async function autoLoadGsClosedTrades(mode) {
     try {
         var fam = await autoGetStrategyFamilies();
         var modeMap = await autoGetStrategyModes();
+        // Trader filter (LIVE only): name → trader map, so closed trades can be scoped by trader.
+        var _closedTraderMap = isLive ? await autoGetStrategyTraders() : new Map();
+        if (isLive && (!_auManualTraders || !_auManualTraders.length)) { try { await autoManualLoadTraders(); } catch (e) {} }
 
         // Fetch GS auto_signals (last _AU_CLOSED_LIMIT events) for THIS page's mode.
         // Group by trade_id; include only trades that have at least one EXIT and net
@@ -5253,6 +5295,7 @@ async function autoLoadGsClosedTrades(mode) {
             var short = leg ? leg.short_symbol : null;
             var ver = (e.metadata && (e.metadata.strategy_version || e.metadata.version)) || '';
             if ((_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') && e.source !== _srcFilter) return false;
+            if (isLive && f.trader !== 'all' && autoGsTraderOf(_closedTraderMap, e.strategy_name) !== f.trader) return false;
             if (f.instr === 'gold'   && short !== 'GOLDM')   return false;
             if (f.instr === 'silver' && short !== 'SILVERM') return false;
             if (f.versions.length && !f.versions.some(function (tok) { return ver.indexOf(tok) >= 0; })) return false;
@@ -5282,7 +5325,7 @@ async function autoLoadGsClosedTrades(mode) {
         // Peak now honours instrument/version/result/exit too — flag any non-source filter
         // so the sub-label can show it's scoped, not the whole-book high-water mark.
         _auGsTotals[mode].peakFiltered = (f.instr !== 'all' || f.result !== 'all' ||
-                                    f.versions.length > 0 || f.exits.length > 0);
+                                    f.versions.length > 0 || f.exits.length > 0 || (isLive && f.trader !== 'all'));
 
         var closedRows = [];
         Object.keys(byTrade).forEach(function (tradeId) {
@@ -5346,6 +5389,7 @@ async function autoLoadGsClosedTrades(mode) {
         var _closedTotal = closedRows.length;
         closedRows = closedRows.filter(function (ct) {
             if ((_srcFilter === 'chassis' || _srcFilter === 'tv_webhook') && ct.source !== _srcFilter) return false;
+            if (isLive && f.trader !== 'all' && autoGsTraderOf(_closedTraderMap, ct.strategy_name) !== f.trader) return false;
             if (f.instr === 'gold'   && ct.short_symbol !== 'GOLDM')   return false;
             if (f.instr === 'silver' && ct.short_symbol !== 'SILVERM') return false;
             if (f.result === 'win'  && !(ct.pnl != null && ct.pnl >= 0)) return false;
@@ -5361,7 +5405,7 @@ async function autoLoadGsClosedTrades(mode) {
         });
         var _anyFilter = _srcFilter !== 'all' || f.instr !== 'all' ||
                          f.result !== 'all' || f.versions.length > 0 ||
-                         f.exits.length > 0;
+                         f.exits.length > 0 || (isLive && f.trader !== 'all');
 
         // Sort — click-to-sort on headers (default: exit date, newest first).
         var _sortDir = f.sort.dir === 'asc' ? 1 : -1;
