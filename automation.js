@@ -1955,15 +1955,19 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
                 html += '</td>';
             });
             // Actions — small icons (pause/resume password-gated + delete), like the ✕
+            // Hide/Unhide sits on its OWN line below Pause/Delete so it doesn't widen the row.
             var _hideBtn = _isHidden
-                ? '<button class="au-btn au-btn-secondary" style="padding:3px 7px;font-size:12px" title="Unhide — show this row in the panel again" onclick="autoGsLiveToggleHidden(\'' + s.name + '\',false)">👁</button> '
+                ? '<button class="au-btn au-btn-secondary" style="padding:3px 7px;font-size:12px" title="Unhide — show this row in the panel again" onclick="autoGsLiveToggleHidden(\'' + s.name + '\',false)">👁 Unhide</button>'
                 : (!s.enabled
-                    ? '<button class="au-btn au-btn-secondary" style="padding:3px 7px;font-size:12px" title="Hide — tuck this paused row out of the panel (kept in DB, stays paused, reversible via Show hidden)" onclick="autoGsLiveToggleHidden(\'' + s.name + '\',true)">🙈</button> '
+                    ? '<button class="au-btn au-btn-secondary" style="padding:3px 7px;font-size:12px" title="Hide — tuck this paused row out of the panel (kept in DB, stays paused, reversible via Show hidden)" onclick="autoGsLiveToggleHidden(\'' + s.name + '\',true)">🙈 Hide</button>'
                     : '');   // enabled rows can\'t be hidden — pause first, so a live-trading row is never out of sight
-            html += '<td style="padding:6px 8px;white-space:nowrap">' +
-                '<button class="au-btn ' + (s.enabled ? 'au-btn-secondary' : 'au-btn-primary') + '" style="padding:3px 7px;font-size:12px" title="' + (s.enabled ? 'Pause (no password — safety stop)' : 'Resume (password required)') + '" onclick="autoGsLiveTogglePw(\'' + s.name + '\',' + (s.enabled ? 'true' : 'false') + ')">' + (s.enabled ? '⏸' : '▶') + '🔒</button> ' +
-                _hideBtn +
-                '<button class="au-btn au-btn-danger" style="padding:3px 7px;font-size:12px" title="Delete this live row" onclick="autoGsLiveRemoveRow(\'' + s.name + '\')">✕</button></td>';
+            html += '<td style="padding:6px 8px;white-space:nowrap;vertical-align:top">' +
+                '<div>' +
+                    '<button class="au-btn ' + (s.enabled ? 'au-btn-secondary' : 'au-btn-primary') + '" style="padding:3px 7px;font-size:12px" title="' + (s.enabled ? 'Pause (no password — safety stop)' : 'Resume (password required)') + '" onclick="autoGsLiveTogglePw(\'' + s.name + '\',' + (s.enabled ? 'true' : 'false') + ')">' + (s.enabled ? '⏸' : '▶') + '🔒</button> ' +
+                    '<button class="au-btn au-btn-danger" style="padding:3px 7px;font-size:12px" title="Delete this live row" onclick="autoGsLiveRemoveRow(\'' + s.name + '\')">✕</button>' +
+                '</div>' +
+                (_hideBtn ? '<div style="margin-top:4px">' + _hideBtn + '</div>' : '') +
+                '</td>';
             html += '</tr>';
         });
     }
