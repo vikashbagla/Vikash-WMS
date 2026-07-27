@@ -1464,6 +1464,27 @@ async function autoGetStrategyDisplayNames() {
 }
 function autoGsDispLabel(dispMap, name) { var d = dispMap && dispMap.get ? dispMap.get(name) : null; return d || name; }
 
+// name → trader_id (cached), mirroring autoGetStrategyDisplayNames. Lets the live open dashboard
+// show/filter by trader. A live row's beneficiary trader lives in metadata.trader_id; a row with
+// none defaults to Veins (the executor/beneficiary default — see gs_sl_runner resolveVeinsFyersIba).
+async function autoGetStrategyTraders() {
+    if (window._auStrategyTrader instanceof Map && window._auStrategyTrader.size) return window._auStrategyTrader;
+    var map = new Map();
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/auto_strategies?select=name,metadata', { headers: wmsHeaders() });
+        if (resp.ok) { (await resp.json() || []).forEach(function (r) { var tid = r.metadata && r.metadata.trader_id; if (tid) map.set(r.name, tid); }); window._auStrategyTrader = map; }
+    } catch (e) { /* fall back to default trader */ }
+    return map;
+}
+// Resolve a live strategy's trader display name (short_name), defaulting to Veins.
+function autoGsTraderOf(traderMap, name) {
+    var tid = traderMap && traderMap.get ? traderMap.get(name) : null;
+    return tid ? (_auGsTraderName(tid) || 'Veins') : 'Veins';
+}
+// Per-mode trader filter for the open dashboard ('all' = every trader). Persists across refreshes.
+var _auGsOpenTrader = { live: 'all', paper: 'all' };
+function autoGsSetOpenTrader(mode, val) { _auGsOpenTrader[mode] = val || 'all'; if (typeof autoLoadGsOpenTrades === 'function') autoLoadGsOpenTrades(mode, false); }
+
 // Double-click a strategy label → rename its display_name only. The internal `name` (and every
 // signal / run / live-command / cron keyed to it) is untouched. Prompt-based (robust against the
 // table's 10s auto-refresh, which would interrupt an inline input).
@@ -4838,6 +4859,20 @@ async function autoLoadGsOpenTrades(mode, silent) {
             }
         }
 
+        // 2c. Trader resolution + filter (LIVE only). Resolve each open row's beneficiary trader,
+        //     capture the traders present (for the dropdown), then narrow the view to the selected
+        //     one. Reset to 'all' if the chosen trader has no open rows now (never get stuck empty).
+        var _traderMap = isLive ? await autoGetStrategyTraders() : new Map();
+        if (isLive && (!_auManualTraders || !_auManualTraders.length)) { try { await autoManualLoadTraders(); } catch (e) {} }
+        var _traderFilter = isLive ? (_auGsOpenTrader[mode] || 'all') : 'all';
+        var _tradersPresent = [];
+        if (isLive) {
+            openRows.forEach(function (ot) { var tn = autoGsTraderOf(_traderMap, ot.strategy_name); if (_tradersPresent.indexOf(tn) < 0) _tradersPresent.push(tn); });
+            _tradersPresent.sort();
+            if (_traderFilter !== 'all' && _tradersPresent.indexOf(_traderFilter) < 0) { _traderFilter = 'all'; _auGsOpenTrader[mode] = 'all'; }
+            if (_traderFilter !== 'all') openRows = openRows.filter(function (ot) { return autoGsTraderOf(_traderMap, ot.strategy_name) === _traderFilter; });
+        }
+
         // 3. Live LTP for unique executed symbols — sourced from the shared price
         //    cache (wmsLivePrices), kept warm by the single app-wide refresh timer.
         var uniqSyms = Array.from(new Set(sigRows.map(function (s) {
@@ -4870,6 +4905,7 @@ async function autoLoadGsOpenTrades(mode, silent) {
             ? (getUnitConfig(getDisplayUnit()).suffix || '') : '';
         var headerRow = '<tr style="background:#f3f4f6;text-align:left">' +
                 '<th style="padding:6px 8px">Strategy</th>' +
+                (isLive ? '<th style="padding:6px 8px">Trader</th>' : '') +
                 '<th style="padding:6px 8px">Side</th>' +
                 '<th style="padding:6px 8px">Entry<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>' +
                 '<th style="padding:6px 8px">Contract</th>' +
@@ -4985,6 +5021,7 @@ async function autoLoadGsOpenTrades(mode, silent) {
 
             body += '<tr style="border-top:1px solid #e5e7eb">' +
                     '<td style="padding:6px 8px;vertical-align:top"><div title="' + autoEsc(ot.strategy_name) + '" style="font-weight:700;color:#1d4ed8">' + autoEsc(autoGsDispLabel(dispMap, ot.strategy_name)) + '</div><div style="margin-top:2px"><code style="font-size:9.5px;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;padding:1px 5px">' + autoEsc(ot.strategy_name) + '</code></div></td>' +
+                    (isLive ? '<td style="padding:6px 8px;vertical-align:top"><span class="au-badge" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe">' + autoEsc(autoGsTraderOf(_traderMap, ot.strategy_name)) + '</span></td>' : '') +
                     '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(entryStr) + daysSub + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(contract) + '</td>' +
@@ -5025,7 +5062,7 @@ async function autoLoadGsOpenTrades(mode, silent) {
                 pnlTotalCell = '<span style="color:#9ca3af">—</span>';
             }
             totalsRowTop = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700;position:sticky;top:0">' +
-                    '<td colspan="7" style="padding:8px;text-align:right">Totals (' + openRows.length + ' open):</td>' +
+                    '<td colspan="' + (isLive ? 8 : 7) + '" style="padding:8px;text-align:right">Totals (' + openRows.length + ' open):</td>' +
                     '<td style="padding:8px;text-align:right;vertical-align:top">' + expCell + '</td>' +
                     '<td style="padding:8px;text-align:right;vertical-align:top">' + mgnCell + '</td>' +
                     '<td style="padding:8px;text-align:right;vertical-align:top">' + pnlTotalCell + '</td>' +
@@ -5033,7 +5070,19 @@ async function autoLoadGsOpenTrades(mode, silent) {
                     '</tr>';
         }
 
-        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">' +
+        // Trader filter bar (LIVE only) — shown whenever ≥1 trader has an open position.
+        var _traderBar = '';
+        if (isLive && _tradersPresent.length) {
+            var _opts = '<option value="all"' + (_traderFilter === 'all' ? ' selected' : '') + '>All traders</option>' +
+                _tradersPresent.map(function (t) { return '<option value="' + autoEsc(t) + '"' + (_traderFilter === t ? ' selected' : '') + '>' + autoEsc(t) + '</option>'; }).join('');
+            _traderBar = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
+                '<span style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em">Trader</span>' +
+                '<select class="wms-df-select" style="font-size:12px;min-width:130px" onchange="autoGsSetOpenTrader(\'' + mode + '\', this.value)">' + _opts + '</select>' +
+                (_traderFilter !== 'all' ? '<span style="font-size:11px;color:#6b7280">filtered — ' + openRows.length + ' open</span>' : '') +
+                '</div>';
+        }
+
+        var html = _traderBar + '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">' +
                    '<thead>' + totalsRowTop + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
         html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6">' +
                 '• LTP via Fyers /quotes (needs active Fyers connection).<br>' +
