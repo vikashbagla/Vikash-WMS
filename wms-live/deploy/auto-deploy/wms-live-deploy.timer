@@ -1,0 +1,33 @@
+# wms-live auto-deploy timer — Phase 13 Task #26.
+# Fires the wms-live-deploy.service oneshot every 60s. See WMS-LESSONS §A.15.
+#
+# Install: sudo install -m 0644 wms-live-deploy.timer /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable --now wms-live-deploy.timer
+#
+# Verify:  sudo systemctl list-timers wms-live-deploy.timer
+#          sudo systemctl status wms-live-deploy.timer
+
+[Unit]
+Description=WMS LIVE auto-deploy timer (every 60s)
+Documentation=https://github.com/vikashbagla/Vikash-WMS
+Requires=wms-live-deploy.service
+
+[Timer]
+# Wait 2 minutes after boot before the first run — gives network +
+# wms-live time to come up cleanly first.
+OnBootSec=2min
+
+# Next run starts 60s AFTER the previous run completes. This is
+# different from OnCalendar in that it serialises and won't pile up
+# triggers if a run takes longer than 60s (rare — should be sub-second
+# when nothing's changed).
+OnUnitActiveSec=60s
+
+# Allow systemd to batch the trigger within ±10s — tiny CPU win.
+AccuracySec=10s
+
+Unit=wms-live-deploy.service
+
+[Install]
+WantedBy=timers.target

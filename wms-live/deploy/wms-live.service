@@ -1,0 +1,48 @@
+[Unit]
+Description=WMS LIVE order-placer service (Phase 13)
+Documentation=https://github.com/vikashbagla/Vikash-WMS/blob/main/wms-live/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wms
+Group=wms
+WorkingDirectory=/opt/Vikash-WMS/wms-live
+EnvironmentFile=/opt/Vikash-WMS/wms-live/.env
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=5s
+
+# Stop window
+TimeoutStopSec=15s
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Logs go to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wms-live
+
+# Resource caps (Droplet has 1 GB RAM)
+MemoryMax=512M
+LimitNOFILE=8192
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/log/wms-live
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

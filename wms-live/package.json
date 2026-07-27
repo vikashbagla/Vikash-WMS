@@ -1,0 +1,21 @@
+{
+  "name": "wms-live",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WMS LIVE order-placer service. Runs on the Droplet, receives HMAC-signed commands from Supabase Edge Functions, places orders via the Fyers API. Phase 13.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "ws": "^8.18.0"
+  }
+}

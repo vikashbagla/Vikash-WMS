@@ -1,0 +1,42 @@
+# wms-live auto-deploy oneshot service — Phase 13 Task #26.
+# Triggered every 60s by wms-live-deploy.timer. See WMS-LESSONS §A.15.
+#
+# Install: sudo install -m 0644 wms-live-deploy.service /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#
+# View logs: sudo journalctl -u wms-live-deploy.service -n 50 --no-pager
+
+[Unit]
+Description=WMS LIVE auto-deploy oneshot
+Documentation=https://github.com/vikashbagla/Vikash-WMS
+After=network-online.target wms-live.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=wms
+Group=wms
+WorkingDirectory=/opt/Vikash-WMS
+ExecStart=/usr/local/bin/wms-live-autodeploy.sh
+
+# 5-minute hard timeout — npm ci on a stable connection is <30s but
+# generous in case GitHub or npm registry is slow.
+TimeoutStartSec=5min
+
+# Don't retry within a single trigger — the timer's next tick is the
+# natural retry. Avoids tight crash loops if origin/dev is broken.
+Restart=no
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wms-live-deploy
+
+# Light sandboxing. Two options deliberately NOT enabled here:
+#   - NoNewPrivileges=true would block the `sudo systemctl restart wms-live`
+#     step (sudo requires gaining new privileges to setuid root).
+#   - ProtectHome=true would block git's SSH from reading /home/wms/.ssh/
+#     (deploy key + known_hosts), causing "Host key verification failed".
+# ProtectSystem=full still blocks writes to /usr, /boot, /etc — sufficient
+# for a script that only reads SSH creds + writes inside /opt/Vikash-WMS.
+ProtectSystem=full
+PrivateTmp=true
