@@ -1887,9 +1887,9 @@ function autoGsRenderLiveTable(liveRows, latestRun, acct) {
             var tname = tid ? (_auGsTraderName(tid) || tid) : '';
             html += '<tr style="border-top:1px solid #f0d0d0">';
             var _disp = s.display_name || s.name;
-            html += '<td style="padding:6px 8px;white-space:normal;max-width:180px">' +
-                '<div data-name="' + autoEsc(s.name) + '" data-disp="' + autoEsc(_disp) + '" title="' + autoEsc(s.name) + ' — double-click to rename" ondblclick="autoGsEditDisplayName(this)" style="font-weight:600;cursor:text">' + autoEsc(_disp) + '</div>' +
-                '<div style="font-size:10px;color:#6b7280"><code style="word-break:break-all">' + autoEsc(s.name) + '</code> · ' + autoEsc(s.version || '') + ' · LIVE</div></td>';
+            html += '<td style="padding:6px 8px;white-space:normal;max-width:190px">' +
+                '<div data-name="' + autoEsc(s.name) + '" data-disp="' + autoEsc(_disp) + '" title="' + autoEsc(s.name) + ' — double-click to rename" ondblclick="autoGsEditDisplayName(this)" style="font-weight:700;color:#1d4ed8;cursor:text">' + autoEsc(_disp) + '</div>' +
+                '<div style="margin-top:2px"><code style="font-size:9.5px;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;padding:1px 5px;word-break:break-all">' + autoEsc(s.name) + '</code> <span style="font-size:10px;color:#9ca3af">' + autoEsc(s.version || '') + ' · LIVE</span></div></td>';
             // Trader — fixed at Add-trader time; shown as text, not editable
             // No explicit trader_id → the executor Veins is the beneficiary (booking defaults
             // trader→Veins, same as KH). Show that instead of a bare dash.
@@ -4984,7 +4984,7 @@ async function autoLoadGsOpenTrades(mode, silent) {
             }
 
             body += '<tr style="border-top:1px solid #e5e7eb">' +
-                    '<td style="padding:6px 8px;vertical-align:top"><div title="' + autoEsc(ot.strategy_name) + '" style="font-weight:600">' + autoEsc(autoGsDispLabel(dispMap, ot.strategy_name)) + '</div><div style="font-size:10px;color:#6b7280"><code>' + autoEsc(ot.strategy_name) + '</code></div></td>' +
+                    '<td style="padding:6px 8px;vertical-align:top"><div title="' + autoEsc(ot.strategy_name) + '" style="font-weight:700;color:#1d4ed8">' + autoEsc(autoGsDispLabel(dispMap, ot.strategy_name)) + '</div><div style="margin-top:2px"><code style="font-size:9.5px;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;padding:1px 5px">' + autoEsc(ot.strategy_name) + '</code></div></td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(entryStr) + daysSub + '</td>' +
                     '<td style="padding:6px 8px;vertical-align:top">' + autoEsc(contract) + '</td>' +
