@@ -1,13 +1,27 @@
 # CLAUDE.md — REDIRECT + CRITICAL RULES
 
-**This file is NOT the primary context file.** It was created during a session but is redundant.
+## 🔱 REPOSITORY STRUCTURE — TWO REPOS (READ FIRST, 2026-07-27)
 
-**Read these three files instead (on OneDrive, in the parent `WMS Claude/` folder):**
-1. `WMS-CONTEXT.md` — architecture, files, functions, UI standards, NEXT STEPS / TODO, recently resolved archive, and the copyable **Startup Prompt** at the end of the file.
-2. `WMS-SCHEMA.md` — DB tables, migrations, investor vs trader audit.
-3. `WMS-LESSONS.md` — rules, patterns, settled decisions (hierarchical A.1.1 format).
+The project is split across **two** repositories to keep the strategy engine and infra private:
 
-Module-level canonical docs (e.g. the Statements engine formulas) live inside `WMS-CONTEXT.md` under the relevant sub-module section — no separate per-module `.md` files.
+| Repo | Visibility | Contains | Deploys to |
+|---|---|---|---|
+| **`Vikash-WMS`** (this one) | **PUBLIC** | Browser **frontend only** — `*.html`, `*.js`, `*.css`, `icons/`, `mockups/` | GitHub Pages (main → prod) + Cloudflare (dev) |
+| **`Vikash-WMS-backend`** | **PRIVATE** | `supabase/` (Edge Functions incl. the **MS007 GS engine** + migrations), `wms-live/` (Droplet order service), `tests/`, `analysis/`, `automation-validation/`, **`Documentation/`** | Manually (see below) |
+
+**HARD RULE — never put server-side code in this public repo.** The MS007 engine, Edge Functions, migrations, live-order logic, tests, backtests, and all docs live **only** in the private `Vikash-WMS-backend` repo. This public repo must stay public (GitHub Pages requires it), so anything with strategy edge, infra detail, or secrets goes in the private repo. Both repos are cloned side-by-side under OneDrive `WMS Claude/`.
+
+**Where to do what:**
+- **Frontend change** → edit here (`Vikash-WMS`), follow the dev→main workflow below, GitHub Pages redeploys prod.
+- **Engine / Edge Function / migration / backend / tests / docs** → edit in **`Vikash-WMS-backend`**. Deploy EFs by dragging the file into the Supabase dashboard; run migrations in Supabase Studio. See `Vikash-WMS-backend/Documentation/REPO-STRUCTURE-AND-PROTOCOL.md` for the full protocol.
+
+**Canonical docs now live in the private repo** at `Vikash-WMS-backend/Documentation/`:
+1. `CONTEXT.md` — architecture, files, functions, UI standards, TODO, Startup Prompt.
+2. `SCHEMA.md` — DB tables, migrations, investor vs trader audit.
+3. `LESSONS.md` — rules, patterns, settled decisions (hierarchical A.1.1 format).
+4. `REPO-STRUCTURE-AND-PROTOCOL.md` — the two-repo split, deploy flows, backups, secret hygiene.
+
+Module-level canonical docs (e.g. the Statements engine formulas) live inside `CONTEXT.md` under the relevant sub-module section — no separate per-module `.md` files.
 
 ---
 
