@@ -710,6 +710,11 @@
             ]);
             console.log('All master data loaded — activating app');
 
+            // Baseline the master change-tokens now that every master is in memory, so the
+            // background cadence (wmsMastersSyncNow) can delta them going forward (§A.4.5).
+            // No-ops harmlessly until the masters_sync_state migration is applied.
+            if (typeof wmsMastersCaptureBaseline === 'function') { try { await wmsMastersCaptureBaseline(); } catch (e) {} }
+
             // Preload the ONE shared transactions cache (LESSONS §A.9.6) now that
             // securities are available (search-text enrichment needs the CM cache).
             // Every module reads this same cache — Trading, Reports, etc. — so they

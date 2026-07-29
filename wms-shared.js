@@ -156,7 +156,11 @@ var wmsRefData = {
     securitiesCmMap: {},     // id → row (O(1) lookups)
     securitiesNfoMap: {},    // id → row (O(1) lookups)
     securitiesCmReady: false,
-    securitiesNfoReady: false
+    securitiesNfoReady: false,
+
+    // Per-master change tokens from masters_sync_state() — the baseline the background
+    // cadence compares against to keep the in-memory masters current (§A.4.5).
+    _masterTokens: {}
 };
 
 /**
@@ -165,59 +169,8 @@ var wmsRefData = {
  * After master data edits (investors, brokers, IBA, reg charges), call this again.
  */
 async function wmsLoadRefData() {
-    var headers = wmsHeaders();
     try {
-        var resp;
-
-        // 1. Investors
-        resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start,interest_terms,tax_rate,accounting_enabled,book_parent_id,post_fno&is_active=eq.true', { headers: headers });
-        var investors = await resp.json();
-        wmsRefData.investors = investors;
-        wmsRefData.investorObjMap = {};
-        wmsRefData.investorCache = {};
-        investors.forEach(function(inv) {
-            wmsRefData.investorObjMap[inv.id] = inv;
-            if (inv.name) wmsRefData.investorCache[inv.name.toLowerCase()] = inv.id;
-            if (inv.short_name) wmsRefData.investorCache[inv.short_name.toLowerCase()] = inv.id;
-        });
-
-        // 2. Brokers
-        resp = await fetch(SUPABASE_URL + '/rest/v1/brokers?select=id,name,broker_code&is_active=eq.true', { headers: headers });
-        var brokers = await resp.json();
-        wmsRefData.brokers = brokers;
-        wmsRefData.brokerObjMap = {};
-        wmsRefData.brokerCache = {};
-        brokers.forEach(function(brk) {
-            wmsRefData.brokerObjMap[brk.id] = brk;
-            if (brk.name) wmsRefData.brokerCache[brk.name.toLowerCase()] = brk.id;
-            if (brk.broker_code) wmsRefData.brokerCache[brk.broker_code.toLowerCase()] = brk.id;
-        });
-
-        // 3. IBA rates (investor_broker_accounts with brokerage_rates + charges_inclusive + ledger fields)
-        resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=investor_id,broker_id,brokerage_rates,charges_inclusive,interest_terms,margin_rate,tax_rate&is_active=eq.true', { headers: headers });
-        var ibAccounts = await resp.json();
-        wmsRefData.ibaRatesMap = {};
-        ibAccounts.forEach(function(iba) {
-            var key = iba.investor_id + '|' + iba.broker_id;
-            wmsRefData.ibaRatesMap[key] = {
-                rates: iba.brokerage_rates || null,
-                charges_inclusive: !!iba.charges_inclusive,
-                interest_terms: iba.interest_terms || null,
-                margin_rate: parseFloat(iba.margin_rate) || 0,
-                tax_rate: (iba.tax_rate != null) ? parseFloat(iba.tax_rate) : null
-            };
-        });
-
-        // 4. Regulatory charges (active only — effective_to IS NULL)
-        resp = await fetch(SUPABASE_URL + '/rest/v1/regulatory_charges_config?effective_to=is.null&select=*', { headers: headers });
-        wmsRefData.regCharges = await resp.json();
-
-        // Build indexed map for O(1) regulatory rate lookups: "chargeType|txnCategory|txnType|exchange" → rate
-        wmsRefData.regChargesIndex = {};
-        wmsRefData.regCharges.forEach(function(rc) {
-            var key = rc.charge_type + '|' + rc.transaction_category + '|' + rc.transaction_type + '|' + rc.exchange;
-            wmsRefData.regChargesIndex[key] = rc.rate_percentage || 0;
-        });
+        await wmsReloadRefMastersOnly();
 
         // 5. Tags autocomplete list — derived from trTransactions, NOT from a
         // separate DB query. Trading's `trLoadData()` populates this via
@@ -234,11 +187,66 @@ async function wmsLoadRefData() {
         wmsRefData.tags = [];
 
         wmsRefData.ready = true;
-        console.log('WMS ref data loaded: ' + investors.length + ' investors, ' + brokers.length + ' brokers, ' +
-            ibAccounts.length + ' IBA, ' + wmsRefData.regCharges.length + ' reg charges (tags derived from trTransactions by Trading module)');
+        console.log('WMS ref data loaded: ' + (wmsRefData.investors || []).length + ' investors, ' + (wmsRefData.brokers || []).length + ' brokers, ' + (wmsRefData.regCharges || []).length + ' reg charges (tags derived from trTransactions by Trading module)');
     } catch (e) {
         console.error('WMS ref data load error:', e);
     }
+}
+
+// Load ONLY the small reference masters (investors, brokers, IBA rates, regulatory charges) +
+// their lookup maps. Extracted from wmsLoadRefData so the background master delta-sync can reload
+// them on a checksum change without touching tags / the `ready` flag / the securities masters. (§A.4.5)
+async function wmsReloadRefMastersOnly() {
+    var headers = wmsHeaders();
+    var resp;
+
+    // 1. Investors
+    resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start,interest_terms,tax_rate,accounting_enabled,book_parent_id,post_fno&is_active=eq.true', { headers: headers });
+    var investors = await resp.json();
+    wmsRefData.investors = investors;
+    wmsRefData.investorObjMap = {};
+    wmsRefData.investorCache = {};
+    investors.forEach(function(inv) {
+        wmsRefData.investorObjMap[inv.id] = inv;
+        if (inv.name) wmsRefData.investorCache[inv.name.toLowerCase()] = inv.id;
+        if (inv.short_name) wmsRefData.investorCache[inv.short_name.toLowerCase()] = inv.id;
+    });
+
+    // 2. Brokers
+    resp = await fetch(SUPABASE_URL + '/rest/v1/brokers?select=id,name,broker_code&is_active=eq.true', { headers: headers });
+    var brokers = await resp.json();
+    wmsRefData.brokers = brokers;
+    wmsRefData.brokerObjMap = {};
+    wmsRefData.brokerCache = {};
+    brokers.forEach(function(brk) {
+        wmsRefData.brokerObjMap[brk.id] = brk;
+        if (brk.name) wmsRefData.brokerCache[brk.name.toLowerCase()] = brk.id;
+        if (brk.broker_code) wmsRefData.brokerCache[brk.broker_code.toLowerCase()] = brk.id;
+    });
+
+    // 3. IBA rates (investor_broker_accounts with brokerage_rates + charges_inclusive + ledger fields)
+    resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=investor_id,broker_id,brokerage_rates,charges_inclusive,interest_terms,margin_rate,tax_rate&is_active=eq.true', { headers: headers });
+    var ibAccounts = await resp.json();
+    wmsRefData.ibaRatesMap = {};
+    ibAccounts.forEach(function(iba) {
+        var key = iba.investor_id + '|' + iba.broker_id;
+        wmsRefData.ibaRatesMap[key] = {
+            rates: iba.brokerage_rates || null,
+            charges_inclusive: !!iba.charges_inclusive,
+            interest_terms: iba.interest_terms || null,
+            margin_rate: parseFloat(iba.margin_rate) || 0,
+            tax_rate: (iba.tax_rate != null) ? parseFloat(iba.tax_rate) : null
+        };
+    });
+
+    // 4. Regulatory charges (active only — effective_to IS NULL)
+    resp = await fetch(SUPABASE_URL + '/rest/v1/regulatory_charges_config?effective_to=is.null&select=*', { headers: headers });
+    wmsRefData.regCharges = await resp.json();
+    wmsRefData.regChargesIndex = {};
+    wmsRefData.regCharges.forEach(function(rc) {
+        var key = rc.charge_type + '|' + rc.transaction_category + '|' + rc.transaction_type + '|' + rc.exchange;
+        wmsRefData.regChargesIndex[key] = rc.rate_percentage || 0;
+    });
 }
 
 /**
@@ -413,7 +421,7 @@ async function wmsLoadSecuritiesDebt() {
 }
 
 // Shared column list for securities_nfo fetches (full loader + surgical backfill)
-var WMS_SECURITIES_NFO_SELECT = 'id,symbol,instrument_name,exchange,instrument_type,underlying_symbol,expiry_date,strike_price,option_type,lot_size,is_active,broker_tokens';
+var WMS_SECURITIES_NFO_SELECT = 'id,symbol,instrument_name,exchange,instrument_type,underlying_symbol,expiry_date,strike_price,option_type,lot_size,is_active,broker_tokens,updated_at';
 
 /**
  * Load all F&O (Futures & Options) securities into wmsRefData.securitiesNfo.
@@ -527,6 +535,114 @@ async function wmsEnsureNfoContracts(transactions) {
         if (!map[missing[j]]) _wmsNfoConfirmedAbsent[missing[j]] = true;
     }
     return true;
+}
+
+// ============================================================================
+// MASTER REFERENCE-DATA DELTA SYNC (§A.4.5)
+// Keeps the in-memory masters current on the SAME cadence as transactions, so a
+// contract / investor / rate created or edited mid-session is picked up without a
+// full reload or a module re-entry (root cause of the recurring F&O phantom expiry).
+// One RPC (masters_sync_state) returns a change-token per master; only the tables
+// whose checksum moved are fetched — securities_nfo via a row-level delta, the rest
+// via a targeted reload. Idle cost = one small RPC per tick, zero row fetches.
+// SAFE BEFORE THE MIGRATION IS APPLIED: the probe 404s → wmsMastersSyncNow no-ops.
+// ============================================================================
+
+// Small masters reloaded wholesale on any change (tiny, negligible bandwidth).
+// securities_nfo → row-level delta; securities_db (CM) → reload (rare intraday; the
+// CM+debt split makes a row-delta fiddly for little gain).
+var WMS_MASTER_SMALL = ['investors', 'brokers', 'investor_broker_accounts', 'regulatory_charges_config'];
+
+// One probe → { table: {row_count, checksum, max_updated} } for every master.
+async function wmsMastersSyncState() {
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/masters_sync_state', {
+        method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }), body: '{}'
+    });
+    if (!resp.ok) throw new Error('masters_sync_state ' + resp.status);
+    var rows = await resp.json();
+    var out = {};
+    (Array.isArray(rows) ? rows : []).forEach(function(r) {
+        out[r.table_name] = { row_count: Number(r.row_count), checksum: r.checksum, max_updated: r.max_updated };
+    });
+    return out;
+}
+
+// Record current tokens as the baseline the cadence compares against. Call once after the
+// startup master load (and after any manual full master reload / CM-F&O Sync).
+async function wmsMastersCaptureBaseline() {
+    try { wmsRefData._masterTokens = await wmsMastersSyncState(); }
+    catch (e) { console.warn('masters baseline probe unavailable (will prime on first tick):', e && e.message); }
+}
+
+// Fetch specific securities_nfo rows by id (full columns) for the delta. Batched under URL limits.
+async function _wmsFetchNfoByIds(ids) {
+    var out = [], BATCH = 100;
+    for (var i = 0; i < ids.length; i += BATCH) {
+        var slice = ids.slice(i, i + BATCH);
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?select=' + WMS_SECURITIES_NFO_SELECT + '&id=in.(' + slice.join(',') + ')', { headers: wmsHeaders() });
+        if (!resp.ok) throw new Error('_wmsFetchNfoByIds ' + resp.status);
+        var rows = await resp.json();
+        for (var j = 0; j < rows.length; j++) out.push(rows[j]);
+    }
+    return out;
+}
+
+// Row-level delta for securities_nfo (mirror of wmsTxnDeltaSync): manifest of id+updated_at →
+// changed (new / updated_at differs) fetched by id and merged (overwrite); rows absent from the
+// manifest are deleted. Keeps securitiesNfo[] and securitiesNfoMap{} in lockstep.
+async function _wmsNfoDeltaSync() {
+    var manifest = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/securities_nfo?select=id,updated_at&order=id.asc');
+    var serverHas = Object.create(null), changedIds = [];
+    var map = wmsRefData.securitiesNfoMap || (wmsRefData.securitiesNfoMap = {});
+    for (var i = 0; i < manifest.length; i++) {
+        var mid = manifest[i].id; serverHas[mid] = true;
+        var cur = map[mid];
+        if (!cur || cur.updated_at !== manifest[i].updated_at) changedIds.push(mid);
+    }
+    var arr = wmsRefData.securitiesNfo || (wmsRefData.securitiesNfo = []);
+    for (var d = arr.length - 1; d >= 0; d--) {                        // deletions
+        if (!serverHas[arr[d].id]) { delete map[arr[d].id]; arr.splice(d, 1); }
+    }
+    if (changedIds.length) {                                            // changed / new
+        var rows = await _wmsFetchNfoByIds(changedIds);
+        for (var c = 0; c < rows.length; c++) {
+            var r = rows[c];
+            if (map[r.id]) { for (var a = 0; a < arr.length; a++) { if (arr[a].id === r.id) { arr[a] = r; break; } } }
+            else { arr.push(r); }
+            map[r.id] = r;
+        }
+    }
+    return changedIds.length;
+}
+
+// Bring every in-memory master current (one probe → delta only the tables that moved). Returns
+// true if anything changed. Guarded on `ready`; non-fatal per table (a failed table keeps its old
+// token so it retries next tick). Wired into the 2-min cadence + tab-focus.
+async function wmsMastersSyncNow() {
+    if (!wmsRefData.ready) return false;
+    var probe;
+    try { probe = await wmsMastersSyncState(); } catch (e) { return false; }  // RPC absent → no-op
+    var base = wmsRefData._masterTokens || {};
+    var next = {}; for (var k in probe) next[k] = probe[k];
+    var changed = false;
+    function moved(t) { return probe[t] && (!base[t] || base[t].checksum !== probe[t].checksum); }
+
+    if (moved('securities_nfo')) {
+        try { await _wmsNfoDeltaSync(); changed = true; }
+        catch (e) { console.warn('NFO master delta failed:', e && e.message); if (base.securities_nfo) next.securities_nfo = base.securities_nfo; }
+    }
+    if (moved('securities_db')) {
+        try { await wmsLoadSecuritiesCm(0, { all: true }); changed = true; }
+        catch (e) { console.warn('CM master reload failed:', e && e.message); if (base.securities_db) next.securities_db = base.securities_db; }
+    }
+    var smallMoved = WMS_MASTER_SMALL.filter(moved);
+    if (smallMoved.length) {
+        try { await wmsReloadRefMastersOnly(); changed = true; }
+        catch (e) { console.warn('small masters reload failed:', e && e.message); smallMoved.forEach(function(t){ if (base[t]) next[t] = base[t]; }); }
+    }
+
+    wmsRefData._masterTokens = next;
+    return changed;
 }
 
 // ============================================================================
@@ -3186,10 +3302,10 @@ function wmsTxnAutoSyncStart() {
         if (document.hidden) return;                                                    // only the visible tab polls
         if (typeof wmsIsRefreshWindow === 'function' && !wmsIsRefreshWindow()) return;  // market window (same gate as prices)
         var changed = await wmsTxnSyncNow();
-        if (changed) {
-            if (wmsTabChannel) { try { wmsTabChannel.postMessage({ type: 'txn-changed', tabId: wmsTabId }); } catch (e) {} }
-            wmsRenderActiveModuleAfterTxn();
-        }
+        var mChanged = false;
+        try { mChanged = await wmsMastersSyncNow(); } catch (e) {}                        // masters: same cadence, one probe RPC
+        if (changed && wmsTabChannel) { try { wmsTabChannel.postMessage({ type: 'txn-changed', tabId: wmsTabId }); } catch (e) {} }
+        if (changed || mChanged) wmsRenderActiveModuleAfterTxn();
     }, WMS_TXN_SYNC_INTERVAL);
 }
 
@@ -3201,9 +3317,12 @@ function wmsTxnAutoSyncStop() {
 // entry made in another tab should show the moment you switch back) + render on change.
 document.addEventListener('visibilitychange', function() {
     if (document.hidden) return;
-    wmsTxnSyncNow().then(function(changed) {
-        if (changed) wmsRenderActiveModuleAfterTxn();
-    }).catch(function() {});
+    Promise.all([
+        wmsTxnSyncNow().catch(function() { return false; }),
+        wmsMastersSyncNow().catch(function() { return false; })
+    ]).then(function(res) {
+        if (res[0] || res[1]) wmsRenderActiveModuleAfterTxn();
+    });
 });
 
 // Start the 2-min background poll once, at module load. The tick self-gates on
