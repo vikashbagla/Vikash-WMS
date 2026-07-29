@@ -1488,9 +1488,6 @@ function autoGsTraderOf(traderMap, name) {
     var tid = traderMap && traderMap.get ? traderMap.get(name) : null;
     return tid ? (_auGsTraderName(tid) || 'Veins') : 'Veins';
 }
-// Per-mode trader filter for the open dashboard ('all' = every trader). Persists across refreshes.
-var _auGsOpenTrader = { live: 'all', paper: 'all' };
-function autoGsSetOpenTrader(mode, val) { _auGsOpenTrader[mode] = val || 'all'; if (typeof autoLoadGsOpenTrades === 'function') autoLoadGsOpenTrades(mode, false); }
 
 // Double-click a strategy label → rename its display_name only. The internal `name` (and every
 // signal / run / live-command / cron keyed to it) is untouched. Prompt-based (robust against the
@@ -4902,19 +4899,10 @@ async function autoLoadGsOpenTrades(mode, silent) {
             }
         }
 
-        // 2c. Trader resolution + filter (LIVE only). Resolve each open row's beneficiary trader,
-        //     capture the traders present (for the dropdown), then narrow the view to the selected
-        //     one. Reset to 'all' if the chosen trader has no open rows now (never get stuck empty).
+        // 2c. Trader resolution (LIVE only) — for the Trader column. (Filtering by trader lives in
+        //     the always-visible Closed filter bar; the open table just labels each row's trader.)
         var _traderMap = isLive ? await autoGetStrategyTraders() : new Map();
         if (isLive && (!_auManualTraders || !_auManualTraders.length)) { try { await autoManualLoadTraders(); } catch (e) {} }
-        var _traderFilter = isLive ? (_auGsOpenTrader[mode] || 'all') : 'all';
-        var _tradersPresent = [];
-        if (isLive) {
-            openRows.forEach(function (ot) { var tn = autoGsTraderOf(_traderMap, ot.strategy_name); if (_tradersPresent.indexOf(tn) < 0) _tradersPresent.push(tn); });
-            _tradersPresent.sort();
-            if (_traderFilter !== 'all' && _tradersPresent.indexOf(_traderFilter) < 0) { _traderFilter = 'all'; _auGsOpenTrader[mode] = 'all'; }
-            if (_traderFilter !== 'all') openRows = openRows.filter(function (ot) { return autoGsTraderOf(_traderMap, ot.strategy_name) === _traderFilter; });
-        }
 
         // 3. Live LTP for unique executed symbols — sourced from the shared price
         //    cache (wmsLivePrices), kept warm by the single app-wide refresh timer.
@@ -5113,19 +5101,7 @@ async function autoLoadGsOpenTrades(mode, silent) {
                     '</tr>';
         }
 
-        // Trader filter bar (LIVE only) — shown whenever ≥1 trader has an open position.
-        var _traderBar = '';
-        if (isLive && _tradersPresent.length) {
-            var _opts = '<option value="all"' + (_traderFilter === 'all' ? ' selected' : '') + '>All traders</option>' +
-                _tradersPresent.map(function (t) { return '<option value="' + autoEsc(t) + '"' + (_traderFilter === t ? ' selected' : '') + '>' + autoEsc(t) + '</option>'; }).join('');
-            _traderBar = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
-                '<span style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em">Trader</span>' +
-                '<select class="wms-df-select" style="font-size:12px;min-width:130px" onchange="autoGsSetOpenTrader(\'' + mode + '\', this.value)">' + _opts + '</select>' +
-                (_traderFilter !== 'all' ? '<span style="font-size:11px;color:#6b7280">filtered — ' + openRows.length + ' open</span>' : '') +
-                '</div>';
-        }
-
-        var html = _traderBar + '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">' +
+        var html = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">' +
                    '<thead>' + totalsRowTop + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
         html += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6">' +
                 '• LTP via Fyers /quotes (needs active Fyers connection).<br>' +
