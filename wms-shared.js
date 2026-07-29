@@ -159,7 +159,7 @@ var wmsRefData = {
     securitiesNfoReady: false,
 
     // Per-master change tokens from masters_sync_state() — the baseline the background
-    // cadence compares against to keep the in-memory masters current (§A.4.5).
+    // cadence compares against to keep the in-memory masters current (§A.4.4b).
     _masterTokens: {}
 };
 
@@ -195,7 +195,7 @@ async function wmsLoadRefData() {
 
 // Load ONLY the small reference masters (investors, brokers, IBA rates, regulatory charges) +
 // their lookup maps. Extracted from wmsLoadRefData so the background master delta-sync can reload
-// them on a checksum change without touching tags / the `ready` flag / the securities masters. (§A.4.5)
+// them on a checksum change without touching tags / the `ready` flag / the securities masters. (§A.4.4b)
 async function wmsReloadRefMastersOnly() {
     var headers = wmsHeaders();
     var resp;
@@ -538,7 +538,7 @@ async function wmsEnsureNfoContracts(transactions) {
 }
 
 // ============================================================================
-// MASTER REFERENCE-DATA DELTA SYNC (§A.4.5)
+// MASTER REFERENCE-DATA DELTA SYNC (§A.4.4b)
 // Keeps the in-memory masters current on the SAME cadence as transactions, so a
 // contract / investor / rate created or edited mid-session is picked up without a
 // full reload or a module re-entry (root cause of the recurring F&O phantom expiry).
