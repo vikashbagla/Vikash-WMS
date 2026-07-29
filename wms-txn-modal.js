@@ -1242,15 +1242,10 @@ function _wmsTxnRenderMatchSummary(groupResults) {
 // Expiry label helper
 function _wmsTxnGetExpiryLabel(contractLabel) {
     if (!contractLabel || contractLabel === 'Equity') return 'Equity';
-    // The expiry label is "<Mon> <YY>". Do NOT assume the month is at a fixed position —
-    // wmsFormatContract emits day-first ("28 Aug 26 57100 PE") when NFO ref data exists, but
-    // month-first ("Aug 26 57100 PE") on the fallback symbol parse (no day). Scanning for the
-    // month token followed by a 2-digit year handles both, so an option's strike+PE never leaks
-    // in as a phantom expiry (e.g. "Aug 26 57100 PE"). Regression guard — see LESSONS.
-    var MONTHS = { Jan:1, Feb:1, Mar:1, Apr:1, May:1, Jun:1, Jul:1, Aug:1, Sep:1, Oct:1, Nov:1, Dec:1 };
     var parts = contractLabel.split(' ');
-    for (var i = 0; i < parts.length - 1; i++) {
-        if (MONTHS[parts[i]] && /^\d{2}$/.test(parts[i + 1])) return parts[i] + ' ' + parts[i + 1];
+    if (parts.length >= 3) {
+        var monthIdx = { Jan:1, Feb:1, Mar:1, Apr:1, May:1, Jun:1, Jul:1, Aug:1, Sep:1, Oct:1, Nov:1, Dec:1 };
+        if (monthIdx[parts[1]]) return parts[1] + ' ' + parts[2];
     }
     return contractLabel;
 }
