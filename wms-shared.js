@@ -668,6 +668,7 @@ async function wmsLoadTransactions(opts) {
                 cache.count = cache.rows.length;
                 cache.checksum = sync.checksum;   // pre-manifest token → cache is a superset (safe)
                 cache.maxUpdated = sync.maxUpdated;
+                await _wmsCoverNewNfoContracts(cache.rows);
                 return cache.rows;
             }
             console.warn('Transactions: delta integrity failed → full reload');
@@ -675,7 +676,26 @@ async function wmsLoadTransactions(opts) {
             console.warn('Transactions: sync/delta failed → full reload', e);
         }
     }
-    return await wmsTxnFullFetch();
+    var full = await wmsTxnFullFetch();
+    await _wmsCoverNewNfoContracts(full);
+    return full;
+}
+
+// Backfill the in-memory NFO master for any contract referenced by a just-(re)loaded
+// transaction set — so EVERY module (F&O expiry label, lot size, margin FIFO) decodes it
+// structurally, not via fuzzy symbol parsing. Previously coverage ran ONLY on Trading-module
+// entry (trDeriveAfterLoad), so a contract booked mid-session by a webhook — created in
+// securities_nfo AFTER this session loaded the master — stayed uncached until the user re-entered
+// Trading or reloaded; in that window an option leaked into the F&O expiry filter as its full
+// contract name (e.g. "Aug 26 57100 PE"). Hooking it into the shared loader covers all modules.
+// Guarded on master-ready so startup (master not yet loaded) never tries to backfill the whole
+// universe. Non-fatal. See LESSONS §A.4.4.
+async function _wmsCoverNewNfoContracts(rows) {
+    try {
+        if (wmsRefData && wmsRefData.ready && typeof wmsEnsureNfoContracts === 'function') {
+            await wmsEnsureNfoContracts(rows);
+        }
+    } catch (e) { console.warn('NFO coverage after transaction (re)load failed (non-fatal):', e); }
 }
 
 // ============================================================================
