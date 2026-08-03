@@ -1794,6 +1794,7 @@ async function _collectRelevantEquitySecurityIds() {
             .from('transactions')
             .select('security_id')
             .not('security_id', 'is', null)
+            .order('id', { ascending: true })   // unique key → total paging (LESSONS §A.4.5); without it .range() can silently skip/repeat rows and drop security_ids
             .range(from, from + BATCH - 1);
         if (resp.error) throw resp.error;
         var rows = resp.data || [];
