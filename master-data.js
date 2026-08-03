@@ -1439,6 +1439,11 @@ function syncModalCommit() {
 
 // Main sync flow ───────────────────────────────────────────────
 
+// CM Sync — now server-side via the securities-cm-sync EF (SYNC-CONSOLIDATION-PLAN
+// Stage 5). The button asks the EF for a PREVIEW (no writes), renders the SAME
+// review modal from the returned diff, and commitSync() calls the EF in commit
+// mode. Classification/diff rules are identical to the old browser flow — they
+// were ported verbatim to the EF and are parity-guarded (tests/cm-sync-parity).
 async function startSync() {
     const btn = document.getElementById('btnSync');
     const progWrap = document.getElementById('syncProgressWrap');
@@ -1446,68 +1451,35 @@ async function startSync() {
     const progLbl  = document.getElementById('syncProgressLabel');
 
     btn.disabled = true;
-    btn.textContent = '⏳ Fetching CSVs...';
+    btn.textContent = '⏳ Computing preview...';
     _syncModalMode = 'cm';
     openSyncModal('📋 CM Sync Preview — Review before committing');
-    progWrap.style.display = 'block';
-    progLbl.style.display  = 'block';
-    progBar.style.width = '10%';
-    progLbl.textContent = 'Downloading NSE_CM.csv...';
+    if (progWrap) progWrap.style.display = 'block';
+    if (progLbl) { progLbl.style.display = 'block'; progLbl.textContent = 'Computing diff (server-side)...'; }
+    if (progBar) progBar.style.width = '45%';
 
     try {
-        const nseRows = await fetchAndParseCSV('https://public.fyers.in/sym_details/NSE_CM.csv');
-        progBar.style.width = '35%';
-        progLbl.textContent = 'Downloading BSE_CM.csv...';
+        const res = await fetch(SUPABASE_URL + '/functions/v1/securities-cm-sync', {
+            method: 'POST',
+            headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ mode: 'preview' })
+        });
+        const body = await res.json();
+        if (!res.ok || !body.success) throw new Error(body && body.error ? body.error : ('HTTP ' + res.status));
 
-        const bseRows = await fetchAndParseCSV('https://public.fyers.in/sym_details/BSE_CM.csv');
-        progBar.style.width = '55%';
-        progLbl.textContent = `Parsed ${nseRows.length + bseRows.length} rows. Loading DB...`;
+        const p = body.preview || { toAdd: [], toUpdate: [], missing: [] };
+        _syncPending = { toAdd: p.toAdd, toUpdate: p.toUpdate, missing: p.missing, unchanged: body.unchanged || 0 };
 
-        // Load ALL existing DB records (paginated — default limit is 1000)
-        const existing = await fetchAllRows('securities_db', '*', 'isin');
-
-        progBar.style.width = '70%';
-        progLbl.textContent = 'Computing diff...';
-
-        const csvMap = buildRecordMap(nseRows, bseRows);
-        const dbMap  = new Map((existing || []).map(r => [r.isin, r]));
-
-        const toAdd    = [];
-        const toUpdate = [];
-        const unchanged= [];
-
-        for (const [isin, incoming] of csvMap) {
-            if (!dbMap.has(isin)) {
-                toAdd.push(incoming);
-            } else {
-                const ex = dbMap.get(isin);
-                // Preserve manually curated classification fields from DB
-                incoming.security_type = ex.security_type;
-                incoming.asset_class   = ex.asset_class;
-                const diffs = diffRecord(ex, incoming);
-                if (diffs.length > 0) {
-                    toUpdate.push({ record: incoming, diffs, existing: ex });
-                } else {
-                    unchanged.push(isin);
-                }
-            }
-        }
-
-        const missing = [...dbMap.keys()].filter(isin => !csvMap.has(isin))
-            .map(isin => dbMap.get(isin));
-
-        _syncPending = { toAdd, toUpdate, missing, unchanged };
-
-        progBar.style.width = '100%';
-        progLbl.textContent = 'Analysis complete.';
-        setTimeout(() => { progWrap.style.display='none'; progLbl.style.display='none'; }, 800);
+        if (progBar) progBar.style.width = '100%';
+        if (progLbl) progLbl.textContent = 'Analysis complete.';
+        setTimeout(() => { if (progWrap) progWrap.style.display='none'; if (progLbl) progLbl.style.display='none'; }, 800);
 
         renderSyncPreview(_syncPending);
-        document.getElementById('btnCommit').disabled = (toAdd.length + toUpdate.length === 0);
+        document.getElementById('btnCommit').disabled = ((p.toAdd.length + p.toUpdate.length) === 0);
 
     } catch (err) {
-        progLbl.textContent = '❌ Error: ' + err.message;
-        progBar.style.background = '#dc2626';
+        if (progLbl) progLbl.textContent = '❌ Error: ' + (err.message || err);
+        if (progBar) progBar.style.background = '#dc2626';
         console.error(err);
     } finally {
         btn.disabled = false;
@@ -1655,54 +1627,49 @@ window.syncCardClick = syncCardClick;
 
 async function commitSync() {
     if (!_syncPending) return;
-    const { toAdd, toUpdate } = _syncPending;
     const btn = document.getElementById('btnCommit');
     btn.disabled = true;
     btn.textContent = '⏳ Committing...';
 
     try {
-        const BATCH = 200;
-        let done = 0;
-        const total = toAdd.length + toUpdate.length;
+        // Server-side commit via the EF (recomputes the diff + upserts; missing
+        // ISINs reported-only, never deactivated — same as the browser flow).
+        const res = await fetch(SUPABASE_URL + '/functions/v1/securities-cm-sync', {
+            method: 'POST',
+            headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ mode: 'commit' })
+        });
+        const body = await res.json();
+        if (!res.ok || !body.success) throw new Error(body && body.error ? body.error : ('HTTP ' + res.status));
 
-        // Upsert new records in batches
-        const all = [
-            ...toAdd,
-            ...toUpdate.map(u => u.record)
-        ];
-        for (let i = 0; i < all.length; i += BATCH) {
-            const batch = all.slice(i, i + BATCH);
-            const { error } = await window.supabaseClient
-                .from('securities_db')
-                .upsert(batch, { onConflict: 'isin' });
-            if (error) throw error;
-            done += batch.length;
-            btn.textContent = `⏳ ${done}/${total}...`;
-        }
-
-        // Save last sync timestamp
         localStorage.setItem('wms_last_securities_sync', new Date().toISOString());
 
-        // Post-commit: fetch sector for newly added equities
+        // Post-commit: enrich newly-added equities via the yahoo-sync EF (mirrors
+        // the old post-commit Yahoo hook — runs only when new securities were added).
         var yahooMsg = '';
-        if (toAdd.length > 0) {
+        if ((body.added || 0) > 0) {
             btn.textContent = '⏳ Fetching Yahoo data for new records...';
             try {
-                var yahooCount = await postCommitYahooFetch(toAdd);
-                if (yahooCount > 0) yahooMsg = ' | Yahoo data populated: ' + yahooCount;
+                const yr = await fetch(SUPABASE_URL + '/functions/v1/yahoo-sync', {
+                    method: 'POST',
+                    headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ mode: 'commit' })
+                });
+                const yb = await yr.json();
+                if (yr.ok && yb.success) yahooMsg = ' | Yahoo enriched: ' + (yb.updated || 0);
             } catch (yahooErr) {
                 console.warn('Post-commit Yahoo fetch error:', yahooErr);
             }
         }
 
-        alert('✓ Done! Added: ' + toAdd.length + ' | Updated: ' + toUpdate.length + yahooMsg);
+        alert('✓ Done! Added: ' + (body.added || 0) + ' | Updated: ' + (body.updated || 0) + yahooMsg);
         _syncPending = null;
         closeSyncModal();
         await loadSecuritiesStats();
         await loadSecuritiesTable(true);
 
     } catch (err) {
-        alert('❌ Commit failed: ' + err.message);
+        alert('❌ Commit failed: ' + (err.message || err));
         console.error(err);
     } finally {
         btn.disabled = false;
@@ -1816,135 +1783,43 @@ async function _collectRelevantEquitySecurityIds() {
     return Object.keys(ids);
 }
 
+// Yahoo Sync — now server-side via the yahoo-sync EF (SYNC-CONSOLIDATION-PLAN
+// Stage 5). Run-and-report, like F&O Sync (runFOSyncEF). Same scope/rules
+// (transactions ∪ watchlist → active equity; sector-only-if-null, size, 52wk),
+// now computed + written in the EF. The browser helpers below
+// (_collectRelevantEquitySecurityIds, deriveYahooSymbol, deriveSizeFromMarketCap,
+// callYahooFinance) are retained for postCommitYahooFetch + parity reference.
 async function startYahooSync() {
     var btn = document.getElementById('btnYahooSync');
-    btn.disabled = true;
-    btn.textContent = '⏳ Loading...';
-    setSecLoading(true, 'Finding relevant securities...');
+    var orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing...'; }
+    setSecLoading(true, 'Yahoo Sync (server-side)...');
 
     try {
-        // Collect IDs from transactions + watchlist_items (B.14.7 / 2026-05-06)
-        var relevantIds = await _collectRelevantEquitySecurityIds();
-
-        if (relevantIds.length === 0) {
-            alert('No relevant equity securities found.\n\nYahoo Sync now runs only on securities that appear in your transactions or watchlist. Add some trades or watchlist entries first.');
+        var res = await fetch(SUPABASE_URL + '/functions/v1/yahoo-sync', {
+            method: 'POST',
+            headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ mode: 'commit' })
+        });
+        var body = await res.json();
+        if (!res.ok || !body.success) {
+            alert('Yahoo Sync failed:\n\n' + JSON.stringify(body, null, 2));
             return;
         }
-
-        setSecLoading(true, 'Found ' + relevantIds.length + ' relevant security id(s). Fetching from Supabase...');
-
-        // Fetch securities_db rows for those ids. Existing filters preserved:
-        //   is_active=true (skip merged/inactive)
-        //   security_type IN ('EQUITY','EQUITY_SME') (Yahoo Sync is equity-only — B.14.6)
-        // Chunk the .in('id', [...]) clause to keep URLs under PostgREST limits
-        // (UUID ≈ 36 chars; 100 ids ≈ 3.6KB which is comfortably below ~8KB).
-        var all = [];
-        var ID_CHUNK = 100;
-        for (var ci = 0; ci < relevantIds.length; ci += ID_CHUNK) {
-            var idBatch = relevantIds.slice(ci, ci + ID_CHUNK);
-            var result = await window.supabaseClient
-                .from('securities_db')
-                .select('id,isin,symbol,nse_symbol,bse_symbol,sector,size,security_type')
-                .eq('is_active', true)
-                .in('security_type', ['EQUITY', 'EQUITY_SME'])
-                .in('id', idBatch);
-            if (result.error) throw result.error;
-            all = all.concat(result.data || []);
-        }
-
-        if (all.length === 0) {
-            alert('No matching active equities for your transactions / watchlist.\n\n' +
-                  '(' + relevantIds.length + ' security id(s) collected, but none matched ' +
-                  'an active EQUITY/EQUITY_SME row — likely all are F&O / debt / etc.)');
-            return;
-        }
-
-        setSecLoading(true, 'Found ' + all.length + ' equities. Fetching data from Yahoo Finance...');
-
-        // Build yahoo symbol → record map
-        var yahooMap = {};
-        var symbols = [];
-        for (var i = 0; i < all.length; i++) {
-            var ySym = deriveYahooSymbol(all[i]);
-            if (!ySym) continue;
-            if (!yahooMap[ySym]) { yahooMap[ySym] = []; symbols.push(ySym); }
-            yahooMap[ySym].push(all[i]);
-        }
-
-        // Call Yahoo Finance in batches of 30
-        var YBATCH = 30;
-        var updated = 0;
-        var skipped = 0;
-        var failed = 0;
-        var now = new Date().toISOString();
-
-        for (var b = 0; b < symbols.length; b += YBATCH) {
-            var batch = symbols.slice(b, b + YBATCH);
-            setSecLoading(true, 'Yahoo Sync... ' + Math.min(b + YBATCH, symbols.length) + '/' + symbols.length);
-
-            try {
-                var result = await callYahooFinance(batch);
-                var results = result.results || {};
-
-                for (var s = 0; s < batch.length; s++) {
-                    var sym = batch[s];
-                    var data = results[sym];
-                    if (!data) { skipped++; continue; }
-
-                    var recs = yahooMap[sym] || [];
-                    for (var r = 0; r < recs.length; r++) {
-                        var rec = recs[r];
-                        var updateObj = {};
-
-                        // Sector: only fill if currently null (don't overwrite manual entries)
-                        if (data.sector && !rec.sector) {
-                            updateObj.sector = data.sector;
-                        }
-
-                        // Size: always update from latest market cap
-                        if (data.marketCap) {
-                            var newSize = deriveSizeFromMarketCap(data.marketCap);
-                            if (newSize) updateObj.size = newSize;
-                        }
-
-                        // 52-week high/low: always update if available
-                        if (data.week52High && data.week52Low) {
-                            updateObj.week_52_high = data.week52High;
-                            updateObj.week_52_low = data.week52Low;
-                            updateObj.week_52_updated_at = now;
-                        }
-
-                        // Single DB update per record
-                        if (Object.keys(updateObj).length > 0) {
-                            var upd = await window.supabaseClient
-                                .from('securities_db')
-                                .update(updateObj)
-                                .eq('id', rec.id);
-                            if (upd.error) { failed++; console.warn('Yahoo update failed for', rec.symbol, upd.error); }
-                            else { updated++; }
-                        } else {
-                            skipped++;
-                        }
-                    }
-                }
-            } catch (batchErr) {
-                console.warn('Yahoo batch failed:', batchErr);
-                failed += batch.length;
-            }
-        }
-
-        alert('Yahoo Sync complete!\nUpdated: ' + updated + ' | Skipped (no data): ' + skipped + (failed > 0 ? ' | Failed: ' + failed : ''));
+        alert('Yahoo Sync complete! (' + Math.round((body.duration_ms || 0) / 1000) + 's)\n' +
+              'Equities in scope: ' + (body.equities || 0) + '\n' +
+              'Updated: ' + (body.updated || 0) + ' | Skipped (no data): ' + (body.skipped || 0) +
+              ((body.failed || 0) > 0 ? ' | Failed: ' + body.failed : ''));
+        localStorage.setItem('wms_last_yahoo_sync', new Date().toISOString());
         await loadSecuritiesStats();
         await loadSecuritiesTable(true);
         // Refresh the securities cache so Portfolio picks up new values
-        await wmsLoadSecuritiesCm(0, {all: true});
-
+        await wmsLoadSecuritiesCm(0, { all: true });
     } catch (err) {
-        alert('Yahoo Sync error: ' + err.message);
+        alert('Yahoo Sync error: ' + (err && err.message ? err.message : err));
         console.error(err);
     } finally {
-        btn.disabled = false;
-        btn.textContent = '⟳ Yahoo Sync';
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
         setSecLoading(false);
     }
 }
