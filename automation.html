@@ -216,6 +216,57 @@ details summary {
 }
 
 /* ================================================================
+   🧪 AT2 family page (Package 11, 2026-08-04)
+   ================================================================ */
+
+/* ⚠️ D.8.6 — app-styles.css ships a BARE `table { min-width: 940px }`, so every
+   table in the app inherits it, including ones inside panels and modals. Without
+   this opt-out the right-hand columns are pushed outside the panel and the page
+   scrolls horizontally. table-layout:fixed makes the <colgroup> authoritative
+   (D.2.4). */
+.au-at2-table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    border-collapse: collapse;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 12px;
+}
+/* D.8.1 — headers are 10px uppercase and sticky within the page's scroller. */
+.au-at2-table th {
+    background: #f7fafc;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #718096;
+    text-align: left;
+    padding: 7px 8px;
+    border-bottom: 1px solid #e2e8f0;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+.au-at2-table td {
+    padding: 7px 8px;
+    border-bottom: 1px solid #f1f5f9;
+    color: #1f2937;
+    vertical-align: middle;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.au-at2-table tbody tr:hover { background: #fafbfc; }
+.au-at2-table .text-right { text-align: right; }
+.au-at2-table tfoot td { border-bottom: none; }
+.au-at2-table code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; }
+
+.au-at2-kv td:first-child { color: #6b7280; padding: 3px 0; width: 40%; }
+.au-at2-kv td:last-child  { padding: 3px 0; }
+
+/* ================================================================
    FAMILY NAV — Phase A of UI reimagining (2026-07-09).
    Strategy-family-first workspace. The Legacy panel it wrapped during
    Phases A–D was deleted in Phase E.3 (2026-07-10) once every surface it
@@ -451,6 +502,7 @@ details summary {
     <button class="au-fam-tab-btn"        data-fam="gs">🥈🥇 GS</button>
     <button class="au-fam-tab-btn"        data-fam="kh">🐦 KH</button>
     <button class="au-fam-tab-btn"        data-fam="pairs">🔗 Pairs</button>
+    <button class="au-fam-tab-btn"        data-fam="at2">🧪 AT2</button>
     <button class="au-fam-tab-btn"        data-fam="manual">✋ Manual</button>
     <button class="au-fam-tab-btn"        data-fam="addnew" disabled title="Contact platform owner to add new strategy family">＋ Add strategy</button>
   </div>
@@ -1097,6 +1149,73 @@ details summary {
     <!-- ✋ Manual — owner-only Fyers order entry (GOP-C4). All content is
          rendered by autoManualInit() into #au-manual-root; the password gate
          and confirm dialog live there. Places via the wms-manual-order EF. -->
+    <!-- ══════════════════════════════════════════════════════════════════════
+         🧪 AT2 — Auto Trading v2 (Package 11)
+         Reads at2_trade DIRECTLY. The old GS page derives open positions from a
+         signal log; AT2 does not — state is a COLUMN (Plan rule R1/R3), so this
+         page reads it rather than reconstructing it.
+         ☠️ Unknown states MUST render loudly. A status this page does not
+         recognise is exactly when a human needs to see something is wrong.
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div id="au-fam-at2" class="automation-family-panel">
+      <div class="fam-scroll">
+        <div class="fam-page">
+
+          <div class="fam-header">
+            <div class="fam-title">
+              <h2>🧪 AT2 — Auto Trading v2</h2>
+              <div class="fam-sub" id="au-at2-sub">Engine MS007 · at2-ms007 · state read from at2_trade</div>
+            </div>
+            <div class="fam-header-right">
+              <span class="status-pill paper" id="au-at2-mode">🟡 PAPER</span>
+              <span id="au-at2-lastact" class="fam-lastact">Last activity: —</span>
+            </div>
+          </div>
+
+          <div class="au-stat-grid" id="au-at2-metrics">
+            <div class="au-stat"><div class="au-stat-label">Open positions</div><div class="au-stat-value" id="au-at2-m-open">—</div></div>
+            <div class="au-stat"><div class="au-stat-label">Open exposure</div><div class="au-stat-value" id="au-at2-m-exposure">—</div></div>
+            <div class="au-stat"><div class="au-stat-label">Realised P&amp;L</div><div class="au-stat-value" id="au-at2-m-realised">—</div></div>
+            <div class="au-stat"><div class="au-stat-label">Open alerts</div><div class="au-stat-value" id="au-at2-m-alerts">—</div></div>
+            <div class="au-stat"><div class="au-stat-label">Strategies</div><div class="au-stat-value" id="au-at2-m-strategies">—</div></div>
+          </div>
+
+          <div class="au-subtabs">
+            <button class="au-subtab-btn active" data-subtab="au-at2-open-panel">Open Trades</button>
+            <button class="au-subtab-btn" data-subtab="au-at2-closed-panel">Closed Trades</button>
+            <button class="au-subtab-btn" data-subtab="au-at2-alerts-panel" id="au-at2-alerts-tab">Alerts</button>
+            <button class="au-subtab-btn" data-subtab="au-at2-events-panel">Signals &amp; Events</button>
+            <button class="au-subtab-btn" data-subtab="au-at2-controls-panel">Controls &amp; Admin</button>
+            <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px"
+                    onclick="autoAt2Refresh()">↻ Refresh</button>
+          </div>
+
+          <div id="au-at2-open-panel" class="au-subtab-panel active">
+            <div id="au-at2-open-content" class="au-meta">Loading open trades…</div>
+          </div>
+
+          <div id="au-at2-closed-panel" class="au-subtab-panel">
+            <div id="au-at2-closed-content" class="au-meta">Loading closed trades…</div>
+          </div>
+
+          <!-- ⚠️ THE EMAIL IS A NOTIFICATION; THIS TABLE IS THE TRUTH.
+               An alert that was emailed and ignored is still open here. -->
+          <div id="au-at2-alerts-panel" class="au-subtab-panel">
+            <div id="au-at2-alerts-content" class="au-meta">Loading alerts…</div>
+          </div>
+
+          <div id="au-at2-events-panel" class="au-subtab-panel">
+            <div id="au-at2-events-content" class="au-meta">Loading signals &amp; events…</div>
+          </div>
+
+          <div id="au-at2-controls-panel" class="au-subtab-panel">
+            <div id="au-at2-controls-content" class="au-meta">Loading configuration…</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
     <div id="au-fam-manual" class="automation-family-panel">
       <div class="fam-scroll">
         <div id="au-manual-root" style="max-width:760px;margin:0 auto">Loading…</div>

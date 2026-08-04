@@ -58,6 +58,12 @@ function autoSwitchFamily(fam) {
         }
     }
 
+    if (fam === 'at2') {
+        // Always refresh: AT2 state changes from the EF and from manual closes,
+        // and a cached page that looks flat is the worst thing this page can do.
+        autoAt2Refresh();
+    }
+
     if (fam === 'gs') {
         // Phase E.1a: no mirror setup — the GS renderers write straight into this
         // page's targets (autoTarget / autoBadgeTarget).
@@ -5883,3 +5889,558 @@ async function _auUpsertLimit(existing, scope, type, value, enabled, breach) {
     if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()));
 }
 
+
+// ============================================================================
+// 🧪 AT2 — Auto Trading v2 family page  (Package 11, 2026-08-04)
+// ============================================================================
+//
+// ── WHAT MAKES THIS PAGE DIFFERENT FROM THE GS PAGE ─────────────────────────
+// GS derives open positions by netting a signal log (v_auto_open_trades). AT2
+// does not: state is a COLUMN (Plan v12 rule R1/R3), so this page READS
+// at2_trade rather than reconstructing it. If a number here looks wrong, the
+// row is wrong — there is no derivation in between to blame.
+//
+// ── ☠️ UNKNOWN STATES RENDER LOUDLY ─────────────────────────────────────────
+// Plan §14's definition of done for this package. A status, exit reason or
+// severity this page does not recognise is EXACTLY when a human needs to see
+// something is wrong — so it renders as a red badge naming the unknown value,
+// never as a blank cell and never silently mapped to a default.
+//
+// ── RLS ─────────────────────────────────────────────────────────────────────
+// Every at2_ table is owner-read (`auth.jwt()->>'email'`), verified 04-Aug-2026,
+// so these plain PostgREST reads work from the browser under the owner session.
+// Writes are revoked — the manual close goes through the at2-ms007 EF (EX-09).
+// ============================================================================
+
+var _auAt2 = { strategies: [], books: [], trades: [], alerts: [], signals: [], events: [], loadedAt: null };
+
+// ── The known vocabularies. Anything outside these renders LOUD. ────────────
+var AU_AT2_STATUS = {
+    pending:          { label: 'Pending',      cls: 'idle',    note: 'order placed, no fill yet' },
+    open_unprotected: { label: 'UNPROTECTED',  cls: 'error',   note: 'open with NO resting stop' },
+    open_protected:   { label: 'Protected',    cls: 'success', note: 'open, stop resting' },
+    closing:          { label: 'Closing',      cls: 'warning', note: 'exit routed, awaiting fill' },
+    closed:           { label: 'Closed',       cls: 'idle',    note: '' },
+    voided:           { label: 'Voided',       cls: 'idle',    note: 'never filled' }
+};
+var AU_AT2_EXIT_REASONS = ['STOP', 'TRAIL', 'TARGET', 'TIME', 'SQUARE_OFF', 'ROLL', 'MANUAL'];
+var AU_AT2_SEVERITY = {
+    critical: { cls: 'error',   icon: '❌' },
+    warn:     { cls: 'warning', icon: '⚠️' },
+    info:     { cls: 'idle',    icon: 'ℹ️' }
+};
+
+function auAt2Esc(s) {
+    return String(s === null || s === undefined ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/**
+ * ☠️ The loud-unknown renderer. Every enum-ish value on this page goes through
+ * one of these. Returning a blank or a plausible default for an unrecognised
+ * value is the specific failure this package exists to prevent.
+ */
+function auAt2StatusBadge(status) {
+    var k = AU_AT2_STATUS[status];
+    if (!k) {
+        return '<span class="au-badge error" title="This page does not recognise this status. '
+             + 'It may be a new state the UI has not been taught, or corrupt data.">'
+             + '⛔ UNKNOWN STATE: ' + auAt2Esc(status === null || status === undefined ? '(null)' : status)
+             + '</span>';
+    }
+    return '<span class="au-badge ' + k.cls + '"' + (k.note ? ' title="' + auAt2Esc(k.note) + '"' : '') + '>'
+         + auAt2Esc(k.label) + '</span>';
+}
+
+function auAt2ExitReason(reason) {
+    if (reason === null || reason === undefined || reason === '') return '<span style="color:#6b7280">—</span>';
+    if (AU_AT2_EXIT_REASONS.indexOf(reason) < 0) {
+        return '<span class="au-badge error">⛔ UNKNOWN REASON: ' + auAt2Esc(reason) + '</span>';
+    }
+    return auAt2Esc(reason);
+}
+
+function auAt2Severity(sev) {
+    var k = AU_AT2_SEVERITY[sev];
+    if (!k) {
+        return '<span class="au-badge error">⛔ UNKNOWN SEVERITY: ' + auAt2Esc(sev) + '</span>';
+    }
+    return '<span class="au-badge ' + k.cls + '">' + k.icon + ' ' + auAt2Esc(sev) + '</span>';
+}
+
+/** IST, dd-mmm-yy hh:mm. Returns an em dash for null rather than "Invalid Date". */
+function auAt2Ts(iso) {
+    if (!iso) return '—';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '<span class="au-badge error">⛔ BAD DATE: ' + auAt2Esc(iso) + '</span>';
+    return d.toLocaleString('en-GB', {
+        timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+    }).replace(',', '');
+}
+
+function auAt2Num(v) {
+    if (v === null || v === undefined || v === '') return '—';
+    var n = Number(v);
+    if (!isFinite(n)) return '<span class="au-badge error">⛔ NOT A NUMBER</span>';
+    return formatPrice(n, false);
+}
+
+/** D.7 — negatives in parentheses and red; zero is a neutral dash. */
+function auAt2Pnl(v) {
+    if (v === null || v === undefined || v === '') return '<span style="color:#6b7280">—</span>';
+    var n = Number(v);
+    if (!isFinite(n)) return '<span class="au-badge error">⛔ NOT A NUMBER</span>';
+    return '<span class="' + getAmountClass(n) + '">' + formatAmount(n) + '</span>';
+}
+
+// ── Loading ─────────────────────────────────────────────────────────────────
+
+async function auAt2Get(table, query) {
+    var url = SUPABASE_URL + '/rest/v1/' + table + '?' + query;
+    var r = await fetch(url, { headers: wmsHeaders() });
+    if (!r.ok) throw new Error(table + ': HTTP ' + r.status + ' — ' + (await r.text()).slice(0, 200));
+    return await r.json();
+}
+
+async function autoAt2Refresh() {
+    var panels = ['open', 'closed', 'alerts', 'events', 'controls'];
+    panels.forEach(function (p) {
+        var el = document.getElementById('au-at2-' + p + '-content');
+        if (el) el.innerHTML = '<div class="au-meta">Loading…</div>';
+    });
+
+    try {
+        var res = await Promise.all([
+            auAt2Get('at2_strategy', 'select=*&order=code'),
+            auAt2Get('at2_book', 'select=*&order=display_name'),
+            auAt2Get('at2_trade', 'select=*&order=created_at.desc&limit=500'),
+            auAt2Get('at2_alert', 'select=*&order=last_seen.desc&limit=200'),
+            auAt2Get('at2_signal', 'select=*&order=fired_at.desc&limit=100'),
+            auAt2Get('at2_trade_event', 'select=*&order=at.desc&limit=200')
+        ]);
+        _auAt2.strategies = res[0]; _auAt2.books = res[1]; _auAt2.trades = res[2];
+        _auAt2.alerts = res[3]; _auAt2.signals = res[4]; _auAt2.events = res[5];
+        _auAt2.loadedAt = new Date();
+
+        auAt2RenderHeader();
+        auAt2RenderMetrics();
+        auAt2RenderOpen();
+        auAt2RenderClosed();
+        auAt2RenderAlerts();
+        auAt2RenderEvents();
+        auAt2RenderControls();
+    } catch (e) {
+        // F.13/F.14 — a failed load must NOT fall through to an empty-looking
+        // page. An empty table and a broken query look identical otherwise.
+        var msg = '<div class="au-error-list"><strong>⛔ AT2 data could not be loaded.</strong>'
+                + '<div style="margin-top:6px">' + auAt2Esc(e.message) + '</div>'
+                + '<div style="margin-top:6px">This page is showing NOTHING, not "no trades". '
+                + 'Do not read an empty page as a flat book.</div></div>';
+        panels.forEach(function (p) {
+            var el = document.getElementById('au-at2-' + p + '-content');
+            if (el) el.innerHTML = msg;
+        });
+    }
+}
+
+function auAt2RenderHeader() {
+    var modes = {};
+    _auAt2.books.forEach(function (b) { modes[b.mode] = true; });
+    var pill = document.getElementById('au-at2-mode');
+    if (pill) {
+        if (modes.live) { pill.className = 'status-pill live'; pill.textContent = '🟢 LIVE'; }
+        else if (modes.paper) { pill.className = 'status-pill paper'; pill.textContent = '🟡 PAPER'; }
+        else { pill.className = 'status-pill'; pill.textContent = '— no books'; }
+    }
+    var last = null;
+    _auAt2.trades.forEach(function (t) {
+        [t.entry_at, t.exit_at, t.updated_at].forEach(function (x) {
+            if (x && (!last || x > last)) last = x;
+        });
+    });
+    var la = document.getElementById('au-at2-lastact');
+    if (la) la.textContent = 'Last activity: ' + (last ? auAt2Ts(last) : '—');
+
+    var sub = document.getElementById('au-at2-sub');
+    if (sub) {
+        var enabled = _auAt2.strategies.filter(function (s) { return s.enabled; }).length;
+        sub.textContent = 'Engine MS007 · at2-ms007 · ' + _auAt2.strategies.length + ' strategy(ies), '
+                        + enabled + ' enabled · state read from at2_trade';
+    }
+}
+
+function auAt2RenderMetrics() {
+    var HELD = ['pending', 'open_unprotected', 'open_protected', 'closing'];
+    var open = _auAt2.trades.filter(function (t) { return HELD.indexOf(t.status) >= 0; });
+    var lots = open.reduce(function (n, t) { return n + (Number(t.qty_lots) || 0); }, 0);
+    var exposure = open.reduce(function (n, t) {
+        return n + (Number(t.entry_price) || 0) * (Number(t.qty_open_units) || 0);
+    }, 0);
+    var realised = _auAt2.trades.reduce(function (n, t) { return n + (Number(t.realised_pnl) || 0); }, 0);
+    var openAlerts = _auAt2.alerts.filter(function (a) { return !a.resolved_at; });
+    var crit = openAlerts.filter(function (a) { return a.severity === 'critical'; }).length;
+
+    function set(id, html) { var el = document.getElementById(id); if (el) el.innerHTML = html; }
+    set('au-at2-m-open', open.length + ' <span style="font-size:12px;font-weight:600;color:#6b7280">trade(s) · ' + lots + ' lots</span>');
+    set('au-at2-m-exposure', exposure ? formatAmount(exposure) : '—');
+    set('au-at2-m-realised', auAt2Pnl(realised));
+    set('au-at2-m-alerts', openAlerts.length
+        ? (crit ? '<span class="negative">' + openAlerts.length + ' (' + crit + ' critical)</span>'
+                : openAlerts.length)
+        : '<span style="color:#059669">0</span>');
+    set('au-at2-m-strategies', _auAt2.strategies.length);
+
+    var tab = document.getElementById('au-at2-alerts-tab');
+    if (tab) tab.innerHTML = 'Alerts' + (openAlerts.length
+        ? ' <span class="au-badge ' + (crit ? 'error' : 'warning') + '" style="margin-left:4px">' + openAlerts.length + '</span>'
+        : '');
+}
+
+function auAt2BookName(id) {
+    var b = _auAt2.books.filter(function (x) { return x.id === id; })[0];
+    return b ? b.display_name : '<span class="au-badge error">⛔ UNKNOWN BOOK</span>';
+}
+
+function auAt2RenderOpen() {
+    var HELD = ['pending', 'open_unprotected', 'open_protected', 'closing'];
+    var rows = _auAt2.trades.filter(function (t) { return HELD.indexOf(t.status) >= 0; });
+    var el = document.getElementById('au-at2-open-content');
+    if (!el) return;
+
+    if (!rows.length) {
+        el.innerHTML = '<div class="au-soon">No open AT2 positions.<br>'
+                     + '<span style="font-size:12px">Read from <code>at2_trade</code> — '
+                     + _auAt2.trades.length + ' trade(s) total, none currently held.</span></div>';
+        return;
+    }
+
+    var h = '<table class="au-at2-table"><colgroup>'
+          + '<col style="width:10%"><col style="width:14%"><col style="width:7%"><col style="width:6%">'
+          + '<col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:12%">'
+          + '<col style="width:12%"><col style="width:12%"></colgroup><thead><tr>'
+          + '<th>Status</th><th>Book</th><th>Side</th><th>Lots</th><th>Entry</th><th>Stop</th>'
+          + '<th>Risk/lot</th><th>Entered</th><th>Flags</th><th class="text-right">Action</th>'
+          + '</tr></thead><tbody>';
+
+    rows.forEach(function (t) {
+        var risk = (Number(t.atr_at_entry) || 0) && (Number(t.entry_price) || 0)
+            ? Math.abs((Number(t.entry_price) - Number(t.stop_at_entry)) * (Number(t.qty_units) / (Number(t.qty_lots) || 1)))
+            : null;
+        var flags = [];
+        if (t.cap_bound) flags.push('<span class="au-badge warning" title="the book\'s lot_cap reduced this allocation">cap-bound</span>');
+        if (t.rolled_from_trade_id) flags.push('<span class="au-badge idle" title="opened by a roll">rolled</span>');
+        if (t.status === 'open_unprotected') flags.push('<span class="au-badge error">NO STOP</span>');
+        if (t.mode === 'live') flags.push('<span class="au-badge error">LIVE</span>');
+
+        h += '<tr>'
+           + '<td>' + auAt2StatusBadge(t.status) + '</td>'
+           + '<td>' + auAt2Esc(auAt2BookName(t.book_id)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</td>'
+           + '<td>' + (t.side === 'LONG' ? '<span style="color:#059669;font-weight:700">LONG</span>'
+                                          : '<span style="color:#dc2626;font-weight:700">SHORT</span>') + '</td>'
+           + '<td>' + auAt2Esc(t.qty_lots) + '</td>'
+           + '<td>' + auAt2Num(t.entry_price) + '</td>'
+           + '<td>' + (t.current_stop ? auAt2Num(t.current_stop)
+                        : '<span class="au-badge error">none</span>') + '</td>'
+           + '<td>' + (risk ? formatAmount(risk) : '—') + '</td>'
+           + '<td>' + auAt2Ts(t.entry_at) + '</td>'
+           + '<td>' + (flags.join(' ') || '—') + '</td>'
+           + '<td class="text-right"><button class="au-btn au-btn-danger" style="font-size:11px;padding:3px 10px"'
+           + ' onclick="autoAt2OpenCloseModal(\'' + t.id + '\')">Close</button></td>'
+           + '</tr>';
+    });
+    h += '</tbody></table>';
+    el.innerHTML = h;
+}
+
+function auAt2RenderClosed() {
+    var rows = _auAt2.trades.filter(function (t) { return t.status === 'closed' || t.status === 'voided'; });
+    var el = document.getElementById('au-at2-closed-content');
+    if (!el) return;
+    if (!rows.length) { el.innerHTML = '<div class="au-soon">No closed AT2 trades yet.</div>'; return; }
+
+    var wins = rows.filter(function (t) { return Number(t.realised_pnl) > 0; }).length;
+    var losses = rows.filter(function (t) { return Number(t.realised_pnl) < 0; }).length;
+    var total = rows.reduce(function (n, t) { return n + (Number(t.realised_pnl) || 0); }, 0);
+
+    var h = '<table class="au-at2-table"><thead><tr>'
+          + '<th>Status</th><th>Book</th><th>Side</th><th>Lots</th><th>Entry</th><th>Exit</th>'
+          + '<th>Reason</th><th class="text-right">Points</th><th class="text-right">Realised</th><th>Closed</th>'
+          + '</tr></thead><tbody>';
+    rows.forEach(function (t) {
+        h += '<tr>'
+           + '<td>' + auAt2StatusBadge(t.status) + '</td>'
+           + '<td>' + auAt2BookName(t.book_id) + '</td>'
+           + '<td>' + (t.side === 'LONG' ? 'LONG' : 'SHORT') + '</td>'
+           + '<td>' + auAt2Esc(t.qty_lots) + '</td>'
+           + '<td>' + auAt2Num(t.entry_price) + '</td>'
+           + '<td>' + auAt2Num(t.exit_price) + '</td>'
+           + '<td>' + auAt2ExitReason(t.exit_reason) + '</td>'
+           + '<td class="text-right">' + auAt2Pnl(t.pnl_points) + '</td>'
+           + '<td class="text-right">' + auAt2Pnl(t.realised_pnl) + '</td>'
+           + '<td>' + auAt2Ts(t.exit_at) + '</td>'
+           + '</tr>';
+    });
+    h += '</tbody><tfoot><tr style="background:#f1f5f9;font-weight:600;border-top:2px solid #cbd5e0">'
+       + '<td colspan="8">' + rows.length + ' closed · ' + wins + 'W / ' + losses + 'L</td>'
+       + '<td class="text-right">' + auAt2Pnl(total) + '</td><td></td></tr></tfoot></table>';
+    el.innerHTML = h;
+}
+
+function auAt2RenderAlerts() {
+    var el = document.getElementById('au-at2-alerts-content');
+    if (!el) return;
+    var open = _auAt2.alerts.filter(function (a) { return !a.resolved_at; });
+    var resolved = _auAt2.alerts.filter(function (a) { return a.resolved_at; });
+
+    var h = '<div class="au-card" style="padding:10px 12px;margin-bottom:10px">'
+          + '<strong>The email is a notification. This table is the truth.</strong>'
+          + '<div class="au-sub" style="margin:2px 0 0">A condition emails once when it fires and once when it '
+          + 'escalates — recurrences are silent by design. An alert you stopped receiving mail about is still '
+          + 'open here until it is resolved.</div></div>';
+
+    if (!open.length) {
+        h += '<div class="au-soon" style="border-color:#a7f3d0;color:#065f46">✅ No open alerts.</div>';
+    } else {
+        h += '<table class="au-at2-table"><thead><tr><th>Severity</th><th>Condition</th><th>Title</th>'
+           + '<th class="text-right">Seen</th><th>First</th><th>Last</th><th>Escalated</th></tr></thead><tbody>';
+        open.forEach(function (a) {
+            h += '<tr' + (a.severity === 'critical' ? ' style="background:#fef2f2"' : '') + '>'
+               + '<td>' + auAt2Severity(a.severity) + '</td>'
+               + '<td><code style="font-size:11px">' + auAt2Esc(a.condition_key) + '</code></td>'
+               + '<td>' + auAt2Esc(a.title) + '</td>'
+               + '<td class="text-right">' + auAt2Esc(a.occurrences) + '×</td>'
+               + '<td>' + auAt2Ts(a.first_seen) + '</td>'
+               + '<td>' + auAt2Ts(a.last_seen) + '</td>'
+               + '<td>' + (a.escalated_at ? auAt2Ts(a.escalated_at) : '—') + '</td>'
+               + '</tr>';
+        });
+        h += '</tbody></table>';
+    }
+
+    if (resolved.length) {
+        h += '<details style="margin-top:12px"><summary>' + resolved.length + ' resolved alert(s)</summary>'
+           + '<table class="au-at2-table" style="margin-top:8px"><thead><tr><th>Severity</th><th>Title</th>'
+           + '<th>Resolved</th></tr></thead><tbody>';
+        resolved.forEach(function (a) {
+            h += '<tr><td>' + auAt2Severity(a.severity) + '</td><td>' + auAt2Esc(a.title) + '</td>'
+               + '<td>' + auAt2Ts(a.resolved_at) + '</td></tr>';
+        });
+        h += '</tbody></table></details>';
+    }
+    el.innerHTML = h;
+}
+
+function auAt2RenderEvents() {
+    var el = document.getElementById('au-at2-events-content');
+    if (!el) return;
+    var h = '<div class="au-card" style="padding:10px 12px"><strong>Signals</strong> '
+          + '<span class="au-sub">— one row per decision. The dedupe key makes a second decision '
+          + 'from one input impossible.</span></div>';
+    if (!_auAt2.signals.length) {
+        h += '<div class="au-soon">No signals recorded.</div>';
+    } else {
+        h += '<table class="au-at2-table"><thead><tr><th>Intent</th><th>Fired</th><th>Bar</th>'
+           + '<th>Dedupe key</th><th>Metrics</th></tr></thead><tbody>';
+        _auAt2.signals.forEach(function (s) {
+            h += '<tr><td><span class="au-badge idle">' + auAt2Esc(s.intent) + '</span></td>'
+               + '<td>' + auAt2Ts(s.fired_at) + '</td><td>' + auAt2Ts(s.bar_ts) + '</td>'
+               + '<td><code style="font-size:11px">' + auAt2Esc(s.dedupe_key) + '</code></td>'
+               + '<td style="font-size:11px;color:#6b7280">' + auAt2Esc(JSON.stringify(s.metrics)) + '</td></tr>';
+        });
+        h += '</tbody></table>';
+    }
+
+    h += '<div class="au-card" style="padding:10px 12px;margin-top:14px"><strong>Trade events</strong> '
+       + '<span class="au-sub">— append-only. The database refuses UPDATE and DELETE here.</span></div>';
+    if (!_auAt2.events.length) {
+        h += '<div class="au-soon">No trade events.</div>';
+    } else {
+        h += '<table class="au-at2-table"><thead><tr><th>Seq</th><th>Kind</th><th>At</th>'
+           + '<th class="text-right">Price</th><th class="text-right">Lots</th><th>Reason</th></tr></thead><tbody>';
+        _auAt2.events.forEach(function (ev) {
+            h += '<tr><td>' + auAt2Esc(ev.seq) + '</td>'
+               + '<td><span class="au-badge idle">' + auAt2Esc(ev.kind) + '</span></td>'
+               + '<td>' + auAt2Ts(ev.at) + '</td>'
+               + '<td class="text-right">' + auAt2Num(ev.price) + '</td>'
+               + '<td class="text-right">' + (ev.qty_lots === null ? '—' : auAt2Esc(ev.qty_lots)) + '</td>'
+               + '<td style="font-size:11px">' + auAt2Esc(ev.reason || '') + '</td></tr>';
+        });
+        h += '</tbody></table>';
+    }
+    el.innerHTML = h;
+}
+
+function auAt2RenderControls() {
+    var el = document.getElementById('au-at2-controls-content');
+    if (!el) return;
+    var h = '<div class="au-card"><h3>Strategies</h3>'
+          + '<div class="au-sub">Configuration lives in <code>at2_strategy</code>. '
+          + 'A family whose <code>engine</code> is not MS007 is REFUSED by the runner, never run with this model.</div>';
+    if (!_auAt2.strategies.length) {
+        h += '<div class="au-soon">No AT2 strategies configured.</div>';
+    } else {
+        h += '<table class="au-at2-table"><thead><tr><th>Code</th><th>Name</th><th>Version</th>'
+           + '<th>Enabled</th><th>Stop required</th><th>Last run</th><th>Marker</th></tr></thead><tbody>';
+        _auAt2.strategies.forEach(function (s) {
+            h += '<tr><td><code>' + auAt2Esc(s.code) + '</code></td><td>' + auAt2Esc(s.display_name) + '</td>'
+               + '<td>' + auAt2Esc(s.version) + '</td>'
+               + '<td>' + (s.enabled ? '<span class="au-badge success">enabled</span>'
+                                     : '<span class="au-badge idle">disabled</span>') + '</td>'
+               + '<td>' + (s.requires_resting_stop ? 'yes' : '<span class="au-badge warning">no</span>') + '</td>'
+               + '<td>' + auAt2Ts(s.last_run_at) + ' ' + (s.last_run_status
+                      ? '<span class="au-badge ' + (s.last_run_status === 'ok' ? 'success' : 'error') + '">'
+                        + auAt2Esc(s.last_run_status) + '</span>' : '') + '</td>'
+               + '<td style="font-size:11px">' + (s.progress_marker ? auAt2Ts(s.progress_marker) : '—') + '</td></tr>';
+        });
+        h += '</tbody></table>';
+    }
+    h += '</div>';
+
+    h += '<div class="au-card"><h3>Books</h3>'
+       + '<div class="au-sub">A book is one (strategy, mode, trader). <code>exposure_factor</code> changes SIZE, '
+       + 'not routing; <code>lot_cap</code> is a hard per-book ceiling and its surplus is NOT redistributed.</div>';
+    if (!_auAt2.books.length) {
+        h += '<div class="au-soon">No books configured.</div>';
+    } else {
+        h += '<table class="au-at2-table"><thead><tr><th>Book</th><th>Mode</th><th>Factor</th>'
+           + '<th>Lot cap</th><th>Tags</th><th>Enabled</th></tr></thead><tbody>';
+        _auAt2.books.forEach(function (b) {
+            h += '<tr><td>' + auAt2Esc(b.display_name) + '</td>'
+               + '<td>' + (b.mode === 'live' ? '<span class="au-badge error">LIVE</span>'
+                                             : '<span class="au-badge idle">paper</span>') + '</td>'
+               + '<td>' + auAt2Esc(b.exposure_factor) + '</td><td>' + auAt2Esc(b.lot_cap) + '</td>'
+               + '<td style="font-size:11px">' + auAt2Esc((b.transaction_tags || []).join(', ')) + '</td>'
+               + '<td>' + (b.enabled ? '<span class="au-badge success">enabled</span>'
+                                     : '<span class="au-badge idle">disabled</span>') + '</td></tr>';
+        });
+        h += '</tbody></table>';
+    }
+    h += '</div>';
+    el.innerHTML = h;
+}
+
+// ── Manual close (EX-09) ────────────────────────────────────────────────────
+//
+// ☠️ THIS IS NOT A SECOND WAY TO CLOSE A POSITION. It calls the at2-ms007 EF's
+// `manual_close` action, which runs cancel → exit → re-place through the SAME
+// write functions an engine exit uses. The browser never touches the order
+// queue and never calls the at2_* RPCs directly — a second implementation is
+// how two paths drift apart, and the manual one is used under pressure.
+//
+// Owner decision 04-Aug-2026: a REASON ONLY. No typed lot-count confirmation
+// and no password gate, for live or paper. Do not add one back.
+// The reason is mandatory — at2_trade_event_manual_has_reason refuses a MANUAL
+// event without it, so the UI asks rather than letting the database refuse.
+
+var _auAt2CloseTradeId = null;
+
+function autoAt2OpenCloseModal(tradeId) {
+    var t = _auAt2.trades.filter(function (x) { return x.id === tradeId; })[0];
+    if (!t) { wmsShowError && wmsShowError('Trade not found — refresh the page.'); return; }
+    _auAt2CloseTradeId = tradeId;
+
+    var existing = document.getElementById('auAt2CloseOverlay');
+    if (existing) existing.remove();
+
+    var isLive = t.mode === 'live';
+    var ov = document.createElement('div');
+    ov.id = 'auAt2CloseOverlay';
+    ov.className = 'wms-modal-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.40);z-index:1100;'
+                     + 'display:flex;align-items:center;justify-content:center';
+    ov.innerHTML =
+        '<div class="wms-modal-dialog" style="background:#fff;border-radius:10px;max-width:560px;width:92%;'
+      + 'max-height:85vh;display:flex;flex-direction:column;box-shadow:0 8px 30px rgba(0,0,0,0.15)">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;'
+      + 'border-bottom:1px solid #e2e8f0">'
+      + '<h3 style="margin:0;font-size:14px">Close position by hand</h3>'
+      + '<button class="btn-close-modal" onclick="autoAt2CloseModal()" '
+      + 'style="width:28px;height:28px;background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer">✕</button>'
+      + '</div>'
+      + '<div style="padding:16px;overflow-y:auto">'
+      + (isLive
+          ? '<div class="au-error-list" style="margin:0 0 12px"><strong>⚠️ This is a LIVE position.</strong> '
+          + 'Closing it places real orders at the broker: the resting stop is cancelled, the exit is sent, and '
+          + 'the stop is re-placed for whatever remains.</div>'
+          : '<div class="au-warn-list" style="margin:0 0 12px"><strong>PAPER position.</strong> '
+          + 'No broker order is placed; the close is simulated through the same write functions.</div>')
+      + '<table style="width:100%;font-size:12px;margin-bottom:12px" class="au-at2-kv">'
+      + '<tr><td>Book</td><td><strong>' + auAt2BookName(t.book_id) + '</strong></td></tr>'
+      + '<tr><td>Side / lots</td><td><strong>' + auAt2Esc(t.side) + ' ' + auAt2Esc(t.qty_lots) + '</strong></td></tr>'
+      + '<tr><td>Entry</td><td>' + auAt2Num(t.entry_price) + '</td></tr>'
+      + '<tr><td>Resting stop</td><td>' + (t.current_stop ? auAt2Num(t.current_stop)
+            : '<span class="au-badge error">none — position is UNPROTECTED</span>') + '</td></tr>'
+      + '<tr><td>State</td><td>' + auAt2StatusBadge(t.status) + '</td></tr>'
+      + '</table>'
+      + '<label style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px">'
+      + 'Reason <span style="color:#dc2626">*</span></label>'
+      + '<textarea id="auAt2CloseReason" rows="3" placeholder="Why are you closing this by hand?" '
+      + 'style="width:100%;padding:8px;border:1.5px solid #cbd5e0;border-radius:6px;font-size:13px;'
+      + 'font-family:inherit;box-sizing:border-box"></textarea>'
+      + '<div style="font-size:11px;color:#6b7280;margin-top:4px">Recorded on the trade event. The database '
+      + 'refuses a manual event without one — this is the audit trail for a hand-made change.</div>'
+      + '<div id="auAt2CloseResult" style="margin-top:12px"></div>'
+      + '</div>'
+      + '<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid #e2e8f0">'
+      + '<button class="au-btn au-btn-secondary" onclick="autoAt2CloseModal()">Cancel</button>'
+      + '<button class="au-btn au-btn-danger" id="auAt2CloseGo" onclick="autoAt2ConfirmClose()">Close position</button>'
+      + '</div></div>';
+
+    // D.1.2 — every modal closes four ways.
+    ov.addEventListener('click', function (e) { if (e.target === ov) autoAt2CloseModal(); });
+    document.addEventListener('keydown', auAt2EscClose);
+    document.body.appendChild(ov);
+    var ta = document.getElementById('auAt2CloseReason');
+    if (ta) ta.focus();
+}
+
+function auAt2EscClose(e) { if (e.key === 'Escape') autoAt2CloseModal(); }
+
+function autoAt2CloseModal() {
+    var ov = document.getElementById('auAt2CloseOverlay');
+    if (ov) ov.remove();
+    document.removeEventListener('keydown', auAt2EscClose);
+    _auAt2CloseTradeId = null;
+}
+
+async function autoAt2ConfirmClose() {
+    var reason = (document.getElementById('auAt2CloseReason') || {}).value || '';
+    var out = document.getElementById('auAt2CloseResult');
+    var btn = document.getElementById('auAt2CloseGo');
+    if (!reason.trim()) {
+        if (out) out.innerHTML = '<div class="au-error-list">A reason is required.</div>';
+        return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Closing…'; }
+    if (out) out.innerHTML = '<div class="au-meta">Calling at2-ms007 → manual_close…</div>';
+
+    try {
+        var r = await fetch(SUPABASE_URL + '/functions/v1/at2-ms007', {
+            method: 'POST',
+            headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ action: 'manual_close', trade_id: _auAt2CloseTradeId, reason: reason.trim() })
+        });
+        var j = await r.json().catch(function () { return { error: 'response was not JSON' }; });
+
+        if (r.ok && j.ok) {
+            if (out) out.innerHTML = '<div class="au-warn-list" style="background:#ecfdf5;border-color:#a7f3d0;color:#065f46">'
+                + '<strong>✅ Closed.</strong><ul>' + (j.steps || []).map(function (s) {
+                    return '<li>' + auAt2Esc(s) + '</li>'; }).join('') + '</ul></div>';
+            setTimeout(function () { autoAt2CloseModal(); autoAt2Refresh(); }, 1400);
+        } else {
+            // A refusal is INFORMATION, not a failure to hide. The engine and
+            // the database both refuse for stated reasons — show them verbatim.
+            if (out) out.innerHTML = '<div class="au-error-list"><strong>Refused — nothing was changed.</strong>'
+                + '<div style="margin-top:6px">' + auAt2Esc(j.refusal || j.error || ('HTTP ' + r.status)) + '</div>'
+                + ((j.steps && j.steps.length) ? '<ul>' + j.steps.map(function (s) {
+                    return '<li>' + auAt2Esc(s) + '</li>'; }).join('') + '</ul>' : '')
+                + '</div>';
+        }
+    } catch (e) {
+        if (out) out.innerHTML = '<div class="au-error-list"><strong>Call failed.</strong><div>'
+            + auAt2Esc(e.message) + '</div><div style="margin-top:6px">The position state is UNKNOWN from here — '
+            + 'refresh and check before retrying.</div></div>';
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Close position'; }
+}
