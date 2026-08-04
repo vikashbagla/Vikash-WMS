@@ -6123,8 +6123,18 @@ function auAt2BookName(id) {
 }
 
 function auAt2RenderOpen() {
-    var HELD = ['pending', 'open_unprotected', 'open_protected', 'closing'];
-    var rows = _auAt2.trades.filter(function (t) { return HELD.indexOf(t.status) >= 0; });
+    // ☠️ DO NOT filter to the four KNOWN held states. A trade whose status this
+    // page does not recognise is not held, not closed, and would appear in
+    // NEITHER table — it would vanish silently, which is strictly worse than
+    // rendering blank because nothing would indicate the row exists at all.
+    // Caught 04-Aug-2026 by injecting status='teleported': six loud-render
+    // assertions passed and this one failed, because the row was filtered out
+    // before any renderer saw it.
+    //
+    // So: Open shows everything NOT terminal. Unknown statuses land here and
+    // shout. Terminal is the short, closed list — the one we can be sure of.
+    var TERMINAL = ['closed', 'voided'];
+    var rows = _auAt2.trades.filter(function (t) { return TERMINAL.indexOf(t.status) < 0; });
     var el = document.getElementById('au-at2-open-content');
     if (!el) return;
 
@@ -6135,8 +6145,15 @@ function auAt2RenderOpen() {
         return;
     }
 
+    var unknown = rows.filter(function (t) { return !AU_AT2_STATUS[t.status]; });
     var bad = rows.filter(auAt2StopInverted);
     var h = '';
+    if (unknown.length) {
+        h += '<div class="au-error-list" style="margin:0 0 12px"><strong>\u26D4 '
+           + unknown.length + ' trade(s) carry a status this page does not recognise.</strong>'
+           + '<div style="margin-top:4px">They are listed below rather than hidden. Either the UI has not '
+           + 'been taught a new state, or the data is wrong — both need a human.</div></div>';
+    }
     if (bad.length) {
         h += '<div class="au-error-list" style="margin:0 0 12px"><strong>\u26D4 '
            + bad.length + ' position(s) carry an INVERTED stop.</strong>'
