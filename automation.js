@@ -6162,9 +6162,9 @@ function auAt2RenderOpen() {
            + 'next session opens.</div></div>';
     }
     h += '<table class="au-at2-table"><colgroup>'
-          + '<col style="width:10%"><col style="width:14%"><col style="width:7%"><col style="width:6%">'
-          + '<col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:12%">'
-          + '<col style="width:12%"><col style="width:12%"></colgroup><thead><tr>'
+          + '<col style="width:15%"><col style="width:13%"><col style="width:6%"><col style="width:5%">'
+          + '<col style="width:9%"><col style="width:9%"><col style="width:7%"><col style="width:11%">'
+          + '<col style="width:17%"><col style="width:8%"></colgroup><thead><tr>'
           + '<th>Status</th><th>Book</th><th>Side</th><th>Lots</th><th>Entry</th><th>Stop</th>'
           + '<th>Risk/lot</th><th>Entered</th><th>Flags</th><th class="text-right">Action</th>'
           + '</tr></thead><tbody>';
@@ -6196,7 +6196,7 @@ function auAt2RenderOpen() {
                         : '<span class="au-badge error">none</span>') + '</td>'
            + '<td>' + (risk ? formatAmount(risk) : '—') + '</td>'
            + '<td>' + auAt2Ts(t.entry_at) + '</td>'
-           + '<td>' + (flags.join(' ') || '—') + '</td>'
+           + '<td class="au-at2-flags">' + (flags.join(' ') || '—') + '</td>'
            + '<td class="text-right"><button class="au-btn au-btn-danger" style="font-size:11px;padding:3px 10px"'
            + ' onclick="autoAt2OpenCloseModal(\'' + t.id + '\')">Close</button></td>'
            + '</tr>';

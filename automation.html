@@ -259,6 +259,16 @@ details summary {
     white-space: nowrap;
 }
 .au-at2-table tbody tr:hover { background: #fafbfc; }
+/* ⚠️ Status and Flags carry the LOUD-unknown badges. Everywhere else an ellipsis
+   is fine, but a truncated warning ("UNKNOWN STATE: T") is only half a warning —
+   these two cells wrap instead. Found 04-Aug-2026 when the injected bad states
+   rendered correctly but unreadably. */
+.au-at2-table td:first-child,
+.au-at2-table td.au-at2-flags {
+    white-space: normal;
+    overflow: visible;
+    line-height: 1.7;
+}
 .au-at2-table .text-right { text-align: right; }
 .au-at2-table tfoot td { border-bottom: none; }
 .au-at2-table code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; }
