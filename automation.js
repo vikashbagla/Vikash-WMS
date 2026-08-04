@@ -6097,6 +6097,26 @@ function auAt2RenderMetrics() {
         : '');
 }
 
+/**
+ * ☠️ AN INVERTED STOP — a long's stop at or above its entry, or a short's at or
+ * below — would fire the instant it rested. The position LOOKS protected and is
+ * not, which is the exact condition this whole module exists to prevent.
+ *
+ * ⚠️ The engine refuses to PLACE one (at2StopOnConfirmation), but the DATABASE
+ * does not: at2_set_stop has no directional check, so a stop written by any
+ * other route can land inverted and the row will happily read `open_protected`.
+ * That gap is why this page tests it independently rather than trusting the
+ * status column. Found 04-Aug-2026 by seeding a bad level and seeing the page
+ * report a calm green PROTECTED.
+ */
+function auAt2StopInverted(t) {
+    var stop = Number(t.current_stop), entry = Number(t.entry_price);
+    if (!isFinite(stop) || !isFinite(entry) || !stop || !entry) return false;
+    if (t.side === 'LONG')  return stop >= entry;
+    if (t.side === 'SHORT') return stop <= entry;
+    return false;
+}
+
 function auAt2BookName(id) {
     var b = _auAt2.books.filter(function (x) { return x.id === id; })[0];
     return b ? b.display_name : '<span class="au-badge error">⛔ UNKNOWN BOOK</span>';
@@ -6115,7 +6135,16 @@ function auAt2RenderOpen() {
         return;
     }
 
-    var h = '<table class="au-at2-table"><colgroup>'
+    var bad = rows.filter(auAt2StopInverted);
+    var h = '';
+    if (bad.length) {
+        h += '<div class="au-error-list" style="margin:0 0 12px"><strong>\u26D4 '
+           + bad.length + ' position(s) carry an INVERTED stop.</strong>'
+           + '<div style="margin-top:4px">The stop sits on the wrong side of the entry and would fire the '
+           + 'instant it rested. These positions read as protected and are NOT. Fix the level before the '
+           + 'next session opens.</div></div>';
+    }
+    h += '<table class="au-at2-table"><colgroup>'
           + '<col style="width:10%"><col style="width:14%"><col style="width:7%"><col style="width:6%">'
           + '<col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:12%">'
           + '<col style="width:12%"><col style="width:12%"></colgroup><thead><tr>'
@@ -6131,6 +6160,9 @@ function auAt2RenderOpen() {
         if (t.cap_bound) flags.push('<span class="au-badge warning" title="the book\'s lot_cap reduced this allocation">cap-bound</span>');
         if (t.rolled_from_trade_id) flags.push('<span class="au-badge idle" title="opened by a roll">rolled</span>');
         if (t.status === 'open_unprotected') flags.push('<span class="au-badge error">NO STOP</span>');
+        if (auAt2StopInverted(t)) flags.push('<span class="au-badge error" title="A long stop at or above its '
+            + 'entry (or a short at or below) would fire the instant it rested. This position reads as protected '
+            + 'and is not.">\u26D4 INVERTED STOP</span>');
         if (t.mode === 'live') flags.push('<span class="au-badge error">LIVE</span>');
 
         h += '<tr>'
@@ -6140,7 +6172,10 @@ function auAt2RenderOpen() {
                                           : '<span style="color:#dc2626;font-weight:700">SHORT</span>') + '</td>'
            + '<td>' + auAt2Esc(t.qty_lots) + '</td>'
            + '<td>' + auAt2Num(t.entry_price) + '</td>'
-           + '<td>' + (t.current_stop ? auAt2Num(t.current_stop)
+           + '<td>' + (t.current_stop
+                        ? (auAt2StopInverted(t)
+                            ? '<span class="negative" style="font-weight:700">' + auAt2Num(t.current_stop) + ' \u26D4</span>'
+                            : auAt2Num(t.current_stop))
                         : '<span class="au-badge error">none</span>') + '</td>'
            + '<td>' + (risk ? formatAmount(risk) : '—') + '</td>'
            + '<td>' + auAt2Ts(t.entry_at) + '</td>'
