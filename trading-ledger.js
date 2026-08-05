@@ -2283,7 +2283,8 @@ function lgRenderSummary() {
     // that symbol, scoped to the Statements module's current filter selection (same as
     // Portfolio's row-click behaviour but honouring the ledger view). The
     // override is installed on window.trTxnModalFilterOverride and is
-    // cleared automatically by trCloseTxnModal.
+    // CONSUMED (one-shot) by _trSetTxnCtx at open time — it does not survive
+    // past the open it was installed for (2026-08-05 stale-override fix).
     var holdingsBody = document.getElementById('lgSummaryBody');
     if (holdingsBody && !holdingsBody.dataset.lgWired) {
         holdingsBody.dataset.lgWired = '1';
