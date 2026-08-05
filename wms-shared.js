@@ -5685,11 +5685,17 @@ var wmsAttachAmountInput = function(input, opts) {
  *   - onChange: function(from, to)
  *   - fyStartMonth: 1-12 (default: 4)
  *   - transactions: Array — transaction records with transaction_date field
+ *   - persistKey: string — localStorage key. When set, the user's selection
+ *     (period preset, FY choice, or Custom range) is saved on every change and
+ *     restored on init, overriding opts.default. Stored value is validated on
+ *     restore (unknown preset / FY not in list → falls back to opts.default).
+ *     Added 2026-08-05 (owner request — filters were resetting on every load).
  * @returns controller: getRange(), setPreset(), getPreset(), destroy()
  * ──────────────────────────────────────────────────────────────────────────── */
 var wmsDateFilter = function(containerEl, opts) {
     opts = opts || {};
     var defaultPreset = opts.default || 'all';
+    var persistKey = opts.persistKey || null;
     var onChangeCallback = opts.onChange || function() {};
     var fyStartMonth = opts.fyStartMonth || 4;
     var transactions = opts.transactions || [];
@@ -5779,6 +5785,18 @@ var wmsDateFilter = function(containerEl, opts) {
         onChangeCallback(range.from, range.to);
     };
 
+    // ────── Browser persistence (opts.persistKey) ──────
+    var saveState = function() {
+        if (!persistKey) return;
+        try {
+            localStorage.setItem(persistKey, JSON.stringify({
+                preset: currentPreset,
+                customFrom: currentCustomFrom,
+                customTo: currentCustomTo
+            }));
+        } catch (e) { /* storage full/blocked — persistence is best-effort */ }
+    };
+
     // ────── Build UI ──────
     containerEl.className = 'wms-date-filter';
     containerEl.style.position = 'relative';
@@ -5804,6 +5822,7 @@ var wmsDateFilter = function(containerEl, opts) {
         fySelect.value = 'fy_all';
         customBtn.classList.remove('active');
         closePopover();
+        saveState();
         fireChange();
     });
     containerEl.appendChild(periodSelect);
@@ -5826,6 +5845,7 @@ var wmsDateFilter = function(containerEl, opts) {
         }
         customBtn.classList.remove('active');
         closePopover();
+        saveState();
         fireChange();
     });
     containerEl.appendChild(fySelect);
@@ -5902,6 +5922,7 @@ var wmsDateFilter = function(containerEl, opts) {
             // Update button label
             updateCustomLabel();
             closePopover();
+            saveState();
             fireChange();
         });
 
@@ -5943,13 +5964,45 @@ var wmsDateFilter = function(containerEl, opts) {
     });
     containerEl.appendChild(customBtn);
 
+    // ────── Restore persisted selection (overrides opts.default when valid) ──────
+    if (persistKey) {
+        try {
+            var storedState = JSON.parse(localStorage.getItem(persistKey) || 'null');
+            if (storedState && storedState.preset) {
+                if (storedState.preset === 'custom' && storedState.customFrom && storedState.customTo) {
+                    currentCustomFrom = storedState.customFrom;
+                    currentCustomTo = storedState.customTo;
+                    defaultPreset = 'custom';
+                } else if (WMS_DF_PERIOD_PRESETS.indexOf(storedState.preset) >= 0) {
+                    defaultPreset = storedState.preset;
+                } else if (storedState.preset.indexOf('fy_') === 0) {
+                    // Only restore an FY that exists in the current FY list
+                    for (var sfi = 0; sfi < fyList.length; sfi++) {
+                        if (fyList[sfi].value === storedState.preset) { defaultPreset = storedState.preset; break; }
+                    }
+                }
+            }
+        } catch (e) { /* corrupt stored value — ignore, use opts.default */ }
+    }
+
     // ────── Apply default preset ──────
     if (WMS_DF_PERIOD_PRESETS.indexOf(defaultPreset) >= 0) {
         periodSelect.value = defaultPreset;
         currentPreset = defaultPreset;
+    } else if (defaultPreset === 'custom' && currentCustomFrom && currentCustomTo) {
+        currentPreset = 'custom';
+        periodSelect.value = 'all';
+        fySelect.value = 'fy_all';
+        customBtn.classList.add('active');
+        updateCustomLabel();
     } else if (defaultPreset === 'currentFY' && fyList.length > 0) {
         fySelect.value = fyList[0].value;
         currentPreset = fyList[0].value;
+        periodSelect.value = 'all';
+    } else if (defaultPreset.indexOf('fy_') === 0) {
+        // A specific restored FY (validated against fyList above)
+        fySelect.value = defaultPreset;
+        currentPreset = defaultPreset;
         periodSelect.value = 'all';
     } else {
         periodSelect.value = 'all';
@@ -5973,6 +6026,7 @@ var wmsDateFilter = function(containerEl, opts) {
                 customBtn.classList.remove('active');
             }
             closePopover();
+            saveState();
             fireChange();
         },
         getPreset: function() { return currentPreset; },

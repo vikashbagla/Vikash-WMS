@@ -304,6 +304,7 @@ function lgInit() {
         }
         lgDateFilterInstance = wmsDateFilter(dateContainer, {
             default: 'currentFY',
+            persistKey: 'wms_lg_datefilter', // browser-persistent (2026-08-05)
             fyStartMonth: fyStartMonth,
             transactions: trTransactions,
             onChange: function(from, to) {

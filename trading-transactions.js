@@ -277,6 +277,7 @@ function trTxSetupOptionsBar() {
         }
         trTxDateFilterInstance = wmsDateFilter(dateContainer, {
             default: 'last7',
+            persistKey: 'wms_txn_datefilter', // browser-persistent (2026-08-05)
             fyStartMonth: fyStartMonth,
             transactions: trTransactions,
             onChange: function(from, to) {
@@ -305,6 +306,7 @@ function trTxRebuildDateFilter() {
     }
     trTxDateFilterInstance = wmsDateFilter(dateContainer, {
         default: prevPreset,
+        persistKey: 'wms_txn_datefilter', // browser-persistent (2026-08-05)
         fyStartMonth: fyStartMonth,
         transactions: trTransactions,
         onChange: function(from, to) {
