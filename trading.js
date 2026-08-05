@@ -2092,6 +2092,13 @@ function _trSetTxnCtx() {
         },
         filterOverride: window.trTxnModalFilterOverride || null
     };
+    // ONE-SHOT: consume the override immediately after reading it (2026-08-05).
+    // The shared modal's ✕ / overlay-click close via wmsTxnModalClose directly,
+    // NOT trCloseTxnModal — so a Statements-installed override was never
+    // cleared and silently hijacked every later Portfolio modal open (modal
+    // ignored the active view's filters until a full page reload). Clearing
+    // here (the only consumer) fixes every close path at once.
+    window.trTxnModalFilterOverride = null;
     if (!wmsTxnCtx.filterOverride) {
         wmsTxnCtx.filterOverride = {
             investorIds: trSelectedInvestorIds,
