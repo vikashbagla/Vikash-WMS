@@ -6323,53 +6323,352 @@ function auAt2RenderEvents() {
     el.innerHTML = h;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// AT2 CONFIGURATION — structured view + edit
+//
+// ☠️ WHY STRUCTURED FIELDS AND NOT A JSON BOX. Owner, 05-Aug-2026: the point is
+// to SEE what the database holds and to TEST whether a value can be written. A
+// JSON textarea shows the same thing the SQL editor shows and teaches nothing
+// about which keys are legal — the whole question being asked.
+//
+// ☠️ THE DATABASE IS THE VALIDATOR, NOT THIS FORM. at2_strategy.params is checked
+// against the family's params_schema by a trigger (pg_jsonschema). This form does
+// NOT re-implement those rules — a second copy would drift from the first, and
+// the first is the one that actually runs. The form's job is to send the value
+// and show the refusal VERBATIM when the database says no. Proved 05-Aug-2026:
+// hour 99 is refused with "params for strategy X do not satisfy the MS007 family
+// template".
+//
+// ⚠️ INLINE, NOT A MODAL — matching this module's own idiom (KH tags, lot sizes
+// are inline cards). It also avoids D.8.6's shipped bug: the app's 940px table
+// min-width is unscoped and leaks into every modal containing a table.
+//
+// ⚠️ D.8.10 — an UNRECOGNISED params key is rendered LOUDLY, never dropped. A
+// renderer that shows only the keys it knows silently hides a value that IS
+// driving the engine.
+// ════════════════════════════════════════════════════════════════════════════
+
+// The MS007 params contract (Plan §4.3). `path` is the dotted location in the
+// params jsonb; `kind` drives the input; `hint` is what the owner needs to know
+// to set it. Adding an engine key means adding a row here AND updating
+// params_schema — the schema is what enforces it.
+var AU_AT2_PARAM_FIELDS = [
+    { path: 'instrument_key',        label: 'Instrument',        kind: 'text',  hint: 'GOLDM · SILVERM — from the catalogue' },
+    { path: 'timeframe_minutes',     label: 'Timeframe (min)',   kind: 'int',   hint: 'Bar size. Defines where a bar closes' },
+    { path: 'risk_per_trade',        label: 'Risk per trade (₹)',kind: 'num',   hint: 'Rupees at risk per signal at total factor 1.0' },
+    { path: 'stop.mode',             label: 'Stop mode',         kind: 'enum',  opts: ['atr'], hint: 'How the hard stop is computed' },
+    { path: 'stop.mult',             label: 'Stop × ATR',        kind: 'num',   hint: 'Stop distance = mult × ATR' },
+    { path: 'trail.mode',            label: 'Trail mode',        kind: 'enum',  opts: ['atr', 'none'], hint: 'Whether a trail runs' },
+    { path: 'trail.trigger',         label: 'Trail trigger × ATR',kind: 'num',  hint: 'Arms when unrealised gain ≥ trigger × ATR' },
+    { path: 'trail.step',            label: 'Trail step × ATR',  kind: 'num',   hint: 'Level = close ∓ step × ATR' },
+    { path: 'session.entry_cutoff',  label: 'Entry cutoff',      kind: 'hhmm',  hint: 'HH:MM IST. No new entry after this, for the rest of the day' },
+    { path: 'session.no_entry_start',label: 'Dead period from',  kind: 'hour',  hint: 'IST hour, inclusive. Blank = no dead period' },
+    { path: 'session.no_entry_end',  label: 'Dead period until', kind: 'hour',  hint: 'IST hour, exclusive. It REOPENS here — unlike the cutoff' },
+    { path: 'session.square_off_time',label:'Square-off',        kind: 'hhmm',  hint: 'HH:MM IST. Blank = the position carries overnight' },
+    { path: 'roll.days_before',      label: 'Roll days before',  kind: 'int',   hint: 'Roll when the held contract is within this many days of expiry' },
+    { path: 'roll.time',             label: 'Roll at',           kind: 'hhmm',  hint: 'HH:MM IST — when in the day the roll executes' },
+    { path: 'min_hold_bars',         label: 'Min hold (bars)',   kind: 'int',   hint: 'Exit rules do not fire before this many bars since entry' }
+];
+
+function auAt2Dig(obj, path) {
+    return path.split('.').reduce(function (o, k) {
+        return (o === null || o === undefined) ? undefined : o[k];
+    }, obj);
+}
+function auAt2Bury(obj, path, val) {
+    var ks = path.split('.'), cur = obj;
+    for (var i = 0; i < ks.length - 1; i++) {
+        if (typeof cur[ks[i]] !== 'object' || cur[ks[i]] === null) cur[ks[i]] = {};
+        cur = cur[ks[i]];
+    }
+    if (val === undefined) delete cur[ks[ks.length - 1]];
+    else cur[ks[ks.length - 1]] = val;
+}
+
+/** Every params key NOT in the contract above. D.8.10 — never silently dropped. */
+function auAt2UnknownParamPaths(params) {
+    var known = {}, out = [];
+    AU_AT2_PARAM_FIELDS.forEach(function (f) { known[f.path] = 1; });
+    (function walk(o, prefix) {
+        Object.keys(o || {}).forEach(function (k) {
+            var path = prefix ? prefix + '.' + k : k;
+            var v = o[k];
+            if (v && typeof v === 'object' && !Array.isArray(v)) { walk(v, path); return; }
+            if (!known[path]) out.push({ path: path, value: v });
+        });
+    })(params || {}, '');
+    return out;
+}
+
+function auAt2FieldInput(f, params, sid) {
+    var v = auAt2Dig(params, f.path);
+    var id = 'au-at2-p-' + sid + '-' + f.path.replace(/\./g, '_');
+    var cls = 'wms-input au-at2-pf' + (f.kind === 'num' || f.kind === 'int' || f.kind === 'hour' ? ' wms-input-number' : '');
+    if (f.kind === 'enum') {
+        // NOT a <select> (D.8.7). A two-value enum is a pill toggle — the
+        // canonical .wms-pill — rather than a search-suggest widget it does not need.
+        return '<div class="au-at2-pills" id="' + id + '" data-path="' + f.path + '" data-kind="enum">'
+             + f.opts.map(function (o) {
+                 return '<span class="wms-pill au-at2-pill' + (String(v) === o ? ' on' : '')
+                      + '" data-val="' + o + '">' + auAt2Esc(o) + '</span>';
+               }).join('') + '</div>';
+    }
+    var type = (f.kind === 'hhmm' || f.kind === 'text') ? 'text' : 'number';
+    var step = f.kind === 'num' ? 'any' : '1';
+    return '<input id="' + id + '" class="' + cls + '" data-path="' + f.path + '" data-kind="' + f.kind + '"'
+         + ' type="' + type + '"' + (type === 'number' ? ' step="' + step + '"' : '')
+         + ' value="' + (v === undefined || v === null ? '' : auAt2Esc(String(v))) + '"'
+         + (f.kind === 'hhmm' ? ' placeholder="HH:MM"' : '') + ' disabled>';
+}
+
 function auAt2RenderControls() {
     var el = document.getElementById('au-at2-controls-content');
     if (!el) return;
+
     var h = '<div class="au-card"><h3>Strategies</h3>'
-          + '<div class="au-sub">Configuration lives in <code>at2_strategy</code>. '
+          + '<div class="au-sub">Every value below is read from <code>at2_strategy</code>. '
+          + 'Saving writes straight back — and the <b>database</b> validates it against the family template, '
+          + 'so an illegal value is refused with the reason shown here rather than silently accepted. '
           + 'A family whose <code>engine</code> is not MS007 is REFUSED by the runner, never run with this model.</div>';
+
     if (!_auAt2.strategies.length) {
         h += '<div class="au-soon">No AT2 strategies configured.</div>';
     } else {
-        h += '<table class="au-at2-table"><thead><tr><th>Code</th><th>Name</th><th>Version</th>'
-           + '<th>Enabled</th><th>Stop required</th><th>Last run</th><th>Marker</th></tr></thead><tbody>';
         _auAt2.strategies.forEach(function (s) {
-            h += '<tr><td><code>' + auAt2Esc(s.code) + '</code></td><td>' + auAt2Esc(s.display_name) + '</td>'
-               + '<td>' + auAt2Esc(s.version) + '</td>'
-               + '<td>' + (s.enabled ? '<span class="au-badge success">enabled</span>'
-                                     : '<span class="au-badge idle">disabled</span>') + '</td>'
-               + '<td>' + (s.requires_resting_stop ? 'yes' : '<span class="au-badge warning">no</span>') + '</td>'
-               + '<td>' + auAt2Ts(s.last_run_at) + ' ' + (s.last_run_status
-                      ? '<span class="au-badge ' + (s.last_run_status === 'ok' ? 'success' : 'error') + '">'
-                        + auAt2Esc(s.last_run_status) + '</span>' : '') + '</td>'
-               + '<td style="font-size:11px">' + (s.progress_marker ? auAt2Ts(s.progress_marker) : '—') + '</td></tr>';
+            var params = s.params || {};
+            h += '<div class="au-at2-strat" data-sid="' + s.id + '">'
+               + '<div class="au-at2-strat-head">'
+               +   '<div><code>' + auAt2Esc(s.code) + '</code> — ' + auAt2Esc(s.display_name)
+               +     ' <span class="au-badge idle">' + auAt2Esc(s.version) + '</span>'
+               +     (s.enabled ? ' <span class="au-badge success">enabled</span>'
+                                : ' <span class="au-badge idle">disabled</span>')
+               +     (s.requires_resting_stop ? '' : ' <span class="au-badge warning">no resting stop</span>')
+               +   '</div>'
+               +   '<div class="au-at2-strat-actions">'
+               +     '<button class="au-btn au-btn-secondary au-at2-edit" data-sid="' + s.id + '">✏️ Edit</button>'
+               +     '<button class="au-btn au-btn-primary au-at2-save" data-sid="' + s.id + '" style="display:none">Save</button>'
+               +     '<button class="au-btn au-btn-secondary au-at2-cancel" data-sid="' + s.id + '" style="display:none">Cancel</button>'
+               +   '</div>'
+               + '</div>'
+               + '<div class="au-at2-grid">';
+
+            AU_AT2_PARAM_FIELDS.forEach(function (f) {
+                h += '<div class="au-at2-field">'
+                   +   '<label>' + auAt2Esc(f.label) + '</label>'
+                   +   auAt2FieldInput(f, params, s.id)
+                   +   '<div class="au-at2-hint">' + auAt2Esc(f.hint) + '</div>'
+                   + '</div>';
+            });
+            h += '</div>';
+
+            // ☠️ D.8.10 — anything the contract does not know about is shown, not
+            // hidden. A key here is either a schema change nobody told the UI
+            // about, or a value quietly driving the engine.
+            var unknown = auAt2UnknownParamPaths(params);
+            if (unknown.length) {
+                h += '<div class="au-at2-unknown">⛔ NOT RECOGNISED BY THIS SCREEN — present in the database and left untouched on save: '
+                   + unknown.map(function (u) {
+                       return '<code>' + auAt2Esc(u.path) + '</code> = ' + auAt2Esc(JSON.stringify(u.value));
+                     }).join(' · ')
+                   + '</div>';
+            }
+            h += '<div class="au-at2-msg" id="au-at2-msg-' + s.id + '"></div></div>';
         });
-        h += '</tbody></table>';
     }
     h += '</div>';
 
+    // ── Books ───────────────────────────────────────────────────────────────
     h += '<div class="au-card"><h3>Books</h3>'
        + '<div class="au-sub">A book is one (strategy, mode, trader). <code>exposure_factor</code> changes SIZE, '
-       + 'not routing; <code>lot_cap</code> is a hard per-book ceiling and its surplus is NOT redistributed.</div>';
+       + 'not routing; <code>lot_cap</code> is a hard per-book ceiling and its surplus is NOT redistributed. '
+       + '<b>The identity — strategy, mode, trader — is deliberately not editable:</b> changing it would silently '
+       + 're-point a book\'s history. Create a new book instead.</div>';
     if (!_auAt2.books.length) {
         h += '<div class="au-soon">No books configured.</div>';
     } else {
-        h += '<table class="au-at2-table"><thead><tr><th>Book</th><th>Mode</th><th>Factor</th>'
-           + '<th>Lot cap</th><th>Tags</th><th>Enabled</th></tr></thead><tbody>';
         _auAt2.books.forEach(function (b) {
-            h += '<tr><td>' + auAt2Esc(b.display_name) + '</td>'
-               + '<td>' + (b.mode === 'live' ? '<span class="au-badge error">LIVE</span>'
-                                             : '<span class="au-badge idle">paper</span>') + '</td>'
-               + '<td>' + auAt2Esc(b.exposure_factor) + '</td><td>' + auAt2Esc(b.lot_cap) + '</td>'
-               + '<td style="font-size:11px">' + auAt2Esc((b.transaction_tags || []).join(', ')) + '</td>'
-               + '<td>' + (b.enabled ? '<span class="au-badge success">enabled</span>'
-                                     : '<span class="au-badge idle">disabled</span>') + '</td></tr>';
+            h += '<div class="au-at2-strat" data-bid="' + b.id + '">'
+               + '<div class="au-at2-strat-head">'
+               +   '<div>' + auAt2Esc(b.display_name)
+               +     (b.mode === 'live' ? ' <span class="au-badge error">LIVE</span>'
+                                        : ' <span class="au-badge idle">paper</span>')
+               +     (b.enabled ? ' <span class="au-badge success">enabled</span>'
+                                : ' <span class="au-badge idle">disabled</span>')
+               +   '</div>'
+               +   '<div class="au-at2-strat-actions">'
+               +     '<button class="au-btn au-btn-secondary au-at2-bedit" data-bid="' + b.id + '">✏️ Edit</button>'
+               +     '<button class="au-btn au-btn-primary au-at2-bsave" data-bid="' + b.id + '" style="display:none">Save</button>'
+               +     '<button class="au-btn au-btn-secondary au-at2-bcancel" data-bid="' + b.id + '" style="display:none">Cancel</button>'
+               +   '</div>'
+               + '</div>'
+               + '<div class="au-at2-grid">'
+               +   '<div class="au-at2-field"><label>Exposure factor</label>'
+               +     '<input class="wms-input wms-input-number au-at2-bf" data-bid="' + b.id + '" data-col="exposure_factor" type="number" step="any" value="' + auAt2Esc(b.exposure_factor) + '" disabled>'
+               +     '<div class="au-at2-hint">The scaling dial, read by sizing every run</div></div>'
+               +   '<div class="au-at2-field"><label>Lot cap</label>'
+               +     '<input class="wms-input wms-input-number au-at2-bf" data-bid="' + b.id + '" data-col="lot_cap" type="number" step="1" value="' + auAt2Esc(b.lot_cap) + '" disabled>'
+               +     '<div class="au-at2-hint">Hard ceiling per signal. Surplus is NOT redistributed</div></div>'
+               +   '<div class="au-at2-field"><label>Enabled</label>'
+               +     '<div class="au-at2-pills au-at2-bf" id="au-at2-benabled-' + b.id + '" data-bid="' + b.id + '" data-col="enabled">'
+               +       '<span class="wms-pill au-at2-pill' + (b.enabled ? ' on' : '') + '" data-val="true">enabled</span>'
+               +       '<span class="wms-pill au-at2-pill' + (b.enabled ? '' : ' on') + '" data-val="false">disabled</span>'
+               +     '</div>'
+               +     '<div class="au-at2-hint">A disabled book is skipped silently — the switch working</div></div>'
+               +   '<div class="au-at2-field"><label>Tags</label>'
+               +     '<input class="wms-input au-at2-bf" data-bid="' + b.id + '" data-col="transaction_tags" type="text" value="' + auAt2Esc((b.transaction_tags || []).join(', ')) + '" disabled>'
+               +     '<div class="au-at2-hint">Comma-separated. Stamped on this book\'s transaction rows</div></div>'
+               + '</div>'
+               + '<div class="au-at2-msg" id="au-at2-bmsg-' + b.id + '"></div></div>';
         });
-        h += '</tbody></table>';
     }
     h += '</div>';
     el.innerHTML = h;
+    auAt2WireControls();
+}
+
+/**
+ * ⚠️ addEventListener, never inline onclick — this markup arrives via innerHTML,
+ * where inline handlers are unreliable (CONTEXT.md §367). Re-wired on every
+ * render because automation.js re-executes on module switches (D.13.14).
+ */
+function auAt2WireControls() {
+    var root = document.getElementById('au-at2-controls-content');
+    if (!root) return;
+
+    // Pill toggles — one value per group.
+    root.querySelectorAll('.au-at2-pills').forEach(function (g) {
+        g.querySelectorAll('.au-at2-pill').forEach(function (p) {
+            p.addEventListener('click', function () {
+                if (g.dataset.locked !== 'no') return;              // read-only unless editing
+                g.querySelectorAll('.au-at2-pill').forEach(function (q) { q.classList.remove('on'); });
+                p.classList.add('on');
+            });
+        });
+    });
+
+    function setMode(scope, editing) {
+        scope.querySelectorAll('input').forEach(function (i) { i.disabled = !editing; });
+        scope.querySelectorAll('.au-at2-pills').forEach(function (g) { g.dataset.locked = editing ? 'no' : 'yes'; });
+        scope.querySelectorAll('.au-at2-edit,.au-at2-bedit').forEach(function (b) { b.style.display = editing ? 'none' : ''; });
+        scope.querySelectorAll('.au-at2-save,.au-at2-cancel,.au-at2-bsave,.au-at2-bcancel')
+             .forEach(function (b) { b.style.display = editing ? '' : 'none'; });
+    }
+    root.querySelectorAll('.au-at2-strat').forEach(function (card) { setMode(card, false); });
+
+    root.querySelectorAll('.au-at2-edit,.au-at2-bedit').forEach(function (btn) {
+        btn.addEventListener('click', function () { setMode(btn.closest('.au-at2-strat'), true); });
+    });
+    root.querySelectorAll('.au-at2-cancel,.au-at2-bcancel').forEach(function (btn) {
+        // Cancel re-renders from the cache — never from the edited DOM, so a
+        // half-typed value cannot survive as if it had been saved.
+        btn.addEventListener('click', function () { auAt2RenderControls(); });
+    });
+    root.querySelectorAll('.au-at2-save').forEach(function (btn) {
+        btn.addEventListener('click', function () { auAt2SaveStrategy(btn.dataset.sid, btn); });
+    });
+    root.querySelectorAll('.au-at2-bsave').forEach(function (btn) {
+        btn.addEventListener('click', function () { auAt2SaveBook(btn.dataset.bid, btn); });
+    });
+}
+
+/** Read one field back out of the DOM, typed. Blank = the key is REMOVED. */
+function auAt2ReadField(card, f) {
+    if (f.kind === 'enum') {
+        var on = card.querySelector('[data-path="' + f.path + '"] .au-at2-pill.on');
+        return on ? on.dataset.val : undefined;
+    }
+    var i = card.querySelector('input[data-path="' + f.path + '"]');
+    if (!i) return undefined;
+    var raw = (i.value || '').trim();
+    if (raw === '') return undefined;                      // absent, not zero
+    if (f.kind === 'text' || f.kind === 'hhmm') return raw;
+    var n = Number(raw);
+    return isFinite(n) ? n : raw;    // a non-number is sent as text so the DB refuses it LOUDLY
+}
+
+async function auAt2SaveStrategy(sid, btn) {
+    var card = btn.closest('.au-at2-strat');
+    var msg  = document.getElementById('au-at2-msg-' + sid);
+    var row  = _auAt2.strategies.filter(function (x) { return x.id === sid; })[0];
+    if (!row) return;
+
+    // Start from what the DATABASE holds, so keys this screen does not know
+    // about survive untouched (the ⛔ block above tells the owner they exist).
+    var params = JSON.parse(JSON.stringify(row.params || {}));
+    AU_AT2_PARAM_FIELDS.forEach(function (f) { auAt2Bury(params, f.path, auAt2ReadField(card, f)); });
+
+    btn.disabled = true;
+    if (msg) msg.innerHTML = '<span class="au-meta">Saving…</span>';
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/at2_strategy?id=eq.' + encodeURIComponent(sid), {
+            method: 'PATCH',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+            body: JSON.stringify({ params: params })
+        });
+        var body = await r.text();
+        if (!r.ok) {
+            // ☠️ VERBATIM. The database's refusal is the most useful sentence on
+            // this screen — it names the rule that was broken. Paraphrasing it
+            // would hide exactly what the owner is trying to find out.
+            if (msg) msg.innerHTML = '<span class="au-at2-err">✕ REFUSED by the database — nothing was saved:<br>'
+                                   + auAt2Esc(body.slice(0, 500)) + '</span>';
+            btn.disabled = false;
+            return;
+        }
+        var saved = JSON.parse(body)[0];
+        if (saved) row.params = saved.params;               // cache = what the DB actually stored
+        if (msg) msg.innerHTML = '<span class="au-at2-ok">✓ Saved — the values below are re-read from the database</span>';
+        auAt2RenderControls();
+        if (typeof showAlert === 'function') showAlert('Strategy parameters saved', 'success');
+    } catch (e) {
+        if (msg) msg.innerHTML = '<span class="au-at2-err">✕ ' + auAt2Esc(String(e).slice(0, 300)) + '</span>';
+    } finally {
+        btn.disabled = false;                               // D.1.7 — always re-enabled
+    }
+}
+
+async function auAt2SaveBook(bid, btn) {
+    var card = btn.closest('.au-at2-strat');
+    var msg  = document.getElementById('au-at2-bmsg-' + bid);
+    var row  = _auAt2.books.filter(function (x) { return x.id === bid; })[0];
+    if (!row) return;
+
+    var patch = {};
+    card.querySelectorAll('input.au-at2-bf').forEach(function (i) {
+        var col = i.dataset.col, raw = (i.value || '').trim();
+        if (col === 'transaction_tags') {
+            patch[col] = raw ? raw.split(',').map(function (t) { return t.trim(); }).filter(Boolean) : [];
+        } else {
+            patch[col] = raw === '' ? null : Number(raw);
+        }
+    });
+    var pill = card.querySelector('.au-at2-pills[data-col="enabled"] .au-at2-pill.on');
+    if (pill) patch.enabled = pill.dataset.val === 'true';
+
+    btn.disabled = true;
+    if (msg) msg.innerHTML = '<span class="au-meta">Saving…</span>';
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/at2_book?id=eq.' + encodeURIComponent(bid), {
+            method: 'PATCH',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+            body: JSON.stringify(patch)
+        });
+        var body = await r.text();
+        if (!r.ok) {
+            if (msg) msg.innerHTML = '<span class="au-at2-err">✕ REFUSED by the database — nothing was saved:<br>'
+                                   + auAt2Esc(body.slice(0, 500)) + '</span>';
+            btn.disabled = false;
+            return;
+        }
+        var saved = JSON.parse(body)[0];
+        if (saved) Object.keys(saved).forEach(function (k) { row[k] = saved[k]; });
+        auAt2RenderControls();
+        if (typeof showAlert === 'function') showAlert('Book saved', 'success');
+    } catch (e) {
+        if (msg) msg.innerHTML = '<span class="au-at2-err">✕ ' + auAt2Esc(String(e).slice(0, 300)) + '</span>';
+    } finally {
+        btn.disabled = false;
+    }
 }
 
 // ── Manual close (EX-09) ────────────────────────────────────────────────────

@@ -224,6 +224,58 @@ details summary {
    this opt-out the right-hand columns are pushed outside the panel and the page
    scrolls horizontally. table-layout:fixed makes the <colgroup> authoritative
    (D.2.4). */
+/* ── AT2 configuration editor (05-Aug-2026) ─────────────────────────────────
+   Module-scoped, in THIS style block because app-styles.css is the only
+   stylesheet and module styles live here (CONTEXT.md). Nothing global is
+   redefined — .wms-input, .wms-pill and .au-btn* are shared and used as-is
+   (D.4.3: global button classes live in app-styles.css, not module CSS). */
+.au-at2-strat {
+  border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; margin-top: 12px;
+  background: #fff;
+}
+.au-at2-strat-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.au-at2-strat-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* A responsive grid, NOT a table — D.8.6: the app's 940px table min-width is
+   unscoped and leaks into anything containing a <table>. auto-fit also means
+   the field count can grow without a layout rewrite. */
+.au-at2-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px 14px;
+}
+.au-at2-field { min-width: 0; }
+.au-at2-field label {
+  display: block; font-size: 10px; font-weight: 600; text-transform: uppercase;
+  color: #718096; margin-bottom: 3px; letter-spacing: .02em;
+}
+.au-at2-field .wms-input { width: 100%; box-sizing: border-box; }
+/* D.6.2 — a disabled (view) field must be visibly different from an editable
+   one, or the owner cannot tell whether they are in edit mode. */
+.au-at2-pf:disabled { background: #f7fafc; color: #4a5568; }
+.au-at2-hint {
+  font-size: 10px; color: #94a3b8; margin-top: 3px; line-height: 1.35;
+  white-space: normal;                     /* D.8.9 — a truncated hint is half a hint */
+}
+.au-at2-pills { display: flex; gap: 4px; flex-wrap: wrap; }
+.au-at2-pill { cursor: pointer; user-select: none; }
+.au-at2-pills[data-locked="yes"] .au-at2-pill { cursor: default; opacity: .65; }
+
+.au-at2-msg { margin-top: 8px; font-size: 11px; min-height: 1px; }
+.au-at2-ok  { color: #059669; }
+.au-at2-err {
+  color: #dc2626; background: #fef2f2; border: 1px solid #fecaca;
+  border-radius: 4px; padding: 6px 8px; display: block;
+  white-space: pre-wrap; word-break: break-word;   /* the DB's refusal is shown WHOLE */
+}
+/* ⛔ D.8.10 — a params key this screen does not know must SHOUT, not vanish. */
+.au-at2-unknown {
+  margin-top: 10px; padding: 6px 8px; border-radius: 4px;
+  background: #fffbeb; border: 1px solid #fcd34d; color: #92400e;
+  font-size: 11px; line-height: 1.5; white-space: normal;
+}
 .au-at2-table {
     width: 100%;
     min-width: 0;
