@@ -109,8 +109,12 @@ var lgStatementType = 'trader';
 // + interest calculations are UNAFFECTED — they read the full transaction
 // universe upstream of this filter. NFO_PNL synthetic rows and options
 // (CE/PE) rows always render because they have _nfoCashImpact===true.
-// Session-state only — not persisted with the view.
-var lgShowFutures = true;
+// BROWSER-PERSISTENT (2026-08-05, owner request): stored in localStorage
+// ('wms_lg_show_fno'), shared across views/tabs on this browser. Default
+// when never set: OFF (unchecked).
+var lgShowFutures = (localStorage.getItem('wms_lg_show_fno') === null)
+    ? false
+    : localStorage.getItem('wms_lg_show_fno') === '1';
 
 // Hide-pre-reconciliation rows toggle (LESSONS §E.15.15). When true (default),
 // all rows with date <= the latest RECONCILIATION row's date are hidden from
@@ -118,9 +122,12 @@ var lgShowFutures = true;
 // the recon date + recon's running balance (so the recon becomes the new "as
 // of" anchor). When false, full history is shown with the recon row visible
 // inline as a green ✓ marker. Engine, margin, interest, drift check, and DB
-// rows are UNAFFECTED — this is a pure display filter. Session-state only —
-// not persisted with the view (mirrors lgShowFutures).
-var lgHidePreRecon = true;
+// rows are UNAFFECTED — this is a pure display filter.
+// BROWSER-PERSISTENT (2026-08-05, owner request): localStorage
+// ('wms_lg_hide_prerecon'). Default when never set: ON (checked).
+var lgHidePreRecon = (localStorage.getItem('wms_lg_hide_prerecon') === null)
+    ? true
+    : localStorage.getItem('wms_lg_hide_prerecon') === '1';
 
 // Expandable "Starting Booked P&L" breakdown (§E.15.17). When true, the pre-recon
 // booked-P&L detail rows are shown under the Starting line so past data stays
@@ -543,6 +550,7 @@ function lgInit() {
         futuresToggleEl.addEventListener('click', function(e) { e.stopPropagation(); });
         futuresToggleEl.addEventListener('change', function() {
             lgShowFutures = futuresToggleEl.checked;
+            localStorage.setItem('wms_lg_show_fno', lgShowFutures ? '1' : '0');
             // Re-render the transactions list only — engine + margin + interest
             // unchanged (those run on the full transaction universe, not on
             // the displayed rows).
@@ -566,6 +574,7 @@ function lgInit() {
         hideReconEl.addEventListener('click', function(e) { e.stopPropagation(); });
         hideReconEl.addEventListener('change', function() {
             lgHidePreRecon = hideReconEl.checked;
+            localStorage.setItem('wms_lg_hide_prerecon', lgHidePreRecon ? '1' : '0');
             lgRenderEntries(lgCombined);
         });
     }

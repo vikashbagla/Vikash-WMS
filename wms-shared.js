@@ -5673,7 +5673,7 @@ var wmsAttachAmountInput = function(input, opts) {
 /* ────────────────────────────────────────────────────────────────────────────
  * wmsDateFilter(containerEl, opts)
  * Date range filter with 3 controls:
- *   1) Period dropdown — Last 7 days, 30 days, 90 days, ALL
+ *   1) Period dropdown — Today, Yesterday, WTD (Mon–today), Last 7/30/90 days, ALL
  *   2) FY dropdown — populated from transaction dates; label "FY26 (Mar26)"
  *   3) Custom button — opens popover with two wmsDateInput widgets
  *
@@ -5681,7 +5681,7 @@ var wmsAttachAmountInput = function(input, opts) {
  *
  * @param {HTMLElement} containerEl
  * @param {Object} opts
- *   - default: 'last7'|'last30'|'last90'|'all'|'currentFY' (default: 'all')
+ *   - default: 'today'|'yesterday'|'wtd'|'last7'|'last30'|'last90'|'all'|'currentFY' (default: 'all')
  *   - onChange: function(from, to)
  *   - fyStartMonth: 1-12 (default: 4)
  *   - transactions: Array — transaction records with transaction_date field
@@ -5745,8 +5745,24 @@ var wmsDateFilter = function(containerEl, opts) {
         return date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0') + '-' + String(date.getDate()).padStart(2,'0');
     };
 
+    // Period presets shown in the Period dropdown (order = display order).
+    // Used by the default-preset guard and setPreset() too — keep in ONE place.
+    var WMS_DF_PERIOD_PRESETS = ['today', 'yesterday', 'wtd', 'last7', 'last30', 'last90', 'all'];
+
     var getPresetRange = function(preset) {
         var today = new Date();
+        if (preset === 'today')  return { from: formatYMD(today), to: formatYMD(today) };
+        if (preset === 'yesterday') {
+            var yd = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+            return { from: formatYMD(yd), to: formatYMD(yd) };
+        }
+        if (preset === 'wtd') {
+            // Week-to-date: Monday of the current week through today (Mon → getDay()=1; Sun counts as end of the PREVIOUS week)
+            var dow = today.getDay(); // Sun=0, Mon=1, ... Sat=6
+            var daysSinceMonday = (dow + 6) % 7;
+            var monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysSinceMonday);
+            return { from: formatYMD(monday), to: formatYMD(today) };
+        }
         if (preset === 'last7')  return { from: formatYMD(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7)), to: formatYMD(today) };
         if (preset === 'last30') return { from: formatYMD(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30)), to: formatYMD(today) };
         if (preset === 'last90') return { from: formatYMD(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 90)), to: formatYMD(today) };
@@ -5775,6 +5791,9 @@ var wmsDateFilter = function(containerEl, opts) {
     var periodSelect = document.createElement('select');
     periodSelect.className = 'wms-df-select';
     periodSelect.innerHTML =
+        '<option value="today">Today</option>' +
+        '<option value="yesterday">Yesterday</option>' +
+        '<option value="wtd">WTD</option>' +
         '<option value="last7">Last 7 days</option>' +
         '<option value="last30">Last 30 days</option>' +
         '<option value="last90">Last 90 days</option>' +
@@ -5925,7 +5944,7 @@ var wmsDateFilter = function(containerEl, opts) {
     containerEl.appendChild(customBtn);
 
     // ────── Apply default preset ──────
-    if (defaultPreset === 'last7' || defaultPreset === 'last30' || defaultPreset === 'last90' || defaultPreset === 'all') {
+    if (WMS_DF_PERIOD_PRESETS.indexOf(defaultPreset) >= 0) {
         periodSelect.value = defaultPreset;
         currentPreset = defaultPreset;
     } else if (defaultPreset === 'currentFY' && fyList.length > 0) {
@@ -5944,7 +5963,7 @@ var wmsDateFilter = function(containerEl, opts) {
         getRange: function() { return getPresetRange(currentPreset); },
         setPreset: function(preset) {
             currentPreset = preset;
-            if (preset === 'last7' || preset === 'last30' || preset === 'last90' || preset === 'all') {
+            if (WMS_DF_PERIOD_PRESETS.indexOf(preset) >= 0) {
                 periodSelect.value = preset;
                 fySelect.value = 'fy_all';
                 customBtn.classList.remove('active');
