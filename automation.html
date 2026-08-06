@@ -308,6 +308,19 @@ input.au-at2-locked:disabled {
   border-style: dashed; cursor: not-allowed;
 }
 
+/* ── RETIRED (hidden) rows ─────────────────────────────────────────────────
+   Visibly set apart when revealed, so "showing retired" never reads as a
+   normal list. Muted, not struck through — the row is intact, just not in use. */
+.au-at2-strat.retired { background: #fafbfc; border-style: dashed; }
+.au-at2-strat.retired .au-at2-name { color: #64748b; font-weight: 600; }
+
+.au-at2-hiddenbar {
+  display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  padding: 5px 9px; border-radius: 6px; background: #f8fafc;
+  border: 1px dashed #cbd5e0; font-size: 11px; color: #64748b;
+}
+.au-at2-hiddenbar button { padding: 2px 8px; font-size: 11px; }
+
 /* Card header with an action on the right (＋ New …). */
 .au-at2-cardhead {
   display: flex; justify-content: space-between; align-items: center;

@@ -6432,6 +6432,11 @@ function auAt2Unmoney(raw) {
 // does not collapse everything the owner had expanded.
 var _auAt2Open = {};
 
+// Whether retired (hidden) rows are on screen. OFF by default — the whole point
+// of hiding is a shorter list — but the count is always shown, so a hidden row
+// is never a row you cannot find.
+var _auAt2ShowHidden = false;
+
 function auAt2Dig(obj, path) {
     return path.split('.').reduce(function (o, k) {
         return (o === null || o === undefined) ? undefined : o[k];
@@ -6535,17 +6540,25 @@ function auAt2RenderControls() {
           + 'and the <b>database</b> validates it against the family template, so an illegal value is REFUSED with '
           + 'the reason shown here rather than silently accepted. Click a name to expand or collapse it.</div>';
 
-    if (!_auAt2.strategies.length) {
-        h += '<div class="au-soon">No AT2 strategies configured. Use ＋ New strategy.</div>';
+    var stratHidden = _auAt2.strategies.filter(function (x) { return x.hidden; }).length;
+    h += auAt2HiddenBar(stratHidden);
+    // Retired rows are OUT of the list unless asked for. The count above is
+    // always shown, so a hidden row is never one you cannot find.
+    var stratShown = _auAt2.strategies.filter(function (x) { return _auAt2ShowHidden || !x.hidden; });
+
+    if (!stratShown.length) {
+        h += '<div class="au-soon">' + (stratHidden ? 'Every strategy is hidden — use “Show retired”.'
+                                                    : 'No AT2 strategies configured. Use ＋ New strategy.') + '</div>';
     } else {
-        _auAt2.strategies.forEach(function (s2) {
+        stratShown.forEach(function (s2) {
             var params = s2.params || {};
             var open = !!_auAt2Open['s:' + s2.id];
-            h += '<div class="au-at2-strat' + (open ? ' open' : '') + '" data-sid="' + s2.id + '">'
+            h += '<div class="au-at2-strat' + (open ? ' open' : '') + (s2.hidden ? ' retired' : '') + '" data-sid="' + s2.id + '">'
                + '<div class="au-at2-strat-head">'
                +   '<div class="au-at2-title" data-toggle="s:' + s2.id + '">'
                +     '<span class="au-at2-caret">' + (open ? '▾' : '▸') + '</span>'
                +     '<span class="au-at2-name">' + auAt2Esc(s2.display_name || s2.code) + '</span>'
+               +     (s2.hidden ? ' <span class="au-badge idle">retired</span>' : '')
                +     '<code class="au-at2-code">' + auAt2Esc(s2.code) + '</code>'
                +     ' <span class="au-badge idle">' + auAt2Esc(s2.version) + '</span>'
                +     (s2.enabled ? ' <span class="au-badge success">enabled</span>'
@@ -6556,6 +6569,9 @@ function auAt2RenderControls() {
                +     '<button class="au-btn au-btn-secondary au-at2-edit" data-sid="' + s2.id + '">✏️ Edit</button>'
                +     '<button class="au-btn au-btn-primary au-at2-save" data-sid="' + s2.id + '" style="display:none">Save</button>'
                +     '<button class="au-btn au-btn-secondary au-at2-cancel" data-sid="' + s2.id + '" style="display:none">Cancel</button>'
+               +     '<button class="au-btn au-btn-secondary au-at2-hide" data-sid="' + s2.id + '" data-hidden="' + (s2.hidden ? '1' : '0') + '"'
+               +       ' title="' + (s2.hidden ? 'Bring it back into the list' : 'Retire it from the list. Nothing is lost and it can be restored') + '">'
+               +       (s2.hidden ? '👁 Restore' : '🗄 Hide') + '</button>'
                +   '</div>'
                + '</div>'
                + '<div class="au-at2-body">'
@@ -6607,16 +6623,22 @@ function auAt2RenderControls() {
        + 'resting stops then protect nothing. To A/B parameter sets, use a different account — or run them on '
        + '<b>paper</b>, where nothing nets and side-by-side variants are exactly right.</div>';
 
-    if (!_auAt2.books.length) {
-        h += '<div class="au-soon">No books configured. Use ＋ New book.</div>';
+    var bookHidden = _auAt2.books.filter(function (x) { return x.hidden; }).length;
+    h += auAt2HiddenBar(bookHidden);
+    var booksShown = _auAt2.books.filter(function (x) { return _auAt2ShowHidden || !x.hidden; });
+
+    if (!booksShown.length) {
+        h += '<div class="au-soon">' + (bookHidden ? 'Every book is hidden — use “Show retired”.'
+                                                   : 'No books configured. Use ＋ New book.') + '</div>';
     } else {
-        _auAt2.books.forEach(function (b2) {
+        booksShown.forEach(function (b2) {
             var open = !!_auAt2Open['b:' + b2.id];
-            h += '<div class="au-at2-strat' + (open ? ' open' : '') + '" data-bid="' + b2.id + '">'
+            h += '<div class="au-at2-strat' + (open ? ' open' : '') + (b2.hidden ? ' retired' : '') + '" data-bid="' + b2.id + '">'
                + '<div class="au-at2-strat-head">'
                +   '<div class="au-at2-title" data-toggle="b:' + b2.id + '">'
                +     '<span class="au-at2-caret">' + (open ? '▾' : '▸') + '</span>'
                +     '<span class="au-at2-name">' + auAt2Esc(b2.display_name || '(unnamed book)') + '</span>'
+               +     (b2.hidden ? ' <span class="au-badge idle">retired</span>' : '')
                +     (b2.mode === 'live' ? ' <span class="au-badge error">LIVE</span>'
                                          : ' <span class="au-badge idle">paper</span>')
                +     (b2.enabled ? ' <span class="au-badge success">enabled</span>'
@@ -6626,6 +6648,9 @@ function auAt2RenderControls() {
                +     '<button class="au-btn au-btn-secondary au-at2-bedit" data-bid="' + b2.id + '">✏️ Edit</button>'
                +     '<button class="au-btn au-btn-primary au-at2-bsave" data-bid="' + b2.id + '" style="display:none">Save</button>'
                +     '<button class="au-btn au-btn-secondary au-at2-bcancel" data-bid="' + b2.id + '" style="display:none">Cancel</button>'
+               +     '<button class="au-btn au-btn-secondary au-at2-bhide" data-bid="' + b2.id + '" data-hidden="' + (b2.hidden ? '1' : '0') + '"'
+               +       ' title="' + (b2.hidden ? 'Bring it back into the list' : 'Retire it from the list. Nothing is lost and it can be restored') + '">'
+               +       (b2.hidden ? '👁 Restore' : '🗄 Hide') + '</button>'
                +   '</div>'
                + '</div>'
                + '<div class="au-at2-body">'
@@ -6662,6 +6687,79 @@ function auAt2RenderControls() {
     h += '</div>';
     el.innerHTML = h;
     auAt2WireControls();
+}
+
+/**
+ * HIDE / UNHIDE a retired strategy or book.
+ *
+ * ☠️ THIS IS THE ALTERNATIVE TO DELETE, and it is deliberate (owner, 06-Aug-2026:
+ * *"delete is not a good idea … But we need a hide button for disabled
+ * strategies / books and a provision to unhide too."*). Deleting a strategy
+ * would orphan every signal, trade, order and alert that points at it; a book
+ * that has traded is an accounting record. Hiding loses NOTHING — every history
+ * view still resolves through `book_id` / `strategy_id` — and it reverses in one
+ * click. Delete stays a back-end operation against
+ * `automation/AT2-DELETE-CHECKLIST.md`.
+ *
+ * ⚠️ ONLY A DISABLED ROW MAY BE HIDDEN, and the database enforces it
+ * (`at2_*_hidden_implies_disabled`, migration 70). The check below is the
+ * courteous version of the same rule — it explains, where the constraint would
+ * only refuse. **Both are needed:** the UI one can be bypassed, the DB one is
+ * the guarantee. If the screen could omit a row that still trades, the list you
+ * read would not be the list that runs.
+ */
+async function auAt2SetHidden(table, id, hidden, btn) {
+    var isStrat = table === 'at2_strategy';
+    var row = (isStrat ? _auAt2.strategies : _auAt2.books)
+                .filter(function (x) { return x.id === id; })[0];
+    var msg = document.getElementById((isStrat ? 'au-at2-msg-' : 'au-at2-bmsg-') + id);
+    if (!row) return;
+
+    if (hidden && row.enabled) {
+        if (msg) msg.innerHTML = '<span class="au-at2-err">✕ <b>Disable it first.</b> Hiding something that can still '
+            + 'trade would leave the screen showing a shorter list than the one that actually runs — and the row you '
+            + 'cannot see is the row you will not check. The database refuses this too.</span>';
+        return;
+    }
+
+    if (btn) btn.disabled = true;
+    if (msg) msg.innerHTML = '<span class="au-meta">' + (hidden ? 'Hiding…' : 'Restoring…') + '</span>';
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/' + table + '?id=eq.' + encodeURIComponent(id), {
+            method: 'PATCH',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+            body: JSON.stringify({ hidden: hidden })
+        });
+        var body = await r.text();
+        if (!r.ok) {
+            if (msg) msg.innerHTML = '<span class="au-at2-err">✕ REFUSED by the database — nothing changed:<br>'
+                                   + auAt2Esc(body.slice(0, 500)) + '</span>';
+            if (btn) btn.disabled = false;
+            return;
+        }
+        var saved = JSON.parse(body)[0];
+        if (saved) Object.keys(saved).forEach(function (k) { row[k] = saved[k]; });
+        // Reveal the list when something is hidden, so the row does not simply
+        // vanish under the cursor with no explanation.
+        if (hidden) _auAt2ShowHidden = true;
+        auAt2RenderControls();
+        if (typeof showAlert === 'function') {
+            showAlert(hidden ? 'Hidden — it keeps all its history and can be restored' : 'Restored to the list', 'success');
+        }
+    } catch (e) {
+        if (msg) msg.innerHTML = '<span class="au-at2-err">✕ ' + auAt2Esc(String(e).slice(0, 300)) + '</span>';
+        if (btn) btn.disabled = false;
+    }
+}
+
+/** The "N hidden · show/hide" strip. Rendered even at zero? No — only when there is something to say. */
+function auAt2HiddenBar(n) {
+    if (!n) return '';
+    return '<div class="au-at2-hiddenbar">'
+         + '<span>' + n + ' hidden</span>'
+         + '<button class="au-btn au-btn-secondary au-at2-toggle-hidden">'
+         +   (_auAt2ShowHidden ? 'Hide retired' : 'Show retired') + '</button>'
+         + '</div>';
 }
 
 /** Strategy display name for a book row, falling back to the code, then the id. */
@@ -6730,7 +6828,10 @@ function auAt2WireControls() {
         scope.querySelectorAll('.au-at2-pills').forEach(function (g) {
             g.dataset.locked = (editing && g.dataset.readonly !== 'yes') ? 'no' : 'yes';
         });
-        scope.querySelectorAll('.au-at2-edit,.au-at2-bedit').forEach(function (b) { b.style.display = editing ? 'none' : ''; });
+        // Hide/Restore is hidden while editing — it re-renders the card, which
+        // would throw away whatever is half-typed.
+        scope.querySelectorAll('.au-at2-edit,.au-at2-bedit,.au-at2-hide,.au-at2-bhide')
+             .forEach(function (b) { b.style.display = editing ? 'none' : ''; });
         scope.querySelectorAll('.au-at2-save,.au-at2-cancel,.au-at2-bsave,.au-at2-bcancel')
              .forEach(function (b) { b.style.display = editing ? '' : 'none'; });
     }
@@ -6757,6 +6858,20 @@ function auAt2WireControls() {
     });
     root.querySelectorAll('.au-at2-bsave').forEach(function (btn) {
         btn.addEventListener('click', function () { auAt2SaveBook(btn.dataset.bid, btn); });
+    });
+
+    root.querySelectorAll('.au-at2-toggle-hidden').forEach(function (b) {
+        b.addEventListener('click', function () { _auAt2ShowHidden = !_auAt2ShowHidden; auAt2RenderControls(); });
+    });
+    root.querySelectorAll('.au-at2-hide').forEach(function (b) {
+        b.addEventListener('click', function () {
+            auAt2SetHidden('at2_strategy', b.dataset.sid, b.dataset.hidden !== '1', b);
+        });
+    });
+    root.querySelectorAll('.au-at2-bhide').forEach(function (b) {
+        b.addEventListener('click', function () {
+            auAt2SetHidden('at2_book', b.dataset.bid, b.dataset.hidden !== '1', b);
+        });
     });
 
     var ns = document.getElementById('au-at2-newstrat');
