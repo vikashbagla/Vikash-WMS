@@ -263,6 +263,55 @@ details summary {
 .au-at2-pill { cursor: pointer; user-select: none; }
 .au-at2-pills[data-locked="yes"] .au-at2-pill { cursor: default; opacity: .65; }
 
+/* ── COLLAPSIBLE CARDS ─────────────────────────────────────────────────────
+   The head is always visible; the body only when .open. Collapsed by default
+   because a screen of eight fully-expanded strategies is a wall of inputs and
+   the name is what you scan for. */
+.au-at2-strat > .au-at2-body { display: none; }
+.au-at2-strat.open > .au-at2-body { display: block; }
+.au-at2-title {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  cursor: pointer; user-select: none; min-width: 0; flex: 1;
+}
+.au-at2-title:hover .au-at2-name { text-decoration: underline; }
+.au-at2-caret { color: #94a3b8; font-size: 11px; width: 10px; flex-shrink: 0; }
+.au-at2-name  { font-size: 15px; font-weight: 700; color: #1a202c; }
+.au-at2-code  {
+  font-size: 11px; color: #64748b; background: #f1f5f9;
+  padding: 1px 6px; border-radius: 4px;
+}
+.au-at2-strat-head { margin-bottom: 0; }
+.au-at2-strat.open > .au-at2-strat-head { margin-bottom: 10px; }
+
+/* ── FIELD GROUPS — the form reads in the order you think in ─────────────── */
+.au-at2-group { margin-top: 12px; }
+.au-at2-group:first-child { margin-top: 0; }
+.au-at2-group-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  color: #475569; letter-spacing: .05em; margin-bottom: 6px;
+  padding-bottom: 3px; border-bottom: 1px solid #edf2f7;
+}
+
+/* ── A LOCKED FIELD LOOKS LOCKED, in view mode AND in edit mode ─────────────
+   D.6.2 says a read-only field must be visibly different. These stay grey and
+   dashed even while the rest of the card is editable, so there is no moment
+   where the screen implies a value can be changed when it cannot. */
+.au-at2-field-locked label { color: #94a3b8; }
+.au-at2-lockbadge { font-size: 9px; opacity: .7; }
+.au-at2-unit { color: #94a3b8; font-weight: 500; }
+input.au-at2-locked,
+input.au-at2-locked:disabled {
+  background: #f1f5f9; color: #64748b;
+  border-style: dashed; cursor: not-allowed;
+}
+
+/* Card header with an action on the right (＋ New …). */
+.au-at2-cardhead {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; flex-wrap: wrap;
+}
+.au-at2-cardhead h3 { margin: 0; }
+
 .au-at2-msg { margin-top: 8px; font-size: 11px; min-height: 1px; }
 .au-at2-ok  { color: #059669; }
 .au-at2-err {
