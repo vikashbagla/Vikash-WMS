@@ -6600,7 +6600,12 @@ function auAt2RenderControls() {
        + '<div class="au-sub">A book is one (strategy, mode, trader). <code>exposure_factor</code> changes SIZE, '
        + 'not routing; <code>lot_cap</code> is a hard per-book ceiling and its surplus is NOT redistributed. '
        + '<b>The identity — strategy, mode, trader — is deliberately not editable:</b> changing it would silently '
-       + 're-point a book\'s history. Create a new book instead.</div>';
+       + 're-point a book\'s history. Create a new book instead.</div>'
+       + '<div class="au-at2-unknown" style="margin:8px 0 0">☠️ <b>ONE CONTRACT, ONE STRATEGY, PER LIVE ACCOUNT.</b> '
+       + 'The broker NETS positions — two strategies on the same instrument and the same live account hold ONE '
+       + 'position between them. Opposite sides cancel to flat while both still believe they are in, and both '
+       + 'resting stops then protect nothing. To A/B parameter sets, use a different account — or run them on '
+       + '<b>paper</b>, where nothing nets and side-by-side variants are exactly right.</div>';
 
     if (!_auAt2.books.length) {
         h += '<div class="au-soon">No books configured. Use ＋ New book.</div>';
@@ -7159,6 +7164,42 @@ function auAt2NewBookModal() {
                           + auAt2Esc(clash.display_name || '(unnamed)') + '</b>. One book per (strategy, mode, trader).</span>';
             return;
         }
+        // ☠️ D31 — ONE CONTRACT, ONE STRATEGY, PER LIVE ACCOUNT.
+        //
+        // A broker account is NETTED. Two strategies on the same instrument and
+        // the same live account do not hold two positions at Fyers — they hold
+        // ONE, and neither of them owns it. Opposite sides cancel to flat while
+        // both still believe they are in, and both resting stops then protect
+        // nothing. RC-14 detects it after the fact; this catches it at the
+        // moment it would be created, which is the only cheap moment.
+        //
+        // ⚠️ PAPER IS EXEMPT and must stay that way — running variants side by
+        // side on paper is the RIGHT way to compare parameter sets.
+        if (mode === 'live') {
+            var myStrat = _auAt2.strategies.filter(function (x) { return x.id === sid; })[0];
+            var myInst = myStrat && myStrat.params && myStrat.params.instrument_key;
+            var rival = null;
+            if (myInst) {
+                _auAt2.books.forEach(function (b) {
+                    if (rival || b.mode !== 'live') return;
+                    if (b.investor_id !== acct[0] || b.broker_id !== acct[1]) return;
+                    if (b.strategy_id === sid) return;                  // same strategy = fine
+                    var os = _auAt2.strategies.filter(function (x) { return x.id === b.strategy_id; })[0];
+                    if (os && os.params && os.params.instrument_key === myInst) rival = os;
+                });
+            }
+            if (rival) {
+                msg.innerHTML = '<span class="au-at2-err">✕ <b>REFUSED — one contract, one strategy, per live account.</b><br>'
+                    + '<b>' + auAt2Esc(rival.display_name || rival.code) + '</b> already trades '
+                    + '<code>' + auAt2Esc(myInst) + '</code> live on this account.<br><br>'
+                    + 'The broker NETS positions: two strategies on one contract hold ONE position between them. '
+                    + 'Opposite sides cancel to flat while both still believe they are in — and both resting stops '
+                    + 'then protect nothing.<br><br>'
+                    + 'Use a <b>different account</b> for the variant, or run it on <b>paper</b>, where nothing nets.</span>';
+                return;
+            }
+        }
+
         if (!name) {
             var a = _auAt2.accounts.filter(function (x) { return x.investor_id === acct[0] && x.broker_id === acct[1]; })[0];
             name = ((a && a.investors && a.investors.name) || 'Account') + ' · '
