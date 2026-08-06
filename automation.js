@@ -7067,12 +7067,30 @@ function auAt2NewBookModal() {
     // ☠️ Only REAL accounts. DB-05 (at2_book_real_account) refuses a pair with
     // no investor_broker_accounts row, so a free-form investor/broker picker
     // would manufacture refusals.
+    // Sorted by name. Thirty accounts arriving in insertion order is a list you
+    // scan, not a list you choose from.
     var acctOpts = _auAt2.accounts.map(function (a) {
-        var inv = (a.investors && a.investors.name) || a.investor_id;
-        var brk = (a.brokers && a.brokers.name) || a.broker_id;
-        return '<option value="' + auAt2Esc(a.investor_id + '|' + a.broker_id) + '">'
-             + auAt2Esc(inv + ' · ' + brk) + '</option>';
-    }).join('');
+        return {
+            v: a.investor_id + '|' + a.broker_id,
+            t: ((a.investors && a.investors.name) || a.investor_id) + ' · '
+             + ((a.brokers && a.brokers.name) || a.broker_id)
+        };
+    }).sort(function (x, y) { return x.t.localeCompare(y.t); })
+      .map(function (o) { return '<option value="' + auAt2Esc(o.v) + '">' + auAt2Esc(o.t) + '</option>'; })
+      .join('');
+
+    // Unique traders, sorted, deduped on the ID — the earlier version deduped
+    // rendered HTML strings, which happens to work and breaks the moment the
+    // markup changes.
+    var seenTrader = {};
+    var traderOpts = _auAt2.accounts.map(function (a) {
+        return { id: a.investor_id, name: (a.investors && a.investors.name) || a.investor_id };
+    }).filter(function (t) {
+        if (seenTrader[t.id]) return false;
+        seenTrader[t.id] = 1; return true;
+    }).sort(function (x, y) { return x.name.localeCompare(y.name); })
+      .map(function (t) { return '<option value="' + auAt2Esc(t.id) + '">' + auAt2Esc(t.name) + '</option>'; })
+      .join('');
 
     var body =
         '<div class="au-warn-list" style="margin:0 0 12px">A book is one <b>(strategy, mode, trader)</b> — that '
@@ -7093,10 +7111,7 @@ function auAt2NewBookModal() {
       +     '<div class="au-at2-hint">Where the order is placed and whose rate card prices the charges</div></div>'
       +   '<div class="au-at2-field"><label>Beneficiary (trader)</label>'
       +     '<select class="wms-input" id="au-at2-nb-trader"><option value="">— same as the account holder —</option>'
-      +       _auAt2.accounts.map(function (a) {
-              var inv = (a.investors && a.investors.name) || a.investor_id;
-              return '<option value="' + auAt2Esc(a.investor_id) + '">' + auAt2Esc(inv) + '</option>'; })
-              .filter(function (v, i, arr) { return arr.indexOf(v) === i; }).join('')
+      +       traderOpts
       +     '</select>'
       +     '<div class="au-at2-hint">Who the trade belongs to. One order can serve several traders — that is the multi-trader split</div></div>'
       + '</div></div>'
