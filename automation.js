@@ -3449,7 +3449,8 @@ function autoHealthFmtIst(iso) {
 // via wmsRegisterRefreshSymbolProvider. Updated whenever GS open trades load.
 var _auGsSyms = { live: [], paper: [] };  // GS open-trade symbols per page [{ fyersKey, cacheKey }]
 var _auPairsSyms = [];  // Pairs (equity) open-trade symbols
-function autoGetRefreshSymbols() { return _auGsSyms.live.concat(_auGsSyms.paper).concat(_auPairsSyms); }
+var _auAt2Syms = [];    // AT2 open-trade symbols [{ fyersKey, cacheKey }] — set by auAt2RenderOpen
+function autoGetRefreshSymbols() { return _auGsSyms.live.concat(_auGsSyms.paper).concat(_auPairsSyms).concat(_auAt2Syms); }
 
 // Register the provider (idempotent) + make sure the single shared timer runs
 // while the user is on an Open Trades sub-tab. Called from autoSwitchSubTab.
@@ -3476,11 +3477,16 @@ function autoOnSharedRefresh() {
     var famPaper     = document.getElementById('au-gs-paper-panel')?.classList.contains('active');
     var famPairs     = document.getElementById('au-fam-pairs')?.classList.contains('active');
     var famPairsOpen = document.getElementById('au-pairs-fam-open-panel')?.classList.contains('active');
+    var famAt2       = document.getElementById('au-fam-at2')?.classList.contains('active');
     // Re-render only the open block of whichever GS page the user is viewing (its
     // open <details> is inside the active Live/Paper panel — see autoGsRenderPageShell).
     if (famGs && famLive)          autoLoadGsOpenTrades('live', true  /* silent — flicker-free */);
     if (famGs && famPaper)         autoLoadGsOpenTrades('paper', true /* silent — flicker-free */);
     if (famPairs && famPairsOpen)  autoLoadOpenTrades(true /* silent — flicker-free */);
+    // AT2's Open trades block is always visible on the Trades sub-tab (never
+    // filtered/hidden behind a sub-panel toggle the way GS's Live/Paper are),
+    // so a family-active check is enough — no sub-tab check needed.
+    if (famAt2 && typeof auAt2RenderOpen === 'function') auAt2RenderOpen(true /* silent — flicker-free */);
     // NOTE: the live/paused/"mkt closed" refresh-tick indicator lived in the Legacy
     // totals bar and was NOT ported (owner call 2026-07-10 — defer to the next round
     // of page improvements). Re-add it to the GS header strip then.
@@ -6165,6 +6171,21 @@ async function autoAt2Refresh() {
         _auAt2.families = res[6] || []; _auAt2.accounts = res[7] || [];
         _auAt2.loadedAt = new Date();
 
+        // Contract identity (symbol/expiry/lot_size) lives on securities_nfo,
+        // joined manually in JS — same pattern the rest of the app uses for
+        // this table (wmsRefData.securitiesNfoMap); Supabase's embed syntax
+        // is never used against securities_nfo anywhere in this codebase.
+        // Needed so the Open/Closed tables can show a Contract column and
+        // fetch live prices, matching GS's table (owner instruction).
+        var secIds = Array.from(new Set(_auAt2.trades.map(function (t) { return t.security_id; }).filter(Boolean)));
+        _auAt2.securities = new Map();
+        if (secIds.length) {
+            var secRows = await auAt2Get('securities_nfo',
+                'select=id,symbol,underlying_symbol,expiry_date,lot_size,instrument_name&id=in.('
+                + secIds.map(encodeURIComponent).join(',') + ')');
+            (secRows || []).forEach(function (s) { _auAt2.securities.set(s.id, s); });
+        }
+
         auAt2RenderHeader();
         auAt2RenderMetrics();
         // Filter bar is rebuilt on every full refresh (book list may have
@@ -6173,7 +6194,7 @@ async function autoAt2Refresh() {
         // inputs' own checked/DOM state isn't disturbed mid-interaction.
         var fb = document.getElementById('au-at2-filterbar');
         if (fb) fb.innerHTML = auAt2FilterBar();
-        auAt2RenderOpen();
+        await auAt2RenderOpen();
         auAt2RenderClosed();
         auAt2RenderAlerts();
         auAt2RenderEvents();
@@ -6287,7 +6308,15 @@ function auAt2BookName(id) {
     return b ? b.display_name : '<span class="au-badge error">⛔ UNKNOWN BOOK</span>';
 }
 
-function auAt2RenderOpen() {
+/** The trade's joined securities_nfo row (symbol/expiry/lot_size), or null if
+ *  unresolved — see the join built in autoAt2Refresh. Used for the Contract
+ *  column and to key LTP / point-value / margin lookups, matching GS. */
+function auAt2Security(t) {
+    if (!t || !t.security_id || !_auAt2.securities) return null;
+    return _auAt2.securities.get(t.security_id) || null;
+}
+
+async function auAt2RenderOpen(silent) {
     // ☠️ DO NOT filter to the four KNOWN held states. A trade whose status this
     // page does not recognise is not held, not closed, and would appear in
     // NEITHER table — it would vanish silently, which is strictly worse than
@@ -6344,15 +6373,86 @@ function auAt2RenderOpen() {
     // sticky totals row on top, sub-values (days held / stop level) nested
     // under their main cell rather than given their own column — so AT2's
     // table reads as the same product as GS's, not a different one bolted on.
+    // Owner instruction (2026-08-10): match GS's COLUMN SET too, not just the
+    // visual style — Contract / Qty(physical) / LTP / Exposure / Margin /
+    // Live P&L are new here; Status / Risk-lot / Flags stay (owner's explicit
+    // call: keep AT2's own protection columns alongside GS's).
     var now = Date.now();
     var totalRisk = 0, anyRisk = false;
+    var totalExposure = 0, anyExposure = false;
+    var totalMargin = 0;
+    var totalPnl = 0, anyPnl = false;
+
+    // Live LTP for the resolved contracts — same shared-cache mechanism GS uses
+    // (autoFetchLtpForSymbols reads window.wmsLivePrices). _auAt2Syms registers
+    // these symbols with the app-wide refresh timer; autoOnSharedRefresh calls
+    // this function again (silently) on every price tick while AT2 is active.
+    var uniqSyms = Array.from(new Set(rows.map(function (t) {
+        var sec = auAt2Security(t);
+        return sec ? sec.symbol : null;
+    }).filter(Boolean)));
+    _auAt2Syms = uniqSyms.map(function (s) { return { fyersKey: s, cacheKey: s.replace(/^[A-Z]+:/, '') }; });
+    if (typeof autoEnsureSharedRefresh === 'function') autoEnsureSharedRefresh();
+    else if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+    if (!silent && typeof wmsStandardRefresh === 'function' && window.fyersToken) {
+        var cold = uniqSyms.some(function (s) {
+            var bare = s.replace(/^[A-Z]+:/, '');
+            var rec = (window.wmsLivePrices || {})[s] || (window.wmsLivePrices || {})[bare];
+            return !(rec && rec.lp > 0);
+        });
+        if (cold) { try { await wmsStandardRefresh(true); } catch (_e) {} }
+    }
+    var ltpMap = autoFetchLtpForSymbols(uniqSyms);
+
     var body = '';
     rows.forEach(function (t) {
+        var sec = auAt2Security(t);
+        var shortSymbol = sec ? sec.underlying_symbol : null;
+        var contractStr = sec ? autoFmtContract(sec.symbol, sec.expiry_date) : '—';
+        var physLot = shortSymbol ? autoGsPhysicalLot(shortSymbol) : null;
         var riskPerLot = (Number(t.atr_at_entry) || 0) && (Number(t.entry_price) || 0)
             ? Math.abs((Number(t.entry_price) - Number(t.stop_at_entry)) * (Number(t.qty_units) / (Number(t.qty_lots) || 1)))
             : null;
         var rowLots = Number(t.qty_lots) || 0;
         if (riskPerLot != null) { totalRisk += riskPerLot * rowLots; anyRisk = true; }
+
+        // Exposure/Margin/Live P&L — same formula the metric tile above already
+        // uses (entry price × currently-open units; see auAt2RenderMetrics), so
+        // this row-level number and that tile total always agree. No separate
+        // point-value multiplier: qty_open_units is already in the same basis
+        // as entry_price (unlike GS's lots × point-value convention).
+        var qtyOpenUnits = Number(t.qty_open_units);
+        var exposure = (isFinite(qtyOpenUnits) && t.entry_price != null) ? qtyOpenUnits * Number(t.entry_price) : null;
+        if (exposure != null && exposure > 0) { totalExposure += exposure; anyExposure = true; }
+        var marginPct = shortSymbol ? autoGsMarginPct(shortSymbol) : null;
+        var margin = (exposure != null && marginPct != null) ? exposure * marginPct / 100 : null;
+        if (margin != null) totalMargin += margin;
+
+        var ltpVal = sec ? ltpMap.get(sec.symbol) : undefined;
+        var ltpCell, pnlCell;
+        if (ltpVal != null && exposure != null) {
+            var sideSign = t.side === 'LONG' ? 1 : -1;
+            var pnl = sideSign * (ltpVal - Number(t.entry_price)) * qtyOpenUnits;
+            anyPnl = true; totalPnl += pnl;
+            ltpCell = auAt2Num(ltpVal);
+            var pnlSign = pnl >= 0 ? '+' : '-';
+            var pnlCol = pnl >= 0 ? '#047857' : '#dc2626';
+            var pnlAbs = Math.abs(Math.round(pnl)).toLocaleString('en-IN');
+            var pnlPctSub = '';
+            if (exposure > 0) {
+                var pnlPct = (pnl / exposure) * 100;
+                pnlPctSub = '<div style="color:' + pnlCol + ';font-size:10px;margin-top:1px;font-weight:500">' + (pnlPct >= 0 ? '+' : '-') + Math.abs(pnlPct).toFixed(2) + '%</div>';
+            }
+            pnlCell = '<span style="color:' + pnlCol + ';font-weight:600">' + pnlSign + auAt2Esc('₹') + pnlAbs + '</span>' + pnlPctSub;
+        } else {
+            ltpCell = '<span style="color:#9ca3af">-</span>';
+            pnlCell = '<span style="color:#9ca3af">-</span>';
+        }
+        var exposureCell = exposure != null ? formatAmount(exposure) : '<span style="color:#9ca3af">-</span>';
+        var marginCell = margin != null
+            ? formatAmount(margin) + '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + marginPct + '%</div>'
+            : '<span style="color:#9ca3af">-</span>';
+
         var flags = [];
         if (t.cap_bound) flags.push('<span class="au-badge warning" title="the book\'s lot_cap reduced this allocation">cap-bound</span>');
         if (t.rolled_from_trade_id) flags.push('<span class="au-badge idle" title="opened by a roll">rolled</span>');
@@ -6368,18 +6468,26 @@ function auAt2RenderOpen() {
         var daysSub = daysHeld != null
             ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + daysHeld + ' day' + (daysHeld === 1 ? '' : 's') + '</div>'
             : '';
+        var qtySub = physLot
+            ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + (rowLots * physLot.qty) + ' ' + physLot.unit + '</div>'
+            : '';
 
         body += '<tr style="border-top:1px solid #e5e7eb">'
            + '<td style="padding:6px 8px;vertical-align:top">' + auAt2StatusBadge(t.status) + '</td>'
            + '<td style="padding:6px 8px;vertical-align:top;font-weight:700;color:#1d4ed8">' + auAt2Esc(auAt2BookName(t.book_id)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</td>'
            + '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>'
            + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Ts(t.entry_at) + daysSub + '</td>'
-           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + '</td>'
+           + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Esc(contractStr) + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + qtySub + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.entry_price) + (!t.current_stop
                         ? '<div style="margin-top:2px"><span class="au-badge error" style="font-size:9px">NO STOP</span></div>'
                         : auAt2StopInverted(t)
                             ? '<div style="color:#dc2626;font-weight:700;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop) + ' \u26D4</div>'
                             : '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop) + '</div>') + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + ltpCell + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + exposureCell + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + marginCell + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + pnlCell + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + (riskPerLot ? formatAmount(riskPerLot) : '—') + '</td>'
            + '<td style="padding:6px 8px;vertical-align:top;white-space:normal;line-height:1.7">' + (flags.join(' ') || '—') + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top"><button class="au-btn au-btn-danger" style="padding:4px 8px;font-size:11px"'
@@ -6387,11 +6495,24 @@ function auAt2RenderOpen() {
            + '</tr>';
     });
 
+    var pnlTotalCell = '<span style="color:#9ca3af">-</span>';
+    if (anyPnl) {
+        var tSign = totalPnl >= 0 ? '+' : '-';
+        var tCol = totalPnl >= 0 ? '#047857' : '#dc2626';
+        var tAbs = Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
+        pnlTotalCell = '<span style="color:' + tCol + '">' + tSign + auAt2Esc('₹') + tAbs + '</span>';
+    }
+
     var totalsRow = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700;position:sticky;top:0">'
             + '<td colspan="4" style="padding:8px;text-align:right">Totals (' + rows.length + ' open):</td>'
+            + '<td style="padding:8px"></td>'
             + '<td style="padding:8px;text-align:right">' + lots + ' lot(s)</td>'
             + '<td style="padding:8px"></td>'
-            + '<td style="padding:8px;text-align:right">' + (anyRisk ? formatAmount(totalRisk) : '—') + '</td>'
+            + '<td style="padding:8px"></td>'
+            + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalExposure) : '<span style="color:#9ca3af">-</span>') + '</td>'
+            + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalMargin) : '<span style="color:#9ca3af">-</span>') + '</td>'
+            + '<td style="padding:8px;text-align:right">' + pnlTotalCell + '</td>'
+            + '<td style="padding:8px;text-align:right">' + (anyRisk ? formatAmount(totalRisk) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px" colspan="2"></td>'
             + '</tr>';
 
@@ -6400,8 +6521,13 @@ function auAt2RenderOpen() {
             + '<th style="padding:6px 8px">Book</th>'
             + '<th style="padding:6px 8px">Side</th>'
             + '<th style="padding:6px 8px">Entered<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>'
-            + '<th style="padding:6px 8px;text-align:right">Lots</th>'
+            + '<th style="padding:6px 8px">Contract</th>'
+            + '<th style="padding:6px 8px;text-align:right">Qty<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ physical</span></th>'
             + '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ stop</span></th>'
+            + '<th style="padding:6px 8px;text-align:right">LTP</th>'
+            + '<th style="padding:6px 8px;text-align:right">Exposure</th>'
+            + '<th style="padding:6px 8px;text-align:right">Margin<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ %</span></th>'
+            + '<th style="padding:6px 8px;text-align:right">Live P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>'
             + '<th style="padding:6px 8px;text-align:right">Risk/lot</th>'
             + '<th style="padding:6px 8px">Flags</th>'
             + '<th style="padding:6px 8px;text-align:right">Action</th>'
@@ -6410,6 +6536,9 @@ function auAt2RenderOpen() {
     h += '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">'
        + '<thead>' + totalsRow + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
     h += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6">'
+       + '• LTP via Fyers /quotes (needs an active Fyers connection) — same shared price cache GS uses.<br>'
+       + '• Exposure = entry price × currently-open units (matches the metric tile above). Margin = Exposure × GOLDM 10% / SILVERM 20%.<br>'
+       + '• Live P&amp;L = side × (LTP − entry) × currently-open units.<br>'
        + '• Risk/lot = |entry − stop| × units per lot (the ATR-based stop set at entry, not the current trailed level).<br>'
        + '• Flags: cap-bound = book’s lot_cap reduced the allocation · rolled = opened by a roll · LIVE = real order, not paper.'
        + '</div>';
@@ -6453,7 +6582,7 @@ function auAt2RenderClosed() {
                     + (filtered ? ' - filtered from ' + all.length : '') + ')';
 
     var totalsRow = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700;position:sticky;top:0">'
-            + '<td colspan="9" style="padding:8px">' + auAt2Esc(totalLabel) + '</td>'
+            + '<td colspan="10" style="padding:8px">' + auAt2Esc(totalLabel) + '</td>'
             + '<td style="padding:8px;text-align:right;white-space:nowrap"><span style="color:' + totalCol + '">' + totalSign + auAt2Esc('₹') + totalAbs + '</span></td>'
             + '</tr>';
 
@@ -6463,7 +6592,8 @@ function auAt2RenderClosed() {
             + '<th style="padding:6px 8px">Side</th>'
             + '<th style="padding:6px 8px">Entry</th>'
             + '<th style="padding:6px 8px">Exit<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>'
-            + '<th style="padding:6px 8px;text-align:right">Lots</th>'
+            + '<th style="padding:6px 8px">Contract</th>'
+            + '<th style="padding:6px 8px;text-align:right">Qty<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ physical</span></th>'
             + '<th style="padding:6px 8px;text-align:right">Entry Px</th>'
             + '<th style="padding:6px 8px;text-align:right">Exit Px</th>'
             + '<th style="padding:6px 8px">Reason</th>'
@@ -6487,7 +6617,15 @@ function auAt2RenderClosed() {
             ? '<span style="color:' + auAt2ExitColor(t.exit_reason) + ';font-weight:600">' + auAt2ExitReason(t.exit_reason) + '</span>'
             : auAt2ExitReason(t.exit_reason);
 
+        var sec = auAt2Security(t);
+        var shortSymbol = sec ? sec.underlying_symbol : null;
+        var contractStr = sec ? autoFmtContract(sec.symbol, sec.expiry_date) : '—';
+        var physLot = shortSymbol ? autoGsPhysicalLot(shortSymbol) : null;
+
         var rowLots = Number(t.qty_lots) || 0;
+        var qtySub = physLot
+            ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + (rowLots * physLot.qty) + ' ' + physLot.unit + '</div>'
+            : '';
         var pointsSub = (t.pnl_points !== null && t.pnl_points !== undefined)
             ? '<div style="font-size:10px;margin-top:1px">' + auAt2Pnl(t.pnl_points) + ' pts</div>' : '';
 
@@ -6497,7 +6635,8 @@ function auAt2RenderClosed() {
            + '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>'
            + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Ts(t.entry_at) + '</td>'
            + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Ts(t.exit_at) + daysSub + '</td>'
-           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + '</td>'
+           + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Esc(contractStr) + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + qtySub + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.entry_price) + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.exit_price) + '</td>'
            + '<td style="padding:6px 8px;vertical-align:top">' + reasonCell + '</td>'
