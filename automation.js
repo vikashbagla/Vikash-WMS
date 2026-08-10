@@ -5931,6 +5931,122 @@ var AU_AT2_SEVERITY = {
     info:     { cls: 'idle',    icon: 'ℹ️' }
 };
 
+// ============================================================================
+// AT2 Trades filter bar — GS-STYLE (autoGsFilterBar), minus Version and
+// Source: AT2 has no engine param versions and no legacy signal source to
+// split by (§10-Aug owner instruction). Filters apply to CLOSED trades only —
+// same as GS: "Open trades" always shows the whole open book, unfiltered
+// (matches AT2's own long-standing rule that an open position must never be
+// hidden — see auAt2RenderOpen's own comment on that).
+//
+//   instr  : all | gold | silver           (radio)
+//   result : all | win  | loss             (radio)
+//   exits  : [] = all, else AU_AT2_EXIT_REASONS tokens (checkbox, multi-select)
+//   book   : all | <book_id>               (radio, built from the live book list)
+// Persisted to localStorage so selections survive a reload, same pattern GS uses.
+// ============================================================================
+function _auAt2BlankFilters() { return { instr: 'all', result: 'all', exits: [], book: 'all' }; }
+var _auAt2Filters = _auAt2BlankFilters();
+var _AU_AT2_FILTERS_KEY = 'wms.at2Filters.v1';
+function _auAt2FiltersSave() {
+    try { localStorage.setItem(_AU_AT2_FILTERS_KEY, JSON.stringify(_auAt2Filters)); }
+    catch (e) { /* private mode / storage disabled — filters just won't persist */ }
+}
+function _auAt2FiltersRestore() {
+    try {
+        var s = JSON.parse(localStorage.getItem(_AU_AT2_FILTERS_KEY) || '{}');
+        if (s.instr)  _auAt2Filters.instr  = s.instr;
+        if (s.result) _auAt2Filters.result = s.result;
+        if (Array.isArray(s.exits)) _auAt2Filters.exits = s.exits;
+        if (s.book)   _auAt2Filters.book   = s.book;
+    } catch (e) { /* ignore malformed */ }
+}
+_auAt2FiltersRestore();
+
+/**
+ * Gold or silver, from the trade's STRATEGY CODE ('gs_goldm_15m' /
+ * 'gs_silverm_15m') — not the contract symbol. AT2 loads `at2_trade` without a
+ * join to `securities_nfo`, and the strategy code already carries the
+ * instrument unambiguously, so there is nothing to look up.
+ */
+function auAt2Instrument(t) {
+    var strat = _auAt2.strategies.filter(function (s) { return s.id === t.strategy_id; })[0];
+    var code = (strat && strat.code || '').toLowerCase();
+    if (code.indexOf('goldm') >= 0)   return 'gold';
+    if (code.indexOf('silverm') >= 0) return 'silver';
+    return '';
+}
+
+function auAt2SetFilter(kind, value) {
+    if (kind === 'instr')       _auAt2Filters.instr = value;
+    else if (kind === 'result') _auAt2Filters.result = value;
+    else if (kind === 'book')   _auAt2Filters.book = value;
+    _auAt2FiltersSave();
+    auAt2RenderClosed();
+}
+
+function auAt2ToggleExit(reason, on) {
+    var arr = _auAt2Filters.exits, i = arr.indexOf(reason);
+    if (on && i < 0) arr.push(reason);
+    else if (!on && i >= 0) arr.splice(i, 1);
+    _auAt2FiltersSave();
+    auAt2RenderClosed();
+}
+
+/** Does this CLOSED trade pass the current filter set? Open trades never call this. */
+function auAt2ClosedPassesFilters(t) {
+    var f = _auAt2Filters;
+    if (f.instr !== 'all' && auAt2Instrument(t) !== f.instr) return false;
+    if (f.result === 'win'  && !(Number(t.realised_pnl) > 0)) return false;
+    if (f.result === 'loss' && !(Number(t.realised_pnl) < 0)) return false;
+    if (f.exits.length && f.exits.indexOf(t.exit_reason) < 0) return false;
+    if (f.book !== 'all' && t.book_id !== f.book) return false;
+    return true;
+}
+
+function auAt2FilterBar() {
+    var lbl = 'font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.04em';
+    var f = _auAt2Filters;
+    function radio(name, val, cur, handler, text) {
+        return '<label class="radio-label" style="font-size:12px"><input type="radio" name="' + name + '" value="' + val + '"' +
+               (cur === val ? ' checked' : '') + ' onchange="' + handler + '"> ' + text + '</label>';
+    }
+    function check(name, val, on, handler, text) {
+        return '<label class="radio-label" style="font-size:12px"><input type="checkbox" name="' + name + '" value="' + val + '"' +
+               (on ? ' checked' : '') + ' onchange="' + handler + '"> ' + text + '</label>';
+    }
+    var exitLabels = { STOP: 'Hard SL', TRAIL: 'Trail SL', TARGET: 'Target', TIME: 'Time stop',
+                        SQUARE_OFF: 'Square-off', ROLL: 'Roll', MANUAL: 'Manual' };
+    var exitsHtml = AU_AT2_EXIT_REASONS.map(function (r) {
+        return check('auat2f-exit', r, f.exits.indexOf(r) >= 0, "auAt2ToggleExit('" + r + "', this.checked)", exitLabels[r] || r);
+    }).join('');
+    var books = _auAt2.books.slice().sort(function (a, b) { return (a.display_name || '').localeCompare(b.display_name || ''); });
+    var bookHtml = radio('auat2f-book', 'all', f.book, "auAt2SetFilter('book','all')", 'All')
+        + books.map(function (b) {
+            return radio('auat2f-book', b.id, f.book, "auAt2SetFilter('book','" + b.id + "')", auAt2Esc(b.display_name));
+        }).join('');
+
+    return '<div style="display:flex;align-items:flex-start;gap:22px;flex-wrap:wrap;margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">' +
+        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Instrument</span>' +
+            radio('auat2f-instr', 'all',    f.instr, "auAt2SetFilter('instr','all')",    'All') +
+            radio('auat2f-instr', 'gold',   f.instr, "auAt2SetFilter('instr','gold')",   'Gold') +
+            radio('auat2f-instr', 'silver', f.instr, "auAt2SetFilter('instr','silver')", 'Silver') +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Result</span>' +
+            radio('auat2f-result', 'all',  f.result, "auAt2SetFilter('result','all')",  'All') +
+            radio('auat2f-result', 'win',  f.result, "auAt2SetFilter('result','win')",  'Winning') +
+            radio('auat2f-result', 'loss', f.result, "auAt2SetFilter('result','loss')", 'Losing') +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Exit reason <span style="font-weight:400;color:#9ca3af;text-transform:none">(tick to filter)</span></span>' +
+            exitsHtml +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Book</span>' +
+            bookHtml +
+        '</div>' +
+        '<div style="font-size:11px;color:#6b7280;max-width:220px;line-height:1.5">These filters apply to <b>Closed trades</b> only — Open trades always shows the whole open book, so a filter can never hide a live position.</div>' +
+    '</div>';
+}
+
 function auAt2Esc(s) {
     return String(s === null || s === undefined ? '' : s)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -6035,6 +6151,12 @@ async function autoAt2Refresh() {
 
         auAt2RenderHeader();
         auAt2RenderMetrics();
+        // Filter bar is rebuilt on every full refresh (book list may have
+        // changed) — but NOT on every filter click, same as GS: a filter
+        // click re-renders only the Closed table + its badge/summary, so the
+        // inputs' own checked/DOM state isn't disturbed mid-interaction.
+        var fb = document.getElementById('au-at2-filterbar');
+        if (fb) fb.innerHTML = auAt2FilterBar();
         auAt2RenderOpen();
         auAt2RenderClosed();
         auAt2RenderAlerts();
@@ -6087,19 +6209,36 @@ function auAt2RenderMetrics() {
     var exposure = open.reduce(function (n, t) {
         return n + (Number(t.entry_price) || 0) * (Number(t.qty_open_units) || 0);
     }, 0);
+    var closed = _auAt2.trades.filter(function (t) { return t.status === 'closed'; });
     var realised = _auAt2.trades.reduce(function (n, t) { return n + (Number(t.realised_pnl) || 0); }, 0);
+    var wins = closed.filter(function (t) { return Number(t.realised_pnl) > 0; }).length;
+    var losses = closed.filter(function (t) { return Number(t.realised_pnl) < 0; }).length;
     var openAlerts = _auAt2.alerts.filter(function (a) { return !a.resolved_at; });
     var crit = openAlerts.filter(function (a) { return a.severity === 'critical'; }).length;
+    var enabled = _auAt2.strategies.filter(function (s) { return s.enabled; }).length;
 
+    // GS-style tiles: a plain value plus a small grey sub-line, rather than
+    // baking the extra detail into the value itself.
     function set(id, html) { var el = document.getElementById(id); if (el) el.innerHTML = html; }
-    set('au-at2-m-open', open.length + ' <span style="font-size:12px;font-weight:600;color:#6b7280">trade(s) · ' + lots + ' lots</span>');
+    function sub(id, text) { var el = document.getElementById(id); if (el) el.textContent = text || ''; }
+
+    set('au-at2-m-open', String(open.length));
+    sub('au-at2-m-open-sub', lots + ' lot(s)');
+
     set('au-at2-m-exposure', exposure ? formatAmount(exposure) : '—');
+    sub('au-at2-m-exposure-sub', open.length ? 'across ' + open.length + ' position(s)' : '');
+
     set('au-at2-m-realised', auAt2Pnl(realised));
+    sub('au-at2-m-realised-sub', closed.length ? (wins + 'W / ' + losses + 'L · ' + closed.length + ' closed') : 'no closed trades yet');
+
     set('au-at2-m-alerts', openAlerts.length
         ? (crit ? '<span class="negative">' + openAlerts.length + ' (' + crit + ' critical)</span>'
                 : openAlerts.length)
         : '<span style="color:#059669">0</span>');
+    sub('au-at2-m-alerts-sub', openAlerts.length ? '' : 'all clear');
+
     set('au-at2-m-strategies', _auAt2.strategies.length);
+    sub('au-at2-m-strategies-sub', enabled + ' enabled');
 
     var tab = document.getElementById('au-at2-alerts-tab');
     if (tab) tab.innerHTML = 'Alerts' + (openAlerts.length
@@ -6146,9 +6285,14 @@ function auAt2RenderOpen() {
     var TERMINAL = ['closed', 'voided'];
     var rows = _auAt2.trades.filter(function (t) { return TERMINAL.indexOf(t.status) < 0; });
     var el = document.getElementById('au-at2-open-content');
+    var badge = document.getElementById('au-at2-open-badge');
+    var summary = document.getElementById('au-at2-open-summary');
     if (!el) return;
 
+    if (badge) { badge.className = 'au-badge ' + (rows.length ? 'success' : 'idle'); badge.textContent = rows.length + ' open'; }
+
     if (!rows.length) {
+        if (summary) summary.textContent = '';
         el.innerHTML = '<div class="au-soon">No open AT2 positions.<br>'
                      + '<span style="font-size:12px">Read from <code>at2_trade</code> — '
                      + _auAt2.trades.length + ' trade(s) total, none currently held.</span></div>';
@@ -6157,6 +6301,12 @@ function auAt2RenderOpen() {
 
     var unknown = rows.filter(function (t) { return !AU_AT2_STATUS[t.status]; });
     var bad = rows.filter(auAt2StopInverted);
+    if (summary) {
+        var lots = rows.reduce(function (n, t) { return n + (Number(t.qty_lots) || 0); }, 0);
+        summary.textContent = lots + ' lot(s)'
+            + (unknown.length ? ' · ' + unknown.length + ' unknown status' : '')
+            + (bad.length ? ' · ' + bad.length + ' inverted stop' : '');
+    }
     var h = '';
     if (unknown.length) {
         h += '<div class="au-error-list" style="margin:0 0 12px"><strong>\u26D4 '
@@ -6216,14 +6366,30 @@ function auAt2RenderOpen() {
 }
 
 function auAt2RenderClosed() {
-    var rows = _auAt2.trades.filter(function (t) { return t.status === 'closed' || t.status === 'voided'; });
+    var all = _auAt2.trades.filter(function (t) { return t.status === 'closed' || t.status === 'voided'; });
+    // Filters (Instrument / Result / Exit reason / Book) apply HERE ONLY —
+    // Open trades (above) is never filtered. See auAt2ClosedPassesFilters.
+    var rows = all.filter(auAt2ClosedPassesFilters);
     var el = document.getElementById('au-at2-closed-content');
+    var badge = document.getElementById('au-at2-closed-badge');
+    var summary = document.getElementById('au-at2-closed-summary');
     if (!el) return;
-    if (!rows.length) { el.innerHTML = '<div class="au-soon">No closed AT2 trades yet.</div>'; return; }
+
+    var filtered = rows.length !== all.length;
+    if (badge) { badge.className = 'au-badge idle'; badge.textContent = rows.length + ' closed' + (filtered ? ' (of ' + all.length + ')' : ''); }
+
+    if (!rows.length) {
+        if (summary) summary.textContent = '';
+        el.innerHTML = '<div class="au-soon">' + (all.length
+            ? 'No closed AT2 trades match the current filters (' + all.length + ' total, all filtered out).'
+            : 'No closed AT2 trades yet.') + '</div>';
+        return;
+    }
 
     var wins = rows.filter(function (t) { return Number(t.realised_pnl) > 0; }).length;
     var losses = rows.filter(function (t) { return Number(t.realised_pnl) < 0; }).length;
     var total = rows.reduce(function (n, t) { return n + (Number(t.realised_pnl) || 0); }, 0);
+    if (summary) summary.textContent = wins + 'W / ' + losses + 'L' + (filtered ? ' · filtered' : '');
 
     var h = '<table class="au-at2-table"><thead><tr>'
           + '<th>Status</th><th>Book</th><th>Side</th><th>Lots</th><th>Entry</th><th>Exit</th>'

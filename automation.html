@@ -1299,17 +1299,29 @@ input.au-at2-locked:disabled {
             </div>
           </div>
 
-          <div class="au-stat-grid" id="au-at2-metrics">
-            <div class="au-stat"><div class="au-stat-label">Open positions</div><div class="au-stat-value" id="au-at2-m-open">—</div></div>
-            <div class="au-stat"><div class="au-stat-label">Open exposure</div><div class="au-stat-value" id="au-at2-m-exposure">—</div></div>
-            <div class="au-stat"><div class="au-stat-label">Realised P&amp;L</div><div class="au-stat-value" id="au-at2-m-realised">—</div></div>
-            <div class="au-stat"><div class="au-stat-label">Open alerts</div><div class="au-stat-value" id="au-at2-m-alerts">—</div></div>
-            <div class="au-stat"><div class="au-stat-label">Strategies</div><div class="au-stat-value" id="au-at2-m-strategies">—</div></div>
+          <!-- ══ GS-STYLE METRIC TILES (fam-metrics / fam-metric-tile) ═══════════
+               Same 5 numbers AT2 has always shown, same ids — restyled to match
+               the GS module's card look (bordered white tiles + a sub-line),
+               rather than the flat au-stat-grid boxes. This strip stays
+               unfiltered/all-time regardless of the Trades-tab filter bar below,
+               since it is visible from every tab (Alerts, Events, Controls too),
+               not just Trades — a filtered number here would be misleading on a
+               tab where the filter bar isn't even in view. -->
+          <div class="fam-metrics" id="au-at2-metrics">
+            <div class="fam-metric-tile"><div class="metric-label">Open positions</div>
+              <div class="metric-value" id="au-at2-m-open">—</div><div class="metric-sub" id="au-at2-m-open-sub"></div></div>
+            <div class="fam-metric-tile"><div class="metric-label">Open exposure</div>
+              <div class="metric-value" id="au-at2-m-exposure">—</div><div class="metric-sub" id="au-at2-m-exposure-sub"></div></div>
+            <div class="fam-metric-tile"><div class="metric-label">Realised P&amp;L (all-time)</div>
+              <div class="metric-value" id="au-at2-m-realised">—</div><div class="metric-sub" id="au-at2-m-realised-sub"></div></div>
+            <div class="fam-metric-tile"><div class="metric-label">Open alerts</div>
+              <div class="metric-value" id="au-at2-m-alerts">—</div><div class="metric-sub" id="au-at2-m-alerts-sub"></div></div>
+            <div class="fam-metric-tile"><div class="metric-label">Strategies</div>
+              <div class="metric-value" id="au-at2-m-strategies">—</div><div class="metric-sub" id="au-at2-m-strategies-sub"></div></div>
           </div>
 
           <div class="au-subtabs">
-            <button class="au-subtab-btn active" data-subtab="au-at2-open-panel">Open Trades</button>
-            <button class="au-subtab-btn" data-subtab="au-at2-closed-panel">Closed Trades</button>
+            <button class="au-subtab-btn active" data-subtab="au-at2-trades-panel">Trades</button>
             <button class="au-subtab-btn" data-subtab="au-at2-alerts-panel" id="au-at2-alerts-tab">Alerts</button>
             <button class="au-subtab-btn" data-subtab="au-at2-events-panel">Signals &amp; Events</button>
             <button class="au-subtab-btn" data-subtab="au-at2-controls-panel">Controls &amp; Admin</button>
@@ -1317,12 +1329,31 @@ input.au-at2-locked:disabled {
                     onclick="autoAt2Refresh()">↻ Refresh</button>
           </div>
 
-          <div id="au-at2-open-panel" class="au-subtab-panel active">
-            <div id="au-at2-open-content" class="au-meta">Loading open trades…</div>
-          </div>
+          <!-- ══ GS-STYLE TRADES PAGE — Open Trades + Closed Trades merged ══════
+               Was two separate tabs; now one page: filter bar + collapsible Open
+               / Closed blocks, mirroring autoGsRenderPageShell(mode). Filters
+               (Instrument / Result / Exit reason / Book) apply to CLOSED only —
+               same as GS: the open book is always shown in full, unfiltered, on
+               purpose (AT2's own long-standing rule: an open position is never
+               hidden by a filter, only a closed one). No Version or Source
+               filter — AT2 has neither multiple param versions nor multiple
+               signal sources. -->
+          <div id="au-at2-trades-panel" class="au-subtab-panel active">
+            <div id="au-at2-filterbar"></div>
 
-          <div id="au-at2-closed-panel" class="au-subtab-panel">
-            <div id="au-at2-closed-content" class="au-meta">Loading closed trades…</div>
+            <details id="au-at2-open-block" class="au-gs-block" open>
+              <summary class="au-gs-block-summary">Open trades
+                <span id="au-at2-open-badge" class="au-badge idle">…</span>
+                <span id="au-at2-open-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-at2-open-content" class="au-meta">Loading open trades…</div>
+            </details>
+
+            <details id="au-at2-closed-block" class="au-gs-block">
+              <summary class="au-gs-block-summary">Closed trades
+                <span id="au-at2-closed-badge" class="au-badge idle">…</span>
+                <span id="au-at2-closed-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-at2-closed-content" class="au-meta">Loading closed trades…</div>
+            </details>
           </div>
 
           <!-- ⚠️ THE EMAIL IS A NOTIFICATION; THIS TABLE IS THE TRUTH.
