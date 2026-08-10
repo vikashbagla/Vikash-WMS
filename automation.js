@@ -6077,6 +6077,22 @@ function auAt2ExitReason(reason) {
     return auAt2Esc(reason);
 }
 
+/** Colour key for the Closed-trades Reason column — mirrors GS's exit-category
+ *  colouring (autoLoadGsClosedTrades' _auGsExitColor) so the two tables read
+ *  the same way: red = stop-driven, green = target, grey = neutral/time. */
+function auAt2ExitColor(reason) {
+    switch (reason) {
+        case 'STOP':       return '#dc2626';
+        case 'TRAIL':      return '#b45309';
+        case 'TARGET':     return '#047857';
+        case 'TIME':       return '#6b7280';
+        case 'SQUARE_OFF': return '#2563eb';
+        case 'ROLL':       return '#7c3aed';
+        case 'MANUAL':     return '#6b7280';
+        default:           return '#6b7280';
+    }
+}
+
 function auAt2Severity(sev) {
     var k = AU_AT2_SEVERITY[sev];
     if (!k) {
@@ -6301,8 +6317,11 @@ function auAt2RenderOpen() {
 
     var unknown = rows.filter(function (t) { return !AU_AT2_STATUS[t.status]; });
     var bad = rows.filter(auAt2StopInverted);
+    // Computed unconditionally (not just when `summary` exists) — the totals
+    // row in the table below also needs this, and a missing DOM node must not
+    // silently leave it undefined for that second use.
+    var lots = rows.reduce(function (n, t) { return n + (Number(t.qty_lots) || 0); }, 0);
     if (summary) {
-        var lots = rows.reduce(function (n, t) { return n + (Number(t.qty_lots) || 0); }, 0);
         summary.textContent = lots + ' lot(s)'
             + (unknown.length ? ' · ' + unknown.length + ' unknown status' : '')
             + (bad.length ? ' · ' + bad.length + ' inverted stop' : '');
@@ -6321,47 +6340,79 @@ function auAt2RenderOpen() {
            + 'instant it rested. These positions read as protected and are NOT. Fix the level before the '
            + 'next session opens.</div></div>';
     }
-    h += '<table class="au-at2-table"><colgroup>'
-          + '<col style="width:15%"><col style="width:13%"><col style="width:6%"><col style="width:5%">'
-          + '<col style="width:9%"><col style="width:9%"><col style="width:7%"><col style="width:11%">'
-          + '<col style="width:17%"><col style="width:8%"></colgroup><thead><tr>'
-          + '<th>Status</th><th>Book</th><th>Side</th><th>Lots</th><th>Entry</th><th>Stop</th>'
-          + '<th>Risk/lot</th><th>Entered</th><th>Flags</th><th class="text-right">Action</th>'
-          + '</tr></thead><tbody>';
-
+    // GS-style table (mirrors autoLoadGsOpenTrades): shaded #f3f4f6 header, a
+    // sticky totals row on top, sub-values (days held / stop level) nested
+    // under their main cell rather than given their own column — so AT2's
+    // table reads as the same product as GS's, not a different one bolted on.
+    var now = Date.now();
+    var totalRisk = 0, anyRisk = false;
+    var body = '';
     rows.forEach(function (t) {
-        var risk = (Number(t.atr_at_entry) || 0) && (Number(t.entry_price) || 0)
+        var riskPerLot = (Number(t.atr_at_entry) || 0) && (Number(t.entry_price) || 0)
             ? Math.abs((Number(t.entry_price) - Number(t.stop_at_entry)) * (Number(t.qty_units) / (Number(t.qty_lots) || 1)))
             : null;
+        var rowLots = Number(t.qty_lots) || 0;
+        if (riskPerLot != null) { totalRisk += riskPerLot * rowLots; anyRisk = true; }
         var flags = [];
         if (t.cap_bound) flags.push('<span class="au-badge warning" title="the book\'s lot_cap reduced this allocation">cap-bound</span>');
         if (t.rolled_from_trade_id) flags.push('<span class="au-badge idle" title="opened by a roll">rolled</span>');
-        if (t.status === 'open_unprotected') flags.push('<span class="au-badge error">NO STOP</span>');
         if (auAt2StopInverted(t)) flags.push('<span class="au-badge error" title="A long stop at or above its '
             + 'entry (or a short at or below) would fire the instant it rested. This position reads as protected '
             + 'and is not.">\u26D4 INVERTED STOP</span>');
         if (t.mode === 'live') flags.push('<span class="au-badge error">LIVE</span>');
 
-        h += '<tr>'
-           + '<td>' + auAt2StatusBadge(t.status) + '</td>'
-           + '<td>' + auAt2Esc(auAt2BookName(t.book_id)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</td>'
-           + '<td>' + (t.side === 'LONG' ? '<span style="color:#059669;font-weight:700">LONG</span>'
-                                          : '<span style="color:#dc2626;font-weight:700">SHORT</span>') + '</td>'
-           + '<td>' + auAt2Esc(t.qty_lots) + '</td>'
-           + '<td>' + auAt2Num(t.entry_price) + '</td>'
-           + '<td>' + (t.current_stop
-                        ? (auAt2StopInverted(t)
-                            ? '<span class="negative" style="font-weight:700">' + auAt2Num(t.current_stop) + ' \u26D4</span>'
-                            : auAt2Num(t.current_stop))
-                        : '<span class="au-badge error">none</span>') + '</td>'
-           + '<td>' + (risk ? formatAmount(risk) : '—') + '</td>'
-           + '<td>' + auAt2Ts(t.entry_at) + '</td>'
-           + '<td class="au-at2-flags">' + (flags.join(' ') || '—') + '</td>'
-           + '<td class="text-right"><button class="au-btn au-btn-danger" style="font-size:11px;padding:3px 10px"'
+        var sideBadge = t.side === 'LONG'
+            ? '<span class="au-badge success">LONG</span>'
+            : '<span class="au-badge error">SHORT</span>';
+        var daysHeld = t.entry_at ? Math.max(0, Math.floor((now - new Date(t.entry_at).getTime()) / 86400000)) : null;
+        var daysSub = daysHeld != null
+            ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + daysHeld + ' day' + (daysHeld === 1 ? '' : 's') + '</div>'
+            : '';
+
+        body += '<tr style="border-top:1px solid #e5e7eb">'
+           + '<td style="padding:6px 8px;vertical-align:top">' + auAt2StatusBadge(t.status) + '</td>'
+           + '<td style="padding:6px 8px;vertical-align:top;font-weight:700;color:#1d4ed8">' + auAt2Esc(auAt2BookName(t.book_id)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</td>'
+           + '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>'
+           + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Ts(t.entry_at) + daysSub + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.entry_price) + (!t.current_stop
+                        ? '<div style="margin-top:2px"><span class="au-badge error" style="font-size:9px">NO STOP</span></div>'
+                        : auAt2StopInverted(t)
+                            ? '<div style="color:#dc2626;font-weight:700;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop) + ' \u26D4</div>'
+                            : '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop) + '</div>') + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + (riskPerLot ? formatAmount(riskPerLot) : '—') + '</td>'
+           + '<td style="padding:6px 8px;vertical-align:top;white-space:normal;line-height:1.7">' + (flags.join(' ') || '—') + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top"><button class="au-btn au-btn-danger" style="padding:4px 8px;font-size:11px"'
            + ' onclick="autoAt2OpenCloseModal(\'' + t.id + '\')">Close</button></td>'
            + '</tr>';
     });
-    h += '</tbody></table>';
+
+    var totalsRow = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700;position:sticky;top:0">'
+            + '<td colspan="4" style="padding:8px;text-align:right">Totals (' + rows.length + ' open):</td>'
+            + '<td style="padding:8px;text-align:right">' + lots + ' lot(s)</td>'
+            + '<td style="padding:8px"></td>'
+            + '<td style="padding:8px;text-align:right">' + (anyRisk ? formatAmount(totalRisk) : '—') + '</td>'
+            + '<td style="padding:8px" colspan="2"></td>'
+            + '</tr>';
+
+    var headerRow = '<tr style="background:#f3f4f6;text-align:left">'
+            + '<th style="padding:6px 8px">Status</th>'
+            + '<th style="padding:6px 8px">Book</th>'
+            + '<th style="padding:6px 8px">Side</th>'
+            + '<th style="padding:6px 8px">Entered<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>'
+            + '<th style="padding:6px 8px;text-align:right">Lots</th>'
+            + '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ stop</span></th>'
+            + '<th style="padding:6px 8px;text-align:right">Risk/lot</th>'
+            + '<th style="padding:6px 8px">Flags</th>'
+            + '<th style="padding:6px 8px;text-align:right">Action</th>'
+            + '</tr>';
+
+    h += '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">'
+       + '<thead>' + totalsRow + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
+    h += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6">'
+       + '• Risk/lot = |entry − stop| × units per lot (the ATR-based stop set at entry, not the current trailed level).<br>'
+       + '• Flags: cap-bound = book’s lot_cap reduced the allocation · rolled = opened by a roll · LIVE = real order, not paper.'
+       + '</div>';
     el.innerHTML = h;
 }
 
@@ -6391,27 +6442,71 @@ function auAt2RenderClosed() {
     var total = rows.reduce(function (n, t) { return n + (Number(t.realised_pnl) || 0); }, 0);
     if (summary) summary.textContent = wins + 'W / ' + losses + 'L' + (filtered ? ' · filtered' : '');
 
-    var h = '<table class="au-at2-table"><thead><tr>'
-          + '<th>Status</th><th>Book</th><th>Side</th><th>Lots</th><th>Entry</th><th>Exit</th>'
-          + '<th>Reason</th><th class="text-right">Points</th><th class="text-right">Realised</th><th>Closed</th>'
-          + '</tr></thead><tbody>';
+    // GS-style table (mirrors autoLoadGsClosedTrades): totals row pinned to the
+    // top (owner ask on GS, carried over here — no scrolling to a tfoot to see
+    // the bottom line), shaded header, Reason colour-coded the same way GS
+    // colours its exit categories (auAt2ExitColor).
+    var totalSign = total >= 0 ? '+' : '-';
+    var totalCol = total >= 0 ? '#047857' : '#dc2626';
+    var totalAbs = Math.abs(Math.round(total)).toLocaleString('en-IN');
+    var totalLabel = 'Total (' + rows.length + ' closed - ' + wins + 'W / ' + losses + 'L'
+                    + (filtered ? ' - filtered from ' + all.length : '') + ')';
+
+    var totalsRow = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700;position:sticky;top:0">'
+            + '<td colspan="9" style="padding:8px">' + auAt2Esc(totalLabel) + '</td>'
+            + '<td style="padding:8px;text-align:right;white-space:nowrap"><span style="color:' + totalCol + '">' + totalSign + auAt2Esc('₹') + totalAbs + '</span></td>'
+            + '</tr>';
+
+    var headerRow = '<tr style="background:#f3f4f6;text-align:left">'
+            + '<th style="padding:6px 8px">Status</th>'
+            + '<th style="padding:6px 8px">Book</th>'
+            + '<th style="padding:6px 8px">Side</th>'
+            + '<th style="padding:6px 8px">Entry</th>'
+            + '<th style="padding:6px 8px">Exit<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>'
+            + '<th style="padding:6px 8px;text-align:right">Lots</th>'
+            + '<th style="padding:6px 8px;text-align:right">Entry Px</th>'
+            + '<th style="padding:6px 8px;text-align:right">Exit Px</th>'
+            + '<th style="padding:6px 8px">Reason</th>'
+            + '<th style="padding:6px 8px;text-align:right">Realised P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ points</span></th>'
+            + '</tr>';
+
+    var body = '';
     rows.forEach(function (t) {
-        h += '<tr>'
-           + '<td>' + auAt2StatusBadge(t.status) + '</td>'
-           + '<td>' + auAt2BookName(t.book_id) + '</td>'
-           + '<td>' + (t.side === 'LONG' ? 'LONG' : 'SHORT') + '</td>'
-           + '<td>' + auAt2Esc(t.qty_lots) + '</td>'
-           + '<td>' + auAt2Num(t.entry_price) + '</td>'
-           + '<td>' + auAt2Num(t.exit_price) + '</td>'
-           + '<td>' + auAt2ExitReason(t.exit_reason) + '</td>'
-           + '<td class="text-right">' + auAt2Pnl(t.pnl_points) + '</td>'
-           + '<td class="text-right">' + auAt2Pnl(t.realised_pnl) + '</td>'
-           + '<td>' + auAt2Ts(t.exit_at) + '</td>'
+        var sideBadge = t.side === 'LONG'
+            ? '<span class="au-badge success">LONG</span>'
+            : '<span class="au-badge error">SHORT</span>';
+
+        var daysHeld = (t.entry_at && t.exit_at)
+            ? Math.max(0, Math.floor((new Date(t.exit_at).getTime() - new Date(t.entry_at).getTime()) / 86400000))
+            : null;
+        var daysSub = daysHeld != null
+            ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + daysHeld + ' day' + (daysHeld === 1 ? '' : 's') + '</div>'
+            : '';
+
+        var reasonCell = t.exit_reason
+            ? '<span style="color:' + auAt2ExitColor(t.exit_reason) + ';font-weight:600">' + auAt2ExitReason(t.exit_reason) + '</span>'
+            : auAt2ExitReason(t.exit_reason);
+
+        var rowLots = Number(t.qty_lots) || 0;
+        var pointsSub = (t.pnl_points !== null && t.pnl_points !== undefined)
+            ? '<div style="font-size:10px;margin-top:1px">' + auAt2Pnl(t.pnl_points) + ' pts</div>' : '';
+
+        body += '<tr style="border-top:1px solid #e5e7eb">'
+           + '<td style="padding:6px 8px;vertical-align:top">' + auAt2StatusBadge(t.status) + '</td>'
+           + '<td style="padding:6px 8px;vertical-align:top;font-weight:700;color:#1d4ed8">' + auAt2Esc(auAt2BookName(t.book_id)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</td>'
+           + '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>'
+           + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Ts(t.entry_at) + '</td>'
+           + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Ts(t.exit_at) + daysSub + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.entry_price) + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.exit_price) + '</td>'
+           + '<td style="padding:6px 8px;vertical-align:top">' + reasonCell + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + auAt2Pnl(t.realised_pnl) + pointsSub + '</td>'
            + '</tr>';
     });
-    h += '</tbody><tfoot><tr style="background:#f1f5f9;font-weight:600;border-top:2px solid #cbd5e0">'
-       + '<td colspan="8">' + rows.length + ' closed · ' + wins + 'W / ' + losses + 'L</td>'
-       + '<td class="text-right">' + auAt2Pnl(total) + '</td><td></td></tr></tfoot></table>';
+
+    var h = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">'
+          + '<thead>' + totalsRow + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
     el.innerHTML = h;
 }
 
