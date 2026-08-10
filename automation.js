@@ -6378,7 +6378,6 @@ async function auAt2RenderOpen(silent) {
     // Live P&L are new here; Status / Risk-lot / Flags stay (owner's explicit
     // call: keep AT2's own protection columns alongside GS's).
     var now = Date.now();
-    var totalRisk = 0, anyRisk = false;
     var totalExposure = 0, anyExposure = false;
     var totalMargin = 0;
     var totalPnl = 0, anyPnl = false;
@@ -6410,11 +6409,7 @@ async function auAt2RenderOpen(silent) {
         var shortSymbol = sec ? sec.underlying_symbol : null;
         var contractStr = sec ? autoFmtContract(sec.symbol, sec.expiry_date) : '—';
         var physLot = shortSymbol ? autoGsPhysicalLot(shortSymbol) : null;
-        var riskPerLot = (Number(t.atr_at_entry) || 0) && (Number(t.entry_price) || 0)
-            ? Math.abs((Number(t.entry_price) - Number(t.stop_at_entry)) * (Number(t.qty_units) / (Number(t.qty_lots) || 1)))
-            : null;
         var rowLots = Number(t.qty_lots) || 0;
-        if (riskPerLot != null) { totalRisk += riskPerLot * rowLots; anyRisk = true; }
 
         // Exposure/Margin/Live P&L — same formula the metric tile above already
         // uses (entry price × currently-open units; see auAt2RenderMetrics), so
@@ -6488,7 +6483,6 @@ async function auAt2RenderOpen(silent) {
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + exposureCell + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + marginCell + '</td>'
            + '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + pnlCell + '</td>'
-           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + (riskPerLot ? formatAmount(riskPerLot) : '—') + '</td>'
            + '<td style="padding:6px 8px;vertical-align:top;white-space:normal;line-height:1.7">' + (flags.join(' ') || '—') + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top"><button class="au-btn au-btn-danger" style="padding:4px 8px;font-size:11px"'
            + ' onclick="autoAt2OpenCloseModal(\'' + t.id + '\')">Close</button></td>'
@@ -6512,7 +6506,6 @@ async function auAt2RenderOpen(silent) {
             + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalExposure) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalMargin) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right">' + pnlTotalCell + '</td>'
-            + '<td style="padding:8px;text-align:right">' + (anyRisk ? formatAmount(totalRisk) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px" colspan="2"></td>'
             + '</tr>';
 
@@ -6528,7 +6521,6 @@ async function auAt2RenderOpen(silent) {
             + '<th style="padding:6px 8px;text-align:right">Exposure</th>'
             + '<th style="padding:6px 8px;text-align:right">Margin<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ %</span></th>'
             + '<th style="padding:6px 8px;text-align:right">Live P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>'
-            + '<th style="padding:6px 8px;text-align:right">Risk/lot</th>'
             + '<th style="padding:6px 8px">Flags</th>'
             + '<th style="padding:6px 8px;text-align:right">Action</th>'
             + '</tr>';
@@ -6539,8 +6531,7 @@ async function auAt2RenderOpen(silent) {
        + '• LTP via Fyers /quotes (needs an active Fyers connection) — same shared price cache GS uses.<br>'
        + '• Exposure = entry price × currently-open units (matches the metric tile above). Margin = Exposure × GOLDM 10% / SILVERM 20%.<br>'
        + '• Live P&amp;L = side × (LTP − entry) × currently-open units.<br>'
-       + '• Risk/lot = |entry − stop| × units per lot (the ATR-based stop set at entry, not the current trailed level).<br>'
-       + '• Flags: cap-bound = book’s lot_cap reduced the allocation · rolled = opened by a roll · LIVE = real order, not paper.'
+       + '• Flags: cap-bound = book’s lot_cap reduced the allocation · rolled = opened by a roll · ⛔ INVERTED STOP = the stop is on the wrong side of entry (reads protected, isn’t) · LIVE = real order, not paper.'
        + '</div>';
     el.innerHTML = h;
 }
