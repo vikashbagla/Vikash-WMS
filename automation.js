@@ -6149,13 +6149,13 @@ function auAt2Pnl(v) {
     return '<span class="' + getAmountClass(n) + '">' + formatAmount(n) + '</span>';
 }
 
-/** POINTS are a PRICE MOVEMENT, not an amount: 2 dp, NO '000 unit scaling
- *  (owner ask 11-Aug-2026), but keep the red/parentheses of a signed value. */
+/** POINTS are a PRICE MOVEMENT (owner ask 11-Aug-2026: "price, no decimals"):
+ *  ZERO dp, NO '000 unit scaling, but keep the red/parentheses of a signed value. */
 function auAt2Pts(v) {
     if (v === null || v === undefined || v === '') return '';
     var n = Number(v);
     if (!isFinite(n)) return '<span class="au-badge error">⛔</span>';
-    return '<span class="' + getAmountClass(n) + '">' + formatPrice(n, false) + '</span>';
+    return '<span class="' + getAmountClass(n) + '">' + formatPrice(Math.round(n), false).replace(/\.00(?=\)?$)/, '') + '</span>';
 }
 
 // ── Loading ─────────────────────────────────────────────────────────────────
