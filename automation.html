@@ -224,6 +224,123 @@ details summary {
    this opt-out the right-hand columns are pushed outside the panel and the page
    scrolls horizontally. table-layout:fixed makes the <colgroup> authoritative
    (D.2.4). */
+/* ── AT2 configuration editor (05-Aug-2026) ─────────────────────────────────
+   Module-scoped, in THIS style block because app-styles.css is the only
+   stylesheet and module styles live here (CONTEXT.md). Nothing global is
+   redefined — .wms-input, .wms-pill and .au-btn* are shared and used as-is
+   (D.4.3: global button classes live in app-styles.css, not module CSS). */
+.au-at2-strat {
+  border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; margin-top: 12px;
+  background: #fff;
+}
+.au-at2-strat-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.au-at2-strat-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* A responsive grid, NOT a table — D.8.6: the app's 940px table min-width is
+   unscoped and leaks into anything containing a <table>. auto-fit also means
+   the field count can grow without a layout rewrite. */
+.au-at2-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px 14px;
+}
+.au-at2-field { min-width: 0; }
+.au-at2-field label {
+  display: block; font-size: 10px; font-weight: 600; text-transform: uppercase;
+  color: #718096; margin-bottom: 3px; letter-spacing: .02em;
+}
+.au-at2-field .wms-input { width: 100%; box-sizing: border-box; }
+/* D.6.2 — a disabled (view) field must be visibly different from an editable
+   one, or the owner cannot tell whether they are in edit mode. */
+.au-at2-pf:disabled { background: #f7fafc; color: #4a5568; }
+.au-at2-hint {
+  font-size: 10px; color: #94a3b8; margin-top: 3px; line-height: 1.35;
+  white-space: normal;                     /* D.8.9 — a truncated hint is half a hint */
+}
+.au-at2-pills { display: flex; gap: 4px; flex-wrap: wrap; }
+.au-at2-pill { cursor: pointer; user-select: none; }
+.au-at2-pills[data-locked="yes"] .au-at2-pill { cursor: default; opacity: .65; }
+
+/* ── COLLAPSIBLE CARDS ─────────────────────────────────────────────────────
+   The head is always visible; the body only when .open. Collapsed by default
+   because a screen of eight fully-expanded strategies is a wall of inputs and
+   the name is what you scan for. */
+.au-at2-strat > .au-at2-body { display: none; }
+.au-at2-strat.open > .au-at2-body { display: block; }
+.au-at2-title {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  cursor: pointer; user-select: none; min-width: 0; flex: 1;
+}
+.au-at2-title:hover .au-at2-name { text-decoration: underline; }
+.au-at2-caret {
+  color: #64748b; font-size: 13px; width: 12px; flex-shrink: 0; line-height: 1;
+}
+.au-at2-title:hover .au-at2-caret { color: #2563eb; }
+.au-at2-name  { font-size: 15px; font-weight: 700; color: #1a202c; }
+.au-at2-code  {
+  font-size: 11px; color: #64748b; background: #f1f5f9;
+  padding: 1px 6px; border-radius: 4px;
+}
+.au-at2-strat-head { margin-bottom: 0; }
+.au-at2-strat.open > .au-at2-strat-head { margin-bottom: 10px; }
+
+/* ── FIELD GROUPS — the form reads in the order you think in ─────────────── */
+.au-at2-group { margin-top: 12px; }
+.au-at2-group:first-child { margin-top: 0; }
+.au-at2-group-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  color: #475569; letter-spacing: .05em; margin-bottom: 6px;
+  padding-bottom: 3px; border-bottom: 1px solid #edf2f7;
+}
+
+/* ── A LOCKED FIELD LOOKS LOCKED, in view mode AND in edit mode ─────────────
+   D.6.2 says a read-only field must be visibly different. These stay grey and
+   dashed even while the rest of the card is editable, so there is no moment
+   where the screen implies a value can be changed when it cannot. */
+.au-at2-field-locked label { color: #94a3b8; }
+.au-at2-lockbadge { font-size: 9px; opacity: .7; }
+.au-at2-unit { color: #94a3b8; font-weight: 500; }
+input.au-at2-locked,
+input.au-at2-locked:disabled {
+  background: #f1f5f9; color: #64748b;
+  border-style: dashed; cursor: not-allowed;
+}
+
+/* ── RETIRED (hidden) rows ─────────────────────────────────────────────────
+   Visibly set apart when revealed, so "showing retired" never reads as a
+   normal list. Muted, not struck through — the row is intact, just not in use. */
+.au-at2-strat.retired { background: #fafbfc; border-style: dashed; }
+.au-at2-strat.retired .au-at2-name { color: #64748b; font-weight: 600; }
+
+.au-at2-hiddenbar {
+  display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  padding: 5px 9px; border-radius: 6px; background: #f8fafc;
+  border: 1px dashed #cbd5e0; font-size: 11px; color: #64748b;
+}
+.au-at2-hiddenbar button { padding: 2px 8px; font-size: 11px; }
+
+/* Card header with an action on the right (＋ New …). */
+.au-at2-cardhead {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; flex-wrap: wrap;
+}
+.au-at2-cardhead h3 { margin: 0; }
+
+.au-at2-msg { margin-top: 8px; font-size: 11px; min-height: 1px; }
+.au-at2-ok  { color: #059669; }
+.au-at2-err {
+  color: #dc2626; background: #fef2f2; border: 1px solid #fecaca;
+  border-radius: 4px; padding: 6px 8px; display: block;
+  white-space: pre-wrap; word-break: break-word;   /* the DB's refusal is shown WHOLE */
+}
+/* ⛔ D.8.10 — a params key this screen does not know must SHOUT, not vanish. */
+.au-at2-unknown {
+  margin-top: 10px; padding: 6px 8px; border-radius: 4px;
+  background: #fffbeb; border: 1px solid #fcd34d; color: #92400e;
+  font-size: 11px; line-height: 1.5; white-space: normal;
+}
 .au-at2-table {
     width: 100%;
     min-width: 0;
@@ -1182,17 +1299,29 @@ details summary {
             </div>
           </div>
 
-          <div class="au-stat-grid" id="au-at2-metrics">
-            <div class="au-stat"><div class="au-stat-label">Open positions</div><div class="au-stat-value" id="au-at2-m-open">—</div></div>
-            <div class="au-stat"><div class="au-stat-label">Open exposure</div><div class="au-stat-value" id="au-at2-m-exposure">—</div></div>
-            <div class="au-stat"><div class="au-stat-label">Realised P&amp;L</div><div class="au-stat-value" id="au-at2-m-realised">—</div></div>
-            <div class="au-stat"><div class="au-stat-label">Open alerts</div><div class="au-stat-value" id="au-at2-m-alerts">—</div></div>
-            <div class="au-stat"><div class="au-stat-label">Strategies</div><div class="au-stat-value" id="au-at2-m-strategies">—</div></div>
+          <!-- ══ GS-STYLE METRIC TILES (fam-metrics / fam-metric-tile) ═══════════
+               Same 5 numbers AT2 has always shown, same ids — restyled to match
+               the GS module's card look (bordered white tiles + a sub-line),
+               rather than the flat au-stat-grid boxes. This strip stays
+               unfiltered/all-time regardless of the Trades-tab filter bar below,
+               since it is visible from every tab (Alerts, Events, Controls too),
+               not just Trades — a filtered number here would be misleading on a
+               tab where the filter bar isn't even in view. -->
+          <div class="fam-metrics" id="au-at2-metrics">
+            <div class="fam-metric-tile"><div class="metric-label">Open positions</div>
+              <div class="metric-value" id="au-at2-m-open">—</div><div class="metric-sub" id="au-at2-m-open-sub"></div></div>
+            <div class="fam-metric-tile"><div class="metric-label">Open exposure</div>
+              <div class="metric-value" id="au-at2-m-exposure">—</div><div class="metric-sub" id="au-at2-m-exposure-sub"></div></div>
+            <div class="fam-metric-tile"><div class="metric-label">Realised P&amp;L (all-time)</div>
+              <div class="metric-value" id="au-at2-m-realised">—</div><div class="metric-sub" id="au-at2-m-realised-sub"></div></div>
+            <div class="fam-metric-tile"><div class="metric-label">Open alerts</div>
+              <div class="metric-value" id="au-at2-m-alerts">—</div><div class="metric-sub" id="au-at2-m-alerts-sub"></div></div>
+            <div class="fam-metric-tile"><div class="metric-label">Strategies</div>
+              <div class="metric-value" id="au-at2-m-strategies">—</div><div class="metric-sub" id="au-at2-m-strategies-sub"></div></div>
           </div>
 
           <div class="au-subtabs">
-            <button class="au-subtab-btn active" data-subtab="au-at2-open-panel">Open Trades</button>
-            <button class="au-subtab-btn" data-subtab="au-at2-closed-panel">Closed Trades</button>
+            <button class="au-subtab-btn active" data-subtab="au-at2-trades-panel">Trades</button>
             <button class="au-subtab-btn" data-subtab="au-at2-alerts-panel" id="au-at2-alerts-tab">Alerts</button>
             <button class="au-subtab-btn" data-subtab="au-at2-events-panel">Signals &amp; Events</button>
             <button class="au-subtab-btn" data-subtab="au-at2-controls-panel">Controls &amp; Admin</button>
@@ -1200,12 +1329,31 @@ details summary {
                     onclick="autoAt2Refresh()">↻ Refresh</button>
           </div>
 
-          <div id="au-at2-open-panel" class="au-subtab-panel active">
-            <div id="au-at2-open-content" class="au-meta">Loading open trades…</div>
-          </div>
+          <!-- ══ GS-STYLE TRADES PAGE — Open Trades + Closed Trades merged ══════
+               Was two separate tabs; now one page: filter bar + collapsible Open
+               / Closed blocks, mirroring autoGsRenderPageShell(mode). Filters
+               (Instrument / Result / Exit reason / Book) apply to CLOSED only —
+               same as GS: the open book is always shown in full, unfiltered, on
+               purpose (AT2's own long-standing rule: an open position is never
+               hidden by a filter, only a closed one). No Version or Source
+               filter — AT2 has neither multiple param versions nor multiple
+               signal sources. -->
+          <div id="au-at2-trades-panel" class="au-subtab-panel active">
+            <div id="au-at2-filterbar"></div>
 
-          <div id="au-at2-closed-panel" class="au-subtab-panel">
-            <div id="au-at2-closed-content" class="au-meta">Loading closed trades…</div>
+            <details id="au-at2-open-block" class="au-gs-block" open>
+              <summary class="au-gs-block-summary">Open trades
+                <span id="au-at2-open-badge" class="au-badge idle">…</span>
+                <span id="au-at2-open-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-at2-open-content" class="au-meta">Loading open trades…</div>
+            </details>
+
+            <details id="au-at2-closed-block" class="au-gs-block">
+              <summary class="au-gs-block-summary">Closed trades
+                <span id="au-at2-closed-badge" class="au-badge idle">…</span>
+                <span id="au-at2-closed-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-at2-closed-content" class="au-meta">Loading closed trades…</div>
+            </details>
           </div>
 
           <!-- ⚠️ THE EMAIL IS A NOTIFICATION; THIS TABLE IS THE TRUTH.
