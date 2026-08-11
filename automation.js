@@ -5951,9 +5951,9 @@ var AU_AT2_SEVERITY = {
 //   book   : all | <book_id>               (radio, built from the live book list)
 // Persisted to localStorage so selections survive a reload, same pattern GS uses.
 // ============================================================================
-function _auAt2BlankFilters() { return { instr: 'all', result: 'all', exits: [], book: 'all' }; }
+function _auAt2BlankFilters() { return { instr: 'all', result: 'all', exits: [], books: [] }; }
 var _auAt2Filters = _auAt2BlankFilters();
-var _AU_AT2_FILTERS_KEY = 'wms.at2Filters.v1';
+var _AU_AT2_FILTERS_KEY = 'wms.at2Filters.v2';   // v2: Book is multi-select (books[]), not a single radio
 function _auAt2FiltersSave() {
     try { localStorage.setItem(_AU_AT2_FILTERS_KEY, JSON.stringify(_auAt2Filters)); }
     catch (e) { /* private mode / storage disabled — filters just won't persist */ }
@@ -5964,7 +5964,7 @@ function _auAt2FiltersRestore() {
         if (s.instr)  _auAt2Filters.instr  = s.instr;
         if (s.result) _auAt2Filters.result = s.result;
         if (Array.isArray(s.exits)) _auAt2Filters.exits = s.exits;
-        if (s.book)   _auAt2Filters.book   = s.book;
+        if (Array.isArray(s.books)) _auAt2Filters.books = s.books;
     } catch (e) { /* ignore malformed */ }
 }
 _auAt2FiltersRestore();
@@ -5986,7 +5986,15 @@ function auAt2Instrument(t) {
 function auAt2SetFilter(kind, value) {
     if (kind === 'instr')       _auAt2Filters.instr = value;
     else if (kind === 'result') _auAt2Filters.result = value;
-    else if (kind === 'book')   _auAt2Filters.book = value;
+    _auAt2FiltersSave();
+    auAt2RenderClosed();
+}
+
+/** Book is multi-select: empty = all, same "tick to filter" pattern as Exit reason. */
+function auAt2ToggleBook(bookId, on) {
+    var arr = _auAt2Filters.books, i = arr.indexOf(bookId);
+    if (on && i < 0) arr.push(bookId);
+    else if (!on && i >= 0) arr.splice(i, 1);
     _auAt2FiltersSave();
     auAt2RenderClosed();
 }
@@ -6006,7 +6014,7 @@ function auAt2ClosedPassesFilters(t) {
     if (f.result === 'win'  && !(Number(t.realised_pnl) > 0)) return false;
     if (f.result === 'loss' && !(Number(t.realised_pnl) < 0)) return false;
     if (f.exits.length && f.exits.indexOf(t.exit_reason) < 0) return false;
-    if (f.book !== 'all' && t.book_id !== f.book) return false;
+    if (f.books.length && f.books.indexOf(t.book_id) < 0) return false;
     return true;
 }
 
@@ -6027,29 +6035,34 @@ function auAt2FilterBar() {
         return check('auat2f-exit', r, f.exits.indexOf(r) >= 0, "auAt2ToggleExit('" + r + "', this.checked)", exitLabels[r] || r);
     }).join('');
     var books = _auAt2.books.slice().sort(function (a, b) { return (a.display_name || '').localeCompare(b.display_name || ''); });
-    var bookHtml = radio('auat2f-book', 'all', f.book, "auAt2SetFilter('book','all')", 'All')
-        + books.map(function (b) {
-            return radio('auat2f-book', b.id, f.book, "auAt2SetFilter('book','" + b.id + "')", auAt2Esc(b.display_name));
+    var bookHtml = books.map(function (b) {
+            return check('auat2f-book', b.id, f.books.indexOf(b.id) >= 0, "auAt2ToggleBook('" + b.id + "', this.checked)", auAt2Esc(b.display_name));
         }).join('');
+    var col = 'display:flex;flex-direction:column;gap:4px';
+    var tick = ' <span style="font-weight:400;color:#9ca3af;text-transform:none">(tick to filter)</span>';
 
-    return '<div style="display:flex;align-items:flex-start;gap:22px;flex-wrap:wrap;margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">' +
-        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Instrument</span>' +
-            radio('auat2f-instr', 'all',    f.instr, "auAt2SetFilter('instr','all')",    'All') +
-            radio('auat2f-instr', 'gold',   f.instr, "auAt2SetFilter('instr','gold')",   'Gold') +
-            radio('auat2f-instr', 'silver', f.instr, "auAt2SetFilter('instr','silver')", 'Silver') +
+    // Even column widths for the four groups; Exit reason gets double width and
+    // lays its (longer) list out in two columns. Note sits full-width below.
+    return '<div style="margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid #e2e8f0;border-radius:6px">' +
+        '<div style="display:flex;align-items:flex-start;gap:22px">' +
+            '<div style="flex:1 1 0;' + col + '"><span style="' + lbl + '">Instrument</span>' +
+                radio('auat2f-instr', 'all',    f.instr, "auAt2SetFilter('instr','all')",    'All') +
+                radio('auat2f-instr', 'gold',   f.instr, "auAt2SetFilter('instr','gold')",   'Gold') +
+                radio('auat2f-instr', 'silver', f.instr, "auAt2SetFilter('instr','silver')", 'Silver') +
+            '</div>' +
+            '<div style="flex:1 1 0;' + col + '"><span style="' + lbl + '">Result</span>' +
+                radio('auat2f-result', 'all',  f.result, "auAt2SetFilter('result','all')",  'All') +
+                radio('auat2f-result', 'win',  f.result, "auAt2SetFilter('result','win')",  'Winning') +
+                radio('auat2f-result', 'loss', f.result, "auAt2SetFilter('result','loss')", 'Losing') +
+            '</div>' +
+            '<div style="flex:2 1 0;' + col + '"><span style="' + lbl + '">Exit reason' + tick + '</span>' +
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px">' + exitsHtml + '</div>' +
+            '</div>' +
+            '<div style="flex:1 1 0;' + col + '"><span style="' + lbl + '">Book' + tick + '</span>' +
+                bookHtml +
+            '</div>' +
         '</div>' +
-        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Result</span>' +
-            radio('auat2f-result', 'all',  f.result, "auAt2SetFilter('result','all')",  'All') +
-            radio('auat2f-result', 'win',  f.result, "auAt2SetFilter('result','win')",  'Winning') +
-            radio('auat2f-result', 'loss', f.result, "auAt2SetFilter('result','loss')", 'Losing') +
-        '</div>' +
-        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Exit reason <span style="font-weight:400;color:#9ca3af;text-transform:none">(tick to filter)</span></span>' +
-            exitsHtml +
-        '</div>' +
-        '<div style="display:flex;flex-direction:column;gap:4px"><span style="' + lbl + '">Book</span>' +
-            bookHtml +
-        '</div>' +
-        '<div style="font-size:11px;color:#6b7280;max-width:220px;line-height:1.5">These filters apply to <b>Closed trades</b> only — Open trades always shows the whole open book, so a filter can never hide a live position.</div>' +
+        '<div style="font-size:11px;color:#6b7280;line-height:1.5;margin-top:8px">These filters apply to <b>Closed trades</b> only — Open trades always shows the whole open book, so a filter can never hide a live position.</div>' +
     '</div>';
 }
 
@@ -6122,15 +6135,27 @@ function auAt2Num(v) {
     if (v === null || v === undefined || v === '') return '—';
     var n = Number(v);
     if (!isFinite(n)) return '<span class="au-badge error">⛔ NOT A NUMBER</span>';
-    return formatPrice(n, false);
+    // Prices: full rupees, ZERO decimals (owner ask 11-Aug-2026) — same comma
+    // style as formatPrice, just without the paise.
+    return formatPrice(Math.round(n), false).replace(/\.00(?=\)?$)/, '');
 }
 
-/** D.7 — negatives in parentheses and red; zero is a neutral dash. */
+/** D.7 — negatives in parentheses and red; zero is a neutral dash. Amounts use
+ *  the global display unit (₹'000 by default). */
 function auAt2Pnl(v) {
     if (v === null || v === undefined || v === '') return '<span style="color:#6b7280">—</span>';
     var n = Number(v);
     if (!isFinite(n)) return '<span class="au-badge error">⛔ NOT A NUMBER</span>';
     return '<span class="' + getAmountClass(n) + '">' + formatAmount(n) + '</span>';
+}
+
+/** POINTS are a PRICE MOVEMENT, not an amount: 2 dp, NO '000 unit scaling
+ *  (owner ask 11-Aug-2026), but keep the red/parentheses of a signed value. */
+function auAt2Pts(v) {
+    if (v === null || v === undefined || v === '') return '';
+    var n = Number(v);
+    if (!isFinite(n)) return '<span class="au-badge error">⛔</span>';
+    return '<span class="' + getAmountClass(n) + '">' + formatPrice(n, false) + '</span>';
 }
 
 // ── Loading ─────────────────────────────────────────────────────────────────
@@ -6351,7 +6376,7 @@ async function auAt2RenderOpen(silent) {
     // silently leave it undefined for that second use.
     var lots = rows.reduce(function (n, t) { return n + (Number(t.qty_lots) || 0); }, 0);
     if (summary) {
-        summary.textContent = lots + ' lot(s)'
+        summary.textContent = lots + ' lot(s) · amounts in ' + getUnitDescription()
             + (unknown.length ? ' · ' + unknown.length + ' unknown status' : '')
             + (bad.length ? ' · ' + bad.length + ' inverted stop' : '');
     }
@@ -6430,15 +6455,14 @@ async function auAt2RenderOpen(silent) {
             var pnl = sideSign * (ltpVal - Number(t.entry_price)) * qtyOpenUnits;
             anyPnl = true; totalPnl += pnl;
             ltpCell = auAt2Num(ltpVal);
-            var pnlSign = pnl >= 0 ? '+' : '-';
             var pnlCol = pnl >= 0 ? '#047857' : '#dc2626';
-            var pnlAbs = Math.abs(Math.round(pnl)).toLocaleString('en-IN');
             var pnlPctSub = '';
             if (exposure > 0) {
                 var pnlPct = (pnl / exposure) * 100;
                 pnlPctSub = '<div style="color:' + pnlCol + ';font-size:10px;margin-top:1px;font-weight:500">' + (pnlPct >= 0 ? '+' : '-') + Math.abs(pnlPct).toFixed(2) + '%</div>';
             }
-            pnlCell = '<span style="color:' + pnlCol + ';font-weight:600">' + pnlSign + auAt2Esc('₹') + pnlAbs + '</span>' + pnlPctSub;
+            // Live P&L in ₹'000, same unit as the closed table's realised column.
+            pnlCell = auAt2Pnl(pnl) + pnlPctSub;
         } else {
             ltpCell = '<span style="color:#9ca3af">-</span>';
             pnlCell = '<span style="color:#9ca3af">-</span>';
@@ -6489,13 +6513,7 @@ async function auAt2RenderOpen(silent) {
            + '</tr>';
     });
 
-    var pnlTotalCell = '<span style="color:#9ca3af">-</span>';
-    if (anyPnl) {
-        var tSign = totalPnl >= 0 ? '+' : '-';
-        var tCol = totalPnl >= 0 ? '#047857' : '#dc2626';
-        var tAbs = Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
-        pnlTotalCell = '<span style="color:' + tCol + '">' + tSign + auAt2Esc('₹') + tAbs + '</span>';
-    }
+    var pnlTotalCell = anyPnl ? auAt2Pnl(totalPnl) : '<span style="color:#9ca3af">-</span>';
 
     var totalsRow = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700;position:sticky;top:0">'
             + '<td colspan="4" style="padding:8px;text-align:right">Totals (' + rows.length + ' open):</td>'
@@ -6560,21 +6578,20 @@ function auAt2RenderClosed() {
     var wins = rows.filter(function (t) { return Number(t.realised_pnl) > 0; }).length;
     var losses = rows.filter(function (t) { return Number(t.realised_pnl) < 0; }).length;
     var total = rows.reduce(function (n, t) { return n + (Number(t.realised_pnl) || 0); }, 0);
-    if (summary) summary.textContent = wins + 'W / ' + losses + 'L' + (filtered ? ' · filtered' : '');
+    if (summary) summary.textContent = wins + 'W / ' + losses + 'L · P&L in ' + getUnitDescription() + (filtered ? ' · filtered' : '');
 
     // GS-style table (mirrors autoLoadGsClosedTrades): totals row pinned to the
     // top (owner ask on GS, carried over here — no scrolling to a tfoot to see
     // the bottom line), shaded header, Reason colour-coded the same way GS
     // colours its exit categories (auAt2ExitColor).
-    var totalSign = total >= 0 ? '+' : '-';
-    var totalCol = total >= 0 ? '#047857' : '#dc2626';
-    var totalAbs = Math.abs(Math.round(total)).toLocaleString('en-IN');
     var totalLabel = 'Total (' + rows.length + ' closed - ' + wins + 'W / ' + losses + 'L'
                     + (filtered ? ' - filtered from ' + all.length : '') + ')';
 
+    // Total in the SAME ₹'000 unit + red/parens style as the column (owner ask
+    // 11-Aug-2026 — it used to render full rupees, an independent format).
     var totalsRow = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700;position:sticky;top:0">'
             + '<td colspan="10" style="padding:8px">' + auAt2Esc(totalLabel) + '</td>'
-            + '<td style="padding:8px;text-align:right;white-space:nowrap"><span style="color:' + totalCol + '">' + totalSign + auAt2Esc('₹') + totalAbs + '</span></td>'
+            + '<td style="padding:8px;text-align:right;white-space:nowrap">' + auAt2Pnl(total) + '</td>'
             + '</tr>';
 
     var headerRow = '<tr style="background:#f3f4f6;text-align:left">'
@@ -6618,7 +6635,7 @@ function auAt2RenderClosed() {
             ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + (rowLots * physLot.qty) + ' ' + physLot.unit + '</div>'
             : '';
         var pointsSub = (t.pnl_points !== null && t.pnl_points !== undefined)
-            ? '<div style="font-size:10px;margin-top:1px">' + auAt2Pnl(t.pnl_points) + ' pts</div>' : '';
+            ? '<div style="font-size:10px;margin-top:1px">' + auAt2Pts(t.pnl_points) + ' pts</div>' : '';
 
         body += '<tr style="border-top:1px solid #e5e7eb">'
            + '<td style="padding:6px 8px;vertical-align:top">' + auAt2StatusBadge(t.status) + '</td>'
