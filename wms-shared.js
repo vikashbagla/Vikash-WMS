@@ -6448,7 +6448,17 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
             _rowType: 'ledger',
             _source: e,
             date: e.entry_date,
-            sortKey: e.entry_date + '|0|' + (e.created_at || ''),
+            // RECONCILIATION anchors at the END of its day — sub-key '3' sorts it
+            // AFTER that date's trades (|1|) and synthetic F&O-P&L rows (|2|). The
+            // snapshot balance is captured as the end-of-day running balance, so it
+            // must be compared/rebased at end-of-day. Sorting it at '0' (start of
+            // day, like OPENING_BALANCE) made (a) lgCheckReconDrift compare an
+            // end-of-day snapshot against a start-of-day recompute → false "balance
+            // mismatch" banner equal to the day's F&O P&L, and (b) the balance loop
+            // re-apply that day's F&O P&L on top of the snapshot → post-recon
+            // balances double-counted low. OPENING_BALANCE stays '0' (true
+            // start-of-day anchor). See LESSONS §E.17 recon end-of-day fix (2026-08-13).
+            sortKey: e.entry_date + '|' + (e.entry_type === 'RECONCILIATION' ? '3' : '0') + '|' + (e.created_at || ''),
             entryType: e.entry_type,
             amount: signedAmt,
             investorId: e.investor_id,
