@@ -1943,33 +1943,66 @@ async function acctResolveLedgers(keys, outMap) {
 // Core: rebuild ONE book's auto-vouchers from its transactions. Returns a report
 // object; does NOT show UI (no confirm/loading/render). NOTE: on the dev site the
 // fetch interceptor routes "transactions" -> "transactions_dev" automatically.
+// Resolve a voucher-line ref -> ledger id (find-or-create auto ledgers).
+async function acctFindOrCreateAuto(fkCol, id) {
+    var found = acctLedgers.find(function (x) { return x[fkCol] === id; });
+    if (found) return found.id;
+    var name, groupName, kind, extra = {};
+    if (fkCol === 'security_id') {
+        var sec = (wmsRefData.securitiesCmMap || {})[id] || {};
+        name = sec.symbol || sec.company_name || ('SEC ' + String(id).slice(0, 8));
+        groupName = 'Listed Securities'; kind = 'SECURITY'; extra.security_id = id;
+    } else if (fkCol === 'broker_id') {
+        var b = (wmsRefData.brokers || []).find(function (x) { return x.id === id; }) || {};
+        name = 'Broker — ' + (b.name || b.broker_code || String(id).slice(0, 8));
+        groupName = 'Brokers'; kind = 'BROKER'; extra.broker_id = id;
+    } else {
+        var inv = (wmsRefData.investors || []).find(function (x) { return x.id === id; }) || {};
+        name = 'Trader — ' + (inv.name || inv.short_name || String(id).slice(0, 8));
+        groupName = 'Traders'; kind = 'TRADER'; extra.investor_id = id;
+    }
+    var grp = acctGroups.find(function (g) { return g.name === groupName; });
+    if (!grp) throw new Error('Group "' + groupName + '" not found (run migration 74/75)');
+    var body = Object.assign({ name: name, group_id: grp.id, ledger_kind: kind, is_global: true, is_system: false }, extra);
+    var resp = await fetch(acctUrl('acct_ledgers'), {
+        method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+        body: JSON.stringify(body)
+    });
+    if (!resp.ok) throw new Error('Create auto ledger "' + name + '" failed: ' + (await resp.text()));
+    var row = (await resp.json())[0];
+    acctLedgers.push(row);
+    return row.id;
+}
+
+async function acctResolveRef(ref) {
+    if (ref.role) {
+        var l = acctLedgers.find(function (x) { return x.posting_role === ref.role; });
+        if (l) return l.id;
+        throw new Error('No ledger for role "' + ref.role + '" (run migration 74)');
+    }
+    if (ref.security_id) return await acctFindOrCreateAuto('security_id', ref.security_id);
+    if (ref.broker_id) return await acctFindOrCreateAuto('broker_id', ref.broker_id);
+    if (ref.investor_id) return await acctFindOrCreateAuto('investor_id', ref.investor_id);
+    throw new Error('Unresolvable ledger ref: ' + JSON.stringify(ref));
+}
+
+// Core: rebuild ONE book's auto-vouchers via the v2 engine (accounting-engine.js).
+// Uses the SHARED FIFO (wmsCalcFifoCost) + classifier, resolves ledgers by role/FK.
 async function acctRebuildOne(bookId) {
     var fields = 'id,investor_id,trader_id,broker_id,security_id,symbol,short_symbol,company_name,' +
         'security_type,transaction_type,transaction_date,transaction_time,quantity,price,' +
-        'gross_amount,total_charges,stt,tds,net_amount,created_at';
+        'gross_amount,total_charges,trader_charges,stt,tds,net_amount,notes,created_at';
     var txns = await wmsFetchAllRaw(acctUrl('transactions?select=' + fields + '&investor_id=eq.' + bookId)) || [];
     var bookInv = (wmsRefData.investors || []).find(function (i) { return i.id === bookId; }) || {};
+    var invById = {}; (wmsRefData.investors || []).forEach(function (i) { invById[i.id] = i; });
     var ctx = {
-        investor: function (id) { return (wmsRefData.investors || []).find(function (i) { return i.id === id; }); },
-        brokerName: function (id) { var b = (wmsRefData.brokers || []).find(function (x) { return x.id === id; }); return b ? (b.name || b.broker_code) : 'Broker'; },
-        sttSeparate: !!bookInv.stt_accounting_method,
-        postFno: bookInv.post_fno !== false
+        securityById: wmsRefData.securitiesCmMap || {},
+        investorById: invById,
+        brokerById: {},
+        fifo: function (t) { return wmsCalcFifoCost(t); }
     };
-    var result = acctProcessBook(bookId, txns, ctx);
-
-    // group skip reasons (collapse digit runs so similar reasons aggregate)
-    var skipReasons = {};
-    result.skipped.forEach(function (s) {
-        var key = String(s.reason).replace(/\d[\d,.]*/g, 'N');
-        skipReasons[key] = (skipReasons[key] || 0) + 1;
-    });
-
-    var keyMap = {};
-    if (result.vouchers.length) {
-        var uniqueKeys = {};
-        result.vouchers.forEach(function (v) { v.lines.forEach(function (l) { uniqueKeys[l.ledger.key] = l.ledger; }); });
-        await acctResolveLedgers(Object.keys(uniqueKeys).map(function (k) { return uniqueKeys[k]; }), keyMap);
-    }
+    var book = { id: bookId, post_fno: bookInv.post_fno !== false };
+    var result = acctEngineProcess(book, txns, ctx);
 
     // clear existing autos for this book (lines cascade)
     await fetch(acctUrl('acct_vouchers?investor_id=eq.' + bookId + '&is_auto=eq.true'),
@@ -1978,30 +2011,35 @@ async function acctRebuildOne(bookId) {
     var posted = 0, failed = 0, firstErr = null;
     for (var j = 0; j < result.vouchers.length; j++) {
         var v = result.vouchers[j];
-        var header = { investor_id: bookId, voucher_type: v.voucherType, voucher_date: v.date,
+        var header = { investor_id: bookId, voucher_type: v.type, voucher_date: v.date,
             narration: v.narration, is_auto: true, source_transaction_id: v.txnId };
-        var lines = v.lines.map(function (l) {
-            return { ledger_id: keyMap[l.ledger.key], debit_amount: l.debit, credit_amount: l.credit,
-                narration: l.narration, sort_order: l.sort_order };
-        });
-        if (lines.some(function (l) { return !l.ledger_id; })) { failed++; continue; }
+        var lines = [], okLines = true;
+        for (var li = 0; li < v.lines.length; li++) {
+            var l = v.lines[li], lid;
+            try { lid = await acctResolveRef(l.ref); }
+            catch (e) { okLines = false; if (!firstErr) firstErr = e.message; break; }
+            lines.push({ ledger_id: lid, debit_amount: l.debit || 0, credit_amount: l.credit || 0, narration: l.narration || null, sort_order: li });
+        }
+        if (!okLines) { failed++; continue; }
         var resp = await fetch(acctUrl('rpc/acct_post_voucher'), {
             method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ p_header: header, p_lines: lines })
         });
         if (resp.ok) posted++; else { failed++; if (!firstErr) firstErr = await resp.text(); }
     }
-    if (result.warnings.length) console.warn('[accounting] rebuild warnings for ' + acctInvName(bookId), result.warnings);
+    if (result.exceptions.length) console.warn('[accounting] rebuild exceptions for ' + acctInvName(bookId), result.exceptions);
     if (firstErr) console.error('[accounting] rebuild first error (' + acctInvName(bookId) + '):', firstErr);
 
+    var skipReasons = {};
+    result.skipped.forEach(function (s) { var k = String(s.reason).replace(/\d[\d,.]*/g, 'N'); skipReasons[k] = (skipReasons[k] || 0) + 1; });
     return { bookId: bookId, book: acctInvName(bookId), posted: posted, skipped: result.skipped.length,
-        failed: failed, warnings: result.warnings.length, skipReasons: skipReasons,
-        warningsList: result.warnings, firstErr: firstErr };
+        failed: failed, warnings: result.exceptions.length, skipReasons: skipReasons,
+        warningsList: result.exceptions.map(function (e) { return e.title; }), firstErr: firstErr };
 }
 
 async function acctRebuildBooks() {
     if (!acctBookId) { acctToast('Select a book first.', true); return; }
-    if (typeof acctProcessBook !== 'function') { acctToast('Posting engine not loaded.', true); return; }
+    if (typeof acctEngineProcess !== 'function') { acctToast('Posting engine not loaded.', true); return; }
     if (!window.confirm('Rebuild auto-vouchers for ' + acctInvName(acctBookId) + ' from its transactions?\n\n' +
         'This deletes existing AUTO-generated vouchers for this book and regenerates them. Manual vouchers are kept.')) return;
     acctLoading(true);
@@ -2016,7 +2054,7 @@ async function acctRebuildBooks() {
 }
 
 async function acctRebuildAll() {
-    if (typeof acctProcessBook !== 'function') { acctToast('Posting engine not loaded.', true); return; }
+    if (typeof acctEngineProcess !== 'function') { acctToast('Posting engine not loaded.', true); return; }
     var books = acctOwnBooks();
     if (!books.length) { acctToast('No own-books to rebuild.', true); return; }
     if (!window.confirm('Rebuild auto-vouchers for ALL ' + books.length + ' books from their transactions?\n\n' +

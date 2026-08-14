@@ -639,7 +639,6 @@
             } else if (moduleName === 'accounting') {
                 const html = await (await fetch('accounting.html' + _cb)).text();
                 injectModule(html, container);
-                await loadScript('accounting-posting.js');
                 await loadScript('accounting.js');
                 if (typeof initAccounting === 'function') await initAccounting();
 
@@ -804,6 +803,7 @@
     document.write(`<script src="utils.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-shared.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-cost-engine.js?v=${_v}"><\/script>`);
+    document.write(`<script src="accounting-engine.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-txn-modal.js?v=${_v}"><\/script>`);
     document.write(`<script src="cn-viewer.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-export.js?v=${_v}"><\/script>`);
