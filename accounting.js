@@ -351,20 +351,24 @@ function acctSideTree(net, rootName, negate) {
         }
         return { key: 'l:' + lg.id, label: lg.name, amount: amt, isLedger: true, ledgerId: lg.id };
     }
-    acctLedgers.filter(function (l) { return l.group_id === root.id; })
-        .sort(function (a, b) { return a.name.localeCompare(b.name); })
-        .forEach(function (l) { var n = ledgerNode(l); if (n) nodes.push(n); });
-    acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
-        .sort(function (a, b) { return a.name.localeCompare(b.name); })
-        .forEach(function (cg) {
-            var children = [];
-            acctLedgers.filter(function (l) { return l.group_id === cg.id; })
-                .sort(function (a, b) { return a.name.localeCompare(b.name); })
-                .forEach(function (l) { var n = ledgerNode(l); if (n) children.push(n); });
-            if (!children.length && !acctFinShowZero) return;
-            var total = children.reduce(function (a, n) { return a + n.amount; }, 0);
-            nodes.push({ key: 'g:' + cg.id, label: cg.name, amount: total, children: children });
-        });
+    // Recurse the group tree to arbitrary depth (chart now has 3 levels:
+    // root → group → sub-group → ledger). Render (acctFinNodeHtml) already recurses.
+    function buildGroup(groupId) {
+        var out = [];
+        acctLedgers.filter(function (l) { return l.group_id === groupId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (l) { var n = ledgerNode(l); if (n) out.push(n); });
+        acctGroups.filter(function (g) { return g.parent_group_id === groupId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (cg) {
+                var children = buildGroup(cg.id);
+                if (!children.length && !acctFinShowZero) return;
+                var total = children.reduce(function (a, n) { return a + n.amount; }, 0);
+                out.push({ key: 'g:' + cg.id, label: cg.name, amount: total, children: children });
+            });
+        return out;
+    }
+    nodes = buildGroup(root.id);
     return { nodes: nodes, total: nodes.reduce(function (a, n) { return a + n.amount; }, 0) };
 }
 function acctFinNodeHtml(node, depth) {
@@ -611,27 +615,26 @@ function acctTbBuild(agg, active) {
             oDr: o.dr, oCr: o.cr, pDr: a.dr, pCr: a.cr, cDr: c.dr, cCr: c.cr
         };
     }
+    // Recurse the group tree to arbitrary depth (chart now has 3 levels).
+    // acctTbNodeHtml already renders nested children recursively.
+    function buildGroup(groupId, label) {
+        var node = zero(); node.key = 'tg:' + groupId; node.label = label; node.children = [];
+        acctLedgers.filter(function (l) { return l.group_id === groupId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (l) { var n = ledNode(l); if (n) { node.children.push(n); add(node, n); } });
+        acctGroups.filter(function (g) { return g.parent_group_id === groupId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (cg) {
+                var g = buildGroup(cg.id, cg.name);
+                if (!g.children.length) return;
+                node.children.push(g); add(node, g);
+            });
+        return node;
+    }
     acctNatureOrder.forEach(function (nm) {
         var root = acctGroups.find(function (g) { return !g.parent_group_id && g.name === nm; });
         if (!root) return;
-        var rootNode = zero();
-        rootNode.key = 'tg:' + root.id; rootNode.label = root.name; rootNode.children = [];
-
-        acctLedgers.filter(function (l) { return l.group_id === root.id; })
-            .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (l) { var n = ledNode(l); if (n) { rootNode.children.push(n); add(rootNode, n); } });
-
-        acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
-            .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (cg) {
-                var g = zero(); g.key = 'tg:' + cg.id; g.label = cg.name; g.children = [];
-                acctLedgers.filter(function (l) { return l.group_id === cg.id; })
-                    .sort(function (a, b) { return a.name.localeCompare(b.name); })
-                    .forEach(function (l) { var n = ledNode(l); if (n) { g.children.push(n); add(g, n); } });
-                if (!g.children.length) return;
-                rootNode.children.push(g); add(rootNode, g);
-            });
-
+        var rootNode = buildGroup(root.id, root.name);
         if (rootNode.children.length) nodes.push(rootNode);
     });
     return nodes;
@@ -794,29 +797,30 @@ function acctLedByName(a, b) { return a.name.localeCompare(b.name); }
 // Build the nature -> sub-group -> ledger model once, so the row renderer, the
 // counts and Collapse-all all read off the same shape (and stay in agreement).
 function acctLedBuild() {
+    // Recurse the group tree (chart now has 3 levels: root → group → sub-group → ledger).
+    function groupNode(groupId, label, key, parentHit) {
+        var groupHit = parentHit || acctLedMatch(label);
+        var ledgers = acctLedgers.filter(function (l) { return l.group_id === groupId; })
+            .sort(acctLedByName)
+            .filter(function (l) { return groupHit || acctLedMatch(l.name); });
+        var subs = [];
+        acctGroups.filter(function (g) { return g.parent_group_id === groupId; })
+            .sort(acctLedByName)
+            .forEach(function (cg) {
+                var sub = groupNode(cg.id, cg.name, 'g:' + cg.id, groupHit);
+                if (sub) subs.push(sub);
+            });
+        var count = ledgers.length + subs.reduce(function (a, s) { return a + s.count; }, 0);
+        if (!count && !groupHit) return null;          // no match anywhere in this branch
+        return { key: key, id: groupId, label: label, ledgers: ledgers, subs: subs, count: count };
+    }
     var roots = [];
     acctNatureOrder.forEach(function (nature) {
         var root = acctGroups.find(function (g) { return !g.parent_group_id && g.name === nature; });
         if (!root) return;
         var natureHit = acctLedMatch(nature);
-        var node = { key: 'n:' + root.id, label: nature, ledgers: [], subs: [], count: 0 };
-
-        acctLedgers.filter(function (l) { return l.group_id === root.id; })
-            .sort(acctLedByName)
-            .forEach(function (l) { if (natureHit || acctLedMatch(l.name)) node.ledgers.push(l); });
-
-        acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
-            .sort(acctLedByName)
-            .forEach(function (cg) {
-                var groupHit = natureHit || acctLedMatch(cg.name);
-                var kids = acctLedgers.filter(function (l) { return l.group_id === cg.id; })
-                    .sort(acctLedByName)
-                    .filter(function (l) { return groupHit || acctLedMatch(l.name); });
-                if (!kids.length && !groupHit) return;          // no match anywhere in this sub-group
-                node.subs.push({ key: 'g:' + cg.id, id: cg.id, label: cg.name, ledgers: kids });
-            });
-
-        node.count = node.ledgers.length + node.subs.reduce(function (a, sg) { return a + sg.ledgers.length; }, 0);
+        var node = groupNode(root.id, nature, 'n:' + root.id, natureHit);
+        if (!node) node = { key: 'n:' + root.id, id: root.id, label: nature, ledgers: [], subs: [], count: 0 };
         // Unsearched: always show the nature header (empty or not). Searching: only if it matched.
         if (!acctLedSearch || node.count || node.subs.length) roots.push(node);
     });
@@ -830,7 +834,7 @@ function acctRenderLedgers() {
 
     var roots = acctLedBuild();
     var allKeys = [];
-    roots.forEach(function (r) { allKeys.push(r.key); r.subs.forEach(function (sg) { allKeys.push(sg.key); }); });
+    (function collect(list) { list.forEach(function (n) { allKeys.push(n.key); collect(n.subs || []); }); })(roots);
 
     // UI-STANDARDS D.2.2 - collapsible groups start collapsed. Seed once per session.
     if (acctLedCollapsed === null) {
@@ -859,6 +863,23 @@ function acctRenderLedgers() {
         html += '<tr><td colspan="4"><div class="acct-empty">Nothing matches &ldquo;' + wmsEsc(acctLedSearch) + '&rdquo;.</div></td></tr>';
     }
 
+    // Render a sub-group and (recursively) its own sub-groups — the chart nests
+    // 3 levels deep (Income → Investment Income → Capital Gains → ledger).
+    function renderSub(sg, depth) {
+        var sopen = isOpen(sg.key);
+        var pad = 20 + (depth - 1) * 16;
+        var h = '<tr class="acct-subgroup-row acct-led-grp" data-node="' + sg.key + '">' +
+            '<td style="padding-left:' + pad + 'px;font-weight:600;color:#475569;">' +
+            '<span class="acct-led-toggle' + (sopen ? '' : ' collapsed') + '">▼</span>' + wmsEsc(sg.label) +
+            '<span class="acct-led-count">' + sg.count + '</span></td>' +
+            '<td colspan="2"></td>' +
+            '<td class="text-right"><button class="acct-edit-btn" data-edit-group="' + sg.id + '" title="Edit group">\u270F\uFE0F</button></td></tr>';
+        if (sopen) {
+            sg.ledgers.forEach(function (lg) { h += acctLedgerRowHtml(lg); });
+            (sg.subs || []).forEach(function (sub) { h += renderSub(sub, depth + 1); });
+        }
+        return h;
+    }
     roots.forEach(function (r) {
         var open = isOpen(r.key);
         html += '<tr class="acct-tb-group acct-led-grp" data-node="' + r.key + '"><td colspan="3">' +
@@ -869,16 +890,7 @@ function acctRenderLedgers() {
         // ledgers hanging directly off the nature root
         r.ledgers.forEach(function (lg) { html += acctLedgerRowHtml(lg); });
 
-        r.subs.forEach(function (sg) {
-            var sopen = isOpen(sg.key);
-            html += '<tr class="acct-subgroup-row acct-led-grp" data-node="' + sg.key + '">' +
-                '<td style="padding-left:20px;font-weight:600;color:#475569;">' +
-                '<span class="acct-led-toggle' + (sopen ? '' : ' collapsed') + '">▼</span>' + wmsEsc(sg.label) +
-                '<span class="acct-led-count">' + sg.ledgers.length + '</span></td>' +
-                '<td colspan="2"></td>' +
-                '<td class="text-right"><button class="acct-edit-btn" data-edit-group="' + sg.id + '" title="Edit group">\u270F\uFE0F</button></td></tr>';
-            if (sopen) sg.ledgers.forEach(function (lg) { html += acctLedgerRowHtml(lg); });
-        });
+        r.subs.forEach(function (sg) { html += renderSub(sg, 1); });
     });
     html += '</tbody></table>';
     el.innerHTML = html;
