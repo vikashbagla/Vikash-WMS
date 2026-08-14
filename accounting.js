@@ -781,10 +781,17 @@ function acctFmtDate(ymd) {
     return parts[2] + '-' + months[parseInt(parts[1], 10) - 1] + '-' + parts[0].slice(2);
 }
 
-function acctLedgerRowHtml(lg) {
+var ACCT_GRP_PALETTE = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#84cc16', '#06b6d4', '#a855f7', '#eab308', '#3b82f6'];
+function acctGrpColor(name) {
+    var h = 0; var nm = name || ''; for (var i = 0; i < nm.length; i++) { h = (h * 31 + nm.charCodeAt(i)) >>> 0; }
+    return ACCT_GRP_PALETTE[h % ACCT_GRP_PALETTE.length];
+}
+function acctLedgerRowHtml(lg, accent, indent) {
     var avail = lg.is_global ? '<span class="acct-kind-badge">Global</span>'
         : '<span class="acct-scope-badge">' + wmsEsc(acctInvName(lg.scope_investor_id)) + ' only</span>';
-    return '<tr><td class="acct-ledger-name" style="padding-left:34px;">' + wmsEsc(lg.name) + (lg.is_system ? ' <span class="acct-kind-badge">system</span>' : '') + '</td>' +
+    var pad = (indent || 34);
+    var bl = accent ? ('border-left:4px solid ' + accent + ';') : '';
+    return '<tr><td class="acct-ledger-name" style="padding-left:' + pad + 'px;' + bl + '">' + wmsEsc(lg.name) + (lg.is_system ? ' <span class="acct-kind-badge">system</span>' : '') + '</td>' +
         '<td><span class="acct-kind-badge">' + wmsEsc(lg.ledger_kind) + '</span></td>' +
         '<td>' + avail + '</td>' +
         '<td class="text-right"><button class="acct-edit-btn" data-edit-ledger="' + lg.id + '" title="Edit ledger">✏️</button></td></tr>';
@@ -868,28 +875,29 @@ function acctRenderLedgers() {
     function renderSub(sg, depth) {
         var sopen = isOpen(sg.key);
         var pad = 20 + (depth - 1) * 16;
+        var col = acctGrpColor(sg.label);
         var h = '<tr class="acct-subgroup-row acct-led-grp" data-node="' + sg.key + '">' +
-            '<td style="padding-left:' + pad + 'px;font-weight:600;color:#475569;">' +
+            '<td style="padding-left:' + pad + 'px;font-weight:600;color:#334155;border-left:5px solid ' + col + ';background:' + col + '14;">' +
             '<span class="acct-led-toggle' + (sopen ? '' : ' collapsed') + '">▼</span>' + wmsEsc(sg.label) +
             '<span class="acct-led-count">' + sg.count + '</span></td>' +
-            '<td colspan="2"></td>' +
-            '<td class="text-right"><button class="acct-edit-btn" data-edit-group="' + sg.id + '" title="Edit group">\u270F\uFE0F</button></td></tr>';
+            '<td colspan="2" style="background:' + col + '14;"></td>' +
+            '<td class="text-right" style="background:' + col + '14;"><button class="acct-edit-btn" data-edit-group="' + sg.id + '" title="Edit group">✏️</button></td></tr>';
         if (sopen) {
-            sg.ledgers.forEach(function (lg) { h += acctLedgerRowHtml(lg); });
+            sg.ledgers.forEach(function (lg) { h += acctLedgerRowHtml(lg, col, pad + 20); });
             (sg.subs || []).forEach(function (sub) { h += renderSub(sub, depth + 1); });
         }
         return h;
     }
     roots.forEach(function (r) {
         var open = isOpen(r.key);
-        html += '<tr class="acct-tb-group acct-led-grp" data-node="' + r.key + '"><td colspan="3">' +
+        var col = acctGrpColor(r.label);
+        html += '<tr class="acct-tb-group acct-led-grp" data-node="' + r.key + '"><td colspan="3" style="border-left:6px solid ' + col + ';background:' + col + '24;font-weight:700;">' +
             '<span class="acct-led-toggle' + (open ? '' : ' collapsed') + '">▼</span>' + wmsEsc(r.label) +
-            '<span class="acct-led-count">' + r.count + '</span></td><td></td></tr>';
+            '<span class="acct-led-count">' + r.count + '</span></td><td style="background:' + col + '24;"></td></tr>';
         if (!open) return;
 
-        // ledgers hanging directly off the nature root
-        r.ledgers.forEach(function (lg) { html += acctLedgerRowHtml(lg); });
-
+        // ledgers hanging directly off the nature root, then its sub-groups (recursive)
+        r.ledgers.forEach(function (lg) { html += acctLedgerRowHtml(lg, col, 34); });
         r.subs.forEach(function (sg) { html += renderSub(sg, 1); });
     });
     html += '</tbody></table>';
