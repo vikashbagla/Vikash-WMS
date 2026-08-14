@@ -57,21 +57,51 @@
     function sellOwn(t, ctx, gains) {
         var net = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount), stt = absN(t.stt);
         var sep = sttSeparate(t, ctx), sec = secOf(t, ctx), lines = [], exceptions = [];
+
+        // No cost basis — FIFO matched fewer units than were sold (e.g. a holding
+        // carried in without an opening lot). Do NOT post a one-legged voucher;
+        // raise an anomaly ALERT and skip so the owner fixes it manually (opening
+        // balance / cost basis). Owner decision 2026-08-14 (see POSTING-RULES v2 §CG).
+        var sold = absN(t.quantity), matched = 0;
+        (gains || []).forEach(function (g) { matched += absN(g.qty); });
+        if (sold > 0 && matched + 0.0001 < sold) {
+            return { skip: 'no cost basis (uncovered ' + r2(sold - matched) + ' of ' + sold + ')',
+                exceptions: [ex('sell_no_cost_basis:' + symOf(t, ctx), 'warn',
+                    'SELL with no cost basis: ' + symOf(t, ctx),
+                    { security_id: t.security_id, symbol: symOf(t, ctx), sold: sold, matched: matched,
+                      uncovered: r2(sold - matched), hint: 'needs an opening lot / cost basis; no voucher posted' })] };
+        }
+
         lines.push({ ref: { broker_id: t.broker_id }, debit: r2(net), credit: 0 });
         if (sep && stt > 0) lines.push({ ref: { role: sttRole(sec) }, debit: r2(stt), credit: 0 });
-        var cost = 0, byRole = {};
+        var cost = 0, byRole = {}, order = [];
         (gains || []).forEach(function (g) {
             cost += (g.buyCost || 0);
             var cls = wmsGainClassify(g, sec);
             var role = (cls.bucket === 'INTRADAY') ? 'INTRADAY_PL' : cls.cgRole;
             if (!role) { exceptions.push(ex('unmapped_cg:' + symOf(t, ctx), 'warn', 'No CG ledger for ' + symOf(t, ctx), { security_id: t.security_id, bucket: cls.bucket })); role = 'CG_ST_SLAB'; }
+            if (byRole[role] === undefined) order.push(role);
             byRole[role] = (byRole[role] || 0) + (g.gain || 0);
         });
         lines.push({ ref: { security_id: t.security_id }, debit: 0, credit: r2(cost) });
-        Object.keys(byRole).forEach(function (role) {
-            var amt = r2(byRole[role]); if (Math.round(amt * 100) === 0) return;
-            if (amt >= 0) lines.push({ ref: { role: role }, debit: 0, credit: amt });
-            else lines.push({ ref: { role: role }, debit: -amt, credit: 0 });
+
+        // Rounding plug — let the LAST P&L (capital-gain) line absorb the sub-paise
+        // residual so the voucher ties EXACTLY (Σdebit === Σcredit). cost and each
+        // gain are r2()'d independently, so their rounded sum can miss the rounded
+        // proceeds by ±0.01; the post-voucher RPC rejects that. The true identity
+        // cost + Σgain === proceeds holds at full precision, so this only moves the
+        // residual, never real value. Owner-approved 2026-08-14.
+        var cg = [];
+        order.forEach(function (role) { var amt = r2(byRole[role]); if (Math.round(amt * 100) !== 0) cg.push({ role: role, amt: amt }); });
+        var debitsTotal = r2(net) + ((sep && stt > 0) ? r2(stt) : 0);
+        var resid = r2(r2(debitsTotal - r2(cost)) - cg.reduce(function (s, e) { return s + e.amt; }, 0));
+        if (Math.abs(resid) >= 0.005 && Math.abs(resid) < 1) {   // rounding only; larger gaps fall through to the unbalanced check
+            if (cg.length) cg[cg.length - 1].amt = r2(cg[cg.length - 1].amt + resid);
+            else cg.push({ role: (sec.capital_gains && sec.capital_gains.stcg) || 'CG_ST_SLAB', amt: resid });
+        }
+        cg.forEach(function (e) {
+            if (e.amt >= 0) lines.push({ ref: { role: e.role }, debit: 0, credit: e.amt });
+            else lines.push({ ref: { role: e.role }, debit: -e.amt, credit: 0 });
         });
         return { type: 'PMS-SELL', narration: 'Sell ' + absN(t.quantity) + ' ' + symOf(t, ctx), lines: lines, exceptions: exceptions };
     }
@@ -165,8 +195,16 @@
         Object.keys(groups).forEach(function (key) {
             var g = groups[key], lines = [];
             if (!g.parent || !g.children.length) { out.exceptions.push(ex('demerger_incomplete:' + key, 'warn', 'Demerger event incomplete: ' + key, {})); return; }
-            g.children.forEach(function (c) { lines.push({ ref: { security_id: c.security_id }, debit: r2(absN(c.net_amount)), credit: 0 }); });
-            lines.push({ ref: { security_id: g.parent.security_id }, debit: 0, credit: r2(absN(g.parent.net_amount)) });
+            var childLines = g.children.map(function (c) { return { ref: { security_id: c.security_id }, debit: r2(absN(c.net_amount)), credit: 0 }; });
+            var parentCr = r2(absN(g.parent.net_amount));
+            // Rounding plug — the last child absorbs the sub-paise cost-allocation
+            // residual so Σ(children) === parent exactly (owner-approved 2026-08-14).
+            var resid = r2(parentCr - childLines.reduce(function (s, l) { return s + l.debit; }, 0));
+            if (childLines.length && Math.abs(resid) >= 0.005 && Math.abs(resid) < 1) {
+                childLines[childLines.length - 1].debit = r2(childLines[childLines.length - 1].debit + resid);
+            }
+            childLines.forEach(function (l) { lines.push(l); });
+            lines.push({ ref: { security_id: g.parent.security_id }, debit: 0, credit: parentCr });
             if (!voucherBalances(lines)) out.exceptions.push(ex('demerger_unbalanced:' + key, 'critical', 'Demerger does not balance: ' + key, {}));
             out.vouchers.push({ txnId: g.parent.id, type: 'PMS-DEMERGER', date: g.parent.transaction_date, narration: 'Demerger ' + key.split('|')[0], lines: lines });
         });

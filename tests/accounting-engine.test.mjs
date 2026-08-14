@@ -22,7 +22,7 @@ const cli = o => Object.assign({investor_id:'T0', trader_id:'T1', security_id:'S
 
 // BUY / SELL own (re-check)
 ok('buy own balances', voucherBalances(acctBuildVoucher(own({transaction_type:'BUY',net_amount:10040,stt:10}), ctx, []).lines));
-let v = acctBuildVoucher(own({transaction_type:'SELL',net_amount:14945,stt:15,quantity:-100}), ctx, [{buyCost:10030,gain:4930,buyDate:'2025-01-01',sellDate:'2025-06-01',securityType:'EQUITY'}]);
+let v = acctBuildVoucher(own({transaction_type:'SELL',net_amount:14945,stt:15,quantity:-100}), ctx, [{qty:100,buyCost:10030,gain:4930,buyDate:'2025-01-01',sellDate:'2025-06-01',securityType:'EQUITY'}]);
 ok('sell own CG_ST_STT credit 4930', amt(v, r=>r.role==='CG_ST_STT')===-4930 && voucherBalances(v.lines));
 
 // Income own (dividend + TDS)
@@ -76,12 +76,37 @@ const trades = [
   own({id:'t3', transaction_type:'DIVIDEND', net_amount:900, tds:100, transaction_date:'2025-03-01'}),
   own({id:'t4', transaction_type:'SPLIT', transaction_date:'2025-02-01'})
 ];
-const fifoStub = () => ({ gains: [{sellTxnId:'t2', buyCost:10030, gain:4930, buyDate:'2025-01-01', sellDate:'2025-06-01', securityType:'EQUITY'}] });
+const fifoStub = () => ({ gains: [{sellTxnId:'t2', qty:100, buyCost:10030, gain:4930, buyDate:'2025-01-01', sellDate:'2025-06-01', securityType:'EQUITY'}] });
 const res = acctEngineProcess(book, trades, Object.assign({}, ctx, { fifo: fifoStub }));
 ok('orch 3 vouchers (buy/sell/div)', res.vouchers.length===3);
 ok('orch all balance', res.vouchers.every(v=>voucherBalances(v.lines)));
 ok('orch split skipped', res.skipped.some(s=>s.id==='t4'));
 ok('orch no critical exceptions', !res.exceptions.some(e=>e.severity==='critical'));
+
+// --- Rounding plug: independently-rounded cost + gain must still tie exactly ---
+// Reproduces the live LIQUIDCASE case: proceeds 22,28,494.06 = cost 21,96,211.19 + gain 32,282.87,
+// where naive r2 of cost and gain sum to ...07 (a 1-paise gap). The last CG line absorbs it.
+v = acctBuildVoucher(own({transaction_type:'SELL', net_amount:2228494.06, stt:0, quantity:-20000, security_id:'SEC1'}),
+  Object.assign({}, ctx, {investorById:{INV1:{stt_accounting_method:false}}}),
+  [{qty:20000, buyCost:2196211.19, gain:32282.87, buyDate:'2024-01-01', sellDate:'2024-08-01', securityType:'EQUITY'}]);
+ok('rounding plug: sell voucher ties exactly', voucherBalances(v.lines));
+ok('rounding plug: broker Dr == sum of credits', Math.round((amt(v,r=>r.broker_id==='BRK1'))*100) === Math.round(2228494.06*100));
+
+// --- No cost basis: uncovered SELL is skipped with a warn alert, not a broken voucher ---
+let nc = acctBuildVoucher(own({transaction_type:'SELL', net_amount:976.35, quantity:-1, security_id:'SEC1'}), ctx, []); // no gains -> uncovered
+ok('no-cost sell is skipped (no voucher)', !!nc.skip && !nc.lines);
+ok('no-cost sell raises sell_no_cost_basis alert', (nc.exceptions||[]).some(e=>e.condition_key.indexOf('sell_no_cost_basis')===0 && e.severity==='warn'));
+
+// --- Demerger plug: children re-sum to parent exactly even with allocation rounding ---
+let dm2 = demergerVouchers([
+  {id:'P', security_id:'VEDL', net_amount:2292996.81, transaction_date:'2026-06-15', notes:'[Demerger of VEDL on 2026-06-15: 100%]'},
+  {id:'c1', security_id:'A', net_amount:588404.34, transaction_date:'2026-06-15', notes:'[Demerger from VEDL on 2026-06-15]'},
+  {id:'c2', security_id:'B', net_amount:1033917.36, transaction_date:'2026-06-15', notes:'[Demerger from VEDL on 2026-06-15]'},
+  {id:'c3', security_id:'C', net_amount:343997.63, transaction_date:'2026-06-15', notes:'[Demerger from VEDL on 2026-06-15]'},
+  {id:'c4', security_id:'D', net_amount:326677.47, transaction_date:'2026-06-15', notes:'[Demerger from VEDL on 2026-06-15]'}
+], ctx);
+ok('demerger plug: voucher ties exactly', voucherBalances(dm2.vouchers[0].lines));
+ok('demerger plug: no critical exception', !dm2.exceptions.some(e=>e.severity==='critical'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);
