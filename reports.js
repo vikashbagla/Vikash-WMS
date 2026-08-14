@@ -1389,10 +1389,31 @@ function rptCalcCapGains(txns) {
     return wmsCalcFifoCost(adj).gains;
 }
 
-// Bucket a realised gain into INTRADAY (same-day) / STCG / LTCG.
+// Resolve a gain's per-security mapping (symbol -> { security_type, capital_gains }).
+// Built lazily from the loaded securities and reset per CG render (below) so a
+// background debt-securities load is picked up. Unfound → equity-default fallback.
+var _rptSecCgMap = null;
+function rptSecMapping(g) {
+    if (_rptSecCgMap === null) {
+        _rptSecCgMap = {};
+        (wmsRefData.securitiesCm || []).forEach(function (s) {
+            if (s.symbol && !_rptSecCgMap[s.symbol]) {
+                _rptSecCgMap[s.symbol] = { security_type: s.security_type, capital_gains: s.capital_gains };
+            }
+        });
+    }
+    return _rptSecCgMap[g.shortSymbol || g.symbol] || { security_type: g.securityType, capital_gains: {} };
+}
+
+// Bucket a realised gain into INTRADAY (same-day) / STCG / LTCG — via the SHARED
+// classifier (wms-cost-engine.js) so Reports and Accounting never diverge. The
+// ST/LT decision comes from the security's capital_gains mapping (per-security
+// lt_months), not the old hardcoded 365-day rule. rptClassifyGain (below) is now
+// superseded for bucketing and kept only for its rate labels if referenced.
 function rptCGBucket(g) {
-    if (g.buyDate && g.sellDate && g.buyDate === g.sellDate) return 'INTRADAY';
-    return rptClassifyGain(g).type === 'LTCG' ? 'LTCG' : 'STCG';
+    var cls = wmsGainClassify(g, rptSecMapping(g));
+    if (cls.bucket === 'INTRADAY') return 'INTRADAY';
+    return cls.bucket === 'LTCG' ? 'LTCG' : 'STCG';   // BUSINESS (F&O) folds into STCG — unchanged
 }
 
 function rptInitFYSelector() {
@@ -1539,6 +1560,7 @@ function rptRenderCapGains() {
     });
 
     // Aggregate per stock: buy/sell amounts + Intra-day / Short-term / Long-term buckets
+    _rptSecCgMap = null;   // rebuild the per-security mapping cache fresh for this render
     var perStock = {};
     var totBuy = 0, totSell = 0, totIntraday = 0, totSTCG = 0, totLTCG = 0;
     fyGains.forEach(function(g) {

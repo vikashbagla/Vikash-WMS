@@ -347,7 +347,7 @@ async function wmsFetchAllRows(table, select, orderCol, filterFn) {
 }
 
 // Shared column list for securities_db fetches
-var WMS_SECURITIES_CM_SELECT = 'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,sector,size,is_active,lot_size,broker_tokens,merged_into_id,merged_at,week_52_high,week_52_low';
+var WMS_SECURITIES_CM_SELECT = 'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,sector,size,is_active,lot_size,broker_tokens,merged_into_id,merged_at,week_52_high,week_52_low,income_ledgers,capital_gains';
 
 // Debt security types excluded from initial load (loaded in background)
 var WMS_DEBT_TYPES = ['NCD', 'GOVT_BOND'];
