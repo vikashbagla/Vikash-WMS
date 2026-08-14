@@ -4225,7 +4225,7 @@ function _secDetailBlock(title, rows) {
     return html;
 }
 
-function openSecDetailsModal(secId) {
+async function openSecDetailsModal(secId) {
     var sec = wmsRefData.securitiesCmMap[secId];
     if (!sec) return;
 
@@ -4274,14 +4274,121 @@ function openSecDetailsModal(secId) {
         });
     }
 
+    // Mount point for the editable Accounting Mapping block (loaded async below)
+    html += '<div id="secMapMount"><div style="font-size:11px;color:#a0aec0;padding:4px 2px;">Loading accounting mapping…</div></div>';
+
     document.getElementById('secDetailsBody').innerHTML = html;
     document.getElementById('secDetailsModal').classList.add('show');
     document.addEventListener('keydown', _secDetailsEscHandler);
+
+    // Accounting mapping (income_ledgers / capital_gains) — fetched fresh, editable
+    try {
+        var ledgers = await _loadAcctMapLedgers();
+        var mapResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + encodeURIComponent(secId) + '&select=income_ledgers,capital_gains', { headers: wmsHeaders({}) });
+        var mrow = (mapResp.ok ? await mapResp.json() : [])[0] || {};
+        sec.income_ledgers = mrow.income_ledgers || {};
+        sec.capital_gains = mrow.capital_gains || {};
+        var mnt = document.getElementById('secMapMount');
+        if (mnt) mnt.innerHTML = _renderAcctMapBlock(sec, ledgers);
+    } catch (e) {
+        var mnt2 = document.getElementById('secMapMount');
+        if (mnt2) mnt2.innerHTML = '<div style="font-size:11px;color:#c53030;padding:4px 2px;">Could not load accounting mapping.</div>';
+        console.error('secMap load', e);
+    }
 }
 
 function closeSecDetailsModal() {
     document.getElementById('secDetailsModal').classList.remove('show');
     document.removeEventListener('keydown', _secDetailsEscHandler);
+}
+
+// ============================================================================
+// ACCOUNTING MAPPING editor — income_ledgers / capital_gains on the security
+// detail modal. Dropdowns are populated from the system ledgers' posting_role
+// (acct_ledgers). Added 2026-08-14.
+// ============================================================================
+var _acctMapLedgers = null; // cached [{name, posting_role}]
+
+async function _loadAcctMapLedgers() {
+    if (_acctMapLedgers) return _acctMapLedgers;
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/acct_ledgers?select=name,posting_role&posting_role=not.is.null&order=name.asc', { headers: wmsHeaders({}) });
+        _acctMapLedgers = resp.ok ? await resp.json() : [];
+    } catch (e) { _acctMapLedgers = []; console.error('_loadAcctMapLedgers', e); }
+    return _acctMapLedgers;
+}
+
+function _acctMapOpts(ledgers, filterFn, selected, noneLabel) {
+    var opts = '<option value="">' + (noneLabel || '— none —') + '</option>';
+    ledgers.filter(filterFn).forEach(function (l) {
+        var sel = (l.posting_role === selected) ? ' selected' : '';
+        opts += '<option value="' + wmsEsc(l.posting_role) + '"' + sel + '>' + wmsEsc(l.name) + '</option>';
+    });
+    return opts;
+}
+
+function _acctMapRow(label, control) {
+    return '<div style="display:flex;align-items:center;padding:3px 0;font-size:11px;">' +
+        '<span style="width:120px;flex-shrink:0;font-weight:600;color:#4a5568;">' + wmsEsc(label) + '</span>' +
+        '<span style="flex:1;">' + control + '</span></div>';
+}
+
+function _renderAcctMapBlock(sec, ledgers) {
+    var inc = (sec.income_ledgers && typeof sec.income_ledgers === 'object') ? sec.income_ledgers : {};
+    var cg = (sec.capital_gains && typeof sec.capital_gains === 'object') ? sec.capital_gains : {};
+    var isInc = function (l) { return l.posting_role.indexOf('INC_') === 0; };
+    var isSt = function (l) { return l.posting_role.indexOf('CG_ST') === 0; };
+    var isLt = function (l) { return l.posting_role.indexOf('CG_LT') === 0; };
+    var selStyle = 'style="width:100%;font-size:11px;padding:3px 5px;border:1px solid #cbd5e0;border-radius:4px;background:#fff;"';
+    var mkSel = function (id, opts) { return '<select id="' + id + '" ' + selStyle + '>' + opts + '</select>'; };
+
+    var ltm = (cg.lt_months != null) ? String(cg.lt_months) : '';
+    var ltOpts = [['', '— none —'], ['0', '0 (always short-term)'], ['12', '12 months'], ['24', '24 months'], ['36', '36 months']]
+        .map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === ltm ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
+
+    return '<div style="margin-bottom:12px;">' +
+        '<div style="font-size:11px;font-weight:700;color:#667eea;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;padding:0 2px;">Accounting Mapping</div>' +
+        '<div style="background:#f7fafc;border:1px solid #edf2f7;border-radius:6px;padding:8px 10px;">' +
+        _acctMapRow('Dividend →', mkSel('secMapDiv', _acctMapOpts(ledgers, isInc, inc.DIVIDEND))) +
+        _acctMapRow('Interest →', mkSel('secMapInt', _acctMapOpts(ledgers, isInc, inc.INTEREST))) +
+        _acctMapRow('Other income →', mkSel('secMapOth', _acctMapOpts(ledgers, isInc, inc.OTHER_INCOME))) +
+        '<div style="height:6px;border-top:1px dashed #e2e8f0;margin:6px 0;"></div>' +
+        _acctMapRow('STCG ledger', mkSel('secMapStcg', _acctMapOpts(ledgers, isSt, cg.stcg))) +
+        _acctMapRow('LTCG ledger', mkSel('secMapLtcg', _acctMapOpts(ledgers, isLt, cg.ltcg))) +
+        _acctMapRow('LT threshold', '<select id="secMapLtMonths" ' + selStyle + '>' + ltOpts + '</select>') +
+        '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px;align-items:center;">' +
+        '<span id="secMapStatus" style="font-size:11px;color:#718096;"></span>' +
+        '<button class="btn-primary" style="padding:4px 14px;font-size:12px;" onclick="saveSecMapping(\'' + sec.id + '\')">Save Mapping</button>' +
+        '</div></div></div>';
+}
+
+async function saveSecMapping(secId) {
+    var g = function (id) { var e = document.getElementById(id); return e ? e.value : ''; };
+    var income = {};
+    if (g('secMapDiv')) income.DIVIDEND = g('secMapDiv');
+    if (g('secMapInt')) income.INTEREST = g('secMapInt');
+    if (g('secMapOth')) income.OTHER_INCOME = g('secMapOth');
+    var cg = {};
+    if (g('secMapStcg')) cg.stcg = g('secMapStcg');
+    if (g('secMapLtcg')) cg.ltcg = g('secMapLtcg');
+    if (g('secMapLtMonths') !== '') cg.lt_months = parseInt(g('secMapLtMonths'), 10);
+
+    var status = document.getElementById('secMapStatus');
+    if (status) { status.textContent = 'Saving…'; status.style.color = '#718096'; }
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + encodeURIComponent(secId), {
+            method: 'PATCH',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+            body: JSON.stringify({ income_ledgers: income, capital_gains: cg })
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        var sec = wmsRefData.securitiesCmMap[secId];
+        if (sec) { sec.income_ledgers = income; sec.capital_gains = cg; }
+        if (status) { status.textContent = 'Saved ✓'; status.style.color = '#2f855a'; }
+    } catch (e) {
+        if (status) { status.textContent = 'Save failed'; status.style.color = '#c53030'; }
+        console.error('saveSecMapping', e);
+    }
 }
 
 // ============================================================================

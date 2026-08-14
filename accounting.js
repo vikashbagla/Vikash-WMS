@@ -351,20 +351,24 @@ function acctSideTree(net, rootName, negate) {
         }
         return { key: 'l:' + lg.id, label: lg.name, amount: amt, isLedger: true, ledgerId: lg.id };
     }
-    acctLedgers.filter(function (l) { return l.group_id === root.id; })
-        .sort(function (a, b) { return a.name.localeCompare(b.name); })
-        .forEach(function (l) { var n = ledgerNode(l); if (n) nodes.push(n); });
-    acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
-        .sort(function (a, b) { return a.name.localeCompare(b.name); })
-        .forEach(function (cg) {
-            var children = [];
-            acctLedgers.filter(function (l) { return l.group_id === cg.id; })
-                .sort(function (a, b) { return a.name.localeCompare(b.name); })
-                .forEach(function (l) { var n = ledgerNode(l); if (n) children.push(n); });
-            if (!children.length && !acctFinShowZero) return;
-            var total = children.reduce(function (a, n) { return a + n.amount; }, 0);
-            nodes.push({ key: 'g:' + cg.id, label: cg.name, amount: total, children: children });
-        });
+    // Recurse the group tree to arbitrary depth (chart now has 3 levels:
+    // root → group → sub-group → ledger). Render (acctFinNodeHtml) already recurses.
+    function buildGroup(groupId) {
+        var out = [];
+        acctLedgers.filter(function (l) { return l.group_id === groupId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (l) { var n = ledgerNode(l); if (n) out.push(n); });
+        acctGroups.filter(function (g) { return g.parent_group_id === groupId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (cg) {
+                var children = buildGroup(cg.id);
+                if (!children.length && !acctFinShowZero) return;
+                var total = children.reduce(function (a, n) { return a + n.amount; }, 0);
+                out.push({ key: 'g:' + cg.id, label: cg.name, amount: total, children: children });
+            });
+        return out;
+    }
+    nodes = buildGroup(root.id);
     return { nodes: nodes, total: nodes.reduce(function (a, n) { return a + n.amount; }, 0) };
 }
 function acctFinNodeHtml(node, depth) {
@@ -611,27 +615,26 @@ function acctTbBuild(agg, active) {
             oDr: o.dr, oCr: o.cr, pDr: a.dr, pCr: a.cr, cDr: c.dr, cCr: c.cr
         };
     }
+    // Recurse the group tree to arbitrary depth (chart now has 3 levels).
+    // acctTbNodeHtml already renders nested children recursively.
+    function buildGroup(groupId, label) {
+        var node = zero(); node.key = 'tg:' + groupId; node.label = label; node.children = [];
+        acctLedgers.filter(function (l) { return l.group_id === groupId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (l) { var n = ledNode(l); if (n) { node.children.push(n); add(node, n); } });
+        acctGroups.filter(function (g) { return g.parent_group_id === groupId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (cg) {
+                var g = buildGroup(cg.id, cg.name);
+                if (!g.children.length) return;
+                node.children.push(g); add(node, g);
+            });
+        return node;
+    }
     acctNatureOrder.forEach(function (nm) {
         var root = acctGroups.find(function (g) { return !g.parent_group_id && g.name === nm; });
         if (!root) return;
-        var rootNode = zero();
-        rootNode.key = 'tg:' + root.id; rootNode.label = root.name; rootNode.children = [];
-
-        acctLedgers.filter(function (l) { return l.group_id === root.id; })
-            .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (l) { var n = ledNode(l); if (n) { rootNode.children.push(n); add(rootNode, n); } });
-
-        acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
-            .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (cg) {
-                var g = zero(); g.key = 'tg:' + cg.id; g.label = cg.name; g.children = [];
-                acctLedgers.filter(function (l) { return l.group_id === cg.id; })
-                    .sort(function (a, b) { return a.name.localeCompare(b.name); })
-                    .forEach(function (l) { var n = ledNode(l); if (n) { g.children.push(n); add(g, n); } });
-                if (!g.children.length) return;
-                rootNode.children.push(g); add(rootNode, g);
-            });
-
+        var rootNode = buildGroup(root.id, root.name);
         if (rootNode.children.length) nodes.push(rootNode);
     });
     return nodes;
@@ -778,10 +781,17 @@ function acctFmtDate(ymd) {
     return parts[2] + '-' + months[parseInt(parts[1], 10) - 1] + '-' + parts[0].slice(2);
 }
 
-function acctLedgerRowHtml(lg) {
+var ACCT_GRP_PALETTE = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#84cc16', '#06b6d4', '#a855f7', '#eab308', '#3b82f6'];
+function acctGrpColor(name) {
+    var h = 0; var nm = name || ''; for (var i = 0; i < nm.length; i++) { h = (h * 31 + nm.charCodeAt(i)) >>> 0; }
+    return ACCT_GRP_PALETTE[h % ACCT_GRP_PALETTE.length];
+}
+function acctLedgerRowHtml(lg, accent, indent) {
     var avail = lg.is_global ? '<span class="acct-kind-badge">Global</span>'
         : '<span class="acct-scope-badge">' + wmsEsc(acctInvName(lg.scope_investor_id)) + ' only</span>';
-    return '<tr><td class="acct-ledger-name" style="padding-left:34px;">' + wmsEsc(lg.name) + (lg.is_system ? ' <span class="acct-kind-badge">system</span>' : '') + '</td>' +
+    var pad = (indent || 34);
+    var bl = accent ? ('border-left:4px solid ' + accent + ';') : '';
+    return '<tr><td class="acct-ledger-name" style="padding-left:' + pad + 'px;' + bl + '">' + wmsEsc(lg.name) + (lg.is_system ? ' <span class="acct-kind-badge">system</span>' : '') + '</td>' +
         '<td><span class="acct-kind-badge">' + wmsEsc(lg.ledger_kind) + '</span></td>' +
         '<td>' + avail + '</td>' +
         '<td class="text-right"><button class="acct-edit-btn" data-edit-ledger="' + lg.id + '" title="Edit ledger">✏️</button></td></tr>';
@@ -794,29 +804,30 @@ function acctLedByName(a, b) { return a.name.localeCompare(b.name); }
 // Build the nature -> sub-group -> ledger model once, so the row renderer, the
 // counts and Collapse-all all read off the same shape (and stay in agreement).
 function acctLedBuild() {
+    // Recurse the group tree (chart now has 3 levels: root → group → sub-group → ledger).
+    function groupNode(groupId, label, key, parentHit) {
+        var groupHit = parentHit || acctLedMatch(label);
+        var ledgers = acctLedgers.filter(function (l) { return l.group_id === groupId; })
+            .sort(acctLedByName)
+            .filter(function (l) { return groupHit || acctLedMatch(l.name); });
+        var subs = [];
+        acctGroups.filter(function (g) { return g.parent_group_id === groupId; })
+            .sort(acctLedByName)
+            .forEach(function (cg) {
+                var sub = groupNode(cg.id, cg.name, 'g:' + cg.id, groupHit);
+                if (sub) subs.push(sub);
+            });
+        var count = ledgers.length + subs.reduce(function (a, s) { return a + s.count; }, 0);
+        if (!count && !groupHit) return null;          // no match anywhere in this branch
+        return { key: key, id: groupId, label: label, ledgers: ledgers, subs: subs, count: count };
+    }
     var roots = [];
     acctNatureOrder.forEach(function (nature) {
         var root = acctGroups.find(function (g) { return !g.parent_group_id && g.name === nature; });
         if (!root) return;
         var natureHit = acctLedMatch(nature);
-        var node = { key: 'n:' + root.id, label: nature, ledgers: [], subs: [], count: 0 };
-
-        acctLedgers.filter(function (l) { return l.group_id === root.id; })
-            .sort(acctLedByName)
-            .forEach(function (l) { if (natureHit || acctLedMatch(l.name)) node.ledgers.push(l); });
-
-        acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
-            .sort(acctLedByName)
-            .forEach(function (cg) {
-                var groupHit = natureHit || acctLedMatch(cg.name);
-                var kids = acctLedgers.filter(function (l) { return l.group_id === cg.id; })
-                    .sort(acctLedByName)
-                    .filter(function (l) { return groupHit || acctLedMatch(l.name); });
-                if (!kids.length && !groupHit) return;          // no match anywhere in this sub-group
-                node.subs.push({ key: 'g:' + cg.id, id: cg.id, label: cg.name, ledgers: kids });
-            });
-
-        node.count = node.ledgers.length + node.subs.reduce(function (a, sg) { return a + sg.ledgers.length; }, 0);
+        var node = groupNode(root.id, nature, 'n:' + root.id, natureHit);
+        if (!node) node = { key: 'n:' + root.id, id: root.id, label: nature, ledgers: [], subs: [], count: 0 };
         // Unsearched: always show the nature header (empty or not). Searching: only if it matched.
         if (!acctLedSearch || node.count || node.subs.length) roots.push(node);
     });
@@ -830,7 +841,7 @@ function acctRenderLedgers() {
 
     var roots = acctLedBuild();
     var allKeys = [];
-    roots.forEach(function (r) { allKeys.push(r.key); r.subs.forEach(function (sg) { allKeys.push(sg.key); }); });
+    (function collect(list) { list.forEach(function (n) { allKeys.push(n.key); collect(n.subs || []); }); })(roots);
 
     // UI-STANDARDS D.2.2 - collapsible groups start collapsed. Seed once per session.
     if (acctLedCollapsed === null) {
@@ -859,26 +870,35 @@ function acctRenderLedgers() {
         html += '<tr><td colspan="4"><div class="acct-empty">Nothing matches &ldquo;' + wmsEsc(acctLedSearch) + '&rdquo;.</div></td></tr>';
     }
 
+    // Render a sub-group and (recursively) its own sub-groups — the chart nests
+    // 3 levels deep (Income → Investment Income → Capital Gains → ledger).
+    function renderSub(sg, depth) {
+        var sopen = isOpen(sg.key);
+        var pad = 20 + (depth - 1) * 16;
+        var col = acctGrpColor(sg.label);
+        var h = '<tr class="acct-subgroup-row acct-led-grp" data-node="' + sg.key + '">' +
+            '<td style="padding-left:' + pad + 'px;font-weight:600;color:#334155;border-left:5px solid ' + col + ';background:' + col + '14;">' +
+            '<span class="acct-led-toggle' + (sopen ? '' : ' collapsed') + '">▼</span>' + wmsEsc(sg.label) +
+            '<span class="acct-led-count">' + sg.count + '</span></td>' +
+            '<td colspan="2" style="background:' + col + '14;"></td>' +
+            '<td class="text-right" style="background:' + col + '14;"><button class="acct-edit-btn" data-edit-group="' + sg.id + '" title="Edit group">✏️</button></td></tr>';
+        if (sopen) {
+            sg.ledgers.forEach(function (lg) { h += acctLedgerRowHtml(lg, col, pad + 20); });
+            (sg.subs || []).forEach(function (sub) { h += renderSub(sub, depth + 1); });
+        }
+        return h;
+    }
     roots.forEach(function (r) {
         var open = isOpen(r.key);
-        html += '<tr class="acct-tb-group acct-led-grp" data-node="' + r.key + '"><td colspan="3">' +
+        var col = acctGrpColor(r.label);
+        html += '<tr class="acct-tb-group acct-led-grp" data-node="' + r.key + '"><td colspan="3" style="border-left:6px solid ' + col + ';background:' + col + '24;font-weight:700;">' +
             '<span class="acct-led-toggle' + (open ? '' : ' collapsed') + '">▼</span>' + wmsEsc(r.label) +
-            '<span class="acct-led-count">' + r.count + '</span></td><td></td></tr>';
+            '<span class="acct-led-count">' + r.count + '</span></td><td style="background:' + col + '24;"></td></tr>';
         if (!open) return;
 
-        // ledgers hanging directly off the nature root
-        r.ledgers.forEach(function (lg) { html += acctLedgerRowHtml(lg); });
-
-        r.subs.forEach(function (sg) {
-            var sopen = isOpen(sg.key);
-            html += '<tr class="acct-subgroup-row acct-led-grp" data-node="' + sg.key + '">' +
-                '<td style="padding-left:20px;font-weight:600;color:#475569;">' +
-                '<span class="acct-led-toggle' + (sopen ? '' : ' collapsed') + '">▼</span>' + wmsEsc(sg.label) +
-                '<span class="acct-led-count">' + sg.ledgers.length + '</span></td>' +
-                '<td colspan="2"></td>' +
-                '<td class="text-right"><button class="acct-edit-btn" data-edit-group="' + sg.id + '" title="Edit group">\u270F\uFE0F</button></td></tr>';
-            if (sopen) sg.ledgers.forEach(function (lg) { html += acctLedgerRowHtml(lg); });
-        });
+        // ledgers hanging directly off the nature root, then its sub-groups (recursive)
+        r.ledgers.forEach(function (lg) { html += acctLedgerRowHtml(lg, col, 34); });
+        r.subs.forEach(function (sg) { html += renderSub(sg, 1); });
     });
     html += '</tbody></table>';
     el.innerHTML = html;
@@ -1923,33 +1943,66 @@ async function acctResolveLedgers(keys, outMap) {
 // Core: rebuild ONE book's auto-vouchers from its transactions. Returns a report
 // object; does NOT show UI (no confirm/loading/render). NOTE: on the dev site the
 // fetch interceptor routes "transactions" -> "transactions_dev" automatically.
+// Resolve a voucher-line ref -> ledger id (find-or-create auto ledgers).
+async function acctFindOrCreateAuto(fkCol, id) {
+    var found = acctLedgers.find(function (x) { return x[fkCol] === id; });
+    if (found) return found.id;
+    var name, groupName, kind, extra = {};
+    if (fkCol === 'security_id') {
+        var sec = (wmsRefData.securitiesCmMap || {})[id] || {};
+        name = sec.symbol || sec.company_name || ('SEC ' + String(id).slice(0, 8));
+        groupName = 'Listed Securities'; kind = 'SECURITY'; extra.security_id = id;
+    } else if (fkCol === 'broker_id') {
+        var b = (wmsRefData.brokers || []).find(function (x) { return x.id === id; }) || {};
+        name = 'Broker — ' + (b.name || b.broker_code || String(id).slice(0, 8));
+        groupName = 'Brokers'; kind = 'BROKER'; extra.broker_id = id;
+    } else {
+        var inv = (wmsRefData.investors || []).find(function (x) { return x.id === id; }) || {};
+        name = 'Trader — ' + (inv.name || inv.short_name || String(id).slice(0, 8));
+        groupName = 'Traders'; kind = 'TRADER'; extra.investor_id = id;
+    }
+    var grp = acctGroups.find(function (g) { return g.name === groupName; });
+    if (!grp) throw new Error('Group "' + groupName + '" not found (run migration 74/75)');
+    var body = Object.assign({ name: name, group_id: grp.id, ledger_kind: kind, is_global: true, is_system: false }, extra);
+    var resp = await fetch(acctUrl('acct_ledgers'), {
+        method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+        body: JSON.stringify(body)
+    });
+    if (!resp.ok) throw new Error('Create auto ledger "' + name + '" failed: ' + (await resp.text()));
+    var row = (await resp.json())[0];
+    acctLedgers.push(row);
+    return row.id;
+}
+
+async function acctResolveRef(ref) {
+    if (ref.role) {
+        var l = acctLedgers.find(function (x) { return x.posting_role === ref.role; });
+        if (l) return l.id;
+        throw new Error('No ledger for role "' + ref.role + '" (run migration 74)');
+    }
+    if (ref.security_id) return await acctFindOrCreateAuto('security_id', ref.security_id);
+    if (ref.broker_id) return await acctFindOrCreateAuto('broker_id', ref.broker_id);
+    if (ref.investor_id) return await acctFindOrCreateAuto('investor_id', ref.investor_id);
+    throw new Error('Unresolvable ledger ref: ' + JSON.stringify(ref));
+}
+
+// Core: rebuild ONE book's auto-vouchers via the v2 engine (accounting-engine.js).
+// Uses the SHARED FIFO (wmsCalcFifoCost) + classifier, resolves ledgers by role/FK.
 async function acctRebuildOne(bookId) {
     var fields = 'id,investor_id,trader_id,broker_id,security_id,symbol,short_symbol,company_name,' +
         'security_type,transaction_type,transaction_date,transaction_time,quantity,price,' +
-        'gross_amount,total_charges,stt,tds,net_amount,created_at';
+        'gross_amount,total_charges,trader_charges,stt,tds,net_amount,notes,created_at';
     var txns = await wmsFetchAllRaw(acctUrl('transactions?select=' + fields + '&investor_id=eq.' + bookId)) || [];
     var bookInv = (wmsRefData.investors || []).find(function (i) { return i.id === bookId; }) || {};
+    var invById = {}; (wmsRefData.investors || []).forEach(function (i) { invById[i.id] = i; });
     var ctx = {
-        investor: function (id) { return (wmsRefData.investors || []).find(function (i) { return i.id === id; }); },
-        brokerName: function (id) { var b = (wmsRefData.brokers || []).find(function (x) { return x.id === id; }); return b ? (b.name || b.broker_code) : 'Broker'; },
-        sttSeparate: !!bookInv.stt_accounting_method,
-        postFno: bookInv.post_fno !== false
+        securityById: wmsRefData.securitiesCmMap || {},
+        investorById: invById,
+        brokerById: {},
+        fifo: function (t) { return wmsCalcFifoCost(t); }
     };
-    var result = acctProcessBook(bookId, txns, ctx);
-
-    // group skip reasons (collapse digit runs so similar reasons aggregate)
-    var skipReasons = {};
-    result.skipped.forEach(function (s) {
-        var key = String(s.reason).replace(/\d[\d,.]*/g, 'N');
-        skipReasons[key] = (skipReasons[key] || 0) + 1;
-    });
-
-    var keyMap = {};
-    if (result.vouchers.length) {
-        var uniqueKeys = {};
-        result.vouchers.forEach(function (v) { v.lines.forEach(function (l) { uniqueKeys[l.ledger.key] = l.ledger; }); });
-        await acctResolveLedgers(Object.keys(uniqueKeys).map(function (k) { return uniqueKeys[k]; }), keyMap);
-    }
+    var book = { id: bookId, post_fno: bookInv.post_fno !== false };
+    var result = acctEngineProcess(book, txns, ctx);
 
     // clear existing autos for this book (lines cascade)
     await fetch(acctUrl('acct_vouchers?investor_id=eq.' + bookId + '&is_auto=eq.true'),
@@ -1958,30 +2011,35 @@ async function acctRebuildOne(bookId) {
     var posted = 0, failed = 0, firstErr = null;
     for (var j = 0; j < result.vouchers.length; j++) {
         var v = result.vouchers[j];
-        var header = { investor_id: bookId, voucher_type: v.voucherType, voucher_date: v.date,
+        var header = { investor_id: bookId, voucher_type: v.type, voucher_date: v.date,
             narration: v.narration, is_auto: true, source_transaction_id: v.txnId };
-        var lines = v.lines.map(function (l) {
-            return { ledger_id: keyMap[l.ledger.key], debit_amount: l.debit, credit_amount: l.credit,
-                narration: l.narration, sort_order: l.sort_order };
-        });
-        if (lines.some(function (l) { return !l.ledger_id; })) { failed++; continue; }
+        var lines = [], okLines = true;
+        for (var li = 0; li < v.lines.length; li++) {
+            var l = v.lines[li], lid;
+            try { lid = await acctResolveRef(l.ref); }
+            catch (e) { okLines = false; if (!firstErr) firstErr = e.message; break; }
+            lines.push({ ledger_id: lid, debit_amount: l.debit || 0, credit_amount: l.credit || 0, narration: l.narration || null, sort_order: li });
+        }
+        if (!okLines) { failed++; continue; }
         var resp = await fetch(acctUrl('rpc/acct_post_voucher'), {
             method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ p_header: header, p_lines: lines })
         });
         if (resp.ok) posted++; else { failed++; if (!firstErr) firstErr = await resp.text(); }
     }
-    if (result.warnings.length) console.warn('[accounting] rebuild warnings for ' + acctInvName(bookId), result.warnings);
+    if (result.exceptions.length) console.warn('[accounting] rebuild exceptions for ' + acctInvName(bookId), result.exceptions);
     if (firstErr) console.error('[accounting] rebuild first error (' + acctInvName(bookId) + '):', firstErr);
 
+    var skipReasons = {};
+    result.skipped.forEach(function (s) { var k = String(s.reason).replace(/\d[\d,.]*/g, 'N'); skipReasons[k] = (skipReasons[k] || 0) + 1; });
     return { bookId: bookId, book: acctInvName(bookId), posted: posted, skipped: result.skipped.length,
-        failed: failed, warnings: result.warnings.length, skipReasons: skipReasons,
-        warningsList: result.warnings, firstErr: firstErr };
+        failed: failed, warnings: result.exceptions.length, skipReasons: skipReasons,
+        warningsList: result.exceptions.map(function (e) { return e.title; }), firstErr: firstErr };
 }
 
 async function acctRebuildBooks() {
     if (!acctBookId) { acctToast('Select a book first.', true); return; }
-    if (typeof acctProcessBook !== 'function') { acctToast('Posting engine not loaded.', true); return; }
+    if (typeof acctEngineProcess !== 'function') { acctToast('Posting engine not loaded.', true); return; }
     if (!window.confirm('Rebuild auto-vouchers for ' + acctInvName(acctBookId) + ' from its transactions?\n\n' +
         'This deletes existing AUTO-generated vouchers for this book and regenerates them. Manual vouchers are kept.')) return;
     acctLoading(true);
@@ -1996,7 +2054,7 @@ async function acctRebuildBooks() {
 }
 
 async function acctRebuildAll() {
-    if (typeof acctProcessBook !== 'function') { acctToast('Posting engine not loaded.', true); return; }
+    if (typeof acctEngineProcess !== 'function') { acctToast('Posting engine not loaded.', true); return; }
     var books = acctOwnBooks();
     if (!books.length) { acctToast('No own-books to rebuild.', true); return; }
     if (!window.confirm('Rebuild auto-vouchers for ALL ' + books.length + ' books from their transactions?\n\n' +
