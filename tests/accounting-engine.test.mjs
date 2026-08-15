@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
-const { acctBuildVoucher, acctEngineProcess, demergerVouchers, acctFnoRealised, voucherBalances } = require(join(here, '..', 'accounting-engine.js'));
+const { acctBuildVoucher, acctEngineProcess, demergerVouchers, acctFnoRealised, acctStatementVoucher, voucherBalances } = require(join(here, '..', 'accounting-engine.js'));
 
 let pass=0, fail=0;
 function ok(name, cond){ if(cond){pass++;} else {fail++; console.log('FAIL', name);} }
@@ -14,7 +14,7 @@ const ctx = {
     SEC1:{security_type:'EQUITY', symbol:'ABC', capital_gains:{stcg:'CG_ST_STT',ltcg:'CG_LT',lt_months:12}, income_ledgers:{DIVIDEND:'INC_DIVIDEND', INTEREST:'INC_INT_BONDS'}},
     FUT1:{security_type:'NFO', symbol:'NIFTYF', capital_gains:{}, income_ledgers:{}}
   },
-  investorById: { INV1:{stt_accounting_method:true}, INV2:{stt_accounting_method:false}, T0:{stt_accounting_method:false} },
+  investorById: { INV1:{stt_accounting_method:true}, INV2:{stt_accounting_method:false}, T0:{stt_accounting_method:false}, T1:{book_parent_id:'T0'}, T2:{book_parent_id:'T0'}, T3a:{book_parent_id:'T0'} },
   brokerById: {}
 };
 const own = o => Object.assign({investor_id:'INV1', security_id:'SEC1', broker_id:'BRK1', quantity:100}, o);
@@ -118,13 +118,32 @@ ok('demerger plug: no critical exception', !dm2.exceptions.some(e=>e.severity===
 
 // --- Client charge spread -> Trader Income (rights/income + F&O) ---
 v = acctBuildVoucher(cli({transaction_type:'RIGHTS_PAYMENT', net_amount:500000, trader_charges:2500, total_charges:0}), ctx, []);
-ok('client rights: spread to Trader Income', voucherBalances(v.lines) && amt(v, r=>r.role==='TRADER_INCOME')===-2500);
-ok('client rights: client billed the spread (Dr 2500)', v.lines.some(l=>l.ref.investor_id==='T1' && l.debit===2500)); // separate spread debit line
+ok('client rights: balances', voucherBalances(v.lines));
+ok('client rights: client Dr net+spread (502500)', amt(v, r=>r.investor_id==='T1')===502500);
+ok('client rights: PMS Settlement Cr 500000 (book pays the bank, not the client)', amt(v, r=>r.role==='PMS_SETTLEMENT')===-500000);
+ok('client rights: spread to Trader Income (2500)', amt(v, r=>r.role==='TRADER_INCOME')===-2500);
 ctx.book = { post_fno:true };
 v = acctBuildVoucher(cli({transaction_type:'SELL', security_type:'NFO', security_id:'FUT1', total_charges:100, trader_charges:2730}), ctx, [{gain:5000}]);
 ok('client F&O: P&L + spread both post', voucherBalances(v.lines) && amt(v, r=>r.role==='FNO_PL')===5000 && amt(v, r=>r.role==='TRADER_INCOME')===-2630);
 v = acctBuildVoucher(cli({transaction_type:'BUY', security_type:'NFO', security_id:'FUT1', total_charges:100, trader_charges:2730}), ctx, []); // open leg, no P&L
 ok('client F&O open leg: spread still posts', voucherBalances(v.lines) && amt(v, r=>r.role==='TRADER_INCOME')===-2630 && !v.skip);
+
+// --- Options: premium is CASH (match Statements), never FIFO P&L (owner rule 2026-08-16) ---
+ctx.book = { post_fno:true };
+v = acctBuildVoucher(own({transaction_type:'BUY', security_type:'NFO', security_id:'OPT1', symbol:'NIFTY26AUG25000CE', net_amount:5000}), ctx, []);
+ok('own option buy: premium Dr FNO_PL / Cr Broker', voucherBalances(v.lines) && amt(v, r=>r.role==='FNO_PL')===5000 && amt(v, r=>r.broker_id==='BRK1')===-5000);
+v = acctBuildVoucher(own({transaction_type:'SELL', security_type:'NFO', security_id:'OPT1', symbol:'NIFTY26AUG25000CE', net_amount:8000, quantity:-100}), ctx, []);
+ok('own option sell: premium Dr Broker / Cr FNO_PL', voucherBalances(v.lines) && amt(v, r=>r.role==='FNO_PL')===-8000 && amt(v, r=>r.broker_id==='BRK1')===8000);
+ctx.book = { post_fno:false };
+v = acctBuildVoucher(own({transaction_type:'BUY', security_type:'NFO', security_id:'OPT1', symbol:'NIFTY26AUG25000CE', net_amount:5000}), ctx, []);
+ok('own option: post_fno off -> skip (like own futures)', !!v.skip);
+v = acctBuildVoucher(cli({transaction_type:'BUY', security_type:'NFO', security_id:'OPT1', symbol:'NIFTY26AUG25000CE', net_amount:5040, total_charges:40, trader_charges:50}), ctx, []);
+ok('client option buy: premium to client (Dr 5050), spread to Trader Income', voucherBalances(v.lines) && amt(v, r=>r.investor_id==='T1')===5050 && amt(v, r=>r.role==='TRADER_INCOME')===-10);
+ok('option excluded from futures FIFO', Object.keys(acctFnoRealised([own({id:'o1', transaction_type:'BUY', security_type:'NFO', security_id:'OPT1', symbol:'NIFTY26AUG25000CE', quantity:50, net_amount:5000})])).length===0);
+ok('future still matched by FIFO', Object.keys(acctFnoRealised([
+  own({id:'f1', transaction_type:'BUY',  security_type:'NFO', security_id:'FUT1', symbol:'NIFTY26AUGFUT', quantity:50,  net_amount:5000, transaction_date:'2026-08-01'}),
+  own({id:'f2', transaction_type:'SELL', security_type:'NFO', security_id:'FUT1', symbol:'NIFTY26AUGFUT', quantity:-50, net_amount:6000, transaction_date:'2026-08-05'})
+])).length>0);
 
 // --- F&O realised P&L matcher: symmetric FIFO, per beneficiary + contract ---
 // Two beneficiaries in the SAME contract in one book must NOT pool (the v4 bug).
@@ -158,6 +177,31 @@ acctEngineProcess({ id:'INV1', post_fno:false }, [
   {id:'p3', investor_id:'INV1', trader_id:'T1', security_id:'SEC1', broker_id:'BRK1', transaction_type:'BUY', quantity:100, net_amount:9000, transaction_date:'2025-01-15'},
 ], Object.assign({}, ctx, { investorById:{INV1:{stt_accounting_method:false}, T1:{}}, fifo:fifoSpy2 }));
 ok('equity FIFO pooled book-level (one call, all trades incl client p3)', fifoCalls2.length===1 && fifoCalls2[0].indexOf('p1')>=0 && fifoCalls2[0].indexOf('p3')>=0);
+
+// --- Statement postings: interest / cash / recon / opening (owner rules 2026-08-16) ---
+// Interest, own book (has broker): Dr Trading Interest / Cr Broker
+v = acctStatementVoucher({entry_type:'INTEREST_BOOKED', investor_id:'T0', broker_id:'BRK1', amount:194191.92}, ctx);
+ok('stmt interest own: Dr Trading Interest / Cr Broker', voucherBalances(v.lines) && amt(v, r=>r.role==='INT_TRADING')===194191.92 && amt(v, r=>r.broker_id==='BRK1')===-194191.92);
+// Interest, client (no broker): Dr Client / Cr Trading Interest (parent charges the client)
+v = acctStatementVoucher({entry_type:'INTEREST_BOOKED', investor_id:'T1', amount:2433.52}, ctx);
+ok('stmt interest client: Dr Client / Cr Trading Interest', voucherBalances(v.lines) && amt(v, r=>r.investor_id==='T1')===2433.52 && amt(v, r=>r.role==='INT_TRADING')===-2433.52);
+ok('stmt client entry posts in the PARENT book (T0), not T1', v.bookId==='T0');
+ok('stmt own-book entry posts in its own book (T0)', acctStatementVoucher({entry_type:'INTEREST_BOOKED', investor_id:'T0', broker_id:'BRK1', amount:100}, ctx).bookId==='T0');
+// Cash received, own book: Dr Cash / Cr Broker
+v = acctStatementVoucher({entry_type:'CASH_RECEIVED', investor_id:'T0', broker_id:'BRK1', amount:20000}, ctx);
+ok('stmt cash recd own: Dr Cash / Cr Broker', voucherBalances(v.lines) && amt(v, r=>r.role==='CASH')===20000 && amt(v, r=>r.broker_id==='BRK1')===-20000);
+// Cash paid, own book: Dr Broker / Cr Cash
+v = acctStatementVoucher({entry_type:'CASH_PAID', investor_id:'T0', broker_id:'BRK1', amount:1000}, ctx);
+ok('stmt cash paid own: Dr Broker / Cr Cash', voucherBalances(v.lines) && amt(v, r=>r.broker_id==='BRK1')===1000 && amt(v, r=>r.role==='CASH')===-1000);
+// Cash paid, client (T0 gives cash to T2): Dr Client / Cr Cash
+v = acctStatementVoucher({entry_type:'CASH_PAID', investor_id:'T2', amount:2516500}, ctx);
+ok('stmt cash paid client: Dr Client / Cr Cash', voucherBalances(v.lines) && amt(v, r=>r.investor_id==='T2')===2516500 && amt(v, r=>r.role==='CASH')===-2516500);
+// Cash received, client (client deposits): Dr Cash / Cr Client
+v = acctStatementVoucher({entry_type:'CASH_RECEIVED', investor_id:'T3a', amount:18500}, ctx);
+ok('stmt cash recd client: Dr Cash / Cr Client', voucherBalances(v.lines) && amt(v, r=>r.role==='CASH')===18500 && amt(v, r=>r.investor_id==='T3a')===-18500);
+// Reconciliation & opening balance: no voucher
+ok('stmt reconciliation: skipped', !!acctStatementVoucher({entry_type:'RECONCILIATION', investor_id:'T3', amount:69448675.66}, ctx).skip);
+ok('stmt opening balance: skipped', !!acctStatementVoucher({entry_type:'OPENING_BALANCE', investor_id:'T0', broker_id:'BRK1', amount:70863016}, ctx).skip);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);

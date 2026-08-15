@@ -2,7 +2,7 @@
 // accounting-engine.js — the WMS accounting posting engine (v2 rebuild).
 // Replaces accounting-posting.js. PURE/UMD (browser + node + Deno).
 //
-// Design: POSTING-RULES.md v2 / EXECUTION-PLAN.md v2.
+// Design: POSTING-RULES.md v4 / EXECUTION-PLAN.md v3.
 //  - Reuses the SHARED calc: wmsCalcFifoCost (FIFO cost + gains) + wmsGainClassify
 //    (ST/LT/intraday, per-security capital_gains) + wmsSttAdjustTxns — so the
 //    books and the Reports CG figures are consistent by construction.
@@ -14,8 +14,15 @@
 //  - Every voucher balances (Σdebit === Σcredit).
 //
 // Ledger roles used: STT_STOCKS/STT_MF, CG_ST_STT/CG_ST_SLAB/CG_LT, INTRADAY_PL,
-//   PMS_SETTLEMENT, TDS_YIELD, FNO_PL, TRADER_INCOME, INT_TRADING, and the income
-//   roles the security's income_ledgers map points at (INC_*).
+//   PMS_SETTLEMENT, CASH, TDS_YIELD, FNO_PL, TRADER_INCOME, INT_TRADING, and the
+//   income roles the security's income_ledgers map points at (INC_*).
+//
+// Trade vouchers: acctEngineProcess (per book) → acctBuildVoucher (per trade).
+// Statement vouchers (acct ledger_entries — interest / cash / recon / opening):
+//   acctProcessStatements → acctStatementVoucher. See POSTING-RULES §9.1–9.2.
+// Options are CASH premiums (not FIFO); futures use the shared wmsFnoRealised.
+// NOTE: feed RAW transactions — never trader-perspective display_net_amount rows —
+//   or the STT-adjusted FIFO basis is silently overridden.
 // ============================================================================
 (function (root, factory) {
     var dep = (typeof module !== 'undefined' && module.exports) ? require('./wms-cost-engine.js') : root;
@@ -159,6 +166,22 @@
         return { type: 'PMS-FNO', narration: 'F&O ' + symOf(t, ctx), lines: lines };
     }
 
+    // OWN option — the premium is CASH, treated EXACTLY as the Statements module does
+    // (both premium legs hit the balance; their net across the round-trip IS the
+    // realised P&L). No FIFO, no security asset. BUY = premium paid (Dr FNO_PL / Cr
+    // Broker); SELL = premium received (Dr Broker / Cr FNO_PL). Gated by post_fno like
+    // own futures (owner rule 2026-08-16). Client options route through buyClient/
+    // sellClient so the premium lands in the client's account, matching their statement.
+    function optionOwn(t, ctx) {
+        if (!ctx.book || !ctx.book.post_fno) return { skip: 'own option — book F&O posting off (post_fno)' };
+        var net = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount);
+        if (Math.round(net * 100) === 0) return { skip: 'option premium net-zero' };
+        var lines = (ttype(t) === 'BUY')
+            ? [{ ref: { role: 'FNO_PL' }, debit: r2(net), credit: 0 }, { ref: { broker_id: t.broker_id }, debit: 0, credit: r2(net) }]
+            : [{ ref: { broker_id: t.broker_id }, debit: r2(net), credit: 0 }, { ref: { role: 'FNO_PL' }, debit: 0, credit: r2(net) }];
+        return { type: 'PMS-OPTION', narration: 'Option ' + ttype(t) + ' ' + symOf(t, ctx) + ' (premium)', lines: lines };
+    }
+
     // ---- CLIENT (parent-book) legs: trader ≠ investor -----------------------
     // BUY: Dr Client [net + spread]; Cr Broker [net]; Cr Trader Income [spread].
     function buyClient(t, ctx) {
@@ -182,6 +205,19 @@
         var lines = [{ ref: { role: 'PMS_SETTLEMENT' }, debit: r2(net), credit: 0 }, { ref: { investor_id: t.trader_id }, debit: 0, credit: r2(net) }];
         pushSpread(lines, t);   // bill the client the book's charge spread (e.g. rights trader_charges)
         return { type: 'PMS-' + ty, narration: ty.charAt(0) + ty.slice(1).toLowerCase() + ' ' + symOf(t, ctx) + ' (client)', lines: lines };
+    }
+    // Client RIGHTS_PAYMENT — the CLIENT subscribes to the rights, so the client is
+    // charged (Dr) and the book pays the bank (Cr PMS Settlement); the trader-charge
+    // spread is the book's income. Mirrors buyClient but the counterparty is PMS
+    // Settlement, not the broker (owner rule 2026-08-16; corrects trades 949 / 1126,
+    // which previously paid the client instead of billing them).
+    function rightsPayClient(t, ctx) {
+        var net = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount);
+        var spread = r2(absN(t.trader_charges) - absN(t.total_charges));
+        var lines = [{ ref: { investor_id: t.trader_id }, debit: r2(net + spread), credit: 0 },
+                     { ref: { role: 'PMS_SETTLEMENT' }, debit: 0, credit: r2(net) }];
+        if (Math.round(spread * 100) !== 0) lines.push({ ref: { role: 'TRADER_INCOME' }, debit: 0, credit: r2(spread) });
+        return { type: 'PMS-RIGHTS_PAYMENT', narration: 'Rights payment ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
     // Client F&O close: the P&L belongs to the CLIENT (trader ≠ investor), so the
     // client's ledger is updated for EVERY F&O booking, IRRESPECTIVE of the book's
@@ -247,7 +283,7 @@
         // own and its clients' positions in the same contract must not pool.
         var rows = [];
         trades.forEach(function (t) {
-            if (!isFno(t)) return;
+            if (!isFno(t) || isOption(t)) return;   // options are cash premiums, not FIFO P&L (match Statements)
             var ty = ttype(t); if (ty !== 'BUY' && ty !== 'SELL') return;
             var contract = String(t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
             var ben = (t.trader_id && String(t.trader_id) !== String(t.investor_id)) ? String(t.trader_id) : String(t.investor_id);
@@ -262,19 +298,87 @@
 
     // ---- per-trade dispatch --------------------------------------------------
     function isFno(t) { var s = String(t.security_type || '').toUpperCase(); return s === 'NFO' || s === 'MCX'; }
+    // Option (CE/PE) vs future: options settle as cash premiums (statement treatment),
+    // futures settle as realised FIFO P&L. Detect via option_type or the strike+CE/PE suffix.
+    function isOption(t) {
+        if (t.option_type) return true;
+        var s = String(t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
+        return /\d(?:CE|PE)$/.test(s);
+    }
     function acctBuildVoucher(t, ctx, gains) {
         var ty = ttype(t);
         if (ty === 'HISTORICAL_PL') return { skip: 'historical (pre-period)' };
         if (ty === 'SPLIT' || ty === 'BONUS' || ty === 'RIGHTS_ENTITLEMENT') return { skip: 'quantity-only, no posting' };
         if (ty === 'DEMERGER') return { skip: 'handled as a grouped event' };
         var client = !!(t.trader_id && String(t.trader_id) !== String(t.investor_id));
-        if (isFno(t)) return client ? fnoClient(t, ctx, gains) : fnoOwn(t, ctx, gains);
+        if (isFno(t)) {
+            if (isOption(t)) {   // options: premium is cash (match Statements) — no FIFO P&L
+                if (ty === 'BUY') return client ? buyClient(t, ctx) : optionOwn(t, ctx);
+                if (ty === 'SELL') return client ? sellClient(t, ctx) : optionOwn(t, ctx);
+                return { skip: 'option non-trade type: ' + ty };
+            }
+            return client ? fnoClient(t, ctx, gains) : fnoOwn(t, ctx, gains);
+        }
         if (ty === 'BUY') return client ? buyClient(t, ctx) : buyOwn(t, ctx);
         if (ty === 'SELL') return client ? sellClient(t, ctx) : sellOwn(t, ctx, gains);
         if (ty === 'DIVIDEND' || ty === 'INTEREST' || ty === 'OTHER_INCOME') return client ? incomeClient(t, ctx) : incomeOwn(t, ctx);
         if (ty === 'CAPITAL_REDUCTION') return client ? incomeClient(t, ctx) : capRedOwn(t, ctx);
-        if (ty === 'RIGHTS_PAYMENT') return client ? incomeClient(t, ctx) : rightsPayOwn(t, ctx);
+        if (ty === 'RIGHTS_PAYMENT') return client ? rightsPayClient(t, ctx) : rightsPayOwn(t, ctx);
         return { skip: 'unrecognised type: ' + ty, exceptions: [ex('unrecognised_type:' + ty, 'warn', 'Unrecognised transaction_type ' + ty, { id: t.id })] };
+    }
+
+    // ---- Statement postings (acct ledger_entries: interest / cash / recon) ----
+    // These come from broker & client STATEMENTS, not the transactions table. The
+    // own-book-vs-client split is signalled by broker_id: a book faces the broker
+    // DIRECTLY (broker_id set) so its interest/cash is a broker item; a client faces
+    // its PARENT book (no broker_id) so the same items flip to the client account.
+    // Owner rules 2026-08-16:
+    //   INTEREST_BOOKED own    : Dr Trading Interest / Cr Broker  (broker charges the book)
+    //   INTEREST_BOOKED client : Dr Client / Cr Trading Interest  (parent charges the client)
+    //   CASH_RECEIVED   own    : Dr Cash / Cr Broker              CASH_PAID own    : Dr Broker / Cr Cash
+    //   CASH_RECEIVED   client : Dr Cash / Cr Client              CASH_PAID client : Dr Client / Cr Cash
+    //   RECONCILIATION         : no voucher      OPENING_BALANCE : no voucher (entered manually)
+    function acctStatementVoucher(e, ctx) {
+        var ty = String(e.entry_type || '').toUpperCase();
+        var amt = absN(e.amount);
+        if (ty === 'OPENING_BALANCE') return { skip: 'opening balance — entered manually' };
+        if (ty === 'RECONCILIATION')  return { skip: 'reconciliation — no voucher' };
+        if (Math.round(amt * 100) === 0) return { skip: 'zero amount' };
+        var own = !!e.broker_id;                                                   // book faces the broker directly
+        var cp  = own ? { broker_id: e.broker_id } : { investor_id: e.investor_id }; // counterparty leg
+        // Posting book: a client (T1..T5) has no book of its own — the voucher posts
+        // in its PARENT book (T0), with the client's current account as the line item.
+        // An own-book entity (has book_parent_id null/self) posts in its own book.
+        var inv = (ctx.investorById || {})[String(e.investor_id)] || {};
+        var bookId = (!inv.book_parent_id || String(inv.book_parent_id) === String(e.investor_id))
+            ? String(e.investor_id) : String(inv.book_parent_id);
+        if (ty === 'INTEREST_BOOKED') {
+            var il = own
+                ? [{ ref: { role: 'INT_TRADING' }, debit: r2(amt), credit: 0 }, { ref: cp, debit: 0, credit: r2(amt) }]
+                : [{ ref: cp, debit: r2(amt), credit: 0 }, { ref: { role: 'INT_TRADING' }, debit: 0, credit: r2(amt) }];
+            return { type: 'STMT-INTEREST', bookId: bookId, narration: 'Trading interest' + (e.reference ? ' — ' + e.reference : ''), lines: il };
+        }
+        if (ty === 'CASH_RECEIVED' || ty === 'CASH_PAID') {
+            var recd = (ty === 'CASH_RECEIVED');
+            var cash  = { ref: { role: 'CASH' }, debit: recd ? r2(amt) : 0, credit: recd ? 0 : r2(amt) };
+            var other = { ref: cp,               debit: recd ? 0 : r2(amt), credit: recd ? r2(amt) : 0 };
+            return { type: 'STMT-' + ty, bookId: bookId, narration: (recd ? 'Cash received' : 'Cash paid') + (e.reference ? ' — ' + e.reference : ''), lines: [cash, other] };
+        }
+        return { skip: 'unhandled entry_type: ' + ty, exceptions: [ex('unhandled_ledger_entry:' + ty, 'warn', 'Unhandled ledger entry_type ' + ty, { id: e.id })] };
+    }
+
+    // Batch the statement entries into vouchers (mirror of acctEngineProcess for trades).
+    function acctProcessStatements(entries, ctx) {
+        var vouchers = [], exceptions = [], skipped = [];
+        (entries || []).forEach(function (e) {
+            var v = acctStatementVoucher(e, ctx);
+            if (v.exceptions) exceptions = exceptions.concat(v.exceptions);
+            if (v.skip) { skipped.push({ id: e.id, reason: v.skip }); return; }
+            if (!voucherBalances(v.lines)) exceptions.push(ex('stmt_unbalanced:' + e.id, 'critical', 'Statement voucher does not balance ' + e.id, { type: v.type }));
+            v.entryId = e.id; v.date = e.entry_date;
+            vouchers.push(v);
+        });
+        return { vouchers: vouchers, exceptions: exceptions, skipped: skipped };
     }
 
     // ---- orchestrator --------------------------------------------------------
@@ -329,6 +433,8 @@
     return {
         acctEngineProcess: acctEngineProcess,
         acctBuildVoucher: acctBuildVoucher,
+        acctStatementVoucher: acctStatementVoucher,
+        acctProcessStatements: acctProcessStatements,
         demergerVouchers: demergerVouchers,
         acctFnoRealised: acctFnoRealised,
         voucherBalances: voucherBalances
