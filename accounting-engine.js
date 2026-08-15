@@ -26,6 +26,7 @@
 
     var wmsGainClassify = dep.wmsGainClassify;
     var wmsSttAdjustTxns = dep.wmsSttAdjustTxns;
+    var wmsFnoRealised = dep.wmsFnoRealised;   // shared, authoritative F&O P&L (Statements module source of truth)
 
     function absN(x) { return Math.abs(parseFloat(x) || 0); }
     function num(x) { return parseFloat(x) || 0; }
@@ -240,38 +241,22 @@
     // exchange prefix (so APR and MAY futures are distinct). Returns { txnId: pnl }
     // keyed on the COVERING trade; realisedPnl = sell proceeds − buy cost (profit +).
     function acctFnoRealised(trades) {
-        var groups = {};
+        // Key each F&O trade by BENEFICIARY + CONTRACT (client trader, else the book),
+        // then defer the actual matching to the shared, authoritative wmsFnoRealised
+        // (Statements module's engine). Beneficiary keying lives here because a book's
+        // own and its clients' positions in the same contract must not pool.
+        var rows = [];
         trades.forEach(function (t) {
             if (!isFno(t)) return;
             var ty = ttype(t); if (ty !== 'BUY' && ty !== 'SELL') return;
-            var sym = String(t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
+            var contract = String(t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
             var ben = (t.trader_id && String(t.trader_id) !== String(t.investor_id)) ? String(t.trader_id) : String(t.investor_id);
-            (groups[ben + '|' + sym] = groups[ben + '|' + sym] || []).push(t);
+            rows.push({ key: ben + '|' + contract, type: ty, qty: absN(t.quantity),
+                net: absN(t.net_amount !== undefined ? t.net_amount : t.netAmount), id: String(t.id),
+                sort: String(t.transaction_date) + '|' + String(t.transaction_time || '') + '|' + String(t.created_at || '') });
         });
         var out = {};
-        Object.keys(groups).forEach(function (key) {
-            var rows = groups[key].slice().sort(function (a, b) {
-                return String(a.transaction_date).localeCompare(String(b.transaction_date)) ||
-                       String(a.transaction_time || '').localeCompare(String(b.transaction_time || '')) ||
-                       String(a.created_at || '').localeCompare(String(b.created_at || ''));
-            });
-            var lots = [];
-            rows.forEach(function (t) {
-                var qty = absN(t.quantity); if (!qty) return;
-                var perUnit = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount) / qty;
-                var isBuy = ttype(t) === 'BUY';
-                var openSide = isBuy ? 'LONG' : 'SHORT', coverSide = isBuy ? 'SHORT' : 'LONG';
-                var remain = qty, matched = 0, buyCost = 0, sellProc = 0;
-                while (remain > 0 && lots.length && lots[0].side === coverSide) {
-                    var lot = lots[0], m = Math.min(remain, lot.qty);
-                    if (isBuy) { sellProc += m * lot.perUnit; buyCost += m * perUnit; }
-                    else { buyCost += m * lot.perUnit; sellProc += m * perUnit; }
-                    lot.qty -= m; remain -= m; matched += m; if (lot.qty <= 0) lots.shift();
-                }
-                if (remain > 0) lots.push({ qty: remain, perUnit: perUnit, side: openSide });
-                if (matched > 0) out[String(t.id)] = r2((out[String(t.id)] || 0) + (sellProc - buyCost));
-            });
-        });
+        wmsFnoRealised(rows).forEach(function (r) { out[r.id] = r2((out[r.id] || 0) + r.realisedPnl); });
         return out;
     }
 
