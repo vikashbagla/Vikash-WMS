@@ -44,6 +44,17 @@
     }
     function ex(key, sev, title, detail) { return { condition_key: key, severity: sev, title: title, detail: detail || {} }; }
 
+    // Client spread — the book bills the client `trader_charges` but pays the broker
+    // `total_charges`; the difference is the BOOK's income, posted to Trader Income
+    // and borne by the client (owner rule 2026-08-15). Used by income/rights and F&O
+    // client vouchers (buy/sell client already bake the spread into their legs).
+    function pushSpread(lines, t) {
+        var spread = r2(absN(t.trader_charges) - absN(t.total_charges));
+        if (Math.round(spread * 100) === 0) return;
+        if (spread > 0) { lines.push({ ref: { investor_id: t.trader_id }, debit: spread, credit: 0 }); lines.push({ ref: { role: 'TRADER_INCOME' }, debit: 0, credit: spread }); }
+        else { lines.push({ ref: { role: 'TRADER_INCOME' }, debit: -spread, credit: 0 }); lines.push({ ref: { investor_id: t.trader_id }, debit: 0, credit: -spread }); }
+    }
+
     // ---- OWN legs -----------------------------------------------------------
     function buyOwn(t, ctx) {
         var total = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount), stt = absN(t.stt);
@@ -167,18 +178,23 @@
     // Client income / cap-reduction / rights: net between the client account and settlement.
     function incomeClient(t, ctx) {
         var ty = ttype(t), net = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount);
-        return { type: 'PMS-' + ty, narration: ty.charAt(0) + ty.slice(1).toLowerCase() + ' ' + symOf(t, ctx) + ' (client)',
-            lines: [{ ref: { role: 'PMS_SETTLEMENT' }, debit: r2(net), credit: 0 }, { ref: { investor_id: t.trader_id }, debit: 0, credit: r2(net) }] };
+        var lines = [{ ref: { role: 'PMS_SETTLEMENT' }, debit: r2(net), credit: 0 }, { ref: { investor_id: t.trader_id }, debit: 0, credit: r2(net) }];
+        pushSpread(lines, t);   // bill the client the book's charge spread (e.g. rights trader_charges)
+        return { type: 'PMS-' + ty, narration: ty.charAt(0) + ty.slice(1).toLowerCase() + ' ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
     // Client F&O close: the P&L belongs to the CLIENT (trader ≠ investor), so the
     // client's ledger is updated for EVERY F&O booking, IRRESPECTIVE of the book's
     // post_fno flag (owner rule 2026-08-15). Profit Dr FNO_PL / Cr Trader; loss reverse.
     function fnoClient(t, ctx, gains) {
         var pnl = 0; (gains || []).forEach(function (g) { pnl += (g.gain || 0); });
-        pnl = r2(pnl); if (Math.round(pnl * 100) === 0) return { skip: 'F&O open / net-zero' };
-        var lines = pnl >= 0
-            ? [{ ref: { role: 'FNO_PL' }, debit: pnl, credit: 0 }, { ref: { investor_id: t.trader_id }, debit: 0, credit: pnl }]
-            : [{ ref: { investor_id: t.trader_id }, debit: -pnl, credit: 0 }, { ref: { role: 'FNO_PL' }, debit: 0, credit: -pnl }];
+        pnl = r2(pnl);
+        var lines = [];
+        if (Math.round(pnl * 100) !== 0) {
+            if (pnl >= 0) { lines.push({ ref: { role: 'FNO_PL' }, debit: pnl, credit: 0 }); lines.push({ ref: { investor_id: t.trader_id }, debit: 0, credit: pnl }); }
+            else { lines.push({ ref: { investor_id: t.trader_id }, debit: -pnl, credit: 0 }); lines.push({ ref: { role: 'FNO_PL' }, debit: 0, credit: -pnl }); }
+        }
+        pushSpread(lines, t);   // the charge spread is the book's income on every client F&O leg (owner rule 2026-08-15)
+        if (!lines.length) return { skip: 'F&O open / net-zero (no P&L, no spread)' };
         return { type: 'PMS-FNO', narration: 'F&O ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
 

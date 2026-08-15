@@ -116,6 +116,16 @@ let dm2 = demergerVouchers([
 ok('demerger plug: voucher ties exactly', voucherBalances(dm2.vouchers[0].lines));
 ok('demerger plug: no critical exception', !dm2.exceptions.some(e=>e.severity==='critical'));
 
+// --- Client charge spread -> Trader Income (rights/income + F&O) ---
+v = acctBuildVoucher(cli({transaction_type:'RIGHTS_PAYMENT', net_amount:500000, trader_charges:2500, total_charges:0}), ctx, []);
+ok('client rights: spread to Trader Income', voucherBalances(v.lines) && amt(v, r=>r.role==='TRADER_INCOME')===-2500);
+ok('client rights: client billed the spread (Dr 2500)', v.lines.some(l=>l.ref.investor_id==='T1' && l.debit===2500)); // separate spread debit line
+ctx.book = { post_fno:true };
+v = acctBuildVoucher(cli({transaction_type:'SELL', security_type:'NFO', security_id:'FUT1', total_charges:100, trader_charges:2730}), ctx, [{gain:5000}]);
+ok('client F&O: P&L + spread both post', voucherBalances(v.lines) && amt(v, r=>r.role==='FNO_PL')===5000 && amt(v, r=>r.role==='TRADER_INCOME')===-2630);
+v = acctBuildVoucher(cli({transaction_type:'BUY', security_type:'NFO', security_id:'FUT1', total_charges:100, trader_charges:2730}), ctx, []); // open leg, no P&L
+ok('client F&O open leg: spread still posts', voucherBalances(v.lines) && amt(v, r=>r.role==='TRADER_INCOME')===-2630 && !v.skip);
+
 // --- F&O realised P&L matcher: symmetric FIFO, per beneficiary + contract ---
 // Two beneficiaries in the SAME contract in one book must NOT pool (the v4 bug).
 let fno = acctFnoRealised([
