@@ -51,12 +51,18 @@ v = acctBuildVoucher(cli({transaction_type:'SELL', net_amount:14945, total_charg
 ok('client sell balances', voucherBalances(v.lines));
 ok('client sell Client Cr net-spread', amt(v, r=>r.investor_id==='T1')===-(14945-10));
 
-// F&O gate
-ctx.book = { post_fno:false };
-ok('F&O off -> skip', acctBuildVoucher(own({transaction_type:'SELL', security_type:'NFO', security_id:'FUT1'}), ctx, [{gain:5000}]).skip);
+// F&O rules (2026-08-15): OWN F&O never posts (even with post_fno on); CLIENT F&O posts, gated by post_fno.
 ctx.book = { post_fno:true };
-v = acctBuildVoucher(own({transaction_type:'SELL', security_type:'NFO', security_id:'FUT1'}), ctx, [{gain:5000}]);
-ok('F&O on profit -> Broker Dr / FNO_PL Cr', voucherBalances(v.lines) && amt(v, r=>r.role==='FNO_PL')===-5000);
+ok('F&O own (post_fno on) -> no voucher', acctBuildVoucher(own({transaction_type:'SELL', security_type:'NFO', security_id:'FUT1'}), ctx, [{gain:5000}]).skip);
+ctx.book = { post_fno:false };
+ok('F&O own (post_fno off) -> no voucher', acctBuildVoucher(own({transaction_type:'SELL', security_type:'NFO', security_id:'FUT1'}), ctx, [{gain:5000}]).skip);
+ctx.book = { post_fno:true };
+v = acctBuildVoucher(cli({transaction_type:'SELL', security_type:'NFO', security_id:'FUT1'}), ctx, [{gain:5000}]);
+ok('F&O client profit -> Dr FNO_PL / Cr Trader', voucherBalances(v.lines) && amt(v, r=>r.role==='FNO_PL')===5000 && amt(v, r=>r.investor_id==='T1')===-5000);
+v = acctBuildVoucher(cli({transaction_type:'SELL', security_type:'NFO', security_id:'FUT1'}), ctx, [{gain:-3000}]);
+ok('F&O client loss -> Dr Trader / Cr FNO_PL', voucherBalances(v.lines) && amt(v, r=>r.role==='FNO_PL')===-3000 && amt(v, r=>r.investor_id==='T1')===3000);
+ctx.book = { post_fno:false };
+ok('F&O client (post_fno off) -> skip', acctBuildVoucher(cli({transaction_type:'SELL', security_type:'NFO', security_id:'FUT1'}), ctx, [{gain:5000}]).skip);
 
 // Demerger grouping
 let dm = demergerVouchers([

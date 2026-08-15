@@ -134,15 +134,13 @@
             lines: [{ ref: { security_id: t.security_id }, debit: r2(amt), credit: 0 }, { ref: { role: 'PMS_SETTLEMENT' }, debit: 0, credit: r2(amt) }] };
     }
 
-    // F&O close — realised P&L only, gated by post_fno. OWN: Broker vs FNO_PL.
+    // F&O close — OWN (no trader, or trader = investor): the P&L is the book
+    // owner's own F&O and is NOT booked in these PMS books. Owner rule 2026-08-15:
+    // own F&O posts NO voucher, even when the book has post_fno on. Only CLIENT F&O
+    // (trader ≠ investor) posts — see fnoClient, which keeps the post_fno gate so a
+    // book with F&O posting off (e.g. Veins) posts nothing either way.
     function fnoOwn(t, ctx, gains) {
-        if (!ctx.book || !ctx.book.post_fno) return { skip: 'F&O gated off (post_fno)' };
-        var pnl = 0; (gains || []).forEach(function (g) { pnl += (g.gain || 0); });
-        pnl = r2(pnl); if (Math.round(pnl * 100) === 0) return { skip: 'F&O open / net-zero' };
-        var lines = pnl >= 0
-            ? [{ ref: { broker_id: t.broker_id }, debit: pnl, credit: 0 }, { ref: { role: 'FNO_PL' }, debit: 0, credit: pnl }]
-            : [{ ref: { role: 'FNO_PL' }, debit: -pnl, credit: 0 }, { ref: { broker_id: t.broker_id }, debit: 0, credit: -pnl }];
-        return { type: 'PMS-FNO', narration: 'F&O ' + symOf(t, ctx), lines: lines };
+        return { skip: 'own F&O — no voucher (P&L belongs to the book owner)' };
     }
 
     // ---- CLIENT (parent-book) legs: trader ≠ investor -----------------------
