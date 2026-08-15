@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
-const { acctBuildVoucher, acctEngineProcess, demergerVouchers, voucherBalances } = require(join(here, '..', 'accounting-engine.js'));
+const { acctBuildVoucher, acctEngineProcess, demergerVouchers, acctFnoRealised, voucherBalances } = require(join(here, '..', 'accounting-engine.js'));
 
 let pass=0, fail=0;
 function ok(name, cond){ if(cond){pass++;} else {fail++; console.log('FAIL', name);} }
@@ -115,6 +115,26 @@ let dm2 = demergerVouchers([
 ], ctx);
 ok('demerger plug: voucher ties exactly', voucherBalances(dm2.vouchers[0].lines));
 ok('demerger plug: no critical exception', !dm2.exceptions.some(e=>e.severity==='critical'));
+
+// --- F&O realised P&L matcher: symmetric FIFO, per beneficiary + contract ---
+// Two beneficiaries in the SAME contract in one book must NOT pool (the v4 bug).
+let fno = acctFnoRealised([
+  // client T1 long MAY: buy 1250@1389.17 + buy 1250@1322.27, sell 2500@1299.61 => LOSS ~140281
+  {id:'b1', investor_id:'T0', trader_id:'T1', security_type:'NFO', symbol:'AXISBANK26MAYFUT', transaction_type:'BUY',  quantity:1250,  net_amount:1736467.07, transaction_date:'2026-04-22'},
+  {id:'b2', investor_id:'T0', trader_id:'T1', security_type:'NFO', symbol:'AXISBANK26MAYFUT', transaction_type:'BUY',  quantity:1250,  net_amount:1652838.02, transaction_date:'2026-04-27'},
+  {id:'s1', investor_id:'T0', trader_id:'T1', security_type:'NFO', symbol:'AXISBANK26MAYFUT', transaction_type:'SELL', quantity:-2500, net_amount:3249024.13, transaction_date:'2026-05-25'},
+  // OWN Veins long MAY same contract — must be matched separately, not pooled with T1
+  {id:'o1', investor_id:'VB', trader_id:'VB', security_type:'NFO', symbol:'AXISBANK26MAYFUT', transaction_type:'BUY',  quantity:100, net_amount:100000, transaction_date:'2026-04-22'},
+  {id:'o2', investor_id:'VB', trader_id:'VB', security_type:'NFO', symbol:'AXISBANK26MAYFUT', transaction_type:'SELL', quantity:-100, net_amount:110000, transaction_date:'2026-05-25'},
+]);
+ok('F&O client MAY loss ~ -140281 (not pooled/profit)', Math.round(fno['s1'])===-140281);
+ok('F&O own MAY profit +10000 (separate beneficiary)', Math.round(fno['o1']||fno['o2'])===10000 && fno['o2']===10000);
+// short-to-open then cover (symmetric FIFO): sell 100@120 open, buy 100@90 cover => profit 3000 on the cover
+let fnoShort = acctFnoRealised([
+  {id:'sh1', investor_id:'VB', trader_id:'VB', security_type:'NFO', symbol:'NIFTY26AUGFUT', transaction_type:'SELL', quantity:-100, net_amount:12000, transaction_date:'2026-08-01'},
+  {id:'sh2', investor_id:'VB', trader_id:'VB', security_type:'NFO', symbol:'NIFTY26AUGFUT', transaction_type:'BUY',  quantity:100,  net_amount:9000,  transaction_date:'2026-08-05'},
+]);
+ok('F&O short cover profit +3000 (symmetric FIFO handles short)', fnoShort['sh2']===3000 && fnoShort['sh1']===undefined);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);

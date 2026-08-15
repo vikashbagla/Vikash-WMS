@@ -214,6 +214,51 @@
         return out;
     }
 
+    // ---- F&O realised P&L — dedicated matcher --------------------------------
+    // F&O P&L must be matched with a SYMMETRIC (long AND short) FIFO, keyed by
+    // BENEFICIARY + CONTRACT — never by the book-wide, long-only wmsCalcFifoCost,
+    // which pools every trader's trades in a book and cannot cover a short (SELL to
+    // open). Mirrors the Statements module (wms-shared.js wmsBuildLedger NFO block),
+    // which the owner confirms is correct. Beneficiary = the client (trader) for a
+    // client trade, else the book (investor). Contract = full symbol minus any
+    // exchange prefix (so APR and MAY futures are distinct). Returns { txnId: pnl }
+    // keyed on the COVERING trade; realisedPnl = sell proceeds − buy cost (profit +).
+    function acctFnoRealised(trades) {
+        var groups = {};
+        trades.forEach(function (t) {
+            if (!isFno(t)) return;
+            var ty = ttype(t); if (ty !== 'BUY' && ty !== 'SELL') return;
+            var sym = String(t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
+            var ben = (t.trader_id && String(t.trader_id) !== String(t.investor_id)) ? String(t.trader_id) : String(t.investor_id);
+            (groups[ben + '|' + sym] = groups[ben + '|' + sym] || []).push(t);
+        });
+        var out = {};
+        Object.keys(groups).forEach(function (key) {
+            var rows = groups[key].slice().sort(function (a, b) {
+                return String(a.transaction_date).localeCompare(String(b.transaction_date)) ||
+                       String(a.transaction_time || '').localeCompare(String(b.transaction_time || '')) ||
+                       String(a.created_at || '').localeCompare(String(b.created_at || ''));
+            });
+            var lots = [];
+            rows.forEach(function (t) {
+                var qty = absN(t.quantity); if (!qty) return;
+                var perUnit = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount) / qty;
+                var isBuy = ttype(t) === 'BUY';
+                var openSide = isBuy ? 'LONG' : 'SHORT', coverSide = isBuy ? 'SHORT' : 'LONG';
+                var remain = qty, matched = 0, buyCost = 0, sellProc = 0;
+                while (remain > 0 && lots.length && lots[0].side === coverSide) {
+                    var lot = lots[0], m = Math.min(remain, lot.qty);
+                    if (isBuy) { sellProc += m * lot.perUnit; buyCost += m * perUnit; }
+                    else { buyCost += m * lot.perUnit; sellProc += m * perUnit; }
+                    lot.qty -= m; remain -= m; matched += m; if (lot.qty <= 0) lots.shift();
+                }
+                if (remain > 0) lots.push({ qty: remain, perUnit: perUnit, side: openSide });
+                if (matched > 0) out[String(t.id)] = r2((out[String(t.id)] || 0) + (sellProc - buyCost));
+            });
+        });
+        return out;
+    }
+
     // ---- per-trade dispatch --------------------------------------------------
     function isFno(t) { var s = String(t.security_type || '').toUpperCase(); return s === 'NFO' || s === 'MCX'; }
     function acctBuildVoucher(t, ctx, gains) {
@@ -251,6 +296,11 @@
         var gainsBySell = {};
         (fifo.gains || []).forEach(function (g) { var k = String(g.sellTxnId); (gainsBySell[k] = gainsBySell[k] || []).push(g); });
 
+        // F&O realised P&L via the dedicated symmetric/per-beneficiary matcher —
+        // OVERRIDE any F&O gains the pooled long-only equity FIFO produced.
+        var fnoMap = acctFnoRealised(sorted);
+        Object.keys(fnoMap).forEach(function (id) { gainsBySell[id] = [{ gain: fnoMap[id] }]; });
+
         var vouchers = [], exceptions = [], skipped = [], demergers = [];
         sorted.forEach(function (t) {
             if (ttype(t) === 'DEMERGER') { demergers.push(t); return; }
@@ -273,6 +323,7 @@
         acctEngineProcess: acctEngineProcess,
         acctBuildVoucher: acctBuildVoucher,
         demergerVouchers: demergerVouchers,
+        acctFnoRealised: acctFnoRealised,
         voucherBalances: voucherBalances
     };
 });
