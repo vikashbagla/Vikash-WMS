@@ -293,20 +293,15 @@
 
         // Shared FIFO on STT-adjusted trades → gains grouped by the SELL txn id.
         var adjusted = wmsSttAdjustTxns(sorted, sttOn);
-        // Equity CG FIFO must run PER BENEFICIARY (own book vs each client), never
-        // pooled book-wide — otherwise an own SELL matches a client's lots (the same
-        // bug found in F&O). Beneficiary = the client (trader) for a client trade,
-        // else the book (investor). The shared wmsCalcFifoCost runs on each slice.
-        var byBen = {};
-        adjusted.forEach(function (t) {
-            var b = (t.trader_id && String(t.trader_id) !== String(t.investor_id)) ? String(t.trader_id) : String(t.investor_id);
-            (byBen[b] = byBen[b] || []).push(t);
-        });
+        // Equity CG FIFO runs POOLED at the BOOK level — all trades in the book,
+        // any trader — because that is the book's TAX P&L and cannot depend on the
+        // trader split (owner, 2026-08-15). REVERTED here to the original book-level
+        // FIFO; the per-beneficiary attempt was wrong. The new dual engine (book-tax
+        // FIFO + separate per-trader settlement FIFO that posts to the trader's
+        // PARENT book) is being finalised separately before any change ships.
+        var fifo = ctx.fifo(adjusted) || { gains: [] };
         var gainsBySell = {};
-        Object.keys(byBen).forEach(function (b) {
-            var f = ctx.fifo(byBen[b]) || { gains: [] };
-            (f.gains || []).forEach(function (g) { var k = String(g.sellTxnId); (gainsBySell[k] = gainsBySell[k] || []).push(g); });
-        });
+        (fifo.gains || []).forEach(function (g) { var k = String(g.sellTxnId); (gainsBySell[k] = gainsBySell[k] || []).push(g); });
 
         // F&O realised P&L via the dedicated symmetric/per-beneficiary matcher —
         // OVERRIDE any F&O gains the pooled long-only equity FIFO produced.

@@ -146,19 +146,18 @@ let fnoShort = acctFnoRealised([
 ]);
 ok('F&O short cover profit +3000 (symmetric FIFO handles short)', fnoShort['sh2']===3000 && fnoShort['sh1']===undefined);
 
-// --- Equity FIFO must run PER BENEFICIARY (own vs client), not pooled book-wide ---
-let fifoCalls=[];
-const fifoSpy = (txns)=>{ fifoCalls.push(txns.map(t=>t.id)); return {gains:[]}; };
-const bookP = { id:'INV1', post_fno:false };
-const tradesP = [
+// --- Equity FIFO runs POOLED at the book level (all trades, any trader) ---
+// The book's tax P&L cannot depend on the trader split; the shared FIFO is called
+// once with the whole book's trades. (New dual book-tax/trader-settlement engine
+// is being finalised separately.)
+let fifoCalls2=[];
+const fifoSpy2 = (txns)=>{ fifoCalls2.push(txns.map(t=>t.id)); return {gains:[]}; };
+acctEngineProcess({ id:'INV1', post_fno:false }, [
   {id:'p1', investor_id:'INV1', security_id:'SEC1', broker_id:'BRK1', transaction_type:'BUY',  quantity:100,  net_amount:10000, transaction_date:'2025-01-01'},
   {id:'p2', investor_id:'INV1', security_id:'SEC1', broker_id:'BRK1', transaction_type:'SELL', quantity:-100, net_amount:12000, transaction_date:'2025-02-01'},
   {id:'p3', investor_id:'INV1', trader_id:'T1', security_id:'SEC1', broker_id:'BRK1', transaction_type:'BUY', quantity:100, net_amount:9000, transaction_date:'2025-01-15'},
-];
-acctEngineProcess(bookP, tradesP, Object.assign({}, ctx, { investorById:{INV1:{stt_accounting_method:false}, T1:{}}, fifo:fifoSpy }));
-ok('equity FIFO partitioned into 2 beneficiary groups', fifoCalls.length===2);
-ok('own group = p1,p2 (no client p3)', fifoCalls.some(a=>a.indexOf('p1')>=0 && a.indexOf('p2')>=0 && a.indexOf('p3')<0));
-ok('client group = p3 only', fifoCalls.some(a=>a.indexOf('p3')>=0 && a.indexOf('p1')<0));
+], Object.assign({}, ctx, { investorById:{INV1:{stt_accounting_method:false}, T1:{}}, fifo:fifoSpy2 }));
+ok('equity FIFO pooled book-level (one call, all trades incl client p3)', fifoCalls2.length===1 && fifoCalls2[0].indexOf('p1')>=0 && fifoCalls2[0].indexOf('p3')>=0);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);
