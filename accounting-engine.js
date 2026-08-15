@@ -308,9 +308,20 @@
 
         // Shared FIFO on STT-adjusted trades → gains grouped by the SELL txn id.
         var adjusted = wmsSttAdjustTxns(sorted, sttOn);
-        var fifo = ctx.fifo(adjusted) || { gains: [] };
+        // Equity CG FIFO must run PER BENEFICIARY (own book vs each client), never
+        // pooled book-wide — otherwise an own SELL matches a client's lots (the same
+        // bug found in F&O). Beneficiary = the client (trader) for a client trade,
+        // else the book (investor). The shared wmsCalcFifoCost runs on each slice.
+        var byBen = {};
+        adjusted.forEach(function (t) {
+            var b = (t.trader_id && String(t.trader_id) !== String(t.investor_id)) ? String(t.trader_id) : String(t.investor_id);
+            (byBen[b] = byBen[b] || []).push(t);
+        });
         var gainsBySell = {};
-        (fifo.gains || []).forEach(function (g) { var k = String(g.sellTxnId); (gainsBySell[k] = gainsBySell[k] || []).push(g); });
+        Object.keys(byBen).forEach(function (b) {
+            var f = ctx.fifo(byBen[b]) || { gains: [] };
+            (f.gains || []).forEach(function (g) { var k = String(g.sellTxnId); (gainsBySell[k] = gainsBySell[k] || []).push(g); });
+        });
 
         // F&O realised P&L via the dedicated symmetric/per-beneficiary matcher —
         // OVERRIDE any F&O gains the pooled long-only equity FIFO produced.
