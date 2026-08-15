@@ -2027,6 +2027,40 @@ async function acctRebuildOne(bookId) {
         });
         if (resp.ok) posted++; else { failed++; if (!firstErr) firstErr = await resp.text(); }
     }
+    // --- Statement postings (acct ledger_entries → this book): interest / cash ---
+    // Clients (T1..T5) have no book of their own — their statement entries post in
+    // this PARENT book. So the scope is this book AND its children. The engine
+    // (acctProcessStatements) resolves each voucher's posting book (bookId); we only
+    // post the ones that resolve to THIS book. Reconciliation/opening-balance skip.
+    var stmtPosted = 0, stmtFailed = 0, stmtSkipped = 0, stmtWarnings = 0;
+    if (typeof acctProcessStatements === 'function') {
+        var childIds = (wmsRefData.investors || []).filter(function (i) { return String(i.book_parent_id) === String(bookId); }).map(function (i) { return i.id; });
+        var scope = [bookId].concat(childIds);
+        var leFields = 'id,entry_type,investor_id,trader_id,broker_id,amount,entry_date,reference,notes';
+        var entries = await wmsFetchAllRaw(acctUrl('ledger_entries?select=' + leFields + '&investor_id=in.(' + scope.join(',') + ')')) || [];
+        var sres = acctProcessStatements(entries, ctx);
+        stmtSkipped = sres.skipped.length; stmtWarnings = (sres.exceptions || []).length;
+        for (var si = 0; si < sres.vouchers.length; si++) {
+            var sv = sres.vouchers[si];
+            if (String(sv.bookId) !== String(bookId)) { stmtSkipped++; continue; }   // safety: only entries that post here
+            var sheader = { investor_id: bookId, voucher_type: sv.type, voucher_date: sv.date, narration: sv.narration, is_auto: true };
+            var slines = [], sok = true;
+            for (var sli = 0; sli < sv.lines.length; sli++) {
+                var sl = sv.lines[sli], slid;
+                try { slid = await acctResolveRef(sl.ref); }
+                catch (e2) { sok = false; if (!firstErr) firstErr = e2.message; break; }
+                slines.push({ ledger_id: slid, debit_amount: sl.debit || 0, credit_amount: sl.credit || 0, narration: sl.narration || null, sort_order: sli });
+            }
+            if (!sok) { stmtFailed++; continue; }
+            var sresp = await fetch(acctUrl('rpc/acct_post_voucher'), {
+                method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ p_header: sheader, p_lines: slines })
+            });
+            if (sresp.ok) stmtPosted++; else { stmtFailed++; if (!firstErr) firstErr = await sresp.text(); }
+        }
+        if (sres.exceptions && sres.exceptions.length) console.warn('[accounting] statement exceptions for ' + acctInvName(bookId), sres.exceptions);
+    }
+
     if (result.exceptions.length) console.warn('[accounting] rebuild exceptions for ' + acctInvName(bookId), result.exceptions);
     if (firstErr) console.error('[accounting] rebuild first error (' + acctInvName(bookId) + '):', firstErr);
 
@@ -2034,7 +2068,8 @@ async function acctRebuildOne(bookId) {
     result.skipped.forEach(function (s) { var k = String(s.reason).replace(/\d[\d,.]*/g, 'N'); skipReasons[k] = (skipReasons[k] || 0) + 1; });
     return { bookId: bookId, book: acctInvName(bookId), posted: posted, skipped: result.skipped.length,
         failed: failed, warnings: result.exceptions.length, skipReasons: skipReasons,
-        warningsList: result.exceptions.map(function (e) { return e.title; }), firstErr: firstErr };
+        warningsList: result.exceptions.map(function (e) { return e.title; }), firstErr: firstErr,
+        stmtPosted: stmtPosted, stmtFailed: stmtFailed, stmtSkipped: stmtSkipped, stmtWarnings: stmtWarnings };
 }
 
 async function acctRebuildBooks() {
@@ -2078,13 +2113,15 @@ function acctShowRebuildReport(reports) {
         acctToast('Rebuilt ' + reports.length + ' book(s): ' + tot + ' vouchers posted.');
         return;
     }
-    var html = '<table class="acct-table"><thead><tr><th>Book</th><th class="text-right">Posted</th><th class="text-right">Skipped</th><th class="text-right">Failed</th><th class="text-right">Warn</th></tr></thead><tbody>';
+    var html = '<table class="acct-table"><thead><tr><th>Book</th><th class="text-right">Trades</th><th class="text-right">Stmts</th><th class="text-right">Skipped</th><th class="text-right">Failed</th><th class="text-right">Warn</th></tr></thead><tbody>';
     reports.forEach(function (r) {
+        var stmtFail = (r.stmtFailed || 0);
         html += '<tr><td>' + wmsEsc(r.book) + '</td>' +
             '<td class="text-right">' + r.posted + '</td>' +
-            '<td class="text-right">' + (r.skipped || '-') + '</td>' +
+            '<td class="text-right"' + (stmtFail ? ' style="color:#dc2626;font-weight:600;"' : '') + '>' + ((r.stmtPosted || 0) || '-') + (stmtFail ? ' (' + stmtFail + ' failed)' : '') + '</td>' +
+            '<td class="text-right">' + ((r.skipped || 0) + (r.stmtSkipped || 0) || '-') + '</td>' +
             '<td class="text-right"' + (r.failed ? ' style="color:#dc2626;font-weight:600;"' : '') + '>' + (r.failed || '-') + '</td>' +
-            '<td class="text-right">' + (r.warnings || '-') + '</td></tr>';
+            '<td class="text-right">' + ((r.warnings || 0) + (r.stmtWarnings || 0) || '-') + '</td></tr>';
     });
     html += '</tbody></table>';
     var allSkip = {}, allWarn = [];
