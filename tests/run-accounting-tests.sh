@@ -7,4 +7,5 @@ echo "— cg-classify —";        node cg-classify.test.mjs
 echo "— accounting-engine —";  node accounting-engine.test.mjs
 echo "— accounting-parity —";  node accounting-parity.test.mjs
 echo "— accounting-ef-parity (server-side, real FIFO) —"; node accounting-ef-parity.test.mjs
+echo "— accounting-worklist (new/changed/closed/orphan) —"; node accounting-worklist.test.mjs
 echo "ALL ACCOUNTING TESTS PASSED"
