@@ -81,6 +81,14 @@
         });
     }
 
+    // ⛔ SINGLE SOURCE — F&O (NFO + MCX) realised P&L. Do NOT copy this logic or add
+    //    another F&O FIFO anywhere. Both consumers MUST call this: Statements
+    //    (wms-shared.js wmsBuildLedger) and Accounting (accounting-engine.js).
+    //    ⚠️ Any edit here is behaviour-changing for BOTH modules and requires
+    //    EXPLICIT OWNER APPROVAL. The guard tests/check-fno-engine.mjs (in the
+    //    Vikash-WMS-backend repo, part of `npm run drift`/`npm test`) fails LOUD on
+    //    any change or on a re-introduced copy; re-pin with `--write` ONLY after approval.
+    //
     // F&O realised P&L — the AUTHORITATIVE symmetric long/short FIFO, per CONTRACT.
     // Lifted from the Statements module (wms-shared.js wmsBuildLedger NFO block),
     // which the owner designates as the single source of truth for F&O P&L (2026-08-15).
