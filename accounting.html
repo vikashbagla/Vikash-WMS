@@ -179,6 +179,13 @@
 .acct-lines-table .acct-line-amt.acct-auto { color: #667eea; font-style: italic; }
 .acct-line-pick { position: relative; }
 .acct-line-pick .wms-dd { text-align: left; }
+/* ⚠ marker on an opening-balance row whose ledger already holds a saved balance.
+   Scoped to the Opening Balances table so the New Voucher modal is untouched. */
+#acctOpeningLines .acct-line-pick .acct-ob-existing {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    color: #d97706; font-size: 12px; cursor: help; z-index: 2;
+}
+#acctOpeningLines .acct-line-pick input.acct-line-ledger { padding-right: 20px; }
 .acct-dd-create { color: #667eea; font-weight: 600; }
 .acct-dd-grp { float: right; font-size: 10px; color: #a0aec0; font-weight: 400; }
 .acct-lines-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
@@ -302,12 +309,12 @@
         <button class="acct-tab" data-acct-tab="ledgers">Ledgers</button>
         <span class="acct-tabs-spacer"></span>
         <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary acct-tab-action">➕ New Voucher</button>
+        <button id="acctRebuildBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="Rebuild this book's auto-vouchers from its trades, via the accounting engine">↻ Rebuild from trades</button>
         <div class="acct-menu-wrap">
             <button id="acctMenuBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="More actions">⋮</button>
             <div class="wms-dd acct-menu-dd" id="acctMenuDd">
                 <div class="wms-dd-item" data-act="opening">⚖ Opening Balances</div>
                 <div class="wms-dd-item" data-act="consolidate">📑 Consolidate…</div>
-                <div class="wms-dd-item" data-act="rebuild">↻ Rebuild from trades</div>
                 <div class="wms-dd-item" data-act="rebuildAll">↻↻ Rebuild all books</div>
                 <div class="wms-dd-item" data-act="refresh">🔄 Refresh</div>
             </div>
@@ -416,17 +423,12 @@
                         <label>As on</label>
                         <div id="acctOpeningDate"></div>
                     </div>
-                    <div class="acct-field acct-ob-search-wrap" style="flex:1;min-width:260px;">
-                        <label>Add ledger</label>
-                        <input type="text" id="acctOpeningSearch" class="wms-input" placeholder="Search a ledger to add…" autocomplete="off">
-                        <div id="acctOpeningResults" class="acct-ob-results" style="display:none;"></div>
-                    </div>
                 </div>
 
                 <table class="acct-lines-table">
                     <thead>
                         <tr>
-                            <th style="width:50%;">Ledger</th>
+                            <th style="width:52%;">Ledger</th>
                             <th class="text-right">Debit</th>
                             <th class="text-right">Credit</th>
                             <th style="width:28px;"></th>
@@ -434,6 +436,9 @@
                     </thead>
                     <tbody id="acctOpeningLines"></tbody>
                 </table>
+                <div class="acct-lines-actions">
+                    <button id="acctOpeningAddLineBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;">➕ Add line</button>
+                </div>
 
                 <div class="acct-balance-bar bad" id="acctOpeningBar">
                     <span id="acctOpeningMsg">Nothing entered</span>

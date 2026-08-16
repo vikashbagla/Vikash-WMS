@@ -153,8 +153,10 @@ function acctSyncActionButtons() {
     var consol = acctIsConsolidated();
     var nv = document.getElementById('acctNewVoucherBtn');
     if (nv) nv.disabled = consol;
+    var rb = document.getElementById('acctRebuildBtn');
+    if (rb) rb.disabled = consol;                    // rebuild is per single book
     var dd = document.getElementById('acctMenuDd');
-    if (dd) ['opening', 'rebuild'].forEach(function (a) {
+    if (dd) ['opening'].forEach(function (a) {
         var it = dd.querySelector('[data-act="' + a + '"]');
         if (it) it.classList.toggle('disabled', consol);
     });
@@ -264,9 +266,11 @@ function acctWireUI() {
         };
     });
 
-    // Primary action stays inline; everything else lives behind the ⋮ menu.
+    // Primary actions stay inline; everything else lives behind the ⋮ menu.
     var nv = document.getElementById('acctNewVoucherBtn');
     if (nv) nv.onclick = acctOpenVoucherModal;
+    var rb = document.getElementById('acctRebuildBtn');
+    if (rb) rb.onclick = acctRebuildBooks;
 
     var mb = document.getElementById('acctMenuBtn');
     var mdd = document.getElementById('acctMenuDd');
@@ -285,7 +289,6 @@ function acctWireUI() {
             var act = it.dataset.act;
             if (act === 'opening') acctOpenOpeningModal();
             else if (act === 'consolidate') acctOpenConsolidate();
-            else if (act === 'rebuild') acctRebuildBooks();
             else if (act === 'rebuildAll') acctRebuildAll();
             else if (act === 'refresh') acctRefreshAll();
         });
@@ -941,9 +944,10 @@ function acctRenderLedgers() {
 // the existing one, so the modal must prefill from it or reopening would wipe it.
 // ============================================================================
 
-var acctOpeningLines = [];        // [{ ledgerId, debit, credit }]
+var acctOpeningLines = [];        // [{ ledgerId, ledgerName, debit, credit }]
 var acctOpeningDateYmd = null;
-var acctOpeningActiveIdx = -1;    // highlighted row in the search results
+var acctOpeningDdCtrls = {};      // row idx -> wmsDropdown controller (per-row ledger picker)
+var acctOpeningExisting = {};     // ledgerId -> { debit, credit } already saved for this book
 
 var ACCT_OB_SUSPENSE = 'Difference in Opening Balance';
 
@@ -969,15 +973,29 @@ function acctOpenOpeningModal() {
     // Prefill from the existing voucher; saving replaces it, so anything not shown
     // here would be silently dropped.
     var rows = acctOpeningExistingRows();
+
+    // Map every already-saved opening balance by ledger (minus the derived suspense
+    // plug). Used to (a) prefill an amount when that ledger is picked again, and (b)
+    // flag the row with an alert icon — "you are changing a saved opening balance".
+    acctOpeningExisting = {};
+    rows.forEach(function (r) {
+        if (!r.ledger_id || acctLedgerName(r.ledger_id) === ACCT_OB_SUSPENSE) return;
+        acctOpeningExisting[r.ledger_id] = {
+            debit: Number(r.debit_amount) || 0, credit: Number(r.credit_amount) || 0
+        };
+    });
+
     acctOpeningLines = rows.map(function (r) {
         var dr = Number(r.debit_amount) || 0, cr = Number(r.credit_amount) || 0;
-        return { ledgerId: r.ledger_id, debit: dr ? String(dr) : '', credit: cr ? String(cr) : '' };
+        return { ledgerId: r.ledger_id, ledgerName: acctLedgerName(r.ledger_id), debit: dr ? String(dr) : '', credit: cr ? String(cr) : '' };
     }).filter(function (l) {
         // The suspense plug is DERIVED, never user input. Restoring it as an editable
         // row would double-count it the moment a real line is corrected and re-saved,
         // so drop it and let the difference recompute from the real lines.
         return l.ledgerId && acctLedgerName(l.ledgerId) !== ACCT_OB_SUSPENSE;
     });
+    // Always leave one empty row to type into (like the New Voucher modal).
+    if (!acctOpeningLines.length) acctOpeningLines.push({ ledgerId: '', ledgerName: '', debit: '', credit: '' });
 
     acctOpeningDateYmd = rows.length ? rows[0].voucher_date : acctOpeningDefaultYmd();
 
@@ -991,62 +1009,129 @@ function acctOpenOpeningModal() {
         var ctrl = wmsDateInput(dc, { compact: true, onChange: function (ymd) { acctOpeningDateYmd = ymd; } });
         if (ctrl && ctrl.setValue) ctrl.setValue(acctOpeningDateYmd);
     }
-    var sb = document.getElementById('acctOpeningSearch');
-    if (sb) sb.value = '';
-    acctOpeningHideResults();
     acctRenderOpeningLines();
     if (acctOpeningModalCtrl) acctOpeningModalCtrl.open();
-    if (sb) setTimeout(function () { sb.focus(); }, 50);
+    // Land on the first empty ledger cell — the modal is typed top-down.
+    setTimeout(function () {
+        var first = document.querySelector('#acctOpeningLines .acct-line-ledger');
+        if (first) first.focus();
+    }, 60);
 }
 
-function acctOpeningCandidates(q) {
-    var used = {};
-    acctOpeningLines.forEach(function (l) { used[l.ledgerId] = true; });
-    var needle = String(q || '').toLowerCase();
-    return acctAvailableLedgers(acctBookId)
-        .filter(function (l) { return !used[l.id] && (!needle || l.name.toLowerCase().indexOf(needle) >= 0); })
-        .slice(0, 12);
+// Ledgers offered in a row's picker: available in this book, minus any already
+// chosen in OTHER rows (a ledger can hold only one opening balance).
+function acctOpeningLedgerMatches(idx, q) {
+    var usedElsewhere = {};
+    acctOpeningLines.forEach(function (l, i) { if (i !== idx && l.ledgerId) usedElsewhere[l.ledgerId] = true; });
+    var needle = String(q || '').trim().toLowerCase();
+    return acctAvailableLedgers(acctBookId).filter(function (l) {
+        return !usedElsewhere[l.id] && (!needle || l.name.toLowerCase().indexOf(needle) >= 0);
+    }).slice(0, 50);
 }
 
-function acctOpeningHideResults() {
-    var box = document.getElementById('acctOpeningResults');
-    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
-    acctOpeningActiveIdx = -1;
-}
-
-function acctOpeningRenderResults() {
-    var box = document.getElementById('acctOpeningResults');
-    var sb = document.getElementById('acctOpeningSearch');
-    if (!box || !sb) return;
-    var list = acctOpeningCandidates(sb.value);
-    if (!sb.value && !list.length) { acctOpeningHideResults(); return; }
-    if (!list.length) {
-        box.innerHTML = '<div class="acct-ob-empty">No matching ledger. Use Ledgers → Add Ledger to create one.</div>';
-        box.style.display = 'block';
-        return;
+function acctOpeningAddLine(focusIt) {
+    acctOpeningLines.push({ ledgerId: '', ledgerName: '', debit: '', credit: '' });
+    acctRenderOpeningLines();
+    if (focusIt) {
+        var el = document.querySelector('#acctOpeningLines tr:last-child .acct-line-ledger');
+        if (el) el.focus();
     }
-    box.innerHTML = list.map(function (l, i) {
-        return '<div class="acct-ob-result' + (i === acctOpeningActiveIdx ? ' active' : '') + '" data-lid="' + l.id + '">' +
-            '<span class="acct-ob-name">' + wmsEsc(l.name) + '</span>' +
-            '<span class="acct-ob-grp">' + wmsEsc(acctRootName(l.group_id)) + '</span></div>';
-    }).join('');
-    box.style.display = 'block';
-    box.querySelectorAll('.acct-ob-result').forEach(function (el) {
-        el.onmousedown = function (e) { e.preventDefault(); acctOpeningAdd(el.dataset.lid); };
+}
+
+/* Per-row ledger cell — the app's standard search-suggest field (wmsDropdown,
+   H.3.2), same shape as the New Voucher modal. Picking a ledger that already
+   carries a saved opening balance prefills that amount (when the row is still
+   empty) so the ⚠ flag and the number stay in step. */
+function acctOpeningWireLedgerCell(input) {
+    var idx = Number(input.dataset.idx);
+    var dd = input.parentElement.querySelector('.acct-line-dd');
+
+    function render() {
+        var list = acctOpeningLedgerMatches(idx, input.value);
+        dd._acctResults = list;
+        var html = list.map(function (l, i) {
+            var flag = acctOpeningExisting[l.id] ? ' <span class="acct-dd-grp" style="color:#b45309;">• has opening bal</span>' : '';
+            return '<div class="wms-dd-item" data-i="' + i + '">' + wmsEsc(l.name) +
+                '<span class="acct-dd-grp">' + wmsEsc(acctRootName(l.group_id)) + '</span>' + flag + '</div>';
+        }).join('');
+        dd.innerHTML = html || '<div class="wms-dd-no-results">No ledgers — add one in the Ledgers tab</div>';
+        ctrl.show();
+    }
+
+    function pick(itemEl) {
+        if (!itemEl) return;
+        var l = (dd._acctResults || [])[Number(itemEl.dataset.i)];
+        if (!l) return;
+        var line = acctOpeningLines[idx];
+        line.ledgerId = l.id;
+        line.ledgerName = l.name;
+        input.value = l.name;
+        var ex = acctOpeningExisting[l.id];
+        // Prefill a saved opening balance when this row has no amount yet.
+        if (ex && !acctParse(line.debit) && !acctParse(line.credit)) {
+            line.debit = ex.debit ? String(ex.debit) : '';
+            line.credit = ex.credit ? String(ex.credit) : '';
+            var dEl = document.querySelector('#acctOpeningLines .acct-line-amt[data-idx="' + idx + '"][data-field="debit"]');
+            var cEl = document.querySelector('#acctOpeningLines .acct-line-amt[data-idx="' + idx + '"][data-field="credit"]');
+            if (dEl) dEl.value = line.debit;
+            if (cEl) cEl.value = line.credit;
+        }
+        // Show / refresh the ⚠ existing-balance marker on this row, in place.
+        var wrap = input.parentElement;
+        var mark = wrap.querySelector('.acct-ob-existing');
+        if (ex) {
+            var exTxt = ex.debit ? ('Dr ' + acctNum(ex.debit)) : ('Cr ' + acctNum(ex.credit));
+            if (!mark) { mark = document.createElement('span'); mark.className = 'acct-ob-existing'; mark.textContent = '⚠'; wrap.insertBefore(mark, dd); }
+            mark.title = 'This ledger already has a saved opening balance (' + exTxt + '). Saving will overwrite it.';
+        } else if (mark) { mark.remove(); }
+        ctrl.close();
+        var amt = document.querySelector('#acctOpeningLines .acct-line-amt[data-idx="' + idx + '"][data-field="debit"]');
+        if (amt) { amt.focus(); amt.select(); }
+        acctOpeningUpdateBalance();
+    }
+
+    var ctrl = wmsDropdown(input, dd, {
+        itemSelector: '.wms-dd-item', closeOnSelect: true, blurDelay: 180,
+        escClearsInput: false, onSelect: pick
+    });
+    acctOpeningDdCtrls[idx] = ctrl;
+
+    input.addEventListener('input', function () {
+        acctOpeningLines[idx].ledgerId = '';       // typing invalidates the pick
+        acctOpeningLines[idx].ledgerName = input.value;
+        var mark = input.parentElement.querySelector('.acct-ob-existing');
+        if (mark) mark.remove();                   // pick no longer confirmed
+        render();
+    });
+    input.addEventListener('focus', render);
+    dd.addEventListener('mousedown', function (e) {
+        var it = e.target.closest ? e.target.closest('.wms-dd-item') : null;
+        if (!it) return;
+        e.preventDefault();
+        pick(it);
     });
 }
 
-function acctOpeningAdd(ledgerId) {
-    if (!ledgerId) return;
-    if (acctOpeningLines.some(function (l) { return l.ledgerId === ledgerId; })) return;
-    acctOpeningLines.push({ ledgerId: ledgerId, debit: '', credit: '' });
-    var sb = document.getElementById('acctOpeningSearch');
-    if (sb) { sb.value = ''; sb.focus(); }
-    acctOpeningHideResults();
-    acctRenderOpeningLines();
-    // focus the debit cell of the row just added
-    var inp = document.querySelector('#acctOpeningLines tr:last-child .acct-ob-amt[data-field="debit"]');
-    if (inp) inp.focus();
+function acctOpeningWireAmountCell(inp) {
+    var idx = Number(inp.dataset.idx), field = inp.dataset.field;
+    if (typeof wmsAttachAmountInput === 'function') wmsAttachAmountInput(inp, { allowNegative: false });
+    inp.addEventListener('input', function () {
+        acctOpeningLines[idx][field] = inp.value;
+        // A line is Dr or Cr, never both — clear the opposite as you type.
+        if (acctParse(inp.value) > 0) {
+            var other = field === 'debit' ? 'credit' : 'debit';
+            acctOpeningLines[idx][other] = '';
+            var oEl = document.querySelector('#acctOpeningLines .acct-line-amt[data-idx="' + idx + '"][data-field="' + other + '"]');
+            if (oEl) oEl.value = '';
+        }
+        acctOpeningUpdateBalance();
+    });
+    // Enter on an amount opens the next line (Tab falls through to native focus).
+    inp.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        acctOpeningAddLine(true);
+    });
 }
 
 function acctLedgerName(id) {
@@ -1057,38 +1142,40 @@ function acctLedgerName(id) {
 function acctRenderOpeningLines() {
     var tb = document.getElementById('acctOpeningLines');
     if (!tb) return;
-    if (!acctOpeningLines.length) {
-        tb.innerHTML = '<tr><td colspan="4" style="padding:14px;color:#a0aec0;font-size:12px;">' +
-            'No ledgers yet — search above to add the accounts this book opens with ' +
-            '(bank/broker balances, investments at cost, capital, client accounts).</td></tr>';
-    } else {
-        tb.innerHTML = acctOpeningLines.map(function (ln, idx) {
-            return '<tr data-idx="' + idx + '">' +
-                '<td><span class="acct-ob-name">' + wmsEsc(acctLedgerName(ln.ledgerId)) + '</span>' +
-                '<span class="acct-ob-grp" style="margin-left:8px;">' + wmsEsc(acctRootName((acctLedgers.find(function (x) { return x.id === ln.ledgerId; }) || {}).group_id)) + '</span></td>' +
-                '<td class="text-right"><input type="text" class="wms-input acct-ob-amt" data-idx="' + idx + '" data-field="debit" value="' + wmsEsc(ln.debit || '') + '" inputmode="decimal" style="text-align:right;"></td>' +
-                '<td class="text-right"><input type="text" class="wms-input acct-ob-amt" data-idx="' + idx + '" data-field="credit" value="' + wmsEsc(ln.credit || '') + '" inputmode="decimal" style="text-align:right;"></td>' +
-                '<td><button class="acct-line-del" data-del="' + idx + '" title="Remove">✕</button></td></tr>';
-        }).join('');
-    }
+    acctOpeningDdCtrls = {};
 
-    tb.querySelectorAll('.acct-ob-amt').forEach(function (inp) {
-        if (typeof wmsAttachAmountInput === 'function') wmsAttachAmountInput(inp, { allowNegative: false });
-        inp.oninput = function () {
-            var i = Number(inp.dataset.idx);
-            acctOpeningLines[i][inp.dataset.field] = inp.value;
-            // A line is Dr or Cr, never both — clear the opposite as you type.
-            if (acctParse(inp.value) > 0) {
-                var other = inp.dataset.field === 'debit' ? 'credit' : 'debit';
-                acctOpeningLines[i][other] = '';
-                var otherEl = tb.querySelector('.acct-ob-amt[data-idx="' + i + '"][data-field="' + other + '"]');
-                if (otherEl) otherEl.value = '';
+    tb.innerHTML = acctOpeningLines.map(function (ln, idx) {
+        var nm = ln.ledgerId ? acctLedgerName(ln.ledgerId) : (ln.ledgerName || '');
+        // ⚠ flag: this ledger already carries a SAVED opening balance — re-saving
+        // overwrites it. Tooltip shows the amount currently on record.
+        var ex = ln.ledgerId ? acctOpeningExisting[ln.ledgerId] : null;
+        var flag = '';
+        if (ex) {
+            var exTxt = ex.debit ? ('Dr ' + acctNum(ex.debit)) : ('Cr ' + acctNum(ex.credit));
+            flag = '<span class="acct-ob-existing" title="This ledger already has a saved opening balance (' + wmsEsc(exTxt) + '). Saving will overwrite it.">⚠</span>';
+        }
+        return '<tr data-idx="' + idx + '">' +
+            '<td><div class="acct-line-pick">' +
+                '<input type="text" class="acct-line-ledger" data-idx="' + idx + '" value="' + wmsEsc(nm) + '" placeholder="Search ledger…" autocomplete="off">' +
+                flag +
+                '<div class="wms-dd acct-line-dd" data-idx="' + idx + '"></div>' +
+            '</div></td>' +
+            '<td class="text-right"><input type="text" class="acct-line-amt" data-idx="' + idx + '" data-field="debit" value="' + wmsEsc(ln.debit || '') + '"></td>' +
+            '<td class="text-right"><input type="text" class="acct-line-amt" data-idx="' + idx + '" data-field="credit" value="' + wmsEsc(ln.credit || '') + '"></td>' +
+            '<td><button class="acct-line-del" data-idx="' + idx + '" title="Remove line">✕</button></td></tr>';
+    }).join('');
+
+    tb.querySelectorAll('.acct-line-ledger').forEach(acctOpeningWireLedgerCell);
+    tb.querySelectorAll('.acct-line-amt').forEach(acctOpeningWireAmountCell);
+    tb.querySelectorAll('.acct-line-del').forEach(function (b) {
+        b.onclick = function () {
+            if (acctOpeningLines.length <= 1) {                 // keep one empty row to type into
+                acctOpeningLines[0] = { ledgerId: '', ledgerName: '', debit: '', credit: '' };
+            } else {
+                acctOpeningLines.splice(Number(b.dataset.idx), 1);
             }
-            acctOpeningUpdateBalance();
+            acctRenderOpeningLines();
         };
-    });
-    tb.querySelectorAll('[data-del]').forEach(function (b) {
-        b.onclick = function () { acctOpeningLines.splice(Number(b.dataset.del), 1); acctRenderOpeningLines(); };
     });
     acctOpeningUpdateBalance();
 }
@@ -1124,11 +1211,14 @@ function acctOpeningUpdateBalance() {
 
 async function acctSaveOpening() {
     var t = acctOpeningTotals();
-    var lines = acctOpeningLines
-        .filter(function (l) { return acctParse(l.debit) > 0 || acctParse(l.credit) > 0; })
-        .map(function (l) {
-            return { ledger_id: l.ledgerId, debit_amount: acctParse(l.debit), credit_amount: acctParse(l.credit) };
-        });
+    var withAmt = acctOpeningLines.filter(function (l) { return acctParse(l.debit) > 0 || acctParse(l.credit) > 0; });
+    // A typed amount with no ledger chosen would post a broken line — stop first.
+    if (withAmt.some(function (l) { return !l.ledgerId; })) {
+        acctToast('Pick a ledger for every row that has an amount.', true); return;
+    }
+    var lines = withAmt.map(function (l) {
+        return { ledger_id: l.ledgerId, debit_amount: acctParse(l.debit), credit_amount: acctParse(l.credit) };
+    });
     if (!lines.length) { acctToast('Enter at least one amount.', true); return; }
 
     var btn = document.getElementById('acctOpeningSave');
@@ -1646,17 +1736,27 @@ function acctOpenEditVoucher(voucherId) {
 // Add ledger / add group modals
 // ============================================================================
 function acctGroupSelectOptions(selectedId, rootsOnlyAllowed) {
-    // Order: roots then their children, indented
+    // Roots first (in nature order), then their descendants to ANY depth, indented
+    // by level. The chart nests 3 deep (e.g. Assets ▸ Investments ▸ Listed
+    // Securities), so a two-level walk hid every depth-2 group — the reason
+    // "Listed Securities", "Brokers", "Traders", the Capital-Gains / Yield-Income
+    // groups, etc. never appeared in the picker.
     var html = '';
+    function walk(parentId, depth) {
+        acctGroups.filter(function (g) { return g.parent_group_id === parentId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (g) {
+                var pad = '';
+                for (var i = 0; i < depth; i++) pad += '&nbsp;&nbsp;&nbsp;';
+                html += '<option value="' + g.id + '"' + (g.id === selectedId ? ' selected' : '') + '>' + pad + wmsEsc(g.name) + '</option>';
+                walk(g.id, depth + 1);
+            });
+    }
     acctNatureOrder.forEach(function (rootName) {
         var root = acctGroups.find(function (g) { return !g.parent_group_id && g.name === rootName; });
         if (!root) return;
         html += '<option value="' + root.id + '"' + (root.id === selectedId ? ' selected' : '') + '>' + wmsEsc(root.name) + '</option>';
-        acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
-            .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (g) {
-                html += '<option value="' + g.id + '"' + (g.id === selectedId ? ' selected' : '') + '>&nbsp;&nbsp;&nbsp;' + wmsEsc(g.name) + '</option>';
-            });
+        walk(root.id, 1);
     });
     return html;
 }
@@ -1800,23 +1900,9 @@ function acctWireModals() {
     if (obSave) obSave.onclick = acctSaveOpening;
     var obBtn = document.getElementById('acctOpeningBtn');
     if (obBtn) obBtn.onclick = acctOpenOpeningModal;
-    var obSearch = document.getElementById('acctOpeningSearch');
-    if (obSearch) {
-        obSearch.oninput = function () { acctOpeningActiveIdx = -1; acctOpeningRenderResults(); };
-        obSearch.onfocus = acctOpeningRenderResults;
-        // mousedown on a result fires before blur, so the click still lands.
-        obSearch.onblur = function () { setTimeout(acctOpeningHideResults, 120); };
-        obSearch.onkeydown = function (e) {
-            var list = acctOpeningCandidates(obSearch.value);
-            if (e.key === 'ArrowDown') { e.preventDefault(); acctOpeningActiveIdx = Math.min(acctOpeningActiveIdx + 1, list.length - 1); acctOpeningRenderResults(); }
-            else if (e.key === 'ArrowUp') { e.preventDefault(); acctOpeningActiveIdx = Math.max(acctOpeningActiveIdx - 1, 0); acctOpeningRenderResults(); }
-            else if (e.key === 'Enter') {
-                e.preventDefault();
-                var pick = list[acctOpeningActiveIdx >= 0 ? acctOpeningActiveIdx : 0];
-                if (pick) acctOpeningAdd(pick.id);
-            } else if (e.key === 'Escape') { acctOpeningHideResults(); }
-        };
-    }
+    var obAdd = document.getElementById('acctOpeningAddLineBtn');
+    if (obAdd) obAdd.onclick = function () { acctOpeningAddLine(true); };
+
     document.getElementById('acctAddLineBtn').onclick = function () { acctAddVoucherLine(true); };
 
     // Narration is the last field typed: Tab or Enter from here goes to Save.
@@ -1986,62 +2072,42 @@ async function acctResolveRef(ref) {
     throw new Error('Unresolvable ledger ref: ' + JSON.stringify(ref));
 }
 
-// Core: rebuild ONE book's auto-vouchers via the v2 engine (accounting-engine.js).
-// Uses the SHARED FIFO (wmsCalcFifoCost) + classifier, resolves ledgers by role/FK.
+// Core: rebuild ONE book's auto-vouchers by invoking the SERVER-SIDE engine (the
+// accounting-post Edge Function). This is the SAME engine the nightly cron runs
+// (frozen + byte-stamped), so the button and the nightly can never diverge (D15).
+// It posts INCREMENTALLY (worklist: new→post, changed-open→cancel+repost,
+// changed-closed→alert, unchanged→skip, orphan→alert) and also does the
+// statement→books postings — not the old browser wipe-and-repost.
+// Auth: the owner's logged-in session (x-user-token via wmsEdgeHeaders); the EF
+// verifies it. Returns a report object shaped for acctShowRebuildReport.
 async function acctRebuildOne(bookId) {
-    var fields = 'id,investor_id,trader_id,broker_id,security_id,symbol,short_symbol,company_name,' +
-        'security_type,transaction_type,transaction_date,transaction_time,quantity,price,' +
-        'gross_amount,total_charges,trader_charges,stt,tds,net_amount,notes,created_at';
-    var txns = await wmsFetchAllRaw(acctUrl('transactions?select=' + fields + '&investor_id=eq.' + bookId)) || [];
-    var bookInv = (wmsRefData.investors || []).find(function (i) { return i.id === bookId; }) || {};
-    var invById = {}; (wmsRefData.investors || []).forEach(function (i) { invById[i.id] = i; });
-    var ctx = {
-        securityById: wmsRefData.securitiesCmMap || {},
-        investorById: invById,
-        brokerById: {},
-        fifo: function (t) { return wmsCalcFifoCost(t); }
+    var resp = await fetch(SUPABASE_URL + '/functions/v1/accounting-post', {
+        method: 'POST',
+        headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ bookId: bookId })
+    });
+    var j = await resp.json().catch(function () { return {}; });
+    if (resp.status === 401) throw new Error('Session expired — refresh the page and sign in again.');
+    if (!resp.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + resp.status));
+    var rep = (j.reports && j.reports[0]) || {};
+    // Fold the EF's trade + statement counters into the report-card fields.
+    return {
+        bookId: bookId, book: rep.book || acctInvName(bookId),
+        posted: (rep.posted || 0) + (rep.stmtPosted || 0),
+        replaced: (rep.replaced || 0) + (rep.stmtReplaced || 0),
+        unchanged: (rep.unchanged || 0) + (rep.stmtUnchanged || 0),
+        skipped: (rep.skipped || 0) + (rep.stmtSkipped || 0),
+        failed: rep.failed || 0,
+        warnings: (rep.engineExceptions || 0) + (rep.closedBlocked || 0) + (rep.orphans || 0),
+        firstErr: rep.firstErr || null, skipReasons: {}, warningsList: []
     };
-    var book = { id: bookId, post_fno: bookInv.post_fno !== false };
-    var result = acctEngineProcess(book, txns, ctx);
-
-    // clear existing autos for this book (lines cascade)
-    await fetch(acctUrl('acct_vouchers?investor_id=eq.' + bookId + '&is_auto=eq.true'),
-        { method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' }) });
-
-    var posted = 0, failed = 0, firstErr = null;
-    for (var j = 0; j < result.vouchers.length; j++) {
-        var v = result.vouchers[j];
-        var header = { investor_id: bookId, voucher_type: v.type, voucher_date: v.date,
-            narration: v.narration, is_auto: true, source_transaction_id: v.txnId };
-        var lines = [], okLines = true;
-        for (var li = 0; li < v.lines.length; li++) {
-            var l = v.lines[li], lid;
-            try { lid = await acctResolveRef(l.ref); }
-            catch (e) { okLines = false; if (!firstErr) firstErr = e.message; break; }
-            lines.push({ ledger_id: lid, debit_amount: l.debit || 0, credit_amount: l.credit || 0, narration: l.narration || null, sort_order: li });
-        }
-        if (!okLines) { failed++; continue; }
-        var resp = await fetch(acctUrl('rpc/acct_post_voucher'), {
-            method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }),
-            body: JSON.stringify({ p_header: header, p_lines: lines })
-        });
-        if (resp.ok) posted++; else { failed++; if (!firstErr) firstErr = await resp.text(); }
-    }
-    if (result.exceptions.length) console.warn('[accounting] rebuild exceptions for ' + acctInvName(bookId), result.exceptions);
-    if (firstErr) console.error('[accounting] rebuild first error (' + acctInvName(bookId) + '):', firstErr);
-
-    var skipReasons = {};
-    result.skipped.forEach(function (s) { var k = String(s.reason).replace(/\d[\d,.]*/g, 'N'); skipReasons[k] = (skipReasons[k] || 0) + 1; });
-    return { bookId: bookId, book: acctInvName(bookId), posted: posted, skipped: result.skipped.length,
-        failed: failed, warnings: result.exceptions.length, skipReasons: skipReasons,
-        warningsList: result.exceptions.map(function (e) { return e.title; }), firstErr: firstErr };
 }
 
 async function acctRebuildBooks() {
     if (!acctBookId) { acctToast('Select a book first.', true); return; }
-    if (typeof acctEngineProcess !== 'function') { acctToast('Posting engine not loaded.', true); return; }
-    if (!window.confirm('Rebuild auto-vouchers for ' + acctInvName(acctBookId) + ' from its transactions?\n\n' +
-        'This deletes existing AUTO-generated vouchers for this book and regenerates them. Manual vouchers are kept.')) return;
+    if (!window.confirm('Rebuild auto-vouchers for ' + acctInvName(acctBookId) + ' from its trades?\n\n' +
+        'This runs the accounting engine on the server: new trades are posted, changed ones are re-posted, ' +
+        'and unchanged ones are left alone. Your manual vouchers are never touched.')) return;
     acctLoading(true);
     try {
         var r = await acctRebuildOne(acctBookId);
@@ -2054,11 +2120,11 @@ async function acctRebuildBooks() {
 }
 
 async function acctRebuildAll() {
-    if (typeof acctEngineProcess !== 'function') { acctToast('Posting engine not loaded.', true); return; }
     var books = acctOwnBooks();
     if (!books.length) { acctToast('No own-books to rebuild.', true); return; }
-    if (!window.confirm('Rebuild auto-vouchers for ALL ' + books.length + ' books from their transactions?\n\n' +
-        'Deletes and regenerates auto-vouchers for every book (manual vouchers kept). May take a minute for large books.')) return;
+    if (!window.confirm('Rebuild auto-vouchers for ALL ' + books.length + ' books from their trades?\n\n' +
+        'Runs the server accounting engine per book (new posted, changed re-posted, unchanged left alone; ' +
+        'manual vouchers never touched). May take a minute for large books.')) return;
     acctLoading(true);
     try {
         var reports = [];
@@ -2078,10 +2144,12 @@ function acctShowRebuildReport(reports) {
         acctToast('Rebuilt ' + reports.length + ' book(s): ' + tot + ' vouchers posted.');
         return;
     }
-    var html = '<table class="acct-table"><thead><tr><th>Book</th><th class="text-right">Posted</th><th class="text-right">Skipped</th><th class="text-right">Failed</th><th class="text-right">Warn</th></tr></thead><tbody>';
+    var html = '<table class="acct-table"><thead><tr><th>Book</th><th class="text-right">Posted</th><th class="text-right">Replaced</th><th class="text-right">Unchanged</th><th class="text-right">Skipped</th><th class="text-right">Failed</th><th class="text-right">Warn</th></tr></thead><tbody>';
     reports.forEach(function (r) {
         html += '<tr><td>' + wmsEsc(r.book) + '</td>' +
-            '<td class="text-right">' + r.posted + '</td>' +
+            '<td class="text-right">' + (r.posted || '-') + '</td>' +
+            '<td class="text-right">' + (r.replaced || '-') + '</td>' +
+            '<td class="text-right">' + (r.unchanged || '-') + '</td>' +
             '<td class="text-right">' + (r.skipped || '-') + '</td>' +
             '<td class="text-right"' + (r.failed ? ' style="color:#dc2626;font-weight:600;"' : '') + '>' + (r.failed || '-') + '</td>' +
             '<td class="text-right">' + (r.warnings || '-') + '</td></tr>';
