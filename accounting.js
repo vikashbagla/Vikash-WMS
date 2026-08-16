@@ -2293,6 +2293,7 @@ async function acctRebuildOne(bookId) {
         replaced: (rep.replaced || 0) + (rep.stmtReplaced || 0),
         unchanged: (rep.unchanged || 0) + (rep.stmtUnchanged || 0),
         skipped: (rep.skipped || 0) + (rep.stmtSkipped || 0),
+        closedPeriod: rep.skippedClosed || 0,
         failed: rep.failed || 0,
         warnings: (rep.engineExceptions || 0) + (rep.closedBlocked || 0) + (rep.orphans || 0),
         firstErr: rep.firstErr || null, skipReasons: {}, warningsList: []
@@ -2340,12 +2341,13 @@ function acctShowRebuildReport(reports) {
         acctToast('Rebuilt ' + reports.length + ' book(s): ' + tot + ' vouchers posted.');
         return;
     }
-    var html = '<table class="acct-table"><thead><tr><th>Book</th><th class="text-right">Posted</th><th class="text-right">Replaced</th><th class="text-right">Unchanged</th><th class="text-right">Skipped</th><th class="text-right">Failed</th><th class="text-right">Warn</th></tr></thead><tbody>';
+    var html = '<table class="acct-table"><thead><tr><th>Book</th><th class="text-right">Posted</th><th class="text-right">Replaced</th><th class="text-right">Unchanged</th><th class="text-right" title="Trades in a closed period — carried by the opening balance, not posted">Closed</th><th class="text-right">Skipped</th><th class="text-right">Failed</th><th class="text-right">Warn</th></tr></thead><tbody>';
     reports.forEach(function (r) {
         html += '<tr><td>' + wmsEsc(r.book) + '</td>' +
             '<td class="text-right">' + (r.posted || '-') + '</td>' +
             '<td class="text-right">' + (r.replaced || '-') + '</td>' +
             '<td class="text-right">' + (r.unchanged || '-') + '</td>' +
+            '<td class="text-right">' + (r.closedPeriod || '-') + '</td>' +
             '<td class="text-right">' + (r.skipped || '-') + '</td>' +
             '<td class="text-right"' + (r.failed ? ' style="color:#dc2626;font-weight:600;"' : '') + '>' + (r.failed || '-') + '</td>' +
             '<td class="text-right">' + (r.warnings || '-') + '</td></tr>';
