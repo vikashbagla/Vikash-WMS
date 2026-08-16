@@ -235,6 +235,7 @@ async function acctLoadBook() {
 async function initAccounting() {
     acctLoading(true);
     try {
+        acctLoadCollapseState();          // restore expand/collapse layout from last session
         await acctLoadCatalogue();
 
         acctRenderBookTabs();
@@ -331,6 +332,22 @@ var acctFinCollapsed = {};   // nodeKey -> true (default expanded)
 var acctLedCollapsed = null;
 var acctLedSearch = '';
 var acctFinShowZero = false;
+
+// Persist the expand/collapse state across sessions (localStorage — this is the
+// real app, not a sandboxed artifact). Keyed by group id, which is stable, so the
+// same layout restores next time. Corrupt/absent state falls back to the defaults.
+var ACCT_FIN_COLLAPSE_KEY = 'wms_acct_fin_collapsed';
+var ACCT_LED_COLLAPSE_KEY = 'wms_acct_led_collapsed';
+function acctLoadCollapseState() {
+    try {
+        var f = localStorage.getItem(ACCT_FIN_COLLAPSE_KEY);
+        if (f) { var pf = JSON.parse(f); if (pf && typeof pf === 'object') acctFinCollapsed = pf; }
+        var l = localStorage.getItem(ACCT_LED_COLLAPSE_KEY);
+        if (l) { var pl = JSON.parse(l); if (pl && typeof pl === 'object') acctLedCollapsed = pl; }
+    } catch (e) { /* ignore corrupt persisted state */ }
+}
+function acctSaveFinCollapse() { try { localStorage.setItem(ACCT_FIN_COLLAPSE_KEY, JSON.stringify(acctFinCollapsed || {})); } catch (e) {} }
+function acctSaveLedCollapse() { try { localStorage.setItem(ACCT_LED_COLLAPSE_KEY, JSON.stringify(acctLedCollapsed || {})); } catch (e) {} }
 var acctFinActive = {};          // ledgerId -> true when it posted in the period
 
 function acctLedgerDisp(net, lg, negate) {
@@ -499,6 +516,7 @@ function acctRenderFinancials() {
     };
     var sz = document.getElementById('acctFinShowZeroChk');
     if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderFinancials(); };
+    acctSaveFinCollapse();
 }
 
 // ── Profit & Loss — T-format (Expenses | Income), same style as the BS ───────
@@ -538,6 +556,7 @@ function acctRenderPL() {
     var ea = document.getElementById('acctPLExpandAll'); if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderPL(); };
     var ca = document.getElementById('acctPLCollapseAll'); if (ca) ca.onclick = function () { var keys = acctFinAllGroupKeys(leftNodes.concat(rightNodes), []); acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; }); acctRenderPL(); };
     var sz = document.getElementById('acctPLShowZeroChk'); if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderPL(); };
+    acctSaveFinCollapse();
 }
 
 // ── Trial Balance — grouped collapsible tree with Debit/Credit columns ───────
@@ -720,6 +739,7 @@ function acctRenderTrialBalance() {
     var ea = document.getElementById('acctTbExpandAll'); if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderTrialBalance(); };
     var ca = document.getElementById('acctTbCollapseAll'); if (ca) ca.onclick = function () { var keys = acctFinAllGroupKeys(nodes, []); acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; }); acctRenderTrialBalance(); };
     var sz = document.getElementById('acctTbShowZeroChk'); if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderTrialBalance(); };
+    acctSaveFinCollapse();
 }
 
 function acctRenderDayBook() {
@@ -936,6 +956,7 @@ function acctRenderLedgers() {
         var s2 = document.getElementById('acctLedSearchInput');
         if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); }
     };
+    if (acctLedCollapsed) acctSaveLedCollapse();
 }
 
 // ============================================================================
