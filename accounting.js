@@ -971,6 +971,14 @@ function acctIsSecurityLedger(id) {
     var l = acctLedgers.find(function (x) { return x.id === id; });
     return !!(l && (l.security_id || l.ledger_kind === 'SECURITY'));
 }
+// Ledgers the Opening Balances modal AUTO-manages on a closed book (investments +
+// the STT charge) — excluded from the editable prefill so they're never entered twice.
+function acctIsAutoOpeningLedger(id) {
+    var l = acctLedgers.find(function (x) { return x.id === id; });
+    if (!l) return false;
+    return !!(l.security_id || l.ledger_kind === 'SECURITY' ||
+        l.posting_role === 'STT_STOCKS' || l.posting_role === 'STT_MF');
+}
 
 // Opening INVESTMENTS, drawn from the trade book — NOT typed by hand. For a book
 // closed to a date (books_closed_upto), this is the cost of the holdings carried
@@ -999,26 +1007,44 @@ async function acctOpeningComputeInvestments() {
     var res;
     try { res = acctEngineProcess({ id: acctBookId, post_fno: inv.post_fno !== false }, txns, ctx); }
     catch (e) { console.error('[accounting] opening-investments engine failed', e); return []; }
-    // Sum every SECURITY-ledger leg (Dr − Cr) per security → net cost carried in.
-    var bySec = {};
+    // Sum the engine's opening-asset legs carried in from the closed period:
+    //  • SECURITY legs (Dr−Cr) per security  → investments at cost (net-of-STT on
+    //    an STT-as-expense book);
+    //  • STT_STOCKS / STT_MF role legs        → STT paid on those holdings, which
+    //    an STT-as-expense book books separately (never in the security cost).
+    // The BROKER (funding) leg is deliberately ignored — at opening the funding is
+    // the capital / bank balances the owner enters, not a per-trade broker credit.
+    var bySec = {}, byRole = {};
     (res.vouchers || []).forEach(function (v) {
         (v.lines || []).forEach(function (l) {
-            if (l.ref && l.ref.security_id) {
+            if (!l.ref) return;
+            if (l.ref.security_id) {
                 var b = bySec[l.ref.security_id] || (bySec[l.ref.security_id] = { d: 0, c: 0 });
                 b.d += (l.debit || 0); b.c += (l.credit || 0);
+            } else if (l.ref.role === 'STT_STOCKS' || l.ref.role === 'STT_MF') {
+                var r = byRole[l.ref.role] || (byRole[l.ref.role] = { d: 0, c: 0 });
+                r.d += (l.debit || 0); r.c += (l.credit || 0);
             }
         });
     });
-    var out = [];
+    var securities = [];
     Object.keys(bySec).forEach(function (sid) {
         var net = Math.round((bySec[sid].d - bySec[sid].c) * 100) / 100;
         if (net > 0.005) {
             var sec = (wmsRefData.securitiesCmMap || {})[sid] || {};
-            out.push({ security_id: sid, cost: net, name: sec.company_name || sec.symbol || ('Security ' + String(sid).slice(0, 8)) });
+            securities.push({ security_id: sid, cost: net, name: sec.company_name || sec.symbol || ('Security ' + String(sid).slice(0, 8)) });
         }
     });
-    out.sort(function (a, b) { return b.cost - a.cost; });
-    return out;
+    securities.sort(function (a, b) { return b.cost - a.cost; });
+    var sttLines = [];
+    Object.keys(byRole).forEach(function (role) {
+        var net = Math.round((byRole[role].d - byRole[role].c) * 100) / 100;
+        if (net > 0.005) {
+            var lg = acctLedgers.find(function (x) { return x.posting_role === role; });
+            sttLines.push({ role: role, cost: net, name: (lg && lg.name) || (role === 'STT_MF' ? 'STT Charges - MFs' : 'STT Charges - Stocks') });
+        }
+    });
+    return { securities: securities, sttLines: sttLines };
 }
 
 async function acctOpenOpeningModal() {
@@ -1034,7 +1060,7 @@ async function acctOpenOpeningModal() {
     var bookInv = (wmsRefData.investors || []).find(function (i) { return i.id === acctBookId; }) || {};
     var autoInvest = !!bookInv.books_closed_upto;
     function acctOpeningHideSaved(id) {
-        return acctLedgerName(id) === ACCT_OB_SUSPENSE || (autoInvest && acctIsSecurityLedger(id));
+        return acctLedgerName(id) === ACCT_OB_SUSPENSE || (autoInvest && acctIsAutoOpeningLedger(id));
     }
 
     // Map every already-saved opening balance by ledger (minus the derived suspense
@@ -1057,13 +1083,23 @@ async function acctOpenOpeningModal() {
         return l.ledgerId && !acctOpeningHideSaved(l.ledgerId);
     });
 
-    // Prepend the auto investment lines (locked) drawn from the trade book.
+    // Prepend the auto lines (locked) drawn from the trade book: ONE consolidated
+    // Investments line (double-click for the per-security breakdown) + any STT line.
     acctLoading(true);
-    var investLines;
-    try { investLines = await acctOpeningComputeInvestments(); }
+    var computed;
+    try { computed = await acctOpeningComputeInvestments(); }
     finally { acctLoading(false); }
-    var locked = (investLines || []).map(function (x) {
-        return { locked: true, security_id: x.security_id, ledgerName: x.name, debit: String(x.cost), credit: '' };
+    computed = computed || { securities: [], sttLines: [] };
+    var locked = [];
+    var secs = computed.securities || [];
+    if (secs.length) {
+        var totalInvest = 0; secs.forEach(function (s) { totalInvest += s.cost; });
+        totalInvest = Math.round(totalInvest * 100) / 100;
+        locked.push({ locked: true, kind: 'invest', ledgerName: 'Investments',
+            debit: String(totalInvest), credit: '', breakdown: secs, expanded: false });
+    }
+    (computed.sttLines || []).forEach(function (r) {
+        locked.push({ locked: true, kind: 'role', role: r.role, ledgerName: r.name, debit: String(r.cost), credit: '' });
     });
     acctOpeningLines = locked.concat(acctOpeningLines);
 
@@ -1094,15 +1130,17 @@ async function acctOpenOpeningModal() {
 // Ledgers offered in a row's picker: available in this book, minus any already
 // chosen in OTHER rows (a ledger can hold only one opening balance).
 function acctOpeningLedgerMatches(idx, q) {
-    var usedElsewhere = {}, lockedSecs = {};
+    var usedElsewhere = {}, lockedSecs = {}, lockedRoles = {};
     acctOpeningLines.forEach(function (l, i) {
         if (i !== idx && l.ledgerId) usedElsewhere[l.ledgerId] = true;
-        if (l.locked && l.security_id) lockedSecs[l.security_id] = true;   // its Investment ledger is already shown (locked)
+        if (l.locked && l.kind === 'invest') (l.breakdown || []).forEach(function (s) { lockedSecs[s.security_id] = true; });
+        if (l.locked && l.kind === 'role' && l.role) lockedRoles[l.role] = true;
     });
     var needle = String(q || '').trim().toLowerCase();
     return acctAvailableLedgers(acctBookId).filter(function (l) {
         if (usedElsewhere[l.id]) return false;
-        if (l.security_id && lockedSecs[l.security_id]) return false;      // don't let a locked security be picked again
+        if (l.security_id && lockedSecs[l.security_id]) return false;      // already in the locked Investments total
+        if (l.posting_role && lockedRoles[l.posting_role]) return false;   // already shown as the locked STT line
         return !needle || l.name.toLowerCase().indexOf(needle) >= 0;
     }).slice(0, 50);
 }
@@ -1229,12 +1267,33 @@ function acctRenderOpeningLines() {
     acctOpeningDdCtrls = {};
 
     tb.innerHTML = acctOpeningLines.map(function (ln, idx) {
-        // Locked AUTO investment line — drawn from the trade book, read-only.
+        // Locked AUTO lines — drawn from the trade book, read-only.
         if (ln.locked) {
+            // Consolidated Investments line: one row for the total, double-click to
+            // expand the per-security breakdown beneath it.
+            if (ln.kind === 'invest') {
+                var bd = ln.breakdown || [];
+                var caret = ln.expanded ? '▾' : '▸';
+                var html = '<tr data-idx="' + idx + '" class="acct-ob-locked acct-ob-invest" title="Investments carried in from the trade book (cost, net of STT). Double-click for the securities.">' +
+                    '<td><span class="acct-ob-lock">🔒</span> <b>Investments</b> ' +
+                    '<span class="acct-ob-expand" data-idx="' + idx + '">' + caret + ' ' + bd.length + ' securities</span></td>' +
+                    '<td class="text-right acct-ob-lockamt">' + acctNum(acctParse(ln.debit)) + '</td>' +
+                    '<td class="text-right"></td><td></td></tr>';
+                if (ln.expanded) {
+                    bd.forEach(function (s) {
+                        html += '<tr class="acct-ob-locked acct-ob-breakdown">' +
+                            '<td style="padding-left:30px;color:#64748b;">' + wmsEsc(s.name) + '</td>' +
+                            '<td class="text-right acct-ob-lockamt" style="color:#64748b;">' + acctNum(s.cost) + '</td>' +
+                            '<td></td><td></td></tr>';
+                    });
+                }
+                return html;
+            }
+            // Simple locked line (the STT charge).
             return '<tr data-idx="' + idx + '" class="acct-ob-locked">' +
-                '<td><span class="acct-ob-lock" title="Auto: cost of holdings carried in from the trade book, as of the book close date. Change the trades to change this.">🔒</span> ' +
-                    wmsEsc(ln.ledgerName || 'Investment') +
-                    '<span class="acct-dd-grp">Investment</span></td>' +
+                '<td><span class="acct-ob-lock" title="Auto: drawn from the trade book. Change the trades to change this.">🔒</span> ' +
+                    wmsEsc(ln.ledgerName || '') +
+                    '<span class="acct-dd-grp">' + (ln.kind === 'role' ? 'Charge' : 'Investment') + '</span></td>' +
                 '<td class="text-right acct-ob-lockamt">' + acctNum(acctParse(ln.debit)) + '</td>' +
                 '<td class="text-right"></td>' +
                 '<td></td></tr>';
@@ -1258,6 +1317,18 @@ function acctRenderOpeningLines() {
             '<td class="text-right"><input type="text" class="acct-line-amt" data-idx="' + idx + '" data-field="credit" value="' + wmsEsc(ln.credit || '') + '"></td>' +
             '<td><button class="acct-line-del" data-idx="' + idx + '" title="Remove line">✕</button></td></tr>';
     }).join('');
+
+    // Expand / collapse the consolidated Investments breakdown (double-click the
+    // row, or click the "N securities" caret).
+    function acctOpeningToggleExpand(i) {
+        if (acctOpeningLines[i]) { acctOpeningLines[i].expanded = !acctOpeningLines[i].expanded; acctRenderOpeningLines(); }
+    }
+    tb.querySelectorAll('.acct-ob-invest').forEach(function (row) {
+        row.ondblclick = function () { acctOpeningToggleExpand(Number(row.dataset.idx)); };
+    });
+    tb.querySelectorAll('.acct-ob-expand').forEach(function (el) {
+        el.onclick = function (e) { e.stopPropagation(); acctOpeningToggleExpand(Number(el.dataset.idx)); };
+    });
 
     tb.querySelectorAll('.acct-line-ledger').forEach(acctOpeningWireLedgerCell);
     tb.querySelectorAll('.acct-line-amt').forEach(acctOpeningWireAmountCell);
@@ -1319,14 +1390,24 @@ async function acctSaveOpening() {
     var btn = document.getElementById('acctOpeningSave');
     if (btn) btn.disabled = true;
     try {
-        // Resolve every row to a ledger id — a locked investment row resolves to its
-        // security's Investment ledger (find-or-create by security_id).
+        // Resolve every row to ledger id(s). The consolidated Investments line posts
+        // ONE Dr per security (creating the Investment ledger if missing); the STT
+        // line resolves by role; editable rows use their picked ledger.
         var lines = [];
         for (var wi = 0; wi < withAmt.length; wi++) {
-            var wl = withAmt[wi], wlid;
-            if (wl.locked && wl.security_id) wlid = await acctFindOrCreateAuto('security_id', wl.security_id);
-            else wlid = wl.ledgerId;
-            lines.push({ ledger_id: wlid, debit_amount: acctParse(wl.debit), credit_amount: acctParse(wl.credit) });
+            var wl = withAmt[wi];
+            if (wl.locked && wl.kind === 'invest') {
+                var bd = wl.breakdown || [];
+                for (var bi = 0; bi < bd.length; bi++) {
+                    var slid = await acctFindOrCreateAuto('security_id', bd[bi].security_id);
+                    lines.push({ ledger_id: slid, debit_amount: bd[bi].cost, credit_amount: 0 });
+                }
+            } else if (wl.locked && wl.kind === 'role') {
+                var rlid = await acctResolveRef({ role: wl.role });
+                lines.push({ ledger_id: rlid, debit_amount: acctParse(wl.debit), credit_amount: 0 });
+            } else {
+                lines.push({ ledger_id: wl.ledgerId, debit_amount: acctParse(wl.debit), credit_amount: acctParse(wl.credit) });
+            }
         }
         // Plug any difference to the suspense ledger so the voucher always ties.
         if (Math.abs(t.diff) >= 0.005) {
