@@ -179,6 +179,17 @@
 .acct-lines-table .acct-line-amt.acct-auto { color: #667eea; font-style: italic; }
 .acct-line-pick { position: relative; }
 .acct-line-pick .wms-dd { text-align: left; }
+/* Voucher view-only (auto / PMS-trade voucher). */
+.acct-ro-banner {
+    background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+    border-radius: 8px; padding: 8px 12px; font-size: 12px; margin-bottom: 12px;
+}
+.acct-ledger-detail-head { position: relative; }
+.acct-ld-toggle { position: absolute; top: 0; right: 0; display: flex; align-items: center; gap: 8px; }
+.acct-ld-toggle .acct-ld-unit { font-size: 11px; color: #64748b; }
+.acct-voucher-ro .acct-lines-table td { color: #64748b; }
+.acct-voucher-ro .acct-type-toggle { opacity: .6; }
+.acct-lines-table tr.acct-line-ro td { padding: 6px; }
 /* ⚠ marker on an opening-balance row whose ledger already holds a saved balance.
    Scoped to the Opening Balances table so the New Voucher modal is untouched. */
 #acctOpeningLines .acct-line-pick .acct-ob-existing {
@@ -363,6 +374,9 @@
             <button class="wms-btn-close" id="acctVoucherClose">✕</button>
         </div>
         <div class="wms-modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
+            <div id="acctVoucherRoBanner" class="acct-ro-banner" style="display:none;">
+                🔒 Auto-posted from a PMS trade — view only. To change it, edit the underlying trade and run Rebuild.
+            </div>
             <div class="acct-type-toggle" id="acctVoucherTypeToggle">
                 <button class="acct-type-btn active" data-vtype="JOURNAL">Journal</button>
                 <button class="acct-type-btn" data-vtype="RECEIPT">Receipt</button>

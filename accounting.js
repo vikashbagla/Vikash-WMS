@@ -1456,6 +1456,7 @@ async function acctSaveOpening() {
 var acctVoucherDdCtrls = {};        // row idx -> wmsDropdown controller
 var acctLedgerPickTarget = null;    // {idx} when Add Ledger was launched from a row
 var acctEditingVoucherId = null;    // set when the voucher modal is editing, not creating
+var acctVoucherReadOnly = false;    // auto (PMS-trade) vouchers open view-only
 
 function acctVoucherIsBalanced() {
     var d = 0, c = 0, nonEmpty = 0, valid = true;
@@ -1604,8 +1605,23 @@ function acctWireAmountCell(inp) {
 function acctRenderVoucherLines() {
     var tb = document.getElementById('acctVoucherLines');
     if (!tb) return;
-    acctSyncAutoLine();
     acctVoucherDdCtrls = {};
+
+    // Read-only (auto / PMS-trade voucher): static rows, no pickers, no delete.
+    if (acctVoucherReadOnly) {
+        tb.innerHTML = acctVoucherLines.map(function (ln) {
+            var nm = ln.ledgerId ? acctLedgerName(ln.ledgerId) : (ln.ledgerName || '');
+            return '<tr class="acct-line-ro">' +
+                '<td>' + wmsEsc(nm) + '</td>' +
+                '<td class="text-right">' + (acctParse(ln.debit) ? acctNum(acctParse(ln.debit)) : '') + '</td>' +
+                '<td class="text-right">' + (acctParse(ln.credit) ? acctNum(acctParse(ln.credit)) : '') + '</td>' +
+                '<td></td></tr>';
+        }).join('');
+        acctUpdateBalance();
+        return;
+    }
+
+    acctSyncAutoLine();
 
     tb.innerHTML = acctVoucherLines.map(function (ln, idx) {
         var nm = ln.ledgerId ? acctLedgerName(ln.ledgerId) : (ln.ledgerName || '');
@@ -1672,6 +1688,7 @@ function acctUpdateBalance() {
 function acctOpenVoucherModal() {
     if (!acctBookId) { acctToast('Select a book first (enable accounting on an investor).', true); return; }
     acctEditingVoucherId = null;          // creating, not editing
+    acctVoucherReadOnly = false;
     acctVoucherType = 'JOURNAL';
     acctVoucherDateYmd = acctTodayYmd();
     acctVoucherLines = [
@@ -1693,6 +1710,7 @@ function acctOpenVoucherModal() {
     }
 
     acctRenderVoucherLines();
+    acctApplyVoucherReadOnly(false);      // fresh voucher is always editable
     if (acctVoucherModalCtrl) acctVoucherModalCtrl.open();
     // Land the caret on the first ledger field — the voucher is typed top-down.
     setTimeout(function () {
@@ -1715,7 +1733,7 @@ function acctAutoBalance() {
 }
 
 async function acctSaveVoucher() {
-    if (!acctBookId) return;
+    if (!acctBookId || acctVoucherReadOnly) return;   // auto vouchers are view-only
     var lines = acctVoucherLines.filter(function (l) { return acctParse(l.debit) > 0 || acctParse(l.credit) > 0; })
         .map(function (l, i) {
             return {
@@ -1831,16 +1849,38 @@ async function acctSaveVoucher() {
 // ============================================================================
 // Ledger-detail modal
 // ============================================================================
+var acctLedgerDetailId = null;
+var acctLedgerDetailFullAmt = false;   // false = global display unit (₹ '000); true = full ₹
+
 function acctOpenLedgerDetail(ledgerId) {
-    var lg = acctLedgers.find(function (x) { return x.id === ledgerId; });
+    acctLedgerDetailId = ledgerId;
+    acctRenderLedgerDetail();
+    if (acctLedgerModalCtrl) acctLedgerModalCtrl.open();
+}
+
+function acctRenderLedgerDetail() {
+    var lg = acctLedgers.find(function (x) { return x.id === acctLedgerDetailId; });
     if (!lg) return;
-    var rows = acctVoucherRows.filter(function (r) { return r.ledger_id === ledgerId; });
+    var rows = acctVoucherRows.filter(function (r) { return r.ledger_id === acctLedgerDetailId; });
     var body = document.getElementById('acctLedgerDetailBody');
     var g = acctGroupById[lg.group_id];
 
+    // One formatter for ALL three amount columns (was inconsistent: Dr/Cr in the
+    // display unit, Balance in full). Toggle flips every column together.
+    var fmt = acctLedgerDetailFullAmt ? acctNum : acctAmt;
+    var unitTxt = acctLedgerDetailFullAmt ? 'Full ₹'
+        : (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
+
     var running = 0;
-    var html = '<div class="acct-ledger-detail-head"><div class="acct-ld-name">' + wmsEsc(lg.name) + '</div>' +
-        '<div class="acct-ld-sub">' + wmsEsc(acctGroupPath(g)) + ' · ' + wmsEsc(acctViewTitle()) + '</div></div>';
+    var html = '<div class="acct-ledger-detail-head">' +
+        '<div class="acct-ld-name">' + wmsEsc(lg.name) + '</div>' +
+        '<div class="acct-ld-sub">' + wmsEsc(acctGroupPath(g)) + ' · ' + wmsEsc(acctViewTitle()) + '</div>' +
+        '<div class="acct-ld-toggle">' +
+            '<span class="acct-ld-unit">' + wmsEsc(unitTxt) + '</span>' +
+            '<button id="acctLdUnitToggle" class="wms-btn wms-btn-secondary" style="font-size:11px;">' +
+                (acctLedgerDetailFullAmt ? "Show in " + wmsEsc((typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000")) : 'Show full amount') +
+            '</button>' +
+        '</div></div>';
     if (!rows.length) {
         html += '<div class="acct-empty">No postings in this book.</div>';
     } else {
@@ -1848,12 +1888,10 @@ function acctOpenLedgerDetail(ledgerId) {
         rows.forEach(function (r) {
             var live = acctIsLive(r);
             if (live) running += (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
-            var balLabel = live ? acctNum(Math.abs(running)) + (running >= 0 ? ' Dr' : ' Cr') : '—';
-            // Auto (PMS / rebuild-from-trades) vouchers are owned by the posting
-            // engine — editing them here would be overwritten on the next rebuild.
+            var balLabel = live ? fmt(Math.abs(running)) + (running >= 0 ? ' Dr' : ' Cr') : '—';
             var auto = !!r.is_auto;
             var tip = !live ? 'Cancelled' + (r.cancel_reason ? ' — ' + r.cancel_reason : '') + ' · excluded from balances'
-                    : auto ? 'Auto-posted from trades — edit the trade, not the voucher'
+                    : auto ? 'Auto-posted from a PMS trade — opens view-only; edit the trade, then Rebuild'
                            : 'Click to edit this voucher';
             html += '<tr class="acct-vch-row' + (auto ? ' acct-vch-auto' : '') + (live ? '' : ' acct-vch-cancelled') +
                 '" data-voucher="' + r.voucher_id + '" title="' + wmsEsc(tip) + '">' +
@@ -1862,17 +1900,18 @@ function acctOpenLedgerDetail(ledgerId) {
                     (auto ? ' <span class="acct-kind-badge">auto</span>' : '') +
                     (live ? '' : ' <span class="acct-scope-badge">cancelled</span>') + '</td>' +
                 '<td>' + wmsEsc(r.line_narration || r.voucher_narration || '') + '</td>' +
-                '<td class="text-right">' + (Number(r.debit_amount) ? acctAmt(Number(r.debit_amount)) : '-') + '</td>' +
-                '<td class="text-right">' + (Number(r.credit_amount) ? acctAmt(Number(r.credit_amount)) : '-') + '</td>' +
+                '<td class="text-right">' + (Number(r.debit_amount) ? fmt(Number(r.debit_amount)) : '-') + '</td>' +
+                '<td class="text-right">' + (Number(r.credit_amount) ? fmt(Number(r.credit_amount)) : '-') + '</td>' +
                 '<td class="text-right">' + balLabel + '</td></tr>';
         });
         html += '</tbody></table>';
     }
     body.innerHTML = html;
+    var tgl = document.getElementById('acctLdUnitToggle');
+    if (tgl) tgl.onclick = function () { acctLedgerDetailFullAmt = !acctLedgerDetailFullAmt; acctRenderLedgerDetail(); };
     body.querySelectorAll('.acct-vch-row[data-voucher]').forEach(function (tr) {
         tr.onclick = function () { acctOpenEditVoucher(tr.dataset.voucher); };
     });
-    if (acctLedgerModalCtrl) acctLedgerModalCtrl.open();
 }
 
 /* Edit an existing manual voucher. Auto vouchers are refused: they belong to the
@@ -1895,13 +1934,14 @@ function acctOpenEditVoucher(voucherId) {
         acctOpenOpeningModal();
         return;
     }
-    if (rows[0].is_auto) {
-        acctToast('“' + rows[0].voucher_number + '” was auto-posted from trades. Edit the underlying trade, then Rebuild.', true);
-        return;
-    }
+    // Auto (PMS-trade) vouchers open VIEW-ONLY — shown greyed with a note that they
+    // can only be changed by editing the underlying trade and rebuilding. Manual
+    // vouchers stay fully editable.
+    var readOnly = !!rows[0].is_auto;
     if (acctLedgerModalCtrl) acctLedgerModalCtrl.close();
 
-    acctEditingVoucherId = voucherId;
+    acctVoucherReadOnly = readOnly;
+    acctEditingVoucherId = readOnly ? null : voucherId;   // never Save-path an auto voucher
     acctVoucherType = rows[0].voucher_type;
     acctVoucherDateYmd = rows[0].voucher_date;
     acctLedgerPickTarget = null;
@@ -1914,7 +1954,7 @@ function acctOpenEditVoucher(voucherId) {
                      debit: d ? String(d) : '', credit: c ? String(c) : '', _auto: false };
         });
 
-    document.getElementById('acctVoucherTitle').textContent = 'Edit Voucher ' + rows[0].voucher_number + ' — ' + acctInvName(acctBookId);
+    document.getElementById('acctVoucherTitle').textContent = (readOnly ? 'View Voucher ' : 'Edit Voucher ') + rows[0].voucher_number + ' — ' + acctInvName(acctBookId);
     document.querySelectorAll('#acctVoucherTypeToggle .acct-type-btn').forEach(function (b) {
         b.classList.toggle('active', b.dataset.vtype === acctVoucherType);
     });
@@ -1925,7 +1965,27 @@ function acctOpenEditVoucher(voucherId) {
         if (ctrl && ctrl.setValue) ctrl.setValue(acctVoucherDateYmd);
     }
     acctRenderVoucherLines();
+    acctApplyVoucherReadOnly(readOnly);
     if (acctVoucherModalCtrl) acctVoucherModalCtrl.open();
+}
+
+/* Toggle the voucher modal between edit and VIEW-ONLY. In view-only every control
+   is disabled and a banner explains the voucher is driven by a PMS trade. */
+function acctApplyVoucherReadOnly(ro) {
+    var modal = document.getElementById('acctVoucherModal');
+    if (modal) modal.classList.toggle('acct-voucher-ro', ro);
+    var banner = document.getElementById('acctVoucherRoBanner');
+    if (banner) banner.style.display = ro ? '' : 'none';
+    var save = document.getElementById('acctVoucherSave');
+    if (save) { save.style.display = ro ? 'none' : ''; save.disabled = ro; }
+    var addLine = document.getElementById('acctAddLineBtn');
+    if (addLine) addLine.style.display = ro ? 'none' : '';
+    var nar = document.getElementById('acctVoucherNarration');
+    if (nar) nar.disabled = ro;
+    document.querySelectorAll('#acctVoucherTypeToggle .acct-type-btn').forEach(function (b) { b.disabled = ro; });
+    // Freeze the date widget in view-only.
+    var dc = document.getElementById('acctVoucherDate');
+    if (dc) dc.style.pointerEvents = ro ? 'none' : '';
 }
 
 // ============================================================================
