@@ -186,6 +186,10 @@
     color: #d97706; font-size: 12px; cursor: help; z-index: 2;
 }
 #acctOpeningLines .acct-line-pick input.acct-line-ledger { padding-right: 20px; }
+/* Locked auto-investment rows — read-only, drawn from the trade book. */
+#acctOpeningLines tr.acct-ob-locked td { background: #f8fafc; color: #334155; }
+#acctOpeningLines tr.acct-ob-locked .acct-ob-lock { cursor: help; margin-right: 2px; }
+#acctOpeningLines tr.acct-ob-locked .acct-ob-lockamt { font-variant-numeric: tabular-nums; color: #1e40af; }
 .acct-dd-create { color: #667eea; font-weight: 600; }
 .acct-dd-grp { float: right; font-size: 10px; color: #a0aec0; font-weight: 400; }
 .acct-lines-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }

@@ -201,7 +201,7 @@ async function wmsReloadRefMastersOnly() {
     var resp;
 
     // 1. Investors
-    resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start,interest_terms,tax_rate,accounting_enabled,book_parent_id,post_fno&is_active=eq.true', { headers: headers });
+    resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start,interest_terms,tax_rate,accounting_enabled,book_parent_id,post_fno,books_closed_upto&is_active=eq.true', { headers: headers });
     var investors = await resp.json();
     wmsRefData.investors = investors;
     wmsRefData.investorObjMap = {};

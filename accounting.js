@@ -966,7 +966,62 @@ function acctOpeningExistingRows() {
     return acctVoucherRows.filter(function (r) { return r.voucher_type === 'OPENING_BALANCE'; });
 }
 
-function acctOpenOpeningModal() {
+// A ledger tied to a security (auto/investment ledger) — resolved by FK, not name.
+function acctIsSecurityLedger(id) {
+    var l = acctLedgers.find(function (x) { return x.id === id; });
+    return !!(l && (l.security_id || l.ledger_kind === 'SECURITY'));
+}
+
+// Opening INVESTMENTS, drawn from the trade book — NOT typed by hand. For a book
+// closed to a date (books_closed_upto), this is the cost of the holdings carried
+// in as of that date. It runs the SAME frozen engine the poster uses
+// (acctEngineProcess) over the closed-period trades and sums each security's net
+// SECURITY-ledger movement, so the figure equals exactly what the engine will use
+// as cost basis for a later sale — including this book's STT treatment (STT-as-
+// expense books exclude STT from cost). Returns [{ security_id, cost, name }].
+async function acctOpeningComputeInvestments() {
+    var inv = (wmsRefData.investors || []).find(function (i) { return i.id === acctBookId; }) || {};
+    var closeDate = inv.books_closed_upto;
+    if (!closeDate) return [];                                  // no closed period → nothing carried in
+    if (typeof acctEngineProcess !== 'function' || typeof wmsCalcFifoCost !== 'function') return [];
+    var fields = 'id,investor_id,trader_id,broker_id,security_id,symbol,short_symbol,company_name,' +
+        'security_type,transaction_type,transaction_date,transaction_time,quantity,price,' +
+        'gross_amount,total_charges,trader_charges,stt,tds,net_amount,notes,created_at';
+    var txns;
+    try {
+        txns = await wmsFetchAllRaw(acctUrl('transactions?select=' + fields +
+            '&investor_id=eq.' + acctBookId + '&transaction_date=lte.' + closeDate)) || [];
+    } catch (e) { console.error('[accounting] opening-investments fetch failed', e); return []; }
+    if (!txns.length) return [];
+    var invById = {}; (wmsRefData.investors || []).forEach(function (i) { invById[i.id] = i; });
+    var ctx = { securityById: wmsRefData.securitiesCmMap || {}, investorById: invById, brokerById: {},
+                fifo: function (t) { return wmsCalcFifoCost(t); } };
+    var res;
+    try { res = acctEngineProcess({ id: acctBookId, post_fno: inv.post_fno !== false }, txns, ctx); }
+    catch (e) { console.error('[accounting] opening-investments engine failed', e); return []; }
+    // Sum every SECURITY-ledger leg (Dr − Cr) per security → net cost carried in.
+    var bySec = {};
+    (res.vouchers || []).forEach(function (v) {
+        (v.lines || []).forEach(function (l) {
+            if (l.ref && l.ref.security_id) {
+                var b = bySec[l.ref.security_id] || (bySec[l.ref.security_id] = { d: 0, c: 0 });
+                b.d += (l.debit || 0); b.c += (l.credit || 0);
+            }
+        });
+    });
+    var out = [];
+    Object.keys(bySec).forEach(function (sid) {
+        var net = Math.round((bySec[sid].d - bySec[sid].c) * 100) / 100;
+        if (net > 0.005) {
+            var sec = (wmsRefData.securitiesCmMap || {})[sid] || {};
+            out.push({ security_id: sid, cost: net, name: sec.company_name || sec.symbol || ('Security ' + String(sid).slice(0, 8)) });
+        }
+    });
+    out.sort(function (a, b) { return b.cost - a.cost; });
+    return out;
+}
+
+async function acctOpenOpeningModal() {
     if (!acctBookId) { acctToast('Select a book first (enable accounting on an investor).', true); return; }
     if (acctViewBookIds().length > 1) { acctToast('Opening balances are per book — exit the consolidated view first.', true); return; }
 
@@ -974,12 +1029,20 @@ function acctOpenOpeningModal() {
     // here would be silently dropped.
     var rows = acctOpeningExistingRows();
 
+    // Only auto-manage investments when the book is CLOSED to a date. When it isn't,
+    // a saved security-ledger line is left EDITABLE (never hidden) so it can't be lost.
+    var bookInv = (wmsRefData.investors || []).find(function (i) { return i.id === acctBookId; }) || {};
+    var autoInvest = !!bookInv.books_closed_upto;
+    function acctOpeningHideSaved(id) {
+        return acctLedgerName(id) === ACCT_OB_SUSPENSE || (autoInvest && acctIsSecurityLedger(id));
+    }
+
     // Map every already-saved opening balance by ledger (minus the derived suspense
-    // plug). Used to (a) prefill an amount when that ledger is picked again, and (b)
-    // flag the row with an alert icon — "you are changing a saved opening balance".
+    // plug and any auto-managed investment ledgers). Used to (a) prefill an amount
+    // when that ledger is picked again, and (b) flag the row with an alert icon.
     acctOpeningExisting = {};
     rows.forEach(function (r) {
-        if (!r.ledger_id || acctLedgerName(r.ledger_id) === ACCT_OB_SUSPENSE) return;
+        if (!r.ledger_id || acctOpeningHideSaved(r.ledger_id)) return;
         acctOpeningExisting[r.ledger_id] = {
             debit: Number(r.debit_amount) || 0, credit: Number(r.credit_amount) || 0
         };
@@ -989,13 +1052,23 @@ function acctOpenOpeningModal() {
         var dr = Number(r.debit_amount) || 0, cr = Number(r.credit_amount) || 0;
         return { ledgerId: r.ledger_id, ledgerName: acctLedgerName(r.ledger_id), debit: dr ? String(dr) : '', credit: cr ? String(cr) : '' };
     }).filter(function (l) {
-        // The suspense plug is DERIVED, never user input. Restoring it as an editable
-        // row would double-count it the moment a real line is corrected and re-saved,
-        // so drop it and let the difference recompute from the real lines.
-        return l.ledgerId && acctLedgerName(l.ledgerId) !== ACCT_OB_SUSPENSE;
+        // Drop the DERIVED suspense plug (recomputed on save) and — only on a closed
+        // book — the AUTO investment ledgers (re-derived below from the trade book).
+        return l.ledgerId && !acctOpeningHideSaved(l.ledgerId);
     });
+
+    // Prepend the auto investment lines (locked) drawn from the trade book.
+    acctLoading(true);
+    var investLines;
+    try { investLines = await acctOpeningComputeInvestments(); }
+    finally { acctLoading(false); }
+    var locked = (investLines || []).map(function (x) {
+        return { locked: true, security_id: x.security_id, ledgerName: x.name, debit: String(x.cost), credit: '' };
+    });
+    acctOpeningLines = locked.concat(acctOpeningLines);
+
     // Always leave one empty row to type into (like the New Voucher modal).
-    if (!acctOpeningLines.length) acctOpeningLines.push({ ledgerId: '', ledgerName: '', debit: '', credit: '' });
+    if (!acctOpeningLines.some(function (l) { return !l.locked; })) acctOpeningLines.push({ ledgerId: '', ledgerName: '', debit: '', credit: '' });
 
     acctOpeningDateYmd = rows.length ? rows[0].voucher_date : acctOpeningDefaultYmd();
 
@@ -1021,11 +1094,16 @@ function acctOpenOpeningModal() {
 // Ledgers offered in a row's picker: available in this book, minus any already
 // chosen in OTHER rows (a ledger can hold only one opening balance).
 function acctOpeningLedgerMatches(idx, q) {
-    var usedElsewhere = {};
-    acctOpeningLines.forEach(function (l, i) { if (i !== idx && l.ledgerId) usedElsewhere[l.ledgerId] = true; });
+    var usedElsewhere = {}, lockedSecs = {};
+    acctOpeningLines.forEach(function (l, i) {
+        if (i !== idx && l.ledgerId) usedElsewhere[l.ledgerId] = true;
+        if (l.locked && l.security_id) lockedSecs[l.security_id] = true;   // its Investment ledger is already shown (locked)
+    });
     var needle = String(q || '').trim().toLowerCase();
     return acctAvailableLedgers(acctBookId).filter(function (l) {
-        return !usedElsewhere[l.id] && (!needle || l.name.toLowerCase().indexOf(needle) >= 0);
+        if (usedElsewhere[l.id]) return false;
+        if (l.security_id && lockedSecs[l.security_id]) return false;      // don't let a locked security be picked again
+        return !needle || l.name.toLowerCase().indexOf(needle) >= 0;
     }).slice(0, 50);
 }
 
@@ -1151,6 +1229,16 @@ function acctRenderOpeningLines() {
     acctOpeningDdCtrls = {};
 
     tb.innerHTML = acctOpeningLines.map(function (ln, idx) {
+        // Locked AUTO investment line — drawn from the trade book, read-only.
+        if (ln.locked) {
+            return '<tr data-idx="' + idx + '" class="acct-ob-locked">' +
+                '<td><span class="acct-ob-lock" title="Auto: cost of holdings carried in from the trade book, as of the book close date. Change the trades to change this.">🔒</span> ' +
+                    wmsEsc(ln.ledgerName || 'Investment') +
+                    '<span class="acct-dd-grp">Investment</span></td>' +
+                '<td class="text-right acct-ob-lockamt">' + acctNum(acctParse(ln.debit)) + '</td>' +
+                '<td class="text-right"></td>' +
+                '<td></td></tr>';
+        }
         var nm = ln.ledgerId ? acctLedgerName(ln.ledgerId) : (ln.ledgerName || '');
         // ⚠ flag: this ledger already carries a SAVED opening balance — re-saving
         // overwrites it. Tooltip shows the amount currently on record.
@@ -1179,6 +1267,10 @@ function acctRenderOpeningLines() {
                 acctOpeningLines[0] = { ledgerId: '', ledgerName: '', debit: '', credit: '' };
             } else {
                 acctOpeningLines.splice(Number(b.dataset.idx), 1);
+                // Always leave at least one editable row (locked rows can't be typed in).
+                if (!acctOpeningLines.some(function (l) { return !l.locked; })) {
+                    acctOpeningLines.push({ ledgerId: '', ledgerName: '', debit: '', credit: '' });
+                }
             }
             acctRenderOpeningLines();
         };
@@ -1218,18 +1310,24 @@ function acctOpeningUpdateBalance() {
 async function acctSaveOpening() {
     var t = acctOpeningTotals();
     var withAmt = acctOpeningLines.filter(function (l) { return acctParse(l.debit) > 0 || acctParse(l.credit) > 0; });
-    // A typed amount with no ledger chosen would post a broken line — stop first.
-    if (withAmt.some(function (l) { return !l.ledgerId; })) {
+    // Editable rows need a ledger; locked auto-investment rows resolve by security_id.
+    if (withAmt.some(function (l) { return !l.locked && !l.ledgerId; })) {
         acctToast('Pick a ledger for every row that has an amount.', true); return;
     }
-    var lines = withAmt.map(function (l) {
-        return { ledger_id: l.ledgerId, debit_amount: acctParse(l.debit), credit_amount: acctParse(l.credit) };
-    });
-    if (!lines.length) { acctToast('Enter at least one amount.', true); return; }
+    if (!withAmt.length) { acctToast('Enter at least one amount.', true); return; }
 
     var btn = document.getElementById('acctOpeningSave');
     if (btn) btn.disabled = true;
     try {
+        // Resolve every row to a ledger id — a locked investment row resolves to its
+        // security's Investment ledger (find-or-create by security_id).
+        var lines = [];
+        for (var wi = 0; wi < withAmt.length; wi++) {
+            var wl = withAmt[wi], wlid;
+            if (wl.locked && wl.security_id) wlid = await acctFindOrCreateAuto('security_id', wl.security_id);
+            else wlid = wl.ledgerId;
+            lines.push({ ledger_id: wlid, debit_amount: acctParse(wl.debit), credit_amount: acctParse(wl.credit) });
+        }
         // Plug any difference to the suspense ledger so the voucher always ties.
         if (Math.abs(t.diff) >= 0.005) {
             var map = {};
