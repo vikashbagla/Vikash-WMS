@@ -1114,7 +1114,13 @@ function acctOpeningWireLedgerCell(input) {
 
 function acctOpeningWireAmountCell(inp) {
     var idx = Number(inp.dataset.idx), field = inp.dataset.field;
-    if (typeof wmsAttachAmountInput === 'function') wmsAttachAmountInput(inp, { allowNegative: false });
+    var ctrl = (typeof wmsAttachAmountInput === 'function') ? wmsAttachAmountInput(inp, { allowNegative: false }) : null;
+    // Prefilled amounts (editing a saved book) are set programmatically and never
+    // blur, so format them now — otherwise they show raw, un-grouped numbers.
+    if (ctrl && inp.value && document.activeElement !== inp) {
+        var n0 = parseFloat(String(inp.value).replace(/,/g, ''));
+        if (!isNaN(n0)) ctrl.setValue(n0);
+    }
     inp.addEventListener('input', function () {
         acctOpeningLines[idx][field] = inp.value;
         // A line is Dr or Cr, never both — clear the opposite as you type.

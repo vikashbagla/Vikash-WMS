@@ -5635,9 +5635,13 @@ var wmsAttachAmountInput = function(input, opts) {
             if (typeof opts.onCommit === 'function') opts.onCommit(parse(input.value));
         }
     };
-    // Strip anything that isn't a digit, comma, dot, or leading minus while typing
+    // Strip anything that isn't a digit, comma, dot, or leading minus while typing.
+    // EXCEPTION: while an "=" formula is being entered (wmsInitFormulaInput), leave
+    // the value alone so the Excel-style calculator can work — it replaces the field
+    // with the numeric result on Enter/blur, which then formats normally.
     var doInput = function() {
         var v = input.value;
+        if (v.charAt(0) === '=') return;
         var cleaned = v.replace(/[^\d.,\-]/g, '');
         if (cleaned !== v) input.value = cleaned;
     };
