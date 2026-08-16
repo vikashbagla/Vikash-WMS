@@ -1699,6 +1699,17 @@ function acctOpenEditVoucher(voucherId) {
         acctToast('“' + rows[0].voucher_number + '” is cancelled. It is kept for the audit trail and cannot be edited.', true);
         return;
     }
+    // Opening balances are edited only through the ⚖ Opening Balances tool, which
+    // owns the single-voucher-per-book rule AND auto-plugs any gap to the
+    // "Difference in Opening Balance" line. Editing them in the generic voucher
+    // modal is a foot-gun: deleting the plug line unbalances the voucher and Save
+    // (which requires Dr = Cr) then refuses it. Redirect instead.
+    if (rows[0].voucher_type === 'OPENING_BALANCE') {
+        acctToast('Opening balances are edited from “⚖ Opening Balances” — it fills any gap for you. Opening it now…', false);
+        if (acctLedgerModalCtrl) acctLedgerModalCtrl.close();
+        acctOpenOpeningModal();
+        return;
+    }
     if (rows[0].is_auto) {
         acctToast('“' + rows[0].voucher_number + '” was auto-posted from trades. Edit the underlying trade, then Rebuild.', true);
         return;
