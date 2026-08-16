@@ -21,10 +21,18 @@
 //          derived voucher rather than re-reading raw trade fields.
 //
 // Returns { toPost, toReplace, unchanged, orphans, closedBlocked }:
-//   toPost        — fresh vouchers with no live existing voucher → post new.
+//   toPost        — fresh vouchers with no live existing voucher, in an OPEN
+//                   period → post new.
 //   toReplace     — [{ oldId, fresh }] existing voucher whose sig changed AND the
 //                   voucher is in an OPEN period → cancel old, post fresh.
 //   unchanged     — sig identical → do nothing.
+//   skippedClosed — fresh voucher in a CLOSED period with no existing voucher →
+//                   do NOT post. The closed period's net effect is carried by the
+//                   book's OPENING BALANCE (investments at cost, capital, cash…),
+//                   so its individual trades are never posted. This is what makes
+//                   "close the book to 31-Mar" actually bound the engine to the
+//                   open period — without it, brand-new closed-period trades were
+//                   posted and double-counted the opening balance.
 //   closedBlocked — sig changed but the voucher is in a CLOSED period → do NOT
 //                   edit; caller logs an acct_exceptions alert (D12).
 //   orphans       — live existing vouchers with no fresh counterpart (source
@@ -61,14 +69,20 @@
         var exByKey = {};
         (existing || []).forEach(function (e) { exByKey[String(e.key)] = e; });
         var seen = {};
-        var out = { toPost: [], toReplace: [], unchanged: [], closedBlocked: [], orphans: [] };
+        var out = { toPost: [], toReplace: [], unchanged: [], skippedClosed: [], closedBlocked: [], orphans: [] };
 
         (fresh || []).forEach(function (f) {
             var key = String(f.key);
             seen[key] = true;
             var e = exByKey[key];
             var date = (opts.dateOf ? opts.dateOf(f) : f.date);
-            if (!e) { out.toPost.push(f); return; }               // NEW
+            if (!e) {                                             // NEW
+                // A brand-new trade in a CLOSED period is carried by the opening
+                // balance, not posted individually (see header). Skip it.
+                if (inClosedPeriod(date, closedUpto)) out.skippedClosed.push(f);
+                else out.toPost.push(f);
+                return;
+            }
             if (e.sig === f.sig) { out.unchanged.push(f); return; } // UNCHANGED
             // CHANGED — open period edits; closed period is logged, never edited (D12)
             if (inClosedPeriod(date, closedUpto)) out.closedBlocked.push({ oldId: e.id, fresh: f });
