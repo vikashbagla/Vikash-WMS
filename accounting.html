@@ -232,6 +232,27 @@
 .acct-ledger-detail-head { margin-bottom: 10px; }
 .acct-ledger-detail-head .acct-ld-name { font-size: 15px; font-weight: 700; color: #1a202c; }
 .acct-ledger-detail-head .acct-ld-sub { font-size: 11px; color: #718096; }
+/* Roomier rows in the ledger drill-down so lines are easy to tell apart. */
+.acct-ld-table td { padding: 9px 10px; }
+.acct-ld-table th { padding: 8px 10px; }
+.acct-ld-opening td { background: #f8fafc; color: #475569; }
+/* Date-filter strip inside the ledger modal. */
+.acct-ld-filter {
+    display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap;
+    margin: 2px 0 12px; padding: 8px 10px;
+    background: #f8fafc; border: 1px solid #eef2f7; border-radius: 8px;
+}
+.acct-ld-filter label { font-size: 10px; font-weight: 600; text-transform: uppercase; color: #718096; }
+.acct-ld-filter select.wms-input, .acct-ld-filter input.wms-input {
+    width: auto; max-width: 190px; font-size: 11px; padding: 3px 6px;
+}
+/* Resizable, wider ledger dialog — long ledgers can be sized to fit the screen. */
+.acct-ledger-dialog {
+    max-width: 96vw; width: 960px;
+    height: 80vh; min-width: 620px; min-height: 320px; max-height: 92vh;
+    resize: both; overflow: hidden;
+}
+.acct-ledger-dialog .wms-modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
 /* ---- Financial statements: MProfit-style two-column T-format ---- */
 .acct-fin-controls { display: flex; align-items: center; gap: 8px; padding: 2px 0 10px; }
@@ -480,12 +501,12 @@
 
 <!-- ===================== Ledger-detail modal ===================== -->
 <div class="wms-modal-overlay" id="acctLedgerModal">
-    <div class="wms-modal-dialog" style="max-width: 760px; width: 92%;">
+    <div class="wms-modal-dialog acct-ledger-dialog">
         <div class="wms-modal-header">
             <span style="font-size:15px;font-weight:700;">Ledger</span>
             <button class="wms-btn-close" id="acctLedgerClose">✕</button>
         </div>
-        <div class="wms-modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
+        <div class="wms-modal-body" style="padding:16px;">
             <div id="acctLedgerDetailBody"></div>
         </div>
         <div class="wms-modal-footer">

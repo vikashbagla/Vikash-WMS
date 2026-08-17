@@ -5057,20 +5057,33 @@ function wmsFormatSecurity(sec, format) {
 //   modal.open();  modal.close();  modal.isOpen();
 // ============================================================================
 
+// Shared stack of currently-open modal overlays, in open order. Lets ESC and
+// backdrop-click act on the TOPMOST modal only — so a modal opened on top of
+// another (e.g. the voucher modal over the ledger-detail modal) steps back ONE
+// layer instead of closing every open modal down to the main screen.
+var wmsModalStack = (typeof window !== 'undefined' && window.__wmsModalStack) || [];
+if (typeof window !== 'undefined') window.__wmsModalStack = wmsModalStack;
+
+function wmsModalIsTop(overlayEl) {
+    return wmsModalStack.length && wmsModalStack[wmsModalStack.length - 1] === overlayEl;
+}
+
 function wmsModal(overlayEl, opts) {
     opts = opts || {};
     var onClose = opts.onClose || function() {};
 
     function escHandler(e) {
-        if (e.key === 'Escape' && overlayEl.classList.contains('show')) {
+        // Only the top-most open modal responds to ESC.
+        if (e.key === 'Escape' && overlayEl.classList.contains('show') && wmsModalIsTop(overlayEl)) {
             e.preventDefault();
+            e.stopPropagation();
             controller.close();
         }
     }
 
     function clickOutsideHandler(e) {
-        // Click on overlay background (not on dialog content)
-        if (e.target === overlayEl) {
+        // Click on overlay background (not on dialog content), top-most only.
+        if (e.target === overlayEl && wmsModalIsTop(overlayEl)) {
             controller.close();
         }
     }
@@ -5078,11 +5091,22 @@ function wmsModal(overlayEl, opts) {
     var controller = {
         open: function() {
             overlayEl.classList.add('show');
+            // De-dupe then push so this overlay is unambiguously the top.
+            var ix = wmsModalStack.indexOf(overlayEl);
+            if (ix !== -1) wmsModalStack.splice(ix, 1);
+            wmsModalStack.push(overlayEl);
+            // Raise this overlay above any modal already open. Base overlay z-index
+            // is 1100; DOM order alone would otherwise let an earlier-in-DOM modal
+            // sit behind a later one. Stack depth drives the paint order instead.
+            overlayEl.style.zIndex = String(1100 + wmsModalStack.length * 10);
             document.addEventListener('keydown', escHandler);
             overlayEl.addEventListener('click', clickOutsideHandler);
         },
         close: function() {
             overlayEl.classList.remove('show');
+            overlayEl.style.zIndex = '';
+            var ix = wmsModalStack.indexOf(overlayEl);
+            if (ix !== -1) wmsModalStack.splice(ix, 1);
             document.removeEventListener('keydown', escHandler);
             overlayEl.removeEventListener('click', clickOutsideHandler);
             onClose();
