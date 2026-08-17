@@ -282,6 +282,34 @@
 .acct-balance-bar.bad { background: #fef2f2; color: #dc2626; }
 .acct-balance-bar .acct-bal-spacer { flex: 1; }
 
+/* ---- Voucher modal (free-form entry) ---- */
+.acct-voucher-header .acct-vh-right { display: flex; align-items: center; gap: 10px; }
+/* Totals aligned under the Debit/Credit columns (not free-standing "Dr x Cr y" text). */
+.acct-voucher-lines-table tfoot .acct-vch-total-row td {
+    border-top: 2px solid #cbd5e0; font-weight: 700; padding-top: 8px;
+    font-variant-numeric: tabular-nums; color: #1f2937;
+}
+.acct-voucher-lines-table tfoot .acct-vch-total-lbl { color: #334155; }
+.acct-vch-diff-row td { padding-top: 3px; border: none; }
+.acct-vch-diff-row .acct-vch-diff-msg { font-size: 11px; font-weight: 600; color: #718096; }
+.acct-vch-diff-row .acct-vch-diff-amt { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.acct-voucher-grid.acct-vch-balanced .acct-vch-diff-msg { color: #059669; }
+.acct-voucher-grid.acct-vch-unbalanced .acct-vch-diff-msg,
+.acct-voucher-grid.acct-vch-unbalanced .acct-vch-diff-amt { color: #dc2626; }
+/* Per-ledger running balance shown as a sub-line under the ledger picker. */
+.acct-line-bal { font-size: 10px; color: #64748b; margin-top: 3px; padding-left: 2px; white-space: nowrap; }
+.acct-line-bal .acct-line-bal-proj { color: #4338ca; font-weight: 600; }
+/* Optional per-leg narration field under a ledger row. */
+.acct-line-narr input { margin-top: 5px; width: 100%; }
+.acct-narr-label { display: flex; align-items: center; justify-content: space-between; }
+.acct-narr-toggle {
+    border: 1px solid #e2e8f0; background: #fff; border-radius: 4px; cursor: pointer;
+    font-size: 10px; color: #718096; padding: 2px 8px; text-transform: none; font-weight: 600;
+}
+.acct-narr-toggle:hover { border-color: #667eea; color: #667eea; }
+.acct-narr-toggle.on { background: #eef2ff; border-color: #667eea; color: #4338ca; }
+.acct-narr-textarea { resize: vertical; min-height: 44px; font-family: inherit; line-height: 1.4; }
+
 /* Ledger detail modal — name + unit controls live in the header row (saves body space). */
 .acct-ledger-header .acct-lh-left { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .acct-ledger-header .acct-lh-title { font-size: 15px; font-weight: 700; color: #1a202c; white-space: nowrap; }
@@ -477,57 +505,53 @@
 <!-- ===================== Voucher entry modal ===================== -->
 <div class="wms-modal-overlay" id="acctVoucherModal">
     <div class="wms-modal-dialog" style="max-width: 720px; width: 92%;">
-        <div class="wms-modal-header">
+        <div class="wms-modal-header acct-voucher-header">
             <span id="acctVoucherTitle" style="font-size:15px;font-weight:700;">New Voucher</span>
-            <button class="wms-btn-close" id="acctVoucherClose">✕</button>
+            <div class="acct-vh-right">
+                <div id="acctVoucherDate"></div>
+                <button class="wms-btn-close" id="acctVoucherClose">✕</button>
+            </div>
         </div>
-        <div class="wms-modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
+        <div class="wms-modal-body" style="padding:16px;max-height:74vh;overflow-y:auto;">
             <div id="acctVoucherRoBanner" class="acct-ro-banner" style="display:none;">
                 🔒 Auto-posted from a PMS trade — view only. To change it, edit the underlying trade and run Rebuild.
             </div>
-            <div class="acct-type-toggle" id="acctVoucherTypeToggle">
-                <button class="acct-type-btn active" data-vtype="JOURNAL">Journal</button>
-                <button class="acct-type-btn" data-vtype="RECEIPT">Receipt</button>
-                <button class="acct-type-btn" data-vtype="PAYMENT">Payment</button>
-                <button class="acct-type-btn" data-vtype="CONTRA">Contra</button>
-                <button class="acct-type-btn" data-vtype="OPENING_BALANCE">Opening</button>
-            </div>
 
             <div class="acct-voucher-grid">
-                <div class="acct-field-row">
-                    <div class="acct-field">
-                        <label>Date</label>
-                        <div id="acctVoucherDate"></div>
-                    </div>
-                </div>
-
-                <table class="acct-lines-table">
+                <table class="acct-lines-table acct-voucher-lines-table">
                     <thead>
                         <tr>
-                            <th style="width:52%;">Ledger</th>
+                            <th style="width:54%;">Ledger</th>
                             <th class="text-right">Debit</th>
                             <th class="text-right">Credit</th>
                             <th style="width:28px;"></th>
                         </tr>
                     </thead>
                     <tbody id="acctVoucherLines"></tbody>
+                    <tfoot>
+                        <tr class="acct-vch-total-row" id="acctVchTotalRow">
+                            <td class="acct-vch-total-lbl">Total</td>
+                            <td class="text-right" id="acctTotalDebit">0.00</td>
+                            <td class="text-right" id="acctTotalCredit">0.00</td>
+                            <td></td>
+                        </tr>
+                        <tr class="acct-vch-diff-row">
+                            <td class="acct-vch-diff-msg" id="acctBalanceMsg">Enter at least two lines</td>
+                            <td class="text-right acct-vch-diff-amt" id="acctVchDiff" colspan="2"></td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
                 </table>
-                <div class="acct-lines-actions">
-                    <button id="acctAddLineBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;">➕ Add line</button>
-                </div>
 
-                <div class="acct-balance-bar bad" id="acctBalanceBar">
-                    <span id="acctBalanceMsg">Not balanced</span>
-                    <span class="acct-bal-spacer"></span>
-                    <span>Dr <span id="acctTotalDebit">0.00</span></span>
-                    <span>Cr <span id="acctTotalCredit">0.00</span></span>
-                </div>
-
-                <!-- Narration sits AFTER the amounts: it is the last thing typed,
-                     and the keyboard flow lands here once the voucher balances. -->
-                <div class="acct-field" style="margin-top:2px;">
-                    <label>Narration</label>
-                    <input type="text" id="acctVoucherNarration" class="wms-input" placeholder="Voucher narration">
+                <!-- Narration: multi-line (Enter = newline). The ✎ button reveals a
+                     per-leg narration field under each ledger (the DB stores narration
+                     on every voucher line). -->
+                <div class="acct-field" style="margin-top:10px;">
+                    <label class="acct-narr-label">
+                        <span>Narration</span>
+                        <button type="button" id="acctLegNarrToggle" class="acct-narr-toggle" title="Add a note under each ledger line">✎ line notes</button>
+                    </label>
+                    <textarea id="acctVoucherNarration" class="wms-input acct-narr-textarea" rows="2" placeholder="Voucher narration (Enter for a new line)"></textarea>
                 </div>
             </div>
         </div>
