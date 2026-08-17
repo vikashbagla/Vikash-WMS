@@ -435,11 +435,92 @@
         return { vouchers: vouchers, exceptions: exceptions, skipped: skipped };
     }
 
+    // ---- Mutual-fund postings (mf_trades — fractional units, separate table) ----
+    // The 3rd PMS source. Counterparty is ALWAYS PMS_SETTLEMENT, never a broker
+    // (owner rule 2026-08-18) — so MF does NOT reuse buyOwn/sellOwn (those credit the
+    // broker). BUY: Dr Investment / Cr PMS Settlement. REDEMPTION: Dr PMS Settlement /
+    // Cr Investment (FIFO cost) / CG via the security's capital_gains map (liquid =
+    // always slab). DIV_REINVEST: Dr Investment / Cr income. DIV_PAYOUT: Dr PMS
+    // Settlement / Cr income. No STT (MF `stt` is not tracked in mf_trades).
+    function acctMfIncomeRole(sec) {
+        var m = (sec && sec.income_ledgers) || {};
+        return m.DIVIDEND || m.INTEREST || m.OTHER_INCOME || 'INC_OTHER';
+    }
+    function acctProcessMfTrades(mfTrades, ctx) {
+        var rows = (mfTrades || []).slice().sort(function (a, b) {
+            return String(a.txn_date).localeCompare(String(b.txn_date)) || String(a.id).localeCompare(String(b.id));
+        });
+        // Pseudo-transactions for the shared FIFO (BUY adds a lot, SELL matches by date).
+        var pt = rows.map(function (r) {
+            var tt = (r.txn_type === 'REDEMPTION') ? 'SELL' : 'BUY';   // PURCHASE / DIV_REINVEST add units
+            return { id: r.id, security_id: r.security_id, security_type: secOf(r, ctx).security_type,
+                     transaction_type: tt, quantity: absN(r.units), net_amount: absN(r.amount),
+                     transaction_date: r.txn_date, stt: 0 };
+        });
+        var fifo = ctx.fifo(pt) || { gains: [] };
+        var gainsBySell = {};
+        (fifo.gains || []).forEach(function (g) { var k = String(g.sellTxnId); (gainsBySell[k] = gainsBySell[k] || []).push(g); });
+
+        var vouchers = [], exceptions = [], skipped = [];
+        rows.forEach(function (r) {
+            var sec = secOf(r, ctx), amt = absN(r.amount), tt = String(r.txn_type || '').toUpperCase(), nm = symOf(r, ctx) || 'MF', lines = [], type;
+            if (tt === 'PURCHASE') {
+                lines.push({ ref: { security_id: r.security_id }, debit: r2(amt), credit: 0 });
+                lines.push({ ref: { role: 'PMS_SETTLEMENT' }, debit: 0, credit: r2(amt) });
+                type = 'PMS-MF-BUY';
+            } else if (tt === 'DIV_REINVEST') {
+                lines.push({ ref: { security_id: r.security_id }, debit: r2(amt), credit: 0 });
+                lines.push({ ref: { role: acctMfIncomeRole(sec) }, debit: 0, credit: r2(amt) });
+                type = 'PMS-MF-DIVREINV';
+            } else if (tt === 'DIV_PAYOUT') {
+                lines.push({ ref: { role: 'PMS_SETTLEMENT' }, debit: r2(amt), credit: 0 });
+                lines.push({ ref: { role: acctMfIncomeRole(sec) }, debit: 0, credit: r2(amt) });
+                type = 'PMS-MF-DIVPAYOUT';
+            } else if (tt === 'REDEMPTION') {
+                var gains = gainsBySell[String(r.id)] || [], sold = absN(r.units), matched = 0;
+                gains.forEach(function (g) { matched += absN(g.qty); });
+                if (sold > 0 && matched + 0.0001 < sold) {
+                    skipped.push({ id: r.id, reason: 'no cost basis' });
+                    exceptions.push(ex('mf_sell_no_cost_basis:' + nm, 'warn', 'MF redemption with no cost basis: ' + nm,
+                        { security_id: r.security_id, sold: sold, matched: matched, uncovered: r2(sold - matched) }));
+                    return;
+                }
+                lines.push({ ref: { role: 'PMS_SETTLEMENT' }, debit: r2(amt), credit: 0 });      // proceeds
+                var cost = 0, byRole = {}, order = [];
+                gains.forEach(function (g) {
+                    cost += (g.buyCost || 0);
+                    var cls = wmsGainClassify(g, sec);
+                    var role = (cls.bucket === 'INTRADAY') ? 'INTRADAY_PL' : cls.cgRole;
+                    if (!role) { exceptions.push(ex('mf_unmapped_cg:' + nm, 'warn', 'No CG ledger for ' + nm, { security_id: r.security_id })); role = 'CG_ST_SLAB'; }
+                    if (byRole[role] === undefined) order.push(role);
+                    byRole[role] = (byRole[role] || 0) + (g.gain || 0);
+                });
+                lines.push({ ref: { security_id: r.security_id }, debit: 0, credit: r2(cost) });
+                var cg = [];
+                order.forEach(function (role) { var a = r2(byRole[role]); if (Math.round(a * 100) !== 0) cg.push({ role: role, amt: a }); });
+                // Rounding plug — last CG line absorbs the sub-paise residual so it ties.
+                var resid = r2(r2(r2(amt) - r2(cost)) - cg.reduce(function (s, e) { return s + e.amt; }, 0));
+                if (Math.abs(resid) >= 0.005 && cg.length) cg[cg.length - 1].amt = r2(cg[cg.length - 1].amt + resid);
+                else if (Math.abs(resid) >= 0.005) cg.push({ role: (sec.capital_gains && sec.capital_gains.stcg) || 'CG_ST_SLAB', amt: resid });
+                cg.forEach(function (e) {
+                    if (e.amt >= 0) lines.push({ ref: { role: e.role }, debit: 0, credit: e.amt });
+                    else lines.push({ ref: { role: e.role }, debit: -e.amt, credit: 0 });
+                });
+                type = 'PMS-MF-SELL';
+            } else { skipped.push({ id: r.id, reason: 'unknown mf txn_type ' + tt }); return; }
+
+            if (!voucherBalances(lines)) { exceptions.push(ex('mf_unbalanced:' + r.id, 'critical', 'MF voucher does not balance for ' + nm, { mfId: r.id, type: type })); }
+            vouchers.push({ mfId: r.id, type: type, date: r.txn_date, narration: (type === 'PMS-MF-SELL' ? 'MF redeem ' : 'MF buy ') + nm, lines: lines });
+        });
+        return { vouchers: vouchers, exceptions: exceptions, skipped: skipped };
+    }
+
     return {
         acctEngineProcess: acctEngineProcess,
         acctBuildVoucher: acctBuildVoucher,
         acctStatementVoucher: acctStatementVoucher,
         acctProcessStatements: acctProcessStatements,
+        acctProcessMfTrades: acctProcessMfTrades,
         demergerVouchers: demergerVouchers,
         acctFnoRealised: acctFnoRealised,
         voucherBalances: voucherBalances

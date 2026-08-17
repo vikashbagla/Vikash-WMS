@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
-const { acctBuildVoucher, acctEngineProcess, demergerVouchers, acctFnoRealised, acctStatementVoucher, voucherBalances } = require(join(here, '..', 'accounting-engine.js'));
+const { acctBuildVoucher, acctEngineProcess, demergerVouchers, acctFnoRealised, acctStatementVoucher, acctProcessMfTrades, voucherBalances } = require(join(here, '..', 'accounting-engine.js'));
 
 let pass=0, fail=0;
 function ok(name, cond){ if(cond){pass++;} else {fail++; console.log('FAIL', name);} }
@@ -203,6 +203,34 @@ ok('stmt cash recd client: Dr Cash / Cr Client', voucherBalances(v.lines) && amt
 // Reconciliation & opening balance: no voucher
 ok('stmt reconciliation: skipped', !!acctStatementVoucher({entry_type:'RECONCILIATION', investor_id:'T3', amount:69448675.66}, ctx).skip);
 ok('stmt opening balance: skipped', !!acctStatementVoucher({entry_type:'OPENING_BALANCE', investor_id:'T0', broker_id:'BRK1', amount:70863016}, ctx).skip);
+
+// --- Mutual funds (acctProcessMfTrades — settles to PMS_SETTLEMENT, never a broker) ---
+const mfCtx = {
+  securityById: { MFLIQ:{ security_type:'ETF_DEBT', symbol:'LIQ',
+    capital_gains:{ stcg:'CG_ST_SLAB', ltcg:'CG_LT', lt_months:0 }, income_ledgers:{ INTEREST:'INC_INT_OTHERS' } } },
+  investorById: { INV1:{} },
+  // stub FIFO: match the sell to the earliest buy; gain = proceeds − cost
+  fifo: (txns)=>{ const buys=txns.filter(t=>t.transaction_type==='BUY'); const gains=[];
+    txns.filter(t=>t.transaction_type==='SELL').forEach(s=>{ const b=buys[0]||{};
+      gains.push({ sellTxnId:s.id, qty:s.quantity, buyCost:b.net_amount||0, gain:(s.net_amount||0)-(b.net_amount||0),
+        buyDate:b.transaction_date, sellDate:s.transaction_date }); });
+    return { gains }; }
+};
+let mr = acctProcessMfTrades([{ id:'M1', security_id:'MFLIQ', txn_type:'PURCHASE', units:100, amount:1000, txn_date:'2026-05-10' }], mfCtx);
+ok('mf buy: one balanced voucher', mr.vouchers.length===1 && voucherBalances(mr.vouchers[0].lines));
+ok('mf buy: Dr Investment 1000', amt(mr.vouchers[0], r=>r.security_id==='MFLIQ')===1000);
+ok('mf buy: Cr PMS Settlement 1000 (never a broker)', amt(mr.vouchers[0], r=>r.role==='PMS_SETTLEMENT')===-1000);
+ok('mf buy: no broker leg ever', !mr.vouchers[0].lines.some(l=>l.ref.broker_id));
+mr = acctProcessMfTrades([
+  { id:'M1', security_id:'MFLIQ', txn_type:'PURCHASE',  units:100, amount:1000, txn_date:'2026-05-10' },
+  { id:'M2', security_id:'MFLIQ', txn_type:'REDEMPTION', units:100, amount:1200, txn_date:'2026-06-10' }
+], mfCtx);
+const mfSell = mr.vouchers.find(v=>v.type==='PMS-MF-SELL');
+ok('mf redeem: balances', !!mfSell && voucherBalances(mfSell.lines));
+ok('mf redeem: Dr PMS Settlement proceeds 1200', amt(mfSell, r=>r.role==='PMS_SETTLEMENT')===1200);
+ok('mf redeem: Cr Investment cost 1000', amt(mfSell, r=>r.security_id==='MFLIQ')===-1000);
+ok('mf redeem: CG to slab (liquid → CG_ST_SLAB) Cr 200', amt(mfSell, r=>r.role==='CG_ST_SLAB')===-200);
+ok('mf redeem: never an LTCG line (lt_months 0)', !mfSell.lines.some(l=>l.ref.role==='CG_LT'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);
