@@ -55,9 +55,24 @@
     box-shadow: 0 6px 18px rgba(0,0,0,.12); min-width: 180px; padding: 4px; display: none;
 }
 .acct-book-add-dd.show { display: block; }
-.acct-book-add-dd .acct-book-add-item { padding: 6px 10px; font-size: 12px; color: #2d3748; cursor: pointer; border-radius: 5px; }
-.acct-book-add-dd .acct-book-add-item:hover { background: #eef2ff; }
-.acct-book-add-dd .acct-book-add-empty { padding: 6px 10px; font-size: 11px; color: #a0aec0; }
+.acct-book-add-dd { min-width: 240px; }
+.acct-book-mgr-hd { padding: 4px 8px 6px; font-size: 10px; color: #a0aec0; border-bottom: 1px solid #f1f5f9; margin-bottom: 3px; }
+.acct-book-mgr-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 5px; }
+.acct-book-mgr-row:hover { background: #f7faff; }
+.acct-book-mgr-row.is-hidden .acct-book-mgr-name { color: #a0aec0; font-style: italic; }
+.acct-book-mgr-move { display: inline-flex; flex-direction: column; line-height: 0.7; }
+.acct-book-mgr-move button {
+    border: none; background: none; cursor: pointer; color: #94a3b8;
+    font-size: 9px; padding: 0 2px; line-height: 1;
+}
+.acct-book-mgr-move button:hover:not(:disabled) { color: #667eea; }
+.acct-book-mgr-move button:disabled { opacity: .3; cursor: default; }
+.acct-book-mgr-name { flex: 1; font-size: 12px; color: #2d3748; cursor: pointer; white-space: nowrap; }
+.acct-book-mgr-toggle {
+    border: 1px solid #e2e8f0; background: #fff; border-radius: 4px; cursor: pointer;
+    font-size: 10px; color: #718096; padding: 2px 8px;
+}
+.acct-book-mgr-toggle:hover { border-color: #667eea; color: #667eea; }
 .acct-books-empty { font-size: 12px; color: #a0aec0; padding: 2px 4px; }
 
 /* ---- Tabs (app tab-bar signature: same look as .tr-view-tab) ---- */
@@ -275,6 +290,13 @@
 .acct-ld-table td { padding: 9px 10px; }
 .acct-ld-table th { padding: 8px 10px; }
 .acct-ld-opening td { background: #f8fafc; color: #475569; }
+/* Column sizing: keep Date/Vch# tight; give the Contra ledger room for long names. */
+.acct-ld-table th.c-date, .acct-ld-table td.c-date { width: 84px; white-space: nowrap; }
+.acct-ld-table th.c-vch, .acct-ld-table td.c-vch { width: 62px; white-space: nowrap; }
+.acct-ld-table th.c-contra { min-width: 190px; }
+.acct-ld-table th.c-amt { width: 94px; }
+/* Search sits at the far right of the filter bar. */
+.acct-ld-filter .acct-ld-search { margin-left: auto; min-width: 190px; }
 /* Date-filter strip inside the ledger modal. */
 .acct-ld-filter {
     display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap;

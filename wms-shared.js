@@ -5071,6 +5071,10 @@ function wmsModalIsTop(overlayEl) {
 function wmsModal(overlayEl, opts) {
     opts = opts || {};
     var onClose = opts.onClose || function() {};
+    // backdropClose:false → clicking the dark overlay does nothing (the accounting
+    // module opts out so a stray click can't discard a half-typed voucher). ESC and
+    // the ✕/Cancel buttons still close.
+    var backdropClose = opts.backdropClose !== false;
 
     function escHandler(e) {
         // Only the top-most open modal responds to ESC.
@@ -5083,7 +5087,7 @@ function wmsModal(overlayEl, opts) {
 
     function clickOutsideHandler(e) {
         // Click on overlay background (not on dialog content), top-most only.
-        if (e.target === overlayEl && wmsModalIsTop(overlayEl)) {
+        if (backdropClose && e.target === overlayEl && wmsModalIsTop(overlayEl)) {
             controller.close();
         }
     }

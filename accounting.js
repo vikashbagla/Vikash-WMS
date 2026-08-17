@@ -166,6 +166,22 @@ function acctReorderBook(dragId, targetId) {
     acctSaveBookOrder();
     acctRenderBookTabs();
 }
+/** Nudge a book one step up/down in the full order (used by the ＋ manager). */
+function acctMoveBook(id, dir) {
+    acctOrderedBooks();
+    var ix = acctBookOrder.indexOf(id), j = ix + dir;
+    if (ix < 0 || j < 0 || j >= acctBookOrder.length) return;
+    var t = acctBookOrder[ix]; acctBookOrder[ix] = acctBookOrder[j]; acctBookOrder[j] = t;
+    acctSaveBookOrder();
+    acctRenderBookTabs();
+}
+/** Flip a book between open (visible) and closed, without forcing a switch. */
+function acctToggleBookHidden(id) {
+    var ix = acctBooksHidden.indexOf(id);
+    if (ix >= 0) { acctBooksHidden.splice(ix, 1); acctSaveBooksHidden(); acctRenderBookTabs(); }
+    else { acctHideBook(id); }           // hiding handles the active-book fallback
+}
+var acctBookMgrOpen = false;             // keep the ＋ manager open across its own re-renders
 
 function acctRenderBookTabs() {
     var el = document.getElementById('acctBookTabs');
@@ -191,13 +207,24 @@ function acctRenderBookTabs() {
             '<span class="acct-book-lbl">' + wmsEsc(b.short_name || b.name) + '</span>' +
             '<span class="acct-book-x" title="Close this book tab">✕</span></span>';
     }).join('');
-    // "＋" opens a menu of closed books to re-open (only shown when some are hidden).
+    // "＋" opens a book manager: every book in order, with ▲▼ reorder and Open/Close.
+    var allBooks = acctOrderedBooks();
+    var mgrRows = allBooks.map(function (b, i) {
+        var isHidden = acctBooksHidden.indexOf(b.id) >= 0;
+        return '<div class="acct-book-mgr-row' + (isHidden ? ' is-hidden' : '') + '">' +
+            '<span class="acct-book-mgr-move">' +
+                '<button class="acct-book-mgr-up" data-book="' + b.id + '"' + (i === 0 ? ' disabled' : '') + ' title="Move up">▲</button>' +
+                '<button class="acct-book-mgr-down" data-book="' + b.id + '"' + (i === allBooks.length - 1 ? ' disabled' : '') + ' title="Move down">▼</button>' +
+            '</span>' +
+            '<span class="acct-book-mgr-name" data-book="' + b.id + '" title="Go to this book">' + wmsEsc(b.short_name || b.name) + '</span>' +
+            '<button class="acct-book-mgr-toggle" data-book="' + b.id + '">' + (isHidden ? 'Open' : 'Close') + '</button>' +
+        '</div>';
+    }).join('');
     var addHtml = '<span class="acct-book-add-wrap">' +
-        '<button class="acct-book-add" id="acctBookAddBtn" title="Open a closed book">+</button>' +
-        '<div class="acct-book-add-dd" id="acctBookAddDd">' +
-            (hidden.length
-                ? hidden.map(function (b) { return '<div class="acct-book-add-item" data-book="' + b.id + '">' + wmsEsc(b.short_name || b.name) + '</div>'; }).join('')
-                : '<div class="acct-book-add-empty">All books are open</div>') +
+        '<button class="acct-book-add" id="acctBookAddBtn" title="Manage books — reorder, open, close">+</button>' +
+        '<div class="acct-book-add-dd' + (acctBookMgrOpen ? ' show' : '') + '" id="acctBookAddDd">' +
+            '<div class="acct-book-mgr-hd">Books — drag tabs or use ▲▼ to reorder</div>' +
+            mgrRows +
         '</div></span>';
     el.innerHTML = tabsHtml + addHtml +
         '<span id="acctConsolidateChip" class="acct-consol-chip" style="display:none;margin-left:8px;"></span>';
@@ -220,9 +247,13 @@ function acctRenderBookTabs() {
     var addBtn = document.getElementById('acctBookAddBtn');
     var addDd = document.getElementById('acctBookAddDd');
     if (addBtn && addDd) {
-        addBtn.onclick = function (e) { e.stopPropagation(); addDd.classList.toggle('show'); };
-        addDd.querySelectorAll('.acct-book-add-item').forEach(function (it) {
-            it.onclick = function () { addDd.classList.remove('show'); acctShowBook(it.dataset.book); };
+        addBtn.onclick = function (e) { e.stopPropagation(); acctBookMgrOpen = !acctBookMgrOpen; addDd.classList.toggle('show', acctBookMgrOpen); };
+        addDd.onclick = function (e) { e.stopPropagation(); };   // clicks inside stay open
+        addDd.querySelectorAll('.acct-book-mgr-up').forEach(function (b) { b.onclick = function () { acctMoveBook(b.dataset.book, -1); }; });
+        addDd.querySelectorAll('.acct-book-mgr-down').forEach(function (b) { b.onclick = function () { acctMoveBook(b.dataset.book, 1); }; });
+        addDd.querySelectorAll('.acct-book-mgr-toggle').forEach(function (b) { b.onclick = function () { acctToggleBookHidden(b.dataset.book); }; });
+        addDd.querySelectorAll('.acct-book-mgr-name').forEach(function (n) {
+            n.onclick = function () { acctBookMgrOpen = false; acctShowBook(n.dataset.book); };
         });
     }
     acctSyncConsolChip();
@@ -233,7 +264,9 @@ if (!window.__acctBookAddDismissWired) {
     window.__acctBookAddDismissWired = true;
     document.addEventListener('click', function (e) {
         var dd = document.getElementById('acctBookAddDd');
-        if (dd && dd.classList.contains('show') && !e.target.closest('.acct-book-add-wrap')) dd.classList.remove('show');
+        if (dd && dd.classList.contains('show') && !e.target.closest('.acct-book-add-wrap')) {
+            dd.classList.remove('show'); acctBookMgrOpen = false;
+        }
     });
 }
 
@@ -1994,11 +2027,19 @@ var acctLedgerDetailId = null;
 var acctLedgerDetailFullAmt = false;   // false = global display unit (₹ '000); true = full ₹
 // Date filter for the ledger-detail modal only (per owner 2026-08-17). Persisted so
 // the choice survives across sessions.  mode: 'all' | 'fy' | 'custom'.  For 'fy',
-// fyStart = the FY's starting calendar year; qtr = 0 (full year) or 1..4.
-var acctLedgerDateFilter = { mode: 'all', fyStart: null, qtr: 0, from: '', to: '' };
-var ACCT_LD_FILTER_KEY = 'wms_acct_ledger_datefilter';
+// fyStart = the FY's starting calendar year (null ⇒ the CURRENT FY, resolved live so
+// it stays "current" as years roll); qtr = 0 (full year) or 1..4. DEFAULT = current FY.
+var acctLedgerDateFilter = { mode: 'fy', fyStart: null, qtr: 0, from: '', to: '' };
+var ACCT_LD_FILTER_KEY = 'wms_acct_ledger_datefilter_v2';
 try { var _ldf = JSON.parse(localStorage.getItem(ACCT_LD_FILTER_KEY) || 'null'); if (_ldf && typeof _ldf === 'object') acctLedgerDateFilter = Object.assign(acctLedgerDateFilter, _ldf); } catch (e) {}
 function acctSaveLedgerDateFilter() { try { localStorage.setItem(ACCT_LD_FILTER_KEY, JSON.stringify(acctLedgerDateFilter)); } catch (e) {} }
+// Show/hide cancelled vouchers in the drill-down (persistent). Default: hidden.
+var ACCT_LD_CANCELLED_KEY = 'wms_acct_ledger_show_cancelled';
+var acctLedgerShowCancelled = false;
+try { acctLedgerShowCancelled = localStorage.getItem(ACCT_LD_CANCELLED_KEY) === '1'; } catch (e) {}
+function acctSetShowCancelled(v) { acctLedgerShowCancelled = !!v; try { localStorage.setItem(ACCT_LD_CANCELLED_KEY, v ? '1' : '0'); } catch (e) {} }
+// Live search within the ledger drill-down (not persisted — resets per open).
+var acctLedgerSearchText = '';
 
 /** FY start month for the active book (financial_year_start, default 4 = April). */
 function acctLedgerFyStartMonth() {
@@ -2016,8 +2057,8 @@ function _acctYmd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).p
 function acctLedgerDateWindow() {
     var f = acctLedgerDateFilter;
     if (f.mode === 'custom') return { start: f.from || null, end: f.to || null };
-    if (f.mode === 'fy' && f.fyStart) {
-        var m = acctLedgerFyStartMonth(), y = f.fyStart;
+    if (f.mode === 'fy') {
+        var m = acctLedgerFyStartMonth(), y = f.fyStart || acctCurrentFyStartYear();
         if (f.qtr >= 1 && f.qtr <= 4) {
             var qs = new Date(y, (m - 1) + (f.qtr - 1) * 3, 1);
             var qe = new Date(y, (m - 1) + f.qtr * 3, 1); qe.setDate(qe.getDate() - 1);
@@ -2083,6 +2124,14 @@ function acctRenderLedgerDetail() {
         rows.push(r);
     });
 
+    var q = (acctLedgerSearchText || '').trim().toLowerCase();
+    function rowMatches(r, contra) {
+        if (!q) return true;
+        var hay = (contra + ' ' + (r.line_narration || r.voucher_narration || '') + ' ' +
+            acctFmtDate(r.voucher_date) + ' ' + (r.voucher_date || '') + ' ' + (r.voucher_number || '')).toLowerCase();
+        return hay.indexOf(q) >= 0;
+    }
+
     var html = '<div class="acct-ledger-detail-head">' +
         '<div class="acct-ld-name">' + wmsEsc(lg.name) + '</div>' +
         '<div class="acct-ld-sub">' + wmsEsc(acctGroupPath(g)) + ' · ' + wmsEsc(acctViewTitle()) + '</div>' +
@@ -2099,18 +2148,24 @@ function acctRenderLedgerDetail() {
         html += '<div class="acct-empty">No postings in this book.</div>';
     } else {
         var running = win.start ? opening : 0;
-        html += '<table class="acct-table acct-ld-table"><thead><tr><th>Date</th><th>Voucher #</th><th>Contra ledger</th><th>Narration</th><th class="text-right">Debit</th><th class="text-right">Credit</th><th class="text-right">Balance</th></tr></thead><tbody>';
-        if (win.start) {
-            html += '<tr class="acct-ld-opening"><td>' + wmsEsc(acctFmtDate(win.start)) + '</td><td>—</td>' +
+        var shown = 0;
+        html += '<table class="acct-table acct-ld-table"><thead><tr>' +
+            '<th class="c-date">Date</th><th class="c-vch">Vch #</th><th class="c-contra">Contra ledger</th>' +
+            '<th>Narration</th><th class="text-right c-amt">Debit</th><th class="text-right c-amt">Credit</th>' +
+            '<th class="text-right c-amt">Balance</th></tr></thead><tbody>';
+        if (win.start && !q) {
+            html += '<tr class="acct-ld-opening"><td class="c-date">' + wmsEsc(acctFmtDate(win.start)) + '</td><td class="c-vch">—</td>' +
                 '<td colspan="2"><em>Opening balance</em></td><td class="text-right">-</td><td class="text-right">-</td>' +
                 '<td class="text-right">' + fmt(Math.abs(opening)) + (opening >= 0 ? ' Dr' : ' Cr') + '</td></tr>';
-        }
-        if (!rows.length) {
-            html += '<tr><td colspan="7" class="acct-empty" style="padding:16px;">No postings in the selected period.</td></tr>';
         }
         rows.forEach(function (r) {
             var live = acctIsLive(r);
             if (live) running += (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
+            // Display filters (running balance already accounts for every live row above):
+            if (!live && !acctLedgerShowCancelled) return;   // cancelled hidden unless toggled on
+            var contra = acctContraLabel(r, byV);
+            if (!rowMatches(r, contra)) return;
+            shown++;
             var balLabel = live ? fmt(Math.abs(running)) + (running >= 0 ? ' Dr' : ' Cr') : '—';
             var auto = !!r.is_auto;
             var tip = !live ? 'Cancelled' + (r.cancel_reason ? ' — ' + r.cancel_reason : '') + ' · excluded from balances'
@@ -2118,16 +2173,20 @@ function acctRenderLedgerDetail() {
                            : 'Click to edit this voucher';
             html += '<tr class="acct-vch-row' + (auto ? ' acct-vch-auto' : '') + (live ? '' : ' acct-vch-cancelled') +
                 '" data-voucher="' + r.voucher_id + '" title="' + wmsEsc(tip) + '">' +
-                '<td>' + wmsEsc(acctFmtDate(r.voucher_date)) + '</td>' +
-                '<td>' + wmsEsc(r.voucher_number) +
+                '<td class="c-date">' + wmsEsc(acctFmtDate(r.voucher_date)) + '</td>' +
+                '<td class="c-vch">' + wmsEsc(r.voucher_number) +
                     (auto ? ' <span class="acct-kind-badge">auto</span>' : '') +
                     (live ? '' : ' <span class="acct-scope-badge">cancelled</span>') + '</td>' +
-                '<td>' + wmsEsc(acctContraLabel(r, byV)) + '</td>' +
+                '<td class="c-contra">' + wmsEsc(contra) + '</td>' +
                 '<td>' + wmsEsc(r.line_narration || r.voucher_narration || '') + '</td>' +
                 '<td class="text-right">' + (Number(r.debit_amount) ? fmt(Number(r.debit_amount)) : '-') + '</td>' +
                 '<td class="text-right">' + (Number(r.credit_amount) ? fmt(Number(r.credit_amount)) : '-') + '</td>' +
                 '<td class="text-right">' + balLabel + '</td></tr>';
         });
+        if (!shown) {
+            html += '<tr><td colspan="7" class="acct-empty" style="padding:16px;">' +
+                (q ? 'No lines match &ldquo;' + wmsEsc(acctLedgerSearchText) + '&rdquo;.' : 'No postings in the selected period.') + '</td></tr>';
+        }
         html += '</tbody></table>';
     }
     body.innerHTML = html;
@@ -2139,14 +2198,16 @@ function acctRenderLedgerDetail() {
     });
 }
 
-/** The date-filter control strip inside the ledger modal. */
+/** The date-filter + search control strip inside the ledger modal. */
 function acctLedgerDateFilterBar() {
     var f = acctLedgerDateFilter;
     var cur = acctCurrentFyStartYear();
+    // fyStart null ⇒ "current FY": pre-select the current-year option.
+    var effFy = (f.mode === 'fy') ? (f.fyStart || cur) : null;
     var fyOpts = '';
     for (var i = 0; i < 4; i++) {
         var y = cur - i;
-        var sel = (f.mode === 'fy' && f.fyStart === y) ? ' selected' : '';
+        var sel = (effFy === y) ? ' selected' : '';
         fyOpts += '<option value="fy:' + y + '"' + sel + '>FY ' + acctFyLabel(y) + (i === 0 ? ' (current)' : i === 1 ? ' (previous)' : '') + '</option>';
     }
     var allSel = f.mode === 'all' ? ' selected' : '';
@@ -2171,6 +2232,9 @@ function acctLedgerDateFilterBar() {
         '</select>' +
         '<label>From</label><input type="date" id="acctLdFrom" class="wms-input"' + cDisabled + ' value="' + wmsEsc(f.from || '') + '">' +
         '<label>To</label><input type="date" id="acctLdTo" class="wms-input"' + cDisabled + ' value="' + wmsEsc(f.to || '') + '">' +
+        '<button id="acctLdCancelledBtn" class="wms-btn wms-btn-secondary" title="Show or hide cancelled vouchers">' +
+            (acctLedgerShowCancelled ? 'Hide cancelled' : 'Show cancelled') + '</button>' +
+        '<input type="text" id="acctLdSearch" class="wms-input acct-ld-search" placeholder="Search ledger, narration, date…" value="' + wmsEsc(acctLedgerSearchText) + '">' +
     '</div>';
 }
 
@@ -2189,6 +2253,15 @@ function acctWireLedgerDateFilter() {
     if (fr) fr.onchange = function () { acctLedgerDateFilter.from = fr.value; acctSaveLedgerDateFilter(); acctRenderLedgerDetail(); };
     var to = document.getElementById('acctLdTo');
     if (to) to.onchange = function () { acctLedgerDateFilter.to = to.value; acctSaveLedgerDateFilter(); acctRenderLedgerDetail(); };
+    var cb = document.getElementById('acctLdCancelledBtn');
+    if (cb) cb.onclick = function () { acctSetShowCancelled(!acctLedgerShowCancelled); acctRenderLedgerDetail(); };
+    var sr = document.getElementById('acctLdSearch');
+    if (sr) sr.oninput = function () {
+        acctLedgerSearchText = sr.value;
+        acctRenderLedgerDetail();
+        var s2 = document.getElementById('acctLdSearch');
+        if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); }
+    };
 }
 
 /* Edit an existing manual voucher. Auto vouchers are refused: they belong to the
@@ -2419,14 +2492,14 @@ async function acctSaveGroup() {
 function acctWireModals() {
     // Voucher modal
     var vOverlay = document.getElementById('acctVoucherModal');
-    if (vOverlay && typeof wmsModal === 'function') acctVoucherModalCtrl = wmsModal(vOverlay, {});
+    if (vOverlay && typeof wmsModal === 'function') acctVoucherModalCtrl = wmsModal(vOverlay, { backdropClose: false });
     document.getElementById('acctVoucherClose').onclick = function () { acctVoucherModalCtrl && acctVoucherModalCtrl.close(); };
     document.getElementById('acctVoucherCancel').onclick = function () { acctVoucherModalCtrl && acctVoucherModalCtrl.close(); };
     document.getElementById('acctVoucherSave').onclick = acctSaveVoucher;
 
     // Opening-balances modal
     var obOverlay = document.getElementById('acctOpeningModal');
-    if (obOverlay && typeof wmsModal === 'function') acctOpeningModalCtrl = wmsModal(obOverlay, {});
+    if (obOverlay && typeof wmsModal === 'function') acctOpeningModalCtrl = wmsModal(obOverlay, { backdropClose: false });
     var obClose = document.getElementById('acctOpeningClose');
     if (obClose) obClose.onclick = function () { acctOpeningModalCtrl && acctOpeningModalCtrl.close(); };
     var obCancel = document.getElementById('acctOpeningCancel');
@@ -2489,13 +2562,13 @@ function acctWireModals() {
 
     // Ledger-detail modal
     var lOverlay = document.getElementById('acctLedgerModal');
-    if (lOverlay && typeof wmsModal === 'function') acctLedgerModalCtrl = wmsModal(lOverlay, {});
+    if (lOverlay && typeof wmsModal === 'function') acctLedgerModalCtrl = wmsModal(lOverlay, { backdropClose: false });
     document.getElementById('acctLedgerClose').onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
     document.getElementById('acctLedgerDone').onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
 
     // Add-ledger modal
     var alOverlay = document.getElementById('acctAddLedgerModal');
-    if (alOverlay && typeof wmsModal === 'function') acctAddLedgerModalCtrl = wmsModal(alOverlay, {});
+    if (alOverlay && typeof wmsModal === 'function') acctAddLedgerModalCtrl = wmsModal(alOverlay, { backdropClose: false });
     document.getElementById('acctAddLedgerClose').onclick = function () { acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
     document.getElementById('acctAddLedgerCancel').onclick = function () { acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
     document.getElementById('acctAddLedgerSave').onclick = acctSaveLedger;
@@ -2509,14 +2582,14 @@ function acctWireModals() {
 
     // Add-group modal
     var agOverlay = document.getElementById('acctAddGroupModal');
-    if (agOverlay && typeof wmsModal === 'function') acctAddGroupModalCtrl = wmsModal(agOverlay, {});
+    if (agOverlay && typeof wmsModal === 'function') acctAddGroupModalCtrl = wmsModal(agOverlay, { backdropClose: false });
     document.getElementById('acctAddGroupClose').onclick = function () { acctAddGroupModalCtrl && acctAddGroupModalCtrl.close(); };
     document.getElementById('acctAddGroupCancel').onclick = function () { acctAddGroupModalCtrl && acctAddGroupModalCtrl.close(); };
     document.getElementById('acctAddGroupSave').onclick = acctSaveGroup;
 
     // Rebuild report modal
     var rpOverlay = document.getElementById('acctReportModal');
-    if (rpOverlay && typeof wmsModal === 'function') acctReportModalCtrl = wmsModal(rpOverlay, {});
+    if (rpOverlay && typeof wmsModal === 'function') acctReportModalCtrl = wmsModal(rpOverlay, { backdropClose: false });
     var rpClose = document.getElementById('acctReportClose');
     if (rpClose) rpClose.onclick = function () { acctReportModalCtrl && acctReportModalCtrl.close(); };
     var rpDone = document.getElementById('acctReportDone');
@@ -2524,7 +2597,7 @@ function acctWireModals() {
 
     // Consolidate modal
     var coOverlay = document.getElementById('acctConsolidateModal');
-    if (coOverlay && typeof wmsModal === 'function') acctConsolidateModalCtrl = wmsModal(coOverlay, {});
+    if (coOverlay && typeof wmsModal === 'function') acctConsolidateModalCtrl = wmsModal(coOverlay, { backdropClose: false });
     var coClose = document.getElementById('acctConsolidateClose');
     if (coClose) coClose.onclick = function () { acctConsolidateModalCtrl && acctConsolidateModalCtrl.close(); };
     var coApply = document.getElementById('acctConsolidateApply');
