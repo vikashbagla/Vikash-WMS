@@ -1963,6 +1963,32 @@ function acctAutoBalance() {
     acctRenderVoucherLines();
 }
 
+/* Delete the voucher being edited. Uses acct_cancel_voucher (soft withdrawal): the
+   row is kept for the audit trail and its number is not reused — a hard delete would
+   collide the next post (voucher numbering is gap-sensitive). */
+async function acctDeleteVoucher() {
+    if (!acctEditingVoucherId || acctVoucherReadOnly) return;
+    if (!confirm('Delete this voucher? It is withdrawn (cancelled) and kept in the audit trail.')) return;
+    var vid = acctEditingVoucherId;
+    try {
+        var resp = await fetch(acctUrl('rpc/acct_cancel_voucher'), {
+            method: 'POST',
+            headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ p_voucher_id: vid, p_reason: 'Deleted from the voucher modal' })
+        });
+        if (!resp.ok) throw new Error((await resp.text()) || ('HTTP ' + resp.status));
+        acctEditingVoucherId = null;
+        if (acctVoucherModalCtrl) acctVoucherModalCtrl.close();
+        acctToast('Voucher deleted.');
+        await acctLoadBook();
+        acctRenderActiveTab();
+        if (acctLedgerModalCtrl && acctLedgerModalCtrl.isOpen()) acctRenderLedgerDetail();
+    } catch (e) {
+        console.error('[accounting] delete voucher failed', e);
+        acctToast('Could not delete voucher: ' + e.message, true);
+    }
+}
+
 async function acctSaveVoucher() {
     if (!acctBookId || acctVoucherReadOnly) return;   // auto vouchers are view-only
     var lines = acctVoucherLines.filter(function (l) { return acctParse(l.debit) > 0 || acctParse(l.credit) > 0; })
@@ -2465,6 +2491,9 @@ function acctApplyVoucherReadOnly(ro) {
     if (banner) banner.style.display = ro ? '' : 'none';
     var save = document.getElementById('acctVoucherSave');
     if (save) { save.style.display = ro ? 'none' : ''; save.disabled = ro; }
+    // Delete only makes sense on an existing, editable (non-auto) voucher.
+    var del = document.getElementById('acctVoucherDelete');
+    if (del) del.style.display = (ro || !acctEditingVoucherId) ? 'none' : '';
     var nar = document.getElementById('acctVoucherNarration');
     if (nar) nar.disabled = ro;
     var lnt = document.getElementById('acctLegNarrToggle');
@@ -2630,6 +2659,16 @@ function acctWireModals() {
     document.getElementById('acctVoucherClose').onclick = function () { acctVoucherModalCtrl && acctVoucherModalCtrl.close(); };
     document.getElementById('acctVoucherCancel').onclick = function () { acctVoucherModalCtrl && acctVoucherModalCtrl.close(); };
     document.getElementById('acctVoucherSave').onclick = acctSaveVoucher;
+    var delBtn = document.getElementById('acctVoucherDelete');
+    if (delBtn) delBtn.onclick = acctDeleteVoucher;
+    // F2 anywhere in the voucher modal jumps the caret to the date field.
+    if (vOverlay) vOverlay.addEventListener('keydown', function (e) {
+        if (e.key === 'F2') {
+            e.preventDefault();
+            var w = document.querySelector('#acctVoucherDate .wms-di-wrap');
+            if (w) w.focus();
+        }
+    });
 
     // Opening-balances modal
     var obOverlay = document.getElementById('acctOpeningModal');
