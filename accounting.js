@@ -601,8 +601,10 @@ function acctRenderContext() {
     if (!el) return;
     if (!acctViewBookIds().length || !acctVoucherRows.length) { el.textContent = ''; return; }
     var unit = acctUnitLabel();
-    // The period is the whole financial year (01-Apr to 31-Mar), not the last entry date.
-    el.textContent = acctFmtDate(acctTbPeriodStart()) + ' to ' + acctFmtDate(acctFyEnd()) + (unit ? '  ·  ' + unit : '');
+    // Statement period is the whole financial year (01-Apr to 31-Mar); the last posted
+    // entry date is shown alongside it.
+    el.textContent = acctFmtDate(acctTbPeriodStart()) + ' to ' + acctFmtDate(acctFyEnd()) +
+        '  ·  Last entry ' + acctFinAsOn() + (unit ? '  ·  ' + unit : '');
 }
 // FY end (31-Mar of the next calendar year) for the active book, from the FY start.
 function acctFyEnd() {
