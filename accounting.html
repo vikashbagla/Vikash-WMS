@@ -282,10 +282,12 @@
 .acct-balance-bar.bad { background: #fef2f2; color: #dc2626; }
 .acct-balance-bar .acct-bal-spacer { flex: 1; }
 
-/* Ledger detail modal */
-.acct-ledger-detail-head { margin-bottom: 10px; }
-.acct-ledger-detail-head .acct-ld-name { font-size: 15px; font-weight: 700; color: #1a202c; }
-.acct-ledger-detail-head .acct-ld-sub { font-size: 11px; color: #718096; }
+/* Ledger detail modal — name + unit controls live in the header row (saves body space). */
+.acct-ledger-header .acct-lh-left { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.acct-ledger-header .acct-lh-title { font-size: 15px; font-weight: 700; color: #1a202c; white-space: nowrap; }
+.acct-ledger-header .acct-lh-sub { font-size: 11px; color: #718096; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-ledger-header .acct-lh-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.acct-ledger-header .acct-ld-unit { font-size: 11px; color: #64748b; }
 /* Roomier rows in the ledger drill-down so lines are easy to tell apart. */
 .acct-ld-table td { padding: 9px 10px; }
 .acct-ld-table th { padding: 8px 10px; }
@@ -294,7 +296,9 @@
 .acct-ld-table th.c-date, .acct-ld-table td.c-date { width: 84px; white-space: nowrap; }
 .acct-ld-table th.c-vch, .acct-ld-table td.c-vch { width: 62px; white-space: nowrap; }
 .acct-ld-table th.c-contra { min-width: 190px; }
-.acct-ld-table th.c-amt { width: 94px; }
+.acct-ld-table th.c-amt { width: 96px; }
+/* Amounts (incl. the "Dr/Cr" suffix) must never wrap to a second line. */
+.acct-ld-table td.text-right, .acct-ld-table th.text-right { white-space: nowrap; }
 /* Search sits at the far right of the filter bar. */
 .acct-ld-filter .acct-ld-search { margin-left: auto; min-width: 190px; }
 /* Cancelled toggle as a compact icon button. */
@@ -585,9 +589,16 @@
 <!-- ===================== Ledger-detail modal ===================== -->
 <div class="wms-modal-overlay" id="acctLedgerModal">
     <div class="wms-modal-dialog acct-ledger-dialog">
-        <div class="wms-modal-header">
-            <span style="font-size:15px;font-weight:700;">Ledger</span>
-            <button class="wms-btn-close" id="acctLedgerClose">✕</button>
+        <div class="wms-modal-header acct-ledger-header">
+            <div class="acct-lh-left">
+                <span id="acctLedgerTitle" class="acct-lh-title">Ledger</span>
+                <span id="acctLedgerSub" class="acct-lh-sub"></span>
+            </div>
+            <div class="acct-lh-right">
+                <span id="acctLedgerUnit" class="acct-ld-unit"></span>
+                <button id="acctLdUnitToggle" class="wms-btn wms-btn-secondary" style="font-size:11px;">Show full amount</button>
+                <button class="wms-btn-close" id="acctLedgerClose">✕</button>
+            </div>
         </div>
         <div class="wms-modal-body" style="padding:16px;">
             <div id="acctLedgerDetailBody"></div>

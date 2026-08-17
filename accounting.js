@@ -2107,24 +2107,24 @@ function acctRenderLedgerDetail() {
     if (!lg) return;
     var body = document.getElementById('acctLedgerDetailBody');
     var g = acctGroupById[lg.group_id];
-    var unitTxt = acctLedgerDetailFullAmt ? 'Full ₹'
-        : (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
+    var baseUnit = (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
+    var unitTxt = acctLedgerDetailFullAmt ? 'Full ₹' : baseUnit;
 
-    var html = '<div class="acct-ledger-detail-head">' +
-        '<div class="acct-ld-name">' + wmsEsc(lg.name) + '</div>' +
-        '<div class="acct-ld-sub">' + wmsEsc(acctGroupPath(g)) + ' · ' + wmsEsc(acctViewTitle()) + '</div>' +
-        '<div class="acct-ld-toggle">' +
-            '<span class="acct-ld-unit">' + wmsEsc(unitTxt) + '</span>' +
-            '<button id="acctLdUnitToggle" class="wms-btn wms-btn-secondary" style="font-size:11px;">' +
-                (acctLedgerDetailFullAmt ? "Show in " + wmsEsc((typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000")) : 'Show full amount') +
-            '</button>' +
-        '</div></div>';
-    html += acctLedgerDateFilterBar();
-    html += '<div id="acctLdTableWrap"></div>';
-    body.innerHTML = html;
-
+    // The ledger name, group path and the unit control now live in the modal HEADER
+    // row (before the ✕) so the body is all real content.
+    var titleEl = document.getElementById('acctLedgerTitle');
+    if (titleEl) titleEl.textContent = lg.name;
+    var subEl = document.getElementById('acctLedgerSub');
+    if (subEl) subEl.textContent = acctGroupPath(g) + ' · ' + acctViewTitle();
+    var unitEl = document.getElementById('acctLedgerUnit');
+    if (unitEl) unitEl.textContent = unitTxt;
     var tgl = document.getElementById('acctLdUnitToggle');
-    if (tgl) tgl.onclick = function () { acctLedgerDetailFullAmt = !acctLedgerDetailFullAmt; acctRenderLedgerDetail(); };
+    if (tgl) {
+        tgl.textContent = acctLedgerDetailFullAmt ? ('Show in ' + baseUnit) : 'Show full amount';
+        tgl.onclick = function () { acctLedgerDetailFullAmt = !acctLedgerDetailFullAmt; acctRenderLedgerDetail(); };
+    }
+
+    body.innerHTML = acctLedgerDateFilterBar() + '<div id="acctLdTableWrap"></div>';
     acctWireLedgerDateFilter();
     acctRenderLedgerTable();
 }
