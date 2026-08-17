@@ -126,16 +126,21 @@
     }
 
     // Income (DIVIDEND / INTEREST / OTHER_INCOME) — own book.
-    // Dr PMS Settlement [net]; Dr TDS on Yield [tds]; Cr <income ledger> [gross].
+    // Cr <income ledger> [gross]; Dr TDS on Yield [tds]; Dr PMS Settlement [gross − tds].
+    // NOTE: the income module stores net_amount = GROSS (qty × price) and keeps tds in
+    // its own field (trading-income.js: "both gross_amount and net_amount store qty ×
+    // price; tds is saved separately"). So net_amount IS the gross — settlement is the
+    // net cash actually received (gross − tds). Do NOT add tds back onto net_amount, or
+    // both income and settlement double-count the TDS (own-book dividend bug, 2026-08-17).
     function incomeOwn(t, ctx) {
         var ty = ttype(t), sec = secOf(t, ctx);
-        var net = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount), tds = absN(t.tds);
-        var gross = r2(net + tds), lines = [], exceptions = [];
+        var gross = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount), tds = absN(t.tds);
+        var settle = r2(gross - tds), lines = [], exceptions = [];
         var role = incRole(sec, ty);
         if (!role) { exceptions.push(ex('unmapped_income:' + symOf(t, ctx) + ':' + ty, 'warn', 'No income ledger for ' + symOf(t, ctx) + ' ' + ty, { security_id: t.security_id, type: ty })); role = 'INC_OTHER'; }
-        lines.push({ ref: { role: 'PMS_SETTLEMENT' }, debit: r2(net), credit: 0 });
+        lines.push({ ref: { role: 'PMS_SETTLEMENT' }, debit: settle, credit: 0 });
         if (tds > 0) lines.push({ ref: { role: 'TDS_YIELD' }, debit: r2(tds), credit: 0 });
-        lines.push({ ref: { role: role }, debit: 0, credit: gross });
+        lines.push({ ref: { role: role }, debit: 0, credit: r2(gross) });
         return { type: 'PMS-' + ty, narration: ty.charAt(0) + ty.slice(1).toLowerCase() + ' ' + symOf(t, ctx), lines: lines, exceptions: exceptions };
     }
 

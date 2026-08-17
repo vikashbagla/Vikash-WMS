@@ -25,12 +25,13 @@ ok('buy own balances', voucherBalances(acctBuildVoucher(own({transaction_type:'B
 let v = acctBuildVoucher(own({transaction_type:'SELL',net_amount:14945,stt:15,quantity:-100}), ctx, [{qty:100,buyCost:10030,gain:4930,buyDate:'2025-01-01',sellDate:'2025-06-01',securityType:'EQUITY'}]);
 ok('sell own CG_ST_STT credit 4930', amt(v, r=>r.role==='CG_ST_STT')===-4930 && voucherBalances(v.lines));
 
-// Income own (dividend + TDS)
-v = acctBuildVoucher(own({transaction_type:'DIVIDEND', net_amount:900, tds:100}), ctx, []);
+// Income own (dividend + TDS). The income module stores net_amount = GROSS (qty × price)
+// and tds separately, so gross=1000 tds=100 -> settlement (net cash) = 900.
+v = acctBuildVoucher(own({transaction_type:'DIVIDEND', net_amount:1000, tds:100}), ctx, []);
 ok('div balances', voucherBalances(v.lines));
-ok('div settlement Dr 900', amt(v, r=>r.role==='PMS_SETTLEMENT')===900);
+ok('div income Cr 1000 (gross = net_amount)', amt(v, r=>r.role==='INC_DIVIDEND')===-1000);
 ok('div TDS Dr 100', amt(v, r=>r.role==='TDS_YIELD')===100);
-ok('div income Cr 1000 (mapped)', amt(v, r=>r.role==='INC_DIVIDEND')===-1000);
+ok('div settlement Dr 900 (gross − tds)', amt(v, r=>r.role==='PMS_SETTLEMENT')===900);
 // Interest -> mapped INC_INT_BONDS
 v = acctBuildVoucher(own({transaction_type:'INTEREST', net_amount:500, tds:0}), ctx, []);
 ok('interest uses income_ledgers.INTEREST', amt(v, r=>r.role==='INC_INT_BONDS')===-500);

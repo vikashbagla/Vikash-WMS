@@ -69,8 +69,9 @@ v = acctBuildVoucher(cli({ transaction_type: 'SELL', security_id: 'EQ1', quantit
 ok('client EQ sell: Dr Broker 14960 / Cr Client 14950 / Cr Trader Income 10', voucherBalances(v.lines) && has(v, 'BRK:BRK1', 'debit', 14960) && has(v, 'INV:T1', 'credit', 14950) && has(v, 'TRADER_INCOME', 'credit', 10));
 
 // ---- C. INCOME own (mapped + TDS, and unmapped → alert) ----
-v = acctBuildVoucher(own({ transaction_type: 'DIVIDEND', security_id: 'EQ1', net_amount: 900, tds: 100 }), ctx, []);
-ok('own dividend: Dr PMS 900 + Dr TDS 100 / Cr Dividend 1000', voucherBalances(v.lines) && has(v, 'PMS_SETTLEMENT', 'debit', 900) && has(v, 'TDS_YIELD', 'debit', 100) && has(v, 'INC_DIVIDEND', 'credit', 1000));
+// net_amount stores GROSS (qty × price); tds separate. gross 1000, tds 100 -> settlement 900.
+v = acctBuildVoucher(own({ transaction_type: 'DIVIDEND', security_id: 'EQ1', net_amount: 1000, tds: 100 }), ctx, []);
+ok('own dividend: Cr Dividend 1000 / Dr TDS 100 / Dr PMS 900', voucherBalances(v.lines) && has(v, 'PMS_SETTLEMENT', 'debit', 900) && has(v, 'TDS_YIELD', 'debit', 100) && has(v, 'INC_DIVIDEND', 'credit', 1000));
 v = acctBuildVoucher(own({ transaction_type: 'OTHER_INCOME', security_id: 'EQ1', net_amount: 500 }), ctx, []);
 ok('own other income → INC_OTH_UNITS (mapped)', voucherBalances(v.lines) && has(v, 'INC_OTH_UNITS', 'credit', 500));
 v = acctBuildVoucher(own({ transaction_type: 'DIVIDEND', security_id: 'UNM', net_amount: 300 }), ctx, []);
