@@ -614,6 +614,10 @@ function acctFyEnd() {
 }
 // Keep the header full-amount toggle in sync; only visible with a book loaded.
 function acctSyncUnitToggle() {
+    // Full rupees are much wider than ₹ '000; widen the fixed amount columns via a
+    // container class so figures don't overflow their boxes and misalign.
+    var cont = document.querySelector('.acct-container');
+    if (cont) cont.classList.toggle('acct-fullamt', acctFullAmt);
     var btn = document.getElementById('acctUnitToggle');
     if (!btn) return;
     btn.style.display = (acctViewBookIds().length && acctVoucherRows.length) ? '' : 'none';
@@ -905,7 +909,7 @@ function acctRenderTrialBalance() {
         '<button class="wms-btn wms-btn-secondary" id="acctTbCollapseAll">Collapse all</button>' +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctTbShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero</label>');
 
-    var W = 'width:184px;';
+    var W = 'width:' + (acctFullAmt ? 248 : 184) + 'px;';   // header block spans its two Dr/Cr cols
     var html = '<div class="acct-tb-wrap">' +
         '<div class="acct-tb-hdr2"><span class="acct-fin-toggle-sp"></span><span class="acct-fin-name"></span>' +
             '<span class="acct-tb-grp acct-tb-blockstart" style="' + W + '">Opening Balance</span>' +

@@ -400,6 +400,10 @@
 .acct-fin-amt  { width: 92px; }
 .acct-fin-amt2 { width: 92px; }
 .acct-fin-amt3 { width: 104px; font-weight: 600; }
+/* Full rupees need wider columns than ₹ '000 or the figures overflow their boxes. */
+.acct-fullamt .acct-fin-amt  { width: 132px; }
+.acct-fullamt .acct-fin-amt2 { width: 132px; }
+.acct-fullamt .acct-fin-amt3 { width: 146px; }
 .acct-fin-unit { font-weight: 400; opacity: .75; }
 /* Per-column total strip, inside each column so both sides show their own total. */
 .acct-fin-coltotal {
@@ -423,6 +427,7 @@
     width: 92px; flex-shrink: 0; padding-left: 8px; text-align: right;
     font-variant-numeric: tabular-nums; white-space: nowrap;
 }
+.acct-fullamt .acct-tb-c { width: 120px; }
 .acct-tb-blockstart { border-left: 1px solid #cbd5e0; margin-left: 6px; padding-left: 10px; }
 .acct-fin-hdr .acct-tb-blockstart { border-left-color: rgba(255,255,255,.35); }
 .acct-fin-total .acct-tb-blockstart { border-left-color: rgba(255,255,255,.35); }
