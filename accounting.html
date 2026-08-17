@@ -21,35 +21,73 @@
     padding: 5px 10px; background: #fff; border-bottom: 1px solid #e2e8f0;
     flex-shrink: 0;
 }
-.acct-books-tabs { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.acct-books-tabs { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
 /* Period + display unit apply to every view in the module, so they are stated
    once here rather than repeated above each table. */
 .acct-context { margin-left: auto; font-size: 11px; color: #718096; white-space: nowrap; }
 .acct-book-tab {
+    display: inline-flex; align-items: center; gap: 5px;
     border: 1px solid transparent; background: transparent; cursor: pointer;
-    padding: 3px 12px; border-radius: 20px;
+    padding: 3px 10px; border-radius: 20px;
     font-size: 12px; font-weight: 600; color: #718096;
 }
 .acct-book-tab:hover { background: #f1f5f9; color: #4a5568; }
 .acct-book-tab.active { background: #667eea; border-color: #667eea; color: #fff; }
+.acct-book-tab.acct-drag-over { box-shadow: inset 2px 0 0 #667eea; }
+.acct-book-tab.acct-dragging { opacity: .45; }
+.acct-book-tab .acct-book-lbl { cursor: pointer; }
+.acct-book-tab .acct-book-x {
+    font-size: 12px; line-height: 1; color: inherit; opacity: 0;
+    transition: opacity .1s; cursor: pointer;
+}
+.acct-book-tab:hover .acct-book-x { opacity: .6; }
+.acct-book-tab .acct-book-x:hover { opacity: 1; }
+.acct-book-add {
+    border: 1px solid #e2e8f0; background: #fff; cursor: pointer;
+    width: 22px; height: 22px; border-radius: 50%; color: #718096;
+    font-size: 13px; line-height: 1; padding: 0;
+}
+.acct-book-add:hover { border-color: #667eea; color: #667eea; }
+.acct-book-add-wrap { position: relative; display: inline-block; }
+.acct-book-add-dd {
+    position: absolute; top: 100%; left: 0; z-index: 60; margin-top: 4px;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.12); min-width: 180px; padding: 4px; display: none;
+}
+.acct-book-add-dd.show { display: block; }
+.acct-book-add-dd .acct-book-add-item { padding: 6px 10px; font-size: 12px; color: #2d3748; cursor: pointer; border-radius: 5px; }
+.acct-book-add-dd .acct-book-add-item:hover { background: #eef2ff; }
+.acct-book-add-dd .acct-book-add-empty { padding: 6px 10px; font-size: 11px; color: #a0aec0; }
 .acct-books-empty { font-size: 12px; color: #a0aec0; padding: 2px 4px; }
 
-/* ---- Tabs ---- */
+/* ---- Tabs (app tab-bar signature: same look as .tr-view-tab) ---- */
 .acct-tabs {
-    display: flex; gap: 0; background: #f8fafc;
+    display: flex; gap: 0; background: #f8fafc; align-items: center;
     border-bottom: 1px solid #e2e8f0; padding: 0 8px; min-height: 36px;
-    flex-shrink: 0;
+    flex-shrink: 0; flex-wrap: nowrap; overflow-x: auto;
+    scrollbar-width: none; -ms-overflow-style: none;
 }
+.acct-tabs::-webkit-scrollbar { display: none; }
 .acct-tab {
-    display: inline-flex; align-items: center; padding: 8px 16px;
-    border: none; background: transparent; cursor: pointer;
+    display: inline-flex; align-items: center; padding: 7px 14px;
+    border: none; background: transparent; cursor: pointer; white-space: nowrap;
     border-bottom: 2px solid transparent; color: #718096;
-    font-size: 12px; font-weight: 600;
+    font-size: 12px; font-weight: 600; transition: all .1s;
 }
 .acct-tab:hover { color: #4a5568; background: #edf2f7; }
 .acct-tab.active { color: #667eea; border-bottom-color: #667eea; }
-.acct-tabs-spacer { flex: 1; }
-.acct-tab-action { font-size: 11px; padding: 3px 10px; }
+.acct-tabs-spacer { flex: 1; min-width: 8px; }
+.acct-tab-action { font-size: 11px; padding: 3px 10px; white-space: nowrap; }
+
+/* ---- Single command line: the active tab's filters + the command buttons ---- */
+.acct-cmd-filters { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.acct-cmd-filters:empty { display: none; }
+.acct-cmd-filters .wms-btn { font-size: 11px; padding: 3px 8px; }
+.acct-cmd-filters .acct-fin-zero { font-size: 11px; color: #4a5568; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+.acct-cmd-filters .acct-fin-zero input { width: auto; margin: 0; }
+.acct-cmd-filters .wms-input { max-width: 200px; font-size: 11px; padding: 3px 6px; }
+.acct-cmd-sep { width: 1px; align-self: stretch; background: #cbd5e0; margin: 6px 6px; }
+.acct-cmd-sep:first-child + * , .acct-cmd-filters:empty + .acct-cmd-sep { display: none; }
 .acct-menu-wrap { position: relative; }
 .acct-menu-dd { left: auto; right: 0; min-width: 210px; }
 .acct-menu-dd .wms-dd-item { padding: 7px 12px; font-size: 12px; }
@@ -337,9 +375,12 @@
         <span class="acct-context" id="acctContextInfo"></span>
     </div>
 
-    <!-- ===== Views + actions on ONE row =====
-         Deliberately a single row. Only the primary action is exposed; the rest
-         live behind the ⋮ menu (D.9.1) so the chrome stays out of the content's way. -->
+    <!-- ===== Report tabs + ONE command line =====
+         Single row, app tab-bar signature: report tabs on the left; then a single
+         command line carrying the active tab's FILTERS (expand/collapse, show-zero,
+         search) followed by the command BUTTONS (New Voucher, Rebuild, ⋮). The
+         per-tab filters are injected into #acctCmdFilters by each render function so
+         they always match the tab on screen. Filter/toggle state is browser-persistent. -->
     <div class="acct-tabs">
         <button class="acct-tab active" data-acct-tab="balance-sheet">Balance Sheet</button>
         <button class="acct-tab" data-acct-tab="profit-loss">Profit &amp; Loss</button>
@@ -347,8 +388,10 @@
         <button class="acct-tab" data-acct-tab="day-book">Day Book</button>
         <button class="acct-tab" data-acct-tab="ledgers">Ledgers</button>
         <span class="acct-tabs-spacer"></span>
+        <span id="acctCmdFilters" class="acct-cmd-filters"></span>
+        <span class="acct-cmd-sep"></span>
         <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary acct-tab-action">➕ New Voucher</button>
-        <button id="acctRebuildBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="Rebuild this book's auto-vouchers from its trades, via the accounting engine">↻ Rebuild from trades</button>
+        <button id="acctRebuildBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="Rebuild this book's auto-vouchers from its trades, via the accounting engine">↻ Rebuild</button>
         <div class="acct-menu-wrap">
             <button id="acctMenuBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="More actions">⋮</button>
             <div class="wms-dd acct-menu-dd" id="acctMenuDd">
