@@ -2230,14 +2230,15 @@ function acctLedgerDateFilterBar() {
     function qSel(v) { return (f.mode === 'fy' && f.qtr === v) ? ' selected' : ''; }
 
     // Custom From–To: a single button that opens a popover; only shown in custom mode.
+    // Uses the shared segmented wmsDateInput widgets (D.5.4), not native date inputs.
     var rangeHtml = '';
     if (f.mode === 'custom') {
         var rlabel = (f.from || f.to) ? ((f.from ? acctFmtDate(f.from) : '…') + ' → ' + (f.to ? acctFmtDate(f.to) : '…')) : 'Pick dates';
         rangeHtml = '<span class="acct-ld-range-wrap">' +
             '<button id="acctLdRangeBtn" class="wms-btn wms-btn-secondary" title="Set a custom date range">📅 ' + wmsEsc(rlabel) + ' ▾</button>' +
             '<div id="acctLdRangePop" class="acct-ld-range-pop' + (acctLedgerRangePopOpen ? ' show' : '') + '">' +
-                '<label>From</label><input type="date" id="acctLdFrom" class="wms-input" value="' + wmsEsc(f.from || '') + '">' +
-                '<label>To</label><input type="date" id="acctLdTo" class="wms-input" value="' + wmsEsc(f.to || '') + '">' +
+                '<label>From</label><div id="acctLdFromWrap"></div>' +
+                '<label>To</label><div id="acctLdToWrap"></div>' +
             '</div></span>';
     }
 
@@ -2271,7 +2272,16 @@ function acctWireLedgerDateFilter() {
     if (p) p.onchange = function () {
         var v = p.value;
         if (v === 'all') { acctLedgerDateFilter.mode = 'all'; }
-        else if (v === 'custom') { acctLedgerDateFilter.mode = 'custom'; acctLedgerRangePopOpen = true; }
+        else if (v === 'custom') {
+            acctLedgerDateFilter.mode = 'custom'; acctLedgerRangePopOpen = true;
+            // Seed an empty custom range with the current FY so the segmented widgets
+            // open on meaningful dates instead of an arbitrary default.
+            if (!acctLedgerDateFilter.from && !acctLedgerDateFilter.to) {
+                var mm = acctLedgerFyStartMonth(), yy = acctCurrentFyStartYear();
+                var fs = new Date(yy, mm - 1, 1), fe = new Date(yy + 1, mm - 1, 1); fe.setDate(fe.getDate() - 1);
+                acctLedgerDateFilter.from = _acctYmd(fs); acctLedgerDateFilter.to = _acctYmd(fe);
+            }
+        }
         else if (v.indexOf('fy:') === 0) { acctLedgerDateFilter.mode = 'fy'; acctLedgerDateFilter.fyStart = Number(v.slice(3)); }
         acctSaveLedgerDateFilter(); acctRenderLedgerDetail();
     };
@@ -2284,10 +2294,23 @@ function acctWireLedgerDateFilter() {
         rbtn.onclick = function (e) { e.stopPropagation(); acctLedgerRangePopOpen = !acctLedgerRangePopOpen; rpop.classList.toggle('show', acctLedgerRangePopOpen); };
         rpop.onclick = function (e) { e.stopPropagation(); };
     }
-    var fr = document.getElementById('acctLdFrom');
-    if (fr) fr.onchange = function () { acctLedgerDateFilter.from = fr.value; acctSaveLedgerDateFilter(); acctRenderLedgerTable(); acctLedgerUpdateRangeLabel(); };
-    var to = document.getElementById('acctLdTo');
-    if (to) to.onchange = function () { acctLedgerDateFilter.to = to.value; acctSaveLedgerDateFilter(); acctRenderLedgerTable(); acctLedgerUpdateRangeLabel(); };
+    // Segmented dd-mmm-yyyy widgets (shared wmsDateInput, per UI-STANDARDS D.5.4).
+    var frWrap = document.getElementById('acctLdFromWrap');
+    var toWrap = document.getElementById('acctLdToWrap');
+    if (frWrap && toWrap && typeof wmsDateInput === 'function') {
+        var rangeReady = false;   // suppress the onChange that setValue() fires during seeding
+        var frCtrl = wmsDateInput(frWrap, { compact: true, onChange: function (ymd) {
+            if (!rangeReady) return;
+            acctLedgerDateFilter.from = ymd || ''; acctSaveLedgerDateFilter(); acctRenderLedgerTable(); acctLedgerUpdateRangeLabel();
+        } });
+        var toCtrl = wmsDateInput(toWrap, { compact: true, onChange: function (ymd) {
+            if (!rangeReady) return;
+            acctLedgerDateFilter.to = ymd || ''; acctSaveLedgerDateFilter(); acctRenderLedgerTable(); acctLedgerUpdateRangeLabel();
+        } });
+        if (acctLedgerDateFilter.from && frCtrl.setValue) frCtrl.setValue(acctLedgerDateFilter.from);
+        if (acctLedgerDateFilter.to && toCtrl.setValue) toCtrl.setValue(acctLedgerDateFilter.to);
+        rangeReady = true;
+    }
     var cb = document.getElementById('acctLdCancelledBtn');
     if (cb) cb.onclick = function () { acctSetShowCancelled(!acctLedgerShowCancelled); acctRenderLedgerDetail(); };
     var sr = document.getElementById('acctLdSearch');
