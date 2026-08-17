@@ -2457,16 +2457,22 @@ function acctOpenEditVoucher(voucherId) {
     acctVoucherType = rows[0].voucher_type;               // preserve the existing type on edit
     acctVoucherDateYmd = rows[0].voucher_date;
     acctLedgerPickTarget = null;
+    var vNarr = rows[0].voucher_narration || '';
     acctVoucherLines = rows
         .slice()
         .sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); })
         .map(function (r) {
             var d = Number(r.debit_amount) || 0, c = Number(r.credit_amount) || 0;
+            // acct_voucher_full.line_narration COALESCEs to the voucher narration when a
+            // line has no note of its own — so only treat it as a real per-leg note when
+            // it differs from the voucher narration. Otherwise it's the header narration
+            // bleeding through and must NOT be shown on every line.
+            var ln = (r.line_narration && r.line_narration !== vNarr) ? r.line_narration : '';
             return { ledgerId: r.ledger_id, ledgerName: acctLedgerName(r.ledger_id),
                      debit: d ? String(d) : '', credit: c ? String(c) : '',
-                     narration: r.line_narration || '', _auto: false };
+                     narration: ln, _auto: false };
         });
-    // Reveal the per-leg narration fields if any line already carries a note.
+    // Reveal the per-leg narration fields only if a line has a genuine, distinct note.
     acctVoucherShowLegNarr = acctVoucherLines.some(function (l) { return l.narration; });
 
     document.getElementById('acctVoucherTitle').textContent = (readOnly ? 'View Voucher ' : 'Edit Voucher ') + rows[0].voucher_number + ' — ' + acctInvName(acctBookId);
