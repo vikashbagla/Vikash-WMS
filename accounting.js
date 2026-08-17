@@ -203,8 +203,7 @@ function acctRenderBookTabs() {
         '<span id="acctConsolidateChip" class="acct-consol-chip" style="display:none;margin-left:8px;"></span>';
 
     el.querySelectorAll('.acct-book-tab').forEach(function (t) {
-        var lbl = t.querySelector('.acct-book-lbl');
-        if (lbl) lbl.onclick = function () { acctSwitchBook(t.dataset.book); };
+        t.onclick = function () { acctSwitchBook(t.dataset.book); };
         var x = t.querySelector('.acct-book-x');
         if (x) x.onclick = function (e) { e.stopPropagation(); acctHideBook(t.dataset.book); };
         // Drag-to-reorder.
@@ -228,11 +227,15 @@ function acctRenderBookTabs() {
     }
     acctSyncConsolChip();
 }
-// Close the "open a closed book" menu on any outside click.
-document.addEventListener('click', function (e) {
-    var dd = document.getElementById('acctBookAddDd');
-    if (dd && dd.classList.contains('show') && !e.target.closest('.acct-book-add-wrap')) dd.classList.remove('show');
-});
+// Close the "open a closed book" menu on any outside click. Guard against
+// duplicate registration when the module script is re-executed (A.1.2a).
+if (!window.__acctBookAddDismissWired) {
+    window.__acctBookAddDismissWired = true;
+    document.addEventListener('click', function (e) {
+        var dd = document.getElementById('acctBookAddDd');
+        if (dd && dd.classList.contains('show') && !e.target.closest('.acct-book-add-wrap')) dd.classList.remove('show');
+    });
+}
 
 async function acctRefreshAll() {
     acctLoading(true);

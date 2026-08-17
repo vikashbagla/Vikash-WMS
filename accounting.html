@@ -61,13 +61,14 @@
 .acct-books-empty { font-size: 12px; color: #a0aec0; padding: 2px 4px; }
 
 /* ---- Tabs (app tab-bar signature: same look as .tr-view-tab) ---- */
+/* NOTE: overflow stays VISIBLE. Setting overflow-x:auto here makes overflow-y
+   compute to auto too, which clips the ⋮ menu + any dropdown that opens below
+   the 36px bar. The row is nowrap and sized to fit on desktop. */
 .acct-tabs {
     display: flex; gap: 0; background: #f8fafc; align-items: center;
     border-bottom: 1px solid #e2e8f0; padding: 0 8px; min-height: 36px;
-    flex-shrink: 0; flex-wrap: nowrap; overflow-x: auto;
-    scrollbar-width: none; -ms-overflow-style: none;
+    flex-shrink: 0; flex-wrap: nowrap;
 }
-.acct-tabs::-webkit-scrollbar { display: none; }
 .acct-tab {
     display: inline-flex; align-items: center; padding: 7px 14px;
     border: none; background: transparent; cursor: pointer; white-space: nowrap;
