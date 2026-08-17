@@ -1282,6 +1282,30 @@ async function acctOpeningComputeInvestments() {
             securities.push({ security_id: sid, cost: net, name: sec.company_name || sec.symbol || ('Security ' + String(sid).slice(0, 8)) });
         }
     });
+
+    // MUTUAL FUNDS carried in from the closed period. MF trades live in their own
+    // table (`mf_trades`, fractional units), so they don't come through the equity
+    // engine above. Sells were FIFO-removed when the data was loaded, so the pre-close
+    // lots ARE the held units and their `amount` IS the cost — a straight sum per
+    // scheme (matches the FY26 financials to the rupee). No STT-in-cost adjustment
+    // applies to MF, so this equals what the engine would compute for a later sale.
+    try {
+        var mf = await wmsFetchAllRaw(acctUrl('mf_trades?select=security_id,amount,securities_db(company_name,symbol)' +
+            '&investor_id=eq.' + acctBookId + '&txn_date=lte.' + closeDate)) || [];
+        var mfBySec = {};
+        mf.forEach(function (r) {
+            var s = mfBySec[r.security_id] || (mfBySec[r.security_id] = { cost: 0, sec: r.securities_db || {} });
+            s.cost += (Number(r.amount) || 0);
+        });
+        Object.keys(mfBySec).forEach(function (sid) {
+            var cost = Math.round(mfBySec[sid].cost * 100) / 100;
+            if (cost > 0.005) {
+                var sec = mfBySec[sid].sec || {};
+                securities.push({ security_id: sid, cost: cost, name: sec.company_name || sec.symbol || ('MF ' + String(sid).slice(0, 8)) });
+            }
+        });
+    } catch (e) { console.error('[accounting] opening MF fetch failed', e); }
+
     securities.sort(function (a, b) { return b.cost - a.cost; });
     var sttLines = [];
     Object.keys(byRole).forEach(function (role) {
