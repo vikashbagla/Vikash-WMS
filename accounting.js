@@ -60,8 +60,18 @@ function acctParse(v) {
     var n = parseFloat(String(v).replace(/,/g, ''));
     return isNaN(n) ? 0 : n;
 }
-// Display-unit aware amount (used in Trial Balance / Day Book), returns HTML.
+// Module-wide "show full rupees" toggle (persistent). When on, every accounting view
+// shows full amounts; when off, the app's display unit (₹ '000) applies. One switch
+// for the whole module (owner request 2026-08-18).
+var ACCT_FULLAMT_KEY = 'wms_acct_full_amount';
+var acctFullAmt = false;
+try { acctFullAmt = localStorage.getItem(ACCT_FULLAMT_KEY) === '1'; } catch (e) {}
+function acctSetFullAmt(v) { acctFullAmt = !!v; try { localStorage.setItem(ACCT_FULLAMT_KEY, v ? '1' : '0'); } catch (e) {} }
+
+// Display amount (used across BS / P&L / Trial Balance / Day Book / ledger drill-down).
+// Honours the module-wide full-amount toggle; otherwise scales by the app display unit.
 function acctAmt(n) {
+    if (acctFullAmt) return acctNum(n);
     if (typeof formatAmount === 'function') return formatAmount(n);
     return acctNum(n);
 }
@@ -407,6 +417,15 @@ function acctWireUI() {
         };
     });
 
+    // Module-wide full-amount toggle (header). Applies to every accounting view.
+    var unitBtn = document.getElementById('acctUnitToggle');
+    if (unitBtn) unitBtn.onclick = function () {
+        acctSetFullAmt(!acctFullAmt);
+        acctRenderActiveTab();
+        acctSyncUnitToggle();
+        if (acctLedgerModalCtrl && acctLedgerModalCtrl.isOpen()) acctRenderLedgerDetail();
+    };
+
     // Primary actions stay inline; everything else lives behind the ⋮ menu.
     var nv = document.getElementById('acctNewVoucherBtn');
     if (nv) nv.onclick = acctOpenVoucherModal;
@@ -450,6 +469,7 @@ function acctRenderActiveTab() {
     else if (acctActiveTab === 'trial-balance') acctRenderTrialBalance();
     else if (acctActiveTab === 'day-book') acctRenderDayBook();
     else if (acctActiveTab === 'ledgers') acctRenderLedgers();
+    acctSyncUnitToggle();   // keep the header full-amount toggle visible + labelled on every tab
 }
 
 // ---- Financials: Balance Sheet + P&L ---------------------------------------
@@ -489,7 +509,6 @@ var ACCT_DB_CANCELLED_KEY = 'wms_acct_daybook_show_cancelled';
 var acctDayBookShowCancelled = false;
 try { acctDayBookShowCancelled = localStorage.getItem(ACCT_DB_CANCELLED_KEY) === '1'; } catch (e) {}
 function acctSetDayBookCancelled(v) { acctDayBookShowCancelled = !!v; try { localStorage.setItem(ACCT_DB_CANCELLED_KEY, v ? '1' : '0'); } catch (e) {} }
-var acctDayBookFullAmt = false;   // false = ₹ '000 (global unit); true = full ₹
 var acctDayBookSearch = '';       // live search (not persisted)
 
 // Persist the expand/collapse state across sessions (localStorage — this is the
@@ -578,13 +597,30 @@ function acctFinNodeHtml(node, depth) {
    period and the display unit apply to every view, so they are stated once. */
 function acctRenderContext() {
     var el = document.getElementById('acctContextInfo');
+    acctSyncUnitToggle();
     if (!el) return;
     if (!acctViewBookIds().length || !acctVoucherRows.length) { el.textContent = ''; return; }
     var unit = acctUnitLabel();
-    el.textContent = acctFmtDate(acctTbPeriodStart()) + ' to ' + acctFinAsOn() + (unit ? '  ·  ' + unit : '');
+    // The period is the whole financial year (01-Apr to 31-Mar), not the last entry date.
+    el.textContent = acctFmtDate(acctTbPeriodStart()) + ' to ' + acctFmtDate(acctFyEnd()) + (unit ? '  ·  ' + unit : '');
+}
+// FY end (31-Mar of the next calendar year) for the active book, from the FY start.
+function acctFyEnd() {
+    var p = acctTbPeriodStart().split('-');
+    var d = new Date(Number(p[0]) + 1, Number(p[1]) - 1, 1); d.setDate(d.getDate() - 1);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+// Keep the header full-amount toggle in sync; only visible with a book loaded.
+function acctSyncUnitToggle() {
+    var btn = document.getElementById('acctUnitToggle');
+    if (!btn) return;
+    btn.style.display = (acctViewBookIds().length && acctVoucherRows.length) ? '' : 'none';
+    var base = (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
+    btn.textContent = acctFullAmt ? ('Show in ' + base) : 'Show full amount';
 }
 
 function acctUnitLabel() {
+    if (acctFullAmt) return 'Full ₹';
     // The whole app scales amounts by the user's display-unit preference; say so,
     // otherwise a figure in '000 is indistinguishable from one in rupees.
     try { if (typeof getUnitDescription === 'function') return getUnitDescription(); } catch (e) {}
@@ -906,18 +942,13 @@ function acctRenderDayBook() {
     if (!el) return;
     if (!acctViewBookIds().length) { acctSetCmdFilters(''); el.innerHTML = '<div class="acct-empty">No book selected.</div>'; return; }
 
-    // Command line: full-amount toggle · show-cancelled icon · search (search sits just
-    // before the New Voucher button). Rebuilt on toggle clicks; the search re-renders
-    // ONLY the table body so its input keeps focus + caret.
-    var baseUnit = (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
+    // Command line: show-cancelled icon · search (search sits just before New Voucher).
+    // The full-amount toggle is module-wide (header), not here. Rebuilt on toggle clicks;
+    // the search re-renders ONLY the table body so its input keeps focus + caret.
     acctSetCmdFilters(
-        '<button id="acctDbUnitToggle" class="wms-btn wms-btn-secondary" title="Toggle full rupees vs ' + wmsEsc(baseUnit) + '">' +
-            (acctDayBookFullAmt ? ('Show in ' + wmsEsc(baseUnit)) : 'Show full amount') + '</button>' +
         '<button id="acctDbCancelledBtn" class="acct-ld-icon-btn' + (acctDayBookShowCancelled ? ' on' : '') + '" title="' +
             (acctDayBookShowCancelled ? 'Hide cancelled vouchers' : 'Show cancelled vouchers') + '">⊘</button>' +
         '<input type="text" id="acctDbSearch" class="wms-input acct-db-search" placeholder="Search vouchers…" value="' + wmsEsc(acctDayBookSearch) + '">');
-    var ut = document.getElementById('acctDbUnitToggle');
-    if (ut) ut.onclick = function () { acctDayBookFullAmt = !acctDayBookFullAmt; acctRenderDayBook(); };
     var cb = document.getElementById('acctDbCancelledBtn');
     if (cb) cb.onclick = function () { acctSetDayBookCancelled(!acctDayBookShowCancelled); acctRenderDayBook(); };
     var sr = document.getElementById('acctDbSearch');
@@ -929,7 +960,7 @@ function acctRenderDayBook() {
 function acctRenderDayBookBody() {
     var el = document.getElementById('acctDayBookBody');
     if (!el) return;
-    var fmt = acctDayBookFullAmt ? acctNum : acctAmt;
+    var fmt = acctAmt;   // honours the module-wide full-amount toggle
 
     // Group lines by voucher.
     var vmap = {};
@@ -958,42 +989,31 @@ function acctRenderDayBookBody() {
         return hay.indexOf(q) >= 0;
     });
 
-    var hasCancelled = vouchers.some(function (v) { return v.cancelled; });
+    var cancelledCount = vouchers.filter(function (v) { return v.cancelled; }).length;
     var count = '<div class="acct-db-count">Day Book — ' + shown.length + ' of ' + total + ' voucher' + (total === 1 ? '' : 's') +
-        ((hasCancelled && !acctDayBookShowCancelled) ? ' <span class="acct-db-count-note">(cancelled hidden)</span>' : '') + '</div>';
+        ((cancelledCount && !acctDayBookShowCancelled) ? ' <span class="acct-db-count-note">(' + cancelledCount + ' cancelled hidden)</span>' : '') + '</div>';
 
     if (!total) { el.innerHTML = count + '<div class="acct-empty">No vouchers yet. Use ➕ New Voucher to begin.</div>'; return; }
 
-    var html = count + '<table class="acct-table"><thead><tr><th>Date</th><th>Voucher #</th><th>Type</th><th>Narration</th><th class="text-right">Debit</th><th class="text-right">Credit</th></tr></thead><tbody>';
+    var html = count + '<table class="acct-table"><thead><tr><th class="c-date">Date</th><th>Voucher #</th><th>Type</th><th>Narration</th><th class="text-right">Debit</th><th class="text-right">Credit</th></tr></thead><tbody>';
     if (!shown.length) {
         html += '<tr><td colspan="6" class="acct-empty" style="padding:16px;">No vouchers match &ldquo;' + wmsEsc(acctDayBookSearch) + '&rdquo;.</td></tr>';
     }
     shown.forEach(function (v) {
-        html += '<tr class="acct-clickable' + (v.cancelled ? ' acct-vch-cancelled' : '') + '" data-voucher="' + v.id + '">' +
-            '<td>' + wmsEsc(acctFmtDate(v.date)) + '</td>' +
+        // Clicking a row OPENS the voucher (view/edit), rather than expanding inline.
+        html += '<tr class="acct-clickable' + (v.cancelled ? ' acct-vch-cancelled' : '') + '" data-voucher="' + v.id + '" title="Open this voucher">' +
+            '<td class="c-date">' + wmsEsc(acctFmtDate(v.date)) + '</td>' +
             '<td>' + wmsEsc(v.number) + (v.cancelled ? ' <span class="acct-scope-badge">cancelled</span>' : '') + '</td>' +
             '<td><span class="acct-kind-badge">' + wmsEsc(v.type) + '</span></td>' +
             '<td>' + wmsEsc(v.narration || '') + '</td>' +
             '<td class="text-right">' + fmt(v.debit) + '</td>' +
             '<td class="text-right">' + fmt(v.credit) + '</td></tr>';
-        var det = '<tr class="acct-voucher-detail" data-detail="' + v.id + '" style="display:none;"><td colspan="6" style="background:#fcfcfd;">';
-        det += '<table class="acct-table" style="margin:4px 0;"><tbody>';
-        v.lines.forEach(function (ln) {
-            det += '<tr><td class="acct-ledger-name" style="padding-left:24px;">' + wmsEsc(ln.ledger_name) + '</td>' +
-                '<td class="text-right">' + (Number(ln.debit_amount) ? fmt(Number(ln.debit_amount)) : '-') + '</td>' +
-                '<td class="text-right">' + (Number(ln.credit_amount) ? fmt(Number(ln.credit_amount)) : '-') + '</td></tr>';
-        });
-        det += '</tbody></table></td></tr>';
-        html += det;
     });
     html += '</tbody></table>';
     el.innerHTML = html;
 
     el.querySelectorAll('tr[data-voucher]').forEach(function (tr) {
-        tr.onclick = function () {
-            var d = el.querySelector('tr[data-detail="' + tr.dataset.voucher + '"]');
-            if (d) d.style.display = (d.style.display === 'none') ? '' : 'none';
-        };
+        tr.onclick = function () { acctOpenEditVoucher(tr.dataset.voucher); };
     });
 }
 
@@ -1579,16 +1599,22 @@ function acctOpeningTotals() {
 function acctOpeningUpdateBalance() {
     var t = acctOpeningTotals();
     var nonEmpty = acctOpeningLines.filter(function (l) { return acctParse(l.debit) > 0 || acctParse(l.credit) > 0; }).length;
+    // Totals aligned under Dr/Cr (full rupees), difference on its own line — same
+    // presentation as the voucher modal.
     document.getElementById('acctOpeningTotalDr').textContent = acctNum(t.dr);
     document.getElementById('acctOpeningTotalCr').textContent = acctNum(t.cr);
-    document.getElementById('acctOpeningDiff').textContent = acctNum(Math.abs(t.diff));
 
     var balanced = Math.abs(t.diff) < 0.005;
-    var bar = document.getElementById('acctOpeningBar');
+    var diffEl = document.getElementById('acctOpeningDiff');
+    if (diffEl) diffEl.textContent = (nonEmpty && !balanced) ? (acctNum(Math.abs(t.diff)) + ' ' + (t.diff > 0 ? 'Dr' : 'Cr')) : '';
+    var grid = document.getElementById('acctOpeningGrid');
+    if (grid) {
+        grid.classList.toggle('acct-vch-balanced', nonEmpty && balanced);
+        grid.classList.toggle('acct-vch-unbalanced', nonEmpty && !balanced);
+    }
     var msg = document.getElementById('acctOpeningMsg');
     var note = document.getElementById('acctOpeningNote');
-    if (bar) bar.className = 'acct-balance-bar ' + (nonEmpty && balanced ? 'ok' : 'bad');
-    if (msg) msg.textContent = !nonEmpty ? 'Nothing entered' : (balanced ? 'Balanced' : 'Out by ' + acctNum(Math.abs(t.diff)));
+    if (msg) msg.textContent = !nonEmpty ? 'Nothing entered' : (balanced ? 'Balanced' : 'Difference');
     if (note) {
         note.textContent = (nonEmpty && !balanced)
             ? 'On save the ' + acctNum(Math.abs(t.diff)) + ' difference is posted to “' + ACCT_OB_SUSPENSE + '” (' +
@@ -2159,7 +2185,6 @@ async function acctSaveVoucher() {
 // Ledger-detail modal
 // ============================================================================
 var acctLedgerDetailId = null;
-var acctLedgerDetailFullAmt = false;   // false = global display unit (₹ '000); true = full ₹
 // Date filter for the ledger-detail modal only (per owner 2026-08-17). Persisted so
 // the choice survives across sessions.  mode: 'all' | 'fy' | 'custom'.  For 'fy',
 // fyStart = the FY's starting calendar year (null ⇒ the CURRENT FY, resolved live so
@@ -2243,20 +2268,20 @@ function acctRenderLedgerDetail() {
     var body = document.getElementById('acctLedgerDetailBody');
     var g = acctGroupById[lg.group_id];
     var baseUnit = (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
-    var unitTxt = acctLedgerDetailFullAmt ? 'Full ₹' : baseUnit;
 
     // The ledger name, group path and the unit control now live in the modal HEADER
-    // row (before the ✕) so the body is all real content.
+    // row (before the ✕) so the body is all real content. The unit toggle drives the
+    // MODULE-WIDE full-amount setting, so switching here also switches the tabs behind.
     var titleEl = document.getElementById('acctLedgerTitle');
     if (titleEl) titleEl.textContent = lg.name;
     var subEl = document.getElementById('acctLedgerSub');
     if (subEl) subEl.textContent = acctGroupPath(g) + ' · ' + acctViewTitle();
     var unitEl = document.getElementById('acctLedgerUnit');
-    if (unitEl) unitEl.textContent = unitTxt;
+    if (unitEl) unitEl.textContent = acctUnitLabel();
     var tgl = document.getElementById('acctLdUnitToggle');
     if (tgl) {
-        tgl.textContent = acctLedgerDetailFullAmt ? ('Show in ' + baseUnit) : 'Show full amount';
-        tgl.onclick = function () { acctLedgerDetailFullAmt = !acctLedgerDetailFullAmt; acctRenderLedgerDetail(); };
+        tgl.textContent = acctFullAmt ? ('Show in ' + baseUnit) : 'Show full amount';
+        tgl.onclick = function () { acctSetFullAmt(!acctFullAmt); acctRenderLedgerDetail(); acctRenderActiveTab(); acctSyncUnitToggle(); };
     }
 
     body.innerHTML = acctLedgerDateFilterBar() + '<div id="acctLdTableWrap"></div>';
@@ -2274,7 +2299,7 @@ function acctRenderLedgerTable() {
             return String(a.voucher_number).localeCompare(String(b.voucher_number));
         });
     var byV = acctLinesByVoucher();
-    var fmt = acctLedgerDetailFullAmt ? acctNum : acctAmt;
+    var fmt = acctAmt;   // honours the module-wide full-amount toggle
 
     var win = acctLedgerDateWindow();
     var opening = 0, rows = [];

@@ -25,6 +25,7 @@
 /* Period + display unit apply to every view in the module, so they are stated
    once here rather than repeated above each table. */
 .acct-context { margin-left: auto; font-size: 11px; color: #718096; white-space: nowrap; }
+.acct-unit-toggle { font-size: 11px; padding: 3px 8px; margin-left: 10px; white-space: nowrap; }
 .acct-book-tab {
     display: inline-flex; align-items: center; gap: 5px;
     border: 1px solid transparent; background: transparent; cursor: pointer;
@@ -320,6 +321,9 @@
 .acct-ld-table td { padding: 9px 10px; }
 .acct-ld-table th { padding: 8px 10px; }
 .acct-ld-opening td { background: #f8fafc; color: #475569; }
+/* Date columns: fixed width + right-aligned so dates line up and are easy to scan
+   (applies to the ledger drill-down and the Day Book — both are .acct-table). */
+.acct-table th.c-date, .acct-table td.c-date { width: 92px; white-space: nowrap; text-align: right; }
 /* Column sizing: keep Date/Vch# tight; give the Contra ledger room for long names. */
 .acct-ld-table th.c-date, .acct-ld-table td.c-date { width: 84px; white-space: nowrap; }
 .acct-ld-table th.c-vch, .acct-ld-table td.c-vch { width: 62px; white-space: nowrap; }
@@ -449,6 +453,7 @@
     <div class="acct-books">
         <div class="acct-books-tabs" id="acctBookTabs"></div>
         <span class="acct-context" id="acctContextInfo"></span>
+        <button id="acctUnitToggle" class="wms-btn wms-btn-secondary acct-unit-toggle" title="Show full rupees or ₹ '000 — applies across the whole module" style="display:none;">Show full amount</button>
     </div>
 
     <!-- ===== Report tabs + ONE command line =====
@@ -570,40 +575,41 @@
 <!-- ===================== Opening balances modal ===================== -->
 <div class="wms-modal-overlay" id="acctOpeningModal">
     <div class="wms-modal-dialog" style="max-width: 720px; width: 92%;">
-        <div class="wms-modal-header">
+        <div class="wms-modal-header acct-voucher-header">
             <span id="acctOpeningTitle" style="font-size:15px;font-weight:700;">Opening Balances</span>
-            <button class="wms-btn-close" id="acctOpeningClose">✕</button>
+            <div class="acct-vh-right">
+                <div id="acctOpeningDate"></div>
+                <button class="wms-btn-close" id="acctOpeningClose">✕</button>
+            </div>
         </div>
-        <div class="wms-modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
-            <div class="acct-voucher-grid">
-                <div class="acct-field-row">
-                    <div class="acct-field">
-                        <label>As on</label>
-                        <div id="acctOpeningDate"></div>
-                    </div>
-                </div>
-
-                <table class="acct-lines-table">
+        <div class="wms-modal-body" style="padding:16px;max-height:74vh;overflow-y:auto;">
+            <div class="acct-voucher-grid" id="acctOpeningGrid">
+                <table class="acct-lines-table acct-voucher-lines-table">
                     <thead>
                         <tr>
-                            <th style="width:52%;">Ledger</th>
+                            <th style="width:54%;">Ledger</th>
                             <th class="text-right">Debit</th>
                             <th class="text-right">Credit</th>
                             <th style="width:28px;"></th>
                         </tr>
                     </thead>
                     <tbody id="acctOpeningLines"></tbody>
+                    <tfoot>
+                        <tr class="acct-vch-total-row">
+                            <td class="acct-vch-total-lbl">Total</td>
+                            <td class="text-right" id="acctOpeningTotalDr">0.00</td>
+                            <td class="text-right" id="acctOpeningTotalCr">0.00</td>
+                            <td></td>
+                        </tr>
+                        <tr class="acct-vch-diff-row">
+                            <td class="acct-vch-diff-msg" id="acctOpeningMsg">Nothing entered</td>
+                            <td class="text-right acct-vch-diff-amt" id="acctOpeningDiff" colspan="2"></td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
                 </table>
                 <div class="acct-lines-actions">
                     <button id="acctOpeningAddLineBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;">➕ Add line</button>
-                </div>
-
-                <div class="acct-balance-bar bad" id="acctOpeningBar">
-                    <span id="acctOpeningMsg">Nothing entered</span>
-                    <span class="acct-bal-spacer"></span>
-                    <span>Dr <span id="acctOpeningTotalDr">0.00</span></span>
-                    <span>Cr <span id="acctOpeningTotalCr">0.00</span></span>
-                    <span class="acct-ob-diff">Diff <span id="acctOpeningDiff">0.00</span></span>
                 </div>
                 <div class="acct-ob-note" id="acctOpeningNote"></div>
             </div>
