@@ -484,6 +484,14 @@ function acctSetCmdFilters(html) {
     if (el) el.innerHTML = html || '';
 }
 
+// ---- Day Book filters: full-amount + show-cancelled (persistent) + live search ----
+var ACCT_DB_CANCELLED_KEY = 'wms_acct_daybook_show_cancelled';
+var acctDayBookShowCancelled = false;
+try { acctDayBookShowCancelled = localStorage.getItem(ACCT_DB_CANCELLED_KEY) === '1'; } catch (e) {}
+function acctSetDayBookCancelled(v) { acctDayBookShowCancelled = !!v; try { localStorage.setItem(ACCT_DB_CANCELLED_KEY, v ? '1' : '0'); } catch (e) {} }
+var acctDayBookFullAmt = false;   // false = ₹ '000 (global unit); true = full ₹
+var acctDayBookSearch = '';       // live search (not persisted)
+
 // Persist the expand/collapse state across sessions (localStorage — this is the
 // real app, not a sandboxed artifact). Keyed by group id, which is stable, so the
 // same layout restores next time. Corrupt/absent state falls back to the defaults.
@@ -896,16 +904,40 @@ function acctRenderTrialBalance() {
 function acctRenderDayBook() {
     var el = document.getElementById('acctDayBookBody');
     if (!el) return;
-    acctSetCmdFilters('');   // Day Book has no filters — keep the command line clean
-    if (!acctViewBookIds().length) { el.innerHTML = '<div class="acct-empty">No book selected.</div>'; return; }
+    if (!acctViewBookIds().length) { acctSetCmdFilters(''); el.innerHTML = '<div class="acct-empty">No book selected.</div>'; return; }
 
-    // Group lines by voucher
+    // Command line: full-amount toggle · show-cancelled icon · search (search sits just
+    // before the New Voucher button). Rebuilt on toggle clicks; the search re-renders
+    // ONLY the table body so its input keeps focus + caret.
+    var baseUnit = (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
+    acctSetCmdFilters(
+        '<button id="acctDbUnitToggle" class="wms-btn wms-btn-secondary" title="Toggle full rupees vs ' + wmsEsc(baseUnit) + '">' +
+            (acctDayBookFullAmt ? ('Show in ' + wmsEsc(baseUnit)) : 'Show full amount') + '</button>' +
+        '<button id="acctDbCancelledBtn" class="acct-ld-icon-btn' + (acctDayBookShowCancelled ? ' on' : '') + '" title="' +
+            (acctDayBookShowCancelled ? 'Hide cancelled vouchers' : 'Show cancelled vouchers') + '">⊘</button>' +
+        '<input type="text" id="acctDbSearch" class="wms-input acct-db-search" placeholder="Search vouchers…" value="' + wmsEsc(acctDayBookSearch) + '">');
+    var ut = document.getElementById('acctDbUnitToggle');
+    if (ut) ut.onclick = function () { acctDayBookFullAmt = !acctDayBookFullAmt; acctRenderDayBook(); };
+    var cb = document.getElementById('acctDbCancelledBtn');
+    if (cb) cb.onclick = function () { acctSetDayBookCancelled(!acctDayBookShowCancelled); acctRenderDayBook(); };
+    var sr = document.getElementById('acctDbSearch');
+    if (sr) sr.oninput = function () { acctDayBookSearch = sr.value; acctRenderDayBookBody(); };
+
+    acctRenderDayBookBody();
+}
+
+function acctRenderDayBookBody() {
+    var el = document.getElementById('acctDayBookBody');
+    if (!el) return;
+    var fmt = acctDayBookFullAmt ? acctNum : acctAmt;
+
+    // Group lines by voucher.
     var vmap = {};
     acctVoucherRows.forEach(function (r) {
         if (!vmap[r.voucher_id]) {
             vmap[r.voucher_id] = {
                 id: r.voucher_id, number: r.voucher_number, type: r.voucher_type,
-                date: r.voucher_date, narration: r.voucher_narration,
+                date: r.voucher_date, narration: r.voucher_narration, cancelled: !acctIsLive(r),
                 debit: Number(r.total_debit) || 0, credit: Number(r.total_credit) || 0, lines: []
             };
         }
@@ -915,24 +947,41 @@ function acctRenderDayBook() {
         if (a.date !== b.date) return a.date < b.date ? -1 : 1;
         return (a.number || '').localeCompare(b.number || '');
     });
-    if (!vouchers.length) { el.innerHTML = '<div class="acct-empty">No vouchers yet. Use ➕ New Voucher to begin.</div>'; return; }
+    var total = vouchers.length;
 
-    var html = '<table class="acct-table"><thead><tr><th>Date</th><th>Voucher #</th><th>Type</th><th>Narration</th><th class="text-right">Debit</th><th class="text-right">Credit</th></tr></thead><tbody>';
-    vouchers.forEach(function (v) {
-        html += '<tr class="acct-clickable" data-voucher="' + v.id + '">' +
+    var q = (acctDayBookSearch || '').trim().toLowerCase();
+    var shown = vouchers.filter(function (v) {
+        if (v.cancelled && !acctDayBookShowCancelled) return false;
+        if (!q) return true;
+        var hay = (v.number + ' ' + v.type + ' ' + (v.narration || '') + ' ' + acctFmtDate(v.date) + ' ' + (v.date || '') + ' ' +
+            v.lines.map(function (l) { return l.ledger_name || ''; }).join(' ')).toLowerCase();
+        return hay.indexOf(q) >= 0;
+    });
+
+    var hasCancelled = vouchers.some(function (v) { return v.cancelled; });
+    var count = '<div class="acct-db-count">Day Book — ' + shown.length + ' of ' + total + ' voucher' + (total === 1 ? '' : 's') +
+        ((hasCancelled && !acctDayBookShowCancelled) ? ' <span class="acct-db-count-note">(cancelled hidden)</span>' : '') + '</div>';
+
+    if (!total) { el.innerHTML = count + '<div class="acct-empty">No vouchers yet. Use ➕ New Voucher to begin.</div>'; return; }
+
+    var html = count + '<table class="acct-table"><thead><tr><th>Date</th><th>Voucher #</th><th>Type</th><th>Narration</th><th class="text-right">Debit</th><th class="text-right">Credit</th></tr></thead><tbody>';
+    if (!shown.length) {
+        html += '<tr><td colspan="6" class="acct-empty" style="padding:16px;">No vouchers match &ldquo;' + wmsEsc(acctDayBookSearch) + '&rdquo;.</td></tr>';
+    }
+    shown.forEach(function (v) {
+        html += '<tr class="acct-clickable' + (v.cancelled ? ' acct-vch-cancelled' : '') + '" data-voucher="' + v.id + '">' +
             '<td>' + wmsEsc(acctFmtDate(v.date)) + '</td>' +
-            '<td>' + wmsEsc(v.number) + '</td>' +
+            '<td>' + wmsEsc(v.number) + (v.cancelled ? ' <span class="acct-scope-badge">cancelled</span>' : '') + '</td>' +
             '<td><span class="acct-kind-badge">' + wmsEsc(v.type) + '</span></td>' +
             '<td>' + wmsEsc(v.narration || '') + '</td>' +
-            '<td class="text-right">' + acctAmt(v.debit) + '</td>' +
-            '<td class="text-right">' + acctAmt(v.credit) + '</td></tr>';
-        // detail row (hidden until clicked)
+            '<td class="text-right">' + fmt(v.debit) + '</td>' +
+            '<td class="text-right">' + fmt(v.credit) + '</td></tr>';
         var det = '<tr class="acct-voucher-detail" data-detail="' + v.id + '" style="display:none;"><td colspan="6" style="background:#fcfcfd;">';
         det += '<table class="acct-table" style="margin:4px 0;"><tbody>';
         v.lines.forEach(function (ln) {
             det += '<tr><td class="acct-ledger-name" style="padding-left:24px;">' + wmsEsc(ln.ledger_name) + '</td>' +
-                '<td class="text-right">' + (Number(ln.debit_amount) ? acctAmt(Number(ln.debit_amount)) : '-') + '</td>' +
-                '<td class="text-right">' + (Number(ln.credit_amount) ? acctAmt(Number(ln.credit_amount)) : '-') + '</td></tr>';
+                '<td class="text-right">' + (Number(ln.debit_amount) ? fmt(Number(ln.debit_amount)) : '-') + '</td>' +
+                '<td class="text-right">' + (Number(ln.credit_amount) ? fmt(Number(ln.credit_amount)) : '-') + '</td></tr>';
         });
         det += '</tbody></table></td></tr>';
         html += det;
