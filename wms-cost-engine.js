@@ -81,9 +81,66 @@
         });
     }
 
+    // ⛔ SINGLE SOURCE — F&O (NFO + MCX) realised P&L. Do NOT copy this logic or add
+    //    another F&O FIFO anywhere. Both consumers MUST call this: Statements
+    //    (wms-shared.js wmsBuildLedger) and Accounting (accounting-engine.js).
+    //    ⚠️ Any edit here is behaviour-changing for BOTH modules and requires
+    //    EXPLICIT OWNER APPROVAL. The guard tests/check-fno-engine.mjs (in the
+    //    Vikash-WMS-backend repo, part of `npm run drift`/`npm test`) fails LOUD on
+    //    any change or on a re-introduced copy; re-pin with `--write` ONLY after approval.
+    //
+    // F&O realised P&L — the AUTHORITATIVE symmetric long/short FIFO, per CONTRACT.
+    // Lifted from the Statements module (wms-shared.js wmsBuildLedger NFO block),
+    // which the owner designates as the single source of truth for F&O P&L (2026-08-15).
+    // Both the Statements module and the Accounting engine call THIS so they cannot
+    // diverge; the fno-parity test guards it.
+    //
+    // A lot is LONG (opened by a BUY) or SHORT (opened by a SELL). Every trade first
+    // COVERS open lots of the opposite side (FIFO, booking realised P&L) and only the
+    // uncovered remainder opens a new lot on its own side — so shorts (SELL to open)
+    // are handled. Callers decide WHAT to feed it: Statements passes futures only
+    // (option premiums are cash there); Accounting passes each beneficiary's F&O.
+    //
+    // rows = [{ key, type:'BUY'|'SELL', qty, net, id, sort }]
+    //   key  = contract identity (e.g. symbol minus exchange prefix)
+    //   qty  = quantity (sign ignored; magnitude used)
+    //   net  = net-amount MAGNITUDE (perUnit = net/qty is cost on BUY, proceeds on SELL)
+    //   id   = caller's row identifier (returned so the caller can attribute the P&L)
+    //   sort = ordering key within a contract (chronological)
+    // Returns [{ id, matchedQty, realisedPnl }] for each COVERING trade
+    //   (realisedPnl = sell proceeds − buy cost; +profit / −loss).
+    function wmsFnoRealised(rows) {
+        var groups = {};
+        (rows || []).forEach(function (r) { (groups[r.key] = groups[r.key] || []).push(r); });
+        var out = [];
+        Object.keys(groups).forEach(function (k) {
+            var g = groups[k].slice().sort(function (a, b) { return a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0; });
+            var lots = [];
+            g.forEach(function (r) {
+                var qty = Math.abs(r.qty); if (qty === 0) return;
+                if (r.type !== 'BUY' && r.type !== 'SELL') return;
+                var perUnit = Math.abs(r.net) / qty;
+                var isBuy = r.type === 'BUY';
+                var openSide = isBuy ? 'LONG' : 'SHORT', coverSide = isBuy ? 'SHORT' : 'LONG';
+                var remain = qty, matchedQty = 0, buyCost = 0, sellProc = 0;
+                while (remain > 0 && lots.length > 0 && lots[0].side === coverSide) {
+                    var lot = lots[0], matched = Math.min(remain, lot.qty);
+                    if (isBuy) { sellProc += matched * lot.perUnit; buyCost += matched * perUnit; }
+                    else { buyCost += matched * lot.perUnit; sellProc += matched * perUnit; }
+                    lot.qty -= matched; remain -= matched; matchedQty += matched;
+                    if (lot.qty <= 0) lots.shift();
+                }
+                if (remain > 0) lots.push({ qty: remain, perUnit: perUnit, side: openSide });
+                if (matchedQty > 0) out.push({ id: r.id, matchedQty: matchedQty, realisedPnl: Math.round((sellProc - buyCost) * 100) / 100 });
+            });
+        });
+        return out;
+    }
+
     return {
         wmsAddMonths: wmsAddMonths,
         wmsGainClassify: wmsGainClassify,
-        wmsSttAdjustTxns: wmsSttAdjustTxns
+        wmsSttAdjustTxns: wmsSttAdjustTxns,
+        wmsFnoRealised: wmsFnoRealised
     };
 });

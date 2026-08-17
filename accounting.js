@@ -98,6 +98,91 @@ function acctViewTitle() {
     var ids = acctViewBookIds();
     return ids.length ? acctInvName(ids[0]) : '—';
 }
+// ---- Book-tab preferences: order, hidden set, active book (all browser-persistent) ----
+var ACCT_BOOK_ORDER_KEY = 'wms_acct_book_order';
+var ACCT_BOOK_HIDDEN_KEY = 'wms_acct_books_hidden';
+var ACCT_ACTIVE_BOOK_KEY = 'wms_acct_active_book';
+var acctBookOrder = [];      // full ordering of book ids (visible + hidden)
+var acctBooksHidden = [];    // ids the user has closed off the tab bar
+function acctLoadBookPrefs() {
+    try { var o = JSON.parse(localStorage.getItem(ACCT_BOOK_ORDER_KEY) || '[]'); acctBookOrder = Array.isArray(o) ? o : []; } catch (e) { acctBookOrder = []; }
+    try { var h = JSON.parse(localStorage.getItem(ACCT_BOOK_HIDDEN_KEY) || '[]'); acctBooksHidden = Array.isArray(h) ? h : []; } catch (e) { acctBooksHidden = []; }
+}
+function acctSaveBookOrder() { try { localStorage.setItem(ACCT_BOOK_ORDER_KEY, JSON.stringify(acctBookOrder)); } catch (e) {} }
+function acctSaveBooksHidden() { try { localStorage.setItem(ACCT_BOOK_HIDDEN_KEY, JSON.stringify(acctBooksHidden)); } catch (e) {} }
+function acctSaveActiveBook() { try { localStorage.setItem(ACCT_ACTIVE_BOOK_KEY, acctBookId || ''); } catch (e) {} }
+/** All own books in the saved order; unknown/new books appended in natural order. */
+function acctOrderedBooks() {
+    var books = acctOwnBooks();
+    var byId = {}; books.forEach(function (b) { byId[b.id] = b; });
+    var out = [];
+    (acctBookOrder || []).forEach(function (id) { if (byId[id]) { out.push(byId[id]); delete byId[id]; } });
+    books.forEach(function (b) { if (byId[b.id]) out.push(b); });
+    // Normalise the stored order to the full current set (drops deleted books).
+    acctBookOrder = out.map(function (b) { return b.id; });
+    return out;
+}
+function acctVisibleBooks() { return acctOrderedBooks().filter(function (b) { return acctBooksHidden.indexOf(b.id) < 0; }); }
+
+async function acctSwitchBook(id) {
+    if (acctBookId === id && !acctIsConsolidated()) return;
+    acctBookId = id;
+    acctBookIds = null;                 // picking a single book clears consolidation
+    acctSaveActiveBook();
+    acctLoading(true);
+    try {
+        await acctLoadBook();
+        acctRenderBookTabs();
+        acctRenderActiveTab();
+        acctSyncActionButtons();
+    } finally { acctLoading(false); }
+}
+function acctHideBook(id) {
+    if (acctBooksHidden.indexOf(id) < 0) acctBooksHidden.push(id);
+    acctSaveBooksHidden();
+    // If we just closed the active book, move to the first still-visible one.
+    if (acctBookId === id) {
+        var vis = acctVisibleBooks();
+        if (vis.length) { acctSwitchBook(vis[0].id); return; }
+    }
+    acctRenderBookTabs();
+}
+function acctShowBook(id) {
+    var ix = acctBooksHidden.indexOf(id);
+    if (ix >= 0) acctBooksHidden.splice(ix, 1);
+    acctSaveBooksHidden();
+    acctSwitchBook(id);                 // re-opening a book also selects it
+}
+/** Move dragged book id to just before targetId in the full order, then persist. */
+function acctReorderBook(dragId, targetId) {
+    if (dragId === targetId) return;
+    acctOrderedBooks();                 // ensure acctBookOrder is the full normalised set
+    var from = acctBookOrder.indexOf(dragId);
+    if (from < 0) return;
+    acctBookOrder.splice(from, 1);
+    var to = acctBookOrder.indexOf(targetId);
+    if (to < 0) to = acctBookOrder.length;
+    acctBookOrder.splice(to, 0, dragId);
+    acctSaveBookOrder();
+    acctRenderBookTabs();
+}
+/** Nudge a book one step up/down in the full order (used by the ＋ manager). */
+function acctMoveBook(id, dir) {
+    acctOrderedBooks();
+    var ix = acctBookOrder.indexOf(id), j = ix + dir;
+    if (ix < 0 || j < 0 || j >= acctBookOrder.length) return;
+    var t = acctBookOrder[ix]; acctBookOrder[ix] = acctBookOrder[j]; acctBookOrder[j] = t;
+    acctSaveBookOrder();
+    acctRenderBookTabs();
+}
+/** Flip a book between open (visible) and closed, without forcing a switch. */
+function acctToggleBookHidden(id) {
+    var ix = acctBooksHidden.indexOf(id);
+    if (ix >= 0) { acctBooksHidden.splice(ix, 1); acctSaveBooksHidden(); acctRenderBookTabs(); }
+    else { acctHideBook(id); }           // hiding handles the active-book fallback
+}
+var acctBookMgrOpen = false;             // keep the ＋ manager open across its own re-renders
+
 function acctRenderBookTabs() {
     var el = document.getElementById('acctBookTabs');
     if (!el) return;
@@ -107,29 +192,82 @@ function acctRenderBookTabs() {
         acctBookId = null;
         return;
     }
-    if (!acctBookId || !books.some(function (b) { return b.id === acctBookId; })) acctBookId = books[0].id;
+    var visible = acctVisibleBooks();
+    var hidden = acctOrderedBooks().filter(function (b) { return acctBooksHidden.indexOf(b.id) >= 0; });
+    // Keep the active book valid and, if hidden/removed, fall back to a visible one.
+    if (!acctBookId || !books.some(function (b) { return b.id === acctBookId; }) ||
+        (visible.length && acctBooksHidden.indexOf(acctBookId) >= 0)) {
+        acctBookId = (visible[0] || books[0]).id;
+        acctSaveActiveBook();
+    }
     var consol = acctIsConsolidated();
-    el.innerHTML = books.map(function (b) {
+    var tabsHtml = visible.map(function (b) {
         var on = !consol && b.id === acctBookId;
-        return '<button class="acct-book-tab' + (on ? ' active' : '') + '" data-book="' + b.id + '">' +
-            wmsEsc(b.short_name || b.name) + '</button>';
-    }).join('') + '<span id="acctConsolidateChip" class="acct-consol-chip" style="display:none;margin-left:8px;"></span>';
+        return '<span class="acct-book-tab' + (on ? ' active' : '') + '" draggable="true" data-book="' + b.id + '">' +
+            '<span class="acct-book-lbl">' + wmsEsc(b.short_name || b.name) + '</span>' +
+            '<span class="acct-book-x" title="Close this book tab">✕</span></span>';
+    }).join('');
+    // "＋" opens a book manager: every book in order, with ▲▼ reorder and Open/Close.
+    var allBooks = acctOrderedBooks();
+    var mgrRows = allBooks.map(function (b, i) {
+        var isHidden = acctBooksHidden.indexOf(b.id) >= 0;
+        return '<div class="acct-book-mgr-row' + (isHidden ? ' is-hidden' : '') + '">' +
+            '<span class="acct-book-mgr-move">' +
+                '<button class="acct-book-mgr-up" data-book="' + b.id + '"' + (i === 0 ? ' disabled' : '') + ' title="Move up">▲</button>' +
+                '<button class="acct-book-mgr-down" data-book="' + b.id + '"' + (i === allBooks.length - 1 ? ' disabled' : '') + ' title="Move down">▼</button>' +
+            '</span>' +
+            '<span class="acct-book-mgr-name" data-book="' + b.id + '" title="Go to this book">' + wmsEsc(b.short_name || b.name) + '</span>' +
+            '<button class="acct-book-mgr-toggle" data-book="' + b.id + '">' + (isHidden ? 'Open' : 'Close') + '</button>' +
+        '</div>';
+    }).join('');
+    var addHtml = '<span class="acct-book-add-wrap">' +
+        '<button class="acct-book-add" id="acctBookAddBtn" title="Manage books — reorder, open, close">+</button>' +
+        '<div class="acct-book-add-dd' + (acctBookMgrOpen ? ' show' : '') + '" id="acctBookAddDd">' +
+            '<div class="acct-book-mgr-hd">Books — drag tabs or use ▲▼ to reorder</div>' +
+            mgrRows +
+        '</div></span>';
+    el.innerHTML = tabsHtml + addHtml +
+        '<span id="acctConsolidateChip" class="acct-consol-chip" style="display:none;margin-left:8px;"></span>';
 
     el.querySelectorAll('.acct-book-tab').forEach(function (t) {
-        t.onclick = async function () {
-            if (acctBookId === t.dataset.book && !acctIsConsolidated()) return;
-            acctBookId = t.dataset.book;
-            acctBookIds = null;                 // picking a single book clears consolidation
-            acctLoading(true);
-            try {
-                await acctLoadBook();
-                acctRenderBookTabs();
-                acctRenderActiveTab();
-                acctSyncActionButtons();
-            } finally { acctLoading(false); }
-        };
+        t.onclick = function () { acctSwitchBook(t.dataset.book); };
+        var x = t.querySelector('.acct-book-x');
+        if (x) x.onclick = function (e) { e.stopPropagation(); acctHideBook(t.dataset.book); };
+        // Drag-to-reorder.
+        t.addEventListener('dragstart', function (e) { t.classList.add('acct-dragging'); e.dataTransfer.setData('text/plain', t.dataset.book); e.dataTransfer.effectAllowed = 'move'; });
+        t.addEventListener('dragend', function () { t.classList.remove('acct-dragging'); el.querySelectorAll('.acct-book-tab').forEach(function (x2) { x2.classList.remove('acct-drag-over'); }); });
+        t.addEventListener('dragover', function (e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; t.classList.add('acct-drag-over'); });
+        t.addEventListener('dragleave', function () { t.classList.remove('acct-drag-over'); });
+        t.addEventListener('drop', function (e) {
+            e.preventDefault(); t.classList.remove('acct-drag-over');
+            var dragId = e.dataTransfer.getData('text/plain');
+            if (dragId) acctReorderBook(dragId, t.dataset.book);
+        });
     });
+    var addBtn = document.getElementById('acctBookAddBtn');
+    var addDd = document.getElementById('acctBookAddDd');
+    if (addBtn && addDd) {
+        addBtn.onclick = function (e) { e.stopPropagation(); acctBookMgrOpen = !acctBookMgrOpen; addDd.classList.toggle('show', acctBookMgrOpen); };
+        addDd.onclick = function (e) { e.stopPropagation(); };   // clicks inside stay open
+        addDd.querySelectorAll('.acct-book-mgr-up').forEach(function (b) { b.onclick = function () { acctMoveBook(b.dataset.book, -1); }; });
+        addDd.querySelectorAll('.acct-book-mgr-down').forEach(function (b) { b.onclick = function () { acctMoveBook(b.dataset.book, 1); }; });
+        addDd.querySelectorAll('.acct-book-mgr-toggle').forEach(function (b) { b.onclick = function () { acctToggleBookHidden(b.dataset.book); }; });
+        addDd.querySelectorAll('.acct-book-mgr-name').forEach(function (n) {
+            n.onclick = function () { acctBookMgrOpen = false; acctShowBook(n.dataset.book); };
+        });
+    }
     acctSyncConsolChip();
+}
+// Close the "open a closed book" menu on any outside click. Guard against
+// duplicate registration when the module script is re-executed (A.1.2a).
+if (!window.__acctBookAddDismissWired) {
+    window.__acctBookAddDismissWired = true;
+    document.addEventListener('click', function (e) {
+        var dd = document.getElementById('acctBookAddDd');
+        if (dd && dd.classList.contains('show') && !e.target.closest('.acct-book-add-wrap')) {
+            dd.classList.remove('show'); acctBookMgrOpen = false;
+        }
+    });
 }
 
 async function acctRefreshAll() {
@@ -153,8 +291,10 @@ function acctSyncActionButtons() {
     var consol = acctIsConsolidated();
     var nv = document.getElementById('acctNewVoucherBtn');
     if (nv) nv.disabled = consol;
+    var rb = document.getElementById('acctRebuildBtn');
+    if (rb) rb.disabled = consol;                    // rebuild is per single book
     var dd = document.getElementById('acctMenuDd');
-    if (dd) ['opening', 'rebuild'].forEach(function (a) {
+    if (dd) ['opening'].forEach(function (a) {
         var it = dd.querySelector('[data-act="' + a + '"]');
         if (it) it.classList.toggle('disabled', consol);
     });
@@ -233,6 +373,9 @@ async function acctLoadBook() {
 async function initAccounting() {
     acctLoading(true);
     try {
+        acctLoadCollapseState();          // restore expand/collapse layout from last session
+        acctLoadBookPrefs();              // restore book order + which books are closed
+        try { var ab = localStorage.getItem(ACCT_ACTIVE_BOOK_KEY); if (ab) acctBookId = ab; } catch (e) {}
         await acctLoadCatalogue();
 
         acctRenderBookTabs();
@@ -264,9 +407,11 @@ function acctWireUI() {
         };
     });
 
-    // Primary action stays inline; everything else lives behind the ⋮ menu.
+    // Primary actions stay inline; everything else lives behind the ⋮ menu.
     var nv = document.getElementById('acctNewVoucherBtn');
     if (nv) nv.onclick = acctOpenVoucherModal;
+    var rb = document.getElementById('acctRebuildBtn');
+    if (rb) rb.onclick = acctRebuildBooks;
 
     var mb = document.getElementById('acctMenuBtn');
     var mdd = document.getElementById('acctMenuDd');
@@ -285,7 +430,6 @@ function acctWireUI() {
             var act = it.dataset.act;
             if (act === 'opening') acctOpenOpeningModal();
             else if (act === 'consolidate') acctOpenConsolidate();
-            else if (act === 'rebuild') acctRebuildBooks();
             else if (act === 'rebuildAll') acctRebuildAll();
             else if (act === 'refresh') acctRefreshAll();
         });
@@ -327,7 +471,34 @@ var acctFinCollapsed = {};   // nodeKey -> true (default expanded)
 // first render seeds every group collapsed per UI-STANDARDS D.2.2.
 var acctLedCollapsed = null;
 var acctLedSearch = '';
+var ACCT_SHOWZERO_KEY = 'wms_acct_show_zero';
 var acctFinShowZero = false;
+try { acctFinShowZero = localStorage.getItem(ACCT_SHOWZERO_KEY) === '1'; } catch (e) {}
+function acctSetShowZero(v) { acctFinShowZero = !!v; try { localStorage.setItem(ACCT_SHOWZERO_KEY, v ? '1' : '0'); } catch (e) {} }
+
+// The single command line hosts the active tab's filters. Each render function
+// calls acctSetCmdFilters(...) so the controls always match the tab on screen;
+// Day Book (no filters) clears it.
+function acctSetCmdFilters(html) {
+    var el = document.getElementById('acctCmdFilters');
+    if (el) el.innerHTML = html || '';
+}
+
+// Persist the expand/collapse state across sessions (localStorage — this is the
+// real app, not a sandboxed artifact). Keyed by group id, which is stable, so the
+// same layout restores next time. Corrupt/absent state falls back to the defaults.
+var ACCT_FIN_COLLAPSE_KEY = 'wms_acct_fin_collapsed';
+var ACCT_LED_COLLAPSE_KEY = 'wms_acct_led_collapsed';
+function acctLoadCollapseState() {
+    try {
+        var f = localStorage.getItem(ACCT_FIN_COLLAPSE_KEY);
+        if (f) { var pf = JSON.parse(f); if (pf && typeof pf === 'object') acctFinCollapsed = pf; }
+        var l = localStorage.getItem(ACCT_LED_COLLAPSE_KEY);
+        if (l) { var pl = JSON.parse(l); if (pl && typeof pl === 'object') acctLedCollapsed = pl; }
+    } catch (e) { /* ignore corrupt persisted state */ }
+}
+function acctSaveFinCollapse() { try { localStorage.setItem(ACCT_FIN_COLLAPSE_KEY, JSON.stringify(acctFinCollapsed || {})); } catch (e) {} }
+function acctSaveLedCollapse() { try { localStorage.setItem(ACCT_LED_COLLAPSE_KEY, JSON.stringify(acctLedCollapsed || {})); } catch (e) {} }
 var acctFinActive = {};          // ledgerId -> true when it posted in the period
 
 function acctLedgerDisp(net, lg, negate) {
@@ -433,6 +604,7 @@ function acctFinAsOn() {
 function acctRenderFinancials() {
     var el = document.getElementById('acctFinancialsBody');
     if (!el) return;
+    acctSetCmdFilters('');
     if (!acctViewBookIds().length) { el.innerHTML = '<div class="acct-empty">No book selected. Enable accounting on an investor first.</div>'; return; }
     if (!acctVoucherRows.length) {
         el.innerHTML = '<div class="acct-empty">No postings yet for ' + wmsEsc(acctViewTitle()) + '. Use ↻ Rebuild from trades or ➕ New Voucher.</div>';
@@ -469,13 +641,12 @@ function acctRenderFinancials() {
     }
     var balanced = Math.round(leftTotal * 100) === Math.round(assets.total * 100);
 
-    var html = '<div class="acct-fin-controls">' +
+    acctSetCmdFilters(
         '<button class="wms-btn wms-btn-secondary" id="acctFinExpandAll">Expand all</button>' +
         '<button class="wms-btn wms-btn-secondary" id="acctFinCollapseAll">Collapse all</button>' +
-        '<label class="acct-fin-zero"><input type="checkbox" id="acctFinShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
-        '</div>';
+        '<label class="acct-fin-zero"><input type="checkbox" id="acctFinShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero</label>');
     var flag = balanced ? '' : ' ⚠ out of balance';
-    html += '<div class="acct-fin-cols">' +
+    var html = '<div class="acct-fin-cols">' +
         acctFinColumnHtml('Liabilities', asOn, leftNodes, leftTotal, flag) +
         acctFinColumnHtml('Assets', asOn, assets.nodes, assets.total, flag) + '</div>';
     el.innerHTML = html;
@@ -495,13 +666,15 @@ function acctRenderFinancials() {
         acctRenderFinancials();
     };
     var sz = document.getElementById('acctFinShowZeroChk');
-    if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderFinancials(); };
+    if (sz) sz.onchange = function () { acctSetShowZero(sz.checked); acctRenderFinancials(); };
+    acctSaveFinCollapse();
 }
 
 // ── Profit & Loss — T-format (Expenses | Income), same style as the BS ───────
 function acctRenderPL() {
     var el = document.getElementById('acctPLBody');
     if (!el) return;
+    acctSetCmdFilters('');
     if (!acctViewBookIds().length) { el.innerHTML = '<div class="acct-empty">No book selected. Enable accounting on an investor first.</div>'; return; }
     if (!acctVoucherRows.length) { el.innerHTML = '<div class="acct-empty">No postings yet for ' + wmsEsc(acctViewTitle()) + '.</div>'; return; }
     var net = acctComputeBalances();
@@ -516,12 +689,11 @@ function acctRenderPL() {
     if (netProfit >= 0) { leftNodes.push({ label: 'Net Profit', amount: netProfit, isDiff: true }); leftTotal += netProfit; }
     else { rightNodes.push({ label: 'Net Loss', amount: -netProfit, isDiff: true }); rightTotal += -netProfit; }
 
-    var html = '<div class="acct-fin-controls">' +
+    acctSetCmdFilters(
         '<button class="wms-btn wms-btn-secondary" id="acctPLExpandAll">Expand all</button>' +
         '<button class="wms-btn wms-btn-secondary" id="acctPLCollapseAll">Collapse all</button>' +
-        '<label class="acct-fin-zero"><input type="checkbox" id="acctPLShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
-        '</div>';
-    html += '<div class="acct-fin-cols">' +
+        '<label class="acct-fin-zero"><input type="checkbox" id="acctPLShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero</label>');
+    var html = '<div class="acct-fin-cols">' +
         acctFinColumnHtml('Expenses', asOn, leftNodes, leftTotal) +
         acctFinColumnHtml('Income', asOn, rightNodes, rightTotal) + '</div>';
     el.innerHTML = html;
@@ -534,7 +706,8 @@ function acctRenderPL() {
     });
     var ea = document.getElementById('acctPLExpandAll'); if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderPL(); };
     var ca = document.getElementById('acctPLCollapseAll'); if (ca) ca.onclick = function () { var keys = acctFinAllGroupKeys(leftNodes.concat(rightNodes), []); acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; }); acctRenderPL(); };
-    var sz = document.getElementById('acctPLShowZeroChk'); if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderPL(); };
+    var sz = document.getElementById('acctPLShowZeroChk'); if (sz) sz.onchange = function () { acctSetShowZero(sz.checked); acctRenderPL(); };
+    acctSaveFinCollapse();
 }
 
 // ── Trial Balance — grouped collapsible tree with Debit/Credit columns ───────
@@ -668,6 +841,7 @@ function acctTbNodeHtml(node, depth) {
 function acctRenderTrialBalance() {
     var el = document.getElementById('acctTBBody');
     if (!el) return;
+    acctSetCmdFilters('');
     if (!acctViewBookIds().length) { el.innerHTML = '<div class="acct-empty">No book selected. Enable accounting on an investor first.</div>'; return; }
     if (!acctVoucherRows.length) { el.innerHTML = '<div class="acct-empty">No postings yet for ' + wmsEsc(acctViewTitle()) + '.</div>'; return; }
 
@@ -680,14 +854,13 @@ function acctRenderTrialBalance() {
     nodes.forEach(function (n) { Object.keys(T).forEach(function (k) { T[k] += n[k]; }); });
     Object.keys(T).forEach(function (k) { T[k] = acctZ(T[k]); });
 
-    var html = '<div class="acct-fin-controls">' +
+    acctSetCmdFilters(
         '<button class="wms-btn wms-btn-secondary" id="acctTbExpandAll">Expand all</button>' +
         '<button class="wms-btn wms-btn-secondary" id="acctTbCollapseAll">Collapse all</button>' +
-        '<label class="acct-fin-zero"><input type="checkbox" id="acctTbShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero values</label>' +
-        '</div>';
+        '<label class="acct-fin-zero"><input type="checkbox" id="acctTbShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero</label>');
 
     var W = 'width:184px;';
-    html += '<div class="acct-tb-wrap">' +
+    var html = '<div class="acct-tb-wrap">' +
         '<div class="acct-tb-hdr2"><span class="acct-fin-toggle-sp"></span><span class="acct-fin-name"></span>' +
             '<span class="acct-tb-grp acct-tb-blockstart" style="' + W + '">Opening Balance</span>' +
             '<span class="acct-tb-grp acct-tb-blockstart" style="' + W + '">During the Period</span>' +
@@ -716,12 +889,14 @@ function acctRenderTrialBalance() {
     });
     var ea = document.getElementById('acctTbExpandAll'); if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderTrialBalance(); };
     var ca = document.getElementById('acctTbCollapseAll'); if (ca) ca.onclick = function () { var keys = acctFinAllGroupKeys(nodes, []); acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; }); acctRenderTrialBalance(); };
-    var sz = document.getElementById('acctTbShowZeroChk'); if (sz) sz.onchange = function () { acctFinShowZero = sz.checked; acctRenderTrialBalance(); };
+    var sz = document.getElementById('acctTbShowZeroChk'); if (sz) sz.onchange = function () { acctSetShowZero(sz.checked); acctRenderTrialBalance(); };
+    acctSaveFinCollapse();
 }
 
 function acctRenderDayBook() {
     var el = document.getElementById('acctDayBookBody');
     if (!el) return;
+    acctSetCmdFilters('');   // Day Book has no filters — keep the command line clean
     if (!acctViewBookIds().length) { el.innerHTML = '<div class="acct-empty">No book selected.</div>'; return; }
 
     // Group lines by voucher
@@ -837,7 +1012,7 @@ function acctLedBuild() {
 function acctRenderLedgers() {
     var el = document.getElementById('acctLedgersBody');
     if (!el) return;
-    if (!acctLedgers.length) { el.innerHTML = '<div class="acct-empty">No ledgers in the catalogue.</div>'; return; }
+    if (!acctLedgers.length) { acctSetCmdFilters(''); el.innerHTML = '<div class="acct-empty">No ledgers in the catalogue.</div>'; return; }
 
     var roots = acctLedBuild();
     var allKeys = [];
@@ -854,17 +1029,16 @@ function acctRenderLedgers() {
     var searching = !!acctLedSearch;
     function isOpen(k) { return searching || !acctLedCollapsed[k]; }
 
-    // Single controls row — the standalone Add Ledger / Add Group toolbar was folded
-    // in here so the Ledgers tab spends one row on chrome instead of two.
-    var html = '<div class="acct-led-controls">' +
+    // All Ledgers-tab controls live in the single command line (matches the app
+    // tab-bar signature; one row of chrome for the whole module).
+    acctSetCmdFilters(
         '<button class="wms-btn wms-btn-secondary" id="acctLedAddLedger">➕ Ledger</button>' +
         '<button class="wms-btn wms-btn-secondary" id="acctLedAddGroup">➕ Group</button>' +
-        '<span style="width:10px;"></span>' +
         '<button class="wms-btn wms-btn-secondary" id="acctLedExpandAll">Expand all</button>' +
         '<button class="wms-btn wms-btn-secondary" id="acctLedCollapseAll">Collapse all</button>' +
-        '<input type="text" id="acctLedSearchInput" class="wms-input" placeholder="Search ledgers &amp; groups" value="' + wmsEsc(acctLedSearch) + '"></div>';
+        '<input type="text" id="acctLedSearchInput" class="wms-input" placeholder="Search ledgers &amp; groups" value="' + wmsEsc(acctLedSearch) + '">');
 
-    html += '<table class="acct-table"><thead><tr><th>Ledger / Group</th><th>Kind</th><th>Availability</th><th style="width:44px;"></th></tr></thead><tbody>';
+    var html = '<table class="acct-table"><thead><tr><th>Ledger / Group</th><th>Kind</th><th>Availability</th><th style="width:44px;"></th></tr></thead><tbody>';
 
     if (!roots.length) {
         html += '<tr><td colspan="4"><div class="acct-empty">Nothing matches &ldquo;' + wmsEsc(acctLedSearch) + '&rdquo;.</div></td></tr>';
@@ -933,6 +1107,7 @@ function acctRenderLedgers() {
         var s2 = document.getElementById('acctLedSearchInput');
         if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); }
     };
+    if (acctLedCollapsed) acctSaveLedCollapse();
 }
 
 // ============================================================================
@@ -941,9 +1116,10 @@ function acctRenderLedgers() {
 // the existing one, so the modal must prefill from it or reopening would wipe it.
 // ============================================================================
 
-var acctOpeningLines = [];        // [{ ledgerId, debit, credit }]
+var acctOpeningLines = [];        // [{ ledgerId, ledgerName, debit, credit }]
 var acctOpeningDateYmd = null;
-var acctOpeningActiveIdx = -1;    // highlighted row in the search results
+var acctOpeningDdCtrls = {};      // row idx -> wmsDropdown controller (per-row ledger picker)
+var acctOpeningExisting = {};     // ledgerId -> { debit, credit } already saved for this book
 
 var ACCT_OB_SUSPENSE = 'Difference in Opening Balance';
 
@@ -962,22 +1138,145 @@ function acctOpeningExistingRows() {
     return acctVoucherRows.filter(function (r) { return r.voucher_type === 'OPENING_BALANCE'; });
 }
 
-function acctOpenOpeningModal() {
+// A ledger tied to a security (auto/investment ledger) — resolved by FK, not name.
+function acctIsSecurityLedger(id) {
+    var l = acctLedgers.find(function (x) { return x.id === id; });
+    return !!(l && (l.security_id || l.ledger_kind === 'SECURITY'));
+}
+// Ledgers the Opening Balances modal AUTO-manages on a closed book (investments +
+// the STT charge) — excluded from the editable prefill so they're never entered twice.
+function acctIsAutoOpeningLedger(id) {
+    var l = acctLedgers.find(function (x) { return x.id === id; });
+    if (!l) return false;
+    return !!(l.security_id || l.ledger_kind === 'SECURITY' ||
+        l.posting_role === 'STT_STOCKS' || l.posting_role === 'STT_MF');
+}
+
+// Opening INVESTMENTS, drawn from the trade book — NOT typed by hand. For a book
+// closed to a date (books_closed_upto), this is the cost of the holdings carried
+// in as of that date. It runs the SAME frozen engine the poster uses
+// (acctEngineProcess) over the closed-period trades and sums each security's net
+// SECURITY-ledger movement, so the figure equals exactly what the engine will use
+// as cost basis for a later sale — including this book's STT treatment (STT-as-
+// expense books exclude STT from cost). Returns [{ security_id, cost, name }].
+async function acctOpeningComputeInvestments() {
+    var inv = (wmsRefData.investors || []).find(function (i) { return i.id === acctBookId; }) || {};
+    var closeDate = inv.books_closed_upto;
+    if (!closeDate) return [];                                  // no closed period → nothing carried in
+    if (typeof acctEngineProcess !== 'function' || typeof wmsCalcFifoCost !== 'function') return [];
+    var fields = 'id,investor_id,trader_id,broker_id,security_id,symbol,short_symbol,company_name,' +
+        'security_type,transaction_type,transaction_date,transaction_time,quantity,price,' +
+        'gross_amount,total_charges,trader_charges,stt,tds,net_amount,notes,created_at';
+    var txns;
+    try {
+        txns = await wmsFetchAllRaw(acctUrl('transactions?select=' + fields +
+            '&investor_id=eq.' + acctBookId + '&transaction_date=lte.' + closeDate)) || [];
+    } catch (e) { console.error('[accounting] opening-investments fetch failed', e); return []; }
+    if (!txns.length) return [];
+    var invById = {}; (wmsRefData.investors || []).forEach(function (i) { invById[i.id] = i; });
+    var ctx = { securityById: wmsRefData.securitiesCmMap || {}, investorById: invById, brokerById: {},
+                fifo: function (t) { return wmsCalcFifoCost(t); } };
+    var res;
+    try { res = acctEngineProcess({ id: acctBookId, post_fno: inv.post_fno !== false }, txns, ctx); }
+    catch (e) { console.error('[accounting] opening-investments engine failed', e); return []; }
+    // Sum the engine's opening-asset legs carried in from the closed period:
+    //  • SECURITY legs (Dr−Cr) per security  → investments at cost (net-of-STT on
+    //    an STT-as-expense book);
+    //  • STT_STOCKS / STT_MF role legs        → STT paid on those holdings, which
+    //    an STT-as-expense book books separately (never in the security cost).
+    // The BROKER (funding) leg is deliberately ignored — at opening the funding is
+    // the capital / bank balances the owner enters, not a per-trade broker credit.
+    var bySec = {}, byRole = {};
+    (res.vouchers || []).forEach(function (v) {
+        (v.lines || []).forEach(function (l) {
+            if (!l.ref) return;
+            if (l.ref.security_id) {
+                var b = bySec[l.ref.security_id] || (bySec[l.ref.security_id] = { d: 0, c: 0 });
+                b.d += (l.debit || 0); b.c += (l.credit || 0);
+            } else if (l.ref.role === 'STT_STOCKS' || l.ref.role === 'STT_MF') {
+                var r = byRole[l.ref.role] || (byRole[l.ref.role] = { d: 0, c: 0 });
+                r.d += (l.debit || 0); r.c += (l.credit || 0);
+            }
+        });
+    });
+    var securities = [];
+    Object.keys(bySec).forEach(function (sid) {
+        var net = Math.round((bySec[sid].d - bySec[sid].c) * 100) / 100;
+        if (net > 0.005) {
+            var sec = (wmsRefData.securitiesCmMap || {})[sid] || {};
+            securities.push({ security_id: sid, cost: net, name: sec.company_name || sec.symbol || ('Security ' + String(sid).slice(0, 8)) });
+        }
+    });
+    securities.sort(function (a, b) { return b.cost - a.cost; });
+    var sttLines = [];
+    Object.keys(byRole).forEach(function (role) {
+        var net = Math.round((byRole[role].d - byRole[role].c) * 100) / 100;
+        if (net > 0.005) {
+            var lg = acctLedgers.find(function (x) { return x.posting_role === role; });
+            sttLines.push({ role: role, cost: net, name: (lg && lg.name) || (role === 'STT_MF' ? 'STT Charges - MFs' : 'STT Charges - Stocks') });
+        }
+    });
+    return { securities: securities, sttLines: sttLines };
+}
+
+async function acctOpenOpeningModal() {
     if (!acctBookId) { acctToast('Select a book first (enable accounting on an investor).', true); return; }
     if (acctViewBookIds().length > 1) { acctToast('Opening balances are per book — exit the consolidated view first.', true); return; }
 
     // Prefill from the existing voucher; saving replaces it, so anything not shown
     // here would be silently dropped.
     var rows = acctOpeningExistingRows();
+
+    // Only auto-manage investments when the book is CLOSED to a date. When it isn't,
+    // a saved security-ledger line is left EDITABLE (never hidden) so it can't be lost.
+    var bookInv = (wmsRefData.investors || []).find(function (i) { return i.id === acctBookId; }) || {};
+    var autoInvest = !!bookInv.books_closed_upto;
+    function acctOpeningHideSaved(id) {
+        return acctLedgerName(id) === ACCT_OB_SUSPENSE || (autoInvest && acctIsAutoOpeningLedger(id));
+    }
+
+    // Map every already-saved opening balance by ledger (minus the derived suspense
+    // plug and any auto-managed investment ledgers). Used to (a) prefill an amount
+    // when that ledger is picked again, and (b) flag the row with an alert icon.
+    acctOpeningExisting = {};
+    rows.forEach(function (r) {
+        if (!r.ledger_id || acctOpeningHideSaved(r.ledger_id)) return;
+        acctOpeningExisting[r.ledger_id] = {
+            debit: Number(r.debit_amount) || 0, credit: Number(r.credit_amount) || 0
+        };
+    });
+
     acctOpeningLines = rows.map(function (r) {
         var dr = Number(r.debit_amount) || 0, cr = Number(r.credit_amount) || 0;
-        return { ledgerId: r.ledger_id, debit: dr ? String(dr) : '', credit: cr ? String(cr) : '' };
+        return { ledgerId: r.ledger_id, ledgerName: acctLedgerName(r.ledger_id), debit: dr ? String(dr) : '', credit: cr ? String(cr) : '' };
     }).filter(function (l) {
-        // The suspense plug is DERIVED, never user input. Restoring it as an editable
-        // row would double-count it the moment a real line is corrected and re-saved,
-        // so drop it and let the difference recompute from the real lines.
-        return l.ledgerId && acctLedgerName(l.ledgerId) !== ACCT_OB_SUSPENSE;
+        // Drop the DERIVED suspense plug (recomputed on save) and — only on a closed
+        // book — the AUTO investment ledgers (re-derived below from the trade book).
+        return l.ledgerId && !acctOpeningHideSaved(l.ledgerId);
     });
+
+    // Prepend the auto lines (locked) drawn from the trade book: ONE consolidated
+    // Investments line (double-click for the per-security breakdown) + any STT line.
+    acctLoading(true);
+    var computed;
+    try { computed = await acctOpeningComputeInvestments(); }
+    finally { acctLoading(false); }
+    computed = computed || { securities: [], sttLines: [] };
+    var locked = [];
+    var secs = computed.securities || [];
+    if (secs.length) {
+        var totalInvest = 0; secs.forEach(function (s) { totalInvest += s.cost; });
+        totalInvest = Math.round(totalInvest * 100) / 100;
+        locked.push({ locked: true, kind: 'invest', ledgerName: 'Investments',
+            debit: String(totalInvest), credit: '', breakdown: secs, expanded: false });
+    }
+    (computed.sttLines || []).forEach(function (r) {
+        locked.push({ locked: true, kind: 'role', role: r.role, ledgerName: r.name, debit: String(r.cost), credit: '' });
+    });
+    acctOpeningLines = locked.concat(acctOpeningLines);
+
+    // Always leave one empty row to type into (like the New Voucher modal).
+    if (!acctOpeningLines.some(function (l) { return !l.locked; })) acctOpeningLines.push({ ledgerId: '', ledgerName: '', debit: '', credit: '' });
 
     acctOpeningDateYmd = rows.length ? rows[0].voucher_date : acctOpeningDefaultYmd();
 
@@ -991,62 +1290,142 @@ function acctOpenOpeningModal() {
         var ctrl = wmsDateInput(dc, { compact: true, onChange: function (ymd) { acctOpeningDateYmd = ymd; } });
         if (ctrl && ctrl.setValue) ctrl.setValue(acctOpeningDateYmd);
     }
-    var sb = document.getElementById('acctOpeningSearch');
-    if (sb) sb.value = '';
-    acctOpeningHideResults();
     acctRenderOpeningLines();
     if (acctOpeningModalCtrl) acctOpeningModalCtrl.open();
-    if (sb) setTimeout(function () { sb.focus(); }, 50);
+    // Land on the first empty ledger cell — the modal is typed top-down.
+    setTimeout(function () {
+        var first = document.querySelector('#acctOpeningLines .acct-line-ledger');
+        if (first) first.focus();
+    }, 60);
 }
 
-function acctOpeningCandidates(q) {
-    var used = {};
-    acctOpeningLines.forEach(function (l) { used[l.ledgerId] = true; });
-    var needle = String(q || '').toLowerCase();
-    return acctAvailableLedgers(acctBookId)
-        .filter(function (l) { return !used[l.id] && (!needle || l.name.toLowerCase().indexOf(needle) >= 0); })
-        .slice(0, 12);
+// Ledgers offered in a row's picker: available in this book, minus any already
+// chosen in OTHER rows (a ledger can hold only one opening balance).
+function acctOpeningLedgerMatches(idx, q) {
+    var usedElsewhere = {}, lockedSecs = {}, lockedRoles = {};
+    acctOpeningLines.forEach(function (l, i) {
+        if (i !== idx && l.ledgerId) usedElsewhere[l.ledgerId] = true;
+        if (l.locked && l.kind === 'invest') (l.breakdown || []).forEach(function (s) { lockedSecs[s.security_id] = true; });
+        if (l.locked && l.kind === 'role' && l.role) lockedRoles[l.role] = true;
+    });
+    var needle = String(q || '').trim().toLowerCase();
+    return acctAvailableLedgers(acctBookId).filter(function (l) {
+        if (usedElsewhere[l.id]) return false;
+        if (l.security_id && lockedSecs[l.security_id]) return false;      // already in the locked Investments total
+        if (l.posting_role && lockedRoles[l.posting_role]) return false;   // already shown as the locked STT line
+        return !needle || l.name.toLowerCase().indexOf(needle) >= 0;
+    }).slice(0, 50);
 }
 
-function acctOpeningHideResults() {
-    var box = document.getElementById('acctOpeningResults');
-    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
-    acctOpeningActiveIdx = -1;
-}
-
-function acctOpeningRenderResults() {
-    var box = document.getElementById('acctOpeningResults');
-    var sb = document.getElementById('acctOpeningSearch');
-    if (!box || !sb) return;
-    var list = acctOpeningCandidates(sb.value);
-    if (!sb.value && !list.length) { acctOpeningHideResults(); return; }
-    if (!list.length) {
-        box.innerHTML = '<div class="acct-ob-empty">No matching ledger. Use Ledgers → Add Ledger to create one.</div>';
-        box.style.display = 'block';
-        return;
+function acctOpeningAddLine(focusIt) {
+    acctOpeningLines.push({ ledgerId: '', ledgerName: '', debit: '', credit: '' });
+    acctRenderOpeningLines();
+    if (focusIt) {
+        var el = document.querySelector('#acctOpeningLines tr:last-child .acct-line-ledger');
+        if (el) el.focus();
     }
-    box.innerHTML = list.map(function (l, i) {
-        return '<div class="acct-ob-result' + (i === acctOpeningActiveIdx ? ' active' : '') + '" data-lid="' + l.id + '">' +
-            '<span class="acct-ob-name">' + wmsEsc(l.name) + '</span>' +
-            '<span class="acct-ob-grp">' + wmsEsc(acctRootName(l.group_id)) + '</span></div>';
-    }).join('');
-    box.style.display = 'block';
-    box.querySelectorAll('.acct-ob-result').forEach(function (el) {
-        el.onmousedown = function (e) { e.preventDefault(); acctOpeningAdd(el.dataset.lid); };
+}
+
+/* Per-row ledger cell — the app's standard search-suggest field (wmsDropdown,
+   H.3.2), same shape as the New Voucher modal. Picking a ledger that already
+   carries a saved opening balance prefills that amount (when the row is still
+   empty) so the ⚠ flag and the number stay in step. */
+function acctOpeningWireLedgerCell(input) {
+    var idx = Number(input.dataset.idx);
+    var dd = input.parentElement.querySelector('.acct-line-dd');
+
+    function render() {
+        var list = acctOpeningLedgerMatches(idx, input.value);
+        dd._acctResults = list;
+        var html = list.map(function (l, i) {
+            var flag = acctOpeningExisting[l.id] ? ' <span class="acct-dd-grp" style="color:#b45309;">• has opening bal</span>' : '';
+            return '<div class="wms-dd-item" data-i="' + i + '">' + wmsEsc(l.name) +
+                '<span class="acct-dd-grp">' + wmsEsc(acctRootName(l.group_id)) + '</span>' + flag + '</div>';
+        }).join('');
+        dd.innerHTML = html || '<div class="wms-dd-no-results">No ledgers — add one in the Ledgers tab</div>';
+        ctrl.show();
+    }
+
+    function pick(itemEl) {
+        if (!itemEl) return;
+        var l = (dd._acctResults || [])[Number(itemEl.dataset.i)];
+        if (!l) return;
+        var line = acctOpeningLines[idx];
+        line.ledgerId = l.id;
+        line.ledgerName = l.name;
+        input.value = l.name;
+        var ex = acctOpeningExisting[l.id];
+        // Prefill a saved opening balance when this row has no amount yet.
+        if (ex && !acctParse(line.debit) && !acctParse(line.credit)) {
+            line.debit = ex.debit ? String(ex.debit) : '';
+            line.credit = ex.credit ? String(ex.credit) : '';
+            var dEl = document.querySelector('#acctOpeningLines .acct-line-amt[data-idx="' + idx + '"][data-field="debit"]');
+            var cEl = document.querySelector('#acctOpeningLines .acct-line-amt[data-idx="' + idx + '"][data-field="credit"]');
+            if (dEl) dEl.value = line.debit;
+            if (cEl) cEl.value = line.credit;
+        }
+        // Show / refresh the ⚠ existing-balance marker on this row, in place.
+        var wrap = input.parentElement;
+        var mark = wrap.querySelector('.acct-ob-existing');
+        if (ex) {
+            var exTxt = ex.debit ? ('Dr ' + acctNum(ex.debit)) : ('Cr ' + acctNum(ex.credit));
+            if (!mark) { mark = document.createElement('span'); mark.className = 'acct-ob-existing'; mark.textContent = '⚠'; wrap.insertBefore(mark, dd); }
+            mark.title = 'This ledger already has a saved opening balance (' + exTxt + '). Saving will overwrite it.';
+        } else if (mark) { mark.remove(); }
+        ctrl.close();
+        var amt = document.querySelector('#acctOpeningLines .acct-line-amt[data-idx="' + idx + '"][data-field="debit"]');
+        if (amt) { amt.focus(); amt.select(); }
+        acctOpeningUpdateBalance();
+    }
+
+    var ctrl = wmsDropdown(input, dd, {
+        itemSelector: '.wms-dd-item', closeOnSelect: true, blurDelay: 180,
+        escClearsInput: false, onSelect: pick
+    });
+    acctOpeningDdCtrls[idx] = ctrl;
+
+    input.addEventListener('input', function () {
+        acctOpeningLines[idx].ledgerId = '';       // typing invalidates the pick
+        acctOpeningLines[idx].ledgerName = input.value;
+        var mark = input.parentElement.querySelector('.acct-ob-existing');
+        if (mark) mark.remove();                   // pick no longer confirmed
+        render();
+    });
+    input.addEventListener('focus', render);
+    dd.addEventListener('mousedown', function (e) {
+        var it = e.target.closest ? e.target.closest('.wms-dd-item') : null;
+        if (!it) return;
+        e.preventDefault();
+        pick(it);
     });
 }
 
-function acctOpeningAdd(ledgerId) {
-    if (!ledgerId) return;
-    if (acctOpeningLines.some(function (l) { return l.ledgerId === ledgerId; })) return;
-    acctOpeningLines.push({ ledgerId: ledgerId, debit: '', credit: '' });
-    var sb = document.getElementById('acctOpeningSearch');
-    if (sb) { sb.value = ''; sb.focus(); }
-    acctOpeningHideResults();
-    acctRenderOpeningLines();
-    // focus the debit cell of the row just added
-    var inp = document.querySelector('#acctOpeningLines tr:last-child .acct-ob-amt[data-field="debit"]');
-    if (inp) inp.focus();
+function acctOpeningWireAmountCell(inp) {
+    var idx = Number(inp.dataset.idx), field = inp.dataset.field;
+    var ctrl = (typeof wmsAttachAmountInput === 'function') ? wmsAttachAmountInput(inp, { allowNegative: false }) : null;
+    // Prefilled amounts (editing a saved book) are set programmatically and never
+    // blur, so format them now — otherwise they show raw, un-grouped numbers.
+    if (ctrl && inp.value && document.activeElement !== inp) {
+        var n0 = parseFloat(String(inp.value).replace(/,/g, ''));
+        if (!isNaN(n0)) ctrl.setValue(n0);
+    }
+    inp.addEventListener('input', function () {
+        acctOpeningLines[idx][field] = inp.value;
+        // A line is Dr or Cr, never both — clear the opposite as you type.
+        if (acctParse(inp.value) > 0) {
+            var other = field === 'debit' ? 'credit' : 'debit';
+            acctOpeningLines[idx][other] = '';
+            var oEl = document.querySelector('#acctOpeningLines .acct-line-amt[data-idx="' + idx + '"][data-field="' + other + '"]');
+            if (oEl) oEl.value = '';
+        }
+        acctOpeningUpdateBalance();
+    });
+    // Enter on an amount opens the next line (Tab falls through to native focus).
+    inp.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        acctOpeningAddLine(true);
+    });
 }
 
 function acctLedgerName(id) {
@@ -1057,38 +1436,87 @@ function acctLedgerName(id) {
 function acctRenderOpeningLines() {
     var tb = document.getElementById('acctOpeningLines');
     if (!tb) return;
-    if (!acctOpeningLines.length) {
-        tb.innerHTML = '<tr><td colspan="4" style="padding:14px;color:#a0aec0;font-size:12px;">' +
-            'No ledgers yet — search above to add the accounts this book opens with ' +
-            '(bank/broker balances, investments at cost, capital, client accounts).</td></tr>';
-    } else {
-        tb.innerHTML = acctOpeningLines.map(function (ln, idx) {
-            return '<tr data-idx="' + idx + '">' +
-                '<td><span class="acct-ob-name">' + wmsEsc(acctLedgerName(ln.ledgerId)) + '</span>' +
-                '<span class="acct-ob-grp" style="margin-left:8px;">' + wmsEsc(acctRootName((acctLedgers.find(function (x) { return x.id === ln.ledgerId; }) || {}).group_id)) + '</span></td>' +
-                '<td class="text-right"><input type="text" class="wms-input acct-ob-amt" data-idx="' + idx + '" data-field="debit" value="' + wmsEsc(ln.debit || '') + '" inputmode="decimal" style="text-align:right;"></td>' +
-                '<td class="text-right"><input type="text" class="wms-input acct-ob-amt" data-idx="' + idx + '" data-field="credit" value="' + wmsEsc(ln.credit || '') + '" inputmode="decimal" style="text-align:right;"></td>' +
-                '<td><button class="acct-line-del" data-del="' + idx + '" title="Remove">✕</button></td></tr>';
-        }).join('');
-    }
+    acctOpeningDdCtrls = {};
 
-    tb.querySelectorAll('.acct-ob-amt').forEach(function (inp) {
-        if (typeof wmsAttachAmountInput === 'function') wmsAttachAmountInput(inp, { allowNegative: false });
-        inp.oninput = function () {
-            var i = Number(inp.dataset.idx);
-            acctOpeningLines[i][inp.dataset.field] = inp.value;
-            // A line is Dr or Cr, never both — clear the opposite as you type.
-            if (acctParse(inp.value) > 0) {
-                var other = inp.dataset.field === 'debit' ? 'credit' : 'debit';
-                acctOpeningLines[i][other] = '';
-                var otherEl = tb.querySelector('.acct-ob-amt[data-idx="' + i + '"][data-field="' + other + '"]');
-                if (otherEl) otherEl.value = '';
+    tb.innerHTML = acctOpeningLines.map(function (ln, idx) {
+        // Locked AUTO lines — drawn from the trade book, read-only.
+        if (ln.locked) {
+            // Consolidated Investments line: one row for the total, double-click to
+            // expand the per-security breakdown beneath it.
+            if (ln.kind === 'invest') {
+                var bd = ln.breakdown || [];
+                var caret = ln.expanded ? '▾' : '▸';
+                var html = '<tr data-idx="' + idx + '" class="acct-ob-locked acct-ob-invest" title="Investments carried in from the trade book (cost, net of STT). Double-click for the securities.">' +
+                    '<td><span class="acct-ob-lock">🔒</span> <b>Investments</b> ' +
+                    '<span class="acct-ob-expand" data-idx="' + idx + '">' + caret + ' ' + bd.length + ' securities</span></td>' +
+                    '<td class="text-right acct-ob-lockamt">' + acctNum(acctParse(ln.debit)) + '</td>' +
+                    '<td class="text-right"></td><td></td></tr>';
+                if (ln.expanded) {
+                    bd.forEach(function (s) {
+                        html += '<tr class="acct-ob-locked acct-ob-breakdown">' +
+                            '<td style="padding-left:30px;color:#64748b;">' + wmsEsc(s.name) + '</td>' +
+                            '<td class="text-right acct-ob-lockamt" style="color:#64748b;">' + acctNum(s.cost) + '</td>' +
+                            '<td></td><td></td></tr>';
+                    });
+                }
+                return html;
             }
-            acctOpeningUpdateBalance();
-        };
+            // Simple locked line (the STT charge).
+            return '<tr data-idx="' + idx + '" class="acct-ob-locked">' +
+                '<td><span class="acct-ob-lock" title="Auto: drawn from the trade book. Change the trades to change this.">🔒</span> ' +
+                    wmsEsc(ln.ledgerName || '') +
+                    '<span class="acct-dd-grp">' + (ln.kind === 'role' ? 'Charge' : 'Investment') + '</span></td>' +
+                '<td class="text-right acct-ob-lockamt">' + acctNum(acctParse(ln.debit)) + '</td>' +
+                '<td class="text-right"></td>' +
+                '<td></td></tr>';
+        }
+        var nm = ln.ledgerId ? acctLedgerName(ln.ledgerId) : (ln.ledgerName || '');
+        // ⚠ flag: this ledger already carries a SAVED opening balance — re-saving
+        // overwrites it. Tooltip shows the amount currently on record.
+        var ex = ln.ledgerId ? acctOpeningExisting[ln.ledgerId] : null;
+        var flag = '';
+        if (ex) {
+            var exTxt = ex.debit ? ('Dr ' + acctNum(ex.debit)) : ('Cr ' + acctNum(ex.credit));
+            flag = '<span class="acct-ob-existing" title="This ledger already has a saved opening balance (' + wmsEsc(exTxt) + '). Saving will overwrite it.">⚠</span>';
+        }
+        return '<tr data-idx="' + idx + '">' +
+            '<td><div class="acct-line-pick">' +
+                '<input type="text" class="acct-line-ledger" data-idx="' + idx + '" value="' + wmsEsc(nm) + '" placeholder="Search ledger…" autocomplete="off">' +
+                flag +
+                '<div class="wms-dd acct-line-dd" data-idx="' + idx + '"></div>' +
+            '</div></td>' +
+            '<td class="text-right"><input type="text" class="acct-line-amt" data-idx="' + idx + '" data-field="debit" value="' + wmsEsc(ln.debit || '') + '"></td>' +
+            '<td class="text-right"><input type="text" class="acct-line-amt" data-idx="' + idx + '" data-field="credit" value="' + wmsEsc(ln.credit || '') + '"></td>' +
+            '<td><button class="acct-line-del" data-idx="' + idx + '" title="Remove line">✕</button></td></tr>';
+    }).join('');
+
+    // Expand / collapse the consolidated Investments breakdown (double-click the
+    // row, or click the "N securities" caret).
+    function acctOpeningToggleExpand(i) {
+        if (acctOpeningLines[i]) { acctOpeningLines[i].expanded = !acctOpeningLines[i].expanded; acctRenderOpeningLines(); }
+    }
+    tb.querySelectorAll('.acct-ob-invest').forEach(function (row) {
+        row.ondblclick = function () { acctOpeningToggleExpand(Number(row.dataset.idx)); };
     });
-    tb.querySelectorAll('[data-del]').forEach(function (b) {
-        b.onclick = function () { acctOpeningLines.splice(Number(b.dataset.del), 1); acctRenderOpeningLines(); };
+    tb.querySelectorAll('.acct-ob-expand').forEach(function (el) {
+        el.onclick = function (e) { e.stopPropagation(); acctOpeningToggleExpand(Number(el.dataset.idx)); };
+    });
+
+    tb.querySelectorAll('.acct-line-ledger').forEach(acctOpeningWireLedgerCell);
+    tb.querySelectorAll('.acct-line-amt').forEach(acctOpeningWireAmountCell);
+    tb.querySelectorAll('.acct-line-del').forEach(function (b) {
+        b.onclick = function () {
+            if (acctOpeningLines.length <= 1) {                 // keep one empty row to type into
+                acctOpeningLines[0] = { ledgerId: '', ledgerName: '', debit: '', credit: '' };
+            } else {
+                acctOpeningLines.splice(Number(b.dataset.idx), 1);
+                // Always leave at least one editable row (locked rows can't be typed in).
+                if (!acctOpeningLines.some(function (l) { return !l.locked; })) {
+                    acctOpeningLines.push({ ledgerId: '', ledgerName: '', debit: '', credit: '' });
+                }
+            }
+            acctRenderOpeningLines();
+        };
     });
     acctOpeningUpdateBalance();
 }
@@ -1124,16 +1552,35 @@ function acctOpeningUpdateBalance() {
 
 async function acctSaveOpening() {
     var t = acctOpeningTotals();
-    var lines = acctOpeningLines
-        .filter(function (l) { return acctParse(l.debit) > 0 || acctParse(l.credit) > 0; })
-        .map(function (l) {
-            return { ledger_id: l.ledgerId, debit_amount: acctParse(l.debit), credit_amount: acctParse(l.credit) };
-        });
-    if (!lines.length) { acctToast('Enter at least one amount.', true); return; }
+    var withAmt = acctOpeningLines.filter(function (l) { return acctParse(l.debit) > 0 || acctParse(l.credit) > 0; });
+    // Editable rows need a ledger; locked auto-investment rows resolve by security_id.
+    if (withAmt.some(function (l) { return !l.locked && !l.ledgerId; })) {
+        acctToast('Pick a ledger for every row that has an amount.', true); return;
+    }
+    if (!withAmt.length) { acctToast('Enter at least one amount.', true); return; }
 
     var btn = document.getElementById('acctOpeningSave');
     if (btn) btn.disabled = true;
     try {
+        // Resolve every row to ledger id(s). The consolidated Investments line posts
+        // ONE Dr per security (creating the Investment ledger if missing); the STT
+        // line resolves by role; editable rows use their picked ledger.
+        var lines = [];
+        for (var wi = 0; wi < withAmt.length; wi++) {
+            var wl = withAmt[wi];
+            if (wl.locked && wl.kind === 'invest') {
+                var bd = wl.breakdown || [];
+                for (var bi = 0; bi < bd.length; bi++) {
+                    var slid = await acctFindOrCreateAuto('security_id', bd[bi].security_id);
+                    lines.push({ ledger_id: slid, debit_amount: bd[bi].cost, credit_amount: 0 });
+                }
+            } else if (wl.locked && wl.kind === 'role') {
+                var rlid = await acctResolveRef({ role: wl.role });
+                lines.push({ ledger_id: rlid, debit_amount: acctParse(wl.debit), credit_amount: 0 });
+            } else {
+                lines.push({ ledger_id: wl.ledgerId, debit_amount: acctParse(wl.debit), credit_amount: acctParse(wl.credit) });
+            }
+        }
         // Plug any difference to the suspense ledger so the voucher always ties.
         if (Math.abs(t.diff) >= 0.005) {
             var map = {};
@@ -1181,6 +1628,7 @@ async function acctSaveOpening() {
 var acctVoucherDdCtrls = {};        // row idx -> wmsDropdown controller
 var acctLedgerPickTarget = null;    // {idx} when Add Ledger was launched from a row
 var acctEditingVoucherId = null;    // set when the voucher modal is editing, not creating
+var acctVoucherReadOnly = false;    // auto (PMS-trade) vouchers open view-only
 
 function acctVoucherIsBalanced() {
     var d = 0, c = 0, nonEmpty = 0, valid = true;
@@ -1329,8 +1777,23 @@ function acctWireAmountCell(inp) {
 function acctRenderVoucherLines() {
     var tb = document.getElementById('acctVoucherLines');
     if (!tb) return;
-    acctSyncAutoLine();
     acctVoucherDdCtrls = {};
+
+    // Read-only (auto / PMS-trade voucher): static rows, no pickers, no delete.
+    if (acctVoucherReadOnly) {
+        tb.innerHTML = acctVoucherLines.map(function (ln) {
+            var nm = ln.ledgerId ? acctLedgerName(ln.ledgerId) : (ln.ledgerName || '');
+            return '<tr class="acct-line-ro">' +
+                '<td>' + wmsEsc(nm) + '</td>' +
+                '<td class="text-right">' + (acctParse(ln.debit) ? acctNum(acctParse(ln.debit)) : '') + '</td>' +
+                '<td class="text-right">' + (acctParse(ln.credit) ? acctNum(acctParse(ln.credit)) : '') + '</td>' +
+                '<td></td></tr>';
+        }).join('');
+        acctUpdateBalance();
+        return;
+    }
+
+    acctSyncAutoLine();
 
     tb.innerHTML = acctVoucherLines.map(function (ln, idx) {
         var nm = ln.ledgerId ? acctLedgerName(ln.ledgerId) : (ln.ledgerName || '');
@@ -1397,6 +1860,7 @@ function acctUpdateBalance() {
 function acctOpenVoucherModal() {
     if (!acctBookId) { acctToast('Select a book first (enable accounting on an investor).', true); return; }
     acctEditingVoucherId = null;          // creating, not editing
+    acctVoucherReadOnly = false;
     acctVoucherType = 'JOURNAL';
     acctVoucherDateYmd = acctTodayYmd();
     acctVoucherLines = [
@@ -1418,6 +1882,7 @@ function acctOpenVoucherModal() {
     }
 
     acctRenderVoucherLines();
+    acctApplyVoucherReadOnly(false);      // fresh voucher is always editable
     if (acctVoucherModalCtrl) acctVoucherModalCtrl.open();
     // Land the caret on the first ledger field — the voucher is typed top-down.
     setTimeout(function () {
@@ -1440,7 +1905,7 @@ function acctAutoBalance() {
 }
 
 async function acctSaveVoucher() {
-    if (!acctBookId) return;
+    if (!acctBookId || acctVoucherReadOnly) return;   // auto vouchers are view-only
     var lines = acctVoucherLines.filter(function (l) { return acctParse(l.debit) > 0 || acctParse(l.credit) > 0; })
         .map(function (l, i) {
             return {
@@ -1524,6 +1989,7 @@ async function acctSaveVoucher() {
             acctToast('Voucher updated.');
             await acctLoadBook();
             acctRenderActiveTab();
+            if (acctLedgerModalCtrl && acctLedgerModalCtrl.isOpen()) acctRenderLedgerDetail();
             return;
         }
 
@@ -1546,6 +2012,7 @@ async function acctSaveVoucher() {
         acctToast('Voucher ' + (result && result.voucher_number ? result.voucher_number : '') + ' posted.');
         await acctLoadBook();
         acctRenderActiveTab();
+        if (acctLedgerModalCtrl && acctLedgerModalCtrl.isOpen()) acctRenderLedgerDetail();
     } catch (e) {
         console.error('[accounting] post voucher failed', e);
         acctToast('Could not post voucher: ' + e.message, true);
@@ -1556,48 +2023,296 @@ async function acctSaveVoucher() {
 // ============================================================================
 // Ledger-detail modal
 // ============================================================================
+var acctLedgerDetailId = null;
+var acctLedgerDetailFullAmt = false;   // false = global display unit (₹ '000); true = full ₹
+// Date filter for the ledger-detail modal only (per owner 2026-08-17). Persisted so
+// the choice survives across sessions.  mode: 'all' | 'fy' | 'custom'.  For 'fy',
+// fyStart = the FY's starting calendar year (null ⇒ the CURRENT FY, resolved live so
+// it stays "current" as years roll); qtr = 0 (full year) or 1..4. DEFAULT = current FY.
+var acctLedgerDateFilter = { mode: 'fy', fyStart: null, qtr: 0, from: '', to: '' };
+var ACCT_LD_FILTER_KEY = 'wms_acct_ledger_datefilter_v2';
+try { var _ldf = JSON.parse(localStorage.getItem(ACCT_LD_FILTER_KEY) || 'null'); if (_ldf && typeof _ldf === 'object') acctLedgerDateFilter = Object.assign(acctLedgerDateFilter, _ldf); } catch (e) {}
+function acctSaveLedgerDateFilter() { try { localStorage.setItem(ACCT_LD_FILTER_KEY, JSON.stringify(acctLedgerDateFilter)); } catch (e) {} }
+// Show/hide cancelled vouchers in the drill-down (persistent). Default: hidden.
+var ACCT_LD_CANCELLED_KEY = 'wms_acct_ledger_show_cancelled';
+var acctLedgerShowCancelled = false;
+try { acctLedgerShowCancelled = localStorage.getItem(ACCT_LD_CANCELLED_KEY) === '1'; } catch (e) {}
+function acctSetShowCancelled(v) { acctLedgerShowCancelled = !!v; try { localStorage.setItem(ACCT_LD_CANCELLED_KEY, v ? '1' : '0'); } catch (e) {} }
+// Live search within the ledger drill-down (not persisted — resets per open).
+var acctLedgerSearchText = '';
+var acctLedgerRangePopOpen = false;   // custom From–To popover open state
+
+/** FY start month for the active book (financial_year_start, default 4 = April). */
+function acctLedgerFyStartMonth() {
+    var inv = (wmsRefData && wmsRefData.investors || []).find(function (i) { return i.id === acctBookId; });
+    return (inv && Number(inv.financial_year_start)) || 4;
+}
+/** The starting calendar year of the FY that contains today. */
+function acctCurrentFyStartYear() {
+    var m = acctLedgerFyStartMonth(), t = new Date();
+    return (t.getMonth() + 1) >= m ? t.getFullYear() : t.getFullYear() - 1;
+}
+function acctFyLabel(y) { return y + '-' + String((y + 1) % 100).padStart(2, '0'); }
+function _acctYmd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+/** Returns {start, end} inclusive ymd strings (or null for unbounded) for the current filter. */
+function acctLedgerDateWindow() {
+    var f = acctLedgerDateFilter;
+    if (f.mode === 'custom') return { start: f.from || null, end: f.to || null };
+    if (f.mode === 'fy') {
+        var m = acctLedgerFyStartMonth(), y = f.fyStart || acctCurrentFyStartYear();
+        if (f.qtr >= 1 && f.qtr <= 4) {
+            var qs = new Date(y, (m - 1) + (f.qtr - 1) * 3, 1);
+            var qe = new Date(y, (m - 1) + f.qtr * 3, 1); qe.setDate(qe.getDate() - 1);
+            return { start: _acctYmd(qs), end: _acctYmd(qe) };
+        }
+        var fs = new Date(y, m - 1, 1);
+        var fe = new Date(y + 1, m - 1, 1); fe.setDate(fe.getDate() - 1);
+        return { start: _acctYmd(fs), end: _acctYmd(fe) };
+    }
+    return { start: null, end: null };
+}
+
 function acctOpenLedgerDetail(ledgerId) {
-    var lg = acctLedgers.find(function (x) { return x.id === ledgerId; });
+    acctLedgerDetailId = ledgerId;
+    acctLedgerSearchText = '';          // search must NOT carry over to another ledger
+    acctLedgerRangePopOpen = false;
+    acctRenderLedgerDetail();
+    if (acctLedgerModalCtrl) acctLedgerModalCtrl.open();
+}
+
+/** All voucher lines grouped by voucher_id — used to name the contra (other-side) ledger. */
+function acctLinesByVoucher() {
+    var byV = {};
+    acctVoucherRows.forEach(function (r) { (byV[r.voucher_id] = byV[r.voucher_id] || []).push(r); });
+    return byV;
+}
+/** The other-side ledger label for one line: the opposite ledger if 2-leg, else "Multi-leg". */
+function acctContraLabel(row, byV) {
+    var legs = byV[row.voucher_id] || [];
+    var others = legs.filter(function (l) { return l.ledger_id !== row.ledger_id; });
+    // Distinct other ledgers (a voucher can post two lines to the same contra).
+    var ids = {}; others.forEach(function (l) { ids[l.ledger_id] = true; });
+    var keys = Object.keys(ids);
+    if (keys.length === 0) return '—';
+    if (keys.length === 1) return acctLedgerName(keys[0]);
+    return 'Multi-leg (' + keys.length + ')';
+}
+
+// Rendering is split in two so that live search (rapid typing) only re-renders the
+// TABLE, never the filter bar — the search <input> is built once and keeps its focus
+// and caret. The head + filter bar are rebuilt only on structural changes (period,
+// quarter, cancelled toggle, unit toggle).
+function acctRenderLedgerDetail() {
+    var lg = acctLedgers.find(function (x) { return x.id === acctLedgerDetailId; });
     if (!lg) return;
-    var rows = acctVoucherRows.filter(function (r) { return r.ledger_id === ledgerId; });
     var body = document.getElementById('acctLedgerDetailBody');
     var g = acctGroupById[lg.group_id];
+    var baseUnit = (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
+    var unitTxt = acctLedgerDetailFullAmt ? 'Full ₹' : baseUnit;
 
-    var running = 0;
-    var html = '<div class="acct-ledger-detail-head"><div class="acct-ld-name">' + wmsEsc(lg.name) + '</div>' +
-        '<div class="acct-ld-sub">' + wmsEsc(acctGroupPath(g)) + ' · ' + wmsEsc(acctViewTitle()) + '</div></div>';
-    if (!rows.length) {
-        html += '<div class="acct-empty">No postings in this book.</div>';
+    // The ledger name, group path and the unit control now live in the modal HEADER
+    // row (before the ✕) so the body is all real content.
+    var titleEl = document.getElementById('acctLedgerTitle');
+    if (titleEl) titleEl.textContent = lg.name;
+    var subEl = document.getElementById('acctLedgerSub');
+    if (subEl) subEl.textContent = acctGroupPath(g) + ' · ' + acctViewTitle();
+    var unitEl = document.getElementById('acctLedgerUnit');
+    if (unitEl) unitEl.textContent = unitTxt;
+    var tgl = document.getElementById('acctLdUnitToggle');
+    if (tgl) {
+        tgl.textContent = acctLedgerDetailFullAmt ? ('Show in ' + baseUnit) : 'Show full amount';
+        tgl.onclick = function () { acctLedgerDetailFullAmt = !acctLedgerDetailFullAmt; acctRenderLedgerDetail(); };
+    }
+
+    body.innerHTML = acctLedgerDateFilterBar() + '<div id="acctLdTableWrap"></div>';
+    acctWireLedgerDateFilter();
+    acctRenderLedgerTable();
+}
+
+/** Builds just the ledger lines table into #acctLdTableWrap (called on every search keystroke). */
+function acctRenderLedgerTable() {
+    var wrap = document.getElementById('acctLdTableWrap');
+    if (!wrap) return;
+    var allRows = acctVoucherRows.filter(function (r) { return r.ledger_id === acctLedgerDetailId; })
+        .slice().sort(function (a, b) {
+            if (a.voucher_date !== b.voucher_date) return a.voucher_date < b.voucher_date ? -1 : 1;
+            return String(a.voucher_number).localeCompare(String(b.voucher_number));
+        });
+    var byV = acctLinesByVoucher();
+    var fmt = acctLedgerDetailFullAmt ? acctNum : acctAmt;
+
+    var win = acctLedgerDateWindow();
+    var opening = 0, rows = [];
+    allRows.forEach(function (r) {
+        if (win.start && r.voucher_date < win.start) {
+            if (acctIsLive(r)) opening += (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
+            return;
+        }
+        if (win.end && r.voucher_date > win.end) return;
+        rows.push(r);
+    });
+
+    var q = (acctLedgerSearchText || '').trim().toLowerCase();
+    function rowMatches(r, contra) {
+        if (!q) return true;
+        var hay = (contra + ' ' + (r.line_narration || r.voucher_narration || '') + ' ' +
+            acctFmtDate(r.voucher_date) + ' ' + (r.voucher_date || '') + ' ' + (r.voucher_number || '')).toLowerCase();
+        return hay.indexOf(q) >= 0;
+    }
+
+    var html;
+    if (!allRows.length) {
+        html = '<div class="acct-empty">No postings in this book.</div>';
     } else {
-        html += '<table class="acct-table"><thead><tr><th>Date</th><th>Voucher #</th><th>Narration</th><th class="text-right">Debit</th><th class="text-right">Credit</th><th class="text-right">Balance</th></tr></thead><tbody>';
+        var running = win.start ? opening : 0;
+        var shown = 0;
+        html = '<table class="acct-table acct-ld-table"><thead><tr>' +
+            '<th class="c-date">Date</th><th class="c-vch">Vch #</th><th class="c-contra">Contra ledger</th>' +
+            '<th>Narration</th><th class="text-right c-amt">Debit</th><th class="text-right c-amt">Credit</th>' +
+            '<th class="text-right c-amt">Balance</th></tr></thead><tbody>';
+        if (win.start && !q) {
+            html += '<tr class="acct-ld-opening"><td class="c-date">' + wmsEsc(acctFmtDate(win.start)) + '</td><td class="c-vch">—</td>' +
+                '<td colspan="2"><em>Opening balance</em></td><td class="text-right">-</td><td class="text-right">-</td>' +
+                '<td class="text-right">' + fmt(Math.abs(opening)) + (opening >= 0 ? ' Dr' : ' Cr') + '</td></tr>';
+        }
         rows.forEach(function (r) {
             var live = acctIsLive(r);
             if (live) running += (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
-            var balLabel = live ? acctNum(Math.abs(running)) + (running >= 0 ? ' Dr' : ' Cr') : '—';
-            // Auto (PMS / rebuild-from-trades) vouchers are owned by the posting
-            // engine — editing them here would be overwritten on the next rebuild.
+            // Display filters (running balance already accounts for every live row above):
+            if (!live && !acctLedgerShowCancelled) return;   // cancelled hidden unless toggled on
+            var contra = acctContraLabel(r, byV);
+            if (!rowMatches(r, contra)) return;
+            shown++;
+            var balLabel = live ? fmt(Math.abs(running)) + (running >= 0 ? ' Dr' : ' Cr') : '—';
             var auto = !!r.is_auto;
             var tip = !live ? 'Cancelled' + (r.cancel_reason ? ' — ' + r.cancel_reason : '') + ' · excluded from balances'
-                    : auto ? 'Auto-posted from trades — edit the trade, not the voucher'
+                    : auto ? 'Auto-posted from a PMS trade — opens view-only; edit the trade, then Rebuild'
                            : 'Click to edit this voucher';
             html += '<tr class="acct-vch-row' + (auto ? ' acct-vch-auto' : '') + (live ? '' : ' acct-vch-cancelled') +
                 '" data-voucher="' + r.voucher_id + '" title="' + wmsEsc(tip) + '">' +
-                '<td>' + wmsEsc(acctFmtDate(r.voucher_date)) + '</td>' +
-                '<td>' + wmsEsc(r.voucher_number) +
+                '<td class="c-date">' + wmsEsc(acctFmtDate(r.voucher_date)) + '</td>' +
+                '<td class="c-vch">' + wmsEsc(r.voucher_number) +
                     (auto ? ' <span class="acct-kind-badge">auto</span>' : '') +
                     (live ? '' : ' <span class="acct-scope-badge">cancelled</span>') + '</td>' +
+                '<td class="c-contra">' + wmsEsc(contra) + '</td>' +
                 '<td>' + wmsEsc(r.line_narration || r.voucher_narration || '') + '</td>' +
-                '<td class="text-right">' + (Number(r.debit_amount) ? acctAmt(Number(r.debit_amount)) : '-') + '</td>' +
-                '<td class="text-right">' + (Number(r.credit_amount) ? acctAmt(Number(r.credit_amount)) : '-') + '</td>' +
+                '<td class="text-right">' + (Number(r.debit_amount) ? fmt(Number(r.debit_amount)) : '-') + '</td>' +
+                '<td class="text-right">' + (Number(r.credit_amount) ? fmt(Number(r.credit_amount)) : '-') + '</td>' +
                 '<td class="text-right">' + balLabel + '</td></tr>';
         });
+        if (!shown) {
+            html += '<tr><td colspan="7" class="acct-empty" style="padding:16px;">' +
+                (q ? 'No lines match &ldquo;' + wmsEsc(acctLedgerSearchText) + '&rdquo;.' : 'No postings in the selected period.') + '</td></tr>';
+        }
         html += '</tbody></table>';
     }
-    body.innerHTML = html;
-    body.querySelectorAll('.acct-vch-row[data-voucher]').forEach(function (tr) {
+    wrap.innerHTML = html;
+    wrap.querySelectorAll('.acct-vch-row[data-voucher]').forEach(function (tr) {
         tr.onclick = function () { acctOpenEditVoucher(tr.dataset.voucher); };
     });
-    if (acctLedgerModalCtrl) acctLedgerModalCtrl.open();
+}
+
+/** The date-filter + search control strip inside the ledger modal. From/To live in a
+ *  compact popover (like the Transactions page) so they don't eat a whole row. */
+function acctLedgerDateFilterBar() {
+    var f = acctLedgerDateFilter;
+    var cur = acctCurrentFyStartYear();
+    var effFy = (f.mode === 'fy') ? (f.fyStart || cur) : null;   // null fyStart ⇒ current FY
+    var fyOpts = '';
+    for (var i = 0; i < 4; i++) {
+        var y = cur - i;
+        var sel = (effFy === y) ? ' selected' : '';
+        fyOpts += '<option value="fy:' + y + '"' + sel + '>FY ' + acctFyLabel(y) + (i === 0 ? ' (current)' : i === 1 ? ' (previous)' : '') + '</option>';
+    }
+    var allSel = f.mode === 'all' ? ' selected' : '';
+    var customSel = f.mode === 'custom' ? ' selected' : '';
+    var qDisabled = f.mode === 'fy' ? '' : ' disabled';
+    function qSel(v) { return (f.mode === 'fy' && f.qtr === v) ? ' selected' : ''; }
+
+    // Custom From–To: a single button that opens a popover; only shown in custom mode.
+    var rangeHtml = '';
+    if (f.mode === 'custom') {
+        var rlabel = (f.from || f.to) ? ((f.from ? acctFmtDate(f.from) : '…') + ' → ' + (f.to ? acctFmtDate(f.to) : '…')) : 'Pick dates';
+        rangeHtml = '<span class="acct-ld-range-wrap">' +
+            '<button id="acctLdRangeBtn" class="wms-btn wms-btn-secondary" title="Set a custom date range">📅 ' + wmsEsc(rlabel) + ' ▾</button>' +
+            '<div id="acctLdRangePop" class="acct-ld-range-pop' + (acctLedgerRangePopOpen ? ' show' : '') + '">' +
+                '<label>From</label><input type="date" id="acctLdFrom" class="wms-input" value="' + wmsEsc(f.from || '') + '">' +
+                '<label>To</label><input type="date" id="acctLdTo" class="wms-input" value="' + wmsEsc(f.to || '') + '">' +
+            '</div></span>';
+    }
+
+    // Cancelled toggle as a compact icon (⊘), highlighted when cancelled are shown.
+    var cancelBtn = '<button id="acctLdCancelledBtn" class="acct-ld-icon-btn' + (acctLedgerShowCancelled ? ' on' : '') + '" ' +
+        'title="' + (acctLedgerShowCancelled ? 'Hide cancelled vouchers' : 'Show cancelled vouchers') + '">⊘</button>';
+
+    return '<div class="acct-ld-filter">' +
+        '<label>Period</label>' +
+        '<select id="acctLdPeriod" class="wms-input">' +
+            '<option value="all"' + allSel + '>All dates</option>' +
+            fyOpts +
+            '<option value="custom"' + customSel + '>Custom…</option>' +
+        '</select>' +
+        '<label>Quarter</label>' +
+        '<select id="acctLdQtr" class="wms-input"' + qDisabled + '>' +
+            '<option value="0"' + qSel(0) + '>Full year</option>' +
+            '<option value="1"' + qSel(1) + '>Q1</option>' +
+            '<option value="2"' + qSel(2) + '>Q2</option>' +
+            '<option value="3"' + qSel(3) + '>Q3</option>' +
+            '<option value="4"' + qSel(4) + '>Q4</option>' +
+        '</select>' +
+        rangeHtml +
+        cancelBtn +
+        '<input type="text" id="acctLdSearch" class="wms-input acct-ld-search" placeholder="Search ledger, narration, date…" value="' + wmsEsc(acctLedgerSearchText) + '">' +
+    '</div>';
+}
+
+function acctWireLedgerDateFilter() {
+    var p = document.getElementById('acctLdPeriod');
+    if (p) p.onchange = function () {
+        var v = p.value;
+        if (v === 'all') { acctLedgerDateFilter.mode = 'all'; }
+        else if (v === 'custom') { acctLedgerDateFilter.mode = 'custom'; acctLedgerRangePopOpen = true; }
+        else if (v.indexOf('fy:') === 0) { acctLedgerDateFilter.mode = 'fy'; acctLedgerDateFilter.fyStart = Number(v.slice(3)); }
+        acctSaveLedgerDateFilter(); acctRenderLedgerDetail();
+    };
+    var q = document.getElementById('acctLdQtr');
+    if (q) q.onchange = function () { acctLedgerDateFilter.qtr = Number(q.value); acctSaveLedgerDateFilter(); acctRenderLedgerDetail(); };
+    // From/To popover — toggle on the button, apply on change (table-only re-render so the popover stays put).
+    var rbtn = document.getElementById('acctLdRangeBtn');
+    var rpop = document.getElementById('acctLdRangePop');
+    if (rbtn && rpop) {
+        rbtn.onclick = function (e) { e.stopPropagation(); acctLedgerRangePopOpen = !acctLedgerRangePopOpen; rpop.classList.toggle('show', acctLedgerRangePopOpen); };
+        rpop.onclick = function (e) { e.stopPropagation(); };
+    }
+    var fr = document.getElementById('acctLdFrom');
+    if (fr) fr.onchange = function () { acctLedgerDateFilter.from = fr.value; acctSaveLedgerDateFilter(); acctRenderLedgerTable(); acctLedgerUpdateRangeLabel(); };
+    var to = document.getElementById('acctLdTo');
+    if (to) to.onchange = function () { acctLedgerDateFilter.to = to.value; acctSaveLedgerDateFilter(); acctRenderLedgerTable(); acctLedgerUpdateRangeLabel(); };
+    var cb = document.getElementById('acctLdCancelledBtn');
+    if (cb) cb.onclick = function () { acctSetShowCancelled(!acctLedgerShowCancelled); acctRenderLedgerDetail(); };
+    var sr = document.getElementById('acctLdSearch');
+    // Live search: only the TABLE re-renders, so this input keeps its focus + caret.
+    if (sr) sr.oninput = function () { acctLedgerSearchText = sr.value; acctRenderLedgerTable(); };
+}
+
+/** Refresh the custom-range button label after a date change (table-only re-render). */
+function acctLedgerUpdateRangeLabel() {
+    var btn = document.getElementById('acctLdRangeBtn');
+    if (!btn) return;
+    var f = acctLedgerDateFilter;
+    var rlabel = (f.from || f.to) ? ((f.from ? acctFmtDate(f.from) : '…') + ' → ' + (f.to ? acctFmtDate(f.to) : '…')) : 'Pick dates';
+    btn.innerHTML = '📅 ' + wmsEsc(rlabel) + ' ▾';
+}
+
+// Close the custom-range popover on an outside click.
+if (!window.__acctLdRangeDismissWired) {
+    window.__acctLdRangeDismissWired = true;
+    document.addEventListener('click', function (e) {
+        var pop = document.getElementById('acctLdRangePop');
+        if (pop && pop.classList.contains('show') && !e.target.closest('.acct-ld-range-wrap')) {
+            pop.classList.remove('show'); acctLedgerRangePopOpen = false;
+        }
+    });
 }
 
 /* Edit an existing manual voucher. Auto vouchers are refused: they belong to the
@@ -1609,13 +2324,27 @@ function acctOpenEditVoucher(voucherId) {
         acctToast('“' + rows[0].voucher_number + '” is cancelled. It is kept for the audit trail and cannot be edited.', true);
         return;
     }
-    if (rows[0].is_auto) {
-        acctToast('“' + rows[0].voucher_number + '” was auto-posted from trades. Edit the underlying trade, then Rebuild.', true);
+    // Opening balances are edited only through the ⚖ Opening Balances tool, which
+    // owns the single-voucher-per-book rule AND auto-plugs any gap to the
+    // "Difference in Opening Balance" line. Editing them in the generic voucher
+    // modal is a foot-gun: deleting the plug line unbalances the voucher and Save
+    // (which requires Dr = Cr) then refuses it. Redirect instead.
+    if (rows[0].voucher_type === 'OPENING_BALANCE') {
+        acctToast('Opening balances are edited from “⚖ Opening Balances” — it fills any gap for you. Opening it now…', false);
+        if (acctLedgerModalCtrl) acctLedgerModalCtrl.close();
+        acctOpenOpeningModal();
         return;
     }
-    if (acctLedgerModalCtrl) acctLedgerModalCtrl.close();
+    // Auto (PMS-trade) vouchers open VIEW-ONLY — shown greyed with a note that they
+    // can only be changed by editing the underlying trade and rebuilding. Manual
+    // vouchers stay fully editable.
+    var readOnly = !!rows[0].is_auto;
+    // Leave the ledger-detail modal OPEN underneath: the voucher modal layers on
+    // top (wmsModal stack raises its z-index) so closing it steps back to the
+    // ledger, not to the main screen.
 
-    acctEditingVoucherId = voucherId;
+    acctVoucherReadOnly = readOnly;
+    acctEditingVoucherId = readOnly ? null : voucherId;   // never Save-path an auto voucher
     acctVoucherType = rows[0].voucher_type;
     acctVoucherDateYmd = rows[0].voucher_date;
     acctLedgerPickTarget = null;
@@ -1628,7 +2357,7 @@ function acctOpenEditVoucher(voucherId) {
                      debit: d ? String(d) : '', credit: c ? String(c) : '', _auto: false };
         });
 
-    document.getElementById('acctVoucherTitle').textContent = 'Edit Voucher ' + rows[0].voucher_number + ' — ' + acctInvName(acctBookId);
+    document.getElementById('acctVoucherTitle').textContent = (readOnly ? 'View Voucher ' : 'Edit Voucher ') + rows[0].voucher_number + ' — ' + acctInvName(acctBookId);
     document.querySelectorAll('#acctVoucherTypeToggle .acct-type-btn').forEach(function (b) {
         b.classList.toggle('active', b.dataset.vtype === acctVoucherType);
     });
@@ -1639,24 +2368,54 @@ function acctOpenEditVoucher(voucherId) {
         if (ctrl && ctrl.setValue) ctrl.setValue(acctVoucherDateYmd);
     }
     acctRenderVoucherLines();
+    acctApplyVoucherReadOnly(readOnly);
     if (acctVoucherModalCtrl) acctVoucherModalCtrl.open();
+}
+
+/* Toggle the voucher modal between edit and VIEW-ONLY. In view-only every control
+   is disabled and a banner explains the voucher is driven by a PMS trade. */
+function acctApplyVoucherReadOnly(ro) {
+    var modal = document.getElementById('acctVoucherModal');
+    if (modal) modal.classList.toggle('acct-voucher-ro', ro);
+    var banner = document.getElementById('acctVoucherRoBanner');
+    if (banner) banner.style.display = ro ? '' : 'none';
+    var save = document.getElementById('acctVoucherSave');
+    if (save) { save.style.display = ro ? 'none' : ''; save.disabled = ro; }
+    var addLine = document.getElementById('acctAddLineBtn');
+    if (addLine) addLine.style.display = ro ? 'none' : '';
+    var nar = document.getElementById('acctVoucherNarration');
+    if (nar) nar.disabled = ro;
+    document.querySelectorAll('#acctVoucherTypeToggle .acct-type-btn').forEach(function (b) { b.disabled = ro; });
+    // Freeze the date widget in view-only.
+    var dc = document.getElementById('acctVoucherDate');
+    if (dc) dc.style.pointerEvents = ro ? 'none' : '';
 }
 
 // ============================================================================
 // Add ledger / add group modals
 // ============================================================================
 function acctGroupSelectOptions(selectedId, rootsOnlyAllowed) {
-    // Order: roots then their children, indented
+    // Roots first (in nature order), then their descendants to ANY depth, indented
+    // by level. The chart nests 3 deep (e.g. Assets ▸ Investments ▸ Listed
+    // Securities), so a two-level walk hid every depth-2 group — the reason
+    // "Listed Securities", "Brokers", "Traders", the Capital-Gains / Yield-Income
+    // groups, etc. never appeared in the picker.
     var html = '';
+    function walk(parentId, depth) {
+        acctGroups.filter(function (g) { return g.parent_group_id === parentId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (g) {
+                var pad = '';
+                for (var i = 0; i < depth; i++) pad += '&nbsp;&nbsp;&nbsp;';
+                html += '<option value="' + g.id + '"' + (g.id === selectedId ? ' selected' : '') + '>' + pad + wmsEsc(g.name) + '</option>';
+                walk(g.id, depth + 1);
+            });
+    }
     acctNatureOrder.forEach(function (rootName) {
         var root = acctGroups.find(function (g) { return !g.parent_group_id && g.name === rootName; });
         if (!root) return;
         html += '<option value="' + root.id + '"' + (root.id === selectedId ? ' selected' : '') + '>' + wmsEsc(root.name) + '</option>';
-        acctGroups.filter(function (g) { return g.parent_group_id === root.id; })
-            .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (g) {
-                html += '<option value="' + g.id + '"' + (g.id === selectedId ? ' selected' : '') + '>&nbsp;&nbsp;&nbsp;' + wmsEsc(g.name) + '</option>';
-            });
+        walk(root.id, 1);
     });
     return html;
 }
@@ -1784,14 +2543,14 @@ async function acctSaveGroup() {
 function acctWireModals() {
     // Voucher modal
     var vOverlay = document.getElementById('acctVoucherModal');
-    if (vOverlay && typeof wmsModal === 'function') acctVoucherModalCtrl = wmsModal(vOverlay, {});
+    if (vOverlay && typeof wmsModal === 'function') acctVoucherModalCtrl = wmsModal(vOverlay, { backdropClose: false });
     document.getElementById('acctVoucherClose').onclick = function () { acctVoucherModalCtrl && acctVoucherModalCtrl.close(); };
     document.getElementById('acctVoucherCancel').onclick = function () { acctVoucherModalCtrl && acctVoucherModalCtrl.close(); };
     document.getElementById('acctVoucherSave').onclick = acctSaveVoucher;
 
     // Opening-balances modal
     var obOverlay = document.getElementById('acctOpeningModal');
-    if (obOverlay && typeof wmsModal === 'function') acctOpeningModalCtrl = wmsModal(obOverlay, {});
+    if (obOverlay && typeof wmsModal === 'function') acctOpeningModalCtrl = wmsModal(obOverlay, { backdropClose: false });
     var obClose = document.getElementById('acctOpeningClose');
     if (obClose) obClose.onclick = function () { acctOpeningModalCtrl && acctOpeningModalCtrl.close(); };
     var obCancel = document.getElementById('acctOpeningCancel');
@@ -1800,23 +2559,9 @@ function acctWireModals() {
     if (obSave) obSave.onclick = acctSaveOpening;
     var obBtn = document.getElementById('acctOpeningBtn');
     if (obBtn) obBtn.onclick = acctOpenOpeningModal;
-    var obSearch = document.getElementById('acctOpeningSearch');
-    if (obSearch) {
-        obSearch.oninput = function () { acctOpeningActiveIdx = -1; acctOpeningRenderResults(); };
-        obSearch.onfocus = acctOpeningRenderResults;
-        // mousedown on a result fires before blur, so the click still lands.
-        obSearch.onblur = function () { setTimeout(acctOpeningHideResults, 120); };
-        obSearch.onkeydown = function (e) {
-            var list = acctOpeningCandidates(obSearch.value);
-            if (e.key === 'ArrowDown') { e.preventDefault(); acctOpeningActiveIdx = Math.min(acctOpeningActiveIdx + 1, list.length - 1); acctOpeningRenderResults(); }
-            else if (e.key === 'ArrowUp') { e.preventDefault(); acctOpeningActiveIdx = Math.max(acctOpeningActiveIdx - 1, 0); acctOpeningRenderResults(); }
-            else if (e.key === 'Enter') {
-                e.preventDefault();
-                var pick = list[acctOpeningActiveIdx >= 0 ? acctOpeningActiveIdx : 0];
-                if (pick) acctOpeningAdd(pick.id);
-            } else if (e.key === 'Escape') { acctOpeningHideResults(); }
-        };
-    }
+    var obAdd = document.getElementById('acctOpeningAddLineBtn');
+    if (obAdd) obAdd.onclick = function () { acctOpeningAddLine(true); };
+
     document.getElementById('acctAddLineBtn').onclick = function () { acctAddVoucherLine(true); };
 
     // Narration is the last field typed: Tab or Enter from here goes to Save.
@@ -1868,13 +2613,13 @@ function acctWireModals() {
 
     // Ledger-detail modal
     var lOverlay = document.getElementById('acctLedgerModal');
-    if (lOverlay && typeof wmsModal === 'function') acctLedgerModalCtrl = wmsModal(lOverlay, {});
+    if (lOverlay && typeof wmsModal === 'function') acctLedgerModalCtrl = wmsModal(lOverlay, { backdropClose: false });
     document.getElementById('acctLedgerClose').onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
     document.getElementById('acctLedgerDone').onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
 
     // Add-ledger modal
     var alOverlay = document.getElementById('acctAddLedgerModal');
-    if (alOverlay && typeof wmsModal === 'function') acctAddLedgerModalCtrl = wmsModal(alOverlay, {});
+    if (alOverlay && typeof wmsModal === 'function') acctAddLedgerModalCtrl = wmsModal(alOverlay, { backdropClose: false });
     document.getElementById('acctAddLedgerClose').onclick = function () { acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
     document.getElementById('acctAddLedgerCancel').onclick = function () { acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
     document.getElementById('acctAddLedgerSave').onclick = acctSaveLedger;
@@ -1888,14 +2633,14 @@ function acctWireModals() {
 
     // Add-group modal
     var agOverlay = document.getElementById('acctAddGroupModal');
-    if (agOverlay && typeof wmsModal === 'function') acctAddGroupModalCtrl = wmsModal(agOverlay, {});
+    if (agOverlay && typeof wmsModal === 'function') acctAddGroupModalCtrl = wmsModal(agOverlay, { backdropClose: false });
     document.getElementById('acctAddGroupClose').onclick = function () { acctAddGroupModalCtrl && acctAddGroupModalCtrl.close(); };
     document.getElementById('acctAddGroupCancel').onclick = function () { acctAddGroupModalCtrl && acctAddGroupModalCtrl.close(); };
     document.getElementById('acctAddGroupSave').onclick = acctSaveGroup;
 
     // Rebuild report modal
     var rpOverlay = document.getElementById('acctReportModal');
-    if (rpOverlay && typeof wmsModal === 'function') acctReportModalCtrl = wmsModal(rpOverlay, {});
+    if (rpOverlay && typeof wmsModal === 'function') acctReportModalCtrl = wmsModal(rpOverlay, { backdropClose: false });
     var rpClose = document.getElementById('acctReportClose');
     if (rpClose) rpClose.onclick = function () { acctReportModalCtrl && acctReportModalCtrl.close(); };
     var rpDone = document.getElementById('acctReportDone');
@@ -1903,7 +2648,7 @@ function acctWireModals() {
 
     // Consolidate modal
     var coOverlay = document.getElementById('acctConsolidateModal');
-    if (coOverlay && typeof wmsModal === 'function') acctConsolidateModalCtrl = wmsModal(coOverlay, {});
+    if (coOverlay && typeof wmsModal === 'function') acctConsolidateModalCtrl = wmsModal(coOverlay, { backdropClose: false });
     var coClose = document.getElementById('acctConsolidateClose');
     if (coClose) coClose.onclick = function () { acctConsolidateModalCtrl && acctConsolidateModalCtrl.close(); };
     var coApply = document.getElementById('acctConsolidateApply');
@@ -1986,62 +2731,43 @@ async function acctResolveRef(ref) {
     throw new Error('Unresolvable ledger ref: ' + JSON.stringify(ref));
 }
 
-// Core: rebuild ONE book's auto-vouchers via the v2 engine (accounting-engine.js).
-// Uses the SHARED FIFO (wmsCalcFifoCost) + classifier, resolves ledgers by role/FK.
+// Core: rebuild ONE book's auto-vouchers by invoking the SERVER-SIDE engine (the
+// accounting-post Edge Function). This is the SAME engine the nightly cron runs
+// (frozen + byte-stamped), so the button and the nightly can never diverge (D15).
+// It posts INCREMENTALLY (worklist: new→post, changed-open→cancel+repost,
+// changed-closed→alert, unchanged→skip, orphan→alert) and also does the
+// statement→books postings — not the old browser wipe-and-repost.
+// Auth: the owner's logged-in session (x-user-token via wmsEdgeHeaders); the EF
+// verifies it. Returns a report object shaped for acctShowRebuildReport.
 async function acctRebuildOne(bookId) {
-    var fields = 'id,investor_id,trader_id,broker_id,security_id,symbol,short_symbol,company_name,' +
-        'security_type,transaction_type,transaction_date,transaction_time,quantity,price,' +
-        'gross_amount,total_charges,trader_charges,stt,tds,net_amount,notes,created_at';
-    var txns = await wmsFetchAllRaw(acctUrl('transactions?select=' + fields + '&investor_id=eq.' + bookId)) || [];
-    var bookInv = (wmsRefData.investors || []).find(function (i) { return i.id === bookId; }) || {};
-    var invById = {}; (wmsRefData.investors || []).forEach(function (i) { invById[i.id] = i; });
-    var ctx = {
-        securityById: wmsRefData.securitiesCmMap || {},
-        investorById: invById,
-        brokerById: {},
-        fifo: function (t) { return wmsCalcFifoCost(t); }
+    var resp = await fetch(SUPABASE_URL + '/functions/v1/accounting-post', {
+        method: 'POST',
+        headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ bookId: bookId })
+    });
+    var j = await resp.json().catch(function () { return {}; });
+    if (resp.status === 401) throw new Error('Session expired — refresh the page and sign in again.');
+    if (!resp.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + resp.status));
+    var rep = (j.reports && j.reports[0]) || {};
+    // Fold the EF's trade + statement counters into the report-card fields.
+    return {
+        bookId: bookId, book: rep.book || acctInvName(bookId),
+        posted: (rep.posted || 0) + (rep.stmtPosted || 0),
+        replaced: (rep.replaced || 0) + (rep.stmtReplaced || 0),
+        unchanged: (rep.unchanged || 0) + (rep.stmtUnchanged || 0),
+        skipped: (rep.skipped || 0) + (rep.stmtSkipped || 0),
+        closedPeriod: rep.skippedClosed || 0,
+        failed: rep.failed || 0,
+        warnings: (rep.engineExceptions || 0) + (rep.closedBlocked || 0) + (rep.orphans || 0),
+        firstErr: rep.firstErr || null, skipReasons: {}, warningsList: []
     };
-    var book = { id: bookId, post_fno: bookInv.post_fno !== false };
-    var result = acctEngineProcess(book, txns, ctx);
-
-    // clear existing autos for this book (lines cascade)
-    await fetch(acctUrl('acct_vouchers?investor_id=eq.' + bookId + '&is_auto=eq.true'),
-        { method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' }) });
-
-    var posted = 0, failed = 0, firstErr = null;
-    for (var j = 0; j < result.vouchers.length; j++) {
-        var v = result.vouchers[j];
-        var header = { investor_id: bookId, voucher_type: v.type, voucher_date: v.date,
-            narration: v.narration, is_auto: true, source_transaction_id: v.txnId };
-        var lines = [], okLines = true;
-        for (var li = 0; li < v.lines.length; li++) {
-            var l = v.lines[li], lid;
-            try { lid = await acctResolveRef(l.ref); }
-            catch (e) { okLines = false; if (!firstErr) firstErr = e.message; break; }
-            lines.push({ ledger_id: lid, debit_amount: l.debit || 0, credit_amount: l.credit || 0, narration: l.narration || null, sort_order: li });
-        }
-        if (!okLines) { failed++; continue; }
-        var resp = await fetch(acctUrl('rpc/acct_post_voucher'), {
-            method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }),
-            body: JSON.stringify({ p_header: header, p_lines: lines })
-        });
-        if (resp.ok) posted++; else { failed++; if (!firstErr) firstErr = await resp.text(); }
-    }
-    if (result.exceptions.length) console.warn('[accounting] rebuild exceptions for ' + acctInvName(bookId), result.exceptions);
-    if (firstErr) console.error('[accounting] rebuild first error (' + acctInvName(bookId) + '):', firstErr);
-
-    var skipReasons = {};
-    result.skipped.forEach(function (s) { var k = String(s.reason).replace(/\d[\d,.]*/g, 'N'); skipReasons[k] = (skipReasons[k] || 0) + 1; });
-    return { bookId: bookId, book: acctInvName(bookId), posted: posted, skipped: result.skipped.length,
-        failed: failed, warnings: result.exceptions.length, skipReasons: skipReasons,
-        warningsList: result.exceptions.map(function (e) { return e.title; }), firstErr: firstErr };
 }
 
 async function acctRebuildBooks() {
     if (!acctBookId) { acctToast('Select a book first.', true); return; }
-    if (typeof acctEngineProcess !== 'function') { acctToast('Posting engine not loaded.', true); return; }
-    if (!window.confirm('Rebuild auto-vouchers for ' + acctInvName(acctBookId) + ' from its transactions?\n\n' +
-        'This deletes existing AUTO-generated vouchers for this book and regenerates them. Manual vouchers are kept.')) return;
+    if (!window.confirm('Rebuild auto-vouchers for ' + acctInvName(acctBookId) + ' from its trades?\n\n' +
+        'This runs the accounting engine on the server: new trades are posted, changed ones are re-posted, ' +
+        'and unchanged ones are left alone. Your manual vouchers are never touched.')) return;
     acctLoading(true);
     try {
         var r = await acctRebuildOne(acctBookId);
@@ -2054,11 +2780,11 @@ async function acctRebuildBooks() {
 }
 
 async function acctRebuildAll() {
-    if (typeof acctEngineProcess !== 'function') { acctToast('Posting engine not loaded.', true); return; }
     var books = acctOwnBooks();
     if (!books.length) { acctToast('No own-books to rebuild.', true); return; }
-    if (!window.confirm('Rebuild auto-vouchers for ALL ' + books.length + ' books from their transactions?\n\n' +
-        'Deletes and regenerates auto-vouchers for every book (manual vouchers kept). May take a minute for large books.')) return;
+    if (!window.confirm('Rebuild auto-vouchers for ALL ' + books.length + ' books from their trades?\n\n' +
+        'Runs the server accounting engine per book (new posted, changed re-posted, unchanged left alone; ' +
+        'manual vouchers never touched). May take a minute for large books.')) return;
     acctLoading(true);
     try {
         var reports = [];
@@ -2078,10 +2804,13 @@ function acctShowRebuildReport(reports) {
         acctToast('Rebuilt ' + reports.length + ' book(s): ' + tot + ' vouchers posted.');
         return;
     }
-    var html = '<table class="acct-table"><thead><tr><th>Book</th><th class="text-right">Posted</th><th class="text-right">Skipped</th><th class="text-right">Failed</th><th class="text-right">Warn</th></tr></thead><tbody>';
+    var html = '<table class="acct-table"><thead><tr><th>Book</th><th class="text-right">Posted</th><th class="text-right">Replaced</th><th class="text-right">Unchanged</th><th class="text-right" title="Trades in a closed period — carried by the opening balance, not posted">Closed</th><th class="text-right">Skipped</th><th class="text-right">Failed</th><th class="text-right">Warn</th></tr></thead><tbody>';
     reports.forEach(function (r) {
         html += '<tr><td>' + wmsEsc(r.book) + '</td>' +
-            '<td class="text-right">' + r.posted + '</td>' +
+            '<td class="text-right">' + (r.posted || '-') + '</td>' +
+            '<td class="text-right">' + (r.replaced || '-') + '</td>' +
+            '<td class="text-right">' + (r.unchanged || '-') + '</td>' +
+            '<td class="text-right">' + (r.closedPeriod || '-') + '</td>' +
             '<td class="text-right">' + (r.skipped || '-') + '</td>' +
             '<td class="text-right"' + (r.failed ? ' style="color:#dc2626;font-weight:600;"' : '') + '>' + (r.failed || '-') + '</td>' +
             '<td class="text-right">' + (r.warnings || '-') + '</td></tr>';

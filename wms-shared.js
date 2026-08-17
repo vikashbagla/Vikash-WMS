@@ -201,7 +201,7 @@ async function wmsReloadRefMastersOnly() {
     var resp;
 
     // 1. Investors
-    resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start,interest_terms,tax_rate,accounting_enabled,book_parent_id,post_fno&is_active=eq.true', { headers: headers });
+    resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start,interest_terms,tax_rate,accounting_enabled,book_parent_id,post_fno,books_closed_upto&is_active=eq.true', { headers: headers });
     var investors = await resp.json();
     wmsRefData.investors = investors;
     wmsRefData.investorObjMap = {};
@@ -5057,20 +5057,37 @@ function wmsFormatSecurity(sec, format) {
 //   modal.open();  modal.close();  modal.isOpen();
 // ============================================================================
 
+// Shared stack of currently-open modal overlays, in open order. Lets ESC and
+// backdrop-click act on the TOPMOST modal only — so a modal opened on top of
+// another (e.g. the voucher modal over the ledger-detail modal) steps back ONE
+// layer instead of closing every open modal down to the main screen.
+var wmsModalStack = (typeof window !== 'undefined' && window.__wmsModalStack) || [];
+if (typeof window !== 'undefined') window.__wmsModalStack = wmsModalStack;
+
+function wmsModalIsTop(overlayEl) {
+    return wmsModalStack.length && wmsModalStack[wmsModalStack.length - 1] === overlayEl;
+}
+
 function wmsModal(overlayEl, opts) {
     opts = opts || {};
     var onClose = opts.onClose || function() {};
+    // backdropClose:false → clicking the dark overlay does nothing (the accounting
+    // module opts out so a stray click can't discard a half-typed voucher). ESC and
+    // the ✕/Cancel buttons still close.
+    var backdropClose = opts.backdropClose !== false;
 
     function escHandler(e) {
-        if (e.key === 'Escape' && overlayEl.classList.contains('show')) {
+        // Only the top-most open modal responds to ESC.
+        if (e.key === 'Escape' && overlayEl.classList.contains('show') && wmsModalIsTop(overlayEl)) {
             e.preventDefault();
+            e.stopPropagation();
             controller.close();
         }
     }
 
     function clickOutsideHandler(e) {
-        // Click on overlay background (not on dialog content)
-        if (e.target === overlayEl) {
+        // Click on overlay background (not on dialog content), top-most only.
+        if (backdropClose && e.target === overlayEl && wmsModalIsTop(overlayEl)) {
             controller.close();
         }
     }
@@ -5078,11 +5095,22 @@ function wmsModal(overlayEl, opts) {
     var controller = {
         open: function() {
             overlayEl.classList.add('show');
+            // De-dupe then push so this overlay is unambiguously the top.
+            var ix = wmsModalStack.indexOf(overlayEl);
+            if (ix !== -1) wmsModalStack.splice(ix, 1);
+            wmsModalStack.push(overlayEl);
+            // Raise this overlay above any modal already open. Base overlay z-index
+            // is 1100; DOM order alone would otherwise let an earlier-in-DOM modal
+            // sit behind a later one. Stack depth drives the paint order instead.
+            overlayEl.style.zIndex = String(1100 + wmsModalStack.length * 10);
             document.addEventListener('keydown', escHandler);
             overlayEl.addEventListener('click', clickOutsideHandler);
         },
         close: function() {
             overlayEl.classList.remove('show');
+            overlayEl.style.zIndex = '';
+            var ix = wmsModalStack.indexOf(overlayEl);
+            if (ix !== -1) wmsModalStack.splice(ix, 1);
             document.removeEventListener('keydown', escHandler);
             overlayEl.removeEventListener('click', clickOutsideHandler);
             onClose();
@@ -5635,9 +5663,13 @@ var wmsAttachAmountInput = function(input, opts) {
             if (typeof opts.onCommit === 'function') opts.onCommit(parse(input.value));
         }
     };
-    // Strip anything that isn't a digit, comma, dot, or leading minus while typing
+    // Strip anything that isn't a digit, comma, dot, or leading minus while typing.
+    // EXCEPTION: while an "=" formula is being entered (wmsInitFormulaInput), leave
+    // the value alone so the Excel-style calculator can work — it replaces the field
+    // with the numeric result on Enter/blur, which then formats normally.
     var doInput = function() {
         var v = input.value;
+        if (v.charAt(0) === '=') return;
         var cleaned = v.replace(/[^\d.,\-]/g, '');
         if (cleaned !== v) input.value = cleaned;
     };
@@ -6594,116 +6626,53 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
         });
 
         var nfoPnlRows = [];
-        var symbolKeys = Object.keys(nfoBySymbol);
-        for (var si = 0; si < symbolKeys.length; si++) {
-            var sym = symbolKeys[si];
-            var rows = nfoBySymbol[sym];
-            // Sort by date, then created_at for same-date ordering
-            rows.sort(function(a, b) {
-                return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0;
+        // Realised F&O P&L via the SHARED, authoritative matcher wmsFnoRealised
+        // (wms-cost-engine.js) — the SAME engine the Accounting module uses, so the
+        // two can no longer drift. This block previously carried its own inline
+        // symmetric long/short FIFO; it was lifted verbatim into wmsFnoRealised and
+        // this call proven byte-identical across every statement view (before/after
+        // capture, 0 diff, 2026-08-15). The symmetric FIFO (covers opposite-side lots
+        // first, opens the uncovered remainder) still handles shorts (SELL to open).
+        // Sign for the running balance is unchanged: profit → credit (−amount),
+        // loss → debit (+amount); the broker counterparty display-flip stays in the
+        // display layer (lgD), never here (see WMS-CONTEXT PRIORITY Issue 1).
+        var _fnoRowById = {}, _fnoInput = [], _fnoId = 0;
+        Object.keys(nfoBySymbol).forEach(function(sym) {
+            nfoBySymbol[sym].forEach(function(row) {
+                var id = 'r' + (_fnoId++);
+                _fnoRowById[id] = { row: row, sym: sym };
+                _fnoInput.push({ key: sym, type: row.transactionType, qty: row.quantity,
+                    net: row.netAmount, id: id, sort: row.sortKey });
             });
-
-            // FIFO lots, SYMMETRIC in direction (E.10.4). A lot is LONG (opened by
-            // a BUY) or SHORT (opened by a SELL). Any trade first *covers* open lots
-            // of the opposite side FIFO — booking realised P&L — and only the
-            // uncovered remainder opens a new lot on its own side.
-            //
-            // The earlier version only ever let a SELL consume BUY lots. A short
-            // future (SELL first) therefore opened nothing, and the covering BUY
-            // opened a fresh LONG lot instead of closing the short: the position
-            // squared off on screen but NO F&O P&L row was ever posted, so short
-            // F&O profits/losses silently never reached the statement balance.
-            // Since lots are always covered before opening, the array only ever
-            // holds one side at a time — the side check below is a safety net.
-            var lots = [];
-            for (var ri = 0; ri < rows.length; ri++) {
-                var row = rows[ri];
-                var qty = Math.abs(row.quantity);
-                if (qty === 0) continue;
-                if (row.transactionType !== 'BUY' && row.transactionType !== 'SELL') continue;
-
-                // netAmount is a positive magnitude for both sides (Math.abs upstream),
-                // so perUnit is the per-unit cost (BUY) or per-unit proceeds (SELL).
-                var perUnit  = row.netAmount / qty;
-                var isBuy    = row.transactionType === 'BUY';
-                var openSide = isBuy ? 'LONG' : 'SHORT';
-                var coverSide = isBuy ? 'SHORT' : 'LONG';
-
-                var remain            = qty;
-                var matchedQty        = 0;
-                var totalBuyCost      = 0;
-                var totalSellProceeds = 0;
-
-                // Cover open lots of the opposite side, oldest first
-                while (remain > 0 && lots.length > 0 && lots[0].side === coverSide) {
-                    var lot = lots[0];
-                    var matched = Math.min(remain, lot.qty);
-                    if (isBuy) {
-                        // Covering a SHORT: the lot holds the sell proceeds
-                        totalSellProceeds += matched * lot.perUnit;
-                        totalBuyCost      += matched * perUnit;
-                    } else {
-                        // Covering a LONG: the lot holds the buy cost
-                        totalBuyCost      += matched * lot.perUnit;
-                        totalSellProceeds += matched * perUnit;
-                    }
-                    lot.qty  -= matched;
-                    remain   -= matched;
-                    matchedQty += matched;
-                    if (lot.qty <= 0) lots.shift();
-                }
-
-                // Uncovered remainder opens a new lot on this trade's own side
-                if (remain > 0) lots.push({ qty: remain, perUnit: perUnit, side: openSide });
-
-                if (matchedQty === 0) continue; // nothing closed → no P&L to post
-
-                // Realised P&L = sell proceeds − buy cost (FIFO matched).
-                // Identical for a long close and a short cover; only the source of
-                // each leg differs (lot vs. current trade).
-                var realisedPnl = wmsRoundMoney(totalSellProceeds - totalBuyCost);
-                if (realisedPnl === 0) continue; // no P&L to post
-
-                // Sign for running balance — firm-POV, consistent across ALL perspectives:
-                //   profit (positive realisedPnl) → credit (negative amount, reduces balance)
-                //   loss   (negative realisedPnl) → debit  (positive amount, increases balance)
-                //
-                // Broker view counterparty-POV display flip is applied UNIFORMLY in the
-                // display layer (`lgD()` in trading-ledger.js / `lgRenderEntries`). A
-                // broker-specific branch HERE would DOUBLE-flip — which was exactly the
-                // bug observed on stmt_TG: F&O profit was *increasing* the -ve balance
-                // instead of reducing it (BUY/SELL trade rows worked correctly because
-                // they use the same single-source sign convention).
-                // See WMS-CONTEXT 🎯 PRIORITY Issue 1 (2026-05-26 root cause analysis).
-                var pnlAmount = -realisedPnl;
-
-                nfoPnlRows.push({
-                    _rowType: 'nfo_pnl',
-                    _source: row._source,
-                    _nfoCashImpact: true,
-                    date: row.date,
-                    // Sort after the covering trade on the same date so the
-                    // P&L line appears right below it (BUY cover or SELL cover).
-                    sortKey: row.sortKey.replace('|1|', '|2|'),
-                    entryType: 'NFO_PNL',
-                    amount: pnlAmount,
-                    investorId: row.investorId,
-                    traderId: row.traderId,
-                    brokerId: row.brokerId,
-                    reference: '',
-                    notes: sym + ' F&O P&L',
-                    symbol: sym,
-                    transactionType: 'NFO_PNL',
-                    quantity: matchedQty, // qty actually closed
-                    price: 0,
-                    isNFO: true,
-                    netAmount: Math.abs(realisedPnl),
-                    grossAmount: 0,
-                    traderCharges: 0,
-                    _realisedPnl: realisedPnl // unsigned: +ve = profit, -ve = loss
-                });
-            }
-        }
+        });
+        wmsFnoRealised(_fnoInput).forEach(function(res) {
+            var realisedPnl = wmsRoundMoney(res.realisedPnl);
+            if (realisedPnl === 0) return; // nothing closed / no P&L to post
+            var ref = _fnoRowById[res.id], row = ref.row, sym = ref.sym;
+            nfoPnlRows.push({
+                _rowType: 'nfo_pnl',
+                _source: row._source,
+                _nfoCashImpact: true,
+                date: row.date,
+                sortKey: row.sortKey.replace('|1|', '|2|'),
+                entryType: 'NFO_PNL',
+                amount: -realisedPnl,
+                investorId: row.investorId,
+                traderId: row.traderId,
+                brokerId: row.brokerId,
+                reference: '',
+                notes: sym + ' F&O P&L',
+                symbol: sym,
+                transactionType: 'NFO_PNL',
+                quantity: res.matchedQty, // qty actually closed
+                price: 0,
+                isNFO: true,
+                netAmount: Math.abs(realisedPnl),
+                grossAmount: 0,
+                traderCharges: 0,
+                _realisedPnl: realisedPnl // unsigned: +ve = profit, -ve = loss
+            });
+        });
 
         // Merge P&L rows into combined
         for (var pi = 0; pi < nfoPnlRows.length; pi++) {
