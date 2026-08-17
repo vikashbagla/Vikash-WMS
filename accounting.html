@@ -297,6 +297,23 @@
 .acct-ld-table th.c-amt { width: 94px; }
 /* Search sits at the far right of the filter bar. */
 .acct-ld-filter .acct-ld-search { margin-left: auto; min-width: 190px; }
+/* Cancelled toggle as a compact icon button. */
+.acct-ld-icon-btn {
+    width: 26px; height: 26px; border: 1px solid #e2e8f0; background: #fff;
+    border-radius: 5px; cursor: pointer; color: #94a3b8; font-size: 14px; line-height: 1; padding: 0;
+}
+.acct-ld-icon-btn:hover { border-color: #667eea; color: #667eea; }
+.acct-ld-icon-btn.on { background: #eef2ff; border-color: #667eea; color: #4338ca; }
+/* Custom From–To popover (collapsed behind one button, like the Transactions page). */
+.acct-ld-range-wrap { position: relative; display: inline-block; }
+.acct-ld-range-pop {
+    display: none; position: absolute; top: 100%; left: 0; z-index: 40; margin-top: 4px;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.12); padding: 10px; white-space: nowrap;
+}
+.acct-ld-range-pop.show { display: flex; align-items: center; gap: 6px; }
+.acct-ld-range-pop label { font-size: 10px; font-weight: 600; text-transform: uppercase; color: #718096; }
+.acct-ld-range-pop input.wms-input { width: auto; font-size: 11px; padding: 3px 6px; }
 /* Date-filter strip inside the ledger modal. */
 .acct-ld-filter {
     display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap;

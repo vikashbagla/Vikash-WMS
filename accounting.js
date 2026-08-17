@@ -2040,6 +2040,7 @@ try { acctLedgerShowCancelled = localStorage.getItem(ACCT_LD_CANCELLED_KEY) === 
 function acctSetShowCancelled(v) { acctLedgerShowCancelled = !!v; try { localStorage.setItem(ACCT_LD_CANCELLED_KEY, v ? '1' : '0'); } catch (e) {} }
 // Live search within the ledger drill-down (not persisted — resets per open).
 var acctLedgerSearchText = '';
+var acctLedgerRangePopOpen = false;   // custom From–To popover open state
 
 /** FY start month for the active book (financial_year_start, default 4 = April). */
 function acctLedgerFyStartMonth() {
@@ -2073,6 +2074,8 @@ function acctLedgerDateWindow() {
 
 function acctOpenLedgerDetail(ledgerId) {
     acctLedgerDetailId = ledgerId;
+    acctLedgerSearchText = '';          // search must NOT carry over to another ledger
+    acctLedgerRangePopOpen = false;
     acctRenderLedgerDetail();
     if (acctLedgerModalCtrl) acctLedgerModalCtrl.open();
 }
@@ -2095,24 +2098,49 @@ function acctContraLabel(row, byV) {
     return 'Multi-leg (' + keys.length + ')';
 }
 
+// Rendering is split in two so that live search (rapid typing) only re-renders the
+// TABLE, never the filter bar — the search <input> is built once and keeps its focus
+// and caret. The head + filter bar are rebuilt only on structural changes (period,
+// quarter, cancelled toggle, unit toggle).
 function acctRenderLedgerDetail() {
     var lg = acctLedgers.find(function (x) { return x.id === acctLedgerDetailId; });
     if (!lg) return;
+    var body = document.getElementById('acctLedgerDetailBody');
+    var g = acctGroupById[lg.group_id];
+    var unitTxt = acctLedgerDetailFullAmt ? 'Full ₹'
+        : (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
+
+    var html = '<div class="acct-ledger-detail-head">' +
+        '<div class="acct-ld-name">' + wmsEsc(lg.name) + '</div>' +
+        '<div class="acct-ld-sub">' + wmsEsc(acctGroupPath(g)) + ' · ' + wmsEsc(acctViewTitle()) + '</div>' +
+        '<div class="acct-ld-toggle">' +
+            '<span class="acct-ld-unit">' + wmsEsc(unitTxt) + '</span>' +
+            '<button id="acctLdUnitToggle" class="wms-btn wms-btn-secondary" style="font-size:11px;">' +
+                (acctLedgerDetailFullAmt ? "Show in " + wmsEsc((typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000")) : 'Show full amount') +
+            '</button>' +
+        '</div></div>';
+    html += acctLedgerDateFilterBar();
+    html += '<div id="acctLdTableWrap"></div>';
+    body.innerHTML = html;
+
+    var tgl = document.getElementById('acctLdUnitToggle');
+    if (tgl) tgl.onclick = function () { acctLedgerDetailFullAmt = !acctLedgerDetailFullAmt; acctRenderLedgerDetail(); };
+    acctWireLedgerDateFilter();
+    acctRenderLedgerTable();
+}
+
+/** Builds just the ledger lines table into #acctLdTableWrap (called on every search keystroke). */
+function acctRenderLedgerTable() {
+    var wrap = document.getElementById('acctLdTableWrap');
+    if (!wrap) return;
     var allRows = acctVoucherRows.filter(function (r) { return r.ledger_id === acctLedgerDetailId; })
         .slice().sort(function (a, b) {
             if (a.voucher_date !== b.voucher_date) return a.voucher_date < b.voucher_date ? -1 : 1;
             return String(a.voucher_number).localeCompare(String(b.voucher_number));
         });
-    var body = document.getElementById('acctLedgerDetailBody');
-    var g = acctGroupById[lg.group_id];
     var byV = acctLinesByVoucher();
-
-    // One formatter for ALL amount columns (Dr/Cr/Balance). Toggle flips every column.
     var fmt = acctLedgerDetailFullAmt ? acctNum : acctAmt;
-    var unitTxt = acctLedgerDetailFullAmt ? 'Full ₹'
-        : (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
 
-    // Date window: rows before `start` roll into an opening balance; rows after `end` are hidden.
     var win = acctLedgerDateWindow();
     var opening = 0, rows = [];
     allRows.forEach(function (r) {
@@ -2132,24 +2160,13 @@ function acctRenderLedgerDetail() {
         return hay.indexOf(q) >= 0;
     }
 
-    var html = '<div class="acct-ledger-detail-head">' +
-        '<div class="acct-ld-name">' + wmsEsc(lg.name) + '</div>' +
-        '<div class="acct-ld-sub">' + wmsEsc(acctGroupPath(g)) + ' · ' + wmsEsc(acctViewTitle()) + '</div>' +
-        '<div class="acct-ld-toggle">' +
-            '<span class="acct-ld-unit">' + wmsEsc(unitTxt) + '</span>' +
-            '<button id="acctLdUnitToggle" class="wms-btn wms-btn-secondary" style="font-size:11px;">' +
-                (acctLedgerDetailFullAmt ? "Show in " + wmsEsc((typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000")) : 'Show full amount') +
-            '</button>' +
-        '</div></div>';
-
-    html += acctLedgerDateFilterBar();
-
+    var html;
     if (!allRows.length) {
-        html += '<div class="acct-empty">No postings in this book.</div>';
+        html = '<div class="acct-empty">No postings in this book.</div>';
     } else {
         var running = win.start ? opening : 0;
         var shown = 0;
-        html += '<table class="acct-table acct-ld-table"><thead><tr>' +
+        html = '<table class="acct-table acct-ld-table"><thead><tr>' +
             '<th class="c-date">Date</th><th class="c-vch">Vch #</th><th class="c-contra">Contra ledger</th>' +
             '<th>Narration</th><th class="text-right c-amt">Debit</th><th class="text-right c-amt">Credit</th>' +
             '<th class="text-right c-amt">Balance</th></tr></thead><tbody>';
@@ -2189,21 +2206,18 @@ function acctRenderLedgerDetail() {
         }
         html += '</tbody></table>';
     }
-    body.innerHTML = html;
-    var tgl = document.getElementById('acctLdUnitToggle');
-    if (tgl) tgl.onclick = function () { acctLedgerDetailFullAmt = !acctLedgerDetailFullAmt; acctRenderLedgerDetail(); };
-    acctWireLedgerDateFilter();
-    body.querySelectorAll('.acct-vch-row[data-voucher]').forEach(function (tr) {
+    wrap.innerHTML = html;
+    wrap.querySelectorAll('.acct-vch-row[data-voucher]').forEach(function (tr) {
         tr.onclick = function () { acctOpenEditVoucher(tr.dataset.voucher); };
     });
 }
 
-/** The date-filter + search control strip inside the ledger modal. */
+/** The date-filter + search control strip inside the ledger modal. From/To live in a
+ *  compact popover (like the Transactions page) so they don't eat a whole row. */
 function acctLedgerDateFilterBar() {
     var f = acctLedgerDateFilter;
     var cur = acctCurrentFyStartYear();
-    // fyStart null ⇒ "current FY": pre-select the current-year option.
-    var effFy = (f.mode === 'fy') ? (f.fyStart || cur) : null;
+    var effFy = (f.mode === 'fy') ? (f.fyStart || cur) : null;   // null fyStart ⇒ current FY
     var fyOpts = '';
     for (var i = 0; i < 4; i++) {
         var y = cur - i;
@@ -2213,8 +2227,24 @@ function acctLedgerDateFilterBar() {
     var allSel = f.mode === 'all' ? ' selected' : '';
     var customSel = f.mode === 'custom' ? ' selected' : '';
     var qDisabled = f.mode === 'fy' ? '' : ' disabled';
-    var cDisabled = f.mode === 'custom' ? '' : ' disabled';
     function qSel(v) { return (f.mode === 'fy' && f.qtr === v) ? ' selected' : ''; }
+
+    // Custom From–To: a single button that opens a popover; only shown in custom mode.
+    var rangeHtml = '';
+    if (f.mode === 'custom') {
+        var rlabel = (f.from || f.to) ? ((f.from ? acctFmtDate(f.from) : '…') + ' → ' + (f.to ? acctFmtDate(f.to) : '…')) : 'Pick dates';
+        rangeHtml = '<span class="acct-ld-range-wrap">' +
+            '<button id="acctLdRangeBtn" class="wms-btn wms-btn-secondary" title="Set a custom date range">📅 ' + wmsEsc(rlabel) + ' ▾</button>' +
+            '<div id="acctLdRangePop" class="acct-ld-range-pop' + (acctLedgerRangePopOpen ? ' show' : '') + '">' +
+                '<label>From</label><input type="date" id="acctLdFrom" class="wms-input" value="' + wmsEsc(f.from || '') + '">' +
+                '<label>To</label><input type="date" id="acctLdTo" class="wms-input" value="' + wmsEsc(f.to || '') + '">' +
+            '</div></span>';
+    }
+
+    // Cancelled toggle as a compact icon (⊘), highlighted when cancelled are shown.
+    var cancelBtn = '<button id="acctLdCancelledBtn" class="acct-ld-icon-btn' + (acctLedgerShowCancelled ? ' on' : '') + '" ' +
+        'title="' + (acctLedgerShowCancelled ? 'Hide cancelled vouchers' : 'Show cancelled vouchers') + '">⊘</button>';
+
     return '<div class="acct-ld-filter">' +
         '<label>Period</label>' +
         '<select id="acctLdPeriod" class="wms-input">' +
@@ -2230,10 +2260,8 @@ function acctLedgerDateFilterBar() {
             '<option value="3"' + qSel(3) + '>Q3</option>' +
             '<option value="4"' + qSel(4) + '>Q4</option>' +
         '</select>' +
-        '<label>From</label><input type="date" id="acctLdFrom" class="wms-input"' + cDisabled + ' value="' + wmsEsc(f.from || '') + '">' +
-        '<label>To</label><input type="date" id="acctLdTo" class="wms-input"' + cDisabled + ' value="' + wmsEsc(f.to || '') + '">' +
-        '<button id="acctLdCancelledBtn" class="wms-btn wms-btn-secondary" title="Show or hide cancelled vouchers">' +
-            (acctLedgerShowCancelled ? 'Hide cancelled' : 'Show cancelled') + '</button>' +
+        rangeHtml +
+        cancelBtn +
         '<input type="text" id="acctLdSearch" class="wms-input acct-ld-search" placeholder="Search ledger, narration, date…" value="' + wmsEsc(acctLedgerSearchText) + '">' +
     '</div>';
 }
@@ -2243,25 +2271,48 @@ function acctWireLedgerDateFilter() {
     if (p) p.onchange = function () {
         var v = p.value;
         if (v === 'all') { acctLedgerDateFilter.mode = 'all'; }
-        else if (v === 'custom') { acctLedgerDateFilter.mode = 'custom'; }
+        else if (v === 'custom') { acctLedgerDateFilter.mode = 'custom'; acctLedgerRangePopOpen = true; }
         else if (v.indexOf('fy:') === 0) { acctLedgerDateFilter.mode = 'fy'; acctLedgerDateFilter.fyStart = Number(v.slice(3)); }
         acctSaveLedgerDateFilter(); acctRenderLedgerDetail();
     };
     var q = document.getElementById('acctLdQtr');
     if (q) q.onchange = function () { acctLedgerDateFilter.qtr = Number(q.value); acctSaveLedgerDateFilter(); acctRenderLedgerDetail(); };
+    // From/To popover — toggle on the button, apply on change (table-only re-render so the popover stays put).
+    var rbtn = document.getElementById('acctLdRangeBtn');
+    var rpop = document.getElementById('acctLdRangePop');
+    if (rbtn && rpop) {
+        rbtn.onclick = function (e) { e.stopPropagation(); acctLedgerRangePopOpen = !acctLedgerRangePopOpen; rpop.classList.toggle('show', acctLedgerRangePopOpen); };
+        rpop.onclick = function (e) { e.stopPropagation(); };
+    }
     var fr = document.getElementById('acctLdFrom');
-    if (fr) fr.onchange = function () { acctLedgerDateFilter.from = fr.value; acctSaveLedgerDateFilter(); acctRenderLedgerDetail(); };
+    if (fr) fr.onchange = function () { acctLedgerDateFilter.from = fr.value; acctSaveLedgerDateFilter(); acctRenderLedgerTable(); acctLedgerUpdateRangeLabel(); };
     var to = document.getElementById('acctLdTo');
-    if (to) to.onchange = function () { acctLedgerDateFilter.to = to.value; acctSaveLedgerDateFilter(); acctRenderLedgerDetail(); };
+    if (to) to.onchange = function () { acctLedgerDateFilter.to = to.value; acctSaveLedgerDateFilter(); acctRenderLedgerTable(); acctLedgerUpdateRangeLabel(); };
     var cb = document.getElementById('acctLdCancelledBtn');
     if (cb) cb.onclick = function () { acctSetShowCancelled(!acctLedgerShowCancelled); acctRenderLedgerDetail(); };
     var sr = document.getElementById('acctLdSearch');
-    if (sr) sr.oninput = function () {
-        acctLedgerSearchText = sr.value;
-        acctRenderLedgerDetail();
-        var s2 = document.getElementById('acctLdSearch');
-        if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); }
-    };
+    // Live search: only the TABLE re-renders, so this input keeps its focus + caret.
+    if (sr) sr.oninput = function () { acctLedgerSearchText = sr.value; acctRenderLedgerTable(); };
+}
+
+/** Refresh the custom-range button label after a date change (table-only re-render). */
+function acctLedgerUpdateRangeLabel() {
+    var btn = document.getElementById('acctLdRangeBtn');
+    if (!btn) return;
+    var f = acctLedgerDateFilter;
+    var rlabel = (f.from || f.to) ? ((f.from ? acctFmtDate(f.from) : '…') + ' → ' + (f.to ? acctFmtDate(f.to) : '…')) : 'Pick dates';
+    btn.innerHTML = '📅 ' + wmsEsc(rlabel) + ' ▾';
+}
+
+// Close the custom-range popover on an outside click.
+if (!window.__acctLdRangeDismissWired) {
+    window.__acctLdRangeDismissWired = true;
+    document.addEventListener('click', function (e) {
+        var pop = document.getElementById('acctLdRangePop');
+        if (pop && pop.classList.contains('show') && !e.target.closest('.acct-ld-range-wrap')) {
+            pop.classList.remove('show'); acctLedgerRangePopOpen = false;
+        }
+    });
 }
 
 /* Edit an existing manual voucher. Auto vouchers are refused: they belong to the
