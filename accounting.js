@@ -1124,10 +1124,40 @@ function acctScopeBadge(lg) {
     var txt = names.length <= 2 ? names.join(', ') : (names.slice(0, 2).join(', ') + ' +' + (names.length - 2));
     return '<span class="acct-scope-badge" title="' + wmsEsc(names.join(', ')) + '">' + wmsEsc(txt) + '</span>';
 }
+// Colour by ROOT FAMILY: each of the five roots owns a hue; sub-groups get shades
+// of that hue that lighten with depth, with a small per-sibling hue nudge so
+// siblings at the same level stay visually distinct while reading as one family.
+var ACCT_ROOT_HUE = { 'Assets': 214, 'Liabilities': 268, 'Capital': 330, 'Income': 150, 'Expenses': 28 };
+function acctRootOfGroup(groupId) {
+    var g = acctGroupById[groupId], guard = 0;
+    while (g && g.parent_group_id && guard < 30) { g = acctGroupById[g.parent_group_id]; guard++; }
+    return g ? g.name : null;
+}
+function acctLedGroupColor(groupId, depth) {
+    var base = ACCT_ROOT_HUE[acctRootOfGroup(groupId)];
+    if (base == null) base = 220;
+    var g = acctGroupById[groupId];
+    var parentId = g ? g.parent_group_id : null;
+    var sibs = acctGroups.filter(function (x) { return x.parent_group_id === parentId; })
+        .sort(function (a, b) { return a.name.localeCompare(b.name); });
+    var idx = sibs.findIndex(function (x) { return x.id === groupId; }); if (idx < 0) idx = 0;
+    var n = sibs.length || 1;
+    var frac = n > 1 ? idx / (n - 1) : 0.5;               // 0..1 position across the siblings
+    // Root: the strong family anchor (saturated border + tinted bg + coloured text).
+    if (depth === 0) return { border: 'hsl(' + base + ',56%,40%)', bg: 'hsl(' + base + ',50%,87%)' };
+    // Sub-groups: same family hue (gentle ±8° fan), stepped in lightness by depth AND
+    // spread across siblings so same-level groups read as distinct shades of one family.
+    var hue = base + (frac - 0.5) * 16;
+    var bL = Math.min(70, 44 + (depth - 1) * 8 + frac * 16);
+    var gL = Math.min(96, 86 + (depth - 1) * 3 + frac * 7);
+    return { border: 'hsl(' + hue + ',48%,' + bL + '%)', bg: 'hsl(' + hue + ',42%,' + gL + '%)' };
+}
 function acctLedLedgerHtml(lg, depth) {
     var pad = 12 + depth * 16 + 4;
     var avail = lg.is_global ? '<span class="acct-kind-badge">Global</span>' : acctScopeBadge(lg);
-    return '<div class="acct-fin-row acct-fin-ledger acct-led-ledrow" data-ledger="' + lg.id + '" style="padding-left:' + pad + 'px;" title="Double-click to edit">' +
+    // thin left accent in the parent group's family colour ties the ledger to its group
+    var c = acctLedGroupColor(lg.group_id, Math.max(0, depth - 1));
+    return '<div class="acct-fin-row acct-fin-ledger acct-led-ledrow" data-ledger="' + lg.id + '" style="padding-left:' + pad + 'px;border-left:3px solid ' + c.border + ';" title="Double-click to edit">' +
         '<span class="acct-fin-toggle-sp"></span>' +
         '<span class="acct-fin-name">' + wmsEsc(lg.name) + (lg.is_system ? ' <span class="acct-kind-badge">system</span>' : '') + '</span>' +
         '<span class="acct-led-avail">' + avail + '</span>' +
@@ -1136,9 +1166,9 @@ function acctLedLedgerHtml(lg, depth) {
 function acctLedGroupHtml(node, depth) {
     var open = acctLedIsOpen(node.key);
     var pad = 10 + depth * 16;
-    var col = acctGrpColor(node.label);
+    var c = acctLedGroupColor(node.id, depth);
     var isRoot = depth === 0;
-    var h = '<div class="acct-fin-row acct-fin-group acct-led-grp" data-node="' + node.key + '" style="padding-left:' + pad + 'px;border-left:' + (isRoot ? 6 : 4) + 'px solid ' + col + ';background:' + col + (isRoot ? '22' : '11') + ';">' +
+    var h = '<div class="acct-fin-row acct-fin-group acct-led-grp" data-node="' + node.key + '" style="padding-left:' + pad + 'px;border-left:' + (isRoot ? 6 : 4) + 'px solid ' + c.border + ';background:' + c.bg + ';' + (isRoot ? 'color:' + c.border + ';' : '') + '">' +
         '<span class="acct-fin-toggle' + (open ? '' : ' collapsed') + '">▼</span>' +
         '<span class="acct-fin-name">' + wmsEsc(node.label) + '</span>' +
         '<span class="acct-led-count">' + node.count + '</span>' +
