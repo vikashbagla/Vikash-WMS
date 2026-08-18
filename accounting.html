@@ -112,8 +112,11 @@
 
 .acct-tabpanel { display: none; padding: 14px; }
 /* The scroll container. min-height:0 is required - without it a flex child
-   refuses to shrink below its content height and overflow-y never engages. */
-.acct-tabpanel.active { display: block; flex: 1; min-height: 0; overflow-y: auto; }
+   refuses to shrink below its content height and overflow-y never engages.
+   Flex-column so a financial statement child can fill the panel and scroll
+   INTERNALLY (its own header/total bars stay pinned); other tabs keep a single
+   child that simply overflows and lets the panel itself scroll. */
+.acct-tabpanel.active { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
 
 /* ---- Generic table ---- */
 .acct-table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -457,7 +460,10 @@
    A pinned header bar, ONE scroll region holding both columns, and a pinned
    total bar. The two totals sit on the SAME row and never scroll out of view;
    the scroll area flexes to the panel height, so it adapts to the screen. */
-.acct-fin-statement { display: flex; flex-direction: column; max-height: 100%; min-height: 0; }
+/* Fill the panel via the flex chain (panel -> body -> statement) so the scroll
+   area is the ONLY scroller and the header/total bars stay pinned. */
+#acctFinancialsBody, #acctPLBody { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.acct-fin-statement { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .acct-fin-headbar, .acct-fin-totalbar { display: flex; gap: 18px; flex-shrink: 0; }
 .acct-fin-headcell {
     flex: 1; min-width: 0; display: flex; justify-content: space-between;
