@@ -13,6 +13,7 @@ var rptInvestors = [];
 var rptBrokers = [];
 var rptLivePrices = {};      // { fyersKey: price }
 var rptLiveData = {};        // { fyersKey: { lp, ch, chp, high, low } }
+var rptMfNav = {};           // { mfSymbol: latestNav } — MF market valuation (market_prices)
 
 // Portfolio tab filters
 var rptSelectedInvestorIds = [];
@@ -320,6 +321,107 @@ async function rptLoadData() {
     if (!wmsRefData.ready) await wmsLoadRefData();
     rptInvestors = wmsRefData.investors;
     rptBrokers = wmsRefData.brokers;
+
+    // Mutual funds live in their OWN table (mf_trades — fractional units, kept out
+    // of the Trading module). Fold them into rptTransactions so Portfolio + Capital
+    // Gains include MF on the SAME FIFO/CG engine as equity. Load latest NAV too.
+    await rptLoadMfTrades();
+    await rptLoadMfNavs();
+}
+
+// Map an mf_trades txn_type to the reports/FIFO transaction type. PURCHASE /
+// DIV_REINVEST add a lot (BUY, real units at NAV); REDEMPTION matches lots (SELL).
+// DIV_PAYOUT is cash income with NO units — return '' so it is DROPPED, never fed
+// to the FIFO: a 'DIVIDEND' type would make _wmsCostEngine do `adjustments -=
+// |amount|` and wrongly shrink the MF cost basis (a payout is not a return of
+// capital). Reports shows holdings + capital gains only, so MF income is out of scope.
+function rptMfType(tt) {
+    tt = String(tt || '').toUpperCase();
+    if (tt === 'REDEMPTION') return 'SELL';
+    if (tt === 'DIV_PAYOUT') return '';            // income — dropped from Reports
+    return 'BUY';                                  // PURCHASE / DIV_REINVEST / SWITCH-in
+}
+
+// Fetch mf_trades, resolve each to its MF security, and append reports-shaped
+// (camelCase) rows to rptTransactions. Fraction-safe: the shared FIFO consumes
+// numeric quantity as-is (proven by the accounting MF postings).
+async function rptLoadMfTrades() {
+    try {
+        var rows = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/mf_trades?select=*&order=txn_date.asc,id.asc', { headers: wmsHeaders() });
+        if (!rows || rows.length === 0) return;
+
+        // security_id -> securities_db row (symbol/name/type). Backfill any missing.
+        var secById = {};
+        (wmsRefData.securitiesCm || []).forEach(function(s) { secById[s.id] = s; });
+        var missing = {};
+        rows.forEach(function(r) { if (r.security_id && !secById[r.security_id]) missing[r.security_id] = true; });
+        var missIds = Object.keys(missing);
+        if (missIds.length) {
+            try {
+                var extra = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/securities_db?id=in.(' + missIds.join(',') + ')&select=id,symbol,company_name,security_type,exchange,capital_gains', { headers: wmsHeaders() });
+                (extra || []).forEach(function(s) { secById[s.id] = s; });
+            } catch (e2) { console.warn('⚠️ Reports MF: security backfill failed:', e2.message || e2); }
+        }
+
+        var mapped = rows.map(function(r) {
+            var sec = secById[r.security_id] || {};
+            var sym = sec.symbol || '';
+            var type = rptMfType(r.txn_type);
+            if (!sym || !type) return null;            // unresolved security or DIV_PAYOUT (income)
+            var units = Math.abs(Number(r.units) || 0);
+            var amt = Math.abs(Number(r.amount) || 0);
+            return {
+                id: r.id,
+                investorId: r.investor_id,
+                brokerId: null,                        // MF has no broker (PMS settlement)
+                securityId: r.security_id,
+                symbol: sym,
+                shortSymbol: sym,                      // FIFO groups non-NFO by short symbol
+                companyName: sec.company_name || sym,
+                exchange: 'MF',
+                securityType: 'MF',
+                type: type,
+                date: r.txn_date,
+                quantity: units,
+                price: Number(r.nav) || 0,
+                grossAmount: amt,
+                netAmount: amt,
+                stt: 0,                                // MF STT not tracked in mf_trades
+                tags: r.tag ? [r.tag] : ['mutual_fund'],
+                _mf: true
+            };
+        }).filter(function(x) { return x; });
+
+        rptTransactions = rptTransactions.concat(mapped);
+        console.log('✅ Reports: folded in ' + mapped.length + ' MF trades');
+    } catch (e) {
+        console.warn('⚠️ Reports: MF trades load failed:', e.message || e);
+    }
+}
+
+// Latest MF NAV per scheme from market_prices (written by the mf-nav-sync EF).
+// Keyed by security symbol. Empty until the NAV feed runs — Portfolio then falls
+// back to each holding's last-trade NAV (latestPrice), so MF still values sanely.
+async function rptLoadMfNavs() {
+    rptMfNav = {};
+    try {
+        var rows = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/market_prices?security_type=eq.MF&resolution=eq.1D&select=security_id,close,price_date&order=price_date.desc', { headers: wmsHeaders() });
+        if (!rows || rows.length === 0) return;
+        var secById = {};
+        (wmsRefData.securitiesCm || []).forEach(function(s) { secById[s.id] = s; });
+        rows.forEach(function(r) {
+            var sec = secById[r.security_id];
+            if (!sec || !sec.symbol) return;
+            if (rptMfNav[sec.symbol] === undefined) rptMfNav[sec.symbol] = Number(r.close) || 0;   // desc order → first = latest
+        });
+    } catch (e) {
+        console.warn('⚠️ Reports: MF NAV load failed:', e.message || e);
+    }
+}
+
+// Fractional MF unit formatter (3 dp, Indian commas) — units are never rounded.
+function rptFmtUnits(n) {
+    return (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 }
 
 // ============================================================================
@@ -327,6 +429,8 @@ async function rptLoadData() {
 // ============================================================================
 
 function rptGetLiveData(holding) {
+    // MF has no intraday tick — Day P&L is not applicable (valued at daily NAV).
+    if (holding.securityType === 'MF') return null;
     var sym = holding.shortSymbol || holding.symbol;
     // Check shared global cache first (populated by wmsStandardRefresh)
     var cached = wmsLivePrices[sym];
@@ -341,6 +445,12 @@ function rptGetLiveData(holding) {
 
 function rptGetPrice(holding) {
     var sym = holding.shortSymbol || holding.symbol;
+    // MF: value at latest NAV (market_prices via mf-nav-sync). Fall back to the
+    // holding's last-trade NAV until the feed has run.
+    if (holding.securityType === 'MF') {
+        if (rptMfNav && rptMfNav[sym] > 0) return rptMfNav[sym];
+        return holding.latestPrice || holding.fifoCost || 0;
+    }
     // Check shared global cache first (populated by wmsStandardRefresh)
     var cached = wmsLivePrices[sym];
     if (cached && cached.lp > 0) return cached.lp;
@@ -359,9 +469,10 @@ async function rptFetchLivePrices() {
             return;
         }
 
-        // Get current holdings (non-F&O only)
+        // Get current holdings (non-F&O only). MF excluded — no Fyers tick; valued
+        // at NAV (rptGetPrice/rptLoadMfNavs), so never sent to the quotes API.
         var filtered = rptFilterTransactions(rptTransactions);
-        filtered = filtered.filter(function(t) { return t.securityType !== 'NFO' && t.securityType !== 'MCX'; });
+        filtered = filtered.filter(function(t) { return t.securityType !== 'NFO' && t.securityType !== 'MCX' && t.securityType !== 'MF'; });
         var fifo = rptFifoEngine(filtered);
         var holdArr = Object.values(fifo.holdings).filter(function(h) { return h.quantity !== 0; });
         if (holdArr.length === 0) return;
@@ -1206,9 +1317,11 @@ function rptRenderPortfolio() {
                 ? buildSlider(price, w52l, w52h, formatPrice(w52l, false), formatPrice(w52h, false))
                 : '';
 
+            // MF units are fractional (never rounded); equity/ETF qty stays integer.
+            var qtyFmt = (h.securityType === 'MF') ? rptFmtUnits : function(v) { return formatQuantity(v); };
             var qtyHtml = h.quantity < 0
-                ? '<div class="number-main negative">(' + formatQuantity(Math.abs(h.quantity)) + ')</div>'
-                : '<div class="number-main">' + formatQuantity(h.quantity) + '</div>';
+                ? '<div class="number-main negative">(' + qtyFmt(Math.abs(h.quantity)) + ')</div>'
+                : '<div class="number-main">' + qtyFmt(h.quantity) + '</div>';
 
             var symbolKey = h.symbol + '-' + h.exchange;
             var shortSym = h.shortSymbol || h.symbol;
