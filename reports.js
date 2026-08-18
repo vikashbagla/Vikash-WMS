@@ -437,9 +437,11 @@ async function rptLoadMfNavs() {
     }
 }
 
-// Fractional MF unit formatter (3 dp, Indian commas) — units are never rounded.
+// MF unit display — rounded to whole units (owner pref 2026-08-18). The stored
+// units stay fractional (FIFO/cost/value use full precision); only the on-screen
+// quantity is rounded to 0 dp with Indian commas.
 function rptFmtUnits(n) {
-    return (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    return (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
 // ============================================================================
