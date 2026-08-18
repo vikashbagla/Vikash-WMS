@@ -447,6 +447,72 @@
 .acct-report-h { font-size: 11px; font-weight: 600; color: #718096; text-transform: uppercase; margin-bottom: 4px; }
 .acct-report-ul { margin: 0; padding-left: 18px; font-size: 12px; color: #4a5568; }
 .acct-report-ul li { margin: 2px 0; }
+
+/* ======================================================================
+   NEW (2026-08-18): sticky aligned totals, suspense red, book-scope pills,
+   bulk-add modal, two-column ledger catalogue.
+   ====================================================================== */
+
+/* ---- Sticky, aligned two-column statement (Balance Sheet + P&L) ----
+   A pinned header bar, ONE scroll region holding both columns, and a pinned
+   total bar. The two totals sit on the SAME row and never scroll out of view;
+   the scroll area flexes to the panel height, so it adapts to the screen. */
+.acct-fin-statement { display: flex; flex-direction: column; max-height: 100%; min-height: 0; }
+.acct-fin-headbar, .acct-fin-totalbar { display: flex; gap: 18px; flex-shrink: 0; }
+.acct-fin-headcell {
+    flex: 1; min-width: 0; display: flex; justify-content: space-between;
+    background: #1e2a4a; color: #fff; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .03em; padding: 8px 12px;
+    border-radius: 6px 6px 0 0;
+}
+.acct-fin-scrollarea { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.acct-fin-scrollarea .acct-fin-cols { gap: 18px; align-items: stretch; }
+.acct-fin-scrollarea .acct-fin-col { border: 1px solid #e2e8f0; border-top: none; border-radius: 0; overflow: visible; }
+.acct-fin-totalcell {
+    flex: 1; min-width: 0; display: flex; align-items: center;
+    background: #1e2a4a; color: #fff; font-weight: 700; font-size: 12px;
+    padding: 8px 12px; border-radius: 0 0 6px 6px;
+}
+.acct-fin-totalcell .acct-fin-name { flex: 1; }
+
+/* ---- Suspense / difference rows: always red (an alert to address) ---- */
+.acct-fin-row.acct-fin-susp { color: #dc2626; background: #fff5f5; }
+.acct-fin-row.acct-fin-susp:hover { background: #fee2e2; }
+
+/* ---- Book-scope pills control (mirrors the Portfolio filter pills) ---- */
+.acct-scope-ctrl { position: relative; }
+.acct-scope-btn {
+    width: 100%; text-align: left; padding: 5px 9px; border: 1px solid #e2e8f0;
+    border-radius: 5px; background: #fff; font-size: 11px; color: #2d3748;
+    cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.acct-scope-btn:hover { border-color: #667eea; }
+.acct-scope-dd {
+    position: absolute; z-index: 60; left: 0; top: 100%; margin-top: 4px;
+    min-width: 210px; max-width: 300px; background: #fff; border: 1px solid #e2e8f0;
+    border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.12); padding: 8px;
+    display: none; flex-wrap: wrap; gap: 5px;
+}
+.acct-scope-dd.show { display: flex; }
+.acct-scope-pill { cursor: pointer; }
+.acct-scope-hint { font-size: 10px; color: #a0aec0; margin-top: 4px; }
+
+/* ---- Bulk add ledgers/groups modal ---- */
+.acct-bulk-top { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+.acct-bulk-table .acct-bulk-name { width: 100%; }
+.acct-bulk-scope-cell { overflow: visible; }
+.acct-bulk-msg { font-size: 11px; color: #718096; }
+.acct-bulk-msg.acct-bulk-err { color: #dc2626; font-weight: 600; }
+.acct-bulk-del { color: #dc2626; }
+
+/* ---- Two-column ledger catalogue ---- */
+.acct-led-cols .acct-fin-col { overflow: visible; }
+.acct-led-avail { flex-shrink: 0; padding-left: 10px; }
+.acct-led-editsp { width: 24px; flex-shrink: 0; }
+.acct-led-edit { flex-shrink: 0; margin-left: 6px; opacity: 0; transition: opacity .1s; }
+.acct-fin-row:hover .acct-led-edit { opacity: .8; }
+.acct-led-edit:hover { opacity: 1; }
+.acct-led-ledrow { user-select: none; }
 </style>
 </head>
 <body>
@@ -667,15 +733,9 @@
                     <select id="acctNewLedgerGroup" class="wms-input"></select>
                 </div>
                 <div class="acct-field">
-                    <label>Availability</label>
-                    <div class="acct-type-toggle" id="acctNewLedgerScopeToggle">
-                        <button class="acct-type-btn active" data-scope="global">Global (all books)</button>
-                        <button class="acct-type-btn" data-scope="restricted">This book only</button>
-                    </div>
-                </div>
-                <div class="acct-field" id="acctNewLedgerScopeBookWrap" style="display:none;">
-                    <label>Restrict to book</label>
-                    <select id="acctNewLedgerScopeBook" class="wms-input"></select>
+                    <label>Available to</label>
+                    <div id="acctEditLedgerScope"></div>
+                    <span class="acct-scope-hint">Global = every book, or pick one or more books.</span>
                 </div>
             </div>
         </div>
@@ -743,6 +803,50 @@
         <div class="wms-modal-footer">
             <button class="wms-btn wms-btn-secondary" id="acctAddGroupCancel">Cancel</button>
             <button class="wms-btn wms-btn-primary" id="acctAddGroupSave">Add Group</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== Bulk add ledgers / groups modal ===================== -->
+<div class="wms-modal-overlay" id="acctBulkModal">
+    <div class="wms-modal-dialog" style="max-width: 720px; width: 94%;">
+        <div class="wms-modal-header">
+            <span style="font-size:15px;font-weight:700;">New Ledgers / Groups</span>
+            <button class="wms-btn-close" id="acctBulkClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;max-height:76vh;overflow-y:auto;">
+            <div class="acct-bulk-top">
+                <div class="acct-field" style="flex:1;min-width:220px;">
+                    <label>Parent group</label>
+                    <select id="acctBulkParent" class="wms-input"></select>
+                </div>
+                <div class="acct-field">
+                    <label>Add</label>
+                    <div class="acct-type-toggle" id="acctBulkKindToggle">
+                        <button class="acct-type-btn active" data-kind="ledger">Ledgers</button>
+                        <button class="acct-type-btn" data-kind="group">Groups</button>
+                    </div>
+                </div>
+            </div>
+            <table class="acct-lines-table acct-bulk-table" style="margin-top:12px;">
+                <thead>
+                    <tr>
+                        <th style="width:46%;">Name</th>
+                        <th id="acctBulkScopeHead">Available to</th>
+                        <th style="width:28px;"></th>
+                    </tr>
+                </thead>
+                <tbody id="acctBulkRows"></tbody>
+            </table>
+            <div class="acct-lines-actions">
+                <button id="acctBulkAddRowBtn" class="wms-btn wms-btn-secondary" style="font-size:11px;">➕ Add row</button>
+                <span id="acctBulkMsg" class="acct-bulk-msg"></span>
+            </div>
+            <div class="acct-ob-note">Tip: press Tab on the last row to add another. All rows are created under the parent group above.</div>
+        </div>
+        <div class="wms-modal-footer">
+            <button class="wms-btn wms-btn-secondary" id="acctBulkCancel">Cancel</button>
+            <button class="wms-btn wms-btn-primary" id="acctBulkSave" disabled>Save</button>
         </div>
     </div>
 </div>

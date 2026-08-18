@@ -350,10 +350,22 @@ function acctInvName(id) {
     var i = (wmsRefData.investors || []).find(function (x) { return x.id === id; });
     return i ? (i.short_name || i.name) : '—';
 }
-// Ledgers usable in a given book: global, or restricted to that book.
+// Ledgers usable in a given book: global, or restricted to a set of books that
+// includes this one. scope_investor_ids (migration 85, uuid[]) is the multi-book
+// list; scope_investor_id (legacy single) is honoured too so the filter works
+// both before and after the migration is applied.
+function acctLedgerScopeIds(l) {
+    if (l && Array.isArray(l.scope_investor_ids) && l.scope_investor_ids.length) return l.scope_investor_ids.slice();
+    if (l && l.scope_investor_id) return [l.scope_investor_id];
+    return [];
+}
+function acctLedgerInBook(l, bookId) {
+    if (l.is_global) return true;
+    return acctLedgerScopeIds(l).indexOf(bookId) >= 0;
+}
 function acctAvailableLedgers(bookId) {
     return acctLedgers.filter(function (l) {
-        return l.is_active && (l.is_global || l.scope_investor_id === bookId);
+        return l.is_active && acctLedgerInBook(l, bookId);
     }).sort(function (a, b) { return a.name.localeCompare(b.name); });
 }
 
@@ -576,8 +588,11 @@ function acctFinNodeHtml(node, depth) {
     var icon = isGroup
         ? '<span class="acct-fin-toggle' + (collapsed ? ' collapsed' : '') + '">▼</span>'
         : '<span class="acct-fin-toggle-sp"></span>';
+    // Suspense/difference rows are an alert — always red (the BS plug is isDiff;
+    // the "Difference in Opening Balance" ledger and any Suspense group match by name).
+    var suspicious = /^\s*difference\b|suspense/i.test(node.label || '');
     var cls = node.isDiff ? 'acct-fin-row acct-fin-diff'
-        : 'acct-fin-row ' + (isGroup ? 'acct-fin-group' : 'acct-fin-ledger acct-clickable');
+        : ('acct-fin-row ' + (isGroup ? 'acct-fin-group' : 'acct-fin-ledger acct-clickable') + (suspicious ? ' acct-fin-susp' : ''));
     var attr = node.isDiff ? '' : (isGroup ? ('data-node="' + node.key + '"') : ('data-ledger="' + node.ledgerId + '"'));
     // Which amount column the figure belongs in: ledger detail innermost,
     // intermediate group subtotals next, section (depth-0) totals outermost.
@@ -646,6 +661,32 @@ function acctFinAllGroupKeys(nodes, acc) {
     nodes.forEach(function (n) { if (!n.isLedger) { acc.push(n.key); if (n.children) acctFinAllGroupKeys(n.children, acc); } });
     return acc;
 }
+// ── Sticky, aligned two-column statement (BS + P&L) ──────────────────────────
+// A pinned header bar, ONE scroll region holding both columns, and a pinned total
+// bar so the two totals sit on the SAME row and never scroll out of view. The
+// scroll area flexes to the panel height, so it adapts to the screen size.
+function acctFinHeadCell(title, asOn) {
+    return '<div class="acct-fin-headcell"><span>' + wmsEsc(title) + '</span>' +
+        '<span>Bal. as on ' + wmsEsc(asOn) + '</span></div>';
+}
+function acctFinColRows(nodes) {
+    var h = '<div class="acct-fin-col">';
+    nodes.forEach(function (n) { h += acctFinNodeHtml(n, 0); });
+    return h + '</div>';
+}
+function acctFinTotalCell(total, flag) {
+    return '<div class="acct-fin-totalcell"><span class="acct-fin-name">Total' + (flag || '') + '</span>' +
+        '<span class="acct-fin-amt"></span><span class="acct-fin-amt2"></span>' +
+        '<span class="acct-fin-amt3">' + acctAmt(total) + '</span></div>';
+}
+function acctFinStatementHtml(leftTitle, rightTitle, asOn, leftNodes, leftTotal, rightNodes, rightTotal, flag) {
+    return '<div class="acct-fin-statement">' +
+        '<div class="acct-fin-headbar">' + acctFinHeadCell(leftTitle, asOn) + acctFinHeadCell(rightTitle, asOn) + '</div>' +
+        '<div class="acct-fin-scrollarea"><div class="acct-fin-cols">' +
+            acctFinColRows(leftNodes) + acctFinColRows(rightNodes) + '</div></div>' +
+        '<div class="acct-fin-totalbar">' + acctFinTotalCell(leftTotal, flag) + acctFinTotalCell(rightTotal, flag) + '</div>' +
+        '</div>';
+}
 function acctFinAsOn() {
     var max = '';
     acctVoucherRows.forEach(function (r) { if (acctIsLive(r) && r.voucher_date > max) max = r.voucher_date; });
@@ -697,14 +738,10 @@ function acctRenderFinancials() {
     var balanced = Math.round(leftTotal * 100) === Math.round(assets.total * 100);
 
     acctSetCmdFilters(
-        '<button class="wms-btn wms-btn-secondary" id="acctFinExpandAll">Expand all</button>' +
-        '<button class="wms-btn wms-btn-secondary" id="acctFinCollapseAll">Collapse all</button>' +
+        acctExpandCtrlHtml('acctFin') +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctFinShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero</label>');
     var flag = balanced ? '' : ' ⚠ out of balance';
-    var html = '<div class="acct-fin-cols">' +
-        acctFinColumnHtml('Liabilities', asOn, leftNodes, leftTotal, flag) +
-        acctFinColumnHtml('Assets', asOn, assets.nodes, assets.total, flag) + '</div>';
-    el.innerHTML = html;
+    el.innerHTML = acctFinStatementHtml('Liabilities', 'Assets', asOn, leftNodes, leftTotal, assets.nodes, assets.total, flag);
 
     el.querySelectorAll('.acct-fin-group[data-node]').forEach(function (r) {
         r.onclick = function () { acctFinCollapsed[r.dataset.node] = !acctFinCollapsed[r.dataset.node]; acctRenderFinancials(); };
@@ -712,14 +749,7 @@ function acctRenderFinancials() {
     el.querySelectorAll('.acct-fin-ledger[data-ledger]').forEach(function (r) {
         r.onclick = function () { acctOpenLedgerDetail(r.dataset.ledger); };
     });
-    var ea = document.getElementById('acctFinExpandAll');
-    if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderFinancials(); };
-    var ca = document.getElementById('acctFinCollapseAll');
-    if (ca) ca.onclick = function () {
-        var keys = acctFinAllGroupKeys(leftNodes.concat(assets.nodes), []);
-        acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; });
-        acctRenderFinancials();
-    };
+    acctWireExpandCtrl('acctFin', function () { return acctFinAllGroupKeys(leftNodes.concat(assets.nodes), []); }, 'fin', acctRenderFinancials);
     var sz = document.getElementById('acctFinShowZeroChk');
     if (sz) sz.onchange = function () { acctSetShowZero(sz.checked); acctRenderFinancials(); };
     acctSaveFinCollapse();
@@ -745,13 +775,9 @@ function acctRenderPL() {
     else { rightNodes.push({ label: 'Net Loss', amount: -netProfit, isDiff: true }); rightTotal += -netProfit; }
 
     acctSetCmdFilters(
-        '<button class="wms-btn wms-btn-secondary" id="acctPLExpandAll">Expand all</button>' +
-        '<button class="wms-btn wms-btn-secondary" id="acctPLCollapseAll">Collapse all</button>' +
+        acctExpandCtrlHtml('acctPL') +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctPLShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero</label>');
-    var html = '<div class="acct-fin-cols">' +
-        acctFinColumnHtml('Expenses', asOn, leftNodes, leftTotal) +
-        acctFinColumnHtml('Income', asOn, rightNodes, rightTotal) + '</div>';
-    el.innerHTML = html;
+    el.innerHTML = acctFinStatementHtml('Expenses', 'Income', asOn, leftNodes, leftTotal, rightNodes, rightTotal, '');
 
     el.querySelectorAll('.acct-fin-group[data-node]').forEach(function (r) {
         r.onclick = function () { acctFinCollapsed[r.dataset.node] = !acctFinCollapsed[r.dataset.node]; acctRenderPL(); };
@@ -759,8 +785,7 @@ function acctRenderPL() {
     el.querySelectorAll('.acct-fin-ledger[data-ledger]').forEach(function (r) {
         r.onclick = function () { acctOpenLedgerDetail(r.dataset.ledger); };
     });
-    var ea = document.getElementById('acctPLExpandAll'); if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderPL(); };
-    var ca = document.getElementById('acctPLCollapseAll'); if (ca) ca.onclick = function () { var keys = acctFinAllGroupKeys(leftNodes.concat(rightNodes), []); acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; }); acctRenderPL(); };
+    acctWireExpandCtrl('acctPL', function () { return acctFinAllGroupKeys(leftNodes.concat(rightNodes), []); }, 'fin', acctRenderPL);
     var sz = document.getElementById('acctPLShowZeroChk'); if (sz) sz.onchange = function () { acctSetShowZero(sz.checked); acctRenderPL(); };
     acctSaveFinCollapse();
 }
@@ -910,8 +935,7 @@ function acctRenderTrialBalance() {
     Object.keys(T).forEach(function (k) { T[k] = acctZ(T[k]); });
 
     acctSetCmdFilters(
-        '<button class="wms-btn wms-btn-secondary" id="acctTbExpandAll">Expand all</button>' +
-        '<button class="wms-btn wms-btn-secondary" id="acctTbCollapseAll">Collapse all</button>' +
+        acctExpandCtrlHtml('acctTb') +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctTbShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero</label>');
 
     var W = 'width:' + (acctFullAmt ? 248 : 184) + 'px;';   // header block spans its two Dr/Cr cols
@@ -942,8 +966,7 @@ function acctRenderTrialBalance() {
     el.querySelectorAll('.acct-fin-ledger[data-ledger]').forEach(function (r) {
         r.onclick = function () { acctOpenLedgerDetail(r.dataset.ledger); };
     });
-    var ea = document.getElementById('acctTbExpandAll'); if (ea) ea.onclick = function () { acctFinCollapsed = {}; acctRenderTrialBalance(); };
-    var ca = document.getElementById('acctTbCollapseAll'); if (ca) ca.onclick = function () { var keys = acctFinAllGroupKeys(nodes, []); acctFinCollapsed = {}; keys.forEach(function (k) { acctFinCollapsed[k] = true; }); acctRenderTrialBalance(); };
+    acctWireExpandCtrl('acctTb', function () { return acctFinAllGroupKeys(nodes, []); }, 'fin', acctRenderTrialBalance);
     var sz = document.getElementById('acctTbShowZeroChk'); if (sz) sz.onchange = function () { acctSetShowZero(sz.checked); acctRenderTrialBalance(); };
     acctSaveFinCollapse();
 }
@@ -1089,6 +1112,51 @@ function acctLedBuild() {
     return roots;
 }
 
+// ── Ledgers catalogue — two-column, Balance-Sheet-style tree ─────────────────
+// Left column mirrors the BS liabilities side (Liabilities, Capital, Income,
+// Expenses); the right column is Assets. Double-clicking a ledger edits it.
+var _acctLedSearching = false;
+function acctLedIsOpen(key) { return _acctLedSearching || !(acctLedCollapsed && acctLedCollapsed[key]); }
+function acctScopeBadge(lg) {
+    var ids = acctLedgerScopeIds(lg);
+    if (!ids.length) return '<span class="acct-scope-badge">no book</span>';
+    var names = ids.map(acctInvName);
+    var txt = names.length <= 2 ? names.join(', ') : (names.slice(0, 2).join(', ') + ' +' + (names.length - 2));
+    return '<span class="acct-scope-badge" title="' + wmsEsc(names.join(', ')) + '">' + wmsEsc(txt) + '</span>';
+}
+function acctLedLedgerHtml(lg, depth) {
+    var pad = 12 + depth * 16 + 4;
+    var avail = lg.is_global ? '<span class="acct-kind-badge">Global</span>' : acctScopeBadge(lg);
+    return '<div class="acct-fin-row acct-fin-ledger acct-led-ledrow" data-ledger="' + lg.id + '" style="padding-left:' + pad + 'px;" title="Double-click to edit">' +
+        '<span class="acct-fin-toggle-sp"></span>' +
+        '<span class="acct-fin-name">' + wmsEsc(lg.name) + (lg.is_system ? ' <span class="acct-kind-badge">system</span>' : '') + '</span>' +
+        '<span class="acct-led-avail">' + avail + '</span>' +
+        '<button class="acct-edit-btn acct-led-edit" data-edit-ledger="' + lg.id + '" tabindex="-1" title="Edit ledger">✏️</button></div>';
+}
+function acctLedGroupHtml(node, depth) {
+    var open = acctLedIsOpen(node.key);
+    var pad = 10 + depth * 16;
+    var col = acctGrpColor(node.label);
+    var isRoot = depth === 0;
+    var h = '<div class="acct-fin-row acct-fin-group acct-led-grp" data-node="' + node.key + '" style="padding-left:' + pad + 'px;border-left:' + (isRoot ? 6 : 4) + 'px solid ' + col + ';background:' + col + (isRoot ? '22' : '11') + ';">' +
+        '<span class="acct-fin-toggle' + (open ? '' : ' collapsed') + '">▼</span>' +
+        '<span class="acct-fin-name">' + wmsEsc(node.label) + '</span>' +
+        '<span class="acct-led-count">' + node.count + '</span>' +
+        (isRoot ? '<span class="acct-led-editsp"></span>'
+            : '<button class="acct-edit-btn acct-led-edit" data-edit-group="' + node.id + '" tabindex="-1" title="Edit group">✏️</button>') +
+        '</div>';
+    if (open) {
+        (node.ledgers || []).forEach(function (lg) { h += acctLedLedgerHtml(lg, depth + 1); });
+        (node.subs || []).forEach(function (sg) { h += acctLedGroupHtml(sg, depth + 1); });
+    }
+    return h;
+}
+function acctLedColHtml(roots, title) {
+    var h = '<div class="acct-fin-col acct-led-col"><div class="acct-fin-hdr"><span>' + wmsEsc(title) + '</span><span></span></div>';
+    if (!roots.length) h += '<div class="acct-empty" style="padding:16px;">—</div>';
+    roots.forEach(function (r) { h += acctLedGroupHtml(r, 0); });
+    return h + '</div>';
+}
 function acctRenderLedgers() {
     var el = document.getElementById('acctLedgersBody');
     if (!el) return;
@@ -1098,73 +1166,43 @@ function acctRenderLedgers() {
     var allKeys = [];
     (function collect(list) { list.forEach(function (n) { allKeys.push(n.key); collect(n.subs || []); }); })(roots);
 
-    // UI-STANDARDS D.2.2 - collapsible groups start collapsed. Seed once per session.
+    // UI-STANDARDS D.2.2 — collapsible groups start collapsed. Seed once per session.
     if (acctLedCollapsed === null) {
         acctLedCollapsed = {};
         allKeys.forEach(function (k) { acctLedCollapsed[k] = true; });
     }
-    // While a search is active, force everything open - otherwise a default-collapsed
-    // tree shows nothing for a hit. The user's collapse state is untouched underneath
-    // and comes back the moment the box is cleared.
-    var searching = !!acctLedSearch;
-    function isOpen(k) { return searching || !acctLedCollapsed[k]; }
+    _acctLedSearching = !!acctLedSearch;
 
-    // All Ledgers-tab controls live in the single command line (matches the app
-    // tab-bar signature; one row of chrome for the whole module).
+    // One command line: ➕ New (bulk add), expand/collapse toggle + Summary, search.
     acctSetCmdFilters(
-        '<button class="wms-btn wms-btn-secondary" id="acctLedAddLedger">➕ Ledger</button>' +
-        '<button class="wms-btn wms-btn-secondary" id="acctLedAddGroup">➕ Group</button>' +
-        '<button class="wms-btn wms-btn-secondary" id="acctLedExpandAll">Expand all</button>' +
-        '<button class="wms-btn wms-btn-secondary" id="acctLedCollapseAll">Collapse all</button>' +
+        '<button class="wms-btn wms-btn-secondary" id="acctLedNew">➕ New</button>' +
+        acctExpandCtrlHtml('acctLed') +
         '<input type="text" id="acctLedSearchInput" class="wms-input" placeholder="Search ledgers &amp; groups" value="' + wmsEsc(acctLedSearch) + '">');
 
-    var html = '<table class="acct-table"><thead><tr><th>Ledger / Group</th><th>Kind</th><th>Availability</th><th style="width:44px;"></th></tr></thead><tbody>';
+    // Split the natures across two columns, mirroring the Balance Sheet.
+    var rightNames = ['Assets'];
+    var leftRoots = [], rightRoots = [];
+    roots.forEach(function (r) { (rightNames.indexOf(r.label) >= 0 ? rightRoots : leftRoots).push(r); });
 
     if (!roots.length) {
-        html += '<tr><td colspan="4"><div class="acct-empty">Nothing matches &ldquo;' + wmsEsc(acctLedSearch) + '&rdquo;.</div></td></tr>';
+        el.innerHTML = '<div class="acct-empty">Nothing matches &ldquo;' + wmsEsc(acctLedSearch) + '&rdquo;.</div>';
+    } else {
+        el.innerHTML = '<div class="acct-fin-cols acct-led-cols">' +
+            acctLedColHtml(leftRoots, 'Liabilities · Capital · Income · Expenses') +
+            acctLedColHtml(rightRoots, 'Assets') + '</div>';
     }
 
-    // Render a sub-group and (recursively) its own sub-groups — the chart nests
-    // 3 levels deep (Income → Investment Income → Capital Gains → ledger).
-    function renderSub(sg, depth) {
-        var sopen = isOpen(sg.key);
-        var pad = 20 + (depth - 1) * 16;
-        var col = acctGrpColor(sg.label);
-        var h = '<tr class="acct-subgroup-row acct-led-grp" data-node="' + sg.key + '">' +
-            '<td style="padding-left:' + pad + 'px;font-weight:600;color:#334155;border-left:5px solid ' + col + ';background:' + col + '14;">' +
-            '<span class="acct-led-toggle' + (sopen ? '' : ' collapsed') + '">▼</span>' + wmsEsc(sg.label) +
-            '<span class="acct-led-count">' + sg.count + '</span></td>' +
-            '<td colspan="2" style="background:' + col + '14;"></td>' +
-            '<td class="text-right" style="background:' + col + '14;"><button class="acct-edit-btn" data-edit-group="' + sg.id + '" title="Edit group">✏️</button></td></tr>';
-        if (sopen) {
-            sg.ledgers.forEach(function (lg) { h += acctLedgerRowHtml(lg, col, pad + 20); });
-            (sg.subs || []).forEach(function (sub) { h += renderSub(sub, depth + 1); });
-        }
-        return h;
-    }
-    roots.forEach(function (r) {
-        var open = isOpen(r.key);
-        var col = acctGrpColor(r.label);
-        html += '<tr class="acct-tb-group acct-led-grp" data-node="' + r.key + '"><td colspan="3" style="border-left:6px solid ' + col + ';background:' + col + '24;font-weight:700;">' +
-            '<span class="acct-led-toggle' + (open ? '' : ' collapsed') + '">▼</span>' + wmsEsc(r.label) +
-            '<span class="acct-led-count">' + r.count + '</span></td><td style="background:' + col + '24;"></td></tr>';
-        if (!open) return;
-
-        // ledgers hanging directly off the nature root, then its sub-groups (recursive)
-        r.ledgers.forEach(function (lg) { html += acctLedgerRowHtml(lg, col, 34); });
-        r.subs.forEach(function (sg) { html += renderSub(sg, 1); });
-    });
-    html += '</tbody></table>';
-    el.innerHTML = html;
-
+    // Group rows toggle collapse; the edit pencil inside must not also toggle.
     el.querySelectorAll('.acct-led-grp[data-node]').forEach(function (row) {
         row.onclick = function () {
             acctLedCollapsed[row.dataset.node] = !acctLedCollapsed[row.dataset.node];
             acctRenderLedgers();
         };
     });
-    // The edit pencils now sit INSIDE a clickable group row - without stopPropagation
-    // opening the edit modal would also toggle the group underneath it.
+    // Double-click a ledger row to edit it.
+    el.querySelectorAll('.acct-led-ledrow[data-ledger]').forEach(function (row) {
+        row.ondblclick = function () { acctOpenEditLedger(row.dataset.ledger); };
+    });
     el.querySelectorAll('[data-edit-ledger]').forEach(function (b) {
         b.onclick = function (e) { e.stopPropagation(); acctOpenEditLedger(b.dataset.editLedger); };
     });
@@ -1172,14 +1210,9 @@ function acctRenderLedgers() {
         b.onclick = function (e) { e.stopPropagation(); acctOpenEditGroup(b.dataset.editGroup); };
     });
 
-    var alBtn = document.getElementById('acctLedAddLedger');
-    if (alBtn) alBtn.onclick = acctOpenAddLedger;
-    var agBtn = document.getElementById('acctLedAddGroup');
-    if (agBtn) agBtn.onclick = acctOpenAddGroup;
-    var ea = document.getElementById('acctLedExpandAll');
-    if (ea) ea.onclick = function () { acctLedCollapsed = {}; acctRenderLedgers(); };
-    var ca = document.getElementById('acctLedCollapseAll');
-    if (ca) ca.onclick = function () { acctLedCollapsed = {}; allKeys.forEach(function (k) { acctLedCollapsed[k] = true; }); acctRenderLedgers(); };
+    var nb = document.getElementById('acctLedNew');
+    if (nb) nb.onclick = acctOpenBulkAdd;
+    acctWireExpandCtrl('acctLed', function () { return allKeys; }, 'led', acctRenderLedgers);
     var srch = document.getElementById('acctLedSearchInput');
     if (srch) srch.oninput = function () {
         acctLedSearch = srch.value;
@@ -2661,6 +2694,283 @@ function acctApplyVoucherReadOnly(ro) {
 }
 
 // ============================================================================
+// Shared expand / collapse controls (Balance Sheet, P&L, Trial Balance, Ledgers)
+// ONE toggle (expand-all <-> collapse-all) + a Summary button (roots + 2 levels).
+// ============================================================================
+// Group's depth from its nature root: a nature root = 0, its child = 1, etc.
+function acctGroupLevel(groupId) {
+    var lvl = 0, g = acctGroupById[groupId], guard = 0;
+    while (g && g.parent_group_id && guard < 30) { lvl++; g = acctGroupById[g.parent_group_id]; guard++; }
+    return lvl;
+}
+// A collapse-map key -> group level. Synthetic wrapper keys (pl, cap, pl-inc…)
+// carry no uuid and are treated as top-level (kept expanded by Summary).
+function acctKeyLevel(key) {
+    if (!key) return 0;
+    var m = /:([0-9a-fA-F-]{36})$/.exec(key);
+    return m ? acctGroupLevel(m[1]) : 0;
+}
+// The two shared control buttons. pfx namespaces the element ids per view.
+function acctExpandCtrlHtml(pfx) {
+    return '<button class="wms-btn wms-btn-secondary" id="' + pfx + 'Toggle" title="Expand or collapse everything">⇵ Collapse all</button>' +
+        '<button class="wms-btn wms-btn-secondary" id="' + pfx + 'Summary" title="Show the roots and two levels, collapse the rest">▤ Summary</button>';
+}
+// Wire the toggle + summary. mapName: "fin" (BS/P&L/TB share acctFinCollapsed) or
+// "led" (Ledgers catalogue = acctLedCollapsed). getKeys() returns the view's group
+// keys; rerender() re-draws the view.
+function acctWireExpandCtrl(pfx, getKeys, mapName, rerender) {
+    function map() {
+        if (mapName === 'led') { if (!acctLedCollapsed) acctLedCollapsed = {}; return acctLedCollapsed; }
+        return acctFinCollapsed;
+    }
+    var t = document.getElementById(pfx + 'Toggle');
+    if (t) {
+        var keysNow = getKeys();
+        var anyOpen = keysNow.some(function (k) { return !map()[k]; });
+        t.innerHTML = anyOpen ? '⇵ Collapse all' : '⇵ Expand all';
+        t.onclick = function () {
+            var keys = getKeys(), m = map();
+            var open = keys.some(function (k) { return !m[k]; });
+            if (open) { keys.forEach(function (k) { m[k] = true; }); }      // collapse all
+            else { keys.forEach(function (k) { delete m[k]; }); }           // expand all
+            rerender();
+        };
+    }
+    var s = document.getElementById(pfx + 'Summary');
+    if (s) s.onclick = function () {
+        var keys = getKeys(), m = map();
+        keys.forEach(function (k) { if (acctKeyLevel(k) >= 2) m[k] = true; else delete m[k]; });
+        rerender();
+    };
+}
+
+// ============================================================================
+// Reusable book-scope control — a compact "pills dropdown" (Global + own books),
+// mirroring the Trading > Portfolio filter pills. Used by the bulk-add rows and
+// the edit-ledger modal. value = { global:bool, bookIds:[uuid] }.
+// ============================================================================
+function acctBookScopeControl(host, initial, onChange) {
+    var books = acctOwnBooks();
+    var state = { global: true, bookIds: [] };
+    if (initial) {
+        state.bookIds = (initial.bookIds || []).slice();
+        state.global = (initial.global !== false) && !state.bookIds.length;
+        if (state.bookIds.length) state.global = false;
+    }
+    host.classList.add('acct-scope-ctrl');
+    host.innerHTML = '<button type="button" class="acct-scope-btn"></button>' +
+        '<div class="acct-scope-dd wms-pill-dropdown"></div>';
+    var btn = host.querySelector('.acct-scope-btn');
+    var dd = host.querySelector('.acct-scope-dd');
+    function label() {
+        if (state.global) return 'Global (all books)';
+        if (!state.bookIds.length) return 'Select book(s)…';
+        var names = state.bookIds.map(function (id) { var b = books.find(function (x) { return x.id === id; }); return b ? (b.short_name || b.name) : '?'; });
+        return names.length <= 2 ? names.join(', ') : (names.slice(0, 2).join(', ') + ' +' + (names.length - 2));
+    }
+    function renderPills() {
+        var h = '<span class="wms-pill acct-scope-pill' + (state.global ? ' on' : '') + '" data-g="1">Global</span>';
+        books.forEach(function (b) {
+            var on = !state.global && state.bookIds.indexOf(b.id) >= 0;
+            h += '<span class="wms-pill acct-scope-pill' + (on ? ' on' : '') + '" data-book="' + b.id + '">' + wmsEsc(b.short_name || b.name) + '</span>';
+        });
+        dd.innerHTML = h;
+    }
+    function sync() { btn.textContent = label(); renderPills(); }
+    btn.onclick = function (e) { e.stopPropagation(); dd.classList.toggle('show'); };
+    dd.onclick = function (e) {
+        var p = e.target.closest ? e.target.closest('.acct-scope-pill') : null;
+        if (!p) return;
+        if (p.dataset.g) { state.global = true; state.bookIds = []; }
+        else {
+            state.global = false;
+            var id = p.dataset.book, i = state.bookIds.indexOf(id);
+            if (i >= 0) state.bookIds.splice(i, 1); else state.bookIds.push(id);
+            if (!state.bookIds.length) state.global = true;
+        }
+        sync();
+        if (onChange) onChange();
+    };
+    if (!host._acctScopeDocClose) {
+        host._acctScopeDocClose = function (e) { if (!host.contains(e.target)) dd.classList.remove('show'); };
+        document.addEventListener('mousedown', host._acctScopeDocClose);
+    }
+    sync();
+    return {
+        getValue: function () { return { global: state.global, bookIds: state.bookIds.slice() }; },
+        setValue: function (v) { state.global = !!(v && v.global); state.bookIds = (v && v.bookIds || []).slice(); if (state.bookIds.length) state.global = false; sync(); }
+    };
+}
+
+// Books (own-books) that have LIVE postings referencing a ledger — used to block a
+// coverage change that would orphan those vouchers.
+async function acctLedgerPostedBooks(ledgerId) {
+    var rows = await wmsFetchAllRaw(acctUrl('acct_voucher_full?ledger_id=eq.' + ledgerId +
+        '&is_cancelled=eq.false&select=investor_id')) || [];
+    var set = {};
+    rows.forEach(function (r) { if (r.investor_id) set[r.investor_id] = true; });
+    return Object.keys(set);
+}
+
+// ============================================================================
+// Combined bulk-add modal — one modal adds MANY ledgers OR groups under one
+// chosen parent group. Radio picks ledgers (default) or groups. Tab off the last
+// row's last field adds another row. Ledger rows carry a book-scope pills control.
+// ============================================================================
+var acctBulkModalCtrl = null;
+var acctBulkKind = 'ledger';                // 'ledger' | 'group'
+var acctBulkRows = [];                       // [{ name, scope:{global,bookIds} }]
+var acctBulkScopeCtrls = {};                 // idx -> scope controller
+
+function acctOpenBulkAdd() {
+    acctBulkKind = 'ledger';
+    acctBulkRows = [{ name: '', scope: { global: true, bookIds: [] } }];
+    var parentSel = document.getElementById('acctBulkParent');
+    if (parentSel) parentSel.innerHTML = acctGroupSelectOptions(null);
+    document.querySelectorAll('#acctBulkKindToggle .acct-type-btn').forEach(function (b) {
+        b.classList.toggle('active', b.dataset.kind === 'ledger');
+    });
+    acctBulkRenderRows();
+    if (acctBulkModalCtrl) acctBulkModalCtrl.open();
+    setTimeout(function () { var f = document.querySelector('#acctBulkRows .acct-bulk-name'); if (f) f.focus(); }, 40);
+}
+
+function acctBulkRenderRows() {
+    var body = document.getElementById('acctBulkRows');
+    if (!body) return;
+    var isLed = acctBulkKind === 'ledger';
+    var scopeHead = document.getElementById('acctBulkScopeHead');
+    if (scopeHead) scopeHead.style.display = isLed ? '' : 'none';
+    acctBulkScopeCtrls = {};
+    var h = '';
+    acctBulkRows.forEach(function (r, idx) {
+        h += '<tr data-idx="' + idx + '">' +
+            '<td><input type="text" class="acct-bulk-name" data-idx="' + idx + '" value="' + wmsEsc(r.name || '') + '" placeholder="' + (isLed ? 'Ledger name' : 'Group name') + '"></td>' +
+            (isLed ? '<td class="acct-bulk-scope-cell"><div class="acct-bulk-scope" data-idx="' + idx + '"></div></td>' : '') +
+            '<td class="text-right"><button class="acct-line-del acct-bulk-del" data-idx="' + idx + '" tabindex="-1" title="Remove row">✕</button></td></tr>';
+    });
+    body.innerHTML = h;
+    body.querySelectorAll('.acct-bulk-name').forEach(function (inp) {
+        inp.oninput = function () { acctBulkRows[+inp.dataset.idx].name = inp.value; acctBulkUpdateFoot(); };
+        inp.onkeydown = function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); acctBulkFocusNextOrAdd(+inp.dataset.idx); }
+        };
+    });
+    if (isLed) {
+        body.querySelectorAll('.acct-bulk-scope').forEach(function (hostEl) {
+            var idx = +hostEl.dataset.idx;
+            acctBulkScopeCtrls[idx] = acctBookScopeControl(hostEl, acctBulkRows[idx].scope, function () {
+                acctBulkRows[idx].scope = acctBulkScopeCtrls[idx].getValue();
+            });
+        });
+    }
+    body.querySelectorAll('.acct-bulk-del').forEach(function (b) {
+        b.onclick = function () {
+            if (acctBulkRows.length <= 1) { acctBulkRows[0] = { name: '', scope: { global: true, bookIds: [] } }; }
+            else { acctBulkRows.splice(+b.dataset.idx, 1); }
+            acctBulkRenderRows(); acctBulkUpdateFoot();
+        };
+    });
+    // Tab off the last row's last field adds a new row.
+    var lastIdx = acctBulkRows.length - 1;
+    var lastRow = body.querySelector('tr[data-idx="' + lastIdx + '"]');
+    if (lastRow) {
+        var target = isLed ? lastRow.querySelector('.acct-scope-btn') : lastRow.querySelector('.acct-bulk-name');
+        if (target) target.addEventListener('keydown', function (e) {
+            if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); acctBulkAddRow(); }
+        });
+    }
+    acctBulkUpdateFoot();
+}
+function acctBulkAddRow() {
+    acctBulkRows.push({ name: '', scope: { global: true, bookIds: [] } });
+    acctBulkRenderRows();
+    var body = document.getElementById('acctBulkRows');
+    var inp = body && body.querySelector('tr[data-idx="' + (acctBulkRows.length - 1) + '"] .acct-bulk-name');
+    if (inp) inp.focus();
+}
+function acctBulkFocusNextOrAdd(idx) {
+    if (idx >= acctBulkRows.length - 1) { acctBulkAddRow(); return; }
+    var body = document.getElementById('acctBulkRows');
+    var inp = body && body.querySelector('tr[data-idx="' + (idx + 1) + '"] .acct-bulk-name');
+    if (inp) inp.focus();
+}
+function acctBulkDupeCheck(named, parentId) {
+    var lowered = named.map(function (r) { return r.name.trim().toLowerCase(); });
+    for (var i = 0; i < lowered.length; i++)
+        for (var j = i + 1; j < lowered.length; j++)
+            if (lowered[i] === lowered[j]) return { msg: 'Duplicate name in the list: "' + named[i].name.trim() + '"' };
+    if (acctBulkKind === 'ledger') {
+        for (var k = 0; k < named.length; k++) {
+            var nm = named[k].name.trim().toLowerCase();
+            if (acctLedgers.some(function (l) { return (l.name || '').toLowerCase() === nm; }))
+                return { msg: 'Ledger "' + named[k].name.trim() + '" already exists' };
+        }
+    } else {
+        for (var k2 = 0; k2 < named.length; k2++) {
+            var nm2 = named[k2].name.trim().toLowerCase();
+            if (acctGroups.some(function (g) { return g.parent_group_id === parentId && (g.name || '').toLowerCase() === nm2; }))
+                return { msg: 'Group "' + named[k2].name.trim() + '" already exists under this parent' };
+        }
+    }
+    return { msg: '' };
+}
+function acctBulkUpdateFoot() {
+    var named = acctBulkRows.filter(function (r) { return (r.name || '').trim(); });
+    var parentSel = document.getElementById('acctBulkParent');
+    var parentId = parentSel ? parentSel.value : '';
+    var dupe = acctBulkDupeCheck(named, parentId);
+    var msg = document.getElementById('acctBulkMsg');
+    var save = document.getElementById('acctBulkSave');
+    var noun = acctBulkKind === 'ledger' ? 'ledger' : 'group';
+    if (msg) {
+        msg.textContent = dupe.msg || (named.length ? (named.length + ' ' + noun + (named.length === 1 ? '' : 's') + ' to add') : 'Enter at least one name');
+        msg.classList.toggle('acct-bulk-err', !!dupe.msg);
+    }
+    if (save) save.disabled = !named.length || !!dupe.msg || !parentId;
+}
+async function acctBulkSave() {
+    var parentSel = document.getElementById('acctBulkParent');
+    var parentId = parentSel ? parentSel.value : '';
+    if (!parentId) { acctToast('Pick a parent group.', true); return; }
+    var named = acctBulkRows.filter(function (r) { return (r.name || '').trim(); });
+    if (!named.length) { acctToast('Enter at least one name.', true); return; }
+    var dupe = acctBulkDupeCheck(named, parentId);
+    if (dupe.msg) { acctToast(dupe.msg, true); return; }
+    try {
+        var url, payload;
+        if (acctBulkKind === 'ledger') {
+            url = acctUrl('acct_ledgers');
+            payload = named.map(function (r) {
+                var v = r.scope || { global: true, bookIds: [] };
+                return {
+                    name: r.name.trim(), group_id: parentId, ledger_kind: 'GENERAL',
+                    is_global: !!v.global,
+                    scope_investor_ids: v.global ? [] : (v.bookIds || []),
+                    scope_investor_id: (!v.global && v.bookIds && v.bookIds.length) ? v.bookIds[0] : null
+                };
+            });
+        } else {
+            url = acctUrl('acct_groups');
+            payload = named.map(function (r) { return { name: r.name.trim(), parent_group_id: parentId }; });
+        }
+        var resp = await fetch(url, {
+            method: 'POST',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+            body: JSON.stringify(payload)
+        });
+        if (!resp.ok) throw new Error(await resp.text() || ('HTTP ' + resp.status));
+        if (acctBulkModalCtrl) acctBulkModalCtrl.close();
+        acctToast(named.length + ' ' + (acctBulkKind === 'ledger' ? 'ledger' : 'group') + (named.length === 1 ? '' : 's') + ' added.');
+        await acctLoadCatalogue();
+        acctRenderActiveTab();
+    } catch (e) {
+        console.error('[accounting] bulk add failed', e);
+        acctToast('Could not save: ' + e.message, true);
+    }
+}
+
+// ============================================================================
 // Add ledger / add group modals
 // ============================================================================
 function acctGroupSelectOptions(selectedId, rootsOnlyAllowed) {
@@ -2689,19 +2999,16 @@ function acctGroupSelectOptions(selectedId, rootsOnlyAllowed) {
     return html;
 }
 
+var acctEditScopeCtrl = null;
 function acctSetLedgerModal(lg) {
     var t = document.getElementById('acctAddLedgerTitle'); if (t) t.textContent = lg ? 'Edit Ledger' : 'Add Ledger';
     document.getElementById('acctNewLedgerName').value = lg ? lg.name : '';
     document.getElementById('acctNewLedgerGroup').innerHTML = acctGroupSelectOptions(lg ? lg.group_id : null);
-    acctNewLedgerScope = (lg && !lg.is_global) ? 'restricted' : 'global';
-    document.querySelectorAll('#acctNewLedgerScopeToggle .acct-type-btn').forEach(function (b) {
-        b.classList.toggle('active', b.dataset.scope === acctNewLedgerScope);
-    });
-    document.getElementById('acctNewLedgerScopeBookWrap').style.display = (acctNewLedgerScope === 'restricted') ? '' : 'none';
-    var scopeId = (lg && lg.scope_investor_id) ? lg.scope_investor_id : acctBookId;
-    document.getElementById('acctNewLedgerScopeBook').innerHTML = acctOwnBooks().map(function (b) {
-        return '<option value="' + b.id + '"' + (b.id === scopeId ? ' selected' : '') + '>' + wmsEsc(b.short_name || b.name) + '</option>';
-    }).join('');
+    var initial = lg
+        ? { global: !!lg.is_global, bookIds: lg.is_global ? [] : acctLedgerScopeIds(lg) }
+        : { global: true, bookIds: [] };
+    var host = document.getElementById('acctEditLedgerScope');
+    if (host) acctEditScopeCtrl = acctBookScopeControl(host, initial, null);
     if (acctAddLedgerModalCtrl) acctAddLedgerModalCtrl.open();
 }
 function acctOpenAddLedger() { acctEditingLedgerId = null; acctSetLedgerModal(null); }
@@ -2717,10 +3024,27 @@ async function acctSaveLedger() {
     var groupId = document.getElementById('acctNewLedgerGroup').value;
     if (!name) { acctToast('Ledger name is required.', true); return; }
     if (!groupId) { acctToast('Pick a group.', true); return; }
-    var isGlobal = acctNewLedgerScope === 'global';
+    // Uniqueness (name is globally UNIQUE) — catch it in-app before the DB does.
+    var clash = acctLedgers.find(function (l) {
+        return l.id !== acctEditingLedgerId && (l.name || '').toLowerCase() === name.toLowerCase();
+    });
+    if (clash) { acctToast('A ledger named "' + name + '" already exists.', true); return; }
+    var v = acctEditScopeCtrl ? acctEditScopeCtrl.getValue() : { global: true, bookIds: [] };
+    if (!v.global && !v.bookIds.length) { acctToast('Pick at least one book, or choose Global.', true); return; }
+    // Orphan guard: never drop a book that already has postings on this ledger.
+    if (acctEditingLedgerId && !v.global) {
+        var posted = await acctLedgerPostedBooks(acctEditingLedgerId);
+        var missing = posted.filter(function (bid) { return v.bookIds.indexOf(bid) < 0; });
+        if (missing.length) {
+            acctToast('Can’t remove coverage: this ledger has postings in ' +
+                missing.map(acctInvName).join(', ') + '. Keep those books selected (or make it Global).', true);
+            return;
+        }
+    }
     var body = {
-        name: name, group_id: groupId, is_global: isGlobal,
-        scope_investor_id: isGlobal ? null : (document.getElementById('acctNewLedgerScopeBook').value || null)
+        name: name, group_id: groupId, is_global: !!v.global,
+        scope_investor_ids: v.global ? [] : (v.bookIds || []),
+        scope_investor_id: (!v.global && v.bookIds.length) ? v.bookIds[0] : null
     };
     try {
         var resp;
@@ -2870,11 +3194,25 @@ function acctWireModals() {
     document.getElementById('acctAddLedgerClose').onclick = function () { acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
     document.getElementById('acctAddLedgerCancel').onclick = function () { acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
     document.getElementById('acctAddLedgerSave').onclick = acctSaveLedger;
-    document.querySelectorAll('#acctNewLedgerScopeToggle .acct-type-btn').forEach(function (b) {
+
+    // Bulk add ledgers/groups modal
+    var buOverlay = document.getElementById('acctBulkModal');
+    if (buOverlay && typeof wmsModal === 'function') acctBulkModalCtrl = wmsModal(buOverlay, { backdropClose: false });
+    var buClose = document.getElementById('acctBulkClose');
+    if (buClose) buClose.onclick = function () { acctBulkModalCtrl && acctBulkModalCtrl.close(); };
+    var buCancel = document.getElementById('acctBulkCancel');
+    if (buCancel) buCancel.onclick = function () { acctBulkModalCtrl && acctBulkModalCtrl.close(); };
+    var buSave = document.getElementById('acctBulkSave');
+    if (buSave) buSave.onclick = acctBulkSave;
+    var buParent = document.getElementById('acctBulkParent');
+    if (buParent) buParent.onchange = acctBulkUpdateFoot;
+    var buAdd = document.getElementById('acctBulkAddRowBtn');
+    if (buAdd) buAdd.onclick = acctBulkAddRow;
+    document.querySelectorAll('#acctBulkKindToggle .acct-type-btn').forEach(function (b) {
         b.onclick = function () {
-            acctNewLedgerScope = b.dataset.scope;
-            document.querySelectorAll('#acctNewLedgerScopeToggle .acct-type-btn').forEach(function (x) { x.classList.toggle('active', x === b); });
-            document.getElementById('acctNewLedgerScopeBookWrap').style.display = (acctNewLedgerScope === 'restricted') ? '' : 'none';
+            acctBulkKind = b.dataset.kind;
+            document.querySelectorAll('#acctBulkKindToggle .acct-type-btn').forEach(function (x) { x.classList.toggle('active', x === b); });
+            acctBulkRenderRows();
         };
     });
 
