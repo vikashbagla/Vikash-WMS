@@ -1288,6 +1288,13 @@ async function acctOpeningComputeInvestments() {
             '&investor_id=eq.' + acctBookId + '&transaction_date=lte.' + closeDate)) || [];
     } catch (e) { console.error('[accounting] opening-investments fetch failed', e); return []; }
     if (!txns.length) return [];
+    // Demerger is an EVENT posted in its own period (reduce parent, create children),
+    // never an opening-balance item — even when a child's inherited acquisition date
+    // (kept for cap-gains holding period) falls before the close. Drop DEMERGER rows
+    // from the opening draw so the parent stays at full cost and the children appear
+    // only when the demerger posts (this also silences the demerger_incomplete
+    // exception when the parent-reduction leg is dated after the close). Owner 2026-08-18.
+    txns = txns.filter(function (t) { return (t.transaction_type || t.type || '') !== 'DEMERGER'; });
     var invById = {}; (wmsRefData.investors || []).forEach(function (i) { invById[i.id] = i; });
     var ctx = { securityById: wmsRefData.securitiesCmMap || {}, investorById: invById, brokerById: {},
                 fifo: function (t) { return wmsCalcFifoCost(t); } };
