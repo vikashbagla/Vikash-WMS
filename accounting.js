@@ -1239,6 +1239,41 @@ function acctIsAutoOpeningLedger(id) {
 // SECURITY-ledger movement, so the figure equals exactly what the engine will use
 // as cost basis for a later sale — including this book's STT treatment (STT-as-
 // expense books exclude STT from cost). Returns [{ security_id, cost, name }].
+// Opening-balance held-lot buy STT. FIFO on (qty, stt), independent of the shared
+// cost engine (which we deliberately do NOT touch — opening balance only). Returns
+// the TOTAL buy-STT of the lots still held at close. Sell-STT and the STT of
+// already-sold lots are excluded: they were expensed in their own period and are
+// not an opening balance. Mirrors the engine's grouping (short_symbol / NFO symbol)
+// and BUY/SELL/SPLIT/BONUS/RIGHTS_ENTITLEMENT/DEMERGER qty mechanics so the held
+// lots match the cost side exactly.
+function acctOpeningHeldBuyStt(txns) {
+    function ekey(t) {
+        var st = t.security_type || 'EQUITY';
+        if (st === 'NFO') return String(t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
+        return (t.short_symbol != null && t.short_symbol !== '' ? t.short_symbol : '') || t.symbol || '';
+    }
+    function ktime(t) { return String(t.transaction_date || '') + ' ' + String(t.transaction_time || '') + ' ' + String(t.created_at || ''); }
+    var bySec = {};
+    (txns || []).forEach(function (t) { var k = ekey(t); if (!k) return; (bySec[k] = bySec[k] || []).push(t); });
+    var total = 0;
+    Object.keys(bySec).forEach(function (k) {
+        var list = bySec[k].slice().sort(function (a, b) { var ka = ktime(a), kb = ktime(b); return ka < kb ? -1 : ka > kb ? 1 : 0; });
+        var lots = [];   // { qty, stt } — stt = rupee amount remaining on the lot
+        list.forEach(function (t) {
+            var ty = t.transaction_type || '';
+            var qty = Math.abs(Number(t.quantity) || 0);
+            var stt = Math.abs(Number(t.stt) || 0);
+            if (ty === 'BUY') lots.push({ qty: qty, stt: stt });
+            else if (ty === 'BONUS' || ty === 'RIGHTS_ENTITLEMENT') lots.push({ qty: qty, stt: 0 });
+            else if (ty === 'DEMERGER') { if ((Number(t.quantity) || 0) > 0) lots.push({ qty: qty, stt: 0 }); }
+            else if (ty === 'SPLIT') { var ex = 0; lots.forEach(function (l) { ex += l.qty; }); if (ex > 0 && qty > 0) { var ra = (ex + qty) / ex; lots.forEach(function (l) { l.qty = l.qty * ra; }); } }
+            else if (ty === 'SELL') { var rem = qty; while (rem > 1e-9 && lots.length > 0) { var lot = lots[0], m = Math.min(rem, lot.qty), before = lot.qty; if (before > 0) lot.stt = lot.stt * ((before - m) / before); lot.qty -= m; rem -= m; if (lot.qty <= 1e-9) lots.shift(); } }
+        });
+        lots.forEach(function (l) { total += l.stt; });
+    });
+    return Math.round(total * 100) / 100;
+}
+
 async function acctOpeningComputeInvestments() {
     var inv = (wmsRefData.investors || []).find(function (i) { return i.id === acctBookId; }) || {};
     var closeDate = inv.books_closed_upto;
@@ -1266,16 +1301,12 @@ async function acctOpeningComputeInvestments() {
     //    an STT-as-expense book books separately (never in the security cost).
     // The BROKER (funding) leg is deliberately ignored — at opening the funding is
     // the capital / bank balances the owner enters, not a per-trade broker credit.
-    var bySec = {}, byRole = {};
+    var bySec = {};
     (res.vouchers || []).forEach(function (v) {
         (v.lines || []).forEach(function (l) {
-            if (!l.ref) return;
-            if (l.ref.security_id) {
+            if (l.ref && l.ref.security_id) {
                 var b = bySec[l.ref.security_id] || (bySec[l.ref.security_id] = { d: 0, c: 0 });
                 b.d += (l.debit || 0); b.c += (l.credit || 0);
-            } else if (l.ref.role === 'STT_STOCKS' || l.ref.role === 'STT_MF') {
-                var r = byRole[l.ref.role] || (byRole[l.ref.role] = { d: 0, c: 0 });
-                r.d += (l.debit || 0); r.c += (l.credit || 0);
             }
         });
     });
@@ -1312,14 +1343,18 @@ async function acctOpeningComputeInvestments() {
     } catch (e) { console.error('[accounting] opening MF fetch failed', e); }
 
     securities.sort(function (a, b) { return b.cost - a.cost; });
+    // OPENING STT (opening balance only): carry ONLY the buy-STT of the lots STILL
+    // HELD at close. The running ledger debits STT on every BUY and SELL; replaying
+    // the whole history and summing those legs (the old approach) wrongly pulled in
+    // sell-STT and the STT of already-sold lots — those were expensed in their own
+    // period and are not an opening balance. Dedicated held-lot FIFO below; the shared
+    // cost engine is deliberately left unchanged.
+    var heldStt = acctOpeningHeldBuyStt(txns);
     var sttLines = [];
-    Object.keys(byRole).forEach(function (role) {
-        var net = Math.round((byRole[role].d - byRole[role].c) * 100) / 100;
-        if (net > 0.005) {
-            var lg = acctLedgers.find(function (x) { return x.posting_role === role; });
-            sttLines.push({ role: role, cost: net, name: (lg && lg.name) || (role === 'STT_MF' ? 'STT Charges - MFs' : 'STT Charges - Stocks') });
-        }
-    });
+    if (heldStt > 0.005) {
+        var sttLg = acctLedgers.find(function (x) { return x.posting_role === 'STT_STOCKS'; });
+        sttLines.push({ role: 'STT_STOCKS', cost: heldStt, name: (sttLg && sttLg.name) || 'STT Charges - Stocks' });
+    }
     return { securities: securities, sttLines: sttLines };
 }
 
