@@ -2177,6 +2177,17 @@ function _wmsCostEngine(transactions, method) {
                 var rcLot = rpLots[rci];
                 if (rcLot.qty > 0 && rcLot.costPerUnit === 0) rpCandidates.push(rcLot);
             }
+            // Fallback: partly-paid shares booked as BUY (not RIGHTS_ENTITLEMENT),
+            // so no zero-cost lot exists. Attach the call money to the OPEN
+            // positive-qty lots pro-rata by qty, so a later partial SELL releases
+            // the fully-paid cost. Without this the rights money is stranded in
+            // the holding — the bug that over-stated Lloyds by the call on the
+            // already-sold shares.
+            if (rpCandidates.length === 0) {
+                for (var rcf = rpLots.length - 1; rcf >= 0; rcf--) {
+                    if (rpLots[rcf].qty > 0) rpCandidates.push(rpLots[rcf]);
+                }
+            }
             if (rpCandidates.length === 0) {
                 adjustments[key] = (adjustments[key] || 0) + txnNetAmount;
                 continue;
