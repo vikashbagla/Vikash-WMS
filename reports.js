@@ -14,6 +14,9 @@ var rptBrokers = [];
 var rptLivePrices = {};      // { fyersKey: price }
 var rptLiveData = {};        // { fyersKey: { lp, ch, chp, high, low } }
 var rptMfNav = {};           // { mfSymbol: latestNav } — MF market valuation (market_prices)
+var rptMfSnake = [];         // snake_case MF trade rows for the drill-down modal (view-only)
+var rptMfLastNav = {};       // { mfSymbol: lastTradeNav } — fallback price before the feed runs
+var rptMfSymbolSet = {};     // { mfSymbol: true } — quick "is this an MF symbol" test
 
 // Portfolio tab filters
 var rptSelectedInvestorIds = [];
@@ -393,6 +396,21 @@ async function rptLoadMfTrades() {
         }).filter(function(x) { return x; });
 
         rptTransactions = rptTransactions.concat(mapped);
+
+        // Snake-case copies + helper maps: the drill-down modal renders from
+        // snake_case rows (like the shared transactions cache); MF trades are
+        // VIEW-ONLY there (they live in mf_trades, not the transactions table).
+        rptMfSnake = mapped.map(function(m) {
+            return {
+                id: m.id, short_symbol: m.shortSymbol, symbol: m.symbol, company_name: m.companyName,
+                security_type: 'MF', exchange: 'MF', transaction_type: m.type, transaction_date: m.date,
+                quantity: m.quantity, price: m.price, gross_amount: m.grossAmount, net_amount: m.netAmount,
+                display_net_amount: m.netAmount, stt: 0, investor_id: m.investorId, broker_id: null,
+                tags: m.tags, dont_display: false, _mf: true
+            };
+        });
+        rptMfLastNav = {}; rptMfSymbolSet = {};
+        mapped.forEach(function(m) { rptMfSymbolSet[m.symbol] = true; rptMfLastNav[m.symbol] = m.price; }); // date-asc → last wins = latest trade NAV
         console.log('✅ Reports: folded in ' + mapped.length + ' MF trades');
     } catch (e) {
         console.warn('⚠️ Reports: MF trades load failed:', e.message || e);
@@ -913,10 +931,13 @@ function rptCloseAllActionMenus() {
 async function rptShowTransactions(shortSymbol, investorId) {
     // Full snake_case rows for the edit modal come straight from the shared
     // cache (§A.9.6) — no separate fetch. Filter to the symbol (or all).
+    // Shared transactions cache (equity/F&O) PLUS the snake-case MF trades so an
+    // MF holding's drill-down shows its mf_trades (they aren't in the cache).
     var allShared = (window._wmsTxnCache && window._wmsTxnCache.rows) || [];
+    var combined = allShared.concat(rptMfSnake || []);
     var allTxns = (shortSymbol === '__ALL__')
-        ? allShared.slice()
-        : allShared.filter(function(t) { return t.short_symbol === shortSymbol; });
+        ? combined.slice()
+        : combined.filter(function(t) { return t.short_symbol === shortSymbol; });
 
     // display_net_amount is already set by the shared load's sanitize; fill only if missing.
     allTxns.forEach(function(t) {
@@ -933,9 +954,13 @@ async function rptShowTransactions(shortSymbol, investorId) {
         investors: rptInvestors,
         brokers: rptBrokers,
         getPrice: function(sym) {
+            if (rptMfSymbolSet && rptMfSymbolSet[sym]) {
+                return (rptMfNav[sym] > 0) ? rptMfNav[sym] : (rptMfLastNav[sym] || 0);
+            }
             return rptGetPrice({ shortSymbol: sym, symbol: sym, exchange: 'NSE', latestPrice: 0 });
         },
         getLiveData: function(sym) {
+            if (rptMfSymbolSet && rptMfSymbolSet[sym]) return null;   // MF: no intraday tick
             return rptGetLiveData({ shortSymbol: sym, symbol: sym, exchange: 'NSE' });
         },
         afterChange: function() {
