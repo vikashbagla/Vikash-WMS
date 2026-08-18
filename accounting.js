@@ -675,7 +675,12 @@ function acctRenderFinancials() {
         { key: 'pl-exp', label: 'Expenses', amount: exp.total, children: exp.nodes }
     ] };
     var liab = acctSideTree(net, 'Liabilities', false);
-    var leftNodes = cap.nodes.concat([plNode]).concat(liab.nodes);
+    // Wrap the Capital root's contents under a synthetic "Capital" header so the
+    // Liabilities column mirrors the Assets side (root name shows as a group row,
+    // its ledgers nest one level in). Hidden when empty unless Show-zero is on.
+    var capNode = { key: 'cap', label: 'Capital', amount: cap.total, children: cap.nodes };
+    var leftNodes = ((cap.nodes.length || acctFinShowZero) ? [capNode] : [])
+        .concat([plNode]).concat(liab.nodes);
     var leftTotal = cap.total + plNet + liab.total;
 
     var assets = acctSideTree(net, 'Assets', false);
