@@ -60,6 +60,12 @@
 .acct-book-mgr-hd { padding: 4px 8px 6px; font-size: 10px; color: #a0aec0; border-bottom: 1px solid #f1f5f9; margin-bottom: 3px; }
 .acct-book-mgr-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 5px; }
 .acct-book-mgr-row:hover { background: #f7faff; }
+.acct-book-mgr-row[draggable="true"] { cursor: default; }
+.acct-book-mgr-row.acct-dragging { opacity: .45; }
+.acct-book-mgr-row.acct-drag-over { box-shadow: inset 0 2px 0 #667eea; }
+.acct-book-mgr-grip { cursor: grab; color: #cbd5e0; font-size: 13px; line-height: 1; padding: 0 2px; user-select: none; }
+.acct-book-mgr-grip:active { cursor: grabbing; }
+.acct-book-mgr-row:hover .acct-book-mgr-grip { color: #94a3b8; }
 .acct-book-mgr-row.is-hidden .acct-book-mgr-name { color: #a0aec0; font-style: italic; }
 .acct-book-mgr-move { display: inline-flex; flex-direction: column; line-height: 0.7; }
 .acct-book-mgr-move button {

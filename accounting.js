@@ -219,13 +219,10 @@ function acctRenderBookTabs() {
     }).join('');
     // "＋" opens a book manager: every book in order, with ▲▼ reorder and Open/Close.
     var allBooks = acctOrderedBooks();
-    var mgrRows = allBooks.map(function (b, i) {
+    var mgrRows = allBooks.map(function (b) {
         var isHidden = acctBooksHidden.indexOf(b.id) >= 0;
-        return '<div class="acct-book-mgr-row' + (isHidden ? ' is-hidden' : '') + '">' +
-            '<span class="acct-book-mgr-move">' +
-                '<button class="acct-book-mgr-up" data-book="' + b.id + '"' + (i === 0 ? ' disabled' : '') + ' title="Move up">▲</button>' +
-                '<button class="acct-book-mgr-down" data-book="' + b.id + '"' + (i === allBooks.length - 1 ? ' disabled' : '') + ' title="Move down">▼</button>' +
-            '</span>' +
+        return '<div class="acct-book-mgr-row' + (isHidden ? ' is-hidden' : '') + '" draggable="true" data-book="' + b.id + '">' +
+            '<span class="acct-book-mgr-grip" title="Drag to reorder">⠿</span>' +
             '<span class="acct-book-mgr-name" data-book="' + b.id + '" title="Go to this book">' + wmsEsc(b.short_name || b.name) + '</span>' +
             '<button class="acct-book-mgr-toggle" data-book="' + b.id + '">' + (isHidden ? 'Open' : 'Close') + '</button>' +
         '</div>';
@@ -233,7 +230,7 @@ function acctRenderBookTabs() {
     var addHtml = '<span class="acct-book-add-wrap">' +
         '<button class="acct-book-add" id="acctBookAddBtn" title="Manage books — reorder, open, close">+</button>' +
         '<div class="acct-book-add-dd' + (acctBookMgrOpen ? ' show' : '') + '" id="acctBookAddDd">' +
-            '<div class="acct-book-mgr-hd">Books — drag tabs or use ▲▼ to reorder</div>' +
+            '<div class="acct-book-mgr-hd">Books — drag a row (or a tab) to reorder</div>' +
             mgrRows +
         '</div></span>';
     el.innerHTML = tabsHtml + addHtml +
@@ -259,8 +256,18 @@ function acctRenderBookTabs() {
     if (addBtn && addDd) {
         addBtn.onclick = function (e) { e.stopPropagation(); acctBookMgrOpen = !acctBookMgrOpen; addDd.classList.toggle('show', acctBookMgrOpen); };
         addDd.onclick = function (e) { e.stopPropagation(); };   // clicks inside stay open
-        addDd.querySelectorAll('.acct-book-mgr-up').forEach(function (b) { b.onclick = function () { acctMoveBook(b.dataset.book, -1); }; });
-        addDd.querySelectorAll('.acct-book-mgr-down').forEach(function (b) { b.onclick = function () { acctMoveBook(b.dataset.book, 1); }; });
+        // Drag-to-reorder the manager rows (same persistence path as the tab drag).
+        addDd.querySelectorAll('.acct-book-mgr-row').forEach(function (row) {
+            row.addEventListener('dragstart', function (e) { row.classList.add('acct-dragging'); e.dataTransfer.setData('text/plain', row.dataset.book); e.dataTransfer.effectAllowed = 'move'; });
+            row.addEventListener('dragend', function () { row.classList.remove('acct-dragging'); addDd.querySelectorAll('.acct-book-mgr-row').forEach(function (r) { r.classList.remove('acct-drag-over'); }); });
+            row.addEventListener('dragover', function (e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; row.classList.add('acct-drag-over'); });
+            row.addEventListener('dragleave', function () { row.classList.remove('acct-drag-over'); });
+            row.addEventListener('drop', function (e) {
+                e.preventDefault(); row.classList.remove('acct-drag-over');
+                var dragId = e.dataTransfer.getData('text/plain');
+                if (dragId) acctReorderBook(dragId, row.dataset.book);
+            });
+        });
         addDd.querySelectorAll('.acct-book-mgr-toggle').forEach(function (b) { b.onclick = function () { acctToggleBookHidden(b.dataset.book); }; });
         addDd.querySelectorAll('.acct-book-mgr-name').forEach(function (n) {
             n.onclick = function () { acctBookMgrOpen = false; acctShowBook(n.dataset.book); };
@@ -2470,7 +2477,10 @@ function acctRenderLedgerTable() {
             '<th class="c-date">Date</th><th class="c-vch">Vch #</th><th class="c-contra">Contra ledger</th>' +
             '<th>Narration</th><th class="text-right c-amt">Debit</th><th class="text-right c-amt">Credit</th>' +
             '<th class="text-right c-amt">Balance</th></tr></thead><tbody>';
-        if (win.start && !q) {
+        // Only show the "brought forward" opening row when it is actually non-zero.
+        // For the current FY nothing predates the period start, so the carry-forward
+        // is 0 and would just duplicate the real Opening-Balance voucher below it.
+        if (win.start && !q && Math.round(opening * 100) !== 0) {
             html += '<tr class="acct-ld-opening"><td class="c-date">' + wmsEsc(acctFmtDate(win.start)) + '</td><td class="c-vch">—</td>' +
                 '<td colspan="2"><em>Opening balance</em></td><td class="text-right">-</td><td class="text-right">-</td>' +
                 '<td class="text-right">' + fmt(Math.abs(opening)) + (opening >= 0 ? ' Dr' : ' Cr') + '</td></tr>';
