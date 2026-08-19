@@ -1443,16 +1443,38 @@ async function acctOpenOpeningModal() {
     // here would be silently dropped.
     var rows = acctOpeningExistingRows();
 
-    // Only auto-manage investments when the book is CLOSED to a date. When it isn't,
-    // a saved security-ledger line is left EDITABLE (never hidden) so it can't be lost.
+    // Only auto-manage investments when the book is CLOSED to a date.
     var bookInv = (wmsRefData.investors || []).find(function (i) { return i.id === acctBookId; }) || {};
     var autoInvest = !!bookInv.books_closed_upto;
+
+    // Compute the trade-draw FIRST, so we know exactly which ledgers will be re-derived
+    // from THIS book's trades. Only those may be hidden from the editable prefill.
+    acctLoading(true);
+    var computed;
+    try { computed = await acctOpeningComputeInvestments(); }
+    finally { acctLoading(false); }
+    computed = computed || { securities: [], sttLines: [] };
+    var autoSecIds = {}; (computed.securities || []).forEach(function (s) { if (s.security_id) autoSecIds[s.security_id] = true; });
+    var autoRoles = {}; (computed.sttLines || []).forEach(function (r) { if (r.role) autoRoles[r.role] = true; });
+
+    // A saved ledger is "auto-drawn" (re-derived below) ONLY if it maps to a security in
+    // THIS book's trade-draw, or is an auto STT role. A manually-entered security ledger
+    // with no trades in this book — e.g. a PE holding carried purely as an opening balance —
+    // is NOT re-drawn, so it must stay editable; otherwise it vanishes on reopen and is lost
+    // on the next save (§A.6d.13: PE-JMS / PE-KTPL disappeared from Vikash's opening).
+    function acctIsAutoDrawnLedger(id) {
+        var lg = acctLedgers.find(function (x) { return x.id === id; });
+        if (!lg) return false;
+        if (lg.security_id && autoSecIds[lg.security_id]) return true;
+        if (lg.posting_role && autoRoles[lg.posting_role]) return true;
+        return false;
+    }
     function acctOpeningHideSaved(id) {
-        return acctLedgerName(id) === ACCT_OB_SUSPENSE || (autoInvest && acctIsAutoOpeningLedger(id));
+        return acctLedgerName(id) === ACCT_OB_SUSPENSE || (autoInvest && acctIsAutoDrawnLedger(id));
     }
 
     // Map every already-saved opening balance by ledger (minus the derived suspense
-    // plug and any auto-managed investment ledgers). Used to (a) prefill an amount
+    // plug and any auto-drawn investment ledgers). Used to (a) prefill an amount
     // when that ledger is picked again, and (b) flag the row with an alert icon.
     acctOpeningExisting = {};
     rows.forEach(function (r) {
@@ -1467,17 +1489,12 @@ async function acctOpenOpeningModal() {
         return { ledgerId: r.ledger_id, ledgerName: acctLedgerName(r.ledger_id), debit: dr ? String(dr) : '', credit: cr ? String(cr) : '' };
     }).filter(function (l) {
         // Drop the DERIVED suspense plug (recomputed on save) and — only on a closed
-        // book — the AUTO investment ledgers (re-derived below from the trade book).
+        // book — the ledgers actually re-derived below from the trade book.
         return l.ledgerId && !acctOpeningHideSaved(l.ledgerId);
     });
 
     // Prepend the auto lines (locked) drawn from the trade book: ONE consolidated
     // Investments line (double-click for the per-security breakdown) + any STT line.
-    acctLoading(true);
-    var computed;
-    try { computed = await acctOpeningComputeInvestments(); }
-    finally { acctLoading(false); }
-    computed = computed || { securities: [], sttLines: [] };
     var locked = [];
     var secs = computed.securities || [];
     if (secs.length) {
