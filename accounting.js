@@ -1461,7 +1461,7 @@ async function acctOpenOpeningModal() {
     // THIS book's trade-draw, or is an auto STT role. A manually-entered security ledger
     // with no trades in this book — e.g. a PE holding carried purely as an opening balance —
     // is NOT re-drawn, so it must stay editable; otherwise it vanishes on reopen and is lost
-    // on the next save (§A.6d.13: PE-JMS / PE-KTPL disappeared from Vikash's opening).
+    // on the next save (§A.6d.14: PE-JMS / PE-KTPL disappeared from Vikash's opening).
     function acctIsAutoDrawnLedger(id) {
         var lg = acctLedgers.find(function (x) { return x.id === id; });
         if (!lg) return false;
