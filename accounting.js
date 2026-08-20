@@ -3066,6 +3066,10 @@ function acctSetLedgerModal(lg) {
         : { global: true, bookIds: [] };
     var host = document.getElementById('acctEditLedgerScope');
     if (host) acctEditScopeCtrl = acctBookScopeControl(host, initial, null);
+    // Delete is offered only when editing a NON-system, non-role ledger (system /
+    // role ledgers are structural). The click still hard-guards against FK use.
+    var delBtn = document.getElementById('acctAddLedgerDelete');
+    if (delBtn) delBtn.style.display = (lg && !lg.is_system && !lg.posting_role) ? '' : 'none';
     if (acctAddLedgerModalCtrl) acctAddLedgerModalCtrl.open();
 }
 function acctOpenAddLedger() { acctEditingLedgerId = null; acctSetLedgerModal(null); }
@@ -3146,6 +3150,10 @@ function acctSetGroupModal(g) {
     var t = document.getElementById('acctAddGroupTitle'); if (t) t.textContent = g ? 'Edit Group' : 'Add Group';
     document.getElementById('acctNewGroupName').value = g ? g.name : '';
     document.getElementById('acctNewGroupParent').innerHTML = acctGroupSelectOptions(g ? g.parent_group_id : null);
+    // Delete offered only for a non-root, non-system group being edited. The click
+    // hard-guards against child groups / ledgers still in it.
+    var gDel = document.getElementById('acctAddGroupDelete');
+    if (gDel) gDel.style.display = (g && g.parent_group_id && !g.is_system) ? '' : 'none';
     if (acctAddGroupModalCtrl) acctAddGroupModalCtrl.open();
 }
 function acctOpenAddGroup() { acctEditingGroupId = null; acctSetGroupModal(null); }
@@ -3184,6 +3192,73 @@ async function acctSaveGroup() {
     } catch (e) {
         console.error('[accounting] save group failed', e);
         acctToast('Could not save group: ' + e.message, true);
+    }
+}
+
+// ---- Delete ledger / group (only when NOT referenced by an FK — esp. vouchers) ----
+// FK map (all NO ACTION): acct_voucher_lines.ledger_id → acct_ledgers;
+// acct_ledgers.group_id → acct_groups; acct_groups.parent_group_id → acct_groups.
+// We pre-check for a friendly message; the DB FK is the ultimate hard stop.
+async function acctDeleteLedger() {
+    var id = acctEditingLedgerId;
+    var lg = acctLedgers.find(function (x) { return x.id === id; });
+    if (!id || !lg) return;
+    if (lg.is_system || lg.posting_role) {
+        acctToast('“' + lg.name + '” is a system/role ledger and cannot be deleted.', true); return;
+    }
+    // Any voucher line (incl. cancelled — the FK still holds) blocks the delete.
+    var used;
+    try {
+        used = await wmsFetchAllRaw(acctUrl('acct_voucher_full?ledger_id=eq.' + id + '&select=voucher_id&limit=1')) || [];
+    } catch (e) { acctToast('Could not check voucher usage: ' + e.message, true); return; }
+    if (used.length) {
+        acctToast('“' + lg.name + '” is used in vouchers and cannot be deleted. Cancel/reassign those entries first.', true); return;
+    }
+    if (!confirm('Delete ledger “' + lg.name + '”? This cannot be undone.')) return;
+    try {
+        var resp = await fetch(acctUrl('acct_ledgers?id=eq.' + id), {
+            method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' })
+        });
+        if (!resp.ok) throw new Error((await resp.text()) || ('HTTP ' + resp.status));
+        acctEditingLedgerId = null;
+        if (acctAddLedgerModalCtrl) acctAddLedgerModalCtrl.close();
+        acctToast('Ledger “' + lg.name + '” deleted.');
+        await acctLoadCatalogue();
+        acctRenderActiveTab();
+    } catch (e) {
+        console.error('[accounting] delete ledger failed', e);
+        acctToast('Could not delete ledger: ' + e.message, true);
+    }
+}
+
+async function acctDeleteGroup() {
+    var id = acctEditingGroupId;
+    var g = acctGroupById[id];
+    if (!id || !g) return;
+    if (!g.parent_group_id) { acctToast('The five root groups are fixed and cannot be deleted.', true); return; }
+    if (g.is_system) { acctToast('“' + g.name + '” is a system group and cannot be deleted.', true); return; }
+    var kids = acctGroups.filter(function (x) { return x.parent_group_id === id; });
+    if (kids.length) {
+        acctToast('“' + g.name + '” has sub-group(s): ' + kids.map(function (k) { return k.name; }).join(', ') + '. Move or delete them first.', true); return;
+    }
+    var leds = acctLedgers.filter(function (x) { return x.group_id === id; });
+    if (leds.length) {
+        acctToast('“' + g.name + '” still has ' + leds.length + ' ledger(s). Move or delete them first.', true); return;
+    }
+    if (!confirm('Delete group “' + g.name + '”? This cannot be undone.')) return;
+    try {
+        var resp = await fetch(acctUrl('acct_groups?id=eq.' + id), {
+            method: 'DELETE', headers: wmsHeaders({ 'Prefer': 'return=minimal' })
+        });
+        if (!resp.ok) throw new Error((await resp.text()) || ('HTTP ' + resp.status));
+        acctEditingGroupId = null;
+        if (acctAddGroupModalCtrl) acctAddGroupModalCtrl.close();
+        acctToast('Group “' + g.name + '” deleted.');
+        await acctLoadCatalogue();
+        acctRenderActiveTab();
+    } catch (e) {
+        console.error('[accounting] delete group failed', e);
+        acctToast('Could not delete group: ' + e.message, true);
     }
 }
 
@@ -3251,6 +3326,8 @@ function acctWireModals() {
     document.getElementById('acctAddLedgerClose').onclick = function () { acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
     document.getElementById('acctAddLedgerCancel').onclick = function () { acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
     document.getElementById('acctAddLedgerSave').onclick = acctSaveLedger;
+    var acctLedDelBtn = document.getElementById('acctAddLedgerDelete');
+    if (acctLedDelBtn) acctLedDelBtn.onclick = acctDeleteLedger;
 
     // Bulk add ledgers/groups modal
     var buOverlay = document.getElementById('acctBulkModal');
@@ -3279,6 +3356,8 @@ function acctWireModals() {
     document.getElementById('acctAddGroupClose').onclick = function () { acctAddGroupModalCtrl && acctAddGroupModalCtrl.close(); };
     document.getElementById('acctAddGroupCancel').onclick = function () { acctAddGroupModalCtrl && acctAddGroupModalCtrl.close(); };
     document.getElementById('acctAddGroupSave').onclick = acctSaveGroup;
+    var acctGrpDelBtn = document.getElementById('acctAddGroupDelete');
+    if (acctGrpDelBtn) acctGrpDelBtn.onclick = acctDeleteGroup;
 
     // Rebuild report modal
     var rpOverlay = document.getElementById('acctReportModal');
