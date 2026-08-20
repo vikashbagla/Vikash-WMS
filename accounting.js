@@ -52,6 +52,7 @@ function acctTodayYmd() {
 // Plain rupee formatter for live voucher entry (actual amounts, no unit scaling).
 function acctNum(n) {
     n = Number(n) || 0;
+    if (Math.abs(n) < 0.005) return '-';   // exact / rounds-to-zero → dash (office-format zero convention), not 0.00 / (0.00)
     var s = Math.abs(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     return n < 0 ? '(' + s + ')' : s;
 }
@@ -71,6 +72,10 @@ function acctSetFullAmt(v) { acctFullAmt = !!v; try { localStorage.setItem(ACCT_
 // Display amount (used across BS / P&L / Trial Balance / Day Book / ledger drill-down).
 // Honours the module-wide full-amount toggle; otherwise scales by the app display unit.
 function acctAmt(n) {
+    // Zero is judged on the FULL amount (any rounds-to-zero → dash), in BOTH unit modes;
+    // a non-zero value then formats to the current unit (₹ '000 etc). So ₹0 → "-", but a
+    // tiny non-zero still formats (may read 0.00 in '000 — it isn't actually zero).
+    if (Math.abs(Number(n) || 0) < 0.005) return '-';
     if (acctFullAmt) return acctNum(n);
     if (typeof formatAmount === 'function') return formatAmount(n);
     return acctNum(n);
