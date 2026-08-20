@@ -1194,6 +1194,46 @@ function acctLedColHtml(roots, title) {
     roots.forEach(function (r) { h += acctLedGroupHtml(r, 0); });
     return h + '</div>';
 }
+// Renders ONLY the catalogue body (the two columns) + wires its rows. The command
+// line (with the search input) is left untouched, so live search keeps focus + caret
+// — the same pattern the Day Book search uses. Called by search/typing and group
+// toggles; the full acctRenderLedgers() rebuilds the command line too.
+function acctRenderLedgerBody() {
+    var el = document.getElementById('acctLedgersBody');
+    if (!el) return;
+    _acctLedSearching = !!acctLedSearch;
+    var roots = acctLedBuild();
+    // Split the natures across two columns, mirroring the Balance Sheet.
+    var rightNames = ['Assets'];
+    var leftRoots = [], rightRoots = [];
+    roots.forEach(function (r) { (rightNames.indexOf(r.label) >= 0 ? rightRoots : leftRoots).push(r); });
+    if (!roots.length) {
+        el.innerHTML = '<div class="acct-empty">Nothing matches &ldquo;' + wmsEsc(acctLedSearch) + '&rdquo;.</div>';
+    } else {
+        el.innerHTML = '<div class="acct-fin-cols acct-led-cols">' +
+            acctLedColHtml(leftRoots, 'Liabilities · Capital · Income · Expenses') +
+            acctLedColHtml(rightRoots, 'Assets') + '</div>';
+    }
+    // Group rows toggle collapse; the edit pencil inside must not also toggle.
+    el.querySelectorAll('.acct-led-grp[data-node]').forEach(function (row) {
+        row.onclick = function () {
+            acctLedCollapsed[row.dataset.node] = !acctLedCollapsed[row.dataset.node];
+            acctRenderLedgerBody();               // body-only: keeps the search input alive
+            if (acctLedCollapsed) acctSaveLedCollapse();
+        };
+    });
+    // Double-click a ledger row to edit it.
+    el.querySelectorAll('.acct-led-ledrow[data-ledger]').forEach(function (row) {
+        row.ondblclick = function () { acctOpenEditLedger(row.dataset.ledger); };
+    });
+    el.querySelectorAll('[data-edit-ledger]').forEach(function (b) {
+        b.onclick = function (e) { e.stopPropagation(); acctOpenEditLedger(b.dataset.editLedger); };
+    });
+    el.querySelectorAll('[data-edit-group]').forEach(function (b) {
+        b.onclick = function (e) { e.stopPropagation(); acctOpenEditGroup(b.dataset.editGroup); };
+    });
+}
+
 function acctRenderLedgers() {
     var el = document.getElementById('acctLedgersBody');
     if (!el) return;
@@ -1208,7 +1248,6 @@ function acctRenderLedgers() {
         acctLedCollapsed = {};
         allKeys.forEach(function (k) { acctLedCollapsed[k] = true; });
     }
-    _acctLedSearching = !!acctLedSearch;
 
     // One command line: ➕ New (bulk add), expand/collapse toggle + Summary, search.
     acctSetCmdFilters(
@@ -1216,46 +1255,15 @@ function acctRenderLedgers() {
         acctExpandCtrlHtml('acctLed') +
         '<input type="text" id="acctLedSearchInput" class="wms-input" placeholder="Search ledgers &amp; groups" value="' + wmsEsc(acctLedSearch) + '">');
 
-    // Split the natures across two columns, mirroring the Balance Sheet.
-    var rightNames = ['Assets'];
-    var leftRoots = [], rightRoots = [];
-    roots.forEach(function (r) { (rightNames.indexOf(r.label) >= 0 ? rightRoots : leftRoots).push(r); });
-
-    if (!roots.length) {
-        el.innerHTML = '<div class="acct-empty">Nothing matches &ldquo;' + wmsEsc(acctLedSearch) + '&rdquo;.</div>';
-    } else {
-        el.innerHTML = '<div class="acct-fin-cols acct-led-cols">' +
-            acctLedColHtml(leftRoots, 'Liabilities · Capital · Income · Expenses') +
-            acctLedColHtml(rightRoots, 'Assets') + '</div>';
-    }
-
-    // Group rows toggle collapse; the edit pencil inside must not also toggle.
-    el.querySelectorAll('.acct-led-grp[data-node]').forEach(function (row) {
-        row.onclick = function () {
-            acctLedCollapsed[row.dataset.node] = !acctLedCollapsed[row.dataset.node];
-            acctRenderLedgers();
-        };
-    });
-    // Double-click a ledger row to edit it.
-    el.querySelectorAll('.acct-led-ledrow[data-ledger]').forEach(function (row) {
-        row.ondblclick = function () { acctOpenEditLedger(row.dataset.ledger); };
-    });
-    el.querySelectorAll('[data-edit-ledger]').forEach(function (b) {
-        b.onclick = function (e) { e.stopPropagation(); acctOpenEditLedger(b.dataset.editLedger); };
-    });
-    el.querySelectorAll('[data-edit-group]').forEach(function (b) {
-        b.onclick = function (e) { e.stopPropagation(); acctOpenEditGroup(b.dataset.editGroup); };
-    });
+    acctRenderLedgerBody();
 
     var nb = document.getElementById('acctLedNew');
     if (nb) nb.onclick = acctOpenBulkAdd;
-    acctWireExpandCtrl('acctLed', function () { return allKeys; }, 'led', acctRenderLedgers);
+    acctWireExpandCtrl('acctLed', function () { return allKeys; }, 'led', acctRenderLedgerBody);
     var srch = document.getElementById('acctLedSearchInput');
     if (srch) srch.oninput = function () {
         acctLedSearch = srch.value;
-        acctRenderLedgers();
-        var s2 = document.getElementById('acctLedSearchInput');
-        if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); }
+        acctRenderLedgerBody();                   // body-only render → the input persists, focus + caret stay
     };
     if (acctLedCollapsed) acctSaveLedCollapse();
 }
@@ -3431,13 +3439,30 @@ async function acctResolveLedgers(keys, outMap) {
 // object; does NOT show UI (no confirm/loading/render). NOTE: on the dev site the
 // fetch interceptor routes "transactions" -> "transactions_dev" automatically.
 // Resolve a voucher-line ref -> ledger id (find-or-create auto ledgers).
+// Proper-case a security's full name for a new auto-created ledger (mirrors the
+// backend accounting-post helper) — a small keep-uppercase set for acronyms, the
+// rest Title Case. Names are cosmetic (ledgers key on security_id).
+function wmsProperSecName(companyName) {
+    if (!companyName) return '';
+    var KEEP = { ETF: 'ETF', REIT: 'REIT', NASDAQ: 'NASDAQ', BEES: 'BeES', PP: 'PP',
+        ICICI: 'ICICI', GHCL: 'GHCL', IFB: 'IFB', UPL: 'UPL', PG: 'PG', PC: 'PC', DDEV: 'DDEV', '1D': '1D' };
+    return String(companyName).trim().split(/\s+/).map(function (word) {
+        return word.replace(/[A-Za-z0-9]+/g, function (tok) {
+            var up = tok.toUpperCase();
+            if (KEEP[up]) return KEEP[up];
+            return tok.charAt(0).toUpperCase() + tok.slice(1).toLowerCase();
+        });
+    }).join(' ');
+}
+
 async function acctFindOrCreateAuto(fkCol, id) {
     var found = acctLedgers.find(function (x) { return x[fkCol] === id; });
     if (found) return found.id;
     var name, groupName, kind, extra = {};
     if (fkCol === 'security_id') {
         var sec = (wmsRefData.securitiesCmMap || {})[id] || {};
-        name = sec.symbol || sec.company_name || ('SEC ' + String(id).slice(0, 8));
+        // Full company name (Title Case), NOT the short symbol. Falls back to symbol only if the name is missing.
+        name = wmsProperSecName(sec.company_name) || sec.symbol || ('SEC ' + String(id).slice(0, 8));
         groupName = 'Listed Securities'; kind = 'SECURITY'; extra.security_id = id;
     } else if (fkCol === 'broker_id') {
         var b = (wmsRefData.brokers || []).find(function (x) { return x.id === id; }) || {};
