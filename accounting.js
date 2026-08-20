@@ -3439,13 +3439,30 @@ async function acctResolveLedgers(keys, outMap) {
 // object; does NOT show UI (no confirm/loading/render). NOTE: on the dev site the
 // fetch interceptor routes "transactions" -> "transactions_dev" automatically.
 // Resolve a voucher-line ref -> ledger id (find-or-create auto ledgers).
+// Proper-case a security's full name for a new auto-created ledger (mirrors the
+// backend accounting-post helper) — a small keep-uppercase set for acronyms, the
+// rest Title Case. Names are cosmetic (ledgers key on security_id).
+function wmsProperSecName(companyName) {
+    if (!companyName) return '';
+    var KEEP = { ETF: 'ETF', REIT: 'REIT', NASDAQ: 'NASDAQ', BEES: 'BeES', PP: 'PP',
+        ICICI: 'ICICI', GHCL: 'GHCL', IFB: 'IFB', UPL: 'UPL', PG: 'PG', PC: 'PC', DDEV: 'DDEV', '1D': '1D' };
+    return String(companyName).trim().split(/\s+/).map(function (word) {
+        return word.replace(/[A-Za-z0-9]+/g, function (tok) {
+            var up = tok.toUpperCase();
+            if (KEEP[up]) return KEEP[up];
+            return tok.charAt(0).toUpperCase() + tok.slice(1).toLowerCase();
+        });
+    }).join(' ');
+}
+
 async function acctFindOrCreateAuto(fkCol, id) {
     var found = acctLedgers.find(function (x) { return x[fkCol] === id; });
     if (found) return found.id;
     var name, groupName, kind, extra = {};
     if (fkCol === 'security_id') {
         var sec = (wmsRefData.securitiesCmMap || {})[id] || {};
-        name = sec.symbol || sec.company_name || ('SEC ' + String(id).slice(0, 8));
+        // Full company name (Title Case), NOT the short symbol. Falls back to symbol only if the name is missing.
+        name = wmsProperSecName(sec.company_name) || sec.symbol || ('SEC ' + String(id).slice(0, 8));
         groupName = 'Listed Securities'; kind = 'SECURITY'; extra.security_id = id;
     } else if (fkCol === 'broker_id') {
         var b = (wmsRefData.brokers || []).find(function (x) { return x.id === id; }) || {};
