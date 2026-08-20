@@ -1435,6 +1435,7 @@ async function acctOpeningComputeInvestments() {
     return { securities: securities, sttLines: sttLines };
 }
 
+var acctOpeningSuppressAutoDd = false;   // suppress the ledger dropdown on the initial modal-open focus
 async function acctOpenOpeningModal() {
     if (!acctBookId) { acctToast('Select a book first (enable accounting on an investor).', true); return; }
     if (acctViewBookIds().length > 1) { acctToast('Opening balances are per book — exit the consolidated view first.', true); return; }
@@ -1504,7 +1505,16 @@ async function acctOpenOpeningModal() {
             debit: String(totalInvest), credit: '', breakdown: secs, expanded: false });
     }
     (computed.sttLines || []).forEach(function (r) {
-        locked.push({ locked: true, kind: 'role', role: r.role, ledgerName: r.name, debit: String(r.cost), credit: '' });
+        // Prefer the STT amount SAVED on the existing opening voucher (if any) over the
+        // freshly-computed held-lot STT, so a manual override (e.g. keeping only the
+        // auditor-capitalised STT) survives a reopen instead of being recalculated.
+        var savedStt = null;
+        rows.forEach(function (rw) {
+            var lg = acctLedgers.find(function (x) { return x.id === rw.ledger_id; });
+            if (lg && lg.posting_role === r.role) savedStt = Number(rw.debit_amount) || 0;
+        });
+        var sttAmt = (savedStt != null) ? savedStt : r.cost;
+        locked.push({ locked: true, kind: 'role', role: r.role, ledgerName: r.name, debit: String(sttAmt), credit: '' });
     });
     acctOpeningLines = locked.concat(acctOpeningLines);
 
@@ -1528,7 +1538,7 @@ async function acctOpenOpeningModal() {
     // Land on the first empty ledger cell — the modal is typed top-down.
     setTimeout(function () {
         var first = document.querySelector('#acctOpeningLines .acct-line-ledger');
-        if (first) first.focus();
+        if (first) { acctOpeningSuppressAutoDd = true; first.focus(); }   // focus the field but don't pop the dropdown
     }, 60);
 }
 
@@ -1624,7 +1634,13 @@ function acctOpeningWireLedgerCell(input) {
         if (mark) mark.remove();                   // pick no longer confirmed
         render();
     });
-    input.addEventListener('focus', render);
+    input.addEventListener('focus', function () {
+        // On the initial modal-open focus, keep the caret on the field but DON'T pop the
+        // suggestion dropdown. It still opens when the user clicks or types.
+        if (acctOpeningSuppressAutoDd) { acctOpeningSuppressAutoDd = false; return; }
+        render();
+    });
+    input.addEventListener('click', render);
     dd.addEventListener('mousedown', function (e) {
         var it = e.target.closest ? e.target.closest('.wms-dd-item') : null;
         if (!it) return;
@@ -1653,11 +1669,13 @@ function acctOpeningWireAmountCell(inp) {
         }
         acctOpeningUpdateBalance();
     });
-    // Enter on an amount opens the next line (Tab falls through to native focus).
+    // Enter on an amount opens the next line; Tab off the last row's Credit field also
+    // adds a new row (same as the New Voucher modal).
     inp.addEventListener('keydown', function (e) {
-        if (e.key !== 'Enter') return;
-        e.preventDefault();
-        acctOpeningAddLine(true);
+        if (e.key === 'Enter') { e.preventDefault(); acctOpeningAddLine(true); return; }
+        if (e.key === 'Tab' && !e.shiftKey && field === 'credit' && idx === acctOpeningLines.length - 1) {
+            e.preventDefault(); acctOpeningAddLine(true);
+        }
     });
 }
 
@@ -1694,12 +1712,15 @@ function acctRenderOpeningLines() {
                 }
                 return html;
             }
-            // Simple locked line (the STT charge).
-            return '<tr data-idx="' + idx + '" class="acct-ob-locked">' +
-                '<td><span class="acct-ob-lock" title="Auto: drawn from the trade book. Change the trades to change this.">🔒</span> ' +
+            // STT charge line: the LEDGER is fixed (drawn from the trade book by role),
+            // but the AMOUNT is EDITABLE — e.g. keep only the STT the auditor capitalised
+            // into cost and expense the rest. acctSaveOpening reads this edited debit for
+            // the role line, so typing here overrides the auto-drawn held-lot STT.
+            return '<tr data-idx="' + idx + '" class="acct-ob-locked acct-ob-roleedit">' +
+                '<td><span class="acct-ob-lock" title="Ledger is fixed (drawn from the trade book); the amount is editable.">🔒</span> ' +
                     wmsEsc(ln.ledgerName || '') +
-                    '<span class="acct-dd-grp">' + (ln.kind === 'role' ? 'Charge' : 'Investment') + '</span></td>' +
-                '<td class="text-right acct-ob-lockamt">' + acctNum(acctParse(ln.debit)) + '</td>' +
+                    '<span class="acct-dd-grp">Charge · editable</span></td>' +
+                '<td class="text-right"><input type="text" class="acct-line-amt" data-idx="' + idx + '" data-field="debit" value="' + wmsEsc(ln.debit || '') + '"></td>' +
                 '<td class="text-right"></td>' +
                 '<td></td></tr>';
         }
