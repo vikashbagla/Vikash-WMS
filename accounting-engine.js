@@ -63,6 +63,35 @@
         else { lines.push({ ref: { role: 'TRADER_INCOME' }, debit: -spread, credit: 0 }); lines.push({ ref: { investor_id: t.trader_id }, debit: 0, credit: -spread }); }
     }
 
+    // Trader-perspective net — mirrors wms-shared.js wmsComputeDisplayNetAmount so the
+    // ledger F&O P&L equals the Statements figure BY CONSTRUCTION. For a CLIENT trade
+    // (trader ≠ investor) a BUY/SELL/RIGHTS_PAYMENT nets at the trader's OWN charges
+    // (gross ± trader_charges); every other case keeps the raw DB net_amount. Feed this
+    // to the F&O matcher so Accounting and Statements can never drift (owner 2026-08-20).
+    function acctDisplayNet(t) {
+        var inv = String(t.investor_id || '');
+        var tr = String(t.trader_id || '') || inv;
+        var dbNet = num(t.net_amount !== undefined ? t.net_amount : t.netAmount);
+        if (!tr || tr === inv) return dbNet;
+        var ty = ttype(t);
+        if (ty !== 'BUY' && ty !== 'SELL' && ty !== 'RIGHTS_PAYMENT') return dbNet;
+        var gross = absN(t.gross_amount), traderCh = absN(t.trader_charges);
+        return r2((ty === 'BUY' || ty === 'RIGHTS_PAYMENT') ? gross + traderCh : gross - traderCh);
+    }
+
+    // Posting book — a trade posts in the trader's PARENT book when trader ≠ investor
+    // (a client trade managed by another book), else in the investor book. When the
+    // trader has no parent it IS its own book. Drives parent-vs-investor routing so a
+    // trader's P&L lands in its parent and the investor book skips it (owner 2026-08-20).
+    function acctPostingBook(t, ctx) {
+        var inv = String(t.investor_id || '');
+        var tr = String(t.trader_id || '') || inv;
+        if (!tr || tr === inv) return inv;
+        var trInv = (ctx.investorById || {})[tr] || {};
+        var parent = trInv.book_parent_id ? String(trInv.book_parent_id) : '';
+        return (!parent || parent === tr) ? tr : parent;
+    }
+
     // ---- OWN legs -----------------------------------------------------------
     function buyOwn(t, ctx) {
         var total = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount), stt = absN(t.stt);
@@ -226,17 +255,19 @@
     }
     // Client F&O close: the P&L belongs to the CLIENT (trader ≠ investor), so the
     // client's ledger is updated for EVERY F&O booking, IRRESPECTIVE of the book's
-    // post_fno flag (owner rule 2026-08-15). Profit Dr FNO_PL / Cr Trader; loss reverse.
+    // post_fno flag (owner rule 2026-08-15). The P&L is already struck on the TRADER
+    // basis (acctDisplayNet feeds the matcher gross ± trader_charges), so it equals the
+    // Statements figure and there is NO separate charge spread for F&O — the trader
+    // charges are inside the P&L (owner rule 2026-08-20; the brokerage/charge spread
+    // stays an EQ-only concept). The voucher posts in the trader's PARENT book (the
+    // engine's posting-book filter routes it there). Profit Dr FNO_PL / Cr Trader; loss reverse.
     function fnoClient(t, ctx, gains) {
         var pnl = 0; (gains || []).forEach(function (g) { pnl += (g.gain || 0); });
         pnl = r2(pnl);
+        if (Math.round(pnl * 100) === 0) return { skip: 'F&O open / net-zero (no realised P&L)' };
         var lines = [];
-        if (Math.round(pnl * 100) !== 0) {
-            if (pnl >= 0) { lines.push({ ref: { role: 'FNO_PL' }, debit: pnl, credit: 0 }); lines.push({ ref: { investor_id: t.trader_id }, debit: 0, credit: pnl }); }
-            else { lines.push({ ref: { investor_id: t.trader_id }, debit: -pnl, credit: 0 }); lines.push({ ref: { role: 'FNO_PL' }, debit: 0, credit: -pnl }); }
-        }
-        pushSpread(lines, t);   // the charge spread is the book's income on every client F&O leg (owner rule 2026-08-15)
-        if (!lines.length) return { skip: 'F&O open / net-zero (no P&L, no spread)' };
+        if (pnl >= 0) { lines.push({ ref: { role: 'FNO_PL' }, debit: pnl, credit: 0 }); lines.push({ ref: { investor_id: t.trader_id }, debit: 0, credit: pnl }); }
+        else { lines.push({ ref: { investor_id: t.trader_id }, debit: -pnl, credit: 0 }); lines.push({ ref: { role: 'FNO_PL' }, debit: 0, credit: -pnl }); }
         return { type: 'PMS-FNO', narration: 'F&O ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
 
@@ -293,7 +324,7 @@
             var contract = String(t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
             var ben = (t.trader_id && String(t.trader_id) !== String(t.investor_id)) ? String(t.trader_id) : String(t.investor_id);
             rows.push({ key: ben + '|' + contract, type: ty, qty: absN(t.quantity),
-                net: absN(t.net_amount !== undefined ? t.net_amount : t.netAmount), id: String(t.id),
+                net: absN(acctDisplayNet(t)), id: String(t.id),
                 sort: String(t.transaction_date) + '|' + String(t.transaction_time || '') + '|' + String(t.created_at || '') });
         });
         var out = {};
@@ -387,7 +418,8 @@
     }
 
     // ---- orchestrator --------------------------------------------------------
-    // book = { id, post_fno }; trades = this book's transactions (investor_id === book.id).
+    // book = { id, post_fno }; trades = the book's own transactions PLUS its child
+    // traders' transactions (the caller fetches investor=book OR trader∈children).
     // ctx = { securityById, investorById, brokerById, fifo:function(txns){return {gains}} }.
     function acctEngineProcess(book, trades, ctx) {
         ctx.book = book;
@@ -399,6 +431,14 @@
                    String(a.transaction_time || '').localeCompare(String(b.transaction_time || '')) ||
                    String(a.created_at || '').localeCompare(String(b.created_at || ''));
         });
+
+        // Posting-book routing (owner rule 2026-08-20): keep only the trades that
+        // belong to THE BOOK being processed — a client trade (trader ≠ investor)
+        // posts in the trader's PARENT book, an own trade in the investor book. This
+        // makes a trader's buy+sell pool together in the parent's run (so the F&O
+        // matcher can cover the round-trip) and makes the investor book skip them
+        // entirely. Non-client trades are unaffected — their posting book IS this book.
+        sorted = sorted.filter(function (t) { return acctPostingBook(t, ctx) === String(book.id); });
 
         // Shared FIFO on STT-adjusted trades → gains grouped by the SELL txn id.
         var adjusted = wmsSttAdjustTxns(sorted, sttOn);
