@@ -52,6 +52,7 @@ function acctTodayYmd() {
 // Plain rupee formatter for live voucher entry (actual amounts, no unit scaling).
 function acctNum(n) {
     n = Number(n) || 0;
+    if (Math.abs(n) < 0.005) return '-';   // exact / rounds-to-zero → dash (office-format zero convention), not 0.00 / (0.00)
     var s = Math.abs(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     return n < 0 ? '(' + s + ')' : s;
 }
