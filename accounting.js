@@ -1194,6 +1194,46 @@ function acctLedColHtml(roots, title) {
     roots.forEach(function (r) { h += acctLedGroupHtml(r, 0); });
     return h + '</div>';
 }
+// Renders ONLY the catalogue body (the two columns) + wires its rows. The command
+// line (with the search input) is left untouched, so live search keeps focus + caret
+// — the same pattern the Day Book search uses. Called by search/typing and group
+// toggles; the full acctRenderLedgers() rebuilds the command line too.
+function acctRenderLedgerBody() {
+    var el = document.getElementById('acctLedgersBody');
+    if (!el) return;
+    _acctLedSearching = !!acctLedSearch;
+    var roots = acctLedBuild();
+    // Split the natures across two columns, mirroring the Balance Sheet.
+    var rightNames = ['Assets'];
+    var leftRoots = [], rightRoots = [];
+    roots.forEach(function (r) { (rightNames.indexOf(r.label) >= 0 ? rightRoots : leftRoots).push(r); });
+    if (!roots.length) {
+        el.innerHTML = '<div class="acct-empty">Nothing matches &ldquo;' + wmsEsc(acctLedSearch) + '&rdquo;.</div>';
+    } else {
+        el.innerHTML = '<div class="acct-fin-cols acct-led-cols">' +
+            acctLedColHtml(leftRoots, 'Liabilities · Capital · Income · Expenses') +
+            acctLedColHtml(rightRoots, 'Assets') + '</div>';
+    }
+    // Group rows toggle collapse; the edit pencil inside must not also toggle.
+    el.querySelectorAll('.acct-led-grp[data-node]').forEach(function (row) {
+        row.onclick = function () {
+            acctLedCollapsed[row.dataset.node] = !acctLedCollapsed[row.dataset.node];
+            acctRenderLedgerBody();               // body-only: keeps the search input alive
+            if (acctLedCollapsed) acctSaveLedCollapse();
+        };
+    });
+    // Double-click a ledger row to edit it.
+    el.querySelectorAll('.acct-led-ledrow[data-ledger]').forEach(function (row) {
+        row.ondblclick = function () { acctOpenEditLedger(row.dataset.ledger); };
+    });
+    el.querySelectorAll('[data-edit-ledger]').forEach(function (b) {
+        b.onclick = function (e) { e.stopPropagation(); acctOpenEditLedger(b.dataset.editLedger); };
+    });
+    el.querySelectorAll('[data-edit-group]').forEach(function (b) {
+        b.onclick = function (e) { e.stopPropagation(); acctOpenEditGroup(b.dataset.editGroup); };
+    });
+}
+
 function acctRenderLedgers() {
     var el = document.getElementById('acctLedgersBody');
     if (!el) return;
@@ -1208,7 +1248,6 @@ function acctRenderLedgers() {
         acctLedCollapsed = {};
         allKeys.forEach(function (k) { acctLedCollapsed[k] = true; });
     }
-    _acctLedSearching = !!acctLedSearch;
 
     // One command line: ➕ New (bulk add), expand/collapse toggle + Summary, search.
     acctSetCmdFilters(
@@ -1216,46 +1255,15 @@ function acctRenderLedgers() {
         acctExpandCtrlHtml('acctLed') +
         '<input type="text" id="acctLedSearchInput" class="wms-input" placeholder="Search ledgers &amp; groups" value="' + wmsEsc(acctLedSearch) + '">');
 
-    // Split the natures across two columns, mirroring the Balance Sheet.
-    var rightNames = ['Assets'];
-    var leftRoots = [], rightRoots = [];
-    roots.forEach(function (r) { (rightNames.indexOf(r.label) >= 0 ? rightRoots : leftRoots).push(r); });
-
-    if (!roots.length) {
-        el.innerHTML = '<div class="acct-empty">Nothing matches &ldquo;' + wmsEsc(acctLedSearch) + '&rdquo;.</div>';
-    } else {
-        el.innerHTML = '<div class="acct-fin-cols acct-led-cols">' +
-            acctLedColHtml(leftRoots, 'Liabilities · Capital · Income · Expenses') +
-            acctLedColHtml(rightRoots, 'Assets') + '</div>';
-    }
-
-    // Group rows toggle collapse; the edit pencil inside must not also toggle.
-    el.querySelectorAll('.acct-led-grp[data-node]').forEach(function (row) {
-        row.onclick = function () {
-            acctLedCollapsed[row.dataset.node] = !acctLedCollapsed[row.dataset.node];
-            acctRenderLedgers();
-        };
-    });
-    // Double-click a ledger row to edit it.
-    el.querySelectorAll('.acct-led-ledrow[data-ledger]').forEach(function (row) {
-        row.ondblclick = function () { acctOpenEditLedger(row.dataset.ledger); };
-    });
-    el.querySelectorAll('[data-edit-ledger]').forEach(function (b) {
-        b.onclick = function (e) { e.stopPropagation(); acctOpenEditLedger(b.dataset.editLedger); };
-    });
-    el.querySelectorAll('[data-edit-group]').forEach(function (b) {
-        b.onclick = function (e) { e.stopPropagation(); acctOpenEditGroup(b.dataset.editGroup); };
-    });
+    acctRenderLedgerBody();
 
     var nb = document.getElementById('acctLedNew');
     if (nb) nb.onclick = acctOpenBulkAdd;
-    acctWireExpandCtrl('acctLed', function () { return allKeys; }, 'led', acctRenderLedgers);
+    acctWireExpandCtrl('acctLed', function () { return allKeys; }, 'led', acctRenderLedgerBody);
     var srch = document.getElementById('acctLedSearchInput');
     if (srch) srch.oninput = function () {
         acctLedSearch = srch.value;
-        acctRenderLedgers();
-        var s2 = document.getElementById('acctLedSearchInput');
-        if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); }
+        acctRenderLedgerBody();                   // body-only render → the input persists, focus + caret stay
     };
     if (acctLedCollapsed) acctSaveLedCollapse();
 }
