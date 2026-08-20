@@ -1694,12 +1694,15 @@ function acctRenderOpeningLines() {
                 }
                 return html;
             }
-            // Simple locked line (the STT charge).
-            return '<tr data-idx="' + idx + '" class="acct-ob-locked">' +
-                '<td><span class="acct-ob-lock" title="Auto: drawn from the trade book. Change the trades to change this.">🔒</span> ' +
+            // STT charge line: the LEDGER is fixed (drawn from the trade book by role),
+            // but the AMOUNT is EDITABLE — e.g. keep only the STT the auditor capitalised
+            // into cost and expense the rest. acctSaveOpening reads this edited debit for
+            // the role line, so typing here overrides the auto-drawn held-lot STT.
+            return '<tr data-idx="' + idx + '" class="acct-ob-locked acct-ob-roleedit">' +
+                '<td><span class="acct-ob-lock" title="Ledger is fixed (drawn from the trade book); the amount is editable.">🔒</span> ' +
                     wmsEsc(ln.ledgerName || '') +
-                    '<span class="acct-dd-grp">' + (ln.kind === 'role' ? 'Charge' : 'Investment') + '</span></td>' +
-                '<td class="text-right acct-ob-lockamt">' + acctNum(acctParse(ln.debit)) + '</td>' +
+                    '<span class="acct-dd-grp">Charge · editable</span></td>' +
+                '<td class="text-right"><input type="text" class="acct-line-amt" data-idx="' + idx + '" data-field="debit" value="' + wmsEsc(ln.debit || '') + '"></td>' +
                 '<td class="text-right"></td>' +
                 '<td></td></tr>';
         }
