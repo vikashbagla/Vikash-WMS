@@ -149,10 +149,14 @@ const mixed = [
   cli({ id: 'm6', transaction_type: 'RIGHTS_PAYMENT', security_id: 'EQ1', net_amount: 100000, total_charges: 0, trader_charges: 500, transaction_date: '2026-05-20' })
 ];
 const res = acctEngineProcess({ id: 'B0', post_fno: true }, mixed, Object.assign({}, ctx, { fifo: function (txns) {
-  // minimal FIFO stub for the EQ round-trips above (own m1/m2, client m3/m4)
-  return { gains: [
-    { sellTxnId: 'm2', qty: 100, buyCost: 10000, gain: 2000, buyDate: '2026-04-01', sellDate: '2026-05-01', securityType: 'EQUITY' }
-  ] };
+  // minimal FIFO stub for the EQ round-trips above (own m1/m2, client m3/m4).
+  // Input-aware: B0 is STT-in-cost, so the engine runs FIFO PER BENEFICIARY and
+  // calls this once per group — return only the gain for the sell present in txns.
+  var ids = (txns || []).map(function (t) { return t.id; });
+  var g = [];
+  if (ids.indexOf('m2') >= 0) g.push({ sellTxnId: 'm2', qty: 100, buyCost: 10000, gain: 2000, buyDate: '2026-04-01', sellDate: '2026-05-01', securityType: 'EQUITY' });
+  if (ids.indexOf('m4') >= 0) g.push({ sellTxnId: 'm4', qty: 100, buyCost: 9040, gain: 3960, buyDate: '2026-04-15', sellDate: '2026-06-01', securityType: 'EQUITY' });
+  return { gains: g };
 } }));
 ok('mixed book: every posted voucher balances', res.vouchers.length > 0 && res.vouchers.every(function (vv) { return voucherBalances(vv.lines); }));
 ok('mixed book: no critical exceptions', !res.exceptions.some(function (e) { return e.severity === 'critical'; }));

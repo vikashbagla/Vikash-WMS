@@ -442,13 +442,30 @@
 
         // Shared FIFO on STT-adjusted trades → gains grouped by the SELL txn id.
         var adjusted = wmsSttAdjustTxns(sorted, sttOn);
-        // Equity CG FIFO runs POOLED at the BOOK level — all trades in the book,
-        // any trader — because that is the book's TAX P&L and cannot depend on the
-        // trader split (owner, 2026-08-15). REVERTED here to the original book-level
-        // FIFO; the per-beneficiary attempt was wrong. The new dual engine (book-tax
-        // FIFO + separate per-trader settlement FIFO that posts to the trader's
-        // PARENT book) is being finalised separately before any change ships.
-        var fifo = ctx.fifo(adjusted) || { gains: [] };
+        // Equity CG FIFO — pooling level gated on the BOOK's stt_accounting_method
+        // (owner 2026-08-21, refining the 2026-08-15 book-level decision):
+        //   • STT accounted SEPARATELY (family investor books — VB/HUF/KDB/AJ/Veins/
+        //     Zoulz) → POOL at BOOK level: one tax P&L for the whole demat, so a
+        //     trader split would wrongly fragment the FIFO tax lots.
+        //   • STT IN COST (T0 + PMS trader books) → POOL PER BENEFICIARY: there is no
+        //     separate book tax return, so a book's own lots and each client's lots in
+        //     the same scrip must not mix. Mirrors acctFnoRealised (F&O already keyed
+        //     per beneficiary). Gains are keyed by sellTxnId, so merging disjoint
+        //     per-beneficiary groups is exact.
+        var bookSttSep = !!(ctx.investorById[String(book.id)] || {}).stt_accounting_method;
+        var fifo;
+        if (bookSttSep) {
+            fifo = ctx.fifo(adjusted) || { gains: [] };            // book-level pooled (unchanged)
+        } else {
+            var _byBen = {};
+            adjusted.forEach(function (t) {
+                var ben = (t.trader_id && String(t.trader_id) !== String(t.investor_id)) ? String(t.trader_id) : String(t.investor_id);
+                (_byBen[ben] = _byBen[ben] || []).push(t);
+            });
+            var _g = [];
+            Object.keys(_byBen).forEach(function (k) { _g = _g.concat((ctx.fifo(_byBen[k]) || { gains: [] }).gains || []); });
+            fifo = { gains: _g };
+        }
         var gainsBySell = {};
         (fifo.gains || []).forEach(function (g) { var k = String(g.sellTxnId); (gainsBySell[k] = gainsBySell[k] || []).push(g); });
 
