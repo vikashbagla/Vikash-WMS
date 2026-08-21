@@ -1237,11 +1237,11 @@ function _wmsFormulaFinalize(el, loud) {
 }
 
 // ===========================================================================
-// GLOBAL FULL-AMOUNT TOGGLE (F2)
+// GLOBAL FULL-AMOUNT TOGGLE (F4)
 // One app-wide switch (flag + formatters live in utils.js) that flips every
 // money view between the user's display unit (₹ '000 / Lakhs …) and full
-// rupees. Bound to F2 — a safe function key (browsers reserve F3=Find,
-// F5=reload, F6=address bar; F2 has no default action). Owner request
+// rupees. Bound to F4 — a safe function key (browsers reserve F3=Find,
+// F5=reload, F6=address bar; F4 is unbound in browsers and in-app; F2 is taken by the accounting date-picker). Owner request
 // 2026-08-21. The accounting header/ledger buttons drive the SAME flag.
 // ===========================================================================
 
@@ -1291,21 +1291,21 @@ function wmsToggleFullAmount() {
     wmsRerenderAmounts();
     if (typeof showAlert === 'function') {
         var msg = wmsIsFullAmount()
-            ? 'Showing full amounts · F2 to toggle'
-            : ('Showing ' + ((typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000") + ' · F2 to toggle');
+            ? 'Showing full amounts · F4 to toggle'
+            : ('Showing ' + ((typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000") + ' · F4 to toggle');
         showAlert(msg, 'info', 2000);
     }
 }
 window.wmsToggleFullAmount = wmsToggleFullAmount;
 window.wmsRerenderAmounts = wmsRerenderAmounts;
 
-// Bind F2 once (capture phase so it beats any element-level handler; F2 has no
+// Bind F4 once (capture phase so it beats any element-level handler; F4 has no
 // native browser action, but preventDefault keeps it inert everywhere).
 (function wmsInstallFullAmountShortcut() {
     if (window._wmsFullAmtShortcut) return;
     window._wmsFullAmtShortcut = true;
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && !e.repeat) {
+        if (e.key === 'F4' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && !e.repeat) {
             e.preventDefault();
             wmsToggleFullAmount();
         }
