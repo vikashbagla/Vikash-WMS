@@ -86,10 +86,35 @@
     function acctPostingBook(t, ctx) {
         var inv = String(t.investor_id || '');
         var tr = String(t.trader_id || '') || inv;
-        if (!tr || tr === inv) return inv;
-        var trInv = (ctx.investorById || {})[tr] || {};
-        var parent = trInv.book_parent_id ? String(trInv.book_parent_id) : '';
-        return (!parent || parent === tr) ? tr : parent;
+        // Beneficiary = trader (client) else investor (own). Route to the beneficiary's
+        // PARENT book when it has one - INCLUDING the "direct" case trader===investor for
+        // a sub-trader (T3's own CS legs post in T0). Owner 2026-08-21.
+        var entity = (tr && tr !== inv) ? tr : inv;
+        var e = (ctx.investorById || {})[entity] || {};
+        var parent = e.book_parent_id ? String(e.book_parent_id) : '';
+        return (!parent || parent === entity) ? entity : parent;
+    }
+
+    // "Direct" trade: investor === trader AND that entity is a sub-trader (has a parent
+    // book). Only these (today: T3's own CS legs) are the legacy direct book kept out of
+    // a trader's PMS routing. They post in the parent as a CLIENT trade, with the broker
+    // leg on a beneficiary-scoped ledger (e.g. "CS - T3") and NO brokerage spread (the
+    // book took no markup). Owner 2026-08-21.
+    function acctIsDirect(t, ctx) {
+        var inv = String(t.investor_id || '');
+        var tr = String(t.trader_id || '') || inv;
+        if (tr !== inv) return false;
+        var e = (ctx.investorById || {})[inv] || {};
+        return !!e.book_parent_id;
+    }
+    function acctClientSpread(t, ctx) {
+        if (acctIsDirect(t, ctx)) return 0;                       // direct: client bears the broker charge in full
+        return r2(absN(t.trader_charges) - absN(t.total_charges));
+    }
+    function acctClientBrokerRef(t, ctx) {
+        return acctIsDirect(t, ctx)
+            ? { broker_id: t.broker_id, investor_id: String(t.investor_id) }   // scoped "CS - T3" ledger
+            : { broker_id: t.broker_id };
     }
 
     // ---- OWN legs -----------------------------------------------------------
@@ -220,16 +245,16 @@
     // BUY: Dr Client [net + spread]; Cr Broker [net]; Cr Trader Income [spread].
     function buyClient(t, ctx) {
         var net = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount);
-        var spread = r2(absN(t.trader_charges) - absN(t.total_charges));
-        var lines = [{ ref: { investor_id: t.trader_id }, debit: r2(net + spread), credit: 0 }, { ref: { broker_id: t.broker_id }, debit: 0, credit: r2(net) }];
+        var spread = acctClientSpread(t, ctx);
+        var lines = [{ ref: { investor_id: t.trader_id }, debit: r2(net + spread), credit: 0 }, { ref: acctClientBrokerRef(t, ctx), debit: 0, credit: r2(net) }];
         if (Math.round(spread * 100) !== 0) lines.push({ ref: { role: 'TRADER_INCOME' }, debit: 0, credit: r2(spread) });
         return { type: 'PMS-BUY', narration: 'Buy ' + absN(t.quantity) + ' ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
     // SELL: Dr Broker [net]; Cr Client [net − spread]; Cr Trader Income [spread].
     function sellClient(t, ctx) {
         var net = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount);
-        var spread = r2(absN(t.trader_charges) - absN(t.total_charges));
-        var lines = [{ ref: { broker_id: t.broker_id }, debit: r2(net), credit: 0 }, { ref: { investor_id: t.trader_id }, debit: 0, credit: r2(net - spread) }];
+        var spread = acctClientSpread(t, ctx);
+        var lines = [{ ref: acctClientBrokerRef(t, ctx), debit: r2(net), credit: 0 }, { ref: { investor_id: t.trader_id }, debit: 0, credit: r2(net - spread) }];
         if (Math.round(spread * 100) !== 0) lines.push({ ref: { role: 'TRADER_INCOME' }, debit: 0, credit: r2(spread) });
         return { type: 'PMS-SELL', narration: 'Sell ' + absN(t.quantity) + ' ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
@@ -346,7 +371,12 @@
         if (ty === 'HISTORICAL_PL') return { skip: 'historical (pre-period)' };
         if (ty === 'SPLIT' || ty === 'BONUS' || ty === 'RIGHTS_ENTITLEMENT') return { skip: 'quantity-only, no posting' };
         if (ty === 'DEMERGER') return { skip: 'handled as a grouped event' };
-        var client = !!(t.trader_id && String(t.trader_id) !== String(t.investor_id));
+        var _book = (ctx.book && ctx.book.id != null) ? String(ctx.book.id) : null;
+        var _ben = (t.trader_id && String(t.trader_id) !== String(t.investor_id)) ? String(t.trader_id) : String(t.investor_id);
+        // A trade is a CLIENT trade of THIS book when its beneficiary is not the book -
+        // this makes a direct sub-trader trade (T3 own) a client of its parent (T0),
+        // not an own trade. Falls back to trader<>investor when ctx.book is absent (unit tests).
+        var client = _book ? (_ben !== _book) : !!(t.trader_id && String(t.trader_id) !== String(t.investor_id));
         if (isFno(t)) {
             if (isOption(t)) {   // options: premium is cash (match Statements) — no FIFO P&L
                 if (ty === 'BUY') return client ? buyClient(t, ctx) : optionOwn(t, ctx);

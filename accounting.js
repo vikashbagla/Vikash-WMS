@@ -3458,7 +3458,14 @@ function wmsProperSecName(companyName) {
 }
 
 async function acctFindOrCreateAuto(fkCol, id) {
-    var found = acctLedgers.find(function (x) { return x[fkCol] === id; });
+    var found = acctLedgers.find(function (x) {
+        // broker/trader finds must exclude the beneficiary-SCOPED broker ledgers
+        // (broker_id AND investor_id both set, e.g. "CS - T3"), else a plain {broker_id}
+        // or {investor_id} ref could resolve to the wrong scoped ledger. Owner 2026-08-21.
+        if (fkCol === 'broker_id') return x.broker_id === id && !x.investor_id;
+        if (fkCol === 'investor_id') return x.investor_id === id && !x.broker_id && !x.security_id;
+        return x[fkCol] === id;
+    });
     if (found) return found.id;
     var name, groupName, kind, extra = {};
     if (fkCol === 'security_id') {
@@ -3488,6 +3495,28 @@ async function acctFindOrCreateAuto(fkCol, id) {
     return row.id;
 }
 
+// Beneficiary-SCOPED broker ledger (broker_id AND investor_id) - e.g. "CS - T3" for a
+// direct sub-trader's own broker legs, kept separate from the book's own broker ledger.
+// Auto-created like every other broker/trader/security ledger (no role, no SQL). 2026-08-21.
+async function acctFindOrCreateScopedBroker(brokerId, investorId) {
+    var found = acctLedgers.find(function (x) { return x.ledger_kind === 'BROKER' && x.broker_id === brokerId && x.investor_id === investorId; });
+    if (found) return found.id;
+    var b = (wmsRefData.brokers || []).find(function (x) { return x.id === brokerId; }) || {};
+    var inv = (wmsRefData.investors || []).find(function (x) { return x.id === investorId; }) || {};
+    var name = (b.broker_code || b.name || 'Broker') + ' - ' + (inv.short_name || inv.name || String(investorId).slice(0, 8));
+    var grp = acctGroups.find(function (g) { return g.name === 'Brokers'; });
+    if (!grp) throw new Error('Group "Brokers" not found (run migration 74/75)');
+    var body = { name: name, group_id: grp.id, ledger_kind: 'BROKER', is_global: true, is_system: false, broker_id: brokerId, investor_id: investorId };
+    var resp = await fetch(acctUrl('acct_ledgers'), {
+        method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+        body: JSON.stringify(body)
+    });
+    if (!resp.ok) throw new Error('Create scoped broker ledger "' + name + '" failed: ' + (await resp.text()));
+    var row = (await resp.json())[0];
+    acctLedgers.push(row);
+    return row.id;
+}
+
 async function acctResolveRef(ref) {
     if (ref.role) {
         var l = acctLedgers.find(function (x) { return x.posting_role === ref.role; });
@@ -3495,6 +3524,7 @@ async function acctResolveRef(ref) {
         throw new Error('No ledger for role "' + ref.role + '" (run migration 74)');
     }
     if (ref.security_id) return await acctFindOrCreateAuto('security_id', ref.security_id);
+    if (ref.broker_id && ref.investor_id) return await acctFindOrCreateScopedBroker(ref.broker_id, ref.investor_id);
     if (ref.broker_id) return await acctFindOrCreateAuto('broker_id', ref.broker_id);
     if (ref.investor_id) return await acctFindOrCreateAuto('investor_id', ref.investor_id);
     throw new Error('Unresolvable ledger ref: ' + JSON.stringify(ref));
