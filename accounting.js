@@ -73,7 +73,7 @@ function acctAmt(n) {
     // a non-zero value then formats to the current unit (₹ '000 etc). So ₹0 → "-", but a
     // tiny non-zero still formats (may read 0.00 in '000 — it isn't actually zero).
     if (Math.abs(Number(n) || 0) < 0.005) return '-';
-    if (typeof wmsIsFullAmount === 'function' && wmsIsFullAmount()) return acctNum(n);
+    if (typeof wmsIsFullAmount === 'function' && wmsIsFullAmount()) return (typeof formatAmountRaw === 'function') ? formatAmountRaw(n) : acctNum(n);
     if (typeof formatAmount === 'function') return formatAmount(n);
     return acctNum(n);
 }

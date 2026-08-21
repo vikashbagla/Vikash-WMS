@@ -52,9 +52,9 @@ function getUnitConfig(unit) {
 
 // Effective unit config used by ALL display formatters. When the global
 // full-amount override is ON, amounts are shown in full rupees (divisor 1,
-// no suffix, Indian commas); otherwise the user's real display unit applies.
+// no suffix, and the user's REAL unit comma style — international for thousands/millions, Indian for lakhs/crores); otherwise the real display unit applies.
 function getEffectiveUnitConfig() {
-    if (_wmsFullAmount) return { divisor: 1, suffix: '', comma: 'indian' };
+    if (_wmsFullAmount) return { divisor: 1, suffix: '', comma: getUnitConfig(getDisplayUnit()).comma };
     return getUnitConfig(getDisplayUnit());
 }
 
