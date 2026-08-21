@@ -1236,6 +1236,82 @@ function _wmsFormulaFinalize(el, loud) {
     }
 }
 
+// ===========================================================================
+// GLOBAL FULL-AMOUNT TOGGLE (F2)
+// One app-wide switch (flag + formatters live in utils.js) that flips every
+// money view between the user's display unit (₹ '000 / Lakhs …) and full
+// rupees. Bound to F2 — a safe function key (browsers reserve F3=Find,
+// F5=reload, F6=address bar; F2 has no default action). Owner request
+// 2026-08-21. The accounting header/ledger buttons drive the SAME flag.
+// ===========================================================================
+
+// Re-render whichever money view is currently on screen so amounts re-format.
+function wmsRerenderAmounts() {
+    // Accounting page (detected via its header toggle button).
+    try {
+        if (document.getElementById('acctUnitToggle') && typeof acctRenderActiveTab === 'function') {
+            if (typeof acctSyncUnitToggle === 'function') acctSyncUnitToggle();
+            acctRenderActiveTab();
+            if (typeof acctLedgerModalCtrl !== 'undefined' && acctLedgerModalCtrl &&
+                acctLedgerModalCtrl.isOpen() && typeof acctRenderLedgerDetail === 'function') {
+                acctRenderLedgerDetail();
+            }
+        }
+    } catch (err) { console.warn('full-amount: accounting re-render failed', err); }
+
+    // Trading — re-render the active tab fully (wmsRefreshRender under-renders
+    // Statements + Transactions, so those get their own full render).
+    try {
+        if (document.getElementById('tr-portfolio')) {
+            var at = document.querySelector('.trading-tab-content.active');
+            var id = at ? at.id : '';
+            if (id === 'tr-ledger' && typeof lgRefresh === 'function') {
+                lgRefresh();
+            } else if (id === 'tr-transactions' && typeof trTxRender === 'function') {
+                trTxRender();
+            } else if (typeof wmsRefreshRender === 'function') {
+                wmsRefreshRender();   // portfolio / F&O / watchlist
+            }
+        }
+    } catch (err) { console.warn('full-amount: trading re-render failed', err); }
+
+    // Reports.
+    try {
+        if (document.getElementById('rptPortfolioBody') && typeof rptRenderPortfolio === 'function') {
+            rptRenderPortfolio();
+        }
+    } catch (err) { console.warn('full-amount: reports re-render failed', err); }
+}
+
+// Flip the global full-amount flag, re-render, and confirm with a brief toast
+// that also teaches the shortcut.
+function wmsToggleFullAmount() {
+    if (typeof wmsSetFullAmount !== 'function' || typeof wmsIsFullAmount !== 'function') return;
+    wmsSetFullAmount(!wmsIsFullAmount());
+    wmsRerenderAmounts();
+    if (typeof showAlert === 'function') {
+        var msg = wmsIsFullAmount()
+            ? 'Showing full amounts · F2 to toggle'
+            : ('Showing ' + ((typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000") + ' · F2 to toggle');
+        showAlert(msg, 'info', 2000);
+    }
+}
+window.wmsToggleFullAmount = wmsToggleFullAmount;
+window.wmsRerenderAmounts = wmsRerenderAmounts;
+
+// Bind F2 once (capture phase so it beats any element-level handler; F2 has no
+// native browser action, but preventDefault keeps it inert everywhere).
+(function wmsInstallFullAmountShortcut() {
+    if (window._wmsFullAmtShortcut) return;
+    window._wmsFullAmtShortcut = true;
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && !e.repeat) {
+            e.preventDefault();
+            wmsToggleFullAmount();
+        }
+    }, true);
+})();
+
 /**
  * Install the global formula-input handlers. Call once at app startup.
  * Idempotent — safe to call multiple times.

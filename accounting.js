@@ -61,22 +61,19 @@ function acctParse(v) {
     var n = parseFloat(String(v).replace(/,/g, ''));
     return isNaN(n) ? 0 : n;
 }
-// Module-wide "show full rupees" toggle (persistent). When on, every accounting view
-// shows full amounts; when off, the app's display unit (₹ '000) applies. One switch
-// for the whole module (owner request 2026-08-18).
-var ACCT_FULLAMT_KEY = 'wms_acct_full_amount';
-var acctFullAmt = false;
-try { acctFullAmt = localStorage.getItem(ACCT_FULLAMT_KEY) === '1'; } catch (e) {}
-function acctSetFullAmt(v) { acctFullAmt = !!v; try { localStorage.setItem(ACCT_FULLAMT_KEY, v ? '1' : '0'); } catch (e) {} }
+// Full-amount display is now a GLOBAL app setting (utils.js, toggled by F2 or the
+// header button). These references delegate to wmsIsFullAmount()/wmsSetFullAmount()
+// so accounting and every other module stay in sync. (Was a module-local flag
+// 'wms_acct_full_amount' — owner request 2026-08-18; made global 2026-08-21.)
 
 // Display amount (used across BS / P&L / Trial Balance / Day Book / ledger drill-down).
-// Honours the module-wide full-amount toggle; otherwise scales by the app display unit.
+// Honours the global full-amount toggle; otherwise scales by the app display unit.
 function acctAmt(n) {
     // Zero is judged on the FULL amount (any rounds-to-zero → dash), in BOTH unit modes;
     // a non-zero value then formats to the current unit (₹ '000 etc). So ₹0 → "-", but a
     // tiny non-zero still formats (may read 0.00 in '000 — it isn't actually zero).
     if (Math.abs(Number(n) || 0) < 0.005) return '-';
-    if (acctFullAmt) return acctNum(n);
+    if (typeof wmsIsFullAmount === 'function' && wmsIsFullAmount()) return acctNum(n);
     if (typeof formatAmount === 'function') return formatAmount(n);
     return acctNum(n);
 }
@@ -444,7 +441,7 @@ function acctWireUI() {
     // Module-wide full-amount toggle (header). Applies to every accounting view.
     var unitBtn = document.getElementById('acctUnitToggle');
     if (unitBtn) unitBtn.onclick = function () {
-        acctSetFullAmt(!acctFullAmt);
+        wmsSetFullAmount(!wmsIsFullAmount());
         acctRenderActiveTab();
         acctSyncUnitToggle();
         if (acctLedgerModalCtrl && acctLedgerModalCtrl.isOpen()) acctRenderLedgerDetail();
@@ -644,16 +641,16 @@ function acctSyncUnitToggle() {
     // Full rupees are much wider than ₹ '000; widen the fixed amount columns via a
     // container class so figures don't overflow their boxes and misalign.
     var cont = document.querySelector('.acct-container');
-    if (cont) cont.classList.toggle('acct-fullamt', acctFullAmt);
+    if (cont) cont.classList.toggle('acct-fullamt', wmsIsFullAmount());
     var btn = document.getElementById('acctUnitToggle');
     if (!btn) return;
     btn.style.display = (acctViewBookIds().length && acctVoucherRows.length) ? '' : 'none';
-    var base = (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
-    btn.textContent = acctFullAmt ? ('Show in ' + base) : 'Show full amount';
+    var base = (typeof getRealUnitDescription === 'function' ? getRealUnitDescription() : "₹ '000");
+    btn.textContent = wmsIsFullAmount() ? ('Show in ' + base) : 'Show full amount';
 }
 
 function acctUnitLabel() {
-    if (acctFullAmt) return 'Full ₹';
+    if (wmsIsFullAmount()) return 'Full ₹';
     // The whole app scales amounts by the user's display-unit preference; say so,
     // otherwise a figure in '000 is indistinguishable from one in rupees.
     try { if (typeof getUnitDescription === 'function') return getUnitDescription(); } catch (e) {}
@@ -950,7 +947,7 @@ function acctRenderTrialBalance() {
         acctExpandCtrlHtml('acctTb') +
         '<label class="acct-fin-zero"><input type="checkbox" id="acctTbShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero</label>');
 
-    var W = 'width:' + (acctFullAmt ? 248 : 184) + 'px;';   // header block spans its two Dr/Cr cols
+    var W = 'width:' + (wmsIsFullAmount() ? 248 : 184) + 'px;';   // header block spans its two Dr/Cr cols
     var html = '<div class="acct-tb-wrap">' +
         '<div class="acct-tb-hdr2"><span class="acct-fin-toggle-sp"></span><span class="acct-fin-name"></span>' +
             '<span class="acct-tb-grp acct-tb-blockstart" style="' + W + '">Opening Balance</span>' +
@@ -2465,7 +2462,7 @@ function acctRenderLedgerDetail() {
     if (!lg) return;
     var body = document.getElementById('acctLedgerDetailBody');
     var g = acctGroupById[lg.group_id];
-    var baseUnit = (typeof getUnitDescription === 'function' ? getUnitDescription() : "₹ '000");
+    var baseUnit = (typeof getRealUnitDescription === 'function' ? getRealUnitDescription() : "₹ '000");
 
     // The ledger name, group path and the unit control now live in the modal HEADER
     // row (before the ✕) so the body is all real content. The unit toggle drives the
@@ -2478,8 +2475,8 @@ function acctRenderLedgerDetail() {
     if (unitEl) unitEl.textContent = acctUnitLabel();
     var tgl = document.getElementById('acctLdUnitToggle');
     if (tgl) {
-        tgl.textContent = acctFullAmt ? ('Show in ' + baseUnit) : 'Show full amount';
-        tgl.onclick = function () { acctSetFullAmt(!acctFullAmt); acctRenderLedgerDetail(); acctRenderActiveTab(); acctSyncUnitToggle(); };
+        tgl.textContent = wmsIsFullAmount() ? ('Show in ' + baseUnit) : 'Show full amount';
+        tgl.onclick = function () { wmsSetFullAmount(!wmsIsFullAmount()); acctRenderLedgerDetail(); acctRenderActiveTab(); acctSyncUnitToggle(); };
     }
 
     body.innerHTML = acctLedgerDateFilterBar() + '<div id="acctLdTableWrap"></div>';
