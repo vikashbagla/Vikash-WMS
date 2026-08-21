@@ -2,6 +2,28 @@
 // WMS UTILITIES - Number Formatting & Helpers
 // ============================================================================
 
+// ---------------------------------------------------------------------------
+// GLOBAL "show full amount" override (F2). When ON, every DISPLAY formatter
+// below shows full rupees regardless of the user's display-unit preference.
+// Persistent per browser (owner request 2026-08-21). This SUPERSEDES the old
+// accounting-only flag (localStorage 'wms_acct_full_amount') — migrated below.
+// NOTE: getDisplayUnit() itself is deliberately NOT overridden, so anything
+// that reads the unit for non-display reasons (exports, etc.) keeps the real
+// unit. Only the display formatters consult getEffectiveUnitConfig().
+// ---------------------------------------------------------------------------
+var WMS_FULL_AMOUNT_KEY = 'wms_full_amount';
+var _wmsFullAmount = false;
+try {
+    var _wmsFA = localStorage.getItem(WMS_FULL_AMOUNT_KEY);
+    if (_wmsFA === null) _wmsFA = localStorage.getItem('wms_acct_full_amount'); // one-time carry-over
+    _wmsFullAmount = (_wmsFA === '1');
+} catch (e) {}
+function wmsIsFullAmount() { return _wmsFullAmount; }
+function wmsSetFullAmount(v) {
+    _wmsFullAmount = !!v;
+    try { localStorage.setItem(WMS_FULL_AMOUNT_KEY, _wmsFullAmount ? '1' : '0'); } catch (e) {}
+}
+
 // Get user's display unit preference
 function getDisplayUnit() {
     const user = window.currentUser;
@@ -27,6 +49,30 @@ function getUnitConfig(unit) {
     };
     return configs[unit] || configs['lakhs'];
 }
+
+// Effective unit config used by ALL display formatters. When the global
+// full-amount override is ON, amounts are shown in full rupees (divisor 1,
+// no suffix, Indian commas); otherwise the user's real display unit applies.
+function getEffectiveUnitConfig() {
+    if (_wmsFullAmount) return { divisor: 1, suffix: '', comma: 'indian' };
+    return getUnitConfig(getDisplayUnit());
+}
+
+// Description text for a specific unit (used for titles + the "switch back to"
+// label on the full-amount toggle button, which must always name the REAL unit).
+function getUnitDescriptionFor(unit) {
+    const descriptions = {
+        'thousands': "₹ '000",
+        'lakhs':     '₹ Lakhs',
+        'millions':  '₹ Millions',
+        'crores':    '₹ Crores'
+    };
+    return descriptions[unit] || '₹ Lakhs';
+}
+
+// The real (non-overridden) unit description — for the toggle button's
+// "Show in <real unit>" label even while full-amount mode is active.
+function getRealUnitDescription() { return getUnitDescriptionFor(getDisplayUnit()); }
 
 // Format number based on comma style
 function formatWithCommas(num, commaStyle) {
@@ -57,8 +103,7 @@ function formatWithCommas(num, commaStyle) {
 const formatPrice = (value, applyUnit = false) => {
     if (value === null || value === undefined || isNaN(value) || value === 0) return '-';
 
-    const unit = getDisplayUnit();
-    const config = getUnitConfig(unit);
+    const config = getEffectiveUnitConfig();
 
     if (applyUnit) {
         // For values (apply display unit)
@@ -76,8 +121,7 @@ const formatPrice = (value, applyUnit = false) => {
 // Used by fmtNoDec and formatAmount
 var formatAmountRaw = function(value) {
     if (value === null || value === undefined || isNaN(value) || value === 0) return '-';
-    var unit = getDisplayUnit();
-    var config = getUnitConfig(unit);
+    var config = getEffectiveUnitConfig();
     var convertedValue = Math.abs(value) / config.divisor;
     if (value < 0) return '(' + formatWithCommas(convertedValue, config.comma) + ')';
     return formatWithCommas(convertedValue, config.comma);
@@ -97,21 +141,15 @@ const formatAmount = (value) => {
 
 // Get unit label for column headers
 const getUnitLabel = () => {
-    const unit = getDisplayUnit();
-    const config = getUnitConfig(unit);
-    return config.suffix;
+    // Honours the full-amount override → blank suffix (columns read "AMOUNT",
+    // not "AMOUNT ('000)"), otherwise the real unit's suffix.
+    return getEffectiveUnitConfig().suffix;
 };
 
 // Get full description for the portfolio title e.g. "₹ '000" or "₹ Lakhs"
 const getUnitDescription = () => {
-    const unit = getDisplayUnit();
-    const descriptions = {
-        'thousands': "₹ '000",
-        'lakhs':     '₹ Lakhs',
-        'millions':  '₹ Millions',
-        'crores':    '₹ Crores'
-    };
-    return descriptions[unit] || '₹ Lakhs';
+    if (_wmsFullAmount) return '₹ (full)';
+    return getUnitDescriptionFor(getDisplayUnit());
 };
 
 // Format quantity (0 decimals)
