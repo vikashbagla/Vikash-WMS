@@ -288,26 +288,36 @@
 .rpt-consol-controls { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:6px 0; border-bottom:1px solid #e2e8f0; flex-shrink:0; }
 .rpt-consol-books { display:flex; flex-wrap:wrap; gap:5px; }
 .rpt-consol-book { font-size:11px; padding:3px 9px; border:1px solid #cbd5e0; border-radius:12px; background:#fff; color:#4a5568; cursor:pointer; user-select:none; }
-.rpt-consol-book.on { background:#667eea; border-color:#667eea; color:#fff; }
+.rpt-consol-book.on { background:#667eea; border-color:#667eea; color:#fff; cursor:grab; }
+.rpt-consol-book.on:active { cursor:grabbing; }
 .rpt-consol-sep { width:1px; height:18px; background:#e2e8f0; }
-.rpt-consol-mode-btn { font-size:11px; padding:3px 10px; border:1px solid #cbd5e0; background:#fff; color:#4a5568; cursor:pointer; }
-.rpt-consol-mode-btn:first-of-type { border-radius:4px 0 0 4px; }
-.rpt-consol-mode-btn:last-of-type { border-radius:0 4px 4px 0; border-left:none; }
+.rpt-consol-stmt, .rpt-consol-mode { display:inline-flex; }
+.rpt-consol-stmt-btn, .rpt-consol-mode-btn { font-size:11px; padding:3px 10px; border:1px solid #cbd5e0; background:#fff; color:#4a5568; cursor:pointer; }
+.rpt-consol-stmt-btn:first-of-type, .rpt-consol-mode-btn:first-of-type { border-radius:4px 0 0 4px; }
+.rpt-consol-stmt-btn:last-of-type, .rpt-consol-mode-btn:last-of-type { border-radius:0 4px 4px 0; border-left:none; }
+.rpt-consol-stmt-btn.active { background:#2d3748; border-color:#2d3748; color:#fff; }
 .rpt-consol-mode-btn.active { background:#667eea; border-color:#667eea; color:#fff; }
 .rpt-consol-chk { font-size:11px; color:#4a5568; display:flex; align-items:center; gap:4px; }
 .rpt-consol-unit { font-size:11px; color:#64748b; margin-left:auto; }
 .rpt-consol-table { width:100%; border-collapse:collapse; font-size:12px; }
-.rpt-consol-table thead th { position:sticky; top:0; z-index:1; background:#edf2f7; font-weight:700; color:#2d3748; padding:8px 10px; border-bottom:1px solid #cbd5e0; text-align:right; white-space:nowrap; }
-.rpt-consol-table thead th.rpt-c-name { text-align:left; }
-.rpt-consol-table td { padding:6px 10px; border-bottom:1px solid #f1f5f9; text-align:right; white-space:nowrap; }
+.rpt-consol-table thead th { position:sticky; top:0; z-index:1; background:#edf2f7; font-weight:700; color:#2d3748; padding:8px 10px; border-bottom:1px solid #cbd5e0; white-space:nowrap; }
+.rpt-consol-table th.rpt-c-name { text-align:left; }
+.rpt-consol-table th.rpt-c-num, .rpt-consol-table td.rpt-c-num { text-align:right; }
+.rpt-consol-table td { padding:6px 10px; border-bottom:1px solid #f1f5f9; white-space:nowrap; }
 .rpt-consol-table td.rpt-c-name { text-align:left; }
 .rpt-consol-row-group { font-weight:700; background:#f8fafc; cursor:pointer; }
 .rpt-consol-row-group.rpt-root { background:#eef2ff; }
 .rpt-consol-row-ledger .rpt-c-name { color:#334155; }
+.rpt-consol-row-ledger { cursor:default; }
 .rpt-consol-toggle { display:inline-block; width:14px; color:#94a3b8; }
-.rpt-consol-toggle.collapsed { transform:none; }
-.rpt-consol-c-total { font-weight:700; border-left:2px solid #cbd5e0; background:#fbfdff; }
-.rpt-consol-table tfoot td { font-weight:700; border-top:2px solid #000; padding:8px 10px; }
+/* Total column: SAME text format as the row it sits on — only a separator rule sets it apart. */
+.rpt-consol-c-total { border-left:2px solid #cbd5e0; }
+/* Summary / section / net / check rows */
+.rpt-consol-row-summary { font-weight:700; }
+.rpt-consol-row-summary.rpt-consol-sect { background:#f1f5f9; border-top:1px solid #cbd5e0; }
+.rpt-consol-row-summary.rpt-consol-net { background:#eef2ff; border-top:2px solid #94a3b8; }
+.rpt-consol-row-summary.rpt-consol-diff { background:#fef2f2; color:#dc2626; }
+.rpt-consol-row-summary.rpt-consol-ok { background:#f0fdf4; color:#16a34a; }
 .rpt-consol-empty { text-align:center; padding:40px; color:#9ca3af; }
 </style>
 </head>
@@ -441,14 +451,17 @@
         <div class="rpt-consol-controls">
             <div class="rpt-consol-books" id="rptConsolBooks"></div>
             <span class="rpt-consol-sep"></span>
+            <div class="rpt-consol-stmt">
+                <button class="rpt-consol-stmt-btn active" data-stmt="bs">Balance Sheet</button>
+                <button class="rpt-consol-stmt-btn" data-stmt="pl">P&amp;L</button>
+            </div>
             <div class="rpt-consol-mode">
                 <button class="rpt-consol-mode-btn active" data-mode="books">Books</button>
                 <button class="rpt-consol-mode-btn" data-mode="quarters">Quarters</button>
             </div>
             <span class="rpt-consol-sep"></span>
-            <button class="tr-vta-btn" id="rptConsolExpandBtn" title="Expand all groups">Expand all</button>
-            <button class="tr-vta-btn" id="rptConsolCollapseBtn" title="Collapse all groups">Collapse all</button>
-            <label class="rpt-consol-chk"><input type="checkbox" id="rptConsolSummaryChk"> Summary</label>
+            <button class="tr-vta-btn" id="rptConsolToggleBtn" title="Expand or collapse everything">&#8693; Collapse all</button>
+            <button class="tr-vta-btn" id="rptConsolSummaryBtn" title="Show roots and top groups, collapse the rest">&#9636; Summary</button>
             <label class="rpt-consol-chk"><input type="checkbox" id="rptConsolZeroChk"> Show zero</label>
             <span class="rpt-consol-unit" id="rptConsolUnit"></span>
         </div>
