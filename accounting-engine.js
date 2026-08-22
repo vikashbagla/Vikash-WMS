@@ -561,8 +561,13 @@
         var gainsBySell = {};
         (fifo.gains || []).forEach(function (g) { var k = String(g.sellTxnId); (gainsBySell[k] = gainsBySell[k] || []).push(g); });
 
-        // F&O realised P&L via the dedicated symmetric/per-beneficiary matcher —
-        // OVERRIDE any F&O gains the pooled long-only equity FIFO produced.
+        // F&O realised P&L comes ONLY from the dedicated symmetric matcher. First PURGE
+        // any gain the equity long-only FIFO left on ANY F&O trade (BOTH legs): the
+        // matcher returns P&L only on the COVERING leg, so a short round-trip's opening
+        // SELL would otherwise keep the equity FIFO's stray gain and double-book a
+        // second, spurious F&O voucher (owner 2026-08-22c; matched the statement, which
+        // never runs an equity FIFO over F&O). Then set the covering trades' F&O P&L.
+        sorted.forEach(function (t) { if (isFno(t)) delete gainsBySell[String(t.id)]; });
         var fnoMap = acctFnoRealised(sorted);                       // trader basis (client P&L)
         ctx.fnoBrokerById = acctFnoRealised(sorted, { broker: true }); // broker basis (broker-leg P&L, mirrors statement)
         Object.keys(fnoMap).forEach(function (id) { gainsBySell[id] = [{ gain: fnoMap[id] }]; });
