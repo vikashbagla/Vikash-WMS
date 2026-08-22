@@ -2129,9 +2129,11 @@ function rptConsNodeRows(node, depth, ncols) {
     return h;
 }
 // A bold, non-collapsible summary/total line (Total Assets, Net Income, etc.).
-function rptConsSummaryRow(label, colVals, ncols, extraCls) {
-    var h = '<tr class="rpt-consol-row-summary ' + (extraCls || '') + '">';
-    h += '<td class="rpt-c-name">' + wmsEsc(label) + '</td>';
+function rptConsSummaryRow(label, colVals, ncols, extraCls, cnodeKey, collapsed) {
+    var attr = cnodeKey ? (' data-cnode="' + cnodeKey + '"') : '';
+    var toggle = cnodeKey ? ('<span class="rpt-consol-toggle">' + (collapsed ? '▶' : '▼') + '</span>') : '';
+    var h = '<tr class="rpt-consol-row-summary ' + (extraCls || '') + '"' + attr + '>';
+    h += '<td class="rpt-c-name">' + toggle + wmsEsc(label) + '</td>';
     for (var i = 0; i < ncols; i++) {
         var totCls = (i === ncols - 1) ? ' rpt-consol-c-total' : '';
         var obCls = (i === rptConsOpBalIdx) ? ' rpt-consol-c-opbal' : '';
@@ -2219,14 +2221,15 @@ function rptRenderConsol() {
             var totU = 0; cols.forEach(function (c, i) { if (c.bookId) totU += unrealPerCol[i]; });
             unrealPerCol[ncols - 1] = totU;   // Total column
             if (classes.length) {
-                rows += rptConsSummaryRow('Unrealised Gain / (Loss) — MTM', unrealPerCol, ncols, 'rpt-consol-mtmhdr');
-                classes.forEach(function (cls) {
+                var mtmCollapsed = !!rptConsCollapsed['mtm'];
+                rows += rptConsSummaryRow('Unrealised Gain / (Loss) — MTM', unrealPerCol, ncols, 'rpt-consol-mtmhdr rpt-consol-clickable', 'mtm', mtmCollapsed);
+                if (!mtmCollapsed) classes.forEach(function (cls) {
                     var cv = cols.map(function (c, i) {
                         if (c.bookId) return (mtmByCol[i][cls] || 0);
                         if (c.isTotal) { var s = 0; cols.forEach(function (cc, j) { if (cc.bookId && mtmByCol[j][cls]) s += mtmByCol[j][cls]; }); return s; }
                         return 0;   // Op Bal — no MTM
                     });
-                    rows += rptConsSummaryRow('\u00a0\u00a0\u00a0' + cls, cv, ncols, 'rpt-consol-mtm');
+                    rows += rptConsSummaryRow('\u00a0\u00a0\u00a0\u00a0' + cls, cv, ncols, 'rpt-consol-mtm');
                 });
             }
             var netWorthMkt = netWorthCost.map(function (v, i) { return v + unrealPerCol[i]; });
@@ -2248,7 +2251,7 @@ function rptRenderConsol() {
     if (!rows) { body.innerHTML = '<div class="rpt-consol-empty">No ledger balances for the selected books.</div>'; return; }
     body.innerHTML = '<table class="rpt-consol-table"><thead>' + th + '</thead><tbody>' + rows + '</tbody></table>';
 
-    body.querySelectorAll('tr.rpt-consol-row-group').forEach(function (tr) {
+    body.querySelectorAll('tr[data-cnode]').forEach(function (tr) {
         tr.onclick = function () {
             var k = tr.dataset.cnode;
             if (rptConsCollapsed[k]) delete rptConsCollapsed[k]; else rptConsCollapsed[k] = true;
