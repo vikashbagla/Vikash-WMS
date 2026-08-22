@@ -2085,12 +2085,14 @@ function rptConsNodeRows(node, depth, ncols) {
         ? '<span class="rpt-consol-toggle">' + (collapsed ? '▶' : '▼') + '</span>'
         : '<span class="rpt-consol-toggle"></span>';
     var rowCls = isGroup ? ('rpt-consol-row-group' + (node.isRoot ? ' rpt-root' : '')) : 'rpt-consol-row-ledger';
+    if (node.rowClass) rowCls += ' ' + node.rowClass;
     var attr = isGroup ? (' data-cnode="' + node.key + '"') : '';
     var h = '<tr class="' + rowCls + '"' + attr + '>';
     h += '<td class="rpt-c-name" style="padding-left:' + pad + 'px;">' + icon + wmsEsc(node.label) + '</td>';
     for (var i = 0; i < ncols; i++) {
         var totCls = (i === ncols - 1) ? ' rpt-consol-c-total' : '';
-        h += '<td class="rpt-c-num' + totCls + '">' + rptConsAmt(node.colVals[i]) + '</td>';
+        var badCls = (node.badCols && node.badCols[i]) ? ' rpt-consol-cell-bad' : '';
+        h += '<td class="rpt-c-num' + totCls + badCls + '">' + rptConsAmt(node.colVals[i]) + '</td>';
     }
     h += '</tr>';
     if (isGroup && !collapsed && node.children) {
@@ -2132,32 +2134,34 @@ function rptRenderConsol() {
 
     var rows = '';
     if (rptConsStatement === 'bs') {
+        // Derivation form:  Assets  -  Liabilities  +/-  P&L for the year  =  Capital.
+        // P&L is ONE line (detail lives on the P&L page). The Capital total carries
+        // the integrity check per column: any column that does not tie shows that
+        // Capital CELL in red; if every column ties the whole row stays green.
+        // Identity: Capital = Assets - Liabilities - NetIncome.
         var assets = rptConsNatureTree('Assets', cols);
         var liab = rptConsNatureTree('Liabilities', cols);
         var cap = rptConsNatureTree('Capital', cols);
         var inc = rptConsNatureTree('Income', cols);
         var exp = rptConsNatureTree('Expenses', cols);
-        // Net Income block (equity side): Income (positive) + Expenses (negated).
-        var plChildren = [];
-        if (inc) plChildren.push(inc);
-        if (exp) plChildren.push(rptConsNegate(exp));
-        var plNode = null;
-        if (plChildren.length) {
-            plNode = { key: 'r:PL', label: 'Profit & Loss (Net Income)', isRoot: true, isGroup: true,
-                children: plChildren, colVals: rptConsSumCols(plChildren, ncols) };
+        var zeros = rptConsSumCols([], ncols);
+        var A = assets ? assets.colVals : zeros;
+        var L = liab ? liab.colVals : zeros;
+        var incTot = inc ? inc.colVals : zeros;
+        var expTot = exp ? exp.colVals : zeros;
+        var NI = incTot.map(function (v, i) { return v - expTot[i]; });   // net income (profit +, loss -)
+        var C = cap ? cap.colVals : zeros;
+        var badCols = [];
+        for (var ci = 0; ci < ncols; ci++) {
+            badCols.push(Math.abs(Math.round(((A[ci] - L[ci] - NI[ci]) - C[ci]) * 100) / 100) >= 0.005);
         }
-        var assetsTot = assets ? assets.colVals : rptConsSumCols([], ncols);
-        var eqLiab = rptConsSumCols([liab, cap, plNode], ncols);
-        var diff = assetsTot.map(function (v, i) { return Math.round((v - eqLiab[i]) * 100) / 100; });
-
-        rows += rptConsNodeRows(assets, 0, ncols);
-        rows += rptConsSummaryRow('Total Assets', assetsTot, ncols, 'rpt-consol-sect');
-        rows += rptConsNodeRows(liab, 0, ncols);
-        rows += rptConsNodeRows(cap, 0, ncols);
-        rows += rptConsNodeRows(plNode, 0, ncols);
-        rows += rptConsSummaryRow('Total Equity & Liabilities', eqLiab, ncols, 'rpt-consol-sect');
-        var anyDiff = diff.some(function (v) { return Math.abs(v) >= 0.005; });
-        rows += rptConsSummaryRow(anyDiff ? '⚠ Difference (should be 0)' : '✓ Balanced — Difference', diff, ncols, anyDiff ? 'rpt-consol-diff' : 'rpt-consol-ok');
+        if (assets) rows += rptConsNodeRows(assets, 0, ncols);
+        else rows += rptConsSummaryRow('Assets', zeros, ncols, 'rpt-consol-sect');
+        if (liab) { liab.label = 'Less: Liabilities'; rows += rptConsNodeRows(liab, 0, ncols); }
+        else rows += rptConsSummaryRow('Less: Liabilities', zeros, ncols, 'rpt-consol-sect');
+        rows += rptConsSummaryRow('Add / Less: P&L for the year', NI, ncols, 'rpt-consol-pl');
+        if (cap) { cap.label = 'Total Capital'; cap.rowClass = 'rpt-consol-cap-ok'; cap.badCols = badCols; rows += rptConsNodeRows(cap, 0, ncols); }
+        else { var capNode = { key: 'r:Capital', label: 'Total Capital', isRoot: true, isGroup: true, colVals: C, rowClass: 'rpt-consol-cap-ok', badCols: badCols }; rows += rptConsNodeRows(capNode, 0, ncols); }
     } else {
         var incP = rptConsNatureTree('Income', cols);
         var expP = rptConsNatureTree('Expenses', cols);
@@ -2205,11 +2209,7 @@ function rptConsSyncControls() {
 // The top-level nodes currently on screen (for expand/collapse/summary key sets).
 function rptConsCurrentTreeNodes(cols) {
     if (rptConsStatement === 'bs') {
-        var a = rptConsNatureTree('Assets', cols), l = rptConsNatureTree('Liabilities', cols),
-            c = rptConsNatureTree('Capital', cols), inc = rptConsNatureTree('Income', cols), exp = rptConsNatureTree('Expenses', cols);
-        var plc = []; if (inc) plc.push(inc); if (exp) plc.push(rptConsNegate(exp));
-        var pl = plc.length ? { key: 'r:PL', isRoot: true, isGroup: true, children: plc, colVals: [] } : null;
-        return [a, l, c, pl].filter(Boolean);
+        return [rptConsNatureTree('Assets', cols), rptConsNatureTree('Liabilities', cols), rptConsNatureTree('Capital', cols)].filter(Boolean);
     }
     return [rptConsNatureTree('Income', cols), rptConsNatureTree('Expenses', cols)].filter(Boolean);
 }
