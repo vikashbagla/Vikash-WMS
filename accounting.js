@@ -2437,28 +2437,59 @@ function acctLedgerDateWindow() {
 // book, grouped by chart-group, current ledger selected. Selecting one re-opens the
 // drill-down on that ledger without leaving the modal.
 function acctPopulateLedgerPicker() {
-    var sel = document.getElementById('acctLedgerPicker');
-    if (!sel) return;
+    // The switcher is a live-search box (wired once in init via acctWireLedgerPicker).
+    // Here we just show the ledger currently on screen as its value.
+    var input = document.getElementById('acctLedgerPicker');
+    if (!input) return;
+    var lg = acctLedgers.find(function (x) { return x.id === acctLedgerDetailId; });
+    input.value = lg ? lg.name : '';
+}
+
+// Ledgers with postings in THIS book, minus the one on screen, filtered by the typed
+// text — the source for the header switcher's live search.
+function acctLedgerPickerMatches(q) {
+    q = String(q || '').trim().toLowerCase();
     var seen = {};
     acctVoucherRows.forEach(function (r) { seen[r.ledger_id] = true; });
-    var byGroup = {};
+    var out = [];
     Object.keys(seen).forEach(function (id) {
+        if (id === acctLedgerDetailId) return;              // don't offer the current ledger
         var lg = acctLedgers.find(function (x) { return x.id === id; });
         if (!lg) return;
-        var g = acctGroupById[lg.group_id];
-        var gname = g ? acctGroupPath(g) : 'Other';
-        (byGroup[gname] = byGroup[gname] || []).push({ id: id, name: lg.name });
+        if (q && lg.name.toLowerCase().indexOf(q) < 0) return;
+        out.push({ id: id, name: lg.name, group_id: lg.group_id });
     });
-    var html = '';
-    Object.keys(byGroup).sort().forEach(function (gn) {
-        html += '<optgroup label="' + wmsEsc(gn) + '">';
-        byGroup[gn].sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (o) {
-            html += '<option value="' + o.id + '"' + (o.id === acctLedgerDetailId ? ' selected' : '') + '>' + wmsEsc(o.name) + '</option>';
-        });
-        html += '</optgroup>';
-    });
-    sel.innerHTML = html || '<option value="">(no ledgers)</option>';
-    sel.onchange = function () { if (this.value && this.value !== acctLedgerDetailId) acctOpenLedgerDetail(this.value); };
+    out.sort(function (a, b) { return a.name.localeCompare(b.name); });
+    return out;
+}
+
+// Wire the header ledger switcher ONCE — a type-to-search box (mirrors the voucher-
+// line ledger picker). Focus shows the full book list; typing filters live; picking
+// re-opens the drill-down on that ledger.
+function acctWireLedgerPicker() {
+    var input = document.getElementById('acctLedgerPicker');
+    var dd = document.getElementById('acctLedgerPickerDd');
+    if (!input || !dd || typeof wmsDropdown !== 'function') return;
+    function render() {
+        var typed = (input.value === input._acctCurrentName) ? '' : input.value;  // unchanged text = browse all
+        var list = acctLedgerPickerMatches(typed);
+        dd._acctResults = list;
+        dd.innerHTML = list.length
+            ? list.map(function (l, i) { return '<div class="wms-dd-item" data-i="' + i + '">' + wmsEsc(l.name) + '<span class="acct-dd-grp">' + wmsEsc(acctRootName(l.group_id)) + '</span></div>'; }).join('')
+            : '<div class="wms-dd-no-results">No matching ledger</div>';
+        ctrl.show();
+    }
+    function pick(itemEl) {
+        if (!itemEl) return;
+        var l = (dd._acctResults || [])[Number(itemEl.dataset.i)];
+        if (!l) return;
+        ctrl.close();
+        acctOpenLedgerDetail(l.id);   // resets search + re-renders on the chosen ledger
+    }
+    var ctrl = wmsDropdown(input, dd, { itemSelector: '.wms-dd-item', closeOnSelect: true, blurDelay: 180, escClearsInput: false, onSelect: pick });
+    input.addEventListener('focus', function () { input._acctCurrentName = input.value; input.select(); render(); });
+    input.addEventListener('input', render);
+    dd.addEventListener('mousedown', function (e) { var it = e.target.closest ? e.target.closest('.wms-dd-item') : null; if (!it) return; e.preventDefault(); pick(it); });
 }
 
 function acctOpenLedgerDetail(ledgerId) {
@@ -3367,6 +3398,20 @@ function acctWireModals() {
     // commits to Save. (Per-cell wiring in acctRenderVoucherLines owns the lines table.)
     var narEl = document.getElementById('acctVoucherNarration');
     if (narEl) narEl.addEventListener('keydown', function (e) {
+        // Enter on an EMPTY line (current caret line has no text) commits to the Save
+        // button instead of adding another blank line; a line WITH text still gets a
+        // newline. Once Save has focus, its native Enter/Space fires the save.
+        if (e.key === 'Enter' && !e.shiftKey) {
+            var val = narEl.value, pos = narEl.selectionStart;
+            var ls = val.lastIndexOf('\n', pos - 1) + 1;
+            var le = val.indexOf('\n', pos); if (le < 0) le = val.length;
+            if (val.slice(ls, le).trim() === '') {
+                e.preventDefault();
+                var s1 = document.getElementById('acctVoucherSave');
+                if (s1 && !s1.disabled) s1.focus();
+            }
+            return;
+        }
         if (e.key === 'Tab' && !e.shiftKey) {
             var save = document.getElementById('acctVoucherSave');
             if (save && !save.disabled) { e.preventDefault(); save.focus(); }
@@ -3387,6 +3432,7 @@ function acctWireModals() {
     document.getElementById('acctLedgerDone').onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
     var _lnv = document.getElementById('acctLedgerNewVoucher');
     if (_lnv) _lnv.onclick = function () { acctOpenVoucherModal(acctLedgerDetailId); };
+    acctWireLedgerPicker();
 
     // Add-ledger modal
     var alOverlay = document.getElementById('acctAddLedgerModal');
