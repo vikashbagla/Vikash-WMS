@@ -282,6 +282,74 @@
 }
 .rpt-cg-type-badge.ltcg { background: #d1fae5; color: #065f46; }
 .rpt-cg-type-badge.stcg { background: #fef3c7; color: #92400e; }
+
+/* ===== Consolidation tab ===== */
+#rpt-consol { flex-direction: column; }
+.rpt-consol-controls { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:6px 0; border-bottom:1px solid #e2e8f0; flex-shrink:0; }
+.rpt-consol-books { display:flex; flex-wrap:wrap; gap:5px; }
+.rpt-consol-book { font-size:11px; padding:3px 9px; border:1px solid #cbd5e0; border-radius:12px; background:#fff; color:#4a5568; cursor:pointer; user-select:none; }
+.rpt-consol-book.on { background:#667eea; border-color:#667eea; color:#fff; cursor:grab; }
+.rpt-consol-book.on:active { cursor:grabbing; }
+.rpt-consol-sep { width:1px; height:18px; background:#e2e8f0; }
+.rpt-consol-stmt, .rpt-consol-mode { display:inline-flex; }
+.rpt-consol-stmt-btn, .rpt-consol-mode-btn { font-size:11px; padding:3px 10px; border:1px solid #cbd5e0; background:#fff; color:#4a5568; cursor:pointer; }
+.rpt-consol-stmt-btn:first-of-type, .rpt-consol-mode-btn:first-of-type { border-radius:4px 0 0 4px; }
+.rpt-consol-stmt-btn:last-of-type, .rpt-consol-mode-btn:last-of-type { border-radius:0 4px 4px 0; border-left:none; }
+.rpt-consol-stmt-btn.active { background:#2d3748; border-color:#2d3748; color:#fff; }
+.rpt-consol-mode-btn.active { background:#667eea; border-color:#667eea; color:#fff; }
+.rpt-consol-chk { font-size:11px; color:#4a5568; display:flex; align-items:center; gap:4px; }
+.rpt-consol-unit { font-size:11px; color:#64748b; margin-left:auto; }
+.rpt-consol-table { width:max-content; min-width:100%; table-layout:auto; border-collapse:collapse; font-size:12px; }
+#rptConsolBody { overflow:auto; }
+.rpt-consol-table thead th { position:sticky; top:0; z-index:1; background:#edf2f7; font-weight:700; color:#2d3748; padding:8px 10px; border-bottom:1px solid #cbd5e0; white-space:nowrap; }
+.rpt-consol-table th.rpt-c-name { text-align:left; }
+.rpt-consol-table th.rpt-c-name, .rpt-consol-table td.rpt-c-name { min-width:150px; }
+.rpt-consol-table th.rpt-c-num, .rpt-consol-table td.rpt-c-num { text-align:right; min-width:96px; }
+.rpt-consol-table td { padding:6px 10px; border-bottom:1px solid #f1f5f9; white-space:nowrap; }
+.rpt-consol-table td.rpt-c-name { text-align:left; }
+.rpt-consol-row-group { font-weight:700; background:#f8fafc; cursor:pointer; }
+.rpt-consol-row-group.rpt-root { background:#eef2ff; }
+.rpt-consol-row-ledger .rpt-c-name { color:#334155; }
+.rpt-consol-row-ledger { cursor:default; }
+.rpt-consol-toggle { display:inline-block; width:14px; color:#94a3b8; }
+/* Total column: SAME text format as the row it sits on — only a separator sets it apart. */
+.rpt-consol-c-total { border-left:2px solid #cbd5e0; }
+/* Pin the Ledger (left) and Total (right) columns so they stay visible while books scroll. */
+.rpt-consol-table th.rpt-c-name, .rpt-consol-table td.rpt-c-name { position:sticky; left:0; z-index:1; background:#fff; }
+.rpt-consol-table thead th.rpt-c-name { z-index:3; }
+.rpt-consol-c-total { position:sticky; right:0; z-index:1; background:#fff; }
+.rpt-consol-c-opbal { border-left:2px solid #cbd5e0; border-right:2px solid #cbd5e0; }
+.rpt-consol-clickable { cursor:pointer; }
+.rpt-consol-table thead th.rpt-consol-c-total { z-index:3; }
+.rpt-consol-table thead th.rpt-c-name, .rpt-consol-table thead th.rpt-consol-c-total { background:#edf2f7; }
+/* Sticky cells must repaint their row background so scrolled cells don't show through. */
+.rpt-consol-row-group td.rpt-c-name, .rpt-consol-row-group td.rpt-consol-c-total { background:#f8fafc; }
+.rpt-consol-row-group.rpt-root td.rpt-c-name, .rpt-consol-row-group.rpt-root td.rpt-consol-c-total { background:#eef2ff; }
+.rpt-consol-row-ledger td.rpt-c-name, .rpt-consol-row-ledger td.rpt-consol-c-total { background:#fff; }
+.rpt-consol-row-summary td.rpt-c-name, .rpt-consol-row-summary td.rpt-consol-c-total { background:#fff; }
+/* Summary / section / net rows */
+.rpt-consol-row-summary { font-weight:700; }
+.rpt-consol-row-summary.rpt-consol-sect { background:#f1f5f9; border-top:1px solid #cbd5e0; }
+.rpt-consol-row-summary.rpt-consol-sect td.rpt-c-name, .rpt-consol-row-summary.rpt-consol-sect td.rpt-consol-c-total { background:#f1f5f9; }
+.rpt-consol-row-summary.rpt-consol-net { background:#eef2ff; border-top:2px solid #94a3b8; }
+.rpt-consol-row-summary.rpt-consol-net td.rpt-c-name, .rpt-consol-row-summary.rpt-consol-net td.rpt-consol-c-total { background:#eef2ff; }
+.rpt-consol-row-summary.rpt-consol-pl { background:#f8fafc; }
+.rpt-consol-row-summary.rpt-consol-pl td.rpt-c-name, .rpt-consol-row-summary.rpt-consol-pl td.rpt-consol-c-total { background:#f8fafc; }
+/* Capital total: green row when it ties; any column that fails the check shows that CELL red. */
+.rpt-consol-row-group.rpt-consol-cap-ok td { background:#f0fdf4 !important; color:#16a34a; }
+.rpt-consol-row-group.rpt-consol-cap-ok td.rpt-consol-cell-bad, td.rpt-consol-cell-bad { background:#fef2f2 !important; color:#dc2626 !important; font-weight:700; }
+/* Net Worth block — starts like a fresh table after a spacer gap */
+.rpt-consol-gap td { height:16px; background:#fff !important; border:none !important; }
+.rpt-consol-row-summary.rpt-consol-nw { background:#eef2ff; border-top:2px solid #64748b; }
+.rpt-consol-row-summary.rpt-consol-nw td.rpt-c-name, .rpt-consol-row-summary.rpt-consol-nw td.rpt-consol-c-total { background:#eef2ff; }
+.rpt-consol-row-summary.rpt-consol-mtmhdr { background:#f1f5f9; }
+.rpt-consol-row-summary.rpt-consol-mtmhdr td.rpt-c-name, .rpt-consol-row-summary.rpt-consol-mtmhdr td.rpt-consol-c-total { background:#f1f5f9; }
+.rpt-consol-row-summary.rpt-consol-mtm { font-weight:400; background:#fff; }
+.rpt-consol-row-summary.rpt-consol-mtm td.rpt-c-name, .rpt-consol-row-summary.rpt-consol-mtm td.rpt-consol-c-total { background:#fff; }
+.rpt-consol-row-summary.rpt-consol-mtm .rpt-c-name { color:#334155; }
+.rpt-consol-row-summary.rpt-consol-nwm { background:#e0e7ff; border-top:1px solid #94a3b8; border-bottom:2px solid #64748b; }
+.rpt-consol-row-summary.rpt-consol-nwm td.rpt-c-name, .rpt-consol-row-summary.rpt-consol-nwm td.rpt-consol-c-total { background:#e0e7ff; }
+.rpt-consol-empty { text-align:center; padding:40px; color:#9ca3af; }
 </style>
 </head>
 
@@ -303,6 +371,7 @@
     <div class="reports-tabs" id="rptTabs">
         <button class="reports-tab-btn active" data-tab="rpt-portfolio">Portfolio</button>
         <button class="reports-tab-btn" data-tab="rpt-capgains">Capital Gains</button>
+        <button class="reports-tab-btn" data-tab="rpt-consol">Consolidation</button>
     </div>
 
     <!-- Tab: Portfolio Holdings (FIFO, grouped by Asset Class, no F&O) -->
@@ -388,6 +457,47 @@
         <!-- CG detail table (scrollable) -->
         <div class="table-container" id="rptCGBody" style="flex:1; min-height:0; overflow:auto;">
             <div style="text-align:center;padding:40px;color:#9ca3af;">Select a financial year to view capital gains...</div>
+        </div>
+    </div>
+
+    <!-- Tab: Consolidation (accounting ledgers, multi-book, books/quarters in columns) -->
+    <div id="rpt-consol" class="reports-tab-content">
+        <div class="rpt-view-tabs-bar">
+            <div class="rpt-view-tabs-container" id="rpt-consol-view-tabs"></div>
+            <div class="tr-view-tabs-actions">
+                <button class="tr-vta-btn" id="rpt-consol-new-view-btn" title="New blank view">+</button>
+                <div style="position:relative;">
+                    <button class="tr-vta-btn" id="rpt-consol-more-btn" title="All views">&#9662; More</button>
+                    <div class="tr-more-dropdown" id="rpt-consol-more-dropdown" style="display:none;"><div id="rpt-consol-more-list"></div></div>
+                </div>
+                <button class="tr-vta-btn" id="rpt-consol-update-view-btn" title="Update current view" disabled>&#8635; Update</button>
+                <button class="tr-vta-btn" id="rpt-consol-save-new-btn" title="Save as new view">+ Save New</button>
+                <div class="tr-save-prompt" id="rpt-consol-save-prompt">
+                    <input type="text" id="rpt-consol-save-prompt-name" placeholder="View name...">
+                    <button class="tr-vta-btn" id="rpt-consol-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">&#10003;</button>
+                    <button class="tr-vta-btn" id="rpt-consol-save-prompt-cancel">&#10005;</button>
+                </div>
+            </div>
+        </div>
+        <div class="rpt-consol-controls">
+            <div class="rpt-consol-books" id="rptConsolBooks"></div>
+            <span class="rpt-consol-sep"></span>
+            <div class="rpt-consol-stmt">
+                <button class="rpt-consol-stmt-btn active" data-stmt="bs">Balance Sheet</button>
+                <button class="rpt-consol-stmt-btn" data-stmt="pl">P&amp;L</button>
+            </div>
+            <div class="rpt-consol-mode">
+                <button class="rpt-consol-mode-btn active" data-mode="books">Books</button>
+                <button class="rpt-consol-mode-btn" data-mode="quarters">Quarters</button>
+            </div>
+            <span class="rpt-consol-sep"></span>
+            <button class="tr-vta-btn" id="rptConsolToggleBtn" title="Expand or collapse everything">&#8693; Collapse all</button>
+            <button class="tr-vta-btn" id="rptConsolSummaryBtn" title="Show roots and top groups, collapse the rest">&#9636; Summary</button>
+            <label class="rpt-consol-chk"><input type="checkbox" id="rptConsolZeroChk"> Show zero</label>
+            <span class="rpt-consol-unit" id="rptConsolUnit"></span>
+        </div>
+        <div class="rpt-consol-scroll" id="rptConsolBody" style="flex:1; min-height:0; overflow:auto; border:1px solid #e2e8f0; border-radius:6px;">
+            <div class="rpt-consol-empty">Pick one or more books to consolidate&hellip;</div>
         </div>
     </div>
 </div>

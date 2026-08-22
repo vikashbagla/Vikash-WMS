@@ -1280,6 +1280,9 @@ function wmsRerenderAmounts() {
         if (document.getElementById('rptPortfolioBody') && typeof rptRenderPortfolio === 'function') {
             rptRenderPortfolio();
         }
+        if (document.getElementById('rptConsolBody') && typeof rptRenderConsol === 'function') {
+            rptRenderConsol();
+        }
     } catch (err) { console.warn('full-amount: reports re-render failed', err); }
 }
 
