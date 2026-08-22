@@ -2381,6 +2381,8 @@ function rptInitConsol() {
         var roots = rptConsCurrentTreeNodes(cols);
         // Summary = roots expanded, every group below them collapsed.
         roots.forEach(function (r) { delete rptConsCollapsed[r.key]; if (r.children) rptConsAllGroupKeys(r.children, []).forEach(function (k) { rptConsCollapsed[k] = true; }); });
+        // Capital is the derivation's answer line — keep it collapsed in Summary.
+        rptConsCollapsed['r:Capital'] = true;
         rptConsSaveCollapse(); rptRenderConsol();
     });
     var zc = document.getElementById('rptConsolZeroChk');
