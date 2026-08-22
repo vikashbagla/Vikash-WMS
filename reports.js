@@ -246,8 +246,10 @@ async function initReports() {
     rptInitFYSelector();
     rptInitCGFilters();
     rptInitCGViewBar();
+    rptInitConsol();
     await rptPortfolioVM.loadViews();
     await rptCGVM.loadViews();
+    await rptConsolVM.loadViews();
     // If no default view applied, render now
     if (!rptPortfolioVM.activeViewId) rptRenderPortfolio();
     if (!rptCGVM.activeViewId) rptRenderCapGains();
@@ -563,6 +565,7 @@ function rptSetupTabs() {
             if (target) target.classList.add('active');
             // Render the active tab if needed
             if (tabId === 'rpt-capgains') rptRenderCapGains();
+            if (tabId === 'rpt-consol') rptRenderConsol();
         });
     });
 }
@@ -1821,6 +1824,357 @@ function rptRenderCapGains() {
 }
 
 // ============================================================================
+// CONSOLIDATION TAB  (accounting ledgers across multiple books)
+// ----------------------------------------------------------------------------
+// Self-contained: fetches acct_groups / acct_ledgers / acct_voucher_full over
+// REST (does NOT depend on accounting.js globals). Mirrors the accounting
+// natural-sign display (crNormal nature -> -net) and the BS/TB grouped tree.
+// Two modes: books-in-columns and quarters-in-columns; Total column = the
+// consolidated (summed) figure. Amounts follow the global F4 full-amount toggle.
+// ============================================================================
+
+var rptConsGroups = [];
+var rptConsLedgers = [];
+var rptConsGroupById = {};
+var rptConsRows = [];              // live voucher rows for the selected books
+var rptConsCatalogueLoaded = false;
+var rptConsLoadedKey = '';        // book-id set last fetched (avoid refetch)
+
+var rptConsolBookIds = [];        // selected books
+var rptConsolMode = 'books';      // 'books' | 'quarters'
+var rptConsShowZero = false;
+var rptConsSummary = false;
+var rptConsNatureOrder = ['Assets', 'Liabilities', 'Income', 'Expenses', 'Capital'];
+
+var RPT_CONS_COLLAPSE_KEY = 'wms_rpt_consol_collapsed';
+var rptConsCollapsed = {};
+try { var _cc = JSON.parse(localStorage.getItem(RPT_CONS_COLLAPSE_KEY) || '{}'); if (_cc && typeof _cc === 'object') rptConsCollapsed = _cc; } catch (e) {}
+function rptConsSaveCollapse() { try { localStorage.setItem(RPT_CONS_COLLAPSE_KEY, JSON.stringify(rptConsCollapsed || {})); } catch (e) {} }
+
+// Display amount — identical rule to acctAmt (global F4 full-amount aware).
+function rptConsAmt(n) {
+    if (Math.abs(Number(n) || 0) < 0.005) return '-';
+    if (typeof wmsIsFullAmount === 'function' && wmsIsFullAmount()) return (typeof formatAmountRaw === 'function') ? formatAmountRaw(n) : String(n);
+    if (typeof formatAmount === 'function') return formatAmount(n);
+    return String(n);
+}
+function rptConsRootName(groupId) {
+    var g = rptConsGroupById[groupId], guard = 0;
+    while (g && g.parent_group_id && guard++ < 20) g = rptConsGroupById[g.parent_group_id];
+    return g ? g.name : '—';
+}
+// Natural-sign per nature: Liabilities/Income/Capital are credit-normal -> negate.
+function rptConsLedgerDisp(net, lg, negate) {
+    var nature = rptConsRootName(lg.group_id);
+    var crNormal = (nature === 'Liabilities' || nature === 'Income' || nature === 'Capital');
+    var v = net[lg.id] || 0;
+    var base = crNormal ? -v : v;
+    return negate ? -base : base;
+}
+// FY quarter index for a yyyy-mm-dd date: Apr-Jun=0 .. Jan-Mar=3.
+function rptConsQuarterOf(dateStr) {
+    if (!dateStr) return 0;
+    var m = parseInt(String(dateStr).slice(5, 7), 10) || 1;   // 1..12
+    return Math.floor(((m - 4 + 12) % 12) / 3);               // Apr->0 ... Mar->3
+}
+
+async function rptLoadConsolCatalogue() {
+    if (rptConsCatalogueLoaded) return;
+    var groups = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/acct_groups?select=*&order=name.asc', { headers: wmsHeaders() });
+    var ledgers = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/acct_ledgers?select=*&order=name.asc', { headers: wmsHeaders() });
+    rptConsGroups = groups || [];
+    rptConsLedgers = ledgers || [];
+    rptConsGroupById = {};
+    rptConsGroups.forEach(function (g) { rptConsGroupById[g.id] = g; });
+    rptConsCatalogueLoaded = true;
+}
+async function rptLoadConsol() {
+    await rptLoadConsolCatalogue();
+    var ids = rptConsolBookIds.slice();
+    if (!ids.length) { rptConsRows = []; rptConsLoadedKey = ''; return; }
+    var key = ids.slice().sort().join(',');
+    if (key === rptConsLoadedKey && rptConsRows.length) return;   // already have it
+    var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
+    var rows = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/acct_voucher_full?' + filter +
+        '&order=voucher_date.asc,voucher_number.asc,sort_order.asc', { headers: wmsHeaders() });
+    rptConsRows = (rows || []).filter(function (r) { return !r.is_cancelled; });
+    rptConsLoadedKey = key;
+}
+
+// Column descriptors for the current mode.
+function rptConsColumns() {
+    if (rptConsolMode === 'quarters') {
+        return [{ label: 'Q1' }, { label: 'Q2' }, { label: 'Q3' }, { label: 'Q4' }].map(function (c, i) {
+            return { key: 'q' + i, label: c.label, q: i };
+        });
+    }
+    return rptConsolBookIds.map(function (id) {
+        var inv = (rptInvestors || []).find(function (v) { return String(v.id) === String(id); });
+        return { key: 'b' + id, label: inv ? (inv.short_name || inv.name) : String(id), bookId: id };
+    });
+}
+// Per-column net maps (ledgerId -> Dr-Cr) plus the consolidated total map.
+function rptConsComputeNets(cols) {
+    var nets = cols.map(function () { return {}; });
+    var total = {};
+    function add(map, lid, amt) { map[lid] = (map[lid] || 0) + amt; }
+    rptConsRows.forEach(function (r) {
+        var lid = r.ledger_id;
+        var amt = (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
+        add(total, lid, amt);
+        var ci;
+        if (rptConsolMode === 'quarters') {
+            ci = rptConsQuarterOf(r.voucher_date);
+        } else {
+            ci = rptConsolBookIds.map(String).indexOf(String(r.investor_id));
+        }
+        if (ci >= 0 && ci < nets.length) add(nets[ci], lid, amt);
+    });
+    return { nets: nets, total: total };
+}
+
+// Build root -> group -> ledger tree. Each node carries colVals[] and total.
+function rptConsBuildTree(nets, total) {
+    var ncols = nets.length;
+    function ledgerNode(lg) {
+        var cv = nets.map(function (net) { return rptConsLedgerDisp(net, lg); });
+        var tot = rptConsLedgerDisp(total, lg);
+        var anyNonZero = tot && Math.round(tot * 100) !== 0;
+        if (!anyNonZero) anyNonZero = cv.some(function (v) { return Math.round(v * 100) !== 0; });
+        if (!anyNonZero && !rptConsShowZero) return null;
+        return { key: 'l:' + lg.id, label: lg.name, isLedger: true, colVals: cv, total: tot };
+    }
+    function buildGroup(groupId) {
+        var out = [];
+        rptConsLedgers.filter(function (l) { return l.group_id === groupId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (l) { var n = ledgerNode(l); if (n) out.push(n); });
+        rptConsGroups.filter(function (g) { return g.parent_group_id === groupId; })
+            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+            .forEach(function (cg) {
+                var children = buildGroup(cg.id);
+                if (!children.length && !rptConsShowZero) return;
+                out.push(mkGroup('g:' + cg.id, cg.name, children));
+            });
+        return out;
+    }
+    function mkGroup(key, label, children) {
+        var cv = []; for (var i = 0; i < ncols; i++) cv.push(0);
+        var tot = 0;
+        children.forEach(function (c) { c.colVals.forEach(function (v, i) { cv[i] += v; }); tot += c.total; });
+        return { key: key, label: label, children: children, colVals: cv, total: tot };
+    }
+    var roots = [];
+    rptConsNatureOrder.forEach(function (nm) {
+        var root = rptConsGroups.find(function (g) { return !g.parent_group_id && g.name === nm; });
+        if (!root) return;
+        var children = buildGroup(root.id);
+        if (!children.length && !rptConsShowZero) return;
+        var node = mkGroup('r:' + nm, nm, children);
+        node.isRoot = true;
+        roots.push(node);
+    });
+    return roots;
+}
+
+function rptConsNodeRows(node, depth, ncols) {
+    var isGroup = !node.isLedger;
+    var collapsed = isGroup && rptConsCollapsed[node.key];
+    var pad = 8 + depth * 16;
+    var icon = isGroup
+        ? '<span class="rpt-consol-toggle' + (collapsed ? ' collapsed' : '') + '">' + (collapsed ? '▶' : '▼') + '</span>'
+        : '<span class="rpt-consol-toggle"></span>';
+    var rowCls = isGroup ? ('rpt-consol-row-group' + (node.isRoot ? ' rpt-root' : '')) : 'rpt-consol-row-ledger';
+    var attr = isGroup ? (' data-cnode="' + node.key + '"') : '';
+    var h = '<tr class="' + rowCls + '"' + attr + '>';
+    h += '<td class="rpt-c-name" style="padding-left:' + pad + 'px;">' + icon + wmsEsc(node.label) + '</td>';
+    for (var i = 0; i < ncols; i++) h += '<td>' + rptConsAmt(node.colVals[i]) + '</td>';
+    h += '<td class="rpt-consol-c-total">' + rptConsAmt(node.total) + '</td>';
+    h += '</tr>';
+    if (isGroup && !collapsed && node.children) {
+        node.children.forEach(function (c) { h += rptConsNodeRows(c, depth + 1, ncols); });
+    }
+    return h;
+}
+function rptConsAllGroupKeys(nodes, acc) {
+    nodes.forEach(function (n) { if (!n.isLedger) { acc.push(n.key); if (n.children) rptConsAllGroupKeys(n.children, acc); } });
+    return acc;
+}
+
+function rptRenderConsol() {
+    var body = document.getElementById('rptConsolBody');
+    if (!body) return;
+    rptConsRenderBooks();
+    // mode buttons
+    document.querySelectorAll('#rpt-consol .rpt-consol-mode-btn').forEach(function (b) {
+        b.classList.toggle('active', b.dataset.mode === rptConsolMode);
+    });
+    var zc = document.getElementById('rptConsolZeroChk'); if (zc) zc.checked = rptConsShowZero;
+    var sc = document.getElementById('rptConsolSummaryChk'); if (sc) sc.checked = rptConsSummary;
+    var unit = document.getElementById('rptConsolUnit');
+    if (unit) unit.textContent = 'all amounts in ' + ((typeof wmsIsFullAmount === 'function' && wmsIsFullAmount()) ? 'full ₹' : ((typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000"));
+
+    if (!rptConsolBookIds.length) {
+        body.innerHTML = '<div class="rpt-consol-empty">Pick one or more books to consolidate…</div>';
+        return;
+    }
+    var cols = rptConsColumns();
+    var ncols = cols.length;
+    var nt = rptConsComputeNets(cols);
+    var roots = rptConsBuildTree(nt.nets, nt.total);
+    if (!roots.length) {
+        body.innerHTML = '<div class="rpt-consol-empty">No ledger balances for the selected books.</div>';
+        return;
+    }
+    var th = '<tr><th class="rpt-c-name">Ledger</th>';
+    cols.forEach(function (c) { th += '<th>' + wmsEsc(c.label) + '</th>'; });
+    th += '<th class="rpt-consol-c-total">Total</th></tr>';
+    var rows = '';
+    roots.forEach(function (r) { rows += rptConsNodeRows(r, 0, ncols); });
+    body.innerHTML = '<table class="rpt-consol-table"><thead>' + th + '</thead><tbody>' + rows + '</tbody></table>';
+
+    // wire group toggles
+    body.querySelectorAll('tr.rpt-consol-row-group').forEach(function (tr) {
+        tr.onclick = function () {
+            var k = tr.dataset.cnode;
+            if (rptConsCollapsed[k]) delete rptConsCollapsed[k]; else rptConsCollapsed[k] = true;
+            rptConsSaveCollapse();
+            rptRenderConsol();
+        };
+    });
+}
+
+function rptConsRenderBooks() {
+    var host = document.getElementById('rptConsolBooks');
+    if (!host) return;
+    var books = (rptInvestors || []).filter(function (v) { return v.accounting_enabled; });
+    var h = '';
+    books.forEach(function (b) {
+        var on = rptConsolBookIds.map(String).indexOf(String(b.id)) >= 0;
+        h += '<span class="rpt-consol-book' + (on ? ' on' : '') + '" data-book="' + b.id + '">' + wmsEsc(b.short_name || b.name) + '</span>';
+    });
+    host.innerHTML = h || '<span style="font-size:11px;color:#9ca3af;">No accounting books</span>';
+    host.querySelectorAll('.rpt-consol-book').forEach(function (chip) {
+        chip.onclick = async function () {
+            var id = chip.dataset.book;
+            var i = rptConsolBookIds.map(String).indexOf(String(id));
+            if (i >= 0) rptConsolBookIds.splice(i, 1); else rptConsolBookIds.push(id);
+            showLoading(true);
+            try { await rptLoadConsol(); } catch (e) { console.error(e); showAlert('Failed to load books: ' + e.message, 'error'); }
+            showLoading(false);
+            rptRenderConsol();
+        };
+    });
+}
+
+// ---- Consolidation view manager (saved views: which books + mode) ----
+var rptConsolVM = wmsViewManager({
+    module: 'reports_consolidation',
+    label: 'Rpt Consolidation',
+    ids: {
+        viewTabs: 'rpt-consol-view-tabs',
+        moreList: 'rpt-consol-more-list',
+        moreDropdown: 'rpt-consol-more-dropdown',
+        updateBtn: 'rpt-consol-update-view-btn'
+    },
+    autoDefaultFirst: true,
+    getFilters: function () { return { bookIds: rptConsolBookIds.slice(), mode: rptConsolMode }; },
+    applyFilters: function (f) {
+        rptConsolBookIds = (f && f.bookIds ? f.bookIds.slice() : []);
+        rptConsolMode = (f && f.mode) || 'books';
+    },
+    onRefresh: async function () {
+        showLoading(true);
+        try { await rptLoadConsol(); } catch (e) { console.error(e); }
+        showLoading(false);
+        rptRenderConsol();
+    }
+});
+
+function rptInitConsol() {
+    // mode toggle
+    document.querySelectorAll('#rpt-consol .rpt-consol-mode-btn').forEach(function (b) {
+        b.addEventListener('click', function () {
+            rptConsolMode = b.dataset.mode;
+            rptRenderConsol();
+        });
+    });
+    var ex = document.getElementById('rptConsolExpandBtn');
+    if (ex) ex.addEventListener('click', function () { rptConsCollapsed = {}; rptConsSaveCollapse(); rptRenderConsol(); });
+    var co = document.getElementById('rptConsolCollapseBtn');
+    if (co) co.addEventListener('click', function () {
+        var cols = rptConsColumns(); var nt = rptConsComputeNets(cols); var roots = rptConsBuildTree(nt.nets, nt.total);
+        var keys = rptConsAllGroupKeys(roots, []);
+        keys.forEach(function (k) { rptConsCollapsed[k] = true; });
+        rptConsSaveCollapse(); rptRenderConsol();
+    });
+    var sc = document.getElementById('rptConsolSummaryChk');
+    if (sc) sc.addEventListener('change', function () {
+        rptConsSummary = sc.checked;
+        var cols = rptConsColumns(); var nt = rptConsComputeNets(cols); var roots = rptConsBuildTree(nt.nets, nt.total);
+        if (rptConsSummary) {
+            // collapse everything below the root nature rows
+            roots.forEach(function (r) { if (r.children) rptConsAllGroupKeys(r.children, []).forEach(function (k) { rptConsCollapsed[k] = true; }); });
+        } else {
+            rptConsCollapsed = {};
+        }
+        rptConsSaveCollapse(); rptRenderConsol();
+    });
+    var zc = document.getElementById('rptConsolZeroChk');
+    if (zc) zc.addEventListener('change', function () { rptConsShowZero = zc.checked; rptRenderConsol(); });
+
+    rptInitConsolViewBar();
+}
+
+// View bar wiring (mirrors rptInitCGViewBar, using rptConsolVM)
+function rptInitConsolViewBar() {
+    var newBtn = document.getElementById('rpt-consol-new-view-btn');
+    if (newBtn) newBtn.addEventListener('click', function () {
+        rptConsolVM.activeViewId = null; rptConsolVM.renderViewTabs(); rptConsolVM.updateViewButtons();
+    });
+    var moreBtn = document.getElementById('rpt-consol-more-btn');
+    if (moreBtn) moreBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var dd = document.getElementById('rpt-consol-more-dropdown');
+        dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+    });
+    var updateBtn = document.getElementById('rpt-consol-update-view-btn');
+    if (updateBtn) updateBtn.addEventListener('click', function () { rptConsolVM.updateCurrentView(); });
+    var saveNewBtn = document.getElementById('rpt-consol-save-new-btn');
+    var savePrompt = document.getElementById('rpt-consol-save-prompt');
+    var savePromptName = document.getElementById('rpt-consol-save-prompt-name');
+    if (saveNewBtn && savePrompt) {
+        saveNewBtn.addEventListener('click', function () {
+            savePrompt.classList.add('show'); saveNewBtn.style.display = 'none'; savePromptName.value = ''; savePromptName.focus();
+        });
+        document.getElementById('rpt-consol-save-prompt-ok').addEventListener('click', function () {
+            var name = savePromptName.value.trim();
+            if (name) rptConsolVM.saveCurrentView(name);
+            savePrompt.classList.remove('show'); saveNewBtn.style.display = '';
+        });
+        document.getElementById('rpt-consol-save-prompt-cancel').addEventListener('click', function () {
+            savePrompt.classList.remove('show'); saveNewBtn.style.display = '';
+        });
+        savePromptName.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                var name = savePromptName.value.trim();
+                if (name) rptConsolVM.saveCurrentView(name);
+                savePrompt.classList.remove('show'); saveNewBtn.style.display = '';
+            } else if (e.key === 'Escape') {
+                savePrompt.classList.remove('show'); saveNewBtn.style.display = '';
+            }
+        });
+    }
+    document.addEventListener('click', function (e) {
+        if (!e.target.closest('#rpt-consol-more-btn') && !e.target.closest('#rpt-consol-more-dropdown')) {
+            var mdd = document.getElementById('rpt-consol-more-dropdown');
+            if (mdd) mdd.style.display = 'none';
+        }
+    });
+}
+
+
+// ============================================================================
 // EXPORTS
 // ============================================================================
 
@@ -1838,4 +2192,5 @@ if (typeof window !== 'undefined') {
     window.rptCloseAllActionMenus = rptCloseAllActionMenus;
     window.rptRenderPortfolio = rptRenderPortfolio;
     window.rptRenderCapGains = rptRenderCapGains;
+    window.rptRenderConsol = rptRenderConsol;
 }
