@@ -325,6 +325,9 @@
 .acct-ledger-header .acct-lh-title { font-size: 15px; font-weight: 700; color: #1a202c; white-space: nowrap; }
 .acct-ledger-header .acct-lh-sub { font-size: 11px; color: #718096; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-ledger-header .acct-lh-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.acct-ledger-header .acct-lh-mid { flex: 1 1 auto; display: flex; justify-content: center; min-width: 0; padding: 0 12px; }
+.acct-ledger-header .acct-lh-picker { max-width: 340px; width: 100%; font-size: 12px; padding: 4px 8px; border: 1px solid #cbd5e0; border-radius: 6px; background: #fff; color: #1a202c; cursor: pointer; }
+.acct-ledger-header .acct-lh-left { flex: 0 1 auto; }
 .acct-ledger-header .acct-ld-unit { font-size: 11px; color: #64748b; }
 /* Roomier rows in the ledger drill-down so lines are easy to tell apart. */
 .acct-ld-table td { padding: 9px 10px; }
@@ -712,7 +715,11 @@
                 <span id="acctLedgerTitle" class="acct-lh-title">Ledger</span>
                 <span id="acctLedgerSub" class="acct-lh-sub"></span>
             </div>
+            <div class="acct-lh-mid">
+                <select id="acctLedgerPicker" class="acct-lh-picker" title="Switch to another ledger"></select>
+            </div>
             <div class="acct-lh-right">
+                <button id="acctLedgerNewVoucher" class="wms-btn wms-btn-primary" style="font-size:11px;">➕ New Voucher</button>
                 <span id="acctLedgerUnit" class="acct-ld-unit"></span>
                 <button id="acctLdUnitToggle" class="wms-btn wms-btn-secondary" style="font-size:11px;">Show full amount</button>
                 <button class="wms-btn-close" id="acctLedgerClose">✕</button>

@@ -2187,7 +2187,7 @@ function acctUpdateBalance() {
     if (save) save.disabled = !balanced;
 }
 
-function acctOpenVoucherModal() {
+function acctOpenVoucherModal(prefillLedgerId) {
     if (!acctBookId) { acctToast('Select a book first (enable accounting on an investor).', true); return; }
     acctEditingVoucherId = null;          // creating, not editing
     acctVoucherReadOnly = false;
@@ -2198,6 +2198,12 @@ function acctOpenVoucherModal() {
         { ledgerId: '', ledgerName: '', debit: '', credit: '', narration: '', _auto: false },
         { ledgerId: '', ledgerName: '', debit: '', credit: '', narration: '', _auto: true }
     ];
+    // Prefill the first line with a ledger when opened from that ledger's drill-down
+    // (typeof guard: the plain New-Voucher button passes a click event, not an id).
+    if (prefillLedgerId && typeof prefillLedgerId === 'string') {
+        var _plg = acctLedgers.find(function (x) { return x.id === prefillLedgerId; });
+        if (_plg) { acctVoucherLines[0].ledgerId = _plg.id; acctVoucherLines[0].ledgerName = _plg.name; }
+    }
     acctLedgerPickTarget = null;
 
     document.getElementById('acctVoucherTitle').textContent = 'New Voucher — ' + acctInvName(acctBookId);
@@ -2427,6 +2433,34 @@ function acctLedgerDateWindow() {
     return { start: null, end: null };
 }
 
+// Populate the header ledger-switcher with every ledger that has postings in THIS
+// book, grouped by chart-group, current ledger selected. Selecting one re-opens the
+// drill-down on that ledger without leaving the modal.
+function acctPopulateLedgerPicker() {
+    var sel = document.getElementById('acctLedgerPicker');
+    if (!sel) return;
+    var seen = {};
+    acctVoucherRows.forEach(function (r) { seen[r.ledger_id] = true; });
+    var byGroup = {};
+    Object.keys(seen).forEach(function (id) {
+        var lg = acctLedgers.find(function (x) { return x.id === id; });
+        if (!lg) return;
+        var g = acctGroupById[lg.group_id];
+        var gname = g ? acctGroupPath(g) : 'Other';
+        (byGroup[gname] = byGroup[gname] || []).push({ id: id, name: lg.name });
+    });
+    var html = '';
+    Object.keys(byGroup).sort().forEach(function (gn) {
+        html += '<optgroup label="' + wmsEsc(gn) + '">';
+        byGroup[gn].sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (o) {
+            html += '<option value="' + o.id + '"' + (o.id === acctLedgerDetailId ? ' selected' : '') + '>' + wmsEsc(o.name) + '</option>';
+        });
+        html += '</optgroup>';
+    });
+    sel.innerHTML = html || '<option value="">(no ledgers)</option>';
+    sel.onchange = function () { if (this.value && this.value !== acctLedgerDetailId) acctOpenLedgerDetail(this.value); };
+}
+
 function acctOpenLedgerDetail(ledgerId) {
     acctLedgerDetailId = ledgerId;
     acctLedgerSearchText = '';          // search must NOT carry over to another ledger
@@ -2471,6 +2505,7 @@ function acctRenderLedgerDetail() {
     if (titleEl) titleEl.textContent = lg.name;
     var subEl = document.getElementById('acctLedgerSub');
     if (subEl) subEl.textContent = acctGroupPath(g) + ' · ' + acctViewTitle();
+    acctPopulateLedgerPicker();
     var unitEl = document.getElementById('acctLedgerUnit');
     if (unitEl) unitEl.textContent = acctUnitLabel();
     var tgl = document.getElementById('acctLdUnitToggle');
@@ -3350,6 +3385,8 @@ function acctWireModals() {
     if (lOverlay && typeof wmsModal === 'function') acctLedgerModalCtrl = wmsModal(lOverlay, { backdropClose: false });
     document.getElementById('acctLedgerClose').onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
     document.getElementById('acctLedgerDone').onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
+    var _lnv = document.getElementById('acctLedgerNewVoucher');
+    if (_lnv) _lnv.onclick = function () { acctOpenVoucherModal(acctLedgerDetailId); };
 
     // Add-ledger modal
     var alOverlay = document.getElementById('acctAddLedgerModal');
