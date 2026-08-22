@@ -463,7 +463,7 @@
     // Owner rules 2026-08-16:
     //   INTEREST_BOOKED own    : Dr Trading Interest / Cr Broker  (broker charges the book)
     //   INTEREST_BOOKED client : Dr Client / Cr Trading Interest  (parent charges the client)
-    //   CASH_RECEIVED   own    : Dr Cash / Cr Broker              CASH_PAID own    : Dr Broker / Cr Cash
+    //   CASH_RECEIVED   own    : Dr Broker / Cr Cash             CASH_PAID own    : Dr Cash / Cr Broker
     //   CASH_RECEIVED   client : Dr Cash / Cr Client              CASH_PAID client : Dr Client / Cr Cash
     //   RECONCILIATION         : no voucher      OPENING_BALANCE : no voucher (entered manually)
     function acctStatementVoucher(e, ctx) {
@@ -488,9 +488,16 @@
         }
         if (ty === 'CASH_RECEIVED' || ty === 'CASH_PAID') {
             var recd = (ty === 'CASH_RECEIVED');
-            var cash  = { ref: { role: 'CASH' }, debit: recd ? r2(amt) : 0, credit: recd ? 0 : r2(amt) };
-            var other = { ref: cp,               debit: recd ? 0 : r2(amt), credit: recd ? r2(amt) : 0 };
-            return { type: 'STMT-' + ty, bookId: bookId, narration: (recd ? 'Cash received' : 'Cash paid') + (e.reference ? ' — ' + e.reference : ''), lines: [cash, other] };
+            // The counterparty leg mirrors that account's STATEMENT (owner 2026-08-22d):
+            //   • BROKER (own): cash INTO the broker account (CASH_RECEIVED) reduces what
+            //     the book owes -> Dr broker; cash OUT (CASH_PAID) -> Cr broker.
+            //   • CLIENT: the current account is an ASSET (opposite sign) -> received Cr
+            //     client, paid Dr client (unchanged). The CASH role is the balancing contra.
+            var cpDr = own ? (recd ? r2(amt) : 0) : (recd ? 0 : r2(amt));
+            var cpCr = own ? (recd ? 0 : r2(amt)) : (recd ? r2(amt) : 0);
+            var other = { ref: cp,               debit: cpDr, credit: cpCr };
+            var cash  = { ref: { role: 'CASH' }, debit: cpCr, credit: cpDr };
+            return { type: 'STMT-' + ty, bookId: bookId, narration: (recd ? 'Cash received' : 'Cash paid') + (e.reference ? ' — ' + e.reference : ''), lines: [other, cash] };
         }
         return { skip: 'unhandled entry_type: ' + ty, exceptions: [ex('unhandled_ledger_entry:' + ty, 'warn', 'Unhandled ledger entry_type ' + ty, { id: e.id })] };
     }
