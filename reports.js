@@ -1857,6 +1857,7 @@ var rptConsStatement = 'bs';      // 'bs' | 'pl'
 var rptConsolMode = 'books';      // 'books' | 'quarters'
 var rptConsShowZero = false;
 var rptConsNatureOrder = ['Assets', 'Liabilities', 'Income', 'Expenses', 'Capital'];
+var rptConsOpBalIdx = -1;   // column index that carries the Op Bal divider (-1 = none)
 
 // ---- Browser-persistent prefs (books, statement, layout, show-zero, collapse) ----
 var RPT_CONS_PREFS_KEY = 'wms_rpt_consol_prefs';
@@ -2080,7 +2081,7 @@ function rptConsAllGroupKeys(nodes, acc) {
 // Net-Worth block below it (owner: "start it like a new table ... a bit of a gap").
 function rptConsGapRow(ncols) {
     var h = '<tr class="rpt-consol-gap"><td class="rpt-c-name"></td>';
-    for (var i = 0; i < ncols; i++) h += '<td class="rpt-c-num' + (i === ncols - 1 ? ' rpt-consol-c-total' : '') + '"></td>';
+    for (var i = 0; i < ncols; i++) h += '<td class="rpt-c-num' + (i === ncols - 1 ? ' rpt-consol-c-total' : '') + (i === rptConsOpBalIdx ? ' rpt-consol-c-opbal' : '') + '"></td>';
     return h + '</tr>';
 }
 // Per-book unrealised gain by asset class — reuses the SAME Reports FIFO engine
@@ -2117,8 +2118,9 @@ function rptConsNodeRows(node, depth, ncols) {
     h += '<td class="rpt-c-name" style="padding-left:' + pad + 'px;">' + icon + wmsEsc(node.label) + '</td>';
     for (var i = 0; i < ncols; i++) {
         var totCls = (i === ncols - 1) ? ' rpt-consol-c-total' : '';
+        var obCls = (i === rptConsOpBalIdx) ? ' rpt-consol-c-opbal' : '';
         var badCls = (node.badCols && node.badCols[i]) ? ' rpt-consol-cell-bad' : '';
-        h += '<td class="rpt-c-num' + totCls + badCls + '">' + rptConsAmt(node.colVals[i]) + '</td>';
+        h += '<td class="rpt-c-num' + totCls + obCls + badCls + '">' + rptConsAmt(node.colVals[i]) + '</td>';
     }
     h += '</tr>';
     if (isGroup && !collapsed && node.children) {
@@ -2132,7 +2134,8 @@ function rptConsSummaryRow(label, colVals, ncols, extraCls) {
     h += '<td class="rpt-c-name">' + wmsEsc(label) + '</td>';
     for (var i = 0; i < ncols; i++) {
         var totCls = (i === ncols - 1) ? ' rpt-consol-c-total' : '';
-        h += '<td class="rpt-c-num' + totCls + '">' + rptConsAmt(colVals[i]) + '</td>';
+        var obCls = (i === rptConsOpBalIdx) ? ' rpt-consol-c-opbal' : '';
+        h += '<td class="rpt-c-num' + totCls + obCls + '">' + rptConsAmt(colVals[i]) + '</td>';
     }
     return h + '</tr>';
 }
@@ -2149,12 +2152,15 @@ function rptRenderConsol() {
     }
     var cols = rptConsBuildColumns();
     var ncols = cols.length;
+    rptConsOpBalIdx = -1;
+    cols.forEach(function (c, i) { if (c.isOpening) rptConsOpBalIdx = i; });
 
     // Header
     var th = '<tr><th class="rpt-c-name">Ledger</th>';
     cols.forEach(function (c, i) {
         var totCls = (i === ncols - 1) ? ' rpt-consol-c-total' : '';
-        th += '<th class="rpt-c-num' + totCls + '">' + wmsEsc(c.label) + '</th>';
+        var obCls = (i === rptConsOpBalIdx) ? ' rpt-consol-c-opbal' : '';
+        th += '<th class="rpt-c-num' + totCls + obCls + '">' + wmsEsc(c.label) + '</th>';
     });
     th += '</tr>';
 
