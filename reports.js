@@ -2076,6 +2076,32 @@ function rptConsAllGroupKeys(nodes, acc) {
 // ---------------------------------------------------------------------------
 // ROW RENDERING
 // ---------------------------------------------------------------------------
+// A blank spacer row that visually separates the ledger statement from the
+// Net-Worth block below it (owner: "start it like a new table ... a bit of a gap").
+function rptConsGapRow(ncols) {
+    var h = '<tr class="rpt-consol-gap"><td class="rpt-c-name"></td>';
+    for (var i = 0; i < ncols; i++) h += '<td class="rpt-c-num' + (i === ncols - 1 ? ' rpt-consol-c-total' : '') + '"></td>';
+    return h + '</tr>';
+}
+// Per-book unrealised gain by asset class — reuses the SAME Reports FIFO engine
+// (wmsCalcFifoCost via rptFifoEngine) and live prices (rptGetPrice) as the
+// Portfolio page, so cost/MTM tie out. Returns { assetClass: unrealisedGain }.
+function rptConsBookMtm(bookId) {
+    var txns = (rptTransactions || []).filter(function (t) {
+        return String(t.investorId) === String(bookId) && t.securityType !== 'NFO' && t.securityType !== 'MCX';
+    });
+    var fifo = rptFifoEngine(txns);
+    var byClass = {};
+    Object.keys(fifo.holdings).forEach(function (k) {
+        var h = fifo.holdings[k];
+        if (!h.quantity) return;
+        var unreal = (h.quantity * rptGetPrice(h)) - h.totalCost;
+        var cls = h.assetClass || 'Other';
+        byClass[cls] = (byClass[cls] || 0) + unreal;
+    });
+    return byClass;
+}
+
 function rptConsNodeRows(node, depth, ncols) {
     if (!node) return '';
     var isGroup = node.isGroup || node.isRoot;
@@ -2162,6 +2188,44 @@ function rptRenderConsol() {
         rows += rptConsSummaryRow('Add / Less: P&L for the year', NI, ncols, 'rpt-consol-pl');
         if (cap) { cap.label = 'Total Capital'; cap.rowClass = 'rpt-consol-cap-ok'; cap.badCols = badCols; rows += rptConsNodeRows(cap, 0, ncols); }
         else { var capNode = { key: 'r:Capital', label: 'Total Capital', isRoot: true, isGroup: true, colVals: C, rowClass: 'rpt-consol-cap-ok', badCols: badCols }; rows += rptConsNodeRows(capNode, 0, ncols); }
+
+        // ---- Net Worth block (starts like a fresh table after a gap) ----
+        // Capital ledgers do NOT yet include this year's P&L, so:
+        //   Net Worth (at Cost) = Capital + Net P&L for the year   (= Assets - Liabilities)
+        var netWorthCost = C.map(function (v, i) { return v + NI[i]; });
+        rows += rptConsGapRow(ncols);
+        rows += rptConsSummaryRow('Net Worth (at Cost)', netWorthCost, ncols, 'rpt-consol-nw');
+
+        // Book-by-book MTM: unrealised gain per asset class (Reports > Portfolio engine).
+        // Quarters view needs historical prices (not yet loaded) so MTM is Books-only.
+        if (rptConsolMode === 'books') {
+            var mtmByCol = cols.map(function (c) { return c.bookId ? rptConsBookMtm(c.bookId) : null; });
+            var present = {};
+            mtmByCol.forEach(function (m) { if (m) Object.keys(m).forEach(function (k) { present[k] = true; }); });
+            var order = (typeof RPT_ASSET_CLASS_ORDER !== 'undefined') ? RPT_ASSET_CLASS_ORDER.slice() : [];
+            var classes = order.filter(function (c) { return present[c]; });
+            Object.keys(present).forEach(function (c) { if (classes.indexOf(c) < 0) classes.push(c); });
+            // unrealised per column (book = its total; Op Bal = 0; Total = sum of books)
+            var unrealPerCol = cols.map(function (c, i) {
+                if (!c.bookId) return 0;
+                var m = mtmByCol[i], su = 0; Object.keys(m).forEach(function (k) { su += m[k]; }); return su;
+            });
+            var totU = 0; cols.forEach(function (c, i) { if (c.bookId) totU += unrealPerCol[i]; });
+            unrealPerCol[ncols - 1] = totU;   // Total column
+            if (classes.length) {
+                rows += rptConsSummaryRow('Unrealised Gain / (Loss) — MTM', unrealPerCol, ncols, 'rpt-consol-mtmhdr');
+                classes.forEach(function (cls) {
+                    var cv = cols.map(function (c, i) {
+                        if (c.bookId) return (mtmByCol[i][cls] || 0);
+                        if (c.isTotal) { var s = 0; cols.forEach(function (cc, j) { if (cc.bookId && mtmByCol[j][cls]) s += mtmByCol[j][cls]; }); return s; }
+                        return 0;   // Op Bal — no MTM
+                    });
+                    rows += rptConsSummaryRow('\u00a0\u00a0\u00a0' + cls, cv, ncols, 'rpt-consol-mtm');
+                });
+            }
+            var netWorthMkt = netWorthCost.map(function (v, i) { return v + unrealPerCol[i]; });
+            rows += rptConsSummaryRow('Net Worth (at Market Value)', netWorthMkt, ncols, 'rpt-consol-nwm');
+        }
     } else {
         var incP = rptConsNatureTree('Income', cols);
         var expP = rptConsNatureTree('Expenses', cols);
