@@ -304,6 +304,7 @@ async function rptLoadData() {
         return {
             id: txn.id,
             investorId: txn.investor_id,
+            traderId: txn.trader_id,
             brokerId: txn.broker_id,
             securityId: txn.security_id,
             symbol: txn.symbol,
@@ -2089,7 +2090,7 @@ function rptConsGapRow(ncols) {
 // Portfolio page, so cost/MTM tie out. Returns { assetClass: unrealisedGain }.
 function rptConsBookMtm(bookId) {
     var txns = (rptTransactions || []).filter(function (t) {
-        return String(t.investorId) === String(bookId) && t.securityType !== 'NFO' && t.securityType !== 'MCX';
+        return String(t.traderId || t.investorId) === String(bookId) && t.securityType !== 'NFO' && t.securityType !== 'MCX';
     });
     var fifo = rptFifoEngine(txns);
     var byClass = {};
