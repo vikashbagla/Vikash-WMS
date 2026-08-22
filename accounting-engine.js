@@ -268,12 +268,21 @@
     // SELL = premium the client received (Dr settle / Cr Trader). Fires regardless of
     // post_fno (a client's P&L is always booked).
     function optionClient(t, ctx) {
-        var net = absN(acctDisplayNet(t));
-        if (Math.round(net * 100) === 0) return { skip: 'option premium net-zero (client)' };
-        var settle = acctFnoSettleRef(t, ctx);
-        var lines = (ttype(t) === 'BUY')
-            ? [{ ref: { investor_id: t.trader_id }, debit: r2(net), credit: 0 }, { ref: settle, debit: 0, credit: r2(net) }]
-            : [{ ref: settle, debit: r2(net), credit: 0 }, { ref: { investor_id: t.trader_id }, debit: 0, credit: r2(net) }];
+        var traderNet = absN(acctDisplayNet(t));                                       // client basis (trader_charges)
+        var brokerNet = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount); // broker basis (total_charges)
+        if (Math.round(traderNet * 100) === 0 && Math.round(brokerNet * 100) === 0) return { skip: 'option premium net-zero (client)' };
+        var settle = acctFnoSettleRef(t, ctx), mk, lines;
+        if (ttype(t) === 'BUY') {   // client pays premium (trader basis); broker paid (broker basis); markup = book income
+            mk = r2(traderNet - brokerNet);
+            lines = [{ ref: { investor_id: t.trader_id }, debit: r2(traderNet), credit: 0 }, { ref: settle, debit: 0, credit: r2(brokerNet) }];
+        } else {                    // broker credits premium (broker basis); client receives (trader basis)
+            mk = r2(brokerNet - traderNet);
+            lines = [{ ref: settle, debit: r2(brokerNet), credit: 0 }, { ref: { investor_id: t.trader_id }, debit: 0, credit: r2(traderNet) }];
+        }
+        if (Math.round(mk * 100) !== 0) {
+            if (mk >= 0) lines.push({ ref: { role: 'TRADER_INCOME' }, debit: 0, credit: mk });
+            else lines.push({ ref: { role: 'TRADER_INCOME' }, debit: -mk, credit: 0 });
+        }
         return { type: 'PMS-OPTION', narration: 'Option ' + ttype(t) + ' ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
 
@@ -319,19 +328,32 @@
     // post_fno flag (owner rule 2026-08-15). The P&L is already struck on the TRADER
     // basis (acctDisplayNet feeds the matcher gross ± trader_charges), so it equals the
     // Statements figure and there is NO separate charge spread for F&O — the trader
-    // charges are inside the P&L (owner rule 2026-08-20; the brokerage/charge spread
-    // stays an EQ-only concept). The voucher posts in the trader's PARENT book (the
-    // engine's posting-book filter routes it there). The Trader leg records the client
-    // receivable/payable; the OTHER leg is acctFnoSettleRef (actual broker when the
-    // investor IS the book, else FNO_PL — owner 2026-08-22). Profit Dr settle / Cr
-    // Trader; loss reverse.
+    // The client (Trader) leg is on the TRADER basis (trader_charges) so it equals the
+    // client's statement; the settlement leg (acctFnoSettleRef: actual broker when the
+    // investor IS the book, else FNO_PL) is on the BROKER basis (total_charges) so it
+    // equals the broker statement's F&O P&L; the difference is the book's charge markup,
+    // posted to TRADER_INCOME (owner rule 2026-08-22b, superseding the 2026-08-20
+    // no-spread rule — the F&O client spread mirrors the equity client spread). Posts in
+    // the trader's PARENT book (the posting-book filter routes it there).
     function fnoClient(t, ctx, gains) {
-        var pnl = 0; (gains || []).forEach(function (g) { pnl += (g.gain || 0); });
-        pnl = r2(pnl);
-        if (Math.round(pnl * 100) === 0) return { skip: 'F&O open / net-zero (no realised P&L)' };
+        var traderPnl = 0; (gains || []).forEach(function (g) { traderPnl += (g.gain || 0); });
+        traderPnl = r2(traderPnl);
+        var bp = (ctx.fnoBrokerById || {})[String(t.id)];
+        var brokerPnl = (bp === undefined || bp === null) ? traderPnl : r2(bp);
+        if (Math.round(traderPnl * 100) === 0 && Math.round(brokerPnl * 100) === 0) return { skip: 'F&O open / net-zero (no realised P&L)' };
+        var spread = r2(brokerPnl - traderPnl);   // book's charge markup on this realisation -> Trader Income
         var settle = acctFnoSettleRef(t, ctx), lines = [];
-        if (pnl >= 0) { lines.push({ ref: settle, debit: pnl, credit: 0 }); lines.push({ ref: { investor_id: t.trader_id }, debit: 0, credit: pnl }); }
-        else { lines.push({ ref: { investor_id: t.trader_id }, debit: -pnl, credit: 0 }); lines.push({ ref: settle, debit: 0, credit: -pnl }); }
+        // settlement leg on BROKER basis (mirrors the statement's F&O P&L on the broker); profit -> Dr settle
+        if (brokerPnl >= 0) lines.push({ ref: settle, debit: brokerPnl, credit: 0 });
+        else lines.push({ ref: settle, debit: 0, credit: -brokerPnl });
+        // client leg on TRADER basis (what the book charges the client); profit -> Cr client
+        if (traderPnl >= 0) lines.push({ ref: { investor_id: t.trader_id }, debit: 0, credit: traderPnl });
+        else lines.push({ ref: { investor_id: t.trader_id }, debit: -traderPnl, credit: 0 });
+        // the difference (broker vs trader charges) is the book's income
+        if (Math.round(spread * 100) !== 0) {
+            if (spread >= 0) lines.push({ ref: { role: 'TRADER_INCOME' }, debit: 0, credit: spread });
+            else lines.push({ ref: { role: 'TRADER_INCOME' }, debit: -spread, credit: 0 });
+        }
         return { type: 'PMS-FNO', narration: 'F&O ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
 
@@ -376,7 +398,8 @@
     // client trade, else the book (investor). Contract = full symbol minus any
     // exchange prefix (so APR and MAY futures are distinct). Returns { txnId: pnl }
     // keyed on the COVERING trade; realisedPnl = sell proceeds − buy cost (profit +).
-    function acctFnoRealised(trades) {
+    function acctFnoRealised(trades, opts) {
+        var brokerBasis = !!(opts && opts.broker);   // broker basis uses raw net_amount (total_charges); trader basis uses acctDisplayNet
         // Key each F&O trade by BENEFICIARY + CONTRACT (client trader, else the book),
         // then defer the actual matching to the shared, authoritative wmsFnoRealised
         // (Statements module's engine). Beneficiary keying lives here because a book's
@@ -388,7 +411,7 @@
             var contract = String(t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
             var ben = (t.trader_id && String(t.trader_id) !== String(t.investor_id)) ? String(t.trader_id) : String(t.investor_id);
             rows.push({ key: ben + '|' + contract, type: ty, qty: absN(t.quantity),
-                net: absN(acctDisplayNet(t)), id: String(t.id),
+                net: absN(brokerBasis ? (t.net_amount !== undefined ? t.net_amount : t.netAmount) : acctDisplayNet(t)), id: String(t.id),
                 sort: String(t.transaction_date) + '|' + String(t.transaction_time || '') + '|' + String(t.created_at || '') });
         });
         var out = {};
@@ -540,7 +563,8 @@
 
         // F&O realised P&L via the dedicated symmetric/per-beneficiary matcher —
         // OVERRIDE any F&O gains the pooled long-only equity FIFO produced.
-        var fnoMap = acctFnoRealised(sorted);
+        var fnoMap = acctFnoRealised(sorted);                       // trader basis (client P&L)
+        ctx.fnoBrokerById = acctFnoRealised(sorted, { broker: true }); // broker basis (broker-leg P&L, mirrors statement)
         Object.keys(fnoMap).forEach(function (id) { gainsBySell[id] = [{ gain: fnoMap[id] }]; });
 
         var vouchers = [], exceptions = [], skipped = [], demergers = [];
