@@ -1,6 +1,9 @@
 // ============================================================================
 // accounting-engine.js — the WMS accounting posting engine (v2 rebuild).
-// Replaces accounting-posting.js. PURE/UMD (browser + node + Deno).
+// The single accounting engine (the old browser-only accounting-posting.js was
+// retired + DELETED 2026-08-22). PURE/UMD (browser + node + Deno): the browser uses
+// it for opening-balance computation; build-accounting-ef.mjs inlines it into the
+// accounting-post EF (drift-guarded), so there is exactly ONE engine.
 //
 // Design: POSTING-RULES.md v4 / EXECUTION-PLAN.md v3.
 //  - Reuses the SHARED calc: wmsCalcFifoCost (FIFO cost + gains) + wmsGainClassify
