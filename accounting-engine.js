@@ -117,6 +117,24 @@
             : { broker_id: t.broker_id };
     }
 
+    // F&O settlement account for a CLIENT trade (futures P&L or option premium) —
+    // owner rule 2026-08-22. Which account faces the client's Trader leg depends on
+    // WHOSE book the P&L really belongs to:
+    //   • investor === the book being posted (the parent itself — e.g. T0's own
+    //     sub-traders such as T2): the P&L is T0's real broker settlement, so it lands
+    //     on the ACTUAL broker ledger the trade executed on (T0's debt to that broker
+    //     moves), exactly like an own F&O trade.
+    //   • investor !== the book (a separate investor book — e.g. Veins traded via
+    //     T1/T3/T3a): that book has ALREADY recorded this P&L, so T0 books the mirror
+    //     leg to FNO_PL, which cancels against the investor's book on consolidation. It
+    //     must NOT hit a broker ledger (that was the Fyers/Suvridhi leakage).
+    function acctFnoSettleRef(t, ctx) {
+        var bookId = (ctx.book && ctx.book.id != null) ? String(ctx.book.id) : null;
+        return (bookId && String(t.investor_id) === bookId)
+            ? { broker_id: t.broker_id }     // parent's own settlement → actual broker
+            : { role: 'FNO_PL' };            // separate investor book → cancels on consolidation
+    }
+
     // ---- OWN legs -----------------------------------------------------------
     function buyOwn(t, ctx) {
         var total = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount), stt = absN(t.stt);
@@ -229,8 +247,8 @@
     // (both premium legs hit the balance; their net across the round-trip IS the
     // realised P&L). No FIFO, no security asset. BUY = premium paid (Dr FNO_PL / Cr
     // Broker); SELL = premium received (Dr Broker / Cr FNO_PL). Gated by post_fno like
-    // own futures (owner rule 2026-08-16). Client options route through buyClient/
-    // sellClient so the premium lands in the client's account, matching their statement.
+    // own futures (owner rule 2026-08-16). Client options route through optionClient
+    // (cash premium to the client on the trader basis; settlement per acctFnoSettleRef).
     function optionOwn(t, ctx) {
         if (!ctx.book || !ctx.book.post_fno) return { skip: 'own option — book F&O posting off (post_fno)' };
         var net = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount);
@@ -239,6 +257,24 @@
             ? [{ ref: { role: 'FNO_PL' }, debit: r2(net), credit: 0 }, { ref: { broker_id: t.broker_id }, debit: 0, credit: r2(net) }]
             : [{ ref: { broker_id: t.broker_id }, debit: r2(net), credit: 0 }, { ref: { role: 'FNO_PL' }, debit: 0, credit: r2(net) }];
         return { type: 'PMS-OPTION', narration: 'Option ' + ttype(t) + ' ' + symOf(t, ctx) + ' (premium)', lines: lines };
+    }
+
+    // CLIENT option — CASH premium (like the Statement / own options), P&L to the
+    // CLIENT. Per leg, TRADER-charges basis (acctDisplayNet), NO equity spread. The
+    // premium's counterparty is acctFnoSettleRef: the actual broker when the investor
+    // IS the book, else FNO_PL — so a separate investor book's premium goes to FNO_PL
+    // and cancels on consolidation instead of leaking onto the execution broker's
+    // ledger (owner 2026-08-22). BUY = premium the client paid (Dr Trader / Cr settle);
+    // SELL = premium the client received (Dr settle / Cr Trader). Fires regardless of
+    // post_fno (a client's P&L is always booked).
+    function optionClient(t, ctx) {
+        var net = absN(acctDisplayNet(t));
+        if (Math.round(net * 100) === 0) return { skip: 'option premium net-zero (client)' };
+        var settle = acctFnoSettleRef(t, ctx);
+        var lines = (ttype(t) === 'BUY')
+            ? [{ ref: { investor_id: t.trader_id }, debit: r2(net), credit: 0 }, { ref: settle, debit: 0, credit: r2(net) }]
+            : [{ ref: settle, debit: r2(net), credit: 0 }, { ref: { investor_id: t.trader_id }, debit: 0, credit: r2(net) }];
+        return { type: 'PMS-OPTION', narration: 'Option ' + ttype(t) + ' ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
 
     // ---- CLIENT (parent-book) legs: trader ≠ investor -----------------------
@@ -285,14 +321,17 @@
     // Statements figure and there is NO separate charge spread for F&O — the trader
     // charges are inside the P&L (owner rule 2026-08-20; the brokerage/charge spread
     // stays an EQ-only concept). The voucher posts in the trader's PARENT book (the
-    // engine's posting-book filter routes it there). Profit Dr FNO_PL / Cr Trader; loss reverse.
+    // engine's posting-book filter routes it there). The Trader leg records the client
+    // receivable/payable; the OTHER leg is acctFnoSettleRef (actual broker when the
+    // investor IS the book, else FNO_PL — owner 2026-08-22). Profit Dr settle / Cr
+    // Trader; loss reverse.
     function fnoClient(t, ctx, gains) {
         var pnl = 0; (gains || []).forEach(function (g) { pnl += (g.gain || 0); });
         pnl = r2(pnl);
         if (Math.round(pnl * 100) === 0) return { skip: 'F&O open / net-zero (no realised P&L)' };
-        var lines = [];
-        if (pnl >= 0) { lines.push({ ref: { role: 'FNO_PL' }, debit: pnl, credit: 0 }); lines.push({ ref: { investor_id: t.trader_id }, debit: 0, credit: pnl }); }
-        else { lines.push({ ref: { investor_id: t.trader_id }, debit: -pnl, credit: 0 }); lines.push({ ref: { role: 'FNO_PL' }, debit: 0, credit: -pnl }); }
+        var settle = acctFnoSettleRef(t, ctx), lines = [];
+        if (pnl >= 0) { lines.push({ ref: settle, debit: pnl, credit: 0 }); lines.push({ ref: { investor_id: t.trader_id }, debit: 0, credit: pnl }); }
+        else { lines.push({ ref: { investor_id: t.trader_id }, debit: -pnl, credit: 0 }); lines.push({ ref: settle, debit: 0, credit: -pnl }); }
         return { type: 'PMS-FNO', narration: 'F&O ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
 
@@ -379,8 +418,8 @@
         var client = _book ? (_ben !== _book) : !!(t.trader_id && String(t.trader_id) !== String(t.investor_id));
         if (isFno(t)) {
             if (isOption(t)) {   // options: premium is cash (match Statements) — no FIFO P&L
-                if (ty === 'BUY') return client ? buyClient(t, ctx) : optionOwn(t, ctx);
-                if (ty === 'SELL') return client ? sellClient(t, ctx) : optionOwn(t, ctx);
+                if (ty === 'BUY') return client ? optionClient(t, ctx) : optionOwn(t, ctx);
+                if (ty === 'SELL') return client ? optionClient(t, ctx) : optionOwn(t, ctx);
                 return { skip: 'option non-trade type: ' + ty };
             }
             return client ? fnoClient(t, ctx, gains) : fnoOwn(t, ctx, gains);
