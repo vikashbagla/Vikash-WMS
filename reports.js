@@ -1306,9 +1306,13 @@ function rptRenderPortfolio() {
         '<th style="width:40px;"></th>' +
     '</tr></thead><tbody>';
 
-    // Total portfolio value — denominator for the Value-column weight %.
-    var rptTotalValue = 0;
-    allHoldings.forEach(function(h) { rptTotalValue += h.quantity * rptGetPrice(h); });
+    // Column totals — denominators for the group-level weight %. Each group is a
+    // % of the whole; each line is a % of its group (matches Trading > Portfolio).
+    var rptTotalValue = 0, rptTotalInvested = 0;
+    allHoldings.forEach(function(h) {
+        rptTotalValue += h.quantity * rptGetPrice(h);
+        rptTotalInvested += h.totalCost;
+    });
 
     // Iterate groups — render EVERY asset class present, ordered by preference.
     var orderedGroups = rptOrderedGroups(groups);
@@ -1342,7 +1346,10 @@ function rptRenderPortfolio() {
                 '<span id="' + chevronId + '" style="display:inline-block;width:18px;font-size:14px;color:#667eea;vertical-align:middle;">' + (isCollapsed ? '▶' : '▼') + '</span>' +
                 acName + ' <span style="font-weight:500;font-size:11px;color:#718096;">(' + groupHoldings.length + ')</span>' +
             '</td>' +
-            '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' + formatAmount(grpInvested) + '</td>' +
+            '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' +
+                formatAmount(grpInvested) + '<br>' +
+                '<span class="number-sub" style="color:#718096;">' + (rptTotalInvested ? formatPercent(grpInvested / Math.abs(rptTotalInvested) * 100) : '-') + '</span>' +
+            '</td>' +
             '<td class="text-right" style="padding:7px 8px;"></td>' +
             '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' +
                 (hasDayData ? '<span class="' + getAmountClass(grpDayPL) + '">' + formatAmount(grpDayPL) + '</span><br><span class="number-sub ' + getAmountClass(grpDayPLPct) + '">' + formatPercent(grpDayPLPct) + '</span>' : '') +
@@ -1353,7 +1360,7 @@ function rptRenderPortfolio() {
             '</td>' +
             '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' +
                 formatAmount(grpValue) + '<br>' +
-                '<span class="number-sub" style="color:#718096;">' + (rptTotalValue ? formatPercent(grpValue / rptTotalValue * 100) : '-') + '</span>' +
+                '<span class="number-sub" style="color:#718096;">' + (rptTotalValue ? formatPercent(grpValue / Math.abs(rptTotalValue) * 100) : '-') + '</span>' +
             '</td>' +
             '<td style="padding:7px 8px;"></td>' +
         '</tr>';
@@ -1407,6 +1414,7 @@ function rptRenderPortfolio() {
                 '</td>' +
                 '<td class="text-right" style="padding:6px 8px;">' +
                     '<div class="number-main">' + formatAmount(invested) + '</div>' +
+                    '<div class="number-sub" style="color:#718096;">' + (grpInvested ? formatPercent(invested / Math.abs(grpInvested) * 100) : '-') + '</div>' +
                 '</td>' +
                 '<td class="text-right" style="padding:6px 8px;">' +
                     '<div class="number-main">' + formatPrice(price, false) + '</div>' +
@@ -1419,7 +1427,7 @@ function rptRenderPortfolio() {
                 '</td>' +
                 '<td class="text-right" style="padding:6px 8px;">' +
                     '<div class="number-main">' + formatAmount(currentValue) + '</div>' +
-                    '<div class="number-sub" style="color:#718096;">' + (rptTotalValue ? formatPercent(currentValue / rptTotalValue * 100) : '-') + '</div>' +
+                    '<div class="number-sub" style="color:#718096;">' + (grpValue ? formatPercent(currentValue / Math.abs(grpValue) * 100) : '-') + '</div>' +
                 '</td>' +
                 '<td class="action-cell" style="padding:6px 8px;">' +
                     '<button class="btn-action rpt-btn-action" data-menu-id="rpt-am-' + shortSym.replace(/[^a-zA-Z0-9]/g, '_') + '" title="Actions">⋮</button>' +
