@@ -70,7 +70,7 @@ function abiParseSheet(ws,acct){
     if(slno==null||slno==='')continue; if(/opening balance/i.test(excelName)||/opening balance/i.test(narr))continue; if(wd<=0&&dp<=0)continue;
     var dir=dp>0?'in':'out'; var amount=dp>0?dp:wd; var res=abiResolveNarr(excelName,acct.bookId);
     var o={slno:String(slno),ymd:ymd,disp:abiDisp(ymd),excelName:excelName,narr:narr,wd:wd,dp:dp,bal:bal,dir:dir,amount:amount,isCC:isCC,mappedId:res?res.id:null,mappedName:res?res.name:null,mapId:res?res.mapId:null,mapGlobal:res?res.global:false,split:null};
-    o.identity=abiCyrb128([acct.ledgerId,o.slno,(o.mappedId||excelName),amount.toFixed(2)].join('|')); rows.push(o); }
+    o.identity=abiCyrb128([acct.ledgerId,o.slno,o.ymd||'',amount.toFixed(2)].join('|')); rows.push(o); }
   return rows;
 }
 async function abiHandleWorkbook(wb){
@@ -265,7 +265,7 @@ function abiSaveSplit(){
   r.narr = narr || r.narr;
   if(legs.length===1){ r.split=null; r.mappedId=legs[0].ledger_id; r.mappedName=(abiLedgerById&&abiLedgerById[legs[0].ledger_id])||r.mappedName; }
   else { r.split=legs; }
-  r.identity=abiCyrb128([t.a.ledgerId,r.slno,(r.split?('split:'+r.split.map(function(l){return l.ledger_id+':'+l.debit+':'+l.credit;}).join(',')):r.mappedId),r.amount.toFixed(2)].join('|'));
+  r.identity=abiCyrb128([t.a.ledgerId,r.slno,r.ymd||'',r.amount.toFixed(2)].join('|'));
   if(abiSplitCtrl)abiSplitCtrl.close(); abiComputeDiff().then(abiRender);
 }
 function abiOpenMap(key){ abiMapTarget=key; var t=abiRowFromKey(key), r=t.r;
@@ -277,7 +277,7 @@ function abiOpenMap(key){ abiMapTarget=key; var t=abiRowFromKey(key), r=t.r;
 function abiReresolveAll(){ abiParsed.accounts.forEach(function(a){ a.rows.forEach(function(row){ if(row.split&&row.split.length)return;
   var res=abiResolveNarr(row.excelName,a.bookId);
   row.mappedId=res?res.id:null; row.mappedName=res?res.name:null; row.mapId=res?res.mapId:null; row.mapGlobal=res?res.global:false;
-  row.identity=abiCyrb128([a.ledgerId,row.slno,(row.mappedId||row.excelName),row.amount.toFixed(2)].join('|')); }); }); }
+  row.identity=abiCyrb128([a.ledgerId,row.slno,row.ymd||'',row.amount.toFixed(2)].join('|')); }); }); }
 async function abiSaveMap(){ var t=abiRowFromKey(abiMapTarget); var r=t.r; var led=document.getElementById('abiMapLedger'); var lid=led.dataset.lid;
   if(!lid){ acctToast('Pick an existing WMS ledger.',true); return; } var glob=document.getElementById('abiMapGlobal').checked;
   var payload={excel_ledger_name:r.excelName,ledger_id:lid,is_global:glob,scope_investor_ids:glob?[]:[t.a.bookId]};
