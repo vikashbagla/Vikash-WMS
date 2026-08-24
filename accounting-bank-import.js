@@ -293,9 +293,14 @@ async function abiSaveMap(){ var t=abiRowFromKey(abiMapTarget); var r=t.r; var l
     abiReresolveAll(); await abiComputeDiff();
     if(abiMapCtrl)abiMapCtrl.close(); acctToast(abiMapEditId?'Mapping updated.':'Mapping saved.'); abiMapEditId=null; abiRender();
   }catch(e){ acctToast('Could not save mapping: '+(e.message||e),true); } }
+function abiBusy(on,msg){
+  var ov=document.getElementById('abiBusyOverlay');
+  if(on){ if(!ov){ ov=document.createElement('div'); ov.id='abiBusyOverlay'; ov.className='abi-busy'; ov.innerHTML='<div class="abi-busy-box"><div class="abi-spin"></div><div class="abi-busy-msg"></div></div>'; document.body.appendChild(ov); } ov.querySelector('.abi-busy-msg').textContent=msg||'Working…'; ov.style.display='flex'; }
+  else if(ov){ ov.style.display='none'; }
+}
 async function abiAddSelected(){
   var keys=Object.keys(abiSelected).filter(function(k){return abiSelected[k];}); if(!keys.length){ acctToast('Nothing selected.',true); return; }
-  var add=document.getElementById('abiAdd'); if(add)add.disabled=true;
+  var add=document.getElementById('abiAdd'); if(add)add.disabled=true; abiBusy(true,'Posting transactions…');
   var perAcct={},posted=0,updated=0,failed=0,blocked=0,firstErr=null;
   for(var i=0;i<keys.length;i++){ var t=abiRowFromKey(keys[i]),a=t.a,r=t.r;
     if(!r.mappedId&&!(r.split&&r.split.length)){ blocked++; continue; }
@@ -313,6 +318,7 @@ async function abiAddSelected(){
   acctToast('Posted '+posted+(updated?(' · updated '+updated):'')+(blocked?(' · '+blocked+' need mapping'):'')+(failed?(' · '+failed+' failed'):''), failed>0);
   if(failed&&firstErr)console.error('[bank-import] first error:',firstErr);
   try{ if(typeof acctLoadBook==='function')await acctLoadBook(); }catch(e){}
+  abiBusy(false);
   abiRender();
 }
 window.abiRender=abiRender; window.abiClear=abiClear; window.abiHandleWorkbook=abiHandleWorkbook;
