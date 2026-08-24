@@ -1279,8 +1279,10 @@ function wmsRerenderAmounts() {
     } catch (err) { console.warn('full-amount: trading re-render failed', err); }
 
     // Reports — update the page caption + re-render the ACTIVE section.
-    // ⚠️ Reports > Consolidation (#rpt-consol) is pinned to the real display unit
-    // by design (its own rptConsFmt + #rptConsolUnit label); F4 leaves it untouched.
+    // Reports > Consolidation owns F4 itself: a 3-stage scale cadence
+    // (millions → full → settings) via rptConsHandleF4(), hooked in the keydown
+    // above, which short-circuits the global toggle while that view is active — so
+    // this block only ever fires on Portfolio / Cap Gains. See HISTORY for cadence.
     try {
         if (document.getElementById('rpt-unit-desc')) {          // reports module loaded
             var rConsol = document.getElementById('rpt-consol');
