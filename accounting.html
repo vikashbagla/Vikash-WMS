@@ -530,6 +530,35 @@
 .acct-fin-row:hover .acct-led-edit { opacity: .8; }
 .acct-led-edit:hover { opacity: 1; }
 .acct-led-ledrow { user-select: none; }
+
+/* ---- Master workspace (Ledgers + Exceptions live under the Master tab) ---- */
+.acct-master-tab { margin-left: 8px; padding-left: 14px; border-left: 1px solid #e2e8f0; }
+.acct-master-tab .acct-book-lbl { font-weight: 600; }
+.acct-master-tab.active .acct-book-lbl { color: #fff; }   /* white on the active blue pill */
+/* View-tab + command visibility by mode. Ledgers & Exceptions belong to Master;
+   the per-book statements and book-only commands belong to book mode. */
+.acct-tab[data-acct-tab="ledgers"], .acct-tab[data-acct-tab="exceptions"] { display: none; }
+.acct-container.acct-mode-master .acct-tab[data-acct-tab="balance-sheet"],
+.acct-container.acct-mode-master .acct-tab[data-acct-tab="profit-loss"],
+.acct-container.acct-mode-master .acct-tab[data-acct-tab="trial-balance"],
+.acct-container.acct-mode-master .acct-tab[data-acct-tab="day-book"] { display: none; }
+.acct-container.acct-mode-master .acct-tab[data-acct-tab="ledgers"],
+.acct-container.acct-mode-master .acct-tab[data-acct-tab="exceptions"] { display: inline-block; }
+.acct-container.acct-mode-master #acctNewVoucherBtn,
+.acct-container.acct-mode-master #acctRebuildBtn,
+.acct-container.acct-mode-master .acct-menu-wrap { display: none; }
+/* Exceptions list */
+.acct-ex-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.acct-ex-sev { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.acct-ex-sev.critical { background: #fde2e2; color: #c0392b; }
+.acct-ex-sev.warn { background: #fff2cc; color: #9a6b00; }
+.acct-ex-sev.info { background: #e2e8f0; color: #475569; }
+.acct-ex-note { color: #64748b; font-size: 11px; }
+.acct-ex-resolved-row td { opacity: .62; }
+.acct-ex-count { color: #64748b; font-size: 11px; margin-bottom: 8px; }
+.acct-ex-resolve-summary { font-size: 12px; color: #334155; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; }
+.acct-ex-resolve-lbl { display: block; margin: 12px 0 4px; font-size: 12px; font-weight: 600; }
+.acct-ex-resolve-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 </style>
 </head>
 <body>
@@ -556,6 +585,7 @@
         <button class="acct-tab" data-acct-tab="trial-balance">Trial Balance</button>
         <button class="acct-tab" data-acct-tab="day-book">Day Book</button>
         <button class="acct-tab" data-acct-tab="ledgers">Ledgers</button>
+        <button class="acct-tab" data-acct-tab="exceptions">Exceptions</button>
         <span class="acct-tabs-spacer"></span>
         <span id="acctCmdFilters" class="acct-cmd-filters"></span>
         <span class="acct-cmd-sep"></span>
@@ -597,9 +627,34 @@
         <div id="acctLedgersBody"><div class="acct-empty">Loading ledger catalogue…</div></div>
     </div>
 
+    <!-- Exceptions (Master) -->
+    <div class="acct-tabpanel" id="acctPanel-exceptions">
+        <div id="acctExceptionsBody"><div class="acct-empty">Loading exceptions…</div></div>
+    </div>
+
 </div>
 
 <!-- ===================== Voucher entry modal ===================== -->
+<!-- ===================== Exception resolve modal ===================== -->
+<div class="wms-modal-overlay" id="acctExResolveModal">
+    <div class="wms-modal-dialog" style="max-width: 520px; width: 92%;">
+        <div class="wms-modal-header">
+            <span style="font-size:15px;font-weight:700;">Resolve exception</span>
+            <button class="wms-btn-close" id="acctExResolveClose">✕</button>
+        </div>
+        <div class="wms-modal-body" style="padding:16px;">
+            <div id="acctExResolveSummary" class="acct-ex-resolve-summary"></div>
+            <label class="acct-ex-resolve-lbl" for="acctExResolveNote">Resolution note (required)</label>
+            <textarea id="acctExResolveNote" class="wms-input" rows="3" placeholder="Why is this being resolved? e.g. added the opening lot for LIQUIDBEES"></textarea>
+            <div class="acct-ex-note" style="margin-top:6px;">Resolving is an acknowledgement — if the same condition recurs on the next run it reopens as a fresh row.</div>
+            <div class="acct-ex-resolve-actions">
+                <button class="wms-btn wms-btn-secondary" id="acctExResolveCancel">Cancel</button>
+                <button class="wms-btn wms-btn-primary" id="acctExResolveConfirm">Resolve</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="wms-modal-overlay" id="acctVoucherModal">
     <div class="wms-modal-dialog" style="max-width: 720px; width: 92%;">
         <div class="wms-modal-header acct-voucher-header">

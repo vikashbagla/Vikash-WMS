@@ -1263,6 +1263,9 @@ function wmsRerenderAmounts() {
     // Statements + Transactions, so those get their own full render).
     try {
         if (document.getElementById('tr-portfolio')) {
+            // Page-level caption ("all amounts in ₹ '000" → "₹ (full)") — set only
+            // at module load otherwise, so refresh it here on every toggle.
+            if (typeof trUpdateUnitLabels === 'function') trUpdateUnitLabels();
             var at = document.querySelector('.trading-tab-content.active');
             var id = at ? at.id : '';
             if (id === 'tr-ledger' && typeof lgRefresh === 'function') {
@@ -1275,13 +1278,24 @@ function wmsRerenderAmounts() {
         }
     } catch (err) { console.warn('full-amount: trading re-render failed', err); }
 
-    // Reports.
+    // Reports — update the page caption + re-render the ACTIVE section.
+    // Reports > Consolidation owns F4 itself: a 3-stage scale cadence
+    // (millions → full → settings) via rptConsHandleF4(), hooked in the keydown
+    // above, which short-circuits the global toggle while that view is active — so
+    // this block only ever fires on Portfolio / Cap Gains. See HISTORY for cadence.
     try {
-        if (document.getElementById('rptPortfolioBody') && typeof rptRenderPortfolio === 'function') {
-            rptRenderPortfolio();
-        }
-        if (document.getElementById('rptConsolBody') && typeof rptRenderConsol === 'function') {
-            rptRenderConsol();
+        if (document.getElementById('rpt-unit-desc')) {          // reports module loaded
+            var rConsol = document.getElementById('rpt-consol');
+            var rConsolActive = !!(rConsol && rConsol.classList.contains('active'));
+            if (!rConsolActive) {
+                if (typeof rptUpdateUnitLabels === 'function') rptUpdateUnitLabels();
+                var rCg = document.getElementById('rpt-capgains');
+                if (rCg && rCg.classList.contains('active')) {
+                    if (typeof rptRenderCapGains === 'function') rptRenderCapGains();
+                } else if (typeof rptRenderPortfolio === 'function') {
+                    rptRenderPortfolio();
+                }
+            }
         }
     } catch (err) { console.warn('full-amount: reports re-render failed', err); }
 }
