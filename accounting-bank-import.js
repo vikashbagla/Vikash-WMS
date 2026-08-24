@@ -162,13 +162,14 @@ function abiRenderReview(el){
   el.innerHTML='<div class="abi-acct-tabs">'+tabs+'<span style="flex:1;"></span><button class="wms-btn wms-btn-secondary" onclick="abiClear()">Clear screen</button></div>'+
     '<div class="abi-chips">'+chips+'<span style="flex:1;"></span><span class="acct-ex-note">'+wmsEsc(a.ledgerName)+' · '+wmsEsc(a.book)+'</span></div>'+
     '<div class="abi-grid"><table class="acct-table"><thead>'+head+'</thead><tbody>'+(body||'<tr><td colspan="9"><div class="acct-empty">No rows in this filter.</div></td></tr>')+'</tbody></table></div>'+
-    '<div class="abi-foot"><button class="wms-btn wms-btn-secondary" id="abiSelAll">Select all shown</button><span style="flex:1;"></span><button class="wms-btn wms-btn-primary" id="abiAdd">Add selected ('+selCount+')</button></div>';
+    '<div class="abi-foot"><button class="wms-btn wms-btn-secondary" id="abiSelAll">Select all shown</button><button class="wms-btn wms-btn-secondary" id="abiUnselAll">Unselect all</button><span style="flex:1;"></span><button class="wms-btn wms-btn-primary" id="abiAdd">Add selected ('+selCount+')</button></div>';
   el.querySelectorAll('.abi-acct-tab').forEach(function(t){ t.onclick=function(){ abiActiveAcct=+t.dataset.ai; abiFilter='new'; abiRender(); }; });
   el.querySelectorAll('.abi-chip').forEach(function(c){ c.onclick=function(){ abiFilter=c.dataset.f; abiRender(); }; });
   el.querySelectorAll('.abi-chk').forEach(function(c){ c.onchange=function(){ abiSelected[c.dataset.key]=c.checked; var b=document.getElementById('abiAdd'); if(b){ var n=Object.keys(abiSelected).filter(function(k){return abiSelected[k];}).length; b.textContent='Add selected ('+n+')'; } }; });
   el.querySelectorAll('[data-split]').forEach(function(b){ b.onclick=function(){ abiOpenSplit(b.dataset.split); }; });
   el.querySelectorAll('[data-map]').forEach(function(b){ b.onclick=function(){ abiOpenMap(b.dataset.map); }; });
   var sa=document.getElementById('abiSelAll'); if(sa)sa.onclick=function(){ vis.forEach(function(o){ var r=o.r; if((r.status==='new'||r.status==='changed') && (r.mappedId||(r.split&&r.split.length))) abiSelected[abiRowKey(abiActiveAcct,o.ri)]=true; }); abiRender(); };
+  var ua=document.getElementById('abiUnselAll'); if(ua)ua.onclick=function(){ abiSelected={}; abiRender(); };
   var add=document.getElementById('abiAdd'); if(add)add.onclick=abiAddSelected;
 }
 // Shared floating search dropdown for ledger inputs (map modal + split rows).
