@@ -548,7 +548,8 @@
 .acct-container.acct-mode-master #acctRebuildBtn,
 .acct-container.acct-mode-master .acct-menu-wrap { display: none; }
 /* Exceptions list */
-.acct-ex-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.acct-ex-filters { display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }
+.acct-ex-filters .wms-input { width: auto; min-width: 0; }
 .acct-ex-sev { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .acct-ex-sev.critical { background: #fde2e2; color: #c0392b; }
 .acct-ex-sev.warn { background: #fff2cc; color: #9a6b00; }

@@ -3818,8 +3818,8 @@ async function acctRenderExceptions() {
     }).join('');
     acctSetCmdFilters(
         '<span class="acct-ex-filters">' +
-        '<select id="acctExBookFilter" class="wms-input" style="min-width:130px;">' + bookOpts + '</select>' +
-        '<select id="acctExSevFilter" class="wms-input" style="min-width:130px;">' + sevOpts + '</select>' +
+        '<select id="acctExBookFilter" class="wms-input">' + bookOpts + '</select>' +
+        '<select id="acctExSevFilter" class="wms-input">' + sevOpts + '</select>' +
         '<label class="acct-ex-note" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="acctExShowResolved"' + (acctExShowResolved ? ' checked' : '') + '> show resolved</label>' +
         '<button class="wms-btn wms-btn-secondary" id="acctExRefresh" title="Reload from the database">🔄 Refresh</button>' +
         '</span>');
