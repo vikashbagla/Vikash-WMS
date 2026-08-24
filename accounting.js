@@ -11,6 +11,16 @@ var acctLedgers = [];         // all acct_ledgers rows
 var acctVoucherRows = [];     // acct_voucher_full rows for the selected book
 var acctBookId = null;        // selected book (investor id, accounting_enabled)
 var acctActiveTab = 'balance-sheet';
+// Master workspace mode: 'book' (per-book statements) | 'master' (Ledgers + Exceptions).
+var acctMode = 'book';
+var acctMasterTab = (function(){ try { var v = localStorage.getItem('wms_acct_master_tab'); return (v === 'exceptions' || v === 'ledgers') ? v : 'ledgers'; } catch(e){ return 'ledgers'; } })();
+// Exceptions screen state
+var acctExceptions = null;         // cached acct_exceptions rows (open + resolved), or null = not loaded
+var acctExShowResolved = false;
+var acctExFilterBook = 'all';
+var acctExFilterSev = 'all';
+var _acctExResolveId = null;
+var acctExResolveCtrl = null;
 var acctBookIds = null;       // consolidation VIEW set (null/[] = follow the single book select)
 var acctGroupById = {};       // id -> group
 
@@ -137,10 +147,11 @@ function acctOrderedBooks() {
 function acctVisibleBooks() { return acctOrderedBooks().filter(function (b) { return acctBooksHidden.indexOf(b.id) < 0; }); }
 
 async function acctSwitchBook(id) {
-    if (acctBookId === id && !acctIsConsolidated()) return;
+    if (acctBookId === id && !acctIsConsolidated() && acctMode !== 'master') return;
     acctBookId = id;
     acctBookIds = null;                 // picking a single book clears consolidation
     acctSaveActiveBook();
+    acctExitMaster();
     acctLoading(true);
     try {
         await acctLoadBook();
@@ -214,7 +225,7 @@ function acctRenderBookTabs() {
     }
     var consol = acctIsConsolidated();
     var tabsHtml = visible.map(function (b) {
-        var on = !consol && b.id === acctBookId;
+        var on = !consol && acctMode !== 'master' && b.id === acctBookId;
         return '<span class="acct-book-tab' + (on ? ' active' : '') + '" draggable="true" data-book="' + b.id + '">' +
             '<span class="acct-book-lbl">' + wmsEsc(b.short_name || b.name) + '</span>' +
             '<span class="acct-book-x" title="Close this book tab">✕</span></span>';
@@ -235,7 +246,8 @@ function acctRenderBookTabs() {
             '<div class="acct-book-mgr-hd">Books — drag a row (or a tab) to reorder</div>' +
             mgrRows +
         '</div></span>';
-    el.innerHTML = tabsHtml + addHtml +
+    var masterHtml = '<span class="acct-book-tab acct-master-tab' + (acctMode === 'master' ? ' active' : '') + '" data-master="1" title="Ledgers & exceptions — not book-specific"><span class="acct-book-lbl">Master</span></span>';
+    el.innerHTML = tabsHtml + addHtml + masterHtml +
         '<span id="acctConsolidateChip" class="acct-consol-chip" style="display:none;margin-left:8px;"></span>';
 
     el.querySelectorAll('.acct-book-tab').forEach(function (t) {
@@ -275,6 +287,8 @@ function acctRenderBookTabs() {
             n.onclick = function () { acctBookMgrOpen = false; acctShowBook(n.dataset.book); };
         });
     }
+    var _mt = el.querySelector('.acct-master-tab');
+    if (_mt) _mt.onclick = function () { acctEnterMaster(); };
     acctSyncConsolChip();
 }
 // Close the "open a closed book" menu on any outside click. Guard against
@@ -430,10 +444,11 @@ function acctWireUI() {
     document.querySelectorAll('.acct-tab').forEach(function (t) {
         t.onclick = function () {
             acctActiveTab = t.dataset.acctTab;
-            document.querySelectorAll('.acct-tab').forEach(function (x) { x.classList.toggle('active', x === t); });
-            document.querySelectorAll('.acct-tabpanel').forEach(function (p) {
-                p.classList.toggle('active', p.id === 'acctPanel-' + acctActiveTab);
-            });
+            if (acctActiveTab === 'ledgers' || acctActiveTab === 'exceptions') {
+                acctMasterTab = acctActiveTab;
+                try { localStorage.setItem('wms_acct_master_tab', acctMasterTab); } catch (e) {}
+            }
+            acctApplyActiveTabUI();
             acctRenderActiveTab();
         };
     });
@@ -490,6 +505,7 @@ function acctRenderActiveTab() {
     else if (acctActiveTab === 'trial-balance') acctRenderTrialBalance();
     else if (acctActiveTab === 'day-book') acctRenderDayBook();
     else if (acctActiveTab === 'ledgers') acctRenderLedgers();
+    else if (acctActiveTab === 'exceptions') acctRenderExceptions();
     acctSyncUnitToggle();   // keep the header full-amount toggle visible + labelled on every tab
 }
 
@@ -3371,6 +3387,13 @@ function acctWireModals() {
     document.getElementById('acctVoucherSave').onclick = acctSaveVoucher;
     var delBtn = document.getElementById('acctVoucherDelete');
     if (delBtn) delBtn.onclick = acctDeleteVoucher;
+
+    // Exception resolve modal (Master ▸ Exceptions)
+    var exOverlay = document.getElementById('acctExResolveModal');
+    if (exOverlay && typeof wmsModal === 'function') acctExResolveCtrl = wmsModal(exOverlay, { backdropClose: false });
+    var exClose = document.getElementById('acctExResolveClose'); if (exClose) exClose.onclick = function () { acctExResolveCtrl && acctExResolveCtrl.close(); };
+    var exCancel = document.getElementById('acctExResolveCancel'); if (exCancel) exCancel.onclick = function () { acctExResolveCtrl && acctExResolveCtrl.close(); };
+    var exConfirm = document.getElementById('acctExResolveConfirm'); if (exConfirm) exConfirm.onclick = acctExConfirmResolve;
     // F2 anywhere in the voucher modal jumps the caret to the date field.
     if (vOverlay) vOverlay.addEventListener('keydown', function (e) {
         if (e.key === 'F2') {
@@ -3721,6 +3744,177 @@ function acctShowRebuildReport(reports) {
     }
     body.innerHTML = html;
     if (acctReportModalCtrl) acctReportModalCtrl.open();
+}
+
+// ============================================================================
+// MASTER workspace (Ledgers + Exceptions) + Exceptions screen
+// ============================================================================
+
+// Sync the active-tab button + panel visibility to acctActiveTab. Shared by the
+// tab click handler and the mode switches so they can't drift.
+function acctApplyActiveTabUI() {
+    document.querySelectorAll('.acct-tab').forEach(function (x) { x.classList.toggle('active', x.dataset.acctTab === acctActiveTab); });
+    document.querySelectorAll('.acct-tabpanel').forEach(function (p) { p.classList.toggle('active', p.id === 'acctPanel-' + acctActiveTab); });
+}
+
+// Enter the Master workspace (Ledgers + Exceptions). Not book-specific.
+function acctEnterMaster() {
+    acctMode = 'master';
+    var c = document.querySelector('.acct-container'); if (c) c.classList.add('acct-mode-master');
+    acctActiveTab = (acctMasterTab === 'exceptions') ? 'exceptions' : 'ledgers';
+    acctRenderBookTabs();          // repaint tabs so Master shows active, books de-activate
+    acctApplyActiveTabUI();
+    acctRenderActiveTab();
+    if (typeof acctSyncActionButtons === 'function') acctSyncActionButtons();
+}
+
+// Leave Master and return to the per-book statements. Called when a book tab is picked.
+function acctExitMaster() {
+    if (acctMode !== 'master') return;
+    acctMode = 'book';
+    var c = document.querySelector('.acct-container'); if (c) c.classList.remove('acct-mode-master');
+    if (acctActiveTab === 'ledgers' || acctActiveTab === 'exceptions') acctActiveTab = 'balance-sheet';
+    acctApplyActiveTabUI();
+}
+
+// ---- Exceptions screen -----------------------------------------------------
+var ACCT_EX_SEV_RANK = { critical: 0, warn: 1, info: 2 };
+
+function acctExBookName(investorId) {
+    if (!investorId) return '—';
+    var list = (typeof acctOwnBooks === 'function') ? (acctOwnBooks() || []) : [];
+    for (var i = 0; i < list.length; i++) { if (String(list[i].id) === String(investorId)) return (list[i].short_name || list[i].name); }
+    return '(other)';
+}
+
+function acctExDetailText(detail) {
+    if (!detail || typeof detail !== 'object') return '';
+    try { return Object.keys(detail).map(function (k) { return k + ': ' + detail[k]; }).join(', '); } catch (e) { return ''; }
+}
+
+async function acctLoadExceptions() {
+    acctExceptions = await wmsFetchAllRaw(acctUrl('acct_exceptions?select=*&order=last_seen.desc'));
+    return acctExceptions;
+}
+
+async function acctRenderExceptions() {
+    var el = document.getElementById('acctExceptionsBody');
+    if (!el) return;
+    if (acctExceptions === null) {
+        el.innerHTML = '<div class="acct-empty">Loading exceptions…</div>';
+        try { await acctLoadExceptions(); }
+        catch (e) { el.innerHTML = '<div class="acct-empty">Could not load exceptions: ' + wmsEsc(String((e && e.message) || e)) + '</div>'; return; }
+    }
+
+    // Command line: Book filter, Severity filter, show-resolved, refresh.
+    var books = (typeof acctOwnBooks === 'function') ? (acctOwnBooks() || []) : [];
+    var bookOpts = '<option value="all">All books</option>' + books.map(function (b) {
+        return '<option value="' + b.id + '"' + (String(acctExFilterBook) === String(b.id) ? ' selected' : '') + '>' + wmsEsc(b.short_name || b.name) + '</option>';
+    }).join('');
+    var sevList = ['all', 'critical', 'warn', 'info'];
+    var sevOpts = sevList.map(function (sv) {
+        var lbl = sv === 'all' ? 'All severities' : (sv.charAt(0).toUpperCase() + sv.slice(1));
+        return '<option value="' + sv + '"' + (acctExFilterSev === sv ? ' selected' : '') + '>' + lbl + '</option>';
+    }).join('');
+    acctSetCmdFilters(
+        '<span class="acct-ex-filters">' +
+        '<select id="acctExBookFilter" class="wms-input" style="min-width:130px;">' + bookOpts + '</select>' +
+        '<select id="acctExSevFilter" class="wms-input" style="min-width:130px;">' + sevOpts + '</select>' +
+        '<label class="acct-ex-note" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="acctExShowResolved"' + (acctExShowResolved ? ' checked' : '') + '> show resolved</label>' +
+        '<button class="wms-btn wms-btn-secondary" id="acctExRefresh" title="Reload from the database">🔄 Refresh</button>' +
+        '</span>');
+
+    var all = acctExceptions || [];
+    var openCount = all.filter(function (r) { return !r.resolved_at; }).length;
+
+    var rows = all.filter(function (r) {
+        if (!acctExShowResolved && r.resolved_at) return false;
+        if (acctExFilterBook !== 'all' && String(r.investor_id) !== String(acctExFilterBook)) return false;
+        if (acctExFilterSev !== 'all' && r.severity !== acctExFilterSev) return false;
+        return true;
+    });
+    rows.sort(function (a, b) {
+        var ao = a.resolved_at ? 1 : 0, bo = b.resolved_at ? 1 : 0;
+        if (ao !== bo) return ao - bo;
+        var ar = (ACCT_EX_SEV_RANK[a.severity] != null) ? ACCT_EX_SEV_RANK[a.severity] : 9;
+        var br = (ACCT_EX_SEV_RANK[b.severity] != null) ? ACCT_EX_SEV_RANK[b.severity] : 9;
+        if (ar !== br) return ar - br;
+        return String(b.last_seen || '').localeCompare(String(a.last_seen || ''));
+    });
+
+    var countLine = '<div class="acct-ex-count">' + openCount + ' open exception' + (openCount === 1 ? '' : 's') +
+        (acctExShowResolved ? ' · resolved shown' : '') + '</div>';
+
+    if (!rows.length) {
+        el.innerHTML = countLine + '<div class="acct-empty">' + (openCount ? 'No exceptions match the current filter.' : '🎉 No open exceptions.') + '</div>';
+        acctExWireFilters();
+        return;
+    }
+
+    var fmt = (typeof formatDate === 'function') ? formatDate : function (x) { return String(x || '').slice(0, 10); };
+    var body = rows.map(function (r) {
+        var resolved = !!r.resolved_at;
+        var action = resolved
+            ? '<span class="acct-ex-note">✔ ' + wmsEsc(r.resolved_by || 'resolved') + (r.resolve_narration ? ' — ' + wmsEsc(r.resolve_narration) : '') + '</span>'
+            : '<button class="wms-btn wms-btn-secondary acct-ex-resolve-btn" data-id="' + wmsEsc(r.id) + '">Resolve…</button>';
+        return '<tr class="' + (resolved ? 'acct-ex-resolved-row' : '') + '">' +
+            '<td>' + wmsEsc(acctExBookName(r.investor_id)) + '</td>' +
+            '<td><span class="acct-ex-sev ' + wmsEsc(r.severity) + '">' + wmsEsc(r.severity) + '</span></td>' +
+            '<td>' + wmsEsc(r.title || r.condition_key) + '<div class="acct-ex-note">' + wmsEsc(r.condition_key) + '</div></td>' +
+            '<td class="acct-ex-note">' + wmsEsc(acctExDetailText(r.detail)) + '</td>' +
+            '<td class="text-right">' + (r.occurrences || 1) + '</td>' +
+            '<td class="c-date">' + wmsEsc(fmt(r.last_seen)) + '</td>' +
+            '<td>' + action + '</td>' +
+            '</tr>';
+    }).join('');
+
+    el.innerHTML = countLine +
+        '<table class="acct-table"><thead><tr>' +
+        '<th>Book</th><th>Severity</th><th>Condition</th><th>Detail</th><th class="text-right">×</th><th class="c-date">Last seen</th><th>Action</th>' +
+        '</tr></thead><tbody>' + body + '</tbody></table>';
+
+    el.querySelectorAll('.acct-ex-resolve-btn').forEach(function (b) { b.onclick = function () { acctExOpenResolve(b.dataset.id); }; });
+    acctExWireFilters();
+}
+
+function acctExWireFilters() {
+    var bf = document.getElementById('acctExBookFilter'); if (bf) bf.onchange = function () { acctExFilterBook = bf.value; acctRenderExceptions(); };
+    var sf = document.getElementById('acctExSevFilter'); if (sf) sf.onchange = function () { acctExFilterSev = sf.value; acctRenderExceptions(); };
+    var sr = document.getElementById('acctExShowResolved'); if (sr) sr.onchange = function () { acctExShowResolved = sr.checked; acctRenderExceptions(); };
+    var rf = document.getElementById('acctExRefresh'); if (rf) rf.onclick = async function () { acctExceptions = null; await acctRenderExceptions(); };
+}
+
+function acctExOpenResolve(id) {
+    _acctExResolveId = id;
+    var r = (acctExceptions || []).filter(function (x) { return String(x.id) === String(id); })[0];
+    var sum = document.getElementById('acctExResolveSummary');
+    if (sum) sum.innerHTML = r
+        ? ('<b>' + wmsEsc(r.title || r.condition_key) + '</b><br><span class="acct-ex-note">' + wmsEsc(acctExBookName(r.investor_id)) + ' · ' + wmsEsc(r.condition_key) + '</span>')
+        : '';
+    var note = document.getElementById('acctExResolveNote'); if (note) note.value = '';
+    if (acctExResolveCtrl) acctExResolveCtrl.open();
+    if (note) setTimeout(function () { note.focus(); }, 40);
+}
+
+async function acctExConfirmResolve() {
+    var note = document.getElementById('acctExResolveNote');
+    var txt = ((note && note.value) || '').trim();
+    if (!txt) { acctToast('A resolution note is required.', true); if (note) note.focus(); return; }
+    if (!_acctExResolveId) return;
+    var who = (window.currentUser && (window.currentUser.email || window.currentUser.name)) || 'owner';
+    try {
+        var res = await fetch(acctUrl('acct_exceptions?id=eq.' + _acctExResolveId), {
+            method: 'PATCH',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+            body: JSON.stringify({ resolved_at: new Date().toISOString(), resolved_by: who, resolve_narration: txt })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        if (acctExResolveCtrl) acctExResolveCtrl.close();
+        _acctExResolveId = null;
+        acctExceptions = null;
+        await acctRenderExceptions();
+        acctToast('Exception resolved.');
+    } catch (e) { acctToast('Resolve failed: ' + ((e && e.message) || e), true); }
 }
 
 // Expose entry point for app.html loadModule
