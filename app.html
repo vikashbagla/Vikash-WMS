@@ -640,6 +640,7 @@
                 const html = await (await fetch('accounting.html' + _cb)).text();
                 injectModule(html, container);
                 await loadScript('accounting.js');
+                await loadScript('accounting-bank-import.js');
                 if (typeof initAccounting === 'function') await initAccounting();
 
             } else {
