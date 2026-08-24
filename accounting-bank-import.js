@@ -162,7 +162,9 @@ function abiRenderReview(el){
     var isSplit=r.split&&r.split.length;
     var mapped=isSplit?('Split ×'+r.split.length):(r.mappedName||'— map name —');
     var mappedCls=(r.mappedId||isSplit)?'#16a34a':'#dc2626';
-    var ledCell=(r.mappedId&&!isSplit)?('<div class="abi-editmap" data-editmap="'+key+'" title="Click to change this mapping">'+wmsEsc(r.mappedName)+'</div>'):('<div style="color:'+mappedCls+';font-weight:600;">'+wmsEsc(mapped)+'</div>');
+    var ledCell = !isSplit
+      ? '<div class="abi-editmap" data-editmap="'+key+'" title="'+(r.mappedId?'Click to change this mapping':'Click to map this name')+'" style="color:'+(r.mappedId?'#16a34a':'#dc2626')+';">'+wmsEsc(mapped)+'</div>'
+      : '<div style="color:'+mappedCls+';font-weight:600;">'+wmsEsc(mapped)+'</div>';
     var canSel=r.status==='new'||r.status==='changed';
     var chk=canSel?'<input type="checkbox" class="abi-chk" data-key="'+key+'"'+(abiSelected[key]?' checked':'')+'>':'<span class="acct-ex-note">✓</span>';
     var sev=r.status==='changed'?' <span class="acct-ex-sev warn" style="font-size:9px;">changed</span>':'';
