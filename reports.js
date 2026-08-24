@@ -157,10 +157,25 @@ var rptCGVM = wmsViewManager({
 // ASSET CLASS MAPPING
 // ============================================================================
 
+// Preferred display order. Grouping now uses the security's asset_class field
+// (owner request 2026-08-24); any value NOT listed here still renders — it just
+// sorts after these, alphabetically (see rptOrderedGroups).
 var RPT_ASSET_CLASS_ORDER = [
-    'Indian Equity', 'ETF', 'Mutual Fund', 'Debt', 'Gold',
-    'Real Estate', 'Infrastructure', 'Other'
+    'Indian Equity', 'Indian Equity - MF', 'Foreign Equity',
+    'Debt', 'Liquid', 'Gold', 'Silver',
+    'Real Estate', 'Infrastructure', 'Private Equity', 'Other'
 ];
+
+// Distinct asset classes present in `groups`, ordered by the priority list above
+// then alphabetically for anything new.
+function rptOrderedGroups(groups) {
+    return Object.keys(groups).sort(function(a, b) {
+        var ia = RPT_ASSET_CLASS_ORDER.indexOf(a); if (ia < 0) ia = 900;
+        var ib = RPT_ASSET_CLASS_ORDER.indexOf(b); if (ib < 0) ib = 900;
+        if (ia !== ib) return ia - ib;
+        return a.localeCompare(b);
+    });
+}
 
 function rptGetAssetClass(securityType) {
     if (!securityType) return 'Indian Equity';
@@ -195,7 +210,6 @@ function rptFifoEngine(txns) {
     var keys = Object.keys(holdings);
     for (var k = 0; k < keys.length; k++) {
         var h = holdings[keys[k]];
-        h.assetClass = rptGetAssetClass(h.securityType);
         h.fifoCost = h.avgCost;
         h.latestPrice = 0;
         h._txns = [];
@@ -212,6 +226,16 @@ function rptFifoEngine(txns) {
             holdings[hKey]._txns.push(tx);
             holdings[hKey].latestPrice = tx.price;
         }
+    }
+
+    // Asset class = the security's master `asset_class` field (owner request
+    // 2026-08-24), falling back to the security_type→class map only when a
+    // security has no asset_class set.
+    for (var ka = 0; ka < keys.length; ka++) {
+        var ha = holdings[keys[ka]];
+        var secId = ha.securityId || (ha._txns[0] && ha._txns[0].securityId) || null;
+        var sec = (secId && wmsRefData.securitiesCmMap) ? wmsRefData.securitiesCmMap[secId] : null;
+        ha.assetClass = (sec && sec.asset_class) ? sec.asset_class : rptGetAssetClass(ha.securityType);
     }
 
     return { holdings: holdings, gains: result.gains };
@@ -851,24 +875,31 @@ function rptToggleGroup(acName) {
     rows.forEach(function(row) { row.style.display = hidden ? 'none' : ''; });
     // Update chevron
     var chevron = document.getElementById('rpt-chevron-' + acName.replace(/\s+/g, '-'));
-    if (chevron) chevron.textContent = hidden ? '▸' : '▾';
+    if (chevron) chevron.textContent = hidden ? '▶' : '▼';
     // Update header toggle icon
     rptUpdateHeaderToggle();
 }
 
+// Distinct asset-class groups currently rendered (DOM-derived — covers any
+// asset_class value, not only the priority list).
+function rptPresentGroups() {
+    var set = {};
+    document.querySelectorAll('#rptPortfolioBody tr[data-rpt-group]').forEach(function(r) {
+        var g = r.getAttribute('data-rpt-group'); if (g) set[g] = true;
+    });
+    return Object.keys(set);
+}
+
 function rptToggleAllGroups() {
     // If any group is expanded, collapse all; otherwise expand all
-    var anyExpanded = false;
-    RPT_ASSET_CLASS_ORDER.forEach(function(ac) {
-        if (!rptCollapsedGroups[ac]) anyExpanded = true;
-    });
-    var collapse = anyExpanded;
-    RPT_ASSET_CLASS_ORDER.forEach(function(ac) {
+    var present = rptPresentGroups();
+    var collapse = present.some(function(ac) { return !rptCollapsedGroups[ac]; });
+    present.forEach(function(ac) {
         rptCollapsedGroups[ac] = collapse;
         var rows = document.querySelectorAll('tr[data-rpt-group="' + ac + '"]');
         rows.forEach(function(row) { row.style.display = collapse ? 'none' : ''; });
         var chevron = document.getElementById('rpt-chevron-' + ac.replace(/\s+/g, '-'));
-        if (chevron) chevron.textContent = collapse ? '▸' : '▾';
+        if (chevron) chevron.textContent = collapse ? '▶' : '▼';
     });
     rptUpdateHeaderToggle();
 }
@@ -876,11 +907,8 @@ function rptToggleAllGroups() {
 function rptUpdateHeaderToggle() {
     var icon = document.getElementById('rpt-header-toggle');
     if (!icon) return;
-    var anyExpanded = false;
-    RPT_ASSET_CLASS_ORDER.forEach(function(ac) {
-        if (!rptCollapsedGroups[ac]) anyExpanded = true;
-    });
-    icon.textContent = anyExpanded ? '▾' : '▸';
+    var anyExpanded = rptPresentGroups().some(function(ac) { return !rptCollapsedGroups[ac]; });
+    icon.textContent = anyExpanded ? '▼' : '▶';
 }
 
 // Apply filters to transaction array
@@ -1255,7 +1283,7 @@ function rptRenderPortfolio() {
     }
 
     var html = '<table style="width:100%; border-collapse:collapse; table-layout:fixed;">' +
-        '<colgroup><col style="width:17%"><col style="width:9%"><col style="width:11%"><col style="width:10%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:9%"><col style="width:40px"></colgroup>';
+        '<colgroup><col style="width:19%"><col style="width:10%"><col style="width:12%"><col style="width:11%"><col style="width:12%"><col style="width:12%"><col style="width:14%"><col style="width:40px"></colgroup>';
 
     // Symbol header content (with search indicator if active)
     var symbolSortArrow = rptSortColumn === 'symbol' ? sortArrow : '';
@@ -1266,7 +1294,7 @@ function rptRenderPortfolio() {
     // Page-level header (single, not repeated per group) — uses app-standard global th styling
     html += '<thead><tr>' +
         '<th id="rpt-th-symbol" class="sortable" onclick="rptSortPortfolio(\'symbol\')" style="width:17%; text-align:left; cursor:pointer;">' +
-            '<span id="rpt-header-toggle" onclick="event.stopPropagation(); rptToggleAllGroups();" style="display:inline-block;width:16px;font-size:12px;color:#718096;cursor:pointer;vertical-align:middle;" title="Collapse/Expand All">▾</span>' +
+            '<span id="rpt-header-toggle" onclick="event.stopPropagation(); rptToggleAllGroups();" style="display:inline-block;width:18px;font-size:14px;color:#667eea;cursor:pointer;vertical-align:middle;" title="Collapse/Expand All">▼</span>' +
             'Company ' + symbolSortArrow + symbolSearchBadge +
         '</th>' +
         '<th class="text-right" style="width:9%;">Qty<br><span class="subheader">FIFO Cost</span></th>' +
@@ -1275,13 +1303,21 @@ function rptRenderPortfolio() {
         '<th class="text-right sortable" onclick="rptSortPortfolio(\'daypl\')" style="width:11%;">Day P&L ' + (rptSortColumn === 'daypl' ? sortLabel + sortArrow : '') + '</th>' +
         '<th class="text-right sortable" onclick="rptSortPortfolio(\'pl\')" style="width:11%;">Gain ' + (rptSortColumn === 'pl' ? sortLabel + sortArrow : '') + '</th>' +
         '<th class="text-right sortable" onclick="rptSortPortfolio(\'value\')" style="width:11%;">Value ' + (rptSortColumn === 'value' ? sortArrow : '') + '</th>' +
-        '<th style="width:9%;">Tags</th>' +
         '<th style="width:40px;"></th>' +
     '</tr></thead><tbody>';
 
-    // Iterate groups
-    for (var gi = 0; gi < RPT_ASSET_CLASS_ORDER.length; gi++) {
-        var acName = RPT_ASSET_CLASS_ORDER[gi];
+    // Column totals — denominators for the group-level weight %. Each group is a
+    // % of the whole; each line is a % of its group (matches Trading > Portfolio).
+    var rptTotalValue = 0, rptTotalInvested = 0;
+    allHoldings.forEach(function(h) {
+        rptTotalValue += h.quantity * rptGetPrice(h);
+        rptTotalInvested += h.totalCost;
+    });
+
+    // Iterate groups — render EVERY asset class present, ordered by preference.
+    var orderedGroups = rptOrderedGroups(groups);
+    for (var gi = 0; gi < orderedGroups.length; gi++) {
+        var acName = orderedGroups[gi];
         var groupHoldings = groups[acName];
         if (!groupHoldings || groupHoldings.length === 0) continue;
 
@@ -1303,16 +1339,17 @@ function rptRenderPortfolio() {
 
         var isCollapsed = !!rptCollapsedGroups[acName];
         var chevronId = 'rpt-chevron-' + acName.replace(/\s+/g, '-');
-        var badge = RPT_AC_BADGE[acName] || '—';
 
         // Group header row (MProfit style: inline totals in same columns as data)
         html += '<tr class="rpt-group-header-row" onclick="rptToggleGroup(\'' + acName + '\')" style="background:#f7fafc; cursor:pointer; border-top:1px solid #e2e8f0;">' +
             '<td colspan="2" style="padding:7px 8px; font-size:13px; font-weight:700; color:#2d3748;">' +
-                '<span id="' + chevronId + '" style="display:inline-block;width:16px;font-size:12px;color:#718096;vertical-align:middle;">' + (isCollapsed ? '▸' : '▾') + '</span>' +
-                '<span style="display:inline-block;border:1px solid #a0aec0;border-radius:3px;padding:0 4px;font-size:10px;font-weight:700;color:#4a5568;margin-right:6px;vertical-align:middle;">' + badge + '</span>' +
+                '<span id="' + chevronId + '" style="display:inline-block;width:18px;font-size:14px;color:#667eea;vertical-align:middle;">' + (isCollapsed ? '▶' : '▼') + '</span>' +
                 acName + ' <span style="font-weight:500;font-size:11px;color:#718096;">(' + groupHoldings.length + ')</span>' +
             '</td>' +
-            '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' + formatAmount(grpInvested) + '</td>' +
+            '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' +
+                formatAmount(grpInvested) + '<br>' +
+                '<span class="number-sub" style="color:#718096;">' + (rptTotalInvested ? formatPercent(grpInvested / Math.abs(rptTotalInvested) * 100) : '-') + '</span>' +
+            '</td>' +
             '<td class="text-right" style="padding:7px 8px;"></td>' +
             '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' +
                 (hasDayData ? '<span class="' + getAmountClass(grpDayPL) + '">' + formatAmount(grpDayPL) + '</span><br><span class="number-sub ' + getAmountClass(grpDayPLPct) + '">' + formatPercent(grpDayPLPct) + '</span>' : '') +
@@ -1321,8 +1358,10 @@ function rptRenderPortfolio() {
                 '<span class="' + getAmountClass(grpPL) + '">' + formatAmount(grpPL) + '</span><br>' +
                 '<span class="number-sub ' + getAmountClass(grpPLPct) + '">' + formatPercent(grpPLPct) + '</span>' +
             '</td>' +
-            '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' + formatAmount(grpValue) + '</td>' +
-            '<td style="padding:7px 8px;"></td>' +
+            '<td class="text-right" style="padding:7px 8px; font-size:12px; font-weight:700;">' +
+                formatAmount(grpValue) + '<br>' +
+                '<span class="number-sub" style="color:#718096;">' + (rptTotalValue ? formatPercent(grpValue / Math.abs(rptTotalValue) * 100) : '-') + '</span>' +
+            '</td>' +
             '<td style="padding:7px 8px;"></td>' +
         '</tr>';
 
@@ -1375,6 +1414,7 @@ function rptRenderPortfolio() {
                 '</td>' +
                 '<td class="text-right" style="padding:6px 8px;">' +
                     '<div class="number-main">' + formatAmount(invested) + '</div>' +
+                    '<div class="number-sub" style="color:#718096;">' + (grpInvested ? formatPercent(invested / Math.abs(grpInvested) * 100) : '-') + '</div>' +
                 '</td>' +
                 '<td class="text-right" style="padding:6px 8px;">' +
                     '<div class="number-main">' + formatPrice(price, false) + '</div>' +
@@ -1387,8 +1427,8 @@ function rptRenderPortfolio() {
                 '</td>' +
                 '<td class="text-right" style="padding:6px 8px;">' +
                     '<div class="number-main">' + formatAmount(currentValue) + '</div>' +
+                    '<div class="number-sub" style="color:#718096;">' + (grpValue ? formatPercent(currentValue / Math.abs(grpValue) * 100) : '-') + '</div>' +
                 '</td>' +
-                '<td style="padding:6px 8px;">' + h.tags.map(function(t) { return '<span class="tag-badge">' + t + '</span>'; }).join('') + '</td>' +
                 '<td class="action-cell" style="padding:6px 8px;">' +
                     '<button class="btn-action rpt-btn-action" data-menu-id="rpt-am-' + shortSym.replace(/[^a-zA-Z0-9]/g, '_') + '" title="Actions">⋮</button>' +
                     '<div class="action-menu rpt-action-menu" id="rpt-am-' + shortSym.replace(/[^a-zA-Z0-9]/g, '_') + '">' +
