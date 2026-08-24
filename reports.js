@@ -1859,6 +1859,7 @@ var rptConsolMode = 'books';      // 'books' | 'quarters'
 var rptConsShowZero = false;
 var rptConsNatureOrder = ['Assets', 'Liabilities', 'Income', 'Expenses', 'Capital'];
 var rptConsOpBalIdx = -1;   // column index that carries the Op Bal divider (-1 = none)
+var rptConsUnitMode = 'settings'; // Consolidation-only F4 3-stage display scale: 'settings' | 'millions' | 'full'
 
 // ---- Browser-persistent prefs (books, statement, layout, show-zero, collapse) ----
 var RPT_CONS_PREFS_KEY = 'wms_rpt_consol_prefs';
@@ -1872,6 +1873,7 @@ function rptConsLoadPrefs() {
             if (p.statement === 'bs' || p.statement === 'pl') rptConsStatement = p.statement;
             if (p.mode === 'books' || p.mode === 'quarters') rptConsolMode = p.mode;
             rptConsShowZero = !!p.showZero;
+            if (p.unitMode === 'settings' || p.unitMode === 'millions' || p.unitMode === 'full') rptConsUnitMode = p.unitMode;
         }
     } catch (e) {}
     try { var c = JSON.parse(localStorage.getItem(RPT_CONS_COLLAPSE_KEY) || '{}'); if (c && typeof c === 'object') rptConsCollapsed = c; } catch (e) {}
@@ -1879,19 +1881,58 @@ function rptConsLoadPrefs() {
 function rptConsSavePrefs() {
     try {
         localStorage.setItem(RPT_CONS_PREFS_KEY, JSON.stringify({
-            bookIds: rptConsolBookIds, statement: rptConsStatement, mode: rptConsolMode, showZero: rptConsShowZero
+            bookIds: rptConsolBookIds, statement: rptConsStatement, mode: rptConsolMode, showZero: rptConsShowZero, unitMode: rptConsUnitMode
         }));
     } catch (e) {}
 }
 function rptConsSaveCollapse() { try { localStorage.setItem(RPT_CONS_COLLAPSE_KEY, JSON.stringify(rptConsCollapsed || {})); } catch (e) {} }
 
-// Display amount — identical rule to acctAmt (global F4 full-amount aware).
+// Display amount for the Consolidation page. UNLIKE the rest of the app (a
+// two-stage global F4 toggle), this page has its OWN three-stage scale cycled
+// by F4 while the Consolidation tab is active: settings unit -> Millions ->
+// full rupees. Each stage renders independently of the global full-amount flag.
+// (rptConsUnitMode, rptConsHandleF4, and the F4 hook in wms-shared.js.)
+function rptConsFmtScaled(n, divisor, comma) {
+    var num = Number(n) || 0;
+    var scaled = Math.abs(num) / divisor;
+    var disp = (typeof formatWithCommas === 'function') ? formatWithCommas(scaled, comma) : scaled.toFixed(2);
+    var full = Math.abs(num).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (num < 0) { disp = '(' + disp + ')'; full = '(' + full + ')'; }
+    return '<span title="\u20B9 ' + full + '">' + disp + '</span>';
+}
 function rptConsAmt(n) {
     if (Math.abs(Number(n) || 0) < 0.005) return '-';
-    if (typeof wmsIsFullAmount === 'function' && wmsIsFullAmount()) return (typeof formatAmountRaw === 'function') ? formatAmountRaw(n) : String(n);
-    if (typeof formatAmount === 'function') return formatAmount(n);
-    return String(n);
+    var realComma = (typeof getUnitConfig === 'function' && typeof getDisplayUnit === 'function')
+        ? getUnitConfig(getDisplayUnit()).comma : 'indian';
+    if (rptConsUnitMode === 'full') return rptConsFmtScaled(n, 1, realComma);
+    if (rptConsUnitMode === 'millions') return rptConsFmtScaled(n, 1000000, 'international');
+    // 'settings' — the user's display-unit preference (e.g. '000s)
+    var cfg = (typeof getUnitConfig === 'function' && typeof getDisplayUnit === 'function')
+        ? getUnitConfig(getDisplayUnit()) : { divisor: 1000, comma: 'international' };
+    return rptConsFmtScaled(n, cfg.divisor, cfg.comma);
 }
+// F4 handler for the Consolidation page: cycles settings -> Millions -> full and
+// re-renders. Returns true only when the Consolidation tab is the active view, so
+// the global F4 handler (wms-shared.js) falls through to its normal two-stage
+// toggle everywhere else. Exposed on window for that handler to call.
+function rptConsHandleF4() {
+    var tab = document.getElementById('rpt-consol');
+    if (!tab || !tab.classList.contains('active')) return false;
+    if (!document.getElementById('rptConsolBody')) return false;
+    var order = ['settings', 'millions', 'full'];
+    var i = order.indexOf(rptConsUnitMode);
+    rptConsUnitMode = order[(i + 1) % order.length];
+    rptConsSavePrefs();
+    if (typeof rptRenderConsol === 'function') rptRenderConsol();
+    if (typeof showAlert === 'function') {
+        var label = rptConsUnitMode === 'full' ? '\u20B9 (full)'
+            : rptConsUnitMode === 'millions' ? '\u20B9 Millions'
+            : (typeof getRealUnitDescription === 'function' ? getRealUnitDescription() : "\u20B9 '000");
+        showAlert('Showing ' + label + ' \u00b7 F4 to toggle', 'info', 2000);
+    }
+    return true;
+}
+window.rptConsHandleF4 = rptConsHandleF4;
 function rptConsRootName(groupId) {
     var g = rptConsGroupById[groupId], guard = 0;
     while (g && g.parent_group_id && guard++ < 20) g = rptConsGroupById[g.parent_group_id];

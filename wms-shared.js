@@ -1310,6 +1310,9 @@ window.wmsRerenderAmounts = wmsRerenderAmounts;
     document.addEventListener('keydown', function(e) {
         if (e.key === 'F4' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && !e.repeat) {
             e.preventDefault();
+            // Consolidation page owns F4 as a 3-stage scale cycle while it is the
+            // active view; everywhere else this is the normal 2-stage toggle.
+            if (typeof window.rptConsHandleF4 === 'function' && window.rptConsHandleF4()) return;
             wmsToggleFullAmount();
         }
     }, true);
