@@ -669,15 +669,19 @@
 </div>
 
 <!-- ===================== Voucher entry modal ===================== -->
-<!-- ===================== Bank Import — split modal ===================== -->
+<!-- ===================== Bank Import — split modal (voucher style) ===================== -->
 <div class="wms-modal-overlay" id="abiSplitModal">
-    <div class="wms-modal-dialog" style="max-width: 640px; width: 94%;">
-        <div class="wms-modal-header"><span style="font-weight:700;">Split transaction</span><button class="wms-btn-close" id="abiSplitClose">✕</button></div>
+    <div class="wms-modal-dialog" style="max-width: 720px; width: 94%;">
+        <div class="wms-modal-header"><span id="abiSplitTitle" style="font-weight:700;">Split transaction</span><span id="abiSplitDate" style="margin-left:auto;color:#64748b;font-size:12px;padding-right:12px;"></span><button class="wms-btn-close" id="abiSplitClose">✕</button></div>
         <div class="wms-modal-body" style="padding:16px;">
-            <div id="abiSplitInfo" class="acct-ex-resolve-summary"></div>
-            <table class="acct-table acct-lines-table" style="margin-top:12px;"><thead><tr><th>WMS ledger</th><th style="text-align:right;">Amount</th><th>Narration</th><th></th></tr></thead><tbody id="abiSplitLegs"></tbody></table>
-            <div style="margin-top:8px;"><button class="wms-btn wms-btn-secondary" id="abiSplitAdd">+ Add split line</button></div>
-            <div id="abiSplitTotal" style="text-align:right;margin-top:10px;font-weight:600;"></div>
+            <div class="acct-ex-note" style="margin-bottom:6px;">The bank line is fixed. Add the counterparty lines (Debit / Credit) — they must balance the voucher.</div>
+            <table class="acct-table acct-lines-table"><thead><tr><th>Ledger</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th><th></th></tr></thead>
+                <tbody id="abiSplitBank"></tbody>
+                <tbody id="abiSplitLegs"></tbody></table>
+            <div style="margin-top:8px;"><button class="wms-btn wms-btn-secondary" id="abiSplitAdd">+ Add line</button></div>
+            <div id="abiSplitTotal" style="margin-top:10px;"></div>
+            <label class="acct-ex-resolve-lbl">Narration</label>
+            <input type="text" id="abiSplitNarr" class="wms-input">
             <div class="acct-ex-resolve-actions"><button class="wms-btn wms-btn-secondary" id="abiSplitCancel">Cancel</button><button class="wms-btn wms-btn-primary" id="abiSplitSave">Save split</button></div>
         </div>
     </div>

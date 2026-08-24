@@ -89,9 +89,13 @@ function abiSig(lines){ return (lines||[]).map(function(l){
   var c=Math.round((Number(l.credit_amount!==undefined?l.credit_amount:l.credit)||0)*100)/100;
   return String(l.ledger_id)+'|'+d+'|'+c; }).sort().join(';'); }
 function abiLines(row,acct){
-  var bankDr=(row.dir==='in'); var legs=(row.split&&row.split.length)?row.split:[{ledger_id:row.mappedId,amount:row.amount,narration:row.narr}];
+  var bankDr=(row.dir==='in');
   var lines=[{ledger_id:acct.ledgerId,debit_amount:bankDr?row.amount:0,credit_amount:bankDr?0:row.amount,narration:null,sort_order:0}];
-  legs.forEach(function(lg,i){ lines.push({ledger_id:lg.ledger_id,debit_amount:bankDr?0:lg.amount,credit_amount:bankDr?lg.amount:0,narration:lg.narration||null,sort_order:i+1}); });
+  if(row.split&&row.split.length){
+    row.split.forEach(function(lg,i){ lines.push({ledger_id:lg.ledger_id,debit_amount:Number(lg.debit)||0,credit_amount:Number(lg.credit)||0,narration:lg.narration||null,sort_order:i+1}); });
+  } else {
+    lines.push({ledger_id:row.mappedId,debit_amount:bankDr?0:row.amount,credit_amount:bankDr?row.amount:0,narration:row.narr||null,sort_order:1});
+  }
   return lines;
 }
 async function abiComputeDiff(){
@@ -142,10 +146,11 @@ function abiRenderReview(el){
   if(!accts.length){ el.innerHTML='<div class="acct-empty">No mapped bank sheets found.'+(abiParsed.unmatched.length?' Unmatched (need a BANK_ role): '+abiParsed.unmatched.map(wmsEsc).join(', '):'')+'</div><div style="margin-top:10px;"><button class="wms-btn wms-btn-secondary" onclick="abiClear()">Back to upload</button></div>'; return; }
   if(abiActiveAcct>=accts.length)abiActiveAcct=0; var a=accts[abiActiveAcct];
   var tabs=accts.map(function(x,i){ return '<span class="abi-acct-tab'+(i===abiActiveAcct?' active':'')+'" data-ai="'+i+'">'+wmsEsc(x.book+' · '+x.sheet)+'</span>'; }).join('');
-  var cnt={all:a.rows.length,new:0,existing:0,changed:0}; a.rows.forEach(function(r){ cnt[r.status]++; });
-  var chips=['all','new','existing','changed'].map(function(f){ return '<span class="abi-chip'+(abiFilter===f?' active':'')+'" data-f="'+f+'">'+(f.charAt(0).toUpperCase()+f.slice(1))+' ('+cnt[f]+')</span>'; }).join('');
+  var abiUnmapped=function(r){ return !r.mappedId && !(r.split&&r.split.length); };
+  var cnt={all:a.rows.length,new:0,existing:0,changed:0,unmapped:0}; a.rows.forEach(function(r){ cnt[r.status]++; if(abiUnmapped(r))cnt.unmapped++; });
+  var chips=['all','new','existing','changed','unmapped'].map(function(f){ return '<span class="abi-chip'+(abiFilter===f?' active':'')+'" data-f="'+f+'">'+(f.charAt(0).toUpperCase()+f.slice(1))+' ('+cnt[f]+')</span>'; }).join('');
   var showBal=(abiFilter==='all');
-  var vis=a.rows.map(function(r,ri){return {r:r,ri:ri};}).filter(function(o){ return abiFilter==='all'||o.r.status===abiFilter; });
+  var vis=a.rows.map(function(r,ri){return {r:r,ri:ri};}).filter(function(o){ return abiFilter==='unmapped'?abiUnmapped(o.r):(abiFilter==='all'||o.r.status===abiFilter); });
   var head='<tr><th style="width:26px;"></th><th>Sl#</th><th class="c-date">Txn Date</th><th>Ledger → WMS ledger</th><th>Narration</th><th class="text-right">Withdrawn</th><th class="text-right">Deposit</th>'+(showBal?'<th class="text-right">Balance</th>':'')+'<th></th></tr>';
   var body=vis.map(function(o){ var r=o.r,ri=o.ri,key=abiRowKey(abiActiveAcct,ri);
     var mapped=r.split&&r.split.length?('Split ×'+r.split.length):(r.mappedName||'— map name —');
@@ -199,31 +204,58 @@ function abiAttachLedgerPick(input,onPick){
         var ex=cat.filter(function(l){return l.name.toLowerCase()===q;})[0]; if(ex){ input.value=ex.name; input.dataset.lid=ex.id; onPick(ex.id); } else onPick(null); }
       abiHideDd(); },160); };
 }
-function abiOpenSplit(key){ abiSplitTarget=key; var r=abiRowFromKey(key).r;
-  var legs=(r.split&&r.split.length)?r.split.slice():[{ledger_id:r.mappedId,amount:r.amount,narration:r.narr}];
-  document.getElementById('abiSplitInfo').innerHTML='<b>'+wmsEsc(r.disp)+' · '+wmsEsc(r.narr||r.excelName)+'</b><br><span class="acct-ex-note">Allocate '+abiAmt(r.amount)+' ('+(r.dir==='in'?'Deposit':'Withdrawn')+')</span>';
-  abiRenderSplitLegs(legs); if(abiSplitCtrl)abiSplitCtrl.open(); }
-function abiRenderSplitLegs(legs){ var body=document.getElementById('abiSplitLegs');
-  body.innerHTML=legs.map(function(lg,i){ return '<tr><td><input class="wms-input abi-sp-led" data-i="'+i+'" placeholder="WMS ledger" value="'+wmsEsc((abiLedgerById&&abiLedgerById[lg.ledger_id])||'')+'" data-lid="'+(lg.ledger_id||'')+'"></td>'+
-    '<td><input class="wms-input abi-sp-amt" data-i="'+i+'" value="'+(lg.amount||'')+'" style="text-align:right;"></td>'+
-    '<td><input class="wms-input abi-sp-nar" data-i="'+i+'" value="'+wmsEsc(lg.narration||'')+'"></td>'+
-    '<td><button class="wms-btn-close abi-sp-del" data-i="'+i+'">✕</button></td></tr>'; }).join('');
-  abiSplitLegsData=legs.map(function(l){return {ledger_id:l.ledger_id,amount:Number(l.amount)||0,narration:l.narration||''};}); abiWireSplitLegs(); abiUpdateSplitTotal(); }
-function abiWireSplitLegs(){ var body=document.getElementById('abiSplitLegs');
-  body.querySelectorAll('.abi-sp-amt').forEach(function(inp){ inp.oninput=function(){ abiSplitLegsData[+inp.dataset.i].amount=abiNum(inp.value); abiUpdateSplitTotal(); }; });
-  body.querySelectorAll('.abi-sp-nar').forEach(function(inp){ inp.oninput=function(){ abiSplitLegsData[+inp.dataset.i].narration=inp.value; }; });
+function abiOpenSplit(key){
+  abiSplitTarget=key; var t=abiRowFromKey(key), r=t.r, a=t.a; var bankDr=(r.dir==='in');
+  document.getElementById('abiSplitTitle').textContent='Split — '+a.ledgerName;
+  document.getElementById('abiSplitDate').textContent=r.disp+'  ·  '+(r.dir==='in'?'Deposit':'Withdrawn')+'  '+abiAmt(r.amount);
+  document.getElementById('abiSplitBank').innerHTML='<tr><td>'+wmsEsc(a.ledgerName)+' <span class="acct-ex-note">(bank — fixed)</span></td>'+
+    '<td class="text-right" style="font-weight:600;">'+(bankDr?abiAmt(r.amount):'')+'</td><td class="text-right" style="font-weight:600;">'+(bankDr?'':abiAmt(r.amount))+'</td><td></td></tr>';
+  var legs=(r.split&&r.split.length)?r.split.map(function(l){return {ledger_id:l.ledger_id,debit:l.debit||'',credit:l.credit||''};})
+    :[{ledger_id:r.mappedId, debit:bankDr?'':r.amount, credit:bankDr?r.amount:''}];
+  document.getElementById('abiSplitNarr').value=r.narr||'';
+  abiRenderSplitLegs(legs); if(abiSplitCtrl)abiSplitCtrl.open();
+}
+function abiRenderSplitLegs(legs){
+  abiSplitLegsData=legs.map(function(l){return {ledger_id:l.ledger_id||null,debit:l.debit||'',credit:l.credit||''};});
+  var body=document.getElementById('abiSplitLegs');
+  body.innerHTML=abiSplitLegsData.map(function(lg,i){
+    return '<tr><td><input class="wms-input abi-sp-led" data-i="'+i+'" placeholder="Ledger" value="'+wmsEsc((abiLedgerById&&abiLedgerById[lg.ledger_id])||'')+'" data-lid="'+(lg.ledger_id||'')+'"></td>'+
+      '<td><input class="wms-input abi-sp-dr" data-i="'+i+'" value="'+(lg.debit||'')+'" style="text-align:right;"></td>'+
+      '<td><input class="wms-input abi-sp-cr" data-i="'+i+'" value="'+(lg.credit||'')+'" style="text-align:right;"></td>'+
+      '<td><button class="wms-btn-close abi-sp-del" data-i="'+i+'">✕</button></td></tr>';
+  }).join('');
+  abiWireSplitLegs(); abiUpdateSplitTotal();
+}
+function abiWireSplitLegs(){
+  var body=document.getElementById('abiSplitLegs');
+  body.querySelectorAll('.abi-sp-dr').forEach(function(inp){ inp.oninput=function(){ var d=abiSplitLegsData[+inp.dataset.i]; d.debit=inp.value; if(inp.value){ d.credit=''; var cr=body.querySelector('.abi-sp-cr[data-i="'+inp.dataset.i+'"]'); if(cr)cr.value=''; } abiUpdateSplitTotal(); }; });
+  body.querySelectorAll('.abi-sp-cr').forEach(function(inp){ inp.oninput=function(){ var d=abiSplitLegsData[+inp.dataset.i]; d.credit=inp.value; if(inp.value){ d.debit=''; var dr=body.querySelector('.abi-sp-dr[data-i="'+inp.dataset.i+'"]'); if(dr)dr.value=''; } abiUpdateSplitTotal(); }; });
   body.querySelectorAll('.abi-sp-led').forEach(function(inp){ abiAttachLedgerPick(inp,function(lid){ abiSplitLegsData[+inp.dataset.i].ledger_id=lid; abiUpdateSplitTotal(); }); });
-  body.querySelectorAll('.abi-sp-del').forEach(function(b){ b.onclick=function(){ abiSplitLegsData.splice(+b.dataset.i,1); abiRenderSplitLegs(abiSplitLegsData); }; }); }
-function abiUpdateSplitTotal(){ var t=abiRowFromKey(abiSplitTarget).r; var sum=abiSplitLegsData.reduce(function(s,l){return s+(Number(l.amount)||0);},0);
-  var el=document.getElementById('abiSplitTotal'); var ok=Math.abs(sum-t.amount)<0.005;
-  el.innerHTML='Total '+abiAmt(sum)+' / '+abiAmt(t.amount)+' '+(ok?'<span class="acct-ex-sev" style="background:#16a34a;color:#fff;">matches</span>':'<span class="acct-ex-sev warn">off by '+abiAmt(t.amount-sum)+'</span>');
-  var save=document.getElementById('abiSplitSave'); if(save)save.disabled=!ok||abiSplitLegsData.some(function(l){return !l.ledger_id;}); }
-function abiAddSplitLeg(){ abiSplitLegsData.push({ledger_id:null,amount:0,narration:''}); abiRenderSplitLegs(abiSplitLegsData); }
-function abiSaveSplit(){ var t=abiRowFromKey(abiSplitTarget); var legs=abiSplitLegsData.filter(function(l){return (Number(l.amount)||0)>0&&l.ledger_id;});
-  t.r.split=legs.length>1?legs.map(function(l){return {ledger_id:l.ledger_id,amount:Number(l.amount),narration:l.narration||null};}):null;
-  if(legs.length===1){ t.r.mappedId=legs[0].ledger_id; t.r.mappedName=(abiLedgerById&&abiLedgerById[legs[0].ledger_id])||t.r.mappedName; }
-  t.r.identity=abiCyrb128([t.a.ledgerId,t.r.slno,(t.r.split?('split:'+t.r.split.map(function(l){return l.ledger_id+':'+l.amount;}).join(',')):t.r.mappedId),t.r.amount.toFixed(2)].join('|'));
-  if(abiSplitCtrl)abiSplitCtrl.close(); abiComputeDiff().then(abiRender); }
+  body.querySelectorAll('.abi-sp-del').forEach(function(b){ b.onclick=function(){ abiSplitLegsData.splice(+b.dataset.i,1); abiRenderSplitLegs(abiSplitLegsData); }; });
+}
+function abiUpdateSplitTotal(){
+  var r=abiRowFromKey(abiSplitTarget).r; var bankDr=(r.dir==='in');
+  var td=(bankDr?r.amount:0), tc=(bankDr?0:r.amount);
+  abiSplitLegsData.forEach(function(l){ td+=abiNum(l.debit); tc+=abiNum(l.credit); });
+  var balanced=Math.abs(td-tc)<0.005;
+  var complete=abiSplitLegsData.length>=1 && abiSplitLegsData.every(function(l){ return l.ledger_id && (abiNum(l.debit)>0||abiNum(l.credit)>0); });
+  document.getElementById('abiSplitTotal').innerHTML='<div style="display:flex;gap:26px;align-items:center;font-weight:700;border-top:1px solid #cbd5e0;padding-top:8px;">'+
+    '<span style="flex:1;"></span><span>Dr '+abiAmt(td)+'</span><span>Cr '+abiAmt(tc)+'</span>'+
+    (balanced?'<span style="color:#16a34a;">Balanced</span>':'<span style="color:#dc2626;">Diff '+abiAmt(td-tc)+'</span>')+'</div>';
+  var save=document.getElementById('abiSplitSave'); if(save)save.disabled=!(balanced&&complete);
+}
+function abiAddSplitLeg(){ abiSplitLegsData.push({ledger_id:null,debit:'',credit:''}); abiRenderSplitLegs(abiSplitLegsData); }
+function abiSaveSplit(){
+  var t=abiRowFromKey(abiSplitTarget), r=t.r; var narr=document.getElementById('abiSplitNarr').value;
+  var legs=abiSplitLegsData.filter(function(l){ return l.ledger_id && (abiNum(l.debit)>0||abiNum(l.credit)>0); })
+    .map(function(l){ return {ledger_id:l.ledger_id, debit:abiNum(l.debit), credit:abiNum(l.credit), narration:null}; });
+  if(!legs.length){ acctToast('Add at least one line.',true); return; }
+  r.narr = narr || r.narr;
+  if(legs.length===1){ r.split=null; r.mappedId=legs[0].ledger_id; r.mappedName=(abiLedgerById&&abiLedgerById[legs[0].ledger_id])||r.mappedName; }
+  else { r.split=legs; }
+  r.identity=abiCyrb128([t.a.ledgerId,r.slno,(r.split?('split:'+r.split.map(function(l){return l.ledger_id+':'+l.debit+':'+l.credit;}).join(',')):r.mappedId),r.amount.toFixed(2)].join('|'));
+  if(abiSplitCtrl)abiSplitCtrl.close(); abiComputeDiff().then(abiRender);
+}
 function abiOpenMap(key){ abiMapTarget=key; var t=abiRowFromKey(key);
   document.getElementById('abiMapName').textContent=t.r.excelName; document.getElementById('abiMapBook').textContent=t.a.book;
   var led=document.getElementById('abiMapLedger'); led.value=''; led.dataset.lid=''; abiAttachLedgerPick(led,function(){});
