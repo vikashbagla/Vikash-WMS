@@ -110,6 +110,7 @@ function abiRowFromKey(key){ var p=key.split('::'); return {a:abiParsed.accounts
 function abiRender(){ var el=document.getElementById('abiBody'); if(!el)return; if(typeof acctSetCmdFilters==='function')acctSetCmdFilters(''); if(!abiParsed){ abiRenderUpload(el); return; } abiRenderReview(el); }
 function abiClear(){ abiParsed=null; abiSelected={}; abiRender(); }
 async function abiRenderUpload(el){
+  el.classList.remove('abi-review');
   el.innerHTML='<div class="abi-drop" id="abiDrop"><input type="file" id="abiFile" accept=".xlsx,.xls" style="display:none;">'+
     '<div class="abi-drop-main">Upload a bank statement workbook (.xlsx)</div>'+
     '<div class="abi-drop-sub">Each sheet matches a bank ledger by its BANK_&lt;sheet&gt; role. Others / PPF_SSY ignored. Re-upload anytime — only new / changed rows are picked up.</div></div>'+
@@ -136,6 +137,7 @@ function abiReadFile(f){ var reader=new FileReader();
   reader.onload=function(e){ try{ var wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true}); abiHandleWorkbook(wb); }catch(err){ acctToast('Could not read file: '+(err.message||err),true); } };
   reader.readAsArrayBuffer(f); }
 function abiRenderReview(el){
+  el.classList.add('abi-review');
   var accts=abiParsed.accounts;
   if(!accts.length){ el.innerHTML='<div class="acct-empty">No mapped bank sheets found.'+(abiParsed.unmatched.length?' Unmatched (need a BANK_ role): '+abiParsed.unmatched.map(wmsEsc).join(', '):'')+'</div><div style="margin-top:10px;"><button class="wms-btn wms-btn-secondary" onclick="abiClear()">Back to upload</button></div>'; return; }
   if(abiActiveAcct>=accts.length)abiActiveAcct=0; var a=accts[abiActiveAcct];
