@@ -109,18 +109,20 @@ async function abiComputeDiff(){
     Object.keys(byV).forEach(function(vid){ var v=byV[vid]; if(v.cancelled)return;
       var rec={vid:v.vid,sig:abiSig(v.lines),nlines:v.lines.length};
       if(v.src)existing[v.src]=rec;
-      // content key for a simple transfer voucher between two bank ledgers (same transfer may be imported from either statement)
+      // content key for a simple transfer voucher between two bank ledgers (same transfer may be imported from either statement).
+      // The key is DIRECTION-AWARE (uses the signed sig, i.e. which ledger is Dr vs Cr) so an intraday round-trip
+      // (A->B in the morning, B->A in the evening — same pair/date/amount, opposite legs) is two distinct transfers, not one.
       if(v.lines.length===2){ var lids=v.lines.map(function(l){return String(l.ledger_id);});
-        if(bankIds[lids[0]]&&bankIds[lids[1]]){ var amt=0; v.lines.forEach(function(l){ amt+=Number(l.debit_amount)||0; });
-          var ck=lids.slice().sort().join('|')+'|'+(v.date||'')+'|'+amt.toFixed(2); if(!byContent[ck])byContent[ck]=rec; } }
+        if(bankIds[lids[0]]&&bankIds[lids[1]]){ var ck=rec.sig+'||'+(v.date||'');
+          if(byContent[ck]){ byContent[ck].dup=true; } else { byContent[ck]=rec; } } }
     });
   }
-  abiParsed.accounts.forEach(function(a){ a.rows.forEach(function(row){ var ex=existing[row.identity]; row.matchedByContent=false;
+  abiParsed.accounts.forEach(function(a){ a.rows.forEach(function(row){ var ex=existing[row.identity]; row.matchedByContent=false; row.dupWarn=false;
     // inter-account transfer: the mapped counterparty is itself an imported bank ledger, so this transfer
-    // may already have been booked from the OTHER statement (different Sl#). Match on content, not Sl#.
+    // may already have been booked from the OTHER statement (different Sl#). Match on content+direction, not Sl#.
     if(!ex && !(row.split&&row.split.length) && row.mappedId && bankIds[String(row.mappedId)]){
-      var ck=[String(a.ledgerId),String(row.mappedId)].sort().join('|')+'|'+(row.ymd||'')+'|'+Number(row.amount).toFixed(2);
-      if(byContent[ck]){ ex=byContent[ck]; row.matchedByContent=true; } }
+      var ck=abiSig(abiLines(row,a))+'||'+(row.ymd||'');
+      if(byContent[ck]){ ex=byContent[ck]; row.matchedByContent=true; row.dupWarn=!!byContent[ck].dup; } }
     if(!ex){ row.status='new'; row.voucherId=null; }
     else { row.voucherId=ex.vid;
       if(ex.nlines>2 && !(row.split&&row.split.length)) row.status='existing';   // booked as a split — a plain re-import can't reproduce it, so treat as already booked
@@ -185,6 +187,7 @@ function abiRenderReview(el){
     var canSel=r.status==='new'||r.status==='changed';
     var chk=canSel?'<input type="checkbox" class="abi-chk" data-key="'+key+'"'+(abiSelected[key]?' checked':'')+'>':'<span class="acct-ex-note">✓</span>';
     var sev=r.status==='changed'?' <span class="acct-ex-sev warn" style="font-size:9px;">changed</span>':'';
+    if(r.dupWarn)sev+=' <span class="acct-ex-sev warn" style="font-size:9px;" title="This transfer is posted more than once in the books — cancel the extra voucher(s).">⚠ multiple postings</span>';
     var act=''; if(canSel){ act='<button class="wms-btn wms-btn-secondary abi-mini" data-split="'+key+'">Split</button>'; if(!r.mappedId&&!(r.split&&r.split.length))act+=' <button class="wms-btn wms-btn-secondary abi-mini" data-map="'+key+'">map…</button>'; }
     return '<tr class="'+(r.status==='existing'?'acct-ex-resolved-row':'')+'"><td>'+chk+'</td><td>'+wmsEsc(r.slno)+sev+'</td><td class="c-date">'+wmsEsc(r.disp)+'</td>'+
       '<td><div class="acct-ex-note">'+wmsEsc(r.excelName||'—')+'</div>'+ledCell+'</td>'+
