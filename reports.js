@@ -2109,7 +2109,7 @@ function rptConsNatureTree(natureName, cols, depthBase) {
         var cv = cols.map(function (c) { return rptConsLedgerDisp(c.net, lg); });
         var anyNonZero = cv.some(function (v) { return Math.round(v * 100) !== 0; });
         if (!anyNonZero && !rptConsShowZero) return null;
-        return { key: 'l:' + lg.id, label: lg.name, isLedger: true, colVals: cv, depth: 0 };
+        return { key: 'l:' + lg.id, label: lg.name, isLedger: true, isPmsSecurity: (lg.ledger_kind === 'SECURITY'), colVals: cv, depth: 0 };
     }
     function mkGroup(key, label, children) {
         var cv = []; for (var i = 0; i < ncols; i++) cv.push(0);
@@ -2197,7 +2197,9 @@ function rptConsNodeRows(node, depth, ncols) {
     if (node.rowClass) rowCls += ' ' + node.rowClass;
     var attr = isGroup ? (' data-cnode="' + node.key + '"') : '';
     var h = '<tr class="' + rowCls + '"' + attr + '>';
-    h += '<td class="rpt-c-name" style="padding-left:' + pad + 'px;">' + icon + wmsEsc(node.label) + '</td>';
+    // Dark-blue dot marks an investment holding auto-posted from a PMS trade (ledger_kind SECURITY).
+    var pmsDot = node.isPmsSecurity ? '<span class="rpt-consol-pms-dot" title="Investment held directly via PMS"></span>' : '';
+    h += '<td class="rpt-c-name" style="padding-left:' + pad + 'px;">' + icon + pmsDot + wmsEsc(node.label) + '</td>';
     for (var i = 0; i < ncols; i++) {
         var totCls = (i === ncols - 1) ? ' rpt-consol-c-total' : '';
         var obCls = (i === rptConsOpBalIdx) ? ' rpt-consol-c-opbal' : '';
