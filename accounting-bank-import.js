@@ -100,13 +100,27 @@ function abiLines(row,acct){
 }
 async function abiComputeDiff(){
   var books={}; abiParsed.accounts.forEach(function(a){ if(a.bookId)books[a.bookId]=1; });
-  var bookIds=Object.keys(books); var existing={};
+  var bookIds=Object.keys(books); var existing={}; var byContent={};
+  // ids of all imported bank ledgers -> used to detect inter-account transfers (both sides are bank statements)
+  var bankIds={}; if(abiBankLedgers){ Object.keys(abiBankLedgers).forEach(function(k){ var b=abiBankLedgers[k]; if(b&&b.id)bankIds[String(b.id)]=1; }); }
   if(bookIds.length){
-    var rows=await wmsFetchAllRaw(acctUrl('acct_voucher_full?select=voucher_id,source_id,is_cancelled,ledger_id,debit_amount,credit_amount&source_kind=eq.BANK_TXN&investor_id=in.('+bookIds.join(',')+')'));
-    var byV={}; (rows||[]).forEach(function(r){ if(!r.source_id)return; (byV[r.source_id]=byV[r.source_id]||{vid:r.voucher_id,cancelled:r.is_cancelled,lines:[]}).lines.push(r); });
-    Object.keys(byV).forEach(function(k){ if(byV[k].cancelled)return; existing[k]={vid:byV[k].vid,sig:abiSig(byV[k].lines),nlines:byV[k].lines.length}; });
+    var rows=await wmsFetchAllRaw(acctUrl('acct_voucher_full?select=voucher_id,source_id,is_cancelled,voucher_date,ledger_id,debit_amount,credit_amount&source_kind=eq.BANK_TXN&investor_id=in.('+bookIds.join(',')+')'));
+    var byV={}; (rows||[]).forEach(function(r){ if(!r.voucher_id)return; (byV[r.voucher_id]=byV[r.voucher_id]||{vid:r.voucher_id,src:r.source_id,cancelled:r.is_cancelled,date:r.voucher_date,lines:[]}).lines.push(r); });
+    Object.keys(byV).forEach(function(vid){ var v=byV[vid]; if(v.cancelled)return;
+      var rec={vid:v.vid,sig:abiSig(v.lines),nlines:v.lines.length};
+      if(v.src)existing[v.src]=rec;
+      // content key for a simple transfer voucher between two bank ledgers (same transfer may be imported from either statement)
+      if(v.lines.length===2){ var lids=v.lines.map(function(l){return String(l.ledger_id);});
+        if(bankIds[lids[0]]&&bankIds[lids[1]]){ var amt=0; v.lines.forEach(function(l){ amt+=Number(l.debit_amount)||0; });
+          var ck=lids.slice().sort().join('|')+'|'+(v.date||'')+'|'+amt.toFixed(2); if(!byContent[ck])byContent[ck]=rec; } }
+    });
   }
-  abiParsed.accounts.forEach(function(a){ a.rows.forEach(function(row){ var ex=existing[row.identity];
+  abiParsed.accounts.forEach(function(a){ a.rows.forEach(function(row){ var ex=existing[row.identity]; row.matchedByContent=false;
+    // inter-account transfer: the mapped counterparty is itself an imported bank ledger, so this transfer
+    // may already have been booked from the OTHER statement (different Sl#). Match on content, not Sl#.
+    if(!ex && !(row.split&&row.split.length) && row.mappedId && bankIds[String(row.mappedId)]){
+      var ck=[String(a.ledgerId),String(row.mappedId)].sort().join('|')+'|'+(row.ymd||'')+'|'+Number(row.amount).toFixed(2);
+      if(byContent[ck]){ ex=byContent[ck]; row.matchedByContent=true; } }
     if(!ex){ row.status='new'; row.voucherId=null; }
     else { row.voucherId=ex.vid;
       if(ex.nlines>2 && !(row.split&&row.split.length)) row.status='existing';   // booked as a split — a plain re-import can't reproduce it, so treat as already booked
