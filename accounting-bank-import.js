@@ -107,7 +107,7 @@ async function abiComputeDiff(){
 }
 function abiRowKey(ai,ri){ return ai+'::'+ri; }
 function abiRowFromKey(key){ var p=key.split('::'); return {a:abiParsed.accounts[+p[0]],r:abiParsed.accounts[+p[0]].rows[+p[1]]}; }
-function abiRender(){ var el=document.getElementById('abiBody'); if(!el)return; if(!abiParsed){ abiRenderUpload(el); return; } abiRenderReview(el); }
+function abiRender(){ var el=document.getElementById('abiBody'); if(!el)return; if(typeof acctSetCmdFilters==='function')acctSetCmdFilters(''); if(!abiParsed){ abiRenderUpload(el); return; } abiRenderReview(el); }
 function abiClear(){ abiParsed=null; abiSelected={}; abiRender(); }
 async function abiRenderUpload(el){
   el.innerHTML='<div class="abi-drop" id="abiDrop"><input type="file" id="abiFile" accept=".xlsx,.xls" style="display:none;">'+
