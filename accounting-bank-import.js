@@ -138,6 +138,15 @@ function abiEditNarr(td,key){ var r=abiRowFromKey(key).r; var cur=r.narr||'';
   inp.onkeydown=function(e){ if(e.key==='Enter'){ e.preventDefault(); commit(); } else if(e.key==='Escape'){ done=true; td.textContent=cur; } };
   inp.onblur=commit; }
 function abiClear(){ abiParsed=null; abiSelected={}; abiRender(); }
+async function abiRefresh(){
+  if(!abiParsed)return;
+  abiBusy(true,'Refreshing…');
+  try{ await abiComputeDiff(); }
+  catch(e){ acctToast('Refresh failed: '+(e.message||e),true); }
+  // drop any selection that is no longer postable (e.g. it became Existing after posting the other side)
+  Object.keys(abiSelected).forEach(function(k){ if(!abiSelected[k])return; var r=null; try{ r=abiRowFromKey(k).r; }catch(e){} if(!r||!(r.status==='new'||r.status==='changed'))abiSelected[k]=false; });
+  abiBusy(false); abiRender();
+}
 async function abiRenderUpload(el){
   el.classList.remove('abi-review');
   el.innerHTML='<div class="abi-drop" id="abiDrop"><input type="file" id="abiFile" accept=".xlsx,.xls" style="display:none;">'+
@@ -194,7 +203,7 @@ function abiRenderReview(el){
       '<td class="abi-narr" data-narr="'+key+'" title="Double-click to edit">'+wmsEsc(r.narr||'')+'</td><td class="text-right">'+(r.wd>0?abiAmt(r.wd):'')+'</td><td class="text-right" style="color:#16a34a;font-weight:600;">'+(r.dp>0?abiAmt(r.dp):'')+'</td>'+
       (showBal?'<td class="text-right acct-ex-note">'+(r.bal!=null?abiAmt(r.bal):'')+'</td>':'')+'<td>'+act+'</td></tr>'; }).join('');
   var selCount=Object.keys(abiSelected).filter(function(k){return abiSelected[k];}).length;
-  el.innerHTML='<div class="abi-acct-tabs">'+tabs+'<span style="flex:1;"></span><button class="wms-btn wms-btn-secondary" onclick="abiClear()">Clear screen</button></div>'+
+  el.innerHTML='<div class="abi-acct-tabs">'+tabs+'<span style="flex:1;"></span><button class="wms-btn wms-btn-secondary" onclick="abiRefresh()" title="Re-check these rows against the books (picks up vouchers you just posted on another account) — no re-upload needed">Refresh</button> <button class="wms-btn wms-btn-secondary" onclick="abiClear()">Clear screen</button></div>'+
     '<div class="abi-chips">'+chips+'<span style="flex:1;"></span><span class="acct-ex-note">'+wmsEsc(a.ledgerName)+' · '+wmsEsc(a.book)+'</span></div>'+
     '<div class="abi-grid"><table class="acct-table"><thead>'+head+'</thead><tbody>'+(body||'<tr><td colspan="9"><div class="acct-empty">No rows in this filter.</div></td></tr>')+'</tbody></table></div>'+
     '<div class="abi-foot"><button class="wms-btn wms-btn-secondary" id="abiSelAll">Select all shown</button><button class="wms-btn wms-btn-secondary" id="abiUnselAll">Unselect all</button><span style="flex:1;"></span><button class="wms-btn wms-btn-primary" id="abiAdd">Add selected ('+selCount+')</button></div>';
@@ -335,10 +344,11 @@ async function abiAddSelected(){
   acctToast('Posted '+posted+(updated?(' · updated '+updated):'')+(blocked?(' · '+blocked+' need mapping'):'')+(failed?(' · '+failed+' failed'):''), failed>0);
   if(failed&&firstErr)console.error('[bank-import] first error:',firstErr);
   try{ if(typeof acctLoadBook==='function')await acctLoadBook(); }catch(e){}
+  try{ await abiComputeDiff(); }catch(e){}   // re-check ALL accounts vs the books, so the other side of a transfer updates immediately
   abiBusy(false);
   abiRender();
 }
-window.abiRender=abiRender; window.abiClear=abiClear; window.abiHandleWorkbook=abiHandleWorkbook;
+window.abiRender=abiRender; window.abiClear=abiClear; window.abiRefresh=abiRefresh; window.abiHandleWorkbook=abiHandleWorkbook;
 window.abiSaveSplit=abiSaveSplit; window.abiAddSplitLeg=abiAddSplitLeg; window.abiSaveMap=abiSaveMap;
 window.abiWireModals=function(){
   var sp=document.getElementById('abiSplitModal'); if(sp&&typeof wmsModal==='function')abiSplitCtrl=wmsModal(sp,{backdropClose:false});
