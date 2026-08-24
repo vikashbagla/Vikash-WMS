@@ -104,10 +104,13 @@ async function abiComputeDiff(){
   if(bookIds.length){
     var rows=await wmsFetchAllRaw(acctUrl('acct_voucher_full?select=voucher_id,source_id,is_cancelled,ledger_id,debit_amount,credit_amount&source_kind=eq.BANK_TXN&investor_id=in.('+bookIds.join(',')+')'));
     var byV={}; (rows||[]).forEach(function(r){ if(!r.source_id)return; (byV[r.source_id]=byV[r.source_id]||{vid:r.voucher_id,cancelled:r.is_cancelled,lines:[]}).lines.push(r); });
-    Object.keys(byV).forEach(function(k){ if(byV[k].cancelled)return; existing[k]={vid:byV[k].vid,sig:abiSig(byV[k].lines)}; });
+    Object.keys(byV).forEach(function(k){ if(byV[k].cancelled)return; existing[k]={vid:byV[k].vid,sig:abiSig(byV[k].lines),nlines:byV[k].lines.length}; });
   }
   abiParsed.accounts.forEach(function(a){ a.rows.forEach(function(row){ var ex=existing[row.identity];
-    if(!ex){ row.status='new'; row.voucherId=null; } else { row.voucherId=ex.vid; row.status=(abiSig(abiLines(row,a))===ex.sig)?'existing':'changed'; } }); });
+    if(!ex){ row.status='new'; row.voucherId=null; }
+    else { row.voucherId=ex.vid;
+      if(ex.nlines>2 && !(row.split&&row.split.length)) row.status='existing';   // booked as a split — a plain re-import can't reproduce it, so treat as already booked
+      else row.status=(abiSig(abiLines(row,a))===ex.sig)?'existing':'changed'; } }); });
 }
 function abiRowKey(ai,ri){ return ai+'::'+ri; }
 function abiRowFromKey(key){ var p=key.split('::'); return {a:abiParsed.accounts[+p[0]],r:abiParsed.accounts[+p[0]].rows[+p[1]]}; }
