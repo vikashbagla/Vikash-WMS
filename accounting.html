@@ -558,6 +558,11 @@
 .abi-dd-item { padding:6px 10px; font-size:12px; cursor:pointer; white-space:nowrap; }
 .abi-dd-item:hover { background:#eef2ff; }
 .abi-dd-empty { padding:6px 10px; font-size:12px; color:#94a3b8; }
+.abi-editmap { color:#16a34a; font-weight:600; cursor:pointer; display:inline-block; }
+.abi-editmap:hover { text-decoration:underline; }
+.abi-narr { cursor:text; }
+.abi-narr:hover { background:#f8fafc; }
+.abi-narr-inp { width:100%; }
 .acct-master-tab { margin-left: 8px; padding-left: 14px; border-left: 1px solid #e2e8f0; }
 .acct-master-tab .acct-book-lbl { font-weight: 600; }
 .acct-master-tab.active .acct-book-lbl { color: #fff; }   /* white on the active blue pill */
@@ -689,7 +694,7 @@
 <!-- ===================== Bank Import — map narration modal ===================== -->
 <div class="wms-modal-overlay" id="abiMapModal">
     <div class="wms-modal-dialog" style="max-width: 520px; width: 92%;">
-        <div class="wms-modal-header"><span style="font-weight:700;">Map narration name</span><button class="wms-btn-close" id="abiMapClose">✕</button></div>
+        <div class="wms-modal-header"><span id="abiMapModalTitle" style="font-weight:700;">Map narration name</span><button class="wms-btn-close" id="abiMapClose">✕</button></div>
         <div class="wms-modal-body" style="padding:16px;">
             <div class="acct-ex-resolve-summary">Excel name: <b id="abiMapName"></b> &nbsp;·&nbsp; book <b id="abiMapBook"></b></div>
             <label class="acct-ex-resolve-lbl">Map to WMS ledger (type to search an existing ledger)</label>
