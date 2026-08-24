@@ -2249,22 +2249,21 @@ function acctOpenVoucherModal(prefillLedgerId, prefillLines) {
     }, 60);
 }
 
-// PMS Settlement ▸ + Dividend. Opens the voucher modal prefilled with the DIVIDEND
-// shape (Dr PMS Settlement (net) + Dr TDS on Yield / Cr Dividend income (gross)).
-// A normal manual voucher — no new posting code. Posts into the currently open book.
-function acctOpenDividendVoucher() {
-    if (!acctBookId || acctIsConsolidated()) { acctToast('Open a specific book first (the dividend posts into that book).', true); return; }
-    function byRole(r){ return acctLedgers.find(function(l){ return l.posting_role===r; }); }
-    var pms = byRole('PMS_SETTLEMENT');
-    var div = byRole('INC_DIVIDEND') || acctLedgers.find(function(l){ return l.name==='Dividend Income'; });
-    var tds = byRole('TDS_YIELD') || acctLedgers.find(function(l){ return l.name==='TDS on Yield'; });
-    if (!pms || !div) { acctToast('Need the PMS Settlement + Dividend Income ledgers.', true); return; }
-    var lines = [{ ledgerId: pms.id, debit: '', credit: '' }];
-    if (tds) lines.push({ ledgerId: tds.id, debit: '', credit: '' });
-    lines.push({ ledgerId: div.id, debit: '', credit: '' });
-    acctOpenVoucherModal(pms.id, lines);
-    var t = document.getElementById('acctVoucherTitle');
-    if (t) t.textContent = 'Dividend into PMS — ' + acctInvName(acctBookId);
+// PMS Settlement ▸ + Dividend. Opens the EXISTING Trading module's Dividend
+// income modal (openIncomeModal('DIVIDEND')) — its own security/holdings checks,
+// tags and posting process. We load the Trading module (which defines the income
+// loader + populates its reference data), then open the modal. No new posting code.
+async function acctOpenDividendVoucher() {
+    try {
+        if (typeof loadModule === 'function') await loadModule('trading');
+        var tries = 0;
+        (function openWhenReady() {
+            if (typeof trLoadIncomeModule === 'function' && typeof openIncomeModal === 'function') {
+                trLoadIncomeModule(function () { openIncomeModal('DIVIDEND'); });
+            } else if (tries++ < 60) { setTimeout(openWhenReady, 120); }
+            else { acctToast('Could not open the Trading dividend modal.', true); }
+        })();
+    } catch (e) { acctToast('Could not open the dividend modal: ' + (e.message || e), true); }
 }
 
 // Add a balancing line to the chosen ledger so the voucher ties (opening balances).
