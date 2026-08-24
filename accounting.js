@@ -13,7 +13,7 @@ var acctBookId = null;        // selected book (investor id, accounting_enabled)
 var acctActiveTab = 'balance-sheet';
 // Master workspace mode: 'book' (per-book statements) | 'master' (Ledgers + Exceptions).
 var acctMode = 'book';
-var acctMasterTab = (function(){ try { var v = localStorage.getItem('wms_acct_master_tab'); return (v === 'exceptions' || v === 'ledgers') ? v : 'ledgers'; } catch(e){ return 'ledgers'; } })();
+var acctMasterTab = (function(){ try { var v = localStorage.getItem('wms_acct_master_tab'); return (v === 'exceptions' || v === 'ledgers' || v === 'bank-import') ? v : 'ledgers'; } catch(e){ return 'ledgers'; } })();
 // Exceptions screen state
 var acctExceptions = null;         // cached acct_exceptions rows (open + resolved), or null = not loaded
 var acctExShowResolved = false;
@@ -444,7 +444,7 @@ function acctWireUI() {
     document.querySelectorAll('.acct-tab').forEach(function (t) {
         t.onclick = function () {
             acctActiveTab = t.dataset.acctTab;
-            if (acctActiveTab === 'ledgers' || acctActiveTab === 'exceptions') {
+            if (acctActiveTab === 'ledgers' || acctActiveTab === 'exceptions' || acctActiveTab === 'bank-import') {
                 acctMasterTab = acctActiveTab;
                 try { localStorage.setItem('wms_acct_master_tab', acctMasterTab); } catch (e) {}
             }
@@ -506,6 +506,7 @@ function acctRenderActiveTab() {
     else if (acctActiveTab === 'day-book') acctRenderDayBook();
     else if (acctActiveTab === 'ledgers') acctRenderLedgers();
     else if (acctActiveTab === 'exceptions') acctRenderExceptions();
+    else if (acctActiveTab === 'bank-import') { if (!window._abiModalsWired) { window._abiModalsWired = true; if (typeof abiWireModals === 'function') abiWireModals(); } if (typeof abiRender === 'function') abiRender(); }
     acctSyncUnitToggle();   // keep the header full-amount toggle visible + labelled on every tab
 }
 
@@ -2203,7 +2204,7 @@ function acctUpdateBalance() {
     if (save) save.disabled = !balanced;
 }
 
-function acctOpenVoucherModal(prefillLedgerId) {
+function acctOpenVoucherModal(prefillLedgerId, prefillLines) {
     if (!acctBookId) { acctToast('Select a book first (enable accounting on an investor).', true); return; }
     acctEditingVoucherId = null;          // creating, not editing
     acctVoucherReadOnly = false;
@@ -2219,6 +2220,12 @@ function acctOpenVoucherModal(prefillLedgerId) {
     if (prefillLedgerId && typeof prefillLedgerId === 'string') {
         var _plg = acctLedgers.find(function (x) { return x.id === prefillLedgerId; });
         if (_plg) { acctVoucherLines[0].ledgerId = _plg.id; acctVoucherLines[0].ledgerName = _plg.name; }
+    }
+    if (Array.isArray(prefillLines) && prefillLines.length) {
+        acctVoucherLines = prefillLines.map(function (l) {
+            var _lg = acctLedgers.find(function (x) { return x.id === l.ledgerId; });
+            return { ledgerId: l.ledgerId || '', ledgerName: _lg ? _lg.name : '', debit: l.debit || '', credit: l.credit || '', narration: l.narration || '', _auto: false };
+        });
     }
     acctLedgerPickTarget = null;
 
@@ -2240,6 +2247,23 @@ function acctOpenVoucherModal(prefillLedgerId) {
         var first = document.querySelector('#acctVoucherLines .acct-line-ledger');
         if (first) first.focus();
     }, 60);
+}
+
+// PMS Settlement ▸ + Dividend. Opens the EXISTING Trading module's Dividend
+// income modal (openIncomeModal('DIVIDEND')) — its own security/holdings checks,
+// tags and posting process. We load the Trading module (which defines the income
+// loader + populates its reference data), then open the modal. No new posting code.
+async function acctOpenDividendVoucher() {
+    try {
+        if (typeof loadModule === 'function') await loadModule('trading');
+        var tries = 0;
+        (function openWhenReady() {
+            if (typeof trLoadIncomeModule === 'function') {
+                trLoadIncomeModule(function () { if (typeof openIncomeModal === 'function') openIncomeModal('DIVIDEND'); });
+            } else if (tries++ < 60) { setTimeout(openWhenReady, 120); }
+            else { acctToast('Could not open the Trading dividend modal.', true); }
+        })();
+    } catch (e) { acctToast('Could not open the dividend modal: ' + (e.message || e), true); }
 }
 
 // Add a balancing line to the chosen ledger so the voucher ties (opening balances).
@@ -2552,6 +2576,8 @@ function acctRenderLedgerDetail() {
     if (titleEl) titleEl.textContent = lg.name;
     var subEl = document.getElementById('acctLedgerSub');
     if (subEl) subEl.textContent = acctGroupPath(g) + ' · ' + acctViewTitle();
+    var _divBtn = document.getElementById('acctLedgerDividend');
+    if (_divBtn) _divBtn.style.display = (lg.posting_role === 'PMS_SETTLEMENT' && acctBookId && !acctIsConsolidated()) ? '' : 'none';
     acctPopulateLedgerPicker();
     var unitEl = document.getElementById('acctLedgerUnit');
     if (unitEl) unitEl.textContent = acctUnitLabel();
@@ -3455,6 +3481,8 @@ function acctWireModals() {
     document.getElementById('acctLedgerDone').onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
     var _lnv = document.getElementById('acctLedgerNewVoucher');
     if (_lnv) _lnv.onclick = function () { acctOpenVoucherModal(acctLedgerDetailId); };
+    var _ldiv = document.getElementById('acctLedgerDividend');
+    if (_ldiv) _ldiv.onclick = acctOpenDividendVoucher;
     acctWireLedgerPicker();
 
     // Add-ledger modal
@@ -3761,7 +3789,7 @@ function acctApplyActiveTabUI() {
 function acctEnterMaster() {
     acctMode = 'master';
     var c = document.querySelector('.acct-container'); if (c) c.classList.add('acct-mode-master');
-    acctActiveTab = (acctMasterTab === 'exceptions') ? 'exceptions' : 'ledgers';
+    acctActiveTab = (acctMasterTab === 'exceptions' || acctMasterTab === 'bank-import') ? acctMasterTab : 'ledgers';
     acctRenderBookTabs();          // repaint tabs so Master shows active, books de-activate
     acctApplyActiveTabUI();
     acctRenderActiveTab();
@@ -3773,7 +3801,7 @@ function acctExitMaster() {
     if (acctMode !== 'master') return;
     acctMode = 'book';
     var c = document.querySelector('.acct-container'); if (c) c.classList.remove('acct-mode-master');
-    if (acctActiveTab === 'ledgers' || acctActiveTab === 'exceptions') acctActiveTab = 'balance-sheet';
+    if (acctActiveTab === 'ledgers' || acctActiveTab === 'exceptions' || acctActiveTab === 'bank-import') acctActiveTab = 'balance-sheet';
     acctApplyActiveTabUI();
 }
 

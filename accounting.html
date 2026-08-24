@@ -532,18 +532,45 @@
 .acct-led-ledrow { user-select: none; }
 
 /* ---- Master workspace (Ledgers + Exceptions live under the Master tab) ---- */
+
+/* ---- Bank Import ---- */
+.abi-drop { border: 1px dashed #667eea; border-radius: 8px; background: #fbfcfe; padding: 22px; text-align: center; cursor: pointer; }
+.abi-drop-over { background: #eef2ff; }
+.abi-drop-main { color: #667eea; font-weight: 700; font-size: 13px; }
+.abi-drop-sub { color: #64748b; font-size: 11px; margin-top: 6px; }
+.abi-acct-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 0 8px; }
+.abi-acct-tab { font-size: 11px; padding: 3px 10px; border: 1px solid #cbd5e0; border-radius: 6px; background: #fff; color: #64748b; cursor: pointer; white-space: nowrap; }
+.abi-acct-tab.active { background: #eef2ff; border-color: #667eea; color: #667eea; font-weight: 600; }
+.abi-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 8px; }
+.abi-chip { font-size: 11px; padding: 3px 10px; border: 1px solid #cbd5e0; border-radius: 12px; background: #fff; color: #64748b; cursor: pointer; }
+.abi-chip.active { background: #667eea; border-color: #667eea; color: #fff; font-weight: 600; }
+/* review layout: tabs + chips fixed, only the grid scrolls, sticky table header */
+#abiBody.abi-review { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.abi-review .abi-acct-tabs, .abi-review .abi-chips, .abi-review .abi-foot { flex-shrink: 0; }
+.abi-review .abi-grid { flex: 1; min-height: 0; overflow: auto; }
+.abi-grid { overflow: auto; }
+.abi-grid table { min-width: 0; }
+.abi-grid thead th { position: sticky; top: 0; z-index: 2; background: #f8fafc; box-shadow: inset 0 -1px 0 #e2e8f0; }
+.abi-mini { font-size: 10px; padding: 2px 7px; }
+.abi-foot { display: flex; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid #e2e8f0; margin-top: 6px; }
+.abi-sp-amt { text-align: right; }
+.abi-dd { background:#fff; border:1px solid #cbd5e0; border-radius:6px; box-shadow:0 8px 22px rgba(0,0,0,.14); max-height:260px; overflow:auto; }
+.abi-dd-item { padding:6px 10px; font-size:12px; cursor:pointer; white-space:nowrap; }
+.abi-dd-item:hover { background:#eef2ff; }
+.abi-dd-empty { padding:6px 10px; font-size:12px; color:#94a3b8; }
 .acct-master-tab { margin-left: 8px; padding-left: 14px; border-left: 1px solid #e2e8f0; }
 .acct-master-tab .acct-book-lbl { font-weight: 600; }
 .acct-master-tab.active .acct-book-lbl { color: #fff; }   /* white on the active blue pill */
 /* View-tab + command visibility by mode. Ledgers & Exceptions belong to Master;
    the per-book statements and book-only commands belong to book mode. */
-.acct-tab[data-acct-tab="ledgers"], .acct-tab[data-acct-tab="exceptions"] { display: none; }
+.acct-tab[data-acct-tab="ledgers"], .acct-tab[data-acct-tab="exceptions"], .acct-tab[data-acct-tab="bank-import"] { display: none; }
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="balance-sheet"],
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="profit-loss"],
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="trial-balance"],
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="day-book"] { display: none; }
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="ledgers"],
-.acct-container.acct-mode-master .acct-tab[data-acct-tab="exceptions"] { display: inline-block; }
+.acct-container.acct-mode-master .acct-tab[data-acct-tab="exceptions"],
+.acct-container.acct-mode-master .acct-tab[data-acct-tab="bank-import"] { display: inline-block; }
 .acct-container.acct-mode-master #acctNewVoucherBtn,
 .acct-container.acct-mode-master #acctRebuildBtn,
 .acct-container.acct-mode-master .acct-menu-wrap { display: none; }
@@ -587,6 +614,7 @@
         <button class="acct-tab" data-acct-tab="day-book">Day Book</button>
         <button class="acct-tab" data-acct-tab="ledgers">Ledgers</button>
         <button class="acct-tab" data-acct-tab="exceptions">Exceptions</button>
+        <button class="acct-tab" data-acct-tab="bank-import">Bank Import</button>
         <span class="acct-tabs-spacer"></span>
         <span id="acctCmdFilters" class="acct-cmd-filters"></span>
         <span class="acct-cmd-sep"></span>
@@ -633,9 +661,45 @@
         <div id="acctExceptionsBody"><div class="acct-empty">Loading exceptions…</div></div>
     </div>
 
+    <!-- Bank Import (Master) -->
+    <div class="acct-tabpanel" id="acctPanel-bank-import">
+        <div id="abiBody"><div class="acct-empty">Loading…</div></div>
+    </div>
+
 </div>
 
 <!-- ===================== Voucher entry modal ===================== -->
+<!-- ===================== Bank Import — split modal (voucher style) ===================== -->
+<div class="wms-modal-overlay" id="abiSplitModal">
+    <div class="wms-modal-dialog" style="max-width: 720px; width: 94%;">
+        <div class="wms-modal-header"><span id="abiSplitTitle" style="font-weight:700;">Split transaction</span><span id="abiSplitDate" style="margin-left:auto;color:#64748b;font-size:12px;padding-right:12px;"></span><button class="wms-btn-close" id="abiSplitClose">✕</button></div>
+        <div class="wms-modal-body" style="padding:16px;">
+            <div class="acct-ex-note" style="margin-bottom:6px;">The bank line is fixed. Add the counterparty lines (Debit / Credit) — they must balance the voucher.</div>
+            <table class="acct-table acct-lines-table"><thead><tr><th>Ledger</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th><th></th></tr></thead>
+                <tbody id="abiSplitBank"></tbody>
+                <tbody id="abiSplitLegs"></tbody></table>
+            <div style="margin-top:8px;"><button class="wms-btn wms-btn-secondary" id="abiSplitAdd">+ Add line</button></div>
+            <div id="abiSplitTotal" style="margin-top:10px;"></div>
+            <label class="acct-ex-resolve-lbl">Narration</label>
+            <input type="text" id="abiSplitNarr" class="wms-input">
+            <div class="acct-ex-resolve-actions"><button class="wms-btn wms-btn-secondary" id="abiSplitCancel">Cancel</button><button class="wms-btn wms-btn-primary" id="abiSplitSave">Save split</button></div>
+        </div>
+    </div>
+</div>
+<!-- ===================== Bank Import — map narration modal ===================== -->
+<div class="wms-modal-overlay" id="abiMapModal">
+    <div class="wms-modal-dialog" style="max-width: 520px; width: 92%;">
+        <div class="wms-modal-header"><span style="font-weight:700;">Map narration name</span><button class="wms-btn-close" id="abiMapClose">✕</button></div>
+        <div class="wms-modal-body" style="padding:16px;">
+            <div class="acct-ex-resolve-summary">Excel name: <b id="abiMapName"></b> &nbsp;·&nbsp; book <b id="abiMapBook"></b></div>
+            <label class="acct-ex-resolve-lbl">Map to WMS ledger (type to search an existing ledger)</label>
+            <input type="text" id="abiMapLedger" class="wms-input" placeholder="Existing WMS ledger name">
+            <label class="acct-ex-note" style="display:inline-flex;align-items:center;gap:6px;margin-top:10px;cursor:pointer;"><input type="checkbox" id="abiMapGlobal" checked> Available to all books (global) — untick to scope to this book only</label>
+            <div class="acct-ex-resolve-actions"><button class="wms-btn wms-btn-secondary" id="abiMapCancel">Cancel</button><button class="wms-btn wms-btn-primary" id="abiMapSave">Save mapping</button></div>
+        </div>
+    </div>
+</div>
+
 <!-- ===================== Exception resolve modal ===================== -->
 <div class="wms-modal-overlay" id="acctExResolveModal">
     <div class="wms-modal-dialog" style="max-width: 520px; width: 92%;">
@@ -781,6 +845,7 @@
             </div>
             <div class="acct-lh-right">
                 <button id="acctLedgerNewVoucher" class="wms-btn wms-btn-primary" style="font-size:11px;">➕ New Voucher</button>
+                <button id="acctLedgerDividend" class="wms-btn wms-btn-secondary" style="font-size:11px;display:none;">＋ Dividend</button>
                 <span id="acctLedgerUnit" class="acct-ld-unit"></span>
                 <button id="acctLdUnitToggle" class="wms-btn wms-btn-secondary" style="font-size:11px;">Show full amount</button>
                 <button class="wms-btn-close" id="acctLedgerClose">✕</button>
