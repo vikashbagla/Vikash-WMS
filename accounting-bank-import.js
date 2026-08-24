@@ -171,10 +171,33 @@ function abiRenderReview(el){
   var sa=document.getElementById('abiSelAll'); if(sa)sa.onclick=function(){ vis.forEach(function(o){ if(o.r.status==='new'||o.r.status==='changed')abiSelected[abiRowKey(abiActiveAcct,o.ri)]=true; }); abiRender(); };
   var add=document.getElementById('abiAdd'); if(add)add.onclick=abiAddSelected;
 }
-function abiAttachLedgerPick(input,onPick){ input.onblur=function(){ var q=input.value.trim().toLowerCase(); if(!q){ input.dataset.lid=''; onPick(null); return; }
-  var cat=(typeof acctLedgers!=='undefined'?acctLedgers:[]);
-  var match=cat.filter(function(l){return l.name.toLowerCase()===q;})[0]||cat.filter(function(l){return l.name.toLowerCase().indexOf(q)>=0;})[0];
-  if(match){ input.value=match.name; input.dataset.lid=match.id; onPick(match.id); } else { input.dataset.lid=''; onPick(null); } }; }
+// Shared floating search dropdown for ledger inputs (map modal + split rows).
+var _abiDd=null,_abiDdInput=null,_abiDdOnPick=null;
+function abiEnsureDd(){ if(_abiDd)return _abiDd;
+  _abiDd=document.createElement('div'); _abiDd.className='abi-dd'; _abiDd.style.display='none'; document.body.appendChild(_abiDd);
+  _abiDd.addEventListener('mousedown',function(e){ var it=e.target.closest('.abi-dd-item'); if(!it)return; e.preventDefault();
+    if(_abiDdInput){ _abiDdInput.value=it.dataset.name; _abiDdInput.dataset.lid=it.dataset.id; }
+    var cb=_abiDdOnPick; abiHideDd(); if(cb)cb(it.dataset.id); });
+  return _abiDd; }
+function abiHideDd(){ if(_abiDd)_abiDd.style.display='none'; _abiDdInput=null; _abiDdOnPick=null; }
+function abiPosDd(input){ var r=input.getBoundingClientRect(); _abiDd.style.position='fixed'; _abiDd.style.left=r.left+'px'; _abiDd.style.top=(r.bottom+2)+'px'; _abiDd.style.width=Math.max(r.width,220)+'px'; _abiDd.style.zIndex=99999; }
+function abiAttachLedgerPick(input,onPick){
+  input.setAttribute('autocomplete','off');
+  function show(){ var q=input.value.trim().toLowerCase(); input.dataset.lid=''; var dd=abiEnsureDd(); _abiDdInput=input; _abiDdOnPick=onPick;
+    var cat=(typeof acctLedgers!=='undefined'?acctLedgers:[]);
+    var m=q? cat.filter(function(l){return l.name.toLowerCase().indexOf(q)>=0;}) : cat.slice(0,0);
+    m=m.slice(0,20);
+    dd.innerHTML = q ? (m.length? m.map(function(l){return '<div class="abi-dd-item" data-id="'+l.id+'" data-name="'+wmsEsc(l.name)+'">'+wmsEsc(l.name)+'</div>';}).join('') : '<div class="abi-dd-empty">No matching ledger</div>') : '';
+    if(q){ abiPosDd(input); dd.style.display='block'; } else abiHideDd();
+  }
+  input.oninput=show;
+  input.onfocus=function(){ if(input.value.trim())show(); };
+  input.onblur=function(){ setTimeout(function(){
+      // fallback resolve if user typed an exact/only match but didn't click
+      if(!input.dataset.lid){ var q=input.value.trim().toLowerCase(); var cat=(typeof acctLedgers!=='undefined'?acctLedgers:[]);
+        var ex=cat.filter(function(l){return l.name.toLowerCase()===q;})[0]; if(ex){ input.value=ex.name; input.dataset.lid=ex.id; onPick(ex.id); } else onPick(null); }
+      abiHideDd(); },160); };
+}
 function abiOpenSplit(key){ abiSplitTarget=key; var r=abiRowFromKey(key).r;
   var legs=(r.split&&r.split.length)?r.split.slice():[{ledger_id:r.mappedId,amount:r.amount,narration:r.narr}];
   document.getElementById('abiSplitInfo').innerHTML='<b>'+wmsEsc(r.disp)+' · '+wmsEsc(r.narr||r.excelName)+'</b><br><span class="acct-ex-note">Allocate '+abiAmt(r.amount)+' ('+(r.dir==='in'?'Deposit':'Withdrawn')+')</span>';
