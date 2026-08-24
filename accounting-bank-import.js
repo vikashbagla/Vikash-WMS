@@ -8,7 +8,7 @@
 // ============================================================================
 var abiBankLedgers=null, abiNarrMap=null, abiLedgerById=null, abiParsed=null;
 var abiActiveAcct=0, abiFilter='new', abiSelected={};
-var abiSplitCtrl=null, abiSplitTarget=null, abiSplitLegsData=[], abiMapCtrl=null, abiMapTarget=null;
+var abiSplitCtrl=null, abiSplitTarget=null, abiSplitLegsData=[], abiMapCtrl=null, abiMapTarget=null, abiMapEditId=null;
 var ABI_IGNORE=['others','ppf_ssy'];
 
 function abiAmt(n){ n=Number(n)||0; return n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -42,7 +42,7 @@ function abiResolveNarr(name,bookId){
   var book=cand.filter(function(m){return !m.is_global&&(m.scope_investor_ids||[]).map(String).indexOf(String(bookId))>=0;});
   var glob=cand.filter(function(m){return m.is_global;});
   var pick=book[0]||glob[0]; if(!pick)return null;
-  return {id:pick.ledger_id,name:(abiLedgerById&&abiLedgerById[pick.ledger_id])||'(ledger)'};
+  return {id:pick.ledger_id,name:(abiLedgerById&&abiLedgerById[pick.ledger_id])||'(ledger)',mapId:pick.id,global:!!pick.is_global};
 }
 function abiHeaderRow(aoa){ for(var i=0;i<Math.min(aoa.length,6);i++){ var vals=(aoa[i]||[]).map(function(x){return String(x==null?'':x).trim().toLowerCase();}); if(vals.indexOf('ledger')>=0)return i; } return -1; }
 function abiColMap(hdr){ var m={}; hdr.forEach(function(h,i){ var k=String(h==null?'':h).trim().toLowerCase();
@@ -69,7 +69,7 @@ function abiParseSheet(ws,acct){
     var bal=cm.bal!==undefined?abiNum(row[cm.bal]):null;
     if(slno==null||slno==='')continue; if(/opening balance/i.test(excelName)||/opening balance/i.test(narr))continue; if(wd<=0&&dp<=0)continue;
     var dir=dp>0?'in':'out'; var amount=dp>0?dp:wd; var res=abiResolveNarr(excelName,acct.bookId);
-    var o={slno:String(slno),ymd:ymd,disp:abiDisp(ymd),excelName:excelName,narr:narr,wd:wd,dp:dp,bal:bal,dir:dir,amount:amount,isCC:isCC,mappedId:res?res.id:null,mappedName:res?res.name:null,split:null};
+    var o={slno:String(slno),ymd:ymd,disp:abiDisp(ymd),excelName:excelName,narr:narr,wd:wd,dp:dp,bal:bal,dir:dir,amount:amount,isCC:isCC,mappedId:res?res.id:null,mappedName:res?res.name:null,mapId:res?res.mapId:null,mapGlobal:res?res.global:false,split:null};
     o.identity=abiCyrb128([acct.ledgerId,o.slno,(o.mappedId||excelName),amount.toFixed(2)].join('|')); rows.push(o); }
   return rows;
 }
@@ -112,6 +112,12 @@ async function abiComputeDiff(){
 function abiRowKey(ai,ri){ return ai+'::'+ri; }
 function abiRowFromKey(key){ var p=key.split('::'); return {a:abiParsed.accounts[+p[0]],r:abiParsed.accounts[+p[0]].rows[+p[1]]}; }
 function abiRender(){ var el=document.getElementById('abiBody'); if(!el)return; if(typeof acctSetCmdFilters==='function')acctSetCmdFilters(''); if(!abiParsed){ abiRenderUpload(el); return; } abiRenderReview(el); }
+function abiEditNarr(td,key){ var r=abiRowFromKey(key).r; var cur=r.narr||'';
+  td.innerHTML='<input class="wms-input abi-narr-inp" value="'+wmsEsc(cur)+'">';
+  var inp=td.querySelector('input'); inp.focus(); inp.select(); var done=false;
+  function commit(){ if(done)return; done=true; r.narr=inp.value.trim(); td.textContent=r.narr; }
+  inp.onkeydown=function(e){ if(e.key==='Enter'){ e.preventDefault(); commit(); } else if(e.key==='Escape'){ done=true; td.textContent=cur; } };
+  inp.onblur=commit; }
 function abiClear(){ abiParsed=null; abiSelected={}; abiRender(); }
 async function abiRenderUpload(el){
   el.classList.remove('abi-review');
@@ -153,15 +159,19 @@ function abiRenderReview(el){
   var vis=a.rows.map(function(r,ri){return {r:r,ri:ri};}).filter(function(o){ return abiFilter==='unmapped'?abiUnmapped(o.r):(abiFilter==='all'||o.r.status===abiFilter); });
   var head='<tr><th style="width:26px;"></th><th>Sl#</th><th class="c-date">Txn Date</th><th>Ledger → WMS ledger</th><th>Narration</th><th class="text-right">Withdrawn</th><th class="text-right">Deposit</th>'+(showBal?'<th class="text-right">Balance</th>':'')+'<th></th></tr>';
   var body=vis.map(function(o){ var r=o.r,ri=o.ri,key=abiRowKey(abiActiveAcct,ri);
-    var mapped=r.split&&r.split.length?('Split ×'+r.split.length):(r.mappedName||'— map name —');
-    var mappedCls=(r.mappedId||(r.split&&r.split.length))?'#16a34a':'#dc2626';
+    var isSplit=r.split&&r.split.length;
+    var mapped=isSplit?('Split ×'+r.split.length):(r.mappedName||'— map name —');
+    var mappedCls=(r.mappedId||isSplit)?'#16a34a':'#dc2626';
+    var ledCell = !isSplit
+      ? '<div class="abi-editmap" data-editmap="'+key+'" title="'+(r.mappedId?'Click to change this mapping':'Click to map this name')+'" style="color:'+(r.mappedId?'#16a34a':'#dc2626')+';">'+wmsEsc(mapped)+'</div>'
+      : '<div style="color:'+mappedCls+';font-weight:600;">'+wmsEsc(mapped)+'</div>';
     var canSel=r.status==='new'||r.status==='changed';
     var chk=canSel?'<input type="checkbox" class="abi-chk" data-key="'+key+'"'+(abiSelected[key]?' checked':'')+'>':'<span class="acct-ex-note">✓</span>';
     var sev=r.status==='changed'?' <span class="acct-ex-sev warn" style="font-size:9px;">changed</span>':'';
     var act=''; if(canSel){ act='<button class="wms-btn wms-btn-secondary abi-mini" data-split="'+key+'">Split</button>'; if(!r.mappedId&&!(r.split&&r.split.length))act+=' <button class="wms-btn wms-btn-secondary abi-mini" data-map="'+key+'">map…</button>'; }
     return '<tr class="'+(r.status==='existing'?'acct-ex-resolved-row':'')+'"><td>'+chk+'</td><td>'+wmsEsc(r.slno)+sev+'</td><td class="c-date">'+wmsEsc(r.disp)+'</td>'+
-      '<td><div class="acct-ex-note">'+wmsEsc(r.excelName||'—')+'</div><div style="color:'+mappedCls+';font-weight:600;">'+wmsEsc(mapped)+'</div></td>'+
-      '<td>'+wmsEsc(r.narr||'')+'</td><td class="text-right">'+(r.wd>0?abiAmt(r.wd):'')+'</td><td class="text-right" style="color:#16a34a;font-weight:600;">'+(r.dp>0?abiAmt(r.dp):'')+'</td>'+
+      '<td><div class="acct-ex-note">'+wmsEsc(r.excelName||'—')+'</div>'+ledCell+'</td>'+
+      '<td class="abi-narr" data-narr="'+key+'" title="Double-click to edit">'+wmsEsc(r.narr||'')+'</td><td class="text-right">'+(r.wd>0?abiAmt(r.wd):'')+'</td><td class="text-right" style="color:#16a34a;font-weight:600;">'+(r.dp>0?abiAmt(r.dp):'')+'</td>'+
       (showBal?'<td class="text-right acct-ex-note">'+(r.bal!=null?abiAmt(r.bal):'')+'</td>':'')+'<td>'+act+'</td></tr>'; }).join('');
   var selCount=Object.keys(abiSelected).filter(function(k){return abiSelected[k];}).length;
   el.innerHTML='<div class="abi-acct-tabs">'+tabs+'<span style="flex:1;"></span><button class="wms-btn wms-btn-secondary" onclick="abiClear()">Clear screen</button></div>'+
@@ -173,6 +183,8 @@ function abiRenderReview(el){
   el.querySelectorAll('.abi-chk').forEach(function(c){ c.onchange=function(){ abiSelected[c.dataset.key]=c.checked; var b=document.getElementById('abiAdd'); if(b){ var n=Object.keys(abiSelected).filter(function(k){return abiSelected[k];}).length; b.textContent='Add selected ('+n+')'; } }; });
   el.querySelectorAll('[data-split]').forEach(function(b){ b.onclick=function(){ abiOpenSplit(b.dataset.split); }; });
   el.querySelectorAll('[data-map]').forEach(function(b){ b.onclick=function(){ abiOpenMap(b.dataset.map); }; });
+  el.querySelectorAll('[data-editmap]').forEach(function(b){ b.onclick=function(){ abiOpenMap(b.dataset.editmap); }; });
+  el.querySelectorAll('.abi-narr').forEach(function(td){ td.ondblclick=function(){ abiEditNarr(td, td.dataset.narr); }; });
   var sa=document.getElementById('abiSelAll'); if(sa)sa.onclick=function(){ vis.forEach(function(o){ var r=o.r; if((r.status==='new'||r.status==='changed') && (r.mappedId||(r.split&&r.split.length))) abiSelected[abiRowKey(abiActiveAcct,o.ri)]=true; }); abiRender(); };
   var ua=document.getElementById('abiUnselAll'); if(ua)ua.onclick=function(){ abiSelected={}; abiRender(); };
   var add=document.getElementById('abiAdd'); if(add)add.onclick=abiAddSelected;
@@ -256,17 +268,27 @@ function abiSaveSplit(){
   r.identity=abiCyrb128([t.a.ledgerId,r.slno,(r.split?('split:'+r.split.map(function(l){return l.ledger_id+':'+l.debit+':'+l.credit;}).join(',')):r.mappedId),r.amount.toFixed(2)].join('|'));
   if(abiSplitCtrl)abiSplitCtrl.close(); abiComputeDiff().then(abiRender);
 }
-function abiOpenMap(key){ abiMapTarget=key; var t=abiRowFromKey(key);
-  document.getElementById('abiMapName').textContent=t.r.excelName; document.getElementById('abiMapBook').textContent=t.a.book;
-  var led=document.getElementById('abiMapLedger'); led.value=''; led.dataset.lid=''; abiAttachLedgerPick(led,function(){});
-  document.getElementById('abiMapGlobal').checked=true; if(abiMapCtrl)abiMapCtrl.open(); }
+function abiOpenMap(key){ abiMapTarget=key; var t=abiRowFromKey(key), r=t.r;
+  abiMapEditId=(r.mappedId&&r.mapId)?r.mapId:null;
+  var ttl=document.getElementById('abiMapModalTitle'); if(ttl)ttl.textContent=abiMapEditId?'Change narration mapping':'Map narration name';
+  document.getElementById('abiMapName').textContent=r.excelName; document.getElementById('abiMapBook').textContent=t.a.book;
+  var led=document.getElementById('abiMapLedger'); led.value=abiMapEditId?(r.mappedName||''):''; led.dataset.lid=abiMapEditId?(r.mappedId||''):''; abiAttachLedgerPick(led,function(){});
+  document.getElementById('abiMapGlobal').checked=abiMapEditId?!!r.mapGlobal:true; if(abiMapCtrl)abiMapCtrl.open(); }
+function abiReresolveAll(){ abiParsed.accounts.forEach(function(a){ a.rows.forEach(function(row){ if(row.split&&row.split.length)return;
+  var res=abiResolveNarr(row.excelName,a.bookId);
+  row.mappedId=res?res.id:null; row.mappedName=res?res.name:null; row.mapId=res?res.mapId:null; row.mapGlobal=res?res.global:false;
+  row.identity=abiCyrb128([a.ledgerId,row.slno,(row.mappedId||row.excelName),row.amount.toFixed(2)].join('|')); }); }); }
 async function abiSaveMap(){ var t=abiRowFromKey(abiMapTarget); var r=t.r; var led=document.getElementById('abiMapLedger'); var lid=led.dataset.lid;
   if(!lid){ acctToast('Pick an existing WMS ledger.',true); return; } var glob=document.getElementById('abiMapGlobal').checked;
-  var body={excel_ledger_name:r.excelName,ledger_id:lid,is_global:glob,scope_investor_ids:glob?[]:[t.a.bookId]};
-  try{ var resp=await fetch(acctUrl('acc_narr_map'),{method:'POST',headers:wmsHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),body:JSON.stringify(body)});
-    if(!resp.ok)throw new Error(await resp.text()); abiNarrMap.push(body);
-    abiParsed.accounts.forEach(function(a){ a.rows.forEach(function(row){ if(row.excelName===r.excelName&&!row.mappedId){ var res=abiResolveNarr(row.excelName,a.bookId); if(res){ row.mappedId=res.id; row.mappedName=res.name; row.identity=abiCyrb128([a.ledgerId,row.slno,res.id,row.amount.toFixed(2)].join('|')); } } }); });
-    await abiComputeDiff(); if(abiMapCtrl)abiMapCtrl.close(); acctToast('Mapping saved.'); abiRender();
+  var payload={excel_ledger_name:r.excelName,ledger_id:lid,is_global:glob,scope_investor_ids:glob?[]:[t.a.bookId]};
+  try{
+    var resp = abiMapEditId
+      ? await fetch(acctUrl('acc_narr_map?id=eq.'+abiMapEditId),{method:'PATCH',headers:wmsHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),body:JSON.stringify(payload)})
+      : await fetch(acctUrl('acc_narr_map'),{method:'POST',headers:wmsHeaders({'Content-Type':'application/json','Prefer':'return=minimal'}),body:JSON.stringify(payload)});
+    if(!resp.ok)throw new Error(await resp.text());
+    abiNarrMap=await wmsFetchAllRaw(acctUrl('acc_narr_map?select=*'))||[];
+    abiReresolveAll(); await abiComputeDiff();
+    if(abiMapCtrl)abiMapCtrl.close(); acctToast(abiMapEditId?'Mapping updated.':'Mapping saved.'); abiMapEditId=null; abiRender();
   }catch(e){ acctToast('Could not save mapping: '+(e.message||e),true); } }
 async function abiAddSelected(){
   var keys=Object.keys(abiSelected).filter(function(k){return abiSelected[k];}); if(!keys.length){ acctToast('Nothing selected.',true); return; }
