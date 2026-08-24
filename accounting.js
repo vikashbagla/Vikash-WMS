@@ -2258,8 +2258,8 @@ async function acctOpenDividendVoucher() {
         if (typeof loadModule === 'function') await loadModule('trading');
         var tries = 0;
         (function openWhenReady() {
-            if (typeof trLoadIncomeModule === 'function' && typeof openIncomeModal === 'function') {
-                trLoadIncomeModule(function () { openIncomeModal('DIVIDEND'); });
+            if (typeof trLoadIncomeModule === 'function') {
+                trLoadIncomeModule(function () { if (typeof openIncomeModal === 'function') openIncomeModal('DIVIDEND'); });
             } else if (tries++ < 60) { setTimeout(openWhenReady, 120); }
             else { acctToast('Could not open the Trading dividend modal.', true); }
         })();
