@@ -1859,7 +1859,7 @@ var rptConsolMode = 'books';      // 'books' | 'quarters'
 var rptConsShowZero = false;
 var rptConsNatureOrder = ['Assets', 'Liabilities', 'Income', 'Expenses', 'Capital'];
 var rptConsOpBalIdx = -1;   // column index that carries the Op Bal divider (-1 = none)
-var rptConsUnitMode = 'settings'; // Consolidation-only F4 3-stage display scale: 'settings' | 'millions' | 'full'
+var rptConsUnitMode = 'millions'; // Consolidation-only F4 3-stage display scale: 'millions' (default) | 'full' | 'settings'
 
 // ---- Browser-persistent prefs (books, statement, layout, show-zero, collapse) ----
 var RPT_CONS_PREFS_KEY = 'wms_rpt_consol_prefs';
@@ -1919,7 +1919,7 @@ function rptConsHandleF4() {
     var tab = document.getElementById('rpt-consol');
     if (!tab || !tab.classList.contains('active')) return false;
     if (!document.getElementById('rptConsolBody')) return false;
-    var order = ['settings', 'millions', 'full'];
+    var order = ['millions', 'full', 'settings'];
     var i = order.indexOf(rptConsUnitMode);
     rptConsUnitMode = order[(i + 1) % order.length];
     rptConsSavePrefs();
@@ -2311,7 +2311,11 @@ function rptConsSyncControls() {
     document.querySelectorAll('#rpt-consol .rpt-consol-mode-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.mode === rptConsolMode); });
     var zc = document.getElementById('rptConsolZeroChk'); if (zc) zc.checked = rptConsShowZero;
     var unit = document.getElementById('rptConsolUnit');
-    if (unit) unit.textContent = 'all amounts in ' + ((typeof wmsIsFullAmount === 'function' && wmsIsFullAmount()) ? 'full ₹' : ((typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000"));
+    if (unit) {
+        unit.textContent = 'all amounts in ' + (rptConsUnitMode === 'full' ? 'full \u20B9'
+            : rptConsUnitMode === 'millions' ? '\u20B9 Millions'
+            : (typeof getRealUnitDescription === 'function' ? getRealUnitDescription() : "\u20B9 '000"));
+    }
     // Expand/collapse toggle label reflects current state.
     var tgl = document.getElementById('rptConsolToggleBtn');
     if (tgl) {
