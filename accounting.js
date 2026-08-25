@@ -2601,6 +2601,18 @@ function acctRenderLedgerDetail() {
     acctRenderLedgerTable();
 }
 
+/** Totals for the ledger drill-down, shown in the modal's fixed footer band (next to Close). */
+function acctSetLedgerFooterTotals(n, totDr, totCr, closing, fmt) {
+    var el = document.getElementById('acctLedgerTotals');
+    if (!el) return;
+    if (!n) { el.innerHTML = ''; return; }
+    el.innerHTML =
+        '<span class="acct-ld-foot-lbl">Total · ' + n + ' row' + (n === 1 ? '' : 's') + '</span>' +
+        '<span>Debit <b>' + fmt(totDr) + '</b></span>' +
+        '<span>Credit <b>' + fmt(totCr) + '</b></span>' +
+        '<span>Balance <b>' + fmt(Math.abs(closing)) + (closing >= 0 ? ' Dr' : ' Cr') + '</b></span>';
+}
+
 /** Builds just the ledger lines table into #acctLdTableWrap (called on every search keystroke). */
 function acctRenderLedgerTable() {
     var wrap = document.getElementById('acctLdTableWrap');
@@ -2634,6 +2646,7 @@ function acctRenderLedgerTable() {
 
     if (!allRows.length) {
         wrap.innerHTML = '<div class="acct-empty">No postings in this book.</div>';
+        acctSetLedgerFooterTotals(0);
         return;
     }
 
@@ -2718,17 +2731,10 @@ function acctRenderLedgerTable() {
         html += '<tr><td colspan="8" class="acct-empty" style="padding:16px;">' +
             (q ? 'No lines match &ldquo;' + wmsEsc(acctLedgerSearchText) + '&rdquo;.' : 'No postings in the selected period.') + '</td></tr>';
     }
-    html += '</tbody>';
-    if (items.length) {
-        html += '<tfoot><tr class="acct-ld-total">' +
-            '<td colspan="4">Total (' + items.length + ' row' + (items.length === 1 ? '' : 's') + ' shown)</td>' +
-            '<td class="text-right">' + fmt(totDr) + '</td>' +
-            '<td class="text-right">' + fmt(totCr) + '</td>' +
-            '<td class="text-right">' + fmt(Math.abs(closing)) + (closing >= 0 ? ' Dr' : ' Cr') + '</td>' +
-            '<td class="c-ldhide"></td></tr></tfoot>';
-    }
-    html += '</table>';
+    html += '</tbody></table>';
     wrap.innerHTML = html;
+    // Totals live in the modal's fixed footer band (next to Close), not inside the scroll area.
+    acctSetLedgerFooterTotals(items.length, totDr, totCr, closing, fmt);
     wrap.querySelectorAll('th[data-sort]').forEach(function (th) { th.onclick = function () { acctLedgerSetSort(th.dataset.sort); }; });
     wrap.querySelectorAll('.acct-ld-hide-btn').forEach(function (b) {
         b.onclick = function (e) { e.stopPropagation(); acctLedgerHidden[b.dataset.hide] = true; acctRenderLedgerTable(); };
@@ -3561,8 +3567,8 @@ function acctWireModals() {
     // Ledger-detail modal
     var lOverlay = document.getElementById('acctLedgerModal');
     if (lOverlay && typeof wmsModal === 'function') acctLedgerModalCtrl = wmsModal(lOverlay, { backdropClose: false });
-    document.getElementById('acctLedgerClose').onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
-    document.getElementById('acctLedgerDone').onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
+    var _ldDone = document.getElementById('acctLedgerDone');
+    if (_ldDone) _ldDone.onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
     var _lnv = document.getElementById('acctLedgerNewVoucher');
     if (_lnv) _lnv.onclick = function () { acctOpenVoucherModal(acctLedgerDetailId); };
     var _ldiv = document.getElementById('acctLedgerDividend');
