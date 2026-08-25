@@ -9,6 +9,7 @@
 var acctGroups = [];          // all acct_groups rows
 var acctLedgers = [];         // all acct_ledgers rows
 var acctVoucherRows = [];     // acct_voucher_full rows for the selected book
+var acctVoucherCreatedAt = {};   // voucher_id -> created_at (from base table; the view omits it)
 var acctBookId = null;        // selected book (investor id, accounting_enabled)
 var acctActiveTab = 'balance-sheet';
 // Master workspace mode: 'book' (per-book statements) | 'master' (Ledgers + Exceptions).
@@ -405,11 +406,16 @@ async function acctLoadCatalogue() {
 }
 async function acctLoadBook() {
     var ids = acctViewBookIds();
-    if (!ids.length) { acctVoucherRows = []; return; }
+    if (!ids.length) { acctVoucherRows = []; acctVoucherCreatedAt = {}; return; }
     var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
-    acctVoucherRows = await wmsFetchAllRaw(acctUrl(
-        'acct_voucher_full?' + filter +
-        '&order=voucher_date.asc,voucher_number.asc,sort_order.asc')) || [];
+    // The acct_voucher_full VIEW has no created_at, so fetch it from the base table in parallel and map by voucher id.
+    var res = await Promise.all([
+        wmsFetchAllRaw(acctUrl('acct_voucher_full?' + filter + '&order=voucher_date.asc,voucher_number.asc,sort_order.asc')),
+        wmsFetchAllRaw(acctUrl('acct_vouchers?select=id,created_at&' + filter))
+    ]);
+    acctVoucherRows = res[0] || [];
+    acctVoucherCreatedAt = {};
+    (res[1] || []).forEach(function (v) { acctVoucherCreatedAt[v.id] = v.created_at; });
 }
 
 // ============================================================================
@@ -548,6 +554,21 @@ var acctDayBookShowCancelled = false;
 try { acctDayBookShowCancelled = localStorage.getItem(ACCT_DB_CANCELLED_KEY) === '1'; } catch (e) {}
 function acctSetDayBookCancelled(v) { acctDayBookShowCancelled = !!v; try { localStorage.setItem(ACCT_DB_CANCELLED_KEY, v ? '1' : '0'); } catch (e) {} }
 var acctDayBookSearch = '';       // live search (not persisted)
+// Day Book sort: which column + direction (click a header to change; not persisted).
+var acctDayBookSort = { col: 'date', dir: 'asc' };
+function acctDayBookSetSort(col) {
+    if (acctDayBookSort.col === col) { acctDayBookSort.dir = (acctDayBookSort.dir === 'asc') ? 'desc' : 'asc'; }
+    else { acctDayBookSort.col = col; acctDayBookSort.dir = (col === 'date' || col === 'created') ? 'asc' : 'asc'; }
+    acctRenderDayBookBody();
+}
+// Created timestamp: "dd-Mon-yy HH:MM" in the browser's local time.
+function acctFmtDateTime(iso) {
+    if (!iso) return '';
+    var d = new Date(iso); if (isNaN(d.getTime())) return '';
+    var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+    return p2(d.getDate()) + '-' + months[d.getMonth()] + '-' + String(d.getFullYear()).slice(2) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+}
 
 // Persist the expand/collapse state across sessions (localStorage — this is the
 // real app, not a sandboxed artifact). Keyed by group id, which is stable, so the
@@ -1029,12 +1050,29 @@ function acctRenderDayBookBody() {
             vmap[r.voucher_id] = {
                 id: r.voucher_id, number: r.voucher_number, type: r.voucher_type,
                 date: r.voucher_date, narration: r.voucher_narration, cancelled: !acctIsLive(r),
+                created: acctVoucherCreatedAt[r.voucher_id] || '',
                 debit: Number(r.total_debit) || 0, credit: Number(r.total_credit) || 0, lines: []
             };
         }
         vmap[r.voucher_id].lines.push(r);
     });
-    var vouchers = Object.keys(vmap).map(function (k) { return vmap[k]; }).sort(function (a, b) {
+    var vouchers = Object.keys(vmap).map(function (k) { return vmap[k]; });
+    // Sort by the clicked column; a stable tiebreak on date+number keeps ties orderly.
+    var sc = acctDayBookSort.col, sdir = (acctDayBookSort.dir === 'desc') ? -1 : 1;
+    function cmpBase(a, b) {
+        var av, bv;
+        if (sc === 'number') { av = a.number || ''; bv = b.number || ''; return av.localeCompare(bv) * sdir; }
+        if (sc === 'type') { av = a.type || ''; bv = b.type || ''; return (av.localeCompare(bv) || 0) * sdir; }
+        if (sc === 'narration') { av = (a.narration || '').toLowerCase(); bv = (b.narration || '').toLowerCase(); return (av < bv ? -1 : av > bv ? 1 : 0) * sdir; }
+        if (sc === 'created') { av = a.created || ''; bv = b.created || ''; return (av < bv ? -1 : av > bv ? 1 : 0) * sdir; }
+        if (sc === 'debit') { return ((a.debit || 0) - (b.debit || 0)) * sdir; }
+        if (sc === 'credit') { return ((a.credit || 0) - (b.credit || 0)) * sdir; }
+        // default: date
+        return (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) * sdir;
+    }
+    vouchers.sort(function (a, b) {
+        var c = cmpBase(a, b);
+        if (c) return c;
         if (a.date !== b.date) return a.date < b.date ? -1 : 1;
         return (a.number || '').localeCompare(b.number || '');
     });
@@ -1055,9 +1093,22 @@ function acctRenderDayBookBody() {
 
     if (!total) { el.innerHTML = count + '<div class="acct-empty">No vouchers yet. Use ➕ New Voucher to begin.</div>'; return; }
 
-    var html = count + '<table class="acct-table"><thead><tr><th class="c-date">Date</th><th>Voucher #</th><th>Type</th><th>Narration</th><th class="text-right">Debit</th><th class="text-right">Credit</th></tr></thead><tbody>';
+    function sortableTh(col, label, cls) {
+        var arrow = (acctDayBookSort.col === col) ? (acctDayBookSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+        return '<th class="acct-db-sortable' + (cls ? ' ' + cls : '') + (acctDayBookSort.col === col ? ' acct-db-sorted' : '') +
+            '" data-sort="' + col + '" title="Sort by ' + label + '">' + label + '<span class="acct-db-arrow">' + arrow + '</span></th>';
+    }
+    var html = count + '<table class="acct-table"><thead><tr>' +
+        sortableTh('date', 'Date', 'c-date') +
+        sortableTh('number', 'Voucher #') +
+        sortableTh('type', 'Type') +
+        sortableTh('narration', 'Narration') +
+        sortableTh('created', 'Created') +
+        sortableTh('debit', 'Debit', 'text-right') +
+        sortableTh('credit', 'Credit', 'text-right') +
+        '</tr></thead><tbody>';
     if (!shown.length) {
-        html += '<tr><td colspan="6" class="acct-empty" style="padding:16px;">No vouchers match &ldquo;' + wmsEsc(acctDayBookSearch) + '&rdquo;.</td></tr>';
+        html += '<tr><td colspan="7" class="acct-empty" style="padding:16px;">No vouchers match &ldquo;' + wmsEsc(acctDayBookSearch) + '&rdquo;.</td></tr>';
     }
     shown.forEach(function (v) {
         // Clicking a row OPENS the voucher (view/edit), rather than expanding inline.
@@ -1066,12 +1117,16 @@ function acctRenderDayBookBody() {
             '<td>' + wmsEsc(v.number) + (v.cancelled ? ' <span class="acct-scope-badge">cancelled</span>' : '') + '</td>' +
             '<td><span class="acct-kind-badge">' + wmsEsc(v.type) + '</span></td>' +
             '<td>' + wmsEsc(v.narration || '') + '</td>' +
+            '<td class="acct-db-created">' + wmsEsc(acctFmtDateTime(v.created)) + '</td>' +
             '<td class="text-right">' + fmt(v.debit) + '</td>' +
             '<td class="text-right">' + fmt(v.credit) + '</td></tr>';
     });
     html += '</tbody></table>';
     el.innerHTML = html;
 
+    el.querySelectorAll('th[data-sort]').forEach(function (th) {
+        th.onclick = function () { acctDayBookSetSort(th.dataset.sort); };
+    });
     el.querySelectorAll('tr[data-voucher]').forEach(function (tr) {
         tr.onclick = function () { acctOpenEditVoucher(tr.dataset.voucher); };
     });
