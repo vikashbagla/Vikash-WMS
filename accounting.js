@@ -39,7 +39,6 @@ var acctLedgerModalCtrl = null;
 var acctAddLedgerModalCtrl = null;
 var acctAddGroupModalCtrl = null;
 var acctReportModalCtrl = null;
-var acctConsolidateModalCtrl = null;
 var acctOpeningModalCtrl = null;
 
 var acctNatureOrder = ['Assets', 'Liabilities', 'Income', 'Expenses', 'Capital'];
@@ -248,8 +247,7 @@ function acctRenderBookTabs() {
             mgrRows +
         '</div></span>';
     var masterHtml = '<span class="acct-book-tab acct-master-tab' + (acctMode === 'master' ? ' active' : '') + '" data-master="1" title="Ledgers & exceptions — not book-specific"><span class="acct-book-lbl">Master</span></span>';
-    el.innerHTML = tabsHtml + addHtml + masterHtml +
-        '<span id="acctConsolidateChip" class="acct-consol-chip" style="display:none;margin-left:8px;"></span>';
+    el.innerHTML = tabsHtml + addHtml + masterHtml;
 
     el.querySelectorAll('.acct-book-tab').forEach(function (t) {
         t.onclick = function () { acctSwitchBook(t.dataset.book); };
@@ -290,7 +288,6 @@ function acctRenderBookTabs() {
     }
     var _mt = el.querySelector('.acct-master-tab');
     if (_mt) _mt.onclick = function () { acctEnterMaster(); };
-    acctSyncConsolChip();
 }
 // Close the "open a closed book" menu on any outside click. Guard against
 // duplicate registration when the module script is re-executed (A.1.2a).
@@ -310,65 +307,8 @@ async function acctRefreshAll() {
     finally { acctLoading(false); }
 }
 
-function acctSyncConsolChip() {
-    var chip = document.getElementById('acctConsolidateChip');
-    if (!chip) return;
-    if (acctIsConsolidated()) {
-        chip.style.display = '';
-        chip.innerHTML = 'Consolidated (' + acctBookIds.length + ') <span class="acct-consol-x" title="Clear">✕</span>';
-        var x = chip.querySelector('.acct-consol-x');
-        if (x) x.onclick = acctClearConsolidate;
-    } else { chip.style.display = 'none'; chip.innerHTML = ''; }
-}
 function acctSyncActionButtons() {
-    // Book-specific actions are meaningless across a consolidated view.
-    var consol = acctIsConsolidated();
-    var nv = document.getElementById('acctNewVoucherBtn');
-    if (nv) nv.disabled = consol;
-    var rb = document.getElementById('acctRebuildBtn');
-    if (rb) rb.disabled = consol;                    // rebuild is per single book
-    var dd = document.getElementById('acctMenuDd');
-    if (dd) ['opening'].forEach(function (a) {
-        var it = dd.querySelector('[data-act="' + a + '"]');
-        if (it) it.classList.toggle('disabled', consol);
-    });
-}
-function acctOpenConsolidate() {
-    var sel = acctViewBookIds();
-    var books = acctOwnBooks();
-    var list = document.getElementById('acctConsolidateList');
-    if (list) {
-        list.innerHTML = books.map(function (b) {
-            var on = sel.indexOf(b.id) >= 0;
-            return '<label class="acct-consol-item"><input type="checkbox" class="acct-consol-cb" value="' + b.id + '"' + (on ? ' checked' : '') + '> ' + wmsEsc(b.short_name || b.name) + '</label>';
-        }).join('');
-    }
-    var all = document.getElementById('acctConsolAll');
-    if (all) {
-        all.checked = books.length > 0 && sel.length === books.length;
-        all.onclick = function () { document.querySelectorAll('.acct-consol-cb').forEach(function (c) { c.checked = all.checked; }); };
-    }
-    if (acctConsolidateModalCtrl) acctConsolidateModalCtrl.open();
-}
-async function acctApplyConsolidate() {
-    var ids = [].slice.call(document.querySelectorAll('.acct-consol-cb:checked')).map(function (c) { return c.value; });
-    if (acctConsolidateModalCtrl) acctConsolidateModalCtrl.close();
-    if (ids.length <= 1) {
-        acctBookIds = null;
-        if (ids.length === 1) acctBookId = ids[0];
-    } else {
-        acctBookIds = ids;
-    }
-    acctLoading(true);
-    try { await acctLoadBook(); acctRenderBookTabs(); acctRenderActiveTab(); acctSyncActionButtons(); }
-    finally { acctLoading(false); }
-}
-async function acctClearConsolidate() {
-    acctBookIds = null;
-    if (acctConsolidateModalCtrl) acctConsolidateModalCtrl.close();
-    acctLoading(true);
-    try { await acctLoadBook(); acctRenderBookTabs(); acctRenderActiveTab(); acctSyncActionButtons(); }
-    finally { acctLoading(false); }
+    // No-op hook kept for callers; book actions live in the ⋮ menu / New Voucher button.
 }
 function acctInvName(id) {
     var i = (wmsRefData.investors || []).find(function (x) { return x.id === id; });
@@ -434,7 +374,6 @@ async function initAccounting() {
         await acctLoadBook();
         acctWireUI();
         acctRenderActiveTab();
-        acctSyncConsolChip();
         acctSyncActionButtons();
     } catch (e) {
         console.error('[accounting] init error', e);
@@ -471,10 +410,8 @@ function acctWireUI() {
     // Primary actions stay inline; everything else lives behind the ⋮ menu.
     var nv = document.getElementById('acctNewVoucherBtn');
     if (nv) nv.onclick = acctOpenVoucherModal;
-    var rb = document.getElementById('acctRebuildBtn');
-    if (rb) rb.onclick = acctRebuildBooks;
-    var rba = document.getElementById('acctRebuildAllBtn');
-    if (rba) rba.onclick = acctRebuildAll;
+    var rfb = document.getElementById('acctRefreshBtn');
+    if (rfb) rfb.onclick = acctRefreshAll;
 
     var mb = document.getElementById('acctMenuBtn');
     var mdd = document.getElementById('acctMenuDd');
@@ -492,9 +429,8 @@ function acctWireUI() {
             mdd.classList.remove('show');
             var act = it.dataset.act;
             if (act === 'opening') acctOpenOpeningModal();
-            else if (act === 'consolidate') acctOpenConsolidate();
+            else if (act === 'rebuildOne') acctRebuildBooks();
             else if (act === 'rebuildAll') acctRebuildAll();
-            else if (act === 'refresh') acctRefreshAll();
         });
         document.addEventListener('mousedown', function (e) {
             if (mdd.classList.contains('show') && !mdd.contains(e.target) && e.target !== mb) mdd.classList.remove('show');
@@ -3666,16 +3602,6 @@ function acctWireModals() {
     if (rpClose) rpClose.onclick = function () { acctReportModalCtrl && acctReportModalCtrl.close(); };
     var rpDone = document.getElementById('acctReportDone');
     if (rpDone) rpDone.onclick = function () { acctReportModalCtrl && acctReportModalCtrl.close(); };
-
-    // Consolidate modal
-    var coOverlay = document.getElementById('acctConsolidateModal');
-    if (coOverlay && typeof wmsModal === 'function') acctConsolidateModalCtrl = wmsModal(coOverlay, { backdropClose: false });
-    var coClose = document.getElementById('acctConsolidateClose');
-    if (coClose) coClose.onclick = function () { acctConsolidateModalCtrl && acctConsolidateModalCtrl.close(); };
-    var coApply = document.getElementById('acctConsolidateApply');
-    if (coApply) coApply.onclick = acctApplyConsolidate;
-    var coClear = document.getElementById('acctConsolidateClear');
-    if (coClear) coClear.onclick = acctClearConsolidate;
 }
 
 // ============================================================================
