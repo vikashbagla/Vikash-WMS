@@ -2410,6 +2410,7 @@ async function acctSaveVoucher() {
                 acctToast('Voucher updated.');
                 await acctLoadBook();
                 acctRenderActiveTab();
+                if (acctLedgerModalCtrl && acctLedgerModalCtrl.isOpen()) acctRenderLedgerDetail();   // refresh the open ledger drill-down (moved/changed lines)
                 return;
             }
             if (rpc.status !== 404) throw new Error((await rpc.text()) || ('HTTP ' + rpc.status));
