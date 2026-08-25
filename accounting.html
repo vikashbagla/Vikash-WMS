@@ -360,11 +360,15 @@
 /* Date columns: fixed width + right-aligned so dates line up and are easy to scan
    (applies to the ledger drill-down and the Day Book — both are .acct-table). */
 .acct-table th.c-date, .acct-table td.c-date { width: 92px; white-space: nowrap; text-align: right; }
-/* Column sizing: keep Date/Vch# tight; give the Contra ledger room for long names. */
-.acct-ld-table th.c-date, .acct-ld-table td.c-date { width: 84px; white-space: nowrap; }
-.acct-ld-table th.c-vch, .acct-ld-table td.c-vch { width: 62px; white-space: nowrap; }
-.acct-ld-table th.c-contra { min-width: 190px; }
-.acct-ld-table th.c-amt { width: 96px; }
+/* Fixed layout: every cell stays on ONE line; long text is clipped with an ellipsis and the
+   full value shows on hover (title). Narration is the flexible column (takes the leftover width);
+   Vch# and Contra are kept narrow to give Narration more room. */
+.acct-ld-table { table-layout: fixed; }
+.acct-ld-table th, .acct-ld-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-ld-table th.c-date, .acct-ld-table td.c-date { width: 80px; }
+.acct-ld-table th.c-vch, .acct-ld-table td.c-vch { width: 96px; }
+.acct-ld-table th.c-contra, .acct-ld-table td.c-contra { width: 140px; }
+.acct-ld-table th.c-amt, .acct-ld-table td.c-amt { width: 112px; }
 /* Amounts (incl. the "Dr/Cr" suffix) must never wrap to a second line. */
 .acct-ld-table td.text-right, .acct-ld-table th.text-right { white-space: nowrap; }
 /* Search sits at the far right of the filter bar. */

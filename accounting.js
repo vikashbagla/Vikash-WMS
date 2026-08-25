@@ -2681,7 +2681,7 @@ function acctRenderLedgerTable() {
     }
     var html = '<table class="acct-table acct-ld-table"><thead><tr>' +
         sortTh('date', 'Date', 'c-date') + sortTh('vch', 'Vch #', 'c-vch') + sortTh('contra', 'Contra ledger', 'c-contra') +
-        sortTh('narration', 'Narration') + sortTh('debit', 'Debit', 'text-right c-amt') + sortTh('credit', 'Credit', 'text-right c-amt') +
+        sortTh('narration', 'Narration', 'c-narr') + sortTh('debit', 'Debit', 'text-right c-amt') + sortTh('credit', 'Credit', 'text-right c-amt') +
         sortTh('balance', 'Balance', 'text-right c-amt') + '<th class="c-ldhide"></th></tr></thead><tbody>';
 
     // The "brought forward" opening row only makes sense in the default chronological view.
@@ -2704,11 +2704,11 @@ function acctRenderLedgerTable() {
         html += '<tr class="acct-vch-row' + (auto ? ' acct-vch-auto' : '') + (live ? '' : ' acct-vch-cancelled') +
             '" data-voucher="' + r.voucher_id + '" title="' + wmsEsc(tip) + '">' +
             '<td class="c-date">' + wmsEsc(acctFmtDate(r.voucher_date)) + '</td>' +
-            '<td class="c-vch">' + wmsEsc(r.voucher_number) +
+            '<td class="c-vch" title="' + wmsEsc(r.voucher_number) + '">' + wmsEsc(r.voucher_number) +
                 (auto ? ' <span class="acct-kind-badge">auto</span>' : '') +
                 (live ? '' : ' <span class="acct-scope-badge">cancelled</span>') + '</td>' +
             '<td class="c-contra" title="' + wmsEsc(it.contra) + '">' + wmsEsc(it.contra) + '</td>' +
-            '<td>' + wmsEsc(it.narr) + '</td>' +
+            '<td class="c-narr" title="' + wmsEsc(it.narr) + '">' + wmsEsc(it.narr) + '</td>' +
             '<td class="text-right">' + (it.dr ? fmt(it.dr) : '-') + '</td>' +
             '<td class="text-right">' + (it.cr ? fmt(it.cr) : '-') + '</td>' +
             '<td class="text-right">' + balLabel + '</td>' +
