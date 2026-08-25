@@ -348,6 +348,16 @@
 .acct-ld-table td { padding: 9px 10px; }
 .acct-ld-table th { padding: 8px 10px; }
 .acct-ld-opening td { background: #f8fafc; color: #475569; }
+/* Per-row hide button (view-only) + its narrow column. */
+.acct-ld-table th.c-ldhide, .acct-ld-table td.c-ldhide { width: 30px; text-align: center; padding-left: 2px; padding-right: 2px; }
+.acct-ld-hide-btn { border: none; background: transparent; color: #cbd5e1; cursor: pointer; font-size: 12px; line-height: 1; padding: 3px 5px; border-radius: 4px; }
+.acct-vch-row:hover .acct-ld-hide-btn { color: #94a3b8; }
+.acct-ld-hide-btn:hover { color: #ef4444; background: #fef2f2; }
+/* Sticky header + totals footer in the ledger modal. The scroll container (.wms-modal-body)
+   has 16px padding, so offset top/bottom by that much or rows bleed through the pad (UI-STANDARDS D.1.10). */
+.acct-ld-table thead th { top: -16px; }
+.acct-ld-table tfoot td { position: sticky; bottom: -16px; z-index: 2; background: #f1f5f9; font-weight: 600; box-shadow: inset 0 1px 0 #cbd5e0; }
+.acct-ld-table tfoot td.text-right { white-space: nowrap; }
 /* Date columns: fixed width + right-aligned so dates line up and are easy to scan
    (applies to the ledger drill-down and the Day Book — both are .acct-table). */
 .acct-table th.c-date, .acct-table td.c-date { width: 92px; white-space: nowrap; text-align: right; }
