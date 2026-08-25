@@ -2601,18 +2601,6 @@ function acctRenderLedgerDetail() {
     acctRenderLedgerTable();
 }
 
-/** Totals for the ledger drill-down, shown in the modal's fixed footer band (next to Close). */
-function acctSetLedgerFooterTotals(n, totDr, totCr, closing, fmt) {
-    var el = document.getElementById('acctLedgerTotals');
-    if (!el) return;
-    if (!n) { el.innerHTML = ''; return; }
-    el.innerHTML =
-        '<span class="acct-ld-foot-lbl">Total · ' + n + ' row' + (n === 1 ? '' : 's') + '</span>' +
-        '<span>Debit <b>' + fmt(totDr) + '</b></span>' +
-        '<span>Credit <b>' + fmt(totCr) + '</b></span>' +
-        '<span>Balance <b>' + fmt(Math.abs(closing)) + (closing >= 0 ? ' Dr' : ' Cr') + '</b></span>';
-}
-
 /** Builds just the ledger lines table into #acctLdTableWrap (called on every search keystroke). */
 function acctRenderLedgerTable() {
     var wrap = document.getElementById('acctLdTableWrap');
@@ -2646,7 +2634,6 @@ function acctRenderLedgerTable() {
 
     if (!allRows.length) {
         wrap.innerHTML = '<div class="acct-empty">No postings in this book.</div>';
-        acctSetLedgerFooterTotals(0);
         return;
     }
 
@@ -2667,7 +2654,10 @@ function acctRenderLedgerTable() {
             dr: Number(r.debit_amount) || 0, cr: Number(r.credit_amount) || 0,
             narr: r.line_narration || r.voucher_narration || '' });
     });
-    var closing = running;   // period closing balance (all live rows in window)
+    // The totals-row Balance is the ledger's ACTUAL closing balance (every live posting, all dates) —
+    // NOT the period/filter running balance. Computed over the unfiltered rows for this ledger.
+    var ledgerClosing = 0;
+    allRows.forEach(function (r) { if (acctIsLive(r)) ledgerClosing += (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0); });
 
     // 2) Sort the shown rows by the clicked column.
     var sc = acctLedgerSort.col, sdir = acctLedgerSort.dir === 'desc' ? -1 : 1;
@@ -2731,10 +2721,18 @@ function acctRenderLedgerTable() {
         html += '<tr><td colspan="8" class="acct-empty" style="padding:16px;">' +
             (q ? 'No lines match &ldquo;' + wmsEsc(acctLedgerSearchText) + '&rdquo;.' : 'No postings in the selected period.') + '</td></tr>';
     }
-    html += '</tbody></table>';
+    html += '</tbody>';
+    if (items.length) {
+        // Sticky totals row INSIDE the table, so Debit/Credit/Balance sit under their columns.
+        html += '<tfoot><tr class="acct-ld-total">' +
+            '<td colspan="4">Total · ' + items.length + ' row' + (items.length === 1 ? '' : 's') + '</td>' +
+            '<td class="text-right">' + (totDr ? fmt(totDr) : '-') + '</td>' +
+            '<td class="text-right">' + (totCr ? fmt(totCr) : '-') + '</td>' +
+            '<td class="text-right" title="Closing balance of the ledger — every live posting, all dates (not the filtered period)">' + fmt(Math.abs(ledgerClosing)) + (ledgerClosing >= 0 ? ' Dr' : ' Cr') + '</td>' +
+            '<td class="c-ldhide"></td></tr></tfoot>';
+    }
+    html += '</table>';
     wrap.innerHTML = html;
-    // Totals live in the modal's fixed footer band (next to Close), not inside the scroll area.
-    acctSetLedgerFooterTotals(items.length, totDr, totCr, closing, fmt);
     wrap.querySelectorAll('th[data-sort]').forEach(function (th) { th.onclick = function () { acctLedgerSetSort(th.dataset.sort); }; });
     wrap.querySelectorAll('.acct-ld-hide-btn').forEach(function (b) {
         b.onclick = function (e) { e.stopPropagation(); acctLedgerHidden[b.dataset.hide] = true; acctRenderLedgerTable(); };
