@@ -2498,6 +2498,16 @@ try { acctLedgerShowCancelled = localStorage.getItem(ACCT_LD_CANCELLED_KEY) === 
 function acctSetShowCancelled(v) { acctLedgerShowCancelled = !!v; try { localStorage.setItem(ACCT_LD_CANCELLED_KEY, v ? '1' : '0'); } catch (e) {} }
 // Live search within the ledger drill-down (not persisted — resets per open).
 var acctLedgerSearchText = '';
+// Column sort for the drill-down table (session-only). Default: date ascending.
+var acctLedgerSort = { col: 'date', dir: 'asc' };
+function acctLedgerSetSort(col) {
+    if (acctLedgerSort.col === col) acctLedgerSort.dir = (acctLedgerSort.dir === 'asc') ? 'desc' : 'asc';
+    else { acctLedgerSort.col = col; acctLedgerSort.dir = 'asc'; }
+    acctRenderLedgerTable();
+}
+// Rows the user has manually hidden FROM THE VIEW (line_id -> true). Not a delete —
+// session-only, cleared by "Clear" and when opening a different ledger.
+var acctLedgerHidden = {};
 var acctLedgerRangePopOpen = false;   // custom From–To popover open state
 
 /** FY start month for the active book (financial_year_start, default 4 = April). */
@@ -2592,6 +2602,8 @@ function acctWireLedgerPicker() {
 function acctOpenLedgerDetail(ledgerId) {
     acctLedgerDetailId = ledgerId;
     acctLedgerSearchText = '';          // search must NOT carry over to another ledger
+    acctLedgerHidden = {};              // manual row-hides are per-ledger
+    acctLedgerSort = { col: 'date', dir: 'asc' };
     acctLedgerRangePopOpen = false;
     acctRenderLedgerDetail();
     if (acctLedgerModalCtrl) acctLedgerModalCtrl.open();
@@ -2680,56 +2692,103 @@ function acctRenderLedgerTable() {
         return hay.indexOf(q) >= 0;
     }
 
-    var html;
     if (!allRows.length) {
-        html = '<div class="acct-empty">No postings in this book.</div>';
-    } else {
-        var running = win.start ? opening : 0;
-        var shown = 0;
-        html = '<table class="acct-table acct-ld-table"><thead><tr>' +
-            '<th class="c-date">Date</th><th class="c-vch">Vch #</th><th class="c-contra">Contra ledger</th>' +
-            '<th>Narration</th><th class="text-right c-amt">Debit</th><th class="text-right c-amt">Credit</th>' +
-            '<th class="text-right c-amt">Balance</th></tr></thead><tbody>';
-        // Only show the "brought forward" opening row when it is actually non-zero.
-        // For the current FY nothing predates the period start, so the carry-forward
-        // is 0 and would just duplicate the real Opening-Balance voucher below it.
-        if (win.start && !q && Math.round(opening * 100) !== 0) {
-            html += '<tr class="acct-ld-opening"><td class="c-date">' + wmsEsc(acctFmtDate(win.start)) + '</td><td class="c-vch">—</td>' +
-                '<td colspan="2"><em>Opening balance</em></td><td class="text-right">-</td><td class="text-right">-</td>' +
-                '<td class="text-right">' + fmt(Math.abs(opening)) + (opening >= 0 ? ' Dr' : ' Cr') + '</td></tr>';
-        }
-        rows.forEach(function (r) {
-            var live = acctIsLive(r);
-            if (live) running += (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
-            // Display filters (running balance already accounts for every live row above):
-            if (!live && !acctLedgerShowCancelled) return;   // cancelled hidden unless toggled on
-            var contra = acctContraLabel(r, byV);
-            if (!rowMatches(r, contra)) return;
-            shown++;
-            var balLabel = live ? fmt(Math.abs(running)) + (running >= 0 ? ' Dr' : ' Cr') : '—';
-            var auto = !!r.is_auto;
-            var tip = !live ? 'Cancelled' + (r.cancel_reason ? ' — ' + r.cancel_reason : '') + ' · excluded from balances'
-                    : auto ? 'Auto-posted from a PMS trade — opens view-only; edit the trade, then Rebuild'
-                           : 'Click to edit this voucher';
-            html += '<tr class="acct-vch-row' + (auto ? ' acct-vch-auto' : '') + (live ? '' : ' acct-vch-cancelled') +
-                '" data-voucher="' + r.voucher_id + '" title="' + wmsEsc(tip) + '">' +
-                '<td class="c-date">' + wmsEsc(acctFmtDate(r.voucher_date)) + '</td>' +
-                '<td class="c-vch">' + wmsEsc(r.voucher_number) +
-                    (auto ? ' <span class="acct-kind-badge">auto</span>' : '') +
-                    (live ? '' : ' <span class="acct-scope-badge">cancelled</span>') + '</td>' +
-                '<td class="c-contra">' + wmsEsc(contra) + '</td>' +
-                '<td>' + wmsEsc(r.line_narration || r.voucher_narration || '') + '</td>' +
-                '<td class="text-right">' + (Number(r.debit_amount) ? fmt(Number(r.debit_amount)) : '-') + '</td>' +
-                '<td class="text-right">' + (Number(r.credit_amount) ? fmt(Number(r.credit_amount)) : '-') + '</td>' +
-                '<td class="text-right">' + balLabel + '</td></tr>';
-        });
-        if (!shown) {
-            html += '<tr><td colspan="7" class="acct-empty" style="padding:16px;">' +
-                (q ? 'No lines match &ldquo;' + wmsEsc(acctLedgerSearchText) + '&rdquo;.' : 'No postings in the selected period.') + '</td></tr>';
-        }
-        html += '</tbody></table>';
+        wrap.innerHTML = '<div class="acct-empty">No postings in this book.</div>';
+        return;
     }
+
+    // 1) Running balance is CHRONOLOGICAL (assigned to every live row in the window,
+    //    regardless of search / hidden / sort), then we keep only the rows that pass
+    //    the display filters. This keeps each row's Balance meaningful even when the
+    //    table is re-sorted by another column.
+    var running = win.start ? opening : 0;
+    var items = [];
+    rows.forEach(function (r) {
+        var live = acctIsLive(r);
+        if (live) running += (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
+        if (!live && !acctLedgerShowCancelled) return;   // cancelled hidden unless toggled on
+        if (acctLedgerHidden[r.line_id]) return;          // manually hidden from view
+        var contra = acctContraLabel(r, byV);
+        if (!rowMatches(r, contra)) return;
+        items.push({ r: r, live: live, contra: contra, bal: running,
+            dr: Number(r.debit_amount) || 0, cr: Number(r.credit_amount) || 0,
+            narr: r.line_narration || r.voucher_narration || '' });
+    });
+    var closing = running;   // period closing balance (all live rows in window)
+
+    // 2) Sort the shown rows by the clicked column.
+    var sc = acctLedgerSort.col, sdir = acctLedgerSort.dir === 'desc' ? -1 : 1;
+    items.sort(function (a, b) {
+        var x, y;
+        if (sc === 'vch') { return String(a.r.voucher_number || '').localeCompare(String(b.r.voucher_number || '')) * sdir; }
+        if (sc === 'contra') { x = (a.contra || '').toLowerCase(); y = (b.contra || '').toLowerCase(); return (x < y ? -1 : x > y ? 1 : 0) * sdir; }
+        if (sc === 'narration') { x = a.narr.toLowerCase(); y = b.narr.toLowerCase(); return (x < y ? -1 : x > y ? 1 : 0) * sdir; }
+        if (sc === 'debit') { return (a.dr - b.dr) * sdir; }
+        if (sc === 'credit') { return (a.cr - b.cr) * sdir; }
+        if (sc === 'balance') { return (a.bal - b.bal) * sdir; }
+        if (a.r.voucher_date !== b.r.voucher_date) return (a.r.voucher_date < b.r.voucher_date ? -1 : 1) * sdir;
+        return String(a.r.voucher_number).localeCompare(String(b.r.voucher_number)) * sdir;
+    });
+
+    // 3) Render.
+    function sortTh(col, label, cls) {
+        var arrow = acctLedgerSort.col === col ? (acctLedgerSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+        return '<th class="acct-db-sortable' + (cls ? (' ' + cls) : '') + (acctLedgerSort.col === col ? ' acct-db-sorted' : '') +
+            '" data-sort="' + col + '">' + label + '<span class="acct-db-arrow">' + arrow + '</span></th>';
+    }
+    var html = '<table class="acct-table acct-ld-table"><thead><tr>' +
+        sortTh('date', 'Date', 'c-date') + sortTh('vch', 'Vch #', 'c-vch') + sortTh('contra', 'Contra ledger', 'c-contra') +
+        sortTh('narration', 'Narration') + sortTh('debit', 'Debit', 'text-right c-amt') + sortTh('credit', 'Credit', 'text-right c-amt') +
+        sortTh('balance', 'Balance', 'text-right c-amt') + '<th class="c-ldhide"></th></tr></thead><tbody>';
+
+    // The "brought forward" opening row only makes sense in the default chronological view.
+    if (win.start && !q && acctLedgerSort.col === 'date' && acctLedgerSort.dir === 'asc' && Math.round(opening * 100) !== 0) {
+        html += '<tr class="acct-ld-opening"><td class="c-date">' + wmsEsc(acctFmtDate(win.start)) + '</td><td class="c-vch">—</td>' +
+            '<td colspan="2"><em>Opening balance</em></td><td class="text-right">-</td><td class="text-right">-</td>' +
+            '<td class="text-right">' + fmt(Math.abs(opening)) + (opening >= 0 ? ' Dr' : ' Cr') + '</td><td class="c-ldhide"></td></tr>';
+    }
+
+    var totDr = 0, totCr = 0;
+    items.forEach(function (it) {
+        var r = it.r, live = it.live;
+        totDr += it.dr; totCr += it.cr;
+        var balLabel = live ? fmt(Math.abs(it.bal)) + (it.bal >= 0 ? ' Dr' : ' Cr') : '—';
+        var auto = !!r.is_auto;
+        var tip = !live ? 'Cancelled' + (r.cancel_reason ? ' — ' + r.cancel_reason : '') + ' · excluded from balances'
+                : auto ? 'Auto-posted from a PMS trade — opens view-only; edit the trade, then Rebuild'
+                       : 'Click to edit this voucher';
+        html += '<tr class="acct-vch-row' + (auto ? ' acct-vch-auto' : '') + (live ? '' : ' acct-vch-cancelled') +
+            '" data-voucher="' + r.voucher_id + '" title="' + wmsEsc(tip) + '">' +
+            '<td class="c-date">' + wmsEsc(acctFmtDate(r.voucher_date)) + '</td>' +
+            '<td class="c-vch">' + wmsEsc(r.voucher_number) +
+                (auto ? ' <span class="acct-kind-badge">auto</span>' : '') +
+                (live ? '' : ' <span class="acct-scope-badge">cancelled</span>') + '</td>' +
+            '<td class="c-contra">' + wmsEsc(it.contra) + '</td>' +
+            '<td>' + wmsEsc(it.narr) + '</td>' +
+            '<td class="text-right">' + (it.dr ? fmt(it.dr) : '-') + '</td>' +
+            '<td class="text-right">' + (it.cr ? fmt(it.cr) : '-') + '</td>' +
+            '<td class="text-right">' + balLabel + '</td>' +
+            '<td class="c-ldhide"><button class="acct-ld-hide-btn" data-hide="' + wmsEsc(r.line_id) + '" title="Hide this row from the view (does not delete)">✕</button></td></tr>';
+    });
+    if (!items.length) {
+        html += '<tr><td colspan="8" class="acct-empty" style="padding:16px;">' +
+            (q ? 'No lines match &ldquo;' + wmsEsc(acctLedgerSearchText) + '&rdquo;.' : 'No postings in the selected period.') + '</td></tr>';
+    }
+    html += '</tbody>';
+    if (items.length) {
+        html += '<tfoot><tr class="acct-ld-total">' +
+            '<td colspan="4">Total (' + items.length + ' row' + (items.length === 1 ? '' : 's') + ' shown)</td>' +
+            '<td class="text-right">' + fmt(totDr) + '</td>' +
+            '<td class="text-right">' + fmt(totCr) + '</td>' +
+            '<td class="text-right">' + fmt(Math.abs(closing)) + (closing >= 0 ? ' Dr' : ' Cr') + '</td>' +
+            '<td class="c-ldhide"></td></tr></tfoot>';
+    }
+    html += '</table>';
     wrap.innerHTML = html;
+    wrap.querySelectorAll('th[data-sort]').forEach(function (th) { th.onclick = function () { acctLedgerSetSort(th.dataset.sort); }; });
+    wrap.querySelectorAll('.acct-ld-hide-btn').forEach(function (b) {
+        b.onclick = function (e) { e.stopPropagation(); acctLedgerHidden[b.dataset.hide] = true; acctRenderLedgerTable(); };
+    });
     wrap.querySelectorAll('.acct-vch-row[data-voucher]').forEach(function (tr) {
         tr.onclick = function () { acctOpenEditVoucher(tr.dataset.voucher); };
     });
@@ -2787,6 +2846,7 @@ function acctLedgerDateFilterBar() {
         rangeHtml +
         cancelBtn +
         '<input type="text" id="acctLdSearch" class="wms-input acct-ld-search" placeholder="Search ledger, narration, date…" value="' + wmsEsc(acctLedgerSearchText) + '">' +
+        '<button id="acctLdClear" class="wms-btn wms-btn-secondary" title="Clear everything — period, dates, search, sort and manually hidden rows — and show the entire ledger">Clear</button>' +
     '</div>';
 }
 
@@ -2839,6 +2899,16 @@ function acctWireLedgerDateFilter() {
     var sr = document.getElementById('acctLdSearch');
     // Live search: only the TABLE re-renders, so this input keeps its focus + caret.
     if (sr) sr.oninput = function () { acctLedgerSearchText = sr.value; acctRenderLedgerTable(); };
+    var clr = document.getElementById('acctLdClear');
+    if (clr) clr.onclick = function () {
+        acctLedgerDateFilter = { mode: 'all', fyStart: null, qtr: 0, from: '', to: '' };
+        acctSaveLedgerDateFilter();
+        acctLedgerSearchText = '';
+        acctLedgerHidden = {};
+        acctLedgerSort = { col: 'date', dir: 'asc' };
+        acctLedgerRangePopOpen = false;
+        acctRenderLedgerDetail();   // full re-render (period changed to All dates)
+    };
 }
 
 /** Refresh the custom-range button label after a date change (table-only re-render). */
