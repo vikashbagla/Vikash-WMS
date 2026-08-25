@@ -755,7 +755,10 @@
         function wmsShowZeroState() {
             var mod = currentModule;
             if (mod === 'accounting' && typeof acctFinShowZero !== 'undefined') return acctFinShowZero;
-            if (mod === 'reports' && typeof rptShowZero !== 'undefined') return rptShowZero;
+            if (mod === 'reports') {
+                if (typeof rptConsolIsActive === 'function' && rptConsolIsActive() && typeof rptConsShowZero !== 'undefined') return rptConsShowZero;
+                if (typeof rptShowZero !== 'undefined') return rptShowZero;
+            }
             if (mod === 'trading' && typeof trShowZeroHoldings !== 'undefined') return trShowZeroHoldings;
             return false;
         }
@@ -768,7 +771,7 @@
             var mod = currentModule;
             try {
                 if (mod === 'accounting' && typeof acctToggleShowZero === 'function') acctToggleShowZero();
-                else if (mod === 'reports' && typeof rptToggleZero === 'function') rptToggleZero();
+                else if (mod === 'reports' && typeof rptToggleShowZeroActive === 'function') rptToggleShowZeroActive();
                 else if (mod === 'trading' && typeof trToggleZeroHoldings === 'function') trToggleZeroHoldings();
             } catch (e) { console.error('[show-zero] failed', e); }
             wmsSyncShowZeroBtn();

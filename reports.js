@@ -866,6 +866,24 @@ function rptToggleZero() {
     }
     rptRenderPortfolio();
 }
+// Show-zero for the ACTIVE reports view — used by the app-header 👁 button + F6.
+// Consolidation has its own show-zero state; everything else uses the portfolio toggle.
+function rptConsolIsActive() {
+    var tab = document.getElementById('rpt-consol');
+    return !!(tab && tab.classList.contains('active') && document.getElementById('rptConsolBody'));
+}
+function rptToggleShowZeroActive() {
+    if (rptConsolIsActive()) {
+        rptConsShowZero = !rptConsShowZero;
+        var zc = document.getElementById('rptConsolZeroChk'); if (zc) zc.checked = rptConsShowZero;
+        if (typeof rptConsSavePrefs === 'function') rptConsSavePrefs();
+        if (typeof rptRenderConsol === 'function') rptRenderConsol();
+        return;
+    }
+    rptToggleZero();
+}
+window.rptToggleShowZeroActive = rptToggleShowZeroActive;
+window.rptConsolIsActive = rptConsolIsActive;
 
 function rptToggleGroup(acName) {
     rptCollapsedGroups[acName] = !rptCollapsedGroups[acName];
@@ -2107,8 +2125,13 @@ function rptConsNatureTree(natureName, cols, depthBase) {
     var ncols = cols.length;
     function ledgerNode(lg) {
         var cv = cols.map(function (c) { return rptConsLedgerDisp(c.net, lg); });
-        var anyNonZero = cv.some(function (v) { return Math.round(v * 100) !== 0; });
-        if (!anyNonZero && !rptConsShowZero) return null;
+        // "Show zero" here keys on the OPENING BALANCE and TOTAL columns only — a row is hidden
+        // when BOTH are zero, even if a middle (book / quarter) column moved (owner rule).
+        var opIdx = rptConsOpBalIdx, totIdx = ncols - 1;
+        var opV = (opIdx != null && opIdx >= 0 && opIdx < ncols) ? cv[opIdx] : 0;
+        var totV = cv[totIdx] || 0;
+        var keyNonZero = (Math.round(opV * 100) !== 0) || (Math.round(totV * 100) !== 0);
+        if (!keyNonZero && !rptConsShowZero) return null;
         return { key: 'l:' + lg.id, label: lg.name, isLedger: true, isPmsSecurity: (lg.ledger_kind === 'SECURITY'), colVals: cv, depth: 0 };
     }
     function mkGroup(key, label, children) {
