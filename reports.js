@@ -2199,7 +2199,7 @@ function rptConsNodeRows(node, depth, ncols) {
     var h = '<tr class="' + rowCls + '"' + attr + '>';
     // Dark-blue dot marks an investment holding auto-posted from a PMS trade (ledger_kind SECURITY).
     var pmsDot = node.isPmsSecurity ? '<span class="rpt-consol-pms-dot" title="Investment held directly via PMS"></span>' : '';
-    h += '<td class="rpt-c-name" style="padding-left:' + pad + 'px;">' + icon + pmsDot + wmsEsc(node.label) + '</td>';
+    h += '<td class="rpt-c-name" style="padding-left:' + pad + 'px;" title="' + wmsEsc(node.label) + '">' + icon + pmsDot + wmsEsc(node.label) + '</td>';
     for (var i = 0; i < ncols; i++) {
         var totCls = (i === ncols - 1) ? ' rpt-consol-c-total' : '';
         var obCls = (i === rptConsOpBalIdx) ? ' rpt-consol-c-opbal' : '';
@@ -2217,7 +2217,7 @@ function rptConsSummaryRow(label, colVals, ncols, extraCls, cnodeKey, collapsed)
     var attr = cnodeKey ? (' data-cnode="' + cnodeKey + '"') : '';
     var toggle = cnodeKey ? ('<span class="rpt-consol-toggle">' + (collapsed ? '▶' : '▼') + '</span>') : '';
     var h = '<tr class="rpt-consol-row-summary ' + (extraCls || '') + '"' + attr + '>';
-    h += '<td class="rpt-c-name">' + toggle + wmsEsc(label) + '</td>';
+    h += '<td class="rpt-c-name" title="' + wmsEsc(label) + '">' + toggle + wmsEsc(label) + '</td>';
     for (var i = 0; i < ncols; i++) {
         var totCls = (i === ncols - 1) ? ' rpt-consol-c-total' : '';
         var obCls = (i === rptConsOpBalIdx) ? ' rpt-consol-c-opbal' : '';
