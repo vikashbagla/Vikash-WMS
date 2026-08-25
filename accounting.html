@@ -607,6 +607,7 @@
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="bank-import"] { display: inline-block; }
 .acct-container.acct-mode-master #acctNewVoucherBtn,
 .acct-container.acct-mode-master #acctRebuildBtn,
+.acct-container.acct-mode-master #acctRebuildAllBtn,
 .acct-container.acct-mode-master .acct-menu-wrap { display: none; }
 /* Exceptions list */
 .acct-ex-filters { display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }
@@ -653,13 +654,13 @@
         <span id="acctCmdFilters" class="acct-cmd-filters"></span>
         <span class="acct-cmd-sep"></span>
         <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary acct-tab-action">➕ New Voucher</button>
-        <button id="acctRebuildBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="Rebuild this book's auto-vouchers from its trades, via the accounting engine">↻ Rebuild</button>
+        <button id="acctRebuildBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="Rebuild THIS book's auto-vouchers from its trades, via the accounting engine">↻ Rebuild</button>
+        <button id="acctRebuildAllBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="Rebuild auto-vouchers for ALL books from their trades (runs the engine per book)">↻↻ Rebuild all</button>
         <div class="acct-menu-wrap">
             <button id="acctMenuBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="More actions">⋮</button>
             <div class="wms-dd acct-menu-dd" id="acctMenuDd">
                 <div class="wms-dd-item" data-act="opening">⚖ Opening Balances</div>
                 <div class="wms-dd-item" data-act="consolidate">📑 Consolidate…</div>
-                <div class="wms-dd-item" data-act="rebuildAll">↻↻ Rebuild all books</div>
                 <div class="wms-dd-item" data-act="refresh">🔄 Refresh</div>
             </div>
         </div>

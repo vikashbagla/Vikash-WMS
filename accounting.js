@@ -473,6 +473,8 @@ function acctWireUI() {
     if (nv) nv.onclick = acctOpenVoucherModal;
     var rb = document.getElementById('acctRebuildBtn');
     if (rb) rb.onclick = acctRebuildBooks;
+    var rba = document.getElementById('acctRebuildAllBtn');
+    if (rba) rba.onclick = acctRebuildAll;
 
     var mb = document.getElementById('acctMenuBtn');
     var mdd = document.getElementById('acctMenuDd');
