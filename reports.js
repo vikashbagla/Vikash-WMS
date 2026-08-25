@@ -201,10 +201,27 @@ function rptGetAssetClass(securityType) {
 // holdings with reports-specific fields: assetClass, fifoCost, latestPrice, _txns.
 // ============================================================================
 
-function rptFifoEngine(txns) {
+function rptFifoEngine(txns, includeExited) {
     // The shared engine accepts both snake_case and camelCase fields
     var result = wmsCalcFifoCost(txns);
     var holdings = result.holdings;
+
+    // The shared engine drops fully-exited symbols (no open lots). For the Portfolio "Show Zero"
+    // view (parity with Trading) re-add them as ZERO-quantity holdings from the txns, so they can
+    // be shown. They stay invisible under Hide Zero (filtered by quantity) and contribute 0 to totals.
+    if (includeExited) {
+        for (var ei = 0; ei < txns.length; ei++) {
+            var et = txns[ei];
+            var eKey = (et.securityType === 'NFO') ? (et.symbol || '') : (et.shortSymbol || et.symbol || '');
+            if (!eKey || holdings[eKey]) continue;
+            holdings[eKey] = {
+                symbol: et.symbol || eKey, shortSymbol: et.shortSymbol || et.symbol || eKey,
+                companyName: et.companyName || '', exchange: et.exchange || '',
+                securityType: et.securityType || 'EQUITY', securityId: et.securityId || null,
+                quantity: 0, totalCost: 0, avgCost: 0, lots: [], tags: [], _exited: true
+            };
+        }
+    }
 
     // Enrich holdings with reports-specific properties
     var keys = Object.keys(holdings);
@@ -1212,8 +1229,8 @@ function rptRenderPortfolio() {
         return t.securityType !== 'NFO' && t.securityType !== 'MCX';
     });
 
-    // 3. Run FIFO
-    var fifo = rptFifoEngine(filtered);
+    // 3. Run FIFO (includeExited so "Show Zero" can reveal fully-exited symbols, like Trading)
+    var fifo = rptFifoEngine(filtered, true);
     var allHoldings = Object.values(fifo.holdings);
 
     // 4. Filter zero holdings
