@@ -128,13 +128,22 @@
 .acct-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .acct-table th {
     background: #f7fafc; font-size: 10px; font-weight: 600; text-transform: uppercase;
-    color: #718096; text-align: left; padding: 7px 10px; border-bottom: 1px solid #e2e8f0;
-    position: sticky; top: 0;
+    color: #718096; text-align: left; padding: 7px 10px;
+    position: sticky; top: 0; z-index: 3;
+    /* Border via inset shadow, NOT border-bottom: under border-collapse a real border
+       does not stay glued to a sticky th, so rows bleed through the 1px gap. See UI-STANDARDS sticky-header rule. */
+    box-shadow: inset 0 -1px 0 #e2e8f0;
 }
 .acct-table td { padding: 6px 10px; border-bottom: 1px solid #edf2f7; vertical-align: middle; }
 .acct-table .text-right { text-align: right; font-variant-numeric: tabular-nums; }
 .acct-table tbody tr.acct-clickable { cursor: pointer; }
 .acct-table tbody tr.acct-clickable:hover { background: #f7faff; }
+/* Sortable headers (Day Book). */
+.acct-table th.acct-db-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.acct-table th.acct-db-sortable:hover { color: #4338ca; background: #eef2ff; }
+.acct-table th.acct-db-sorted { color: #4338ca; }
+.acct-db-arrow { font-size: 9px; }
+.acct-table td.acct-db-created { color: #64748b; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* Trial Balance grouping */
 .acct-tb-group td { background: #f1f5f9; font-weight: 700; color: #2d3748; }
