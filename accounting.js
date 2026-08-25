@@ -2229,8 +2229,10 @@ function acctOpenVoucherModal(prefillLedgerId, prefillLines) {
     acctRenderVoucherLines();
     acctApplyVoucherReadOnly(false);      // fresh voucher is always editable
     if (acctVoucherModalCtrl) acctVoucherModalCtrl.open();
-    // Land the caret on the first ledger field (dropdown stays closed until typing).
+    // Land the caret on the DATE first (owner: the date is easy to miss otherwise).
     setTimeout(function () {
+        var d = document.querySelector('#acctVoucherDate .wms-di-wrap');
+        if (d && d.focus) { d.focus(); return; }
         var first = document.querySelector('#acctVoucherLines .acct-line-ledger');
         if (first) first.focus();
     }, 60);
