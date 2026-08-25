@@ -2446,6 +2446,8 @@ function acctLedgerSetSort(col) {
 // Rows the user has manually hidden FROM THE VIEW (line_id -> true). Not a delete —
 // session-only, cleared by "Clear" and when opening a different ledger.
 var acctLedgerHidden = {};
+// Line-id order of the rows currently shown (for "hide everything above this row").
+var acctLedgerRowOrder = [];
 var acctLedgerRangePopOpen = false;   // custom From–To popover open state
 
 /** FY start month for the active book (financial_year_start, default 4 = April). */
@@ -2686,6 +2688,7 @@ function acctRenderLedgerTable() {
             '<td class="text-right">' + fmt(Math.abs(opening)) + (opening >= 0 ? ' Dr' : ' Cr') + '</td><td class="c-ldhide"></td></tr>';
     }
 
+    acctLedgerRowOrder = items.map(function (it) { return it.r.line_id; });
     var totDr = 0, totCr = 0;
     items.forEach(function (it) {
         var r = it.r, live = it.live;
@@ -2706,7 +2709,10 @@ function acctRenderLedgerTable() {
             '<td class="text-right">' + (it.dr ? fmt(it.dr) : '-') + '</td>' +
             '<td class="text-right">' + (it.cr ? fmt(it.cr) : '-') + '</td>' +
             '<td class="text-right">' + balLabel + '</td>' +
-            '<td class="c-ldhide"><button class="acct-ld-hide-btn" data-hide="' + wmsEsc(r.line_id) + '" title="Hide this row from the view (does not delete)">✕</button></td></tr>';
+            '<td class="c-ldhide">' +
+                '<button class="acct-ld-hideabove-btn" data-hideabove="' + wmsEsc(r.line_id) + '" title="Hide every row above this one (from the view)">⤒</button>' +
+                '<button class="acct-ld-hide-btn" data-hide="' + wmsEsc(r.line_id) + '" title="Hide this row from the view (does not delete)">✕</button>' +
+            '</td></tr>';
     });
     if (!items.length) {
         html += '<tr><td colspan="8" class="acct-empty" style="padding:16px;">' +
@@ -2726,6 +2732,13 @@ function acctRenderLedgerTable() {
     wrap.querySelectorAll('th[data-sort]').forEach(function (th) { th.onclick = function () { acctLedgerSetSort(th.dataset.sort); }; });
     wrap.querySelectorAll('.acct-ld-hide-btn').forEach(function (b) {
         b.onclick = function (e) { e.stopPropagation(); acctLedgerHidden[b.dataset.hide] = true; acctRenderLedgerTable(); };
+    });
+    wrap.querySelectorAll('.acct-ld-hideabove-btn').forEach(function (b) {
+        b.onclick = function (e) {
+            e.stopPropagation();
+            var idx = acctLedgerRowOrder.indexOf(b.dataset.hideabove);
+            if (idx > 0) { for (var i = 0; i < idx; i++) acctLedgerHidden[acctLedgerRowOrder[i]] = true; acctRenderLedgerTable(); }
+        };
     });
     wrap.querySelectorAll('.acct-vch-row[data-voucher]').forEach(function (tr) {
         tr.onclick = function () { acctOpenEditVoucher(tr.dataset.voucher); };
