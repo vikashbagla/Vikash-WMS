@@ -69,6 +69,7 @@
             </div>
             <div class="user-section">
                 <button class="btn-refresh-app" id="appRefreshBtn" title="Refresh this module (F5)">🔄</button>
+                <button class="btn-refresh-app" id="appShowZeroBtn" title="Show / hide zero-value rows (F6)">👁</button>
                 <div class="fyers-indicator" id="fyers-indicator">
                     <span id="fyers-status" style="font-size:12px;">⏳ Fyers...</span>
                     <span id="fyers-refresh-time" style="font-size:10px; color:#a0aec0; display:block;"></span>
@@ -749,15 +750,41 @@
         }
         window.wmsRefreshActiveModule = wmsRefreshActiveModule;
         document.getElementById('appRefreshBtn').addEventListener('click', wmsRefreshActiveModule);
-        // F5 anywhere in the app triggers the same refresh (instead of a full browser reload).
+
+        // Show-zero: one control (header 👁 button + F6) toggles zero-value rows for the ACTIVE module.
+        function wmsShowZeroState() {
+            var mod = currentModule;
+            if (mod === 'accounting' && typeof acctFinShowZero !== 'undefined') return acctFinShowZero;
+            if (mod === 'reports' && typeof rptShowZero !== 'undefined') return rptShowZero;
+            if (mod === 'trading' && typeof trShowZeroHoldings !== 'undefined') return trShowZeroHoldings;
+            return false;
+        }
+        function wmsSyncShowZeroBtn() {
+            var b = document.getElementById('appShowZeroBtn');
+            if (b) b.classList.toggle('active', !!wmsShowZeroState());
+        }
+        window.wmsSyncShowZeroBtn = wmsSyncShowZeroBtn;
+        function wmsToggleShowZeroActiveModule() {
+            var mod = currentModule;
+            try {
+                if (mod === 'accounting' && typeof acctToggleShowZero === 'function') acctToggleShowZero();
+                else if (mod === 'reports' && typeof rptToggleZero === 'function') rptToggleZero();
+                else if (mod === 'trading' && typeof trToggleZeroHoldings === 'function') trToggleZeroHoldings();
+            } catch (e) { console.error('[show-zero] failed', e); }
+            wmsSyncShowZeroBtn();
+        }
+        window.wmsToggleShowZeroActiveModule = wmsToggleShowZeroActiveModule;
+        var _szBtn = document.getElementById('appShowZeroBtn');
+        if (_szBtn) _szBtn.addEventListener('click', wmsToggleShowZeroActiveModule);
+
+        // F5 = refresh, F6 = toggle show-zero — anywhere in the app (instead of the browser defaults).
         document.addEventListener('keydown', function (e) {
-            if (e.key === 'F5' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-                e.preventDefault();
-                wmsRefreshActiveModule();
-            }
+            if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+            if (e.key === 'F5') { e.preventDefault(); wmsRefreshActiveModule(); }
+            else if (e.key === 'F6') { e.preventDefault(); wmsToggleShowZeroActiveModule(); }
         });
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
-            btn.addEventListener('click', () => loadModule(btn.dataset.module));
+            btn.addEventListener('click', async () => { await loadModule(btn.dataset.module); if (typeof wmsSyncShowZeroBtn === 'function') wmsSyncShowZeroBtn(); });
         });
 
         // Bottom nav bar — click handler

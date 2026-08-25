@@ -169,6 +169,7 @@ body {
     transition: all 0.2s;
 }
 .btn-refresh-app:hover { background: #eef2ff; border-color: #667eea; }
+.btn-refresh-app.active { background: #eef2ff; border-color: #667eea; box-shadow: inset 0 0 0 1px #667eea; }
 .fyers-indicator { text-align: center; min-width: 60px; margin-right: 8px; }
 
 /* + Others dropdown */
