@@ -452,6 +452,7 @@ function acctRenderActiveTab() {
     else if (acctActiveTab === 'exceptions') acctRenderExceptions();
     else if (acctActiveTab === 'bank-import') { if (!window._abiModalsWired) { window._abiModalsWired = true; if (typeof abiWireModals === 'function') abiWireModals(); } if (typeof abiRender === 'function') abiRender(); }
     acctSyncUnitToggle();   // keep the header full-amount toggle visible + labelled on every tab
+    if (typeof wmsSyncShowZeroBtn === 'function') wmsSyncShowZeroBtn();   // reflect show-zero state on the header 👁 icon
 }
 
 // ---- Financials: Balance Sheet + P&L ---------------------------------------
@@ -477,6 +478,8 @@ var ACCT_SHOWZERO_KEY = 'wms_acct_show_zero';
 var acctFinShowZero = false;
 try { acctFinShowZero = localStorage.getItem(ACCT_SHOWZERO_KEY) === '1'; } catch (e) {}
 function acctSetShowZero(v) { acctFinShowZero = !!v; try { localStorage.setItem(ACCT_SHOWZERO_KEY, v ? '1' : '0'); } catch (e) {} }
+// Consolidated show-zero toggle for the accounting statements (BS/P&L/TB) — driven by the app-header 👁 button + F6.
+function acctToggleShowZero() { acctSetShowZero(!acctFinShowZero); acctRenderActiveTab(); }
 
 // The single command line hosts the active tab's filters. Each render function
 // calls acctSetCmdFilters(...) so the controls always match the tab on screen;
@@ -722,9 +725,7 @@ function acctRenderFinancials() {
     }
     var balanced = Math.round(leftTotal * 100) === Math.round(assets.total * 100);
 
-    acctSetCmdFilters(
-        acctExpandCtrlHtml('acctFin') +
-        '<label class="acct-fin-zero"><input type="checkbox" id="acctFinShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero</label>');
+    acctSetCmdFilters(acctExpandCtrlHtml('acctFin'));
     var flag = balanced ? '' : ' ⚠ out of balance';
     el.innerHTML = acctFinStatementHtml('Liabilities', 'Assets', asOn, leftNodes, leftTotal, assets.nodes, assets.total, flag);
 
@@ -735,8 +736,6 @@ function acctRenderFinancials() {
         r.onclick = function () { acctOpenLedgerDetail(r.dataset.ledger); };
     });
     acctWireExpandCtrl('acctFin', function () { return acctFinAllGroupKeys(leftNodes.concat(assets.nodes), []); }, 'fin', acctRenderFinancials);
-    var sz = document.getElementById('acctFinShowZeroChk');
-    if (sz) sz.onchange = function () { acctSetShowZero(sz.checked); acctRenderFinancials(); };
     acctSaveFinCollapse();
 }
 
@@ -759,9 +758,7 @@ function acctRenderPL() {
     if (netProfit >= 0) { leftNodes.push({ label: 'Net Profit', amount: netProfit, isDiff: true }); leftTotal += netProfit; }
     else { rightNodes.push({ label: 'Net Loss', amount: -netProfit, isDiff: true }); rightTotal += -netProfit; }
 
-    acctSetCmdFilters(
-        acctExpandCtrlHtml('acctPL') +
-        '<label class="acct-fin-zero"><input type="checkbox" id="acctPLShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero</label>');
+    acctSetCmdFilters(acctExpandCtrlHtml('acctPL'));
     el.innerHTML = acctFinStatementHtml('Expenses', 'Income', asOn, leftNodes, leftTotal, rightNodes, rightTotal, '');
 
     el.querySelectorAll('.acct-fin-group[data-node]').forEach(function (r) {
@@ -771,7 +768,6 @@ function acctRenderPL() {
         r.onclick = function () { acctOpenLedgerDetail(r.dataset.ledger); };
     });
     acctWireExpandCtrl('acctPL', function () { return acctFinAllGroupKeys(leftNodes.concat(rightNodes), []); }, 'fin', acctRenderPL);
-    var sz = document.getElementById('acctPLShowZeroChk'); if (sz) sz.onchange = function () { acctSetShowZero(sz.checked); acctRenderPL(); };
     acctSaveFinCollapse();
 }
 
@@ -919,9 +915,7 @@ function acctRenderTrialBalance() {
     nodes.forEach(function (n) { Object.keys(T).forEach(function (k) { T[k] += n[k]; }); });
     Object.keys(T).forEach(function (k) { T[k] = acctZ(T[k]); });
 
-    acctSetCmdFilters(
-        acctExpandCtrlHtml('acctTb') +
-        '<label class="acct-fin-zero"><input type="checkbox" id="acctTbShowZeroChk"' + (acctFinShowZero ? ' checked' : '') + '> Show zero</label>');
+    acctSetCmdFilters(acctExpandCtrlHtml('acctTb'));
 
     var W = 'width:' + (wmsIsFullAmount() ? 248 : 184) + 'px;';   // header block spans its two Dr/Cr cols
     var html = '<div class="acct-tb-wrap">' +
@@ -952,7 +946,6 @@ function acctRenderTrialBalance() {
         r.onclick = function () { acctOpenLedgerDetail(r.dataset.ledger); };
     });
     acctWireExpandCtrl('acctTb', function () { return acctFinAllGroupKeys(nodes, []); }, 'fin', acctRenderTrialBalance);
-    var sz = document.getElementById('acctTbShowZeroChk'); if (sz) sz.onchange = function () { acctSetShowZero(sz.checked); acctRenderTrialBalance(); };
     acctSaveFinCollapse();
 }
 
