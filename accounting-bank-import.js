@@ -188,11 +188,14 @@ function abiRenderReview(el){
   var head='<tr><th style="width:26px;"></th><th>Sl#</th><th class="c-date">Txn Date</th><th>Ledger → WMS ledger</th><th>Narration</th><th class="text-right">Withdrawn</th><th class="text-right">Deposit</th>'+(showBal?'<th class="text-right">Balance</th>':'')+'<th></th></tr>';
   var body=vis.map(function(o){ var r=o.r,ri=o.ri,key=abiRowKey(abiActiveAcct,ri);
     var isSplit=r.split&&r.split.length;
+    var locked=(r.status==='existing');   // already posted — mapping + narration are read-only
     var mapped=isSplit?('Split ×'+r.split.length):(r.mappedName||'— map name —');
     var mappedCls=(r.mappedId||isSplit)?'#16a34a':'#dc2626';
-    var ledCell = !isSplit
-      ? '<div class="abi-editmap" data-editmap="'+key+'" title="'+(r.mappedId?'Click to change this mapping':'Click to map this name')+'" style="color:'+(r.mappedId?'#16a34a':'#dc2626')+';">'+wmsEsc(mapped)+'</div>'
-      : '<div style="color:'+mappedCls+';font-weight:600;">'+wmsEsc(mapped)+'</div>';
+    var ledCell = isSplit
+      ? '<div style="color:'+mappedCls+';font-weight:600;">'+wmsEsc(mapped)+'</div>'
+      : (locked
+          ? '<div style="color:#16a34a;">'+wmsEsc(mapped)+'</div>'
+          : '<div class="abi-editmap" data-editmap="'+key+'" title="'+(r.mappedId?'Click to change this mapping':'Click to map this name')+'" style="color:'+(r.mappedId?'#16a34a':'#dc2626')+';">'+wmsEsc(mapped)+'</div>');
     var canSel=r.status==='new'||r.status==='changed';
     var chk=canSel?'<input type="checkbox" class="abi-chk" data-key="'+key+'"'+(abiSelected[key]?' checked':'')+'>':'<span class="acct-ex-note">✓</span>';
     var sev=r.status==='changed'?' <span class="acct-ex-sev warn" style="font-size:9px;">changed</span>':'';
@@ -200,7 +203,7 @@ function abiRenderReview(el){
     var act=''; if(canSel){ act='<button class="wms-btn wms-btn-secondary abi-mini" data-split="'+key+'">Split</button>'; if(!r.mappedId&&!(r.split&&r.split.length))act+=' <button class="wms-btn wms-btn-secondary abi-mini" data-map="'+key+'">map…</button>'; }
     return '<tr class="'+(r.status==='existing'?'acct-ex-resolved-row':'')+'"><td>'+chk+'</td><td>'+wmsEsc(r.slno)+sev+'</td><td class="c-date">'+wmsEsc(r.disp)+'</td>'+
       '<td><div class="acct-ex-note">'+wmsEsc(r.excelName||'—')+'</div>'+ledCell+'</td>'+
-      '<td class="abi-narr" data-narr="'+key+'" title="Double-click to edit">'+wmsEsc(r.narr||'')+'</td><td class="text-right">'+(r.wd>0?abiAmt(r.wd):'')+'</td><td class="text-right" style="color:#16a34a;font-weight:600;">'+(r.dp>0?abiAmt(r.dp):'')+'</td>'+
+      (locked?('<td>'+wmsEsc(r.narr||'')+'</td>'):('<td class="abi-narr" data-narr="'+key+'" title="Double-click to edit">'+wmsEsc(r.narr||'')+'</td>'))+'<td class="text-right">'+(r.wd>0?abiAmt(r.wd):'')+'</td><td class="text-right" style="color:#16a34a;font-weight:600;">'+(r.dp>0?abiAmt(r.dp):'')+'</td>'+
       (showBal?'<td class="text-right acct-ex-note">'+(r.bal!=null?abiAmt(r.bal):'')+'</td>':'')+'<td>'+act+'</td></tr>'; }).join('');
   var selCount=Object.keys(abiSelected).filter(function(k){return abiSelected[k];}).length;
   el.innerHTML='<div class="abi-acct-tabs">'+tabs+'<span style="flex:1;"></span><button class="wms-btn wms-btn-secondary" onclick="abiRefresh()" title="Re-check these rows against the books (picks up vouchers you just posted on another account) — no re-upload needed">Refresh</button> <button class="wms-btn wms-btn-secondary" onclick="abiClear()">Clear screen</button></div>'+
