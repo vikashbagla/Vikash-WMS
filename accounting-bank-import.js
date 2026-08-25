@@ -222,10 +222,23 @@ function abiRenderReview(el){
 var _abiDd=null,_abiDdInput=null,_abiDdOnPick=null;
 function abiEnsureDd(){ if(_abiDd)return _abiDd;
   _abiDd=document.createElement('div'); _abiDd.className='abi-dd'; _abiDd.style.display='none'; document.body.appendChild(_abiDd);
-  _abiDd.addEventListener('mousedown',function(e){ var it=e.target.closest('.abi-dd-item'); if(!it)return; e.preventDefault();
+  _abiDd.addEventListener('mousedown',function(e){
+    var cr=e.target.closest('.abi-dd-create');
+    if(cr){ e.preventDefault(); var inp=_abiDdInput, cbc=_abiDdOnPick, typed=(inp&&String(inp.value||'').trim())||cr.dataset.name||''; abiHideDd(); abiCreateLedgerInline(typed,inp,cbc); return; }
+    var it=e.target.closest('.abi-dd-item'); if(!it)return; e.preventDefault();
     if(_abiDdInput){ _abiDdInput.value=it.dataset.name; _abiDdInput.dataset.lid=it.dataset.id; }
     var cb=_abiDdOnPick; abiHideDd(); if(cb)cb(it.dataset.id); });
   return _abiDd; }
+// Open the org Add-Ledger modal from a bank-import picker; on save, drop the new ledger into this field.
+function abiCreateLedgerInline(typed,inp,onPick){
+  if(typeof acctOpenAddLedger!=='function'){ acctToast('Ledger creation is unavailable here.',true); return; }
+  acctOnLedgerCreated=function(led){
+    try{ abiLedgerById={}; (typeof acctLedgers!=='undefined'?acctLedgers:[]).forEach(function(l){ abiLedgerById[l.id]=l.name; }); }catch(e){}
+    if(led){ if(inp){ inp.value=led.name; inp.dataset.lid=led.id; } if(onPick)onPick(led.id); }
+  };
+  acctOpenAddLedger();
+  var nameEl=document.getElementById('acctNewLedgerName'); if(nameEl)nameEl.value=typed||'';
+}
 function abiHideDd(){ if(_abiDd)_abiDd.style.display='none'; _abiDdInput=null; _abiDdOnPick=null; }
 function abiPosDd(input){ var r=input.getBoundingClientRect(); _abiDd.style.position='fixed'; _abiDd.style.left=r.left+'px'; _abiDd.style.top=(r.bottom+2)+'px'; _abiDd.style.width=Math.max(r.width,220)+'px'; _abiDd.style.zIndex=99999; }
 function abiAttachLedgerPick(input,onPick){
@@ -234,7 +247,13 @@ function abiAttachLedgerPick(input,onPick){
     var cat=(typeof acctLedgers!=='undefined'?acctLedgers:[]);
     var m=q? cat.filter(function(l){return l.name.toLowerCase().indexOf(q)>=0;}) : cat.slice(0,0);
     m=m.slice(0,20);
-    dd.innerHTML = q ? (m.length? m.map(function(l){return '<div class="abi-dd-item" data-id="'+l.id+'" data-name="'+wmsEsc(l.name)+'">'+wmsEsc(l.name)+'</div>';}).join('') : '<div class="abi-dd-empty">No matching ledger</div>') : '';
+    var typed=String(input.value||'').trim();
+    var items = q ? m.map(function(l){return '<div class="abi-dd-item" data-id="'+l.id+'" data-name="'+wmsEsc(l.name)+'">'+wmsEsc(l.name)+'</div>';}).join('') : '';
+    // Offer "Create ledger …" when the typed text isn't already an exact ledger name.
+    if(q && !m.some(function(l){return l.name.toLowerCase()===q;})){
+      items += '<div class="abi-dd-item abi-dd-create" data-create="1" data-name="'+wmsEsc(typed)+'">➕ Create ledger “'+wmsEsc(typed)+'”…</div>';
+    }
+    dd.innerHTML = q ? items : '';
     if(q){ abiPosDd(input); dd.style.display='block'; } else abiHideDd();
   }
   input.oninput=show;

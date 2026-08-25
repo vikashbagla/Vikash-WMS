@@ -1968,7 +1968,8 @@ async function acctSaveOpening() {
 // ============================================================================
 
 var acctVoucherDdCtrls = {};        // row idx -> wmsDropdown controller
-var acctLedgerPickTarget = null;    // {idx} when Add Ledger was launched from a row
+var acctLedgerPickTarget = null;    // {idx} when Add Ledger was launched from a voucher row
+var acctOnLedgerCreated = null;     // function(newLedger) — any picker can set this before acctOpenAddLedger(); fired once after a CREATE
 var acctEditingVoucherId = null;    // set when the voucher modal is editing, not creating
 var acctVoucherReadOnly = false;    // auto (PMS-trade) vouchers open view-only
 var acctVoucherShowLegNarr = false; // per-leg narration fields toggled on
@@ -3333,6 +3334,12 @@ async function acctSaveLedger() {
             }
             acctLedgerPickTarget = null;
         }
+        // Created from any other ledger picker (e.g. Bank Import map/split) — hand the new ledger back via callback.
+        if (wasCreate && acctOnLedgerCreated) {
+            var madeCb = acctLedgers.find(function (l) { return l.name === name; });
+            var cb = acctOnLedgerCreated; acctOnLedgerCreated = null;
+            try { cb(madeCb || null); } catch (e) { console.error('[accounting] onLedgerCreated cb failed', e); }
+        }
         acctRenderActiveTab();
     } catch (e) {
         console.error('[accounting] save ledger failed', e);
@@ -3543,8 +3550,8 @@ function acctWireModals() {
     // Add-ledger modal
     var alOverlay = document.getElementById('acctAddLedgerModal');
     if (alOverlay && typeof wmsModal === 'function') acctAddLedgerModalCtrl = wmsModal(alOverlay, { backdropClose: false });
-    document.getElementById('acctAddLedgerClose').onclick = function () { acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
-    document.getElementById('acctAddLedgerCancel').onclick = function () { acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
+    document.getElementById('acctAddLedgerClose').onclick = function () { acctOnLedgerCreated = null; acctLedgerPickTarget = null; acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
+    document.getElementById('acctAddLedgerCancel').onclick = function () { acctOnLedgerCreated = null; acctLedgerPickTarget = null; acctAddLedgerModalCtrl && acctAddLedgerModalCtrl.close(); };
     document.getElementById('acctAddLedgerSave').onclick = acctSaveLedger;
     var acctLedDelBtn = document.getElementById('acctAddLedgerDelete');
     if (acctLedDelBtn) acctLedDelBtn.onclick = acctDeleteLedger;
