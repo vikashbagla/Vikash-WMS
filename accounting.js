@@ -584,7 +584,7 @@ function acctFinNodeHtml(node, depth) {
     var col = node.isLedger ? 1 : (depth === 0 || node.isDiff ? 3 : 2);
     var amt = acctAmt(node.amount);
     var h = '<div class="' + cls + '" ' + attr + ' style="padding-left:' + pad + 'px;">' +
-        icon + '<span class="acct-fin-name">' + wmsEsc(node.label) + '</span>' +
+        icon + '<span class="acct-fin-name" title="' + wmsEsc(node.label) + '">' + wmsEsc(node.label) + '</span>' +
         '<span class="acct-fin-amt">'  + (col === 1 ? amt : '') + '</span>' +
         '<span class="acct-fin-amt2">' + (col === 2 ? amt : '') + '</span>' +
         '<span class="acct-fin-amt3">' + (col === 3 ? amt : '') + '</span></div>';
@@ -892,7 +892,7 @@ function acctTbNodeHtml(node, depth) {
     var cls = 'acct-fin-row ' + (isGroup ? 'acct-fin-group' : 'acct-fin-ledger acct-clickable');
     var attr = isGroup ? ('data-node="' + node.key + '"') : ('data-ledger="' + node.ledgerId + '"');
     var h = '<div class="' + cls + '" ' + attr + ' style="padding-left:' + pad + 'px;">' + icon +
-        '<span class="acct-fin-name">' + wmsEsc(node.label) + '</span>' +
+        '<span class="acct-fin-name" title="' + wmsEsc(node.label) + '">' + wmsEsc(node.label) + '</span>' +
         acctTbCell(node.oDr, ' acct-tb-blockstart') + acctTbCell(node.oCr) +
         acctTbCell(node.pDr, ' acct-tb-blockstart') + acctTbCell(node.pCr) +
         acctTbCell(node.cDr, ' acct-tb-blockstart acct-tb-close-c') + acctTbCell(node.cCr, ' acct-tb-close-c') +
@@ -1178,7 +1178,7 @@ function acctLedLedgerHtml(lg, depth) {
     var c = acctLedGroupColor(lg.group_id, Math.max(0, depth - 1));
     return '<div class="acct-fin-row acct-fin-ledger acct-led-ledrow" data-ledger="' + lg.id + '" style="padding-left:' + pad + 'px;border-left:3px solid ' + c.border + ';" title="Double-click to edit">' +
         '<span class="acct-fin-toggle-sp"></span>' +
-        '<span class="acct-fin-name">' + wmsEsc(lg.name) + (lg.is_system ? ' <span class="acct-kind-badge">system</span>' : '') + '</span>' +
+        '<span class="acct-fin-name" title="' + wmsEsc(lg.name) + '">' + wmsEsc(lg.name) + (lg.is_system ? ' <span class="acct-kind-badge">system</span>' : '') + '</span>' +
         '<span class="acct-led-avail">' + avail + '</span>' +
         '<button class="acct-edit-btn acct-led-edit" data-edit-ledger="' + lg.id + '" tabindex="-1" title="Edit ledger">✏️</button></div>';
 }
@@ -1189,7 +1189,7 @@ function acctLedGroupHtml(node, depth) {
     var isRoot = depth === 0;
     var h = '<div class="acct-fin-row acct-fin-group acct-led-grp" data-node="' + node.key + '" style="padding-left:' + pad + 'px;border-left:' + (isRoot ? 6 : 4) + 'px solid ' + c.border + ';background:' + c.bg + ';' + (isRoot ? 'color:' + c.border + ';' : '') + '">' +
         '<span class="acct-fin-toggle' + (open ? '' : ' collapsed') + '">▼</span>' +
-        '<span class="acct-fin-name">' + wmsEsc(node.label) + '</span>' +
+        '<span class="acct-fin-name" title="' + wmsEsc(node.label) + '">' + wmsEsc(node.label) + '</span>' +
         '<span class="acct-led-count">' + node.count + '</span>' +
         (isRoot ? '<span class="acct-led-editsp"></span>'
             : '<button class="acct-edit-btn acct-led-edit" data-edit-group="' + node.id + '" tabindex="-1" title="Edit group">✏️</button>') +
@@ -2707,7 +2707,7 @@ function acctRenderLedgerTable() {
             '<td class="c-vch">' + wmsEsc(r.voucher_number) +
                 (auto ? ' <span class="acct-kind-badge">auto</span>' : '') +
                 (live ? '' : ' <span class="acct-scope-badge">cancelled</span>') + '</td>' +
-            '<td class="c-contra">' + wmsEsc(it.contra) + '</td>' +
+            '<td class="c-contra" title="' + wmsEsc(it.contra) + '">' + wmsEsc(it.contra) + '</td>' +
             '<td>' + wmsEsc(it.narr) + '</td>' +
             '<td class="text-right">' + (it.dr ? fmt(it.dr) : '-') + '</td>' +
             '<td class="text-right">' + (it.cr ? fmt(it.cr) : '-') + '</td>' +

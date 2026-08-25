@@ -68,7 +68,7 @@
                 </div>
             </div>
             <div class="user-section">
-                <button class="btn-refresh-app" id="appRefreshBtn" title="Refresh prices">🔄</button>
+                <button class="btn-refresh-app" id="appRefreshBtn" title="Refresh this module (F5)">🔄</button>
                 <div class="fyers-indicator" id="fyers-indicator">
                     <span id="fyers-status" style="font-size:12px;">⏳ Fyers...</span>
                     <span id="fyers-refresh-time" style="font-size:10px; color:#a0aec0; display:block;"></span>
@@ -735,12 +735,25 @@
 
         startIndexRefresh(); // Start index ticker
         document.getElementById('logoutBtn').addEventListener('click', logout);
-        document.getElementById('appRefreshBtn').addEventListener('click', function() {
-            // Refresh whichever module is active
-            if (document.getElementById('rptPortfolioBody') && typeof rptRefresh === 'function') {
-                rptRefresh();
-            } else if (typeof trRefresh === 'function') {
-                trRefresh();
+        // One refresh entry point for the whole app — used by the header 🔄 button AND F5.
+        // Dispatches to the ACTIVE module's own refresh; modules without one are re-rendered.
+        function wmsRefreshActiveModule() {
+            var mod = currentModule;
+            try {
+                if (mod === 'accounting' && typeof acctRefreshAll === 'function') { acctRefreshAll(); return; }
+                if (mod === 'reports' && typeof rptRefresh === 'function') { rptRefresh(); return; }
+                if (mod === 'trading' && typeof trRefresh === 'function') { trRefresh(); return; }
+                // No dedicated refresh (automation / master-data / import): re-render the module.
+                if (mod && typeof loadModule === 'function') { var m = mod; currentModule = null; loadModule(m); }
+            } catch (e) { console.error('[refresh] failed', e); }
+        }
+        window.wmsRefreshActiveModule = wmsRefreshActiveModule;
+        document.getElementById('appRefreshBtn').addEventListener('click', wmsRefreshActiveModule);
+        // F5 anywhere in the app triggers the same refresh (instead of a full browser reload).
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'F5' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+                e.preventDefault();
+                wmsRefreshActiveModule();
             }
         });
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
