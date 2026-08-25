@@ -184,10 +184,6 @@
 }
 .acct-led-toggle.collapsed { transform: rotate(-90deg); }
 .acct-led-count { font-size: 10px; font-weight: 600; color: #a0aec0; margin-left: 6px; }
-.acct-consol-chip { display: inline-flex; align-items: center; gap: 6px; background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
-.acct-consol-chip .acct-consol-x { cursor: pointer; font-weight: 700; }
-.acct-consol-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #2d3748; padding: 5px 0; cursor: pointer; }
-.acct-consol-item input { width: auto; }
 .acct-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
 
 /* ---- Opening balances: search-and-add picker ---- */
@@ -606,8 +602,8 @@
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="exceptions"],
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="bank-import"] { display: inline-block; }
 .acct-container.acct-mode-master #acctNewVoucherBtn,
-.acct-container.acct-mode-master #acctRebuildBtn,
 .acct-container.acct-mode-master .acct-menu-wrap { display: none; }
+.acct-icon-btn { padding-left: 9px; padding-right: 9px; }
 /* Exceptions list */
 .acct-ex-filters { display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }
 .acct-ex-filters .wms-input { width: auto; min-width: 0; }
@@ -653,14 +649,13 @@
         <span id="acctCmdFilters" class="acct-cmd-filters"></span>
         <span class="acct-cmd-sep"></span>
         <button id="acctNewVoucherBtn" class="wms-btn wms-btn-primary acct-tab-action">➕ New Voucher</button>
-        <button id="acctRebuildBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="Rebuild this book's auto-vouchers from its trades, via the accounting engine">↻ Rebuild</button>
+        <button id="acctRefreshBtn" class="wms-btn wms-btn-secondary acct-tab-action acct-icon-btn" title="Refresh — reload the chart of accounts and this book's vouchers from the server (picks up changes made elsewhere). Does not recompute or post anything.">🔄</button>
         <div class="acct-menu-wrap">
             <button id="acctMenuBtn" class="wms-btn wms-btn-secondary acct-tab-action" title="More actions">⋮</button>
             <div class="wms-dd acct-menu-dd" id="acctMenuDd">
                 <div class="wms-dd-item" data-act="opening">⚖ Opening Balances</div>
-                <div class="wms-dd-item" data-act="consolidate">📑 Consolidate…</div>
+                <div class="wms-dd-item" data-act="rebuildOne">↻ Rebuild this book</div>
                 <div class="wms-dd-item" data-act="rebuildAll">↻↻ Rebuild all books</div>
-                <div class="wms-dd-item" data-act="refresh">🔄 Refresh</div>
             </div>
         </div>
     </div>
@@ -922,25 +917,6 @@
             <button class="wms-btn wms-btn-danger" id="acctAddLedgerDelete" style="margin-right:auto;display:none;">🗑 Delete ledger</button>
             <button class="wms-btn wms-btn-secondary" id="acctAddLedgerCancel">Cancel</button>
             <button class="wms-btn wms-btn-primary" id="acctAddLedgerSave">Add Ledger</button>
-        </div>
-    </div>
-</div>
-
-<!-- ===================== Consolidate modal ===================== -->
-<div class="wms-modal-overlay" id="acctConsolidateModal">
-    <div class="wms-modal-dialog" style="max-width: 420px; width: 92%;">
-        <div class="wms-modal-header">
-            <span style="font-size:15px;font-weight:700;">Consolidate books</span>
-            <button class="wms-btn-close" id="acctConsolidateClose">✕</button>
-        </div>
-        <div class="wms-modal-body" style="padding:16px;max-height:60vh;overflow-y:auto;">
-            <p style="font-size:11px;color:#718096;margin:0 0 10px;">Select the books to combine into one set of statements (Balance Sheet, P&amp;L, Trial Balance).</p>
-            <label class="acct-consol-item" style="font-weight:700;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin-bottom:4px;"><input type="checkbox" id="acctConsolAll"> Select all</label>
-            <div id="acctConsolidateList"></div>
-        </div>
-        <div class="wms-modal-footer">
-            <button class="wms-btn wms-btn-secondary" id="acctConsolidateClear">Single book</button>
-            <button class="wms-btn wms-btn-primary" id="acctConsolidateApply">Apply</button>
         </div>
     </div>
 </div>
