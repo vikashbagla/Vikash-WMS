@@ -353,11 +353,10 @@
 /* Sticky header in the ledger modal. The scroll container (.wms-modal-body) has 16px padding,
    so offset the top by that much or rows bleed through the pad (UI-STANDARDS D.1.10). */
 .acct-ld-table thead th { top: -16px; }
-/* Totals live in the modal's fixed footer band, next to Close. */
-.wms-modal-footer.acct-ld-footer { justify-content: space-between; align-items: center; gap: 16px; }
-.acct-ld-foot-totals { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; font-size: 12px; color: #475569; }
-.acct-ld-foot-totals b { color: #1a202c; font-variant-numeric: tabular-nums; }
-.acct-ld-foot-totals .acct-ld-foot-lbl { font-weight: 700; color: #334155; }
+/* Sticky totals row at the bottom of the table (columns aligned). The scroll container has 16px
+   padding, so offset the bottom by that much (UI-STANDARDS D.1.10). */
+.acct-ld-table tfoot td { position: sticky; bottom: -16px; z-index: 2; background: #f1f5f9; font-weight: 600; box-shadow: inset 0 1px 0 #cbd5e0; }
+.acct-ld-table tfoot td.text-right { white-space: nowrap; }
 /* Date columns: fixed width + right-aligned so dates line up and are easy to scan
    (applies to the ledger drill-down and the Day Book — both are .acct-table). */
 .acct-table th.c-date, .acct-table td.c-date { width: 92px; white-space: nowrap; text-align: right; }
@@ -886,9 +885,6 @@
         </div>
         <div class="wms-modal-body" style="padding:16px;">
             <div id="acctLedgerDetailBody"></div>
-        </div>
-        <div class="wms-modal-footer acct-ld-footer">
-            <div id="acctLedgerTotals" class="acct-ld-foot-totals"></div>
         </div>
     </div>
 </div>
