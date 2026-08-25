@@ -144,6 +144,10 @@
 .acct-table th.acct-db-sorted { color: #4338ca; }
 .acct-db-arrow { font-size: 9px; }
 .acct-table td.acct-db-created { color: #64748b; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* The Day Book scroll container (.acct-tabpanel) has 14px padding, so a sticky header at top:0
+   rests 14px below the real top edge and rows scroll through that gap ABOVE the header.
+   Offset the sticky header up by the padding so it sits flush at the container's top (UI-STANDARDS D.1.10). */
+#acctPanel-day-book .acct-table th { top: -14px; }
 
 /* Trial Balance grouping */
 .acct-tb-group td { background: #f1f5f9; font-weight: 700; color: #2d3748; }
