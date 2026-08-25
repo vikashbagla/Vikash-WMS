@@ -2123,34 +2123,33 @@ function rptConsBookName(id) {
 // ---------------------------------------------------------------------------
 function rptConsNatureTree(natureName, cols, depthBase) {
     var ncols = cols.length;
-    function ledgerNode(lg) {
-        var cv = cols.map(function (c) { return rptConsLedgerDisp(c.net, lg); });
-        // "Show zero" here keys on the OPENING BALANCE and TOTAL columns only — a row is hidden
-        // when BOTH are zero, even if a middle (book / quarter) column moved (owner rule).
+    // "Show zero" keys on the OPENING BALANCE and TOTAL columns only — a node is HIDDEN (from the
+    // display, but STILL counted in the column sums) when BOTH are zero, even if a middle
+    // (book / quarter) column moved. Keeping it in the sum is what stops the per-column Capital
+    // integrity check from going red for books that only move in the middle columns (owner report).
+    function nodeHiddenByZero(cv) {
         var opIdx = rptConsOpBalIdx, totIdx = ncols - 1;
         var opV = (opIdx != null && opIdx >= 0 && opIdx < ncols) ? cv[opIdx] : 0;
         var totV = cv[totIdx] || 0;
-        var keyNonZero = (Math.round(opV * 100) !== 0) || (Math.round(totV * 100) !== 0);
-        if (!keyNonZero && !rptConsShowZero) return null;
-        return { key: 'l:' + lg.id, label: lg.name, isLedger: true, isPmsSecurity: (lg.ledger_kind === 'SECURITY'), colVals: cv, depth: 0 };
+        return (Math.round(opV * 100) === 0) && (Math.round(totV * 100) === 0);
+    }
+    function ledgerNode(lg) {
+        var cv = cols.map(function (c) { return rptConsLedgerDisp(c.net, lg); });
+        return { key: 'l:' + lg.id, label: lg.name, isLedger: true, isPmsSecurity: (lg.ledger_kind === 'SECURITY'), colVals: cv, depth: 0, hidden: nodeHiddenByZero(cv) };
     }
     function mkGroup(key, label, children) {
         var cv = []; for (var i = 0; i < ncols; i++) cv.push(0);
         children.forEach(function (ch) { ch.colVals.forEach(function (v, i) { cv[i] += v; }); });
-        return { key: key, label: label, children: children, colVals: cv, isGroup: true };
+        return { key: key, label: label, children: children, colVals: cv, isGroup: true, hidden: nodeHiddenByZero(cv) };
     }
     function buildGroup(groupId) {
         var out = [];
         rptConsLedgers.filter(function (l) { return l.group_id === groupId; })
             .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (l) { var n = ledgerNode(l); if (n) out.push(n); });
+            .forEach(function (l) { out.push(ledgerNode(l)); });   // keep all (sums); render skips hidden
         rptConsGroups.filter(function (g) { return g.parent_group_id === groupId; })
             .sort(function (a, b) { return a.name.localeCompare(b.name); })
-            .forEach(function (cg) {
-                var children = buildGroup(cg.id);
-                if (!children.length && !rptConsShowZero) return;
-                out.push(mkGroup('g:' + cg.id, cg.name, children));
-            });
+            .forEach(function (cg) { out.push(mkGroup('g:' + cg.id, cg.name, buildGroup(cg.id))); });
         return out;
     }
     var root = rptConsGroups.find(function (g) { return !g.parent_group_id && g.name === natureName; });
@@ -2165,6 +2164,7 @@ function rptConsNatureTree(natureName, cols, depthBase) {
 function rptConsNegate(node) {
     if (!node) return node;
     var out = { key: node.key, label: node.label, isLedger: node.isLedger, isGroup: node.isGroup, isRoot: node.isRoot,
+        hidden: node.hidden, isPmsSecurity: node.isPmsSecurity,
         colVals: node.colVals.map(function (v) { return -v; }) };
     if (node.children) out.children = node.children.map(rptConsNegate);
     return out;
@@ -2210,6 +2210,9 @@ function rptConsBookMtm(bookId) {
 
 function rptConsNodeRows(node, depth, ncols) {
     if (!node) return '';
+    // Hidden by show-zero (op & total both zero) — skip the row AND its subtree from DISPLAY,
+    // but it has already been counted in the column sums. Roots (Assets/Liabilities/…) always show.
+    if (node.hidden && !node.isRoot && !rptConsShowZero) return '';
     var isGroup = node.isGroup || node.isRoot;
     var collapsed = isGroup && rptConsCollapsed[node.key];
     var pad = 8 + depth * 16;
