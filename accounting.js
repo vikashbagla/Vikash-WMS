@@ -3567,8 +3567,8 @@ function acctWireModals() {
     // Ledger-detail modal
     var lOverlay = document.getElementById('acctLedgerModal');
     if (lOverlay && typeof wmsModal === 'function') acctLedgerModalCtrl = wmsModal(lOverlay, { backdropClose: false });
-    var _ldDone = document.getElementById('acctLedgerDone');
-    if (_ldDone) _ldDone.onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
+    var _ldClose = document.getElementById('acctLedgerClose');
+    if (_ldClose) _ldClose.onclick = function () { acctLedgerModalCtrl && acctLedgerModalCtrl.close(); };
     var _lnv = document.getElementById('acctLedgerNewVoucher');
     if (_lnv) _lnv.onclick = function () { acctOpenVoucherModal(acctLedgerDetailId); };
     var _ldiv = document.getElementById('acctLedgerDividend');
