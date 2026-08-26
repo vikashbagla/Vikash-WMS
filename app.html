@@ -574,7 +574,7 @@
             if (old) old.remove();
 
             const script = document.createElement('script');
-            script.src = src + '?t=' + Date.now(); // cache bust
+            script.src = src + '?v=' + (window.__wmsV || (window.__wmsV = Date.now())); // versioned → browser-cached within the session (was ?t=Date.now(), which re-downloaded every switch)
             script.onload = resolve;
             script.onerror = reject;
             document.body.appendChild(script);
@@ -605,7 +605,7 @@
         container.innerHTML = '<div class="loading-module">Loading...</div>';
         
         try {
-            var _cb = '?t=' + Date.now(); // cache bust for HTML modules
+            var _cb = '?v=' + (window.__wmsV || (window.__wmsV = Date.now())); // versioned → HTML fragments browser-cached within the session
             if (moduleName === 'reports') {
                 const html = await (await fetch('reports.html' + _cb)).text();
                 injectModule(html, container);
@@ -843,9 +843,11 @@
     <script>
     // Cache busting - auto version by date so deployments always load fresh files
     const _v = Date.now();
+    window.__wmsV = _v;   // stable per-page asset version — reused by loadScript / loadModule / trading sub-loaders so module assets are BROWSER-CACHED within a session (full reload only on hard refresh)
     document.getElementById('app-styles-link').href = `app-styles.css?v=${_v}`;
     document.write(`<script src="utils.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-shared.js?v=${_v}"><\/script>`);
+    document.write(`<script src="wms-store.js?v=${_v}"><\/script>`);   // ADR-001 app-wide data store
     document.write(`<script src="wms-cost-engine.js?v=${_v}"><\/script>`);
     document.write(`<script src="accounting-engine.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-txn-modal.js?v=${_v}"><\/script>`);

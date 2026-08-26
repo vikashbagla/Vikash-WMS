@@ -303,6 +303,8 @@ if (!window.__acctBookAddDismissWired) {
 
 async function acctRefreshAll() {
     acctLoading(true);
+    // Explicit Refresh: drop the store copies so this is a guaranteed re-pull.
+    if (typeof window !== 'undefined' && window.wmsStore) { wmsStore.invalidate('acctGroups'); wmsStore.invalidate('acctLedgers'); wmsStore.invalidate('vouchers'); }
     try { await acctLoadCatalogue(); await acctLoadBook(); acctRenderActiveTab(); }
     finally { acctLoading(false); }
 }
@@ -336,9 +338,55 @@ function acctAvailableLedgers(bookId) {
 // ============================================================================
 // Data loading
 // ============================================================================
+// ADR-001 Phase 2 — Accounting datasets on the app-wide store. Chart (groups,
+// ledgers) and per-book vouchers are cached and re-fetched ONLY when their table
+// changed. Writes (New Voucher / Rebuild / Add Ledger) bump updated_at, so the
+// cheap probe detects the change and reloads automatically — no explicit
+// invalidation needed. Degrades safely to today's always-fetch if the store or
+// the store_sync_state RPC is unavailable.
+async function acctStoreSyncStateRpc(table) {
+    try {
+        var res = await fetch(SUPABASE_URL + '/rest/v1/rpc/store_sync_state', { method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ p_table: table }) });
+        if (!res.ok) return null;
+        var rows = await res.json(); var r = Array.isArray(rows) ? rows[0] : rows;
+        return r ? { checksum: r.checksum } : null;
+    } catch (e) { return null; }
+}
+async function acctVouchersSyncState(ids) {
+    try {
+        var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
+        var res = await fetch(acctUrl('acct_vouchers?' + filter + '&select=updated_at&order=updated_at.desc&limit=1'), { headers: wmsHeaders({ Prefer: 'count=exact' }) });
+        if (!res.ok) return null;
+        var cr = res.headers.get('content-range'); var total = cr ? cr.split('/')[1] : '?';
+        var rows = await res.json(); var maxu = (rows && rows[0]) ? rows[0].updated_at : '?';
+        return { checksum: total + '|' + maxu };
+    } catch (e) { return null; }
+}
+if (typeof window !== 'undefined' && window.wmsStore) {
+    wmsStore.register('acctGroups', { policy: 'cache',
+        loader: function () { return wmsFetchAllRaw(acctUrl('acct_groups?select=*&order=name.asc')); },
+        syncState: function () { return acctStoreSyncStateRpc('acct_groups'); } });
+    wmsStore.register('acctLedgers', { policy: 'cache',
+        loader: function () { return wmsFetchAllRaw(acctUrl('acct_ledgers?select=*&order=name.asc')); },
+        syncState: function () { return acctStoreSyncStateRpc('acct_ledgers'); } });
+    wmsStore.register('vouchers', { policy: 'cache',
+        keyBy: function (pr) { return (pr && pr.ids) ? pr.ids.slice().sort().join(',') : ''; },
+        loader: async function (pr) {
+            var ids = (pr && pr.ids) || [];
+            var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
+            var res = await Promise.all([
+                wmsFetchAllRaw(acctUrl('acct_voucher_full?' + filter + '&order=voucher_date.asc,voucher_number.asc,sort_order.asc')),
+                wmsFetchAllRaw(acctUrl('acct_vouchers?select=id,created_at&' + filter))
+            ]);
+            var createdAt = {}; (res[1] || []).forEach(function (v) { createdAt[v.id] = v.created_at; });
+            return { rows: res[0] || [], createdAt: createdAt };
+        },
+        syncState: function (pr) { return acctVouchersSyncState((pr && pr.ids) || []); } });
+}
+
 async function acctLoadCatalogue() {
-    var groups = await wmsFetchAllRaw(acctUrl('acct_groups?select=*&order=name.asc'));
-    var ledgers = await wmsFetchAllRaw(acctUrl('acct_ledgers?select=*&order=name.asc'));
+    var groups = (typeof window !== 'undefined' && window.wmsStore) ? await wmsStore.get('acctGroups') : await wmsFetchAllRaw(acctUrl('acct_groups?select=*&order=name.asc'));
+    var ledgers = (typeof window !== 'undefined' && window.wmsStore) ? await wmsStore.get('acctLedgers') : await wmsFetchAllRaw(acctUrl('acct_ledgers?select=*&order=name.asc'));
     acctGroups = groups || [];
     acctLedgers = ledgers || [];
     acctGroupById = {};
@@ -347,6 +395,12 @@ async function acctLoadCatalogue() {
 async function acctLoadBook() {
     var ids = acctViewBookIds();
     if (!ids.length) { acctVoucherRows = []; acctVoucherCreatedAt = {}; return; }
+    if (typeof window !== 'undefined' && window.wmsStore) {
+        var vb = await wmsStore.get('vouchers', { ids: ids });
+        acctVoucherRows = (vb && vb.rows) || [];
+        acctVoucherCreatedAt = (vb && vb.createdAt) || {};
+        return;
+    }
     var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
     // The acct_voucher_full VIEW has no created_at, so fetch it from the base table in parallel and map by voucher id.
     var res = await Promise.all([

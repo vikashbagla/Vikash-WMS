@@ -275,12 +275,10 @@ async function initReports() {
         return;
     }
 
-    // Live prices — build symbol list then use shared refresh system
+    // Live prices refresh in the BACKGROUND (below); no blocking Fyers fetch before
+    // first paint. On re-entry wmsLivePrices is already fresh (10s timer); first-ever
+    // load shows last-trade prices briefly then updates (price-status pill reflects it).
     if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
-    if (typeof wmsStandardRefresh === 'function') {
-        await wmsStandardRefresh(false);
-    }
-    await rptFetchLivePrices();
 
     rptUpdateUnitLabels();
     rptSetupTabs();
@@ -290,17 +288,29 @@ async function initReports() {
     rptInitCGFilters();
     rptInitCGViewBar();
     rptInitConsol();
+    // Only the ACTIVE tab (Portfolio) loads its views + renders on entry; Cap Gains
+    // and Consolidation defer to first open (rptEnsureTabLoaded).
     await rptPortfolioVM.loadViews();
-    await rptCGVM.loadViews();
-    await rptConsolVM.loadViews();
-    // If no default view applied, render now
     if (!rptPortfolioVM.activeViewId) rptRenderPortfolio();
-    if (!rptCGVM.activeViewId) rptRenderCapGains();
+    rptPortfolioLoaded = true;
     showLoading(false);
+
+    // Background: refresh live prices, then re-render the loaded tabs in place.
+    (async function () {
+        try {
+            if (typeof wmsStandardRefresh === 'function') await wmsStandardRefresh(false);
+            await rptFetchLivePrices();
+            rptRenderPortfolio();
+            if (rptCGLoaded) rptRenderCapGains();
+            if (rptConsolLoaded && typeof rptRenderConsol === 'function') rptRenderConsol();
+        } catch (e) { console.warn('Reports: background price refresh failed', e); }
+    })();
 }
 
 async function rptRefresh() {
     showLoading(true);
+    // Explicit Refresh: drop the store copies so this is a guaranteed re-pull.
+    if (typeof window !== 'undefined' && window.wmsStore) { wmsStore.invalidate('mfTradesRaw'); wmsStore.invalidate('mfNavRaw'); wmsStore.invalidate('histPrices1M'); }
     try {
         await rptLoadData();
     } catch (error) {
@@ -339,7 +349,9 @@ async function rptLoadData() {
     // view, excluding dont_display (hidden) trades exactly as the old
     // dont_display=eq.false query did. The shared cache is already sorted by
     // (transaction_date, transaction_time, id), which Reports relies on.
-    await wmsLoadTransactions();
+    // ADR-001: read transactions through the app-wide store (delegates to the same
+    // checksum-gated cache; falls back if the store isn't present).
+    await (window.wmsStore ? window.wmsStore.get('transactions') : wmsLoadTransactions());
     var rptRows = window._wmsTxnCache.rows.filter(function(t) { return !t.dont_display; });
     console.log('✅ Reports: using ' + rptRows.length + ' shared transactions');
 
@@ -374,8 +386,7 @@ async function rptLoadData() {
     // Mutual funds live in their OWN table (mf_trades — fractional units, kept out
     // of the Trading module). Fold them into rptTransactions so Portfolio + Capital
     // Gains include MF on the SAME FIFO/CG engine as equity. Load latest NAV too.
-    await rptLoadMfTrades();
-    await rptLoadMfNavs();
+    await Promise.all([rptLoadMfTrades(), rptLoadMfNavs()]);   // independent → run concurrently
 }
 
 // Map an mf_trades txn_type to the reports/FIFO transaction type. PURCHASE /
@@ -394,9 +405,50 @@ function rptMfType(tt) {
 // Fetch mf_trades, resolve each to its MF security, and append reports-shaped
 // (camelCase) rows to rptTransactions. Fraction-safe: the shared FIFO consumes
 // numeric quantity as-is (proven by the accounting MF postings).
+// ADR-001 Phase 2 — Reports' own datasets on the app-wide store. Each fetch below
+// is cached and re-run ONLY when its underlying table changed (a cheap probe):
+// mf_trades via store_sync_state (migration 97); market_prices slices via
+// count + latest created_at (append-only, no updated_at). If the store or the
+// probe is unavailable, behaviour degrades safely to today's always-fetch.
+async function rptStoreSyncState(table) {
+    try {
+        var res = await fetch(SUPABASE_URL + '/rest/v1/rpc/store_sync_state', { method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ p_table: table }) });
+        if (!res.ok) return null;
+        var rows = await res.json(); var r = Array.isArray(rows) ? rows[0] : rows;
+        return r ? { checksum: r.checksum } : null;
+    } catch (e) { return null; }
+}
+async function rptMpSyncState(qs) {
+    try {
+        var res = await fetch(SUPABASE_URL + '/rest/v1/market_prices?' + qs + '&select=created_at&order=created_at.desc&limit=1', { headers: wmsHeaders({ Prefer: 'count=exact' }) });
+        if (!res.ok) return null;
+        var cr = res.headers.get('content-range'); var total = cr ? cr.split('/')[1] : '?';
+        var rows = await res.json(); var maxc = (rows && rows[0]) ? rows[0].created_at : '?';
+        return { checksum: total + '|' + maxc };
+    } catch (e) { return null; }
+}
+if (typeof window !== 'undefined' && window.wmsStore) {
+    wmsStore.register('mfTradesRaw', {
+        policy: 'cache',
+        loader: function () { return wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/mf_trades?select=*&order=txn_date.asc,id.asc', { headers: wmsHeaders() }); },
+        syncState: function () { return rptStoreSyncState('mf_trades'); }
+    });
+    wmsStore.register('mfNavRaw', {
+        policy: 'cache',
+        loader: function () { return wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/market_prices?security_type=eq.MF&resolution=eq.1D&select=security_id,close,price_date&order=price_date.desc', { headers: wmsHeaders() }); },
+        syncState: function () { return rptMpSyncState('security_type=eq.MF&resolution=eq.1D'); }
+    });
+    wmsStore.register('histPrices1M', {
+        policy: 'cache',
+        loader: function () { return wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/market_prices?resolution=eq.1M&select=security_id,price_date,close&order=security_id.asc,price_date.asc', { headers: wmsHeaders() }); },
+        syncState: function () { return rptMpSyncState('resolution=eq.1M'); }
+    });
+}
+
 async function rptLoadMfTrades() {
     try {
-        var rows = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/mf_trades?select=*&order=txn_date.asc,id.asc', { headers: wmsHeaders() });
+        var rows = (typeof window !== 'undefined' && window.wmsStore) ? await wmsStore.get('mfTradesRaw')
+                 : await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/mf_trades?select=*&order=txn_date.asc,id.asc', { headers: wmsHeaders() });
         if (!rows || rows.length === 0) return;
 
         // security_id -> securities_db row (symbol/name/type). Backfill any missing.
@@ -469,7 +521,8 @@ async function rptLoadMfTrades() {
 async function rptLoadMfNavs() {
     rptMfNav = {};
     try {
-        var rows = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/market_prices?security_type=eq.MF&resolution=eq.1D&select=security_id,close,price_date&order=price_date.desc', { headers: wmsHeaders() });
+        var rows = (typeof window !== 'undefined' && window.wmsStore) ? await wmsStore.get('mfNavRaw')
+                 : await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/market_prices?security_type=eq.MF&resolution=eq.1D&select=security_id,close,price_date&order=price_date.desc', { headers: wmsHeaders() });
         if (!rows || rows.length === 0) return;
         var secById = {};
         (wmsRefData.securitiesCm || []).forEach(function(s) { secById[s.id] = s; });
@@ -487,9 +540,9 @@ async function rptLoadMfNavs() {
 // Consolidated > Quarters view. One fetch (equity + MF rows, keyed by security_id),
 // cached for the session. Written by monthly-price-history (equity) + mf-nav-sync (MF).
 async function rptLoadHistPrices() {
-    if (rptHistPxLoaded) return;
     try {
-        var rows = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/market_prices?resolution=eq.1M&select=security_id,price_date,close&order=security_id.asc,price_date.asc', { headers: wmsHeaders() });
+        var rows = (typeof window !== 'undefined' && window.wmsStore) ? await wmsStore.get('histPrices1M')
+                 : await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/market_prices?resolution=eq.1M&select=security_id,price_date,close&order=security_id.asc,price_date.asc', { headers: wmsHeaders() });
         var map = {};
         (rows || []).forEach(function (r) {
             if (!r.security_id) return;
@@ -614,6 +667,22 @@ function rptUpdatePriceStatus(status) {
 // TAB SWITCHING
 // ============================================================================
 
+// Deferred-tab loader (ADR-001 perf): Cap Gains + Consolidation load their views
+// (and, for Consolidation, vouchers + '1M' history) only on first open, then
+// re-render from cache. Keeps a normal Reports entry to the Portfolio tab only.
+var rptPortfolioLoaded = false, rptCGLoaded = false, rptConsolLoaded = false;
+async function rptEnsureTabLoaded(which) {
+    try {
+        if (which === 'capgains') {
+            if (!rptCGLoaded) { await rptCGVM.loadViews(); rptCGLoaded = true; if (!rptCGVM.activeViewId) rptRenderCapGains(); }
+            else rptRenderCapGains();
+        } else if (which === 'consol') {
+            if (!rptConsolLoaded) { await rptConsolVM.loadViews(); rptConsolLoaded = true; if (!rptConsolVM.activeViewId) rptRenderConsol(); }
+            else rptRenderConsol();
+        }
+    } catch (e) { console.warn('Reports: deferred tab load failed (' + which + ')', e); }
+}
+
 function rptSetupTabs() {
     var tabBtns = document.querySelectorAll('#rptTabs .reports-tab-btn');
     tabBtns.forEach(function(btn) {
@@ -626,9 +695,9 @@ function rptSetupTabs() {
             });
             var target = document.getElementById(tabId);
             if (target) target.classList.add('active');
-            // Render the active tab if needed
-            if (tabId === 'rpt-capgains') rptRenderCapGains();
-            if (tabId === 'rpt-consol') rptRenderConsol();
+            // Render the active tab if needed (lazy-loading its views on first open)
+            if (tabId === 'rpt-capgains') rptEnsureTabLoaded('capgains');
+            else if (tabId === 'rpt-consol') rptEnsureTabLoaded('consol');
         });
     });
 }
