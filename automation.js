@@ -6747,11 +6747,10 @@ function auAt2RenderEvents() {
 }
 
 // ----- Log tab --------------------------------------------------------------
-// Every run's events, terse, newest first — the same lines the digest emails
+// Every run as ONE table row, newest first — the terse lines the digest emails
 // carried (blocked X of Y bars, entry Z lots @ price, exit … P&L, stop → level).
-// Emails are now gated to entries/exits/criticals; this is the FULL record.
-// Source: at2_run_log (migration 95), one row per scan, digest = {events, blocks,
-// failed, positions}. No prose, no trade detail — just what happened.
+// Emails are gated to entries/exits/criticals; this is the FULL record.
+// Source: at2_run_log (mig 95 + engine col mig 96), one row per scan.
 function auAt2RenderLog() {
     var el = document.getElementById('au-at2-log-content');
     if (!el) return;
@@ -6769,6 +6768,9 @@ function auAt2RenderLog() {
     var chip = function (m) { return '<span class="au-badge ' + (m === 'live' ? 'error' : 'idle')
           + '" style="font-size:9px;padding:0 5px;margin-left:2px">' + (m === 'live' ? 'LIVE' : 'paper') + '</span>'; };
 
+    h += '<table class="au-at2-table"><thead><tr>'
+       + '<th style="white-space:nowrap">Time</th><th>Family</th><th>What happened</th>'
+       + '<th style="text-align:center">Email</th></tr></thead><tbody>';
     runs.forEach(function (r) {
         var d = r.digest || {};
         var evs = d.events || [], blocks = d.blocks || [], failed = d.failed || [];
@@ -6788,18 +6790,19 @@ function auAt2RenderLog() {
         blocks.forEach(function (b) { lines.push('\u23f8 ' + auAt2Esc(b)); });
         failed.forEach(function (fl) { lines.push('\u26a0 ' + auAt2Esc(fl)); });
 
-        // The family badge (at2_run_log.engine, migration 96) — the journal serves
-        // EVERY AT2 family, not just ms007; each run is stamped with its family code.
-        h += '<div class="au-card" style="padding:7px 12px;margin-top:6px">'
-           + '<div style="font-weight:600;font-size:12px;color:#374151">' + auAt2Esc(r.run_ist || auAt2Ts(r.run_at))
-           + ' <span class="au-badge idle" style="font-size:9px;padding:0 5px;font-weight:600">' + auAt2Esc(r.engine || 'MS007') + '</span>'
-           + (r.emailed ? ' <span class="au-badge idle" style="font-size:9px;padding:0 5px">emailed</span>' : '') + '</div>';
-        if (lines.length)
-            h += '<div style="font-size:12.5px;line-height:1.75;margin-top:2px">' + lines.map(function (l) { return '<div>' + l + '</div>'; }).join('') + '</div>';
-        else
-            h += '<div style="font-size:12px;margin-top:1px"><span class="au-sub">quiet \u2014 nothing to act on</span></div>';
-        h += '</div>';
+        // ONE ROW PER RUN. Family badge = at2_run_log.engine (mig 96) — the journal
+        // serves EVERY AT2 family. Multiple events stack in the last cell; a quiet
+        // scan is one dimmed row so the eye skips it.
+        var what = lines.length
+            ? lines.map(function (l) { return '<div>' + l + '</div>'; }).join('')
+            : '<span class="au-sub">quiet \u2014 nothing to act on</span>';
+        h += '<tr' + (lines.length ? '' : ' style="opacity:.5"') + '>'
+           + '<td style="white-space:nowrap;font-weight:600">' + auAt2Esc(r.run_ist || auAt2Ts(r.run_at)) + '</td>'
+           + '<td><span class="au-badge idle" style="font-size:9px;padding:0 5px;font-weight:600">' + auAt2Esc(r.engine || 'MS007') + '</span></td>'
+           + '<td style="line-height:1.7">' + what + '</td>'
+           + '<td style="text-align:center">' + (r.emailed ? '\u2709' : '\u2014') + '</td></tr>';
     });
+    h += '</tbody></table>';
     el.innerHTML = h;
 }
 
