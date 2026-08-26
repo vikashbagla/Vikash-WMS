@@ -5919,7 +5919,7 @@ async function _auUpsertLimit(existing, scope, type, value, enabled, breach) {
 // ============================================================================
 
 var _auAt2 = { strategies: [], books: [], trades: [], alerts: [], signals: [], events: [],
-               families: [], accounts: [], loadedAt: null };
+               runlog: [], families: [], accounts: [], loadedAt: null };
 
 // ── The known vocabularies. Anything outside these renders LOUD. ────────────
 var AU_AT2_STATUS = {
@@ -6168,7 +6168,7 @@ async function auAt2Get(table, query) {
 }
 
 async function autoAt2Refresh() {
-    var panels = ['open', 'closed', 'alerts', 'events', 'controls'];
+    var panels = ['open', 'closed', 'alerts', 'events', 'log', 'controls'];
     panels.forEach(function (p) {
         var el = document.getElementById('au-at2-' + p + '-content');
         if (el) el.innerHTML = '<div class="au-meta">Loading…</div>';
@@ -6189,11 +6189,15 @@ async function autoAt2Refresh() {
             // have to decode.
             auAt2Get('at2_strategy_family', 'select=id,code,name,engine,driver,params_schema&order=code'),
             auAt2Get('investor_broker_accounts',
-                     'select=investor_id,broker_id,investors(name),brokers(name)&order=investor_id')
+                     'select=investor_id,broker_id,investors(name),brokers(name)&order=investor_id'),
+            // The per-run journal (migration 95) — the terse events the digest emails
+            // used to carry. Feeds the Log tab; every scan, newest first.
+            auAt2Get('at2_run_log', 'select=*&order=run_at.desc&limit=200')
         ]);
         _auAt2.strategies = res[0]; _auAt2.books = res[1]; _auAt2.trades = res[2];
         _auAt2.alerts = res[3]; _auAt2.signals = res[4]; _auAt2.events = res[5];
         _auAt2.families = res[6] || []; _auAt2.accounts = res[7] || [];
+        _auAt2.runlog = res[8] || [];
         _auAt2.loadedAt = new Date();
 
         // Contract identity (symbol/expiry/lot_size) lives on securities_nfo,
@@ -6223,6 +6227,7 @@ async function autoAt2Refresh() {
         auAt2RenderClosed();
         auAt2RenderAlerts();
         auAt2RenderEvents();
+        auAt2RenderLog();
         auAt2RenderControls();
     } catch (e) {
         // F.13/F.14 — a failed load must NOT fall through to an empty-looking
@@ -6738,6 +6743,60 @@ function auAt2RenderEvents() {
         });
         h += '</tbody></table>';
     }
+    el.innerHTML = h;
+}
+
+// ----- Log tab --------------------------------------------------------------
+// Every run's events, terse, newest first — the same lines the digest emails
+// carried (blocked X of Y bars, entry Z lots @ price, exit … P&L, stop → level).
+// Emails are now gated to entries/exits/criticals; this is the FULL record.
+// Source: at2_run_log (migration 95), one row per scan, digest = {events, blocks,
+// failed, positions}. No prose, no trade detail — just what happened.
+function auAt2RenderLog() {
+    var el = document.getElementById('au-at2-log-content');
+    if (!el) return;
+    var runs = _auAt2.runlog || [];
+    var h = '<div class="au-card" style="padding:10px 12px"><strong>Run log</strong> '
+          + '<span class="au-sub">— every scan, newest first; times IST. The same terse lines the '
+          + 'digest emails carried. Emails now fire only for entries, exits and criticals; this is the full record.</span></div>';
+    if (!runs.length) {
+        h += '<div class="au-soon">No runs journalled yet — starts once the engine build carrying the Log is deployed.</div>';
+        el.innerHTML = h; return;
+    }
+    var px = function (n) { return (n === null || n === undefined || !isFinite(Number(n))) ? '—' : '\u20b9' + auAt2Num(n); };
+    var money = function (n) { n = Number(n) || 0;
+        return '<span style="color:' + (n < 0 ? '#c53030' : '#2f855a') + '">' + (n < 0 ? '\u2212\u20b9' : '+\u20b9') + auAt2Num(Math.abs(n)) + '</span>'; };
+    var chip = function (m) { return '<span class="au-badge ' + (m === 'live' ? 'error' : 'idle')
+          + '" style="font-size:9px;padding:0 5px;margin-left:2px">' + (m === 'live' ? 'LIVE' : 'paper') + '</span>'; };
+
+    runs.forEach(function (r) {
+        var d = r.digest || {};
+        var evs = d.events || [], blocks = d.blocks || [], failed = d.failed || [];
+        var lines = [];
+        evs.forEach(function (e) {
+            var who = auAt2Esc(e.instrument) + ' ' + auAt2Esc(e.side);
+            var lot = e.lots + ' lot' + (Number(e.lots) > 1 ? 's' : '');
+            if (e.kind === 'ENTRY')
+                lines.push('\ud83d\udfe2 ' + who + ' \u00b7 entry ' + lot + ' @ ' + px(e.price) + ' \u00b7 SL ' + px(e.toStop) + ' \u00b7 ' + auAt2Esc(e.book || '') + chip(e.mode));
+            else if (e.kind === 'EXIT')
+                lines.push('\ud83d\udd34 ' + who + ' \u00b7 exit ' + lot + ' @ ' + px(e.price) + ' \u00b7 ' + auAt2Esc(e.reason || '') + ' \u00b7 ' + money(e.pnl) + chip(e.mode));
+            else if (e.kind === 'STOP_MOVE')
+                lines.push('\ud83d\udd27 ' + who + ' \u00b7 SL \u2192 ' + px(e.toStop) + chip(e.mode));
+            else if (e.kind === 'ROLL')
+                lines.push('\ud83d\udd04 ' + who + ' \u00b7 rolled' + chip(e.mode));
+        });
+        blocks.forEach(function (b) { lines.push('\u23f8 ' + auAt2Esc(b)); });
+        failed.forEach(function (fl) { lines.push('\u26a0 ' + auAt2Esc(fl)); });
+
+        h += '<div class="au-card" style="padding:7px 12px;margin-top:6px">'
+           + '<div style="font-weight:600;font-size:12px;color:#374151">' + auAt2Esc(r.run_ist || auAt2Ts(r.run_at))
+           + (r.emailed ? ' <span class="au-badge idle" style="font-size:9px;padding:0 5px">emailed</span>' : '') + '</div>';
+        if (lines.length)
+            h += '<div style="font-size:12.5px;line-height:1.75;margin-top:2px">' + lines.map(function (l) { return '<div>' + l + '</div>'; }).join('') + '</div>';
+        else
+            h += '<div style="font-size:12px;margin-top:1px"><span class="au-sub">quiet \u2014 nothing to act on</span></div>';
+        h += '</div>';
+    });
     el.innerHTML = h;
 }
 
