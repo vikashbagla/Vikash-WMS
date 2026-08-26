@@ -6667,6 +6667,9 @@ function auAt2RenderAlerts() {
     if (!el) return;
     var open = _auAt2.alerts.filter(function (a) { return !a.resolved_at; });
     var resolved = _auAt2.alerts.filter(function (a) { return a.resolved_at; });
+    // Titles carry raw trade/command UUIDs (e.g. "trade 8e1f3fdd-… is UNPROTECTED");
+    // shorten to the first 8 chars so the table reads in plain English, not jargon.
+    var shortIds = function (x) { return String(x || '').replace(/[0-9a-f]{8}-[0-9a-f-]{27}/gi, function (m) { return m.slice(0, 8) + '\u2026'; }); };
 
     var h = '<div class="au-card" style="padding:10px 12px;margin-bottom:10px">'
           + '<strong>The email is a notification. This table is the truth.</strong>'
@@ -6677,13 +6680,12 @@ function auAt2RenderAlerts() {
     if (!open.length) {
         h += '<div class="au-soon" style="border-color:#a7f3d0;color:#065f46">✅ No open alerts.</div>';
     } else {
-        h += '<table class="au-at2-table"><thead><tr><th>Severity</th><th>Condition</th><th>Title</th>'
+        h += '<table class="au-at2-table"><thead><tr><th>Severity</th><th>Alert</th>'
            + '<th class="text-right">Seen</th><th>First</th><th>Last</th><th>Escalated</th></tr></thead><tbody>';
         open.forEach(function (a) {
             h += '<tr' + (a.severity === 'critical' ? ' style="background:#fef2f2"' : '') + '>'
                + '<td>' + auAt2Severity(a.severity) + '</td>'
-               + '<td><code style="font-size:11px">' + auAt2Esc(a.condition_key) + '</code></td>'
-               + '<td>' + auAt2Esc(a.title) + '</td>'
+               + '<td>' + shortIds(auAt2Esc(a.title)) + '</td>'
                + '<td class="text-right">' + auAt2Esc(a.occurrences) + '×</td>'
                + '<td>' + auAt2Ts(a.first_seen) + '</td>'
                + '<td>' + auAt2Ts(a.last_seen) + '</td>'
@@ -6698,7 +6700,7 @@ function auAt2RenderAlerts() {
            + '<table class="au-at2-table" style="margin-top:8px"><thead><tr><th>Severity</th><th>Title</th>'
            + '<th>Resolved</th></tr></thead><tbody>';
         resolved.forEach(function (a) {
-            h += '<tr><td>' + auAt2Severity(a.severity) + '</td><td>' + auAt2Esc(a.title) + '</td>'
+            h += '<tr><td>' + auAt2Severity(a.severity) + '</td><td>' + shortIds(auAt2Esc(a.title)) + '</td>'
                + '<td>' + auAt2Ts(a.resolved_at) + '</td></tr>';
         });
         h += '</tbody></table></details>';
