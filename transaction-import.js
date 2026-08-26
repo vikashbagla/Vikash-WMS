@@ -2631,7 +2631,7 @@ function displayExcelPreview() {
     var reviewCount = excelFlaggedRows.length;
 
     // Update sticky summary bar
-    document.getElementById('statTotal').textContent = allRows.length;
+    document.getElementById('impStatTotal').textContent = allRows.length;
     document.getElementById('statConfirmed').textContent = confirmedCount;
     document.getElementById('statReview').textContent = reviewCount;
 

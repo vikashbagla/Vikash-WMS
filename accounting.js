@@ -301,6 +301,15 @@ if (!window.__acctBookAddDismissWired) {
     });
 }
 
+// ADR-001 Phase 4 — cheap resume on RETURN to Accounting (module stays mounted).
+// Store-backed chart + vouchers reload (reuse when unchanged) + re-render. No
+// invalidate (that is the explicit Refresh button); this is a cheap diff.
+async function wmsResumeAccounting() {
+    try { await acctLoadCatalogue(); await acctLoadBook(); acctRenderActiveTab(); }
+    catch (e) { console.warn('wmsResumeAccounting failed', e); }
+}
+if (typeof window !== 'undefined') window.wmsResumeAccounting = wmsResumeAccounting;
+
 async function acctRefreshAll() {
     acctLoading(true);
     // Explicit Refresh: drop the store copies so this is a guaranteed re-pull.

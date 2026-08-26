@@ -567,88 +567,84 @@
     }
 
     // Helper to load a script dynamically
+    const _wmsLoadedScripts = {};
     function loadScript(src) {
         return new Promise((resolve, reject) => {
-            // Remove old instance if exists
-            const old = document.querySelector(`script[src="${src}"]`);
-            if (old) old.remove();
-
+            // Load ONCE per page session (ADR-001 Phase 4): a module's script is parsed
+            // and executed a single time; returning to the module reuses it (no re-parse).
+            if (_wmsLoadedScripts[src]) { resolve(); return; }
             const script = document.createElement('script');
-            script.src = src + '?v=' + (window.__wmsV || (window.__wmsV = Date.now())); // versioned → browser-cached within the session (was ?t=Date.now(), which re-downloaded every switch)
-            script.onload = resolve;
+            script.src = src + '?v=' + (window.__wmsV || (window.__wmsV = Date.now()));
+            script.onload = () => { _wmsLoadedScripts[src] = true; resolve(); };
             script.onerror = reject;
             document.body.appendChild(script);
         });
     }
 
-    // Load module
-    async function loadModule(moduleName) {
-        // Access guard (defense-in-depth; the DB RLS is the real gate). A non-owner can never
-        // load a module they aren't granted, even via a stale saved preference.
+    // ADR-001 Phase 4 — KEEP-MOUNTED module shell. Each module gets its own pane
+    // that stays in the DOM; switching hides one and shows another. A module's HTML
+    // is injected and its script parsed + init'd ONCE (first visit); a return visit
+    // just shows the pane and runs a cheap store-backed resume() (diff + re-render),
+    // so there is no re-download, no re-parse, no re-wire on switch.
+    const WMS_MODULE_DEF = {
+        'reports':             { html: 'reports.html',            scripts: ['reports.js'],                                        init: 'initReports',           resume: 'wmsResumeReports' },
+        'master-data':         { html: 'master-data.html',        scripts: ['master-data.js'],                                    init: 'initMasterData' },
+        'import-transactions': { html: 'transaction-import.html', scripts: ['transaction-import.js', 'transaction-template.js'],  init: 'initTransactionImport' },
+        'trading':             { html: 'trading.html',            scripts: ['trading.js'],                                        init: 'initTrading',           resume: 'wmsResumeTrading' },
+        'automation':          { html: 'automation.html',         scripts: ['automation.js'],                                     init: 'initAutomation' },
+        'accounting':          { html: 'accounting.html',         scripts: ['accounting.js', 'accounting-bank-import.js'],        init: 'initAccounting',        resume: 'wmsResumeAccounting' },
+    };
+    const _wmsModuleLoaded = {};
+    function _wmsEnsurePane(name) {
+        const c = document.getElementById('content-container');
+        let pane = c.querySelector('.module-pane[data-pane="' + name + '"]');
+        if (!pane) { pane = document.createElement('div'); pane.className = 'module-pane'; pane.setAttribute('data-pane', name); c.appendChild(pane); }
+        return pane;
+    }
+    function _wmsSyncNav(moduleName) {
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        const topBtn = document.querySelector('.nav-btn[data-module="' + moduleName + '"]');
+        if (topBtn) topBtn.classList.add('active');
+        if (typeof updateBottomNavActive === 'function') updateBottomNavActive(moduleName);
+    }
+
+    async function loadModule(moduleName, opts) {
+        opts = opts || {};
         if (typeof wmsHasModule === 'function' && !wmsHasModule(moduleName)) {
             console.warn('[access] blocked module load (not granted):', moduleName);
             return;
         }
-        if (currentModule === moduleName) return;
+        const def = WMS_MODULE_DEF[moduleName];
+        const force = opts.force === true;
+        if (currentModule === moduleName && !force && _wmsModuleLoaded[moduleName]) return;
         currentModule = moduleName;
-        localStorage.setItem('wms_last_module', moduleName);  // Remember current module
+        localStorage.setItem('wms_last_module', moduleName);
+        _wmsSyncNav(moduleName);
 
-        // Sync top nav (desktop)
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-        const topBtn = document.querySelector(`.nav-btn[data-module="${moduleName}"]`);
-        if (topBtn) topBtn.classList.add('active');
+        const pane = _wmsEnsurePane(moduleName);
+        document.querySelectorAll('#content-container .module-pane').forEach(p => { if (p !== pane) p.style.display = 'none'; });
+        pane.style.display = '';
+        if (!def) { pane.innerHTML = '<div class="coming-soon">🚧 Coming soon!</div>'; return; }
 
-        // Sync bottom nav (mobile/tablet)
-        if (typeof updateBottomNavActive === 'function') updateBottomNavActive(moduleName);
-        
-        const container = document.getElementById('content-container');
-        container.innerHTML = '<div class="loading-module">Loading...</div>';
-        
         try {
-            var _cb = '?v=' + (window.__wmsV || (window.__wmsV = Date.now())); // versioned → HTML fragments browser-cached within the session
-            if (moduleName === 'reports') {
-                const html = await (await fetch('reports.html' + _cb)).text();
-                injectModule(html, container);
-                await loadScript('reports.js');
-                if (typeof initReports === 'function') await initReports();
-
-            } else if (moduleName === 'master-data') {
-                const html = await (await fetch('master-data.html' + _cb)).text();
-                injectModule(html, container);
-                await loadScript('master-data.js');
-                if (typeof initMasterData === 'function') initMasterData();
-
-            } else if (moduleName === 'import-transactions') {
-                const html = await (await fetch('transaction-import.html' + _cb)).text();
-                injectModule(html, container);
-                await loadScript('transaction-import.js');
-                await loadScript('transaction-template.js');
-                if (typeof initTransactionImport === 'function') initTransactionImport();
-
-            } else if (moduleName === 'trading') {
-                const html = await (await fetch('trading.html' + _cb)).text();
-                injectModule(html, container);
-                await loadScript('trading.js');
-                if (typeof initTrading === 'function') initTrading();
-
-            } else if (moduleName === 'automation') {
-                const html = await (await fetch('automation.html' + _cb)).text();
-                injectModule(html, container);
-                await loadScript('automation.js');
-                if (typeof initAutomation === 'function') await initAutomation();
-
-            } else if (moduleName === 'accounting') {
-                const html = await (await fetch('accounting.html' + _cb)).text();
-                injectModule(html, container);
-                await loadScript('accounting.js');
-                await loadScript('accounting-bank-import.js');
-                if (typeof initAccounting === 'function') await initAccounting();
-
+            const firstLoad = !_wmsModuleLoaded[moduleName];
+            if (firstLoad || force) {
+                if (force) _wmsModuleLoaded[moduleName] = false;
+                pane.innerHTML = '<div class="loading-module">Loading...</div>';
+                const _cb = '?v=' + (window.__wmsV || (window.__wmsV = Date.now()));
+                const html = await (await fetch(def.html + _cb)).text();
+                injectModule(html, pane);
+                for (const sc of def.scripts) await loadScript(sc);
+                _wmsModuleLoaded[moduleName] = true;
+                const initFn = window[def.init];
+                if (typeof initFn === 'function') await initFn();
             } else {
-                container.innerHTML = '<div class="coming-soon">🚧 Coming soon!</div>';
+                // RETURN visit — keep the mounted DOM; cheap store-backed resume.
+                const resFn = def.resume && window[def.resume];
+                if (typeof resFn === 'function') { try { await resFn(); } catch (e) { console.warn('[resume] ' + moduleName, e); } }
             }
         } catch (e) {
-            container.innerHTML = '<div class="error-message">Error loading module: ' + e.message + '</div>';
+            pane.innerHTML = '<div class="error-message">Error loading module: ' + e.message + '</div>';
             console.error('Module load error:', e);
         }
     }
@@ -745,7 +741,7 @@
                 if (mod === 'reports' && typeof rptRefresh === 'function') { rptRefresh(); return; }
                 if (mod === 'trading' && typeof trRefresh === 'function') { trRefresh(); return; }
                 // No dedicated refresh (automation / master-data / import): re-render the module.
-                if (mod && typeof loadModule === 'function') { var m = mod; currentModule = null; loadModule(m); }
+                if (mod && typeof loadModule === 'function') { loadModule(mod, { force: true }); }
             } catch (e) { console.error('[refresh] failed', e); }
         }
         window.wmsRefreshActiveModule = wmsRefreshActiveModule;
