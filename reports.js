@@ -14,6 +14,8 @@ var rptBrokers = [];
 var rptLivePrices = {};      // { fyersKey: price }
 var rptLiveData = {};        // { fyersKey: { lp, ch, chp, high, low } }
 var rptMfNav = {};           // { mfSymbol: latestNav } — MF market valuation (market_prices)
+var rptHistPx = {};           // { security_id: [{ym:'YYYY-MM', close}] asc } — market_prices '1M' month-end series (quarter-end MTM)
+var rptHistPxLoaded = false;
 var rptMfSnake = [];         // snake_case MF trade rows for the drill-down modal (view-only)
 var rptMfLastNav = {};       // { mfSymbol: lastTradeNav } — fallback price before the feed runs
 var rptMfSymbolSet = {};     // { mfSymbol: true } — quick "is this an MF symbol" test
@@ -478,6 +480,25 @@ async function rptLoadMfNavs() {
         });
     } catch (e) {
         console.warn('⚠️ Reports: MF NAV load failed:', e.message || e);
+    }
+}
+
+// Month-end ('1M') closes from market_prices, for QUARTER-END MTM in the
+// Consolidated > Quarters view. One fetch (equity + MF rows, keyed by security_id),
+// cached for the session. Written by monthly-price-history (equity) + mf-nav-sync (MF).
+async function rptLoadHistPrices() {
+    if (rptHistPxLoaded) return;
+    try {
+        var rows = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/market_prices?resolution=eq.1M&select=security_id,price_date,close&order=security_id.asc,price_date.asc', { headers: wmsHeaders() });
+        var map = {};
+        (rows || []).forEach(function (r) {
+            if (!r.security_id) return;
+            (map[r.security_id] = map[r.security_id] || []).push({ ym: String(r.price_date).slice(0, 7), close: Number(r.close) || 0 });
+        });
+        rptHistPx = map;
+        rptHistPxLoaded = true;
+    } catch (e) {
+        console.warn('\u26a0\ufe0f Reports: 1M history load failed:', e.message || e);
     }
 }
 
@@ -2065,6 +2086,7 @@ async function rptLoadConsol() {
         '&order=voucher_date.asc,voucher_number.asc,sort_order.asc', { headers: wmsHeaders() });
     rptConsRows = (rows || []).filter(function (r) { return !r.is_cancelled; });
     rptConsLoadedKey = key;
+    await rptLoadHistPrices();   // month-end '1M' closes for the Quarters-view MTM
 }
 
 // ---------------------------------------------------------------------------
@@ -2098,7 +2120,7 @@ function rptConsBuildColumns() {
             qEnds.forEach(function (qe, i) {
                 var net = emptyNet();
                 rptConsRows.forEach(function (r) { if (rptConsIsOpening(r, fyStart) || r.voucher_date <= qe) addRow(net, r); });
-                cols.push({ label: 'Q' + (i + 1), net: net });
+                cols.push({ label: 'Q' + (i + 1), qEnd: qe, net: net });
             });
             var totQ = emptyNet();
             rptConsRows.forEach(function (r) { addRow(totQ, r); });
@@ -2225,6 +2247,61 @@ function rptConsBookMtm(bookId) {
     return byClass;
 }
 
+// Historical month-end close for a holding as of month `ym` ('YYYY-MM'). Uses the
+// '1M' series keyed by security_id; if that exact month is absent, carries forward
+// the most recent earlier month-end close. Returns null if the security has none.
+function rptHistPriceAsOf(h, ym) {
+    var secId = h.securityId || (h._txns && h._txns[0] && h._txns[0].securityId) || null;
+    if (!secId) return null;
+    var series = rptHistPx[secId];
+    if (!series || !series.length) return null;
+    var best = null;
+    for (var i = 0; i < series.length; i++) { if (series[i].ym <= ym) best = series[i]; else break; }
+    return best ? best.close : null;
+}
+
+// Consolidated CURRENT unrealised (all selected books, at live price) — the value
+// for the Quarters "Total" column, identical to the Books-mode Total.
+function rptConsMtmConsolLive() {
+    var acc = {};
+    rptConsolBookIds.forEach(function (id) {
+        var m = rptConsBookMtm(id);
+        Object.keys(m).forEach(function (k) { acc[k] = (acc[k] || 0) + m[k]; });
+    });
+    return acc;
+}
+
+// Consolidated unrealised gain by asset class AS OF a quarter-end date. Identical to
+// rptConsBookMtm (same FIFO engine, same qty*price-cost), with two changes only:
+//   (1) transactions are cut off at the quarter-end date (engine walks in date order);
+//   (2) a COMPLETED past quarter is priced at that quarter-end's '1M' close, while the
+//       current/future quarter uses the live price (parity with the as-on-date view).
+// Consolidation = per selected book, then summed (matches the Books-mode Total).
+function rptConsQuarterMtm(qEnd) {
+    if (!qEnd) return {};
+    var ym = String(qEnd).slice(0, 7);
+    var useLive = ym >= new Date().toISOString().slice(0, 7);   // current/future quarter → live
+    var byClass = {};
+    rptConsolBookIds.forEach(function (bookId) {
+        var txns = (rptTransactions || []).filter(function (t) {
+            return String(t.traderId || t.investorId) === String(bookId)
+                && t.securityType !== 'NFO' && t.securityType !== 'MCX'
+                && (t.date || t.transaction_date) <= qEnd;
+        });
+        if (!txns.length) return;
+        var fifo = rptFifoEngine(txns);
+        Object.keys(fifo.holdings).forEach(function (k) {
+            var h = fifo.holdings[k];
+            if (!h.quantity) return;
+            var px = useLive ? rptGetPrice(h) : rptHistPriceAsOf(h, ym);
+            if (px == null) px = rptGetPrice(h);   // no '1M' row for this security → live/last-trade
+            var cls = h.assetClass || 'Other';
+            byClass[cls] = (byClass[cls] || 0) + ((h.quantity * px) - h.totalCost);
+        });
+    });
+    return byClass;
+}
+
 function rptConsNodeRows(node, depth, ncols) {
     if (!node) return '';
     // Hidden by show-zero (op & total both zero) — skip the row AND its subtree from DISPLAY,
@@ -2331,31 +2408,37 @@ function rptRenderConsol() {
         rows += rptConsGapRow(ncols);
         rows += rptConsSummaryRow('Net Worth (at Cost)', netWorthCost, ncols, 'rpt-consol-nw');
 
-        // Book-by-book MTM: unrealised gain per asset class (Reports > Portfolio engine).
-        // Quarters view needs historical prices (not yet loaded) so MTM is Books-only.
-        if (rptConsolMode === 'books') {
-            var mtmByCol = cols.map(function (c) { return c.bookId ? rptConsBookMtm(c.bookId) : null; });
+        // MTM (unrealised gain per asset class) per column — SAME Reports FIFO engine +
+        // pricing as the Portfolio page, so cost/MTM tie out. Now available in BOTH layouts:
+        //   Books mode    → each book column at live price; Total = sum of books.
+        //   Quarters mode → consolidated (selected books, summed) as of each quarter-end;
+        //                   completed past quarters priced at the market_prices '1M' close,
+        //                   the current/future quarter + Total at live price (as-on-date parity).
+        {
+            var mtmByCol;
+            if (rptConsolMode === 'books') {
+                mtmByCol = cols.map(function (c) { return c.bookId ? rptConsBookMtm(c.bookId) : null; });
+                var totMap = {};
+                mtmByCol.forEach(function (m) { if (m) Object.keys(m).forEach(function (k) { totMap[k] = (totMap[k] || 0) + m[k]; }); });
+                mtmByCol[ncols - 1] = totMap;   // Total = sum of books
+            } else {
+                mtmByCol = cols.map(function (c) {
+                    if (c.isOpening) return null;
+                    if (c.isTotal) return rptConsMtmConsolLive();
+                    return rptConsQuarterMtm(c.qEnd);
+                });
+            }
             var present = {};
             mtmByCol.forEach(function (m) { if (m) Object.keys(m).forEach(function (k) { present[k] = true; }); });
             var order = (typeof RPT_ASSET_CLASS_ORDER !== 'undefined') ? RPT_ASSET_CLASS_ORDER.slice() : [];
             var classes = order.filter(function (c) { return present[c]; });
             Object.keys(present).forEach(function (c) { if (classes.indexOf(c) < 0) classes.push(c); });
-            // unrealised per column (book = its total; Op Bal = 0; Total = sum of books)
-            var unrealPerCol = cols.map(function (c, i) {
-                if (!c.bookId) return 0;
-                var m = mtmByCol[i], su = 0; Object.keys(m).forEach(function (k) { su += m[k]; }); return su;
-            });
-            var totU = 0; cols.forEach(function (c, i) { if (c.bookId) totU += unrealPerCol[i]; });
-            unrealPerCol[ncols - 1] = totU;   // Total column
+            var unrealPerCol = mtmByCol.map(function (m) { if (!m) return 0; var su = 0; Object.keys(m).forEach(function (k) { su += m[k]; }); return su; });
             if (classes.length) {
                 var mtmCollapsed = !!rptConsCollapsed['mtm'];
                 rows += rptConsSummaryRow('Unrealised Gain / (Loss) — MTM', unrealPerCol, ncols, 'rpt-consol-mtmhdr rpt-consol-clickable', 'mtm', mtmCollapsed);
                 if (!mtmCollapsed) classes.forEach(function (cls) {
-                    var cv = cols.map(function (c, i) {
-                        if (c.bookId) return (mtmByCol[i][cls] || 0);
-                        if (c.isTotal) { var s = 0; cols.forEach(function (cc, j) { if (cc.bookId && mtmByCol[j][cls]) s += mtmByCol[j][cls]; }); return s; }
-                        return 0;   // Op Bal — no MTM
-                    });
+                    var cv = mtmByCol.map(function (m) { return m ? (m[cls] || 0) : 0; });
                     rows += rptConsSummaryRow('\u00a0\u00a0\u00a0\u00a0' + cls, cv, ncols, 'rpt-consol-mtm');
                 });
             }
@@ -2496,7 +2579,7 @@ function rptInitConsol() {
         b.addEventListener('click', function () { rptConsStatement = b.dataset.stmt; rptConsSavePrefs(); rptRenderConsol(); });
     });
     document.querySelectorAll('#rpt-consol .rpt-consol-mode-btn').forEach(function (b) {
-        b.addEventListener('click', function () { rptConsolMode = b.dataset.mode; rptConsSavePrefs(); rptRenderConsol(); });
+        b.addEventListener('click', async function () { rptConsolMode = b.dataset.mode; rptConsSavePrefs(); if (rptConsolMode === 'quarters' && !rptHistPxLoaded) { showLoading(true); try { await rptLoadHistPrices(); } catch (e) { console.error(e); } showLoading(false); } rptRenderConsol(); });
     });
     var tgl = document.getElementById('rptConsolToggleBtn');
     if (tgl) tgl.addEventListener('click', function () {
