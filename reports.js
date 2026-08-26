@@ -2415,15 +2415,20 @@ function rptRenderConsol() {
         //                   completed past quarters priced at the market_prices '1M' close,
         //                   the current/future quarter + Total at live price (as-on-date parity).
         {
+            // Op Bal is the position carried INTO the FY (all trades up to the FY-open),
+            // so its MTM is valued at the prior FY-end close (FY start - 1 day = 31-Mar),
+            // using the '1M' March close — same treatment in both Books and Quarters.
+            var openingDate = rptConsFyStart().slice(0, 4) + '-03-31';
             var mtmByCol;
             if (rptConsolMode === 'books') {
                 mtmByCol = cols.map(function (c) { return c.bookId ? rptConsBookMtm(c.bookId) : null; });
                 var totMap = {};
-                mtmByCol.forEach(function (m) { if (m) Object.keys(m).forEach(function (k) { totMap[k] = (totMap[k] || 0) + m[k]; }); });
-                mtmByCol[ncols - 1] = totMap;   // Total = sum of books
+                cols.forEach(function (c, i) { if (c.bookId && mtmByCol[i]) Object.keys(mtmByCol[i]).forEach(function (k) { totMap[k] = (totMap[k] || 0) + mtmByCol[i][k]; }); });
+                mtmByCol[ncols - 1] = totMap;   // Total = sum of books (current, live)
+                if (rptConsOpBalIdx >= 0) mtmByCol[rptConsOpBalIdx] = rptConsQuarterMtm(openingDate);   // Op Bal at FY-open
             } else {
                 mtmByCol = cols.map(function (c) {
-                    if (c.isOpening) return null;
+                    if (c.isOpening) return rptConsQuarterMtm(openingDate);
                     if (c.isTotal) return rptConsMtmConsolLive();
                     return rptConsQuarterMtm(c.qEnd);
                 });
