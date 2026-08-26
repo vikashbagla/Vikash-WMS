@@ -74,6 +74,7 @@
     var d = _ds[name];
     if (!d) return Promise.reject(new Error('wmsStore: unknown dataset "' + name + '"'));
     var st = _st(name, params);
+    st.lastParams = params;
     if (st.loading) return st.loading;
 
     var policy = d.policy || 'cache';
@@ -131,10 +132,46 @@
     _datasets: _ds, _state: _state
   };
 
+  // ---- Data self-check (ADR-001) --------------------------------------------
+  // For every store-managed ('cache') dataset currently held, fetch a FRESH copy
+  // from the DB and compare it to what is cached — proving the on-screen data
+  // equals the database, with no eyeballing. Run in the browser console:
+  //     await wmsStoreVerify()
+  function _hash(v) {
+    var str = JSON.stringify(v);
+    var h = 5381; for (var i = 0; i < str.length; i++) { h = ((h << 5) + h) ^ str.charCodeAt(i); }
+    return (h >>> 0).toString(16) + ':' + str.length;
+  }
+  async function verify() {
+    var out = [];
+    for (var key in _state) {
+      var name = key.indexOf('::') >= 0 ? key.slice(0, key.indexOf('::')) : key;
+      var d = _ds[name];
+      var st = _state[key];
+      if (!d || d.policy !== 'cache' || st.data === undefined) continue;
+      var line = { dataset: key, ok: false, detail: '' };
+      try {
+        var fresh = await d.loader(st.lastParams);
+        var cachedRows = Array.isArray(st.data) ? st.data.length : (st.data && st.data.rows ? st.data.rows.length : (st.data ? 1 : 0));
+        var freshRows = Array.isArray(fresh) ? fresh.length : (fresh && fresh.rows ? fresh.rows.length : (fresh ? 1 : 0));
+        var ch = _hash(st.data), fh = _hash(fresh);
+        line.ok = (ch === fh);
+        line.detail = 'cached ' + cachedRows + ' rows [' + ch + '] vs DB ' + freshRows + ' rows [' + fh + ']';
+      } catch (e) { line.detail = 'fetch failed: ' + (e && e.message); }
+      out.push(line);
+      if (typeof console !== 'undefined') console.log((line.ok ? '\u2705 PASS ' : '\u274c FAIL ') + line.dataset + ' \u2014 ' + line.detail);
+    }
+    var fails = out.filter(function (x) { return !x.ok; }).length;
+    if (typeof console !== 'undefined') console.log(fails ? ('\u274c ' + fails + ' dataset(s) DIFFER from the DB') : ('\u2705 all ' + out.length + ' cached datasets match the DB'));
+    return out;
+  }
+  api.verify = verify;
+
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 
   if (typeof window !== 'undefined') {
     window.wmsStore = api;
+    window.wmsStoreVerify = verify;
     // Phase 1 registrations — the three already-shared caches as DELEGATES.
     register('transactions', {
       policy: 'delegate',
