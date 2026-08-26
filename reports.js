@@ -330,8 +330,11 @@ if (typeof window !== 'undefined') window.wmsResumeReports = wmsResumeReports;
 
 async function rptRefresh() {
     showLoading(true);
-    // Explicit Refresh: drop the store copies so this is a guaranteed re-pull.
-    if (typeof window !== 'undefined' && window.wmsStore) { wmsStore.invalidate('mfTradesRaw'); wmsStore.invalidate('mfNavRaw'); wmsStore.invalidate('histPrices1M'); }
+    // Refresh = a CHEAP DIFF, not a forced re-pull. rptLoadData reads through the
+    // store, whose syncState probe guarantees the cached copy still equals the DB
+    // (reload only on change) — so forcing a re-fetch is redundant. Live PRICES are
+    // still force-refreshed below (they are not checksum-gated). For a guaranteed
+    // cold reload of everything, hard-refresh the browser (Cmd/Ctrl+Shift+R).
     try {
         await rptLoadData();
     } catch (error) {

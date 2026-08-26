@@ -312,8 +312,10 @@ if (typeof window !== 'undefined') window.wmsResumeAccounting = wmsResumeAccount
 
 async function acctRefreshAll() {
     acctLoading(true);
-    // Explicit Refresh: drop the store copies so this is a guaranteed re-pull.
-    if (typeof window !== 'undefined' && window.wmsStore) { wmsStore.invalidate('acctGroups'); wmsStore.invalidate('acctLedgers'); wmsStore.invalidate('vouchers'); }
+    // Refresh = a CHEAP DIFF (the store's syncState probe guarantees the cached
+    // chart + vouchers still equal the DB, reloading only what changed). A write
+    // bumps updated_at, so a post/edit is picked up here automatically. For a
+    // guaranteed cold reload, hard-refresh the browser (Cmd/Ctrl+Shift+R).
     try { await acctLoadCatalogue(); await acctLoadBook(); acctRenderActiveTab(); }
     finally { acctLoading(false); }
 }
