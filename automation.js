@@ -6788,8 +6788,11 @@ function auAt2RenderLog() {
         blocks.forEach(function (b) { lines.push('\u23f8 ' + auAt2Esc(b)); });
         failed.forEach(function (fl) { lines.push('\u26a0 ' + auAt2Esc(fl)); });
 
+        // The family badge (at2_run_log.engine, migration 96) — the journal serves
+        // EVERY AT2 family, not just ms007; each run is stamped with its family code.
         h += '<div class="au-card" style="padding:7px 12px;margin-top:6px">'
            + '<div style="font-weight:600;font-size:12px;color:#374151">' + auAt2Esc(r.run_ist || auAt2Ts(r.run_at))
+           + ' <span class="au-badge idle" style="font-size:9px;padding:0 5px;font-weight:600">' + auAt2Esc(r.engine || 'MS007') + '</span>'
            + (r.emailed ? ' <span class="au-badge idle" style="font-size:9px;padding:0 5px">emailed</span>' : '') + '</div>';
         if (lines.length)
             h += '<div style="font-size:12.5px;line-height:1.75;margin-top:2px">' + lines.map(function (l) { return '<div>' + l + '</div>'; }).join('') + '</div>';
