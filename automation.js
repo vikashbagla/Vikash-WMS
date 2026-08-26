@@ -5919,7 +5919,7 @@ async function _auUpsertLimit(existing, scope, type, value, enabled, breach) {
 // ============================================================================
 
 var _auAt2 = { strategies: [], books: [], trades: [], alerts: [], signals: [], events: [],
-               families: [], accounts: [], loadedAt: null };
+               runlog: [], families: [], accounts: [], loadedAt: null };
 
 // ── The known vocabularies. Anything outside these renders LOUD. ────────────
 var AU_AT2_STATUS = {
@@ -6168,7 +6168,7 @@ async function auAt2Get(table, query) {
 }
 
 async function autoAt2Refresh() {
-    var panels = ['open', 'closed', 'alerts', 'events', 'controls'];
+    var panels = ['open', 'closed', 'alerts', 'events', 'log', 'controls'];
     panels.forEach(function (p) {
         var el = document.getElementById('au-at2-' + p + '-content');
         if (el) el.innerHTML = '<div class="au-meta">Loading…</div>';
@@ -6189,11 +6189,15 @@ async function autoAt2Refresh() {
             // have to decode.
             auAt2Get('at2_strategy_family', 'select=id,code,name,engine,driver,params_schema&order=code'),
             auAt2Get('investor_broker_accounts',
-                     'select=investor_id,broker_id,investors(name),brokers(name)&order=investor_id')
+                     'select=investor_id,broker_id,investors(name),brokers(name)&order=investor_id'),
+            // The per-run journal (migration 95) — the terse events the digest emails
+            // used to carry. Feeds the Log tab; every scan, newest first.
+            auAt2Get('at2_run_log', 'select=*&order=run_at.desc&limit=200')
         ]);
         _auAt2.strategies = res[0]; _auAt2.books = res[1]; _auAt2.trades = res[2];
         _auAt2.alerts = res[3]; _auAt2.signals = res[4]; _auAt2.events = res[5];
         _auAt2.families = res[6] || []; _auAt2.accounts = res[7] || [];
+        _auAt2.runlog = res[8] || [];
         _auAt2.loadedAt = new Date();
 
         // Contract identity (symbol/expiry/lot_size) lives on securities_nfo,
@@ -6223,6 +6227,7 @@ async function autoAt2Refresh() {
         auAt2RenderClosed();
         auAt2RenderAlerts();
         auAt2RenderEvents();
+        auAt2RenderLog();
         auAt2RenderControls();
     } catch (e) {
         // F.13/F.14 — a failed load must NOT fall through to an empty-looking
@@ -6662,6 +6667,9 @@ function auAt2RenderAlerts() {
     if (!el) return;
     var open = _auAt2.alerts.filter(function (a) { return !a.resolved_at; });
     var resolved = _auAt2.alerts.filter(function (a) { return a.resolved_at; });
+    // Titles carry raw trade/command UUIDs (e.g. "trade 8e1f3fdd-… is UNPROTECTED");
+    // shorten to the first 8 chars so the table reads in plain English, not jargon.
+    var shortIds = function (x) { return String(x || '').replace(/[0-9a-f]{8}-[0-9a-f-]{27}/gi, function (m) { return m.slice(0, 8) + '\u2026'; }); };
 
     var h = '<div class="au-card" style="padding:10px 12px;margin-bottom:10px">'
           + '<strong>The email is a notification. This table is the truth.</strong>'
@@ -6672,13 +6680,12 @@ function auAt2RenderAlerts() {
     if (!open.length) {
         h += '<div class="au-soon" style="border-color:#a7f3d0;color:#065f46">✅ No open alerts.</div>';
     } else {
-        h += '<table class="au-at2-table"><thead><tr><th>Severity</th><th>Condition</th><th>Title</th>'
+        h += '<table class="au-at2-table"><thead><tr><th>Severity</th><th>Alert</th>'
            + '<th class="text-right">Seen</th><th>First</th><th>Last</th><th>Escalated</th></tr></thead><tbody>';
         open.forEach(function (a) {
             h += '<tr' + (a.severity === 'critical' ? ' style="background:#fef2f2"' : '') + '>'
                + '<td>' + auAt2Severity(a.severity) + '</td>'
-               + '<td><code style="font-size:11px">' + auAt2Esc(a.condition_key) + '</code></td>'
-               + '<td>' + auAt2Esc(a.title) + '</td>'
+               + '<td>' + shortIds(auAt2Esc(a.title)) + '</td>'
                + '<td class="text-right">' + auAt2Esc(a.occurrences) + '×</td>'
                + '<td>' + auAt2Ts(a.first_seen) + '</td>'
                + '<td>' + auAt2Ts(a.last_seen) + '</td>'
@@ -6693,7 +6700,7 @@ function auAt2RenderAlerts() {
            + '<table class="au-at2-table" style="margin-top:8px"><thead><tr><th>Severity</th><th>Title</th>'
            + '<th>Resolved</th></tr></thead><tbody>';
         resolved.forEach(function (a) {
-            h += '<tr><td>' + auAt2Severity(a.severity) + '</td><td>' + auAt2Esc(a.title) + '</td>'
+            h += '<tr><td>' + auAt2Severity(a.severity) + '</td><td>' + shortIds(auAt2Esc(a.title)) + '</td>'
                + '<td>' + auAt2Ts(a.resolved_at) + '</td></tr>';
         });
         h += '</tbody></table></details>';
@@ -6738,6 +6745,66 @@ function auAt2RenderEvents() {
         });
         h += '</tbody></table>';
     }
+    el.innerHTML = h;
+}
+
+// ----- Log tab --------------------------------------------------------------
+// Every run as ONE table row, newest first — the terse lines the digest emails
+// carried (blocked X of Y bars, entry Z lots @ price, exit … P&L, stop → level).
+// Emails are gated to entries/exits/criticals; this is the FULL record.
+// Source: at2_run_log (mig 95 + engine col mig 96), one row per scan.
+function auAt2RenderLog() {
+    var el = document.getElementById('au-at2-log-content');
+    if (!el) return;
+    var runs = _auAt2.runlog || [];
+    var h = '<div class="au-card" style="padding:10px 12px"><strong>Run log</strong> '
+          + '<span class="au-sub">— every scan, newest first; times IST. The same terse lines the '
+          + 'digest emails carried. Emails now fire only for entries, exits and criticals; this is the full record.</span></div>';
+    if (!runs.length) {
+        h += '<div class="au-soon">No runs journalled yet — starts once the engine build carrying the Log is deployed.</div>';
+        el.innerHTML = h; return;
+    }
+    var px = function (n) { return (n === null || n === undefined || !isFinite(Number(n))) ? '—' : '\u20b9' + auAt2Num(n); };
+    var money = function (n) { n = Number(n) || 0;
+        return '<span style="color:' + (n < 0 ? '#c53030' : '#2f855a') + '">' + (n < 0 ? '\u2212\u20b9' : '+\u20b9') + auAt2Num(Math.abs(n)) + '</span>'; };
+    var chip = function (m) { return '<span class="au-badge ' + (m === 'live' ? 'error' : 'idle')
+          + '" style="font-size:9px;padding:0 5px;margin-left:2px">' + (m === 'live' ? 'LIVE' : 'paper') + '</span>'; };
+
+    h += '<table class="au-at2-table"><thead><tr>'
+       + '<th style="white-space:nowrap">Time</th><th>Family</th><th>What happened</th>'
+       + '<th style="text-align:center">Email</th></tr></thead><tbody>';
+    runs.forEach(function (r) {
+        var d = r.digest || {};
+        var evs = d.events || [], blocks = d.blocks || [], failed = d.failed || [];
+        var lines = [];
+        evs.forEach(function (e) {
+            var who = auAt2Esc(e.instrument) + ' ' + auAt2Esc(e.side);
+            var lot = e.lots + ' lot' + (Number(e.lots) > 1 ? 's' : '');
+            if (e.kind === 'ENTRY')
+                lines.push('\ud83d\udfe2 ' + who + ' \u00b7 entry ' + lot + ' @ ' + px(e.price) + ' \u00b7 SL ' + px(e.toStop) + ' \u00b7 ' + auAt2Esc(e.book || '') + chip(e.mode));
+            else if (e.kind === 'EXIT')
+                lines.push('\ud83d\udd34 ' + who + ' \u00b7 exit ' + lot + ' @ ' + px(e.price) + ' \u00b7 ' + auAt2Esc(e.reason || '') + ' \u00b7 ' + money(e.pnl) + chip(e.mode));
+            else if (e.kind === 'STOP_MOVE')
+                lines.push('\ud83d\udd27 ' + who + ' \u00b7 SL \u2192 ' + px(e.toStop) + chip(e.mode));
+            else if (e.kind === 'ROLL')
+                lines.push('\ud83d\udd04 ' + who + ' \u00b7 rolled' + chip(e.mode));
+        });
+        blocks.forEach(function (b) { lines.push('\u23f8 ' + auAt2Esc(b)); });
+        failed.forEach(function (fl) { lines.push('\u26a0 ' + auAt2Esc(fl)); });
+
+        // ONE ROW PER RUN. Family badge = at2_run_log.engine (mig 96) — the journal
+        // serves EVERY AT2 family. Multiple events stack in the last cell; a quiet
+        // scan is one dimmed row so the eye skips it.
+        var what = lines.length
+            ? lines.map(function (l) { return '<div>' + l + '</div>'; }).join('')
+            : '<span class="au-sub">quiet \u2014 nothing to act on</span>';
+        h += '<tr' + (lines.length ? '' : ' style="opacity:.5"') + '>'
+           + '<td style="white-space:nowrap;font-weight:600">' + auAt2Esc(r.run_ist || auAt2Ts(r.run_at)) + '</td>'
+           + '<td><span class="au-badge idle" style="font-size:9px;padding:0 5px;font-weight:600">' + auAt2Esc(r.engine || 'MS007') + '</span></td>'
+           + '<td style="line-height:1.7">' + what + '</td>'
+           + '<td style="text-align:center">' + (r.emailed ? '\u2709' : '\u2014') + '</td></tr>';
+    });
+    h += '</tbody></table>';
     el.innerHTML = h;
 }
 
