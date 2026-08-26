@@ -757,7 +757,7 @@ function loadCnParser(template) {
     if (cnLoadedParsers[template]) return cnLoadedParsers[template];
     cnLoadedParsers[template] = new Promise(function(resolve, reject) {
         var script = document.createElement('script');
-        script.src = 'cn-parser-' + template + '.js?t=' + Date.now();
+        script.src = 'cn-parser-' + template + '.js?v=' + (window.__wmsV || '');
         script.onload = function() {
             if (window.CN_PARSERS[template]) {
                 console.log('CN parser loaded: ' + template);

@@ -756,7 +756,7 @@ async function trLoadWatchlistModule() {
     if (!trWlLoaded) {
         try {
             // Load HTML
-            var htmlResp = await fetch('trading-watchlist.html?t=' + Date.now());
+            var htmlResp = await fetch('trading-watchlist.html?v=' + (window.__wmsV || ''));
             if (!htmlResp.ok) throw new Error('Failed to load trading-watchlist.html');
             var htmlText = await htmlResp.text();
 
@@ -772,7 +772,7 @@ async function trLoadWatchlistModule() {
             // Load JS
             await new Promise(function(resolve, reject) {
                 var script = document.createElement('script');
-                script.src = 'trading-watchlist.js?t=' + Date.now();
+                script.src = 'trading-watchlist.js?v=' + (window.__wmsV || '');
                 script.onload = resolve;
                 script.onerror = function() { reject(new Error('Failed to load trading-watchlist.js')); };
                 document.body.appendChild(script);
@@ -2144,7 +2144,7 @@ async function trLoadTransactionsModule() {
     if (!trTxLoaded) {
         try {
             // Load HTML
-            var htmlResp = await fetch('trading-transactions.html?t=' + Date.now());
+            var htmlResp = await fetch('trading-transactions.html?v=' + (window.__wmsV || ''));
             if (!htmlResp.ok) throw new Error('Failed to load trading-transactions.html');
             var htmlText = await htmlResp.text();
 
@@ -2160,7 +2160,7 @@ async function trLoadTransactionsModule() {
             // Load JS
             await new Promise(function(resolve, reject) {
                 var script = document.createElement('script');
-                script.src = 'trading-transactions.js?t=' + Date.now();
+                script.src = 'trading-transactions.js?v=' + (window.__wmsV || '');
                 script.onload = resolve;
                 script.onerror = function() { reject(new Error('Failed to load trading-transactions.js')); };
                 document.body.appendChild(script);
@@ -2221,7 +2221,7 @@ async function trOpenAddTransaction() {
     if (!trAddTxnLoaded) {
         try {
             // Load HTML
-            var htmlResp = await fetch('trading-add-transaction.html?t=' + Date.now());
+            var htmlResp = await fetch('trading-add-transaction.html?v=' + (window.__wmsV || ''));
             if (!htmlResp.ok) throw new Error('Failed to load trading-add-transaction.html');
             var htmlText = await htmlResp.text();
 
@@ -2250,7 +2250,7 @@ async function trOpenAddTransaction() {
             if (oldAtScript) oldAtScript.remove();
             await new Promise(function(resolve, reject) {
                 var script = document.createElement('script');
-                script.src = 'trading-add-transaction.js?t=' + Date.now();
+                script.src = 'trading-add-transaction.js?v=' + (window.__wmsV || '');
                 script.onload = resolve;
                 script.onerror = function() { reject(new Error('Failed to load trading-add-transaction.js')); };
                 document.body.appendChild(script);
@@ -2299,7 +2299,7 @@ async function trLoadRightsModule(callback) {
 
     try {
         // Load HTML
-        var htmlResp = await fetch('trading-rights.html?t=' + Date.now());
+        var htmlResp = await fetch('trading-rights.html?v=' + (window.__wmsV || ''));
         if (!htmlResp.ok) throw new Error('Failed to load trading-rights.html');
         var htmlText = await htmlResp.text();
 
@@ -2325,7 +2325,7 @@ async function trLoadRightsModule(callback) {
         if (oldScript) oldScript.remove();
         await new Promise(function(resolve, reject) {
             var script = document.createElement('script');
-            script.src = 'trading-rights.js?t=' + Date.now();
+            script.src = 'trading-rights.js?v=' + (window.__wmsV || '');
             script.onload = resolve;
             script.onerror = function() { reject(new Error('Failed to load trading-rights.js')); };
             document.body.appendChild(script);
@@ -2369,7 +2369,7 @@ async function trLoadBonusModule(callback) {
 
     try {
         // Load HTML
-        var htmlResp = await fetch('trading-bonus.html?t=' + Date.now());
+        var htmlResp = await fetch('trading-bonus.html?v=' + (window.__wmsV || ''));
         if (!htmlResp.ok) throw new Error('Failed to load trading-bonus.html');
         var htmlText = await htmlResp.text();
 
@@ -2395,7 +2395,7 @@ async function trLoadBonusModule(callback) {
         if (oldScript) oldScript.remove();
         await new Promise(function(resolve, reject) {
             var script = document.createElement('script');
-            script.src = 'trading-bonus.js?t=' + Date.now();
+            script.src = 'trading-bonus.js?v=' + (window.__wmsV || '');
             script.onload = resolve;
             script.onerror = function() { reject(new Error('Failed to load trading-bonus.js')); };
             document.body.appendChild(script);
@@ -2438,7 +2438,7 @@ async function trLoadDemergerModule(callback) {
     if (typeof callback === 'function') trDemergerCallbacks.push(callback);
 
     try {
-        var htmlResp = await fetch('trading-demerger.html?t=' + Date.now());
+        var htmlResp = await fetch('trading-demerger.html?v=' + (window.__wmsV || ''));
         if (!htmlResp.ok) throw new Error('Failed to load trading-demerger.html');
         var htmlText = await htmlResp.text();
 
@@ -2459,7 +2459,7 @@ async function trLoadDemergerModule(callback) {
         if (oldScript) oldScript.remove();
         await new Promise(function(resolve, reject) {
             var script = document.createElement('script');
-            script.src = 'trading-demerger.js?t=' + Date.now();
+            script.src = 'trading-demerger.js?v=' + (window.__wmsV || '');
             script.onload = resolve;
             script.onerror = function() { reject(new Error('Failed to load trading-demerger.js')); };
             document.body.appendChild(script);
@@ -2505,7 +2505,7 @@ async function trLoadExpiryModule(callback) {
         if (oldScript) oldScript.remove();
         await new Promise(function(resolve, reject) {
             var script = document.createElement('script');
-            script.src = 'trading-expiry.js?t=' + Date.now();
+            script.src = 'trading-expiry.js?v=' + (window.__wmsV || '');
             script.onload = resolve;
             script.onerror = function() { reject(new Error('Failed to load trading-expiry.js')); };
             document.body.appendChild(script);
@@ -2543,7 +2543,7 @@ async function trLoadSplitModule(callback) {
 
     try {
         // Load HTML
-        var htmlResp = await fetch('trading-split.html?t=' + Date.now());
+        var htmlResp = await fetch('trading-split.html?v=' + (window.__wmsV || ''));
         if (!htmlResp.ok) throw new Error('Failed to load trading-split.html');
         var htmlText = await htmlResp.text();
 
@@ -2569,7 +2569,7 @@ async function trLoadSplitModule(callback) {
         if (oldScript) oldScript.remove();
         await new Promise(function(resolve, reject) {
             var script = document.createElement('script');
-            script.src = 'trading-split.js?t=' + Date.now();
+            script.src = 'trading-split.js?v=' + (window.__wmsV || '');
             script.onload = resolve;
             script.onerror = function() { reject(new Error('Failed to load trading-split.js')); };
             document.body.appendChild(script);
@@ -2625,7 +2625,7 @@ async function trLoadIncomeModule(callback) {
 
     try {
         // Load HTML
-        var htmlResp = await fetch('trading-income.html?t=' + Date.now());
+        var htmlResp = await fetch('trading-income.html?v=' + (window.__wmsV || ''));
         if (!htmlResp.ok) throw new Error('Failed to load trading-income.html');
         var htmlText = await htmlResp.text();
 
@@ -2651,7 +2651,7 @@ async function trLoadIncomeModule(callback) {
         if (oldScript) oldScript.remove();
         await new Promise(function(resolve, reject) {
             var script = document.createElement('script');
-            script.src = 'trading-income.js?t=' + Date.now();
+            script.src = 'trading-income.js?v=' + (window.__wmsV || '');
             script.onload = resolve;
             script.onerror = function() { reject(new Error('Failed to load trading-income.js')); };
             document.body.appendChild(script);
@@ -2703,7 +2703,7 @@ async function trLoadHistPlModule(callback) {
     }
 
     try {
-        var htmlResp = await fetch('trading-histpl.html?t=' + Date.now());
+        var htmlResp = await fetch('trading-histpl.html?v=' + (window.__wmsV || ''));
         if (!htmlResp.ok) throw new Error('Failed to load trading-histpl.html');
         var htmlText = await htmlResp.text();
 
@@ -2726,7 +2726,7 @@ async function trLoadHistPlModule(callback) {
         if (oldScript) oldScript.remove();
         await new Promise(function(resolve, reject) {
             var script = document.createElement('script');
-            script.src = 'trading-histpl.js?t=' + Date.now();
+            script.src = 'trading-histpl.js?v=' + (window.__wmsV || '');
             script.onload = resolve;
             script.onerror = function() { reject(new Error('Failed to load trading-histpl.js')); };
             document.body.appendChild(script);
@@ -2829,7 +2829,7 @@ async function trLoadFnoModule() {
         try {
             await new Promise(function(resolve, reject) {
                 var script = document.createElement('script');
-                script.src = 'trading-fno.js?t=' + Date.now();
+                script.src = 'trading-fno.js?v=' + (window.__wmsV || '');
                 script.onload = resolve;
                 script.onerror = function() { reject(new Error('Failed to load trading-fno.js')); };
                 document.body.appendChild(script);
@@ -2856,14 +2856,14 @@ async function trLoadLedgerModule() {
             var container = document.getElementById('tr-ledger');
             if (!container) return;
             // Fetch HTML
-            var resp = await fetch('trading-ledger.html?t=' + Date.now());
+            var resp = await fetch('trading-ledger.html?v=' + (window.__wmsV || ''));
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             var html = await resp.text();
             container.innerHTML = html;
             // Load JS
             await new Promise(function(resolve, reject) {
                 var script = document.createElement('script');
-                script.src = 'trading-ledger.js?t=' + Date.now();
+                script.src = 'trading-ledger.js?v=' + (window.__wmsV || '');
                 script.onload = resolve;
                 script.onerror = function() { reject(new Error('Failed to load trading-ledger.js')); };
                 document.body.appendChild(script);
