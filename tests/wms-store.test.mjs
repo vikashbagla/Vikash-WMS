@@ -71,6 +71,17 @@ await wmsStore.get('keyed', { ids: ['b1'] });
 ok(kA.forKey === 'b1' && kB.forKey === 'b2', 'keyed datasets cache per key');
 ok(kloads['b1'] === 1 && kloads['b2'] === 1, 'each key loads once; re-get reuses');
 
+// ---- wmsStoreVerify: catches cache-vs-DB drift ------------------------------
+wmsStore.register('vp', { policy: 'cache', loader: async () => [1, 2, 3], syncState: async () => ({ checksum: 'z' }) });
+await wmsStore.get('vp');
+let vr = await wmsStore.verify();
+let vpLine = vr.find((x) => x.dataset === 'vp');
+ok(vpLine && vpLine.ok, 'verify(): cached copy matches a fresh DB fetch → PASS');
+wmsStore._state['vp'].data = [1, 2, 999];          // simulate a corrupted/stale cache
+vr = await wmsStore.verify();
+vpLine = vr.find((x) => x.dataset === 'vp');
+ok(vpLine && !vpLine.ok, 'verify(): drift from the DB is detected → FAIL');
+
 wmsStore.invalidate('t');
 ok(wmsStore._state['t'] === undefined, 'invalidate() drops the cached state');
 

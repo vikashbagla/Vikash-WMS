@@ -307,6 +307,27 @@ async function initReports() {
     })();
 }
 
+// ADR-001 Phase 4 — cheap resume on RETURN to Reports (module stays mounted).
+// Store-backed data reload (reuse when unchanged) + re-render loaded tabs; prices
+// refresh in the background. No re-wiring (handlers persist on the mounted DOM).
+async function wmsResumeReports() {
+    try {
+        await rptLoadData();
+        rptRenderPortfolio();
+        if (rptCGLoaded) rptRenderCapGains();
+        if (rptConsolLoaded && typeof rptRenderConsol === 'function') rptRenderConsol();
+        (async function () {
+            try {
+                if (typeof wmsStandardRefresh === 'function') await wmsStandardRefresh(false);
+                await rptFetchLivePrices();
+                rptRenderPortfolio();
+                if (rptCGLoaded) rptRenderCapGains();
+            } catch (e) { /* background */ }
+        })();
+    } catch (e) { console.warn('wmsResumeReports failed', e); }
+}
+if (typeof window !== 'undefined') window.wmsResumeReports = wmsResumeReports;
+
 async function rptRefresh() {
     showLoading(true);
     // Explicit Refresh: drop the store copies so this is a guaranteed re-pull.

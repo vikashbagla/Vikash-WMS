@@ -862,6 +862,18 @@ async function trLoadDataIfChanged() {
     return true;
 }
 
+// ADR-001 Phase 4 — cheap resume on RETURN to Trading (module stays mounted).
+// Store-backed transaction delta + derive + re-render the active view. No re-wiring
+// and no sub-module reload (the mounted DOM + loaded sub-scripts persist).
+async function wmsResumeTrading() {
+    try {
+        await trLoadDataIfChanged();
+        if (typeof wmsRefreshRender === 'function') wmsRefreshRender();
+        else if (typeof trRenderPortfolio === 'function') trRenderPortfolio();
+    } catch (e) { console.warn('wmsResumeTrading failed', e); }
+}
+if (typeof window !== 'undefined') window.wmsResumeTrading = wmsResumeTrading;
+
 async function trRefresh() {
     showLoading(true);
     try {
