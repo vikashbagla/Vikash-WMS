@@ -344,7 +344,7 @@ async function rptRefresh() {
     }
     if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
     if (typeof wmsStandardRefresh === 'function') {
-        await wmsStandardRefresh(true);
+        await wmsStandardRefresh(false)   /* Refresh = fast: fetch only NEW/uncached symbols; existing prices stay fresh via the 10s timer. A guaranteed all-symbol re-fetch = hard refresh. */;
     }
     await rptFetchLivePrices();
     rptRenderPortfolio();

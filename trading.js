@@ -891,7 +891,7 @@ async function trRefresh() {
 
     // Rebuild symbol list (new transactions may have appeared) and force-refresh all prices
     if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
-    await wmsStandardRefresh(true);
+    await wmsStandardRefresh(false)   /* Refresh = fast: fetch only NEW/uncached symbols; existing prices stay fresh via the 10s timer. A guaranteed all-symbol re-fetch = hard refresh. */;
 
     // Transactions tab also needs explicit re-render (not price-driven)
     var activeTab = document.querySelector('.trading-tab-content.active');
