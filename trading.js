@@ -281,7 +281,7 @@ async function trComputeLeverage() {
         var ids = trGetConsolBookIds();
         if (!ids.length) { window._trLeverage = null; trUpdateDayPLBanner(); return; }
         var lb = await wmsStore.get('leverageBalances', { ids: ids });
-        window._trLeverage = -1 * ((lb.brokers || 0) - (lb.traders || 0) - (lb.cash_bank || 0));
+        window._trLeverage = -1 * ((lb.brokers || 0) + (lb.traders || 0) + (lb.cash_bank || 0));
     } catch (e) { console.warn('trComputeLeverage failed', e); window._trLeverage = null; }
     trUpdateDayPLBanner();
 }
