@@ -80,6 +80,15 @@
     font-size: 9px;
     font-weight: 500;
 }
+.tr-lev-popover {
+    position: absolute; top: 100%; right: 0; margin-top: 6px; z-index: 60;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.14); padding: 8px 10px;
+    display: flex; align-items: center; gap: 6px; font-size: 11px; white-space: nowrap;
+}
+.tr-lev-popover input { width: 46px; padding: 3px 5px; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 11px; text-align: right; }
+.tr-lev-popover .tr-lev-set { background: #667eea; color: #fff; border: none; border-radius: 5px; padding: 4px 12px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.tr-lev-popover .tr-lev-set:hover { background: #5a67d8; }
 #trDayPLBanner .tr-pl-sep {
     width: 1px;
     height: 28px;
@@ -741,30 +750,24 @@
         </div>
         <div id="trDayPLBanner" style="display:flex;gap:24px;align-items:center;font-size:12px;"></div>
         <div class="tr-header-actions" style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
-            <div class="tr-header-actions-row" style="display: flex; align-items: center; gap: 8px;">
-                <div class="tr-others-wrap" style="position: relative; display: inline-block;">
-                    <button class="btn-others" id="trOthersBtn" title="Income &amp; Corporate Actions">+ Others ▾</button>
-                    <div class="tr-others-dropdown" id="trOthersDropdown" style="display:none;">
-                        <div class="tr-others-group-label">Income</div>
-                        <button class="tr-others-item" data-type="DIVIDEND">Dividend</button>
-                        <button class="tr-others-item" data-type="INTEREST">Interest</button>
-                        <button class="tr-others-item" data-type="OTHER_INCOME">Other Income</button>
-                        <button class="tr-others-item" data-type="CAPITAL_REDUCTION">Capital Reduction</button>
-                        <div class="tr-others-group-label">Adjustments</div>
-                        <button class="tr-others-item" data-type="HISTORICAL_PL">Historical P&L</button>
-                        <div class="tr-others-group-label">Corporate Actions</div>
-                        <button class="tr-others-item" data-type="RIGHTS_ENTITLEMENT">Rights (Entitlement)</button>
-                        <button class="tr-others-item" data-type="RIGHTS_PAYMENT">Rights (Payment)</button>
-                        <button class="tr-others-item" data-type="BONUS">Bonus</button>
-                        <button class="tr-others-item" data-type="SPLIT">Split</button>
-                        <button class="tr-others-item" data-type="DEMERGER">Demerger</button>
-                    </div>
+            <button class="btn-add-txn" id="trAddTxnBtn" style="width: 104px; text-align: center;">Trade</button>
+            <div class="tr-others-wrap" style="position: relative;">
+                <button class="btn-others" id="trOthersBtn" title="Income &amp; Corporate Actions" style="width: 104px; padding: 6px 16px; font-size: 13px; text-align: center;">Others &#9662;</button>
+                <div class="tr-others-dropdown" id="trOthersDropdown" style="display:none;">
+                    <div class="tr-others-group-label">Income</div>
+                    <button class="tr-others-item" data-type="DIVIDEND">Dividend</button>
+                    <button class="tr-others-item" data-type="INTEREST">Interest</button>
+                    <button class="tr-others-item" data-type="OTHER_INCOME">Other Income</button>
+                    <button class="tr-others-item" data-type="CAPITAL_REDUCTION">Capital Reduction</button>
+                    <div class="tr-others-group-label">Adjustments</div>
+                    <button class="tr-others-item" data-type="HISTORICAL_PL">Historical P&L</button>
+                    <div class="tr-others-group-label">Corporate Actions</div>
+                    <button class="tr-others-item" data-type="RIGHTS_ENTITLEMENT">Rights (Entitlement)</button>
+                    <button class="tr-others-item" data-type="RIGHTS_PAYMENT">Rights (Payment)</button>
+                    <button class="tr-others-item" data-type="BONUS">Bonus</button>
+                    <button class="tr-others-item" data-type="SPLIT">Split</button>
+                    <button class="tr-others-item" data-type="DEMERGER">Demerger</button>
                 </div>
-                <button class="btn-toggle-zero" id="trToggleZeroBtn" title="Show/hide zero holdings" style="padding: 4px 8px; font-size: 11px;">👁 Zero</button>
-            </div>
-            <div class="tr-header-actions-row" style="display: flex; align-items: center; gap: 8px;">
-                <button class="btn-add-txn" id="trAddTxnBtn">+/- Trade</button>
-                <button class="btn-add-txn" id="trFyersImportBtn" title="Import today's Fyers trades for Veins" style="background:#0f9d58;">⬇ Fyers</button>
             </div>
         </div>
     </div>

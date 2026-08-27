@@ -244,21 +244,74 @@ function trUpdateDayPLBanner() {
 
     // --- Block 3: Leverage (from the Consolidation page's selected books) ---
     var leverageHtml = '';
-    if (window._trLeverage != null) {
-        var lev = window._trLeverage;
+    if (window._trLeverageAccounting != null) {
+        // Leverage = -(Brokers+Traders+Cash&Bank) + F&O exposure (default/Self NFO view).
+        var lev = window._trLeverageAccounting + (window._trFnoExposure || 0);
         var levPct = (currentValue && currentValue !== 0) ? (lev / Math.abs(currentValue)) * 100 : null;
+        var levColor = trLevColor(levPct);
         leverageHtml = '<div class="tr-pl-block-sep"></div>' +
             '<div class="tr-pl-block">' +
                 '<div class="tr-pl-block-label">Leverage</div>' +
                 '<div class="tr-pl-block-cards">' +
                     '<div class="tr-pl-card">' +
-                        '<div class="tr-pl-value" style="color:#4a5568;">' + fmtNoDec(lev) + '</div>' +
-                        '<div class="tr-pl-pct">' + (levPct != null ? '<span style="color:#718096;">' + formatPercent(levPct) + '</span>' : '') + '</div>' +
+                        '<div class="tr-pl-value tr-leverage-value" id="trLeverageValue" title="Double-click to set Amber / Red thresholds" style="color:' + levColor + ';cursor:pointer;">' + fmtNoDec(lev) + '</div>' +
+                        '<div class="tr-pl-pct">' + (levPct != null ? '<span style="color:' + levColor + ';">' + formatPercent(levPct) + '</span>' : '') + '</div>' +
                     '</div>' +
                 '</div>' +
             '</div>';
     }
     banner.innerHTML = dayBlock + '<div class="tr-pl-block-sep"></div>' + totalBlock + leverageHtml;
+
+    var _levEl = document.getElementById('trLeverageValue');
+    if (_levEl) _levEl.addEventListener('dblclick', function (e) { e.stopPropagation(); trLevOpenPopover(_levEl); });
+    if (!window._trLevOutsideWired) {
+        document.addEventListener('click', function (e) {
+            if (window._trLevPopoverOpen && !e.target.closest('.tr-lev-popover') && !e.target.closest('#trLeverageValue')) trLevClosePopover();
+        });
+        window._trLevOutsideWired = true;
+    }
+}
+
+// ---- Leverage RAG colour + threshold popover (thresholds in localStorage) ----
+function trLevGetThresholds() {
+    try { var t = JSON.parse(localStorage.getItem('wms_tr_leverage_thresholds') || 'null'); if (t && isFinite(t.amber) && isFinite(t.red)) return t; } catch (e) {}
+    return { amber: 25, red: 50 };   // default: <25% green, 25-50% amber, >=50% red
+}
+function trLevSaveThresholds(t) { try { localStorage.setItem('wms_tr_leverage_thresholds', JSON.stringify(t)); } catch (e) {} }
+function trLevColor(pct) {
+    if (pct == null) return '#4a5568';
+    var t = trLevGetThresholds();
+    if (pct >= t.red) return '#dc2626';     // red
+    if (pct >= t.amber) return '#d97706';   // amber
+    return '#16a34a';                       // green
+}
+function trLevClosePopover() { document.querySelectorAll('.tr-lev-popover').forEach(function (x) { x.remove(); }); window._trLevPopoverOpen = false; }
+function trLevOpenPopover(anchorEl) {
+    trLevClosePopover();
+    var th = trLevGetThresholds();
+    var card = anchorEl.closest('.tr-pl-block') || anchorEl.parentNode;
+    card.style.position = 'relative';
+    card.insertAdjacentHTML('beforeend',
+        '<div class="tr-lev-popover">' +
+            '<span style="color:#d97706;font-weight:600;">Amber \u2265</span>' +
+            '<input type="number" class="tr-lev-amber" value="' + th.amber + '" step="any">' +
+            '<span style="color:#cbd5e0;">\u2502</span>' +
+            '<span style="color:#dc2626;font-weight:600;">Red \u2265</span>' +
+            '<input type="number" class="tr-lev-red" value="' + th.red + '" step="any">' +
+            '<button class="tr-lev-set">Set</button>' +
+        '</div>');
+    window._trLevPopoverOpen = true;
+    var pop = card.querySelector('.tr-lev-popover');
+    pop.querySelector('.tr-lev-set').addEventListener('click', function () {
+        var amber = parseFloat(pop.querySelector('.tr-lev-amber').value);
+        var red = parseFloat(pop.querySelector('.tr-lev-red').value);
+        if (!isFinite(amber)) amber = 25;
+        if (!isFinite(red)) red = 50;
+        trLevSaveThresholds({ amber: amber, red: red });
+        trLevClosePopover();
+        trUpdateDayPLBanner();
+    });
+    pop.querySelector('.tr-lev-amber').focus();
 }
 
 // ============================================================================
@@ -266,7 +319,7 @@ function trUpdateDayPLBanner() {
 // page's currently-selected books (localStorage wms_rpt_consol_prefs.bookIds;
 // falls back to all accounting-enabled books). Computed via the app-wide store
 // (§A.21) so it reuses the checksum-gated cache; the value is cached in
-// window._trLeverage and the banner render shows it + its % of Current Value.
+// window._trLeverageAccounting and the banner render shows it + its % of Current Value.
 // ============================================================================
 function trGetConsolBookIds() {
     try {
@@ -277,12 +330,12 @@ function trGetConsolBookIds() {
 }
 async function trComputeLeverage() {
     try {
-        if (!window.wmsStore) { window._trLeverage = null; return; }
+        if (!window.wmsStore) { window._trLeverageAccounting = null; return; }
         var ids = trGetConsolBookIds();
-        if (!ids.length) { window._trLeverage = null; trUpdateDayPLBanner(); return; }
+        if (!ids.length) { window._trLeverageAccounting = null; trUpdateDayPLBanner(); return; }
         var lb = await wmsStore.get('leverageBalances', { ids: ids });
-        window._trLeverage = -1 * ((lb.brokers || 0) + (lb.traders || 0) + (lb.cash_bank || 0));
-    } catch (e) { console.warn('trComputeLeverage failed', e); window._trLeverage = null; }
+        window._trLeverageAccounting = -1 * ((lb.brokers || 0) + (lb.traders || 0) + (lb.cash_bank || 0));
+    } catch (e) { console.warn('trComputeLeverage failed', e); window._trLeverageAccounting = null; }
     trUpdateDayPLBanner();
 }
 if (typeof window !== 'undefined') window.trComputeLeverage = trComputeLeverage;
@@ -534,31 +587,8 @@ function trSetupEventHandlers() {
     document.getElementById('trAddTxnBtn').addEventListener('click', function() {
         trOpenAddTransaction();
     });
-    // Quick Fyers import shortcut — loads the Import Transactions module (which
-    // defaults the Fyers investor to Veins via fyInit) and triggers the EXACT
-    // same fetch the import module's "Fetch Today's Trades" button calls. No new
-    // import logic — pure reuse of window.fyFetchTrades.
-    var trFyersBtn = document.getElementById('trFyersImportBtn');
-    if (trFyersBtn) {
-        trFyersBtn.addEventListener('click', async function() {
-            try { await loadModule('import-transactions'); } catch (e) { console.warn('Fyers shortcut: module load failed', e); }
-            // Wait for the Fyers box to finish init (investor defaulted to Veins,
-            // broker resolved), then fire the existing fetch which opens the preview.
-            var tries = 0;
-            var iv = setInterval(function() {
-                tries++;
-                if (typeof window.fyFetchTrades === 'function' && window.fyInvestorId && window.fyBrokerId) {
-                    clearInterval(iv);
-                    window.fyFetchTrades();
-                    trFyersWatchAndReturn();
-                } else if (tries > 40) {
-                    clearInterval(iv);
-                    if (typeof showAlert === 'function') showAlert('Fyers import is taking a moment — open Import Transactions and use the Fyers box.', 'warning', 4000);
-                }
-            }, 150);
-        });
-    }
-    document.getElementById('trToggleZeroBtn').addEventListener('click', trToggleZeroHoldings);
+    // (Fyers import button removed — imports are automated via the Droplet.
+    //  Show-zero toggle removed — it lives on the app header now / F6.)
 
     // Filter toggle — Portfolio
     document.getElementById('tr-filters-toggle').addEventListener('click', function() {
