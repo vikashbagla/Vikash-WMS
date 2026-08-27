@@ -242,8 +242,50 @@ function trUpdateDayPLBanner() {
             '</div>' +
         '</div>';
 
-    banner.innerHTML = dayBlock + '<div class="tr-pl-block-sep"></div>' + totalBlock;
+    // --- Block 3: Leverage (from the Consolidation page's selected books) ---
+    var leverageHtml = '';
+    if (window._trLeverage != null) {
+        var lev = window._trLeverage;
+        var levPct = (currentValue && currentValue !== 0) ? (lev / Math.abs(currentValue)) * 100 : null;
+        leverageHtml = '<div class="tr-pl-block-sep"></div>' +
+            '<div class="tr-pl-block">' +
+                '<div class="tr-pl-block-label">Leverage</div>' +
+                '<div class="tr-pl-block-cards">' +
+                    '<div class="tr-pl-card">' +
+                        '<div class="tr-pl-value" style="color:#4a5568;">' + fmtNoDec(lev) + '</div>' +
+                        '<div class="tr-pl-pct">' + (levPct != null ? '<span style="color:#718096;">' + formatPercent(levPct) + '</span>' : '') + '</div>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+    }
+    banner.innerHTML = dayBlock + '<div class="tr-pl-block-sep"></div>' + totalBlock + leverageHtml;
 }
+
+// ============================================================================
+// BANNER: Leverage = -1 * (Brokers - Traders - Cash&Bank) from the Consolidation
+// page's currently-selected books (localStorage wms_rpt_consol_prefs.bookIds;
+// falls back to all accounting-enabled books). Computed via the app-wide store
+// (§A.21) so it reuses the checksum-gated cache; the value is cached in
+// window._trLeverage and the banner render shows it + its % of Current Value.
+// ============================================================================
+function trGetConsolBookIds() {
+    try {
+        var pr = JSON.parse(localStorage.getItem('wms_rpt_consol_prefs') || '{}');
+        if (pr && Array.isArray(pr.bookIds) && pr.bookIds.length) return pr.bookIds.map(String);
+    } catch (e) {}
+    return (wmsRefData.investors || []).filter(function (v) { return v.accounting_enabled; }).map(function (v) { return String(v.id); });
+}
+async function trComputeLeverage() {
+    try {
+        if (!window.wmsStore) { window._trLeverage = null; return; }
+        var ids = trGetConsolBookIds();
+        if (!ids.length) { window._trLeverage = null; trUpdateDayPLBanner(); return; }
+        var lb = await wmsStore.get('leverageBalances', { ids: ids });
+        window._trLeverage = -1 * ((lb.brokers || 0) + (lb.traders || 0) + (lb.cash_bank || 0));
+    } catch (e) { console.warn('trComputeLeverage failed', e); window._trLeverage = null; }
+    trUpdateDayPLBanner();
+}
+if (typeof window !== 'undefined') window.trComputeLeverage = trComputeLeverage;
 
 // ============================================================================
 // BANNER: Background F&O Day's P&L + Exposure (no F&O module dependency)
@@ -466,6 +508,8 @@ async function initTrading() {
         if (wmsIsRefreshWindow() && window.fyersToken) {
             wmsStartRefreshTimer();
         }
+
+        trComputeLeverage();   // Leverage metric (from Consolidation books)
     } catch (error) {
         console.error('Trading: Error during post-load init:', error);
         showAlert('Trading loaded with errors: ' + error.message, 'warning');
@@ -870,6 +914,7 @@ async function wmsResumeTrading() {
         await trLoadDataIfChanged();
         if (typeof wmsRefreshRender === 'function') wmsRefreshRender();
         else if (typeof trRenderPortfolio === 'function') trRenderPortfolio();
+        trComputeLeverage();
     } catch (e) { console.warn('wmsResumeTrading failed', e); }
 }
 if (typeof window !== 'undefined') window.wmsResumeTrading = wmsResumeTrading;
@@ -908,6 +953,7 @@ async function trRefresh() {
         try { await lgRefresh(); } catch (err) { console.warn('Statements refresh failed:', err); }
     }
 
+    trComputeLeverage();
     showLoading(false);
     showAlert('Refreshed', 'success', 2000);
 }
