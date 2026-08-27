@@ -742,35 +742,8 @@
 </head>
 <body>
 <div class="trading-container">
-    <!-- Sticky Header -->
-    <div class="trading-header-bar">
-        <div>
-            <h2 style="margin: 0; font-size: 15px; color: #2d3748;">Trading</h2>
-            <span id="tr-unit-desc" style="font-size: 10px; color: #a0aec0; display: block;"></span>
-        </div>
-        <div id="trDayPLBanner" style="display:flex;gap:24px;align-items:center;font-size:12px;"></div>
-        <div class="tr-header-actions" style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
-            <button class="btn-add-txn" id="trAddTxnBtn" style="width: 104px; text-align: center;">Trade</button>
-            <div class="tr-others-wrap" style="position: relative;">
-                <button class="btn-others" id="trOthersBtn" title="Income &amp; Corporate Actions" style="width: 104px; padding: 6px 16px; font-size: 13px; text-align: center;">Others &#9662;</button>
-                <div class="tr-others-dropdown" id="trOthersDropdown" style="display:none;">
-                    <div class="tr-others-group-label">Income</div>
-                    <button class="tr-others-item" data-type="DIVIDEND">Dividend</button>
-                    <button class="tr-others-item" data-type="INTEREST">Interest</button>
-                    <button class="tr-others-item" data-type="OTHER_INCOME">Other Income</button>
-                    <button class="tr-others-item" data-type="CAPITAL_REDUCTION">Capital Reduction</button>
-                    <div class="tr-others-group-label">Adjustments</div>
-                    <button class="tr-others-item" data-type="HISTORICAL_PL">Historical P&L</button>
-                    <div class="tr-others-group-label">Corporate Actions</div>
-                    <button class="tr-others-item" data-type="RIGHTS_ENTITLEMENT">Rights (Entitlement)</button>
-                    <button class="tr-others-item" data-type="RIGHTS_PAYMENT">Rights (Payment)</button>
-                    <button class="tr-others-item" data-type="BONUS">Bonus</button>
-                    <button class="tr-others-item" data-type="SPLIT">Split</button>
-                    <button class="tr-others-item" data-type="DEMERGER">Demerger</button>
-                </div>
-            </div>
-        </div>
-    </div>
+    <!-- Header bar (Trading numbers + Trade/Others) now lives in the app-shell
+         global banner (app.html #wmsGlobalBanner) so it shows on every module. -->
 
     <!-- Tabs -->
     <div class="trading-tabs">

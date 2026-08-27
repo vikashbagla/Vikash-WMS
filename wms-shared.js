@@ -3224,38 +3224,38 @@ function wmsRefreshRender() {
     // Always update the global Fyers refresh time indicator (in app header)
     wmsUpdateFyersTime();
 
-    // Check if Trading module is active (portfolio tab element exists in DOM)
-    var isTradingActive = !!document.getElementById('tr-portfolio');
-
-    if (isTradingActive) {
-        var activeTab = document.querySelector('.trading-tab-content.active');
-        var activeId = activeTab ? activeTab.id : '';
-
-        if (activeId === 'tr-portfolio') {
-            // trRenderPortfolio internally calls trComputeBannerStats
-            if (typeof trRenderPortfolio === 'function') trRenderPortfolio();
-        } else {
-            // Not on portfolio — still compute stocks banner from cached prices
-            if (typeof trComputeBannerStats === 'function') trComputeBannerStats();
-            // Render active F&O, Watchlist, or Statements tab
-            if (activeId === 'tr-fno-positions' && typeof trFnoRender === 'function') {
-                trFnoRender();
-            } else if (activeId === 'tr-watchlist' && typeof trWlUpdatePricesInPlace === 'function') {
-                trWlUpdatePricesInPlace();
-            } else if (activeId === 'tr-ledger' && typeof lgRenderSummary === 'function') {
-                // Re-render Open Positions table + Summary cards so CMP reflects
-                // the freshly-fetched wmsLivePrices. Only runs if lgInit has
-                // already completed (guarded by typeof check).
-                try { lgRenderSummary(); } catch (err) { console.warn('Statements render failed:', err); }
+    // Trading loaded? (tr-portfolio exists — it is now preloaded at startup for the
+    // global banner, so this is true app-wide). Only do the HEAVY tab renders when
+    // the Trading pane is actually VISIBLE; when it is hidden (you are on another
+    // module) just recompute the banner numbers for the global banner. (ADR §A.21)
+    var isTradingLoaded = !!document.getElementById('tr-portfolio');
+    if (isTradingLoaded) {
+        var _trPane = document.querySelector('.module-pane[data-pane="trading"]');
+        var tradingVisible = !_trPane || _trPane.style.display !== 'none';
+        if (tradingVisible) {
+            var activeTab = document.querySelector('.trading-tab-content.active');
+            var activeId = activeTab ? activeTab.id : '';
+            if (activeId === 'tr-portfolio') {
+                if (typeof trRenderPortfolio === 'function') trRenderPortfolio();   // internally calls trComputeBannerStats
+            } else {
+                if (typeof trComputeBannerStats === 'function') trComputeBannerStats();
+                if (activeId === 'tr-fno-positions' && typeof trFnoRender === 'function') {
+                    trFnoRender();
+                } else if (activeId === 'tr-watchlist' && typeof trWlUpdatePricesInPlace === 'function') {
+                    trWlUpdatePricesInPlace();
+                } else if (activeId === 'tr-ledger' && typeof lgRenderSummary === 'function') {
+                    try { lgRenderSummary(); } catch (err) { console.warn('Statements render failed:', err); }
+                }
             }
+        } else {
+            // Trading hidden — global banner only: recompute the banner numbers, no table render.
+            if (typeof trComputeBannerStats === 'function') trComputeBannerStats();
         }
 
-        // Always refresh F&O banner (reads from wmsLivePrices cache — fast)
+        // Always refresh F&O banner (reads from wmsLivePrices cache — fast; drives the Leverage exposure too)
         if (typeof trFnoBannerRefreshFromDefault === 'function') {
             trFnoBannerRefreshFromDefault();
         }
-
-        // Update price status indicator
         if (typeof trUpdatePriceStatus === 'function') trUpdatePriceStatus('live');
     }
 
