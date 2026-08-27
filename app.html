@@ -91,6 +91,39 @@
         </div>
     </nav>
 
+    <!-- Global at-a-glance banner (ADR §A.21) — the Trading numbers + Trade/Others,
+         visible on every module; heading follows the current module. Reuses the
+         .trading-header-bar class so trading.html's styles apply once Trading is
+         preloaded. -->
+    <div class="trading-header-bar" id="wmsGlobalBanner" style="padding: 8px 16px; margin: 0; display: none;">
+        <div>
+            <h2 id="wmsBannerHeading" style="margin: 0; font-size: 15px; color: #2d3748;">WMS</h2>
+            <span id="tr-unit-desc" style="font-size: 10px; color: #a0aec0; display: block;"></span>
+        </div>
+        <div id="trDayPLBanner" style="display:flex;gap:24px;align-items:center;font-size:12px;"></div>
+        <div class="tr-header-actions" style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
+            <button class="btn-add-txn" id="trAddTxnBtn" style="width: 104px; text-align: center;">Trade</button>
+            <div class="tr-others-wrap" style="position: relative;">
+                <button class="btn-others" id="trOthersBtn" title="Income &amp; Corporate Actions" style="width: 104px; padding: 6px 16px; font-size: 13px; text-align: center;">Others &#9662;</button>
+                <div class="tr-others-dropdown" id="trOthersDropdown" style="display:none;">
+                    <div class="tr-others-group-label">Income</div>
+                    <button class="tr-others-item" data-type="DIVIDEND">Dividend</button>
+                    <button class="tr-others-item" data-type="INTEREST">Interest</button>
+                    <button class="tr-others-item" data-type="OTHER_INCOME">Other Income</button>
+                    <button class="tr-others-item" data-type="CAPITAL_REDUCTION">Capital Reduction</button>
+                    <div class="tr-others-group-label">Adjustments</div>
+                    <button class="tr-others-item" data-type="HISTORICAL_PL">Historical P&L</button>
+                    <div class="tr-others-group-label">Corporate Actions</div>
+                    <button class="tr-others-item" data-type="RIGHTS_ENTITLEMENT">Rights (Entitlement)</button>
+                    <button class="tr-others-item" data-type="RIGHTS_PAYMENT">Rights (Payment)</button>
+                    <button class="tr-others-item" data-type="BONUS">Bonus</button>
+                    <button class="tr-others-item" data-type="SPLIT">Split</button>
+                    <button class="tr-others-item" data-type="DEMERGER">Demerger</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <main class="main-content">
         <div id="content-container" class="content-container"></div>
     </main>
@@ -601,11 +634,34 @@
         if (!pane) { pane = document.createElement('div'); pane.className = 'module-pane'; pane.setAttribute('data-pane', name); c.appendChild(pane); }
         return pane;
     }
+    const _wmsModuleLabel = { 'trading': 'Trading', 'automation': 'Auto Trading', 'reports': 'Reports', 'accounting': 'Accounting', 'import-transactions': 'Import Transactions', 'master-data': 'Master Database' };
     function _wmsSyncNav(moduleName) {
         document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
         const topBtn = document.querySelector('.nav-btn[data-module="' + moduleName + '"]');
         if (topBtn) topBtn.classList.add('active');
         if (typeof updateBottomNavActive === 'function') updateBottomNavActive(moduleName);
+        const h = document.getElementById('wmsBannerHeading');
+        if (h) h.textContent = _wmsModuleLabel[moduleName] || moduleName;
+    }
+    // Preload Trading in the background so its banner compute runs app-wide (the
+    // shared refresh computes the banner whenever the tr-portfolio element exists).
+    function _wmsShowGlobalBanner() { const b = document.getElementById('wmsGlobalBanner'); if (b) b.style.display = 'flex'; }
+    async function _wmsPreloadTrading() {
+        if (typeof wmsHasModule === 'function' && !wmsHasModule('trading')) return;
+        if (_wmsModuleLoaded['trading']) { _wmsShowGlobalBanner(); return; }   // loaded via loadModule already
+        try {
+            const pane = _wmsEnsurePane('trading');
+            const wasCurrent = (currentModule === 'trading');
+            if (!wasCurrent) pane.style.display = 'none';
+            const _cb = '?v=' + (window.__wmsV || (window.__wmsV = Date.now()));
+            const html = await (await fetch('trading.html' + _cb)).text();
+            injectModule(html, pane);
+            await loadScript('trading.js');
+            _wmsModuleLoaded['trading'] = true;
+            if (typeof initTrading === 'function') await initTrading();
+            if (!wasCurrent && currentModule !== 'trading') pane.style.display = 'none';
+            _wmsShowGlobalBanner();
+        } catch (e) { console.warn('[global-banner] preload trading failed', e); }
     }
 
     async function loadModule(moduleName, opts) {
@@ -825,6 +881,8 @@
             // Set initial bottom nav active state
             updateBottomNavActive(lastModule);
         }
+        // Global banner: preload Trading so the at-a-glance numbers exist everywhere.
+        setTimeout(function () { _wmsPreloadTrading(); }, 150);
     });
 
     // Keep bottom nav active state in sync
