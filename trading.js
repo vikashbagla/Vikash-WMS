@@ -244,8 +244,9 @@ function trUpdateDayPLBanner() {
 
     // --- Block 3: Leverage (from the Consolidation page's selected books) ---
     var leverageHtml = '';
-    if (window._trLeverage != null) {
-        var lev = window._trLeverage;
+    if (window._trLeverageAccounting != null) {
+        // Leverage = -(Brokers+Traders+Cash&Bank) + F&O exposure (default/Self NFO view).
+        var lev = window._trLeverageAccounting + (window._trFnoExposure || 0);
         var levPct = (currentValue && currentValue !== 0) ? (lev / Math.abs(currentValue)) * 100 : null;
         var levColor = trLevColor(levPct);
         leverageHtml = '<div class="tr-pl-block-sep"></div>' +
@@ -318,7 +319,7 @@ function trLevOpenPopover(anchorEl) {
 // page's currently-selected books (localStorage wms_rpt_consol_prefs.bookIds;
 // falls back to all accounting-enabled books). Computed via the app-wide store
 // (§A.21) so it reuses the checksum-gated cache; the value is cached in
-// window._trLeverage and the banner render shows it + its % of Current Value.
+// window._trLeverageAccounting and the banner render shows it + its % of Current Value.
 // ============================================================================
 function trGetConsolBookIds() {
     try {
@@ -329,12 +330,12 @@ function trGetConsolBookIds() {
 }
 async function trComputeLeverage() {
     try {
-        if (!window.wmsStore) { window._trLeverage = null; return; }
+        if (!window.wmsStore) { window._trLeverageAccounting = null; return; }
         var ids = trGetConsolBookIds();
-        if (!ids.length) { window._trLeverage = null; trUpdateDayPLBanner(); return; }
+        if (!ids.length) { window._trLeverageAccounting = null; trUpdateDayPLBanner(); return; }
         var lb = await wmsStore.get('leverageBalances', { ids: ids });
-        window._trLeverage = -1 * ((lb.brokers || 0) + (lb.traders || 0) + (lb.cash_bank || 0));
-    } catch (e) { console.warn('trComputeLeverage failed', e); window._trLeverage = null; }
+        window._trLeverageAccounting = -1 * ((lb.brokers || 0) + (lb.traders || 0) + (lb.cash_bank || 0));
+    } catch (e) { console.warn('trComputeLeverage failed', e); window._trLeverageAccounting = null; }
     trUpdateDayPLBanner();
 }
 if (typeof window !== 'undefined') window.trComputeLeverage = trComputeLeverage;
