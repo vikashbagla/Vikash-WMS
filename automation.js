@@ -6770,7 +6770,7 @@ function auAt2RenderLog() {
     var chip = function (m) { return '<span class="au-badge ' + (m === 'live' ? 'error' : 'idle')
           + '" style="font-size:9px;padding:0 5px;margin-left:2px">' + (m === 'live' ? 'LIVE' : 'paper') + '</span>'; };
 
-    h += '<table class="au-at2-table"><thead><tr>'
+    h += '<table class="au-at2-table au-at2-log"><thead><tr>'
        + '<th style="white-space:nowrap">Time</th><th>Family</th><th>What happened</th>'
        + '<th style="text-align:center">Email</th></tr></thead><tbody>';
     runs.forEach(function (r) {

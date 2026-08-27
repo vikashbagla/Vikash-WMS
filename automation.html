@@ -390,6 +390,28 @@ input.au-at2-locked:disabled {
 .au-at2-table tfoot td { border-bottom: none; }
 .au-at2-table code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; }
 
+/* ── LOG tab only ────────────────────────────────────────────────────────────
+   The shared table is table-layout:fixed (equal quarters) with ellipsis-clipped
+   cells — right for the narrow Alert/Signal/Event tables, wrong here: it starved
+   the multi-event "What happened" column (it truncated to "... TRA") while Time
+   and Family sat in wide empty space. The log opts into auto layout so Time,
+   Family and Email shrink to their content and "What happened" takes the slack
+   and WRAPS instead of clipping. Scoped by the extra .au-at2-log class so the
+   other four tables are untouched. */
+.au-at2-table.au-at2-log { table-layout: auto; }
+.au-at2-table.au-at2-log th,
+.au-at2-table.au-at2-log td {
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+    vertical-align: top;
+}
+.au-at2-table.au-at2-log th:nth-child(3),
+.au-at2-table.au-at2-log td:nth-child(3) {
+    white-space: normal;
+    width: 100%;
+}
+
 .au-at2-kv td:first-child { color: #6b7280; padding: 3px 0; width: 40%; }
 .au-at2-kv td:last-child  { padding: 3px 0; }
 
