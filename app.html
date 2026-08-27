@@ -628,6 +628,30 @@
         'accounting':          { html: 'accounting.html',         scripts: ['accounting.js', 'accounting-bank-import.js'],        init: 'initAccounting',        resume: 'wmsResumeAccounting' },
     };
     const _wmsModuleLoaded = {};
+    const _wmsModuleLoading = {};   // name -> in-flight first-load Promise (single-flight guard)
+    // Single-flight module loader (ADR-001 / LESSONS A.21): fetch html + inject +
+    // load script + init EXACTLY once. Both loadModule() and _wmsPreloadTrading()
+    // funnel through here, so a concurrent landing-load + background preload of the
+    // same module can never run initXxx() (and thus wire event handlers) twice.
+    function _wmsDoLoad(moduleName) {
+        if (_wmsModuleLoaded[moduleName]) return Promise.resolve();
+        if (_wmsModuleLoading[moduleName]) return _wmsModuleLoading[moduleName];
+        const def = WMS_MODULE_DEF[moduleName];
+        const p = (async () => {
+            const pane = _wmsEnsurePane(moduleName);
+            pane.innerHTML = '<div class="loading-module">Loading...</div>';
+            const _cb = '?v=' + (window.__wmsV || (window.__wmsV = Date.now()));
+            const html = await (await fetch(def.html + _cb)).text();
+            injectModule(html, pane);
+            for (const sc of def.scripts) await loadScript(sc);
+            _wmsModuleLoaded[moduleName] = true;
+            const initFn = window[def.init];
+            if (typeof initFn === 'function') await initFn();
+        })();
+        _wmsModuleLoading[moduleName] = p;
+        p.catch(function(){}).then(function(){ if (_wmsModuleLoading[moduleName] === p) _wmsModuleLoading[moduleName] = null; });
+        return p;
+    }
     function _wmsEnsurePane(name) {
         const c = document.getElementById('content-container');
         let pane = c.querySelector('.module-pane[data-pane="' + name + '"]');
@@ -653,12 +677,7 @@
             const pane = _wmsEnsurePane('trading');
             const wasCurrent = (currentModule === 'trading');
             if (!wasCurrent) pane.style.display = 'none';
-            const _cb = '?v=' + (window.__wmsV || (window.__wmsV = Date.now()));
-            const html = await (await fetch('trading.html' + _cb)).text();
-            injectModule(html, pane);
-            await loadScript('trading.js');
-            _wmsModuleLoaded['trading'] = true;
-            if (typeof initTrading === 'function') await initTrading();
+            await _wmsDoLoad('trading');
             if (!wasCurrent && currentModule !== 'trading') pane.style.display = 'none';
             _wmsShowGlobalBanner();
         } catch (e) { console.warn('[global-banner] preload trading failed', e); }
@@ -685,15 +704,12 @@
         try {
             const firstLoad = !_wmsModuleLoaded[moduleName];
             if (firstLoad || force) {
-                if (force) _wmsModuleLoaded[moduleName] = false;
-                pane.innerHTML = '<div class="loading-module">Loading...</div>';
-                const _cb = '?v=' + (window.__wmsV || (window.__wmsV = Date.now()));
-                const html = await (await fetch(def.html + _cb)).text();
-                injectModule(html, pane);
-                for (const sc of def.scripts) await loadScript(sc);
-                _wmsModuleLoaded[moduleName] = true;
-                const initFn = window[def.init];
-                if (typeof initFn === 'function') await initFn();
+                if (force) {
+                    if (_wmsModuleLoading[moduleName]) { try { await _wmsModuleLoading[moduleName]; } catch (e) {} }
+                    _wmsModuleLoaded[moduleName] = false;
+                    _wmsModuleLoading[moduleName] = null;
+                }
+                await _wmsDoLoad(moduleName);
             } else {
                 // RETURN visit — keep the mounted DOM; cheap store-backed resume.
                 const resFn = def.resume && window[def.resume];
