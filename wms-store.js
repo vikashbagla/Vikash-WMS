@@ -183,6 +183,28 @@
       loader: async function () { if (window.wmsRefData && !window.wmsRefData.ready && typeof window.wmsLoadRefData === 'function') await window.wmsLoadRefData(); return window.wmsRefData; },
       peek: function () { return window.wmsRefData; }
     });
+    // Leverage balances (Brokers/Traders/Cash&Bank Dr-Cr) for a set of accounting
+    // books — the Trading banner's Leverage metric (§A.21). Keyed by the book-id set
+    // (the Consolidation page's selection). Change-signal = the acct_vouchers probe.
+    var _wmsLevSync = function (ids) {
+        if (!ids || !ids.length) return Promise.resolve({ checksum: 'empty' });
+        var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
+        return fetch(SUPABASE_URL + '/rest/v1/acct_vouchers?' + filter + '&select=updated_at&order=updated_at.desc&limit=1', { headers: wmsHeaders({ Prefer: 'count=exact' }) })
+            .then(function (res) { if (!res.ok) return null; var cr = res.headers.get('content-range'); var total = cr ? cr.split('/')[1] : '?'; return res.json().then(function (rows) { return { checksum: total + '|' + ((rows && rows[0]) ? rows[0].updated_at : '?') }; }); })
+            .catch(function () { return null; });
+    };
+    register('leverageBalances', {
+        policy: 'cache',
+        keyBy: function (pr) { return (pr && pr.ids) ? pr.ids.slice().sort().join(',') : ''; },
+        loader: function (pr) {
+            var ids = (pr && pr.ids) || [];
+            if (!ids.length) return Promise.resolve({ brokers: 0, traders: 0, cash_bank: 0 });
+            return fetch(SUPABASE_URL + '/rest/v1/rpc/leverage_balances', { method: 'POST', headers: wmsHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ p_book_ids: ids }) })
+                .then(function (res) { return res.ok ? res.json() : null; })
+                .then(function (rows) { var r = Array.isArray(rows) ? rows[0] : rows; return r ? { brokers: Number(r.brokers) || 0, traders: Number(r.traders) || 0, cash_bank: Number(r.cash_bank) || 0 } : { brokers: 0, traders: 0, cash_bank: 0 }; });
+        },
+        syncState: function (pr) { return _wmsLevSync((pr && pr.ids) || []); }
+    });
     register('livePrices', {
       policy: 'delegate',
       loader: async function () { if (typeof window.wmsStandardRefresh === 'function') { try { await window.wmsStandardRefresh(false); } catch (e) {} } return window.wmsLivePrices; },
