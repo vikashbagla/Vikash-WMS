@@ -1375,9 +1375,16 @@ function trCalcHoldings() {
 function trSort(column) {
     var isPL = (column === 'pl' || column === 'daypl');
     if (trSortColumn === column) {
-        if (isPL && !trSortByPct) { trSortByPct = true; }
-        else if (isPL && trSortByPct) { trSortByPct = false; trSortDirection = trSortDirection === 'asc' ? 'desc' : 'asc'; }
-        else { trSortDirection = trSortDirection === 'asc' ? 'desc' : 'asc'; }
+        if (isPL) {
+            // 4-state cadence, grouped so amount and % are not interleaved:
+            // amount asc -> amount desc -> % asc -> % desc -> (repeat)
+            if (!trSortByPct && trSortDirection === 'asc') { trSortDirection = 'desc'; }
+            else if (!trSortByPct && trSortDirection === 'desc') { trSortByPct = true; trSortDirection = 'asc'; }
+            else if (trSortByPct && trSortDirection === 'asc') { trSortDirection = 'desc'; }
+            else { trSortByPct = false; trSortDirection = 'asc'; }
+        } else {
+            trSortDirection = trSortDirection === 'asc' ? 'desc' : 'asc';
+        }
     } else {
         trSortColumn = column;
         trSortDirection = 'asc';
