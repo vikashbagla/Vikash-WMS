@@ -6887,7 +6887,8 @@ var AU_AT2_PARAM_FIELDS = [
     { group: 'session', path: 'session.no_entry_end',   label: 'Dead period until',kind: 'hour', hint: 'IST hour, exclusive. It REOPENS here — unlike the cutoff. May wrap midnight' },
     { group: 'session', path: 'session.square_off_time',label: 'Square-off',       kind: 'hhmm', hint: 'HH:MM IST. Blank = the position carries overnight (MS007 carries)' },
 
-    { group: 'roll', path: 'roll.days_before', label: 'Roll days before', kind: 'int',  hint: 'Roll when the held contract is within this many days of expiry' },
+    { group: 'roll', path: 'roll.entry_days_before', label: 'Entry roll — days before expiry', kind: 'int', hint: 'A NEW entry rolls to the NEXT month this many days before the front contract\'s expiry (contract selection). 7 clears MCX\'s staggered-delivery block near expiry.' },
+    { group: 'roll', path: 'roll.days_before', label: 'Roll days before', kind: 'int',  hint: 'Roll when the held contract is within this many days of expiry (open-position rollover — currently disabled)' },
     { group: 'roll', path: 'roll.time',        label: 'Roll at',          kind: 'hhmm', hint: 'HH:MM IST — when in the day the roll executes' }
 ];
 
