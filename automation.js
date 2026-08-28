@@ -6302,29 +6302,34 @@ function auAt2RenderMetrics(mode) {
     var losses = closed.filter(function (t) { return Number(t.realised_pnl) < 0; }).length;
     var filtered = closed.length !== allClosed.length;
 
-    // Charges (T3a rate: 0.015% of gross notional per side) + peak exposure, over
-    // the FILTERED closed set. Notional = qty_lots x lot_size x price.
-    var charges = 0, maxExp = 0;
+    // Margin rate: Gold 10%, Silver 20% (owner). Notional = qty_lots x lot_size x price.
+    var MARGIN = { gold: 0.10, silver: 0.20 };
+    function rateOf(t) { return MARGIN[auAt2Instrument(t)] || 0.10; }
+    function notion(t, px) {
+        var sec = auAt2Security(t); var lot = sec ? (Number(sec.lot_size) || 0) : 0;
+        return (Number(px) || 0) * (Number(t.qty_lots) || 0) * lot;
+    }
+    // Charges (T3a: 0.015% of notional per side) + PEAK exposure/margin, filtered closed set.
+    var charges = 0, maxExp = 0, maxMargin = 0;
     closed.forEach(function (t) {
-        var sec = auAt2Security(t);
-        var lot = sec ? (Number(sec.lot_size) || 0) : 0;
-        var units = (Number(t.qty_lots) || 0) * lot;
-        var entN = (Number(t.entry_price) || 0) * units;
-        var exN  = (Number(t.exit_price)  || 0) * units;
+        var entN = notion(t, t.entry_price), exN = notion(t, t.exit_price);
         charges += 0.00015 * (entN + exN);
-        if (entN > maxExp) maxExp = entN;
+        if (entN > maxExp) { maxExp = entN; maxMargin = entN * rateOf(t); }
     });
     var net = gross - charges;
     var pct = function (v) { return maxExp ? (v / maxExp * 100).toFixed(2) + '% of max exp' : '—'; };
+    // Open-book margin (current, whole open book — same basis as Open exposure).
+    var openMargin = open.reduce(function (n, t) { return n + (Number(t.entry_price) || 0) * (Number(t.qty_open_units) || 0) * rateOf(t); }, 0);
 
     function set(id, html) { var el = document.getElementById(id); if (el) el.innerHTML = html; }
-    function sub(id, text) { var el = document.getElementById(id); if (el) el.textContent = text || ''; }
+    function sub(id, html) { var el = document.getElementById(id); if (el) el.innerHTML = html || ''; }
     var pfx = 'au-at2-' + mode + '-m-';
     set(pfx + 'open', String(open.length));
     sub(pfx + 'open-sub', lots + ' lot(s)');
-    // Open exposure = current open book; max exposure = peak position on the FILTERED closed set.
     set(pfx + 'exposure', exposure ? formatAmount(exposure) : '—');
-    sub(pfx + 'exposure-sub', 'max ' + (maxExp ? formatAmount(maxExp) : '—') + (open.length ? ' · ' + open.length + ' open' : ''));
+    sub(pfx + 'exposure-sub', open.length ? 'margin ' + formatAmount(openMargin) : '');
+    set(pfx + 'maxexp', maxExp ? formatAmount(maxExp) : '—');
+    sub(pfx + 'maxexp-sub', maxExp ? 'margin ' + formatAmount(maxMargin) : (filtered ? '(filtered)' : ''));
     set(pfx + 'realised', closed.length ? auAt2Pnl(gross) : '—');
     sub(pfx + 'realised-sub', closed.length
         ? (pct(gross) + ' · ' + wins + 'W/' + losses + 'L' + (filtered ? ' (filtered)' : ''))
@@ -6341,7 +6346,7 @@ function auAt2RenderBanner() {
         ? '<span class="au-badge ' + (crit ? 'error' : 'warning') + '" style="margin-left:8px" title="Open alerts — see the Alerts tab">\u26A0 '
           + openAlerts.length + ' alert' + (openAlerts.length === 1 ? '' : 's')
           + (crit ? ' (' + crit + ' critical)' : '') + '</span>'
-        : '';
+        : '<span class="au-badge success" style="margin-left:8px" title="No open alerts">\u2713 0 alerts</span>';
     var tab = document.getElementById('au-at2-alerts-tab');
     if (tab) tab.innerHTML = 'Alerts' + (openAlerts.length
         ? ' <span class="au-badge ' + (crit ? 'error' : 'warning') + '" style="margin-left:4px">' + openAlerts.length + '</span>'
