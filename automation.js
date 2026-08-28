@@ -6339,6 +6339,15 @@ function auAt2RenderMetrics(mode) {
         if (run > maxExp) { maxExp = run; maxMargin = runM; }
     });
     var pct = function (v) { return maxExp ? (v / maxExp * 100).toFixed(2) + '% of peak exp' : '—'; };
+    // First trade date (per filter) — earliest entry in the filtered closed set;
+    // shown bottom-right of the Peak exposure card.
+    var firstMs = null;
+    closed.forEach(function (t) {
+        if (!t.entry_at) return;
+        var ms = new Date(t.entry_at).getTime();
+        if (!isNaN(ms) && (firstMs == null || ms < firstMs)) firstMs = ms;
+    });
+    var firstDate = firstMs == null ? '' : new Date(firstMs).toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: '2-digit' });
     // Open-book margin (current, whole open book — same basis as Open exposure).
     var openMargin = open.reduce(function (n, t) { return n + (Number(t.entry_price) || 0) * (Number(t.qty_open_units) || 0) * rateOf(t); }, 0);
 
@@ -6350,7 +6359,9 @@ function auAt2RenderMetrics(mode) {
     set(pfx + 'exposure', exposure ? formatAmount(exposure) : '—');
     sub(pfx + 'exposure-sub', open.length ? 'margin ' + formatAmount(openMargin) : '');
     set(pfx + 'maxexp', maxExp ? formatAmount(maxExp) : '—');
-    sub(pfx + 'maxexp-sub', maxExp ? 'margin ' + formatAmount(maxMargin) : (filtered ? '(filtered)' : ''));
+    sub(pfx + 'maxexp-sub', maxExp
+        ? 'margin ' + formatAmount(maxMargin) + (firstDate ? '<span style="float:right" title="first trade (per filter)">' + firstDate + '</span>' : '')
+        : (filtered ? '(filtered)' : ''));
     set(pfx + 'realised', closed.length ? auAt2Pnl(gross) : '—');
     sub(pfx + 'realised-sub', closed.length
         ? (pct(gross) + ' · ' + wins + 'W/' + losses + 'L' + (filtered ? ' (filtered)' : ''))
