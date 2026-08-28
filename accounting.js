@@ -423,6 +423,20 @@ async function acctLoadBook() {
     (res[1] || []).forEach(function (v) { acctVoucherCreatedAt[v.id] = v.created_at; });
 }
 
+// After a LOCAL voucher write (post/edit/cancel) drop the store's cached copy for
+// this book so the reload is immediate and guaranteed. The cheap checksum diff (F5,
+// engine rebuild, another tab) stays as-is — migration 100 (updated_at bump) makes
+// that diff reliable too; this is the belt-and-suspenders for the local writer.
+function acctInvalidateVouchers() {
+    try {
+        if (typeof window !== 'undefined' && window.wmsStore && wmsStore.invalidate) {
+            var ids = acctViewBookIds();
+            wmsStore.invalidate('vouchers', { ids: ids });
+            wmsStore.invalidate('leverageBalances', { ids: ids });
+        }
+    } catch (e) { /* non-fatal */ }
+}
+
 // ============================================================================
 // Init
 // ============================================================================
@@ -2350,6 +2364,7 @@ async function acctDeleteVoucher() {
         acctEditingVoucherId = null;
         if (acctVoucherModalCtrl) acctVoucherModalCtrl.close();
         acctToast('Voucher deleted.');
+        acctInvalidateVouchers();
         await acctLoadBook();
         acctRenderActiveTab();
         if (acctLedgerModalCtrl && acctLedgerModalCtrl.isOpen()) acctRenderLedgerDetail();
@@ -2357,6 +2372,32 @@ async function acctDeleteVoucher() {
         console.error('[accounting] delete voucher failed', e);
         acctToast('Could not delete voucher: ' + e.message, true);
     }
+}
+
+/* Duplicate the voucher being edited into a NEW, unsaved voucher — same ledgers,
+   amounts, per-leg notes and narration — but Save posts a fresh voucher and leaves
+   the original untouched. Lands on the DATE so a new date is entered. */
+function acctDuplicateVoucher() {
+    if (acctVoucherReadOnly) return;                 // only from an editable voucher
+    // Snapshot BEFORE reopening — acctOpenVoucherModal resets all voucher state.
+    var snapLines = acctVoucherLines.map(function (l) {
+        return { ledgerId: l.ledgerId, debit: l.debit, credit: l.credit, narration: l.narration };
+    });
+    var nEl0 = document.getElementById('acctVoucherNarration');
+    var snapNarr = nEl0 ? nEl0.value : '';
+    var snapLeg = acctVoucherShowLegNarr;
+    // Reopen as a fresh voucher (sets acctEditingVoucherId = null -> Save creates new).
+    acctOpenVoucherModal(null, snapLines);
+    // acctOpenVoucherModal clears the header narration + per-leg toggle — restore them.
+    var nEl = document.getElementById('acctVoucherNarration');
+    if (nEl) nEl.value = snapNarr;
+    acctVoucherShowLegNarr = snapLeg;
+    var lnt = document.getElementById('acctLegNarrToggle');
+    if (lnt) lnt.classList.toggle('on', snapLeg);
+    var t = document.getElementById('acctVoucherTitle');
+    if (t) t.textContent = 'New Voucher (copy) — ' + acctInvName(acctBookId);
+    acctRenderVoucherLines();
+    // Date focus is handled by acctOpenVoucherModal's own setTimeout.
 }
 
 async function acctSaveVoucher() {
@@ -2406,6 +2447,7 @@ async function acctSaveVoucher() {
                 acctEditingVoucherId = null;
                 if (acctVoucherModalCtrl) acctVoucherModalCtrl.close();
                 acctToast('Voucher updated.');
+                acctInvalidateVouchers();
                 await acctLoadBook();
                 acctRenderActiveTab();
                 if (acctLedgerModalCtrl && acctLedgerModalCtrl.isOpen()) acctRenderLedgerDetail();   // refresh the open ledger drill-down (moved/changed lines)
@@ -2444,6 +2486,7 @@ async function acctSaveVoucher() {
             acctEditingVoucherId = null;
             if (acctVoucherModalCtrl) acctVoucherModalCtrl.close();
             acctToast('Voucher updated.');
+            acctInvalidateVouchers();
             await acctLoadBook();
             acctRenderActiveTab();
             if (acctLedgerModalCtrl && acctLedgerModalCtrl.isOpen()) acctRenderLedgerDetail();
@@ -2467,6 +2510,7 @@ async function acctSaveVoucher() {
         var result = await resp.json();
         if (acctVoucherModalCtrl) acctVoucherModalCtrl.close();
         acctToast('Voucher ' + (result && result.voucher_number ? result.voucher_number : '') + ' posted.');
+        acctInvalidateVouchers();
         await acctLoadBook();
         acctRenderActiveTab();
         if (acctLedgerModalCtrl && acctLedgerModalCtrl.isOpen()) acctRenderLedgerDetail();
@@ -3022,6 +3066,8 @@ function acctApplyVoucherReadOnly(ro) {
     // Delete only makes sense on an existing, editable (non-auto) voucher.
     var del = document.getElementById('acctVoucherDelete');
     if (del) del.style.display = (ro || !acctEditingVoucherId) ? 'none' : '';
+    var dup = document.getElementById('acctVoucherDuplicate');
+    if (dup) dup.style.display = (ro || !acctEditingVoucherId) ? 'none' : '';
     var nar = document.getElementById('acctVoucherNarration');
     if (nar) nar.disabled = ro;
     var lnt = document.getElementById('acctLegNarrToggle');
@@ -3561,6 +3607,8 @@ function acctWireModals() {
     document.getElementById('acctVoucherSave').onclick = acctSaveVoucher;
     var delBtn = document.getElementById('acctVoucherDelete');
     if (delBtn) delBtn.onclick = acctDeleteVoucher;
+    var dupBtn = document.getElementById('acctVoucherDuplicate');
+    if (dupBtn) dupBtn.onclick = acctDuplicateVoucher;
 
     // Exception resolve modal (Master ▸ Exceptions)
     var exOverlay = document.getElementById('acctExResolveModal');
