@@ -196,7 +196,7 @@ function autoManualRenderForm() {
           '<h3 style="margin:0">✋ Manual Fyers order <span style="font-size:12px;font-weight:400;color:#16a34a">● unlocked</span></h3>' +
           '<button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualLock()">Lock</button>' +
         '</div>' +
-        '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ <b>LIVE</b> orders on Veins/Fyers. No automated risk checks — the Confirm step is the only gate. One row per order; each is a separate Fyers order. <b>Qty/Lots is signed: + = BUY, − = SELL.</b> Product is derived automatically (F&O → MARGIN, equity → CNC).</div>' +
+        '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ <b>LIVE</b> orders on Veins/Fyers. No automated risk checks — the Confirm step is the only gate. One row per order; same-symbol orders on the account are aggregated into ONE Fyers order and split back per beneficiary. <b>Qty/Lots is signed: + = BUY, − = SELL.</b> Product is derived automatically (F&O → MARGIN, equity → CNC).</div>' +
         // Flex rows (NOT a fixed-width <table>) so columns fit the container at
         // any width — no horizontal scroll (UI-STANDARDS §H.5.4). Symbol flexes;
         // every other column has a fixed width + flex-shrink:0.
@@ -204,7 +204,7 @@ function autoManualRenderForm() {
             '<span class="atm-c-trader">Trader</span><span class="atm-c-sym">Symbol</span>' +
             '<span class="atm-c-lots">Lots</span><span class="atm-c-qty">Qty</span>' +
             '<span class="atm-c-price">Price / Type</span><span class="atm-c-tags">Tags</span>' +
-            '<span class="atm-c-sl">SL</span><span class="atm-c-act"></span>' +
+            '<span class="atm-c-act"></span>' +
         '</div>' +
         '<div id="atm-rows"></div>' +
         '<div style="margin-top:10px"><button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualAddOrderFromLast()">＋ Add order</button></div>' +
@@ -220,13 +220,11 @@ function autoManualRenderForm() {
           '.atm-c-qty{flex:0 0 84px;width:84px}' +
           '.atm-c-price{flex:0 0 150px;width:150px}' +
           '.atm-c-tags{flex:0 0 190px;width:190px;position:relative}' +
-          '.atm-c-sl{flex:0 0 74px;width:74px}' +
           '.atm-c-act{flex:0 0 34px;width:34px}' +
           '.atm-main .wms-input,.atm-main .wms-input-compact{width:100%;font-size:12px}' +
           '.atm-radios{display:flex;gap:8px;font-size:11px;color:#374151;margin-top:3px}' +
           '.atm-radios label{display:flex;align-items:center;gap:3px;cursor:pointer}' +
           '.atm-bal{font-size:10px;color:#2563eb;margin-top:2px}' +
-          '.atm-sl-panel{background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px;margin-top:6px}' +
         '</style>';
     autoManualLoadTraders();
     autoManualAddRow();
@@ -270,9 +268,7 @@ function autoManualAddRow(copyFromId) {
         quantity: copyFrom ? copyFrom.quantity : 0,
         price: copyFrom ? copyFrom.price : 0,
         orderType: copyFrom ? copyFrom.orderType : 'MARKET',
-        tags: copyFrom ? copyFrom.tags.slice() : [],
-        // SL is per-order and risk-bearing — never copied; add it deliberately per row.
-        sl: { on: false, orderType: 'SL-MARKET', stopPrice: 0, limitPrice: 0 }
+        tags: copyFrom ? copyFrom.tags.slice() : []
     };
     _atmRows.push(row);
 
@@ -301,10 +297,8 @@ function autoManualAddRow(copyFromId) {
                 '<div class="wms-tag-pills atm-tagpills" id="atmTagPills_' + rowId + '" style="margin-top:3px"></div>' +
                 '<div class="wms-tag-dd atm-tagdd" id="atmTagDd_' + rowId + '"></div>' +
             '</span>' +
-            '<span class="atm-c-sl"><button type="button" class="wms-btn wms-btn-secondary atm-sl-toggle" data-rid="' + rowId + '" style="font-size:11px;padding:3px 6px" onclick="autoManualToggleSl(' + rowId + ')">＋ SL</button></span>' +
             '<span class="atm-c-act"><button type="button" class="wms-btn wms-btn-secondary" title="Remove" style="font-size:12px;padding:3px 7px" onclick="autoManualRemoveRow(' + rowId + ')">✕</button></span>' +
-        '</div>' +
-        '<div class="atm-sl-panel" id="atmSlPanel_' + rowId + '" style="display:none"></div>';
+        '</div>';
     document.getElementById('atm-rows').appendChild(order);
     autoManualWireRow(rowId);
     if (copyFrom) autoManualPopulateRowDom(rowId);   // mirror the copied order into the inputs
@@ -433,6 +427,17 @@ function autoManualWireRow(rowId) {
             _atmTagCtrls[rowId] = wmsTagInput(ti, tp, td, { tags: row.tags, existingTags: (ex || []).slice(), onChange: function () {} });
         }).catch(function () {
             _atmTagCtrls[rowId] = wmsTagInput(ti, tp, td, { tags: row.tags, existingTags: [], onChange: function () {} });
+        });
+        // Tab in the tag field (the row's last field) adds a NEW order row (owner UX).
+        ti.addEventListener('keydown', function (e) {
+            if (e.key === 'Tab' && !e.shiftKey) {
+                e.preventDefault();
+                autoManualAddOrderFromLast();
+                var rws = document.querySelectorAll('#atm-rows .atm-order');
+                var last = rws[rws.length - 1];
+                var fe = last && (last.querySelector('.atm-trader') || last.querySelector('.atm-sym'));
+                if (fe) fe.focus();
+            }
         });
     }
 }
@@ -705,38 +710,6 @@ async function autoManualShowBalance(rowId) {
 }
 
 // ---- Bracket SL toggle + panel (§2c: opposite side, same qty, immediate) ----
-function autoManualToggleSl(rowId) {
-    var row = autoManualRow(rowId); if (!row) return;
-    var panel = document.getElementById('atmSlPanel_' + rowId);
-    var toggle = document.querySelector('.atm-sl-toggle[data-rid="' + rowId + '"]');
-    row.sl.on = !row.sl.on;
-    if (row.sl.on) {
-        panel.style.display = '';
-        toggle.textContent = '− SL';
-        panel.innerHTML =
-            '<div style="font-size:10px;color:#9a3412;text-transform:uppercase;margin-bottom:4px">Bracket stop-loss (opposite side, same qty)</div>' +
-            '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
-                '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-sl-trigger" data-rid="' + rowId + '" placeholder="Trigger" style="width:80px">' +
-                '<input type="text" inputmode="decimal" class="wms-input wms-input-compact wms-input-number atm-sl-limit" data-rid="' + rowId + '" placeholder="Limit" style="width:80px;display:none">' +
-                '<div class="atm-radios" style="margin-top:0">' +
-                    '<label><input type="radio" name="atmSlOt_' + rowId + '" class="atm-sl-ot" data-rid="' + rowId + '" value="SL-MARKET" checked>Mkt</label>' +
-                    '<label><input type="radio" name="atmSlOt_' + rowId + '" class="atm-sl-ot" data-rid="' + rowId + '" value="SL-LIMIT">Lmt</label>' +
-                '</div>' +
-            '</div>';
-        var trig = panel.querySelector('.atm-sl-trigger'), lim = panel.querySelector('.atm-sl-limit');
-        trig.addEventListener('blur', function () { var v = atmEvalNum(trig.value); row.sl.stopPrice = isNaN(v) ? 0 : v; trig.value = row.sl.stopPrice ? atmFmtPrice(row.sl.stopPrice) : ''; });
-        trig.addEventListener('input', function () { var v = atmEvalNum(trig.value); if (!isNaN(v)) row.sl.stopPrice = v; });
-        lim.addEventListener('blur', function () { var v = atmEvalNum(lim.value); row.sl.limitPrice = isNaN(v) ? 0 : v; lim.value = row.sl.limitPrice ? atmFmtPrice(row.sl.limitPrice) : ''; });
-        lim.addEventListener('input', function () { var v = atmEvalNum(lim.value); if (!isNaN(v)) row.sl.limitPrice = v; });
-        panel.querySelectorAll('.atm-sl-ot[data-rid="' + rowId + '"]').forEach(function (rb) {
-            rb.addEventListener('change', function () { if (!rb.checked) return; row.sl.orderType = rb.value; lim.style.display = (rb.value === 'SL-LIMIT') ? '' : 'none'; });
-        });
-    } else {
-        panel.style.display = 'none'; panel.innerHTML = ''; toggle.textContent = '＋ SL';
-        row.sl = { on: false, orderType: 'SL-MARKET', stopPrice: 0, limitPrice: 0 };
-    }
-}
-
 // ---- Review -> Confirm dialog ----------------------------------------------
 function autoManualReview() {
     if (!_atmRows.length) { autoManualStatus('Add at least one order.', true); return; }
@@ -760,13 +733,6 @@ function autoManualReview() {
         if (ot === 'LIMIT' && !(row.price > 0)) { autoManualStatus('Order ' + n + ': LIMIT needs a positive price.', true); return; }
         var intent = { symbol: fy, side: side, qty: absQty, orderType: ot };
         if (ot === 'LIMIT') intent.limitPrice = row.price;
-        // Bracket SL
-        if (row.sl && row.sl.on) {
-            if (!(row.sl.stopPrice > 0)) { autoManualStatus('Order ' + n + ': SL needs a positive trigger.', true); return; }
-            if (row.sl.orderType === 'SL-LIMIT' && !(row.sl.limitPrice > 0)) { autoManualStatus('Order ' + n + ': SL-Limit needs a positive limit.', true); return; }
-            intent.sl = { orderType: row.sl.orderType, stopPrice: row.sl.stopPrice };
-            if (row.sl.orderType === 'SL-LIMIT') intent.sl.limitPrice = row.sl.limitPrice;
-        }
         // Tags + trader
         var tags = (_atmTagCtrls[row.rowId] && typeof _atmTagCtrls[row.rowId].getTags === 'function') ? _atmTagCtrls[row.rowId].getTags() : (row.tags || []);
         if (tags && tags.length) intent.tags = tags;
@@ -774,16 +740,15 @@ function autoManualReview() {
         var traderSel = document.querySelector('.atm-trader[data-rid="' + row.rowId + '"]');
         var traderName = (row.trader_id && traderSel && traderSel.selectedOptions[0]) ? traderSel.selectedOptions[0].text : '';
         var priceStr = (ot === 'LIMIT') ? ('@ ' + row.price) : '@ market';
-        var slStr = (row.sl && row.sl.on) ? ('  + SL ' + row.sl.orderType + ' trig ' + row.sl.stopPrice + (row.sl.orderType === 'SL-LIMIT' ? '/lim ' + row.sl.limitPrice : '')) : '';
         var extra = (tags && tags.length ? '  tags:' + tags.join('/') : '') + (traderName ? '  trader:' + traderName : '');
-        var label = side + ' ' + absQty + (isMcx ? ' lot' + (absQty > 1 ? 's' : '') : 'u') + '  ' + fy + '  [' + ot + ']  ' + priceStr + slStr + extra;
+        var label = side + ' ' + absQty + (isMcx ? ' lot' + (absQty > 1 ? 's' : '') : 'u') + '  ' + fy + '  [' + ot + ']  ' + priceStr + extra;
         legs.push({ label: label, intent: intent });
     }
     _auManualLegsToPlace = legs;
     var el = document.getElementById('au-manual-status');
     el.innerHTML =
         '<div style="border:2px solid #f59e0b;border-radius:10px;padding:16px;background:#fffbeb">' +
-        '<div style="font-size:13px;color:#92400e;margin-bottom:8px">Confirm ' + legs.length + ' <b>LIVE</b> order(s) — each is a separate Fyers order (an SL is placed with, and linked to, its entry):</div>' +
+        '<div style="font-size:13px;color:#92400e;margin-bottom:8px">Confirm ' + legs.length + ' <b>LIVE</b> order(s) — same-symbol orders are aggregated into ONE Fyers order, split back per beneficiary:</div>' +
         legs.map(function (l) { return '<div style="font-family:monospace;font-size:13px;font-weight:600;margin:3px 0">' + autoEsc(l.label) + '</div>'; }).join('') +
         '<div style="margin-top:14px"><button class="wms-btn wms-btn-primary" style="background:#dc2626" onclick="autoManualPlaceAll()">Confirm &amp; Place ' + legs.length + ' order(s)</button> ' +
         '<button class="wms-btn wms-btn-secondary" onclick="autoManualStatus(\'\',false)">Cancel</button></div>' +
@@ -794,53 +759,35 @@ async function autoManualPlaceAll() {
     var legs = _auManualLegsToPlace;
     if (!legs || !legs.length) return;
     if (!_auManualPw) { autoManualLock(); return; }
-    autoManualStatus('Placing ' + legs.length + ' order(s)…', false);
-    var results = [];
-    for (var k = 0; k < legs.length; k++) {
-        try {
-            var body = Object.assign({}, legs[k].intent, { password: _auManualPw, confirm: true });
-            var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
-                method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body)
-            });
-            var j = await resp.json().catch(function () { return {}; });
-            if (resp.status === 401) { _auManualPw = null; autoManualRenderGate((j.error || 'Unauthorized') + ' — re-enter password.'); return; }
-            results.push({ label: legs[k].label, ok: !!(resp.ok && j.ok), command_id: j.command_id || null, sl_command_id: j.sl_command_id || null, error: (resp.ok && j.ok) ? null : (j.error || ('HTTP ' + resp.status)) });
-        } catch (e) {
-            results.push({ label: legs[k].label, ok: false, command_id: null, sl_command_id: null, error: (e && e.message ? e.message : String(e)) });
-        }
-    }
-    _auManualLegsToPlace = null;
-    var ids = [];
-    results.forEach(function (r) { if (r.command_id) ids.push(r.command_id); if (r.sl_command_id) ids.push(r.sl_command_id); });
-    var el = document.getElementById('au-manual-status');
-    if (el) {
-        el.innerHTML = '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px;background:#fff">' +
-            '<div style="font-weight:600;margin-bottom:8px">Placed ' + results.filter(function (r) { return r.ok; }).length + '/' + results.length + ' order(s)</div>' +
-            results.map(function (r) {
-                var slNote = r.sl_command_id ? '  (+SL ' + r.sl_command_id + ' <button class="wms-btn wms-btn-secondary" style="font-size:10px;padding:1px 6px" onclick="autoManualCancelSl(\'' + r.sl_command_id + '\',this)">Cancel SL</button>)' : '';
-                return '<div style="font-family:monospace;font-size:12px;margin:2px 0;color:' + (r.ok ? '#166534' : '#991b1b') + '">' +
-                    (r.ok ? '✅' : '✗') + ' ' + autoEsc(r.label) + (r.ok ? '  → cmd ' + r.command_id + slNote : '  → ' + autoEsc(r.error || '')) + '</div>';
-            }).join('') +
-            '<div id="au-m-track" style="margin-top:10px;font-size:12px;color:#374151"></div></div>';
-    }
-    if (ids.length) autoManualTrackMany(ids);
-}
-
-// Cancel a working bracket SL — via the EF (never a direct queue write). The EF
-// enqueues a KH-style cancel; the Droplet cancels at Fyers and cmd-complete flips
-// the SL row to CANCELLED.
-async function autoManualCancelSl(slCommandId, btn) {
-    if (!_auManualPw) { autoManualLock(); return; }
-    if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
+    autoManualStatus('Placing ' + legs.length + ' order(s)\u2026', false);
+    var orders = legs.map(function (l) { return l.intent; });
+    var res = { ok: false, j: {}, status: 0 };
     try {
         var resp = await fetch(SUPABASE_URL + '/functions/v1/wms-manual-order', {
             method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
-            body: JSON.stringify({ action: 'cancel_sl', sl_command_id: slCommandId, password: _auManualPw, confirm: true })
+            body: JSON.stringify({ orders: orders, mode: 'live', password: _auManualPw, confirm: true })
         });
-        var j = await resp.json().catch(function () { return {}; });
-        if (resp.status === 401) { _auManualPw = null; autoManualRenderGate((j.error || 'Unauthorized') + ' — re-enter password.'); return; }
-        if (btn) { btn.textContent = (resp.ok && j.ok) ? 'SL cancel queued' : ('Cancel failed: ' + (j.error || resp.status)); }
-    } catch (e) { if (btn) { btn.disabled = false; btn.textContent = 'Cancel SL'; } }
+        res.j = await resp.json().catch(function () { return {}; });
+        res.status = resp.status;
+        if (resp.status === 401) { _auManualPw = null; autoManualRenderGate((res.j.error || 'Unauthorized') + ' \u2014 re-enter password.'); return; }
+        res.ok = !!(resp.ok && res.j.ok);
+    } catch (e) { res.j = { error: (e && e.message ? e.message : String(e)) }; }
+    _auManualLegsToPlace = null;
+    var el = document.getElementById('au-manual-status');
+    if (!el) return;
+    if (res.ok) {
+        var placed = res.j.placed || [];
+        var ids = placed.map(function (p) { return p.command_id; }).filter(Boolean);
+        el.innerHTML = '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px;background:#fff">' +
+            '<div style="font-weight:600;margin-bottom:8px;color:#166534">\u2705 Placed ' + legs.length + ' order(s) \u2192 ' + (res.j.groups != null ? res.j.groups : placed.length) + ' Fyers order(s)' + (res.j.signal_id ? '  \u00b7 signal ' + res.j.signal_id : '') + '</div>' +
+            placed.map(function (p) {
+                return '<div style="font-family:monospace;font-size:12px;margin:2px 0;color:#166534">\u2705 ' + autoEsc(p.symbol || '') + '  ' + (p.fyers_qty != null ? p.fyers_qty : '') + '  \u2192 ' + (p.beneficiaries || 1) + ' beneficiary(ies)' + (p.command_id ? '  cmd ' + p.command_id : '  (paper)') + '</div>';
+            }).join('') +
+            '<div id="au-m-track" style="margin-top:10px;font-size:12px;color:#374151"></div></div>';
+        if (ids.length) autoManualTrackMany(ids);
+    } else {
+        el.innerHTML = '<div style="border:1px solid #fecaca;border-radius:10px;padding:14px;background:#fef2f2;color:#991b1b">\u2717 Not placed: ' + autoEsc(res.j.error || ('HTTP ' + res.status)) + '</div>';
+    }
 }
 
 function autoManualTrackMany(ids) {
