@@ -669,7 +669,17 @@
     }
     // Preload Trading in the background so its banner compute runs app-wide (the
     // shared refresh computes the banner whenever the tr-portfolio element exists).
-    function _wmsShowGlobalBanner() { const b = document.getElementById('wmsGlobalBanner'); if (b) b.style.display = 'flex'; }
+    function _wmsShowGlobalBanner() { const b = document.getElementById('wmsGlobalBanner'); if (b) b.style.display = 'flex'; _wmsSyncShellTop(); }
+    // Measure everything ABOVE .main-content (dev banner + header + top-nav + the
+    // global banner) into --wms-shell-top, so .main-content's height leaves room for
+    // it. Plain block layout — no shell flexbox — so page WIDTHS are unaffected.
+    function _wmsSyncShellTop() {
+        const mc = document.querySelector('.main-content');
+        if (!mc) return;
+        const top = Math.round(mc.getBoundingClientRect().top);
+        if (top > 0) document.documentElement.style.setProperty('--wms-shell-top', top + 'px');
+    }
+    window.addEventListener('resize', _wmsSyncShellTop);
     async function _wmsPreloadTrading() {
         if (typeof wmsHasModule === 'function' && !wmsHasModule('trading')) return;
         if (_wmsModuleLoaded['trading']) { _wmsShowGlobalBanner(); return; }   // loaded via loadModule already

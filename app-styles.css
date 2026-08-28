@@ -129,11 +129,12 @@ body {
 /* LAYOUT — fills viewport below header+nav */
 .main-content {
     max-width: 1600px; margin: 0 auto; padding: 8px 14px;
-    /* Fill the vertical space the shell flex-column leaves after the header,
-       top-nav AND the global banner. Was a fixed calc(100dvh - 82px) which did
-       NOT account for the global banner's height, so the page overflowed and the
-       bottom of a module (e.g. the ledger summary) fell below the fold. */
-    flex: 1 1 auto; min-height: 0;
+    /* Height = viewport minus everything ABOVE main-content (dev banner + header +
+       top-nav + the global banner), measured live into --wms-shell-top by
+       _wmsSyncShellTop() (app.html). Plain block layout — NO shell flexbox — so
+       page WIDTHS are unaffected. (A flex-column attempt made this box shrink-wrap
+       to its content and clipped wide pages — never reintroduce body flex here.) */
+    height: calc(100dvh - var(--wms-shell-top, 82px));
     display: flex; flex-direction: column;
 }
 .content-container {
@@ -143,17 +144,7 @@ body {
     overflow: hidden; min-height: 0;
 }
 .module-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-
-/* Shell height model (DESKTOP > 768px only — mobile keeps its own height:auto model):
-   make body a vertical flex stack so .main-content fills whatever space is left
-   after the header, top-nav AND the (variable-height) global banner. Fixes the
-   global-banner regression where main-content used a fixed calc(100dvh - 82px)
-   that ignored the banner, pushing the bottom of a module below the fold. */
-@media (min-width: 769px) {
-  body { display: flex; flex-direction: column; }
-  .app-header, .top-nav, #wmsGlobalBanner { flex-shrink: 0; }
-  .main-content { flex: 1 1 auto; min-height: 0; height: auto; }
-}   /* ADR-001 Phase 4: each module lives in its own pane; replicates .content-container's flex-column so module content fills. Inactive panes get inline display:none. */
+   /* ADR-001 Phase 4: each module lives in its own pane; replicates .content-container's flex-column so module content fills. Inactive panes get inline display:none. */
 .loading-module,.coming-soon,.error-message { text-align:center; padding:60px 20px; font-size:14px; color:#718096; }
 .coming-soon  { font-size:16px; color:#667eea; }
 .error-message { color:#dc2626; }
