@@ -2270,6 +2270,12 @@ function acctUpdateBalance() {
     if (save) save.disabled = !balanced;
 }
 
+// Enter on the last date segment jumps into the first ledger line (owner: the
+// date field otherwise traps focus, cycling dd/mm/yy). Wired via wmsDateInput onEnter.
+function acctFocusFirstVoucherLedger() {
+    var f = document.querySelector('#acctVoucherLines .acct-line-ledger');
+    if (f && f.focus) f.focus();
+}
 function acctOpenVoucherModal(prefillLedgerId, prefillLines) {
     if (!acctBookId) { acctToast('Select a book first (enable accounting on an investor).', true); return; }
     acctEditingVoucherId = null;          // creating, not editing
@@ -2302,7 +2308,7 @@ function acctOpenVoucherModal(prefillLedgerId, prefillLines) {
     // Date widget (now in the modal header).
     var dc = document.getElementById('acctVoucherDate');
     if (dc && typeof wmsDateInput === 'function') {
-        wmsDateInput(dc, { compact: true, onChange: function (ymd) { acctVoucherDateYmd = ymd; } });
+        wmsDateInput(dc, { compact: true, onChange: function (ymd) { acctVoucherDateYmd = ymd; }, onEnter: acctFocusFirstVoucherLedger });
     }
 
     acctRenderVoucherLines();
@@ -3046,7 +3052,7 @@ function acctOpenEditVoucher(voucherId) {
     document.getElementById('acctVoucherNarration').value = rows[0].voucher_narration || '';
     var dc = document.getElementById('acctVoucherDate');
     if (dc && typeof wmsDateInput === 'function') {
-        var ctrl = wmsDateInput(dc, { compact: true, onChange: function (ymd) { acctVoucherDateYmd = ymd; } });
+        var ctrl = wmsDateInput(dc, { compact: true, onChange: function (ymd) { acctVoucherDateYmd = ymd; }, onEnter: acctFocusFirstVoucherLedger });
         if (ctrl && ctrl.setValue) ctrl.setValue(acctVoucherDateYmd);
     }
     acctRenderVoucherLines();

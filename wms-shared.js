@@ -5640,7 +5640,8 @@ var wmsDateInput = function(containerEl, opts) {
             else { clearActive(); }
         } else if (key === 'Enter') {
             e.preventDefault();
-            if (activeSeg !== 'yyyy') moveSeg(1); else clearActive();
+            if (activeSeg !== 'yyyy') moveSeg(1);
+            else { clearActive(); if (typeof opts.onEnter === 'function') opts.onEnter(toYMD()); }
         } else if (/^[0-9]$/.test(key)) { e.preventDefault(); typeDigit(key); }
         else if (/^[a-zA-Z]$/.test(key)) { e.preventDefault(); typeLetter(key); }
     });
