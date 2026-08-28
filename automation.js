@@ -6309,15 +6309,36 @@ function auAt2RenderMetrics(mode) {
         var sec = auAt2Security(t); var lot = sec ? (Number(sec.lot_size) || 0) : 0;
         return (Number(px) || 0) * (Number(t.qty_lots) || 0) * lot;
     }
-    // Charges (T3a: 0.015% of notional per side) + PEAK exposure/margin, filtered closed set.
-    var charges = 0, maxExp = 0, maxMargin = 0;
+    // Charges (T3a: 0.015% of notional per side), filtered closed set.
+    var charges = 0;
     closed.forEach(function (t) {
-        var entN = notion(t, t.entry_price), exN = notion(t, t.exit_price);
-        charges += 0.00015 * (entN + exN);
-        if (entN > maxExp) { maxExp = entN; maxMargin = entN * rateOf(t); }
+        charges += 0.00015 * (notion(t, t.entry_price) + notion(t, t.exit_price));
     });
     var net = gross - charges;
-    var pct = function (v) { return maxExp ? (v / maxExp * 100).toFixed(2) + '% of max exp' : '—'; };
+    // PEAK exposure: the largest COMBINED notional held at any one instant across
+    // the filtered set (not the biggest single trade). Sweep +notional at entry_at,
+    // -notional at exit_at; margin is tracked alongside so it reflects the mix
+    // (Gold 10% / Silver 20%) at the peak moment. Open positions extend to "now".
+    var evts = [];
+    var nowMs = Date.now();
+    closed.forEach(function (t) {
+        var n = notion(t, t.entry_price); if (!n) return;
+        var en = t.entry_at ? new Date(t.entry_at).getTime() : null;
+        var ex = t.exit_at ? new Date(t.exit_at).getTime() : nowMs;
+        if (en == null) return;
+        var r = rateOf(t);
+        evts.push({ ts: en, d: n,  m: n * r });
+        evts.push({ ts: ex, d: -n, m: -n * r });
+    });
+    // At the same instant, apply exits (negative) before entries so touching
+    // intervals don't double-count.
+    evts.sort(function (a, b) { return a.ts - b.ts || a.d - b.d; });
+    var run = 0, runM = 0, maxExp = 0, maxMargin = 0;
+    evts.forEach(function (e) {
+        run += e.d; runM += e.m;
+        if (run > maxExp) { maxExp = run; maxMargin = runM; }
+    });
+    var pct = function (v) { return maxExp ? (v / maxExp * 100).toFixed(2) + '% of peak exp' : '—'; };
     // Open-book margin (current, whole open book — same basis as Open exposure).
     var openMargin = open.reduce(function (n, t) { return n + (Number(t.entry_price) || 0) * (Number(t.qty_open_units) || 0) * rateOf(t); }, 0);
 
