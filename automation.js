@@ -6297,22 +6297,40 @@ function auAt2RenderMetrics(mode) {
     // same as GS's "from filtered closed trades".
     var closed = mine.filter(function (t) { return t.status === 'closed' && auAt2ClosedPassesFilters(mode, t); });
     var allClosed = mine.filter(function (t) { return t.status === 'closed'; });
-    var realised = closed.reduce(function (n, t) { return n + (Number(t.realised_pnl) || 0); }, 0);
+    var gross = closed.reduce(function (n, t) { return n + (Number(t.realised_pnl) || 0); }, 0);
     var wins = closed.filter(function (t) { return Number(t.realised_pnl) > 0; }).length;
     var losses = closed.filter(function (t) { return Number(t.realised_pnl) < 0; }).length;
     var filtered = closed.length !== allClosed.length;
+
+    // Charges (T3a rate: 0.015% of gross notional per side) + peak exposure, over
+    // the FILTERED closed set. Notional = qty_lots x lot_size x price.
+    var charges = 0, maxExp = 0;
+    closed.forEach(function (t) {
+        var sec = auAt2Security(t);
+        var lot = sec ? (Number(sec.lot_size) || 0) : 0;
+        var units = (Number(t.qty_lots) || 0) * lot;
+        var entN = (Number(t.entry_price) || 0) * units;
+        var exN  = (Number(t.exit_price)  || 0) * units;
+        charges += 0.00015 * (entN + exN);
+        if (entN > maxExp) maxExp = entN;
+    });
+    var net = gross - charges;
+    var pct = function (v) { return maxExp ? (v / maxExp * 100).toFixed(2) + '% of max exp' : '—'; };
 
     function set(id, html) { var el = document.getElementById(id); if (el) el.innerHTML = html; }
     function sub(id, text) { var el = document.getElementById(id); if (el) el.textContent = text || ''; }
     var pfx = 'au-at2-' + mode + '-m-';
     set(pfx + 'open', String(open.length));
     sub(pfx + 'open-sub', lots + ' lot(s)');
+    // Open exposure = current open book; max exposure = peak position on the FILTERED closed set.
     set(pfx + 'exposure', exposure ? formatAmount(exposure) : '—');
-    sub(pfx + 'exposure-sub', open.length ? 'across ' + open.length + ' position(s)' : '');
-    set(pfx + 'realised', auAt2Pnl(realised));
+    sub(pfx + 'exposure-sub', 'max ' + (maxExp ? formatAmount(maxExp) : '—') + (open.length ? ' · ' + open.length + ' open' : ''));
+    set(pfx + 'realised', closed.length ? auAt2Pnl(gross) : '—');
     sub(pfx + 'realised-sub', closed.length
-        ? (wins + 'W / ' + losses + 'L · ' + closed.length + ' closed' + (filtered ? ' (filtered)' : ''))
+        ? (pct(gross) + ' · ' + wins + 'W/' + losses + 'L' + (filtered ? ' (filtered)' : ''))
         : (filtered ? 'none match the filters' : 'no closed trades yet'));
+    set(pfx + 'net', closed.length ? auAt2Pnl(net) : '—');
+    sub(pfx + 'net-sub', closed.length ? (pct(net) + ' · after 0.015%/side') : '');
 }
 
 function auAt2RenderBanner() {
