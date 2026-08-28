@@ -526,6 +526,8 @@ tr:hover:not(.total-row) { background:#f9fafb; }
 .wms-btn-primary:hover { background: #5a67d8; }
 .wms-btn-secondary { background: #f7fafc; color: #4a5568; border: 1px solid #e2e8f0; }
 .wms-btn-secondary:hover { background: #e2e8f0; }
+.wms-btn-danger { background: #e53e3e; color: #fff; font-weight: 600; }
+.wms-btn-danger:hover { background: #c53030; }
 .wms-btn-close {
     width: 28px; height: 28px; border: none;
     background: #f7fafc; border-radius: 5px; cursor: pointer;
