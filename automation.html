@@ -1318,32 +1318,13 @@ input.au-at2-locked:disabled {
             <div class="fam-header-right">
               <span class="status-pill paper" id="au-at2-mode">🟡 PAPER</span>
               <span id="au-at2-lastact" class="fam-lastact">Last activity: —</span>
+              <span id="au-at2-alertbadge"></span>
             </div>
           </div>
 
-          <!-- ══ GS-STYLE METRIC TILES (fam-metrics / fam-metric-tile) ═══════════
-               Same 5 numbers AT2 has always shown, same ids — restyled to match
-               the GS module's card look (bordered white tiles + a sub-line),
-               rather than the flat au-stat-grid boxes. This strip stays
-               unfiltered/all-time regardless of the Trades-tab filter bar below,
-               since it is visible from every tab (Alerts, Events, Controls too),
-               not just Trades — a filtered number here would be misleading on a
-               tab where the filter bar isn't even in view. -->
-          <div class="fam-metrics" id="au-at2-metrics">
-            <div class="fam-metric-tile"><div class="metric-label">Open positions</div>
-              <div class="metric-value" id="au-at2-m-open">—</div><div class="metric-sub" id="au-at2-m-open-sub"></div></div>
-            <div class="fam-metric-tile"><div class="metric-label">Open exposure</div>
-              <div class="metric-value" id="au-at2-m-exposure">—</div><div class="metric-sub" id="au-at2-m-exposure-sub"></div></div>
-            <div class="fam-metric-tile"><div class="metric-label">Realised P&amp;L (all-time)</div>
-              <div class="metric-value" id="au-at2-m-realised">—</div><div class="metric-sub" id="au-at2-m-realised-sub"></div></div>
-            <div class="fam-metric-tile"><div class="metric-label">Open alerts</div>
-              <div class="metric-value" id="au-at2-m-alerts">—</div><div class="metric-sub" id="au-at2-m-alerts-sub"></div></div>
-            <div class="fam-metric-tile"><div class="metric-label">Strategies</div>
-              <div class="metric-value" id="au-at2-m-strategies">—</div><div class="metric-sub" id="au-at2-m-strategies-sub"></div></div>
-          </div>
-
           <div class="au-subtabs">
-            <button class="au-subtab-btn active" data-subtab="au-at2-trades-panel">Trades</button>
+            <button class="au-subtab-btn active" data-subtab="au-at2-paper-panel">Paper</button>
+            <button class="au-subtab-btn" data-subtab="au-at2-live-panel">Live</button>
             <button class="au-subtab-btn" data-subtab="au-at2-alerts-panel" id="au-at2-alerts-tab">Alerts</button>
             <button class="au-subtab-btn" data-subtab="au-at2-events-panel">Signals &amp; Events</button>
             <button class="au-subtab-btn" data-subtab="au-at2-log-panel">Log</button>
@@ -1352,30 +1333,50 @@ input.au-at2-locked:disabled {
                     onclick="autoAt2Refresh()">↻ Refresh</button>
           </div>
 
-          <!-- ══ GS-STYLE TRADES PAGE — Open Trades + Closed Trades merged ══════
-               Was two separate tabs; now one page: filter bar + collapsible Open
-               / Closed blocks, mirroring autoGsRenderPageShell(mode). Filters
-               (Instrument / Result / Exit reason / Book) apply to CLOSED only —
-               same as GS: the open book is always shown in full, unfiltered, on
-               purpose (AT2's own long-standing rule: an open position is never
-               hidden by a filter, only a closed one). No Version or Source
-               filter — AT2 has neither multiple param versions nor multiple
-               signal sources. -->
-          <div id="au-at2-trades-panel" class="au-subtab-panel active">
-            <div id="au-at2-filterbar"></div>
-
-            <details id="au-at2-open-block" class="au-gs-block" open>
+          <div id="au-at2-paper-panel" class="au-subtab-panel active">
+            <div class="fam-metrics" id="au-at2-paper-metrics">
+              <div class="fam-metric-tile"><div class="metric-label">Open positions</div>
+                <div class="metric-value" id="au-at2-paper-m-open">—</div><div class="metric-sub" id="au-at2-paper-m-open-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Open exposure</div>
+                <div class="metric-value" id="au-at2-paper-m-exposure">—</div><div class="metric-sub" id="au-at2-paper-m-exposure-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Realised P&amp;L (all-time)</div>
+                <div class="metric-value" id="au-at2-paper-m-realised">—</div><div class="metric-sub" id="au-at2-paper-m-realised-sub"></div></div>
+            </div>
+            <div id="au-at2-paper-filterbar"></div>
+            <details id="au-at2-paper-open-block" class="au-gs-block" open>
               <summary class="au-gs-block-summary">Open trades
-                <span id="au-at2-open-badge" class="au-badge idle">…</span>
-                <span id="au-at2-open-summary" class="au-gs-block-sum"></span></summary>
-              <div id="au-at2-open-content" class="au-meta">Loading open trades…</div>
+                <span id="au-at2-paper-open-badge" class="au-badge idle">…</span>
+                <span id="au-at2-paper-open-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-at2-paper-open-content" class="au-meta">Loading open trades…</div>
             </details>
-
-            <details id="au-at2-closed-block" class="au-gs-block">
+            <details id="au-at2-paper-closed-block" class="au-gs-block">
               <summary class="au-gs-block-summary">Closed trades
-                <span id="au-at2-closed-badge" class="au-badge idle">…</span>
-                <span id="au-at2-closed-summary" class="au-gs-block-sum"></span></summary>
-              <div id="au-at2-closed-content" class="au-meta">Loading closed trades…</div>
+                <span id="au-at2-paper-closed-badge" class="au-badge idle">…</span>
+                <span id="au-at2-paper-closed-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-at2-paper-closed-content" class="au-meta">Loading closed trades…</div>
+            </details>
+          </div>
+          <div id="au-at2-live-panel" class="au-subtab-panel">
+            <div class="fam-metrics" id="au-at2-live-metrics">
+              <div class="fam-metric-tile"><div class="metric-label">Open positions</div>
+                <div class="metric-value" id="au-at2-live-m-open">—</div><div class="metric-sub" id="au-at2-live-m-open-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Open exposure</div>
+                <div class="metric-value" id="au-at2-live-m-exposure">—</div><div class="metric-sub" id="au-at2-live-m-exposure-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Realised P&amp;L (all-time)</div>
+                <div class="metric-value" id="au-at2-live-m-realised">—</div><div class="metric-sub" id="au-at2-live-m-realised-sub"></div></div>
+            </div>
+            <div id="au-at2-live-filterbar"></div>
+            <details id="au-at2-live-open-block" class="au-gs-block" open>
+              <summary class="au-gs-block-summary">Open trades
+                <span id="au-at2-live-open-badge" class="au-badge idle">…</span>
+                <span id="au-at2-live-open-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-at2-live-open-content" class="au-meta">Loading open trades…</div>
+            </details>
+            <details id="au-at2-live-closed-block" class="au-gs-block">
+              <summary class="au-gs-block-summary">Closed trades
+                <span id="au-at2-live-closed-badge" class="au-badge idle">…</span>
+                <span id="au-at2-live-closed-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-at2-live-closed-content" class="au-meta">Loading closed trades…</div>
             </details>
           </div>
 
