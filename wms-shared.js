@@ -3373,20 +3373,31 @@ function wmsRenderActiveModuleAfterTxn() {
     _wmsTxnRenderInFlight = true;
     try {
         if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
-        if (document.getElementById('tr-portfolio')) {
-            // Trading active — same re-render the edit modal's afterChange uses.
+        // ADR-001 Phase 4: modules stay MOUNTED and Trading is PRELOADED HIDDEN for
+        // the global banner — so "does #tr-portfolio exist" is ALWAYS true now and can
+        // no longer mean "Trading is active". Route by which module PANE is VISIBLE
+        // (same test wmsRefreshRender uses), else a droplet/Fyers trade only re-renders
+        // the hidden Trading pane and the module you are LOOKING at never updates until
+        // a manual refresh. Fallback to element-existence for the pre-pane layout.
+        var _hasPanes = !!document.querySelector('.module-pane');
+        function _vis(name) { var p = document.querySelector('.module-pane[data-pane="' + name + '"]'); return !!(p && p.style.display !== 'none'); }
+        var trActive  = _hasPanes ? _vis('trading') : !!document.getElementById('tr-portfolio');
+        var rptActive = _hasPanes ? _vis('reports') : !!document.getElementById('rptPortfolioBody');
+        if (trActive) {
+            // Trading visible — same re-render the edit modal's afterChange uses.
             if (typeof trRefreshAllViews === 'function') trRefreshAllViews();
             var lg = document.getElementById('tr-ledger');
             if (lg && lg.classList.contains('active') && typeof lgRefresh === 'function') {
                 try { lgRefresh(); } catch (e) { /* ignore */ }
             }
-        } else if (document.getElementById('rptPortfolioBody')) {
-            // Reports active — re-map from the shared cache, then re-render.
-            if (typeof rptLoadData === 'function') {
-                rptLoadData().then(function() {
-                    if (typeof rptRenderPortfolio === 'function') rptRenderPortfolio();
-                }).catch(function() {});
-            }
+        } else if (rptActive && typeof rptLoadData === 'function') {
+            // Reports visible — re-map from the shared cache, then re-render whichever
+            // Reports tabs are live (Portfolio + Capital Gains + Consolidation MTM).
+            rptLoadData().then(function() {
+                if (typeof rptRenderPortfolio === 'function') rptRenderPortfolio();
+                if (typeof rptCGLoaded !== 'undefined' && rptCGLoaded && typeof rptRenderCapGains === 'function') { try { rptRenderCapGains(); } catch (e) {} }
+                if (typeof rptConsolLoaded !== 'undefined' && rptConsolLoaded && typeof rptRenderConsol === 'function') { try { rptRenderConsol(); } catch (e) {} }
+            }).catch(function() {});
         }
     } finally {
         _wmsTxnRenderInFlight = false;
