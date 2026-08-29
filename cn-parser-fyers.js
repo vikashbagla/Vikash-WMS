@@ -301,9 +301,15 @@ function parseFyersObligationDetails(allText) {
         nfo: { brokerage: 0, stt: 0, gst: 0, exchangeCharges: 0, sebiCharges: 0, stampDuty: 0, ipft: 0 }
     };
 
+    // Page-spanning scan: the obligation table can start near the bottom of one
+    // page and continue onto the next (esp. REVISED/SUPPLEMENTARY notes with an
+    // F&O leg). The "inside section" flag therefore lives OUTSIDE the page loop —
+    // it turns on at "Obligation Details" and only off at "Net Amount Receivable",
+    // wherever those land. Resetting it per page dropped every charge row that
+    // spilled onto page 2 (STT / GST / Stamp came back 0). Column logic unchanged.
+    var inObligationSection = false;
     for (var p = 0; p < allText.length; p++) {
         var lines = CN_UTILS.buildLines(allText[p]);
-        var inObligationSection = false;
 
         for (var li = 0; li < lines.length; li++) {
             var lineText = lines[li].text;
