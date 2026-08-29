@@ -1479,29 +1479,51 @@ async function checkDuplicates(rows, tradeDate) {
                                  cnQty: cnQty, existingQty: sumQty, rowCount: matches.length });
         }
 
-        // ── One update per existing row. KEEP each row's QUANTITY (the trail of the N
-        // orders); the CN is the SOURCE OF TRUTH for the rest — OVERRIDE price + gross
-        // from the CN (its WAP, and its gross split across the rows by qty so the sum
-        // ties the CN to the paisa). Qty is the only thing matched — the recon alert
-        // above fires if the rows don't sum to the CN. broker_trade_id is preserved so
-        // the Fyers dedupe still recognises the row. ──
-        var cnQtyAbs   = Math.abs(Number(r.quantity) || 0);
-        var cnGrossAbs = Math.abs(Number(r.gross_amount) || 0);
-        var cnUnit     = cnQtyAbs > 0 ? (cnGrossAbs / cnQtyAbs) : (Number(r.price) || 0);  // CN per-unit (exact WAP)
+        // ── One update per existing row. KEEP each row's QUANTITY *and* its ACTUAL
+        // gross/price from the auto-imported fills, so the real price of each trade is
+        // preserved (not flattened to the CN's weighted average). The CN gross stays
+        // authoritative on the TOTAL: if the rows' actual grosses don't sum to it, the
+        // gap is spread proportionally by qty — a uniform per-unit nudge that keeps the
+        // price SPREAD between the trades intact while the total ties the CN to the
+        // paisa. Qty is the only thing matched (the recon alert above fires on a qty
+        // mismatch). broker_trade_id is preserved so the Fyers dedupe still recognises
+        // the row. ──
+        var cnGrossAbs     = Math.abs(Number(r.gross_amount) || 0);
+        var sumActualGross = matches.reduce(function(s, e) { return s + Math.abs(Number(e.gross_amount) || 0); }, 0);
+        var totalQtyAbs    = matches.reduce(function(s, e) { return s + Math.abs(Number(e.quantity) || 0); }, 0);
+        // (CN gross − Σ actual gross) spread over total qty → per-unit reconciliation.
+        // 0 when the actuals already tie the CN → prices stay exactly as traded.
+        var perUnitAdj = totalQtyAbs > 0 ? ((cnGrossAbs - sumActualGross) / totalQtyAbs) : 0;
         var orderRows = matches.map(function(e) {
-            var qAbs = Math.abs(Number(e.quantity) || 0);
+            var qAbs        = Math.abs(Number(e.quantity) || 0);
+            var actualGross = Math.abs(Number(e.gross_amount) || 0);
+            var reconGross  = wmsRoundMoney(actualGross + qAbs * perUnitAdj);  // actual + proportional nudge
             return {
                 security_id: r.security_id, security_type: r.security_type,
                 symbol: r.symbol, short_symbol: r.short_symbol, company_name: r.company_name,
                 exchange: r.exchange, transaction_type: r.transaction_type,
                 quantity: Number(e.quantity),        // KEEP — the per-order trail
-                price: r.price,                       // CN WAP overrides the stored price
-                gross_amount: qAbs * cnUnit,          // CN gross split by qty → sum ties the CN
+                price: qAbs > 0 ? wmsRoundMoney(reconGross / qAbs) : (Number(e.price) || 0),  // actual price (+ uniform nudge)
+                gross_amount: reconGross,             // actual gross, reconciled to the CN total
                 _db_security_type: r._db_security_type, _db_asset_class: r._db_asset_class,
                 _existingId: e.id, _existingBrokerTradeId: e.broker_trade_id || null,
                 tags: (e.tags && e.tags.length) ? e.tags : [], _action: 'UPDATE'
             };
         });
+        // 2-dp rounding can leave the per-row grosses a paisa off the CN total; absorb
+        // that residue into the largest-qty row so Σ gross ties the CN exactly (mirrors
+        // the charge-allocation rounding correction). Not a re-allocation — a few paise.
+        (function() {
+            var assigned = orderRows.reduce(function(s, o) { return s + o.gross_amount; }, 0);
+            var delta = wmsRoundMoney(cnGrossAbs - assigned);
+            if (Math.abs(delta) >= 0.01) {
+                var big = orderRows[0];
+                orderRows.forEach(function(o) { if (Math.abs(o.quantity) > Math.abs(big.quantity)) big = o; });
+                big.gross_amount = wmsRoundMoney(big.gross_amount + delta);
+                var bq = Math.abs(big.quantity);
+                if (bq > 0) big.price = wmsRoundMoney(big.gross_amount / bq);
+            }
+        })();
 
         // ── Split the CN's per-security charges (already on the summary row r) across
         // ALL the order rows with the SAME allocateCharges engine — each order keeps
