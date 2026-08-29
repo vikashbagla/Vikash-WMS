@@ -781,30 +781,41 @@ async function triggerClaimAttempt(reason) {
   inFlightTriggers.add(reason);
 
   try {
-    let resp;
-    try {
-      resp = await callCmdPoll();
-      edgeFunctionConsecutiveErrors = 0;
-    } catch (err) {
-      edgeFunctionConsecutiveErrors++;
-      console.error(`[poll:${reason}] cmd-poll error #${edgeFunctionConsecutiveErrors} — ${err.message}`);
-      return;
-    }
+    // Drain the queue: one wake (a NOTIFY, or the safety-net poll) keeps claiming
+    // until nothing pending remains. A grid enqueues several commands in ONE
+    // transaction, so their NOTIFYs arrive together; claiming one per wake left the
+    // LAST of a burst for the 60s safety-net poll (the 29-Aug ~1-min lag on the last
+    // grid order). The loop drains the whole burst in seconds, and a lost claim race
+    // (cmd-poll returns null while rows remain) is retried by the loop rather than
+    // waiting for the poll. cmd-poll's atomic claim still guarantees each command is
+    // processed exactly once across concurrent wakes; a claimed command is no longer
+    // 'pending', so the loop can neither re-claim it nor spin.
+    for (let drained = 0; ; drained++) {
+      let resp;
+      try {
+        resp = await callCmdPoll();
+        edgeFunctionConsecutiveErrors = 0;
+      } catch (err) {
+        edgeFunctionConsecutiveErrors++;
+        console.error(`[poll:${reason}] cmd-poll error #${edgeFunctionConsecutiveErrors} — ${err.message}`);
+        return;
+      }
 
-    if (resp.kill_switch) {
-      console.log(`[poll:${reason}] kill_switch=true — skipping`);
-      return;
-    }
-    if (!resp.command) {
-      // No pending work — normal when LISTEN already drained the queue.
-      return;
-    }
+      if (resp.kill_switch) {
+        console.log(`[poll:${reason}] kill_switch=true — skipping`);
+        return;
+      }
+      if (!resp.command) {
+        if (drained > 0) console.log(`[poll:${reason}] queue drained — ${drained} command(s) this wake`);
+        return;   // nothing pending left
+      }
 
-    lastClaimAt = Date.now();
-    totalCommandsClaimed++;
-    console.log(`[poll:${reason}] claimed command ${resp.command.id} — signal_source=${resp.command.signal_source}, iba_id=${resp.command.iba_id}, broker=${resp.broker?.broker_code}`);
+      lastClaimAt = Date.now();
+      totalCommandsClaimed++;
+      console.log(`[poll:${reason}] claimed command ${resp.command.id} — signal_source=${resp.command.signal_source}, iba_id=${resp.command.iba_id}, broker=${resp.broker?.broker_code}`);
 
-    await processCommand(resp.command, resp.broker);
+      await processCommand(resp.command, resp.broker);
+    }
   } finally {
     inFlightTriggers.delete(reason);
   }
