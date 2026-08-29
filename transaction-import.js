@@ -1479,15 +1479,24 @@ async function checkDuplicates(rows, tradeDate) {
                                  cnQty: cnQty, existingQty: sumQty, rowCount: matches.length });
         }
 
-        // ── One update per existing row — KEEP its own qty/price (the real per-order
-        // trail). broker_trade_id preserved so the Fyers dedupe still recognises it. ──
+        // ── One update per existing row. KEEP each row's QUANTITY (the trail of the N
+        // orders); the CN is the SOURCE OF TRUTH for the rest — OVERRIDE price + gross
+        // from the CN (its WAP, and its gross split across the rows by qty so the sum
+        // ties the CN to the paisa). Qty is the only thing matched — the recon alert
+        // above fires if the rows don't sum to the CN. broker_trade_id is preserved so
+        // the Fyers dedupe still recognises the row. ──
+        var cnQtyAbs   = Math.abs(Number(r.quantity) || 0);
+        var cnGrossAbs = Math.abs(Number(r.gross_amount) || 0);
+        var cnUnit     = cnQtyAbs > 0 ? (cnGrossAbs / cnQtyAbs) : (Number(r.price) || 0);  // CN per-unit (exact WAP)
         var orderRows = matches.map(function(e) {
+            var qAbs = Math.abs(Number(e.quantity) || 0);
             return {
                 security_id: r.security_id, security_type: r.security_type,
                 symbol: r.symbol, short_symbol: r.short_symbol, company_name: r.company_name,
                 exchange: r.exchange, transaction_type: r.transaction_type,
-                quantity: Number(e.quantity), price: Number(e.price),
-                gross_amount: Math.abs(Number(e.quantity) || 0) * (Number(e.price) || 0),
+                quantity: Number(e.quantity),        // KEEP — the per-order trail
+                price: r.price,                       // CN WAP overrides the stored price
+                gross_amount: qAbs * cnUnit,          // CN gross split by qty → sum ties the CN
                 _db_security_type: r._db_security_type, _db_asset_class: r._db_asset_class,
                 _existingId: e.id, _existingBrokerTradeId: e.broker_trade_id || null,
                 tags: (e.tags && e.tags.length) ? e.tags : [], _action: 'UPDATE'
