@@ -309,6 +309,12 @@ function autoManualAddRow(copyFromId) {
 // initial `tags`. Ported spirit of the Add Transaction row-copy.
 function autoManualPopulateRowDom(rowId) {
     var row = autoManualRow(rowId); if (!row) return;
+    // Sync the trader <select> to the copied row's model. Without this, a row added
+    // via '+ Add order' / Tab inherits copyFrom.trader_id but the freshly-rendered
+    // dropdown shows its first option '(Same as Veins)', so the row SILENTLY carries the
+    // wrong beneficiary. (Bug found 2026-08-29 dev test: a 'Same as Veins' row booked to T2.)
+    var traderSelP = document.querySelector('.atm-trader[data-rid="' + rowId + '"]');
+    if (traderSelP) traderSelP.value = row.trader_id || '';
     var symInput = document.querySelector('.atm-sym[data-rid="' + rowId + '"]');
     var lotsInput = document.querySelector('.atm-lots[data-rid="' + rowId + '"]');
     var qtyInput = document.querySelector('.atm-qty[data-rid="' + rowId + '"]');
