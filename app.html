@@ -70,7 +70,7 @@
             <div class="user-section">
                 <button class="btn-refresh-app" id="appRefreshBtn" title="Refresh this module (F5)">🔄</button>
                 <button class="btn-refresh-app" id="appShowZeroBtn" title="Show / hide zero-value rows (F6)">👁</button>
-                <button class="btn-refresh-app" id="appBannerToggleBtn" title="Show / hide summary banner">▲</button>
+                <button class="btn-refresh-app" id="appBannerToggleBtn" title="Show / hide summary banner (F3)">▲</button>
                 <div class="fyers-indicator" id="fyers-indicator">
                     <span id="fyers-status" style="font-size:12px;">⏳ Fyers...</span>
                     <span id="fyers-refresh-time" style="font-size:10px; color:#a0aec0; display:block;"></span>
@@ -885,16 +885,17 @@
         var _szBtn = document.getElementById('appShowZeroBtn');
         if (_szBtn) _szBtn.addEventListener('click', wmsToggleShowZeroActiveModule);
 
-        // Summary banner show/hide: header ▲/▼ button. Reflect the stored state on load.
+        // Summary banner show/hide: header ▲/▼ button (+ F3). Reflect the stored state on load.
         var _btBtn = document.getElementById('appBannerToggleBtn');
         if (_btBtn) _btBtn.addEventListener('click', wmsToggleBanner);
         wmsSyncBannerToggleBtn();
 
-        // F5 = refresh, F6 = toggle show-zero — anywhere in the app (instead of the browser defaults).
+        // F5 = refresh, F6 = toggle show-zero, F3 = show/hide banner — anywhere in the app (instead of the browser defaults).
         document.addEventListener('keydown', function (e) {
             if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
             if (e.key === 'F5') { e.preventDefault(); wmsRefreshActiveModule(); }
             else if (e.key === 'F6') { e.preventDefault(); wmsToggleShowZeroActiveModule(); }
+            else if (e.key === 'F3') { e.preventDefault(); wmsToggleBanner(); }   // override browser Find; Ctrl/Cmd+F still works
         });
         document.querySelectorAll('.nav-btn:not(.disabled)').forEach(btn => {
             btn.addEventListener('click', async () => { await loadModule(btn.dataset.module); if (typeof wmsSyncShowZeroBtn === 'function') wmsSyncShowZeroBtn(); });
