@@ -29,6 +29,7 @@ var cnParsedRows = [];         // After parsing + grouping
 var cnNewRows = [];            // Will be inserted
 var cnUpdateRows = [];         // Will update existing
 var cnErrorRows = [];          // Could not match security
+var cnReconAlerts = [];        // (symbol,side) where existing rows' qty != CN total (fill missing/extra)
 var cnSelectedAccount = null;  // Currently selected account object
 var cnTradeDate = null;        // Trade date from parsed CN (YYYY-MM-DD)
 var cnCnNumber = null;         // Contract note number from parsed CN
@@ -578,8 +579,12 @@ async function parseCnPdf(file, password) {
         // Show preview
         displayCnPreview(parseResult);
         tiLoading(false);
-        statusEl.textContent = 'Parsed ' + (cnNewRows.length + cnUpdateRows.length) + ' trade(s), ' + cnErrorRows.length + ' error(s).';
-        statusEl.className = cnErrorRows.length > 0 ? 'cn-status' : 'cn-status success';
+        var _reconMsg = (cnReconAlerts.length > 0)
+            ? '  ⚠️ ' + cnReconAlerts.length + ' RECON ALERT(S): ' +
+              cnReconAlerts.map(function(a){ return a.symbol + ' ' + a.side + ' — CN ' + a.cnQty + ' vs existing ' + a.existingQty + ' (' + a.rowCount + ' row(s))'; }).join('; ')
+            : '';
+        statusEl.textContent = 'Parsed ' + (cnNewRows.length + cnUpdateRows.length) + ' trade(s), ' + cnErrorRows.length + ' error(s).' + _reconMsg;
+        statusEl.className = (cnErrorRows.length > 0 || cnReconAlerts.length > 0) ? 'cn-status' : 'cn-status success';
 
     } catch (e) {
         console.error('CN Parse error:', e);
@@ -1427,37 +1432,82 @@ async function _autoPopulateTagsForNewRows(newRows, investorId) {
 // ============================================================================
 
 async function checkDuplicates(rows, tradeDate) {
-    if (rows.length === 0) { cnNewRows = []; cnUpdateRows = []; return; }
+    if (rows.length === 0) { cnNewRows = []; cnUpdateRows = []; cnReconAlerts = []; return; }
 
     // Query existing transactions for this investor + broker + date
     var investorId = cnSelectedAccount.investor_id;
     var brokerId = cnSelectedAccount.broker_id;
 
-    var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + investorId + '&broker_id=eq.' + brokerId + '&transaction_date=eq.' + tradeDate + '&select=id,symbol,transaction_type,quantity,price,gross_amount,tags', {
+    var resp = await fetch(SUPABASE_URL + '/rest/v1/transactions?investor_id=eq.' + investorId + '&broker_id=eq.' + brokerId + '&transaction_date=eq.' + tradeDate + '&select=id,symbol,transaction_type,quantity,price,gross_amount,tags,broker_trade_id', {
         headers: wmsHeaders()
     });
     var existing = await resp.json();
 
     cnNewRows = [];
     cnUpdateRows = [];
+    cnReconAlerts = [];
+
+    var bare = function(x) { return (x || '').replace(/^[A-Z]+:/, ''); };
 
     rows.forEach(function(r) {
-        // Match: same symbol + same transaction_type (strip exchange prefix for consistent comparison)
-        var rBare = (r.symbol || '').replace(/^[A-Z]+:/, '');
-        var match = existing.find(function(e) {
-            return (e.symbol || '').replace(/^[A-Z]+:/, '') === rBare && e.transaction_type === r.transaction_type;
+        // r = the CN's ONE aggregated row per (security, side), already charge-allocated
+        // by allocateCharges() in processAndGroupTrades.
+        var rBare = bare(r.symbol);
+
+        // ── ALL existing trade rows for this security+side (not just the first). ──
+        // The Fyers auto-import books ONE row per ORDER (its fills aggregated), so a
+        // security traded via several orders has several rows. We pass EVERY one into
+        // the charge allocation and update it — we do NOT try to match the CN's
+        // individual fills/orders to specific rows (owner, 2026-08-29). The old code
+        // matched only the FIRST row (existing.find) and updated it, leaving the rest
+        // as duplicates that inflated the position.
+        var matches = existing.filter(function(e) {
+            return bare(e.symbol) === rBare && e.transaction_type === r.transaction_type;
         });
 
-        if (match) {
-            r._existingId = match.id;
-            r._action = 'UPDATE';
-            r.tags = match.tags || [];  // Load existing tags for editing
-            cnUpdateRows.push(r);
-        } else {
-            r.tags = [];  // Empty tags for new rows
-            r._action = 'NEW';
-            cnNewRows.push(r);
+        if (matches.length === 0) {
+            r.tags = []; r._action = 'NEW'; cnNewRows.push(r);
+            return;
         }
+
+        // ── RECON: the existing rows' quantities MUST sum to the CN total. If they
+        // don't, a fill is missing or extra — flag it (do not silently proceed). ──
+        var sumQty = matches.reduce(function(s, e) { return s + Math.abs(Number(e.quantity) || 0); }, 0);
+        var cnQty  = Math.abs(Number(r.quantity) || 0);
+        if (Math.abs(sumQty - cnQty) > 0.5) {
+            cnReconAlerts.push({ symbol: rBare, side: r.transaction_type,
+                                 cnQty: cnQty, existingQty: sumQty, rowCount: matches.length });
+        }
+
+        // ── One update per existing row — KEEP its own qty/price (the real per-order
+        // trail). broker_trade_id preserved so the Fyers dedupe still recognises it. ──
+        var orderRows = matches.map(function(e) {
+            return {
+                security_id: r.security_id, security_type: r.security_type,
+                symbol: r.symbol, short_symbol: r.short_symbol, company_name: r.company_name,
+                exchange: r.exchange, transaction_type: r.transaction_type,
+                quantity: Number(e.quantity), price: Number(e.price),
+                gross_amount: Math.abs(Number(e.quantity) || 0) * (Number(e.price) || 0),
+                _db_security_type: r._db_security_type, _db_asset_class: r._db_asset_class,
+                _existingId: e.id, _existingBrokerTradeId: e.broker_trade_id || null,
+                tags: (e.tags && e.tags.length) ? e.tags : [], _action: 'UPDATE'
+            };
+        });
+
+        // ── Split the CN's per-security charges (already on the summary row r) across
+        // ALL the order rows with the SAME allocateCharges engine — each order keeps
+        // its own ₹20 brokerage etc. and the sum still ties to the CN. Engine untouched. ──
+        allocateCharges(orderRows, {
+            brokerage:       r.brokerage || 0,
+            stt:             r.stt || 0,
+            exchangeCharges: r._exchange_charges || 0,
+            sebiCharges:     r._sebi_charges || 0,
+            stampDuty:       r._stamp_duty || 0,
+            ipft:            r._ipft || 0,
+            gst:             r.gst || 0
+        });
+
+        orderRows.forEach(function(or) { cnUpdateRows.push(or); });
     });
 }
 
@@ -1960,6 +2010,10 @@ window.importCnToDatabase = async function() {
         return;
     }
 
+    if (cnReconAlerts.length > 0) {
+        var _rl = cnReconAlerts.map(function(a){ return '  • ' + a.symbol + ' ' + a.side + ': CN total ' + a.cnQty + ' vs existing rows ' + a.existingQty + ' (' + a.rowCount + ' row(s))'; }).join('\n');
+        if (!confirm('⚠️ RECON MISMATCH — the existing trade rows do NOT sum to the CN total for:\n\n' + _rl + '\n\nA fill may be missing or extra. The CN charges will still be split across the existing rows, but the quantities will NOT match the CN. Proceed anyway?')) return;
+    }
     if (!confirm('Import ' + cnNewRows.length + ' new + ' + cnUpdateRows.length + ' updates = ' + totalRows + ' transactions?')) return;
 
     // Read tags from autocomplete pill selections (data-tags attr), blank → ['blank']
@@ -2017,6 +2071,9 @@ window.importCnToDatabase = async function() {
             var cnCtxU = { source: 'CN', investorId: cnSelectedAccount.investor_id, brokerId: cnSelectedAccount.broker_id, tradeDate: cnTradeDate, cnNumber: cnCnNumber };
             var udata = buildTransactionRecord(ur, cnCtxU);
             delete udata.created_at; // Don't update created_at
+            // Keep the Fyers order id on a CN-reconciled row so the tradebook dedupe
+            // still recognises it (prevents the auto-import re-creating a duplicate).
+            if (ur._existingBrokerTradeId) udata.broker_trade_id = ur._existingBrokerTradeId;
             try {
                 var uresp = await fetchWithRetry(SUPABASE_URL + '/rest/v1/transactions?id=eq.' + ur._existingId, {
                     method: 'PATCH',
