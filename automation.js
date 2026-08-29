@@ -194,7 +194,10 @@ function autoManualRenderForm() {
     root.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
           '<h3 style="margin:0">✋ Manual Fyers order <span style="font-size:12px;font-weight:400;color:#16a34a">● unlocked</span></h3>' +
-          '<button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualLock()">Lock</button>' +
+          '<div style="display:flex;gap:8px">' +
+            '<button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualRenderForm()" title="Reset the form to one empty row">Clear</button>' +
+            '<button class="wms-btn wms-btn-secondary" style="font-size:12px" onclick="autoManualLock()">Lock</button>' +
+          '</div>' +
         '</div>' +
         '<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-bottom:14px">⚠️ <b>LIVE</b> orders on Veins/Fyers. No automated risk checks — the Confirm step is the only gate. One row per order; same-symbol orders on the account are aggregated into ONE Fyers order and split back per beneficiary. <b>Qty/Lots is signed: + = BUY, − = SELL.</b> Product is derived automatically (F&O → MARGIN, equity → CNC).</div>' +
         // Flex rows (NOT a fixed-width <table>) so columns fit the container at
