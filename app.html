@@ -70,6 +70,7 @@
             <div class="user-section">
                 <button class="btn-refresh-app" id="appRefreshBtn" title="Refresh this module (F5)">🔄</button>
                 <button class="btn-refresh-app" id="appShowZeroBtn" title="Show / hide zero-value rows (F6)">👁</button>
+                <button class="btn-refresh-app" id="appBannerToggleBtn" title="Show / hide summary banner">▲</button>
                 <div class="fyers-indicator" id="fyers-indicator">
                     <span id="fyers-status" style="font-size:12px;">⏳ Fyers...</span>
                     <span id="fyers-refresh-time" style="font-size:10px; color:#a0aec0; display:block;"></span>
@@ -669,7 +670,33 @@
     }
     // Preload Trading in the background so its banner compute runs app-wide (the
     // shared refresh computes the banner whenever the tr-portfolio element exists).
-    function _wmsShowGlobalBanner() { const b = document.getElementById('wmsGlobalBanner'); if (b) b.style.display = 'flex'; _wmsSyncShellTop(); }
+    function _wmsShowGlobalBanner() { const b = document.getElementById('wmsGlobalBanner'); if (b && !wmsBannerIsHidden()) b.style.display = 'flex'; wmsSyncBannerToggleBtn(); _wmsSyncShellTop(); }
+    // Summary banner show/hide (header ▲/▼ button). Persisted per-browser via localStorage
+    // so a small screen can stay collapsed while a desktop stays expanded. Top-level scope so
+    // _wmsShowGlobalBanner (preload path) can honour the stored preference. Space is reclaimed
+    // by _wmsSyncShellTop (banner is display:none when hidden).
+    function wmsBannerIsHidden() { return localStorage.getItem('wms_banner_hidden') === '1'; }
+    function wmsSyncBannerToggleBtn() {
+        const b = document.getElementById('appBannerToggleBtn');
+        if (!b) return;
+        const hidden = wmsBannerIsHidden();
+        b.textContent = hidden ? '▼' : '▲';
+        b.classList.toggle('active', hidden);
+    }
+    function wmsApplyBannerVisibility() {
+        const banner = document.getElementById('wmsGlobalBanner');
+        if (banner) {
+            if (wmsBannerIsHidden()) banner.style.display = 'none';
+            else if (_wmsModuleLoaded['trading']) banner.style.display = 'flex';   // only reveal once its content is preloaded
+        }
+        wmsSyncBannerToggleBtn();
+        _wmsSyncShellTop();
+    }
+    function wmsToggleBanner() {
+        localStorage.setItem('wms_banner_hidden', wmsBannerIsHidden() ? '0' : '1');
+        wmsApplyBannerVisibility();
+    }
+    window.wmsToggleBanner = wmsToggleBanner;
     // Measure everything ABOVE .main-content (dev banner + header + top-nav + the
     // global banner) into --wms-shell-top, so .main-content's height leaves room for
     // it. Plain block layout — no shell flexbox — so page WIDTHS are unaffected.
@@ -857,6 +884,11 @@
         window.wmsToggleShowZeroActiveModule = wmsToggleShowZeroActiveModule;
         var _szBtn = document.getElementById('appShowZeroBtn');
         if (_szBtn) _szBtn.addEventListener('click', wmsToggleShowZeroActiveModule);
+
+        // Summary banner show/hide: header ▲/▼ button. Reflect the stored state on load.
+        var _btBtn = document.getElementById('appBannerToggleBtn');
+        if (_btBtn) _btBtn.addEventListener('click', wmsToggleBanner);
+        wmsSyncBannerToggleBtn();
 
         // F5 = refresh, F6 = toggle show-zero — anywhere in the app (instead of the browser defaults).
         document.addEventListener('keydown', function (e) {
