@@ -6164,6 +6164,38 @@ async function autoAt2Refresh() {
         _auAt2.runlog = res[8] || [];
         _auAt2.loadedAt = new Date();
 
+        // ── Scope this page to the MS007 family ONLY ────────────────────────
+        // This is the AT2-MS007 dashboard: it must show MS007 data only. Other
+        // families (MANUAL — owner-fired orders — and any future one) each have
+        // their own home; their books/trades must NOT leak in here. Everything
+        // links to a family through strategy_id -> at2_strategy.family_id, except
+        // the run log, which carries the family code in its own `engine` column.
+        // Filtering ONCE here keeps every downstream render (metrics, tables,
+        // filter bar, controls, alerts, log) MS007-only without touching each
+        // renderer. If the MS007 family row cannot be identified we leave the
+        // data unfiltered rather than blank the page (F.13 — never show an empty
+        // page that looks like "no trades").
+        var _ms007Fam = (_auAt2.families || []).find(function (f) { return f.code === 'MS007'; })
+                     || (_auAt2.families || []).find(function (f) { return f.engine === 'at2-ms007'; });
+        if (_ms007Fam) {
+            var _ms007StratIds = new Set((_auAt2.strategies || [])
+                .filter(function (s) { return s.family_id === _ms007Fam.id; })
+                .map(function (s) { return s.id; }));
+            _auAt2.strategies = (_auAt2.strategies || []).filter(function (s) { return _ms007StratIds.has(s.id); });
+            _auAt2.books = (_auAt2.books || []).filter(function (b) { return _ms007StratIds.has(b.strategy_id); });
+            _auAt2.trades = (_auAt2.trades || []).filter(function (t) { return _ms007StratIds.has(t.strategy_id); });
+            var _ms007TradeIds = new Set(_auAt2.trades.map(function (t) { return t.id; }));
+            _auAt2.signals = (_auAt2.signals || []).filter(function (s) { return _ms007StratIds.has(s.strategy_id); });
+            _auAt2.events = (_auAt2.events || []).filter(function (e) { return _ms007TradeIds.has(e.trade_id); });
+            _auAt2.alerts = (_auAt2.alerts || []).filter(function (a) {
+                if (a.strategy_id) return _ms007StratIds.has(a.strategy_id);
+                if (a.trade_id) return _ms007TradeIds.has(a.trade_id);
+                return true; // family-agnostic system alert (feed/recon) stays visible
+            });
+            _auAt2.runlog = (_auAt2.runlog || []).filter(function (r) { return (r.engine || _ms007Fam.code) === _ms007Fam.code; });
+            _auAt2.families = (_auAt2.families || []).filter(function (f) { return f.id === _ms007Fam.id; });
+        }
+
         // Contract identity (symbol/expiry/lot_size) lives on securities_nfo,
         // joined manually in JS — same pattern the rest of the app uses for
         // this table (wmsRefData.securitiesNfoMap); Supabase's embed syntax
