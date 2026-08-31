@@ -342,11 +342,9 @@ input.au-at2-locked:disabled {
 .au-scalp-tbl th.num, .au-scalp-tbl td.num { text-align: right; }
 .au-scalp-tbl tbody.au-scalp-strat { border-bottom: 1px solid #edf2f7; }
 .au-scalp-srow > td { padding: 8px 10px; vertical-align: middle; white-space: nowrap; }
-/* fill the width: data columns shrink to content, the name column absorbs the slack */
-.au-scalp-tbl thead th { width: 1%; }
-.au-scalp-srow > td { width: 1%; }
-.au-scalp-tbl thead th:first-child,
-.au-scalp-srow > td.au-scalp-title { width: auto; white-space: normal; }
+/* the controls cards fill the panel width regardless of table content */
+#au-scalp-controls-content { align-items: stretch; }
+#au-scalp-controls-content > .au-card { width: 100%; box-sizing: border-box; }
 .au-scalp-srow:hover > td { background: #f8fafc; }
 .au-scalp-strat.open .au-scalp-srow > td { background: #eef2ff; }
 .au-scalp-strat.retired .au-scalp-srow > td { background: #fafbfc; color: #94a3b8; }
