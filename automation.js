@@ -9174,12 +9174,92 @@ function auScalpUnknownParamPaths(params) {
     return out;
 }
 
+
+// ── Underlying search-select (scalp) ────────────────────────────────────────
+// Picks an UNDERLYING from securities_db (stocks) + securities_nfo (F&O). Tags
+// each with whether it has an active FUTURES contract, and on pick constrains
+// Instrument type: Future is offered only when a future exists, else Equity-only.
+function auScalpFutUnderlyings() {
+    var set = {};
+    var today = new Date().toISOString().slice(0, 10);
+    (wmsRefData.securitiesNfo || []).forEach(function (n) {
+        if (n.instrument_type === 'FUTURES' && n.is_active !== false
+            && (!n.expiry_date || n.expiry_date >= today) && n.underlying_symbol) {
+            set[String(n.underlying_symbol).toUpperCase()] = 1;
+        }
+    });
+    return set;
+}
+async function auScalpUnderlyingSearch(inp) {
+    var dd = inp.parentElement.querySelector('.au-scalp-udd');
+    if (!dd) return;
+    var q = (inp.value || '').trim();
+    if (q.length < 1) { dd.style.display = 'none'; return; }
+    if (!wmsRefData.securitiesCmReady || !wmsRefData.securitiesNfoReady) {
+        dd.innerHTML = '<div style="padding:8px 10px;color:#9ca3af">Loading securities…</div>';
+        dd.style.display = 'block';
+        try {
+            if (!wmsRefData.securitiesCmReady) await wmsLoadSecuritiesCm(0, { all: true });
+            if (!wmsRefData.securitiesNfoReady) await wmsLoadSecuritiesNfo();
+        } catch (e) { dd.innerHTML = '<div style="padding:8px 10px;color:#dc2626">Could not load securities</div>'; return; }
+        if ((inp.value || '').trim() !== q) return;   // query moved on while loading
+    }
+    var futSet = auScalpFutUnderlyings();
+    var seen = {}, items = [];
+    (wmsSearchSecurities(q) || []).forEach(function (sec) {
+        var under = sec._isNfo ? (sec.underlying_symbol || sec.symbol)
+                               : (sec.nse_symbol || sec.bse_symbol || sec.symbol);
+        var name  = sec._isNfo ? (sec.instrument_name || '') : (sec.company_name || '');
+        if (!under) return;
+        under = String(under).toUpperCase();
+        if (seen[under]) return; seen[under] = 1;
+        items.push({ under: under, name: name, hasFut: !!futSet[under] });
+    });
+    items = items.slice(0, 15);
+    dd.innerHTML = items.length ? items.map(function (it, i) {
+        return '<div class="au-scalp-uitem" data-idx="' + i + '" style="padding:7px 10px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid #f1f5f9">'
+             + '<span style="font-family:monospace;font-weight:600">' + auScalpEsc(it.under) + '</span>'
+             + '<span style="color:#6b7280;font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + auScalpEsc(it.name) + '</span>'
+             + (it.hasFut ? '<span class="au-badge success" style="font-size:9px">F&amp;O</span>'
+                          : '<span class="au-badge idle" style="font-size:9px">EQ only</span>')
+             + '</div>';
+    }).join('') : '<div style="padding:8px 10px;color:#9ca3af">No matches</div>';
+    dd._items = items;
+    dd.style.display = 'block';
+}
+function auScalpPickUnderlying(dd, idx) {
+    var it = dd._items && dd._items[idx]; if (!it) return;
+    var wrap = dd.parentElement, inp = wrap.querySelector('.au-scalp-uinput');
+    inp.value = it.under;
+    dd.style.display = 'none';
+    // Constrain Instrument type to what the underlying supports.
+    var card = inp.closest('.au-scalp-strat');
+    var grp = card && card.querySelector('.au-scalp-pills[data-path="instrument_type"]');
+    if (!grp) return;
+    var futPill = grp.querySelector('.au-scalp-pill[data-val="future"]');
+    var eqPill  = grp.querySelector('.au-scalp-pill[data-val="equity"]');
+    if (!it.hasFut) {
+        if (futPill) { futPill.classList.remove('on'); futPill.style.opacity = '.4'; futPill.style.pointerEvents = 'none'; futPill.title = 'No futures contract for ' + it.under + ' — equity only'; }
+        if (eqPill) eqPill.classList.add('on');
+    } else if (futPill) {
+        futPill.style.opacity = ''; futPill.style.pointerEvents = ''; futPill.title = '';
+    }
+}
+
 function auScalpFieldInput(f, params, sid) {
     var v = auScalpDig(params, f.path);
     var id = 'au-scalp-p-' + sid + '-' + f.path.replace(/\./g, '_');
     var numeric = (f.kind === 'num' || f.kind === 'int' || f.kind === 'hour');
     var cls = 'wms-input au-scalp-pf' + (numeric ? ' wms-input-number' : '');
     if (f.readonly) cls += ' au-scalp-locked';
+
+    if (f.path === 'underlying') {
+        var uv = (v == null ? '' : String(v));
+        return '<div class="au-scalp-usearch" style="position:relative">'
+             + '<input id="' + id + '" class="wms-input au-scalp-pf au-scalp-uinput" data-path="underlying" data-kind="text" type="text" autocomplete="off" placeholder="Type a stock or F&O underlying…" value="' + auScalpEsc(uv) + '" disabled>'
+             + '<div class="au-scalp-udd" style="display:none;position:absolute;z-index:60;left:0;right:0;top:100%;margin-top:2px;background:#fff;border:1px solid #cbd5e0;border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12);max-height:240px;overflow:auto"></div>'
+             + '</div>';
+    }
 
     if (f.kind === 'bool') {
         return '<div class="au-scalp-pills" id="' + id + '" data-path="' + f.path + '" data-kind="bool"'
@@ -9532,6 +9612,20 @@ function auScalpWireControls() {
     root.querySelectorAll('.au-scalp-bhide').forEach(function (b) {
         b.addEventListener('click', function () {
             auScalpSetHidden('at2_book', b.dataset.bid, b.dataset.hidden !== '1', b);
+        });
+    });
+
+    root.querySelectorAll('.au-scalp-uinput').forEach(function (inp) {
+        var t;
+        inp.addEventListener('input', function () { clearTimeout(t); t = setTimeout(function () { auScalpUnderlyingSearch(inp); }, 180); });
+        inp.addEventListener('focus', function () { if ((inp.value || '').trim()) auScalpUnderlyingSearch(inp); });
+        inp.addEventListener('blur', function () { setTimeout(function () { var dd = inp.parentElement.querySelector('.au-scalp-udd'); if (dd) dd.style.display = 'none'; }, 200); });
+    });
+    root.querySelectorAll('.au-scalp-udd').forEach(function (dd) {
+        dd.addEventListener('mousedown', function (e) {
+            var item = e.target.closest('.au-scalp-uitem'); if (!item) return;
+            e.preventDefault();
+            auScalpPickUnderlying(dd, parseInt(item.dataset.idx, 10));
         });
     });
 
