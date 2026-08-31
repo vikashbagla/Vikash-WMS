@@ -9232,6 +9232,7 @@ function auScalpFieldCell(f, params, sid) {
 function auScalpParamForm(params, sid) {
     var h = '';
     AU_SCALP_PARAM_GROUPS.forEach(function (g) {
+        if (g.key === 'roll' && params && params.instrument_type === 'equity') return;   // roll is futures-only
         var fields = AU_SCALP_PARAM_FIELDS.filter(function (f) { return f.group === g.key; });
         if (!fields.length) return;
         h += '<div class="au-scalp-group"><div class="au-scalp-group-label">' + auScalpEsc(g.label) + '</div>'
@@ -9259,7 +9260,7 @@ function auScalpRenderControls() {
         h += '<div class="au-soon">' + (stratHidden ? 'Every strategy is hidden — use “Show retired”.' : 'No AT2 strategies configured. Use ＋ New strategy.') + '</div>';
     } else {
         h += '<div class="au-scalp-tblwrap"><table class="au-scalp-tbl"><thead><tr>'
-           + '<th>Strategy</th><th>Code · Ver</th><th>Status</th><th>Instrument</th><th>Dir</th>'
+           + '<th>Strategy</th><th>Code</th><th>Status</th><th>Instrument</th><th>Dir</th>'
            + '<th class="num">Entry ₹</th><th class="num">Target ₹</th><th>Band ₹</th><th>Roll</th><th></th></tr></thead>';
         stratShown.forEach(function (s2) {
             var params = s2.params || {};
@@ -9268,8 +9269,8 @@ function auScalpRenderControls() {
             h += '<tbody class="au-scalp-strat' + (open ? ' open' : '') + (s2.hidden ? ' retired' : '') + '" data-sid="' + s2.id + '">'
                + '<tr class="au-scalp-srow">'
                +   '<td class="au-scalp-title" data-toggle="s:' + s2.id + '"><span class="au-scalp-caret">' + (open ? '▾' : '▸') + '</span> <span class="au-scalp-name">' + auScalpEsc(s2.display_name || s2.code) + '</span>' + (s2.hidden ? ' <span class="au-badge idle">retired</span>' : '') + '</td>'
-               +   '<td><code class="au-scalp-code">' + auScalpEsc(s2.code) + '</code> <span class="au-badge idle">' + auScalpEsc(s2.version) + '</span></td>'
-               +   '<td>' + (s2.enabled ? '<span class="au-badge success">enabled</span>' : '<span class="au-badge idle">disabled</span>') + (s2.requires_resting_stop ? '' : ' <span class="au-badge warning">no SL</span>') + '</td>'
+               +   '<td><code class="au-scalp-code">' + auScalpEsc(s2.code) + '</code></td>'
+               +   '<td>' + (s2.enabled ? '<span class="au-badge success">enabled</span>' : '<span class="au-badge idle">disabled</span>') + '</td>'
                +   '<td>' + auScalpEsc(P(s2, 'instrument_type')) + ' · ' + auScalpEsc(P(s2, 'underlying')) + '</td>'
                +   '<td>' + auScalpEsc(P(s2, 'direction')) + '</td>'
                +   '<td class="num">' + auScalpEsc(P(s2, 'entry_interval')) + '</td>'
@@ -9542,15 +9543,6 @@ function auScalpWireControls() {
 
 /** Read one field back out of the DOM, typed. Blank = the key is REMOVED. */
 function auScalpReadField(card, f) {
-    if (f.kind === 'bool') {
-        return '<div class="au-scalp-pills" id="' + id + '" data-path="' + f.path + '" data-kind="bool"'
-             + (f.readonly ? ' data-readonly="yes"' : '') + '>'
-             + [['true', 'Yes'], ['false', 'No']].map(function (o) {
-                 return '<span class="wms-pill au-scalp-pill' + (String(!!v) === o[0] ? ' on' : '')
-                      + '" data-val="' + o[0] + '">' + o[1] + '</span>';
-               }).join('') + '</div>';
-    }
-
     if (f.kind === 'bool') {
         var onb = card.querySelector('[data-path="' + f.path + '"] .au-scalp-pill.on');
         return onb ? (onb.dataset.val === 'true') : undefined;
