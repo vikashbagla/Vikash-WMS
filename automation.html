@@ -649,6 +649,7 @@ input.au-at2-locked:disabled {
   <div class="automation-family-tabs">
     <button class="au-fam-tab-btn active" data-fam="health">⚡ Health &amp; Global</button>
     <button class="au-fam-tab-btn"        data-fam="at2">🧪 AT2-MS007</button>
+    <button class="au-fam-tab-btn"        data-fam="scalp">🧪 AT2-Scalp</button>
     <button class="au-fam-tab-btn"        data-fam="gs">🥈🥇 GS</button>
     <button class="au-fam-tab-btn"        data-fam="kh">🐦 KH</button>
     <button class="au-fam-tab-btn"        data-fam="pairs">🔗 Pairs</button>
@@ -1404,6 +1405,110 @@ input.au-at2-locked:disabled {
 
           <div id="au-at2-controls-panel" class="au-subtab-panel">
             <div id="au-at2-controls-content" class="au-meta">Loading configuration…</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div id="au-fam-scalp" class="automation-family-panel">
+      <div class="fam-scroll">
+        <div class="fam-page">
+
+          <div class="fam-header" style="position:relative">
+            <div class="fam-title">
+              <h2>🧪 AT2-Scalp</h2>
+              <div class="fam-sub" id="au-scalp-sub">Engine SCALP · at2-scalp · state read from at2_trade</div>
+            </div>
+            <span id="au-scalp-alertbadge" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)"></span>
+            <div class="fam-header-right">
+              <span class="status-pill paper" id="au-scalp-mode">🟡 PAPER</span>
+              <span id="au-scalp-lastact" class="fam-lastact">Last activity: —</span>
+            </div>
+          </div>
+
+          <div class="au-subtabs">
+            <button class="au-subtab-btn active" data-subtab="au-scalp-paper-panel">Paper</button>
+            <button class="au-subtab-btn" data-subtab="au-scalp-live-panel">Live</button>
+            <button class="au-subtab-btn" data-subtab="au-scalp-alerts-panel" id="au-scalp-alerts-tab">Alerts</button>
+            <button class="au-subtab-btn" data-subtab="au-scalp-events-panel">Signals &amp; Events</button>
+            <button class="au-subtab-btn" data-subtab="au-scalp-log-panel">Log</button>
+            <button class="au-subtab-btn" data-subtab="au-scalp-controls-panel">Controls &amp; Admin</button>
+            <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px"
+                    onclick="autoAt2Refresh()">↻ Refresh</button>
+          </div>
+
+          <div id="au-scalp-paper-panel" class="au-subtab-panel active">
+            <div class="fam-metrics" id="au-scalp-paper-metrics">
+              <div class="fam-metric-tile"><div class="metric-label">Open positions</div>
+                <div class="metric-value" id="au-scalp-paper-m-open">—</div><div class="metric-sub" id="au-scalp-paper-m-open-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Open exposure</div>
+                <div class="metric-value" id="au-scalp-paper-m-exposure">—</div><div class="metric-sub" id="au-scalp-paper-m-exposure-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Peak exposure</div>
+                <div class="metric-value" id="au-scalp-paper-m-maxexp">—</div><div class="metric-sub" id="au-scalp-paper-m-maxexp-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Gross P&amp;L</div>
+                <div class="metric-value" id="au-scalp-paper-m-realised">—</div><div class="metric-sub" id="au-scalp-paper-m-realised-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Net P&amp;L</div>
+                <div class="metric-value" id="au-scalp-paper-m-net">—</div><div class="metric-sub" id="au-scalp-paper-m-net-sub"></div></div>
+            </div>
+            <div id="au-scalp-paper-filterbar"></div>
+            <details id="au-scalp-paper-open-block" class="au-gs-block" open>
+              <summary class="au-gs-block-summary">Open trades
+                <span id="au-scalp-paper-open-badge" class="au-badge idle">…</span>
+                <span id="au-scalp-paper-open-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-scalp-paper-open-content" class="au-meta">Loading open trades…</div>
+            </details>
+            <details id="au-scalp-paper-closed-block" class="au-gs-block">
+              <summary class="au-gs-block-summary">Closed trades
+                <span id="au-scalp-paper-closed-badge" class="au-badge idle">…</span>
+                <span id="au-scalp-paper-closed-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-scalp-paper-closed-content" class="au-meta">Loading closed trades…</div>
+            </details>
+          </div>
+          <div id="au-scalp-live-panel" class="au-subtab-panel">
+            <div class="fam-metrics" id="au-scalp-live-metrics">
+              <div class="fam-metric-tile"><div class="metric-label">Open positions</div>
+                <div class="metric-value" id="au-scalp-live-m-open">—</div><div class="metric-sub" id="au-scalp-live-m-open-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Open exposure</div>
+                <div class="metric-value" id="au-scalp-live-m-exposure">—</div><div class="metric-sub" id="au-scalp-live-m-exposure-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Peak exposure</div>
+                <div class="metric-value" id="au-scalp-live-m-maxexp">—</div><div class="metric-sub" id="au-scalp-live-m-maxexp-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Gross P&amp;L</div>
+                <div class="metric-value" id="au-scalp-live-m-realised">—</div><div class="metric-sub" id="au-scalp-live-m-realised-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Net P&amp;L</div>
+                <div class="metric-value" id="au-scalp-live-m-net">—</div><div class="metric-sub" id="au-scalp-live-m-net-sub"></div></div>
+            </div>
+            <div id="au-scalp-live-filterbar"></div>
+            <details id="au-scalp-live-open-block" class="au-gs-block" open>
+              <summary class="au-gs-block-summary">Open trades
+                <span id="au-scalp-live-open-badge" class="au-badge idle">…</span>
+                <span id="au-scalp-live-open-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-scalp-live-open-content" class="au-meta">Loading open trades…</div>
+            </details>
+            <details id="au-scalp-live-closed-block" class="au-gs-block">
+              <summary class="au-gs-block-summary">Closed trades
+                <span id="au-scalp-live-closed-badge" class="au-badge idle">…</span>
+                <span id="au-scalp-live-closed-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-scalp-live-closed-content" class="au-meta">Loading closed trades…</div>
+            </details>
+          </div>
+
+          <!-- ⚠️ THE EMAIL IS A NOTIFICATION; THIS TABLE IS THE TRUTH.
+               An alert that was emailed and ignored is still open here. -->
+          <div id="au-scalp-alerts-panel" class="au-subtab-panel">
+            <div id="au-scalp-alerts-content" class="au-meta">Loading alerts…</div>
+          </div>
+
+          <div id="au-scalp-events-panel" class="au-subtab-panel">
+            <div id="au-scalp-events-content" class="au-meta">Loading signals &amp; events…</div>
+          </div>
+
+          <div id="au-scalp-log-panel" class="au-subtab-panel">
+            <div id="au-scalp-log-content" class="au-meta">Loading run log…</div>
+          </div>
+
+          <div id="au-scalp-controls-panel" class="au-subtab-panel">
+            <div id="au-scalp-controls-content" class="au-meta">Loading configuration…</div>
           </div>
 
         </div>
