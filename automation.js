@@ -6575,7 +6575,7 @@ async function auAt2RenderOpen(mode, silent) {
            + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Esc(contractStr) + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + qtySub + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.entry_price) + (!t.current_stop
-                        ? '<div style="margin-top:2px"><span class="au-badge error" style="font-size:9px">NO STOP</span></div>'
+                        ? '<div style="margin-top:2px"><span class="au-badge error" style="font-size:9px">NO TARGET</span></div>'
                         : auAt2StopInverted(t)
                             ? '<div style="color:#dc2626;font-weight:700;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop) + ' \u26D4</div>'
                             : '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop) + '</div>') + '</td>'
@@ -6610,7 +6610,7 @@ async function auAt2RenderOpen(mode, silent) {
             + '<th style="padding:6px 8px">Entered<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>'
             + '<th style="padding:6px 8px">Contract</th>'
             + '<th style="padding:6px 8px;text-align:right">Qty<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ physical</span></th>'
-            + '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ stop</span></th>'
+            + '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ target</span></th>'
             + '<th style="padding:6px 8px;text-align:right">LTP</th>'
             + '<th style="padding:6px 8px;text-align:right">Exposure</th>'
             + '<th style="padding:6px 8px;text-align:right">Margin<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ %</span></th>'
@@ -8575,10 +8575,8 @@ function auScalpRenderBanner() {
  * report a calm green PROTECTED.
  */
 function auScalpStopInverted(t) {
-    var stop = Number(t.current_stop), entry = Number(t.entry_price);
-    if (!isFinite(stop) || !isFinite(entry) || !stop || !entry) return false;
-    if (t.side === 'LONG')  return stop >= entry;
-    if (t.side === 'SHORT') return stop <= entry;
+    // SCALP: current_stop holds the resting TAKE-PROFIT (above entry for long,
+    // below for short) — that is correct by design, never an "inverted stop".
     return false;
 }
 
@@ -8754,10 +8752,10 @@ async function auScalpRenderOpen(mode, silent) {
            + '<td style="padding:6px 8px;vertical-align:top">' + auScalpEsc(contractStr) + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + qtySub + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.entry_price) + (!t.current_stop
-                        ? '<div style="margin-top:2px"><span class="au-badge error" style="font-size:9px">NO STOP</span></div>'
+                        ? '<div style="margin-top:2px"><span class="au-badge error" style="font-size:9px">NO TARGET</span></div>'
                         : auScalpStopInverted(t)
-                            ? '<div style="color:#dc2626;font-weight:700;font-size:10px;margin-top:1px">Stop: ' + auScalpNum(t.current_stop) + ' \u26D4</div>'
-                            : '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auScalpNum(t.current_stop) + '</div>') + '</td>'
+                            ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">Target: ' + auScalpNum(t.current_stop) + '</div>'
+                            : '<div style="color:#6b7280;font-size:10px;margin-top:1px">Target: ' + auScalpNum(t.current_stop) + '</div>') + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + ltpCell + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + exposureCell + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + marginCell + '</td>'
@@ -10169,7 +10167,7 @@ function autoScalpOpenCloseModal(tradeId) {
       + '<tr><td>Book</td><td><strong>' + auScalpBookName(t.book_id) + '</strong></td></tr>'
       + '<tr><td>Side / lots</td><td><strong>' + auScalpEsc(t.side) + ' ' + auScalpEsc(t.qty_lots) + '</strong></td></tr>'
       + '<tr><td>Entry</td><td>' + auScalpNum(t.entry_price) + '</td></tr>'
-      + '<tr><td>Resting stop</td><td>' + (t.current_stop ? auScalpNum(t.current_stop)
+      + '<tr><td>Resting target</td><td>' + (t.current_stop ? auScalpNum(t.current_stop)
             : '<span class="au-badge error">none — position is UNPROTECTED</span>') + '</td></tr>'
       + '<tr><td>State</td><td>' + auScalpStatusBadge(t.status) + '</td></tr>'
       + '</table>'
