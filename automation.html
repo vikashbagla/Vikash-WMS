@@ -330,6 +330,55 @@ input.au-at2-locked:disabled {
 
 .au-at2-msg { margin-top: 8px; font-size: 11px; min-height: 1px; }
 .au-at2-ok  { color: #059669; }
+
+/* ══ AT2-Scalp Controls — TABLE layout (strategies & books as rows) ═══════ */
+.au-scalp-tblwrap { overflow-x: auto; margin-top: 10px; }
+.au-scalp-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.au-scalp-tbl thead th {
+  text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase;
+  color: #475569; letter-spacing: .04em; padding: 6px 10px;
+  border-bottom: 2px solid #e2e8f0; background: #f8fafc; white-space: nowrap;
+}
+.au-scalp-tbl th.num, .au-scalp-tbl td.num { text-align: right; }
+.au-scalp-tbl tbody.au-scalp-strat { border-bottom: 1px solid #edf2f7; }
+.au-scalp-srow > td { padding: 8px 10px; vertical-align: middle; white-space: nowrap; }
+.au-scalp-srow:hover > td { background: #f8fafc; }
+.au-scalp-strat.open .au-scalp-srow > td { background: #eef2ff; }
+.au-scalp-strat.retired .au-scalp-srow > td { background: #fafbfc; color: #94a3b8; }
+.au-scalp-title { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.au-scalp-title:hover .au-scalp-name { text-decoration: underline; }
+.au-scalp-caret { color: #64748b; font-size: 12px; width: 10px; flex-shrink: 0; }
+.au-scalp-name { font-weight: 700; color: #1a202c; }
+.au-scalp-code { font-size: 11px; color: #64748b; background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
+.au-scalp-strat-actions { display: flex; gap: 5px; justify-content: flex-end; }
+.au-scalp-strat-actions .au-btn { padding: 3px 8px; font-size: 11px; }
+/* the edit detail row — only when the row is open */
+.au-scalp-strat:not(.open) .au-scalp-detailrow { display: none; }
+.au-scalp-detailrow > td { padding: 6px 14px 16px; background: #fbfdff; border-top: 1px dashed #e2e8f0; white-space: normal; }
+.au-scalp-body { display: block; }
+.au-scalp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 14px; }
+.au-scalp-field { min-width: 0; }
+.au-scalp-field label { display: block; font-size: 10px; font-weight: 600; text-transform: uppercase; color: #718096; margin-bottom: 3px; letter-spacing: .02em; }
+.au-scalp-field .wms-input { width: 100%; box-sizing: border-box; }
+.au-scalp-pf:disabled { background: #f7fafc; color: #4a5568; }
+.au-scalp-hint { font-size: 10px; color: #94a3b8; margin-top: 3px; line-height: 1.35; white-space: normal; }
+.au-scalp-pills { display: flex; gap: 4px; flex-wrap: wrap; }
+.au-scalp-pill { cursor: pointer; user-select: none; }
+.au-scalp-pills[data-locked="yes"] .au-scalp-pill { cursor: default; opacity: .65; }
+.au-scalp-group { margin-top: 12px; }
+.au-scalp-group:first-child { margin-top: 0; }
+.au-scalp-group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #475569; letter-spacing: .05em; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1px solid #edf2f7; }
+.au-scalp-field-locked label { color: #94a3b8; }
+.au-scalp-lockbadge { font-size: 9px; opacity: .7; }
+input.au-scalp-locked, input.au-scalp-locked:disabled { background: #f1f5f9; color: #64748b; border-style: dashed; cursor: not-allowed; }
+.au-scalp-cardhead { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.au-scalp-cardhead h3 { margin: 0; }
+.au-scalp-hiddenbar { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 5px 9px; border-radius: 6px; background: #f8fafc; border: 1px dashed #cbd5e0; font-size: 11px; color: #64748b; }
+.au-scalp-hiddenbar button { padding: 2px 8px; font-size: 11px; }
+.au-scalp-msg { margin-top: 8px; font-size: 11px; min-height: 1px; }
+.au-scalp-ok { color: #059669; }
+.au-scalp-unknown { margin-top: 10px; padding: 8px 10px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 6px; font-size: 11px; color: #9a3412; }
+
 .au-at2-err {
   color: #dc2626; background: #fef2f2; border: 1px solid #fecaca;
   border-radius: 4px; padding: 6px 8px; display: block;

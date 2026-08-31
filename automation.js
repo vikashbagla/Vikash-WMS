@@ -9245,160 +9245,104 @@ function auScalpParamForm(params, sid) {
 function auScalpRenderControls() {
     var el = document.getElementById('au-scalp-controls-content');
     if (!el) return;
+    function P(s, k) { var v = (s.params || {})[k]; return (v === undefined || v === null || v === '') ? '—' : v; }
 
-    // ── Strategies ──────────────────────────────────────────────────────────
+    // ── Strategies (TABLE) ──────────────────────────────────────────────────
     var h = '<div class="au-card">'
-          + '<div class="au-scalp-cardhead">'
-          +   '<h3>Strategies</h3>'
-          +   '<button class="au-btn au-btn-primary" id="au-scalp-newstrat">＋ New strategy</button>'
-          + '</div>'
-          + '<div class="au-sub">Every value is read from <code>at2_strategy</code>. Saving writes straight back — '
-          + 'and the <b>database</b> validates it against the family template, so an illegal value is REFUSED with '
-          + 'the reason shown here rather than silently accepted. Click a name to expand or collapse it.</div>';
-
+          + '<div class="au-scalp-cardhead"><h3>Strategies</h3>'
+          +   '<button class="au-btn au-btn-primary" id="au-scalp-newstrat">＋ New strategy</button></div>'
+          + '<div class="au-sub">Read from <code>at2_strategy</code>. Click a row to expand and edit — the <b>database</b> validates on save and shows any refusal here.</div>';
     var stratHidden = _auScalp.strategies.filter(function (x) { return x.hidden; }).length;
     h += auScalpHiddenBar(stratHidden);
-    // Retired rows are OUT of the list unless asked for. The count above is
-    // always shown, so a hidden row is never one you cannot find.
     var stratShown = _auScalp.strategies.filter(function (x) { return _auScalpShowHidden || !x.hidden; });
-
     if (!stratShown.length) {
-        h += '<div class="au-soon">' + (stratHidden ? 'Every strategy is hidden — use “Show retired”.'
-                                                    : 'No AT2 strategies configured. Use ＋ New strategy.') + '</div>';
+        h += '<div class="au-soon">' + (stratHidden ? 'Every strategy is hidden — use “Show retired”.' : 'No AT2 strategies configured. Use ＋ New strategy.') + '</div>';
     } else {
+        h += '<div class="au-scalp-tblwrap"><table class="au-scalp-tbl"><thead><tr>'
+           + '<th>Strategy</th><th>Code · Ver</th><th>Status</th><th>Instrument</th><th>Dir</th>'
+           + '<th class="num">Entry ₹</th><th class="num">Target ₹</th><th>Band ₹</th><th>Roll</th><th></th></tr></thead>';
         stratShown.forEach(function (s2) {
             var params = s2.params || {};
             var open = !!_auScalpOpen['s:' + s2.id];
-            h += '<div class="au-scalp-strat' + (open ? ' open' : '') + (s2.hidden ? ' retired' : '') + '" data-sid="' + s2.id + '">'
-               + '<div class="au-scalp-strat-head">'
-               +   '<div class="au-scalp-title" data-toggle="s:' + s2.id + '">'
-               +     '<span class="au-scalp-caret">' + (open ? '▾' : '▸') + '</span>'
-               +     '<span class="au-scalp-name">' + auScalpEsc(s2.display_name || s2.code) + '</span>'
-               +     (s2.hidden ? ' <span class="au-badge idle">retired</span>' : '')
-               +     '<code class="au-scalp-code">' + auScalpEsc(s2.code) + '</code>'
-               +     ' <span class="au-badge idle">' + auScalpEsc(s2.version) + '</span>'
-               +     (s2.enabled ? ' <span class="au-badge success">enabled</span>'
-                                 : ' <span class="au-badge idle">disabled</span>')
-               +     (s2.requires_resting_stop ? '' : ' <span class="au-badge warning">no resting stop</span>')
-               +   '</div>'
-               +   '<div class="au-scalp-strat-actions">'
-               +     '<button class="au-btn au-btn-secondary au-scalp-edit" data-sid="' + s2.id + '">✏️ Edit</button>'
+            var rollTxt = (P(s2, 'instrument_type') === 'equity') ? '—' : (auScalpEsc(P(s2, 'roll_days_before')) + 'd @ ' + auScalpEsc(P(s2, 'roll_time')));
+            h += '<tbody class="au-scalp-strat' + (open ? ' open' : '') + (s2.hidden ? ' retired' : '') + '" data-sid="' + s2.id + '">'
+               + '<tr class="au-scalp-srow">'
+               +   '<td class="au-scalp-title" data-toggle="s:' + s2.id + '"><span class="au-scalp-caret">' + (open ? '▾' : '▸') + '</span> <span class="au-scalp-name">' + auScalpEsc(s2.display_name || s2.code) + '</span>' + (s2.hidden ? ' <span class="au-badge idle">retired</span>' : '') + '</td>'
+               +   '<td><code class="au-scalp-code">' + auScalpEsc(s2.code) + '</code> <span class="au-badge idle">' + auScalpEsc(s2.version) + '</span></td>'
+               +   '<td>' + (s2.enabled ? '<span class="au-badge success">enabled</span>' : '<span class="au-badge idle">disabled</span>') + (s2.requires_resting_stop ? '' : ' <span class="au-badge warning">no SL</span>') + '</td>'
+               +   '<td>' + auScalpEsc(P(s2, 'instrument_type')) + ' · ' + auScalpEsc(P(s2, 'underlying')) + '</td>'
+               +   '<td>' + auScalpEsc(P(s2, 'direction')) + '</td>'
+               +   '<td class="num">' + auScalpEsc(P(s2, 'entry_interval')) + '</td>'
+               +   '<td class="num">' + auScalpEsc(P(s2, 'target_interval')) + '</td>'
+               +   '<td class="num">' + auScalpEsc(P(s2, 'band_lower')) + '–' + auScalpEsc(P(s2, 'band_upper')) + '</td>'
+               +   '<td>' + rollTxt + '</td>'
+               +   '<td class="au-scalp-strat-actions">'
+               +     '<button class="au-btn au-btn-secondary au-scalp-edit" data-sid="' + s2.id + '" title="Edit">✏️</button>'
                +     '<button class="au-btn au-btn-primary au-scalp-save" data-sid="' + s2.id + '" style="display:none">Save</button>'
                +     '<button class="au-btn au-btn-secondary au-scalp-cancel" data-sid="' + s2.id + '" style="display:none">Cancel</button>'
-               +     '<button class="au-btn au-btn-secondary au-scalp-hide" data-sid="' + s2.id + '" data-hidden="' + (s2.hidden ? '1' : '0') + '"'
-               +       ' title="' + (s2.hidden ? 'Bring it back into the list' : 'Retire it from the list. Nothing is lost and it can be restored') + '">'
-               +       (s2.hidden ? '👁 Restore' : '🗄 Hide') + '</button>'
-               +   '</div>'
-               + '</div>'
-               + '<div class="au-scalp-body">'
+               +     '<button class="au-btn au-btn-secondary au-scalp-hide" data-sid="' + s2.id + '" data-hidden="' + (s2.hidden ? '1' : '0') + '" title="' + (s2.hidden ? 'Restore' : 'Hide (retire)') + '">' + (s2.hidden ? '👁' : '🗄') + '</button>'
+               +   '</td>'
+               + '</tr>'
+               + '<tr class="au-scalp-detailrow"><td colspan="10"><div class="au-scalp-body">'
                +   '<div class="au-scalp-group"><div class="au-scalp-group-label">Identity</div><div class="au-scalp-grid">'
-               +     '<div class="au-scalp-field"><label>Display name</label>'
-               +       '<input class="wms-input au-scalp-sf" data-sid="' + s2.id + '" data-col="display_name" type="text" value="' + auScalpEsc(s2.display_name || '') + '" disabled>'
-               +       '<div class="au-scalp-hint">What this screen and the dashboard call it. Free text</div></div>'
-               +     '<div class="au-scalp-field au-scalp-field-locked"><label>Code <span class="au-scalp-lockbadge" title="Read-only">🔒</span></label>'
-               +       '<input class="wms-input au-scalp-locked" type="text" value="' + auScalpEsc(s2.code) + '" disabled>'
-               +       '<div class="au-scalp-hint">The identity every trade, signal and book points at. Changing it would orphan history</div></div>'
-               +     '<div class="au-scalp-field"><label>Enabled</label>'
-               +       '<div class="au-scalp-pills au-scalp-sf" data-sid="' + s2.id + '" data-col="enabled">'
-               +         '<span class="wms-pill au-scalp-pill' + (s2.enabled ? ' on' : '') + '" data-val="true">enabled</span>'
-               +         '<span class="wms-pill au-scalp-pill' + (s2.enabled ? '' : ' on') + '" data-val="false">disabled</span>'
-               +       '</div>'
-               +       '<div class="au-scalp-hint">☠️ A disabled strategy is NOT SCANNED — an open position stops being managed, though its stop still rests at the broker</div></div>'
+               +     '<div class="au-scalp-field"><label>Display name</label><input class="wms-input au-scalp-sf" data-sid="' + s2.id + '" data-col="display_name" type="text" value="' + auScalpEsc(s2.display_name || '') + '" disabled><div class="au-scalp-hint">What this screen and the dashboard call it. Free text</div></div>'
+               +     '<div class="au-scalp-field au-scalp-field-locked"><label>Code <span class="au-scalp-lockbadge" title="Read-only">🔒</span></label><input class="wms-input au-scalp-locked" type="text" value="' + auScalpEsc(s2.code) + '" disabled><div class="au-scalp-hint">The identity every trade, signal and book points at</div></div>'
+               +     '<div class="au-scalp-field"><label>Enabled</label><div class="au-scalp-pills au-scalp-sf" data-sid="' + s2.id + '" data-col="enabled"><span class="wms-pill au-scalp-pill' + (s2.enabled ? ' on' : '') + '" data-val="true">enabled</span><span class="wms-pill au-scalp-pill' + (s2.enabled ? '' : ' on') + '" data-val="false">disabled</span></div><div class="au-scalp-hint">☠️ A disabled strategy is NOT SCANNED — its resting target still rests at the broker</div></div>'
                +   '</div></div>'
                +   auScalpParamForm(params, s2.id);
-
-            // ☠️ D.8.10 — anything the contract does not know about is SHOWN, not
-            // hidden. A key here is either a schema change nobody told the UI
-            // about, or a value quietly driving the engine.
             var unknown = auScalpUnknownParamPaths(params);
             if (unknown.length) {
                 h += '<div class="au-scalp-unknown">⛔ NOT RECOGNISED BY THIS SCREEN — present in the database and left untouched on save: '
-                   + unknown.map(function (u) {
-                       return '<code>' + auScalpEsc(u.path) + '</code> = ' + auScalpEsc(JSON.stringify(u.value));
-                     }).join(' · ')
-                   + '</div>';
+                   + unknown.map(function (u) { return '<code>' + auScalpEsc(u.path) + '</code> = ' + auScalpEsc(JSON.stringify(u.value)); }).join(' · ') + '</div>';
             }
-            h += '<div class="au-scalp-msg" id="au-scalp-msg-' + s2.id + '"></div></div></div>';
+            h += '<div class="au-scalp-msg" id="au-scalp-msg-' + s2.id + '"></div></div></td></tr></tbody>';
         });
+        h += '</table></div>';
     }
     h += '</div>';
 
-    // ── Books ───────────────────────────────────────────────────────────────
-    h += '<div class="au-card">'
-       + '<div class="au-scalp-cardhead">'
-       +   '<h3>Books</h3>'
-       +   '<button class="au-btn au-btn-primary" id="au-scalp-newbook">＋ New book</button>'
-       + '</div>'
-       + '<div class="au-sub">A book is one (strategy, mode, trader). <code>exposure_factor</code> changes SIZE, '
-       + 'not routing; <code>lot_cap</code> is a hard per-book ceiling and its surplus is NOT redistributed. '
-       + '<b>The identity — strategy, mode, trader — is deliberately not editable:</b> changing it would silently '
-       + 're-point a book\'s history. Create a new book instead.</div>'
-       + '<div class="au-scalp-unknown" style="margin:8px 0 0">☠️ <b>ONE CONTRACT, ONE STRATEGY, PER LIVE ACCOUNT.</b> '
-       + 'The broker NETS positions — two strategies on the same instrument and the same live account hold ONE '
-       + 'position between them. Opposite sides cancel to flat while both still believe they are in, and both '
-       + 'resting stops then protect nothing. To A/B parameter sets, use a different account — or run them on '
-       + '<b>paper</b>, where nothing nets and side-by-side variants are exactly right.</div>';
-
+    // ── Books (TABLE) ───────────────────────────────────────────────────────
+    h += '<div class="au-card"><div class="au-scalp-cardhead"><h3>Books</h3>'
+       + '<button class="au-btn au-btn-primary" id="au-scalp-newbook">＋ New book</button></div>'
+       + '<div class="au-sub">A book is one (strategy, mode, trader). Click a row to edit sizing & tags. Identity (strategy · mode · trader) is not editable — make a new book instead.</div>'
+       + '<div class="au-scalp-unknown" style="margin:8px 0 0">☠️ <b>ONE CONTRACT, ONE STRATEGY, PER LIVE ACCOUNT.</b> The broker NETS positions — two strategies on the same instrument and live account hold ONE position between them. To A/B parameter sets, use a different account, or run on <b>paper</b>.</div>';
     var bookHidden = _auScalp.books.filter(function (x) { return x.hidden; }).length;
     h += auScalpHiddenBar(bookHidden);
     var booksShown = _auScalp.books.filter(function (x) { return _auScalpShowHidden || !x.hidden; });
-
     if (!booksShown.length) {
-        h += '<div class="au-soon">' + (bookHidden ? 'Every book is hidden — use “Show retired”.'
-                                                   : 'No books configured. Use ＋ New book.') + '</div>';
+        h += '<div class="au-soon">' + (bookHidden ? 'Every book is hidden — use “Show retired”.' : 'No books configured. Use ＋ New book.') + '</div>';
     } else {
+        h += '<div class="au-scalp-tblwrap"><table class="au-scalp-tbl"><thead><tr>'
+           + '<th>Book</th><th>Strategy · mode</th><th>Status</th><th class="num">Factor</th><th class="num">Lot cap</th><th>Tags</th><th></th></tr></thead>';
         booksShown.forEach(function (b2) {
             var open = !!_auScalpOpen['b:' + b2.id];
-            h += '<div class="au-scalp-strat' + (open ? ' open' : '') + (b2.hidden ? ' retired' : '') + '" data-bid="' + b2.id + '">'
-               + '<div class="au-scalp-strat-head">'
-               +   '<div class="au-scalp-title" data-toggle="b:' + b2.id + '">'
-               +     '<span class="au-scalp-caret">' + (open ? '▾' : '▸') + '</span>'
-               +     '<span class="au-scalp-name">' + auScalpEsc(b2.display_name || '(unnamed book)') + '</span>'
-               +     (b2.hidden ? ' <span class="au-badge idle">retired</span>' : '')
-               +     (b2.mode === 'live' ? ' <span class="au-badge error">LIVE</span>'
-                                         : ' <span class="au-badge idle">paper</span>')
-               +     (b2.enabled ? ' <span class="au-badge success">enabled</span>'
-                                 : ' <span class="au-badge idle">disabled</span>')
-               +   '</div>'
-               +   '<div class="au-scalp-strat-actions">'
-               +     '<button class="au-btn au-btn-secondary au-scalp-bedit" data-bid="' + b2.id + '">✏️ Edit</button>'
+            h += '<tbody class="au-scalp-strat' + (open ? ' open' : '') + (b2.hidden ? ' retired' : '') + '" data-bid="' + b2.id + '">'
+               + '<tr class="au-scalp-srow">'
+               +   '<td class="au-scalp-title" data-toggle="b:' + b2.id + '"><span class="au-scalp-caret">' + (open ? '▾' : '▸') + '</span> <span class="au-scalp-name">' + auScalpEsc(b2.display_name || '(unnamed book)') + '</span>' + (b2.hidden ? ' <span class="au-badge idle">retired</span>' : '') + '</td>'
+               +   '<td>' + auScalpEsc(auScalpStrategyName(b2.strategy_id)) + ' · ' + (b2.mode === 'live' ? '<span class="au-badge error">LIVE</span>' : '<span class="au-badge idle">paper</span>') + '</td>'
+               +   '<td>' + (b2.enabled ? '<span class="au-badge success">enabled</span>' : '<span class="au-badge idle">disabled</span>') + '</td>'
+               +   '<td class="num">' + auScalpEsc(b2.exposure_factor) + '</td>'
+               +   '<td class="num">' + auScalpEsc(b2.lot_cap == null ? '—' : b2.lot_cap) + '</td>'
+               +   '<td>' + auScalpEsc((b2.transaction_tags || []).join(', ')) + '</td>'
+               +   '<td class="au-scalp-strat-actions">'
+               +     '<button class="au-btn au-btn-secondary au-scalp-bedit" data-bid="' + b2.id + '" title="Edit">✏️</button>'
                +     '<button class="au-btn au-btn-primary au-scalp-bsave" data-bid="' + b2.id + '" style="display:none">Save</button>'
                +     '<button class="au-btn au-btn-secondary au-scalp-bcancel" data-bid="' + b2.id + '" style="display:none">Cancel</button>'
-               +     '<button class="au-btn au-btn-secondary au-scalp-bhide" data-bid="' + b2.id + '" data-hidden="' + (b2.hidden ? '1' : '0') + '"'
-               +       ' title="' + (b2.hidden ? 'Bring it back into the list' : 'Retire it from the list. Nothing is lost and it can be restored') + '">'
-               +       (b2.hidden ? '👁 Restore' : '🗄 Hide') + '</button>'
-               +   '</div>'
-               + '</div>'
-               + '<div class="au-scalp-body">'
-               +   '<div class="au-scalp-group"><div class="au-scalp-group-label">Identity</div><div class="au-scalp-grid">'
-               +     '<div class="au-scalp-field"><label>Display name</label>'
-               +       '<input class="wms-input au-scalp-bf" data-bid="' + b2.id + '" data-col="display_name" type="text" value="' + auScalpEsc(b2.display_name || '') + '" disabled>'
-               +       '<div class="au-scalp-hint">Free text. This is what the trade tables and alerts call the book</div></div>'
-               +     '<div class="au-scalp-field au-scalp-field-locked"><label>Strategy · mode · trader <span class="au-scalp-lockbadge" title="Read-only">🔒</span></label>'
-               +       '<input class="wms-input au-scalp-locked" type="text" value="' + auScalpEsc(auScalpStrategyName(b2.strategy_id) + ' · ' + b2.mode) + '" disabled>'
-               +       '<div class="au-scalp-hint">The book\'s identity. Re-pointing it would silently move its history — make a new book</div></div>'
-               +     '<div class="au-scalp-field"><label>Enabled</label>'
-               +       '<div class="au-scalp-pills au-scalp-bf" data-bid="' + b2.id + '" data-col="enabled">'
-               +         '<span class="wms-pill au-scalp-pill' + (b2.enabled ? ' on' : '') + '" data-val="true">enabled</span>'
-               +         '<span class="wms-pill au-scalp-pill' + (b2.enabled ? '' : ' on') + '" data-val="false">disabled</span>'
-               +       '</div>'
-               +       '<div class="au-scalp-hint">A disabled book is skipped silently — the switch working as intended</div></div>'
+               +     '<button class="au-btn au-btn-secondary au-scalp-bhide" data-bid="' + b2.id + '" data-hidden="' + (b2.hidden ? '1' : '0') + '" title="' + (b2.hidden ? 'Restore' : 'Hide (retire)') + '">' + (b2.hidden ? '👁' : '🗄') + '</button>'
+               +   '</td>'
+               + '</tr>'
+               + '<tr class="au-scalp-detailrow"><td colspan="7"><div class="au-scalp-body">'
+               +   '<div class="au-scalp-group"><div class="au-scalp-group-label">Book settings</div><div class="au-scalp-grid">'
+               +     '<div class="au-scalp-field"><label>Display name</label><input class="wms-input au-scalp-bf" data-bid="' + b2.id + '" data-col="display_name" type="text" value="' + auScalpEsc(b2.display_name || '') + '" disabled><div class="au-scalp-hint">What the trade tables and alerts call the book</div></div>'
+               +     '<div class="au-scalp-field au-scalp-field-locked"><label>Strategy · mode · trader <span class="au-scalp-lockbadge" title="Read-only">🔒</span></label><input class="wms-input au-scalp-locked" type="text" value="' + auScalpEsc(auScalpStrategyName(b2.strategy_id) + ' · ' + b2.mode) + '" disabled><div class="au-scalp-hint">Re-pointing it would move its history — make a new book</div></div>'
+               +     '<div class="au-scalp-field"><label>Enabled</label><div class="au-scalp-pills au-scalp-bf" data-bid="' + b2.id + '" data-col="enabled"><span class="wms-pill au-scalp-pill' + (b2.enabled ? ' on' : '') + '" data-val="true">enabled</span><span class="wms-pill au-scalp-pill' + (b2.enabled ? '' : ' on') + '" data-val="false">disabled</span></div><div class="au-scalp-hint">A disabled book is skipped silently</div></div>'
+               +     '<div class="au-scalp-field"><label>Exposure factor</label><input class="wms-input wms-input-number au-scalp-bf" data-bid="' + b2.id + '" data-col="exposure_factor" type="number" step="any" value="' + auScalpEsc(b2.exposure_factor) + '" disabled><div class="au-scalp-hint">Size dial. 1 lot per rung × factor</div></div>'
+               +     '<div class="au-scalp-field"><label>Lot cap</label><input class="wms-input wms-input-number au-scalp-bf" data-bid="' + b2.id + '" data-col="lot_cap" type="number" step="1" value="' + auScalpEsc(b2.lot_cap) + '" disabled><div class="au-scalp-hint">Hard ceiling on total open lots for this book</div></div>'
+               +     '<div class="au-scalp-field"><label>Tags</label><input class="wms-input au-scalp-bf" data-bid="' + b2.id + '" data-col="transaction_tags" type="text" value="' + auScalpEsc((b2.transaction_tags || []).join(', ')) + '" disabled><div class="au-scalp-hint">Comma-separated. Stamped on this book’s transaction rows</div></div>'
                +   '</div></div>'
-               +   '<div class="au-scalp-group"><div class="au-scalp-group-label">Sizing</div><div class="au-scalp-grid">'
-               +     '<div class="au-scalp-field"><label>Exposure factor</label>'
-               +       '<input class="wms-input wms-input-number au-scalp-bf" data-bid="' + b2.id + '" data-col="exposure_factor" type="number" step="any" value="' + auScalpEsc(b2.exposure_factor) + '" disabled>'
-               +       '<div class="au-scalp-hint">The scaling dial, read by sizing every run. 0.5 = half size. Small enough and the book rounds to zero lots and is excluded</div></div>'
-               +     '<div class="au-scalp-field"><label>Lot cap</label>'
-               +       '<input class="wms-input wms-input-number au-scalp-bf" data-bid="' + b2.id + '" data-col="lot_cap" type="number" step="1" value="' + auScalpEsc(b2.lot_cap) + '" disabled>'
-               +       '<div class="au-scalp-hint">Hard ceiling per signal. Surplus is NOT redistributed to other books</div></div>'
-               +   '</div></div>'
-               +   '<div class="au-scalp-group"><div class="au-scalp-group-label">Booking</div><div class="au-scalp-grid">'
-               +     '<div class="au-scalp-field"><label>Tags</label>'
-               +       '<input class="wms-input au-scalp-bf" data-bid="' + b2.id + '" data-col="transaction_tags" type="text" value="' + auScalpEsc((b2.transaction_tags || []).join(', ')) + '" disabled>'
-               +       '<div class="au-scalp-hint">Comma-separated. Stamped on this book\'s transaction rows</div></div>'
-               +   '</div></div>'
-               + '<div class="au-scalp-msg" id="au-scalp-bmsg-' + b2.id + '"></div></div></div>';
+               + '<div class="au-scalp-msg" id="au-scalp-bmsg-' + b2.id + '"></div></div></td></tr></tbody>';
         });
+        h += '</table></div>';
     }
     h += '</div>';
     el.innerHTML = h;
