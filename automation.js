@@ -6575,7 +6575,7 @@ async function auAt2RenderOpen(mode, silent) {
            + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Esc(contractStr) + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + qtySub + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.entry_price) + (!t.current_stop
-                        ? '<div style="margin-top:2px"><span class="au-badge error" style="font-size:9px">NO TARGET</span></div>'
+                        ? '<div style="margin-top:2px"><span class="au-badge error" style="font-size:9px">NO STOP</span></div>'
                         : auAt2StopInverted(t)
                             ? '<div style="color:#dc2626;font-weight:700;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop) + ' \u26D4</div>'
                             : '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop) + '</div>') + '</td>'
@@ -6610,7 +6610,7 @@ async function auAt2RenderOpen(mode, silent) {
             + '<th style="padding:6px 8px">Entered<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>'
             + '<th style="padding:6px 8px">Contract</th>'
             + '<th style="padding:6px 8px;text-align:right">Qty<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ physical</span></th>'
-            + '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ target</span></th>'
+            + '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ stop</span></th>'
             + '<th style="padding:6px 8px;text-align:right">LTP</th>'
             + '<th style="padding:6px 8px;text-align:right">Exposure</th>'
             + '<th style="padding:6px 8px;text-align:right">Margin<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ %</span></th>'
@@ -8787,7 +8787,7 @@ async function auScalpRenderOpen(mode, silent) {
             + '<th style="padding:6px 8px">Entered<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>'
             + '<th style="padding:6px 8px">Contract</th>'
             + '<th style="padding:6px 8px;text-align:right">Qty<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ physical</span></th>'
-            + '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ stop</span></th>'
+            + '<th style="padding:6px 8px;text-align:right">Entry Px<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ target</span></th>'
             + '<th style="padding:6px 8px;text-align:right">LTP</th>'
             + '<th style="padding:6px 8px;text-align:right">Exposure</th>'
             + '<th style="padding:6px 8px;text-align:right">Margin<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ %</span></th>'
@@ -8802,7 +8802,7 @@ async function auScalpRenderOpen(mode, silent) {
        + '• LTP via Fyers /quotes (needs an active Fyers connection) — same shared price cache GS uses.<br>'
        + '• Exposure = entry price × currently-open units (matches the metric tile above).<br>'
        + '• Live P&amp;L = side × (LTP − entry) × currently-open units.<br>'
-       + '• Flags: cap-bound = book’s lot_cap reduced the allocation · rolled = opened by a roll · ⛔ INVERTED STOP = the stop is on the wrong side of entry (reads protected, isn’t) · LIVE = real order, not paper.'
+       + '• Target = the resting take-profit (SELL LIMIT above entry for a long, BUY LIMIT below for a short). · Flags: cap-bound = book’s lot_cap reduced the allocation · rolled = opened by a roll · LIVE = real order, not paper.'
        + '</div>';
     el.innerHTML = h;
 }
