@@ -6190,7 +6190,11 @@ async function autoAt2Refresh() {
             _auAt2.alerts = (_auAt2.alerts || []).filter(function (a) {
                 if (a.strategy_id) return _ms007StratIds.has(a.strategy_id);
                 if (a.trade_id) return _ms007TradeIds.has(a.trade_id);
-                return true; // family-agnostic system alert (feed/recon) stays visible
+                // An alert with NO strategy/trade link is NOT attributable to MS007.
+                // Cross-family / global alerts belong on the Health & Global page
+                // (its "Recent errors" is the one cross-family failure view), never
+                // on a family page — otherwise a MANUAL (or system) alert lands here.
+                return false;
             });
             _auAt2.runlog = (_auAt2.runlog || []).filter(function (r) { return (r.engine || _ms007Fam.code) === _ms007Fam.code; });
             _auAt2.families = (_auAt2.families || []).filter(function (f) { return f.id === _ms007Fam.id; });
