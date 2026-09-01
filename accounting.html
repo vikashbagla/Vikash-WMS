@@ -600,14 +600,15 @@
 .acct-master-tab.active .acct-book-lbl { color: #fff; }   /* white on the active blue pill */
 /* View-tab + command visibility by mode. Ledgers & Exceptions belong to Master;
    the per-book statements and book-only commands belong to book mode. */
-.acct-tab[data-acct-tab="ledgers"], .acct-tab[data-acct-tab="exceptions"], .acct-tab[data-acct-tab="bank-import"] { display: none; }
+.acct-tab[data-acct-tab="ledgers"], .acct-tab[data-acct-tab="exceptions"], .acct-tab[data-acct-tab="bank-import"], .acct-tab[data-acct-tab="import-map"] { display: none; }
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="balance-sheet"],
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="profit-loss"],
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="trial-balance"],
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="day-book"] { display: none; }
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="ledgers"],
 .acct-container.acct-mode-master .acct-tab[data-acct-tab="exceptions"],
-.acct-container.acct-mode-master .acct-tab[data-acct-tab="bank-import"] { display: inline-block; }
+.acct-container.acct-mode-master .acct-tab[data-acct-tab="bank-import"],
+.acct-container.acct-mode-master .acct-tab[data-acct-tab="import-map"] { display: inline-block; }
 .acct-container.acct-mode-master #acctNewVoucherBtn,
 .acct-container.acct-mode-master .acct-menu-wrap { display: none; }
 .acct-icon-btn { padding-left: 9px; padding-right: 9px; }
@@ -624,6 +625,14 @@
 .acct-ex-resolve-summary { font-size: 12px; color: #334155; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; }
 .acct-ex-resolve-lbl { display: block; margin: 12px 0 4px; font-size: 12px; font-weight: 600; }
 .acct-ex-resolve-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+/* Import Map (acc_narr_map listing) — multi-column so the long list fills the width */
+.acct-map-head { color:#64748b; font-size:12px; margin-bottom:10px; }
+.acct-map-cols { columns: 340px; column-gap: 26px; }
+.acct-map-item { break-inside: avoid; display:flex; align-items:baseline; gap:6px; padding:4px 2px; border-bottom:1px solid #f1f5f9; font-size:12.5px; }
+.acct-map-from { font-weight:600; color:#334155; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:44%; }
+.acct-map-arrow { color:#94a3b8; }
+.acct-map-to { color:#0f766e; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; }
+.acct-map-scope { margin-left:6px; font-size:9px; background:#eef2ff; color:#4338ca; padding:1px 6px; border-radius:8px; white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -652,6 +661,7 @@
         <button class="acct-tab" data-acct-tab="ledgers">Ledgers</button>
         <button class="acct-tab" data-acct-tab="exceptions">Exceptions</button>
         <button class="acct-tab" data-acct-tab="bank-import">Bank Import</button>
+        <button class="acct-tab" data-acct-tab="import-map">Import Map</button>
         <span class="acct-tabs-spacer"></span>
         <span id="acctCmdFilters" class="acct-cmd-filters"></span>
         <span class="acct-cmd-sep"></span>
@@ -700,6 +710,11 @@
     <!-- Bank Import (Master) -->
     <div class="acct-tabpanel" id="acctPanel-bank-import">
         <div id="abiBody"><div class="acct-empty">Loading…</div></div>
+    </div>
+
+    <!-- Import Map (Master) — acc_narr_map listing (Excel ledger name -> WMS ledger) -->
+    <div class="acct-tabpanel" id="acctPanel-import-map">
+        <div id="acctImportMapBody"><div class="acct-empty">Loading import mappings…</div></div>
     </div>
 
 </div>
