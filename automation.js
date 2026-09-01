@@ -8865,8 +8865,7 @@ async function auScalpRenderOpen(mode, silent) {
                 + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + dExp + '</td>'
                 + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + dTgt + '</td>'
                 + '<td style="padding:5px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + dPnl + '</td>'
-                + '<td style="padding:5px 8px;text-align:center;vertical-align:top">' + _auScalpRowIcon(t) + '</td>'
-                + '<td style="padding:5px 8px;text-align:center;vertical-align:top"><button class="au-btn au-btn-danger" title="Close this rung" style="padding:1px 8px;font-size:14px;line-height:1.2;font-weight:700" onclick="autoScalpOpenCloseModal(\'' + t.id + '\')">×</button></td>'
+                + '<td style="padding:5px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + _auScalpRowIcon(t) + ' &nbsp;<button class="au-btn au-btn-danger" title="Close this rung" style="padding:1px 8px;font-size:14px;line-height:1.2;font-weight:700" onclick="autoScalpOpenCloseModal(\'' + t.id + '\')">×</button></td>'
                 + '</tr>';
         });
 
@@ -8891,7 +8890,7 @@ async function auScalpRenderOpen(mode, silent) {
             return (t.book_id === bid && t.mode === mode && t.status === 'closed') ? n + (Number(t.realised_pnl) || 0) : n; }, 0);
         totalRealised += bRealised;
         var bNet = bRealised + bPnl;
-        var netCell = auScalpPnl(bNet) + '<div style="color:#6b7280;font-size:10px;font-weight:400">cl ' + formatAmount(bRealised) + ' · lv ' + (bAnyPnl ? formatAmount(bPnl) : '—') + '</div>';
+        var netCell = auScalpPnl(bNet);
 
         var expKey = mode + ':' + bid;
         var isOpen = !!_auScalpOpenExpand[expKey];
@@ -8905,8 +8904,7 @@ async function auScalpRenderOpen(mode, silent) {
             + _auScalpSortTh(mode, bid, 'exposure', 'Exposure', 'right', 'open')
             + _auScalpSortTh(mode, bid, 'target', 'Target', 'right', 'open')
             + _auScalpSortTh(mode, bid, 'livepnl', 'Live P&amp;L', 'right', 'open')
-            + '<th style="padding:4px 8px;font-weight:600;text-align:center" title="Row health">✅</th>'
-            + '<th style="padding:4px 8px;font-weight:600;text-align:center">Close</th>'
+            + '<th style="padding:4px 8px;font-weight:600;text-align:right">Close</th>'
             + '</tr>';
 
         body += '<tr class="au-scalp-openrow" style="border-top:1px solid #e5e7eb;cursor:pointer;background:' + (isOpen ? '#f8fafc' : '#fff') + '" onclick="auScalpToggleOpenBook(\'' + mode + '\',\'' + bid + '\')">'
