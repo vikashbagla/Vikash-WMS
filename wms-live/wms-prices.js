@@ -47,39 +47,22 @@ const state = {
   symbols: [], startedAt: new Date().toISOString(), lastError: null,
 };
 
-async function freshToken() {
-  const { rows } = await pool.query(
-    `select api_access_token
-       from investor_broker_accounts
-      where api_access_token is not null and api_token_date = current_date
-      order by api_token_generated_at desc nulls last
-      limit 1`);
-  return rows[0]?.api_access_token || null;
-}
-
-async function scalpSymbols() {
-  // Phase-1 universe: the contracts of currently-open AT2 SCALP rungs — the
-  // exact set the dashboard P&L cares about. Phase 2 widens to the full display
-  // universe (watchlist / portfolio / F&O).
-  const { rows } = await pool.query(
-    `select distinct s.symbol
-       from at2_trade t
-       join securities_nfo s        on s.id  = t.security_id
-       join at2_strategy st         on st.id = t.strategy_id
-       join at2_strategy_family f   on f.id  = st.family_id
-      where f.code = 'SCALP' and t.status like 'open%' and s.symbol is not null`);
-  return rows.map((r) => r.symbol);
+// The Droplet role (wms_live_notify_only) has NO table SELECT by design, so we
+// read the token + open scalp symbols through a SECURITY DEFINER function it is
+// granted to EXECUTE. One round-trip; nothing else is exposed.
+async function bootstrap() {
+  const { rows } = await pool.query('select public.at2_ws_bootstrap() as b');
+  const b = rows[0]?.b || {};
+  return { token: b.token || null, symbols: Array.isArray(b.symbols) ? b.symbols : [] };
 }
 
 async function start() {
-  let token;
-  try { token = await freshToken(); }
-  catch (e) { state.lastError = 'token read: ' + String(e && e.message || e); console.error('[wms-prices]', state.lastError); return void setTimeout(start, 30000); }
+  let token, symbols = [];
+  try { const b = await bootstrap(); token = b.token; symbols = b.symbols; }
+  catch (e) { state.lastError = 'bootstrap: ' + String(e && e.message || e); console.error('[wms-prices]', state.lastError); return void setTimeout(start, 30000); }
 
   if (!token) { console.log('[wms-prices] no Fyers token for today yet — retry in 60s'); return void setTimeout(start, 60000); }
 
-  let symbols = [];
-  try { symbols = await scalpSymbols(); } catch (e) { console.error('[wms-prices] symbol query failed:', String(e && e.message || e)); }
   if (!symbols.length) symbols = ['MCX:SILVERMIC26NOVFUT'];   // fallback so the socket is still proven
   state.symbols = symbols;
 
