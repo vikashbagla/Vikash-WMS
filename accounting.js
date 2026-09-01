@@ -4038,7 +4038,7 @@ async function acctRenderImportMap() {
             return '<span class="acct-map-t" title="' + wmsEsc(s.t) + '">' + wmsEsc(s.t) + (s.sc ? '<span class="acct-map-scope" title="Scoped to: ' + wmsEsc(s.sc) + '">' + wmsEsc(s.sc) + '</span>' : '') + '</span>';
         }).join('');
         return '<div class="acct-map-item">' +
-            '<span class="acct-map-led" title="' + wmsEsc(g.name) + '">' + wmsEsc(g.name) + (multi ? '<span class="acct-map-cnt" title="' + g.srcs.length + ' Excel texts map to this ledger">' + g.srcs.length + '</span>' : '') + '</span>' +
+            '<span class="acct-map-led" title="' + wmsEsc(g.name) + '"><span class="acct-map-ledname">' + wmsEsc(g.name) + '</span>' + (multi ? '<span class="acct-map-cnt" title="' + g.srcs.length + ' Excel texts map to this ledger">' + g.srcs.length + '</span>' : '') + '</span>' +
             '<span class="acct-map-arrow">\u2192</span>' +
             '<span class="acct-map-texts">' + texts + '</span>' +
             '</div>';

@@ -628,11 +628,12 @@
 /* Import Map (acc_narr_map) — compact one row per WMS ledger: Ledger -> Excel text(s); extra texts stack under the first */
 .acct-map-head { color:#64748b; font-size:12px; margin-bottom:10px; }
 .acct-map-cols { columns: 340px; column-gap: 26px; }
-.acct-map-item { break-inside: avoid; display:flex; align-items:baseline; gap:6px; padding:4px 2px; border-bottom:1px solid #f1f5f9; font-size:12.5px; }
-.acct-map-led { font-weight:600; color:#0f766e; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:46%; }
-.acct-map-cnt { font-size:9px; font-weight:700; background:#ccfbf1; color:#0f766e; padding:0 5px; border-radius:8px; margin-left:4px; }
-.acct-map-arrow { color:#94a3b8; }
-.acct-map-texts { display:flex; flex-direction:column; flex:1; min-width:0; }
+.acct-map-item { break-inside: avoid; display:grid; grid-template-columns: 150px 12px 1fr; align-items:baseline; column-gap:6px; padding:4px 2px; border-bottom:1px solid #f1f5f9; font-size:12.5px; }
+.acct-map-led { display:flex; align-items:baseline; gap:4px; min-width:0; font-weight:600; color:#0f766e; }
+.acct-map-ledname { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.acct-map-cnt { flex:0 0 auto; font-size:9px; font-weight:700; background:#ccfbf1; color:#0f766e; padding:0 5px; border-radius:8px; }
+.acct-map-arrow { color:#94a3b8; text-align:center; }
+.acct-map-texts { display:flex; flex-direction:column; min-width:0; }
 .acct-map-t { color:#334155; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .acct-map-scope { margin-left:6px; font-size:9px; background:#eef2ff; color:#4338ca; padding:1px 6px; border-radius:8px; white-space:nowrap; }
 </style>
