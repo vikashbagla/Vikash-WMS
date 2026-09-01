@@ -6102,12 +6102,19 @@ function auAt2Ts(iso) {
     }).replace(',', '');
 }
 
-function auAt2Num(v) {
+function auAt2Num(v, sym) {
     if (v === null || v === undefined || v === '') return '—';
     var n = Number(v);
     if (!isFinite(n)) return '<span class="au-badge error">⛔ NOT A NUMBER</span>';
-    // Prices: full rupees, ZERO decimals (owner ask 11-Aug-2026) — same comma
-    // style as formatPrice, just without the paise.
+    // Decimals follow the instrument's tick (owner ask 01-Sep-2026):
+    //   NSE/BSE tick 0.01 -> 2 decimals ; MCX tick ₹1 -> 0 decimals.
+    // Exchange comes from the Fyers symbol prefix ("NSE:...", "MCX:..."). When
+    // no symbol is given, keep the old full-rupee 0-decimal behaviour.
+    var ex = sym ? String(sym).split(':')[0].toUpperCase() : '';
+    if (ex === 'NSE' || ex === 'BSE') {
+        return Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    // Full rupees, ZERO decimals — same comma style as formatPrice, no paise.
     return formatPrice(Math.round(n), false).replace(/\.00(?=\)?$)/, '');
 }
 
@@ -6549,7 +6556,7 @@ async function auAt2RenderOpen(mode, silent) {
             var sideSign = t.side === 'LONG' ? 1 : -1;
             var pnl = sideSign * (ltpVal - Number(t.entry_price)) * qtyOpenUnits;
             anyPnl = true; totalPnl += pnl;
-            ltpCell = auAt2Num(ltpVal);
+            ltpCell = auAt2Num(ltpVal, sec && sec.symbol);
             var pnlCol = pnl >= 0 ? '#047857' : '#dc2626';
             var pnlPctSub = '';
             if (exposure > 0) {
@@ -6593,11 +6600,11 @@ async function auAt2RenderOpen(mode, silent) {
            + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Ts(t.entry_at) + daysSub + '</td>'
            + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Esc(contractStr) + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + qtySub + '</td>'
-           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.entry_price) + (!t.current_stop
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.entry_price, sec && sec.symbol) + (!t.current_stop
                         ? '<div style="margin-top:2px"><span class="au-badge error" style="font-size:9px">NO STOP</span></div>'
                         : auAt2StopInverted(t)
-                            ? '<div style="color:#dc2626;font-weight:700;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop) + ' \u26D4</div>'
-                            : '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop) + '</div>') + '</td>'
+                            ? '<div style="color:#dc2626;font-weight:700;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop, sec && sec.symbol) + ' \u26D4</div>'
+                            : '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop, sec && sec.symbol) + '</div>') + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + ltpCell + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + exposureCell + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + marginCell + '</td>'
@@ -6740,8 +6747,8 @@ function auAt2RenderClosed(mode) {
            + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Ts(t.exit_at) + daysSub + '</td>'
            + '<td style="padding:6px 8px;vertical-align:top">' + auAt2Esc(contractStr) + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + qtySub + '</td>'
-           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.entry_price) + '</td>'
-           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.exit_price) + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.entry_price, sec && sec.symbol) + '</td>'
+           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.exit_price, sec && sec.symbol) + '</td>'
            + '<td style="padding:6px 8px;vertical-align:top">' + reasonCell + '</td>'
            + '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + auAt2Pnl(t.realised_pnl) + pointsSub + '</td>'
            + '</tr>';
@@ -7975,8 +7982,8 @@ function autoAt2OpenCloseModal(tradeId) {
       + '<table style="width:100%;font-size:12px;margin-bottom:12px" class="au-at2-kv">'
       + '<tr><td>Book</td><td><strong>' + auAt2BookName(t.book_id) + '</strong></td></tr>'
       + '<tr><td>Side / lots</td><td><strong>' + auAt2Esc(t.side) + ' ' + auAt2Esc(t.qty_lots) + '</strong></td></tr>'
-      + '<tr><td>Entry</td><td>' + auAt2Num(t.entry_price) + '</td></tr>'
-      + '<tr><td>Resting stop</td><td>' + (t.current_stop ? auAt2Num(t.current_stop)
+      + '<tr><td>Entry</td><td>' + auAt2Num(t.entry_price, (auAt2Security(t)||{}).symbol) + '</td></tr>'
+      + '<tr><td>Resting stop</td><td>' + (t.current_stop ? auAt2Num(t.current_stop, (auAt2Security(t)||{}).symbol)
             : '<span class="au-badge error">none — position is UNPROTECTED</span>') + '</td></tr>'
       + '<tr><td>State</td><td>' + auAt2StatusBadge(t.status) + '</td></tr>'
       + '</table>'
