@@ -8835,7 +8835,7 @@ async function auScalpRenderOpen(mode, silent) {
                 } });
         });
 
-        var st = _auScalpRungSort[mode + ':' + bid] || { col: 'rung', dir: 'asc' };
+        var st = _auScalpRungSort[mode + ':' + bid] || { col: 'rung', dir: 'desc' };
         var sorted = _auScalpSortRows(rowObjs, st);
 
         var detail = '';
@@ -9102,7 +9102,7 @@ function auScalpRenderClosed(mode) {
             } });
         });
 
-        var st = _auScalpClosedRungSort[mode + ':' + bid] || { col: 'rung', dir: 'asc' };
+        var st = _auScalpClosedRungSort[mode + ':' + bid] || { col: 'rung', dir: 'desc' };
         var sorted = _auScalpSortRows(rowObjs, st);
 
         var detail = '';
