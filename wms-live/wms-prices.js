@@ -45,8 +45,10 @@ const pool = new pg.Pool({
   application_name: 'wms-prices',
 });
 
+let liveToken = null;
+let lastTickMs = 0;
 const state = {
-  service: 'wms-prices', phase: 1,
+  service: 'wms-prices', phase: 2,
   connected: false, ticks: 0, lastTickAt: null,
   symbols: [], startedAt: new Date().toISOString(), lastError: null,
 };
@@ -97,6 +99,7 @@ async function start() {
   catch (e) { state.lastError = 'bootstrap: ' + String(e && e.message || e); console.error('[wms-prices]', state.lastError); return void setTimeout(start, 30000); }
 
   if (!token) { console.log('[wms-prices] no Fyers token for today yet — retry in 60s'); return void setTimeout(start, 60000); }
+  liveToken = token;
 
   if (!symbols.length) symbols = ['MCX:SILVERMIC26NOVFUT'];   // fallback so the socket is still proven
   state.symbols = symbols;
@@ -116,7 +119,7 @@ async function start() {
   });
 
   socket.on('message', (msg) => {
-    state.ticks++; state.lastTickAt = new Date().toISOString();
+    state.ticks++; lastTickMs = Date.now(); state.lastTickAt = new Date().toISOString();
     noteTick(msg);                                   // Phase 2: queue for the Realtime relay
     if (state.ticks <= 6 || state.ticks % 500 === 0) console.log('[tick]', JSON.stringify(msg));
   });
@@ -126,6 +129,36 @@ async function start() {
 
   try { socket.connect(); } catch (e) { state.lastError = 'connect: ' + String(e && e.message || e); console.error('[wms-prices]', state.lastError); setTimeout(start, 30000); }
 }
+
+// ── Fix #1: survive the daily Fyers token rotation (~08:00 IST) and silent
+// feed deaths. The token WS auths at connect; when auto-login rotates the token
+// the socket's session eventually dies and the SDK cannot re-auth with the old
+// token. So: re-check the token every 5 min and, if it changed, exit — systemd
+// (Restart=on-failure) restarts us and a fresh process re-bootstraps cleanly.
+function istActiveHours() {
+  const d = new Date(Date.now() + 5.5 * 3600 * 1000);
+  const day = d.getUTCDay();
+  if (day === 0 || day === 6) return false;              // Sun/Sat
+  const min = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return min >= 540 && min <= 1415;                      // 09:00–23:35 IST
+}
+setInterval(async () => {
+  try {
+    const b = await bootstrap();
+    if (b.token && liveToken && b.token !== liveToken) {
+      console.log('[wms-prices] Fyers token rotated — restarting for a clean re-auth');
+      process.exit(1);
+    }
+  } catch (e) { /* transient DB blip — never exit on that */ }
+}, 5 * 60 * 1000);
+
+setInterval(() => {
+  // Connected but silent during market hours for >120s = a dead feed → restart.
+  if (state.connected && istActiveHours() && lastTickMs && (Date.now() - lastTickMs) > 120000) {
+    console.log('[wms-prices] no ticks for >120s during market hours — restarting the feed');
+    process.exit(1);
+  }
+}, 30000);
 
 http.createServer((_req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });

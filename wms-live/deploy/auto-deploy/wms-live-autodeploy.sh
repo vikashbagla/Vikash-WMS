@@ -76,4 +76,16 @@ fi
 echo "[auto-deploy] Restarting wms-live service..."
 sudo -n /bin/systemctl restart "$SERVICE_NAME"
 
+# Also restart the INDEPENDENT live-prices feed (wms-prices) so its code updates
+# land the same way. Syntax-check first; a broken/uninstalled wms-prices must NOT
+# fail the deploy that already restarted wms-live.
+if [ -f "$WMS_LIVE_DIR/wms-prices.js" ]; then
+    if node --check "$WMS_LIVE_DIR/wms-prices.js"; then
+        echo "[auto-deploy] Restarting wms-prices service..."
+        sudo -n /bin/systemctl restart wms-prices.service || echo "[auto-deploy] wms-prices restart skipped (not installed yet?)"
+    else
+        echo "[auto-deploy] SYNTAX ERROR in wms-prices.js — NOT restarting wms-prices."
+    fi
+fi
+
 echo "[auto-deploy] ✓ Deployed $REMOTE successfully"
