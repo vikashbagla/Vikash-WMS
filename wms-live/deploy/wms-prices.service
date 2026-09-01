@@ -1,0 +1,42 @@
+[Unit]
+Description=WMS live-prices feed (Fyers Data WS -> dashboard). INDEPENDENT of wms-live (orders).
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wms
+Group=wms
+WorkingDirectory=/opt/Vikash-WMS/wms-live
+EnvironmentFile=/opt/Vikash-WMS/wms-live/.env
+ExecStart=/usr/bin/node wms-prices.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+KillMode=mixed
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wms-prices
+
+# Resource caps (1 GB box; this is a light WS client)
+MemoryMax=160M
+LimitNOFILE=8192
+
+# Hardening (mirrors wms-live.service; PrivateTmp gives a writable isolated /tmp for the SDK log)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
