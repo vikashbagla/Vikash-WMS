@@ -8313,12 +8313,16 @@ function auScalpTs(iso) {
     }).replace(',', '');
 }
 
-function auScalpNum(v) {
+function auScalpNum(v, sym, forceDec) {
     if (v === null || v === undefined || v === '') return '—';
     var n = Number(v);
     if (!isFinite(n)) return '<span class="au-badge error">⛔ NOT A NUMBER</span>';
-    // Prices: full rupees, ZERO decimals (owner ask 11-Aug-2026) — same comma
-    // style as formatPrice, just without the paise.
+    // Decimals follow the instrument tick (owner ask 01-Sep-2026): NSE/BSE
+    // 0.01 -> 2dp, MCX ₹1 -> 0dp. forceDec overrides; unknown/absent -> 0dp.
+    var dec;
+    if (typeof forceDec === 'number') { dec = forceDec; }
+    else { var ex = sym ? String(sym).split(':')[0].toUpperCase() : ''; dec = (ex === 'NSE' || ex === 'BSE') ? 2 : 0; }
+    if (dec > 0) return Number(n).toLocaleString('en-IN', { minimumFractionDigits: dec, maximumFractionDigits: dec });
     return formatPrice(Math.round(n), false).replace(/\.00(?=\)?$)/, '');
 }
 
@@ -8619,6 +8623,71 @@ function auScalpSecurity(t) {
     return _auScalp.securities.get(t.security_id) || null;
 }
 
+// ── Rung-table helpers (owner redesign 01-Sep-2026) ─────────────────────────
+// Per-book rung sequence (1 = first opened), a compact health icon that folds
+// the old Status + Flags into one glyph, and a persisted per-book sort state
+// read back on every silent re-render so a click-sort survives the LTP ticks.
+var _auScalpRungSort = {};        // 'mode:book_id' -> {col, dir}
+var _auScalpClosedRungSort = {};  // 'mode:book_id' -> {col, dir}
+
+function _auScalpRungMap(trades) {
+    var ord = trades.slice().sort(function (a, b) {
+        var ta = a.entry_at ? new Date(a.entry_at).getTime() : 0;
+        var tb = b.entry_at ? new Date(b.entry_at).getTime() : 0;
+        if (ta !== tb) return ta - tb;
+        return String(a.id) < String(b.id) ? -1 : 1;
+    });
+    var map = {};
+    ord.forEach(function (t, i) { map[t.id] = i + 1; });
+    return map;
+}
+
+function _auScalpRowIcon(t) {
+    var problems = [], notes = [];
+    if (!t.current_stop) problems.push('No resting target — position is UNPROTECTED');
+    else if (auScalpStopInverted(t)) problems.push('Inverted stop — sits on the wrong side of entry');
+    if (t.cap_bound) notes.push('cap-bound (book lot_cap reduced this rung)');
+    if (t.rolled_from_trade_id) notes.push('rolled from the previous contract');
+    if (t.mode === 'live') notes.push('LIVE');
+    if (problems.length) {
+        return '<span title="' + auScalpEsc(problems.concat(notes).join(' · ')) + '" style="color:#dc2626;font-size:15px;font-weight:700;cursor:help">⚠</span>';
+    }
+    var title = notes.length ? ('OK · ' + notes.join(' · ')) : 'OK — protected';
+    return '<span title="' + auScalpEsc(title) + '" style="color:#059669;font-size:14px;cursor:help">✓</span>';
+}
+
+function _auScalpSortTh(mode, bid, col, label, align, kind) {
+    var store = (kind === 'closed') ? _auScalpClosedRungSort : _auScalpRungSort;
+    var st = store[mode + ':' + bid];
+    var arrow = (st && st.col === col) ? (st.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    var fn = (kind === 'closed') ? 'auScalpSortClosedRungs' : 'auScalpSortRungs';
+    return '<th style="padding:4px 8px;font-weight:600;text-align:' + (align || 'left') + ';cursor:pointer;user-select:none" '
+        + 'onclick="' + fn + '(\'' + mode + '\',\'' + bid + '\',\'' + col + '\')">' + label + arrow + '</th>';
+}
+
+function _auScalpSortRows(rowObjs, st) {
+    if (!st) return rowObjs;
+    var dir = st.dir === 'desc' ? -1 : 1, col = st.col;
+    return rowObjs.slice().sort(function (a, b) {
+        var av = a.sort[col], bv = b.sort[col];
+        if (av == null) av = -Infinity;
+        if (bv == null) bv = -Infinity;
+        if (av < bv) return -dir;
+        if (av > bv) return dir;
+        return 0;
+    });
+}
+
+function auScalpSortRungs(mode, bid, col) {
+    var k = mode + ':' + bid, cur = _auScalpRungSort[k];
+    _auScalpRungSort[k] = (cur && cur.col === col) ? { col: col, dir: cur.dir === 'asc' ? 'desc' : 'asc' } : { col: col, dir: 'asc' };
+    auScalpRenderOpen(mode, true);
+}
+function auScalpSortClosedRungs(mode, bid, col) {
+    var k = mode + ':' + bid, cur = _auScalpClosedRungSort[k];
+    _auScalpClosedRungSort[k] = (cur && cur.col === col) ? { col: col, dir: cur.dir === 'asc' ? 'desc' : 'asc' } : { col: col, dir: 'asc' };
+    auScalpRenderClosed(mode);
+}
 async function auScalpRenderOpen(mode, silent) {
     // ☠️ DO NOT filter to the four KNOWN held states. A trade whose status this
     // page does not recognise is not held, not closed, and would appear in
@@ -8716,27 +8785,22 @@ async function auScalpRenderOpen(mode, silent) {
         groups[t.book_id].push(t);
     });
 
-    function _flagsFor(t) {
-        var fl = [];
-        if (t.cap_bound) fl.push('<span class="au-badge warning" title="the book\'s lot_cap reduced this allocation">cap-bound</span>');
-        if (t.rolled_from_trade_id) fl.push('<span class="au-badge idle" title="opened by a roll">rolled</span>');
-        if (auScalpStopInverted(t)) fl.push('<span class="au-badge error" title="stop on the wrong side of entry — reads protected, is not">⛔ INVERTED</span>');
-        if (t.mode === 'live') fl.push('<span class="au-badge error">LIVE</span>');
-        return fl.join(' ');
-    }
+    el.style.display = 'block';   // container is .au-meta (flex) — let the table fill
 
     var body = '';
     order.forEach(function (bid) {
         var trades = groups[bid];
         var sec = auScalpSecurity(trades[0]);
+        var sym = sec ? sec.symbol : null;
         var shortSymbol = sec ? sec.underlying_symbol : null;
         var contractStr = sec ? autoFmtContract(sec.symbol, sec.expiry_date) : '—';
         var physLot = shortSymbol ? autoGsPhysicalLot(shortSymbol) : null;
         var marginPct = shortSymbol ? autoGsMarginPct(shortSymbol) : null;
         var ltpVal = sec ? ltpMap.get(sec.symbol) : undefined;
+        var rungMap = _auScalpRungMap(trades);
 
         var bLots = 0, bExp = 0, bMargin = 0, bPnl = 0, bAnyExp = false, bAnyPnl = false, entryWt = 0;
-        var sideSet = {}, detail = '';
+        var sideSet = {}, rowObjs = [];
 
         trades.forEach(function (t) {
             var rowLots = Number(t.qty_lots) || 0;
@@ -8751,24 +8815,49 @@ async function auScalpRenderOpen(mode, silent) {
             if (margin != null) bMargin += margin;
             if (pnl != null) { bPnl += pnl; bAnyPnl = true; }
 
+            rowObjs.push({ t: t, rung: rungMap[t.id] || 0, lots: rowLots, exposure: exposure, pnl: pnl,
+                sort: {
+                    rung: rungMap[t.id] || 0,
+                    entered: t.entry_at ? new Date(t.entry_at).getTime() : 0,
+                    qty: rowLots,
+                    entry: Number(t.entry_price) || 0,
+                    exposure: exposure != null ? exposure : -Infinity,
+                    target: t.current_stop != null ? Number(t.current_stop) : -Infinity,
+                    livepnl: pnl != null ? pnl : -Infinity
+                } });
+        });
+
+        var st = _auScalpRungSort[mode + ':' + bid] || { col: 'rung', dir: 'asc' };
+        var sorted = _auScalpSortRows(rowObjs, st);
+
+        var detail = '';
+        sorted.forEach(function (o) {
+            var t = o.t;
             var dHeld = t.entry_at ? Math.max(0, Math.floor((now - new Date(t.entry_at).getTime()) / 86400000)) : null;
             var dHeldSub = dHeld != null ? '<div style="color:#6b7280;font-size:10px">' + dHeld + ' day' + (dHeld === 1 ? '' : 's') + '</div>' : '';
+            var qtySub = physLot ? '<div style="color:#6b7280;font-size:10px">' + (o.lots * physLot.qty) + ' ' + physLot.unit + '</div>' : '';
             var dPnl;
-            if (pnl != null && exposure != null && exposure > 0) {
-                var pcol = pnl >= 0 ? '#047857' : '#dc2626';
-                dPnl = auScalpPnl(pnl) + '<div style="color:' + pcol + ';font-size:10px">' + (pnl >= 0 ? '+' : '-') + Math.abs((pnl / exposure) * 100).toFixed(2) + '%</div>';
+            if (o.pnl != null && o.exposure != null && o.exposure > 0) {
+                var pcol = o.pnl >= 0 ? '#047857' : '#dc2626';
+                dPnl = auScalpPnl(o.pnl) + '<div style="color:' + pcol + ';font-size:10px">' + (o.pnl >= 0 ? '+' : '-') + Math.abs((o.pnl / o.exposure) * 100).toFixed(2) + '%</div>';
             } else { dPnl = '<span style="color:#9ca3af">-</span>'; }
-            var dTgt = !t.current_stop ? '<span class="au-badge error" style="font-size:9px">NO TARGET</span>' : auScalpNum(t.current_stop);
-            var dExp = exposure != null ? formatAmount(exposure) : '<span style="color:#9ca3af">-</span>';
-            var dFlags = _flagsFor(t);
+            var dExp = o.exposure != null ? formatAmount(o.exposure) : '<span style="color:#9ca3af">-</span>';
+            var dTgt;
+            if (!t.current_stop) { dTgt = '<span class="au-badge error" style="font-size:9px">NO TARGET</span>'; }
+            else {
+                var dist = Number(t.current_stop) - Number(t.entry_price);
+                var distStr = (dist >= 0 ? '+' : '−') + Math.abs(Math.round(dist)).toLocaleString('en-IN');
+                dTgt = auScalpNum(t.current_stop, sym) + '<div style="color:#6b7280;font-size:10px">' + distStr + ' ticks</div>';
+            }
             detail += '<tr style="border-top:1px solid #eef2f7">'
-                + '<td style="padding:5px 8px 5px 30px;vertical-align:top">' + auScalpStatusBadge(t.status) + '</td>'
+                + '<td style="padding:5px 8px 5px 30px;text-align:right;vertical-align:top;font-weight:700;color:#334155">' + (o.rung || '—') + '</td>'
                 + '<td style="padding:5px 8px;vertical-align:top">' + auScalpTs(t.entry_at) + dHeldSub + '</td>'
-                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.entry_price) + '</td>'
-                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + dTgt + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + o.lots + ' lot' + (o.lots === 1 ? '' : 's') + qtySub + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.entry_price, sym) + '</td>'
                 + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + dExp + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + dTgt + '</td>'
                 + '<td style="padding:5px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + dPnl + '</td>'
-                + '<td style="padding:5px 8px;vertical-align:top;line-height:1.6">' + (dFlags || '—') + '</td>'
+                + '<td style="padding:5px 8px;text-align:center;vertical-align:top">' + _auScalpRowIcon(t) + '</td>'
                 + '<td style="padding:5px 8px;text-align:center;vertical-align:top"><button class="au-btn au-btn-danger" title="Close this rung" style="padding:1px 8px;font-size:14px;line-height:1.2;font-weight:700" onclick="autoScalpOpenCloseModal(\'' + t.id + '\')">×</button></td>'
                 + '</tr>';
         });
@@ -8781,7 +8870,7 @@ async function auScalpRenderOpen(mode, silent) {
         var sideKeys = Object.keys(sideSet);
         var sideBadge = sideKeys.length > 1 ? '<span class="au-badge warning">MIXED</span>'
             : (sideKeys[0] === 'SHORT' ? '<span class="au-badge error">SHORT</span>' : '<span class="au-badge success">LONG</span>');
-        var qtySub = physLot ? '<div style="color:#6b7280;font-size:10px">' + (bLots * physLot.qty) + ' ' + physLot.unit + '</div>' : '';
+        var qtySumSub = physLot ? '<div style="color:#6b7280;font-size:10px">' + (bLots * physLot.qty) + ' ' + physLot.unit + '</div>' : '';
         var bPnlCell;
         if (bAnyPnl && bExp > 0) {
             var bcol = bPnl >= 0 ? '#047857' : '#dc2626';
@@ -8792,31 +8881,35 @@ async function auScalpRenderOpen(mode, silent) {
         var isOpen = !!_auScalpOpenExpand[expKey];
         var caret = '<span class="au-scalp-ocaret" style="display:inline-block;width:14px;color:#6b7280">' + (isOpen ? '▾' : '▸') + '</span>';
 
+        var detHead = '<tr style="color:#6b7280">'
+            + _auScalpSortTh(mode, bid, 'rung', 'Rung #', 'right', 'open')
+            + _auScalpSortTh(mode, bid, 'entered', 'Entered', 'left', 'open')
+            + _auScalpSortTh(mode, bid, 'qty', 'Qty', 'right', 'open')
+            + _auScalpSortTh(mode, bid, 'entry', 'Entry Px', 'right', 'open')
+            + _auScalpSortTh(mode, bid, 'exposure', 'Exposure', 'right', 'open')
+            + _auScalpSortTh(mode, bid, 'target', 'Target', 'right', 'open')
+            + _auScalpSortTh(mode, bid, 'livepnl', 'Live P&amp;L', 'right', 'open')
+            + '<th style="padding:4px 8px;font-weight:600;text-align:center" title="Row health">✓</th>'
+            + '<th style="padding:4px 8px;font-weight:600;text-align:center">Close</th>'
+            + '</tr>';
+
         body += '<tr class="au-scalp-openrow" style="border-top:1px solid #e5e7eb;cursor:pointer;background:' + (isOpen ? '#f8fafc' : '#fff') + '" onclick="auScalpToggleOpenBook(\'' + mode + '\',\'' + bid + '\')">'
-            + '<td style="padding:8px;vertical-align:middle;font-weight:700;color:#1d4ed8">' + caret + auScalpEsc(auScalpBookName(bid)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + ' <button class="au-btn au-btn-danger" title="Close ALL open rungs in this book" style="padding:1px 7px;font-size:10px;font-weight:600;margin-left:8px" onclick="event.stopPropagation();auScalpCloseAllBook(\'' + mode + '\',\'' + bid + '\')">✕ Close all</button>' + '</td>'
+            + '<td style="padding:8px;vertical-align:middle;font-weight:700;color:#1d4ed8">' + caret + auScalpEsc(auScalpBookName(bid)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</td>'
             + '<td style="padding:8px;vertical-align:middle">' + sideBadge + '</td>'
             + '<td style="padding:8px;vertical-align:middle">' + auScalpEsc(contractStr) + '</td>'
             + '<td style="padding:8px;text-align:right;vertical-align:middle">' + trades.length + ' rung' + (trades.length === 1 ? '' : 's') + '</td>'
-            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + bLots + ' lot' + (bLots === 1 ? '' : 's') + qtySub + '</td>'
-            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (avgEntry != null ? auScalpNum(avgEntry) : '<span style="color:#9ca3af">-</span>') + '</td>'
-            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (ltpVal != null ? auScalpNum(ltpVal) : '<span style="color:#9ca3af">-</span>') + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + bLots + ' lot' + (bLots === 1 ? '' : 's') + qtySumSub + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (avgEntry != null ? auScalpNum(avgEntry, sym) : '<span style="color:#9ca3af">-</span>') + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (ltpVal != null ? auScalpNum(ltpVal, sym) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (bAnyExp ? formatAmount(bExp) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (bAnyExp ? formatAmount(bMargin) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:middle">' + bPnlCell + '</td>'
+            + '<td style="padding:8px;text-align:center;vertical-align:middle"><button class="au-btn au-btn-danger" title="Close ALL open rungs in this book" style="padding:1px 8px;font-size:14px;line-height:1.2;font-weight:700" onclick="event.stopPropagation();auScalpCloseAllBook(\'' + mode + '\',\'' + bid + '\')">×</button></td>'
             + '</tr>';
         body += '<tr class="au-scalp-opendetail" data-expkey="' + expKey + '"' + (isOpen ? '' : ' style="display:none"') + '>'
-            + '<td colspan="10" style="padding:0 8px 12px 8px;background:#f8fafc">'
+            + '<td colspan="11" style="padding:0 8px 12px 8px;background:#f8fafc">'
             + '<table style="width:100%;font-size:11.5px;border-collapse:collapse">'
-            + '<thead><tr style="text-align:left;color:#6b7280">'
-            + '<th style="padding:4px 8px 4px 30px;font-weight:600">Status</th>'
-            + '<th style="padding:4px 8px;font-weight:600">Entered</th>'
-            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Entry Px</th>'
-            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Target</th>'
-            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Exposure</th>'
-            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Live P&amp;L</th>'
-            + '<th style="padding:4px 8px;font-weight:600">Flags</th>'
-            + '<th style="padding:4px 8px;text-align:center;font-weight:600">Close</th>'
-            + '</tr></thead><tbody>' + detail + '</tbody></table>'
+            + '<thead>' + detHead + '</thead><tbody>' + detail + '</tbody></table>'
             + '</td></tr>';
     });
 
@@ -8831,6 +8924,7 @@ async function auScalpRenderOpen(mode, silent) {
             + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalExposure) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalMargin) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right">' + pnlTotalCell + '</td>'
+            + '<td style="padding:8px"></td>'
             + '</tr>';
 
     var headerRow = '<tr style="background:#f3f4f6;text-align:left">'
@@ -8844,15 +8938,16 @@ async function auScalpRenderOpen(mode, silent) {
             + '<th style="padding:6px 8px;text-align:right">Exposure</th>'
             + '<th style="padding:6px 8px;text-align:right">Margin</th>'
             + '<th style="padding:6px 8px;text-align:right">Live P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>'
+            + '<th style="padding:6px 8px;text-align:center">Close all</th>'
             + '</tr>';
 
-    h += '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">'
+    h += '<div style="overflow-x:auto;width:100%"><table style="width:100%;font-size:12px;border-collapse:collapse">'
        + '<thead>' + totalsRow + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
-    h += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6">'
-       + '• One row per book — click it to expand the individual rungs. The red × closes a single rung.<br>'
-       + '• Avg Entry is lot-weighted; Exposure / Margin / Live P&amp;L are book totals (each rung’s own figures show inside).<br>'
-       + '• LTP via Fyers /quotes (needs an active Fyers connection) — same shared price cache GS uses.<br>'
-       + '• Live P&amp;L = side × (LTP − entry) × open units. Target = the resting take-profit. Flags: cap-bound · rolled · LIVE.'
+    h += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6;width:100%">'
+       + '• One row per book — click to expand its rungs. The red × on a rung closes that rung; the × on a book row closes ALL its rungs.<br>'
+       + '• Rung # is the open sequence (1 = first opened). Click any rung-table header to sort. The ✓ / ⚠ icon is the rung’s health (⚠ = unprotected or inverted stop — hover for detail and any cap-bound / rolled notes).<br>'
+       + '• Target’s sub-line is its distance from entry in ticks (the config’s take-profit interval — lets you tell configs apart on one book). Avg Entry is lot-weighted; Exposure / Margin / Live P&amp;L are book totals.<br>'
+       + '• Prices: NSE 2dp, MCX 0dp. Amounts honour the ₹ display unit — press F4 to toggle. LTP via the live feed / Fyers quotes.'
        + '</div>';
     el.innerHTML = h;
 }
@@ -8959,33 +9054,54 @@ function auScalpRenderClosed(mode) {
         cgroups[t.book_id].push(t);
     });
 
+    el.style.display = 'block';   // container is .au-meta (flex) — let the table fill
+
     var body = '';
     corder.forEach(function (bid) {
         var trades = cgroups[bid];
         var sec = auScalpSecurity(trades[0]);
+        var sym = sec ? sec.symbol : null;
         var contractStr = sec ? autoFmtContract(sec.symbol, sec.expiry_date) : '—';
         var shortSymbol = sec ? sec.underlying_symbol : null;
         var physLot = shortSymbol ? autoGsPhysicalLot(shortSymbol) : null;
+        var rungMap = _auScalpRungMap(trades);
 
-        var bW = 0, bL = 0, bPnl = 0, bLots = 0, sideSet = {}, detail = '';
+        var bW = 0, bL = 0, bPnl = 0, bLots = 0, sideSet = {}, rowObjs = [];
         trades.forEach(function (t) {
             var pnl = Number(t.realised_pnl) || 0;
             bPnl += pnl; if (pnl > 0) bW++; else if (pnl < 0) bL++;
-            bLots += Number(t.qty_lots) || 0; sideSet[t.side] = 1;
+            var rowLots = Number(t.qty_lots) || 0;
+            bLots += rowLots; sideSet[t.side] = 1;
+            rowObjs.push({ t: t, rung: rungMap[t.id] || 0, lots: rowLots, sort: {
+                rung: rungMap[t.id] || 0,
+                entry: t.entry_at ? new Date(t.entry_at).getTime() : 0,
+                exit: t.exit_at ? new Date(t.exit_at).getTime() : 0,
+                qty: rowLots,
+                entrypx: Number(t.entry_price) || 0,
+                exitpx: Number(t.exit_price) || 0,
+                reason: t.exit_reason || '',
+                pnl: pnl
+            } });
+        });
 
+        var st = _auScalpClosedRungSort[mode + ':' + bid] || { col: 'rung', dir: 'asc' };
+        var sorted = _auScalpSortRows(rowObjs, st);
+
+        var detail = '';
+        sorted.forEach(function (o) {
+            var t = o.t;
             var dHeld = (t.entry_at && t.exit_at) ? Math.max(0, Math.floor((new Date(t.exit_at).getTime() - new Date(t.entry_at).getTime()) / 86400000)) : null;
             var dHeldSub = dHeld != null ? '<div style="color:#6b7280;font-size:10px">' + dHeld + ' day' + (dHeld === 1 ? '' : 's') + '</div>' : '';
             var reasonCell = t.exit_reason ? '<span style="color:' + auScalpExitColor(t.exit_reason) + ';font-weight:600">' + auScalpExitReason(t.exit_reason) + '</span>' : auScalpExitReason(t.exit_reason);
-            var rowLots = Number(t.qty_lots) || 0;
-            var qtySub = physLot ? '<div style="color:#6b7280;font-size:10px">' + (rowLots * physLot.qty) + ' ' + physLot.unit + '</div>' : '';
+            var qtySub = physLot ? '<div style="color:#6b7280;font-size:10px">' + (o.lots * physLot.qty) + ' ' + physLot.unit + '</div>' : '';
             var pointsSub = (t.pnl_points !== null && t.pnl_points !== undefined) ? '<div style="font-size:10px;margin-top:1px">' + auScalpPts(t.pnl_points) + ' pts</div>' : '';
             detail += '<tr style="border-top:1px solid #eef2f7">'
-                + '<td style="padding:5px 8px 5px 30px;vertical-align:top">' + auScalpStatusBadge(t.status) + '</td>'
+                + '<td style="padding:5px 8px 5px 30px;text-align:right;vertical-align:top;font-weight:700;color:#334155">' + (o.rung || '—') + '</td>'
                 + '<td style="padding:5px 8px;vertical-align:top">' + auScalpTs(t.entry_at) + '</td>'
                 + '<td style="padding:5px 8px;vertical-align:top">' + auScalpTs(t.exit_at) + dHeldSub + '</td>'
-                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + qtySub + '</td>'
-                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.entry_price) + '</td>'
-                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.exit_price) + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + o.lots + ' lot' + (o.lots === 1 ? '' : 's') + qtySub + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.entry_price, sym) + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.exit_price, sym) + '</td>'
                 + '<td style="padding:5px 8px;vertical-align:top">' + reasonCell + '</td>'
                 + '<td style="padding:5px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + auScalpPnl(t.realised_pnl) + pointsSub + '</td>'
                 + '</tr>';
@@ -8996,6 +9112,17 @@ function auScalpRenderClosed(mode) {
         var expKey = mode + ':' + bid;
         var isOpen = !!_auScalpClosedExpand[expKey];
         var caret = '<span class="au-scalp-ccaret" style="display:inline-block;width:14px;color:#6b7280">' + (isOpen ? '▾' : '▸') + '</span>';
+
+        var detHead = '<tr style="color:#6b7280">'
+            + _auScalpSortTh(mode, bid, 'rung', 'Rung #', 'right', 'closed')
+            + _auScalpSortTh(mode, bid, 'entry', 'Entry', 'left', 'closed')
+            + _auScalpSortTh(mode, bid, 'exit', 'Exit', 'left', 'closed')
+            + _auScalpSortTh(mode, bid, 'qty', 'Qty', 'right', 'closed')
+            + _auScalpSortTh(mode, bid, 'entrypx', 'Entry Px', 'right', 'closed')
+            + _auScalpSortTh(mode, bid, 'exitpx', 'Exit Px', 'right', 'closed')
+            + _auScalpSortTh(mode, bid, 'reason', 'Reason', 'left', 'closed')
+            + _auScalpSortTh(mode, bid, 'pnl', 'Realised P&amp;L', 'right', 'closed')
+            + '</tr>';
 
         body += '<tr class="au-scalp-closedrow" style="border-top:1px solid #e5e7eb;cursor:pointer;background:' + (isOpen ? '#f8fafc' : '#fff') + '" onclick="auScalpToggleClosedBook(\'' + mode + '\',\'' + bid + '\')">'
             + '<td style="padding:8px;vertical-align:middle;font-weight:700;color:#1d4ed8">' + caret + auScalpEsc(auScalpBookName(bid)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</td>'
@@ -9009,16 +9136,7 @@ function auScalpRenderClosed(mode) {
         body += '<tr class="au-scalp-closeddetail" data-expkey="' + expKey + '"' + (isOpen ? '' : ' style="display:none"') + '>'
             + '<td colspan="7" style="padding:0 8px 12px 8px;background:#f8fafc">'
             + '<table style="width:100%;font-size:11.5px;border-collapse:collapse">'
-            + '<thead><tr style="text-align:left;color:#6b7280">'
-            + '<th style="padding:4px 8px 4px 30px;font-weight:600">Status</th>'
-            + '<th style="padding:4px 8px;font-weight:600">Entry</th>'
-            + '<th style="padding:4px 8px;font-weight:600">Exit<br><span style="font-weight:400;font-size:10px">/ days</span></th>'
-            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Qty</th>'
-            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Entry Px</th>'
-            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Exit Px</th>'
-            + '<th style="padding:4px 8px;font-weight:600">Reason</th>'
-            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Realised P&amp;L</th>'
-            + '</tr></thead><tbody>' + detail + '</tbody></table>'
+            + '<thead>' + detHead + '</thead><tbody>' + detail + '</tbody></table>'
             + '</td></tr>';
     });
 
@@ -9038,7 +9156,7 @@ function auScalpRenderClosed(mode) {
             + '<th style="padding:6px 8px;text-align:right">Realised P&amp;L</th>'
             + '</tr>';
 
-    var h = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">'
+    var h = '<div style="overflow-x:auto;width:100%"><table style="width:100%;font-size:12px;border-collapse:collapse">'
           + '<thead>' + totalsRow + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
     el.innerHTML = h;
 }
@@ -10409,3 +10527,34 @@ async function autoScalpConfirmClose() {
     }
     if (btn) { btn.disabled = false; btn.textContent = 'Close position'; }
 }
+
+// Re-render the active Auto-Trading family's money views when the ₹ display unit
+// flips (F4). Wired from wmsRerenderAmounts. Amounts already route through
+// formatAmount (unit-aware); this just re-paints the on-screen surface so the
+// change shows without a manual refresh. Prices (entry/LTP/target) are NOT
+// scaled — they are real market prices — only ₹ amounts move with the unit.
+function autoRerenderOnUnitChange() {
+    function famActive(id) { var e = document.getElementById(id); return e && e.classList.contains('active'); }
+    try {
+        if (famActive('au-fam-scalp')) {
+            if (typeof auScalpRenderMetrics === 'function') auScalpRenderMetrics();
+            ['paper', 'live'].forEach(function (m) {
+                if (typeof auScalpRenderClosed === 'function') auScalpRenderClosed(m);
+                if (typeof auScalpRenderOpen === 'function') auScalpRenderOpen(m, true);
+            });
+        }
+        if (famActive('au-fam-at2')) {
+            ['paper', 'live'].forEach(function (m) {
+                if (typeof auAt2RenderMetrics === 'function') auAt2RenderMetrics(m);
+                if (typeof auAt2RenderClosed === 'function') auAt2RenderClosed(m);
+                if (typeof auAt2RenderOpen === 'function') auAt2RenderOpen(m, true);
+            });
+        }
+        if (famActive('au-fam-gs')) {
+            if (typeof autoLoadGsOpenTrades === 'function') { autoLoadGsOpenTrades('paper', true); autoLoadGsOpenTrades('live', true); }
+            if (typeof autoLoadGsClosedTrades === 'function') { autoLoadGsClosedTrades('paper'); autoLoadGsClosedTrades('live'); }
+        }
+        if (famActive('au-fam-pairs') && typeof autoLoadOpenTrades === 'function') autoLoadOpenTrades(true);
+    } catch (e) { console.warn('auto-trading unit re-render failed', e); }
+}
+window.autoRerenderOnUnitChange = autoRerenderOnUnitChange;
