@@ -4020,6 +4020,7 @@ async function acctLoadExceptions() {
 
 async function acctRenderImportMap() {
     var el = document.getElementById('acctImportMapBody'); if (!el) return;
+    if (typeof acctSetCmdFilters === 'function') acctSetCmdFilters('');   // this tab has no command-line filters
     el.innerHTML = '<div class="acct-empty">Loading import mappings…</div>';
     var rows;
     try { rows = await wmsFetchAllRaw(acctUrl('acc_narr_map?select=*&order=excel_ledger_name.asc')) || []; }
