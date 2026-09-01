@@ -4174,7 +4174,7 @@ function autoFmtIST(iso) {
 // e.g. ("MCX:SILVERM26JUNFUT", "2026-06-30") → "SILVERM 30 Jun 26 Fut"
 function autoFmtContract(symbol, expiry_date) {
     if (!symbol) return '—';
-    var short = symbol.replace(/^MCX:/, '');
+    var short = symbol.replace(/^[A-Z]+:/, '');
     // If no expiry_date provided, return the bare short (e.g. SILVERM26JUNFUT)
     if (!expiry_date) return short;
     // Extract the underlying (strip trailing "26JUNFUT" / "26JUL FUT" etc)
@@ -8642,6 +8642,14 @@ function _auScalpRungMap(trades) {
     return map;
 }
 
+function _auScalpRungOf(bid) {
+    // Rung # is the book's LIFETIME open sequence — numbered across ALL its
+    // trades (open + closed + voided), so a closed rung and an open rung never
+    // share a number. Same map feeds both tables.
+    var all = ((window._auScalp && _auScalp.trades) || []).filter(function (t) { return t.book_id === bid; });
+    return _auScalpRungMap(all);
+}
+
 function _auScalpRowIcon(t) {
     var problems = [], notes = [];
     if (!t.current_stop) problems.push('No resting target — position is UNPROTECTED');
@@ -8797,7 +8805,7 @@ async function auScalpRenderOpen(mode, silent) {
         var physLot = shortSymbol ? autoGsPhysicalLot(shortSymbol) : null;
         var marginPct = shortSymbol ? autoGsMarginPct(shortSymbol) : null;
         var ltpVal = sec ? ltpMap.get(sec.symbol) : undefined;
-        var rungMap = _auScalpRungMap(trades);
+        var rungMap = _auScalpRungOf(bid);
 
         var bLots = 0, bExp = 0, bMargin = 0, bPnl = 0, bAnyExp = false, bAnyPnl = false, entryWt = 0;
         var sideSet = {}, rowObjs = [];
@@ -8846,13 +8854,13 @@ async function auScalpRenderOpen(mode, silent) {
             if (!t.current_stop) { dTgt = '<span class="au-badge error" style="font-size:9px">NO TARGET</span>'; }
             else {
                 var dist = Number(t.current_stop) - Number(t.entry_price);
-                var distStr = (dist >= 0 ? '+' : '−') + Math.abs(Math.round(dist)).toLocaleString('en-IN');
-                dTgt = auScalpNum(t.current_stop, sym) + '<div style="color:#6b7280;font-size:10px">' + distStr + ' ticks</div>';
+                var distStr = (dist >= 0 ? '+₹' : '−₹') + Math.abs(Math.round(dist)).toLocaleString('en-IN');
+                dTgt = auScalpNum(t.current_stop, sym) + '<div style="color:#6b7280;font-size:10px">' + distStr + '</div>';
             }
             detail += '<tr style="border-top:1px solid #eef2f7">'
                 + '<td style="padding:5px 8px 5px 30px;text-align:right;vertical-align:top;font-weight:700;color:#334155">' + (o.rung || '—') + '</td>'
                 + '<td style="padding:5px 8px;vertical-align:top">' + auScalpTs(t.entry_at) + dHeldSub + '</td>'
-                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + o.lots + ' lot' + (o.lots === 1 ? '' : 's') + qtySub + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + (Number(o.t.qty_units) || o.lots).toLocaleString('en-IN') + '<div style="color:#6b7280;font-size:10px">' + o.lots + ' lot' + (o.lots === 1 ? '' : 's') + '</div></td>'
                 + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.entry_price, sym) + '</td>'
                 + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + dExp + '</td>'
                 + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + dTgt + '</td>'
@@ -8898,7 +8906,7 @@ async function auScalpRenderOpen(mode, silent) {
             + '<td style="padding:8px;vertical-align:middle">' + sideBadge + '</td>'
             + '<td style="padding:8px;vertical-align:middle">' + auScalpEsc(contractStr) + '</td>'
             + '<td style="padding:8px;text-align:right;vertical-align:middle">' + trades.length + ' rung' + (trades.length === 1 ? '' : 's') + '</td>'
-            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + bLots + ' lot' + (bLots === 1 ? '' : 's') + qtySumSub + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + trades.reduce(function (n, t) { return n + (Number(t.qty_units) || 0); }, 0).toLocaleString('en-IN') + '<div style="color:#6b7280;font-size:10px">' + bLots + ' lot' + (bLots === 1 ? '' : 's') + '</div></td>'
             + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (avgEntry != null ? auScalpNum(avgEntry, sym) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (ltpVal != null ? auScalpNum(ltpVal, sym) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (bAnyExp ? formatAmount(bExp) : '<span style="color:#9ca3af">-</span>') + '</td>'
@@ -8932,7 +8940,7 @@ async function auScalpRenderOpen(mode, silent) {
             + '<th style="padding:6px 8px">Side</th>'
             + '<th style="padding:6px 8px">Contract</th>'
             + '<th style="padding:6px 8px;text-align:right">Rungs</th>'
-            + '<th style="padding:6px 8px;text-align:right">Qty<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ physical</span></th>'
+            + '<th style="padding:6px 8px;text-align:right">Qty<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ lots</span></th>'
             + '<th style="padding:6px 8px;text-align:right">Avg Entry</th>'
             + '<th style="padding:6px 8px;text-align:right">LTP</th>'
             + '<th style="padding:6px 8px;text-align:right">Exposure</th>'
@@ -8946,7 +8954,7 @@ async function auScalpRenderOpen(mode, silent) {
     h += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6;width:100%">'
        + '• One row per book — click to expand its rungs. The red × on a rung closes that rung; the × on a book row closes ALL its rungs.<br>'
        + '• Rung # is the open sequence (1 = first opened). Click any rung-table header to sort. The ✓ / ⚠ icon is the rung’s health (⚠ = unprotected or inverted stop — hover for detail and any cap-bound / rolled notes).<br>'
-       + '• Target’s sub-line is its distance from entry in ticks (the config’s take-profit interval — lets you tell configs apart on one book). Avg Entry is lot-weighted; Exposure / Margin / Live P&amp;L are book totals.<br>'
+       + '• Target’s sub-line is its distance from entry in ₹ (the config’s take-profit interval — lets you tell configs apart on one book). Avg Entry is lot-weighted; Exposure / Margin / Live P&amp;L are book totals.<br>'
        + '• Prices: NSE 2dp, MCX 0dp. Amounts honour the ₹ display unit — press F4 to toggle. LTP via the live feed / Fyers quotes.'
        + '</div>';
     el.innerHTML = h;
@@ -9064,7 +9072,7 @@ function auScalpRenderClosed(mode) {
         var contractStr = sec ? autoFmtContract(sec.symbol, sec.expiry_date) : '—';
         var shortSymbol = sec ? sec.underlying_symbol : null;
         var physLot = shortSymbol ? autoGsPhysicalLot(shortSymbol) : null;
-        var rungMap = _auScalpRungMap(trades);
+        var rungMap = _auScalpRungOf(bid);
 
         var bW = 0, bL = 0, bPnl = 0, bLots = 0, sideSet = {}, rowObjs = [];
         trades.forEach(function (t) {
@@ -9099,7 +9107,7 @@ function auScalpRenderClosed(mode) {
                 + '<td style="padding:5px 8px 5px 30px;text-align:right;vertical-align:top;font-weight:700;color:#334155">' + (o.rung || '—') + '</td>'
                 + '<td style="padding:5px 8px;vertical-align:top">' + auScalpTs(t.entry_at) + '</td>'
                 + '<td style="padding:5px 8px;vertical-align:top">' + auScalpTs(t.exit_at) + dHeldSub + '</td>'
-                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + o.lots + ' lot' + (o.lots === 1 ? '' : 's') + qtySub + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + (Number(o.t.qty_units) || o.lots).toLocaleString('en-IN') + '<div style="color:#6b7280;font-size:10px">' + o.lots + ' lot' + (o.lots === 1 ? '' : 's') + '</div></td>'
                 + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.entry_price, sym) + '</td>'
                 + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.exit_price, sym) + '</td>'
                 + '<td style="padding:5px 8px;vertical-align:top">' + reasonCell + '</td>'
