@@ -6137,6 +6137,31 @@ async function auAt2Get(table, query) {
     return await r.json();
 }
 
+// Resolve a set of AT2/Scalp trades' securities_nfo contract rows (symbol,
+// expiry, lot_size, underlying) from the app-wide securities master store
+// (wmsRefData.securitiesNfoMap, keyed by id) — ADR-001 / LESSONS §A.21. Replaces
+// the old per-refresh securities_nfo fetch: the master is loaded ONCE at app
+// startup, so a dashboard refresh should read the cache, not re-query. Any id not
+// yet cached (a contract written after this session's master load) is backfilled
+// by id through the shared helper, which merges into the SAME store. Only
+// securities_nfo-master trades are resolved here (MS007 is all F&O); a
+// securities_db trade, if any family ever books one, is left for its own path.
+// Returns Map<security_id, nfoRow>.
+async function auResolveNfoSecurities(trades) {
+    var ids = Array.from(new Set((trades || [])
+        .filter(function (t) { return (t.security_master || 'securities_nfo') === 'securities_nfo'; })
+        .map(function (t) { return t.security_id; }).filter(Boolean)));
+    var map = (window.wmsRefData && wmsRefData.securitiesNfoMap) || {};
+    var missing = ids.filter(function (id) { return !map[id]; });
+    if (missing.length && typeof wmsBackfillNfoContracts === 'function') {
+        try { await wmsBackfillNfoContracts(missing); } catch (_e) {}
+        map = (window.wmsRefData && wmsRefData.securitiesNfoMap) || {};
+    }
+    var out = new Map();
+    ids.forEach(function (id) { if (map[id]) out.set(id, map[id]); });
+    return out;
+}
+
 async function autoAt2Refresh() {
     var panels = ['paper-open', 'paper-closed', 'live-open', 'live-closed', 'alerts', 'events', 'log', 'controls'];
     panels.forEach(function (p) {
@@ -6206,20 +6231,13 @@ async function autoAt2Refresh() {
             _auAt2.families = (_auAt2.families || []).filter(function (f) { return f.id === _ms007Fam.id; });
         }
 
-        // Contract identity (symbol/expiry/lot_size) lives on securities_nfo,
-        // joined manually in JS — same pattern the rest of the app uses for
-        // this table (wmsRefData.securitiesNfoMap); Supabase's embed syntax
-        // is never used against securities_nfo anywhere in this codebase.
-        // Needed so the Open/Closed tables can show a Contract column and
-        // fetch live prices, matching GS's table (owner instruction).
-        var secIds = Array.from(new Set(_auAt2.trades.map(function (t) { return t.security_id; }).filter(Boolean)));
-        _auAt2.securities = new Map();
-        if (secIds.length) {
-            var secRows = await auAt2Get('securities_nfo',
-                'select=id,symbol,underlying_symbol,expiry_date,lot_size,instrument_name&id=in.('
-                + secIds.map(encodeURIComponent).join(',') + ')');
-            (secRows || []).forEach(function (s) { _auAt2.securities.set(s.id, s); });
-        }
+        // Contract identity (symbol/expiry/lot_size) is resolved from the
+        // app-wide securities master store (wmsRefData.securitiesNfoMap, keyed
+        // by id) per ADR-001 / LESSONS §A.21 — NOT a per-refresh securities_nfo
+        // DB fetch. See auResolveNfoSecurities (by-id backfill covers a contract
+        // written after this session loaded the master). Also lets an RLS-scoped
+        // external viewer resolve contracts through the master it already loads.
+        _auAt2.securities = await auResolveNfoSecurities(_auAt2.trades);
 
         auAt2RenderHeader();
         auAt2RenderMetrics();   // no-arg: both Paper + Live cards, plus the banner alert
@@ -8385,20 +8403,13 @@ async function autoScalpRefresh() {
             _auScalp.families = (_auScalp.families || []).filter(function (f) { return f.id === _ms007Fam.id; });
         }
 
-        // Contract identity (symbol/expiry/lot_size) lives on securities_nfo,
-        // joined manually in JS — same pattern the rest of the app uses for
-        // this table (wmsRefData.securitiesNfoMap); Supabase's embed syntax
-        // is never used against securities_nfo anywhere in this codebase.
-        // Needed so the Open/Closed tables can show a Contract column and
-        // fetch live prices, matching GS's table (owner instruction).
-        var secIds = Array.from(new Set(_auScalp.trades.map(function (t) { return t.security_id; }).filter(Boolean)));
-        _auScalp.securities = new Map();
-        if (secIds.length) {
-            var secRows = await auScalpGet('securities_nfo',
-                'select=id,symbol,underlying_symbol,expiry_date,lot_size,instrument_name&id=in.('
-                + secIds.map(encodeURIComponent).join(',') + ')');
-            (secRows || []).forEach(function (s) { _auScalp.securities.set(s.id, s); });
-        }
+        // Contract identity (symbol/expiry/lot_size) is resolved from the
+        // app-wide securities master store (wmsRefData.securitiesNfoMap, keyed
+        // by id) per ADR-001 / LESSONS §A.21 — NOT a per-refresh securities_nfo
+        // DB fetch. See auResolveNfoSecurities (by-id backfill covers a contract
+        // written after this session loaded the master). Also lets an RLS-scoped
+        // external viewer resolve contracts through the master it already loads.
+        _auScalp.securities = await auResolveNfoSecurities(_auScalp.trades);
 
         auScalpRenderHeader();
         auScalpRenderMetrics();   // no-arg: both Paper + Live cards, plus the banner alert
