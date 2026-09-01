@@ -27,6 +27,10 @@ const { fyersDataSocket } = fyers;
 const FYERS_APP_ID = process.env.FYERS_APP_ID;
 const HEALTH_PORT  = Number(process.env.PRICES_HEALTH_PORT) || 3002;
 const LOG_PATH     = process.env.FYERS_WS_LOG_PATH || '/tmp';   // PrivateTmp makes /tmp writable + isolated
+const SUPABASE_URL      = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const RT_CHANNEL        = process.env.PRICES_RT_CHANNEL || 'wms-prices';
+const BROADCAST_MS      = Number(process.env.PRICES_BROADCAST_MS) || 1000;   // relay the latest snapshot at most once/sec
 
 if (!FYERS_APP_ID) { console.error('[wms-prices] FYERS_APP_ID missing — exiting'); process.exit(1); }
 
@@ -50,6 +54,37 @@ const state = {
 // The Droplet role (wms_live_notify_only) has NO table SELECT by design, so we
 // read the token + open scalp symbols through a SECURITY DEFINER function it is
 // granted to EXECUTE. One round-trip; nothing else is exposed.
+// ── Phase 2: relay throttled tick snapshots to the browser over Supabase
+// Realtime (outbound POST only — no inbound port opened on the firewall). ──
+const latest = new Map();   // symbol -> { s, lp, ch, chp, h, l, t }
+let dirty = false;
+function noteTick(msg) {
+  if (!msg || msg.type !== 'sf' || !msg.symbol) return;
+  latest.set(msg.symbol, {
+    s: msg.symbol, lp: msg.ltp, ch: msg.ch, chp: msg.chp,
+    h: msg.high_price, l: msg.low_price, t: msg.exch_feed_time || msg.last_traded_time,
+  });
+  dirty = true;
+}
+async function broadcast() {
+  if (!dirty) return;
+  dirty = false;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
+  const ticks = Array.from(latest.values());
+  try {
+    const res = await fetch(`${SUPABASE_URL}/realtime/v1/api/broadcast`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ topic: RT_CHANNEL, event: 'ticks', payload: { ts: Date.now(), t: ticks }, private: false }] }),
+    });
+    state.lastBroadcast = { at: new Date().toISOString(), status: res.status, n: ticks.length };
+    if (!res.ok && (state.bcErrors = (state.bcErrors || 0) + 1) <= 3) console.error('[wms-prices] broadcast HTTP', res.status, (await res.text()).slice(0, 200));
+  } catch (e) {
+    if ((state.bcErrors = (state.bcErrors || 0) + 1) <= 3) console.error('[wms-prices] broadcast failed:', String(e && e.message || e));
+  }
+}
+setInterval(broadcast, BROADCAST_MS);
+
 async function bootstrap() {
   const { rows } = await pool.query('select public.at2_ws_bootstrap() as b');
   const b = rows[0]?.b || {};
@@ -82,7 +117,8 @@ async function start() {
 
   socket.on('message', (msg) => {
     state.ticks++; state.lastTickAt = new Date().toISOString();
-    if (state.ticks <= 20 || state.ticks % 50 === 0) console.log('[tick]', JSON.stringify(msg));
+    noteTick(msg);                                   // Phase 2: queue for the Realtime relay
+    if (state.ticks <= 6 || state.ticks % 500 === 0) console.log('[tick]', JSON.stringify(msg));
   });
 
   socket.on('error', (e) => { state.connected = false; state.lastError = typeof e === 'string' ? e : JSON.stringify(e); console.error('[wms-prices] ws error:', state.lastError); });

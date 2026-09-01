@@ -960,6 +960,7 @@
     document.getElementById('app-styles-link').href = `app-styles.css?v=${_v}`;
     document.write(`<script src="utils.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-shared.js?v=${_v}"><\/script>`);
+    document.write(`<script src="wms-prices-client.js?v=${_v}"><\/script>`);   // real-time price relay (Supabase Realtime <- Droplet Fyers WS)
     document.write(`<script src="wms-store.js?v=${_v}"><\/script>`);   // ADR-001 app-wide data store
     document.write(`<script src="wms-cost-engine.js?v=${_v}"><\/script>`);
     document.write(`<script src="accounting-engine.js?v=${_v}"><\/script>`);
