@@ -6599,8 +6599,12 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
             _rowType: 'ledger',
             _source: e,
             date: e.entry_date,
-            // RECONCILIATION anchors at the END of its day — sub-key '3' sorts it
-            // AFTER that date's trades (|1|) and synthetic F&O-P&L rows (|2|). The
+            // WITHIN-DATE ORDER (sub-key): trades |1| < F&O-P&L |2| < INTEREST_BOOKED
+            // |3| < RECONCILIATION |4|. Interest is a period-end charge the broker
+            // posts AFTER the day's trades, so it sorts last-but-one, right before the
+            // reconciliation close (owner 2026-09-01, §E.17.13). RECONCILIATION stays
+            // the LARGEST sub-key so it anchors the END of its day — AFTER trades (|1|),
+            // F&O-P&L (|2|) and interest (|3|). The
             // snapshot balance is captured as the end-of-day running balance, so it
             // must be compared/rebased at end-of-day. Sorting it at '0' (start of
             // day, like OPENING_BALANCE) made (a) lgCheckReconDrift compare an
@@ -6609,7 +6613,11 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
             // re-apply that day's F&O P&L on top of the snapshot → post-recon
             // balances double-counted low. OPENING_BALANCE stays '0' (true
             // start-of-day anchor). See LESSONS §E.17 recon end-of-day fix (2026-08-13).
-            sortKey: e.entry_date + '|' + (e.entry_type === 'RECONCILIATION' ? '3' : '0') + '|' + (e.created_at || ''),
+            sortKey: e.entry_date + '|' + (
+                e.entry_type === 'RECONCILIATION'  ? '4'
+              : e.entry_type === 'INTEREST_BOOKED' ? '3'
+              : '0'
+            ) + '|' + (e.created_at || ''),
             entryType: e.entry_type,
             amount: signedAmt,
             investorId: e.investor_id,

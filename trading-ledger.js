@@ -1038,7 +1038,7 @@ async function lgRefresh() {
                         _pendingKey: 'pi_' + p.postDate,
                         _calc: p,
                         date: p.postDate,
-                        sortKey: p.postDate + '|0|_pending_' + p.postDate,
+                        sortKey: p.postDate + '|3|_pending_' + p.postDate,
                         entryType: 'INTEREST_BOOKED',
                         amount: p.interest,
                         investorId: invId,
@@ -2490,7 +2490,7 @@ function lgCheckReconDrift() {
                 storedAmt: storedAmt,
                 computedBal: parallelBal,
                 diff: diff,
-                sortKey: r.sortKey || (r.date + '|0|' + ((r._source && r._source.created_at) || ''))
+                sortKey: r.sortKey || (r.date + '|4|' + ((r._source && r._source.created_at) || ''))
             });
             // Do NOT advance parallelBal — recon is audit-only in this pass.
             continue;
