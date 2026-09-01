@@ -1298,6 +1298,11 @@ function wmsRerenderAmounts() {
             }
         }
     } catch (err) { console.warn('full-amount: reports re-render failed', err); }
+
+    // Auto Trading — re-render the active family's money views so amounts flip.
+    try {
+        if (typeof autoRerenderOnUnitChange === 'function') autoRerenderOnUnitChange();
+    } catch (err) { console.warn('full-amount: auto-trading re-render failed', err); }
 }
 
 // Flip the global full-amount flag, re-render, and confirm with a brief toast
