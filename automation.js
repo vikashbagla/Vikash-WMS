@@ -6102,17 +6102,24 @@ function auAt2Ts(iso) {
     }).replace(',', '');
 }
 
-function auAt2Num(v, sym) {
+function auAt2Num(v, sym, forceDec) {
     if (v === null || v === undefined || v === '') return '—';
     var n = Number(v);
     if (!isFinite(n)) return '<span class="au-badge error">⛔ NOT A NUMBER</span>';
     // Decimals follow the instrument's tick (owner ask 01-Sep-2026):
     //   NSE/BSE tick 0.01 -> 2 decimals ; MCX tick ₹1 -> 0 decimals.
     // Exchange comes from the Fyers symbol prefix ("NSE:...", "MCX:..."). When
-    // no symbol is given, keep the old full-rupee 0-decimal behaviour.
-    var ex = sym ? String(sym).split(':')[0].toUpperCase() : '';
-    if (ex === 'NSE' || ex === 'BSE') {
-        return Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    // no symbol is given, keep the old full-rupee 0-decimal behaviour. Callers
+    // that want a fixed number of decimals regardless of exchange pass forceDec.
+    var dec;
+    if (typeof forceDec === 'number') {
+        dec = forceDec;
+    } else {
+        var ex = sym ? String(sym).split(':')[0].toUpperCase() : '';
+        dec = (ex === 'NSE' || ex === 'BSE') ? 2 : 0;
+    }
+    if (dec > 0) {
+        return Number(n).toLocaleString('en-IN', { minimumFractionDigits: dec, maximumFractionDigits: dec });
     }
     // Full rupees, ZERO decimals — same comma style as formatPrice, no paise.
     return formatPrice(Math.round(n), false).replace(/\.00(?=\)?$)/, '');
@@ -6836,7 +6843,7 @@ function auAt2RenderEvents() {
             h += '<tr><td>' + auAt2Esc(ev.seq) + '</td>'
                + '<td><span class="au-badge idle">' + auAt2Esc(ev.kind) + '</span></td>'
                + '<td>' + auAt2Ts(ev.at) + '</td>'
-               + '<td class="text-right">' + auAt2Num(ev.price) + '</td>'
+               + '<td class="text-right">' + auAt2Num(ev.price, null, 2) + '</td>'
                + '<td class="text-right">' + (ev.qty_lots === null ? '—' : auAt2Esc(ev.qty_lots)) + '</td>'
                + '<td style="font-size:11px">' + auAt2Esc(ev.reason || '') + '</td></tr>';
         });
@@ -6861,7 +6868,7 @@ function auAt2RenderLog() {
         h += '<div class="au-soon">No runs journalled yet — starts once the engine build carrying the Log is deployed.</div>';
         el.innerHTML = h; return;
     }
-    var px = function (n) { return (n === null || n === undefined || !isFinite(Number(n))) ? '—' : '\u20b9' + auAt2Num(n); };
+    var px = function (n) { return (n === null || n === undefined || !isFinite(Number(n))) ? '—' : '\u20b9' + auAt2Num(n, null, 2); };
     var money = function (n) { n = Number(n) || 0;
         return '<span style="color:' + (n < 0 ? '#c53030' : '#2f855a') + '">' + (n < 0 ? '\u2212\u20b9' : '+\u20b9') + auAt2Num(Math.abs(n)) + '</span>'; };
     var chip = function (m) { return '<span class="au-badge ' + (m === 'live' ? 'error' : 'idle')
