@@ -14,7 +14,7 @@ var acctBookId = null;        // selected book (investor id, accounting_enabled)
 var acctActiveTab = 'balance-sheet';
 // Master workspace mode: 'book' (per-book statements) | 'master' (Ledgers + Exceptions).
 var acctMode = 'book';
-var acctMasterTab = (function(){ try { var v = localStorage.getItem('wms_acct_master_tab'); return (v === 'exceptions' || v === 'ledgers' || v === 'bank-import') ? v : 'ledgers'; } catch(e){ return 'ledgers'; } })();
+var acctMasterTab = (function(){ try { var v = localStorage.getItem('wms_acct_master_tab'); return (v === 'exceptions' || v === 'ledgers' || v === 'bank-import' || v === 'import-map') ? v : 'ledgers'; } catch(e){ return 'ledgers'; } })();
 // Exceptions screen state
 var acctExceptions = null;         // cached acct_exceptions rows (open + resolved), or null = not loaded
 var acctExShowResolved = false;
@@ -468,7 +468,7 @@ function acctWireUI() {
     document.querySelectorAll('.acct-tab').forEach(function (t) {
         t.onclick = function () {
             acctActiveTab = t.dataset.acctTab;
-            if (acctActiveTab === 'ledgers' || acctActiveTab === 'exceptions' || acctActiveTab === 'bank-import') {
+            if (acctActiveTab === 'ledgers' || acctActiveTab === 'exceptions' || acctActiveTab === 'bank-import' || acctActiveTab === 'import-map') {
                 acctMasterTab = acctActiveTab;
                 try { localStorage.setItem('wms_acct_master_tab', acctMasterTab); } catch (e) {}
             }
@@ -530,6 +530,7 @@ function acctRenderActiveTab() {
     else if (acctActiveTab === 'ledgers') acctRenderLedgers();
     else if (acctActiveTab === 'exceptions') acctRenderExceptions();
     else if (acctActiveTab === 'bank-import') { if (!window._abiModalsWired) { window._abiModalsWired = true; if (typeof abiWireModals === 'function') abiWireModals(); } if (typeof abiRender === 'function') abiRender(); }
+    else if (acctActiveTab === 'import-map') acctRenderImportMap();
     acctSyncUnitToggle();   // keep the header full-amount toggle visible + labelled on every tab
     if (typeof wmsSyncShowZeroBtn === 'function') wmsSyncShowZeroBtn();   // reflect show-zero state on the header 👁 icon
 }
@@ -3981,7 +3982,7 @@ function acctApplyActiveTabUI() {
 function acctEnterMaster() {
     acctMode = 'master';
     var c = document.querySelector('.acct-container'); if (c) c.classList.add('acct-mode-master');
-    acctActiveTab = (acctMasterTab === 'exceptions' || acctMasterTab === 'bank-import') ? acctMasterTab : 'ledgers';
+    acctActiveTab = (acctMasterTab === 'exceptions' || acctMasterTab === 'bank-import' || acctMasterTab === 'import-map') ? acctMasterTab : 'ledgers';
     acctRenderBookTabs();          // repaint tabs so Master shows active, books de-activate
     acctApplyActiveTabUI();
     acctRenderActiveTab();
@@ -4015,6 +4016,29 @@ function acctExDetailText(detail) {
 async function acctLoadExceptions() {
     acctExceptions = await wmsFetchAllRaw(acctUrl('acct_exceptions?select=*&order=last_seen.desc'));
     return acctExceptions;
+}
+
+async function acctRenderImportMap() {
+    var el = document.getElementById('acctImportMapBody'); if (!el) return;
+    el.innerHTML = '<div class="acct-empty">Loading import mappings…</div>';
+    var rows;
+    try { rows = await wmsFetchAllRaw(acctUrl('acc_narr_map?select=*&order=excel_ledger_name.asc')) || []; }
+    catch (e) { el.innerHTML = '<div class="acct-empty">Could not load mappings: ' + wmsEsc(e.message || e) + '</div>'; return; }
+    if (!rows.length) { el.innerHTML = '<div class="acct-empty">No import mappings yet. They are created from the Bank Import screen (the “map…” action).</div>'; return; }
+    var ledName = function (id) { var l = (acctLedgers || []).find(function (x) { return x.id === id; }); return l ? l.name : '(unknown ledger)'; };
+    var scopeLbl = function (m) { if (m.is_global) return ''; return (m.scope_investor_ids || []).map(function (i) { return acctInvName(i); }).join(', ') || 'scoped'; };
+    var items = rows.map(function (m) {
+        var sc = scopeLbl(m), led = ledName(m.ledger_id);
+        return '<div class="acct-map-item">' +
+            '<span class="acct-map-from" title="' + wmsEsc(m.excel_ledger_name) + '">' + wmsEsc(m.excel_ledger_name) + '</span>' +
+            '<span class="acct-map-arrow">→</span>' +
+            '<span class="acct-map-to" title="' + wmsEsc(led) + '">' + wmsEsc(led) + '</span>' +
+            (sc ? '<span class="acct-map-scope" title="Scoped to: ' + wmsEsc(sc) + '">' + wmsEsc(sc) + '</span>' : '') +
+            '</div>';
+    }).join('');
+    el.innerHTML = '<div class="acct-map-head">' + rows.length + ' mapping' + (rows.length !== 1 ? 's' : '') +
+        ' · used by the Excel Bank Import to map each statement’s “Ledger” name to a WMS ledger. Global unless a book is shown.</div>' +
+        '<div class="acct-map-cols">' + items + '</div>';
 }
 
 async function acctRenderExceptions() {
