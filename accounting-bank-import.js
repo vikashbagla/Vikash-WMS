@@ -98,6 +98,49 @@ function abiLines(row,acct){
   }
   return lines;
 }
+// What differs between the Excel row (fresh lines) and the posted voucher (stored
+// lines) — used to show the mismatch on a "changed" row. Compares the contra (non-bank)
+// legs: ledger, amount, side.
+function abiLedName(id){ return (abiLedgerById&&abiLedgerById[id])||'(ledger)'; }
+function abiDiffDetail(fresh, stored, bankId){
+  var contra=function(ls){ return (ls||[]).filter(function(l){ return String(l.ledger_id)!==String(bankId); }); };
+  var norm=function(l){ return { id:String(l.ledger_id),
+      d:Math.round((Number(l.debit_amount!==undefined?l.debit_amount:l.debit)||0)*100)/100,
+      c:Math.round((Number(l.credit_amount!==undefined?l.credit_amount:l.credit)||0)*100)/100 }; };
+  var fc=contra(fresh), sc=contra(stored);
+  if(fc.length===1&&sc.length===1){ var f=norm(fc[0]),s=norm(sc[0]); var parts=[];
+    if(f.id!==s.id)parts.push({field:'Ledger',from:abiLedName(s.id),to:abiLedName(f.id)});
+    var fa=f.d||f.c, sa=s.d||s.c, fdir=f.d>0?'Dr':'Cr', sdir=s.d>0?'Dr':'Cr';
+    if(fa!==sa)parts.push({field:'Amount',from:abiAmt(sa),to:abiAmt(fa)});
+    if(fdir!==sdir)parts.push({field:'Side',from:sdir,to:fdir});
+    return parts.length?parts:[{field:'Entry',from:'differs',to:''}];
+  }
+  return [{field:'Lines',from:sc.length+'-line',to:fc.length+'-line'}];
+}
+// Resolve ONE changed row -> re-post with the Excel values (cancel old + post new).
+async function abiUpdateOne(key){
+  var t=abiRowFromKey(key),a=t.a,r=t.r; if(r.status!=='changed'||!r.voucherId)return;
+  abiBusy(true,'Updating posting…');
+  try{
+    var c=await fetch(acctUrl('rpc/acct_cancel_voucher'),{method:'POST',headers:wmsHeaders({'Content-Type':'application/json'}),body:JSON.stringify({p_voucher_id:r.voucherId,p_reason:'bank re-import — row changed'})});
+    if(!c.ok)throw new Error(await c.text());
+    var lines=abiLines(r,a); var header={investor_id:a.bookId,voucher_type:'JOURNAL',voucher_date:r.ymd,narration:(r.narr||r.excelName||'Bank')+' [Sl# '+r.slno+']',source_kind:'BANK_TXN',source_id:r.identity};
+    var resp=await fetch(acctUrl('rpc/acct_post_voucher'),{method:'POST',headers:wmsHeaders({'Content-Type':'application/json'}),body:JSON.stringify({p_header:header,p_lines:lines})});
+    if(!resp.ok)throw new Error(await resp.text());
+    abiSelected[key]=false;
+    acctToast('Posting updated for Sl# '+r.slno+'.');
+    if(typeof acctLoadBook==='function')await acctLoadBook();
+    await abiComputeDiff();
+  }catch(e){ acctToast('Update failed: '+(e.message||e),true); }
+  finally{ abiBusy(false); abiRender(); }
+}
+// Keep the current posting for ONE changed row (dismiss for this session). The real
+// fix is to edit the Excel so the next import matches; a Refresh will re-flag it.
+function abiKeepOne(key){
+  var r=abiRowFromKey(key).r; r.status='existing'; r.changeDetail=null; abiSelected[key]=false;
+  acctToast('Kept the posting for Sl# '+r.slno+'. Fix the Excel to match and the next import will be clean.');
+  abiRender();
+}
 async function abiComputeDiff(){
   var books={}; abiParsed.accounts.forEach(function(a){ if(a.bookId)books[a.bookId]=1; });
   var bookIds=Object.keys(books); var existing={}; var byContent={};
@@ -107,7 +150,7 @@ async function abiComputeDiff(){
     var rows=await wmsFetchAllRaw(acctUrl('acct_voucher_full?select=voucher_id,source_id,is_cancelled,voucher_date,ledger_id,debit_amount,credit_amount&source_kind=eq.BANK_TXN&investor_id=in.('+bookIds.join(',')+')'));
     var byV={}; (rows||[]).forEach(function(r){ if(!r.voucher_id)return; (byV[r.voucher_id]=byV[r.voucher_id]||{vid:r.voucher_id,src:r.source_id,cancelled:r.is_cancelled,date:r.voucher_date,lines:[]}).lines.push(r); });
     Object.keys(byV).forEach(function(vid){ var v=byV[vid]; if(v.cancelled)return;
-      var rec={vid:v.vid,sig:abiSig(v.lines),nlines:v.lines.length};
+      var rec={vid:v.vid,sig:abiSig(v.lines),nlines:v.lines.length,lines:v.lines};
       if(v.src)existing[v.src]=rec;
       // content key for a simple transfer voucher between two bank ledgers (same transfer may be imported from either statement).
       // The key is DIRECTION-AWARE (uses the signed sig, i.e. which ledger is Dr vs Cr) so an intraday round-trip
@@ -117,7 +160,7 @@ async function abiComputeDiff(){
           if(byContent[ck]){ byContent[ck].dup=true; } else { byContent[ck]=rec; } } }
     });
   }
-  abiParsed.accounts.forEach(function(a){ a.rows.forEach(function(row){ var ex=existing[row.identity]; row.matchedByContent=false; row.dupWarn=false;
+  abiParsed.accounts.forEach(function(a){ a.rows.forEach(function(row){ var ex=existing[row.identity]; row.matchedByContent=false; row.dupWarn=false; row.changeDetail=null;
     // inter-account transfer: the mapped counterparty is itself an imported bank ledger, so this transfer
     // may already have been booked from the OTHER statement (different Sl#). Match on content+direction, not Sl#.
     if(!ex && !(row.split&&row.split.length) && row.mappedId && bankIds[String(row.mappedId)]){
@@ -126,7 +169,7 @@ async function abiComputeDiff(){
     if(!ex){ row.status='new'; row.voucherId=null; }
     else { row.voucherId=ex.vid;
       if(ex.nlines>2 && !(row.split&&row.split.length)) row.status='existing';   // booked as a split — a plain re-import can't reproduce it, so treat as already booked
-      else row.status=(abiSig(abiLines(row,a))===ex.sig)?'existing':'changed'; } }); });
+      else { var _fl=abiLines(row,a); if(abiSig(_fl)===ex.sig) row.status='existing'; else { row.status='changed'; row.changeDetail=abiDiffDetail(_fl, ex.lines||[], a.ledgerId); } } } }); });
 }
 function abiRowKey(ai,ri){ return ai+'::'+ri; }
 function abiRowFromKey(key){ var p=key.split('::'); return {a:abiParsed.accounts[+p[0]],r:abiParsed.accounts[+p[0]].rows[+p[1]]}; }
@@ -201,8 +244,10 @@ function abiRenderReview(el){
     var sev=r.status==='changed'?' <span class="acct-ex-sev warn" style="font-size:9px;">changed</span>':'';
     if(r.dupWarn)sev+=' <span class="acct-ex-sev warn" style="font-size:9px;" title="This transfer is posted more than once in the books — cancel the extra voucher(s).">⚠ multiple postings</span>';
     var act=''; if(canSel){ act='<button class="wms-btn wms-btn-secondary abi-mini" data-split="'+key+'">Split</button>'; if(!r.mappedId&&!(r.split&&r.split.length))act+=' <button class="wms-btn wms-btn-secondary abi-mini" data-map="'+key+'">map…</button>'; }
+    if(r.status==='changed'){ act+=' <button class="wms-btn wms-btn-secondary abi-mini" data-updone="'+key+'" title="Cancel the posted voucher and re-post it with the Excel values">↻ Update posting</button> <button class="wms-btn wms-btn-secondary abi-mini" data-keepone="'+key+'" title="Keep the current posting as-is — fix the Excel and the next import will match">Keep posted</button>'; }
+    var changeNote=''; if(r.status==='changed'&&r.changeDetail&&r.changeDetail.length){ changeNote='<div class="abi-change" style="font-size:10px;color:#d97706;margin-top:2px;">'+r.changeDetail.map(function(d){ return wmsEsc(d.field)+': <b>'+wmsEsc(d.from)+'</b> \u2192 <b>'+wmsEsc(d.to)+'</b>'; }).join(' · ')+'</div>'; }
     return '<tr class="'+(r.status==='existing'?'acct-ex-resolved-row':'')+'"><td>'+chk+'</td><td>'+wmsEsc(r.slno)+sev+'</td><td class="c-date">'+wmsEsc(r.disp)+'</td>'+
-      '<td><div class="acct-ex-note">'+wmsEsc(r.excelName||'—')+'</div>'+ledCell+'</td>'+
+      '<td><div class="acct-ex-note">'+wmsEsc(r.excelName||'—')+'</div>'+ledCell+changeNote+'</td>'+
       (locked?('<td>'+wmsEsc(r.narr||'')+'</td>'):('<td class="abi-narr" data-narr="'+key+'" title="Double-click to edit">'+wmsEsc(r.narr||'')+'</td>'))+'<td class="text-right">'+(r.wd>0?abiAmt(r.wd):'')+'</td><td class="text-right" style="color:#16a34a;font-weight:600;">'+(r.dp>0?abiAmt(r.dp):'')+'</td>'+
       (showBal?'<td class="text-right acct-ex-note">'+(r.bal!=null?abiAmt(r.bal):'')+'</td>':'')+'<td>'+act+'</td></tr>'; }).join('');
   var selCount=Object.keys(abiSelected).filter(function(k){return abiSelected[k];}).length;
@@ -216,6 +261,8 @@ function abiRenderReview(el){
   el.querySelectorAll('[data-split]').forEach(function(b){ b.onclick=function(){ abiOpenSplit(b.dataset.split); }; });
   el.querySelectorAll('[data-map]').forEach(function(b){ b.onclick=function(){ abiOpenMap(b.dataset.map); }; });
   el.querySelectorAll('[data-editmap]').forEach(function(b){ b.onclick=function(){ abiOpenMap(b.dataset.editmap); }; });
+  el.querySelectorAll('[data-updone]').forEach(function(b){ b.onclick=function(){ abiUpdateOne(b.dataset.updone); }; });
+  el.querySelectorAll('[data-keepone]').forEach(function(b){ b.onclick=function(){ abiKeepOne(b.dataset.keepone); }; });
   el.querySelectorAll('.abi-narr').forEach(function(td){ td.ondblclick=function(){ abiEditNarr(td, td.dataset.narr); }; });
   var sa=document.getElementById('abiSelAll'); if(sa)sa.onclick=function(){ vis.forEach(function(o){ var r=o.r; if((r.status==='new'||r.status==='changed') && (r.mappedId||(r.split&&r.split.length))) abiSelected[abiRowKey(abiActiveAcct,o.ri)]=true; }); abiRender(); };
   var ua=document.getElementById('abiUnselAll'); if(ua)ua.onclick=function(){ abiSelected={}; abiRender(); };
