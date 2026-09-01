@@ -8779,7 +8779,7 @@ async function auScalpRenderOpen(mode, silent) {
         var caret = '<span class="au-scalp-ocaret" style="display:inline-block;width:14px;color:#6b7280">' + (isOpen ? '▾' : '▸') + '</span>';
 
         body += '<tr class="au-scalp-openrow" style="border-top:1px solid #e5e7eb;cursor:pointer;background:' + (isOpen ? '#f8fafc' : '#fff') + '" onclick="auScalpToggleOpenBook(\'' + mode + '\',\'' + bid + '\')">'
-            + '<td style="padding:8px;vertical-align:middle;font-weight:700;color:#1d4ed8">' + caret + auScalpEsc(auScalpBookName(bid)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</td>'
+            + '<td style="padding:8px;vertical-align:middle;font-weight:700;color:#1d4ed8">' + caret + auScalpEsc(auScalpBookName(bid)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + ' <button class="au-btn au-btn-danger" title="Close ALL open rungs in this book" style="padding:1px 7px;font-size:10px;font-weight:600;margin-left:8px" onclick="event.stopPropagation();auScalpCloseAllBook(\'' + mode + '\',\'' + bid + '\')">✕ Close all</button>' + '</td>'
             + '<td style="padding:8px;vertical-align:middle">' + sideBadge + '</td>'
             + '<td style="padding:8px;vertical-align:middle">' + auScalpEsc(contractStr) + '</td>'
             + '<td style="padding:8px;text-align:right;vertical-align:middle">' + trades.length + ' rung' + (trades.length === 1 ? '' : 's') + '</td>'
@@ -8861,6 +8861,55 @@ function auScalpToggleOpenBook(mode, bookId) {
     }
 }
 
+var _auScalpClosedExpand = {};   // closed-trades per-book expand state (mode:book_id -> bool)
+
+// Close EVERY open rung in one book (the book-row "✕ Close all"). One reason,
+// one call — the engine loops at2ManualClose per rung and books each at market.
+async function auScalpCloseAllBook(mode, bookId) {
+    var trades = (_auScalp.trades || []).filter(function (t) {
+        return t.book_id === bookId && t.mode === mode && ['open_protected', 'open_unprotected'].indexOf(t.status) >= 0;
+    });
+    if (!trades.length) { window.alert('No open rungs to close in this book.'); return; }
+    var name = auScalpBookName(bookId);
+    var reason = window.prompt('Close ALL ' + trades.length + ' open rung(s) in “' + name + '”?\n\n'
+        + 'This books a market exit on every rung. Enter a reason (required, recorded on each trade):', '');
+    if (reason == null) return;
+    if (!reason.trim()) { window.alert('A reason is required.'); return; }
+    try {
+        var r = await fetch(SUPABASE_URL + '/functions/v1/at2-scalp', {
+            method: 'POST',
+            headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ action: 'close_all', book_id: bookId, reason: reason.trim() })
+        });
+        var j = await r.json().catch(function () { return { error: 'response was not JSON' }; });
+        if (r.ok && j.ok) {
+            window.alert('✓ Closed ' + (j.closed || 0) + ' of ' + (j.total || 0) + ' rung(s) in “' + name + '”.');
+        } else {
+            window.alert('Close all — ' + (j.refusal || j.error || ('HTTP ' + r.status))
+                + (j.closed ? ('\nClosed ' + j.closed + ' of ' + j.total + ' before stopping.') : ''));
+        }
+        autoScalpRefresh();
+    } catch (e) {
+        window.alert('Close all failed: ' + (e && e.message || e));
+    }
+}
+
+// Expand/collapse one book's CLOSED rungs (same pattern as the open table).
+function auScalpToggleClosedBook(mode, bookId) {
+    var key = mode + ':' + bookId;
+    _auScalpClosedExpand[key] = !_auScalpClosedExpand[key];
+    var open = _auScalpClosedExpand[key];
+    var det = document.querySelector('.au-scalp-closeddetail[data-expkey="' + key + '"]');
+    if (!det) return;
+    det.style.display = open ? '' : 'none';
+    var sum = det.previousElementSibling;
+    if (sum) {
+        sum.style.background = open ? '#f8fafc' : '#fff';
+        var car = sum.querySelector('.au-scalp-ccaret');
+        if (car) car.textContent = open ? '▾' : '▸';
+    }
+}
+
 function auScalpRenderClosed(mode) {
     var all = _auScalp.trades.filter(function (t) { return t.mode === mode && (t.status === 'closed' || t.status === 'voided'); });
     // Filters (Instrument / Result / Exit reason / Book) apply HERE ONLY —
@@ -8887,77 +8936,93 @@ function auScalpRenderClosed(mode) {
     var total = rows.reduce(function (n, t) { return n + (Number(t.realised_pnl) || 0); }, 0);
     if (summary) summary.textContent = wins + 'W / ' + losses + 'L · P&L in ' + getUnitDescription() + (filtered ? ' · filtered' : '');
 
-    // GS-style table (mirrors autoLoadGsClosedTrades): totals row pinned to the
-    // top (owner ask on GS, carried over here — no scrolling to a tfoot to see
-    // the bottom line), shaded header, Reason colour-coded the same way GS
-    // colours its exit categories (auScalpExitColor).
-    var totalLabel = 'Total (' + rows.length + ' closed - ' + wins + 'W / ' + losses + 'L'
-                    + (filtered ? ' - filtered from ' + all.length : '') + ')';
-
-    // Total in the SAME ₹'000 unit + red/parens style as the column (owner ask
-    // 11-Aug-2026 — it used to render full rupees, an independent format).
-    var totalsRow = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700;position:sticky;top:0">'
-            + '<td colspan="10" style="padding:8px">' + auScalpEsc(totalLabel) + '</td>'
-            + '<td style="padding:8px;text-align:right;white-space:nowrap">' + auScalpPnl(total) + '</td>'
-            + '</tr>';
-
-    var headerRow = '<tr style="background:#f3f4f6;text-align:left">'
-            + '<th style="padding:6px 8px">Status</th>'
-            + '<th style="padding:6px 8px">Book</th>'
-            + '<th style="padding:6px 8px">Side</th>'
-            + '<th style="padding:6px 8px">Entry</th>'
-            + '<th style="padding:6px 8px">Exit<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ days held</span></th>'
-            + '<th style="padding:6px 8px">Contract</th>'
-            + '<th style="padding:6px 8px;text-align:right">Qty<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ physical</span></th>'
-            + '<th style="padding:6px 8px;text-align:right">Entry Px</th>'
-            + '<th style="padding:6px 8px;text-align:right">Exit Px</th>'
-            + '<th style="padding:6px 8px">Reason</th>'
-            + '<th style="padding:6px 8px;text-align:right">Realised P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ points</span></th>'
-            + '</tr>';
+    // ── Same book-summary structure as Open: one row per book (its realised
+    //    totals), click to expand the individual closed rungs. The filters above
+    //    still apply — they already shaped `rows`. ────────────────────────────
+    var cgroups = {}, corder = [];
+    rows.forEach(function (t) {
+        if (!cgroups[t.book_id]) { cgroups[t.book_id] = []; corder.push(t.book_id); }
+        cgroups[t.book_id].push(t);
+    });
 
     var body = '';
-    rows.forEach(function (t) {
-        var sideBadge = t.side === 'LONG'
-            ? '<span class="au-badge success">LONG</span>'
-            : '<span class="au-badge error">SHORT</span>';
-
-        var daysHeld = (t.entry_at && t.exit_at)
-            ? Math.max(0, Math.floor((new Date(t.exit_at).getTime() - new Date(t.entry_at).getTime()) / 86400000))
-            : null;
-        var daysSub = daysHeld != null
-            ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + daysHeld + ' day' + (daysHeld === 1 ? '' : 's') + '</div>'
-            : '';
-
-        var reasonCell = t.exit_reason
-            ? '<span style="color:' + auScalpExitColor(t.exit_reason) + ';font-weight:600">' + auScalpExitReason(t.exit_reason) + '</span>'
-            : auScalpExitReason(t.exit_reason);
-
-        var sec = auScalpSecurity(t);
-        var shortSymbol = sec ? sec.underlying_symbol : null;
+    corder.forEach(function (bid) {
+        var trades = cgroups[bid];
+        var sec = auScalpSecurity(trades[0]);
         var contractStr = sec ? autoFmtContract(sec.symbol, sec.expiry_date) : '—';
+        var shortSymbol = sec ? sec.underlying_symbol : null;
         var physLot = shortSymbol ? autoGsPhysicalLot(shortSymbol) : null;
 
-        var rowLots = Number(t.qty_lots) || 0;
-        var qtySub = physLot
-            ? '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + (rowLots * physLot.qty) + ' ' + physLot.unit + '</div>'
-            : '';
-        var pointsSub = (t.pnl_points !== null && t.pnl_points !== undefined)
-            ? '<div style="font-size:10px;margin-top:1px">' + auScalpPts(t.pnl_points) + ' pts</div>' : '';
+        var bW = 0, bL = 0, bPnl = 0, bLots = 0, sideSet = {}, detail = '';
+        trades.forEach(function (t) {
+            var pnl = Number(t.realised_pnl) || 0;
+            bPnl += pnl; if (pnl > 0) bW++; else if (pnl < 0) bL++;
+            bLots += Number(t.qty_lots) || 0; sideSet[t.side] = 1;
 
-        body += '<tr style="border-top:1px solid #e5e7eb">'
-           + '<td style="padding:6px 8px;vertical-align:top">' + auScalpStatusBadge(t.status) + '</td>'
-           + '<td style="padding:6px 8px;vertical-align:top;font-weight:700;color:#1d4ed8">' + auScalpEsc(auScalpBookName(t.book_id)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</td>'
-           + '<td style="padding:6px 8px;vertical-align:top">' + sideBadge + '</td>'
-           + '<td style="padding:6px 8px;vertical-align:top">' + auScalpTs(t.entry_at) + '</td>'
-           + '<td style="padding:6px 8px;vertical-align:top">' + auScalpTs(t.exit_at) + daysSub + '</td>'
-           + '<td style="padding:6px 8px;vertical-align:top">' + auScalpEsc(contractStr) + '</td>'
-           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + qtySub + '</td>'
-           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.entry_price) + '</td>'
-           + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.exit_price) + '</td>'
-           + '<td style="padding:6px 8px;vertical-align:top">' + reasonCell + '</td>'
-           + '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + auScalpPnl(t.realised_pnl) + pointsSub + '</td>'
-           + '</tr>';
+            var dHeld = (t.entry_at && t.exit_at) ? Math.max(0, Math.floor((new Date(t.exit_at).getTime() - new Date(t.entry_at).getTime()) / 86400000)) : null;
+            var dHeldSub = dHeld != null ? '<div style="color:#6b7280;font-size:10px">' + dHeld + ' day' + (dHeld === 1 ? '' : 's') + '</div>' : '';
+            var reasonCell = t.exit_reason ? '<span style="color:' + auScalpExitColor(t.exit_reason) + ';font-weight:600">' + auScalpExitReason(t.exit_reason) + '</span>' : auScalpExitReason(t.exit_reason);
+            var rowLots = Number(t.qty_lots) || 0;
+            var qtySub = physLot ? '<div style="color:#6b7280;font-size:10px">' + (rowLots * physLot.qty) + ' ' + physLot.unit + '</div>' : '';
+            var pointsSub = (t.pnl_points !== null && t.pnl_points !== undefined) ? '<div style="font-size:10px;margin-top:1px">' + auScalpPts(t.pnl_points) + ' pts</div>' : '';
+            detail += '<tr style="border-top:1px solid #eef2f7">'
+                + '<td style="padding:5px 8px 5px 30px;vertical-align:top">' + auScalpStatusBadge(t.status) + '</td>'
+                + '<td style="padding:5px 8px;vertical-align:top">' + auScalpTs(t.entry_at) + '</td>'
+                + '<td style="padding:5px 8px;vertical-align:top">' + auScalpTs(t.exit_at) + dHeldSub + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + qtySub + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.entry_price) + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;vertical-align:top">' + auScalpNum(t.exit_price) + '</td>'
+                + '<td style="padding:5px 8px;vertical-align:top">' + reasonCell + '</td>'
+                + '<td style="padding:5px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + auScalpPnl(t.realised_pnl) + pointsSub + '</td>'
+                + '</tr>';
+        });
+
+        var sideKeys = Object.keys(sideSet);
+        var sideBadge = sideKeys.length > 1 ? '<span class="au-badge warning">MIXED</span>' : (sideKeys[0] === 'SHORT' ? '<span class="au-badge error">SHORT</span>' : '<span class="au-badge success">LONG</span>');
+        var expKey = mode + ':' + bid;
+        var isOpen = !!_auScalpClosedExpand[expKey];
+        var caret = '<span class="au-scalp-ccaret" style="display:inline-block;width:14px;color:#6b7280">' + (isOpen ? '▾' : '▸') + '</span>';
+
+        body += '<tr class="au-scalp-closedrow" style="border-top:1px solid #e5e7eb;cursor:pointer;background:' + (isOpen ? '#f8fafc' : '#fff') + '" onclick="auScalpToggleClosedBook(\'' + mode + '\',\'' + bid + '\')">'
+            + '<td style="padding:8px;vertical-align:middle;font-weight:700;color:#1d4ed8">' + caret + auScalpEsc(auScalpBookName(bid)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</td>'
+            + '<td style="padding:8px;vertical-align:middle">' + sideBadge + '</td>'
+            + '<td style="padding:8px;vertical-align:middle">' + auScalpEsc(contractStr) + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + trades.length + ' trade' + (trades.length === 1 ? '' : 's') + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:middle"><span style="color:#047857;font-weight:600">' + bW + 'W</span> / <span style="color:#dc2626;font-weight:600">' + bL + 'L</span></td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + bLots + ' lot' + (bLots === 1 ? '' : 's') + '</td>'
+            + '<td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:middle;font-weight:700">' + auScalpPnl(bPnl) + '</td>'
+            + '</tr>';
+        body += '<tr class="au-scalp-closeddetail" data-expkey="' + expKey + '"' + (isOpen ? '' : ' style="display:none"') + '>'
+            + '<td colspan="7" style="padding:0 8px 12px 8px;background:#f8fafc">'
+            + '<table style="width:100%;font-size:11.5px;border-collapse:collapse">'
+            + '<thead><tr style="text-align:left;color:#6b7280">'
+            + '<th style="padding:4px 8px 4px 30px;font-weight:600">Status</th>'
+            + '<th style="padding:4px 8px;font-weight:600">Entry</th>'
+            + '<th style="padding:4px 8px;font-weight:600">Exit<br><span style="font-weight:400;font-size:10px">/ days</span></th>'
+            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Qty</th>'
+            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Entry Px</th>'
+            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Exit Px</th>'
+            + '<th style="padding:4px 8px;font-weight:600">Reason</th>'
+            + '<th style="padding:4px 8px;text-align:right;font-weight:600">Realised P&amp;L</th>'
+            + '</tr></thead><tbody>' + detail + '</tbody></table>'
+            + '</td></tr>';
     });
+
+    var totalLabel = 'Totals (' + rows.length + ' closed · ' + corder.length + ' book' + (corder.length === 1 ? '' : 's') + ' · ' + wins + 'W / ' + losses + 'L'
+                    + (filtered ? ' · filtered from ' + all.length : '') + ')';
+    var totalsRow = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700">'
+            + '<td colspan="6" style="padding:8px">' + auScalpEsc(totalLabel) + '</td>'
+            + '<td style="padding:8px;text-align:right;white-space:nowrap">' + auScalpPnl(total) + '</td>'
+            + '</tr>';
+    var headerRow = '<tr style="background:#f3f4f6;text-align:left">'
+            + '<th style="padding:6px 8px">Book</th>'
+            + '<th style="padding:6px 8px">Side</th>'
+            + '<th style="padding:6px 8px">Contract</th>'
+            + '<th style="padding:6px 8px;text-align:right">Trades</th>'
+            + '<th style="padding:6px 8px;text-align:right">W / L</th>'
+            + '<th style="padding:6px 8px;text-align:right">Lots</th>'
+            + '<th style="padding:6px 8px;text-align:right">Realised P&amp;L</th>'
+            + '</tr>';
 
     var h = '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">'
           + '<thead>' + totalsRow + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
