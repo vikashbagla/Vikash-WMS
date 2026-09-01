@@ -1,0 +1,42 @@
+[Unit]
+Description=WMS scalp-engine tick driver (Fyers Data WS -> at2-scalp `tick`). INDEPENDENT of wms-live (orders) and wms-prices (display feed).
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wms
+Group=wms
+WorkingDirectory=/opt/Vikash-WMS/wms-live
+EnvironmentFile=/opt/Vikash-WMS/wms-live/.env
+ExecStart=/usr/bin/node wms-scalp-ws.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+KillMode=mixed
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wms-scalp-ws
+
+# Resource caps (1 GB box; this is a light WS client + HTTP poke)
+MemoryMax=160M
+LimitNOFILE=8192
+
+# Hardening (mirrors wms-prices.service; PrivateTmp gives a writable isolated /tmp for the SDK log)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

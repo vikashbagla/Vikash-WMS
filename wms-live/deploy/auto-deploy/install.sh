@@ -69,6 +69,46 @@ else
     echo "[install] $SUDOERS_FILE already exists — leaving alone."
 fi
 
+# 3b. Passwordless sudo for restarting wms-prices (the live-prices feed), so the
+#     auto-deploy can restart it unattended too. Separate file so re-running this
+#     installer adds it even when the wms-live-restart file already exists.
+SUDOERS_PRICES=/etc/sudoers.d/wms-prices-restart
+if [ ! -f "$SUDOERS_PRICES" ]; then
+    echo "[install] Adding passwordless sudo for systemctl restart wms-prices"
+    cat > "$SUDOERS_PRICES" <<'EOF'
+# Installed by wms-live/deploy/auto-deploy/install.sh
+wms ALL=(root) NOPASSWD: /bin/systemctl restart wms-prices.service
+wms ALL=(root) NOPASSWD: /bin/systemctl restart wms-prices
+EOF
+    chmod 0440 "$SUDOERS_PRICES"
+    if ! visudo -c -f "$SUDOERS_PRICES" > /dev/null; then
+        echo "[install] wms-prices sudoers syntax check FAILED — removing."
+        rm "$SUDOERS_PRICES"; exit 2
+    fi
+else
+    echo "[install] $SUDOERS_PRICES already exists — leaving alone."
+fi
+
+# 3c. Passwordless sudo for restarting wms-scalp-ws (the scalp-engine tick
+#     driver), so the auto-deploy can restart it unattended too. Separate file
+#     so re-running this installer adds it even when the others already exist.
+SUDOERS_SCALP=/etc/sudoers.d/wms-scalp-ws-restart
+if [ ! -f "$SUDOERS_SCALP" ]; then
+    echo "[install] Adding passwordless sudo for systemctl restart wms-scalp-ws"
+    cat > "$SUDOERS_SCALP" <<'SUDO'
+# Installed by wms-live/deploy/auto-deploy/install.sh
+wms ALL=(root) NOPASSWD: /bin/systemctl restart wms-scalp-ws.service
+wms ALL=(root) NOPASSWD: /bin/systemctl restart wms-scalp-ws
+SUDO
+    chmod 0440 "$SUDOERS_SCALP"
+    if ! visudo -c -f "$SUDOERS_SCALP" > /dev/null; then
+        echo "[install] wms-scalp-ws sudoers syntax check FAILED — removing."
+        rm "$SUDOERS_SCALP"; exit 2
+    fi
+else
+    echo "[install] $SUDOERS_SCALP already exists — leaving alone."
+fi
+
 # 4. Reload systemd, enable + start the timer
 echo "[install] systemctl daemon-reload"
 systemctl daemon-reload

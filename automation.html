@@ -330,6 +330,58 @@ input.au-at2-locked:disabled {
 
 .au-at2-msg { margin-top: 8px; font-size: 11px; min-height: 1px; }
 .au-at2-ok  { color: #059669; }
+
+/* ══ AT2-Scalp Controls — TABLE layout (strategies & books as rows) ═══════ */
+.au-scalp-tblwrap { overflow-x: auto; margin-top: 10px; }
+.au-scalp-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.au-scalp-tbl thead th {
+  text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase;
+  color: #475569; letter-spacing: .04em; padding: 6px 10px;
+  border-bottom: 2px solid #e2e8f0; background: #f8fafc; white-space: nowrap;
+}
+.au-scalp-tbl th.num, .au-scalp-tbl td.num { text-align: right; }
+.au-scalp-tbl tbody.au-scalp-strat { border-bottom: 1px solid #edf2f7; }
+.au-scalp-srow > td { padding: 8px 10px; vertical-align: middle; white-space: nowrap; }
+/* the controls cards fill the panel width regardless of table content */
+#au-scalp-controls-content { align-items: stretch; }
+#au-scalp-controls-content > .au-card { width: 100%; box-sizing: border-box; }
+.au-scalp-srow:hover > td { background: #f8fafc; }
+.au-scalp-strat.open .au-scalp-srow > td { background: #eef2ff; }
+.au-scalp-strat.retired .au-scalp-srow > td { background: #fafbfc; color: #94a3b8; }
+.au-scalp-title { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.au-scalp-title:hover .au-scalp-name { text-decoration: underline; }
+.au-scalp-caret { color: #64748b; font-size: 12px; width: 10px; flex-shrink: 0; }
+.au-scalp-name { font-weight: 700; color: #1a202c; }
+.au-scalp-code { font-size: 11px; color: #64748b; background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
+.au-scalp-strat-actions { display: flex; gap: 5px; justify-content: flex-end; }
+.au-scalp-strat-actions .au-btn { padding: 3px 8px; font-size: 11px; }
+/* the edit detail row — only when the row is open */
+.au-scalp-strat:not(.open) .au-scalp-detailrow { display: none; }
+.au-scalp-detailrow > td { padding: 6px 14px 16px; background: #fbfdff; border-top: 1px dashed #e2e8f0; white-space: normal; }
+.au-scalp-body { display: block; }
+.au-scalp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 14px; }
+.au-scalp-field { min-width: 0; }
+.au-scalp-field label { display: block; font-size: 10px; font-weight: 600; text-transform: uppercase; color: #718096; margin-bottom: 3px; letter-spacing: .02em; }
+.au-scalp-field .wms-input { width: 100%; box-sizing: border-box; }
+.au-scalp-pf:disabled { background: #f7fafc; color: #4a5568; }
+.au-scalp-hint { font-size: 10px; color: #94a3b8; margin-top: 3px; line-height: 1.35; white-space: normal; }
+.au-scalp-pills { display: flex; gap: 4px; flex-wrap: wrap; }
+.au-scalp-pill { cursor: pointer; user-select: none; }
+.au-scalp-pills[data-locked="yes"] .au-scalp-pill { cursor: default; opacity: .65; }
+.au-scalp-group { margin-top: 12px; }
+.au-scalp-group:first-child { margin-top: 0; }
+.au-scalp-group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #475569; letter-spacing: .05em; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1px solid #edf2f7; }
+.au-scalp-field-locked label { color: #94a3b8; }
+.au-scalp-lockbadge { font-size: 9px; opacity: .7; }
+input.au-scalp-locked, input.au-scalp-locked:disabled { background: #f1f5f9; color: #64748b; border-style: dashed; cursor: not-allowed; }
+.au-scalp-cardhead { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.au-scalp-cardhead h3 { margin: 0; }
+.au-scalp-hiddenbar { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 5px 9px; border-radius: 6px; background: #f8fafc; border: 1px dashed #cbd5e0; font-size: 11px; color: #64748b; }
+.au-scalp-hiddenbar button { padding: 2px 8px; font-size: 11px; }
+.au-scalp-msg { margin-top: 8px; font-size: 11px; min-height: 1px; }
+.au-scalp-ok { color: #059669; }
+.au-scalp-unknown { margin-top: 10px; padding: 8px 10px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 6px; font-size: 11px; color: #9a3412; }
+
 .au-at2-err {
   color: #dc2626; background: #fef2f2; border: 1px solid #fecaca;
   border-radius: 4px; padding: 6px 8px; display: block;
@@ -649,6 +701,7 @@ input.au-at2-locked:disabled {
   <div class="automation-family-tabs">
     <button class="au-fam-tab-btn active" data-fam="health">⚡ Health &amp; Global</button>
     <button class="au-fam-tab-btn"        data-fam="at2">🧪 AT2-MS007</button>
+    <button class="au-fam-tab-btn"        data-fam="scalp">🧪 AT2-Scalp</button>
     <button class="au-fam-tab-btn"        data-fam="gs">🥈🥇 GS</button>
     <button class="au-fam-tab-btn"        data-fam="kh">🐦 KH</button>
     <button class="au-fam-tab-btn"        data-fam="pairs">🔗 Pairs</button>
@@ -1404,6 +1457,110 @@ input.au-at2-locked:disabled {
 
           <div id="au-at2-controls-panel" class="au-subtab-panel">
             <div id="au-at2-controls-content" class="au-meta">Loading configuration…</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div id="au-fam-scalp" class="automation-family-panel">
+      <div class="fam-scroll">
+        <div class="fam-page">
+
+          <div class="fam-header" style="position:relative">
+            <div class="fam-title">
+              <h2>🧪 AT2-Scalp</h2>
+              <div class="fam-sub" id="au-scalp-sub">Engine SCALP · at2-scalp · state read from at2_trade</div>
+            </div>
+            <span id="au-scalp-alertbadge" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)"></span>
+            <div class="fam-header-right">
+              <span class="status-pill paper" id="au-scalp-mode">🟡 PAPER</span>
+              <span id="au-scalp-lastact" class="fam-lastact">Last activity: —</span>
+            </div>
+          </div>
+
+          <div class="au-subtabs">
+            <button class="au-subtab-btn active" data-subtab="au-scalp-paper-panel">Paper</button>
+            <button class="au-subtab-btn" data-subtab="au-scalp-live-panel">Live</button>
+            <button class="au-subtab-btn" data-subtab="au-scalp-alerts-panel" id="au-scalp-alerts-tab">Alerts</button>
+            <button class="au-subtab-btn" data-subtab="au-scalp-events-panel">Signals &amp; Events</button>
+            <button class="au-subtab-btn" data-subtab="au-scalp-log-panel">Log</button>
+            <button class="au-subtab-btn" data-subtab="au-scalp-controls-panel">Controls &amp; Admin</button>
+            <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px"
+                    onclick="autoAt2Refresh()">↻ Refresh</button>
+          </div>
+
+          <div id="au-scalp-paper-panel" class="au-subtab-panel active">
+            <div class="fam-metrics" id="au-scalp-paper-metrics">
+              <div class="fam-metric-tile"><div class="metric-label">Open positions</div>
+                <div class="metric-value" id="au-scalp-paper-m-open">—</div><div class="metric-sub" id="au-scalp-paper-m-open-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Open exposure</div>
+                <div class="metric-value" id="au-scalp-paper-m-exposure">—</div><div class="metric-sub" id="au-scalp-paper-m-exposure-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Peak exposure</div>
+                <div class="metric-value" id="au-scalp-paper-m-maxexp">—</div><div class="metric-sub" id="au-scalp-paper-m-maxexp-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Gross P&amp;L</div>
+                <div class="metric-value" id="au-scalp-paper-m-realised">—</div><div class="metric-sub" id="au-scalp-paper-m-realised-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Net P&amp;L</div>
+                <div class="metric-value" id="au-scalp-paper-m-net">—</div><div class="metric-sub" id="au-scalp-paper-m-net-sub"></div></div>
+            </div>
+            <div id="au-scalp-paper-filterbar"></div>
+            <details id="au-scalp-paper-open-block" class="au-gs-block" open>
+              <summary class="au-gs-block-summary">Open trades
+                <span id="au-scalp-paper-open-badge" class="au-badge idle">…</span>
+                <span id="au-scalp-paper-open-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-scalp-paper-open-content" class="au-meta">Loading open trades…</div>
+            </details>
+            <details id="au-scalp-paper-closed-block" class="au-gs-block">
+              <summary class="au-gs-block-summary">Closed trades
+                <span id="au-scalp-paper-closed-badge" class="au-badge idle">…</span>
+                <span id="au-scalp-paper-closed-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-scalp-paper-closed-content" class="au-meta">Loading closed trades…</div>
+            </details>
+          </div>
+          <div id="au-scalp-live-panel" class="au-subtab-panel">
+            <div class="fam-metrics" id="au-scalp-live-metrics">
+              <div class="fam-metric-tile"><div class="metric-label">Open positions</div>
+                <div class="metric-value" id="au-scalp-live-m-open">—</div><div class="metric-sub" id="au-scalp-live-m-open-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Open exposure</div>
+                <div class="metric-value" id="au-scalp-live-m-exposure">—</div><div class="metric-sub" id="au-scalp-live-m-exposure-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Peak exposure</div>
+                <div class="metric-value" id="au-scalp-live-m-maxexp">—</div><div class="metric-sub" id="au-scalp-live-m-maxexp-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Gross P&amp;L</div>
+                <div class="metric-value" id="au-scalp-live-m-realised">—</div><div class="metric-sub" id="au-scalp-live-m-realised-sub"></div></div>
+              <div class="fam-metric-tile"><div class="metric-label">Net P&amp;L</div>
+                <div class="metric-value" id="au-scalp-live-m-net">—</div><div class="metric-sub" id="au-scalp-live-m-net-sub"></div></div>
+            </div>
+            <div id="au-scalp-live-filterbar"></div>
+            <details id="au-scalp-live-open-block" class="au-gs-block" open>
+              <summary class="au-gs-block-summary">Open trades
+                <span id="au-scalp-live-open-badge" class="au-badge idle">…</span>
+                <span id="au-scalp-live-open-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-scalp-live-open-content" class="au-meta">Loading open trades…</div>
+            </details>
+            <details id="au-scalp-live-closed-block" class="au-gs-block">
+              <summary class="au-gs-block-summary">Closed trades
+                <span id="au-scalp-live-closed-badge" class="au-badge idle">…</span>
+                <span id="au-scalp-live-closed-summary" class="au-gs-block-sum"></span></summary>
+              <div id="au-scalp-live-closed-content" class="au-meta">Loading closed trades…</div>
+            </details>
+          </div>
+
+          <!-- ⚠️ THE EMAIL IS A NOTIFICATION; THIS TABLE IS THE TRUTH.
+               An alert that was emailed and ignored is still open here. -->
+          <div id="au-scalp-alerts-panel" class="au-subtab-panel">
+            <div id="au-scalp-alerts-content" class="au-meta">Loading alerts…</div>
+          </div>
+
+          <div id="au-scalp-events-panel" class="au-subtab-panel">
+            <div id="au-scalp-events-content" class="au-meta">Loading signals &amp; events…</div>
+          </div>
+
+          <div id="au-scalp-log-panel" class="au-subtab-panel">
+            <div id="au-scalp-log-content" class="au-meta">Loading run log…</div>
+          </div>
+
+          <div id="au-scalp-controls-panel" class="au-subtab-panel">
+            <div id="au-scalp-controls-content" class="au-meta">Loading configuration…</div>
           </div>
 
         </div>
