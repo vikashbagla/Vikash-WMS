@@ -4027,22 +4027,24 @@ async function acctRenderImportMap() {
     if (!rows.length) { el.innerHTML = '<div class="acct-empty">No import mappings yet. They are created from the Bank Import screen (the \u201cmap\u2026\u201d action).</div>'; return; }
     var ledName = function (id) { var l = (acctLedgers || []).find(function (x) { return x.id === id; }); return l ? l.name : '(unknown ledger)'; };
     var scopeLbl = function (m) { if (m.is_global) return ''; return (m.scope_investor_ids || []).map(function (i) { return acctInvName(i); }).join(', ') || 'scoped'; };
-    // Many-to-one: group the Excel texts UNDER their single WMS ledger.
+    // Many-to-one: one row per WMS ledger; its Excel texts stack in the second column.
     var byLed = {};
     rows.forEach(function (m) { var g = byLed[m.ledger_id] || (byLed[m.ledger_id] = { name: ledName(m.ledger_id), srcs: [] }); g.srcs.push({ t: m.excel_ledger_name, sc: scopeLbl(m) }); });
     var leds = Object.keys(byLed).map(function (k) { return byLed[k]; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
     leds.forEach(function (g) { g.srcs.sort(function (a, b) { return String(a.t).localeCompare(String(b.t)); }); });
     var items = leds.map(function (g) {
         var multi = g.srcs.length > 1;
-        var srcLines = g.srcs.map(function (s) {
-            return '<div class="acct-map-src">' + wmsEsc(s.t) + (s.sc ? '<span class="acct-map-scope" title="Scoped to: ' + wmsEsc(s.sc) + '">' + wmsEsc(s.sc) + '</span>' : '') + '</div>';
+        var texts = g.srcs.map(function (s) {
+            return '<span class="acct-map-t" title="' + wmsEsc(s.t) + '">' + wmsEsc(s.t) + (s.sc ? '<span class="acct-map-scope" title="Scoped to: ' + wmsEsc(s.sc) + '">' + wmsEsc(s.sc) + '</span>' : '') + '</span>';
         }).join('');
         return '<div class="acct-map-item">' +
-            '<div class="acct-map-led">' + wmsEsc(g.name) + (multi ? ' <span class="acct-map-cnt" title="' + g.srcs.length + ' Excel texts map to this ledger">' + g.srcs.length + '</span>' : '') + '</div>' +
-            srcLines + '</div>';
+            '<span class="acct-map-led" title="' + wmsEsc(g.name) + '">' + wmsEsc(g.name) + (multi ? '<span class="acct-map-cnt" title="' + g.srcs.length + ' Excel texts map to this ledger">' + g.srcs.length + '</span>' : '') + '</span>' +
+            '<span class="acct-map-arrow">\u2192</span>' +
+            '<span class="acct-map-texts">' + texts + '</span>' +
+            '</div>';
     }).join('');
     el.innerHTML = '<div class="acct-map-head">' + leds.length + ' ledger' + (leds.length !== 1 ? 's' : '') + ' \u00b7 ' + rows.length + ' Excel name' + (rows.length !== 1 ? 's' : '') +
-        ' \u2014 the Bank Import maps each statement\u2019s \u201cLedger\u201d text (listed under each heading) to one WMS ledger (bold). Several texts can point to the same ledger.</div>' +
+        ' \u2014 the Bank Import maps each statement\u2019s \u201cLedger\u201d text to one WMS ledger (bold). Several texts can map to the same ledger.</div>' +
         '<div class="acct-map-cols">' + items + '</div>';
 }
 
