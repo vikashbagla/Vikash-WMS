@@ -88,4 +88,16 @@ if [ -f "$WMS_LIVE_DIR/wms-prices.js" ]; then
     fi
 fi
 
+# Also restart the INDEPENDENT scalp-engine tick driver (wms-scalp-ws) so its
+# code updates land the same way. Syntax-check first; a broken/uninstalled
+# wms-scalp-ws must NOT fail the deploy that already restarted the others.
+if [ -f "$WMS_LIVE_DIR/wms-scalp-ws.js" ]; then
+    if node --check "$WMS_LIVE_DIR/wms-scalp-ws.js"; then
+        echo "[auto-deploy] Restarting wms-scalp-ws service..."
+        sudo -n /bin/systemctl restart wms-scalp-ws.service || echo "[auto-deploy] wms-scalp-ws restart skipped (not installed yet?)"
+    else
+        echo "[auto-deploy] SYNTAX ERROR in wms-scalp-ws.js — NOT restarting wms-scalp-ws."
+    fi
+fi
+
 echo "[auto-deploy] ✓ Deployed $REMOTE successfully"
