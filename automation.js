@@ -8658,10 +8658,10 @@ function _auScalpRowIcon(t) {
     if (t.rolled_from_trade_id) notes.push('rolled from the previous contract');
     if (t.mode === 'live') notes.push('LIVE');
     if (problems.length) {
-        return '<span title="' + auScalpEsc(problems.concat(notes).join(' · ')) + '" style="color:#dc2626;font-size:15px;font-weight:700;cursor:help">⚠</span>';
+        return '<span title="' + auScalpEsc(problems.concat(notes).join(' · ')) + '" style="font-size:13px;cursor:help">⚠️</span>';
     }
     var title = notes.length ? ('OK · ' + notes.join(' · ')) : 'OK — protected';
-    return '<span title="' + auScalpEsc(title) + '" style="color:#059669;font-size:14px;cursor:help">✓</span>';
+    return '<span title="' + auScalpEsc(title) + '" style="font-size:13px;cursor:help">✅</span>';
 }
 
 function _auScalpSortTh(mode, bid, col, label, align, kind) {
@@ -8760,7 +8760,7 @@ async function auScalpRenderOpen(mode, silent) {
     var now = Date.now();
     var totalExposure = 0, anyExposure = false;
     var totalMargin = 0;
-    var totalPnl = 0, anyPnl = false;
+    var totalPnl = 0, anyPnl = false, totalRealised = 0;
 
     // Live LTP for the resolved contracts — same shared-cache mechanism GS uses
     // (autoFetchLtpForSymbols reads window.wmsLivePrices). _auScalpSyms registers
@@ -8885,6 +8885,14 @@ async function auScalpRenderOpen(mode, silent) {
             bPnlCell = auScalpPnl(bPnl) + '<div style="color:' + bcol + ';font-size:10px">' + (bPnl >= 0 ? '+' : '-') + Math.abs((bPnl / bExp) * 100).toFixed(2) + '%</div>';
         } else { bPnlCell = '<span style="color:#9ca3af">-</span>'; }
 
+        // Net P&L = this book's realised (closed) + current live (open). Live is
+        // structurally negative on a grid, so Net is the number that matters.
+        var bRealised = ((window._auScalp && _auScalp.trades) || []).reduce(function (n, t) {
+            return (t.book_id === bid && t.mode === mode && t.status === 'closed') ? n + (Number(t.realised_pnl) || 0) : n; }, 0);
+        totalRealised += bRealised;
+        var bNet = bRealised + bPnl;
+        var netCell = auScalpPnl(bNet) + '<div style="color:#6b7280;font-size:10px;font-weight:400">cl ' + formatAmount(bRealised) + ' · lv ' + (bAnyPnl ? formatAmount(bPnl) : '—') + '</div>';
+
         var expKey = mode + ':' + bid;
         var isOpen = !!_auScalpOpenExpand[expKey];
         var caret = '<span class="au-scalp-ocaret" style="display:inline-block;width:14px;color:#6b7280">' + (isOpen ? '▾' : '▸') + '</span>';
@@ -8897,7 +8905,7 @@ async function auScalpRenderOpen(mode, silent) {
             + _auScalpSortTh(mode, bid, 'exposure', 'Exposure', 'right', 'open')
             + _auScalpSortTh(mode, bid, 'target', 'Target', 'right', 'open')
             + _auScalpSortTh(mode, bid, 'livepnl', 'Live P&amp;L', 'right', 'open')
-            + '<th style="padding:4px 8px;font-weight:600;text-align:center" title="Row health">✓</th>'
+            + '<th style="padding:4px 8px;font-weight:600;text-align:center" title="Row health">✅</th>'
             + '<th style="padding:4px 8px;font-weight:600;text-align:center">Close</th>'
             + '</tr>';
 
@@ -8912,16 +8920,18 @@ async function auScalpRenderOpen(mode, silent) {
             + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (bAnyExp ? formatAmount(bExp) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (bAnyExp ? formatAmount(bMargin) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:middle">' + bPnlCell + '</td>'
+            + '<td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:middle;font-weight:700">' + netCell + '</td>'
             + '<td style="padding:8px;text-align:center;vertical-align:middle"><button class="au-btn au-btn-danger" title="Close ALL open rungs in this book" style="padding:1px 8px;font-size:14px;line-height:1.2;font-weight:700" onclick="event.stopPropagation();auScalpCloseAllBook(\'' + mode + '\',\'' + bid + '\')">×</button></td>'
             + '</tr>';
         body += '<tr class="au-scalp-opendetail" data-expkey="' + expKey + '"' + (isOpen ? '' : ' style="display:none"') + '>'
-            + '<td colspan="11" style="padding:0 8px 12px 8px;background:#f8fafc">'
+            + '<td colspan="12" style="padding:0 8px 12px 8px;background:#f8fafc">'
             + '<table style="width:100%;font-size:11.5px;border-collapse:collapse">'
             + '<thead>' + detHead + '</thead><tbody>' + detail + '</tbody></table>'
             + '</td></tr>';
     });
 
     var pnlTotalCell = anyPnl ? auScalpPnl(totalPnl) : '<span style="color:#9ca3af">-</span>';
+    var netTotalCell = (anyPnl || totalRealised) ? auScalpPnl(totalRealised + totalPnl) : '<span style="color:#9ca3af">-</span>';
 
     var totalsRow = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700">'
             + '<td colspan="3" style="padding:8px;text-align:right">Totals (' + rows.length + ' open · ' + order.length + ' book' + (order.length === 1 ? '' : 's') + '):</td>'
@@ -8932,6 +8942,7 @@ async function auScalpRenderOpen(mode, silent) {
             + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalExposure) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalMargin) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right">' + pnlTotalCell + '</td>'
+            + '<td style="padding:8px;text-align:right">' + netTotalCell + '</td>'
             + '<td style="padding:8px"></td>'
             + '</tr>';
 
@@ -8946,14 +8957,15 @@ async function auScalpRenderOpen(mode, silent) {
             + '<th style="padding:6px 8px;text-align:right">Exposure</th>'
             + '<th style="padding:6px 8px;text-align:right">Margin</th>'
             + '<th style="padding:6px 8px;text-align:right">Live P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>'
+            + '<th style="padding:6px 8px;text-align:right">Net P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">closed + live</span></th>'
             + '<th style="padding:6px 8px;text-align:center">Close all</th>'
             + '</tr>';
 
-    h += '<div style="overflow-x:auto;width:100%"><table style="width:100%;font-size:12px;border-collapse:collapse">'
+    h += '<div style="overflow-x:auto;width:100%"><table style="width:100%;font-size:11px;border-collapse:collapse">'
        + '<thead>' + totalsRow + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
     h += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6;width:100%">'
        + '• One row per book — click to expand its rungs. The red × on a rung closes that rung; the × on a book row closes ALL its rungs.<br>'
-       + '• Rung # is the open sequence (1 = first opened). Click any rung-table header to sort. The ✓ / ⚠ icon is the rung’s health (⚠ = unprotected or inverted stop — hover for detail and any cap-bound / rolled notes).<br>'
+       + '• Rung # is the open sequence (1 = first opened). Click any rung-table header to sort. The ✅ / ⚠️ icon is the rung’s health (⚠ = unprotected or inverted stop — hover for detail and any cap-bound / rolled notes).<br>'
        + '• Target’s sub-line is its distance from entry in ₹ (the config’s take-profit interval — lets you tell configs apart on one book). Avg Entry is lot-weighted; Exposure / Margin / Live P&amp;L are book totals.<br>'
        + '• Prices: NSE 2dp, MCX 0dp. Amounts honour the ₹ display unit — press F4 to toggle. LTP via the live feed / Fyers quotes.'
        + '</div>';
