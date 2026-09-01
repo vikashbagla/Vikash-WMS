@@ -9407,6 +9407,7 @@ function auScalpRenderControls() {
                +     '<button class="au-btn au-btn-secondary au-scalp-bedit" data-bid="' + b2.id + '" title="Edit">✏️</button>'
                +     '<button class="au-btn au-btn-primary au-scalp-bsave" data-bid="' + b2.id + '" style="display:none">Save</button>'
                +     '<button class="au-btn au-btn-secondary au-scalp-bcancel" data-bid="' + b2.id + '" style="display:none">Cancel</button>'
+               +     '<button class="au-btn au-btn-secondary au-scalp-breset" data-bid="' + b2.id + '" title="Reset grid — fresh start on the next in-band scan (refused if the book has open positions)">⟳</button>'
                +     '<button class="au-btn au-btn-secondary au-scalp-bhide" data-bid="' + b2.id + '" data-hidden="' + (b2.hidden ? '1' : '0') + '" title="' + (b2.hidden ? 'Restore' : 'Hide (retire)') + '">' + (b2.hidden ? '👁' : '🗄') + '</button>'
                +   '</td>'
                + '</tr>'
@@ -9512,6 +9513,35 @@ function auScalpStrategyName(sid) {
  * where inline handlers are unreliable (CONTEXT.md §367). Re-wired on every
  * render because automation.js re-executes on module switches (D.13.14).
  */
+async function auScalpResetGrid(bid, btn) {
+    var row = (_auScalp.books || []).filter(function (x) { return x.id === bid; })[0];
+    var name = row ? (row.display_name || 'this book') : 'this book';
+    if (!window.confirm('Reset the grid for \u201C' + name + '\u201D?\n\n'
+        + 'This clears the book\u2019s grid history so it starts fresh \u2014 a first buy at market on the next scan while price is inside the band. '
+        + 'It is REFUSED if the book currently has any open position.')) return;
+    if (btn) btn.disabled = true;
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/rpc/at2_scalp_reset_grid', {
+            method: 'POST',
+            headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ p_book_id: bid })
+        });
+        var txt = await r.text();
+        if (!r.ok) {
+            var reason = txt;
+            try { var j = JSON.parse(txt); reason = j.message || j.hint || j.details || txt; } catch (e) {}
+            window.alert('Grid reset refused:\n\n' + reason);
+            if (btn) btn.disabled = false;
+            return;
+        }
+        window.alert('\u2713 Grid reset for \u201C' + name + '\u201D.\nIt will take a fresh position on the next in-band scan.');
+        if (typeof autoScalpRefresh === 'function') autoScalpRefresh();
+    } catch (e) {
+        window.alert('Grid reset failed: ' + String(e && e.message || e));
+        if (btn) btn.disabled = false;
+    }
+}
+
 function auScalpWireControls() {
     var root = document.getElementById('au-scalp-controls-content');
     if (!root) return;
@@ -9569,7 +9599,7 @@ function auScalpWireControls() {
         });
         // Hide/Restore is hidden while editing — it re-renders the card, which
         // would throw away whatever is half-typed.
-        scope.querySelectorAll('.au-scalp-edit,.au-scalp-bedit,.au-scalp-hide,.au-scalp-bhide')
+        scope.querySelectorAll('.au-scalp-edit,.au-scalp-bedit,.au-scalp-hide,.au-scalp-bhide,.au-scalp-breset')
              .forEach(function (b) { b.style.display = editing ? 'none' : ''; });
         scope.querySelectorAll('.au-scalp-save,.au-scalp-cancel,.au-scalp-bsave,.au-scalp-bcancel')
              .forEach(function (b) { b.style.display = editing ? '' : 'none'; });
@@ -9611,6 +9641,10 @@ function auScalpWireControls() {
         b.addEventListener('click', function () {
             auScalpSetHidden('at2_book', b.dataset.bid, b.dataset.hidden !== '1', b);
         });
+    });
+
+    root.querySelectorAll('.au-scalp-breset').forEach(function (b) {
+        b.addEventListener('click', function () { auScalpResetGrid(b.dataset.bid, b); });
     });
 
     root.querySelectorAll('.au-scalp-uinput').forEach(function (inp) {
