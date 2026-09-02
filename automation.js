@@ -9482,6 +9482,18 @@ async function auScalpUnderlyingSearch(inp) {
         if (seen[under]) return; seen[under] = 1;
         items.push({ under: under, name: name, hasFut: !!futSet[under] });
     });
+    // ☠️ Index underlyings (NIFTY, BANKNIFTY) have hundreds of CM namesakes
+    // (ETFs, index funds). wmsSearchSecurities sorts ALL CM ahead of NFO, so a
+    // raw slice(0,15) would show 15 "Nifty …" ETFs and bury the actual F&O
+    // underlying past the cut — making NIFTY impossible to pick. Pin the exact
+    // typed match first, then F&O-capable underlyings, before trimming.
+    var qU = q.toUpperCase();
+    items.sort(function (a, b) {
+        var ax = a.under === qU ? 0 : 1, bx = b.under === qU ? 0 : 1;
+        if (ax !== bx) return ax - bx;               // exact match to the top
+        if (a.hasFut !== b.hasFut) return a.hasFut ? -1 : 1; // F&O before EQ-only
+        return a.under < b.under ? -1 : (a.under > b.under ? 1 : 0);
+    });
     items = items.slice(0, 15);
     dd.innerHTML = items.length ? items.map(function (it, i) {
         return '<div class="au-scalp-uitem" data-idx="' + i + '" style="padding:7px 10px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid #f1f5f9">'
