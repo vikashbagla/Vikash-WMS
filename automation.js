@@ -10139,6 +10139,51 @@ function auScalpModal(id, title, bodyHtml, okLabel, onOk) {
  * exists — a blank form invites a params_schema refusal on the first save, and
  * the fastest way to a valid row is to start from one that already validates.
  */
+// Enable + wire the parameter form inside a MODAL (New-Strategy modal). The
+// Controls-tab CARDS wire their fields via auScalpWireControls + an Edit toggle;
+// a modal has no card/edit model, so auScalpFieldInput's inputs render disabled
+// and its pills / underlying-search are unwired. This makes the whole param form
+// live. Reuses the exact card logic (pills, ₹ separators, underlying search).
+function auScalpWireModalForm(scope) {
+    if (!scope) return;
+    scope.querySelectorAll('.au-scalp-pf').forEach(function (i) {
+        if (i.dataset.readonly === 'yes') return;
+        i.disabled = false;
+    });
+    scope.querySelectorAll('.au-scalp-pills').forEach(function (g) {
+        if (g.dataset.readonly === 'yes') return;
+        g.dataset.locked = 'no';
+        g.querySelectorAll('.au-scalp-pill').forEach(function (p) {
+            p.addEventListener('click', function () {
+                g.querySelectorAll('.au-scalp-pill').forEach(function (q) { q.classList.remove('on'); });
+                p.classList.add('on');
+            });
+        });
+    });
+    scope.querySelectorAll('input[data-money="yes"]').forEach(function (i) {
+        i.addEventListener('focus', function () { i.value = auScalpUnmoney(i.value); });
+        i.addEventListener('blur', function () {
+            var raw = auScalpUnmoney(i.value);
+            if (raw === '') { i.value = ''; return; }
+            var n = Number(raw);
+            i.value = isFinite(n) ? auScalpMoney(n) : raw;
+        });
+    });
+    scope.querySelectorAll('.au-scalp-uinput').forEach(function (inp) {
+        var t;
+        inp.addEventListener('input', function () { clearTimeout(t); t = setTimeout(function () { auScalpUnderlyingSearch(inp); }, 180); });
+        inp.addEventListener('focus', function () { if ((inp.value || '').trim()) auScalpUnderlyingSearch(inp); });
+        inp.addEventListener('blur', function () { setTimeout(function () { var dd = inp.parentElement.querySelector('.au-scalp-udd'); if (dd) dd.style.display = 'none'; }, 200); });
+    });
+    scope.querySelectorAll('.au-scalp-udd').forEach(function (dd) {
+        dd.addEventListener('mousedown', function (e) {
+            var item = e.target.closest('.au-scalp-uitem'); if (!item) return;
+            e.preventDefault();
+            auScalpPickUnderlying(dd, parseInt(item.dataset.idx, 10));
+        });
+    });
+}
+
 function auScalpNewStrategyModal() {
     if (!_auScalp.families.length) {
         wmsShowError && wmsShowError('No strategy family is loaded — refresh the tab first.');
@@ -10179,7 +10224,7 @@ function auScalpNewStrategyModal() {
       + 'Nothing can trade until you enable it deliberately.</div>'
       + '<div id="au-scalp-nf-msg" style="margin-top:10px"></div>';
 
-    auScalpModal('auScalpNewStratOverlay', 'New strategy', body, 'Create strategy', async function (btn, root, close) {
+    var _ov = auScalpModal('auScalpNewStratOverlay', 'New strategy', body, 'Create strategy', async function (btn, root, close) {
         var msg = document.getElementById('au-scalp-nf-msg');
         var code = (document.getElementById('au-scalp-nf-code').value || '').trim();
         var name = (document.getElementById('au-scalp-nf-name').value || '').trim();
@@ -10233,6 +10278,8 @@ function auScalpNewStrategyModal() {
             btn.disabled = false;
         }
     });
+
+    auScalpWireModalForm(_ov);
 }
 
 /** A new book on an existing strategy. */
