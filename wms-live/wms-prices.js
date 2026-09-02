@@ -52,6 +52,7 @@ const state = {
   connected: false, ticks: 0, lastTickAt: null,
   symbols: [], startedAt: new Date().toISOString(), lastError: null,
 };
+let socket = null;        // hoisted: the LISTEN handler re-subscribes on the LIVE socket
 
 // The Droplet role (wms_live_notify_only) has NO table SELECT by design, so we
 // read the token + open scalp symbols through a SECURITY DEFINER function it is
@@ -106,7 +107,6 @@ async function start() {
 
   console.log(`[wms-prices] connecting Fyers Data WS — ${symbols.length} symbol(s): ${symbols.join(', ')}`);
 
-  let socket;
   try { socket = fyersDataSocket.getInstance(`${FYERS_APP_ID}:${token}`, LOG_PATH); }
   catch (e) { state.lastError = 'getInstance: ' + String(e && e.message || e); console.error('[wms-prices]', state.lastError); return void setTimeout(start, 30000); }
 
@@ -129,6 +129,54 @@ async function start() {
 
   try { socket.connect(); } catch (e) { state.lastError = 'connect: ' + String(e && e.message || e); console.error('[wms-prices]', state.lastError); setTimeout(start, 30000); }
 }
+
+// ── Event-driven re-subscription (migration 108). A newly-opened scalp contract
+// must join the feed IMMEDIATELY, not on the next restart. A trigger NOTIFYs on
+// 'wms_ws_refresh'; we LISTEN and diff-subscribe on the live socket. 60s safety net.
+function applySymbolDiff(newSymbols) {
+  const desired = new Set(newSymbols || []);
+  const current = new Set(state.symbols || []);
+  const added = [...desired].filter((x) => !current.has(x));
+  const removed = [...current].filter((x) => !desired.has(x));
+  state.symbols = [...desired];
+  if (socket && state.connected) {
+    if (added.length)   { try { socket.subscribe(added);     console.log('[wms-prices] +subscribe', added.join(',')); }   catch (e) { console.error('[wms-prices] subscribe(add) failed:', String(e && e.message || e)); } }
+    if (removed.length) { try { socket.unsubscribe(removed); console.log('[wms-prices] -unsubscribe', removed.join(',')); } catch (e) { console.warn('[wms-prices] unsubscribe unsupported/failed (harmless until restart):', String(e && e.message || e)); } }
+  }
+  return { added, removed };
+}
+async function refreshSubs() {
+  let b;
+  try { b = await bootstrap(); } catch (e) { return; }
+  if (!Array.isArray(b.symbols) || !b.symbols.length) return;   // never blank out a live feed
+  const { added, removed } = applySymbolDiff(b.symbols);
+  if (added.length || removed.length) console.log(`[wms-prices] subs refresh: +${added.length} -${removed.length} -> ${state.symbols.length} live`);
+}
+let _refreshTimer = null, _refreshInFlight = false;
+function scheduleRefresh() {
+  if (_refreshTimer) return;
+  _refreshTimer = setTimeout(async () => {
+    _refreshTimer = null;
+    if (_refreshInFlight) { scheduleRefresh(); return; }
+    _refreshInFlight = true;
+    try { await refreshSubs(); } finally { _refreshInFlight = false; }
+  }, 600);   // debounce a burst into one refresh
+}
+function startListener() {
+  const client = new pg.Client({
+    host: process.env.PG_HOST, port: Number(process.env.PG_PORT) || 5432,
+    database: process.env.PG_DATABASE || 'postgres', user: process.env.PG_USER,
+    password: process.env.PG_PASSWORD, ssl: { rejectUnauthorized: false },
+    application_name: 'wms-prices-listen',
+  });
+  client.on('notification', (msg) => { if (msg.channel === 'wms_ws_refresh') scheduleRefresh(); });
+  client.on('error', (e) => { console.error('[wms-prices] LISTEN error:', String(e && e.message || e)); try { client.end(); } catch (_) {} setTimeout(startListener, 5000); });
+  client.connect()
+    .then(() => client.query('LISTEN wms_ws_refresh'))
+    .then(() => console.log('[wms-prices] LISTEN wms_ws_refresh — event-driven re-subscribe armed'))
+    .catch((e) => { console.error('[wms-prices] LISTEN connect failed:', String(e && e.message || e)); try { client.end(); } catch (_) {} setTimeout(startListener, 5000); });
+}
+setInterval(refreshSubs, 60000);   // safety net; the LISTEN handler is the instant path
 
 // ── Fix #1: survive the daily Fyers token rotation (~08:00 IST) and silent
 // feed deaths. The token WS auths at connect; when auto-login rotates the token
@@ -168,3 +216,4 @@ http.createServer((_req, res) => {
 process.on('SIGTERM', () => { console.log('[wms-prices] SIGTERM — bye'); process.exit(0); });
 
 start();
+startListener();

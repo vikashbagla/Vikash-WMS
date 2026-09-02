@@ -46,6 +46,8 @@ let liveToken = null;
 let lastTickMs = 0;
 const bySymbol = new Map();     // symbol -> { code, threshold, lastPokePrice, lastPokeMs }
 const state = { service: 'wms-scalp-ws', connected: false, ticks: 0, pokes: 0, lastPokeAt: null, symbols: [], startedAt: new Date().toISOString(), lastError: null };
+let socket = null;              // hoisted: the LISTEN handler re-subscribes on the LIVE socket
+let refreshTimer = null;        // debounce for wms_ws_refresh notifications
 
 async function universe() {
   const { rows } = await pool.query('select public.at2_scalp_ws_universe() as u');
@@ -53,15 +55,32 @@ async function universe() {
   return { token: u.token || null, strategies: Array.isArray(u.strategies) ? u.strategies : [] };
 }
 
-function buildMap(strategies) {
-  bySymbol.clear();
+// Reconcile the live subscription to the strategies' contracts WITHOUT a restart.
+// Additions are subscribed, removals unsubscribed, on the live socket; a symbol
+// that persists keeps its poke state (lastPokePrice/lastPokeMs). Returns the diff.
+function applyStrategies(strategies) {
+  const desired = new Map();
   for (const s of strategies) {
     if (!s.symbol) continue;
     const step = Math.min(Number(s.entry_interval) || Infinity, Number(s.target_interval) || Infinity);
     const threshold = Number.isFinite(step) ? Math.max(step * 0.4, 0) : 0;
-    bySymbol.set(s.symbol, { code: s.code, threshold, lastPokePrice: null, lastPokeMs: 0 });
+    desired.set(s.symbol, { code: s.code, threshold });
+  }
+  const added = [], removed = [];
+  for (const [sym, cfg] of desired) {
+    const cur = bySymbol.get(sym);
+    if (!cur) { bySymbol.set(sym, { code: cfg.code, threshold: cfg.threshold, lastPokePrice: null, lastPokeMs: 0 }); added.push(sym); }
+    else { cur.code = cfg.code; cur.threshold = cfg.threshold; }   // persist poke state
+  }
+  for (const sym of Array.from(bySymbol.keys())) {
+    if (!desired.has(sym)) { bySymbol.delete(sym); removed.push(sym); }
   }
   state.symbols = Array.from(bySymbol.keys());
+  if (socket && state.connected) {
+    if (added.length)   { try { socket.subscribe(added);     console.log('[scalp-ws] +subscribe', added.join(',')); }   catch (e) { console.error('[scalp-ws] subscribe(add) failed:', String(e && e.message || e)); } }
+    if (removed.length) { try { socket.unsubscribe(removed); console.log('[scalp-ws] -unsubscribe', removed.join(',')); } catch (e) { console.warn('[scalp-ws] unsubscribe unsupported/failed (harmless until restart):', String(e && e.message || e)); } }
+  }
+  return { added, removed };
 }
 
 async function pokeTick(code, price) {
@@ -100,10 +119,9 @@ async function start() {
   if (!u.token) { console.log('[scalp-ws] no token yet — retry 60s'); return void setTimeout(start, 60000); }
   if (!u.strategies.length) { console.log('[scalp-ws] no enabled scalp strategies — idle, recheck in 60s'); liveToken = u.token; return void setTimeout(start, 60000); }
   liveToken = u.token;
-  buildMap(u.strategies);
+  applyStrategies(u.strategies);
   console.log(`[scalp-ws] connecting Fyers Data WS — ${state.symbols.length} contract(s): ${state.symbols.join(', ')}`);
 
-  let socket;
   try { socket = fyersDataSocket.getInstance(`${FYERS_APP_ID}:${liveToken}`, LOG_PATH); }
   catch (e) { state.lastError = 'getInstance: ' + String(e && e.message || e); console.error('[scalp-ws]', state.lastError); return void setTimeout(start, 30000); }
 
@@ -120,15 +138,44 @@ async function start() {
   try { socket.connect(); } catch (e) { state.lastError = 'connect: ' + String(e && e.message || e); setTimeout(start, 30000); }
 }
 
-// token rotation + universe-change guard: re-check every 60s; restart on change
-setInterval(async () => {
-  try {
-    const u = await universe();
-    if (u.token && liveToken && u.token !== liveToken) { console.log('[scalp-ws] token rotated — restarting'); process.exit(1); }
-    const nowSet = u.strategies.map((s) => s.symbol).sort().join(',');
-    if (state.symbols.length && nowSet !== state.symbols.slice().sort().join(',')) { console.log('[scalp-ws] scalp universe changed — restarting to re-subscribe'); process.exit(1); }
-  } catch (e) { /* transient */ }
-}, 60000);
+// Re-derive the universe and reconcile the live subscription. Token rotation
+// still forces a clean restart (the socket must re-auth); a symbol-set change is
+// now applied INCREMENTALLY (no restart). Called instantly by the LISTEN handler
+// on any wms_ws_refresh, and every 60s as a safety net.
+async function refreshUniverse() {
+  let u;
+  try { u = await universe(); } catch (e) { return; }
+  if (u.token && liveToken && u.token !== liveToken) { console.log('[scalp-ws] token rotated — restarting'); process.exit(1); }
+  const { added, removed } = applyStrategies(u.strategies);
+  if (added.length || removed.length) console.log(`[scalp-ws] universe refresh: +${added.length} -${removed.length} -> ${state.symbols.length} live`);
+}
+let _refreshInFlight = false;
+function scheduleRefresh() {
+  if (refreshTimer) return;
+  refreshTimer = setTimeout(async () => {
+    refreshTimer = null;
+    if (_refreshInFlight) { scheduleRefresh(); return; }
+    _refreshInFlight = true;
+    try { await refreshUniverse(); } finally { _refreshInFlight = false; }
+  }, 600);   // debounce a burst (e.g. multi-rung open) into one refresh
+}
+// Event-driven: LISTEN on a dedicated pg client; migration 108 NOTIFYs on
+// at2_strategy(enabled) / at2_trade(status) changes. Reconnects on drop.
+function startListener() {
+  const client = new pg.Client({
+    host: process.env.PG_HOST, port: Number(process.env.PG_PORT) || 5432,
+    database: process.env.PG_DATABASE || 'postgres', user: process.env.PG_USER,
+    password: process.env.PG_PASSWORD, ssl: { rejectUnauthorized: false },
+    application_name: 'wms-scalp-ws-listen',
+  });
+  client.on('notification', (msg) => { if (msg.channel === 'wms_ws_refresh') scheduleRefresh(); });
+  client.on('error', (e) => { console.error('[scalp-ws] LISTEN error:', String(e && e.message || e)); try { client.end(); } catch (_) {} setTimeout(startListener, 5000); });
+  client.connect()
+    .then(() => client.query('LISTEN wms_ws_refresh'))
+    .then(() => console.log('[scalp-ws] LISTEN wms_ws_refresh — event-driven re-subscribe armed'))
+    .catch((e) => { console.error('[scalp-ws] LISTEN connect failed:', String(e && e.message || e)); try { client.end(); } catch (_) {} setTimeout(startListener, 5000); });
+}
+setInterval(refreshUniverse, 60000);   // safety net; the LISTEN handler is the instant path
 
 // stale-feed watchdog (market hours)
 function istActiveHours() {
@@ -148,3 +195,4 @@ http.createServer((_req, res) => { res.writeHead(200, { 'Content-Type': 'applica
 process.on('SIGTERM', () => { console.log('[scalp-ws] SIGTERM — bye'); process.exit(0); });
 
 start();
+startListener();
