@@ -175,6 +175,11 @@ body {
     transition: all 0.2s;
 }
 .btn-refresh-app:hover { background: #eef2ff; border-color: #667eea; }
+.btn-txn-sync { align-self: center; background: none; border: 1px solid #e2e8f0; border-radius: 5px; padding: 1px 6px; font-size: 13px; line-height: 1; cursor: pointer; color: #667eea; transition: all 0.2s; }
+.btn-txn-sync:hover { background: #eef2ff; border-color: #667eea; }
+.btn-txn-sync:disabled { opacity: 0.6; cursor: default; }
+.btn-txn-sync.spinning { animation: wmsSpin 0.8s linear infinite; }
+@keyframes wmsSpin { to { transform: rotate(360deg); } }
 .btn-refresh-app.active { background: #eef2ff; border-color: #667eea; box-shadow: inset 0 0 0 1px #667eea; }
 .fyers-indicator { text-align: center; min-width: 60px; margin-right: 8px; }
 
