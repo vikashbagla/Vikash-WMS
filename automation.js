@@ -9021,6 +9021,36 @@ async function auScalpCloseAllBook(mode, bookId) {
     }
 }
 
+// Manual "Reconcile covers" — fires the SAME recon action the market-open cron
+// fires (the at2-scalp EF's `recon` -> scalpReconLive): for every LIVE, enabled
+// book it verifies each rung's take-profit is actually resting at the broker and
+// re-arms any that is missing (hours-gated; skips REJECTED). No new engine code —
+// owner-token auth (wmsEdgeHeaders) is accepted by the EF's recon action.
+async function auScalpRecon(btn) {
+    var prev = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Reconciling…'; }
+    try {
+        var r = await fetch(SUPABASE_URL + '/functions/v1/at2-scalp', {
+            method: 'POST',
+            headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ action: 'recon' })
+        });
+        var j = await r.json().catch(function () { return { error: 'response was not JSON' }; });
+        if (r.ok && j.ok) {
+            var notes = (j.notes && j.notes.length) ? j.notes.join('\n') : 'Nothing to do — every live cover is resting.';
+            window.alert('✓ Recon complete\n\n' + notes);
+        } else {
+            window.alert('Recon — ' + (j.error || ('HTTP ' + r.status)));
+        }
+        autoScalpRefresh();
+    } catch (e) {
+        window.alert('Recon failed: ' + (e && e.message || e));
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = prev; }
+    }
+}
+window.auScalpRecon = auScalpRecon;
+
 // Expand/collapse one book's CLOSED rungs (same pattern as the open table).
 function auScalpToggleClosedBook(mode, bookId) {
     var key = mode + ':' + bookId;

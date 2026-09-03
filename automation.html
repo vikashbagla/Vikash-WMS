@@ -1487,6 +1487,8 @@ input.au-scalp-locked, input.au-scalp-locked:disabled { background: #f1f5f9; col
             <button class="au-subtab-btn" data-subtab="au-scalp-log-panel">Log</button>
             <button class="au-subtab-btn" data-subtab="au-scalp-controls-panel">Controls &amp; Admin</button>
             <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px"
+                    onclick="auScalpRecon(this)" title="Verify every live cover is resting at the broker; re-arm any that is missing (hours-gated, enabled live books). Same recon the market-open cron runs.">🛡️ Reconcile covers</button>
+            <button class="au-btn au-btn-secondary" style="font-size:11px;padding:4px 12px"
                     onclick="autoAt2Refresh()">↻ Refresh</button>
           </div>
 
