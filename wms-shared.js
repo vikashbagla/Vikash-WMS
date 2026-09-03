@@ -883,8 +883,10 @@ async function wmsTxnFullFetch() {
         rows: rows,
         count: rows.length,
         checksum: syncBaseline ? syncBaseline.checksum : null,
-        maxUpdated: syncBaseline ? syncBaseline.maxUpdated : null
+        maxUpdated: syncBaseline ? syncBaseline.maxUpdated : null,
+        syncedAt: Date.now()
     };
+    _wmsTxnIdbPersist();
     console.log('Transactions: full load — ' + rows.length + ' rows');
     return rows;
 }
@@ -935,14 +937,110 @@ async function wmsTxnDeltaSync() {
 // window._wmsTxnCache and returns cache.rows. opts.force = skip the checksum
 // gate and full-reload. Callers (Trading, Reports, startup) do their own
 // module-specific derivation on the returned rows.
+// ============================================================================
+// TRANSACTIONS CACHE — cross-reload PERSISTENCE in IndexedDB (flag-gated).
+// ----------------------------------------------------------------------------
+// When localStorage.wms_txn_source === 'idb', the shared transactions cache
+// (window._wmsTxnCache) is persisted per-user in IndexedDB, so a hard boot does
+// NOT re-fetch all rows: it hydrates the last copy, then the EXISTING checksum
+// gate (wmsTxnSyncState) + delta reconcile (wmsTxnDeltaSync) bring it current —
+// unchanged => 0 rows fetched, changed => only the delta. Default (flag off) =
+// original in-memory-only behaviour, byte-for-byte unchanged (instant rollback).
+//
+// SAFETY (fastest-moving, highest-stakes table):
+//   • Keyed by USER id — a stored copy is only hydrated for the SAME user, so an
+//     account switch on a shared browser can never serve another user's rows.
+//   • The full-fingerprint checksum is KEPT (not cheapened): after hydrating, the
+//     probe always runs before the cache is trusted, and any delta integrity miss
+//     falls back to a full REST reload (wmsTxnDeltaSync returns false).
+//   • All IndexedDB access is try/caught and never blocks the load.
+//   • De-dupe: a non-force call within 3s of a fresh sync reuses it (collapses the
+//     boot burst of redundant probes) — force + the 2-min cadence + Refresh bypass it.
+// ============================================================================
+
+var _WMS_TXN_IDB_DB = 'wms-txn-cache', _WMS_TXN_IDB_STORE = 'txn', _WMS_TXN_IDB_VER = 1;
+
+function wmsTxnCacheMode() {
+    try { return localStorage.getItem('wms_txn_source') === 'idb'; } catch (e) { return false; }
+}
+function _wmsTxnUserKey() {
+    var u = window.currentUser;
+    return (u && (u.id || u.email)) ? String(u.id || u.email) : null;
+}
+function _wmsTxnIdbOpen() {
+    return new Promise(function (resolve, reject) {
+        if (!window.indexedDB) return reject(new Error('no indexedDB'));
+        var req = indexedDB.open(_WMS_TXN_IDB_DB, _WMS_TXN_IDB_VER);
+        req.onupgradeneeded = function () { var db = req.result; if (!db.objectStoreNames.contains(_WMS_TXN_IDB_STORE)) db.createObjectStore(_WMS_TXN_IDB_STORE); };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error || new Error('idb open error')); };
+    });
+}
+function _wmsTxnIdbGet(key) {
+    return _wmsTxnIdbOpen().then(function (db) { return new Promise(function (resolve, reject) {
+        var rq = db.transaction(_WMS_TXN_IDB_STORE, 'readonly').objectStore(_WMS_TXN_IDB_STORE).get(key);
+        rq.onsuccess = function () { resolve(rq.result || null); };
+        rq.onerror = function () { reject(rq.error); };
+    }); });
+}
+function _wmsTxnIdbPut(key, val) {
+    return _wmsTxnIdbOpen().then(function (db) { return new Promise(function (resolve, reject) {
+        var tx = db.transaction(_WMS_TXN_IDB_STORE, 'readwrite');
+        tx.objectStore(_WMS_TXN_IDB_STORE).put(val, key);
+        tx.oncomplete = function () { resolve(true); };
+        tx.onerror = function () { reject(tx.error); };
+    }); });
+}
+// Populate window._wmsTxnCache from IndexedDB (same user only). No-op if flag off,
+// cache already present, no user yet, or the stored userKey mismatches.
+async function _wmsTxnIdbHydrate() {
+    if (!wmsTxnCacheMode()) return false;
+    if (window._wmsTxnCache && Array.isArray(window._wmsTxnCache.rows) && window._wmsTxnCache.rows.length) return false;
+    var key = _wmsTxnUserKey(); if (!key) return false;
+    try {
+        var rec = await _wmsTxnIdbGet(key);
+        if (rec && rec.userKey === key && Array.isArray(rec.rows) && rec.rows.length && rec.checksum) {
+            // syncedAt:0 => the checksum probe ALWAYS runs before this hydrated copy is trusted.
+            window._wmsTxnCache = { rows: rec.rows, count: rec.rows.length, checksum: rec.checksum, maxUpdated: rec.maxUpdated || null, syncedAt: 0 };
+            console.log('Transactions: hydrated ' + rec.rows.length + ' rows from IndexedDB (will verify vs server)');
+            return true;
+        }
+    } catch (e) { /* ignore — fall through to normal REST load */ }
+    return false;
+}
+function _wmsTxnIdbPersist() {
+    if (!wmsTxnCacheMode()) return;
+    var key = _wmsTxnUserKey(); if (!key) return;
+    var c = window._wmsTxnCache; if (!c || !Array.isArray(c.rows) || !c.checksum) return;
+    _wmsTxnIdbPut(key, { userKey: key, rows: c.rows, checksum: c.checksum, maxUpdated: c.maxUpdated || null, storedAt: Date.now() }).catch(function () {});
+}
+// Clear this user's persisted transactions (call on logout). Best-effort.
+function wmsTxnIdbClear() {
+    var key = _wmsTxnUserKey();
+    _wmsTxnIdbOpen().then(function (db) {
+        var st = db.transaction(_WMS_TXN_IDB_STORE, 'readwrite').objectStore(_WMS_TXN_IDB_STORE);
+        if (key) st.delete(key); else st.clear();
+    }).catch(function () {});
+}
+
+
 async function wmsLoadTransactions(opts) {
     opts = opts || {};
+    // Cache mode: hydrate the in-memory cache from IndexedDB before deciding (same user only).
+    if (wmsTxnCacheMode() && !(window._wmsTxnCache && Array.isArray(window._wmsTxnCache.rows) && window._wmsTxnCache.rows.length)) {
+        try { await _wmsTxnIdbHydrate(); } catch (e) { /* ignore */ }
+    }
     var cache = window._wmsTxnCache;
     var haveCache = cache && Array.isArray(cache.rows) && cache.rows.length > 0 && cache.checksum != null;
+    // De-dupe the boot burst: a non-force call within 3s of a fresh sync reuses it (no re-probe).
+    if (!opts.force && haveCache && wmsTxnCacheMode() && cache.syncedAt && (Date.now() - cache.syncedAt) < 3000) {
+        return cache.rows;
+    }
     if (!opts.force && haveCache) {
         try {
             var sync = await wmsTxnSyncState();
             if (sync.checksum && sync.checksum === cache.checksum) {
+                cache.syncedAt = Date.now();
                 return cache.rows;  // unchanged
             }
             var ok = await wmsTxnDeltaSync();
@@ -950,6 +1048,8 @@ async function wmsLoadTransactions(opts) {
                 cache.count = cache.rows.length;
                 cache.checksum = sync.checksum;   // pre-manifest token → cache is a superset (safe)
                 cache.maxUpdated = sync.maxUpdated;
+                cache.syncedAt = Date.now();
+                _wmsTxnIdbPersist();
                 await _wmsCoverNewNfoContracts(cache.rows);
                 return cache.rows;
             }
