@@ -825,7 +825,9 @@
             // Baseline the master change-tokens now that every master is in memory, so the
             // background cadence (wmsMastersSyncNow) can delta them going forward (§A.4.4b).
             // No-ops harmlessly until the masters_sync_state migration is applied.
-            if (typeof wmsMastersCaptureBaseline === 'function') { try { await wmsMastersCaptureBaseline(); } catch (e) {} }
+            // Cache mode already baselined the master tokens inside wmsLoadSecuritiesCache
+            // (from the same probe) — skip a second ~750ms masters_sync_state round-trip.
+            if (!(_wmsSecCache && window.wmsRefData && wmsRefData._masterTokens) && typeof wmsMastersCaptureBaseline === 'function') { try { await wmsMastersCaptureBaseline(); } catch (e) {} }
 
             // Preload the ONE shared transactions cache (LESSONS §A.9.6) now that
             // securities are available (search-text enrichment needs the CM cache).

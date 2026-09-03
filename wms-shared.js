@@ -785,6 +785,10 @@ async function wmsLoadSecuritiesCache() {
     jobs.push(cmVer ? _wmsLoadOneFromCache('cm', cmVer) : wmsLoadSecuritiesCm(0, { all: true }));
     jobs.push(nfoVer ? _wmsLoadOneFromCache('nfo', nfoVer) : wmsLoadSecuritiesNfo());
     var res = await Promise.all(jobs);
+    // Establish the master change-token baseline from THIS probe so the boot does
+    // NOT call masters_sync_state a second time via wmsMastersCaptureBaseline
+    // (each call is a ~750ms round-trip). The 2-min cadence compares against this.
+    wmsRefData._masterTokens = probe;
     console.log('Securities loaded (cache mode): CM=' + res[0] + ' (' + ((wmsRefData.securitiesCm || []).length) + '), NFO=' + res[1] + ' (' + ((wmsRefData.securitiesNfo || []).length) + ')');
 }
 
