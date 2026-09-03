@@ -672,7 +672,8 @@ var WMS_CACHE_BUCKET = 'reference-cache';
 var _WMS_IDB_NAME = 'wms-ref-cache', _WMS_IDB_STORE = 'securities', _WMS_IDB_VER = 1;
 
 function wmsSecuritiesCacheMode() {
-    try { return localStorage.getItem('wms_securities_source') === 'cache'; } catch (e) { return false; }
+    // DEFAULT = cache (off-meter reference-cache). Set localStorage.wms_securities_source='rest' to opt out (instant rollback).
+    try { return localStorage.getItem('wms_securities_source') !== 'rest'; } catch (e) { return true; }
 }
 
 // ---- IndexedDB (per-browser copy, keyed 'cm'/'nfo' -> {version, rows}) -------
