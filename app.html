@@ -809,11 +809,17 @@
             var refPromise = wmsLoadRefData();
 
             loaderMsg.textContent = 'Loading securities data...';
-            await Promise.all([
-                refPromise,
-                wmsLoadSecuritiesCm(),
-                wmsLoadSecuritiesNfo()
-            ]);
+            var _wmsSecCache = false;
+            try { _wmsSecCache = (localStorage.getItem('wms_securities_source') === 'cache'); } catch (e) {}
+            if (_wmsSecCache && typeof wmsLoadSecuritiesCache === 'function') {
+                await Promise.all([ refPromise, wmsLoadSecuritiesCache() ]);
+            } else {
+                await Promise.all([
+                    refPromise,
+                    wmsLoadSecuritiesCm(),
+                    wmsLoadSecuritiesNfo()
+                ]);
+            }
             console.log('All master data loaded — activating app');
 
             // Baseline the master change-tokens now that every master is in memory, so the

@@ -625,14 +625,19 @@ async function wmsMastersSyncNow() {
     var base = wmsRefData._masterTokens || {};
     var next = {}; for (var k in probe) next[k] = probe[k];
     var changed = false;
+    var cacheMode = wmsSecuritiesCacheMode();
     function moved(t) { return probe[t] && (!base[t] || base[t].checksum !== probe[t].checksum); }
 
     if (moved('securities_nfo')) {
-        try { await _wmsNfoDeltaSync(); changed = true; }
+        try { await _wmsNfoDeltaSync(); if (cacheMode) _wmsIdbPut('nfo', probe.securities_nfo.checksum, wmsRefData.securitiesNfo).catch(function(){}); changed = true; }
         catch (e) { console.warn('NFO master delta failed:', e && e.message); if (base.securities_nfo) next.securities_nfo = base.securities_nfo; }
     }
     if (moved('securities_db')) {
-        try { await wmsLoadSecuritiesCm(0, { all: true }); changed = true; }
+        try {
+            if (cacheMode) { await _wmsCmDeltaSync(base.securities_db && base.securities_db.max_updated); _wmsIdbPut('cm', probe.securities_db.checksum, wmsRefData.securitiesCm).catch(function(){}); }
+            else { await wmsLoadSecuritiesCm(0, { all: true }); }
+            changed = true;
+        }
         catch (e) { console.warn('CM master reload failed:', e && e.message); if (base.securities_db) next.securities_db = base.securities_db; }
     }
     var smallMoved = WMS_MASTER_SMALL.filter(moved);
@@ -641,8 +646,164 @@ async function wmsMastersSyncNow() {
         catch (e) { console.warn('small masters reload failed:', e && e.message); smallMoved.forEach(function(t){ if (base[t]) next[t] = base[t]; }); }
     }
 
+    if (cacheMode && changed) wmsFireCacheGen();
     wmsRefData._masterTokens = next;
     return changed;
+}
+
+
+// ============================================================================
+// OFF-METER SECURITIES CACHE (EGRESS-OPTIMISATION-PLAN-v2) — flag-gated.
+// ----------------------------------------------------------------------------
+// When localStorage.wms_securities_source === 'cache', the securities masters
+// load from a gzipped, CHECKSUM-NAMED file on the PUBLIC `reference-cache`
+// Storage bucket (served off the DB/REST egress meter) instead of paginated
+// REST. The filename carries the exact md5 masters_sync_state() returns, so the
+// browser builds the URL from the checksum it already probes at boot:
+//   200 -> decompress + cache in IndexedDB (unchanged boots then cost 0 network)
+//   404 -> file behind -> REST fallback (correct) + fire securities-cache-gen.
+// Default (no flag / 'rest') = the original REST path, byte-for-byte unchanged.
+// The cache file is the FULL securities_db incl. debt, so debt is NOT loaded
+// separately in cache mode (securitiesDebtLoaded is set true).
+// NOTE: needs DecompressionStream (Chrome/Edge/Firefox, Safari 16.4+).
+// ============================================================================
+
+var WMS_CACHE_BUCKET = 'reference-cache';
+var _WMS_IDB_NAME = 'wms-ref-cache', _WMS_IDB_STORE = 'securities', _WMS_IDB_VER = 1;
+
+function wmsSecuritiesCacheMode() {
+    try { return localStorage.getItem('wms_securities_source') === 'cache'; } catch (e) { return false; }
+}
+
+// ---- IndexedDB (per-browser copy, keyed 'cm'/'nfo' -> {version, rows}) -------
+function _wmsIdbOpen() {
+    return new Promise(function (resolve, reject) {
+        if (!window.indexedDB) return reject(new Error('no indexedDB'));
+        var req = indexedDB.open(_WMS_IDB_NAME, _WMS_IDB_VER);
+        req.onupgradeneeded = function () { var db = req.result; if (!db.objectStoreNames.contains(_WMS_IDB_STORE)) db.createObjectStore(_WMS_IDB_STORE); };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error || new Error('idb open error')); };
+    });
+}
+function _wmsIdbGet(key) {
+    return _wmsIdbOpen().then(function (db) {
+        return new Promise(function (resolve, reject) {
+            var rq = db.transaction(_WMS_IDB_STORE, 'readonly').objectStore(_WMS_IDB_STORE).get(key);
+            rq.onsuccess = function () { resolve(rq.result || null); };
+            rq.onerror = function () { reject(rq.error); };
+        });
+    });
+}
+function _wmsIdbPut(key, version, rows) {
+    return _wmsIdbOpen().then(function (db) {
+        return new Promise(function (resolve, reject) {
+            var tx = db.transaction(_WMS_IDB_STORE, 'readwrite');
+            tx.objectStore(_WMS_IDB_STORE).put({ version: version, rows: rows, stored_at: Date.now() }, key);
+            tx.oncomplete = function () { resolve(true); };
+            tx.onerror = function () { reject(tx.error); };
+        });
+    });
+}
+
+// ---- apply rows into wmsRefData (mirror of the REST loaders' post-state) -----
+function _wmsApplyCm(rows) {
+    wmsRefData.securitiesCm = rows;
+    wmsRefData.securitiesCmMap = {};
+    rows.forEach(function (r) { wmsRefData.securitiesCmMap[r.id] = r; });
+    wmsRefData.securitiesCmReady = true;
+    wmsRefData.securitiesDebtLoaded = true;   // the cache file is the FULL set incl. debt
+}
+function _wmsApplyNfo(rows) {
+    wmsRefData.securitiesNfo = rows;
+    wmsRefData.securitiesNfoMap = {};
+    rows.forEach(function (r) { wmsRefData.securitiesNfoMap[r.id] = r; });
+    wmsRefData.securitiesNfoReady = true;
+}
+
+// ---- fetch + gunzip a checksum-named cache file (public, no auth) ------------
+async function _wmsFetchCacheFile(kind, version) {
+    var fname = (kind === 'cm' ? 'securities_cm.' : 'securities_nfo.') + version + '.json.gz';
+    var url = SUPABASE_URL + '/storage/v1/object/public/' + WMS_CACHE_BUCKET + '/' + fname;
+    var res = await fetch(url);                  // no auth — public bucket, CDN-served
+    if (!res.ok) return null;                     // 404 = file behind the DB
+    var buf = await res.arrayBuffer();
+    var text = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+    var doc = JSON.parse(text);
+    return doc && Array.isArray(doc.rows) ? doc.rows : null;
+}
+
+// ---- fire the regenerator (owner-only, fire-and-forget) ----------------------
+function wmsFireCacheGen() {
+    if (!wmsSecuritiesCacheMode()) return;
+    if (window.wmsAccess && !window.wmsAccess.isOwner) return;   // only the owner JWT is accepted by the EF
+    try {
+        fetch(SUPABASE_URL + '/functions/v1/securities-cache-gen', {
+            method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }), body: '{}'
+        }).catch(function () {});
+    } catch (e) { /* never blocks */ }
+}
+
+// ---- load one master (IDB -> Storage file -> REST fallback) ------------------
+async function _wmsLoadOneFromCache(kind, version) {
+    try {                                          // 1) IndexedDB — same version = instant, 0 network
+        var cached = await _wmsIdbGet(kind);
+        if (cached && cached.version === version && Array.isArray(cached.rows)) {
+            (kind === 'cm' ? _wmsApplyCm : _wmsApplyNfo)(cached.rows);
+            return 'idb';
+        }
+    } catch (e) { /* fall through */ }
+    try {                                          // 2) Storage cache file (cached-egress)
+        var rows = await _wmsFetchCacheFile(kind, version);
+        if (rows) {
+            (kind === 'cm' ? _wmsApplyCm : _wmsApplyNfo)(rows);
+            _wmsIdbPut(kind, version, rows).catch(function () {});
+            return 'storage';
+        }
+    } catch (e) { /* fall through */ }
+    // 3) REST fallback (file behind / error) + fire regenerator so it catches up
+    if (kind === 'cm') await wmsLoadSecuritiesCm(0, { all: true });
+    else await wmsLoadSecuritiesNfo();
+    try { _wmsIdbPut(kind, version, kind === 'cm' ? wmsRefData.securitiesCm : wmsRefData.securitiesNfo).catch(function () {}); } catch (e) {}
+    wmsFireCacheGen();
+    return 'rest';
+}
+
+// ---- boot orchestrator: probe checksums, load both masters from cache --------
+async function wmsLoadSecuritiesCache() {
+    var probe;
+    try { probe = await wmsMastersSyncState(); }
+    catch (e) {                                    // checksum RPC unavailable -> plain REST
+        console.warn('cache mode: masters_sync_state unavailable, using REST', e && e.message);
+        await Promise.all([wmsLoadSecuritiesCm(), wmsLoadSecuritiesNfo()]);
+        wmsLoadSecuritiesDebt();
+        return;
+    }
+    var cmVer = probe.securities_db && probe.securities_db.checksum;
+    var nfoVer = probe.securities_nfo && probe.securities_nfo.checksum;
+    var jobs = [];
+    jobs.push(cmVer ? _wmsLoadOneFromCache('cm', cmVer) : wmsLoadSecuritiesCm(0, { all: true }));
+    jobs.push(nfoVer ? _wmsLoadOneFromCache('nfo', nfoVer) : wmsLoadSecuritiesNfo());
+    var res = await Promise.all(jobs);
+    console.log('Securities loaded (cache mode): CM=' + res[0] + ' (' + ((wmsRefData.securitiesCm || []).length) + '), NFO=' + res[1] + ' (' + ((wmsRefData.securitiesNfo || []).length) + ')');
+}
+
+// ---- cache-mode CM delta on change: only rows updated since the last max -----
+// Cheap replacement for the full REST reload when securities_db changes mid-
+// session (e.g. a broker_tokens write). Misses hard-deletes (rare — securities
+// are deactivated via an UPDATE, which this catches); a cold reload reconciles.
+async function _wmsCmDeltaSync(sinceMaxUpdated) {
+    if (!sinceMaxUpdated) { await wmsLoadSecuritiesCm(0, { all: true }); return; }   // no baseline -> full reload
+    var url = SUPABASE_URL + '/rest/v1/securities_db?select=' + WMS_SECURITIES_CM_SELECT +
+              '&updated_at=gt.' + encodeURIComponent(sinceMaxUpdated) + '&order=id.asc';
+    var rows = await wmsFetchAllRaw(url);
+    if (!wmsRefData.securitiesCmMap) wmsRefData.securitiesCmMap = {};
+    if (!Array.isArray(wmsRefData.securitiesCm)) wmsRefData.securitiesCm = [];
+    rows.forEach(function (r) {
+        if (wmsRefData.securitiesCmMap[r.id]) {
+            for (var i = 0; i < wmsRefData.securitiesCm.length; i++) { if (wmsRefData.securitiesCm[i].id === r.id) { wmsRefData.securitiesCm[i] = r; break; } }
+        } else { wmsRefData.securitiesCm.push(r); }
+        wmsRefData.securitiesCmMap[r.id] = r;
+    });
 }
 
 // ============================================================================
