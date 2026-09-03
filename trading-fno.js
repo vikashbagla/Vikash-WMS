@@ -1067,7 +1067,7 @@ function trFnoRenderGrouped(positions) {
         }
 
         // Symbol-level summary row — highlighted, no arrow, no contract list
-        html += '<tr class="trFno-symbol-row' + (p.autoAll ? ' trFno-auto' : '') + '" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
+        html += '<tr class="trFno-symbol-row" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
             '<td><span class="trFno-symbol-name">' + wmsEsc(p.companyName) + '</span>' +
                 '<div class="trFno-symbol-sub">' + wmsEsc(p.underlying) + '</div></td>' +
             '<td></td>' +
