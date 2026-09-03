@@ -809,8 +809,8 @@
             var refPromise = wmsLoadRefData();
 
             loaderMsg.textContent = 'Loading securities data...';
-            var _wmsSecCache = false;
-            try { _wmsSecCache = (localStorage.getItem('wms_securities_source') === 'cache'); } catch (e) {}
+            var _wmsSecCache = true;
+            try { _wmsSecCache = (localStorage.getItem('wms_securities_source') !== 'rest'); } catch (e) { _wmsSecCache = true; }
             if (_wmsSecCache && typeof wmsLoadSecuritiesCache === 'function') {
                 await Promise.all([ refPromise, wmsLoadSecuritiesCache() ]);
             } else {
