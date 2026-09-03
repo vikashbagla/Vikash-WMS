@@ -441,16 +441,15 @@
 .trFno-detail-row:hover { background: #fafbff; }
 .trFno-detail-row:not(.trFno-detail-open) td { color: #a0aec0; }
 
-/* Auto Trading source marker (trade-source markers, 2026-09-03) — a faint
-   indigo wash + a soft 3px left bar on trades PLACED BY the Auto Trading module:
+/* Auto Trading source marker (trade-source markers, 2026-09-03) — a faint 5%
+   indigo wash on trades PLACED BY the Auto Trading module:
    AT2 (MS007 / Scalp / Pairs) strategies and the KH webhook. Manual orders,
    hand-keyed rows, imports and adviser trades stay plain. The wash sits on the
-   cells so it composites over the symbol row's own light-blue background; the
-   bar is an inset box-shadow on the first cell (works with border-collapse, no
-   layout shift). Symbol/contract rows are tinted only when the WHOLE position is
-   auto-sourced; individual legs are tinted by their own opening trade. */
-.trFno-auto td { background-color: rgba(99, 102, 241, 0.07); }
-.trFno-auto td:first-child { box-shadow: inset 3px 0 0 #6366f1; }
+   data cells only (Qty..Net P&L, td 3+), leaving the Underlying/Contract labels
+   plain. Symbol (underlying) rows are NOT tinted; contract rows are tinted only
+   when the WHOLE position is auto-sourced, and individual legs by their own
+   opening trade. */
+.trFno-auto td:nth-child(n+3) { background-color: rgba(99, 102, 241, 0.05); }
 .trFno-detail-row:not(.trFno-detail-open) td span { color: #a0aec0 !important; }
 .trFno-total-row { background: #edf2f7; border-bottom: 2px solid #cbd5e0; }
 .trFno-total-row td { padding: 8px 8px; font-size: 12px; font-weight: 600; background: #edf2f7; }
