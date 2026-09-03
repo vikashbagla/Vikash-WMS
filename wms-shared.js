@@ -961,7 +961,15 @@ async function wmsTxnDeltaSync() {
 var _WMS_TXN_IDB_DB = 'wms-txn-cache', _WMS_TXN_IDB_STORE = 'txn', _WMS_TXN_IDB_VER = 1;
 
 function wmsTxnCacheMode() {
-    try { return localStorage.getItem('wms_txn_source') === 'idb'; } catch (e) { return false; }
+    // DEFAULT = on (persist in IndexedDB). Set localStorage.wms_txn_source='rest' to opt out (rollback).
+    try { return localStorage.getItem('wms_txn_source') !== 'rest'; } catch (e) { return true; }
+}
+// Force a FULL server reload of the transactions cache (bypasses IndexedDB + delta)
+// and rewrites the persisted copy. Wired to the header sync button (NOT F5). Re-derives
+// and re-renders the active module afterwards. Returns the fresh rows.
+async function wmsForceRefreshTxn() {
+    var rows = await wmsLoadTransactions({ force: true });   // wmsTxnFullFetch -> _wmsTxnIdbPersist
+    return rows;
 }
 function _wmsTxnUserKey() {
     var u = window.currentUser;

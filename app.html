@@ -46,7 +46,7 @@
         <div class="header-content">
             <div class="logo-section">
                 <h1>💼 WMS</h1>
-                <span class="tagline">Wealth Management System</span>
+                <button class="btn-txn-sync" id="appTxnSyncBtn" title="Force full transactions refresh from server (rebuilds the local cache)">⟳</button>
                 <span class="mobile-unit-badge" style="display:none; font-size:9px; color:#718096; background:#f0f4f8; padding:1px 6px; border-radius:3px; white-space:nowrap;">₹ '000</span>
             </div>
             <div class="index-ticker" id="indexTicker">
@@ -863,6 +863,25 @@
         }
         window.wmsRefreshActiveModule = wmsRefreshActiveModule;
         document.getElementById('appRefreshBtn').addEventListener('click', wmsRefreshActiveModule);
+
+        // Header ⟳ = FORCE a full transactions refresh from the server (rebuild the local
+        // IndexedDB cache). Deliberately separate from F5 (which delta-syncs + re-prices).
+        async function wmsHeaderForceTxnRefresh() {
+            var b = document.getElementById('appTxnSyncBtn');
+            if (b) { b.classList.add('spinning'); b.disabled = true; }
+            try {
+                if (typeof wmsForceRefreshTxn === 'function') await wmsForceRefreshTxn();
+                if (typeof wmsRefreshActiveModule === 'function') wmsRefreshActiveModule();
+                if (typeof showAlert === 'function') showAlert('Transactions fully refreshed from server', 'success', 2000);
+            } catch (e) {
+                if (typeof showAlert === 'function') showAlert('Full refresh failed: ' + (e && e.message ? e.message : e), 'error');
+            } finally {
+                if (b) { b.classList.remove('spinning'); b.disabled = false; }
+            }
+        }
+        window.wmsHeaderForceTxnRefresh = wmsHeaderForceTxnRefresh;
+        var _txnSyncBtn = document.getElementById('appTxnSyncBtn');
+        if (_txnSyncBtn) _txnSyncBtn.addEventListener('click', wmsHeaderForceTxnRefresh);
 
         // Show-zero: one control (header 👁 button + F6) toggles zero-value rows for the ACTIVE module.
         function wmsShowZeroState() {
