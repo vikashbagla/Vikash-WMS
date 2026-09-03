@@ -2774,32 +2774,26 @@ async function wmsFetchFnoContractPrices(symbols, forceRefresh) {
     });
     if (toFetch.length === 0) return;
 
-    // Batch fetch from Fyers (NSE: prefix for F&O contracts)
-    for (var i = 0; i < toFetch.length; i += 50) {
-        var chunk = toFetch.slice(i, i + 50);
-        var fyersKeys = chunk.map(function(s) { return 'NSE:' + s; });
-        try {
-            var data = await window.fyersCall({ action: 'quotes', symbols: fyersKeys });
-            if (data && data.d) {
-                data.d.forEach(function(item) {
-                    if (item.v && item.v.lp > 0 && item.v.short_name) {
-                        wmsLivePrices[item.v.short_name] = {
-                            lp: item.v.lp,
-                            ch: item.v.ch || 0,
-                            chp: item.v.chp || 0,
-                            high: item.v.high_price || null,
-                            low: item.v.low_price || null,
-                            resolvedSymbol: item.v.symbol
-                        };
-                    }
-                });
-            }
-        } catch (err) {
-            console.warn('wmsFetchFnoContractPrices: error:', err.message);
+    // ONE lean call — the EF batches to 50 internally + trims each quote (live-price optimisation)
+    var fyersKeys = toFetch.map(function(s) { return 'NSE:' + s; });
+    try {
+        var data = await window.fyersCall({ action: 'quotes', symbols: fyersKeys, lean: true });
+        if (data && data.d) {
+            data.d.forEach(function(item) {
+                if (item.v && item.v.lp > 0 && item.v.short_name) {
+                    wmsLivePrices[item.v.short_name] = {
+                        lp: item.v.lp,
+                        ch: item.v.ch || 0,
+                        chp: item.v.chp || 0,
+                        high: item.v.high_price || null,
+                        low: item.v.low_price || null,
+                        resolvedSymbol: item.v.symbol
+                    };
+                }
+            });
         }
-        if (i + 50 < toFetch.length) {
-            await new Promise(function(r) { setTimeout(r, 200); });
-        }
+    } catch (err) {
+        console.warn('wmsFetchFnoContractPrices: error:', err.message);
     }
 }
 

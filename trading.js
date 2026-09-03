@@ -446,9 +446,13 @@ async function trFnoBannerRefreshFromDefault(forceRefresh) {
     if (brkIds.length > 0) txns = txns.filter(function(t) { return t.broker_id && brkIds.indexOf(t.broker_id) >= 0; });
     if (tagNames.length > 0) txns = txns.filter(function(t) { return wmsMatchTagsFilter(t.tags, tagNames, tagLogic); });
 
+    var _fnoToday = new Date().toISOString().slice(0, 10);
     var symbols = {};
     txns.forEach(function(t) {
         if (t.symbol && t.symbol !== t.short_symbol) {
+            // Skip expired contracts — no live price exists for them (live-price optimisation)
+            var nrec = (typeof wmsRefData !== 'undefined' && wmsRefData.securitiesNfoMap) ? wmsRefData.securitiesNfoMap[t.security_id] : null;
+            if (nrec && nrec.expiry_date && nrec.expiry_date < _fnoToday) return;
             var sym = t.symbol.replace(/^[A-Z]+:/, '');
             symbols[sym] = true;
         }
