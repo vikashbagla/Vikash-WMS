@@ -3344,6 +3344,7 @@ function wmsIsRefreshWindow() {
 function wmsBuildRefreshSymbols() {
     var seen = {};
     var list = [];
+    var _wmsRefToday = new Date().toISOString().slice(0, 10);   // drop expired F&O / inactive below
 
     // 1. Equity symbols from transactions
     if (typeof trTransactions !== 'undefined' && trTransactions) {
@@ -3351,10 +3352,11 @@ function wmsBuildRefreshSymbols() {
             if (t.security_type === 'NFO' || t.security_type === 'MCX') return;
             var ss = t.short_symbol;
             if (!ss || seen[ss]) return;
-            seen[ss] = true;
-            var fKey = null;
             var dbRec = (typeof wmsRefData !== 'undefined' && wmsRefData.securitiesCmMap)
                 ? wmsRefData.securitiesCmMap[t.security_id] : null;
+            if (dbRec && dbRec.is_active === false) return;   // drop delisted/inactive (live price is dead weight)
+            seen[ss] = true;
+            var fKey = null;
             if (dbRec && dbRec.broker_tokens && dbRec.broker_tokens.fyers) {
                 fKey = dbRec.broker_tokens.fyers.nse_symbol || dbRec.broker_tokens.fyers.bse_symbol;
             }
@@ -3368,6 +3370,9 @@ function wmsBuildRefreshSymbols() {
         trTransactions.forEach(function(t) {
             if (t.security_type !== 'NFO' && t.security_type !== 'MCX') return;
             if (!t.symbol || t.symbol === t.short_symbol) return;
+            var nrec = (typeof wmsRefData !== 'undefined' && wmsRefData.securitiesNfoMap)
+                ? wmsRefData.securitiesNfoMap[t.security_id] : null;
+            if (nrec && (nrec.is_active === false || (nrec.expiry_date && nrec.expiry_date < _wmsRefToday))) return;   // drop EXPIRED / inactive F&O
             var bare = t.symbol.replace(/^[A-Z]+:/, '');
             if (!seen[bare]) {
                 seen[bare] = true;
@@ -3398,11 +3403,12 @@ function wmsBuildRefreshSymbols() {
             if (t.securityType === 'NFO' || t.securityType === 'MCX') return;
             var ss = t.shortSymbol;
             if (!ss || seen[ss]) return;
+            var dbRec = (typeof wmsRefData !== 'undefined' && wmsRefData.securitiesCmMap)
+                ? wmsRefData.securitiesCmMap[t.securityId] : null;
+            if (dbRec && dbRec.is_active === false) return;
             seen[ss] = true;
             // Same broker_tokens lookup as Trading (section 1) — handles REITs, InvITs, BSE stocks
             var fKey = null;
-            var dbRec = (typeof wmsRefData !== 'undefined' && wmsRefData.securitiesCmMap)
-                ? wmsRefData.securitiesCmMap[t.securityId] : null;
             if (dbRec && dbRec.broker_tokens && dbRec.broker_tokens.fyers) {
                 fKey = dbRec.broker_tokens.fyers.nse_symbol || dbRec.broker_tokens.fyers.bse_symbol;
             }
@@ -3474,44 +3480,41 @@ async function wmsStandardRefresh(forceRefresh, opts) {
         toFetch = toFetch.filter(function(s) { return /^MCX:/.test(s.fyersKey); });
     }
 
-    // 2. Batch fetch from Fyers (chunks of 50)
+    // 2. Fetch from Fyers — ONE lean call for the whole list. The fyers-market-data EF
+    //    batches to 50 internally (Fyers' cap) and, with lean:true, trims each quote to the
+    //    fields we use (~71% smaller response, 1 EF invocation instead of ~6). The mapping
+    //    below is unchanged — the lean response keeps item.v.symbol / short_name.
     if (toFetch.length > 0) {
-        for (var i = 0; i < toFetch.length; i += 50) {
-            var chunk = toFetch.slice(i, i + 50);
-            var fyersKeys = chunk.map(function(s) { return s.fyersKey; });
-            try {
-                var data = await window.fyersCall({ action: 'quotes', symbols: fyersKeys });
-                if (data && data.d) {
-                    data.d.forEach(function(item) {
-                        if (!item.v) return;
-                        var priceData = {
-                            lp: item.v.lp || 0,
-                            ch: item.v.ch || 0,
-                            chp: item.v.chp || 0,
-                            high: item.v.high_price || null,
-                            low: item.v.low_price || null,
-                            resolvedSymbol: item.v.symbol
-                        };
-                        // Store under all relevant keys so every consumer finds it
-                        if (item.v.symbol) wmsLivePrices[item.v.symbol] = priceData;
-                        if (item.v.short_name) wmsLivePrices[item.v.short_name] = priceData;
-                        // Map back to our requested cacheKey + fyersKey
-                        chunk.forEach(function(s) {
-                            var retBase = (item.v.symbol || '').replace(/^[A-Z]+:/, '');
-                            var reqBase = s.fyersKey.replace(/^[A-Z]+:/, '');
-                            if (retBase === reqBase || item.v.short_name === s.cacheKey) {
-                                wmsLivePrices[s.cacheKey] = priceData;
-                                wmsLivePrices[s.fyersKey] = priceData;
-                            }
-                        });
+        var fyersKeys = toFetch.map(function(s) { return s.fyersKey; });
+        try {
+            var data = await window.fyersCall({ action: 'quotes', symbols: fyersKeys, lean: true });
+            if (data && data.d) {
+                data.d.forEach(function(item) {
+                    if (!item.v) return;
+                    var priceData = {
+                        lp: item.v.lp || 0,
+                        ch: item.v.ch || 0,
+                        chp: item.v.chp || 0,
+                        high: item.v.high_price || null,
+                        low: item.v.low_price || null,
+                        resolvedSymbol: item.v.symbol
+                    };
+                    // Store under all relevant keys so every consumer finds it
+                    if (item.v.symbol) wmsLivePrices[item.v.symbol] = priceData;
+                    if (item.v.short_name) wmsLivePrices[item.v.short_name] = priceData;
+                    // Map back to our requested cacheKey + fyersKey
+                    toFetch.forEach(function(s) {
+                        var retBase = (item.v.symbol || '').replace(/^[A-Z]+:/, '');
+                        var reqBase = s.fyersKey.replace(/^[A-Z]+:/, '');
+                        if (retBase === reqBase || item.v.short_name === s.cacheKey) {
+                            wmsLivePrices[s.cacheKey] = priceData;
+                            wmsLivePrices[s.fyersKey] = priceData;
+                        }
                     });
-                }
-            } catch (err) {
-                console.warn('wmsStandardRefresh: batch error:', err.message);
+                });
             }
-            if (i + 50 < toFetch.length) {
-                await new Promise(function(r) { setTimeout(r, 200); });
-            }
+        } catch (err) {
+            console.warn('wmsStandardRefresh: fetch error:', err.message);
         }
     }
 
