@@ -480,6 +480,8 @@ function trFnoCalcPositions(filtersOverride) {
             var cmp = contractCache ? contractCache.lp : 0;
 
             var matchedRows = [];
+            // Source-of-trade lookup for the auto-trading tint (trade-source markers)
+            var _byId = {}; g.txns.forEach(function(x){ _byId[x.id] = x; });
 
             // Matched rows come from gains[]. Short-cover gains have buyDate > sellDate.
             result.gains.forEach(function(gain) {
@@ -500,6 +502,7 @@ function trFnoCalcPositions(filtersOverride) {
                     var dp = wmsCalcFnoClosedTodayPnl(gain.qty, rowIsShort, openerDate, openerPpu, closerPpu, contractCache, todayStr);
                     if (dp !== 0) mRow.dayPnl = dp;
                 }
+                mRow._auto = wmsIsAutoTradeSource(_byId[rowIsShort ? gain.sellTxnId : gain.buyTxnId] || _byId[gain.buyTxnId] || _byId[gain.sellTxnId]);
                 matchedRows.push(mRow);
             });
 
@@ -534,6 +537,7 @@ function trFnoCalcPositions(filtersOverride) {
                     var tradePrice = lotIsShort ? row.sellAvg  : row.buyAvg;
                     var dpO = wmsCalcFnoDayPnl(absQty, lotIsShort, tradeDate, tradePrice, contractCache);
                     if (dpO !== 0) row.dayPnl = dpO;
+                    row._auto = wmsIsAutoTradeSource(_byId[lot.txnId]);
                     matchedRows.push(row);
                 });
             });
@@ -605,7 +609,8 @@ function trFnoCalcPositions(filtersOverride) {
                 isShort: isShort, isFuture: isFuture, rows: matchedRows,
                 totalQty: totalQty, totalBuyAmt: totalBuyAmt, totalSellAmt: totalSellAmt,
                 totalPnl: totalPnl, openQty: openQty, openCost: openCost,
-                unrealisedPnl: unrealisedPnl, dayPnl: dayPnl
+                unrealisedPnl: unrealisedPnl, dayPnl: dayPnl,
+                autoAll: g.txns.length > 0 && g.txns.every(wmsIsAutoTradeSource)
             });
         });
 
@@ -645,7 +650,8 @@ function trFnoCalcPositions(filtersOverride) {
             totalSellAmt: symbolTotalSellAmt,
             futOpenQty: absFutQty,
             futAvgCost: futAvgCost,
-            futIsShort: symbolFutIsShort
+            futIsShort: symbolFutIsShort,
+            autoAll: symbolTrades.length > 0 && symbolTrades.every(wmsIsAutoTradeSource)
         });
     });
 
@@ -1061,7 +1067,7 @@ function trFnoRenderGrouped(positions) {
         }
 
         // Symbol-level summary row — highlighted, no arrow, no contract list
-        html += '<tr class="trFno-symbol-row" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
+        html += '<tr class="trFno-symbol-row' + (p.autoAll ? ' trFno-auto' : '') + '" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
             '<td><span class="trFno-symbol-name">' + wmsEsc(p.companyName) + '</span>' +
                 '<div class="trFno-symbol-sub">' + wmsEsc(p.underlying) + '</div></td>' +
             '<td></td>' +
@@ -1102,7 +1108,7 @@ function trFnoRenderGrouped(positions) {
                 var cgSellPrice = (cg.isShort && cgAvgPrice) ? cgAvgPrice : '';
 
                 // Sub-group header row (clickable to expand detail rows)
-                html += '<tr class="trFno-detail-header trFno-group-row" data-fno-group="' + wmsEsc(groupKey) + '">' +
+                html += '<tr class="trFno-detail-header trFno-group-row' + (cg.autoAll ? ' trFno-auto' : '') + '" data-fno-group="' + wmsEsc(groupKey) + '">' +
                     '<td style="padding-left:24px;">' + wmsEsc(cg.groupLabel) + '</td>' +
                     '<td>' + wmsEsc(cg.contractLabel) + shortLabel + '</td>' +
                     '<td class="text-right">' + formatQuantity(cg.openQty) + '</td>' +
@@ -1187,6 +1193,7 @@ function trFnoRenderFlat(positions) {
         var isOpen = r.type === 'open';
         var rowClass = 'trFno-detail-row';
         if (isOpen) rowClass += ' trFno-detail-open';
+        if (r._auto) rowClass += ' trFno-auto';
 
         var buyDateHtml = r.buyDate ? formatDate(r.buyDate) : '-';
         var sellDateHtml = r.sellDate ? formatDate(r.sellDate) : '-';
@@ -1261,6 +1268,7 @@ function trFnoRenderDetailRow(r, cg) {
     var isOpen = r.type === 'open';
     var rowClass = 'trFno-detail-row';
     if (isOpen) rowClass += ' trFno-detail-open';
+    if (r._auto) rowClass += ' trFno-auto';   // auto-trading-module trade tint
 
     var buyDateHtml = r.buyDate ? formatDate(r.buyDate) : '-';
     var sellDateHtml = r.sellDate ? formatDate(r.sellDate) : '-';
