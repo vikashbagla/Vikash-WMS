@@ -9036,15 +9036,41 @@ async function auScalpRecon(btn) {
             body: JSON.stringify({ action: 'recon' })
         });
         var j = await r.json().catch(function () { return { error: 'response was not JSON' }; });
-        if (r.ok && j.ok) {
-            var notes = (j.notes && j.notes.length) ? j.notes.join('\n') : 'Nothing to do — every live cover is resting.';
-            window.alert('✓ Recon complete\n\n' + notes);
-        } else {
-            window.alert('Recon — ' + (j.error || ('HTTP ' + r.status)));
+        if (!(r.ok && j.ok)) { window.alert('Reconcile failed — ' + (j.error || ('HTTP ' + r.status))); return; }
+
+        var raw = j.notes || [];
+        console.log('[AT2-Scalp recon] raw notes:', raw);   // full engine detail lives here
+
+        // Refresh the book first so the status line reflects what recon just did.
+        try { await autoScalpRefresh(); } catch (e) { /* status falls back to pre-refresh cache */ }
+
+        // Status straight from the (refreshed) live book — robust, not parsed from text.
+        var HELD = ['open_protected', 'open_unprotected'];
+        var live = (_auScalp.trades || []).filter(function (t) { return t.mode === 'live' && HELD.indexOf(t.status) >= 0; });
+        var prot = live.filter(function (t) { return t.status === 'open_protected'; }).length;
+        var unprot = live.length - prot;
+
+        // Rung UUID -> "Book · CONTRACT"; keep only lines that describe a CHANGE
+        // (a re-arm or an alert) — drop the "already resting / no-op" chatter.
+        function labelFor(id) {
+            var t = (_auScalp.trades || []).find(function (x) { return x.id === id; });
+            if (!t) return id.slice(0, 8);
+            var bk = auScalpBookName(t.book_id) || 'book';
+            var sec = auScalpSecurity(t);
+            var sym = sec && sec.symbol ? String(sec.symbol).replace(/^(NSE|BSE|MCX):/, '').replace(/FUT$/, '') : '';
+            return bk + (sym ? ' · ' + sym : '');
         }
-        autoScalpRefresh();
+        var UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+        var KEEP = /QUEUED|ALERT|REJECTED|NOT armed|unverifiable|could NOT|failed/i;
+        var changes = raw.filter(function (n) { return KEEP.test(n); }).map(function (n) {
+            return '• ' + n.replace(/^rung\s+/i, '').replace(UUID, labelFor);
+        });
+
+        window.alert('✓ Reconcile complete\n\n'
+            + live.length + ' live cover' + (live.length === 1 ? '' : 's') + ' — ' + prot + ' protected, ' + unprot + ' unprotected.\n\n'
+            + (changes.length ? ('Changed:\n' + changes.join('\n')) : 'No changes — every cover was already resting.'));
     } catch (e) {
-        window.alert('Recon failed: ' + (e && e.message || e));
+        window.alert('Reconcile failed: ' + (e && e.message || e));
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = prev; }
     }
