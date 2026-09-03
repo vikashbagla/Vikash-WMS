@@ -11,11 +11,13 @@
 // (both raw off Fyers), but a separate socket keeps this fully independent — a
 // fault in the display feed can't blind the engine, and vice versa.
 //
-// Poke policy (bounds Edge-Function calls): per contract, call `tick` when the
-// price has moved >= threshold since the last poke (threshold = 0.4 x the
-// strategy's smaller interval, so it fires ~2-3x per grid step), OR at least
-// every HEARTBEAT_MS (catches a flat/fresh first-buy and slow drifts). The
-// engine is idempotent (re-derives from state), so an extra poke is harmless.
+// Poke policy (LEVEL-AWARE, mig 114): per contract the engine publishes the next
+// armed entry level (at2_book.next_entry_level, surfaced via at2_scalp_ws_universe).
+// The driver pokes `tick` when price CROSSES that level from the actionable side
+// (long: <=, short: >=), inside the band + market hours; a flat first-entry book is
+// poked on the next in-band tick. NO idle heartbeat (owner 03-Sep). The engine is
+// idempotent + run-locked + single-cover-guarded, so an extra poke is harmless. A
+// pre-mig-114 universe (no band) falls back to poke-on-move so deploy order is safe.
 // ============================================================================
 
 import 'dotenv/config';
@@ -23,13 +25,19 @@ import http from 'node:http';
 import pg from 'pg';
 import fyers from 'fyers-api-v3';
 const { fyersDataSocket } = fyers;
+import { decidePoke } from './scalp-poke.js';   // pure poke-decision (level-aware, mig 114) — unit-tested separately
 
 const FYERS_APP_ID      = process.env.FYERS_APP_ID;
 const SUPABASE_URL      = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const CRON_SECRET_KEY   = process.env.CRON_SECRET_KEY;          // to auth the `tick` call
 const HEALTH_PORT       = Number(process.env.SCALP_WS_HEALTH_PORT) || 3003;
-const HEARTBEAT_MS      = Number(process.env.SCALP_WS_HEARTBEAT_MS) || 20000;
+// Level-aware poking (mig 114): no idle heartbeat. A flat first-entry book is poked
+// on the next in-band tick, throttled by this cooldown until the entry books + the
+// universe refreshes. The safety re-derive is a slow catch for a SILENT LISTEN stall
+// (a detectable drop re-derives on reconnect — see startListener); D6 = reconnect + 30 min.
+const FIRST_ENTRY_COOLDOWN_MS = Number(process.env.SCALP_WS_FIRST_ENTRY_COOLDOWN_MS) || 3000;
+const SAFETY_REDERIVE_MS      = Number(process.env.SCALP_WS_SAFETY_REDERIVE_MS) || 1800000; // 30 min
 const LOG_PATH          = process.env.FYERS_WS_LOG_PATH || '/tmp';
 
 if (!FYERS_APP_ID)     { console.error('[scalp-ws] FYERS_APP_ID missing'); process.exit(1); }
@@ -62,15 +70,23 @@ function applyStrategies(strategies) {
   const desired = new Map();
   for (const s of strategies) {
     if (!s.symbol) continue;
+    const bandLo = Number(s.band_lower), bandHi = Number(s.band_upper);
+    const levelAware = Number.isFinite(bandLo) && Number.isFinite(bandHi);   // false on a pre-mig-114 universe
     const step = Math.min(Number(s.entry_interval) || Infinity, Number(s.target_interval) || Infinity);
-    const threshold = Number.isFinite(step) ? Math.max(step * 0.4, 0) : 0;
-    desired.set(s.symbol, { code: s.code, threshold });
+    const threshold = Number.isFinite(step) ? Math.max(step * 0.4, 0) : 0;   // legacy fallback only
+    desired.set(s.symbol, {
+      code: s.code, levelAware,
+      direction: s.direction === 'short' ? 'short' : 'long',
+      bandLo: levelAware ? bandLo : null, bandHi: levelAware ? bandHi : null,
+      trigger: (s.trigger === null || s.trigger === undefined) ? null : Number(s.trigger),
+      firstEntry: !!s.first_entry, threshold,
+    });
   }
   const added = [], removed = [];
   for (const [sym, cfg] of desired) {
     const cur = bySymbol.get(sym);
-    if (!cur) { bySymbol.set(sym, { code: cfg.code, threshold: cfg.threshold, lastPokePrice: null, lastPokeMs: 0 }); added.push(sym); }
-    else { cur.code = cfg.code; cur.threshold = cfg.threshold; }   // persist poke state
+    if (!cur) { bySymbol.set(sym, { ...cfg, lastPokePrice: null, lastCrossTrigger: null, lastFirstPokeMs: 0 }); added.push(sym); }
+    else { cur.code = cfg.code; cur.levelAware = cfg.levelAware; cur.direction = cfg.direction; cur.bandLo = cfg.bandLo; cur.bandHi = cfg.bandHi; cur.trigger = cfg.trigger; cur.firstEntry = cfg.firstEntry; cur.threshold = cfg.threshold; }   // persist poke state (lastCrossTrigger etc.)
   }
   for (const sym of Array.from(bySymbol.keys())) {
     if (!desired.has(sym)) { bySymbol.delete(sym); removed.push(sym); }
@@ -104,12 +120,9 @@ function onTick(msg) {
   state.ticks++; lastTickMs = Date.now();
   const price = Number(msg.ltp);
   if (!Number.isFinite(price) || price <= 0) return;
-  const moved = st.lastPokePrice == null || Math.abs(price - st.lastPokePrice) >= st.threshold;
-  const stale = (Date.now() - st.lastPokeMs) >= HEARTBEAT_MS;
-  if (moved || stale) {
-    st.lastPokePrice = price; st.lastPokeMs = Date.now();
-    pokeTick(st.code, price);
-  }
+  const d = decidePoke(st, price, Date.now(), FIRST_ENTRY_COOLDOWN_MS, istActiveHours());
+  if (d.set) Object.assign(st, d.set);
+  if (d.poke) pokeTick(st.code, price);
 }
 
 async function start() {
@@ -172,27 +185,29 @@ function startListener() {
   client.on('error', (e) => { console.error('[scalp-ws] LISTEN error:', String(e && e.message || e)); try { client.end(); } catch (_) {} setTimeout(startListener, 5000); });
   client.connect()
     .then(() => client.query('LISTEN wms_ws_refresh'))
-    .then(() => console.log('[scalp-ws] LISTEN wms_ws_refresh — event-driven re-subscribe armed'))
+    .then(() => { console.log('[scalp-ws] LISTEN wms_ws_refresh — event-driven re-subscribe armed'); scheduleRefresh(); })   // re-derive on (re)connect: recover any NOTIFY missed during a drop (D6)
     .catch((e) => { console.error('[scalp-ws] LISTEN connect failed:', String(e && e.message || e)); try { client.end(); } catch (_) {} setTimeout(startListener, 5000); });
 }
-setInterval(refreshUniverse, 60000);   // safety net; the LISTEN handler is the instant path
-
-// stale-feed watchdog (market hours)
+// stale-feed watchdog window (also the coarse market-hours gate used by onTick).
 function istActiveHours() {
   const d = new Date(Date.now() + 5.5 * 3600 * 1000);
   if (d.getUTCDay() === 0 || d.getUTCDay() === 6) return false;
   const m = d.getUTCHours() * 60 + d.getUTCMinutes();
   return m >= 540 && m <= 1415;
 }
-setInterval(() => {
-  if (state.connected && istActiveHours() && lastTickMs && (Date.now() - lastTickMs) > 120000) {
-    console.log('[scalp-ws] no ticks >120s during market hours — restarting'); process.exit(1);
-  }
-}, 30000);
 
-http.createServer((_req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, ...state })); })
-  .listen(HEALTH_PORT, '127.0.0.1', () => console.log(`[scalp-ws] health on 127.0.0.1:${HEALTH_PORT}`));
-process.on('SIGTERM', () => { console.log('[scalp-ws] SIGTERM — bye'); process.exit(0); });
-
-start();
-startListener();
+// Runtime side effects — skipped when the module is imported for tests (SCALP_WS_IMPORT_ONLY=1).
+function main() {
+  setInterval(refreshUniverse, SAFETY_REDERIVE_MS);   // slow silent-stall catch (D6); LISTEN is the instant path + reconnect re-derives
+  setInterval(() => {
+    if (state.connected && istActiveHours() && lastTickMs && (Date.now() - lastTickMs) > 120000) {
+      console.log('[scalp-ws] no ticks >120s during market hours — restarting'); process.exit(1);
+    }
+  }, 30000);
+  http.createServer((_req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, ...state })); })
+    .listen(HEALTH_PORT, '127.0.0.1', () => console.log(`[scalp-ws] health on 127.0.0.1:${HEALTH_PORT}`));
+  process.on('SIGTERM', () => { console.log('[scalp-ws] SIGTERM — bye'); process.exit(0); });
+  start();
+  startListener();
+}
+if (!process.env.SCALP_WS_IMPORT_ONLY) main();
