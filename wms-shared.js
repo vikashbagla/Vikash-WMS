@@ -1500,6 +1500,54 @@ function wmsMatchTagsFilter(txnTags, selectedTags, logic) {
 }
 
 // ============================================================================
+// TRADE SOURCE — did this transaction come from the Auto Trading module?
+// ============================================================================
+// Returns true for trades PLACED BY the Auto Trading module: the in-house AT2
+// strategies (MS007 gold/silver, Scalp, Pairs) AND the KH external-adviser
+// webhook. Returns false for manual orders (the AT2 manual grid), hand-keyed
+// Add-Transaction rows, imports (Fyers / CN), and adviser-attributed trades.
+//
+// Source of truth is `notes` (machine-set at booking), with a `tags` fallback
+// for AT2 rows booked before the note carried a family:
+//   • "Katalysthive LIVE fill (<src>)"  -> src has 'manual' => manual; else auto
+//       (sharanaga=KH, gold_mini/silver_mini=GS, pair*=pairs — all auto)
+//   • "AT2 MANUAL …"                    -> manual (new note format)
+//   • "AT2 MS007|SCALP|PAIR …"          -> auto  (new note format)
+//   • "AT2 <digits> — booked by the engine" (old note, no family) -> use tags
+//   • anything else                     -> use tags
+// Tags counted as auto: at2, at2GS*, at2_scalp, atGS*, at_KH / at_kh*, atPair.
+// Deliberately NOT auto: manual, at_manual, at_test, adv*, trading, yield.
+// See CONTEXT/HISTORY 2026-09-03 (trade-source markers).
+function wmsIsAutoTradeSource(txn) {
+    if (!txn) return false;
+    var notes = String(txn.notes || '');
+
+    var kh = notes.match(/^Katalysthive LIVE fill \(([^)]*)\)/i);
+    if (kh) return kh[1].toLowerCase().indexOf('manual') < 0;
+    if (/^Backfill: Katalysthive LIVE fill/i.test(notes)) return true;
+
+    if (/booked by the engine/i.test(notes)) {
+        if (/^AT2\s+MANUAL\b/i.test(notes)) return false;
+        if (/^AT2\s+(MS007|SCALP|PAIR)/i.test(notes)) return true;
+        return wmsTagsLookAuto(txn.tags);   // old "AT2 <id>" note — no family
+    }
+    return wmsTagsLookAuto(txn.tags);
+}
+
+// Tag-only heuristic used as the fallback by wmsIsAutoTradeSource. Matches the
+// in-house auto-strategy + KH tag families ONLY — never adv*/manual/at_test.
+function wmsTagsLookAuto(tags) {
+    if (!Array.isArray(tags)) return false;
+    return tags.some(function(t) {
+        t = String(t || '').toLowerCase();
+        return /^at2(gs|_scalp|$|_|gs)/.test(t)   // at2, at2gs, at2gs_advna, at2_scalp
+            || /^atgs/.test(t)                    // atgs, atgs_advna (old GS)
+            || /^at_?kh/.test(t)                  // at_kh, at_kh_sh_v1
+            || /^atpair/.test(t);                 // atpair
+    });
+}
+
+// ============================================================================
 // DISPLAY NET AMOUNT (Rule E.14)
 // ============================================================================
 // When investor ≠ trader, the investor's account is used by the trader
