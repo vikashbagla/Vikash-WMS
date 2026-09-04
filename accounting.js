@@ -748,7 +748,7 @@ function acctFinTotalCell(total, flag) {
         '<span class="acct-fin-amt3">' + acctAmt(total) + '</span></div>';
 }
 function acctFinStatementHtml(leftTitle, rightTitle, asOn, leftNodes, leftTotal, rightNodes, rightTotal, flag) {
-    return '<div class="acct-fin-statement">' +
+    return '<div class="acct-fin-statement' + (acctHideMidCol ? ' acct-hide-mid' : '') + '">' +
         '<div class="acct-fin-headbar">' + acctFinHeadCell(leftTitle, asOn) + acctFinHeadCell(rightTitle, asOn) + '</div>' +
         '<div class="acct-fin-scrollarea"><div class="acct-fin-cols">' +
             acctFinColRows(leftNodes) + acctFinColRows(rightNodes) + '</div></div>' +
@@ -3110,9 +3110,18 @@ function acctKeyLevel(key) {
     return m ? acctGroupLevel(m[1]) : 0;
 }
 // The two shared control buttons. pfx namespaces the element ids per view.
+// Hide the intermediate sub-total (middle) amount column on the BS / P&L T-format so
+// ledger names show fully. Browser-persistent; the statement still balances (leaf
+// amounts + section totals + grand Total remain). Owner 2026-09-04.
+var acctHideMidCol = (function(){ try { return localStorage.getItem('wms_acct_hide_midcol')==='1'; } catch(e){ return false; } })();
+function acctSetHideMidCol(v){ acctHideMidCol=!!v; try{ localStorage.setItem('wms_acct_hide_midcol', v?'1':'0'); }catch(e){} }
+function acctToggleHideMid(){ acctSetHideMidCol(!acctHideMidCol); if (acctActiveTab==='balance-sheet') acctRenderFinancials(); else if (acctActiveTab==='profit-loss') acctRenderPL(); }
 function acctExpandCtrlHtml(pfx) {
+    var mid = (pfx === 'acctFin' || pfx === 'acctPL')
+        ? '<button class="wms-btn wms-btn-secondary" id="' + pfx + 'HideMid" title="Hide the intermediate sub-total column so ledger names show fully — the statement still balances">' + (acctHideMidCol ? '◨ Show sub-totals' : '◧ Hide sub-totals') + '</button>'
+        : '';
     return '<button class="wms-btn wms-btn-secondary" id="' + pfx + 'Toggle" title="Expand or collapse everything">⇵ Collapse all</button>' +
-        '<button class="wms-btn wms-btn-secondary" id="' + pfx + 'Summary" title="Show the roots and two levels, collapse the rest">▤ Summary</button>';
+        '<button class="wms-btn wms-btn-secondary" id="' + pfx + 'Summary" title="Show the roots and two levels, collapse the rest">▤ Summary</button>' + mid;
 }
 // Wire the toggle + summary. mapName: "fin" (BS/P&L/TB share acctFinCollapsed) or
 // "led" (Ledgers catalogue = acctLedCollapsed). getKeys() returns the view's group
@@ -3141,6 +3150,8 @@ function acctWireExpandCtrl(pfx, getKeys, mapName, rerender) {
         keys.forEach(function (k) { if (acctKeyLevel(k) >= 2) m[k] = true; else delete m[k]; });
         rerender();
     };
+    var hm = document.getElementById(pfx + 'HideMid');
+    if (hm) hm.onclick = acctToggleHideMid;
 }
 
 // ============================================================================
