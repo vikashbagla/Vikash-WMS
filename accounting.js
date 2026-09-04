@@ -732,6 +732,22 @@ function acctFinAllGroupKeys(nodes, acc) {
     nodes.forEach(function (n) { if (!n.isLedger) { acc.push(n.key); if (n.children) acctFinAllGroupKeys(n.children, acc); } });
     return acc;
 }
+// Display-depth of each group, used by the Balance-Sheet Summary so BOTH columns collapse
+// at the same VISUAL tier. The Liabilities column carries synthetic wrappers; the
+// 'Profit & Loss' wrapper ('pl') is TRANSPARENT (its Income/Expenses children sit at the
+// same depth as an Assets root), otherwise the P&L side counts one level shallower and
+// Summary drills it down to ledgers while Assets stops at groups. Owner 2026-09-04.
+function acctFinDepthMap(nodes) {
+    var map = {}, TRANSPARENT = { 'pl': 1 };
+    (function walk(list, depth) {
+        list.forEach(function (n) {
+            if (!n.isLedger) map[n.key] = depth;
+            var cd = TRANSPARENT[n.key] ? depth : depth + 1;
+            if (n.children) walk(n.children, cd);
+        });
+    })(nodes, 0);
+    return map;
+}
 // ── Sticky, aligned two-column statement (BS + P&L) ──────────────────────────
 // A pinned header bar, ONE scroll region holding both columns, and a pinned total
 // bar so the two totals sit on the SAME row and never scroll out of view. The
@@ -818,7 +834,8 @@ function acctRenderFinancials() {
     el.querySelectorAll('.acct-fin-ledger[data-ledger]').forEach(function (r) {
         r.onclick = function () { acctOpenLedgerDetail(r.dataset.ledger); };
     });
-    acctWireExpandCtrl('acctFin', function () { return acctFinAllGroupKeys(leftNodes.concat(assets.nodes), []); }, 'fin', acctRenderFinancials);
+    var _fdm = acctFinDepthMap(leftNodes.concat(assets.nodes));
+    acctWireExpandCtrl('acctFin', function () { return acctFinAllGroupKeys(leftNodes.concat(assets.nodes), []); }, 'fin', acctRenderFinancials, function (k) { return (_fdm[k] || 0) >= 1; });
     acctSaveFinCollapse();
 }
 
@@ -3129,7 +3146,7 @@ function acctExpandCtrlHtml(pfx) {
 // Wire the toggle + summary. mapName: "fin" (BS/P&L/TB share acctFinCollapsed) or
 // "led" (Ledgers catalogue = acctLedCollapsed). getKeys() returns the view's group
 // keys; rerender() re-draws the view.
-function acctWireExpandCtrl(pfx, getKeys, mapName, rerender) {
+function acctWireExpandCtrl(pfx, getKeys, mapName, rerender, summaryCollapse) {
     function map() {
         if (mapName === 'led') { if (!acctLedCollapsed) acctLedCollapsed = {}; return acctLedCollapsed; }
         return acctFinCollapsed;
@@ -3150,7 +3167,7 @@ function acctWireExpandCtrl(pfx, getKeys, mapName, rerender) {
     var s = document.getElementById(pfx + 'Summary');
     if (s) s.onclick = function () {
         var keys = getKeys(), m = map();
-        keys.forEach(function (k) { if (acctKeyLevel(k) >= 2) m[k] = true; else delete m[k]; });
+        keys.forEach(function (k) { if (summaryCollapse ? summaryCollapse(k) : (acctKeyLevel(k) >= 2)) m[k] = true; else delete m[k]; });
         rerender();
     };
     var hm = document.getElementById(pfx + 'HideMid');
