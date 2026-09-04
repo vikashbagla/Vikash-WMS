@@ -79,14 +79,15 @@ function applyStrategies(strategies) {
       direction: s.direction === 'short' ? 'short' : 'long',
       bandLo: levelAware ? bandLo : null, bandHi: levelAware ? bandHi : null,
       trigger: (s.trigger === null || s.trigger === undefined) ? null : Number(s.trigger),
+      target: (s.target_trigger === null || s.target_trigger === undefined) ? null : Number(s.target_trigger),
       firstEntry: !!s.first_entry, threshold,
     });
   }
   const added = [], removed = [];
   for (const [sym, cfg] of desired) {
     const cur = bySymbol.get(sym);
-    if (!cur) { bySymbol.set(sym, { ...cfg, lastPokePrice: null, lastCrossTrigger: null, lastFirstPokeMs: 0 }); added.push(sym); }
-    else { cur.code = cfg.code; cur.levelAware = cfg.levelAware; cur.direction = cfg.direction; cur.bandLo = cfg.bandLo; cur.bandHi = cfg.bandHi; cur.trigger = cfg.trigger; cur.firstEntry = cfg.firstEntry; cur.threshold = cfg.threshold; }   // persist poke state (lastCrossTrigger etc.)
+    if (!cur) { bySymbol.set(sym, { ...cfg, lastPokePrice: null, lastCrossTrigger: null, lastCrossTarget: null, lastFirstPokeMs: 0 }); added.push(sym); }
+    else { cur.code = cfg.code; cur.levelAware = cfg.levelAware; cur.direction = cfg.direction; cur.bandLo = cfg.bandLo; cur.bandHi = cfg.bandHi; cur.trigger = cfg.trigger; cur.target = cfg.target; cur.firstEntry = cfg.firstEntry; cur.threshold = cfg.threshold; }   // persist poke state (lastCrossTrigger etc.)
   }
   for (const sym of Array.from(bySymbol.keys())) {
     if (!desired.has(sym)) { bySymbol.delete(sym); removed.push(sym); }

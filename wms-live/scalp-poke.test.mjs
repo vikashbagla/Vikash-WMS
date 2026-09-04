@@ -17,6 +17,15 @@ T('long: trigger moved (new level) -> pokes again on cross', ()=>{ const d=decid
 T('short: price crosses UP to trigger -> poke', ()=>{ const d=decidePoke(shortSt({trigger:24000}), 24000, 1e6, CD, HRS); eq(d.poke,true); eq(d.why,'level-cross'); });
 T('short: price below trigger -> no poke', ()=>{ eq(decidePoke(shortSt({trigger:24000}), 23950, 1e6, CD, HRS).poke, false); });
 
+// --- TARGET-CROSS (mig 116): paper exit poke; opposite side to entry; NOT band-gated ---
+T('long target: price crosses UP to target -> poke', ()=>{ const d=decidePoke(longSt({target:350,trigger:340}), 350, 1e6, CD, HRS); eq(d.poke,true); eq(d.why,'target-cross'); eq(d.set.lastCrossTarget,350); });
+T('long target: de-dupe same target -> no poke', ()=>{ eq(decidePoke(longSt({target:350,lastCrossTarget:350,trigger:340}), 351, 1e6, CD, HRS).poke, false); });
+T('long target: next rung target -> pokes again', ()=>{ const d=decidePoke(longSt({target:352,lastCrossTarget:350,trigger:340}), 352, 1e6, CD, HRS); eq(d.poke,true); eq(d.set.lastCrossTarget,352); });
+T('short target: price crosses DOWN to target -> poke', ()=>{ const d=decidePoke(shortSt({target:23900,trigger:24000}), 23900, 1e6, CD, HRS); eq(d.poke,true); eq(d.why,'target-cross'); });
+T('target poke fires ABOVE band (not band-gated)', ()=>{ const d=decidePoke(longSt({target:350,trigger:340}), 365, 1e6, CD, HRS); eq(d.poke,true); eq(d.why,'target-cross'); });
+T('target below current for a long -> no target poke (falls through)', ()=>{ const d=decidePoke(longSt({target:350,trigger:340}), 345, 1e6, CD, HRS); eq(d.why!=='target-cross', true); });
+T('no target set -> entry logic unaffected', ()=>{ const d=decidePoke(longSt({trigger:340}), 340, 1e6, CD, HRS); eq(d.why,'level-cross'); });
+
 T('band gate: below band -> no poke', ()=>{ eq(decidePoke(longSt({trigger:340}), 299, 1e6, CD, HRS).poke, false); });
 T('band gate: above band -> no poke', ()=>{ eq(decidePoke(longSt({trigger:340}), 361, 1e6, CD, HRS).poke, false); });
 
