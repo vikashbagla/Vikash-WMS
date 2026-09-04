@@ -664,7 +664,10 @@ function acctFinNodeHtml(node, depth) {
     var attr = node.isDiff ? '' : (isGroup ? ('data-node="' + node.key + '"') : ('data-ledger="' + node.ledgerId + '"'));
     // Which amount column the figure belongs in: ledger detail innermost,
     // intermediate group subtotals next, section (depth-0) totals outermost.
-    var col = node.isLedger ? 1 : (depth === 0 || node.isDiff ? 3 : 2);
+    // When the middle sub-total column is hidden, intermediate group subtotals move
+    // INTO the leaf-amount column (col 1) so they stay visible — the balance sheet keeps
+    // its group totals, just without a dedicated middle column. Owner 2026-09-04.
+    var col = node.isLedger ? 1 : (depth === 0 || node.isDiff ? 3 : (acctHideMidCol ? 1 : 2));
     var amt = acctAmt(node.amount);
     var h = '<div class="' + cls + '" ' + attr + ' style="padding-left:' + pad + 'px;">' +
         icon + '<span class="acct-fin-name" title="' + wmsEsc(node.label) + '">' + wmsEsc(node.label) + '</span>' +
