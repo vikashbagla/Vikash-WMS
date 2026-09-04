@@ -2723,6 +2723,14 @@ function acctRenderLedgerTable() {
         });
     var byV = acctLinesByVoucher();
     var fmt = acctAmt;   // honours the module-wide full-amount toggle
+    // Direction-aware balance colour (owner 2026-09-04): a BS ledger whose balance sits
+    // on the WRONG side for its nature (Assets = Dr, Liabilities/Capital = Cr) shows red.
+    // P&L ledgers (Income/Expenses) are never coloured here.
+    var _ldNature = (function(){ var l=(acctLedgers||[]).find(function(x){return x.id===acctLedgerDetailId;}); return l?acctRootName(l.group_id):null; })();
+    var _ldIsBS = (_ldNature==='Assets'||_ldNature==='Liabilities'||_ldNature==='Capital');
+    var _ldCrNormal = (_ldNature==='Liabilities'||_ldNature==='Capital');
+    function acctBalWrong(bal){ if(!_ldIsBS) return false; var c=Math.round((Number(bal)||0)*100); if(c===0) return false; return _ldCrNormal ? (c>0) : (c<0); }
+    function acctBalStyle(bal){ return acctBalWrong(bal) ? ' style="color:#dc2626;"' : ''; }
 
     var win = acctLedgerDateWindow();
     var opening = 0, rows = [];
@@ -2799,7 +2807,7 @@ function acctRenderLedgerTable() {
     if (win.start && !q && acctLedgerSort.col === 'date' && acctLedgerSort.dir === 'asc' && Math.round(opening * 100) !== 0) {
         html += '<tr class="acct-ld-opening"><td class="c-date">' + wmsEsc(acctFmtDate(win.start)) + '</td><td class="c-vch">—</td>' +
             '<td colspan="2"><em>Opening balance</em></td><td class="text-right">-</td><td class="text-right">-</td>' +
-            '<td class="text-right">' + fmt(Math.abs(opening)) + (opening >= 0 ? ' Dr' : ' Cr') + '</td><td class="c-ldhide"></td></tr>';
+            '<td class="text-right"' + acctBalStyle(opening) + '>' + fmt(Math.abs(opening)) + (opening >= 0 ? ' Dr' : ' Cr') + '</td><td class="c-ldhide"></td></tr>';
     }
 
     acctLedgerRowOrder = items.map(function (it) { return it.r.line_id; });
@@ -2822,7 +2830,7 @@ function acctRenderLedgerTable() {
             '<td class="c-narr" title="' + wmsEsc(it.narr) + '">' + wmsEsc(it.narr) + '</td>' +
             '<td class="text-right">' + (it.dr ? fmt(it.dr) : '-') + '</td>' +
             '<td class="text-right">' + (it.cr ? fmt(it.cr) : '-') + '</td>' +
-            '<td class="text-right">' + balLabel + '</td>' +
+            '<td class="text-right"' + (live ? acctBalStyle(it.bal) : '') + '>' + balLabel + '</td>' +
             '<td class="c-ldhide">' +
                 '<button class="acct-ld-hideabove-btn" data-hideabove="' + wmsEsc(r.line_id) + '" title="Hide every row above this one (from the view)">⤒</button>' +
                 '<button class="acct-ld-hide-btn" data-hide="' + wmsEsc(r.line_id) + '" title="Hide this row from the view (does not delete)">✕</button>' +
@@ -2839,7 +2847,7 @@ function acctRenderLedgerTable() {
             '<td colspan="4">Total · ' + items.length + ' row' + (items.length === 1 ? '' : 's') + '</td>' +
             '<td class="text-right">' + (totDr ? fmt(totDr) : '-') + '</td>' +
             '<td class="text-right">' + (totCr ? fmt(totCr) : '-') + '</td>' +
-            '<td class="text-right" title="Closing balance of the ledger — every live posting, all dates (not the filtered period)">' + fmt(Math.abs(ledgerClosing)) + (ledgerClosing >= 0 ? ' Dr' : ' Cr') + '</td>' +
+            '<td class="text-right"' + acctBalStyle(ledgerClosing) + ' title="Closing balance of the ledger — every live posting, all dates (not the filtered period)">' + fmt(Math.abs(ledgerClosing)) + (ledgerClosing >= 0 ? ' Dr' : ' Cr') + '</td>' +
             '<td class="c-ldhide"></td></tr></tfoot>';
     }
     html += '</table>';
