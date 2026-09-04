@@ -2818,7 +2818,7 @@ function acctRenderLedgerTable() {
         return '<th class="acct-db-sortable' + (cls ? (' ' + cls) : '') + (acctLedgerSort.col === col ? ' acct-db-sorted' : '') +
             '" data-sort="' + col + '">' + label + '<span class="acct-db-arrow">' + arrow + '</span></th>';
     }
-    var html = '<table class="acct-table acct-ld-table"><thead><tr>' +
+    var html = '<table class="acct-table acct-ld-table' + ((typeof wmsIsFullAmount === 'function' && wmsIsFullAmount()) ? ' acct-ld-fullamt' : '') + '"><thead><tr>' +
         sortTh('date', 'Date', 'c-date') + sortTh('vch', 'Vch #', 'c-vch') + sortTh('contra', 'Contra ledger', 'c-contra') +
         sortTh('narration', 'Narration', 'c-narr') + sortTh('debit', 'Debit', 'text-right c-amt') + sortTh('credit', 'Credit', 'text-right c-amt') +
         sortTh('balance', 'Balance', 'text-right c-amt') + '<th class="c-ldhide"></th></tr></thead><tbody>';
