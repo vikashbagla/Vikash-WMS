@@ -363,16 +363,6 @@ async function acctStoreSyncStateRpc(table) {
         return r ? { checksum: r.checksum } : null;
     } catch (e) { return null; }
 }
-async function acctVouchersSyncState(ids) {
-    try {
-        var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
-        var res = await fetch(acctUrl('acct_vouchers?' + filter + '&select=updated_at&order=updated_at.desc&limit=1'), { headers: wmsHeaders({ Prefer: 'count=exact' }) });
-        if (!res.ok) return null;
-        var cr = res.headers.get('content-range'); var total = cr ? cr.split('/')[1] : '?';
-        var rows = await res.json(); var maxu = (rows && rows[0]) ? rows[0].updated_at : '?';
-        return { checksum: total + '|' + maxu };
-    } catch (e) { return null; }
-}
 if (typeof window !== 'undefined' && window.wmsStore) {
     wmsStore.register('acctGroups', { policy: 'cache',
         loader: function () { return wmsFetchAllRaw(acctUrl('acct_groups?select=*&order=name.asc')); },
@@ -380,19 +370,9 @@ if (typeof window !== 'undefined' && window.wmsStore) {
     wmsStore.register('acctLedgers', { policy: 'cache',
         loader: function () { return wmsFetchAllRaw(acctUrl('acct_ledgers?select=*&order=name.asc')); },
         syncState: function () { return acctStoreSyncStateRpc('acct_ledgers'); } });
-    wmsStore.register('vouchers', { policy: 'cache',
-        keyBy: function (pr) { return (pr && pr.ids) ? pr.ids.slice().sort().join(',') : ''; },
-        loader: async function (pr) {
-            var ids = (pr && pr.ids) || [];
-            var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
-            var res = await Promise.all([
-                wmsFetchAllRaw(acctUrl('acct_voucher_full?' + filter + '&order=voucher_date.asc,voucher_number.asc,sort_order.asc')),
-                wmsFetchAllRaw(acctUrl('acct_vouchers?select=id,created_at&' + filter))
-            ]);
-            var createdAt = {}; (res[1] || []).forEach(function (v) { createdAt[v.id] = v.created_at; });
-            return { rows: res[0] || [], createdAt: createdAt };
-        },
-        syncState: function (pr) { return acctVouchersSyncState((pr && pr.ids) || []); } });
+    // 'vouchers' store now lives in wms-shared.js (shared with reports.js) with
+    // IndexedDB persistence + the same checksum gate. See wmsEnsureVoucherStore.
+    if (typeof wmsEnsureVoucherStore === 'function') wmsEnsureVoucherStore();
 }
 
 async function acctLoadCatalogue() {
