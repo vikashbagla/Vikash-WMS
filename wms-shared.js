@@ -1032,6 +1032,114 @@ function wmsTxnIdbClear() {
 }
 
 
+// ============================================================================
+// ACCOUNTING VOUCHER CACHE — cross-reload PERSISTENCE in IndexedDB (flag-gated).
+// ----------------------------------------------------------------------------
+// The accounting + reports/consolidation pages read acct_voucher_full (a VIEW:
+// voucher x lines x ledgers x groups) per investor-set. Previously every hard
+// refresh / new tab / new Chrome instance re-fetched the whole set (the largest
+// investor ~1.9 MB) — the accounting egress. This persists the wmsStore
+// 'vouchers' dataset per (user + investor-set) in IndexedDB: a boot hydrates the
+// last copy, the EXISTING checksum gate (wmsAcctVouchersSyncState = voucher
+// count | max(updated_at)) verifies it, and unchanged => 0 heavy fetch. A real
+// change (new/edited/cancelled voucher — every edit path bumps voucher.updated_at
+// via trg_acct_vouchers_touch_updated_at) moves the checksum and re-fetches.
+// Default ON; localStorage.wms_acct_source='rest' opts out (instant rollback).
+// Registration lives here (not accounting.js) so reports.js can share it — both
+// call wmsEnsureVoucherStore() after wmsStore exists (wms-shared loads first).
+// ============================================================================
+var _WMS_ACCT_IDB_DB = 'wms-acct-cache', _WMS_ACCT_IDB_STORE = 'vouchers', _WMS_ACCT_IDB_VER = 1;
+function wmsAcctCacheMode() { try { return localStorage.getItem('wms_acct_source') !== 'rest'; } catch (e) { return true; } }
+function _wmsAcctUserKey() { var u = window.currentUser; return (u && (u.id || u.email)) ? String(u.id || u.email) : null; }
+function _wmsAcctIdbKey(ids) { var u = _wmsAcctUserKey(); return u ? (u + '|' + (ids || []).slice().sort().join(',')) : null; }
+function _wmsAcctIdbOpen() {
+    return new Promise(function (resolve, reject) {
+        if (!window.indexedDB) return reject(new Error('no indexedDB'));
+        var req = indexedDB.open(_WMS_ACCT_IDB_DB, _WMS_ACCT_IDB_VER);
+        req.onupgradeneeded = function () { var db = req.result; if (!db.objectStoreNames.contains(_WMS_ACCT_IDB_STORE)) db.createObjectStore(_WMS_ACCT_IDB_STORE); };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error || new Error('idb open error')); };
+    });
+}
+function _wmsAcctIdbGet(key) {
+    return _wmsAcctIdbOpen().then(function (db) { return new Promise(function (resolve, reject) {
+        var rq = db.transaction(_WMS_ACCT_IDB_STORE, 'readonly').objectStore(_WMS_ACCT_IDB_STORE).get(key);
+        rq.onsuccess = function () { resolve(rq.result || null); };
+        rq.onerror = function () { reject(rq.error); };
+    }); });
+}
+function _wmsAcctIdbPut(key, val) {
+    return _wmsAcctIdbOpen().then(function (db) { return new Promise(function (resolve, reject) {
+        var tx = db.transaction(_WMS_ACCT_IDB_STORE, 'readwrite');
+        tx.objectStore(_WMS_ACCT_IDB_STORE).put(val, key);
+        tx.oncomplete = function () { resolve(true); };
+        tx.onerror = function () { reject(tx.error); };
+    }); });
+}
+// Clear this user's persisted vouchers (call on logout). Best-effort.
+function wmsAcctIdbClear() {
+    _wmsAcctIdbOpen().then(function (db) { db.transaction(_WMS_ACCT_IDB_STORE, 'readwrite').objectStore(_WMS_ACCT_IDB_STORE).clear(); }).catch(function () {});
+}
+
+// Cheap freshness token for a set of investor books: voucher count | max(updated_at).
+// (Shared — was acctVouchersSyncState in accounting.js.) A new/edited/cancelled
+// voucher moves this; renders of ledger/group NAMES come from the separately-gated
+// acctLedgers/acctGroups stores, so a rename is caught there.
+async function wmsAcctVouchersSyncState(ids) {
+    try {
+        var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
+        var res = await fetch(SUPABASE_URL + '/rest/v1/acct_vouchers?' + filter + '&select=updated_at&order=updated_at.desc&limit=1', { headers: wmsHeaders({ Prefer: 'count=exact' }) });
+        if (!res.ok) return null;
+        var cr = res.headers.get('content-range'); var total = cr ? cr.split('/')[1] : '?';
+        var rows = await res.json(); var maxu = (rows && rows[0]) ? rows[0].updated_at : '?';
+        return { checksum: total + '|' + maxu };
+    } catch (e) { return null; }
+}
+
+// Idempotent registration of the shared 'vouchers' store, with IndexedDB
+// persistence baked into the loader: hydrate -> checksum gate -> 0 fetch if
+// unchanged, else a fresh fetch of that investor-set + re-persist. Any IndexedDB
+// error falls through to the plain REST fetch (never blocks a load).
+function wmsEnsureVoucherStore() {
+    if (typeof window === 'undefined' || !window.wmsStore || !wmsStore.register) return;
+    if (wmsStore.isRegistered && wmsStore.isRegistered('vouchers')) return;
+    wmsStore.register('vouchers', {
+        policy: 'cache',
+        keyBy: function (pr) { return (pr && pr.ids) ? pr.ids.slice().sort().join(',') : ''; },
+        loader: async function (pr) {
+            var ids = (pr && pr.ids) || [];
+            if (!ids.length) return { rows: [], createdAt: {} };
+            var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
+            var idbKey = wmsAcctCacheMode() ? _wmsAcctIdbKey(ids) : null;
+            // Hydrate + verify: if the persisted copy's checksum still matches the server, reuse it (0 heavy fetch).
+            if (idbKey) {
+                try {
+                    var rec = await _wmsAcctIdbGet(idbKey);
+                    if (rec && rec.checksum && Array.isArray(rec.rows)) {
+                        var probe = await wmsAcctVouchersSyncState(ids);
+                        if (probe && probe.checksum === rec.checksum) {
+                            return { rows: rec.rows, createdAt: rec.createdAt || {} };
+                        }
+                    }
+                } catch (e) { /* ignore -> fall through to fetch */ }
+            }
+            // Fetch fresh (changed, or no usable persisted copy). The VIEW has no created_at, so pull it from the base table in parallel and map by voucher id.
+            var res = await Promise.all([
+                wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/acct_voucher_full?' + filter + '&order=voucher_date.asc,voucher_number.asc,sort_order.asc'),
+                wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/acct_vouchers?select=id,created_at&' + filter)
+            ]);
+            var createdAt = {}; (res[1] || []).forEach(function (v) { createdAt[v.id] = v.created_at; });
+            var out = { rows: res[0] || [], createdAt: createdAt };
+            if (idbKey) {
+                try { var pc = await wmsAcctVouchersSyncState(ids); _wmsAcctIdbPut(idbKey, { rows: out.rows, createdAt: out.createdAt, checksum: pc ? pc.checksum : null, storedAt: Date.now() }); } catch (e) { /* ignore */ }
+            }
+            return out;
+        },
+        syncState: function (pr) { return wmsAcctVouchersSyncState((pr && pr.ids) || []); }
+    });
+}
+
+
 async function wmsLoadTransactions(opts) {
     opts = opts || {};
     // Cache mode: hydrate the in-memory cache from IndexedDB before deciding (same user only).

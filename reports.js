@@ -315,7 +315,9 @@ async function wmsResumeReports() {
         await rptLoadData();
         rptRenderPortfolio();
         if (rptCGLoaded) rptRenderCapGains();
-        if (rptConsolLoaded && typeof rptRenderConsol === 'function') rptRenderConsol();
+        // Re-load consolidation through the store (cheap checksum probe; 0 fetch when
+        // unchanged) so a voucher posted elsewhere shows on return — no F5 needed.
+        if (rptConsolLoaded && typeof rptRenderConsol === 'function') { try { await rptLoadConsol(); } catch (e) {} rptRenderConsol(); }
         (async function () {
             try {
                 if (typeof wmsStandardRefresh === 'function') await wmsStandardRefresh(false);
@@ -702,7 +704,7 @@ async function rptEnsureTabLoaded(which) {
             else rptRenderCapGains();
         } else if (which === 'consol') {
             if (!rptConsolLoaded) { await rptConsolVM.loadViews(); rptConsolLoaded = true; if (!rptConsolVM.activeViewId) rptRenderConsol(); }
-            else rptRenderConsol();
+            else { try { await rptLoadConsol(); } catch (e) {} rptRenderConsol(); }
         }
     } catch (e) { console.warn('Reports: deferred tab load failed (' + which + ')', e); }
 }
@@ -2173,13 +2175,24 @@ async function rptLoadConsol() {
     var ids = rptConsolBookIds.slice();
     if (!ids.length) { rptConsRows = []; rptConsLoadedKey = ''; return; }
     var key = ids.slice().sort().join(',');
-    if (key === rptConsLoadedKey && rptConsRows.length) return;
     var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
-    var rows = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/acct_voucher_full?' + filter +
-        '&order=voucher_date.asc,voucher_number.asc,sort_order.asc', { headers: wmsHeaders() });
+    // Route through the SHARED, IndexedDB-persisted 'vouchers' store (wms-shared.js):
+    // its checksum gate means a re-render costs a tiny probe (0 rows) when nothing
+    // changed, and a fresh fetch only when a voucher actually changed — so a new
+    // voucher posted elsewhere flows into consolidation without a full re-download.
+    // Falls back to the original raw fetch if the store is unavailable.
+    var rows;
+    if (typeof window !== 'undefined' && window.wmsStore && typeof wmsEnsureVoucherStore === 'function') {
+        wmsEnsureVoucherStore();
+        var vb = await wmsStore.get('vouchers', { ids: ids });
+        rows = (vb && vb.rows) || [];
+    } else {
+        rows = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/acct_voucher_full?' + filter +
+            '&order=voucher_date.asc,voucher_number.asc,sort_order.asc', { headers: wmsHeaders() });
+    }
     rptConsRows = (rows || []).filter(function (r) { return !r.is_cancelled; });
-    rptConsLoadedKey = key;
-    await rptLoadHistPrices();   // month-end '1M' closes for the Quarters-view MTM
+    // Hist prices (month-end closes) don't move intraday — only reload them when the book set changes.
+    if (key !== rptConsLoadedKey) { rptConsLoadedKey = key; await rptLoadHistPrices(); }
 }
 
 // ---------------------------------------------------------------------------
