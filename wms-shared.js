@@ -1081,24 +1081,53 @@ function wmsAcctIdbClear() {
     _wmsAcctIdbOpen().then(function (db) { db.transaction(_WMS_ACCT_IDB_STORE, 'readwrite').objectStore(_WMS_ACCT_IDB_STORE).clear(); }).catch(function () {});
 }
 
-// Cheap freshness token for a set of investor books: voucher count | max(updated_at).
+// Cheap freshness token for a set of investor books: { checksum, count, maxUpdated }.
 // (Shared — was acctVouchersSyncState in accounting.js.) A new/edited/cancelled
-// voucher moves this; renders of ledger/group NAMES come from the separately-gated
+// voucher moves this (updated_at defaults now() on insert, and every edit path
+// bumps it); renders of ledger/group NAMES come from the separately-gated
 // acctLedgers/acctGroups stores, so a rename is caught there.
 async function wmsAcctVouchersSyncState(ids) {
     try {
         var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
         var res = await fetch(SUPABASE_URL + '/rest/v1/acct_vouchers?' + filter + '&select=updated_at&order=updated_at.desc&limit=1', { headers: wmsHeaders({ Prefer: 'count=exact' }) });
         if (!res.ok) return null;
-        var cr = res.headers.get('content-range'); var total = cr ? cr.split('/')[1] : '?';
-        var rows = await res.json(); var maxu = (rows && rows[0]) ? rows[0].updated_at : '?';
-        return { checksum: total + '|' + maxu };
+        var cr = res.headers.get('content-range'); var total = cr ? parseInt(cr.split('/')[1], 10) : null;
+        var rows = await res.json(); var maxu = (rows && rows[0]) ? rows[0].updated_at : null;
+        return { checksum: (total == null ? '?' : total) + '|' + (maxu || '?'), count: (isNaN(total) ? null : total), maxUpdated: maxu };
     } catch (e) { return null; }
 }
 
-// Idempotent registration of the shared 'vouchers' store, with IndexedDB
-// persistence baked into the loader: hydrate -> checksum gate -> 0 fetch if
-// unchanged, else a fresh fetch of that investor-set + re-persist. Any IndexedDB
+// Row-delta: fetch ONLY the vouchers changed since lastMax and splice them into the
+// cached set (drop those voucher_ids' old rows, add the new ones). Returns
+// { rows, createdAt } or null → caller does a full fetch. Deletions (no updated_at
+// signal) are caught by the count-reconcile and fall back to a full reload.
+async function _wmsAcctVoucherDelta(ids, cachedRows, cachedCreatedAt, lastMax, serverCount) {
+    try {
+        if (!lastMax) return null;
+        var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
+        var chg = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/acct_vouchers?' + filter + '&updated_at=gt.' + encodeURIComponent(lastMax) + '&select=id,created_at&order=id.asc');
+        var chgIds = (chg || []).map(function (v) { return v.id; });
+        var newRows = [];
+        if (chgIds.length) {
+            newRows = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/acct_voucher_full?voucher_id=in.(' + chgIds.join(',') + ')&order=voucher_date.asc,voucher_number.asc,sort_order.asc');
+        }
+        var chgSet = {}; chgIds.forEach(function (id) { chgSet[id] = 1; });
+        var merged = (cachedRows || []).filter(function (r) { return !chgSet[r.voucher_id]; }).concat(newRows || []);
+        var createdAt = {}, k; for (k in (cachedCreatedAt || {})) createdAt[k] = cachedCreatedAt[k];
+        (chg || []).forEach(function (v) { createdAt[v.id] = v.created_at; });
+        // Distinct voucher_ids in the (view) rows must equal the server voucher count —
+        // a mismatch means a voucher was deleted or a voucher has no lines; force a full reload.
+        var seen = {}, distinct = 0;
+        merged.forEach(function (r) { if (!seen[r.voucher_id]) { seen[r.voucher_id] = 1; distinct++; } });
+        if (serverCount != null && distinct !== serverCount) return null;
+        return { rows: merged, createdAt: createdAt };
+    } catch (e) { return null; }
+}
+
+// Idempotent registration of the shared 'vouchers' store with IndexedDB
+// persistence + a row-delta on change. Hydrate → checksum probe → 0 fetch when
+// unchanged; changed → delta (only the moved vouchers) → full only if the delta
+// can't reconcile (deletion) or there's no usable persisted copy. Any IndexedDB
 // error falls through to the plain REST fetch (never blocks a load).
 function wmsEnsureVoucherStore() {
     if (typeof window === 'undefined' || !window.wmsStore || !wmsStore.register) return;
@@ -1111,19 +1140,24 @@ function wmsEnsureVoucherStore() {
             if (!ids.length) return { rows: [], createdAt: {} };
             var filter = ids.length === 1 ? ('investor_id=eq.' + ids[0]) : ('investor_id=in.(' + ids.join(',') + ')');
             var idbKey = wmsAcctCacheMode() ? _wmsAcctIdbKey(ids) : null;
-            // Hydrate + verify: if the persisted copy's checksum still matches the server, reuse it (0 heavy fetch).
+            var probe = null;
             if (idbKey) {
                 try {
                     var rec = await _wmsAcctIdbGet(idbKey);
-                    if (rec && rec.checksum && Array.isArray(rec.rows)) {
-                        var probe = await wmsAcctVouchersSyncState(ids);
-                        if (probe && probe.checksum === rec.checksum) {
-                            return { rows: rec.rows, createdAt: rec.createdAt || {} };
+                    probe = await wmsAcctVouchersSyncState(ids);
+                    if (rec && rec.checksum && Array.isArray(rec.rows) && probe) {
+                        if (probe.checksum === rec.checksum) {
+                            return { rows: rec.rows, createdAt: rec.createdAt || {} };          // unchanged → 0 heavy fetch
+                        }
+                        var delta = await _wmsAcctVoucherDelta(ids, rec.rows, rec.createdAt || {}, rec.maxUpdated, probe.count);
+                        if (delta) {
+                            try { _wmsAcctIdbPut(idbKey, { rows: delta.rows, createdAt: delta.createdAt, checksum: probe.checksum, maxUpdated: probe.maxUpdated, storedAt: Date.now() }); } catch (e) {}
+                            return delta;                                                       // changed → delta only
                         }
                     }
-                } catch (e) { /* ignore -> fall through to fetch */ }
+                } catch (e) { /* ignore → full fetch */ }
             }
-            // Fetch fresh (changed, or no usable persisted copy). The VIEW has no created_at, so pull it from the base table in parallel and map by voucher id.
+            // Full fetch (no usable persisted copy, delta couldn't reconcile, or cache off).
             var res = await Promise.all([
                 wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/acct_voucher_full?' + filter + '&order=voucher_date.asc,voucher_number.asc,sort_order.asc'),
                 wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/acct_vouchers?select=id,created_at&' + filter)
@@ -1131,14 +1165,13 @@ function wmsEnsureVoucherStore() {
             var createdAt = {}; (res[1] || []).forEach(function (v) { createdAt[v.id] = v.created_at; });
             var out = { rows: res[0] || [], createdAt: createdAt };
             if (idbKey) {
-                try { var pc = await wmsAcctVouchersSyncState(ids); _wmsAcctIdbPut(idbKey, { rows: out.rows, createdAt: out.createdAt, checksum: pc ? pc.checksum : null, storedAt: Date.now() }); } catch (e) { /* ignore */ }
+                try { var pc = probe || await wmsAcctVouchersSyncState(ids); _wmsAcctIdbPut(idbKey, { rows: out.rows, createdAt: out.createdAt, checksum: pc ? pc.checksum : null, maxUpdated: pc ? pc.maxUpdated : null, storedAt: Date.now() }); } catch (e) {}
             }
             return out;
         },
         syncState: function (pr) { return wmsAcctVouchersSyncState((pr && pr.ids) || []); }
     });
 }
-
 
 async function wmsLoadTransactions(opts) {
     opts = opts || {};
