@@ -39,5 +39,14 @@ export function decidePoke(st, price, now, cooldownMs, inHours) {
   const crossed = st.direction === 'short' ? price >= st.trigger : price <= st.trigger;
   if (crossed && st.lastCrossKey !== crossKey)
     return { poke: true, why: 'level-cross', set: { lastCrossKey: crossKey } };
+  // RE-ARM CROSS (v7 M27): the universe hands us the ratchet trigger (arm -/+ 2E), non-null
+  // ONLY for a FLAT book (a holding book gets null -> never poked). Poke when price crosses
+  // it so the engine ratchets the arm toward price. De-duped on the level, exactly like
+  // target-cross -- a ratchet moves the arm, so the universe sends a fresh level next time.
+  if (st.rearm != null) {
+    const hitR = st.direction === 'short' ? price <= st.rearm : price >= st.rearm;
+    if (hitR && st.lastCrossRearm !== st.rearm)
+      return { poke: true, why: 'rearm-cross', set: { lastCrossRearm: st.rearm } };
+  }
   return { poke: false, why: crossed ? 'already-poked-this-level' : 'not-crossed' };
 }
