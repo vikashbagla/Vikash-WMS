@@ -38,11 +38,12 @@ T('first-entry: pokes again after the cooldown', ()=>{ eq(decidePoke(longSt({fir
 T('no trigger + not first-entry -> no poke', ()=>{ eq(decidePoke(longSt({trigger:null}), 330, 1e6, CD, HRS).poke, false); });
 
 // --- RE-ARM CROSS (mig 121): flat book gets a rearm level; driver just watches it ---
-T('long flat: price crosses UP to rearm (arm+2E) -> poke', ()=>{ const d=decidePoke(longSt({rearm:344,trigger:340}), 344, 1e6, CD, HRS); eq(d.poke,true); eq(d.why,'rearm-cross'); eq(d.set.lastCrossRearm,344); });
+T('long flat: price crosses UP to rearm (arm+2E) -> poke', ()=>{ const d=decidePoke(longSt({rearm:344,trigger:340}), 344, 1e6, CD, HRS); eq(d.poke,true); eq(d.why,'rearm-cross'); eq(d.set.lastCrossRearm,'344@'); });
 T('long flat: price below rearm -> no poke', ()=>{ eq(decidePoke(longSt({rearm:344,trigger:340}), 343, 1e6, CD, HRS).poke, false); });
 T('long HOLDING (rearm null) -> never rearm-pokes', ()=>{ eq(decidePoke(longSt({rearm:null,trigger:340}), 344, 1e6, CD, HRS).poke, false); });
-T('long flat: de-dupe same rearm level -> no repoke', ()=>{ eq(decidePoke(longSt({rearm:344,lastCrossRearm:344,trigger:340}), 346, 1e6, CD, HRS).poke, false); });
-T('long flat: rearm moved (engine ratcheted) -> pokes again', ()=>{ const d=decidePoke(longSt({rearm:346,lastCrossRearm:344,trigger:340}), 346, 1e6, CD, HRS); eq(d.poke,true); eq(d.set.lastCrossRearm,346); });
+T('long flat: de-dupe same rearm level+epoch -> no repoke', ()=>{ eq(decidePoke(longSt({rearm:344,lastCrossRearm:'344@',trigger:340}), 346, 1e6, CD, HRS).poke, false); });
+T('long flat: rearm moved (engine ratcheted) -> pokes again', ()=>{ const d=decidePoke(longSt({rearm:346,lastCrossRearm:'344@',trigger:340}), 346, 1e6, CD, HRS); eq(d.poke,true); eq(d.set.lastCrossRearm,'346@'); });
+T('MANUAL POKE: arm epoch bumped (dashboard button) -> re-pokes the SAME rearm level', ()=>{ const d=decidePoke(longSt({rearm:344,armEpoch:200,lastCrossRearm:'344@100',trigger:340}), 344, 1e6, CD, HRS); eq(d.poke,true); eq(d.why,'rearm-cross'); eq(d.set.lastCrossRearm,'344@200'); });
 T('short flat: price crosses DOWN to rearm (arm-2E) -> poke', ()=>{ const d=decidePoke(shortSt({rearm:23750,trigger:24000}), 23750, 1e6, CD, HRS); eq(d.poke,true); eq(d.why,'rearm-cross'); });
 T('short flat: price above rearm -> no poke', ()=>{ eq(decidePoke(shortSt({rearm:23750,trigger:24000}), 23800, 1e6, CD, HRS).poke, false); });
 T('rearm respects band gate (below band -> no poke)', ()=>{ eq(decidePoke(longSt({rearm:344,trigger:340}), 299, 1e6, CD, HRS).why, 'below-band'); });

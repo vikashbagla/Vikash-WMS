@@ -45,8 +45,11 @@ export function decidePoke(st, price, now, cooldownMs, inHours) {
   // target-cross -- a ratchet moves the arm, so the universe sends a fresh level next time.
   if (st.rearm != null) {
     const hitR = st.direction === 'short' ? price <= st.rearm : price >= st.rearm;
-    if (hitR && st.lastCrossRearm !== st.rearm)
-      return { poke: true, why: 'rearm-cross', set: { lastCrossRearm: st.rearm } };
+    // De-dupe on (level, arm epoch): a ratchet moves the level; a manual poke (the dashboard
+    // button bumps at2_book.armed_at → a new epoch, mig 118) releases it at the SAME level.
+    const rearmKey = st.rearm + '@' + (st.armEpoch == null ? '' : st.armEpoch);
+    if (hitR && st.lastCrossRearm !== rearmKey)
+      return { poke: true, why: 'rearm-cross', set: { lastCrossRearm: rearmKey } };
   }
   return { poke: false, why: crossed ? 'already-poked-this-level' : 'not-crossed' };
 }
