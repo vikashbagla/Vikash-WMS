@@ -9077,6 +9077,36 @@ async function auScalpRecon(btn) {
 }
 window.auScalpRecon = auScalpRecon;
 
+// Per-strategy "Poke driver" (mig 123). The \u26a1 button left of a strategy name bumps
+// armed_at on THAT strategy's enabled books via at2_scalp_request_poke(code). Only that
+// strategy's arm_epoch advances, so the WS driver (on the wms_ws_refresh re-read) releases
+// its de-dupe for that strategy alone and re-pokes it on the next tick \u2014 nothing else runs.
+async function auScalpPoke(btn) {
+    var code = btn ? btn.getAttribute('data-code') : null;
+    if (!code) { window.alert('Poke: no strategy code on the button.'); return; }
+    var prev = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = '\u23f3'; }
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/rpc/at2_scalp_request_poke', {
+            method: 'POST',
+            headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ p_strategy_code: code })
+        });
+        var txt = await r.text();
+        if (!r.ok) {
+            var reason = txt; try { var j = JSON.parse(txt); reason = j.message || j.hint || j.details || txt; } catch (e) {}
+            window.alert('Poke failed \u2014 ' + reason); return;
+        }
+        var n = parseInt(txt, 10);
+        window.alert('\u26a1 Poked ' + code + ' (' + (isNaN(n) ? '?' : n) + ' book(s)). The driver re-pokes it on the next tick.');
+    } catch (e) {
+        window.alert('Poke failed: ' + (e && e.message || e));
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = prev; }
+    }
+}
+window.auScalpPoke = auScalpPoke;
+
 // Expand/collapse one book's CLOSED rungs (same pattern as the open table).
 function auScalpToggleClosedBook(mode, bookId) {
     var key = mode + ':' + bookId;
@@ -9683,7 +9713,7 @@ function auScalpRenderControls() {
             var rollTxt = (P(s2, 'instrument_type') === 'equity') ? '—' : (auScalpEsc(P(s2, 'roll_days_before')) + 'd @ ' + auScalpEsc(P(s2, 'roll_time')));
             h += '<tbody class="au-scalp-strat' + (open ? ' open' : '') + (s2.hidden ? ' retired' : '') + '" data-sid="' + s2.id + '">'
                + '<tr class="au-scalp-srow">'
-               +   '<td class="au-scalp-title" data-toggle="s:' + s2.id + '"><span class="au-scalp-caret">' + (open ? '▾' : '▸') + '</span> <span class="au-scalp-name">' + auScalpEsc(s2.display_name || s2.code) + '</span>' + (s2.hidden ? ' <span class="au-badge idle">retired</span>' : '') + '</td>'
+               +   '<td class="au-scalp-title" data-toggle="s:' + s2.id + '">'+ '<button class="au-btn au-btn-secondary au-scalp-poke" data-code="' + auScalpEsc(s2.code) + '" title="\u26a1 Poke the driver for THIS strategy \u2014 bumps its arm epoch so the driver re-pokes it on the next tick" onclick="event.stopPropagation();auScalpPoke(this)" style="padding:0 6px;font-size:12px;line-height:1.5;margin-right:5px">\u26a1</button>'+ '<span class="au-scalp-name">' + auScalpEsc(s2.display_name || s2.code) + '</span>' + (s2.hidden ? ' <span class="au-badge idle">retired</span>' : '') + '</td>'
                +   '<td><code class="au-scalp-code">' + auScalpEsc(s2.code) + '</code></td>'
                +   '<td>' + (s2.enabled ? '<span class="au-badge success">enabled</span>' : '<span class="au-badge idle">disabled</span>') + '</td>'
                +   '<td>' + auScalpEsc(P(s2, 'instrument_type')) + ' · ' + auScalpEsc(P(s2, 'underlying')) + '</td>'
