@@ -9107,6 +9107,40 @@ async function auScalpPoke(btn) {
 }
 window.auScalpPoke = auScalpPoke;
 
+// PAUSE / RESUME new entries for THIS strategy (params.entries_paused via
+// at2_scalp_set_entries_paused). A PAUSE, not a disable: exits, recon, roll and
+// arm-tracking keep running; only NEW entry-opens are suppressed in the engine.
+async function auScalpPauseToggle(btn) {
+    var code = btn ? btn.getAttribute('data-code') : null;
+    var paused = btn && btn.getAttribute('data-paused') === '1';
+    var next = !paused;
+    if (!code) { window.alert('Pause: no strategy code on the button.'); return; }
+    if (!window.confirm((next ? 'PAUSE new entries' : 'RESUME new entries') + ' for ' + code + '?\n\n'
+        + (next ? 'Existing rungs keep being managed (exits, recon, roll). Only NEW entries stop.'
+                : 'New entries resume on the next in-band dip.'))) return;
+    var prev = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = '\u23f3'; }
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/rpc/at2_scalp_set_entries_paused', {
+            method: 'POST',
+            headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ p_strategy_code: code, p_paused: next })
+        });
+        var txt = await r.text();
+        if (!r.ok) { var reason = txt; try { var j = JSON.parse(txt); reason = j.message || j.hint || j.details || txt; } catch (e) {} window.alert('Pause toggle failed \u2014 ' + reason); return; }
+        var n = parseInt(txt, 10);
+        window.alert((next ? '\u23f8 Entries PAUSED for ' : '\u25b6 Entries RESUMED for ') + code
+            + ' (' + (isNaN(n) ? '?' : n) + ' strategy). '
+            + (next ? 'Exits, recon and roll keep running.' : 'Re-pokes on the next in-band dip.'));
+        if (typeof autoScalpRefresh === 'function') autoScalpRefresh();
+    } catch (e) {
+        window.alert('Pause toggle failed: ' + (e && e.message || e));
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = prev; }
+    }
+}
+window.auScalpPauseToggle = auScalpPauseToggle;
+
 // Expand/collapse one book's CLOSED rungs (same pattern as the open table).
 function auScalpToggleClosedBook(mode, bookId) {
     var key = mode + ':' + bookId;
@@ -9709,11 +9743,12 @@ function auScalpRenderControls() {
            + '<th class="num">Entry ₹</th><th class="num">Target ₹</th><th>Band ₹</th><th>Roll</th><th></th></tr></thead>';
         stratShown.forEach(function (s2) {
             var params = s2.params || {};
+            var paused = !!params.entries_paused;
             var open = !!_auScalpOpen['s:' + s2.id];
             var rollTxt = (P(s2, 'instrument_type') === 'equity') ? '—' : (auScalpEsc(P(s2, 'roll_days_before')) + 'd @ ' + auScalpEsc(P(s2, 'roll_time')));
             h += '<tbody class="au-scalp-strat' + (open ? ' open' : '') + (s2.hidden ? ' retired' : '') + '" data-sid="' + s2.id + '">'
                + '<tr class="au-scalp-srow">'
-               +   '<td class="au-scalp-title" data-toggle="s:' + s2.id + '">'+ '<button class="au-btn au-btn-secondary au-scalp-poke" data-code="' + auScalpEsc(s2.code) + '" title="\u26a1 Poke the driver for THIS strategy \u2014 bumps its arm epoch so the driver re-pokes it on the next tick" onclick="event.stopPropagation();auScalpPoke(this)" style="padding:0 6px;font-size:12px;line-height:1.5;margin-right:5px">\u26a1</button>'+ '<span class="au-scalp-name">' + auScalpEsc(s2.display_name || s2.code) + '</span>' + (s2.hidden ? ' <span class="au-badge idle">retired</span>' : '') + '</td>'
+               +   '<td class="au-scalp-title" data-toggle="s:' + s2.id + '">'+ '<button class="au-btn au-btn-secondary au-scalp-poke" data-code="' + auScalpEsc(s2.code) + '" title="\u26a1 Poke the driver for THIS strategy \u2014 bumps its arm epoch so the driver re-pokes it on the next tick" onclick="event.stopPropagation();auScalpPoke(this)" style="padding:0 6px;font-size:12px;line-height:1.5;margin-right:5px">\u26a1</button>'+ '<button class="au-btn au-btn-secondary au-scalp-pause" data-code="' + auScalpEsc(s2.code) + '" data-paused="' + (paused ? '1' : '0') + '" title="' + (paused ? 'Resume new entries' : 'Pause NEW entries — exits, recon, roll keep running') + '" onclick="event.stopPropagation();auScalpPauseToggle(this)" style="padding:0 6px;font-size:12px;line-height:1.5;margin-right:5px">' + (paused ? '▶' : '⏸') + '</button>'+ '<span class="au-scalp-name">' + auScalpEsc(s2.display_name || s2.code) + '</span>'+ (paused ? ' <span class="au-badge warn">entries paused</span>' : '') + (s2.hidden ? ' <span class="au-badge idle">retired</span>' : '') + '</td>'
                +   '<td><code class="au-scalp-code">' + auScalpEsc(s2.code) + '</code></td>'
                +   '<td>' + (s2.enabled ? '<span class="au-badge success">enabled</span>' : '<span class="au-badge idle">disabled</span>') + '</td>'
                +   '<td>' + auScalpEsc(P(s2, 'instrument_type')) + ' · ' + auScalpEsc(P(s2, 'underlying')) + '</td>'
