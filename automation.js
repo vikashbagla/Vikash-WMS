@@ -3495,6 +3495,8 @@ function autoSwitchSubTab(subtabId) {
     var btn = parent.querySelector('.au-subtab-btn[data-subtab="' + subtabId + '"]');
     if (btn) btn.classList.add('active');
     panel.classList.add('active');
+    var _sct = document.getElementById('au-scalp-cardstoggle');
+    if (_sct) _sct.style.display = (subtabId === 'au-scalp-paper-panel' || subtabId === 'au-scalp-live-panel') ? '' : 'none';
 
     // Arm the shared price timer whenever an Open Trades panel becomes visible.
     // (Phase E.3 removed the Legacy au-ot-gs / au-ot-pairs sub-tabs and the fixed
@@ -8448,6 +8450,7 @@ async function autoScalpRefresh() {
         auScalpRenderEvents();
         auScalpRenderLog();
         auScalpRenderControls();
+        auScalpApplyCardsCollapsed();
     } catch (e) {
         // F.13/F.14 — a failed load must NOT fall through to an empty-looking
         // page. An empty table and a broken query look identical otherwise.
@@ -8460,6 +8463,22 @@ async function autoScalpRefresh() {
             if (el) el.innerHTML = msg;
         });
     }
+}
+
+// ── Collapse/expand the summary cards + filter band on Paper & Live (2026-09-10, UI) ──
+var _auScalpCardsCollapsed = false;
+try { _auScalpCardsCollapsed = (localStorage.getItem('wms_scalp_cards_collapsed') === '1'); } catch (e) {}
+function auScalpApplyCardsCollapsed() {
+    ['au-scalp-paper-metrics', 'au-scalp-paper-filterbar', 'au-scalp-live-metrics', 'au-scalp-live-filterbar'].forEach(function (id) {
+        var el = document.getElementById(id); if (el) el.style.display = _auScalpCardsCollapsed ? 'none' : '';
+    });
+    var b = document.getElementById('au-scalp-cardstoggle');
+    if (b) b.textContent = _auScalpCardsCollapsed ? '▾ Expand' : '▴ Collapse';
+}
+function auScalpToggleCards() {
+    _auScalpCardsCollapsed = !_auScalpCardsCollapsed;
+    try { localStorage.setItem('wms_scalp_cards_collapsed', _auScalpCardsCollapsed ? '1' : '0'); } catch (e) {}
+    auScalpApplyCardsCollapsed();
 }
 
 function auScalpRenderHeader() {
@@ -9819,7 +9838,7 @@ function auScalpRenderControls() {
                +     '<button class="au-btn au-btn-secondary au-scalp-bedit" data-bid="' + b2.id + '" title="Edit">✏️</button>'
                +     '<button class="au-btn au-btn-primary au-scalp-bsave" data-bid="' + b2.id + '" style="display:none">Save</button>'
                +     '<button class="au-btn au-btn-secondary au-scalp-bcancel" data-bid="' + b2.id + '" style="display:none">Cancel</button>'
-               +     '<button class="au-btn au-btn-secondary au-scalp-breset" data-bid="' + b2.id + '" title="Reset grid — fresh start on the next in-band scan (refused if the book has open positions)">⟳</button>'
+               +     '<button class="au-btn au-btn-secondary au-scalp-breset" data-bid="' + b2.id + '" title="Reset grid — fresh start on the next in-band scan (refused if the book has open positions)">♻</button>'
                +     '<button class="au-btn au-btn-secondary au-scalp-bhide" data-bid="' + b2.id + '" data-hidden="' + (b2.hidden ? '1' : '0') + '" title="' + (b2.hidden ? 'Restore' : 'Hide (retire)') + '">' + (b2.hidden ? '👁' : '🙈') + '</button>'
                +   '</td>'
                + '</tr>'
