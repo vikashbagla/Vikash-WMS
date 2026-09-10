@@ -8663,9 +8663,10 @@ function _auScalpRungMap(trades) {
 
 function _auScalpRungOf(bid) {
     // Rung # is the book's LIFETIME open sequence — numbered across ALL its
-    // trades (open + closed + voided), so a closed rung and an open rung never
-    // share a number. Same map feeds both tables.
-    var all = ((window._auScalp && _auScalp.trades) || []).filter(function (t) { return t.book_id === bid; });
+    // trades (open + closed), so a closed rung and an open rung never share a
+    // number. VOIDED (never-filled/rejected) are excluded — they were never a rung.
+    // Same map feeds both tables.
+    var all = ((window._auScalp && _auScalp.trades) || []).filter(function (t) { return t.book_id === bid && t.status !== 'voided'; });
     return _auScalpRungMap(all);
 }
 
@@ -8720,12 +8721,9 @@ async function auScalpRenderOpen(mode, silent) {
     // page does not recognise is not held, not closed, and would appear in
     // NEITHER table — it would vanish silently, which is strictly worse than
     // rendering blank because nothing would indicate the row exists at all.
-    // Caught 04-Aug-2026 by injecting status='teleported': six loud-render
-    // assertions passed and this one failed, because the row was filtered out
-    // before any renderer saw it.
+    // Caught 04-Aug-2026 by injecting status='teleported'.
     //
-    // So: Open shows everything NOT terminal. Unknown statuses land here and
-    // shout. Terminal is the short, closed list — the one we can be sure of.
+    // Open shows everything NOT terminal. Terminal is the short, closed list.
     var TERMINAL = ['closed', 'voided'];
     var rows = _auScalp.trades.filter(function (t) { return t.mode === mode && TERMINAL.indexOf(t.status) < 0; });
     var el = document.getElementById('au-scalp-' + mode + '-open-content');
@@ -8733,21 +8731,32 @@ async function auScalpRenderOpen(mode, silent) {
     var summary = document.getElementById('au-scalp-' + mode + '-open-summary');
     if (!el) return;
 
+    // Books to show (2026-09-10): every enabled, non-hidden book in this mode
+    // whose strategy is enabled — PLUS any book that holds an OPEN position, even
+    // if disabled/retired, because an open position must NEVER be hidden (D.8.10).
+    // Disabled/retired FLAT books drop off (owner). Flat shown books render one
+    // summary line (Qty = FLAT) carrying their stored next-arm level.
+    var openByBook = {};
+    rows.forEach(function (t) { (openByBook[t.book_id] = openByBook[t.book_id] || []).push(t); });
+    var stratById = {}; (_auScalp.strategies || []).forEach(function (s) { stratById[s.id] = s; });
+    var shownBooks = (_auScalp.books || []).filter(function (b) {
+        if (b.mode !== mode) return false;
+        if (openByBook[b.id]) return true;
+        var st = stratById[b.strategy_id];
+        return b.enabled && !b.hidden && st && st.enabled;
+    }).sort(function (a, b) { return String(a.display_name || '').localeCompare(String(b.display_name || '')); });
+
     if (badge) { badge.className = 'au-badge ' + (rows.length ? 'success' : 'idle'); badge.textContent = rows.length + ' open'; }
 
-    if (!rows.length) {
+    if (!shownBooks.length) {
         if (summary) summary.textContent = '';
-        el.innerHTML = '<div class="au-soon">No open AT2 positions.<br>'
-                     + '<span style="font-size:12px">Read from <code>at2_trade</code> — '
-                     + _auScalp.trades.length + ' trade(s) total, none currently held.</span></div>';
+        el.innerHTML = '<div class="au-soon">No ' + mode + ' books configured.<br>'
+                     + '<span style="font-size:12px">Read from <code>at2_book</code> — add one in Controls &amp; Admin.</span></div>';
         return;
     }
 
     var unknown = rows.filter(function (t) { return !AU_SCALP_STATUS[t.status]; });
     var bad = rows.filter(auScalpStopInverted);
-    // Computed unconditionally (not just when `summary` exists) — the totals
-    // row in the table below also needs this, and a missing DOM node must not
-    // silently leave it undefined for that second use.
     var lots = rows.reduce(function (n, t) { return n + (Number(t.qty_lots) || 0); }, 0);
     if (summary) {
         summary.textContent = lots + ' lot(s) · amounts in ' + getUnitDescription()
@@ -8756,37 +8765,29 @@ async function auScalpRenderOpen(mode, silent) {
     }
     var h = '';
     if (unknown.length) {
-        h += '<div class="au-error-list" style="margin:0 0 12px"><strong>\u26D4 '
+        h += '<div class="au-error-list" style="margin:0 0 12px"><strong>⛔ '
            + unknown.length + ' trade(s) carry a status this page does not recognise.</strong>'
            + '<div style="margin-top:4px">They are listed below rather than hidden. Either the UI has not '
            + 'been taught a new state, or the data is wrong — both need a human.</div></div>';
     }
     if (bad.length) {
-        h += '<div class="au-error-list" style="margin:0 0 12px"><strong>\u26D4 '
+        h += '<div class="au-error-list" style="margin:0 0 12px"><strong>⛔ '
            + bad.length + ' position(s) carry an INVERTED stop.</strong>'
            + '<div style="margin-top:4px">The stop sits on the wrong side of the entry and would fire the '
            + 'instant it rested. These positions read as protected and are NOT. Fix the level before the '
            + 'next session opens.</div></div>';
     }
-    // GS-style table (mirrors autoLoadGsOpenTrades): shaded #f3f4f6 header, a
-    // sticky totals row on top, sub-values (days held / stop level) nested
-    // under their main cell rather than given their own column — so AT2's
-    // table reads as the same product as GS's, not a different one bolted on.
-    // Owner instruction (2026-08-10): match GS's COLUMN SET too, not just the
-    // visual style — Contract / Qty(physical) / LTP / Exposure / Margin /
-    // Live P&L are new here; Status / Risk-lot / Flags stay (owner's explicit
-    // call: keep AT2's own protection columns alongside GS's).
     var now = Date.now();
     var totalExposure = 0, anyExposure = false;
     var totalMargin = 0;
     var totalPnl = 0, anyPnl = false, totalRealised = 0;
 
-    // Live LTP for the resolved contracts — same shared-cache mechanism GS uses
-    // (autoFetchLtpForSymbols reads window.wmsLivePrices). _auScalpSyms registers
-    // these symbols with the app-wide refresh timer; autoOnSharedRefresh calls
-    // this function again (silently) on every price tick while AT2 is active.
-    var uniqSyms = Array.from(new Set(rows.map(function (t) {
-        var sec = auScalpSecurity(t);
+    // A FLAT book still shows a contract + LTP via its most recent trade (any status).
+    function _auScalpLatestTrade(bid) { var all = _auScalp.trades || []; for (var i = 0; i < all.length; i++) { if (all[i].book_id === bid) return all[i]; } return null; }
+    function _auScalpSampleTrade(bid) { return (openByBook[bid] && openByBook[bid][0]) || _auScalpLatestTrade(bid); }
+
+    var uniqSyms = Array.from(new Set(shownBooks.map(function (b) {
+        var _s = _auScalpSampleTrade(b.id); var sec = _s ? auScalpSecurity(_s) : null;
         return sec ? sec.symbol : null;
     }).filter(Boolean)));
     if (mode === 'paper') _auScalpSyms = [];
@@ -8803,32 +8804,62 @@ async function auScalpRenderOpen(mode, silent) {
     }
     var ltpMap = autoFetchLtpForSymbols(uniqSyms);
 
-    // ── Group open rungs by BOOK. Each book is ONE summary row (its aggregates);
-    //    click it to expand into the individual rungs — trade-only detail, since
-    //    Book / Side / Contract / LTP already sit on the summary row. ──────────
-    var groups = {}, order = [];
-    rows.forEach(function (t) {
-        if (!groups[t.book_id]) { groups[t.book_id] = []; order.push(t.book_id); }
-        groups[t.book_id].push(t);
-    });
+    el.style.display = 'block';
 
-    el.style.display = 'block';   // container is .au-meta (flex) — let the table fill
+    var groups = openByBook;
+    var order = shownBooks.map(function (b) { return b.id; });
 
     var body = '';
     order.forEach(function (bid) {
-        var trades = groups[bid];
-        var sec = auScalpSecurity(trades[0]);
+        var bk = (_auScalp.books || []).filter(function (x) { return x.id === bid; })[0] || {};
+        var st = stratById[bk.strategy_id] || {};
+        var params = st.params || {};
+        var trades = groups[bid] || [];
+        var sampleT = _auScalpSampleTrade(bid);
+        var sec = sampleT ? auScalpSecurity(sampleT) : null;
         var sym = sec ? sec.symbol : null;
-        var shortSymbol = sec ? sec.underlying_symbol : null;
-        var contractStr = sec ? autoFmtContract(sec.symbol, sec.expiry_date) : '—';
+        var shortSymbol = sec ? sec.underlying_symbol : (params.underlying || null);
+        var contractStr = sec ? autoFmtContract(sec.symbol, sec.expiry_date)
+                              : (params.underlying ? (params.underlying + (params.instrument_type ? ' · ' + params.instrument_type : '')) : '—');
         var physLot = shortSymbol ? autoGsPhysicalLot(shortSymbol) : null;
-        var marginPct = shortSymbol ? autoGsMarginPct(shortSymbol) : null;
+        var marginPct = 25;   // ⚠ PROVISIONAL flat 25% of exposure — pending a definite margin source (owner 2026-09-10)
         var ltpVal = sec ? ltpMap.get(sec.symbol) : undefined;
-        var rungMap = _auScalpRungOf(bid);
+        var _dash = '<span style="color:#9ca3af">-</span>';
 
+        var paused = !!params.entries_paused;
+        var disabledBook = !(bk.enabled && st.enabled);
+        var dotCls = paused ? 'paused' : (disabledBook ? 'off' : 'on');
+        var dotTitle = paused ? 'Entries paused — no new trades coming in'
+                     : (disabledBook ? 'Disabled — shown only because it holds an open position' : 'Enabled — taking new entries');
+        var dotHtml = '<span class="au-scalp-odot ' + dotCls + '" title="' + dotTitle + '"></span>';
+        var nextArmCell = (bk.next_entry_level != null && bk.next_entry_level !== '') ? auScalpNum(bk.next_entry_level, sym) : _dash;
+        var bkCell = '<td style="padding:8px;vertical-align:top"><div class="au-scalp-obkcell">' + dotHtml
+            + '<div class="au-scalp-obk"><div class="au-scalp-obkname">' + auScalpEsc(auScalpBookName(bid)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</div>'
+            + '<div class="au-scalp-obksub">' + auScalpEsc(contractStr) + '</div></div></div></td>';
+
+        if (!trades.length) {
+            var flatRealised = (_auScalp.trades || []).reduce(function (n, t) { return (t.book_id === bid && t.mode === mode && t.status === 'closed') ? n + (Number(t.realised_pnl) || 0) : n; }, 0);
+            var flatSide = params.direction === 'short' ? '<span class="au-badge error">SHORT</span>' : (params.direction === 'long' ? '<span class="au-badge success">LONG</span>' : _dash);
+            body += '<tr class="au-scalp-openrow au-scalp-flatrow" style="border-top:1px solid #e5e7eb">'
+                + bkCell
+                + '<td style="padding:8px;vertical-align:top">' + flatSide + '</td>'
+                + '<td style="padding:8px;text-align:right;vertical-align:top">' + _dash + '</td>'
+                + '<td style="padding:8px;text-align:right;vertical-align:top"><span class="au-badge idle">FLAT</span></td>'
+                + '<td style="padding:8px;text-align:right;vertical-align:top">' + _dash + '</td>'
+                + '<td style="padding:8px;text-align:right;vertical-align:top">' + _dash + '</td>'
+                + '<td style="padding:8px;text-align:right;vertical-align:top">' + nextArmCell + '</td>'
+                + '<td style="padding:8px;text-align:right;vertical-align:top">' + _dash + '</td>'
+                + '<td style="padding:8px;text-align:right;vertical-align:top">' + (ltpVal != null ? auScalpNum(ltpVal, sym) : _dash) + '</td>'
+                + '<td style="padding:8px;text-align:right;vertical-align:top">' + _dash + '</td>'
+                + '<td style="padding:8px;text-align:right;vertical-align:top;font-weight:700">' + (flatRealised ? auScalpPnl(flatRealised) : _dash) + '</td>'
+                + '<td style="padding:8px;text-align:center;vertical-align:top"></td>'
+                + '</tr>';
+            return;
+        }
+
+        var rungMap = _auScalpRungOf(bid);
         var bLots = 0, bExp = 0, bMargin = 0, bPnl = 0, bAnyExp = false, bAnyPnl = false, entryWt = 0;
         var sideSet = {}, rowObjs = [];
-
         trades.forEach(function (t) {
             var rowLots = Number(t.qty_lots) || 0;
             var qtyOpenUnits = Number(t.qty_open_units);
@@ -8836,12 +8867,10 @@ async function auScalpRenderOpen(mode, silent) {
             var margin = (exposure != null && marginPct != null) ? exposure * marginPct / 100 : null;
             var pnl = null;
             if (ltpVal != null && exposure != null) { var sgn = t.side === 'LONG' ? 1 : -1; pnl = sgn * (ltpVal - Number(t.entry_price)) * qtyOpenUnits; }
-
             bLots += rowLots; sideSet[t.side] = 1;
             if (exposure != null && exposure > 0) { bExp += exposure; bAnyExp = true; entryWt += Number(t.entry_price) * rowLots; }
             if (margin != null) bMargin += margin;
             if (pnl != null) { bPnl += pnl; bAnyPnl = true; }
-
             rowObjs.push({ t: t, rung: rungMap[t.id] || 0, lots: rowLots, exposure: exposure, pnl: pnl,
                 sort: {
                     rung: rungMap[t.id] || 0,
@@ -8854,8 +8883,8 @@ async function auScalpRenderOpen(mode, silent) {
                 } });
         });
 
-        var st = _auScalpRungSort[mode + ':' + bid] || { col: 'rung', dir: 'desc' };
-        var sorted = _auScalpSortRows(rowObjs, st);
+        var st_sort = _auScalpRungSort[mode + ':' + bid] || { col: 'rung', dir: 'desc' };
+        var sorted = _auScalpSortRows(rowObjs, st_sort);
 
         var detail = '';
         sorted.forEach(function (o) {
@@ -8896,24 +8925,27 @@ async function auScalpRenderOpen(mode, silent) {
         var sideKeys = Object.keys(sideSet);
         var sideBadge = sideKeys.length > 1 ? '<span class="au-badge warning">MIXED</span>'
             : (sideKeys[0] === 'SHORT' ? '<span class="au-badge error">SHORT</span>' : '<span class="au-badge success">LONG</span>');
-        var qtySumSub = physLot ? '<div style="color:#6b7280;font-size:10px">' + (bLots * physLot.qty) + ' ' + physLot.unit + '</div>' : '';
         var bPnlCell;
         if (bAnyPnl && bExp > 0) {
             var bcol = bPnl >= 0 ? '#047857' : '#dc2626';
             bPnlCell = auScalpPnl(bPnl) + '<div style="color:' + bcol + ';font-size:10px">' + (bPnl >= 0 ? '+' : '-') + Math.abs((bPnl / bExp) * 100).toFixed(2) + '%</div>';
         } else { bPnlCell = '<span style="color:#9ca3af">-</span>'; }
 
-        // Net P&L = this book's realised (closed) + current live (open). Live is
-        // structurally negative on a grid, so Net is the number that matters.
+        // Net P&L = this book's realised (closed) + current live (open).
         var bRealised = ((window._auScalp && _auScalp.trades) || []).reduce(function (n, t) {
             return (t.book_id === bid && t.mode === mode && t.status === 'closed') ? n + (Number(t.realised_pnl) || 0) : n; }, 0);
         totalRealised += bRealised;
         var bNet = bRealised + bPnl;
         var netCell = auScalpPnl(bNet);
 
+        // Next target = the take-profit (resting stop) of the LAST-OPENED rung
+        // (highest rung #) — the same value shown on the first row of the nested
+        // rung table when the book is expanded (owner 2026-09-10).
+        var lastRungObj = rowObjs.reduce(function (best, o) { return (!best || o.rung > best.rung) ? o : best; }, null);
+        var nextTargetCell = (lastRungObj && lastRungObj.t.current_stop != null) ? auScalpNum(lastRungObj.t.current_stop, sym) : _dash;
+
         var expKey = mode + ':' + bid;
         var isOpen = !!_auScalpOpenExpand[expKey];
-        var caret = '<span class="au-scalp-ocaret" style="display:inline-block;width:14px;color:#6b7280">' + (isOpen ? '▾' : '▸') + '</span>';
 
         var detHead = '<tr style="color:#6b7280">'
             + _auScalpSortTh(mode, bid, 'rung', 'Rung #', 'right', 'open')
@@ -8926,19 +8958,22 @@ async function auScalpRenderOpen(mode, silent) {
             + '<th style="padding:4px 8px;font-weight:600;text-align:right">Close</th>'
             + '</tr>';
 
+        var qtyMain = trades.reduce(function (n, t) { return n + (Number(t.qty_units) || 0); }, 0).toLocaleString('en-IN');
+        var expCell = bAnyExp ? (formatAmount(bExp) + '<div class="au-scalp-osub">margin ' + formatAmount(bMargin) + '</div>') : _dash;
+
         body += '<tr class="au-scalp-openrow" style="border-top:1px solid #e5e7eb;cursor:pointer;background:' + (isOpen ? '#f8fafc' : '#fff') + '" onclick="auScalpToggleOpenBook(\'' + mode + '\',\'' + bid + '\')">'
-            + '<td style="padding:8px;vertical-align:middle;font-weight:700;color:#1d4ed8">' + caret + auScalpEsc(auScalpBookName(bid)).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</td>'
-            + '<td style="padding:8px;vertical-align:middle">' + sideBadge + '</td>'
-            + '<td style="padding:8px;vertical-align:middle">' + auScalpEsc(contractStr) + '</td>'
-            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + trades.length + ' rung' + (trades.length === 1 ? '' : 's') + '</td>'
-            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + trades.reduce(function (n, t) { return n + (Number(t.qty_units) || 0); }, 0).toLocaleString('en-IN') + '<div style="color:#6b7280;font-size:10px">' + bLots + ' lot' + (bLots === 1 ? '' : 's') + '</div></td>'
-            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (avgEntry != null ? auScalpNum(avgEntry, sym) : '<span style="color:#9ca3af">-</span>') + '</td>'
-            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (ltpVal != null ? auScalpNum(ltpVal, sym) : '<span style="color:#9ca3af">-</span>') + '</td>'
-            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (bAnyExp ? formatAmount(bExp) : '<span style="color:#9ca3af">-</span>') + '</td>'
-            + '<td style="padding:8px;text-align:right;vertical-align:middle">' + (bAnyExp ? formatAmount(bMargin) : '<span style="color:#9ca3af">-</span>') + '</td>'
-            + '<td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:middle">' + bPnlCell + '</td>'
-            + '<td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:middle;font-weight:700">' + netCell + '</td>'
-            + '<td style="padding:8px;text-align:center;vertical-align:middle"><button class="au-btn au-btn-danger" title="Close ALL open rungs in this book" style="padding:1px 8px;font-size:14px;line-height:1.2;font-weight:700" onclick="event.stopPropagation();auScalpCloseAllBook(\'' + mode + '\',\'' + bid + '\')">×</button></td>'
+            + bkCell
+            + '<td style="padding:8px;vertical-align:top">' + sideBadge + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:top">' + trades.length + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:top">' + qtyMain + '<div class="au-scalp-osub">' + bLots + ' lot' + (bLots === 1 ? '' : 's') + '</div></td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:top">' + (avgEntry != null ? auScalpNum(avgEntry, sym) : _dash) + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:top">' + expCell + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:top">' + nextArmCell + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:top">' + nextTargetCell + '</td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:top">' + (ltpVal != null ? auScalpNum(ltpVal, sym) : _dash) + '</td>'
+            + '<td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:top">' + bPnlCell + '</td>'
+            + '<td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:top;font-weight:700">' + netCell + '</td>'
+            + '<td style="padding:8px;text-align:center;vertical-align:top"><button class="au-btn au-btn-danger" title="Close ALL open rungs in this book" style="padding:1px 8px;font-size:14px;line-height:1.3" onclick="event.stopPropagation();auScalpCloseAllBook(\'' + mode + '\',\'' + bid + '\')">✕</button></td>'
             + '</tr>';
         body += '<tr class="au-scalp-opendetail" data-expkey="' + expKey + '"' + (isOpen ? '' : ' style="display:none"') + '>'
             + '<td colspan="12" style="padding:0 8px 12px 8px;background:#f8fafc">'
@@ -8947,17 +8982,21 @@ async function auScalpRenderOpen(mode, silent) {
             + '</td></tr>';
     });
 
-    var pnlTotalCell = anyPnl ? auScalpPnl(totalPnl) : '<span style="color:#9ca3af">-</span>';
-    var netTotalCell = (anyPnl || totalRealised) ? auScalpPnl(totalRealised + totalPnl) : '<span style="color:#9ca3af">-</span>';
+    var _dashT = '<span style="color:#9ca3af">-</span>';
+    var pnlTotalCell = anyPnl ? auScalpPnl(totalPnl) : _dashT;
+    var netTotalCell = (anyPnl || totalRealised) ? auScalpPnl(totalRealised + totalPnl) : _dashT;
+    var expTotalCell = anyExposure ? (formatAmount(totalExposure) + '<div class="au-scalp-osub">margin ' + formatAmount(totalMargin) + '</div>') : _dashT;
+    var nBooks = shownBooks.length;
 
     var totalsRow = '<tr style="background:#f7fafc;border-bottom:2px solid #cbd5e0;font-weight:700">'
-            + '<td colspan="3" style="padding:8px;text-align:right">Totals (' + rows.length + ' open · ' + order.length + ' book' + (order.length === 1 ? '' : 's') + '):</td>'
-            + '<td style="padding:8px;text-align:right">' + rows.length + ' rung' + (rows.length === 1 ? '' : 's') + '</td>'
+            + '<td colspan="2" style="padding:8px;text-align:right">Totals (' + rows.length + ' open · ' + nBooks + ' book' + (nBooks === 1 ? '' : 's') + '):</td>'
+            + '<td style="padding:8px;text-align:right">' + rows.length + '</td>'
             + '<td style="padding:8px;text-align:right">' + lots + ' lot' + (lots === 1 ? '' : 's') + '</td>'
             + '<td style="padding:8px"></td>'
+            + '<td style="padding:8px;text-align:right;vertical-align:top">' + expTotalCell + '</td>'
             + '<td style="padding:8px"></td>'
-            + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalExposure) : '<span style="color:#9ca3af">-</span>') + '</td>'
-            + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalMargin) : '<span style="color:#9ca3af">-</span>') + '</td>'
+            + '<td style="padding:8px"></td>'
+            + '<td style="padding:8px"></td>'
             + '<td style="padding:8px;text-align:right">' + pnlTotalCell + '</td>'
             + '<td style="padding:8px;text-align:right">' + netTotalCell + '</td>'
             + '<td style="padding:8px"></td>'
@@ -8966,24 +9005,26 @@ async function auScalpRenderOpen(mode, silent) {
     var headerRow = '<tr style="background:#f3f4f6;text-align:left">'
             + '<th style="padding:6px 8px">Book</th>'
             + '<th style="padding:6px 8px">Side</th>'
-            + '<th style="padding:6px 8px">Contract</th>'
             + '<th style="padding:6px 8px;text-align:right">Rungs</th>'
             + '<th style="padding:6px 8px;text-align:right">Qty<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ lots</span></th>'
             + '<th style="padding:6px 8px;text-align:right">Avg Entry</th>'
+            + '<th style="padding:6px 8px;text-align:right">Exposure<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ margin</span></th>'
+            + '<th style="padding:6px 8px;text-align:right">Next arm</th>'
+            + '<th style="padding:6px 8px;text-align:right">Next target</th>'
             + '<th style="padding:6px 8px;text-align:right">LTP</th>'
-            + '<th style="padding:6px 8px;text-align:right">Exposure</th>'
-            + '<th style="padding:6px 8px;text-align:right">Margin</th>'
             + '<th style="padding:6px 8px;text-align:right">Live P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>'
             + '<th style="padding:6px 8px;text-align:right">Net P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">closed + live</span></th>'
-            + '<th style="padding:6px 8px;text-align:center">Close all</th>'
+            + '<th style="padding:6px 8px;width:34px"></th>'
             + '</tr>';
 
     h += '<div style="overflow-x:auto;width:100%"><table style="width:100%;font-size:11px;border-collapse:collapse">'
        + '<thead>' + totalsRow + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
     h += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6;width:100%">'
-       + '• One row per book — click to expand its rungs. The red × on a rung closes that rung; the × on a book row closes ALL its rungs.<br>'
-       + '• Rung # is the open sequence (1 = first opened). Click any rung-table header to sort. The ✅ / ⚠️ icon is the rung’s health (⚠ = unprotected or inverted stop — hover for detail and any cap-bound / rolled notes).<br>'
-       + '• Target’s sub-line is its distance from entry in ₹ (the config’s take-profit interval — lets you tell configs apart on one book). Avg Entry is lot-weighted; Exposure / Margin / Live P&amp;L are book totals.<br>'
+       + '• All ' + mode + ' books show — flat ones read FLAT in Qty. The dot is book status: '
+       + '<span style="color:#16a34a">●</span> enabled &amp; taking entries · <span style="color:#dc2626">●</span> entries paused. '
+       + 'Click a book with rungs to expand them; the × closes ALL its rungs.<br>'
+       + '• Next arm = the book’s stored next entry level. Next target = the take-profit of the last-opened rung. '
+       + 'Avg Entry is lot-weighted; Exposure / Margin / P&amp;L are book totals. <b>Margin is a provisional 25% of exposure</b> pending a definite source.<br>'
        + '• Prices: NSE 2dp, MCX 0dp. Amounts honour the ₹ display unit — press F4 to toggle. LTP via the live feed / Fyers quotes.'
        + '</div>';
     el.innerHTML = h;
@@ -9177,7 +9218,7 @@ function auScalpToggleClosedBook(mode, bookId) {
 }
 
 function auScalpRenderClosed(mode) {
-    var all = _auScalp.trades.filter(function (t) { return t.mode === mode && (t.status === 'closed' || t.status === 'voided'); });
+    var all = _auScalp.trades.filter(function (t) { return t.mode === mode && t.status === 'closed'; });   // voided = never-filled/rejected (e.g. F&O ban) → not shown as trades
     // Filters (Instrument / Result / Exit reason / Book) apply HERE ONLY —
     // Open trades (above) is never filtered. See auScalpClosedPassesFilters.
     var rows = all.filter(function (t) { return auScalpClosedPassesFilters(mode, t); });

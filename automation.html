@@ -370,6 +370,16 @@ input.au-at2-locked:disabled {
 .au-scalp-stack .t2 { color: #64748b; }
 .au-scalp-band { align-items: flex-end; }
 .au-scalp-pause.au-scalp-paused { background: #fef3c7; border-color: #f6d98a; color: #92400e; }
+/* ── AT2-Scalp Open-trades table redesign (2026-09-10, cosmetic) ── */
+.au-scalp-obkcell { display: flex; gap: 9px; align-items: flex-start; }
+.au-scalp-odot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+.au-scalp-odot.on { background: #16a34a; box-shadow: 0 0 0 2.5px rgba(22,163,74,.16); }
+.au-scalp-odot.paused { background: #dc2626; box-shadow: 0 0 0 2.5px rgba(220,38,38,.16); }
+.au-scalp-odot.off { background: #cbd5e1; box-shadow: 0 0 0 2.5px rgba(148,163,184,.14); }
+.au-scalp-obkname { font-weight: 700; color: #1d4ed8; }
+.au-scalp-openrow:not(.au-scalp-flatrow):hover .au-scalp-obkname { text-decoration: underline; }
+.au-scalp-obksub { color: #6b7280; font-size: 10px; margin-top: 1px; font-weight: 400; }
+.au-scalp-osub { color: #6b7280; font-size: 10px; margin-top: 1px; font-weight: 400; }
 /* the edit detail row — only when the row is open */
 .au-scalp-strat:not(.open) .au-scalp-detailrow { display: none; }
 .au-scalp-detailrow > td { padding: 6px 14px 16px; background: #fbfdff; border-top: 1px dashed #e2e8f0; white-space: normal; }
