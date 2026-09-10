@@ -9722,6 +9722,12 @@ function auScalpParamForm(params, sid) {
     return h;
 }
 
+function auScalpNumIN(v) {
+    if (v === undefined || v === null || v === '') return '—';
+    var n = Number(v);
+    return isFinite(n) ? n.toLocaleString('en-IN') : auScalpEsc(String(v));
+}
+
 function auScalpRenderControls() {
     var el = document.getElementById('au-scalp-controls-content');
     if (!el) return;
@@ -9729,7 +9735,7 @@ function auScalpRenderControls() {
 
     // ── Strategies (TABLE) ──────────────────────────────────────────────────
     var h = '<div class="au-card">'
-          + '<div class="au-scalp-cardhead"><h3>Strategies</h3>'
+          + '<div class="au-scalp-cardhead"><h3 class="au-scalp-h3-big">Strategies</h3>'
           +   '<button class="au-btn au-btn-primary" id="au-scalp-newstrat">＋ New strategy</button></div>'
           + '<div class="au-sub">Read from <code>at2_strategy</code>. Click a row to expand and edit — the <b>database</b> validates on save and shows any refusal here.</div>';
     var stratHidden = _auScalp.strategies.filter(function (x) { return x.hidden; }).length;
@@ -9739,32 +9745,36 @@ function auScalpRenderControls() {
         h += '<div class="au-soon">' + (stratHidden ? 'Every strategy is hidden — use “Show retired”.' : 'No AT2 strategies configured. Use ＋ New strategy.') + '</div>';
     } else {
         h += '<div class="au-scalp-tblwrap"><table class="au-scalp-tbl"><thead><tr>'
-           + '<th>Strategy</th><th>Code</th><th>Status</th><th>Instrument</th><th>Dir</th>'
-           + '<th class="num">Entry ₹</th><th class="num">Target ₹</th><th>Band ₹</th><th>Roll</th><th></th></tr></thead>';
+           + '<th>Strategy</th><th>Dir</th>'
+           + '<th class="num">Entry ₹</th><th class="num">Target ₹</th><th class="num">Band ₹</th><th>Roll</th><th></th></tr></thead>';
         stratShown.forEach(function (s2) {
             var params = s2.params || {};
             var paused = !!params.entries_paused;
             var open = !!_auScalpOpen['s:' + s2.id];
-            var rollTxt = (P(s2, 'instrument_type') === 'equity') ? '—' : (auScalpEsc(P(s2, 'roll_days_before')) + 'd @ ' + auScalpEsc(P(s2, 'roll_time')));
+            var rollTxt = (P(s2, 'instrument_type') === 'equity') ? '—' : ('<div class="au-scalp-stack"><span>' + auScalpEsc(P(s2, 'roll_days_before')) + 'd before</span><span class="t2">' + auScalpEsc(P(s2, 'roll_time')) + '</span></div>');
+            var dirRaw = P(s2, 'direction');
+            var dirHtml = (dirRaw === 'long') ? '<span class="au-scalp-dir long">LONG</span>' : (dirRaw === 'short') ? '<span class="au-scalp-dir short">SHORT</span>' : auScalpEsc(dirRaw);
             h += '<tbody class="au-scalp-strat' + (open ? ' open' : '') + (s2.hidden ? ' retired' : '') + '" data-sid="' + s2.id + '">'
                + '<tr class="au-scalp-srow">'
-               +   '<td class="au-scalp-title" data-toggle="s:' + s2.id + '">'+ '<button class="au-btn au-btn-secondary au-scalp-poke" data-code="' + auScalpEsc(s2.code) + '" title="\u26a1 Poke the driver for THIS strategy \u2014 bumps its arm epoch so the driver re-pokes it on the next tick" onclick="event.stopPropagation();auScalpPoke(this)" style="padding:0 6px;font-size:12px;line-height:1.5;margin-right:5px">\u26a1</button>'+ '<button class="au-btn au-btn-secondary au-scalp-pause" data-code="' + auScalpEsc(s2.code) + '" data-paused="' + (paused ? '1' : '0') + '" title="' + (paused ? 'Resume new entries' : 'Pause NEW entries — exits, recon, roll keep running') + '" onclick="event.stopPropagation();auScalpPauseToggle(this)" style="padding:0 6px;font-size:12px;line-height:1.5;margin-right:5px">' + (paused ? '▶' : '⏸') + '</button>'+ '<span class="au-scalp-name">' + auScalpEsc(s2.display_name || s2.code) + '</span>'+ (paused ? ' <span class="au-badge warn">entries paused</span>' : '') + (s2.hidden ? ' <span class="au-badge idle">retired</span>' : '') + '</td>'
-               +   '<td><code class="au-scalp-code">' + auScalpEsc(s2.code) + '</code></td>'
-               +   '<td>' + (s2.enabled ? '<span class="au-badge success">enabled</span>' : '<span class="au-badge idle">disabled</span>') + '</td>'
-               +   '<td>' + auScalpEsc(P(s2, 'instrument_type')) + ' · ' + auScalpEsc(P(s2, 'underlying')) + '</td>'
-               +   '<td>' + auScalpEsc(P(s2, 'direction')) + '</td>'
-               +   '<td class="num">' + auScalpEsc(P(s2, 'entry_interval')) + '</td>'
-               +   '<td class="num">' + auScalpEsc(P(s2, 'target_interval')) + '</td>'
-               +   '<td class="num">' + auScalpEsc(P(s2, 'band_lower')) + '–' + auScalpEsc(P(s2, 'band_upper')) + '</td>'
+               +   '<td class="au-scalp-title au-scalp-stitle" data-toggle="s:' + s2.id + '">'
+               +     '<span class="au-scalp-sdot ' + (s2.enabled ? 'on' : 'off') + '" title="' + (s2.enabled ? 'Enabled' : 'Disabled') + '"></span>'
+               +     '<div class="au-scalp-titletext"><div><span class="au-scalp-name">' + auScalpEsc(s2.display_name || s2.code) + '</span>' + (paused ? ' <span class="au-badge warning">entries paused</span>' : '') + (s2.hidden ? ' <span class="au-badge idle">retired</span>' : '') + '</div><div class="au-scalp-instr">' + auScalpEsc(P(s2, 'instrument_type')) + ' · ' + auScalpEsc(P(s2, 'underlying')) + '</div></div>'
+               +   '</td>'
+               +   '<td>' + dirHtml + '</td>'
+               +   '<td class="num">' + auScalpNumIN(params.entry_interval) + '</td>'
+               +   '<td class="num">' + auScalpNumIN(params.target_interval) + '</td>'
+               +   '<td class="num"><div class="au-scalp-stack au-scalp-band"><span>' + auScalpNumIN(params.band_lower) + '</span><span>' + auScalpNumIN(params.band_upper) + '</span></div></td>'
                +   '<td>' + rollTxt + '</td>'
                +   '<td class="au-scalp-strat-actions">'
+               +     '<button class="au-btn au-btn-secondary au-scalp-poke" data-code="' + auScalpEsc(s2.code) + '" title="⚡ Poke the driver for THIS strategy — bumps its arm epoch so the driver re-pokes it on the next tick" onclick="event.stopPropagation();auScalpPoke(this)">⚡</button>'
+               +     '<button class="au-btn au-btn-secondary au-scalp-pause' + (paused ? ' au-scalp-paused' : '') + '" data-code="' + auScalpEsc(s2.code) + '" data-paused="' + (paused ? '1' : '0') + '" title="' + (paused ? 'Resume new entries' : 'Pause NEW entries — exits, recon, roll keep running') + '" onclick="event.stopPropagation();auScalpPauseToggle(this)">' + (paused ? '▶' : '⏸') + '</button>'
                +     '<button class="au-btn au-btn-secondary au-scalp-edit" data-sid="' + s2.id + '" title="Edit">✏️</button>'
                +     '<button class="au-btn au-btn-primary au-scalp-save" data-sid="' + s2.id + '" style="display:none">Save</button>'
                +     '<button class="au-btn au-btn-secondary au-scalp-cancel" data-sid="' + s2.id + '" style="display:none">Cancel</button>'
                +     '<button class="au-btn au-btn-secondary au-scalp-hide" data-sid="' + s2.id + '" data-hidden="' + (s2.hidden ? '1' : '0') + '" title="' + (s2.hidden ? 'Restore' : 'Hide (retire)') + '">' + (s2.hidden ? '👁' : '🙈') + '</button>'
                +   '</td>'
                + '</tr>'
-               + '<tr class="au-scalp-detailrow"><td colspan="10"><div class="au-scalp-body">'
+               + '<tr class="au-scalp-detailrow"><td colspan="7"><div class="au-scalp-body">'
                +   '<div class="au-scalp-group"><div class="au-scalp-group-label">Identity</div><div class="au-scalp-grid">'
                +     '<div class="au-scalp-field"><label>Display name</label><input class="wms-input au-scalp-sf" data-sid="' + s2.id + '" data-col="display_name" type="text" value="' + auScalpEsc(s2.display_name || '') + '" disabled><div class="au-scalp-hint">What this screen and the dashboard call it. Free text</div></div>'
                +     '<div class="au-scalp-field au-scalp-field-locked"><label>Code <span class="au-scalp-lockbadge" title="Read-only">🔒</span></label><input class="wms-input au-scalp-locked" type="text" value="' + auScalpEsc(s2.code) + '" disabled><div class="au-scalp-hint">The identity every trade, signal and book points at</div></div>'

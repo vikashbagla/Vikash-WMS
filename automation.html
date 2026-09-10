@@ -355,6 +355,21 @@ input.au-at2-locked:disabled {
 .au-scalp-code { font-size: 11px; color: #64748b; background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
 .au-scalp-strat-actions { display: flex; gap: 5px; justify-content: flex-end; }
 .au-scalp-strat-actions .au-btn { padding: 3px 8px; font-size: 11px; }
+/* ── AT2-Scalp strategies table redesign (2026-09-10, cosmetic only) ── */
+.au-scalp-h3-big { font-size: 18px; }
+.au-scalp-stitle { align-items: flex-start; }
+.au-scalp-sdot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+.au-scalp-sdot.on { background: #16a34a; box-shadow: 0 0 0 2.5px rgba(22,163,74,.16); }
+.au-scalp-sdot.off { background: #cbd5e1; box-shadow: 0 0 0 2.5px rgba(148,163,184,.14); }
+.au-scalp-titletext { display: flex; flex-direction: column; min-width: 0; }
+.au-scalp-instr { font-size: 11px; color: #64748b; margin-top: 1px; font-variant-numeric: tabular-nums; }
+.au-scalp-dir { display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: .05em; padding: 2px 9px; border-radius: 5px; }
+.au-scalp-dir.long { background: #d1fae5; color: #065f46; }
+.au-scalp-dir.short { background: #fee2e2; color: #991b1b; }
+.au-scalp-stack { display: flex; flex-direction: column; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.au-scalp-stack .t2 { color: #64748b; }
+.au-scalp-band { align-items: flex-end; }
+.au-scalp-pause.au-scalp-paused { background: #fef3c7; border-color: #f6d98a; color: #92400e; }
 /* the edit detail row — only when the row is open */
 .au-scalp-strat:not(.open) .au-scalp-detailrow { display: none; }
 .au-scalp-detailrow > td { padding: 6px 14px 16px; background: #fbfdff; border-top: 1px dashed #e2e8f0; white-space: normal; }
@@ -1485,7 +1500,7 @@ input.au-scalp-locked, input.au-scalp-locked:disabled { background: #f1f5f9; col
             <button class="au-subtab-btn" data-subtab="au-scalp-alerts-panel" id="au-scalp-alerts-tab">Alerts</button>
             <button class="au-subtab-btn" data-subtab="au-scalp-events-panel">Signals &amp; Events</button>
             <button class="au-subtab-btn" data-subtab="au-scalp-log-panel">Log</button>
-            <button class="au-subtab-btn" data-subtab="au-scalp-controls-panel">Controls &amp; Admin</button>
+            <button class="au-subtab-btn" data-subtab="au-scalp-controls-panel" style="color:#b91c1c;font-weight:700">⚡ Controls &amp; Admin</button>
             <button class="au-btn au-btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 12px"
                     onclick="auScalpRecon(this)" title="Verify every live cover is resting at the broker; re-arm any that is missing (hours-gated, enabled live books). Same recon the market-open cron runs.">🛡️ Reconcile covers</button>
             <button class="au-btn au-btn-secondary" style="font-size:11px;padding:4px 12px"
