@@ -9019,13 +9019,17 @@ async function auScalpRenderOpen(mode, silent) {
 
     h += '<div style="overflow-x:auto;width:100%"><table style="width:100%;font-size:11px;border-collapse:collapse">'
        + '<thead>' + totalsRow + headerRow + '</thead><tbody>' + body + '</tbody></table></div>';
-    h += '<div class="au-meta" style="margin-top:8px;font-size:11px;color:#6b7280;line-height:1.6;width:100%">'
-       + '• All ' + mode + ' books show — flat ones read FLAT in Qty. The dot is book status: '
-       + '<span style="color:#16a34a">●</span> enabled &amp; taking entries · <span style="color:#dc2626">●</span> entries paused. '
-       + 'Click a book with rungs to expand them; the × closes ALL its rungs.<br>'
-       + '• Next arm = the book’s stored next entry level. Next target = the take-profit of the last-opened rung. '
-       + 'Avg Entry is lot-weighted; Exposure / Margin / P&amp;L are book totals. <b>Margin is a provisional 25% of exposure</b> pending a definite source.<br>'
-       + '• Prices: NSE 2dp, MCX 0dp. Amounts honour the ₹ display unit — press F4 to toggle. LTP via the live feed / Fyers quotes.'
+    h += '<div style="margin-top:10px;font-size:11px;color:#6b7280;line-height:1.55;width:100%">'
+       + '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;margin-bottom:5px">'
+       +   '<span style="font-weight:600;color:#475569">Book status:</span>'
+       +   '<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:#16a34a"></span>enabled &amp; taking entries</span>'
+       +   '<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:#dc2626"></span>entries paused</span>'
+       +   '<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:#cbd5e1"></span>disabled (shown only if it holds a position)</span>'
+       + '</div>'
+       + '<div style="margin-bottom:3px">All ' + mode + ' books are listed; flat ones read <b>FLAT</b> in Qty. Click a book with rungs to expand them; the × closes ALL its rungs.</div>'
+       + '<div style="margin-bottom:3px"><b>Next arm</b> = the book’s stored next entry level. <b>Next target</b> = the take-profit of the last-opened rung. Avg Entry is lot-weighted; Exposure / Margin / P&amp;L are book totals.</div>'
+       + '<div style="margin-bottom:3px"><b>Margin is a provisional 25% of exposure</b>, pending a definite source.</div>'
+       + '<div>Prices: NSE 2dp, MCX 0dp. Amounts honour the ₹ display unit — press F4 to toggle. LTP via the live feed / Fyers quotes.</div>'
        + '</div>';
     el.innerHTML = h;
 }
