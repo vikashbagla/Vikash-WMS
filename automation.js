@@ -8663,9 +8663,10 @@ function _auScalpRungMap(trades) {
 
 function _auScalpRungOf(bid) {
     // Rung # is the book's LIFETIME open sequence — numbered across ALL its
-    // trades (open + closed + voided), so a closed rung and an open rung never
-    // share a number. Same map feeds both tables.
-    var all = ((window._auScalp && _auScalp.trades) || []).filter(function (t) { return t.book_id === bid; });
+    // trades (open + closed), so a closed rung and an open rung never share a
+    // number. VOIDED (never-filled/rejected) are excluded — they were never a rung.
+    // Same map feeds both tables.
+    var all = ((window._auScalp && _auScalp.trades) || []).filter(function (t) { return t.book_id === bid && t.status !== 'voided'; });
     return _auScalpRungMap(all);
 }
 
@@ -9177,7 +9178,7 @@ function auScalpToggleClosedBook(mode, bookId) {
 }
 
 function auScalpRenderClosed(mode) {
-    var all = _auScalp.trades.filter(function (t) { return t.mode === mode && (t.status === 'closed' || t.status === 'voided'); });
+    var all = _auScalp.trades.filter(function (t) { return t.mode === mode && t.status === 'closed'; });   // voided = never-filled/rejected (e.g. F&O ban) → not shown as trades
     // Filters (Instrument / Result / Exit reason / Book) apply HERE ONLY —
     // Open trades (above) is never filtered. See auScalpClosedPassesFilters.
     var rows = all.filter(function (t) { return auScalpClosedPassesFilters(mode, t); });
