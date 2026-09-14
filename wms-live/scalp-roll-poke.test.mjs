@@ -10,16 +10,23 @@ const NOW = Date.UTC(2026, 8, 30, 5, 0, 0);
 
 T('hhmmToMin', () => { eq(hhmmToMin('12:30'), 750); eq(hhmmToMin('08:30'), 510); eq(hhmmToMin('bad'), null); });
 
-T('Event A: advanceDue + pre-open passed → ADVANCE (first morning of the window)', () => {
-  const r = decideRollPoke(st({ rollDate: '2026-09-30' }), NOW, '2026-09-11', 511, PREOPEN);   // window opened, before roll_time/rollDate
-  eq(r.advance, true); eq(r.set.lastAdvanceDate, '2026-09-11');
+T('Event A: advanceDue + pre-open passed → ADVANCE (records the ATTEMPT, not done)', () => {
+  const r = decideRollPoke(st({ rollDate: '2026-09-30', lastAdvanceTryMs: 0 }), NOW, '2026-09-11', 511, PREOPEN);
+  eq(r.advance, true); eq(r.set.lastAdvanceTryMs, NOW); eq(r.set.lastAdvanceDate, undefined);   // caller marks done only on confirmed advance
 });
-T('Event A: before pre-open minute → no advance', () => { eq(decideRollPoke(st(), NOW, '2026-09-11', 500, PREOPEN).advance, false); });
-T('Event A: de-dupes on lastAdvanceDate (already advanced today)', () => {
-  eq(decideRollPoke(st({ lastAdvanceDate: '2026-09-11' }), NOW, '2026-09-11', 520, PREOPEN).advance, false);
+T('Event A: before pre-open minute → no advance', () => { eq(decideRollPoke(st({ lastAdvanceTryMs: 0 }), NOW, '2026-09-11', 500, PREOPEN).advance, false); });
+T('Event A: de-dupes on lastAdvanceDate once CONFIRMED (caller set it)', () => {
+  eq(decideRollPoke(st({ lastAdvanceDate: '2026-09-11', lastAdvanceTryMs: 0 }), NOW, '2026-09-11', 520, PREOPEN).advance, false);
 });
-T('Event A: advanceDue false (already advanced, op far) → no advance ever again', () => {
-  eq(decideRollPoke(st({ advanceDue: false }), NOW, '2026-09-11', 520, PREOPEN).advance, false);
+T('Event A: RETRIES after a defer — within advanceRetryMs → no re-attempt', () => {
+  eq(decideRollPoke(st({ lastAdvanceTryMs: NOW - 60000 }), NOW, '2026-09-11', 520, PREOPEN, 60000, 120000).advance, false);
+});
+T('Event A: RETRIES after a defer — once advanceRetryMs elapsed → re-attempt', () => {
+  const r = decideRollPoke(st({ lastAdvanceTryMs: NOW - 130000 }), NOW, '2026-09-11', 520, PREOPEN, 60000, 120000);
+  eq(r.advance, true); eq(r.set.lastAdvanceTryMs, NOW);
+});
+T('Event A: advanceDue false (advance confirmed, op far) → no advance ever again', () => {
+  eq(decideRollPoke(st({ advanceDue: false, lastAdvanceTryMs: 0 }), NOW, '2026-09-11', 520, PREOPEN).advance, false);
 });
 
 T('Event B: on/after rollDate, at/after roll_time → ROLL nudge', () => {

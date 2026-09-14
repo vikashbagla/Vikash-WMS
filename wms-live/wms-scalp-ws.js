@@ -43,6 +43,9 @@ const LOG_PATH          = process.env.FYERS_WS_LOG_PATH || '/tmp';
 // throttle for the Event B roll nudge. PREOPEN_MIN = 08:30 IST (MCX morning pre-open).
 const PREOPEN_MIN       = Number(process.env.SCALP_WS_PREOPEN_MIN) || 510;
 const ROLL_THROTTLE_MS  = Number(process.env.SCALP_WS_ROLL_THROTTLE_MS) || 60000;
+// Event A retry: if the advance can't complete (e.g. the Fyers day-token isn't live yet at
+// pre-open), re-attempt every ADVANCE_RETRY_MS until CONFIRMED. Marked done only on success.
+const ADVANCE_RETRY_MS  = Number(process.env.SCALP_WS_ADVANCE_RETRY_MS) || 120000;
 
 if (!FYERS_APP_ID)     { console.error('[scalp-ws] FYERS_APP_ID missing'); process.exit(1); }
 if (!CRON_SECRET_KEY)  { console.error('[scalp-ws] CRON_SECRET_KEY missing — cannot auth tick calls'); process.exit(1); }
@@ -97,7 +100,7 @@ function applyStrategies(strategies) {
   const added = [], removed = [];
   for (const [sym, cfg] of desired) {
     const cur = bySymbol.get(sym);
-    if (!cur) { bySymbol.set(sym, { ...cfg, lastPokePrice: null, lastCrossKey: null, lastCrossTarget: null, lastCrossRearm: null, lastFirstPokeMs: 0, lastAdvanceDate: null, lastRollPokeMs: 0 }); added.push(sym); }
+    if (!cur) { bySymbol.set(sym, { ...cfg, lastPokePrice: null, lastCrossKey: null, lastCrossTarget: null, lastCrossRearm: null, lastFirstPokeMs: 0, lastAdvanceDate: null, lastAdvanceTryMs: 0, lastRollPokeMs: 0, _advDay: null, _advTriedToday: false }); added.push(sym); }
     else { cur.code = cfg.code; cur.levelAware = cfg.levelAware; cur.direction = cfg.direction; cur.bandLo = cfg.bandLo; cur.bandHi = cfg.bandHi; cur.trigger = cfg.trigger; cur.target = cfg.target; cur.armEpoch = cfg.armEpoch; cur.firstEntry = cfg.firstEntry; cur.threshold = cfg.threshold; cur.rearm = cfg.rearm; cur.rollDate = cfg.rollDate; cur.advanceDue = cfg.advanceDue; cur.rollMin = cfg.rollMin; }   // persist poke state (lastCrossTrigger, lastAdvanceDate, lastRollPokeMs)
   }
   for (const sym of Array.from(bySymbol.keys())) {
@@ -140,6 +143,22 @@ async function pokeAction(body, label) {
   } catch (e) { console.error(`[scalp-ws] ${label} failed:`, String(e && e.message || e)); }
 }
 
+// Event A advance — returns { ok, deferred } so the scheduler can mark it done ONLY when
+// confirmed. `first` is false on a retry so the EF suppresses a repeat DEFERRED e-mail.
+async function pokeAdvance(code, first, sym) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/at2-scalp`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'x-cron-key': CRON_SECRET_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'advance', strategy: code, first }),
+    });
+    if (!res.ok) { console.error(`[scalp-ws] Event A advance ${sym} HTTP`, res.status, (await res.text()).slice(0, 200)); return null; }
+    const j = await res.json().catch(() => null);
+    console.log(`[scalp-ws] Event A advance ${sym}`, j && j.deferred ? 'DEFERRED (will retry)' : 'ok');
+    return { ok: !!(j && j.ok), deferred: !!(j && j.deferred) };
+  } catch (e) { console.error(`[scalp-ws] Event A advance ${sym} failed:`, String(e && e.message || e)); return null; }
+}
+
 // The roll-window scheduler: once per cycle, decide Event A (advance) / Event B (roll
 // nudge) per symbol on the IST clock. The GRID + roll BRAIN stay in the Edge Function —
 // this only fires the pokes; the engine is idempotent + run-locked, so an extra poke is safe.
@@ -150,10 +169,17 @@ async function rollScheduler() {
   const minNow = d.getUTCHours() * 60 + d.getUTCMinutes();
   const now = Date.now();
   for (const [sym, st] of bySymbol) {
-    const r = decideRollPoke(st, now, todayIst, minNow, PREOPEN_MIN, ROLL_THROTTLE_MS);
+    if (st._advDay !== todayIst) { st._advDay = todayIst; st._advTriedToday = false; }   // reset the per-day first-try flag
+    const r = decideRollPoke(st, now, todayIst, minNow, PREOPEN_MIN, ROLL_THROTTLE_MS, ADVANCE_RETRY_MS);
     if (r.set) Object.assign(st, r.set);
-    if (r.advance) await pokeAction({ action: 'advance', strategy: st.code }, `Event A advance ${sym}`);
-    if (r.roll)    await pokeAction({ action: 'scan',    strategy: st.code }, `Event B roll-poke ${sym}`);
+    if (r.advance) {
+      const first = !st._advTriedToday; st._advTriedToday = true;
+      const resp = await pokeAdvance(st.code, first, sym);
+      // Mark Event A DONE only on a CONFIRMED advance (ok && !deferred). A defer or a
+      // transport failure leaves lastAdvanceDate unset → the next cycle retries.
+      if (resp && resp.ok && !resp.deferred) { st.lastAdvanceDate = todayIst; console.log(`[scalp-ws] Event A confirmed ${sym} — done for ${todayIst}`); }
+    }
+    if (r.roll) await pokeAction({ action: 'scan', strategy: st.code }, `Event B roll-poke ${sym}`);
   }
 }
 

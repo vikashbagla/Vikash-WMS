@@ -67,17 +67,20 @@ export function decidePoke(st, price, now, cooldownMs, inHours) {
 //              throttled, until the roll completes (the engine is idempotent).
 // st carries: rollDate (YYYY-MM-DD IST | null), advanceDue (bool), rollMin (minutes-
 // of-day from roll_time | null), lastAdvanceDate, lastRollPokeMs.
-export function decideRollPoke(st, nowMs, todayIst, minNow, preopenMin, rollThrottleMs = 60000) {
+export function decideRollPoke(st, nowMs, todayIst, minNow, preopenMin, rollThrottleMs = 60000, advanceRetryMs = 120000) {
   const out = { advance: false, roll: false };
   if (!st) return out;
-  // Event A — advance while the OPERATING contract is inside its OWN roll window
-  // (advanceDue, from ws_universe), at/after the pre-open minute, once per calendar day.
-  // advanceDue flips false the moment the advance lands (op becomes the far contract), so
-  // this self-limits to the first trading morning of the window — robust to a weekend or a
-  // holiday rollover date, and needs no exact-date match.
-  if (st.advanceDue && Number.isFinite(preopenMin) && minNow >= preopenMin && st.lastAdvanceDate !== todayIst) {
+  // Event A — advance while the OPERATING contract is inside its OWN roll window (advanceDue,
+  // from ws_universe), at/after the pre-open minute. It fires on the first trading morning of
+  // the window and RETRIES every advanceRetryMs until the advance is CONFIRMED — the caller
+  // sets lastAdvanceDate only on a confirmed advance (never on a defer), so a slightly-late
+  // Fyers token doesn't lose Event A. This records only the ATTEMPT time (lastAdvanceTryMs);
+  // it self-limits because advanceDue flips false the moment the advance lands.
+  if (st.advanceDue && Number.isFinite(preopenMin) && minNow >= preopenMin
+      && st.lastAdvanceDate !== todayIst
+      && (nowMs - (st.lastAdvanceTryMs || 0)) >= advanceRetryMs) {
     out.advance = true;
-    out.set = { ...(out.set || {}), lastAdvanceDate: todayIst };
+    out.set = { ...(out.set || {}), lastAdvanceTryMs: nowMs };
   }
   // Event B — nudge a scan at/after roll_time on/after the rollover date (rollDate is keyed
   // to the HELD contract). Throttled; self-terminates once rolled (rollDate jumps forward to
