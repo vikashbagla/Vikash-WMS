@@ -53,3 +53,46 @@ export function decidePoke(st, price, now, cooldownMs, inHours) {
   }
   return { poke: false, why: crossed ? 'already-poked-this-level' : 'not-crossed' };
 }
+
+// ── Roll-window driver decision (spec v8) — PURE ────────────────────────────
+// The driver holds ONE rollover date and TWO times on it: a pre-open moment
+// (Event A — advance the operating contract) and roll_time (Event B — the physical
+// roll). This decides, per symbol, whether to fire either poke now.
+//   Event A  → POST {action:'advance'} — a DB-only advance; fires once per rollover
+//              date, at/after the pre-open minute, only while the OPERATING contract
+//              is itself inside its roll window (advanceDue, so it can't re-fire once
+//              advanced). De-duped on lastAdvanceDate.
+//   Event B  → POST {action:'scan'} — a normal poke so the engine's roll-due check
+//              (keyed to the HELD contract) fires even in a quiet market; repeats,
+//              throttled, until the roll completes (the engine is idempotent).
+// st carries: rollDate (YYYY-MM-DD IST | null), advanceDue (bool), rollMin (minutes-
+// of-day from roll_time | null), lastAdvanceDate, lastRollPokeMs.
+export function decideRollPoke(st, nowMs, todayIst, minNow, preopenMin, rollThrottleMs = 60000) {
+  const out = { advance: false, roll: false };
+  if (!st) return out;
+  // Event A — advance while the OPERATING contract is inside its OWN roll window
+  // (advanceDue, from ws_universe), at/after the pre-open minute, once per calendar day.
+  // advanceDue flips false the moment the advance lands (op becomes the far contract), so
+  // this self-limits to the first trading morning of the window — robust to a weekend or a
+  // holiday rollover date, and needs no exact-date match.
+  if (st.advanceDue && Number.isFinite(preopenMin) && minNow >= preopenMin && st.lastAdvanceDate !== todayIst) {
+    out.advance = true;
+    out.set = { ...(out.set || {}), lastAdvanceDate: todayIst };
+  }
+  // Event B — nudge a scan at/after roll_time on/after the rollover date (rollDate is keyed
+  // to the HELD contract). Throttled; self-terminates once rolled (rollDate jumps forward to
+  // the new contract, so todayIst < rollDate again).
+  if (st.rollDate && st.rollMin != null && Number.isFinite(st.rollMin)
+      && todayIst >= st.rollDate && minNow >= st.rollMin
+      && (nowMs - (st.lastRollPokeMs || 0)) >= rollThrottleMs) {
+    out.roll = true;
+    out.set = { ...(out.set || {}), lastRollPokeMs: nowMs };
+  }
+  return out;
+}
+
+/** "HH:MM" → minutes-of-day, or null. */
+export function hhmmToMin(s) {
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(s || ''));
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}

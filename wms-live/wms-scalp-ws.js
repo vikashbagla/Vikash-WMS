@@ -25,7 +25,7 @@ import http from 'node:http';
 import pg from 'pg';
 import fyers from 'fyers-api-v3';
 const { fyersDataSocket } = fyers;
-import { decidePoke } from './scalp-poke.js';   // pure poke-decision (level-aware, mig 114) — unit-tested separately
+import { decidePoke, decideRollPoke, hhmmToMin } from './scalp-poke.js';   // pure poke-decision (level-aware, mig 114) + roll-window (spec v8) — unit-tested separately
 
 const FYERS_APP_ID      = process.env.FYERS_APP_ID;
 const SUPABASE_URL      = process.env.SUPABASE_URL;
@@ -39,6 +39,10 @@ const HEALTH_PORT       = Number(process.env.SCALP_WS_HEALTH_PORT) || 3003;
 const FIRST_ENTRY_COOLDOWN_MS = Number(process.env.SCALP_WS_FIRST_ENTRY_COOLDOWN_MS) || 3000;
 const SAFETY_REDERIVE_MS      = Number(process.env.SCALP_WS_SAFETY_REDERIVE_MS) || 1800000; // 30 min
 const LOG_PATH          = process.env.FYERS_WS_LOG_PATH || '/tmp';
+// Roll-window (spec v8): the driver holds the pre-open minute for Event A (advance) and a
+// throttle for the Event B roll nudge. PREOPEN_MIN = 08:30 IST (MCX morning pre-open).
+const PREOPEN_MIN       = Number(process.env.SCALP_WS_PREOPEN_MIN) || 510;
+const ROLL_THROTTLE_MS  = Number(process.env.SCALP_WS_ROLL_THROTTLE_MS) || 60000;
 
 if (!FYERS_APP_ID)     { console.error('[scalp-ws] FYERS_APP_ID missing'); process.exit(1); }
 if (!CRON_SECRET_KEY)  { console.error('[scalp-ws] CRON_SECRET_KEY missing — cannot auth tick calls'); process.exit(1); }
@@ -83,13 +87,18 @@ function applyStrategies(strategies) {
       armEpoch: (s.arm_epoch === null || s.arm_epoch === undefined) ? null : Number(s.arm_epoch),
       firstEntry: !!s.first_entry, threshold,
       rearm: (s.rearm_trigger === null || s.rearm_trigger === undefined) ? null : Number(s.rearm_trigger),
+      // roll-window driver hints (spec v8): the operating contract's advance window,
+      // the rollover date (keyed to the HELD contract) and roll_time.
+      rollDate: s.roll_date || null,
+      advanceDue: !!s.advance_due,
+      rollMin: hhmmToMin(s.roll_time),
     });
   }
   const added = [], removed = [];
   for (const [sym, cfg] of desired) {
     const cur = bySymbol.get(sym);
-    if (!cur) { bySymbol.set(sym, { ...cfg, lastPokePrice: null, lastCrossKey: null, lastCrossTarget: null, lastCrossRearm: null, lastFirstPokeMs: 0 }); added.push(sym); }
-    else { cur.code = cfg.code; cur.levelAware = cfg.levelAware; cur.direction = cfg.direction; cur.bandLo = cfg.bandLo; cur.bandHi = cfg.bandHi; cur.trigger = cfg.trigger; cur.target = cfg.target; cur.armEpoch = cfg.armEpoch; cur.firstEntry = cfg.firstEntry; cur.threshold = cfg.threshold; cur.rearm = cfg.rearm; }   // persist poke state (lastCrossTrigger etc.)
+    if (!cur) { bySymbol.set(sym, { ...cfg, lastPokePrice: null, lastCrossKey: null, lastCrossTarget: null, lastCrossRearm: null, lastFirstPokeMs: 0, lastAdvanceDate: null, lastRollPokeMs: 0 }); added.push(sym); }
+    else { cur.code = cfg.code; cur.levelAware = cfg.levelAware; cur.direction = cfg.direction; cur.bandLo = cfg.bandLo; cur.bandHi = cfg.bandHi; cur.trigger = cfg.trigger; cur.target = cfg.target; cur.armEpoch = cfg.armEpoch; cur.firstEntry = cfg.firstEntry; cur.threshold = cfg.threshold; cur.rearm = cfg.rearm; cur.rollDate = cfg.rollDate; cur.advanceDue = cfg.advanceDue; cur.rollMin = cfg.rollMin; }   // persist poke state (lastCrossTrigger, lastAdvanceDate, lastRollPokeMs)
   }
   for (const sym of Array.from(bySymbol.keys())) {
     if (!desired.has(sym)) { bySymbol.delete(sym); removed.push(sym); }
@@ -113,6 +122,38 @@ async function pokeTick(code, price) {
     if (!res.ok && (state.pokeErrors = (state.pokeErrors || 0) + 1) <= 5) console.error('[scalp-ws] tick HTTP', res.status, (await res.text()).slice(0, 200));
   } catch (e) {
     if ((state.pokeErrors = (state.pokeErrors || 0) + 1) <= 5) console.error('[scalp-ws] tick call failed:', String(e && e.message || e));
+  }
+}
+
+// Roll-window pokes (spec v8): a generic engine call. Event A = {action:'advance'} (a
+// DB-only advance of the operating contract + arm); Event B = {action:'scan'} (a normal
+// poke so the engine's roll-due check, keyed to the HELD contract, fires in a quiet market).
+async function pokeAction(body, label) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/at2-scalp`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'x-cron-key': CRON_SECRET_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) console.error(`[scalp-ws] ${label} HTTP`, res.status, (await res.text()).slice(0, 200));
+    else console.log(`[scalp-ws] ${label} ok`);
+  } catch (e) { console.error(`[scalp-ws] ${label} failed:`, String(e && e.message || e)); }
+}
+
+// The roll-window scheduler: once per cycle, decide Event A (advance) / Event B (roll
+// nudge) per symbol on the IST clock. The GRID + roll BRAIN stay in the Edge Function —
+// this only fires the pokes; the engine is idempotent + run-locked, so an extra poke is safe.
+async function rollScheduler() {
+  const d = new Date(Date.now() + 5.5 * 3600 * 1000);
+  if (d.getUTCDay() === 0 || d.getUTCDay() === 6) return;   // weekend — the market is closed
+  const todayIst = d.toISOString().slice(0, 10);
+  const minNow = d.getUTCHours() * 60 + d.getUTCMinutes();
+  const now = Date.now();
+  for (const [sym, st] of bySymbol) {
+    const r = decideRollPoke(st, now, todayIst, minNow, PREOPEN_MIN, ROLL_THROTTLE_MS);
+    if (r.set) Object.assign(st, r.set);
+    if (r.advance) await pokeAction({ action: 'advance', strategy: st.code }, `Event A advance ${sym}`);
+    if (r.roll)    await pokeAction({ action: 'scan',    strategy: st.code }, `Event B roll-poke ${sym}`);
   }
 }
 
@@ -202,6 +243,7 @@ function istActiveHours() {
 // Runtime side effects — skipped when the module is imported for tests (SCALP_WS_IMPORT_ONLY=1).
 function main() {
   setInterval(refreshUniverse, SAFETY_REDERIVE_MS);   // slow silent-stall catch (D6); LISTEN is the instant path + reconnect re-derives
+  setInterval(rollScheduler, 30000);                  // roll-window scheduler (spec v8): Event A advance + Event B roll nudge
   setInterval(() => {
     if (state.connected && istActiveHours() && lastTickMs && (Date.now() - lastTickMs) > 120000) {
       console.log('[scalp-ws] no ticks >120s during market hours — restarting'); process.exit(1);
