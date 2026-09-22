@@ -2674,7 +2674,9 @@ async function loadFOTable() {
 // rot — if MCX revises a contract size, edit the number here. See LESSONS A.11.5.
 //   SILVERM = 5  (Silver Mini, 5 kg, quoted ₹/kg)
 //   GOLDM   = 10 (Gold Mini, 100 g, quoted ₹/10 g)  ← VERIFY against a real trade
-var MCX_LOT_OVERRIDE = { SILVERM: 5, GOLDM: 10 };
+//   SILVER  = 30 (Silver big, 30 kg, quoted ₹/kg)
+//   (GOLD big = 100 has the same latent issue — add when traded.)
+var MCX_LOT_OVERRIDE = { SILVERM: 5, GOLDM: 10, SILVER: 30 };
 
 var _foCsvMap   = null;   // Map<symbol, record> built from CSV
 var _foDbMap    = null;   // Map<symbol, record> from DB

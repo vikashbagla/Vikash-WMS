@@ -622,9 +622,14 @@ function trFnoCalcPositions(filtersOverride) {
             if (contractGroups.length === 0) return;
         }
 
-        // Resolve company name from CM securities master
+        // Resolve company name from CM securities master — but NOT for MCX
+        // commodity groups: their bare underlying (e.g. "SILVER") can collide
+        // with an NSE equity/ETF of the same ticker (ADITYA BIRLA SUN LIFE
+        // SILVER ETF, NSE:SILVER), mislabelling the commodity position. Keep
+        // the underlying as the header for MCX. Display-only. (LESSONS A.11.x)
         var companyName = underlying;
-        if (wmsRefData.securitiesCmReady) {
+        var _isMcxGroup = symbolTrades.some(function(t) { return t.security_type === 'MCX' || t.exchange === 'MCX'; });
+        if (!_isMcxGroup && wmsRefData.securitiesCmReady) {
             for (var i = 0; i < wmsRefData.securitiesCm.length; i++) {
                 var s = wmsRefData.securitiesCm[i];
                 if (s.symbol === underlying || s.nse_symbol === underlying || s.bse_symbol === underlying) {
