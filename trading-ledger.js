@@ -3669,7 +3669,7 @@ function lgGatherExportData(opts) {
     var sourceLookup = {};
     for (var si = 0; si < sortedAll.length; si++) {
         var st = sortedAll[si];
-        var sKey = (st.security_type === 'NFO') ? (st.symbol || '').replace(/^[A-Z]+:/, '') : (st.short_symbol || st.symbol || '');
+        var sKey = (st.security_type === 'NFO' || st.security_type === 'MCX') ? (st.symbol || '').replace(/^[A-Z]+:/, '') : (st.short_symbol || st.symbol || '');
         if (!sourceLookup[sKey]) sourceLookup[sKey] = st;
     }
 

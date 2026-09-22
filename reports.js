@@ -214,7 +214,7 @@ function rptFifoEngine(txns, includeExited) {
     if (includeExited) {
         for (var ei = 0; ei < txns.length; ei++) {
             var et = txns[ei];
-            var eKey = (et.securityType === 'NFO') ? (et.symbol || '') : (et.shortSymbol || et.symbol || '');
+            var eKey = (et.securityType === 'NFO' || et.securityType === 'MCX') ? (et.symbol || '').replace(/^[A-Z]+:/, '') : (et.shortSymbol || et.symbol || '');
             if (!eKey || holdings[eKey]) continue;
             holdings[eKey] = {
                 symbol: et.symbol || eKey, shortSymbol: et.shortSymbol || et.symbol || eKey,
@@ -238,8 +238,8 @@ function rptFifoEngine(txns, includeExited) {
     // Engine grouping (J.2 updated): EQ → short_symbol, NFO → full symbol.
     for (var n = 0; n < rptTransactions.length; n++) {
         var tx = rptTransactions[n];
-        var hKey = (tx.securityType === 'NFO')
-            ? (tx.symbol || '')
+        var hKey = (tx.securityType === 'NFO' || tx.securityType === 'MCX')
+            ? (tx.symbol || '').replace(/^[A-Z]+:/, '')
             : (tx.shortSymbol || tx.symbol || '');
         if (holdings[hKey]) {
             holdings[hKey]._txns.push(tx);

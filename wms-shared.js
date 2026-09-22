@@ -2460,7 +2460,7 @@ function _wmsCostEngine(transactions, method) {
     // the merge-into-underlying behaviour separately via E.12 — that
     // logic does NOT live here. See WMS-LESSONS §J.5.D.
     // ------------------------------------------------------------------
-    // Helper: resolve grouping key. EQ → short_symbol, NFO → full symbol.
+    // Helper: resolve grouping key. EQ → short_symbol, NFO/MCX → full contract symbol.
     // Exchange prefix (e.g. "NSE:") is stripped for NFO because the same
     // contract can carry inconsistent prefixes across txns (some "NSE:XYZFUT",
     // some "XYZFUT") and all inline callers already normalise this way.
@@ -2469,7 +2469,7 @@ function _wmsCostEngine(transactions, method) {
     // ------------------------------------------------------------------
     function _engineKey(txn) {
         var secType = (txn.security_type !== undefined ? txn.security_type : txn.securityType) || 'EQUITY';
-        if (secType === 'NFO') {
+        if (secType === 'NFO' || secType === 'MCX') {  // MCX keyed by contract too (A.11.x) — else it folds to the underlying + collides with a same-ticker ETF on price lookup
             var nfoSym = txn.symbol || txn.short_symbol || txn.shortSymbol || '';
             return nfoSym.replace(/^[A-Z]+:/, '');
         }
