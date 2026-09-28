@@ -238,6 +238,16 @@
             if (el) { el.innerHTML = '🔴 Prices'; el.title = 'Live price feed error — see console'; el.style.color = '#dc2626'; }
         } catch (_e) {}
     };
+    // Clear the error state once the feed recovers (only touches DOM if it was red).
+    window.__priceWorkerOk = function() {
+        if (window.__priceWorkerLastError) {
+            window.__priceWorkerLastError = null;
+            try {
+                var el = document.getElementById('fyers-status');
+                if (el) { el.innerHTML = '🟢 Fyers'; el.title = ''; el.style.color = '#059669'; }
+            } catch (_e) {}
+        }
+    };
     window.fyersCall = async function(payload) {
         // OFF-SUPABASE PRICE PATH: live quotes go ONLY to the Cloudflare Worker.
         // There is NO Supabase EF fallback by design — if the Worker fails we
@@ -257,7 +267,7 @@
                     headers: { 'Content-Type': 'application/json', 'x-user-token': _wmsAuthToken },
                     body: JSON.stringify({ symbols: payload.symbols, lean: payload.lean === true })
                 });
-                if (wres.ok) { window.__priceWorkerLastError = null; return await wres.json(); }
+                if (wres.ok) { window.__priceWorkerOk(); return await wres.json(); }
                 const body = await wres.text().catch(function(){ return ''; });
                 console.error('[price] Worker HTTP ' + wres.status + ' — ' + body.slice(0, 200));
                 window.__priceWorkerError({ status: wres.status, body: body.slice(0, 200) });
