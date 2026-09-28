@@ -172,6 +172,22 @@
         return 'prod';
     })();
 
+    // ============================================================
+    // LIVE PRICE SOURCE — off-Supabase Cloudflare Worker (fyers-quotes)
+    // The `quotes` path runs on an isolated Cloudflare Worker, NOT on Supabase,
+    // to keep live-price polling off Supabase's metered log-ingestion / egress.
+    // The Worker holds the daily Fyers token (pushed by fyers-auto-login) and is
+    // OWNER-ONLY — it verifies the owner's Supabase JWT. On ANY Worker error,
+    // window.fyersCall transparently falls back to the Supabase EF, so prices
+    // never go dark. Rollout is staged by BRANCH, not by this flag: the dev
+    // branch carries this change first (→ vikash-wms.pages.dev), and prod
+    // (vikashbagla.github.io / main) only gets it when dev is merged after
+    // sign-off — so prod runs the exact bytes tested on dev. Kill switch: set
+    // window.WMS_USE_PRICE_WORKER = false to fall back to the Supabase EF everywhere.
+    // ============================================================
+    window.WMS_PRICE_WORKER_URL = 'https://fyers-quotes.vikash-bagla.workers.dev';
+    window.WMS_USE_PRICE_WORKER = true;
+
     // Fetch interceptor — transparently rewrites table names for dev env.
     // No module code changes needed; all REST URLs pass through here.
     if (window.WMS_ENV === 'dev') {
@@ -215,6 +231,26 @@
     // Call Fyers via Supabase Edge Function
     // Pass the locally stored token in the request body
     window.fyersCall = async function(payload) {
+        // OFF-SUPABASE PRICE PATH: route live quotes to the Cloudflare Worker.
+        // Owner-only (the Worker verifies _wmsAuthToken as the owner JWT). On any
+        // Worker error we fall through to the Supabase EF below, so prices never
+        // go dark. Non-quote actions (e.g. 'tradebook') always use the EF.
+        if (payload && payload.action === 'quotes' && window.WMS_USE_PRICE_WORKER
+            && window.WMS_PRICE_WORKER_URL && _wmsAuthToken) {
+            try {
+                const wres = await fetch(window.WMS_PRICE_WORKER_URL + '/quotes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-user-token': _wmsAuthToken },
+                    body: JSON.stringify({ symbols: payload.symbols, lean: payload.lean === true })
+                });
+                if (wres.ok) return await wres.json();
+                console.warn('[price] Worker HTTP ' + wres.status + ' — falling back to Supabase EF');
+            } catch (e) {
+                console.warn('[price] Worker call failed — falling back to Supabase EF:', e && e.message);
+            }
+            // fall through to the Supabase EF on any Worker failure
+        }
+
         const stored = localStorage.getItem('fyers_token');
         let fyersToken = null;
         if (stored) {
