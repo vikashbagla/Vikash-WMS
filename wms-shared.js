@@ -3269,7 +3269,7 @@ function wmsUpdateNfoBrokerToken(securityId, fyersSymbol) {
 // Architecture:
 //   wmsBuildRefreshSymbols() → builds master symbol list
 //   wmsStandardRefresh()    → fetches prices + renders active page
-//   wmsStartRefreshTimer()  → starts 10s timer
+//   wmsStartRefreshTimer()  → starts 5s timer
 //
 // Multi-Tab Sync (BroadcastChannel):
 //   wmsTabSyncInit()  → probe for existing leader, elect if none
@@ -3402,7 +3402,7 @@ wmsTabSyncInit();
 
 var wmsRefreshSymbols = [];    // [{ fyersKey, cacheKey }, ...]
 var wmsRefreshTimer = null;    // single setInterval ID
-var wmsRefreshInterval = 10000; // 10 seconds (base tick + equity cadence)
+var wmsRefreshInterval = 5000; // 5 seconds (base tick + equity cadence). Prices now come from the off-Supabase Worker, so a faster poll no longer costs Supabase egress/logs.
 var wmsMcxRefreshInterval = 120000; // 2 minutes — cadence during MCX-only evening
 var _wmsLastMcxFetch = 0;       // timestamp of last evening MCX-only fetch
 var wmsRefreshFirstDone = false; // first-load flag for Stage 2+3 resolution
@@ -3752,7 +3752,7 @@ function wmsUpdateFyersTime() {
 }
 
 /**
- * wmsStartRefreshTimer — start the single 10s auto-refresh timer.
+ * wmsStartRefreshTimer — start the single 5s auto-refresh timer.
  * Runs always (not tab-dependent). Stops if market closes.
  */
 function wmsStartRefreshTimer() {
@@ -3784,7 +3784,7 @@ function wmsStartRefreshTimer() {
 }
 
 /**
- * wmsStopRefreshTimer — stop the 10s timer.
+ * wmsStopRefreshTimer — stop the refresh timer.
  */
 function wmsStopRefreshTimer() {
     if (wmsRefreshTimer) {
