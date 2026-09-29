@@ -357,9 +357,15 @@ async function trFnoBannerRefresh(forceRefresh) {
 // Called on init, refresh, and live price updates. Decoupled from active view.
 // ============================================================================
 
-function trComputeBannerStats() {
-    // Use default Portfolio view filters (or empty = all data if no default)
-    var f = trDefaultViewFilters || {};
+// Shared banner computation for one filter set (investors / traders / brokers /
+// tags / tagLogic / viewMode). Returns portfolio invested+value and the stock-leg
+// Day's P&L. Each group is priced by its equity short_symbol — correct for equity
+// views; derivative positions are excluded by viewMode:'holdings' at the caller,
+// and F&O Day's P&L is computed separately (by contract) in
+// trFnoBannerRefreshFromDefault. Extracted so the banner can source its Stocks
+// figure from one view and its Portfolio totals from another.
+function _trComputeBannerFromFilters(f) {
+    f = f || {};
     var invIds = f.investorIds || [];
     var trdIds = f.traderIds || [];
     var brkIds = f.brokerIds || [];
@@ -367,21 +373,18 @@ function trComputeBannerStats() {
     var tagLogic = f.tagLogic || 'OR';
     var viewMode = f.viewMode || 'default';
 
-    // Filter transactions using default view filters
     var filtered = trTransactions.filter(function(t) { return !t.dont_display; });
     if (invIds.length > 0) filtered = filtered.filter(function(t) { return invIds.indexOf(t.investor_id) >= 0; });
     if (trdIds.length > 0) filtered = filtered.filter(function(t) { var tid = t.trader_id || t.investor_id; return tid && trdIds.indexOf(tid) >= 0; });
     if (brkIds.length > 0) filtered = filtered.filter(function(t) { return t.broker_id && brkIds.indexOf(t.broker_id) >= 0; });
     if (tagNames.length > 0) filtered = filtered.filter(function(t) { return wmsMatchTagsFilter(t.tags, tagNames, tagLogic); });
 
-    // View mode filter
     if (viewMode === 'holdings') {
         filtered = filtered.filter(function(t) { return !wmsIsDerivativeSecurity(t.security_type); });
     } else if (viewMode === 'fno') {
         filtered = filtered.filter(function(t) { return wmsIsDerivativeSecurity(t.security_type); });
     }
 
-    // Group by short_symbol and calculate holdings (lightweight version of trCalcHoldings)
     var groups = {};
     filtered.forEach(function(txn) {
         var key = txn.short_symbol || txn.symbol;
@@ -398,15 +401,12 @@ function trComputeBannerStats() {
         var calc = wmsCalcAvgCost(g.txns);
         if (calc.netQuantity === 0) return;
 
-        // Get live price
         var sym = g.shortSymbol;
         var cache = wmsLivePrices[sym];
         var price = cache ? (cache.lp || calc.avgCost) : calc.avgCost;
-        var currentValue = calc.netQuantity * price;
         totalInvested += calc.totalCost;
-        totalValue += currentValue;
+        totalValue += calc.netQuantity * price;
 
-        // Stocks Day's P&L: use shared function (handles same-day trades correctly)
         if (hasLive && cache) {
             var sdp = wmsCalcStockDayPL(g.txns, cache);
             if (sdp !== null && sdp !== 0) {
@@ -416,12 +416,49 @@ function trComputeBannerStats() {
         }
     });
 
-    var totalPL = totalValue - totalInvested;
-    var totalPLPct = totalInvested !== 0 ? (totalPL / Math.abs(totalInvested)) * 100 : 0;
+    return { totalInvested: totalInvested, totalValue: totalValue,
+             stocksDayPL: stocksDayPL, stocksInvested: stocksInvested, hasLive: hasLive };
+}
 
-    window._trStocksDayPL = hasLive ? stocksDayPL : null;
-    window._trStocksInvested = stocksInvested;
-    window._trPortfolioInvested = totalInvested;
+// Look up a saved Portfolio view's filters by name (case-insensitive). Null if
+// the view manager isn't ready or no such view exists.
+function _trGetPortfolioViewFilters(name) {
+    try {
+        if (typeof trPortfolioVM === 'undefined' || !trPortfolioVM || !Array.isArray(trPortfolioVM.views)) return null;
+        var want = String(name).trim().toLowerCase();
+        var v = trPortfolioVM.views.find(function(x) { return x && x.name && String(x.name).trim().toLowerCase() === want; });
+        return v ? (v.filters || {}) : null;
+    } catch (e) { return null; }
+}
+
+function trComputeBannerStats() {
+    // PORTFOLIO block (Invested / Total P&L / Current Value) — the whole book,
+    // from the default Portfolio view (e.g. "Self All").
+    var portf = _trComputeBannerFromFilters(trDefaultViewFilters || {});
+
+    // STOCKS Day's P&L — the equity book only. Mirrors the "Self Holdings" tab
+    // using that view's FULL filter set (its own investors/traders/brokers/tags,
+    // plus its 'holdings' mode that excludes F&O/MCX). This keeps commodity/F&O
+    // positions (e.g. SILVER MCX) out of the Stocks figure — their Day's P&L is
+    // shown in the F&O card ("Self NFO"), computed by contract. If a "Self
+    // Holdings" view isn't present, fall back to the default view's filters
+    // restricted to holdings.
+    var shFilters = _trGetPortfolioViewFilters('Self Holdings');
+    if (!shFilters) {
+        var d = trDefaultViewFilters || {};
+        shFilters = {
+            investorIds: d.investorIds, traderIds: d.traderIds, brokerIds: d.brokerIds,
+            tagNames: d.tagNames, tagLogic: d.tagLogic, viewMode: 'holdings'
+        };
+    }
+    var stk = _trComputeBannerFromFilters(shFilters);
+
+    var totalPL = portf.totalValue - portf.totalInvested;
+    var totalPLPct = portf.totalInvested !== 0 ? (totalPL / Math.abs(portf.totalInvested)) * 100 : 0;
+
+    window._trStocksDayPL = stk.hasLive ? stk.stocksDayPL : null;
+    window._trStocksInvested = stk.stocksInvested;
+    window._trPortfolioInvested = portf.totalInvested;
     window._trPortfolioTotalPL = totalPL;
     window._trPortfolioTotalPLPct = totalPLPct;
     trUpdateDayPLBanner();
