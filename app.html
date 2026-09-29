@@ -689,7 +689,7 @@
         'master-data':         { html: 'master-data.html',        scripts: ['master-data.js'],                                    init: 'initMasterData' },
         'import-transactions': { html: 'transaction-import.html', scripts: ['transaction-import.js', 'transaction-template.js'],  init: 'initTransactionImport' },
         'trading':             { html: 'trading.html',            scripts: ['trading.js'],                                        init: 'initTrading',           resume: 'wmsResumeTrading' },
-        'automation':          { html: 'automation.html',         scripts: ['automation.js'],                                     init: 'initAutomation' },
+        'automation':          { html: 'automation.html',         scripts: ['automation.js'],                                     init: 'initAutomation',        resume: 'wmsResumeAutomation' },
         'accounting':          { html: 'accounting.html',         scripts: ['accounting.js', 'accounting-bank-import.js'],        init: 'initAccounting',        resume: 'wmsResumeAccounting' },
     };
     const _wmsModuleLoaded = {};

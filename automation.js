@@ -35,10 +35,9 @@ function autoSwitchFamily(fam) {
     if (panel) panel.classList.add('active');
 
     if (fam === 'health') {
-        if (!window._auHealthLoaded) {
-            autoHealthLoadAll();
-            window._auHealthLoaded = true;
-        }
+        // Refresh every time the user ENTERS Health (no timer — 2026-09-29, see
+        // autoHealthRefreshIfViewing). Same rule as AT2/Scalp below.
+        autoHealthLoadAll();
     }
 
     if (fam === 'pairs') {
@@ -3080,13 +3079,43 @@ function autoRenderGsFamMetrics(mode) {
 // Health page renderers (Phase A — kill switch + families board + crons + errors)
 // ----------------------------------------------------------------------------
 
-function autoHealthLoadAll() {
-    autoHealthLoadKill();
-    autoHealthLoadFamilies();
+async function autoHealthLoadAll() {
+    window._auHealthLastLoad = Date.now();
     autoHealthLoadCrons();
     autoHealthLoadErrors();
     autoHealthLoadPlatformRuns();
+    // app_state is read ONCE (kill card) and handed to the families card — it used
+    // to be read twice per refresh (2026-09-29 log-ingestion fix).
+    await autoHealthLoadKill();
+    autoHealthLoadFamilies(_auHealthState);
 }
+
+// ----------------------------------------------------------------------------
+// Health refresh policy (owner decision 2026-09-29 — Log Ingestion). NO timer.
+// The page used to reload every 30 s forever (Chrome throttles hidden tabs to 60 s),
+// even hidden / on another module / after the login expired — one tab left open
+// overnight was ~1/3 of a weekday's Supabase Log Ingestion. It now refreshes ONLY:
+//   • when the user enters Health (autoSwitchFamily), or returns to the Auto
+//     Trading module (wmsResumeAutomation, app.html resume hook);
+//   • when the browser tab / Chrome window comes back into view or focus while
+//     Health is the page on screen (visibilitychange + focus below);
+//   • on a manual refresh — the header 🔄 / F5, or a card's ↻ button.
+// Visibility is tested by the pane actually being rendered (offsetParent), per
+// LESSONS §A.21.8 — never by element existence (modules stay mounted).
+// ----------------------------------------------------------------------------
+function autoHealthIsOnScreen() {
+    if (document.hidden) return false;
+    var el = document.getElementById('au-fam-health');
+    return !!(el && el.classList.contains('active') && el.offsetParent !== null);
+}
+function autoHealthRefreshIfViewing() {
+    if (!autoHealthIsOnScreen()) return;
+    // 'visibilitychange' and 'focus' usually fire together — collapse them into one load.
+    if (window._auHealthLastLoad && Date.now() - window._auHealthLastLoad < 5000) return;
+    autoHealthLoadAll();
+}
+// Module return visit (app.html WMS_MODULE_DEF 'automation'.resume).
+window.wmsResumeAutomation = function () { autoHealthRefreshIfViewing(); };
 
 // ----------------------------------------------------------------------------
 // Health page — Platform Maintenance (2026-07-09; de-mirrored Phase E.1c 2026-07-10).
@@ -3167,19 +3196,27 @@ async function autoHealthToggleKill() {
     }
 }
 
-async function autoHealthLoadFamilies() {
+async function autoHealthLoadFamilies(sharedState) {
     var tbody = document.getElementById('au-health-families-body');
     if (!tbody) return;
     try {
+        // sharedState = the app_state row autoHealthLoadAll just read (one read, not two).
+        // Called from the card's ↻ button it arrives as the click Event → fetch our own.
+        var haveState = !!(sharedState && typeof sharedState === 'object' && 'kill_switch' in sharedState);
         var results = await Promise.all([
             fetch(SUPABASE_URL + '/rest/v1/auto_strategies?select=name,enabled,execution_mode,version', { headers: wmsHeaders() }),
-            fetch(SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=strategy_name,net_qty', { headers: wmsHeaders() }),
-            fetch(SUPABASE_URL + '/rest/v1/app_state?id=eq.1&select=kill_switch,paused_sources', { headers: wmsHeaders() }),
-            fetch(SUPABASE_URL + '/rest/v1/wms_live_commands?signal_source=eq.katalysthive&status=in.(PENDING,WORKING,PLACED)&select=trade_id,quantity', { headers: wmsHeaders() })
+            // (was select=…,net_qty — no such column: the read 400'd on every load, so the
+            //  card always showed "0 legs". Only strategy_name is used — 2026-09-29.)
+            fetch(SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=strategy_name', { headers: wmsHeaders() }),
+            haveState ? null : fetch(SUPABASE_URL + '/rest/v1/app_state?id=eq.1&select=kill_switch,paused_sources', { headers: wmsHeaders() }),
+            // KH orders still in flight = pending / claimed, or placed and still live at the
+            // broker (LESSONS §A.1.9e status table). Was select=trade_id,quantity (no such
+            // columns → 400 on every load, card always "0 cmd") + upper-case statuses. 2026-09-29.
+            fetch(SUPABASE_URL + '/rest/v1/wms_live_commands?signal_source=eq.katalysthive&or=(status.in.(pending,claimed),and(status.eq.placed,or(broker_status.is.null,broker_status.in.(PENDING,OPEN,PARTIAL))))&select=id', { headers: wmsHeaders() })
         ]);
         var strategies = results[0].ok ? await results[0].json() : [];
         var openLegs   = results[1].ok ? await results[1].json() : [];
-        var stateRows  = results[2].ok ? await results[2].json() : [];
+        var stateRows  = haveState ? [sharedState] : (results[2].ok ? await results[2].json() : []);
         var khOpen     = results[3].ok ? await results[3].json() : [];
         var state = (stateRows && stateRows[0]) || { kill_switch: false, paused_sources: [] };
         var paused = state.paused_sources || [];
@@ -3265,7 +3302,10 @@ async function autoHealthLoadErrors() {
     var el = document.getElementById('au-health-errors');
     if (!el) return;
     try {
-        var since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+        // Window start rounded DOWN to the hour (24–25 h back). A per-millisecond
+        // timestamp made every URL unique, so the browser re-sent its CORS pre-check
+        // (an extra OPTIONS request) on every refresh — 2 requests instead of 1.
+        var since = new Date(Math.floor((Date.now() - 24 * 3600 * 1000) / 3600000) * 3600000).toISOString();
         // auto_runs.status domain is SUCCESS / FAILED / RUNNING (NOT lowercase
         // 'error'), and the message column is `error` (NOT `error_message`).
         // With the wrong column in ?select= PostgREST 400s, r.ok is false, rows
@@ -3312,7 +3352,7 @@ async function autoHealthLoadPlatformRuns(filterOverride) {
     var badge = document.getElementById('au-hp-platform-runs-badge');
     if (!el) return;
     var sel = document.getElementById('au-hp-platform-runs-filter');
-    // The 30s Health auto-refresh calls this with no argument — honour whatever
+    // A Health refresh calls this with no argument — honour whatever
     // filter the user last picked rather than silently resetting it to 'all'.
     var filter = (typeof filterOverride === 'string' && filterOverride !== '[object Event]')
         ? filterOverride
@@ -3526,12 +3566,12 @@ async function initAutomation() {
     // Health page is the default landing tab. (Phase E.1c: no mirror setup — the
     // platform-utility renderers write into the Health targets directly.)
     autoHealthLoadAll();
-    window._auHealthLoaded = true;
-    if (!window._auHealthTimer) {
-        window._auHealthTimer = setInterval(function () {
-            var el = document.getElementById('au-fam-health');
-            if (el && el.classList.contains('active')) autoHealthLoadAll();
-        }, 30000);
+    // NO auto-refresh timer (removed 2026-09-29 — see autoHealthRefreshIfViewing).
+    // Wired once: init re-runs on a forced module reload (header 🔄 / F5).
+    if (!window._auHealthWakeWired) {
+        window._auHealthWakeWired = true;
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) autoHealthRefreshIfViewing(); });
+        window.addEventListener('focus', autoHealthRefreshIfViewing);
     }
 
     // Warm the Health page's platform-maintenance panels (EOD ingest / market_prices
