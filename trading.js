@@ -357,13 +357,36 @@ async function trFnoBannerRefresh(forceRefresh) {
 // Called on init, refresh, and live price updates. Decoupled from active view.
 // ============================================================================
 
+// Banner views are pinned by their saved-view DB id (rename-safe); the name is
+// only a fallback if the id ever goes missing (e.g. the view was re-created).
+// Deleting a pinned view degrades gracefully to the default view. Ids are this
+// account's saved Portfolio views.
+var TR_BANNER_VIEWS = {
+    portfolio: { id: 'a7b43354-e682-4e9d-bd9a-662f81d3ae58', name: 'Self All' },
+    stocks:    { id: '24b2001b-b23a-4551-83c4-79c20cba9113', name: 'Self Holdings' }
+};
+
+// Resolve a pinned banner view's filters: by id first, then by name. Null if the
+// view manager isn't ready or the view can't be found.
+function _trGetBannerViewFilters(role) {
+    var spec = TR_BANNER_VIEWS[role];
+    if (!spec) return null;
+    try {
+        if (typeof trPortfolioVM === 'undefined' || !trPortfolioVM || !Array.isArray(trPortfolioVM.views)) return null;
+        var byId = trPortfolioVM.views.find(function(v) { return v && v.id === spec.id; });
+        if (byId) return byId.filters || {};
+        var want = String(spec.name).trim().toLowerCase();
+        var byName = trPortfolioVM.views.find(function(v) { return v && v.name && String(v.name).trim().toLowerCase() === want; });
+        if (byName) return byName.filters || {};
+    } catch (e) {}
+    return null;
+}
+
 // Shared banner computation for one filter set (investors / traders / brokers /
 // tags / tagLogic / viewMode). Returns portfolio invested+value and the stock-leg
-// Day's P&L. Each group is priced by its equity short_symbol — correct for equity
-// views; derivative positions are excluded by viewMode:'holdings' at the caller,
-// and F&O Day's P&L is computed separately (by contract) in
-// trFnoBannerRefreshFromDefault. Extracted so the banner can source its Stocks
-// figure from one view and its Portfolio totals from another.
+// Day's P&L. Pure derivative groups (MCX commodity / F&O-only) are priced by their
+// contract symbol; everything else (incl. combined equity+F&O rows) by the equity
+// short_symbol — mirroring trGetPrice, so banner totals reconcile with the tab.
 function _trComputeBannerFromFilters(f) {
     f = f || {};
     var invIds = f.investorIds || [];
@@ -389,8 +412,11 @@ function _trComputeBannerFromFilters(f) {
     filtered.forEach(function(txn) {
         var key = txn.short_symbol || txn.symbol;
         if (!key) return;
-        if (!groups[key]) groups[key] = { txns: [], shortSymbol: key };
+        if (!groups[key]) groups[key] = { txns: [], shortSymbol: key, symbol: txn.symbol, securityType: txn.security_type };
         groups[key].txns.push(txn);
+        // Equity leg wins for CMP resolution (mirror trCalcHoldings): a combined
+        // equity+F&O row prices by the equity; only a pure derivative row stays derivative.
+        if (!wmsIsDerivativeSecurity(txn.security_type)) groups[key].securityType = txn.security_type;
     });
 
     var totalInvested = 0, totalValue = 0, stocksDayPL = 0, stocksInvested = 0;
@@ -401,8 +427,14 @@ function _trComputeBannerFromFilters(f) {
         var calc = wmsCalcAvgCost(g.txns);
         if (calc.netQuantity === 0) return;
 
-        var sym = g.shortSymbol;
-        var cache = wmsLivePrices[sym];
+        // Resolve the price cache the same way trGetPrice does.
+        var cache;
+        if (wmsIsDerivativeSecurity(g.securityType)) {
+            var ck = (g.symbol || '').replace(/^[A-Z]+:/, '');
+            cache = (ck && wmsLivePrices[ck]) ? wmsLivePrices[ck] : wmsLivePrices[g.shortSymbol];
+        } else {
+            cache = wmsLivePrices[g.shortSymbol];
+        }
         var price = cache ? (cache.lp || calc.avgCost) : calc.avgCost;
         totalInvested += calc.totalCost;
         totalValue += calc.netQuantity * price;
@@ -420,30 +452,18 @@ function _trComputeBannerFromFilters(f) {
              stocksDayPL: stocksDayPL, stocksInvested: stocksInvested, hasLive: hasLive };
 }
 
-// Look up a saved Portfolio view's filters by name (case-insensitive). Null if
-// the view manager isn't ready or no such view exists.
-function _trGetPortfolioViewFilters(name) {
-    try {
-        if (typeof trPortfolioVM === 'undefined' || !trPortfolioVM || !Array.isArray(trPortfolioVM.views)) return null;
-        var want = String(name).trim().toLowerCase();
-        var v = trPortfolioVM.views.find(function(x) { return x && x.name && String(x.name).trim().toLowerCase() === want; });
-        return v ? (v.filters || {}) : null;
-    } catch (e) { return null; }
-}
-
 function trComputeBannerStats() {
     // PORTFOLIO block (Invested / Total P&L / Current Value) — the whole book,
-    // from the default Portfolio view (e.g. "Self All").
-    var portf = _trComputeBannerFromFilters(trDefaultViewFilters || {});
+    // pinned to the "Self All" view. Falls back to the default Portfolio view.
+    var pfFilters = _trGetBannerViewFilters('portfolio') || trDefaultViewFilters || {};
+    var portf = _trComputeBannerFromFilters(pfFilters);
 
-    // STOCKS Day's P&L — the equity book only. Mirrors the "Self Holdings" tab
-    // using that view's FULL filter set (its own investors/traders/brokers/tags,
-    // plus its 'holdings' mode that excludes F&O/MCX). This keeps commodity/F&O
-    // positions (e.g. SILVER MCX) out of the Stocks figure — their Day's P&L is
-    // shown in the F&O card ("Self NFO"), computed by contract. If a "Self
-    // Holdings" view isn't present, fall back to the default view's filters
-    // restricted to holdings.
-    var shFilters = _trGetPortfolioViewFilters('Self Holdings');
+    // STOCKS Day's P&L — the equity book only, pinned to the "Self Holdings" view
+    // (its own investors/traders/brokers/tags + 'holdings' mode, which excludes
+    // F&O/MCX). Commodity/F&O positions (e.g. SILVER MCX) therefore stay out of
+    // Stocks — their Day's P&L shows in the F&O card ("Self NFO"), computed by
+    // contract. Falls back to the default view restricted to holdings.
+    var shFilters = _trGetBannerViewFilters('stocks');
     if (!shFilters) {
         var d = trDefaultViewFilters || {};
         shFilters = {
