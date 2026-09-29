@@ -7002,6 +7002,7 @@ var AU_AT2_PARAM_GROUPS = [
     { key: 'instrument', label: 'Instrument & run' },
     { key: 'risk',       label: 'Risk & stop' },
     { key: 'trail',      label: 'Trail' },
+    { key: 'signal',     label: 'Signal filters & exit' },
     { key: 'session',    label: 'Session — when it may trade' },
     { key: 'roll',       label: 'Roll' }
 ];
@@ -7027,6 +7028,16 @@ var AU_AT2_PARAM_FIELDS = [
     { group: 'trail', path: 'trail.mode',    label: 'Trail mode',       kind: 'enum', opts: ['atr', 'none'], hint: 'Whether a trail runs at all' },
     { group: 'trail', path: 'trail.trigger', label: 'Trigger × ATR',    kind: 'num',  hint: 'Arms once unrealised gain ≥ trigger × ATR' },
     { group: 'trail', path: 'trail.step',    label: 'Step × ATR',       kind: 'num',  hint: 'Level = close ∓ step × ATR. It only ever ratchets — never loosens' },
+
+    // Per-strategy switches (owner, 29-Sep-2026 — backtest round 2, silver #2125). All three
+    // are OPTIONAL: nothing selected = the key is absent = TODAY's behaviour (filter on, exit
+    // always). The database only accepts them once migration 130 is applied.
+    { group: 'signal', path: 'filters.short_after_rise', label: 'Short after-rise filter', kind: 'enum', opts: ['on', 'off'],
+      hint: 'Blocks a SHORT soon after a sharp up-move. Nothing selected = on (today)' },
+    { group: 'signal', path: 'filters.spike',            label: 'Spike filter',            kind: 'enum', opts: ['on', 'off'],
+      hint: 'Blocks ANY entry on a sudden price spike. Nothing selected = on (today)' },
+    { group: 'signal', path: 'exit.trend_break',         label: 'Trend-break exit',        kind: 'enum', opts: ['always', 'profit_only'],
+      hint: 'profit_only = exit on a trend break only while the trade is in profit; the stop and trail still protect it. Nothing selected = always (today)' },
 
     { group: 'session', path: 'session.entry_cutoff',   label: 'Entry cutoff',     kind: 'hhmm', hint: 'HH:MM IST. A ONE-WAY door — no new entry for the rest of the day' },
     { group: 'session', path: 'session.no_entry_start', label: 'Dead period from', kind: 'hour', hint: 'IST hour, inclusive. Blank = no dead period' },
@@ -7066,6 +7077,16 @@ function auAt2Dig(obj, path) {
 }
 function auAt2Bury(obj, path, val) {
     var ks = path.split('.'), cur = obj;
+    // Removing a key whose parent does not exist is a no-op — it must NOT create an empty
+    // parent object (e.g. `filters: {}`), which the database may not accept (29-Sep-2026).
+    if (val === undefined) {
+        for (var j = 0; j < ks.length - 1; j++) {
+            if (typeof cur[ks[j]] !== 'object' || cur[ks[j]] === null) return;
+            cur = cur[ks[j]];
+        }
+        delete cur[ks[ks.length - 1]];
+        return;
+    }
     for (var i = 0; i < ks.length - 1; i++) {
         if (typeof cur[ks[i]] !== 'object' || cur[ks[i]] === null) cur[ks[i]] = {};
         cur = cur[ks[i]];
