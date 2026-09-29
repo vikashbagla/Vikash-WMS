@@ -596,6 +596,16 @@ function rptGetLiveData(holding) {
     // MF has no intraday tick — Day P&L is not applicable (valued at daily NAV).
     if (holding.securityType === 'MF') return null;
     var sym = holding.shortSymbol || holding.symbol;
+    // Derivatives (MCX commodities / F&O contracts) resolve by their contract
+    // symbol, not the equity shortSymbol — keeps a 'SILVER' commodity off an
+    // unrelated 'SILVER' equity quote (parity with Trading trGetLiveData).
+    if (typeof wmsIsDerivativeSecurity === 'function' && wmsIsDerivativeSecurity(holding.securityType)) {
+        var _ck = (holding.symbol || '').replace(/^[A-Z]+:/, '');
+        if (_ck && _ck !== sym) {
+            var _dc = wmsLivePrices[_ck];
+            if (_dc && _dc.lp > 0) return _dc;
+        }
+    }
     // Check shared global cache first (populated by wmsStandardRefresh)
     var cached = wmsLivePrices[sym];
     if (cached && cached.lp > 0) return cached;
@@ -614,6 +624,15 @@ function rptGetPrice(holding) {
     if (holding.securityType === 'MF') {
         if (rptMfNav && rptMfNav[sym] > 0) return rptMfNav[sym];
         return holding.latestPrice || holding.fifoCost || 0;
+    }
+    // Derivatives (MCX commodities / F&O contracts) resolve by their contract
+    // symbol, not the equity shortSymbol (parity with Trading trGetPrice).
+    if (typeof wmsIsDerivativeSecurity === 'function' && wmsIsDerivativeSecurity(holding.securityType)) {
+        var _ck = (holding.symbol || '').replace(/^[A-Z]+:/, '');
+        if (_ck && _ck !== sym) {
+            var _dc = wmsLivePrices[_ck];
+            if (_dc && _dc.lp > 0) return _dc.lp;
+        }
     }
     // Check shared global cache first (populated by wmsStandardRefresh)
     var cached = wmsLivePrices[sym];

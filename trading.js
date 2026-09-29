@@ -1022,6 +1022,17 @@ function trInvBrk(txn) {
 
 function trGetPrice(h) {
     var sym = h.shortSymbol || h.symbol;
+    // Derivatives (MCX commodities / F&O contracts) resolve CMP by their contract
+    // symbol, not the equity shortSymbol — e.g. the 'SILVER' commodity must not
+    // pick up an unrelated 'SILVER' equity quote. Combined equity+F&O rows carry
+    // the equity security_type, so they fall through to the shortSymbol lookup.
+    if (typeof wmsIsDerivativeSecurity === 'function' && wmsIsDerivativeSecurity(h.securityType)) {
+        var _ck = (h.symbol || '').replace(/^[A-Z]+:/, '');
+        if (_ck && _ck !== sym) {
+            var _dc = wmsLivePrices[_ck];
+            if (_dc && _dc.lp > 0) return _dc.lp;
+        }
+    }
     var cached = wmsLivePrices[sym];
     if (cached && cached.lp > 0) return cached.lp;
     // Legacy fallback to module-level cache (for backward compat)
@@ -1034,6 +1045,14 @@ function trGetPrice(h) {
 
 function trGetLiveData(h) {
     var sym = h.shortSymbol || h.symbol;
+    // Derivatives resolve by contract symbol first (see trGetPrice).
+    if (typeof wmsIsDerivativeSecurity === 'function' && wmsIsDerivativeSecurity(h.securityType)) {
+        var _ck = (h.symbol || '').replace(/^[A-Z]+:/, '');
+        if (_ck && _ck !== sym) {
+            var _dc = wmsLivePrices[_ck];
+            if (_dc && _dc.lp > 0) return _dc;
+        }
+    }
     var cached = wmsLivePrices[sym];
     if (cached && cached.lp > 0) return cached;
     // Legacy fallback
@@ -1280,6 +1299,7 @@ function trCalcHoldings() {
                 shortSymbol: txn.short_symbol || txn.symbol,
                 companyName: initName,
                 securityId: txn.security_id,
+                securityType: txn.security_type,
                 exchange: txn.exchange || 'NSE',
                 tags: {},
                 latestPrice: 0,
@@ -1297,6 +1317,13 @@ function trCalcHoldings() {
         // Use company_name from equity txn (not F&O contract name)
         if (txn.company_name && !wmsIsDerivativeSecurity(txn.security_type) && !groups[key].companyName) {
             groups[key].companyName = txn.company_name;
+        }
+        // Prefer the equity leg's security_type for CMP resolution. A combined
+        // equity + F&O row then resolves CMP by the underlying equity (shortSymbol);
+        // a pure derivative row (MCX commodity / F&O-only) stays derivative and
+        // resolves by its contract symbol (see trGetPrice / trGetLiveData).
+        if (!wmsIsDerivativeSecurity(txn.security_type)) {
+            groups[key].securityType = txn.security_type;
         }
 
         if (txn.tags) txn.tags.forEach(function(tag) { if (tag) groups[key].tags[tag] = true; });
@@ -1353,6 +1380,7 @@ function trCalcHoldings() {
             shortSymbol: g.shortSymbol,
             companyName: g.companyName,
             securityId: g.securityId,
+            securityType: g.securityType,
             isin: _secMaster ? _secMaster.isin : null,
             exchange: g.exchange,
             quantity: calc.netQuantity,

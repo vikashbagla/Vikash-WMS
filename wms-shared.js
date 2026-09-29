@@ -3523,9 +3523,13 @@ function wmsBuildRefreshSymbols() {
                 list.push({ fyersKey: fKey, cacheKey: bare });
             }
             // Also add the underlying equity symbol so portfolio rows can look up
-            // by shortSymbol (e.g., 'SHRIRAMFIN') even for F&O-only positions
+            // by shortSymbol (e.g., 'SHRIRAMFIN') even for F&O-only positions.
+            // MCX commodities are skipped: they have no NSE equity, and the
+            // short_symbol (e.g. 'SILVER') collides with an unrelated equity
+            // ticker — adding 'NSE:SILVER-EQ' would pollute the 'SILVER' cache
+            // slot with the wrong (equity) price. NFO stock F&O keeps the fallback.
             var underlying = t.short_symbol;
-            if (underlying && !seen[underlying]) {
+            if (t.security_type !== 'MCX' && underlying && !seen[underlying]) {
                 seen[underlying] = true;
                 list.push({ fyersKey: 'NSE:' + underlying + '-EQ', cacheKey: underlying });
             }
