@@ -3205,9 +3205,14 @@ async function autoHealthLoadFamilies(sharedState) {
         var haveState = !!(sharedState && typeof sharedState === 'object' && 'kill_switch' in sharedState);
         var results = await Promise.all([
             fetch(SUPABASE_URL + '/rest/v1/auto_strategies?select=name,enabled,execution_mode,version', { headers: wmsHeaders() }),
-            fetch(SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=strategy_name,net_qty', { headers: wmsHeaders() }),
+            // (was select=…,net_qty — no such column: the read 400'd on every load, so the
+            //  card always showed "0 legs". Only strategy_name is used — 2026-09-29.)
+            fetch(SUPABASE_URL + '/rest/v1/v_auto_open_trades?select=strategy_name', { headers: wmsHeaders() }),
             haveState ? null : fetch(SUPABASE_URL + '/rest/v1/app_state?id=eq.1&select=kill_switch,paused_sources', { headers: wmsHeaders() }),
-            fetch(SUPABASE_URL + '/rest/v1/wms_live_commands?signal_source=eq.katalysthive&status=in.(PENDING,WORKING,PLACED)&select=trade_id,quantity', { headers: wmsHeaders() })
+            // KH orders still in flight = pending / claimed, or placed and still live at the
+            // broker (LESSONS §A.1.9e status table). Was select=trade_id,quantity (no such
+            // columns → 400 on every load, card always "0 cmd") + upper-case statuses. 2026-09-29.
+            fetch(SUPABASE_URL + '/rest/v1/wms_live_commands?signal_source=eq.katalysthive&or=(status.in.(pending,claimed),and(status.eq.placed,or(broker_status.is.null,broker_status.in.(PENDING,OPEN,PARTIAL))))&select=id', { headers: wmsHeaders() })
         ]);
         var strategies = results[0].ok ? await results[0].json() : [];
         var openLegs   = results[1].ok ? await results[1].json() : [];
