@@ -32,10 +32,9 @@
 //        → on every NOTIFY (or gap-fill on reconnect): call cmd-poll
 //          (atomic claim + broker creds), place order, call cmd-complete
 //        → reconnect on disconnect with exponential backoff (capped 30s)
-//   2. Safety-net Edge Function poll for command intake (every
-//      PG_POLL_SAFETY_NET_MS, default 60000): regardless of NOTIFY activity,
-//      call cmd-poll once to catch any missed notifications. Usually returns
-//      null when LISTEN is healthy.
+//   2. (RETIRED 30-Sep-2026) Safety-net cmd-poll every PG_POLL_SAFETY_NET_MS.
+//      Switched off — see the note at the loop start-up below. Stale orders
+//      are rejected by cmd-poll's 2-min freshness rule, never placed late.
 //   3. Phase F2 — Orders monitoring loop (every MONITORING_POLL_IDLE_MS=5min,
 //      busy or idle — single cadence since 30-Sep-2026):
 //        → call wms-live-orders-monitoring (HMAC) to fetch all working
@@ -1615,10 +1614,15 @@ startListenClient().catch((err) => {
   process.exit(1);
 });
 
-safetyNetPollLoop().catch((err) => {
-  console.error('[wms-live] safety-net loop crashed:', err);
-  process.exit(1);
-});
+// Safety-net poll RETIRED 30-Sep-2026 (owner decision, Supabase log-quota
+// Phase 2). LISTEN/NOTIFY picked up every order in the prior 30 days within
+// seconds; a reconnect still runs a gap-fill cmd-poll. A missed order is NOT
+// placed late: cmd-poll's 2-min freshness rule (backend 38f4ba4) rejects any
+// pending order older than 2 min. Rollback = revert this commit.
+// safetyNetPollLoop().catch((err) => {
+//   console.error('[wms-live] safety-net loop crashed:', err);
+//   process.exit(1);
+// });
 
 ordersMonitoringLoop().catch((err) => {
   console.error('[wms-live] orders-monitoring loop crashed:', err);
