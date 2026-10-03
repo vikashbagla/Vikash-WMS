@@ -634,7 +634,15 @@ async function wmsMastersSyncNow() {
     }
     if (moved('securities_db')) {
         try {
-            if (cacheMode) { await _wmsCmDeltaSync(base.securities_db && base.securities_db.max_updated); _wmsIdbPut('cm', probe.securities_db.checksum, wmsRefData.securitiesCm).catch(function(){}); }
+            if (cacheMode) {
+                await _wmsCmDeltaSync(base.securities_db && base.securities_db.max_updated);
+                // The delta only sees rows whose updated_at moved, so a HARD DELETE is invisible to it.
+                // Count-reconcile against the probe; on a mismatch reconcile the full id manifest
+                // (drops deleted rows, adds any missed) BEFORE the snapshot is stamped current — else a
+                // deleted security is re-saved under the NEW checksum and survives every reload (03-Oct-2026).
+                if ((wmsRefData.securitiesCm || []).length !== probe.securities_db.row_count) await _wmsCmManifestReconcile();
+                _wmsIdbPut('cm', probe.securities_db.checksum, wmsRefData.securitiesCm).catch(function(){});
+            }
             else { await wmsLoadSecuritiesCm(0, { all: true }); }
             changed = true;
         }
@@ -700,6 +708,16 @@ function _wmsIdbPut(key, version, rows) {
         return new Promise(function (resolve, reject) {
             var tx = db.transaction(_WMS_IDB_STORE, 'readwrite');
             tx.objectStore(_WMS_IDB_STORE).put({ version: version, rows: rows, stored_at: Date.now() }, key);
+            tx.oncomplete = function () { resolve(true); };
+            tx.onerror = function () { reject(tx.error); };
+        });
+    });
+}
+function _wmsIdbDel(key) {
+    return _wmsIdbOpen().then(function (db) {
+        return new Promise(function (resolve, reject) {
+            var tx = db.transaction(_WMS_IDB_STORE, 'readwrite');
+            tx.objectStore(_WMS_IDB_STORE).delete(key);
             tx.oncomplete = function () { resolve(true); };
             tx.onerror = function () { reject(tx.error); };
         });
@@ -794,8 +812,8 @@ async function wmsLoadSecuritiesCache() {
 
 // ---- cache-mode CM delta on change: only rows updated since the last max -----
 // Cheap replacement for the full REST reload when securities_db changes mid-
-// session (e.g. a broker_tokens write). Misses hard-deletes (rare — securities
-// are deactivated via an UPDATE, which this catches); a cold reload reconciles.
+// session (e.g. a broker_tokens write). Misses hard-deletes — the caller
+// (wmsMastersSyncNow) count-checks afterwards and runs _wmsCmManifestReconcile.
 async function _wmsCmDeltaSync(sinceMaxUpdated) {
     if (!sinceMaxUpdated) { await wmsLoadSecuritiesCm(0, { all: true }); return; }   // no baseline -> full reload
     var url = SUPABASE_URL + '/rest/v1/securities_db?select=' + WMS_SECURITIES_CM_SELECT +
@@ -809,6 +827,51 @@ async function _wmsCmDeltaSync(sinceMaxUpdated) {
         } else { wmsRefData.securitiesCm.push(r); }
         wmsRefData.securitiesCmMap[r.id] = r;
     });
+}
+
+// Fetch specific securities_db rows by id (full columns). Batched under URL limits.
+async function _wmsFetchCmByIds(ids) {
+    var out = [], BATCH = 100;
+    for (var i = 0; i < ids.length; i += BATCH) {
+        var slice = ids.slice(i, i + BATCH);
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?select=' + WMS_SECURITIES_CM_SELECT + '&id=in.(' + slice.join(',') + ')', { headers: wmsHeaders() });
+        if (!resp.ok) throw new Error('_wmsFetchCmByIds ' + resp.status);
+        var rows = await resp.json();
+        for (var j = 0; j < rows.length; j++) out.push(rows[j]);
+    }
+    return out;
+}
+
+// Id-manifest reconcile for securities_db (mirror of _wmsNfoDeltaSync's deletion pass).
+// Runs ONLY when the in-memory count disagrees with the server count after a delta —
+// i.e. a row was hard-deleted (or otherwise missed). Fetches the id-only manifest
+// (~1 MB, vs ~13 MB for a full reload), removes in-memory rows the server no longer
+// has, fetches any ids the memory lacks, and THROWS unless the two id-sets then match
+// — so the caller never stamps an unreconciled snapshot as current.
+async function _wmsCmManifestReconcile() {
+    var manifest = await wmsFetchAllRaw(SUPABASE_URL + '/rest/v1/securities_db?select=id&order=id.asc');
+    var serverHas = Object.create(null);
+    for (var i = 0; i < manifest.length; i++) serverHas[manifest[i].id] = true;
+    var arr = wmsRefData.securitiesCm || (wmsRefData.securitiesCm = []);
+    var map = wmsRefData.securitiesCmMap || (wmsRefData.securitiesCmMap = {});
+    var seen = Object.create(null), removed = 0;
+    for (var d = arr.length - 1; d >= 0; d--) {                        // deletions + duplicate ids
+        var id = arr[d].id;
+        if (!serverHas[id]) { delete map[id]; arr.splice(d, 1); removed++; }
+        else if (seen[id]) { arr.splice(d, 1); }
+        else { seen[id] = true; }
+    }
+    var missing = [];
+    for (var m = 0; m < manifest.length; m++) { if (!seen[manifest[m].id]) missing.push(manifest[m].id); }
+    if (missing.length) {                                               // rows the delta missed
+        var rows = await _wmsFetchCmByIds(missing);
+        for (var c = 0; c < rows.length; c++) {
+            if (!seen[rows[c].id]) { arr.push(rows[c]); map[rows[c].id] = rows[c]; seen[rows[c].id] = true; }
+        }
+    }
+    if (arr.length !== manifest.length) throw new Error('securities_db reconcile mismatch: memory ' + arr.length + ' vs server ' + manifest.length);
+    console.log('Securities CM reconciled against the server id list: ' + removed + ' removed, ' + missing.length + ' added (' + arr.length + ' rows)');
+    return { removed: removed, added: missing.length };
 }
 
 // ============================================================================
@@ -970,6 +1033,71 @@ function wmsTxnCacheMode() {
 async function wmsForceRefreshTxn() {
     var rows = await wmsLoadTransactions({ force: true });   // wmsTxnFullFetch -> _wmsTxnIdbPersist
     return rows;
+}
+
+// Force a FULL server rebuild of the securities masters — equity/CM (incl. debt) AND
+// F&O — bypassing IndexedDB, the Storage cache file and the delta, then rewrite the
+// persisted copies. The persisted snapshots are dropped FIRST so a stale copy can
+// never outlive a failed reload. Throws if either master could not be reloaded.
+async function wmsForceRefreshSecurities() {
+    var cacheMode = wmsSecuritiesCacheMode();
+    var probe = null;
+    try { probe = await wmsMastersSyncState(); } catch (e) { probe = null; }   // token taken BEFORE the load (a later DB change then re-syncs)
+    if (cacheMode) { try { await Promise.all([_wmsIdbDel('cm'), _wmsIdbDel('nfo')]); } catch (e) { /* IndexedDB unavailable — nothing persisted to drop */ } }
+    var cmBefore = wmsRefData.securitiesCm, nfoBefore = wmsRefData.securitiesNfo;
+    await Promise.all([wmsLoadSecuritiesCm(0, { all: true }), wmsLoadSecuritiesNfo()]);
+    // The loaders retry and then SWALLOW errors; a successful load REPLACES the array,
+    // so an unchanged reference means that load failed.
+    var cmOk = wmsRefData.securitiesCm !== cmBefore, nfoOk = wmsRefData.securitiesNfo !== nfoBefore;
+    if (probe) {
+        var tk = wmsRefData._masterTokens || (wmsRefData._masterTokens = {});
+        if (cmOk && probe.securities_db) {
+            tk.securities_db = probe.securities_db;
+            if (cacheMode && probe.securities_db.checksum && wmsRefData.securitiesCm.length === probe.securities_db.row_count) {
+                _wmsIdbPut('cm', probe.securities_db.checksum, wmsRefData.securitiesCm).catch(function () {});
+            }
+        }
+        if (nfoOk && probe.securities_nfo) {
+            tk.securities_nfo = probe.securities_nfo;
+            if (cacheMode && probe.securities_nfo.checksum && wmsRefData.securitiesNfo.length === probe.securities_nfo.row_count) {
+                _wmsIdbPut('nfo', probe.securities_nfo.checksum, wmsRefData.securitiesNfo).catch(function () {});
+            }
+        }
+    }
+    if (!cmOk || !nfoOk) throw new Error('securities reload failed (' + (cmOk ? '' : 'equity') + (!cmOk && !nfoOk ? ' + ' : '') + (nfoOk ? '' : 'F&O') + ')');
+    console.log('Securities: full server rebuild — CM ' + wmsRefData.securitiesCm.length + ', NFO ' + wmsRefData.securitiesNfo.length);
+    return { cm: wmsRefData.securitiesCm.length, nfo: wmsRefData.securitiesNfo.length };
+}
+
+// Drop EVERY persisted accounting-voucher snapshot plus the in-memory store copy, so
+// the next read (the active-module refresh that follows the header button, or the next
+// visit to Accounting / Reports) downloads vouchers fresh from the server and
+// re-persists them. Deliberately lazy: snapshots are per book-set, so an eager rebuild
+// would re-download book-sets nobody is looking at.
+async function wmsForceResetVouchers() {
+    try { if (window.wmsStore && wmsStore.invalidate) wmsStore.invalidate('vouchers'); } catch (e) { /* store not loaded yet */ }
+    if (!window.indexedDB) return false;
+    var db = await _wmsAcctIdbOpen();
+    await new Promise(function (resolve, reject) {
+        var tx = db.transaction(_WMS_ACCT_IDB_STORE, 'readwrite');
+        tx.objectStore(_WMS_ACCT_IDB_STORE).clear();
+        tx.oncomplete = function () { resolve(true); };
+        tx.onerror = function () { reject(tx.error); };
+    });
+    return true;
+}
+
+// Header sync button: rebuild EVERY persisted copy from the server — securities
+// (equity + F&O), transactions, accounting vouchers. Securities go first (the
+// transaction search-text is built from them). Each part runs even if another fails;
+// the failures are reported together.
+async function wmsForceRefreshAllStored() {
+    var errs = [];
+    try { await wmsForceRefreshSecurities(); } catch (e) { errs.push('securities: ' + (e && e.message ? e.message : e)); }
+    try { await wmsForceRefreshTxn(); } catch (e) { errs.push('transactions: ' + (e && e.message ? e.message : e)); }
+    try { await wmsForceResetVouchers(); } catch (e) { errs.push('vouchers: ' + (e && e.message ? e.message : e)); }
+    if (errs.length) throw new Error(errs.join('; '));
+    return true;
 }
 function _wmsTxnUserKey() {
     var u = window.currentUser;
