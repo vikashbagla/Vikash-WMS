@@ -1828,6 +1828,39 @@ function lgAnchorReconDate() {
     return latest;
 }
 
+// Dividends received count as BOOKED P&L for the year, and so enter the Potential-Tax
+// base (owner 2026-10-03, CALCULATIONS §E.15.19). One booked entry per DIVIDEND row in
+// the statement's own transaction scope: amount = the dividend NET OF TDS (net_amount
+// stores the gross qty × price; tds is its own field), dated on the dividend date, with
+// the shares it was paid on as the quantity. Dividends ONLY — interest / other income
+// stay out, and a capital reduction is already a cost change inside the FIFO engine.
+// Returns NEW objects in the FIFO-gain shape and is concat-ed onto a COPY of the engine's
+// gains: the shared cost engine (Reports capital gains, the accounting engine) must never
+// see a dividend as a gain. securityType 'DIVIDEND' is a statement-local pseudo-type that
+// keeps a symbol's dividend on its own Booked P&L row, labelled DIV.
+var LG_BOOKED_DIVIDEND_TYPE = 'DIVIDEND';
+function lgDividendBookedEntries(txns) {
+    var out = [];
+    (txns || []).forEach(function(t) {
+        if (!t || t.transaction_type !== 'DIVIDEND' || !t.transaction_date) return;
+        var gross = Math.abs(parseFloat(t.net_amount) || 0);
+        var tds = Math.abs(parseFloat(t.tds) || 0);
+        var net = Math.round((gross - tds) * 100) / 100;
+        if (Math.round(net * 100) === 0) return;
+        out.push({
+            symbol: t.symbol || t.short_symbol || '', shortSymbol: t.short_symbol || t.symbol || '',
+            companyName: t.company_name || '', securityType: LG_BOOKED_DIVIDEND_TYPE,
+            sellDate: t.transaction_date, qty: Math.abs(parseFloat(t.quantity) || 0), gain: net,
+            investorId: t.investor_id, brokerId: t.broker_id, sellTxnId: t.id, isDividend: true
+        });
+    });
+    return out;
+}
+// Type label for a Booked P&L row: DIV for a dividend entry, else the shared EQ / NFO / MCX.
+function lgBookedTypeLabel(securityType) {
+    return securityType === LG_BOOKED_DIVIDEND_TYPE ? 'DIV' : wmsSecTypeShortLabel(securityType);
+}
+
 // Split a set of FY booked gains into Starting (realised on/before the recon
 // date) + New (realised after it), per §E.15.17. Returns
 // { split, reconDate, startingGain, startingGains, newGains, total }. When no
@@ -1884,7 +1917,7 @@ function lgRenderSummary() {
     // keeping NFO contracts distinct.
     var fifo = wmsCalcFifoCost(sorted);
     var holdingsMap = fifo.holdings;
-    var allGains = fifo.gains || [];
+    var allGains = (fifo.gains || []).concat(lgDividendBookedEntries(sorted));   // + dividends net of TDS (§E.15.19)
 
     // Build source lookup for NFO symbol decoding — match the engine's key
     // scheme: EQ keys by short_symbol, NFO keys by full symbol with any
@@ -2205,7 +2238,7 @@ function lgRenderSummary() {
                 return Object.keys(bySym).sort().map(function(k) {
                     var b = bySym[k];
                     var cls = lgAmtClass(b.gain);
-                    var typeL = wmsSecTypeShortLabel(b.securityType);
+                    var typeL = lgBookedTypeLabel(b.securityType);
                     var symHtml = wmsEsc(b.shortSymbol || '');
                     if (wmsIsDerivativeSecurity(b.securityType) && typeof wmsFormatContract === 'function') {
                         var srcTxn = sourceLookup[b.fullSymbol];
@@ -3663,7 +3696,7 @@ function lgGatherExportData(opts) {
     });
     var fifo = wmsCalcFifoCost(sortedAll);
     var holdingsMap = fifo.holdings;
-    var allGains = fifo.gains || [];
+    var allGains = (fifo.gains || []).concat(lgDividendBookedEntries(sortedAll));   // + dividends net of TDS (§E.15.19)
 
     // Source lookup for NFO symbol decoding
     var sourceLookup = {};
@@ -3778,7 +3811,7 @@ function lgGatherExportData(opts) {
     });
     var bookedRows = Object.keys(bySym).sort().map(function(k) {
         var b = bySym[k];
-        return [b.shortSymbol, wmsSecTypeShortLabel(b.securityType), b.qty, b.gain];
+        return [b.shortSymbol, lgBookedTypeLabel(b.securityType), b.qty, b.gain];
     });
 
     // Counterparty-POV display values (LESSONS §E.15.13). Balance-like values
