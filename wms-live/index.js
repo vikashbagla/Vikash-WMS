@@ -32,12 +32,11 @@
 //        → on every NOTIFY (or gap-fill on reconnect): call cmd-poll
 //          (atomic claim + broker creds), place order, call cmd-complete
 //        → reconnect on disconnect with exponential backoff (capped 30s)
-//   2. Safety-net Edge Function poll for command intake (every
-//      PG_POLL_SAFETY_NET_MS, default 60000): regardless of NOTIFY activity,
-//      call cmd-poll once to catch any missed notifications. Usually returns
-//      null when LISTEN is healthy.
-//   3. Phase F2 — Orders monitoring loop (every MONITORING_POLL_BUSY_MS=30s
-//      when working orders exist; MONITORING_POLL_IDLE_MS=5min when idle):
+//   2. (RETIRED 30-Sep-2026) Safety-net cmd-poll every PG_POLL_SAFETY_NET_MS.
+//      Switched off — see the note at the loop start-up below. Stale orders
+//      are rejected by cmd-poll's 2-min freshness rule, never placed late.
+//   3. Phase F2 — Orders monitoring loop (every MONITORING_POLL_IDLE_MS=5min,
+//      busy or idle — single cadence since 30-Sep-2026):
 //        → call wms-live-orders-monitoring (HMAC) to fetch all working
 //          orders grouped by IBA + each IBA's current Fyers access_token
 //        → reconcile per-IBA Fyers Order WebSocket pool (open new, restart
@@ -107,8 +106,15 @@ const PG_POLL_SAFETY_NET_MS     = Number(process.env.PG_POLL_SAFETY_NET_MS) || 6
 const PG_RECONNECT_BACKOFF_MAX_MS = Number(process.env.PG_RECONNECT_BACKOFF_MAX_MS) || 30_000;
 
 // Phase F2 — orders monitoring + Fyers Order WS
-const MONITORING_POLL_BUSY_MS   = Number(process.env.MONITORING_POLL_BUSY_MS) || 30_000;
 const MONITORING_POLL_IDLE_MS   = Number(process.env.MONITORING_POLL_IDLE_MS) || 5 * 60_000;
+// Owner decision 30-Sep-2026 (Supabase log-quota Phase 2): ONE 5-min cadence,
+// even while orders are working at the broker. Order updates (fills, cancels,
+// rejections) arrive instantly on the Fyers Order WebSocket, which reconnects
+// itself and gap-fills on reconnect; this loop is only the fallback behind it.
+// The old MONITORING_POLL_BUSY_MS env var (30000 in the Droplet .env) is
+// DELIBERATELY IGNORED so the change needs no .env edit. Rollback = git revert.
+const MONITORING_POLL_BUSY_MS   = MONITORING_POLL_IDLE_MS;
+const MONITORING_ERROR_RETRY_MS = 30_000;   // retry sooner after a failed poll
 const FYERS_ORDER_WS_URL        = process.env.FYERS_ORDER_WS_URL || 'wss://socket.fyers.in/trade/v3';
 const FYERS_WS_PING_INTERVAL_MS = Number(process.env.FYERS_WS_PING_INTERVAL_MS) || 10_000;
 const FYERS_WS_RECONNECT_BACKOFF_MAX_MS = Number(process.env.FYERS_WS_RECONNECT_BACKOFF_MAX_MS) || 30_000;
@@ -1499,7 +1505,7 @@ async function ordersMonitoringLoop() {
       console.error(`[monitor] poll error #${edgeFunctionConsecutiveErrors}: ${err.message}`);
       // Back off briefly on errors but don't go full idle — operator might
       // be debugging.
-      nextDelay = Math.min(nextDelay, MONITORING_POLL_BUSY_MS);
+      nextDelay = Math.min(nextDelay, MONITORING_ERROR_RETRY_MS);
     }
 
     lastMonitoringPollMode = mode;
@@ -1608,10 +1614,15 @@ startListenClient().catch((err) => {
   process.exit(1);
 });
 
-safetyNetPollLoop().catch((err) => {
-  console.error('[wms-live] safety-net loop crashed:', err);
-  process.exit(1);
-});
+// Safety-net poll RETIRED 30-Sep-2026 (owner decision, Supabase log-quota
+// Phase 2). LISTEN/NOTIFY picked up every order in the prior 30 days within
+// seconds; a reconnect still runs a gap-fill cmd-poll. A missed order is NOT
+// placed late: cmd-poll's 2-min freshness rule (backend 38f4ba4) rejects any
+// pending order older than 2 min. Rollback = revert this commit.
+// safetyNetPollLoop().catch((err) => {
+//   console.error('[wms-live] safety-net loop crashed:', err);
+//   process.exit(1);
+// });
 
 ordersMonitoringLoop().catch((err) => {
   console.error('[wms-live] orders-monitoring loop crashed:', err);
