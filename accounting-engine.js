@@ -55,17 +55,6 @@
     }
     function ex(key, sev, title, detail) { return { condition_key: key, severity: sev, title: title, detail: detail || {} }; }
 
-    // Client spread — the book bills the client `trader_charges` but pays the broker
-    // `total_charges`; the difference is the BOOK's income, posted to Trader Income
-    // and borne by the client (owner rule 2026-08-15). Used by income/rights and F&O
-    // client vouchers (buy/sell client already bake the spread into their legs).
-    function pushSpread(lines, t) {
-        var spread = r2(absN(t.trader_charges) - absN(t.total_charges));
-        if (Math.round(spread * 100) === 0) return;
-        if (spread > 0) { lines.push({ ref: { investor_id: t.trader_id }, debit: spread, credit: 0 }); lines.push({ ref: { role: 'TRADER_INCOME' }, debit: 0, credit: spread }); }
-        else { lines.push({ ref: { role: 'TRADER_INCOME' }, debit: -spread, credit: 0 }); lines.push({ ref: { investor_id: t.trader_id }, debit: 0, credit: -spread }); }
-    }
-
     // Trader-perspective net — mirrors wms-shared.js wmsComputeDisplayNetAmount so the
     // ledger F&O P&L equals the Statements figure BY CONSTRUCTION. For a CLIENT trade
     // (trader ≠ investor) a BUY/SELL/RIGHTS_PAYMENT nets at the trader's OWN charges
@@ -306,11 +295,20 @@
         if (Math.round(spread * 100) !== 0) lines.push({ ref: { role: 'TRADER_INCOME' }, debit: 0, credit: r2(spread) });
         return { type: 'PMS-SELL', narration: 'Sell ' + absN(t.quantity) + ' ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
-    // Client income / cap-reduction / rights: net between the client account and settlement.
+    // Client income / cap-reduction: Dr PMS Settlement [gross − tds]; Cr Client [gross − tds].
+    // The client's account moves by the cash that actually arrived — exactly as incomeOwn
+    // settles the book's OWN income (owner rule 2026-10-03). The income module stores
+    // net_amount = GROSS and the TDS separately, and copies the TDS into total_charges with
+    // trader_charges = 0 (LESSONS A.2.9) — so on an income row the TDS is NOT a
+    // broker-vs-client charge spread. No Trader Income line and no TDS line in the book:
+    // the CLIENT bears the TDS. (Before this fix both legs took the GROSS and a 'spread' of
+    // −TDS was then credited to the client against Trader Income — KTKBANK / T2,
+    // PMS-2627-0374: client credited gross + TDS. Client RIGHTS_PAYMENT has its own
+    // builder, rightsPayClient, and still posts its trader-charge spread.)
     function incomeClient(t, ctx) {
-        var ty = ttype(t), net = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount);
-        var lines = [{ ref: { role: 'PMS_SETTLEMENT' }, debit: r2(net), credit: 0 }, { ref: { investor_id: t.trader_id }, debit: 0, credit: r2(net) }];
-        pushSpread(lines, t);   // bill the client the book's charge spread (e.g. rights trader_charges)
+        var ty = ttype(t), gross = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount), tds = absN(t.tds);
+        var settle = r2(gross - tds);
+        var lines = [{ ref: { role: 'PMS_SETTLEMENT' }, debit: settle, credit: 0 }, { ref: { investor_id: t.trader_id }, debit: 0, credit: settle }];
         return { type: 'PMS-' + ty, narration: ty.charAt(0) + ty.slice(1).toLowerCase() + ' ' + symOf(t, ctx) + ' (client)', lines: lines };
     }
     // Client RIGHTS_PAYMENT — the CLIENT subscribes to the rights, so the client is
