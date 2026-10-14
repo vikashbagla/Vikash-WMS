@@ -6459,23 +6459,47 @@ function auAt2RenderBanner() {
 }
 
 /**
- * ☠️ AN INVERTED STOP — a long's stop at or above its entry, or a short's at or
- * below — would fire the instant it rested. The position LOOKS protected and is
- * not, which is the exact condition this whole module exists to prevent.
+ * A trail move SENT to the broker but not yet CONFIRMED (owner, 14-Oct-2026).
  *
- * ⚠️ The engine refuses to PLACE one (at2StopOnConfirmation), but the DATABASE
- * does not: at2_set_stop has no directional check, so a stop written by any
- * other route can land inverted and the row will happily read `open_protected`.
- * That gap is why this page tests it independently rather than trusting the
- * status column. Found 04-Aug-2026 by seeding a bad level and seeing the page
- * report a calm green PROTECTED.
+ * For live trades `current_stop` is written only when reconciliation reads the
+ * level back from Fyers on the NEXT run (owner rule 05-Aug: record placement,
+ * then confirmation). Between the two the broker already holds the new level and
+ * the row still shows the old one, so the page reads it from the latest stop
+ * event instead: if the newest stop event for the trade is a SENT, unconfirmed
+ * modify at a different level, that is the level sent to the broker.
+ * Returns { level, atMs } or null. Sent > 20 min ago and still unconfirmed is
+ * flagged by the caller — a rejected modify never gets a confirmation.
+ *
+ * (Replaces the old "inverted stop" check, removed 14-Oct-2026 on owner
+ * instruction: a trailed stop past the entry is locked-in profit, not an error.)
  */
-function auAt2StopInverted(t) {
-    var stop = Number(t.current_stop), entry = Number(t.entry_price);
-    if (!isFinite(stop) || !isFinite(entry) || !stop || !entry) return false;
-    if (t.side === 'LONG')  return stop >= entry;
-    if (t.side === 'SHORT') return stop <= entry;
-    return false;
+function auAt2PendingStop(t) {
+    if (!t || t.mode !== 'live' || !_auAt2.events) return null;
+    var STOPK = { STOP_MODIFIED: 1, STOP_PLACED: 1, STOP_CANCELLED: 1 };
+    var last = null;
+    _auAt2.events.forEach(function (e) {
+        if (e.trade_id !== t.id || !STOPK[e.kind]) return;
+        if (!last || Number(e.seq) > Number(last.seq)) last = e;
+    });
+    if (!last || last.kind !== 'STOP_MODIFIED') return null;
+    var d = last.detail || {};
+    if (d.sent !== true || d.confirmed !== false) return null;
+    var lvl = Number(last.price);
+    if (!isFinite(lvl) || lvl === Number(t.current_stop)) return null;
+    return { level: lvl, atMs: last.at ? new Date(last.at).getTime() : null };
+}
+
+/** The "Stop:" line under the entry price: the confirmed level, or a sent
+ *  trail move awaiting confirmation (see auAt2PendingStop). */
+function auAt2StopCell(t, sec) {
+    var sym = sec && sec.symbol;
+    var p = auAt2PendingStop(t);
+    if (!p) return '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop, sym) + '</div>';
+    var ageMin = p.atMs ? (Date.now() - p.atMs) / 60000 : 0;
+    var stale = ageMin > 20;
+    return '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(p.level, sym) + '</div>'
+         + '<div style="color:' + (stale ? '#b45309' : '#9ca3af') + ';font-size:9px;margin-top:1px" title="Previous confirmed level: '
+         + auAt2Num(t.current_stop, sym) + '">' + (stale ? 'not yet confirmed — check Fyers' : 'awaiting confirmation') + '</div>';
 }
 
 function auAt2BookName(id) {
@@ -6520,15 +6544,13 @@ async function auAt2RenderOpen(mode, silent) {
     }
 
     var unknown = rows.filter(function (t) { return !AU_AT2_STATUS[t.status]; });
-    var bad = rows.filter(auAt2StopInverted);
     // Computed unconditionally (not just when `summary` exists) — the totals
     // row in the table below also needs this, and a missing DOM node must not
     // silently leave it undefined for that second use.
     var lots = rows.reduce(function (n, t) { return n + (Number(t.qty_lots) || 0); }, 0);
     if (summary) {
         summary.textContent = lots + ' lot(s) · amounts in ' + getUnitDescription()
-            + (unknown.length ? ' · ' + unknown.length + ' unknown status' : '')
-            + (bad.length ? ' · ' + bad.length + ' inverted stop' : '');
+            + (unknown.length ? ' · ' + unknown.length + ' unknown status' : '');
     }
     var h = '';
     if (unknown.length) {
@@ -6536,13 +6558,6 @@ async function auAt2RenderOpen(mode, silent) {
            + unknown.length + ' trade(s) carry a status this page does not recognise.</strong>'
            + '<div style="margin-top:4px">They are listed below rather than hidden. Either the UI has not '
            + 'been taught a new state, or the data is wrong — both need a human.</div></div>';
-    }
-    if (bad.length) {
-        h += '<div class="au-error-list" style="margin:0 0 12px"><strong>\u26D4 '
-           + bad.length + ' position(s) carry an INVERTED stop.</strong>'
-           + '<div style="margin-top:4px">The stop sits on the wrong side of the entry and would fire the '
-           + 'instant it rested. These positions read as protected and are NOT. Fix the level before the '
-           + 'next session opens.</div></div>';
     }
     // GS-style table (mirrors autoLoadGsOpenTrades): shaded #f3f4f6 header, a
     // sticky totals row on top, sub-values (days held / stop level) nested
@@ -6623,13 +6638,6 @@ async function auAt2RenderOpen(mode, silent) {
             ? formatAmount(margin) + '<div style="color:#6b7280;font-size:10px;margin-top:1px">' + marginPct + '%</div>'
             : '<span style="color:#9ca3af">-</span>';
 
-        var flags = [];
-        if (t.cap_bound) flags.push('<span class="au-badge warning" title="the book\'s lot_cap reduced this allocation">cap-bound</span>');
-        if (t.rolled_from_trade_id) flags.push('<span class="au-badge idle" title="opened by a roll">rolled</span>');
-        if (auAt2StopInverted(t)) flags.push('<span class="au-badge error" title="A long stop at or above its '
-            + 'entry (or a short at or below) would fire the instant it rested. This position reads as protected '
-            + 'and is not.">\u26D4 INVERTED STOP</span>');
-        if (t.mode === 'live') flags.push('<span class="au-badge error">LIVE</span>');
 
         var sideBadge = t.side === 'LONG'
             ? '<span class="au-badge success">LONG</span>'
@@ -6651,14 +6659,11 @@ async function auAt2RenderOpen(mode, silent) {
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + rowLots + ' lot' + (rowLots === 1 ? '' : 's') + qtySub + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + auAt2Num(t.entry_price, sec && sec.symbol) + (!t.current_stop
                         ? '<div style="margin-top:2px"><span class="au-badge error" style="font-size:9px">NO STOP</span></div>'
-                        : auAt2StopInverted(t)
-                            ? '<div style="color:#dc2626;font-weight:700;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop, sec && sec.symbol) + ' \u26D4</div>'
-                            : '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop, sec && sec.symbol) + '</div>') + '</td>'
+                        : auAt2StopCell(t, sec)) + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + ltpCell + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + exposureCell + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top">' + marginCell + '</td>'
            + '<td style="padding:6px 8px;text-align:right;white-space:nowrap;vertical-align:top">' + pnlCell + '</td>'
-           + '<td style="padding:6px 8px;vertical-align:top;white-space:normal;line-height:1.7">' + (flags.join(' ') || '—') + '</td>'
            + '<td style="padding:6px 8px;text-align:right;vertical-align:top"><button class="au-btn au-btn-danger" style="padding:4px 8px;font-size:11px"'
            + ' onclick="autoAt2OpenCloseModal(\'' + t.id + '\')">Close</button></td>'
            + '</tr>';
@@ -6675,7 +6680,7 @@ async function auAt2RenderOpen(mode, silent) {
             + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalExposure) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right">' + (anyExposure ? formatAmount(totalMargin) : '<span style="color:#9ca3af">-</span>') + '</td>'
             + '<td style="padding:8px;text-align:right">' + pnlTotalCell + '</td>'
-            + '<td style="padding:8px" colspan="2"></td>'
+            + '<td style="padding:8px"></td>'
             + '</tr>';
 
     var headerRow = '<tr style="background:#f3f4f6;text-align:left">'
@@ -6690,7 +6695,6 @@ async function auAt2RenderOpen(mode, silent) {
             + '<th style="padding:6px 8px;text-align:right">Exposure</th>'
             + '<th style="padding:6px 8px;text-align:right">Margin<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ %</span></th>'
             + '<th style="padding:6px 8px;text-align:right">Live P&amp;L<br><span style="font-weight:400;color:#6b7280;font-size:10px">/ % of exp</span></th>'
-            + '<th style="padding:6px 8px">Flags</th>'
             + '<th style="padding:6px 8px;text-align:right">Action</th>'
             + '</tr>';
 
@@ -6700,7 +6704,7 @@ async function auAt2RenderOpen(mode, silent) {
        + '• LTP via Fyers /quotes (needs an active Fyers connection) — same shared price cache GS uses.<br>'
        + '• Exposure = entry price × currently-open units (matches the metric tile above). Margin = Exposure × GOLDM 10% / SILVERM 20%.<br>'
        + '• Live P&amp;L = side × (LTP − entry) × currently-open units.<br>'
-       + '• Flags: cap-bound = book’s lot_cap reduced the allocation · rolled = opened by a roll · ⛔ INVERTED STOP = the stop is on the wrong side of entry (reads protected, isn’t) · LIVE = real order, not paper.'
+       + '• Stop = the level resting at the broker. A trail move sent to Fyers shows at once, marked “awaiting confirmation” until the next run reads it back.'
        + '</div>';
     el.innerHTML = h;
 }
