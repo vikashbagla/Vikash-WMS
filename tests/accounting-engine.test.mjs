@@ -101,10 +101,10 @@ v = acctBuildVoucher(own({transaction_type:'SELL', net_amount:2228494.06, stt:0,
 ok('rounding plug: sell voucher ties exactly', voucherBalances(v.lines));
 ok('rounding plug: broker Dr == sum of credits', Math.round((amt(v,r=>r.broker_id==='BRK1'))*100) === Math.round(2228494.06*100));
 
-// --- No cost basis: uncovered SELL is skipped with a warn alert, not a broken voucher ---
+// --- No cost basis: an uncovered SELL opens a SHORT (owner 2026-10-15; was skip + alert) ---
 let nc = acctBuildVoucher(own({transaction_type:'SELL', net_amount:976.35, quantity:-1, security_id:'SEC1'}), ctx, []); // no gains -> uncovered
-ok('no-cost sell is skipped (no voucher)', !!nc.skip && !nc.lines);
-ok('no-cost sell raises sell_no_cost_basis alert', (nc.exceptions||[]).some(e=>e.condition_key.indexOf('sell_no_cost_basis')===0 && e.severity==='warn'));
+ok('uncovered sell posts a balanced short voucher', !nc.skip && !!nc.lines && voucherBalances(nc.lines));
+ok('uncovered sell: proceeds credited to Investment, no alert', amt(nc, r=>r.security_id==='SEC1') === -976.35 && !(nc.exceptions||[]).some(e=>e.condition_key.indexOf('sell_no_cost_basis')===0));
 
 // --- Demerger plug: children re-sum to parent exactly even with allocation rounding ---
 let dm2 = demergerVouchers([

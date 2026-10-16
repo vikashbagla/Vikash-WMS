@@ -58,9 +58,9 @@ v = acctBuildVoucher(own({ transaction_type: 'SELL', security_id: 'EQ1', quantit
 ok('own EQ sell LTCG(STT): Cr CG_LT_STT 10000', voucherBalances(v.lines) && has(v, 'CG_LT_STT', 'credit', 10000));
 v = acctBuildVoucher(own({ transaction_type: 'SELL', security_id: 'EQ1', quantity: -50, net_amount: 7500 }), ctx, [{ qty: 50, buyCost: 7400, gain: 100, buyDate: '2025-06-01', sellDate: '2025-06-01', securityType: 'EQUITY' }]);
 ok('own EQ intraday: Cr INTRADAY_PL', voucherBalances(v.lines) && has(v, 'INTRADAY_PL', 'credit', 100));
-// no cost basis → skip + alert
+// no cost basis → opens a SHORT (owner 2026-10-15; was skip + alert): Dr Broker / Cr Investment at proceeds
 v = acctBuildVoucher(own({ transaction_type: 'SELL', security_id: 'EQ1', quantity: -100, net_amount: 9000 }), ctx, []);
-ok('own EQ sell no cost basis: SKIP + acct_exceptions alert', !!v.skip && !!(v.exceptions && v.exceptions.some(e => e.condition_key.indexOf('sell_no_cost_basis') === 0)));
+ok('own EQ sell no cost basis: opens a short — Cr Investment 9000, no alert', !v.skip && voucherBalances(v.lines) && has(v, 'SEC:EQ1', 'credit', 9000) && !(v.exceptions || []).some(e => e.condition_key.indexOf('sell_no_cost_basis') === 0));
 
 // ---- B. CLIENT EQUITY ----
 v = acctBuildVoucher(cli({ transaction_type: 'BUY', security_id: 'EQ1', quantity: 100, net_amount: 10040, total_charges: 40, trader_charges: 50 }), ctx, []);

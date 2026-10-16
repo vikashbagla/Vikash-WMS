@@ -128,32 +128,62 @@
     }
 
     // ---- OWN legs -----------------------------------------------------------
-    function buyOwn(t, ctx) {
+    // covers = cover gains from the shared FIFO when this BUY closes an OPEN SHORT
+    // (owner 2026-10-15, APTUS): the short's proceeds sit as a CREDIT on the
+    // Investment ledger since the short SELL; the cover debits them back and books
+    // the difference (short proceeds − cover cost) as capital gain on THIS date,
+    // classified by the time the short was open (ST / LT / intraday). Any quantity
+    // beyond the short is a normal long purchase. No covers → unchanged.
+    function buyOwn(t, ctx, covers) {
         var total = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount), stt = absN(t.stt);
-        var sep = sttSeparate(t, ctx), sec = secOf(t, ctx), lines = [];
-        lines.push({ ref: { security_id: t.security_id }, debit: r2(sep ? total - stt : total), credit: 0 });
+        var sep = sttSeparate(t, ctx), sec = secOf(t, ctx), lines = [], exceptions = [];
+        if (!covers || !covers.length) {
+            lines.push({ ref: { security_id: t.security_id }, debit: r2(sep ? total - stt : total), credit: 0 });
+            if (sep && stt > 0) lines.push({ ref: { role: sttRole(sec) }, debit: r2(stt), credit: 0 });
+            lines.push({ ref: { broker_id: t.broker_id }, debit: 0, credit: r2(total) });
+            return { type: 'PMS-BUY', narration: 'Buy ' + absN(t.quantity) + ' ' + symOf(t, ctx), lines: lines };
+        }
+        var basis = sep ? total - stt : total;              // the FIFO (STT-adjusted) buy cost
+        var openProceeds = 0, coverCost = 0, coverQty = 0, byRole = {}, order = [];
+        covers.forEach(function (g) {
+            openProceeds += (g.sellProceeds || 0); coverCost += (g.buyCost || 0); coverQty += absN(g.qty);
+            var cls = wmsGainClassify({ buyDate: g.sellDate, sellDate: g.buyDate }, sec);   // held short → covered
+            var role = (cls.bucket === 'INTRADAY') ? 'INTRADAY_PL' : cls.cgRole;
+            if (!role) { exceptions.push(ex('unmapped_cg:' + symOf(t, ctx), 'warn', 'No CG ledger for ' + symOf(t, ctx), { security_id: t.security_id, bucket: cls.bucket })); role = 'CG_ST_SLAB'; }
+            if (byRole[role] === undefined) order.push(role);
+            byRole[role] = (byRole[role] || 0) + (g.gain || 0);
+        });
+        var invDebit = r2((basis - coverCost) + openProceeds);   // fresh long cost + short proceeds reversed
+        lines.push({ ref: { security_id: t.security_id }, debit: invDebit, credit: 0 });
         if (sep && stt > 0) lines.push({ ref: { role: sttRole(sec) }, debit: r2(stt), credit: 0 });
         lines.push({ ref: { broker_id: t.broker_id }, debit: 0, credit: r2(total) });
-        return { type: 'PMS-BUY', narration: 'Buy ' + absN(t.quantity) + ' ' + symOf(t, ctx), lines: lines };
+        var cg = [];
+        order.forEach(function (role) { var amt = r2(byRole[role]); if (Math.round(amt * 100) !== 0) cg.push({ role: role, amt: amt }); });
+        var debits = invDebit + ((sep && stt > 0) ? r2(stt) : 0);
+        var resid = r2(r2(debits - r2(total)) - cg.reduce(function (s, e) { return s + e.amt; }, 0));
+        if (Math.abs(resid) >= 0.005 && Math.abs(resid) < 1) {   // rounding only
+            if (cg.length) cg[cg.length - 1].amt = r2(cg[cg.length - 1].amt + resid);
+            else cg.push({ role: (sec.capital_gains && sec.capital_gains.stcg) || 'CG_ST_SLAB', amt: resid });
+        }
+        cg.forEach(function (e) {
+            if (e.amt >= 0) lines.push({ ref: { role: e.role }, debit: 0, credit: e.amt });
+            else lines.push({ ref: { role: e.role }, debit: -e.amt, credit: 0 });
+        });
+        return { type: 'PMS-BUY', narration: 'Buy ' + absN(t.quantity) + ' ' + symOf(t, ctx) + ' (covers short ' + r2(coverQty) + ')', lines: lines, exceptions: exceptions };
     }
 
     function sellOwn(t, ctx, gains) {
         var net = absN(t.net_amount !== undefined ? t.net_amount : t.netAmount), stt = absN(t.stt);
         var sep = sttSeparate(t, ctx), sec = secOf(t, ctx), lines = [], exceptions = [];
 
-        // No cost basis — FIFO matched fewer units than were sold (e.g. a holding
-        // carried in without an opening lot). Do NOT post a one-legged voucher;
-        // raise an anomaly ALERT and skip so the owner fixes it manually (opening
-        // balance / cost basis). Owner decision 2026-08-14 (see POSTING-RULES v2 §CG).
+        // Selling MORE than is held opens a SHORT for the excess (owner 2026-10-15,
+        // replacing the 2026-08-14 skip-and-alert rule): the uncovered quantity's
+        // share of the proceeds is CREDITED to the security's Investment ledger
+        // (a negative holding) — no gain yet. The gain is booked when a later BUY
+        // covers it (buyOwn). Matches the shared FIFO, which opens a short lot.
         var sold = absN(t.quantity), matched = 0;
         (gains || []).forEach(function (g) { matched += absN(g.qty); });
-        if (sold > 0 && matched + 0.0001 < sold) {
-            return { skip: 'no cost basis (uncovered ' + r2(sold - matched) + ' of ' + sold + ')',
-                exceptions: [ex('sell_no_cost_basis:' + symOf(t, ctx), 'warn',
-                    'SELL with no cost basis: ' + symOf(t, ctx),
-                    { security_id: t.security_id, symbol: symOf(t, ctx), sold: sold, matched: matched,
-                      uncovered: r2(sold - matched), hint: 'needs an opening lot / cost basis; no voucher posted' })] };
-        }
+        var shortQty = (sold > 0 && matched + 0.0001 < sold) ? (sold - matched) : 0;
 
         lines.push({ ref: { broker_id: t.broker_id }, debit: r2(net), credit: 0 });
         if (sep && stt > 0) lines.push({ ref: { role: sttRole(sec) }, debit: r2(stt), credit: 0 });
@@ -166,6 +196,9 @@
             if (byRole[role] === undefined) order.push(role);
             byRole[role] = (byRole[role] || 0) + (g.gain || 0);
         });
+        var debitsTotal = r2(net) + ((sep && stt > 0) ? r2(stt) : 0);
+        var shortProceeds = shortQty ? r2(debitsTotal * shortQty / sold) : 0;
+        cost += shortProceeds;
         lines.push({ ref: { security_id: t.security_id }, debit: 0, credit: r2(cost) });
 
         // Rounding plug — let the LAST P&L (capital-gain) line absorb the sub-paise
@@ -176,7 +209,6 @@
         // residual, never real value. Owner-approved 2026-08-14.
         var cg = [];
         order.forEach(function (role) { var amt = r2(byRole[role]); if (Math.round(amt * 100) !== 0) cg.push({ role: role, amt: amt }); });
-        var debitsTotal = r2(net) + ((sep && stt > 0) ? r2(stt) : 0);
         var resid = r2(r2(debitsTotal - r2(cost)) - cg.reduce(function (s, e) { return s + e.amt; }, 0));
         if (Math.abs(resid) >= 0.005 && Math.abs(resid) < 1) {   // rounding only; larger gaps fall through to the unbalanced check
             if (cg.length) cg[cg.length - 1].amt = r2(cg[cg.length - 1].amt + resid);
@@ -186,7 +218,7 @@
             if (e.amt >= 0) lines.push({ ref: { role: e.role }, debit: 0, credit: e.amt });
             else lines.push({ ref: { role: e.role }, debit: -e.amt, credit: 0 });
         });
-        return { type: 'PMS-SELL', narration: 'Sell ' + absN(t.quantity) + ' ' + symOf(t, ctx), lines: lines, exceptions: exceptions };
+        return { type: 'PMS-SELL', narration: 'Sell ' + absN(t.quantity) + ' ' + symOf(t, ctx) + (shortQty ? ' (opens short ' + r2(shortQty) + ')' : ''), lines: lines, exceptions: exceptions };
     }
 
     // Income (DIVIDEND / INTEREST / OTHER_INCOME) — own book.
@@ -367,12 +399,14 @@
             var mFrom = n.match(/Demerger from ([A-Z0-9&._-]+) on (\d{4}-\d{2}-\d{2})/i);
             var mOf = n.match(/Demerger of ([A-Z0-9&._-]+) on (\d{4}-\d{2}-\d{2})/i);
             var m = mOf || mFrom; if (!m) { out.exceptions.push(ex('demerger_unparsed:' + t.id, 'warn', 'Demerger row not parseable', { id: t.id })); return; }
+            var ben = (t.trader_id && String(t.trader_id) !== String(t.investor_id)) ? String(t.trader_id) : String(t.investor_id);
             var key = m[1].toUpperCase() + '|' + m[2];
-            if (!groups[key]) groups[key] = { parent: null, children: [] };
-            if (mOf) groups[key].parent = t; else groups[key].children.push(t);
+            var gk = key + '|' + ben;                 // one event per OWNER (two owners' rows never merge)
+            if (!groups[gk]) groups[gk] = { key: key, parent: null, children: [] };
+            if (mOf) groups[gk].parent = t; else groups[gk].children.push(t);
         });
-        Object.keys(groups).forEach(function (key) {
-            var g = groups[key], lines = [];
+        Object.keys(groups).forEach(function (gk) {
+            var g = groups[gk], key = g.key, lines = [];
             if (!g.parent || !g.children.length) { out.exceptions.push(ex('demerger_incomplete:' + key, 'warn', 'Demerger event incomplete: ' + key, {})); return; }
             var childLines = g.children.map(function (c) { return { ref: { security_id: c.security_id }, debit: r2(absN(c.net_amount)), credit: 0 }; });
             var parentCr = r2(absN(g.parent.net_amount));
@@ -429,7 +463,7 @@
         var s = String(t.symbol || t.short_symbol || '').replace(/^[A-Z]+:/, '');
         return /\d(?:CE|PE)$/.test(s);
     }
-    function acctBuildVoucher(t, ctx, gains) {
+    function acctBuildVoucher(t, ctx, gains, covers) {
         var ty = ttype(t);
         if (ty === 'HISTORICAL_PL') return { skip: 'historical (pre-period)' };
         if (ty === 'SPLIT' || ty === 'BONUS' || ty === 'RIGHTS_ENTITLEMENT') return { skip: 'quantity-only, no posting' };
@@ -448,7 +482,7 @@
             }
             return client ? fnoClient(t, ctx, gains) : fnoOwn(t, ctx, gains);
         }
-        if (ty === 'BUY') return client ? buyClient(t, ctx) : buyOwn(t, ctx);
+        if (ty === 'BUY') return client ? buyClient(t, ctx) : buyOwn(t, ctx, covers);
         if (ty === 'SELL') return client ? sellClient(t, ctx) : sellOwn(t, ctx, gains);
         if (ty === 'DIVIDEND' || ty === 'INTEREST' || ty === 'OTHER_INCOME') return client ? incomeClient(t, ctx) : incomeOwn(t, ctx);
         if (ty === 'CAPITAL_REDUCTION') return client ? incomeClient(t, ctx) : capRedOwn(t, ctx);
@@ -566,8 +600,19 @@
             Object.keys(_byBen).forEach(function (k) { _g = _g.concat((ctx.fifo(_byBen[k]) || { gains: [] }).gains || []); });
             fifo = { gains: _g };
         }
-        var gainsBySell = {};
-        (fifo.gains || []).forEach(function (g) { var k = String(g.sellTxnId); (gainsBySell[k] = gainsBySell[k] || []).push(g); });
+        // A gain whose BUY comes AFTER its SELL, on a LATER DATE, is a short COVER: it
+        // belongs to the covering BUY (booked on the cover date), not to the short
+        // SELL — the SELL only opened the position (owner 2026-10-15). A SAME-DAY
+        // reverse-order pair is an intraday round trip and keeps its P&L on the SELL
+        // exactly as before (no change to existing intraday vouchers). Long sales
+        // are unaffected.
+        var pos = {}; sorted.forEach(function (t, i) { pos[String(t.id)] = i; });
+        var gainsBySell = {}, coversByBuy = {};
+        (fifo.gains || []).forEach(function (g) {
+            var b = pos[String(g.buyTxnId)], s = pos[String(g.sellTxnId)];
+            if (b !== undefined && s !== undefined && b > s && String(g.buyDate) !== String(g.sellDate)) { var kb = String(g.buyTxnId); (coversByBuy[kb] = coversByBuy[kb] || []).push(g); return; }
+            var k = String(g.sellTxnId); (gainsBySell[k] = gainsBySell[k] || []).push(g);
+        });
 
         // F&O realised P&L comes ONLY from the dedicated symmetric matcher. First PURGE
         // any gain the equity long-only FIFO left on ANY F&O trade (BOTH legs): the
@@ -575,15 +620,27 @@
         // SELL would otherwise keep the equity FIFO's stray gain and double-book a
         // second, spurious F&O voucher (owner 2026-08-22c; matched the statement, which
         // never runs an equity FIFO over F&O). Then set the covering trades' F&O P&L.
-        sorted.forEach(function (t) { if (isFno(t)) delete gainsBySell[String(t.id)]; });
+        sorted.forEach(function (t) { if (isFno(t)) { delete gainsBySell[String(t.id)]; delete coversByBuy[String(t.id)]; } });
         var fnoMap = acctFnoRealised(sorted);                       // trader basis (client P&L)
         ctx.fnoBrokerById = acctFnoRealised(sorted, { broker: true }); // broker basis (broker-leg P&L, mirrors statement)
         Object.keys(fnoMap).forEach(function (id) { gainsBySell[id] = [{ gain: fnoMap[id] }]; });
 
         var vouchers = [], exceptions = [], skipped = [], demergers = [];
         sorted.forEach(function (t) {
-            if (ttype(t) === 'DEMERGER') { demergers.push(t); return; }
-            var v = acctBuildVoucher(t, ctx, gainsBySell[String(t.id)] || []);
+            if (ttype(t) === 'DEMERGER') {
+                // A CLIENT's demerger (beneficiary ≠ this book — e.g. T3's own holding,
+                // posted in T0) only re-splits the CLIENT's cost between two of the
+                // client's holdings; client holdings never sit on this book's Investment
+                // ledgers (client BUY/SELL post to the Trader account), so there is
+                // nothing to post. Only the book's OWN demergers are grouped. Before
+                // 2026-10-16 both were grouped under one key, so T0's and T3's VERANDA
+                // rows (06-Oct-2026) merged into one unbalanced voucher and the post failed.
+                var _db = (ctx.book && ctx.book.id != null) ? String(ctx.book.id) : null;
+                var _dben = (t.trader_id && String(t.trader_id) !== String(t.investor_id)) ? String(t.trader_id) : String(t.investor_id);
+                if (_db && _dben !== _db) { skipped.push({ id: t.id, reason: 'client demerger — the client\'s holding, nothing to post in this book' }); return; }
+                demergers.push(t); return;
+            }
+            var v = acctBuildVoucher(t, ctx, gainsBySell[String(t.id)] || [], coversByBuy[String(t.id)] || []);
             if (v.exceptions) exceptions = exceptions.concat(v.exceptions);
             if (v.skip) { skipped.push({ id: t.id, reason: v.skip }); return; }
             if (!voucherBalances(v.lines)) { exceptions.push(ex('unbalanced:' + t.id, 'critical', 'Voucher does not balance for txn ' + t.id, { type: v.type })); }
