@@ -36,6 +36,7 @@
 // Order test (until ORDER_TEST_UNTIL; contract SILVERMIC | GOLDPETAL):
 //   select pg_notify('mosl_relay', '{"mode":"order_test","contract":"GOLDPETAL"}');
 //   modes: order_test | overnight_place | order_status | cancel_tests
+//   ws_watch: select pg_notify('mosl_relay', '{"mode":"ws_watch","minutes":5}');
 //   fill_test (OWNER ONLY, real 1-lot GOLDPETAL trade):
 //   select pg_notify('mosl_relay', '{"mode":"fill_test","confirm":"I-AUTHORISE-FILL"}');
 //
@@ -51,7 +52,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.3.0';
+const VERSION = 'wms-mosl/1.4.0';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -807,6 +808,103 @@ export async function runFillTest(trigger = {}) {
   }
 }
 
+// ── Live order/trade feed watch (read-only + one far, non-executing order) ──
+// Connects to MOSL's trade WebSocket from this IPv4, logs in in-band, subscribes
+// to order + trade updates, and records every frame for N minutes. Meanwhile
+// it places ONE far-from-market GOLDPETAL order and cancels it (to see API-order
+// events). The owner can place a trade in the MOSL app during the window to
+// see whether app orders appear on the feed and in the API books.
+async function wsConnect(url, headers) {
+  const { default: WebSocket } = await import('ws');
+  return new Promise((resolve) => {
+    const frames = [];
+    let opened = false;
+    const ws = new WebSocket(url, { headers, family: 4, handshakeTimeout: 10000 });
+    ws.on('open', () => { opened = true; resolve({ ws, frames, opened: true }); });
+    ws.on('error', (e) => { if (!opened) resolve({ ws: null, frames, opened: false, error: String(e?.message ?? e) }); });
+    ws.on('unexpected-response', (_req, res) => { if (!opened) resolve({ ws: null, frames, opened: false, error: `HTTP ${res.statusCode}` }); });
+  });
+}
+
+export async function runWsWatch(trigger = {}) {
+  const t0 = Date.now();
+  const timings = {};
+  const minutes = Math.min(10, Math.max(1, Number(trigger.minutes) || 5));
+  const report = { version: VERSION, mode: 'ws_watch', minutes, attempts: [], frames: [] };
+  let step = 'login'; let ctx = null; let ws = null; let hb = null;
+  try {
+    ctx = await loginCtx(timings, report);
+    const url = CFG.moslBase.replace(/^http/, 'ws') + '/ws';
+    step = 'connect';
+    // Try plain first (as MOSL's own SDK does), then with the MOSL User-Agent.
+    let conn = null;
+    for (const [label, headers] of [['no headers', {}], ['MOSL User-Agent', { 'User-Agent': USER_AGENT }]]) {
+      const tC = Date.now();
+      conn = await wsConnect(url, headers);
+      report.attempts.push({ label, opened: conn.opened, error: conn.error ?? null, ms: Date.now() - tC });
+      if (conn.opened) break;
+    }
+    if (!conn?.opened) throw new Error('could not open the trade WebSocket');
+    ws = conn.ws;
+    const rec = (dir, data) => {
+      if (report.frames.length >= 300) return;
+      let parsed = null; try { parsed = JSON.parse(String(data)); } catch { /* raw */ }
+      report.frames.push({ t_ms: Date.now() - t0, dir, data: parsed ? scrub(parsed) : String(data).slice(0, 500) });
+    };
+    let closed = null;
+    ws.on('message', (d) => rec('in', d));
+    ws.on('close', (code, reason) => { closed = { code, reason: String(reason), at_ms: Date.now() - t0 }; });
+    const send = (o) => { ws.send(JSON.stringify(o)); rec('out', JSON.stringify(scrub(o))); };
+    send({ clientid: ctx.clientId, authtoken: ctx.authToken, apikey: ctx.apiKey });
+    await sleep(500);
+    send({ clientid: ctx.clientId, action: 'OrderSubscribe' });
+    send({ clientid: ctx.clientId, action: 'TradeSubscribe' });
+    hb = setInterval(() => { try { send({ clientid: ctx.clientId, action: 'heartbeat' }); } catch { /* closed */ } }, 30_000);
+
+    // One far, non-executing API order so we see what an API order looks like on the feed.
+    step = 'api_order';
+    if (Date.now() < ORDER_TEST_UNTIL) {
+      const P = await pickTestContract(ctx, { contract: 'GOLDPETAL' }, report, timings);
+      const body = { clientcode: '', exchange: 'MCX', symboltoken: P.token, quantityinlot: 1, disclosedquantity: 0, amoorder: 'N', algoid: '', goodtilldate: '', participantcode: '',
+        producttype: 'NORMAL', orderduration: 'DAY', buyorsell: 'BUY', ordertype: 'LIMIT', price: P.farBuy, triggerprice: 0, tag: 'WMSTWS1' };
+      const r = await transPost(ctx, 'place', body).catch((e) => ({ json: { status: 'BLOCKED', message: e.message } }));
+      report.api_order = { placed_at_ms: Date.now() - t0, status: r.json?.status, message: r.json?.message ?? null, uniqueorderid: r.json?.uniqueorderid ?? null };
+      await sleep(4000);
+      if (r.json?.uniqueorderid) {
+        const c = await transPost(ctx, 'cancel', { clientcode: '', uniqueorderid: r.json.uniqueorderid }).catch((e) => ({ json: { status: 'ERR', message: e.message } }));
+        report.api_order.cancel = { at_ms: Date.now() - t0, status: c.json?.status, message: c.json?.message ?? null };
+      }
+    }
+
+    step = 'watch';
+    const until = t0 + (Number(trigger.test_seconds) > 0 ? Number(trigger.test_seconds) * 1000 : minutes * 60_000);   // test_seconds: offline tests only
+    while (Date.now() < until && !closed) await sleep(1000);
+    report.closed = closed;
+
+    step = 'books';
+    const ob = await moslPost(ctx, '/rest/book/v5/getorderbook', { clientcode: '', dateandtime: '' });
+    const all = Array.isArray(ob.json?.data) ? ob.json.data : [];
+    report.non_test_orders = all.filter((o) => !TAG_RE.test(String(o.tag ?? ''))).map(pickRow);
+    report.ws_test_order = all.filter((o) => o.tag === 'WMSTWS1').map(pickRow);
+    const tb = await moslPost(ctx, '/rest/book/v4/gettradebook', { clientcode: '' });
+    report.trade_book = Array.isArray(tb.json?.data) ? tb.json.data : tb.json;
+    const pos = await moslPost(ctx, '/rest/book/v4/getposition', { clientcode: '' });
+    report.positions = Array.isArray(pos.json?.data) ? pos.json.data : pos.json;
+    step = 'done';
+    timings.total_ms = Date.now() - t0;
+    return { ok: true, step, timings, report };
+  } catch (e) {
+    report.error = String(e?.message ?? e).slice(0, 300);
+    timings.total_ms = Date.now() - t0;
+    return { ok: false, step, timings, report };
+  } finally {
+    if (hb) clearInterval(hb);
+    try { ws?.send(JSON.stringify({ clientid: ctx?.clientId, action: 'logout' })); } catch { /* ignore */ }
+    try { ws?.close(); } catch { /* ignore */ }
+    if (ctx) { ctx.agent.destroy(); ctx.authToken = ''; ctx.accessToken = ''; ctx.apiKey = ''; ctx.apiSecret = ''; }
+  }
+}
+
 let busy = false;
 let lastRecordMs = null;
 async function handleTrigger(payloadText) {
@@ -815,11 +913,12 @@ async function handleTrigger(payloadText) {
   let trigger = {};
   try { trigger = JSON.parse(payloadText || '{}') || {}; } catch { /* plain text payload */ }
   try {
-    const isOrderTest = ['order_test', 'overnight_place', 'order_status', 'cancel_tests', 'fill_test'].includes(trigger.mode);
-    const limit = isOrderTest ? 170_000 : RUN_TIMEOUT_MS;
+    const isOrderTest = ['order_test', 'overnight_place', 'order_status', 'cancel_tests', 'fill_test', 'ws_watch'].includes(trigger.mode);
+    const wsMin = Math.min(10, Math.max(1, Number(trigger.minutes) || 5));
+    const limit = trigger.mode === 'ws_watch' ? wsMin * 60_000 + 90_000 : isOrderTest ? 170_000 : RUN_TIMEOUT_MS;
     const result = await Promise.race([
       trigger.mode === 'order_test' ? runOrderTest(trigger) : trigger.mode === 'fill_test' ? runFillTest(trigger)
-        : isOrderTest ? runOrderMode(trigger) : runProbe(trigger),
+        : trigger.mode === 'ws_watch' ? runWsWatch(trigger) : isOrderTest ? runOrderMode(trigger) : runProbe(trigger),
       new Promise((r) => setTimeout(() => r({ ok: false, step: 'timeout', timings: {}, report: { error: `run exceeded ${limit}ms` } }), limit)),
     ]);
     result.timings.prev_record_ms = lastRecordMs;

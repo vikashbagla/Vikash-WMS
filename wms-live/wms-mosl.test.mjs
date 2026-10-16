@@ -150,6 +150,20 @@ T('fill test: entry filled then exit filled', ft.report.entry?.final === 'Traded
 T('fill test: SL modified with lastmodifiedtime', ft.report.steps.some((x) => /MODIFY SL/.test(x.step) && x.status === 'SUCCESS'));
 T('fill test: SL and TP cancelled', ['WMSFSL', 'WMSFTP'].every((tg) => orders.find((o) => o.tag === tg)?.orderstatus === 'Cancel'));
 T('guard: fill-armed ctx still refuses 2 lots / non-WMSF tag', await (async () => { const c = { orderTest: { token: 7777, ltp: 151000, fill: true } }; const a = await M3.transPost(c, 'place', { exchange: 'MCX', symboltoken: 7777, quantityinlot: 2, tag: 'WMSFX' }).then(() => 'ok', (e) => e.message); const b = await M3.transPost(c, 'place', { exchange: 'MCX', symboltoken: 7777, quantityinlot: 1, tag: 'X' }).then(() => 'ok', (e) => e.message); return /1 lot/.test(a) && /WMSF/.test(b); })());
+
+// ---- live feed watch (fake WebSocket on the fake MOSL server) ----
+const { WebSocketServer } = await import('ws');
+const wss = new WebSocketServer({ server: mosl, path: '/ws' });
+const wsIn = [];
+wss.on('connection', (sock) => sock.on('message', (m) => { const o = JSON.parse(String(m)); wsIn.push(o);
+  if (o.authtoken) sock.send(JSON.stringify({ status: 'SUCCESS', message: 'Login Successful' }));
+  if (o.action === 'OrderSubscribe') setTimeout(() => sock.send(JSON.stringify({ uniqueorderid: 'U99', orderstatus: 'Confirm', tag: 'WMSTWS1', accesstoken: 'LEAK?' })), 300); }));
+const ww = await M3.runWsWatch({ minutes: 1, test_seconds: 2 });
+T('ws_watch: connects, logs in, subscribes order + trade', ww.ok && ww.report.attempts[0].opened && wsIn.some((o) => o.authtoken === 'AUTH-TOKEN-SECRET') && ['OrderSubscribe', 'TradeSubscribe'].every((a) => wsIn.some((o) => o.action === a)), JSON.stringify(ww.report.error ?? ww.report.attempts));
+T('ws_watch: records incoming frames', ww.report.frames.some((f) => f.dir === 'in' && f.data?.uniqueorderid === 'U99'));
+T('ws_watch: no secrets in recorded frames', !/AUTH-TOKEN-SECRET|KEY-XYZ|LEAK\?/.test(JSON.stringify(ww.report.frames)));
+T('ws_watch: far API order placed and cancelled', ww.report.api_order?.status === 'SUCCESS' && ww.report.api_order?.cancel?.status === 'SUCCESS');
+wss.close();
 mosl.close(); ef.close(); ip.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
