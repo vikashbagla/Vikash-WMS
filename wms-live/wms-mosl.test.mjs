@@ -124,6 +124,17 @@ T('guard: price near market refused', /too close/.test(await rej({ ...good, pric
 T('guard: trigger near market refused', /too close/.test(await rej({ ...good, ordertype: 'STOPLOSS', price: 140000, triggerprice: 150000 })));
 T('guard: expires after ORDER_TEST_UNTIL', /expired/.test(await rej(good, M3.ORDER_TEST_UNTIL + 1)));
 T('guard: unarmed ctx refused', /not armed/.test(await (async () => { try { await M3.transPost({}, 'place', good); } catch (e) { return e.message; } })()));
+
+// ---- overnight / status / cancel modes ----
+orders.push({ uniqueorderid: 'APP1', orderid: 'XAPP1', tag: '', ordertype: 'Limit', orderduration: 'Day', orderstatus: 'Confirm', price: 1 });  // order placed in the MOSL app
+const on = await M3.runOrderMode({ mode: 'overnight_place', contract: 'SILVERMIC' });
+T('overnight_place: 3 GTC/GTD orders placed and left open', on.ok && on.report.placed.length === 3 && on.report.placed.every((p) => p.status === 'SUCCESS') && on.report.test_orders.filter((o) => /^WMSO/.test(o.tag) && o.orderstatus === 'Confirm').length === 3, JSON.stringify(on.report.error ?? on.report.placed));
+T('overnight_place: durations GTC, GTC, GTD', on.report.placed.map((p) => p.request.orderduration).join() === 'GTC,GTC,GTD');
+T('order_status: app order reported separately (not a test order)', on.report.non_test_orders.some((o) => o.uniqueorderid === 'APP1'));
+const st = await M3.runOrderMode({ mode: 'order_status' });
+T('order_status: read-only (no trans calls)', st.ok && !moslSeen.slice(-6).some((x) => x.path.startsWith('/rest/trans')));
+const cx = await M3.runOrderMode({ mode: 'cancel_tests' });
+T('cancel_tests: cancels only WMS-tagged open orders', cx.ok && cx.report.cancel.length === 3 && orders.find((o) => o.uniqueorderid === 'APP1').orderstatus === 'Confirm');
 mosl.close(); ef.close(); ip.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

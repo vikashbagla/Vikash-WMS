@@ -33,8 +33,9 @@
 //    approved ORDER TEST MODE (16-Oct-2026): far-from-market, 1 lot, one
 //    contract, never MARKET, and it self-disables after ORDER_TEST_UNTIL.
 //
-// Order test (until ORDER_TEST_UNTIL):
-//   select pg_notify('mosl_relay', '{"mode":"order_test"}');
+// Order test (until ORDER_TEST_UNTIL; contract SILVERMIC | GOLDPETAL):
+//   select pg_notify('mosl_relay', '{"mode":"order_test","contract":"GOLDPETAL"}');
+//   modes: order_test | overnight_place | order_status | cancel_tests
 //
 // Trigger (from SQL):
 //   select pg_notify('mosl_relay', json_build_object(
@@ -48,7 +49,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.1.0';
+const VERSION = 'wms-mosl/1.2.0';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -154,6 +155,10 @@ export function moslPost(ctx, path, body) {
 //     test picked (front-month SILVERMIC on MCX), never a MARKET order
 //   - prices must sit far from the market (checked here, not just by the caller)
 export const ORDER_TEST_UNTIL = Date.parse('2026-10-23T18:30:00Z');   // Sat 24-Oct 00:00 IST
+const MIN_DISTANCE = 0.02;            // every price/trigger at least 2% from LTP
+const TOWARD_CIRCUIT = 0.9;           // place 90% of the way from LTP to the daily price limit
+const TEST_CONTRACTS = ['SILVERMIC', 'GOLDPETAL'];
+const TAG_RE = /^WMS(T|O)/;            // only orders carrying our test tags are ever cancelled
 const TRANS_PATHS = {
   place: '/rest/trans/v2/placeorder',
   modify: '/rest/trans/v5/modifyorder',
@@ -173,8 +178,8 @@ export function transPost(ctx, kind, body, now = Date.now()) {
   if (kind === 'place' || kind === 'modify') {
     const px = Number(kind === 'place' ? body.price : body.newprice);
     const trg = Number(kind === 'place' ? body.triggerprice : body.newtriggerprice) || 0;
-    const far = (v) => v === 0 || Math.abs(v - t.ltp) / t.ltp >= 0.015;
-    if (!far(px) || !far(trg)) return Promise.reject(new Error('order test: price/trigger too close to market (<1.5%)'));
+    const far = (v) => v === 0 || Math.abs(v - t.ltp) / t.ltp >= MIN_DISTANCE;
+    if (!far(px) || !far(trg)) return Promise.reject(new Error(`order test: price/trigger too close to market (<${MIN_DISTANCE * 100}%)`));
   }
   return rawPost(ctx, path, body);
 }
@@ -382,6 +387,36 @@ async function loginCtx(timings, report) {
   return ctx;
 }
 
+async function pickTestContract(ctx, trigger, report, timings) {
+    const inst = await moslPost(ctx, '/rest/report/v3/getscripsbyexchangename', { clientcode: '', exchangename: 'MCX' });
+    timings.instruments_ms = inst.ms;
+    const rows = Array.isArray(inst.json?.data) ? inst.json.data : [];
+    const want = TEST_CONTRACTS.includes(String(trigger.contract).toUpperCase()) ? String(trigger.contract).toUpperCase() : 'SILVERMIC';
+    const futs = rows.filter((r) => new RegExp(`^${want}\\b`, 'i').test(String(r.scripname ?? '')) && /^FUT/i.test(String(r.instrumentname ?? '')))
+      .sort((a, b) => Number(a.expirydate) - Number(b.expirydate));
+    rows.length = 0;
+    const c = futs[0];
+    if (!c) throw new Error(`no ${want} future found`);
+    const token = Number(c.scripcode);
+    const tick = Number(c.ticksize) || 1;
+    const ltpRes = await moslPost(ctx, '/rest/report/v3/getltpdata', { clientcode: '', exchange: 'MCX', scripcode: token });
+    const ltp = Number(ltpRes.json?.data?.ltp) / 100;
+    if (!(ltp > 0)) throw new Error('no LTP');
+    // Circuit limits: the contract list may give rupees or paisa — normalise against LTP.
+    const norm = (v) => { v = Number(v); if (!(v > 0)) return null; return v > ltp * 10 ? v / 100 : v; };
+    const lcl = norm(c.lowercircuitprice) ?? ltp * 0.97;
+    const ucl = norm(c.uppercircuitprice) ?? ltp * 1.03;
+    const rt = (v) => Math.round(v / tick) * tick;
+    const farBuy = rt(ltp - TOWARD_CIRCUIT * (ltp - lcl));    // 90% of the way down to the lower limit
+    const farSell = rt(ltp + TOWARD_CIRCUIT * (ucl - ltp));   // 90% of the way up to the upper limit
+    report.contract = { name: c.scripname, scripcode: token, lot: c.marketlot, tick, ltp, lcl, ucl, farBuy, farSell,
+      raw_circuits: { lower: c.lowercircuitprice, upper: c.uppercircuitprice }, maxqty: c.maxqtyperorder, algoid: c.algoid ?? null };
+    if (farBuy - 20 * tick < lcl || farSell + 20 * tick > ucl) throw new Error('stop buffer would cross the daily price limit');
+    if (farBuy > ltp * (1 - MIN_DISTANCE) || farSell < ltp * (1 + MIN_DISTANCE)) throw new Error('daily price band too narrow for a safe far-from-market test');
+    ctx.orderTest = { token, ltp };
+    return { token, tick, ltp, lcl, ucl, farBuy, farSell, rt };
+}
+
 export async function runOrderTest(trigger = {}) {
   const t0 = Date.now();
   const timings = {};
@@ -393,32 +428,9 @@ export async function runOrderTest(trigger = {}) {
     if (!(Date.now() < ORDER_TEST_UNTIL)) throw new Error('order test mode has expired');
     ctx = await loginCtx(timings, report);
 
-    // 1) Pick the contract: front-month SILVERMIC future
+    // 1) Pick the contract + far-from-market prices
     step = 'contract';
-    const inst = await moslPost(ctx, '/rest/report/v3/getscripsbyexchangename', { clientcode: '', exchangename: 'MCX' });
-    timings.instruments_ms = inst.ms;
-    const rows = Array.isArray(inst.json?.data) ? inst.json.data : [];
-    const futs = rows.filter((r) => /^SILVERMIC\b/i.test(String(r.scripname ?? '')) && /^FUT/i.test(String(r.instrumentname ?? '')))
-      .sort((a, b) => Number(a.expirydate) - Number(b.expirydate));
-    rows.length = 0;
-    const c = futs[0];
-    if (!c) throw new Error('no SILVERMIC future found');
-    const token = Number(c.scripcode);
-    const tick = Number(c.ticksize) || 1;
-    const ltpRes = await moslPost(ctx, '/rest/report/v3/getltpdata', { clientcode: '', exchange: 'MCX', scripcode: token });
-    const ltp = Number(ltpRes.json?.data?.ltp) / 100;
-    if (!(ltp > 0)) throw new Error('no LTP');
-    // Circuit limits: the contract list may give rupees or paisa — normalise against LTP.
-    const norm = (v) => { v = Number(v); if (!(v > 0)) return null; return v > ltp * 10 ? v / 100 : v; };
-    const lcl = norm(c.lowercircuitprice) ?? ltp * 0.97;
-    const ucl = norm(c.uppercircuitprice) ?? ltp * 1.03;
-    const rt = (v) => Math.round(v / tick) * tick;
-    const farBuy = rt(lcl + 0.25 * (ltp - lcl));    // 75% of the way down to the lower circuit
-    const farSell = rt(ucl - 0.25 * (ucl - ltp));   // 75% of the way up to the upper circuit
-    report.contract = { name: c.scripname, scripcode: token, lot: c.marketlot, tick, ltp, lcl, ucl, farBuy, farSell,
-      raw_circuits: { lower: c.lowercircuitprice, upper: c.uppercircuitprice }, maxqty: c.maxqtyperorder, algoid: c.algoid ?? null };
-    if (farBuy > ltp * 0.985 || farSell < ltp * 1.015) throw new Error('circuit band too narrow for a safe far-from-market test');
-    ctx.orderTest = { token, ltp };
+    const { token, tick, ltp, farBuy, farSell, rt } = await pickTestContract(ctx, trigger, report, timings);
 
     // 2) Place the test matrix (all far from market; MARKET is never sent)
     step = 'place';
@@ -469,7 +481,7 @@ export async function runOrderTest(trigger = {}) {
     // 4) Modify one open order (needs lastmodifiedtime + qtytradedtoday from the book)
     step = 'modify';
     const openRows = report.order_book_after_place.rows.filter((o) => OPEN_STATUSES.test(String(o.orderstatus)));
-    const target = openRows.find((o) => /LIMIT/i.test(o.ordertype)) ?? openRows[0];
+    const target = openRows.find((o) => /LIMIT/i.test(o.ordertype) && /BUY/i.test(o.buyorsell)) ?? openRows[0];
     if (target) {
       const tRead = Date.now();
       const fresh = await moslPost(ctx, '/rest/book/v5/getorderdetailbyuniqueorderid', { clientcode: '', uniqueorderid: target.uniqueorderid });
@@ -534,6 +546,84 @@ export async function runOrderTest(trigger = {}) {
   }
 }
 
+// ── Overnight carry-over test + status + cleanup ────────────────────────────
+// overnight_place : leave GTC/GTD orders (tag WMSO..) far from market on the
+//                   chosen contract, to see if they survive the close.
+// order_status    : read-only — every order with a WMS test tag, plus books.
+// cancel_tests    : cancel every OPEN order carrying a WMS test tag (only those).
+const pickRow = (o) => ({ uniqueorderid: o.uniqueorderid, orderid: o.orderid, tag: o.tag, symbol: o.symbol, buyorsell: o.buyorsell,
+  ordertype: o.ordertype, orderduration: o.orderduration, goodtilldate: o.goodtilldate, price: o.price, triggerprice: o.triggerprice,
+  orderstatus: o.orderstatus, error: o.error, entrydatetime: o.entrydatetime, lastmodifiedtime: o.lastmodifiedtime,
+  recordinserttime: o.recordinserttime, totalqtytraded: o.totalqtytraded, averageprice: o.averageprice, algoid: o.algoid });
+
+export async function runOrderMode(trigger = {}) {
+  const t0 = Date.now();
+  const timings = {};
+  const mode = String(trigger.mode);
+  const report = { version: VERSION, mode, now_utc: new Date().toISOString() };
+  let step = 'login';
+  let ctx = null;
+  try {
+    ctx = await loginCtx(timings, report);
+    if (mode === 'overnight_place') {
+      if (!(Date.now() < ORDER_TEST_UNTIL)) throw new Error('order test mode has expired');
+      step = 'contract';
+      const { token, tick, farBuy, farSell, rt } = await pickTestContract(ctx, trigger, report, timings);
+      step = 'place';
+      const gtd = ddmmmyyyy(new Date(Date.now() + 7 * 86400_000));
+      const base = { clientcode: '', exchange: 'MCX', symboltoken: token, quantityinlot: 1, disclosedquantity: 0, amoorder: 'N', algoid: '', participantcode: '', producttype: 'NORMAL' };
+      const k = String(trigger.contract || 'SILVERMIC').toUpperCase().slice(0, 2);   // SI / GO
+      const cases = [
+        { tag: `WMSO${k}1`, note: 'GTC LIMIT BUY far below (like a target/entry)', o: { buyorsell: 'BUY', ordertype: 'LIMIT', orderduration: 'GTC', price: farBuy, triggerprice: 0, goodtilldate: '' } },
+        { tag: `WMSO${k}2`, note: 'GTC STOP-LIMIT BUY far above (like a short\'s stop)', o: { buyorsell: 'BUY', ordertype: 'STOPLOSS', orderduration: 'GTC', price: rt(farSell + 20 * tick), triggerprice: farSell, goodtilldate: '' } },
+        { tag: `WMSO${k}3`, note: `GTD ${gtd} LIMIT BUY far below`, o: { buyorsell: 'BUY', ordertype: 'LIMIT', orderduration: 'GTD', price: farBuy, triggerprice: 0, goodtilldate: gtd } },
+      ];
+      report.placed = [];
+      for (const cse of cases) {
+        const body = { ...base, ...cse.o, tag: cse.tag };
+        const r = await transPost(ctx, 'place', body).catch((e) => ({ ms: 0, json: { status: 'BLOCKED', message: e.message } }));
+        report.placed.push({ tag: cse.tag, note: cse.note, request: body, ms: r.ms, status: r.json?.status, message: r.json?.message ?? r.raw ?? null, errorcode: r.json?.errorcode ?? null, uniqueorderid: r.json?.uniqueorderid ?? null });
+        await sleep(200);
+      }
+      await sleep(2000);
+    }
+    step = 'books';
+    const ob = await moslPost(ctx, '/rest/book/v5/getorderbook', { clientcode: '', dateandtime: '' });
+    const all = Array.isArray(ob.json?.data) ? ob.json.data : [];
+    report.order_book_status = { status: ob.json?.status, message: ob.json?.message, total_rows: all.length };
+    report.test_orders = all.filter((o) => TAG_RE.test(String(o.tag ?? ''))).map(pickRow);
+    report.non_test_orders = all.filter((o) => !TAG_RE.test(String(o.tag ?? ''))).map(pickRow);   // e.g. orders placed in the MOSL app
+    if (mode === 'cancel_tests') {
+      step = 'cancel';
+      ctx.orderTest = { token: -1, ltp: 1 };   // arm for cancel only (place/modify still need a real contract)
+      report.cancel = [];
+      for (const o of all) {
+        if (!TAG_RE.test(String(o.tag ?? '')) || !OPEN_STATUSES.test(String(o.orderstatus))) continue;
+        const r = await transPost(ctx, 'cancel', { clientcode: '', uniqueorderid: o.uniqueorderid }).catch((e) => ({ ms: 0, json: { status: 'BLOCKED', message: e.message } }));
+        report.cancel.push({ uniqueorderid: o.uniqueorderid, tag: o.tag, ms: r.ms, status: r.json?.status, message: r.json?.message ?? null, errorcode: r.json?.errorcode ?? null });
+      }
+      await sleep(1500);
+      const ob2 = await moslPost(ctx, '/rest/book/v5/getorderbook', { clientcode: '', dateandtime: '' });
+      report.after_cancel = (Array.isArray(ob2.json?.data) ? ob2.json.data : []).filter((o) => TAG_RE.test(String(o.tag ?? ''))).map(pickRow);
+    }
+    const tb = await moslPost(ctx, '/rest/book/v4/gettradebook', { clientcode: '' });
+    report.trade_book = { status: tb.json?.status, message: tb.json?.message, rows: Array.isArray(tb.json?.data) ? tb.json.data.slice(0, 20) : [] };
+    const pos = await moslPost(ctx, '/rest/book/v4/getposition', { clientcode: '' });
+    report.positions = { status: pos.json?.status, message: pos.json?.message, rows: Array.isArray(pos.json?.data) ? pos.json.data.slice(0, 20) : [] };
+    const pd = await moslPost(ctx, '/rest/book/v4/getpositiondetail', { clientcode: '' });
+    report.position_detail = { status: pd.json?.status, message: pd.json?.message, rows: Array.isArray(pd.json?.data) ? pd.json.data.slice(0, 20) : pd.json?.data ?? null };
+    step = 'done';
+    timings.total_ms = Date.now() - t0;
+    return { ok: true, step, timings, report };
+  } catch (e) {
+    report.error = String(e?.message ?? e).slice(0, 300);
+    timings.total_ms = Date.now() - t0;
+    return { ok: false, step, timings, report };
+  } finally {
+    if (ctx) { ctx.agent.destroy(); ctx.authToken = ''; ctx.accessToken = ''; ctx.apiKey = ''; ctx.apiSecret = ''; }
+  }
+}
+
 let busy = false;
 let lastRecordMs = null;
 async function handleTrigger(payloadText) {
@@ -542,14 +632,14 @@ async function handleTrigger(payloadText) {
   let trigger = {};
   try { trigger = JSON.parse(payloadText || '{}') || {}; } catch { /* plain text payload */ }
   try {
-    const isOrderTest = trigger.mode === 'order_test';
+    const isOrderTest = ['order_test', 'overnight_place', 'order_status', 'cancel_tests'].includes(trigger.mode);
     const limit = isOrderTest ? 150_000 : RUN_TIMEOUT_MS;
     const result = await Promise.race([
-      isOrderTest ? runOrderTest(trigger) : runProbe(trigger),
+      trigger.mode === 'order_test' ? runOrderTest(trigger) : isOrderTest ? runOrderMode(trigger) : runProbe(trigger),
       new Promise((r) => setTimeout(() => r({ ok: false, step: 'timeout', timings: {}, report: { error: `run exceeded ${limit}ms` } }), limit)),
     ]);
     result.timings.prev_record_ms = lastRecordMs;
-    const rec = await callEf({ mode: 'relay_record', kind: isOrderTest ? 'order_test' : 'probe', ok: result.ok, step: result.step,
+    const rec = await callEf({ mode: 'relay_record', kind: isOrderTest ? String(trigger.mode) : 'probe', ok: result.ok, step: result.step,
       timings: result.timings, report: scrub(result.report) });
     lastRecordMs = rec.ms;
     log(`probe ${result.ok ? 'OK' : 'FAILED at ' + result.step} · total ${result.timings.total_ms ?? '?'}ms · recorded http ${rec.status} (${rec.ms}ms)`);
