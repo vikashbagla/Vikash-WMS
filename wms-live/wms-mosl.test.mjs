@@ -11,19 +11,27 @@ const T = (n, ok, extra = '') => { if (ok) { console.log('PASS  ' + n); pass++; 
 
 // ---- fake MOSL ----
 const moslSeen = [];
+const orders = [], modifies = [];
 const mosl = http.createServer((req, res) => {
   let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
     moslSeen.push({ path: req.url, h: req.headers, body: b });
     const j = (o) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(o)); };
-    if (req.url.startsWith('/rest/trans/')) return j({ status: 'FAILURE', message: 'should never be called' });
+    if (req.url === '/rest/trans/v2/placeorder') { const o = JSON.parse(b); if (o.ordertype === 'SL-M') return j({ status: 'ERROR', message: 'Invalid Order Type', errorcode: 'MO1053' }); const id = 'U' + (orders.length + 1); orders.push({ uniqueorderid: id, orderid: 'X' + id, tag: o.tag, ordertype: o.ordertype, orderduration: o.orderduration, orderstatus: o.orderduration === 'IOC' ? 'Cancel' : 'Confirm', price: o.price, triggerprice: o.triggerprice, lastmodifiedtime: '16-Oct-2026 13:20:00', qtytradedtoday: 0 }); return j({ status: 'SUCCESS', message: 'ok', uniqueorderid: id }); }
+    if (req.url === '/rest/trans/v5/modifyorder') { const o = JSON.parse(b); modifies.push(o); return j({ status: 'SUCCESS', message: 'modified' }); }
+    if (req.url === '/rest/trans/v2/cancelorder') { const o = JSON.parse(b); const r = orders.find((x) => x.uniqueorderid === o.uniqueorderid); if (r) r.orderstatus = 'Cancel'; return j({ status: 'SUCCESS', message: 'cancelled' }); }
+    if (req.url === '/rest/book/v5/getorderbook') return j({ status: 'SUCCESS', data: orders });
+    if (req.url === '/rest/book/v5/getorderdetailbyuniqueorderid') { const o = JSON.parse(b); return j({ status: 'SUCCESS', data: orders.filter((x) => x.uniqueorderid === o.uniqueorderid) }); }
+    if (req.url.startsWith('/rest/trans/')) return j({ status: 'FAILURE', message: 'unexpected trans path' });
     if (req.url === '/rest/login/v7/authdirectapi') return j({ status: 'SUCCESS', AuthToken: 'AUTH-TOKEN-SECRET' });
     if (req.url === '/rest/login/v1/getaccesstoken') return j({ status: 'SUCCESS', accesstoken: 'ACCESS-SECRET' });
     if (req.url === '/rest/report/v3/getscripsbyexchangename') return j({ status: 'SUCCESS', data: [
-      { scripname: 'SILVERMIC 30-NOV-2026', instrumentname: 'FUTCOM', scripcode: 4242, marketlot: 1, ticksize: 100, expirydate: 1796000000 },
+      { scripname: 'SILVERMIC 30-NOV-2026', instrumentname: 'FUTCOM', scripcode: 4242, marketlot: 1, ticksize: 1, expirydate: 1796000000, lowercircuitprice: 142000, uppercircuitprice: 160000 },
+      { scripname: 'SILVERMIC 27-FEB-2027', instrumentname: 'FUTCOM', scripcode: 4999, marketlot: 1, ticksize: 1, expirydate: 1799000000 },
+      { scripname: 'SILVERMIC 30-NOV-2026 CE 150000', instrumentname: 'OPTFUT', scripcode: 5000, marketlot: 1, ticksize: 1, expirydate: 1795000000 },
       { scripname: 'GOLDM 05-NOV-2026', instrumentname: 'FUTCOM', scripcode: 4343, marketlot: 1, ticksize: 100 },
       { scripname: 'CRUDEOIL 19-OCT-2026', instrumentname: 'FUTCOM', scripcode: 1 },
     ] });
-    if (req.url === '/rest/report/v3/getltpdata') return j({ status: 'SUCCESS', data: { ltp: 15123400, accesstoken: 'LEAK?' } });
+    if (req.url === '/rest/report/v3/getltpdata') return j({ status: 'SUCCESS', data: { ltp: 15100000, accesstoken: 'LEAK?' } });
     if (req.url === '/rest/report/v3/getreportmarginsummary') return j({ status: 'SUCCESS', data: [{ particulars: 'Total', amount: 1000 }] });
     return j({ status: 'SUCCESS', data: [] });
   });
@@ -86,6 +94,36 @@ const M2 = await import('./wms-mosl.js?x=2');
 const r2 = await M2.runProbe({ reps: 1 });
 T('wrong HMAC secret -> fails at prepare, no MOSL call', r2.ok === false && r2.step === 'prepare' && moslSeen.length === before);
 
+
+// ---- order test mode ----
+const before2 = moslSeen.length;
+process.env.WMS_LIVE_HMAC_SECRET = SECRET;
+const M3 = await import('./wms-mosl.js?x=3');
+const ot = await M3.runOrderTest({});
+const sent = moslSeen.slice(before2);
+const places = sent.filter((x) => x.path === '/rest/trans/v2/placeorder').map((x) => JSON.parse(x.body));
+T('order test completes, nothing left open', ot.ok === true && ot.step === 'done' && ot.report.still_open.length === 0, JSON.stringify(ot.report.error ?? ot.report.still_open));
+T('picks front-month FUTURE (not option, not later month)', ot.report.contract?.scripcode === 4242);
+T('11 cases attempted, 11 sent (SL-M B rejected by MOSL, not locally)', ot.report.cases.length === 11 && places.length === 11);
+T('no MARKET order ever sent', places.every((o) => o.ordertype !== 'MARKET'));
+T('every order is 1 lot of the chosen contract', places.every((o) => o.quantityinlot === 1 && o.symboltoken === 4242 && o.exchange === 'MCX'));
+const ltp = 151000;
+T('every non-zero price/trigger >= 1.5% from LTP', places.every((o) => [o.price, o.triggerprice].every((v) => !v || Math.abs(v - ltp) / ltp >= 0.015)));
+T('tags WMST.. echoed and <= 10 chars', places.every((o) => /^WMST/.test(o.tag) && o.tag.length <= 10));
+T('GTD order carries DD-MMM-YYYY date', /^\d{2}-[A-Z][a-z]{2}-\d{4}$/.test(places.find((o) => o.orderduration === 'GTD')?.goodtilldate ?? ''));
+T('modify sent with lastmodifiedtime + qtytradedtoday', modifies.length === 1 && modifies[0].lastmodifiedtime === '16-Oct-2026 13:20:00' && modifies[0].qtytradedtoday === 0);
+T('all open orders cancelled', orders.every((o) => o.orderstatus !== 'Confirm'));
+// guards
+const ctxG = { orderTest: { token: 4242, ltp }, agent: undefined, apiKey: '', apiSecret: '', clientId: '', publicIp: '', authToken: '', accessToken: '' };
+const good = { exchange: 'MCX', symboltoken: 4242, quantityinlot: 1, ordertype: 'LIMIT', price: 140000, triggerprice: 0 };
+const rej = async (body, now, kind = 'place') => { try { await M3.transPost(ctxG, kind, body, now); return null; } catch (e) { return e.message; } };
+T('guard: MARKET refused', /MARKET/.test(await rej({ ...good, ordertype: 'MARKET' })));
+T('guard: 2 lots refused', /1 lot/.test(await rej({ ...good, quantityinlot: 2 })));
+T('guard: other contract refused', /wrong contract/.test(await rej({ ...good, symboltoken: 1 })));
+T('guard: price near market refused', /too close/.test(await rej({ ...good, price: 150500 })));
+T('guard: trigger near market refused', /too close/.test(await rej({ ...good, ordertype: 'STOPLOSS', price: 140000, triggerprice: 150000 })));
+T('guard: expires after ORDER_TEST_UNTIL', /expired/.test(await rej(good, M3.ORDER_TEST_UNTIL + 1)));
+T('guard: unarmed ctx refused', /not armed/.test(await (async () => { try { await M3.transPost({}, 'place', good); } catch (e) { return e.message; } })()));
 mosl.close(); ef.close(); ip.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
