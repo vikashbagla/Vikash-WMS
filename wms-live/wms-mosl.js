@@ -36,6 +36,8 @@
 // Order test (until ORDER_TEST_UNTIL; contract SILVERMIC | GOLDPETAL):
 //   select pg_notify('mosl_relay', '{"mode":"order_test","contract":"GOLDPETAL"}');
 //   modes: order_test | overnight_place | order_status | cancel_tests
+//   fill_test (OWNER ONLY, real 1-lot GOLDPETAL trade):
+//   select pg_notify('mosl_relay', '{"mode":"fill_test","confirm":"I-AUTHORISE-FILL"}');
 //
 // Trigger (from SQL):
 //   select pg_notify('mosl_relay', json_build_object(
@@ -49,7 +51,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.2.0';
+const VERSION = 'wms-mosl/1.3.0';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -158,7 +160,7 @@ export const ORDER_TEST_UNTIL = Date.parse('2026-10-23T18:30:00Z');   // Sat 24-
 const MIN_DISTANCE = 0.02;            // every price/trigger at least 2% from LTP
 const TOWARD_CIRCUIT = 0.9;           // place 90% of the way from LTP to the daily price limit
 const TEST_CONTRACTS = ['SILVERMIC', 'GOLDPETAL'];
-const TAG_RE = /^WMS(T|O)/;            // only orders carrying our test tags are ever cancelled
+const TAG_RE = /^WMS(T|O|F)/;            // only orders carrying our test tags are ever cancelled
 const TRANS_PATHS = {
   place: '/rest/trans/v2/placeorder',
   modify: '/rest/trans/v5/modifyorder',
@@ -170,6 +172,16 @@ export function transPost(ctx, kind, body, now = Date.now()) {
   if (!(now < ORDER_TEST_UNTIL)) return Promise.reject(new Error('order test mode has expired'));
   const t = ctx.orderTest;
   if (!t || !t.token || !t.ltp) return Promise.reject(new Error('order test: not armed'));
+  if (t.fill) {
+    // OWNER-TRIGGERED FILL TEST: near-market and MARKET allowed, but only
+    // 1 lot of the one GOLDPETAL contract, only orders tagged WMSF…
+    if (kind === 'place') {
+      if (body.exchange !== 'MCX' || Number(body.symboltoken) !== t.token) return Promise.reject(new Error('fill test: wrong contract'));
+      if (Number(body.quantityinlot) !== 1) return Promise.reject(new Error('fill test: quantity must be 1 lot'));
+      if (!/^WMSF/.test(String(body.tag ?? ''))) return Promise.reject(new Error('fill test: tag must start WMSF'));
+    }
+    return rawPost(ctx, path, body);
+  }
   if (kind === 'place') {
     if (body.exchange !== 'MCX' || Number(body.symboltoken) !== t.token) return Promise.reject(new Error('order test: wrong contract'));
     if (Number(body.quantityinlot) !== 1) return Promise.reject(new Error('order test: quantity must be 1 lot'));
@@ -624,6 +636,177 @@ export async function runOrderMode(trigger = {}) {
   }
 }
 
+// ── OWNER-TRIGGERED END-TO-END FILL TEST (GOLDPETAL, 1 lot) ─────────────────
+// Started ONLY by the owner (payload must carry confirm:"I-AUTHORISE-FILL").
+// Sequence: market-order attempt → protected-limit entry → wait for fill →
+// books/references → SL (stop-limit) + TP (limit) as separate orders →
+// bracket-field attempts (far, non-executing) → modify SL → cancel SL/TP →
+// protected-limit exit → final books. Any failure after a fill: cancel our
+// open orders and exit the 1 lot with a protected limit.
+const FILL_CONFIRM = 'I-AUTHORISE-FILL';
+
+async function waitStatus(ctx, uid, ms = 15000) {
+  const t0 = Date.now(); const seen = [];
+  while (Date.now() - t0 < ms) {
+    const d = await moslPost(ctx, '/rest/book/v5/getorderdetailbyuniqueorderid', { clientcode: '', uniqueorderid: uid });
+    const row = Array.isArray(d.json?.data) ? d.json.data[0] : d.json?.data;
+    const st = String(row?.orderstatus ?? '?');
+    if (!seen.length || seen[seen.length - 1].status !== st) seen.push({ at_ms: Date.now() - t0, status: st, exch: row?.orderid ?? null });
+    if (/^(traded|rejected|cancel|error)$/i.test(st)) return { row, seen, final: st, waited_ms: Date.now() - t0 };
+    await sleep(400);
+  }
+  return { row: null, seen, final: 'timeout', waited_ms: Date.now() - t0 };
+}
+
+export async function runFillTest(trigger = {}) {
+  const t0 = Date.now();
+  const timings = {};
+  const report = { version: VERSION, mode: 'fill_test', steps: [] };
+  const log = (name, r, extra = {}) => report.steps.push({ step: name, ms: r?.ms ?? null, status: r?.json?.status ?? null,
+    message: r?.json?.message ?? r?.raw ?? null, errorcode: r?.json?.errorcode ?? null, uniqueorderid: r?.json?.uniqueorderid ?? null, ...extra });
+  let step = 'login'; let ctx = null; let longOpen = false; const mine = [];
+  let P = null;
+  const place = async (name, o) => {
+    const body = { clientcode: '', exchange: 'MCX', symboltoken: P.token, quantityinlot: 1, disclosedquantity: 0, amoorder: 'N', algoid: '',
+      goodtilldate: '', participantcode: '', producttype: 'NORMAL', orderduration: 'DAY', triggerprice: 0, ...o };
+    const r = await transPost(ctx, 'place', body).catch((e) => ({ ms: 0, json: { status: 'BLOCKED', message: e.message } }));
+    if (r.json?.uniqueorderid) mine.push(r.json.uniqueorderid);
+    log(name, r, { request: body });
+    return r.json?.uniqueorderid ?? null;
+  };
+  const exitLong = async (why) => {
+    const ltpR = await moslPost(ctx, '/rest/report/v3/getltpdata', { clientcode: '', exchange: 'MCX', scripcode: P.token });
+    const l = Number(ltpR.json?.data?.ltp) / 100 || P.ltp;
+    const uid = await place(`exit (${why})`, { buyorsell: 'SELL', ordertype: 'LIMIT', price: P.rt(Math.max(P.lcl, l * 0.995)), tag: 'WMSFEXIT' });
+    if (!uid) return;
+    const w = await waitStatus(ctx, uid, 20000);
+    report.exit = { uniqueorderid: uid, ...w, row: w.row ? pickRow(w.row) : null };
+    if (/^traded$/i.test(w.final)) longOpen = false;
+  };
+  try {
+    if (trigger.confirm !== FILL_CONFIRM) throw new Error('fill test needs the owner confirmation phrase');
+    if (!(Date.now() < ORDER_TEST_UNTIL)) throw new Error('order test mode has expired');
+    ctx = await loginCtx(timings, report);
+    step = 'contract';
+    P = await pickTestContract(ctx, { contract: 'GOLDPETAL' }, report, timings);
+    ctx.orderTest.fill = true;
+
+    // A) Market order attempt (expected: rejected — no market orders via API)
+    step = 'market';
+    const mkt = await place('A. MARKET BUY attempt', { buyorsell: 'BUY', ordertype: 'MARKET', price: 0, tag: 'WMSFMKT' });
+    let entryUid = null;
+    if (mkt) {
+      const w = await waitStatus(ctx, mkt, 8000);
+      report.market_attempt = { ...w, row: w.row ? pickRow(w.row) : null };
+      if (/^traded$/i.test(w.final)) { longOpen = true; entryUid = mkt; }
+      else if (w.final === 'timeout') log('cancel pending market attempt', await transPost(ctx, 'cancel', { clientcode: '', uniqueorderid: mkt }));
+    }
+
+    // B) Bracket-style attempts — far from market so they cannot fill
+    step = 'bracket';
+    const b1 = await place('B1. LIMIT BUY far + stoploss/squareoff fields', { buyorsell: 'BUY', ordertype: 'LIMIT', price: P.farBuy, stoploss: P.rt(P.farBuy * 0.01), squareoff: P.rt(P.farBuy * 0.01), trailingstoploss: 0, tag: 'WMSFBR1' });
+    const b2 = await place('B2. LIMIT BUY far, ordercategory BRACKET', { buyorsell: 'BUY', ordertype: 'LIMIT', price: P.farBuy, ordercategory: 'BRACKET', stoploss: P.rt(P.farBuy * 0.01), squareoff: P.rt(P.farBuy * 0.01), tag: 'WMSFBR2' });
+    await sleep(1500);
+    report.bracket_rows = [];
+    for (const u of [b1, b2].filter(Boolean)) {
+      const d = await moslPost(ctx, '/rest/book/v5/getorderdetailbyuniqueorderid', { clientcode: '', uniqueorderid: u });
+      const row = Array.isArray(d.json?.data) ? d.json.data[0] : d.json?.data;
+      report.bracket_rows.push(row ? { ...pickRow(row), stoploss: row.stoploss, squareoff: row.squareoff, trailingstoploss: row.trailingstoploss, ordercategory: row.ordercategory, booktype: row.booktype } : null);
+      if (row && OPEN_STATUSES.test(String(row.orderstatus))) log(`cancel bracket ${u}`, await transPost(ctx, 'cancel', { clientcode: '', uniqueorderid: u }));
+    }
+
+    // C) Protected-limit entry (how AT2 must enter on MOSL)
+    if (!longOpen) {
+      step = 'entry';
+      const tE = Date.now();
+      entryUid = await place('C. ENTRY: LIMIT BUY at LTP+0.5% (protected)', { buyorsell: 'BUY', ordertype: 'LIMIT', price: P.rt(Math.min(P.ucl, P.ltp * 1.005)), tag: 'WMSFENT' });
+      if (!entryUid) throw new Error('entry not accepted');
+      const w = await waitStatus(ctx, entryUid, 15000);
+      report.entry = { ...w, row: w.row ? pickRow(w.row) : null, place_to_final_ms: Date.now() - tE };
+      if (!/^traded$/i.test(w.final)) {
+        log('cancel unfilled entry', await transPost(ctx, 'cancel', { clientcode: '', uniqueorderid: entryUid }));
+        throw new Error(`entry did not fill (${w.final})`);
+      }
+      longOpen = true;
+    }
+    const fill = Number(report.entry?.row?.averageprice ?? report.market_attempt?.row?.averageprice) || P.ltp;
+
+    // D) Books and references after the fill
+    step = 'books_after_fill';
+    await sleep(1000);
+    const tb = await moslPost(ctx, '/rest/book/v4/gettradebook', { clientcode: '' });
+    report.trade_book_after_entry = Array.isArray(tb.json?.data) ? tb.json.data : tb.json;
+    const td = await moslPost(ctx, '/rest/book/v4/gettradedetailbyuniqueorderid', { clientcode: '', uniqueorderid: entryUid });
+    report.trade_detail_entry = { ms: td.ms, data: td.json?.data ?? td.json };
+    const pos = await moslPost(ctx, '/rest/book/v4/getposition', { clientcode: '' });
+    report.positions_after_entry = Array.isArray(pos.json?.data) ? pos.json.data : pos.json;
+    const pd = await moslPost(ctx, '/rest/book/v4/getpositiondetail', { clientcode: '' });
+    report.position_detail_after_entry = Array.isArray(pd.json?.data) ? pd.json.data : pd.json;
+
+    // E) SL + TP as separate orders (1% each side of the fill)
+    step = 'sl_tp';
+    const slTrig = P.rt(fill * 0.99), slPx = P.rt(fill * 0.987), tpPx = P.rt(fill * 1.01);
+    const slUid = await place('E1. SL: STOP-LIMIT SELL (trigger −1%, limit −1.3%)', { buyorsell: 'SELL', ordertype: 'STOPLOSS', price: slPx, triggerprice: slTrig, tag: 'WMSFSL' });
+    const tpUid = await place('E2. TP: LIMIT SELL +1%', { buyorsell: 'SELL', ordertype: 'LIMIT', price: tpPx, tag: 'WMSFTP' });
+    await sleep(1500);
+
+    // F) Trail the SL (modify), like AT2's trailing stop
+    step = 'modify_sl';
+    if (slUid) {
+      const tM = Date.now();
+      const d = await moslPost(ctx, '/rest/book/v5/getorderdetailbyuniqueorderid', { clientcode: '', uniqueorderid: slUid });
+      const row = Array.isArray(d.json?.data) ? d.json.data[0] : d.json?.data;
+      report.sl_before_modify = row ? pickRow(row) : null;
+      if (row && OPEN_STATUSES.test(String(row.orderstatus))) {
+        const body = { clientcode: '', uniqueorderid: slUid, newordertype: 'STOPLOSS', neworderduration: 'DAY', newquantityinlot: 1, newdisclosedquantity: 0,
+          newprice: P.rt(fill * 0.989), newtriggerprice: P.rt(fill * 0.992), newgoodtilldate: '', lastmodifiedtime: row.lastmodifiedtime, qtytradedtoday: Number(row.qtytradedtoday ?? 0) };
+        const m = await transPost(ctx, 'modify', body);
+        log('F. MODIFY SL (trail up 0.2%)', m, { request: body, read_ms: d.ms, read_plus_modify_ms: Date.now() - tM });
+        await sleep(1000);
+        const a = await moslPost(ctx, '/rest/book/v5/getorderdetailbyuniqueorderid', { clientcode: '', uniqueorderid: slUid });
+        const ar = Array.isArray(a.json?.data) ? a.json.data[0] : a.json?.data;
+        report.sl_after_modify = ar ? pickRow(ar) : null;
+      }
+    }
+
+    // G) Cancel SL + TP, then exit with a protected limit
+    step = 'exit';
+    for (const u of [slUid, tpUid].filter(Boolean)) log(`G. cancel ${u === slUid ? 'SL' : 'TP'}`, await transPost(ctx, 'cancel', { clientcode: '', uniqueorderid: u }));
+    await sleep(800);
+    await exitLong('end of test');
+
+    // H) Final books
+    step = 'final';
+    await sleep(1500);
+    const tb2 = await moslPost(ctx, '/rest/book/v4/gettradebook', { clientcode: '' });
+    report.trade_book_final = Array.isArray(tb2.json?.data) ? tb2.json.data : tb2.json;
+    const pos2 = await moslPost(ctx, '/rest/book/v4/getposition', { clientcode: '' });
+    report.positions_final = Array.isArray(pos2.json?.data) ? pos2.json.data : pos2.json;
+    const ob = await moslPost(ctx, '/rest/book/v5/getorderbook', { clientcode: '', dateandtime: '' });
+    report.order_book_final = (Array.isArray(ob.json?.data) ? ob.json.data : []).filter((o) => /^WMSF/.test(String(o.tag ?? ''))).map(pickRow);
+    report.still_open = report.order_book_final.filter((o) => OPEN_STATUSES.test(String(o.orderstatus))).map((o) => o.uniqueorderid);
+    report.position_left_open = longOpen;
+    step = 'done';
+    timings.total_ms = Date.now() - t0;
+    return { ok: !longOpen && report.still_open.length === 0, step, timings, report };
+  } catch (e) {
+    report.error = String(e?.message ?? e).slice(0, 300);
+    if (ctx && P) {
+      report.cleanup = [];
+      for (const u of mine) {
+        const r = await transPost(ctx, 'cancel', { clientcode: '', uniqueorderid: u }).catch((er) => ({ json: { status: 'ERR', message: er.message } }));
+        report.cleanup.push({ u, status: r.json?.status, message: r.json?.message ?? null });
+      }
+      if (longOpen) await exitLong('cleanup after error').catch(() => {});
+    }
+    report.position_left_open = longOpen;
+    timings.total_ms = Date.now() - t0;
+    return { ok: false, step, timings, report };
+  } finally {
+    if (ctx) { ctx.agent.destroy(); ctx.authToken = ''; ctx.accessToken = ''; ctx.apiKey = ''; ctx.apiSecret = ''; }
+  }
+}
+
 let busy = false;
 let lastRecordMs = null;
 async function handleTrigger(payloadText) {
@@ -632,10 +815,11 @@ async function handleTrigger(payloadText) {
   let trigger = {};
   try { trigger = JSON.parse(payloadText || '{}') || {}; } catch { /* plain text payload */ }
   try {
-    const isOrderTest = ['order_test', 'overnight_place', 'order_status', 'cancel_tests'].includes(trigger.mode);
-    const limit = isOrderTest ? 150_000 : RUN_TIMEOUT_MS;
+    const isOrderTest = ['order_test', 'overnight_place', 'order_status', 'cancel_tests', 'fill_test'].includes(trigger.mode);
+    const limit = isOrderTest ? 170_000 : RUN_TIMEOUT_MS;
     const result = await Promise.race([
-      trigger.mode === 'order_test' ? runOrderTest(trigger) : isOrderTest ? runOrderMode(trigger) : runProbe(trigger),
+      trigger.mode === 'order_test' ? runOrderTest(trigger) : trigger.mode === 'fill_test' ? runFillTest(trigger)
+        : isOrderTest ? runOrderMode(trigger) : runProbe(trigger),
       new Promise((r) => setTimeout(() => r({ ok: false, step: 'timeout', timings: {}, report: { error: `run exceeded ${limit}ms` } }), limit)),
     ]);
     result.timings.prev_record_ms = lastRecordMs;

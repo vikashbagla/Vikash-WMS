@@ -16,7 +16,7 @@ const mosl = http.createServer((req, res) => {
   let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
     moslSeen.push({ path: req.url, h: req.headers, body: b });
     const j = (o) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(o)); };
-    if (req.url === '/rest/trans/v2/placeorder') { const o = JSON.parse(b); if (o.ordertype === 'SL-M') return j({ status: 'ERROR', message: 'Invalid Order Type', errorcode: 'MO1053' }); const id = 'U' + (orders.length + 1); orders.push({ uniqueorderid: id, orderid: 'X' + id, tag: o.tag, ordertype: o.ordertype, orderduration: o.orderduration, orderstatus: o.orderduration === 'IOC' ? 'Cancel' : 'Confirm', price: o.price, triggerprice: o.triggerprice, lastmodifiedtime: '16-Oct-2026 13:20:00', qtytradedtoday: 0 }); return j({ status: 'SUCCESS', message: 'ok', uniqueorderid: id }); }
+    if (req.url === '/rest/trans/v2/placeorder') { const o = JSON.parse(b); if (o.ordertype === 'SL-M') return j({ status: 'ERROR', message: 'Invalid Order Type', errorcode: 'MO1053' }); if (o.ordertype === 'MARKET') return j({ status: 'ERROR', message: 'Market order is restricted in this product', errorcode: 'MO1072' }); const id = 'U' + (orders.length + 1); orders.push({ uniqueorderid: id, orderid: 'X' + id, tag: o.tag, ordertype: o.ordertype, orderduration: o.orderduration, orderstatus: o.orderduration === 'IOC' ? 'Cancel' : (o.ordertype === 'LIMIT' && Math.abs(o.price - 151000) / 151000 < 0.01) ? 'Traded' : 'Confirm', averageprice: (o.ordertype === 'LIMIT' && Math.abs(o.price - 151000) / 151000 < 0.01) ? 151050 : 0, buyorsell: o.buyorsell, price: o.price, triggerprice: o.triggerprice, lastmodifiedtime: '16-Oct-2026 13:20:00', qtytradedtoday: 0 }); return j({ status: 'SUCCESS', message: 'ok', uniqueorderid: id }); }
     if (req.url === '/rest/trans/v5/modifyorder') { const o = JSON.parse(b); modifies.push(o); return j({ status: 'SUCCESS', message: 'modified' }); }
     if (req.url === '/rest/trans/v2/cancelorder') { const o = JSON.parse(b); const r = orders.find((x) => x.uniqueorderid === o.uniqueorderid); if (r) r.orderstatus = 'Cancel'; return j({ status: 'SUCCESS', message: 'cancelled' }); }
     if (req.url === '/rest/book/v5/getorderbook') return j({ status: 'SUCCESS', data: orders });
@@ -26,6 +26,7 @@ const mosl = http.createServer((req, res) => {
     if (req.url === '/rest/login/v1/getaccesstoken') return j({ status: 'SUCCESS', accesstoken: 'ACCESS-SECRET' });
     if (req.url === '/rest/report/v3/getscripsbyexchangename') return j({ status: 'SUCCESS', data: [
       { scripname: 'SILVERMIC 30-NOV-2026', instrumentname: 'FUTCOM', scripcode: 4242, marketlot: 1, ticksize: 1, expirydate: 1796000000, lowercircuitprice: 142000, uppercircuitprice: 160000 },
+      { scripname: 'GOLDPETAL 30-OCT-2026', instrumentname: 'FUTCOM', scripcode: 7777, marketlot: 1, ticksize: 1, expirydate: 1795500000, lowercircuitprice: 142000, uppercircuitprice: 160000 },
       { scripname: 'SILVERMIC 27-FEB-2027', instrumentname: 'FUTCOM', scripcode: 4999, marketlot: 1, ticksize: 1, expirydate: 1799000000 },
       { scripname: 'SILVERMIC 30-NOV-2026 CE 150000', instrumentname: 'OPTFUT', scripcode: 5000, marketlot: 1, ticksize: 1, expirydate: 1795000000 },
       { scripname: 'GOLDM 05-NOV-2026', instrumentname: 'FUTCOM', scripcode: 4343, marketlot: 1, ticksize: 100 },
@@ -135,6 +136,20 @@ const st = await M3.runOrderMode({ mode: 'order_status' });
 T('order_status: read-only (no trans calls)', st.ok && !moslSeen.slice(-6).some((x) => x.path.startsWith('/rest/trans')));
 const cx = await M3.runOrderMode({ mode: 'cancel_tests' });
 T('cancel_tests: cancels only WMS-tagged open orders', cx.ok && cx.report.cancel.length === 3 && orders.find((o) => o.uniqueorderid === 'APP1').orderstatus === 'Confirm');
+
+// ---- fill test (owner-triggered) ----
+const nBefore = orders.length;
+const noConfirm = await M3.runFillTest({});
+T('fill test refuses without owner confirmation phrase', noConfirm.ok === false && /confirmation/.test(noConfirm.report.error) && orders.length === nBefore);
+const ft = await M3.runFillTest({ confirm: 'I-AUTHORISE-FILL' });
+const fo = orders.slice(nBefore);
+T('fill test completes, flat, nothing open', ft.ok === true && ft.report.position_left_open === false && ft.report.still_open.length === 0, JSON.stringify(ft.report.error ?? ft.report.steps.map((x) => x.step + ':' + x.status)));
+T('fill test: MARKET attempted and rejected', ft.report.steps.some((x) => /MARKET/.test(x.step) && x.errorcode === 'MO1072'));
+T('fill test: entry, SL, TP, exit all on GOLDPETAL 1 lot, tags WMSF', fo.length >= 5 && fo.every((o) => /^WMSF/.test(o.tag)));
+T('fill test: entry filled then exit filled', ft.report.entry?.final === 'Traded' && ft.report.exit?.final === 'Traded');
+T('fill test: SL modified with lastmodifiedtime', ft.report.steps.some((x) => /MODIFY SL/.test(x.step) && x.status === 'SUCCESS'));
+T('fill test: SL and TP cancelled', ['WMSFSL', 'WMSFTP'].every((tg) => orders.find((o) => o.tag === tg)?.orderstatus === 'Cancel'));
+T('guard: fill-armed ctx still refuses 2 lots / non-WMSF tag', await (async () => { const c = { orderTest: { token: 7777, ltp: 151000, fill: true } }; const a = await M3.transPost(c, 'place', { exchange: 'MCX', symboltoken: 7777, quantityinlot: 2, tag: 'WMSFX' }).then(() => 'ok', (e) => e.message); const b = await M3.transPost(c, 'place', { exchange: 'MCX', symboltoken: 7777, quantityinlot: 1, tag: 'X' }).then(() => 'ok', (e) => e.message); return /1 lot/.test(a) && /WMSF/.test(b); })());
 mosl.close(); ef.close(); ip.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
