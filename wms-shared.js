@@ -7234,6 +7234,7 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
     //   CAPITAL_REDUCTION     : -ve (cash inflow reduces what investor owes)
     var _debitTypes = { 'BUY': true, 'RIGHTS_PAYMENT': true };
     var _creditTypes = { 'SELL': true, 'DIVIDEND': true, 'OTHER_INCOME': true, 'CAPITAL_REDUCTION': true };
+    var _nonCashTypes = { 'DEMERGER': true, 'BONUS': true, 'SPLIT': true, 'RIGHTS_ENTITLEMENT': true };
 
     // Perspective controls how the per-transaction amount is computed.
     // See LEDGER-ENGINE-LOGIC.md (Amount Used). Three views are supported:
@@ -7281,9 +7282,17 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
             amt = Math.abs(amt);
         } else if (_creditTypes[t.transaction_type]) {
             amt = -Math.abs(amt);
+        } else if (_nonCashTypes[t.transaction_type]) {
+            // Corporate actions that move NO cash (2026-10-19, owner): a DEMERGER row
+            // carries the cost re-split in net_amount (parent cost out → child lots in),
+            // which is a cost-basis figure, not money. It used to flow through here as
+            // if it were a sale/purchase, distorting the statement balance (VERANDA
+            // 06-Oct-26) and tripping the reconciliation check (child lot dated 14-Jul-26
+            // landed before the 03-Oct reconciliation). Same rule for BONUS / SPLIT /
+            // RIGHTS_ENTITLEMENT, whose net_amount is 0 anyway.
+            amt = 0;
         }
-        // else: BONUS, SPLIT, RIGHTS_ENTITLEMENT → amt stays 0
-        //       HISTORICAL_PL → use sign as stored in amt
+        // else: HISTORICAL_PL / INTEREST → use sign as stored in amt
 
         var isNfo = _isNFO(t);
         var isOpt = isNfo && _isOption(t);
