@@ -139,6 +139,10 @@ var lgBookedStartExpanded = false;
 // split-groups the user has expanded. Keyed by aggKey (date|symbol|price|side|
 // firstTxnId). Session-state only — not persisted with the view.
 var lgAggExpanded = {};
+// Reconciliation periods expanded by the user (Hide pre-recon OFF). Key = the
+// reconciliation entry id; the period = rows after the previous recon up to and
+// including this one. Collapsed by default (owner 2026-10-23).
+var lgReconExpanded = {};
 
 // Date filter (shared wmsDateFilter component)
 var lgDateFilterInstance = null;
@@ -510,6 +514,13 @@ function lgInit() {
             if (aggTr) {
                 var ak = aggTr.getAttribute('data-agg-key');
                 if (ak) { lgAggExpanded[ak] = !lgAggExpanded[ak]; lgRenderEntries(lgCombined); }
+                return;
+            }
+            // Reconciliation row → expand / collapse its period (owner 2026-10-23).
+            var recTr = e.target.closest('tr.lg-row-recon');
+            if (recTr) {
+                var rid = recTr.getAttribute('data-entry-id');
+                if (rid && !lgHidePreRecon) { lgReconExpanded[rid] = !lgReconExpanded[rid]; lgRenderEntries(lgCombined); }
                 return;
             }
             var tr = e.target.closest('tr.lg-row-trade');
@@ -1302,9 +1313,19 @@ function lgRenderEntries(rows) {
     //  - Hide-pre-recon filter (LESSONS §E.15.15): skip rows dated on/before the
     //    latest reconciliation (the recon row becomes the synthesized OB row).
     // Engine/margin/interest read the full ledger upstream — unaffected.
+    // Reconciliation periods (Hide pre-recon OFF, owner 2026-10-23): every row is
+    // assigned to the FIRST reconciliation at/after it (chronological sortKey
+    // order). Rows of a closed period stay hidden until its reconciliation row is
+    // clicked; rows after the last reconciliation are always shown.
+    var reconPeriodOf = lgAssignReconPeriods(sorted);
     var visibleRows = sorted.filter(function(row) {
         if (!lgShowFutures && row._rowType === 'trade' && row._nfoCashImpact === false) return false;
         if (latestRecon && row.date && row.date <= latestRecon.date) return false;
+        if (!lgHidePreRecon) {
+            var per = reconPeriodOf.get(row);
+            var isRecon = (row._rowType === 'ledger' && row.entryType === 'RECONCILIATION');
+            if (per && !isRecon && !lgReconExpanded[per]) return false;
+        }
         return true;
     });
     // Collapse broker split-trades into expandable rows (broker view only).
@@ -1352,13 +1373,17 @@ function lgRenderEntries(rows) {
             if (source.reference) {
                 symbol = wmsEsc(source.reference);
             }
+            // Reconciliation row = collapsible period header (Hide pre-recon OFF).
+            if (row.entryType === 'RECONCILIATION' && !lgHidePreRecon) {
+                symbol = '<span class="lg-agg-caret">' + (lgReconExpanded[source.id] ? '▾' : '▸') + '</span>' + symbol;
+            }
 
             balance = lgFmt(dispBal);
             lastBalance = row._runningBalance;
 
-            // Edit/delete — standard icons (D.9: ✏️ edit, 🗑️ delete)
+            // Delete only — the ✏️ edit icon was removed (owner 2026-10-23): there is
+            // no edit function (lgEditEntry was a 'coming soon' stub).
             actions = '<span class="lg-actions">' +
-                '<a href="#" onclick="event.preventDefault(); lgEditEntry(\'' + wmsEsc(source.id) + '\');" title="Edit">✏️</a>' +
                 '<a href="#" class="lg-del" onclick="event.preventDefault(); lgDeleteEntry(\'' + wmsEsc(source.id) + '\', this);" title="Delete">🗑️</a>' +
                 '</span>';
         } else if (row._rowType === 'nfo_pnl') {
@@ -1419,7 +1444,7 @@ function lgRenderEntries(rows) {
         var isReconRow = (row._rowType === 'ledger' && row.entryType === 'RECONCILIATION');
         if (isReconRow) {
             // Reconciliation audit snapshot — persistent green styling
-            trAttrs = ' class="lg-row-recon" data-entry-id="' + wmsEsc((row._source && row._source.id) || '') + '"';
+            trAttrs = ' class="lg-row-recon" data-entry-id="' + wmsEsc((row._source && row._source.id) || '') + '" title="Click to show / hide the entries of this period"';
         } else if (row._isAgg) {
             // Aggregated broker-split header — click toggles expand (no edit).
             trAttrs = ' class="lg-row-agg" data-agg-key="' + wmsEsc(row._aggKey) + '"';
@@ -3089,26 +3114,60 @@ async function lgDeleteEntry(entryId, linkEl) {
         return;
     }
 
+    // Confirmation as a centred pop-up (owner 2026-10-23): the old inline
+    // Yes/No bar was clipped inside the narrow symbol cell and could not be seen
+    // or clicked. The pop-up stays until Yes / No / Esc / click outside.
+    lgCancelDelete();                       // clear any earlier pop-up first
     lgPendingDeleteId = entryId;
-    var actionsSpan = linkEl ? linkEl.closest('.lg-actions') : null;
-    if (actionsSpan) {
-        var confirmHtml = '<span class="lg-confirm-bar">Delete? ' +
-            '<button class="lg-confirm-yes" onclick="event.preventDefault(); lgDeleteEntry(\'' + wmsEsc(entryId) + '\');">Yes</button>' +
-            '<button onclick="event.preventDefault(); lgCancelDelete();">No</button>' +
-            '</span>';
-        actionsSpan.insertAdjacentHTML('afterend', confirmHtml);
-    }
-
-    setTimeout(function() {
-        if (lgPendingDeleteId === entryId) {
-            lgCancelDelete();
-        }
-    }, 5000);
+    var entry = (lgLedgerEntries || []).find(function(e) { return e.id === entryId; }) || {};
+    var label = (entry.reference || entry.notes || entry.entry_type || 'this entry');
+    var amt = (entry.amount !== undefined && entry.amount !== null) ? lgFmt(lgD(parseFloat(entry.amount) || 0)) : '';
+    var ov = document.createElement('div');
+    ov.className = 'lg-del-overlay';
+    ov.innerHTML = '<div class="lg-del-box" role="dialog" aria-modal="true">' +
+        '<div class="lg-del-title">Delete this entry?</div>' +
+        '<div class="lg-del-body">' + wmsEsc(entry.entry_date || '') + ' &middot; ' + wmsEsc(label) + (amt ? ' &middot; ' + amt : '') + '</div>' +
+        '<div class="lg-del-btns"><button type="button" class="lg-del-no">No</button>' +
+        '<button type="button" class="lg-del-yes">Yes, delete</button></div></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function(ev) { if (ev.target === ov) lgCancelDelete(); });
+    ov.querySelector('.lg-del-no').addEventListener('click', lgCancelDelete);
+    ov.querySelector('.lg-del-yes').addEventListener('click', function() {
+        ov.remove();
+        document.removeEventListener('keydown', lgDelEscKey);
+        lgDeleteEntry(entryId);           // lgPendingDeleteId === entryId → performs the delete
+    });
+    document.addEventListener('keydown', lgDelEscKey);
+    ov.querySelector('.lg-del-no').focus();
 }
+
+function lgDelEscKey(ev) { if (ev.key === 'Escape') lgCancelDelete(); }
 
 function lgCancelDelete() {
     lgPendingDeleteId = null;
-    document.querySelectorAll('.lg-confirm-bar').forEach(function(el) { el.remove(); });
+    document.removeEventListener('keydown', lgDelEscKey);
+    document.querySelectorAll('.lg-confirm-bar, .lg-del-overlay').forEach(function(el) { el.remove(); });
+}
+
+// Map each row → the id of the FIRST reconciliation at/after it in chronological
+// (sortKey) order; rows after the last reconciliation map to '' (open period).
+// A reconciliation row maps to its own id. Used by the collapsible periods.
+function lgAssignReconPeriods(rows) {
+    var m = new Map();
+    var chron = (rows || []).slice().sort(function(a, b) {
+        return String(a.sortKey || a.date || '').localeCompare(String(b.sortKey || b.date || ''));
+    });
+    var pending = [];
+    chron.forEach(function(r) {
+        pending.push(r);
+        if (r._rowType === 'ledger' && r.entryType === 'RECONCILIATION') {
+            var id = (r._source && r._source.id) || '';
+            pending.forEach(function(x) { m.set(x, id); });
+            pending = [];
+        }
+    });
+    pending.forEach(function(x) { m.set(x, ''); });
+    return m;
 }
 
 // ============================================================================
