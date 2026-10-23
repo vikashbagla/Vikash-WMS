@@ -6358,6 +6358,7 @@ var wmsAttachAmountInput = function(input, opts) {
     };
 
     var doBlur = function() {
+        if (String(input.value).charAt(0) === '=') return;   // formula pending — calculator finalises it
         var n = parse(input.value);
         if (isNaN(n)) {
             input.value = '';
@@ -6375,6 +6376,10 @@ var wmsAttachAmountInput = function(input, opts) {
     };
     var doKey = function(e) {
         if (e.key === 'Enter') {
+            // An "=" formula is being entered: leave Enter to the global calculator
+            // (wmsInitFormulaInput, UI-STANDARDS B.9A). Formatting here first would
+            // parse "=…" as NaN and blank the field before the formula is evaluated.
+            if (String(input.value).charAt(0) === '=') return;
             doBlur();
             if (typeof opts.onCommit === 'function') opts.onCommit(parse(input.value));
         }
