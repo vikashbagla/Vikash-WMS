@@ -534,6 +534,21 @@
             var cash  = { ref: { role: 'CASH' }, debit: cpCr, credit: cpDr };
             return { type: 'STMT-' + ty, bookId: bookId, narration: (recd ? 'Cash received' : 'Cash paid') + (e.reference ? ' — ' + e.reference : ''), lines: [other, cash] };
         }
+        if (ty === 'ADJUSTMENT') {
+            // Statement ADJUSTMENT (owner 2026-10-23): a non-cash correction, so the
+            // contra is ALWAYS PMS Settlement (never Cash). Direction follows the amount
+            // AS DISPLAYED on the statement (displayed = −stored):
+            //   • BROKER: displayed +ve (I owe the broker less) → Dr Broker / Cr PMS;
+            //             displayed −ve                         → Dr PMS / Cr Broker.
+            //   • TRADER: displayed +ve (trader owes me less)   → Dr PMS / Cr Trader;
+            //             displayed −ve                         → Dr Trader / Cr PMS.
+            // Stored-sign terms: broker stored <0 → Dr Broker; trader stored >0 → Dr Trader.
+            var stored = parseFloat(e.amount) || 0;
+            var cpDebit = own ? (stored < 0) : (stored > 0);              // counterparty leg is the debit?
+            var cpLine  = { ref: cp,                         debit: cpDebit ? r2(amt) : 0, credit: cpDebit ? 0 : r2(amt) };
+            var pmsLine = { ref: { role: 'PMS_SETTLEMENT' }, debit: cpDebit ? 0 : r2(amt), credit: cpDebit ? r2(amt) : 0 };
+            return { type: 'STMT-ADJUSTMENT', bookId: bookId, narration: 'Adjustment' + (e.reference ? ' — ' + e.reference : ''), lines: [cpLine, pmsLine] };
+        }
         return { skip: 'unhandled entry_type: ' + ty, exceptions: [ex('unhandled_ledger_entry:' + ty, 'warn', 'Unhandled ledger entry_type ' + ty, { id: e.id })] };
     }
 

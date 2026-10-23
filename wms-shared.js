@@ -7235,6 +7235,7 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
     var _debitTypes = { 'BUY': true, 'RIGHTS_PAYMENT': true };
     var _creditTypes = { 'SELL': true, 'DIVIDEND': true, 'OTHER_INCOME': true, 'CAPITAL_REDUCTION': true };
     var _nonCashTypes = { 'DEMERGER': true, 'BONUS': true, 'SPLIT': true, 'RIGHTS_ENTITLEMENT': true };
+    var _incomeTypes = { 'DIVIDEND': true, 'OTHER_INCOME': true, 'INTEREST': true, 'CAPITAL_REDUCTION': true };
 
     // Perspective controls how the per-transaction amount is computed.
     // See LEDGER-ENGINE-LOGIC.md (Amount Used). Three views are supported:
@@ -7275,6 +7276,17 @@ function wmsBuildLedger(ledgerEntries, transactions, opts) {
             amt = t.display_net_amount !== undefined
                 ? (parseFloat(t.display_net_amount) || 0)
                 : (parseFloat(t.net_amount) || 0);
+        }
+
+        // Income rows show NET of the TDS entered on the trade (2026-10-23, owner):
+        // net_amount is stored GROSS for DIVIDEND / OTHER_INCOME / INTEREST /
+        // CAPITAL_REDUCTION, with the TDS held separately in `tds`. The broker
+        // credits — and the books post — gross − TDS, so the statement must too,
+        // in every perspective (trader, investor and broker statements alike).
+        if (_incomeTypes[t.transaction_type]) {
+            var _tds = Math.abs(parseFloat(t.tds) || 0);
+            var _sgn = amt < 0 ? -1 : 1;                       // keep the stored sign (INTEREST uses it as-is below)
+            amt = _sgn * Math.max(0, Math.abs(amt) - _tds);
         }
 
         // Apply sign based on transaction_type (investor-receivable convention)
