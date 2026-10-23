@@ -164,6 +164,9 @@ var lgInited = false;
 // Interest detail temp state
 var lgInterestDetailEntryId = null;
 var lgInterestDetailData = null;
+var lgInterestAdjCtrl = null;     // amount-input controller for the manual adjustment box
+var lgInterestCalcAmt = 0;        // calculated (rounded) interest the open modal is based on
+var lgInterestCalcSaved = null;   // the calc object shown in the open modal (saved back on post)
 var lgInterestTotalCtrl = null;
 
 // Sorting state
@@ -412,6 +415,21 @@ function lgInit() {
             decimals: 0
         });
     }
+    // Manual adjustment (owner 2026-10-23). Total = calculated + adjustment; editing
+    // either box keeps the other in step (the total stays editable).
+    var lgIntAdjEl = document.getElementById('lgInterestAdjAmt');
+    if (lgIntAdjEl && typeof wmsAttachAmountInput === 'function') {
+        lgInterestAdjCtrl = wmsAttachAmountInput(lgIntAdjEl, { allowNegative: true, decimals: 0 });
+    }
+    if (lgIntAdjEl) lgIntAdjEl.addEventListener('input', function() {
+        var adj = _lgIntGet(lgInterestAdjCtrl, lgIntAdjEl) || 0;
+        _lgIntSet(lgInterestTotalCtrl, lgIntTotalEl, Math.round(lgInterestCalcAmt + adj));
+    });
+    if (lgIntTotalEl) lgIntTotalEl.addEventListener('input', function() {
+        var tot = _lgIntGet(lgInterestTotalCtrl, lgIntTotalEl);
+        if (tot == null || isNaN(tot)) return;
+        _lgIntSet(lgInterestAdjCtrl, lgIntAdjEl, Math.round(tot - lgInterestCalcAmt));
+    });
 
     // Export modal — format buttons inside the body (see #lgExportModal).
     // Each fires the same data-gathering path with a different renderer.
@@ -3364,9 +3382,47 @@ function _lgRenderMonthlyTrace(calc) {
 //   - 'daily_monthly_compound' → renders a daily-trace table (one row per day)
 //   - everything else (default = 'weekly_friday') → renders the single-Friday
 //     breakdown unchanged from the pre-2026-05-27 layout.
-function lgPopulateInterestDetail(calc, currentAmount) {
+function _lgIntGet(ctrl, el) {
+    if (ctrl && typeof ctrl.getValue === 'function') return ctrl.getValue();
+    return el ? parseFloat(el.value) : null;
+}
+function _lgIntSet(ctrl, el, v) {
+    if (ctrl && typeof ctrl.setValue === 'function') ctrl.setValue(v);
+    else if (el) el.value = v;
+}
+// The saved calculation record of a posted interest entry (ledger_entries.notes,
+// JSON written at commit time), or null for old / free-text notes.
+function lgParseInterestNotes(notes) {
+    if (!notes) return null;
+    try {
+        var o = (typeof notes === 'string') ? JSON.parse(notes) : notes;
+        return (o && typeof o === 'object' && typeof o.interest === 'number') ? o : null;
+    } catch (e) { return null; }
+}
+// Build the notes record to save: the calculation + the manual adjustment.
+function lgInterestNotesToSave(calc, total) {
+    var o = {};
+    if (calc && typeof calc === 'object') Object.keys(calc).forEach(function(k) { o[k] = calc[k]; });
+    var noteEl = document.getElementById('lgInterestAdjNote');
+    var adj = Math.round((total || 0) - lgInterestCalcAmt);
+    o.manualAdj = adj;
+    o.manualAdjNote = (noteEl && noteEl.value.trim()) || '';
+    return JSON.stringify(o);
+}
+
+function lgPopulateInterestDetail(calc, currentAmount, opts) {
+    opts = opts || {};
     var detailBody = document.getElementById('lgInterestDetailBreakdown');
     var totalEditEl = document.getElementById('lgInterestTotalEdit');
+    lgInterestCalcSaved = calc || null;
+    lgInterestCalcAmt = calc ? Math.round(calc.interest || 0) : 0;
+    var noteBox = document.getElementById('lgInterestRecalcNote');
+    if (noteBox) {
+        if (opts.recalcDiff) {
+            noteBox.innerHTML = 'Recalculated today: <b>' + lgFmt(opts.recalcDiff.v) + '</b> (trades or entries in this period changed since posting). The figures above are as saved when posted.';
+            noteBox.style.display = '';
+        } else { noteBox.style.display = 'none'; noteBox.innerHTML = ''; }
+    }
 
     if (detailBody) {
         if (calc && calc.frequency === 'daily_monthly_compound') {
@@ -3379,13 +3435,14 @@ function lgPopulateInterestDetail(calc, currentAmount) {
     }
 
     if (totalEditEl) {
-        var amtVal = currentAmount != null ? currentAmount : (calc ? Math.round(calc.interest) : 0);
-        if (lgInterestTotalCtrl && typeof lgInterestTotalCtrl.setValue === 'function') {
-            lgInterestTotalCtrl.setValue(amtVal);
-        } else {
-            totalEditEl.value = amtVal;
-        }
+        var amtVal = currentAmount != null ? currentAmount : lgInterestCalcAmt;
+        _lgIntSet(lgInterestTotalCtrl, totalEditEl, amtVal);
     }
+    // Adjustment = total − calculated (shows any earlier hand-edit of the total too).
+    _lgIntSet(lgInterestAdjCtrl, document.getElementById('lgInterestAdjAmt'),
+        Math.round((currentAmount != null ? currentAmount : lgInterestCalcAmt) - lgInterestCalcAmt));
+    var adjNoteEl = document.getElementById('lgInterestAdjNote');
+    if (adjNoteEl) adjNoteEl.value = opts.adjNote || '';
 }
 
 // Open interest detail modal for a POSTED interest entry (already in DB).
@@ -3493,7 +3550,15 @@ async function lgShowInterestDetail(entryId) {
         console.warn('Failed to recompute interest detail:', err.message);
     }
 
-    lgPopulateInterestDetail(calc, entry.amount);
+    // Prefer the breakup SAVED at posting (owner 2026-10-23); the live recalculation
+    // above is only used for old entries without a saved record, and to flag drift.
+    var saved = lgParseInterestNotes(entry.notes);
+    if (saved) {
+        var diff = (calc && Math.round(calc.interest) !== Math.round(saved.interest)) ? { v: Math.round(calc.interest) } : null;
+        lgPopulateInterestDetail(saved, entry.amount, { recalcDiff: diff, adjNote: saved.manualAdjNote || '' });
+    } else {
+        lgPopulateInterestDetail(calc, entry.amount);
+    }
     lgShowModal('lgInterestDetail');
 }
 
@@ -3546,7 +3611,7 @@ async function lgCommitPendingInterest(pendingKey) {
                 entry_type: 'INTEREST_BOOKED',
                 amount: amount,
                 reference: pending.reference,
-                notes: JSON.stringify(pending._calc || {})
+                notes: (lgPendingModalKey === pendingKey) ? lgInterestNotesToSave(pending._calc, amount) : JSON.stringify(pending._calc || {})
             })
         });
         if (resp.ok) {
@@ -3584,7 +3649,9 @@ async function lgPostInterest() {
         await fetch(SUPABASE_URL + '/rest/v1/ledger_entries?id=eq.' + lgInterestDetailEntryId, {
             method: 'PATCH',
             headers: wmsHeaders({'Content-Type': 'application/json', 'Prefer': 'return=representation'}),
-            body: JSON.stringify({ amount: totalAmount })
+            body: JSON.stringify(lgInterestCalcSaved
+                ? { amount: totalAmount, notes: lgInterestNotesToSave(lgInterestCalcSaved, totalAmount) }
+                : { amount: totalAmount })
         });
 
         lgHideModal('lgInterestDetail');
