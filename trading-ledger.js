@@ -3126,7 +3126,7 @@ async function lgDeleteEntry(entryId, linkEl) {
     ov.className = 'lg-del-overlay';
     ov.innerHTML = '<div class="lg-del-box" role="dialog" aria-modal="true">' +
         '<div class="lg-del-title">Delete this entry?</div>' +
-        '<div class="lg-del-body">' + wmsEsc(entry.entry_date || '') + ' &middot; ' + wmsEsc(label) + (amt ? ' &middot; ' + amt : '') + '</div>' +
+        '<div class="lg-del-body">' + wmsEsc(lgFmtDate(entry.entry_date) || entry.entry_date || '') + ' &middot; ' + wmsEsc(label) + (amt ? ' &middot; ' + amt : '') + '</div>' +
         '<div class="lg-del-btns"><button type="button" class="lg-del-no">No</button>' +
         '<button type="button" class="lg-del-yes">Yes, delete</button></div></div>';
     document.body.appendChild(ov);
