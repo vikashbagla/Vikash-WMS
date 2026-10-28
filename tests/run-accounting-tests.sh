@@ -12,6 +12,7 @@ echo "— statements: income net of trade TDS —"; node check-statement-income-
 echo "— statement ADJUSTMENT → PMS Settlement —"; node accounting-stmt-adjustment.test.mjs
 echo "— statements: recon periods + delete pop-up —"; node check-statement-recon-periods.test.mjs
 echo "— statement interest: manual adjustment —"; node check-interest-adjustment.test.mjs
+echo "— statement: open options valued at Qty × CMP —"; node check-statement-option-value.test.mjs
 echo "— accounting-engine —";  node accounting-engine.test.mjs
 echo "— accounting-parity —";  node accounting-parity.test.mjs
 echo "— accounting-ef-parity (server-side, real FIFO) —"; node accounting-ef-parity.test.mjs

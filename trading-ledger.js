@@ -1990,7 +1990,8 @@ function lgRenderSummary() {
     // ------------------------------------------------------------
     // Build holdings table rows — split EQ vs NFO
     //   EQ:  Value = Qty × CMP,  MTM = Value − Cost
-    //   NFO: Value = MTM (open P&L from live price vs trade price).
+    //   OPTIONS: Value = Qty × CMP like EQ (premium is cash — owner 2026-10-28).
+    //   FUTURES: Value = MTM (open P&L from live price vs trade price).
     //        NFO has no notional "value" on the books — the position lives
     //        against blocked margin — so we surface the MTM in the Value
     //        column. This lets Open Positions footer totals match the
@@ -2035,10 +2036,21 @@ function lgRenderSummary() {
         var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[priceLookupKey] : null;
         var cmp = (priceEntry && priceEntry.lp > 0) ? priceEntry.lp : avgCost;
 
+        // OPTIONS (owner 2026-10-28): the premium is real cash (it already moved the
+        // statement balance), so an open option is valued like a share —
+        // Value = Qty × CMP (a short option is negative), MTM = (CMP − avg) × Qty.
+        // Only FUTURES keep Value = MTM.
+        var isOpt = isNfo && wmsIsOptionContract(key, shortSym);
         var value, mtm;
-        if (isNfo) {
+        if (isOpt) {
+            value = qty * cmp;
             mtm = (cmp - avgCost) * qty;
-            value = mtm;           // NFO Value column reflects open P&L
+            totalEqCost += avgCost * qty;
+            totalEqValue += value;
+            totalEqMtm += mtm;
+        } else if (isNfo) {
+            mtm = (cmp - avgCost) * qty;
+            value = mtm;           // FUTURES: Value column reflects open P&L
             totalNfoMtm += mtm;
         } else {
             value = qty * cmp;
@@ -3872,8 +3884,15 @@ function lgGatherExportData(opts) {
         var priceLookupKey2 = isNfo ? key : shortSym;
         var priceEntry = (typeof wmsLivePrices === 'object' && wmsLivePrices) ? wmsLivePrices[priceLookupKey2] : null;
         var cmp = (priceEntry && priceEntry.lp > 0) ? priceEntry.lp : avgCost;
+        var isOpt2 = isNfo && wmsIsOptionContract(key, shortSym);   // options valued at Qty × CMP (see screen)
         var value, mtm;
-        if (isNfo) {
+        if (isOpt2) {
+            value = qty2 * cmp;
+            mtm = (cmp - avgCost) * qty2;
+            totalEqCost += avgCost * qty2;
+            totalEqValue += value;
+            totalEqMtm += mtm;
+        } else if (isNfo) {
             mtm = (cmp - avgCost) * qty2;
             value = mtm;
             totalNfoMtm += mtm;
