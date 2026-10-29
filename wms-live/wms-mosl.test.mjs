@@ -96,10 +96,17 @@ const r2 = await M2.runProbe({ reps: 1 });
 T('wrong HMAC secret -> fails at prepare, no MOSL call', r2.ok === false && r2.step === 'prepare' && moslSeen.length === before);
 
 
+process.env.WMS_LIVE_HMAC_SECRET = SECRET;
+const M3 = await import('./wms-mosl.js?x=3');
+// ---- daily login ----
+const dl = await M3.runDailyLogin({ t: Date.now() - 50 });
+T('daily_login: logs in and verifies session (profile + margin)', dl.ok === true && dl.step === 'done' && dl.report.access_token_ok === true, JSON.stringify(dl.report.error ?? dl.step));
+T('daily_login: no secrets in report', !/AUTH-TOKEN-SECRET|ACCESS-SECRET|KEY-XYZ|SEC-XYZ|123456/.test(JSON.stringify(M3.scrub(dl.report))));
+if (Date.now() < M3.ORDER_TEST_UNTIL) {
 // ---- order test mode ----
 const before2 = moslSeen.length;
 process.env.WMS_LIVE_HMAC_SECRET = SECRET;
-const M3 = await import('./wms-mosl.js?x=3');
+
 const ot = await M3.runOrderTest({});
 const sent = moslSeen.slice(before2);
 const places = sent.filter((x) => x.path === '/rest/trans/v2/placeorder').map((x) => JSON.parse(x.body));
@@ -164,6 +171,11 @@ T('ws_watch: records incoming frames', ww.report.frames.some((f) => f.dir === 'i
 T('ws_watch: no secrets in recorded frames', !/AUTH-TOKEN-SECRET|KEY-XYZ|LEAK\?/.test(JSON.stringify(ww.report.frames)));
 T('ws_watch: far API order placed and cancelled', ww.report.api_order?.status === 'SUCCESS' && ww.report.api_order?.cancel?.status === 'SUCCESS');
 wss.close();
+
+
+} else {
+  console.log('SKIP  order-test / overnight / fill / ws_watch checks: test modes expired on ' + new Date(M3.ORDER_TEST_UNTIL).toISOString());
+}
 mosl.close(); ef.close(); ip.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

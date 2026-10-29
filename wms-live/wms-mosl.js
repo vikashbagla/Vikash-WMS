@@ -36,6 +36,7 @@
 // Order test (until ORDER_TEST_UNTIL; contract SILVERMIC | GOLDPETAL):
 //   select pg_notify('mosl_relay', '{"mode":"order_test","contract":"GOLDPETAL"}');
 //   modes: order_test | overnight_place | order_status | cancel_tests
+//   daily_login (pg_cron 08:01 IST Mon–Fri): select pg_notify('mosl_relay', '{"mode":"daily_login"}');
 //   ws_watch: select pg_notify('mosl_relay', '{"mode":"ws_watch","minutes":5}');
 //   fill_test (OWNER ONLY, real 1-lot GOLDPETAL trade):
 //   select pg_notify('mosl_relay', '{"mode":"fill_test","confirm":"I-AUTHORISE-FILL"}');
@@ -52,7 +53,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.4.0';
+const VERSION = 'wms-mosl/1.5.0';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -905,6 +906,43 @@ export async function runWsWatch(trigger = {}) {
   }
 }
 
+// ── Daily unattended login (08:01 IST, pg_cron → pg_notify) ─────────────────
+// Mirrors the Fyers morning login: log in with TOTP, confirm the session works
+// (profile + margin), record the outcome. mosl-probe emails success/failure;
+// an 08:20 IST watchdog emails if no successful login was recorded today.
+// READ-ONLY. The session is NOT saved anywhere (avoids the "any token" trap).
+export async function runDailyLogin(trigger = {}) {
+  const t0 = Date.now();
+  const timings = {};
+  if (Number.isFinite(Number(trigger.t))) timings.wake_ms = t0 - Number(trigger.t);
+  const report = { version: VERSION, mode: 'daily_login' };
+  let step = 'login'; let ctx = null;
+  try {
+    ctx = await loginCtx(timings, report);
+    report.droplet_public_ip = ctx.publicIp;
+    report.access_token_ok = !!ctx.accessToken;
+    step = 'verify';
+    const prof = await moslPost(ctx, '/rest/login/v5/getprofile', { clientcode: '' });
+    timings.profile_ms = prof.ms;
+    report.profile = { status: prof.json?.status ?? null, message: prof.json?.message ?? null, segments: prof.json?.data?.exchanges ?? null };
+    const ms = await moslPost(ctx, '/rest/report/v3/getreportmarginsummary', { clientcode: '' });
+    timings.margin_ms = ms.ms;
+    const rows = Array.isArray(ms.json?.data) ? ms.json.data : [];
+    const comm = rows.find((r) => /Available Margin for Comm/i.test(String(r.particulars ?? '')));
+    report.margin_commodity = comm ? Number(comm.amount) : null;
+    const ok = prof.json?.status === 'SUCCESS' && ms.json?.status === 'SUCCESS';
+    step = ok ? 'done' : 'verify_failed';
+    timings.total_ms = Date.now() - t0;
+    return { ok, step, timings, report };
+  } catch (e) {
+    report.error = String(e?.message ?? e).slice(0, 300);
+    timings.total_ms = Date.now() - t0;
+    return { ok: false, step, timings, report };
+  } finally {
+    if (ctx) { ctx.agent.destroy(); ctx.authToken = ''; ctx.accessToken = ''; ctx.apiKey = ''; ctx.apiSecret = ''; }
+  }
+}
+
 let busy = false;
 let lastRecordMs = null;
 async function handleTrigger(payloadText) {
@@ -913,12 +951,13 @@ async function handleTrigger(payloadText) {
   let trigger = {};
   try { trigger = JSON.parse(payloadText || '{}') || {}; } catch { /* plain text payload */ }
   try {
-    const isOrderTest = ['order_test', 'overnight_place', 'order_status', 'cancel_tests', 'fill_test', 'ws_watch'].includes(trigger.mode);
+    const isOrderTest = ['order_test', 'overnight_place', 'order_status', 'cancel_tests', 'fill_test', 'ws_watch', 'daily_login'].includes(trigger.mode);
     const wsMin = Math.min(10, Math.max(1, Number(trigger.minutes) || 5));
     const limit = trigger.mode === 'ws_watch' ? wsMin * 60_000 + 90_000 : isOrderTest ? 170_000 : RUN_TIMEOUT_MS;
     const result = await Promise.race([
       trigger.mode === 'order_test' ? runOrderTest(trigger) : trigger.mode === 'fill_test' ? runFillTest(trigger)
-        : trigger.mode === 'ws_watch' ? runWsWatch(trigger) : isOrderTest ? runOrderMode(trigger) : runProbe(trigger),
+        : trigger.mode === 'ws_watch' ? runWsWatch(trigger) : trigger.mode === 'daily_login' ? runDailyLogin(trigger)
+        : isOrderTest ? runOrderMode(trigger) : runProbe(trigger),
       new Promise((r) => setTimeout(() => r({ ok: false, step: 'timeout', timings: {}, report: { error: `run exceeded ${limit}ms` } }), limit)),
     ]);
     result.timings.prev_record_ms = lastRecordMs;
