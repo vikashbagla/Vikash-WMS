@@ -6461,13 +6461,14 @@ function auAt2RenderBanner() {
 /**
  * A trail move SENT to the broker but not yet CONFIRMED (owner, 14-Oct-2026).
  *
- * For live trades `current_stop` is written only when reconciliation reads the
- * level back from Fyers on the NEXT run (owner rule 05-Aug: record placement,
- * then confirmation). Between the two the broker already holds the new level and
+ * For live trades `current_stop` is written when Fyers CONFIRMS the modify —
+ * within seconds since 30-Oct-2026 (AT2 R1, engine outcome handler); the next
+ * run's reconciliation remains the backstop (owner rule 05-Aug: record
+ * placement, then confirmation). Between the two the broker already holds the new level and
  * the row still shows the old one, so the page reads it from the latest stop
  * event instead: if the newest stop event for the trade is a SENT, unconfirmed
  * modify at a different level, that is the level sent to the broker.
- * Returns { level, atMs } or null. Sent > 20 min ago and still unconfirmed is
+ * Returns { level, atMs } or null. Sent > 2 min ago and still unconfirmed is
  * flagged by the caller — a rejected modify never gets a confirmation.
  *
  * (Replaces the old "inverted stop" check, removed 14-Oct-2026 on owner
@@ -6496,7 +6497,7 @@ function auAt2StopCell(t, sec) {
     var p = auAt2PendingStop(t);
     if (!p) return '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(t.current_stop, sym) + '</div>';
     var ageMin = p.atMs ? (Date.now() - p.atMs) / 60000 : 0;
-    var stale = ageMin > 20;
+    var stale = ageMin > 2;   // 30-Oct-2026: Fyers' confirmation is now recorded within seconds (AT2 R1) — 2 min unconfirmed = rejected/stuck
     return '<div style="color:#6b7280;font-size:10px;margin-top:1px">Stop: ' + auAt2Num(p.level, sym) + '</div>'
          + '<div style="color:' + (stale ? '#b45309' : '#9ca3af') + ';font-size:9px;margin-top:1px" title="Previous confirmed level: '
          + auAt2Num(t.current_stop, sym) + '">' + (stale ? 'not yet confirmed — check Fyers' : 'awaiting confirmation') + '</div>';
@@ -6704,7 +6705,7 @@ async function auAt2RenderOpen(mode, silent) {
        + '• LTP via Fyers /quotes (needs an active Fyers connection) — same shared price cache GS uses.<br>'
        + '• Exposure = entry price × currently-open units (matches the metric tile above). Margin = Exposure × GOLDM 10% / SILVERM 20%.<br>'
        + '• Live P&amp;L = side × (LTP − entry) × currently-open units.<br>'
-       + '• Stop = the level resting at the broker. A trail move sent to Fyers shows at once, marked “awaiting confirmation” until the next run reads it back.'
+       + '• Stop = the level resting at the broker. A trail move sent to Fyers shows at once, marked “awaiting confirmation” until Fyers confirms it (usually within seconds). Still unconfirmed after 2 minutes = check Fyers (the move may have been rejected; the old stop is still resting).'
        + '</div>';
     el.innerHTML = h;
 }
