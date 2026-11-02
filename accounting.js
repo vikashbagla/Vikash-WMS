@@ -2560,6 +2560,14 @@ var acctLedgerHidden = {};
 // Line-id order of the rows currently shown (for "hide everything above this row").
 var acctLedgerRowOrder = [];
 var acctLedgerRangePopOpen = false;   // custom From–To popover open state
+// Matching (owner 2026-11-02, migration 142): a DISPLAY-ONLY tick on voucher lines.
+// acct_voucher_lines.is_matched — set/cleared via rpc acct_set_lines_matched (refuses a
+// mark unless the lines net to 0.00 in one ledger of one book). Lost by design when a
+// voucher is edited / re-posted. The link-icon toggle hides matched lines ("Pending").
+var acctLedgerPendingOnly = false;    // session-only; off on every ledger open
+var acctLedgerSel = {};               // line_id -> true, rows ticked for mark/unmark
+var ACCT_SVG_LINK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 15l6 -6"/><path d="M11 6l.463 -.536a5 5 0 0 1 7.071 7.072l-.534 .464"/><path d="M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463"/></svg>';
+var ACCT_SVG_TICK = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M9 12l2 2l4 -4"/></svg>';
 
 /** FY start month for the active book (financial_year_start, default 4 = April). */
 function acctLedgerFyStartMonth() {
@@ -2654,6 +2662,8 @@ function acctOpenLedgerDetail(ledgerId) {
     acctLedgerDetailId = ledgerId;
     acctLedgerSearchText = '';          // search must NOT carry over to another ledger
     acctLedgerHidden = {};              // manual row-hides are per-ledger
+    acctLedgerPendingOnly = false;      // matching view resets per ledger (owner: off by default)
+    acctLedgerSel = {};
     acctLedgerSort = { col: 'date', dir: 'asc' };
     acctLedgerRangePopOpen = false;
     acctRenderLedgerDetail();
@@ -2767,6 +2777,7 @@ function acctRenderLedgerTable() {
         if (live) running += (Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0);
         if (!live && !acctLedgerShowCancelled) return;   // cancelled hidden unless toggled on
         if (acctLedgerHidden[r.line_id]) return;          // manually hidden from view
+        if (acctLedgerPendingOnly && r.is_matched) return; // Pending view: matched lines hidden
         var contra = acctContraLabel(r, byV);
         if (!rowMatches(r, contra)) return;
         items.push({ r: r, live: live, contra: contra, bal: running,
@@ -2820,7 +2831,7 @@ function acctRenderLedgerTable() {
         var tip = !live ? 'Cancelled' + (r.cancel_reason ? ' — ' + r.cancel_reason : '') + ' · excluded from balances'
                 : auto ? 'Auto-posted from a PMS trade — opens view-only; edit the trade, then Rebuild'
                        : 'Click to edit this voucher';
-        html += '<tr class="acct-vch-row' + (auto ? ' acct-vch-auto' : '') + (live ? '' : ' acct-vch-cancelled') +
+        html += '<tr class="acct-vch-row' + (auto ? ' acct-vch-auto' : '') + (live ? '' : ' acct-vch-cancelled') + (acctLedgerSel[r.line_id] ? ' acct-ld-selrow' : '') +
             '" data-voucher="' + r.voucher_id + '" title="' + wmsEsc(tip) + '">' +
             '<td class="c-date">' + wmsEsc(acctFmtDate(r.voucher_date)) + '</td>' +
             '<td class="c-vch" title="' + wmsEsc(r.voucher_number) + '">' + wmsEsc(r.voucher_number) +
@@ -2832,16 +2843,35 @@ function acctRenderLedgerTable() {
             '<td class="text-right">' + (it.cr ? fmt(it.cr) : '-') + '</td>' +
             '<td class="text-right"' + (live ? acctBalStyle(it.bal) : '') + '>' + balLabel + '</td>' +
             '<td class="c-ldhide">' +
+                (live ? '<button class="acct-ld-match-btn' + (r.is_matched ? ' matched' : '') + (acctLedgerSel[r.line_id] ? ' sel' : '') +
+                    '" data-match="' + wmsEsc(r.line_id) + '" title="' + (r.is_matched ? 'Matched — tick to select (Unmark)' : 'Not matched — tick to select') + '">' + ACCT_SVG_TICK + '</button>' : '') +
                 '<button class="acct-ld-hideabove-btn" data-hideabove="' + wmsEsc(r.line_id) + '" title="Hide every row above this one (from the view)">⤒</button>' +
                 '<button class="acct-ld-hide-btn" data-hide="' + wmsEsc(r.line_id) + '" title="Hide this row from the view (does not delete)">✕</button>' +
             '</td></tr>';
     });
     if (!items.length) {
         html += '<tr><td colspan="8" class="acct-empty" style="padding:16px;">' +
-            (q ? 'No lines match &ldquo;' + wmsEsc(acctLedgerSearchText) + '&rdquo;.' : 'No postings in the selected period.') + '</td></tr>';
+            (q ? 'No lines match &ldquo;' + wmsEsc(acctLedgerSearchText) + '&rdquo;.' : acctLedgerPendingOnly ? 'No pending lines — everything here is matched.' : 'No postings in the selected period.') + '</td></tr>';
     }
     html += '</tbody>';
-    if (items.length) {
+    var selIds = Object.keys(acctLedgerSel);
+    if (selIds.length) {
+        // Selection bar replaces the totals row while lines are ticked (owner mock-up v2, 02-Nov-2026).
+        var selNetP = 0, selAllMatched = true;
+        allRows.forEach(function (r) {
+            if (!acctLedgerSel[r.line_id]) return;
+            selNetP += Math.round(((Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0)) * 100);
+            if (!r.is_matched) selAllMatched = false;
+        });
+        var selNet = selNetP / 100, selOk = selNetP === 0;
+        html += '<tfoot><tr class="acct-ld-total acct-ld-selbar">' +
+            '<td colspan="4">' + selIds.length + ' selected · net <span style="color:' + (selOk ? '#059669' : '#dc2626') + ';">' +
+                (selOk ? '0.00' : fmt(Math.abs(selNet)) + (selNet > 0 ? ' Dr' : ' Cr')) + '</span></td>' +
+            '<td colspan="4" class="text-right">' +
+                '<button id="acctLdMatchGo" class="wms-btn wms-btn-secondary" style="font-size:11px;">' + (selAllMatched ? 'Unmark' : 'Mark matched') + '</button> ' +
+                '<button id="acctLdMatchCancel" class="wms-btn wms-btn-secondary" style="font-size:11px;">Cancel</button>' +
+            '</td></tr></tfoot>';
+    } else if (items.length) {
         // Sticky totals row INSIDE the table, so Debit/Credit/Balance sit under their columns.
         html += '<tfoot><tr class="acct-ld-total">' +
             '<td colspan="4">Total · ' + items.length + ' row' + (items.length === 1 ? '' : 's') + '</td>' +
@@ -2856,6 +2886,18 @@ function acctRenderLedgerTable() {
     wrap.querySelectorAll('.acct-ld-hide-btn').forEach(function (b) {
         b.onclick = function (e) { e.stopPropagation(); acctLedgerHidden[b.dataset.hide] = true; acctRenderLedgerTable(); };
     });
+    wrap.querySelectorAll('.acct-ld-match-btn').forEach(function (b) {
+        b.onclick = function (e) {
+            e.stopPropagation();
+            var id = b.dataset.match;
+            if (acctLedgerSel[id]) delete acctLedgerSel[id]; else acctLedgerSel[id] = true;
+            acctRenderLedgerTable();
+        };
+    });
+    var mGo = document.getElementById('acctLdMatchGo');
+    if (mGo) mGo.onclick = function () { acctLedgerApplyMatch(); };
+    var mCx = document.getElementById('acctLdMatchCancel');
+    if (mCx) mCx.onclick = function () { acctLedgerSel = {}; acctRenderLedgerTable(); };
     wrap.querySelectorAll('.acct-ld-hideabove-btn').forEach(function (b) {
         b.onclick = function (e) {
             e.stopPropagation();
@@ -2866,6 +2908,39 @@ function acctRenderLedgerTable() {
     wrap.querySelectorAll('.acct-vch-row[data-voucher]').forEach(function (tr) {
         tr.onclick = function () { acctOpenEditVoucher(tr.dataset.voucher); };
     });
+}
+
+/** Mark / unmark the ticked lines (rpc acct_set_lines_matched, migration 142). Marking needs
+ *  the selection to net to 0.00 — the DB re-checks (one ledger, one book, net 0). All ticked
+ *  lines already matched → Unmark. Display-only: balances and postings are untouched. */
+async function acctLedgerApplyMatch() {
+    var ids = Object.keys(acctLedgerSel);
+    if (!ids.length) return;
+    var rows = acctVoucherRows.filter(function (r) { return acctLedgerSel[r.line_id]; });
+    var allMatched = rows.length > 0 && rows.every(function (r) { return !!r.is_matched; });
+    var netP = 0; rows.forEach(function (r) { netP += Math.round(((Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0)) * 100); });
+    if (!allMatched && netP !== 0) { acctToast('Selected lines must net to 0.00 to mark them matched.', true); return; }
+    var btn = document.getElementById('acctLdMatchGo'); if (btn) btn.disabled = true;
+    try {
+        var resp = await fetch(acctUrl('rpc/acct_set_lines_matched'), {
+            method: 'POST',
+            headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ p_line_ids: ids, p_matched: !allMatched })
+        });
+        if (!resp.ok) {
+            var t = await resp.text(), m = t;
+            try { m = JSON.parse(t).message || t; } catch (e) {}
+            throw new Error(String(m).replace(/^acct_set_lines_matched:\s*/, ''));
+        }
+        acctLedgerSel = {};
+        acctInvalidateVouchers();
+        await acctLoadBook();
+        acctRenderLedgerTable();
+        acctToast(allMatched ? (ids.length + ' line(s) unmarked.') : (ids.length + ' line(s) marked matched.'));
+    } catch (e) {
+        if (btn) btn.disabled = false;
+        acctToast('Could not update: ' + (e && e.message ? e.message : e), true);
+    }
 }
 
 /** The date-filter + search control strip inside the ledger modal. From/To live in a
@@ -2919,6 +2994,8 @@ function acctLedgerDateFilterBar() {
         '</select>' +
         rangeHtml +
         cancelBtn +
+        '<button id="acctLdPendingBtn" class="acct-ld-icon-btn' + (acctLedgerPendingOnly ? ' on' : '') + '" ' +
+            'title="' + (acctLedgerPendingOnly ? 'Showing pending (unmatched) lines only — click to show all' : 'Show pending (unmatched) lines only') + '">' + ACCT_SVG_LINK + '</button>' +
         '<input type="text" id="acctLdSearch" class="wms-input acct-ld-search" placeholder="Search ledger, narration, date…" value="' + wmsEsc(acctLedgerSearchText) + '">' +
         '<button id="acctLdClear" class="wms-btn wms-btn-secondary" title="Clear everything — period, dates, search, sort and manually hidden rows — and show the entire ledger">Clear</button>' +
     '</div>';
@@ -2970,6 +3047,8 @@ function acctWireLedgerDateFilter() {
     }
     var cb = document.getElementById('acctLdCancelledBtn');
     if (cb) cb.onclick = function () { acctSetShowCancelled(!acctLedgerShowCancelled); acctRenderLedgerDetail(); };
+    var pb = document.getElementById('acctLdPendingBtn');
+    if (pb) pb.onclick = function () { acctLedgerPendingOnly = !acctLedgerPendingOnly; acctLedgerSel = {}; acctRenderLedgerDetail(); };
     var sr = document.getElementById('acctLdSearch');
     // Live search: only the TABLE re-renders, so this input keeps its focus + caret.
     if (sr) sr.oninput = function () { acctLedgerSearchText = sr.value; acctRenderLedgerTable(); };
@@ -2979,6 +3058,8 @@ function acctWireLedgerDateFilter() {
         acctSaveLedgerDateFilter();
         acctLedgerSearchText = '';
         acctLedgerHidden = {};
+        acctLedgerPendingOnly = false;
+        acctLedgerSel = {};
         acctLedgerSort = { col: 'date', dir: 'asc' };
         acctLedgerRangePopOpen = false;
         acctRenderLedgerDetail();   // full re-render (period changed to All dates)
