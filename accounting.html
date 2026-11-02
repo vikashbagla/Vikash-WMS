@@ -345,11 +345,20 @@
 .acct-ld-table th { padding: 8px 10px; }
 .acct-ld-opening td { background: #f8fafc; color: #475569; }
 /* Per-row hide buttons (view-only) + their narrow column. */
-.acct-ld-table th.c-ldhide, .acct-ld-table td.c-ldhide { width: 52px; text-align: center; white-space: nowrap; padding-left: 2px; padding-right: 2px; }
+.acct-ld-table th.c-ldhide, .acct-ld-table td.c-ldhide { width: 76px; text-align: center; white-space: nowrap; padding-left: 2px; padding-right: 2px; }
 .acct-ld-hide-btn, .acct-ld-hideabove-btn { border: none; background: transparent; color: #cbd5e1; cursor: pointer; font-size: 12px; line-height: 1; padding: 3px 4px; border-radius: 4px; }
 .acct-vch-row:hover .acct-ld-hide-btn, .acct-vch-row:hover .acct-ld-hideabove-btn { color: #94a3b8; }
 .acct-ld-hide-btn:hover { color: #ef4444; background: #fef2f2; }
 .acct-ld-hideabove-btn:hover { color: #4338ca; background: #eef2ff; }
+/* Matching tick (display-only flag, migration 142): grey = pending, green = matched, indigo = ticked. */
+.acct-ld-match-btn { border: none; background: transparent; color: #cbd5e1; cursor: pointer; line-height: 1; padding: 2px 3px; border-radius: 4px; vertical-align: middle; }
+.acct-ld-match-btn svg { display: block; }
+.acct-vch-row:hover .acct-ld-match-btn { color: #94a3b8; }
+.acct-ld-match-btn.matched, .acct-vch-row:hover .acct-ld-match-btn.matched { color: #059669; }
+.acct-ld-match-btn.sel, .acct-vch-row:hover .acct-ld-match-btn.sel { color: #4338ca; }
+.acct-ld-match-btn:hover { background: #eef2ff; }
+.acct-ld-table tr.acct-ld-selrow td { background: #eef2ff; }
+.acct-ld-icon-btn svg { display: block; margin: 0 auto; }
 /* Sticky header in the ledger modal. The scroll container (.wms-modal-body) has 16px padding,
    so offset the top by that much or rows bleed through the pad (UI-STANDARDS D.1.10). */
 .acct-ld-table thead th { top: -16px; }
