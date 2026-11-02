@@ -2857,18 +2857,21 @@ function acctRenderLedgerTable() {
     var selIds = Object.keys(acctLedgerSel);
     if (selIds.length) {
         // Selection bar replaces the totals row while lines are ticked (owner mock-up v2, 02-Nov-2026).
-        var selNetP = 0, selAllMatched = true;
+        // Same rule both ways (owner 02-Nov-2026): tick only pending rows (Mark) or only matched
+        // rows (Unmark), netting to 0.00 — so a ledger's matched lines always net to zero.
+        var selNetP = 0, selMatched = 0, selPending = 0;
         allRows.forEach(function (r) {
             if (!acctLedgerSel[r.line_id]) return;
             selNetP += Math.round(((Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0)) * 100);
-            if (!r.is_matched) selAllMatched = false;
+            if (r.is_matched) selMatched++; else selPending++;
         });
-        var selNet = selNetP / 100, selOk = selNetP === 0;
+        var selNet = selNetP / 100, selOk = selNetP === 0, selMixed = selMatched > 0 && selPending > 0;
         html += '<tfoot><tr class="acct-ld-total acct-ld-selbar">' +
             '<td colspan="4">' + selIds.length + ' selected · net <span style="color:' + (selOk ? '#059669' : '#dc2626') + ';">' +
-                (selOk ? '0.00' : fmt(Math.abs(selNet)) + (selNet > 0 ? ' Dr' : ' Cr')) + '</span></td>' +
+                (selOk ? '0.00' : fmt(Math.abs(selNet)) + (selNet > 0 ? ' Dr' : ' Cr')) + '</span>' +
+                (selMixed ? ' <span style="font-weight:400;color:#dc2626;">· tick only pending or only matched rows</span>' : '') + '</td>' +
             '<td colspan="4" class="text-right">' +
-                '<button id="acctLdMatchGo" class="wms-btn wms-btn-secondary" style="font-size:11px;">' + (selAllMatched ? 'Unmark' : 'Mark matched') + '</button> ' +
+                (selMixed ? '' : '<button id="acctLdMatchGo" class="wms-btn wms-btn-secondary" style="font-size:11px;">' + (selMatched ? 'Unmark' : 'Mark matched') + '</button> ') +
                 '<button id="acctLdMatchCancel" class="wms-btn wms-btn-secondary" style="font-size:11px;">Cancel</button>' +
             '</td></tr></tfoot>';
     } else if (items.length) {
@@ -2910,16 +2913,19 @@ function acctRenderLedgerTable() {
     });
 }
 
-/** Mark / unmark the ticked lines (rpc acct_set_lines_matched, migration 142). Marking needs
- *  the selection to net to 0.00 — the DB re-checks (one ledger, one book, net 0). All ticked
- *  lines already matched → Unmark. Display-only: balances and postings are untouched. */
+/** Mark / unmark the ticked lines (rpc acct_set_lines_matched, migrations 142/143). Both ways
+ *  the selection must be all-pending (Mark) or all-matched (Unmark) AND net to 0.00 — the DB
+ *  re-checks (one ledger, one book, net 0, no mix), so a ledger's matched lines always net to
+ *  zero. Display-only: balances and postings are untouched. */
 async function acctLedgerApplyMatch() {
     var ids = Object.keys(acctLedgerSel);
     if (!ids.length) return;
     var rows = acctVoucherRows.filter(function (r) { return acctLedgerSel[r.line_id]; });
     var allMatched = rows.length > 0 && rows.every(function (r) { return !!r.is_matched; });
+    var anyMatched = rows.some(function (r) { return !!r.is_matched; });
     var netP = 0; rows.forEach(function (r) { netP += Math.round(((Number(r.debit_amount) || 0) - (Number(r.credit_amount) || 0)) * 100); });
-    if (!allMatched && netP !== 0) { acctToast('Selected lines must net to 0.00 to mark them matched.', true); return; }
+    if (anyMatched && !allMatched) { acctToast('Tick only pending rows to mark, or only matched rows to unmark.', true); return; }
+    if (netP !== 0) { acctToast('Selected lines must net to 0.00 — ' + (allMatched ? 'unmark the whole matched group.' : 'to mark them matched.'), true); return; }
     var btn = document.getElementById('acctLdMatchGo'); if (btn) btn.disabled = true;
     try {
         var resp = await fetch(acctUrl('rpc/acct_set_lines_matched'), {
