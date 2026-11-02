@@ -90,8 +90,16 @@ var rptPortfolioVM = wmsViewManager({
             r.checked = r.value === rptTagFilterLogic;
         });
     },
-    onRefresh: function() { rptRenderPortfolio(); }
+    onRefresh: function() { rptRenderSharedTabs(); }
 });
+
+// ONE set of saved views + filters drives Portfolio, Capital Gains and Composition
+// (owner 02-Nov-2026). Re-render whichever of them are loaded.
+function rptRenderSharedTabs() {
+    rptRenderPortfolio();
+    if (rptCGLoaded) rptRenderCapGains();
+    if (typeof rptCmpLoaded !== 'undefined' && rptCmpLoaded) rptRenderComp();
+}
 
 // Asset-class badge labels
 var RPT_AC_BADGE = {
@@ -106,60 +114,6 @@ var RPT_AC_BADGE = {
 };
 
 // Capital Gains tab filters
-var rptCGSelectedInvestorIds = [];
-var rptCGSelectedBrokerIds = [];
-var rptCGInvPillFilter = null;   // wmsPillSearch instance
-var rptCGBrkPillFilter = null;   // wmsPillSearch instance
-var rptCGSelectedTagNames = [];
-var rptCGTagFilterLogic = 'OR';
-var rptCGTagPillFilter = null;   // wmsPillSearch instance
-
-// ---- Capital Gains View Manager (wmsViewManager instance — same as Portfolio) ----
-var rptCGVM = wmsViewManager({
-    module: 'reports_capgains',
-    label: 'Rpt CapGains',
-    ids: {
-        viewTabs: 'rpt-cg-view-tabs',
-        moreList: 'rpt-cg-more-list',
-        moreDropdown: 'rpt-cg-more-dropdown',
-        updateBtn: 'rpt-cg-update-view-btn'
-    },
-    autoDefaultFirst: true,
-    getPills: function() {
-        return [
-            { pill: rptCGInvPillFilter, type: 'investor' },
-            { pill: rptCGBrkPillFilter, type: 'broker' },
-            { pill: rptCGTagPillFilter, type: 'tag' }
-        ];
-    },
-    getFilters: function() {
-        return {
-            investorIds: rptCGSelectedInvestorIds.slice(),
-            brokerIds: rptCGSelectedBrokerIds.slice(),
-            tagNames: rptCGSelectedTagNames.slice(),
-            tagLogic: rptCGTagFilterLogic
-        };
-    },
-    applyFilters: function(f) {
-        rptCGSelectedInvestorIds.length = 0;
-        Array.prototype.push.apply(rptCGSelectedInvestorIds, f.investorIds || []);
-        rptCGSelectedBrokerIds.length = 0;
-        Array.prototype.push.apply(rptCGSelectedBrokerIds, f.brokerIds || []);
-        rptCGSelectedTagNames.length = 0;
-        Array.prototype.push.apply(rptCGSelectedTagNames, f.tagNames || []);
-        rptCGTagFilterLogic = f.tagLogic || 'OR';
-
-        // Sync pill UI
-        var pills = [rptCGInvPillFilter, rptCGBrkPillFilter, rptCGTagPillFilter];
-        pills.forEach(function(p) { if (p && p.syncStates) p.syncStates(); });
-
-        // Update tag logic radio
-        document.querySelectorAll('input[name="rpt-cg-tag-logic"]').forEach(function(r) {
-            r.checked = r.value === rptCGTagFilterLogic;
-        });
-    },
-    onRefresh: function() { rptRenderCapGains(); }
-});
 
 // ============================================================================
 // ASSET CLASS MAPPING
@@ -291,8 +245,6 @@ async function initReports() {
     rptInitPillFilters();
     rptInitViewBar();
     rptInitFYSelector();
-    rptInitCGFilters();
-    rptInitCGViewBar();
     rptInitConsol();
     rptInitComp();
     // Only the ACTIVE tab (Portfolio) loads its views + renders on entry; Cap Gains
@@ -730,8 +682,7 @@ var rptPortfolioLoaded = false, rptCGLoaded = false, rptConsolLoaded = false;
 async function rptEnsureTabLoaded(which) {
     try {
         if (which === 'capgains') {
-            if (!rptCGLoaded) { await rptCGVM.loadViews(); rptCGLoaded = true; if (!rptCGVM.activeViewId) rptRenderCapGains(); }
-            else rptRenderCapGains();
+            rptCGLoaded = true; rptRenderCapGains();   // shared views/filters (rptPortfolioVM)
         } else if (which === 'consol') {
             if (!rptConsolLoaded) { await rptConsolVM.loadViews(); rptConsolLoaded = true; if (!rptConsolVM.activeViewId) rptRenderConsol(); }
             else { try { await rptLoadConsol(); } catch (e) {} rptRenderConsol(); }
@@ -739,8 +690,7 @@ async function rptEnsureTabLoaded(which) {
             // Quarter-end prices: the SAME '1M' store Consolidation uses — fetched once,
             // reused by both tabs (historical closes don't change).
             if (!rptHistPxLoaded) { showLoading(true); try { await rptLoadHistPrices(); } catch (e) { console.error(e); } showLoading(false); }
-            if (!rptCmpLoaded) { await rptCmpVM.loadViews(); rptCmpLoaded = true; if (!rptCmpVM.activeViewId) rptRenderComp(); }
-            else rptRenderComp();
+            rptCmpLoaded = true; rptRenderComp();   // shared views/filters (rptPortfolioVM)
         }
     } catch (e) { console.warn('Reports: deferred tab load failed (' + which + ')', e); }
 }
@@ -758,6 +708,8 @@ function rptSetupTabs() {
             var target = document.getElementById(tabId);
             if (target) target.classList.add('active');
             // Render the active tab if needed (lazy-loading its views on first open)
+            var shared = document.getElementById('rptSharedViews');
+            if (shared) shared.style.display = (tabId === 'rpt-consol') ? 'none' : '';
             if (tabId === 'rpt-capgains') rptEnsureTabLoaded('capgains');
             else if (tabId === 'rpt-consol') rptEnsureTabLoaded('consol');
             else if (tabId === 'rpt-comp') rptEnsureTabLoaded('comp');
@@ -781,7 +733,7 @@ function rptInitPillFilters() {
             placeholder: 'Search investors...',
             items: invItems,
             selectedIds: rptSelectedInvestorIds,
-            onChange: rptRenderPortfolio
+            onChange: rptRenderSharedTabs
         });
     }
     // Trader pills (traders are investors — same list as the Trading module)
@@ -790,7 +742,7 @@ function rptInitPillFilters() {
         rptTrdPillFilter = wmsPillSearch(trdContainer, {
             label: 'Trader', placeholder: 'Search traders...',
             items: rptInvestors.map(function (inv) { return { id: String(inv.id), label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') }; }),
-            selectedIds: rptSelectedTraderIds, onChange: rptRenderPortfolio
+            selectedIds: rptSelectedTraderIds, onChange: rptRenderSharedTabs
         });
     }
     // Broker pills
@@ -804,7 +756,7 @@ function rptInitPillFilters() {
             placeholder: 'Search brokers...',
             items: brkItems,
             selectedIds: rptSelectedBrokerIds,
-            onChange: rptRenderPortfolio
+            onChange: rptRenderSharedTabs
         });
     }
     // Tag pills (with Any/All radio)
@@ -826,14 +778,14 @@ function rptInitPillFilters() {
             placeholder: 'Search tags...',
             items: tagItems,
             selectedIds: rptSelectedTagNames,
-            onChange: rptRenderPortfolio,
+            onChange: rptRenderSharedTabs,
             headerExtra: tagExtra
         });
         // Listen for tag logic change
         tagExtra.addEventListener('change', function(e) {
             if (e.target.name === 'rpt-tag-logic') {
                 rptTagFilterLogic = e.target.value;
-                rptRenderPortfolio();
+                rptRenderSharedTabs();
             }
         });
     }
@@ -926,76 +878,6 @@ function rptInitViewBar() {
     });
 }
 
-// View bar for the Capital Gains tab (mirrors rptInitViewBar, using rptCGVM)
-function rptInitCGViewBar() {
-    var newBtn = document.getElementById('rpt-cg-new-view-btn');
-    if (newBtn) {
-        newBtn.addEventListener('click', function() {
-            rptCGVM.activeViewId = null;
-            rptCGVM.renderViewTabs();
-            rptCGVM.updateViewButtons();
-        });
-    }
-    var moreBtn = document.getElementById('rpt-cg-more-btn');
-    if (moreBtn) {
-        moreBtn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var dd = document.getElementById('rpt-cg-more-dropdown');
-            dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
-        });
-    }
-    var updateBtn = document.getElementById('rpt-cg-update-view-btn');
-    if (updateBtn) {
-        updateBtn.addEventListener('click', function() { rptCGVM.updateCurrentView(); });
-    }
-    var saveNewBtn = document.getElementById('rpt-cg-save-new-btn');
-    var savePrompt = document.getElementById('rpt-cg-save-prompt');
-    var savePromptName = document.getElementById('rpt-cg-save-prompt-name');
-    if (saveNewBtn && savePrompt) {
-        saveNewBtn.addEventListener('click', function() {
-            savePrompt.classList.add('show');
-            saveNewBtn.style.display = 'none';
-            savePromptName.value = '';
-            savePromptName.focus();
-        });
-        document.getElementById('rpt-cg-save-prompt-ok').addEventListener('click', function() {
-            var name = savePromptName.value.trim();
-            if (name) rptCGVM.saveCurrentView(name);
-            savePrompt.classList.remove('show');
-            saveNewBtn.style.display = '';
-        });
-        document.getElementById('rpt-cg-save-prompt-cancel').addEventListener('click', function() {
-            savePrompt.classList.remove('show');
-            saveNewBtn.style.display = '';
-        });
-        savePromptName.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') {
-                var name = savePromptName.value.trim();
-                if (name) rptCGVM.saveCurrentView(name);
-                savePrompt.classList.remove('show');
-                saveNewBtn.style.display = '';
-            } else if (e.key === 'Escape') {
-                savePrompt.classList.remove('show');
-                saveNewBtn.style.display = '';
-            }
-        });
-    }
-    var filtersToggle = document.getElementById('rpt-cg-filters-toggle');
-    var filtersDiv = document.getElementById('rptCGFilters');
-    if (filtersToggle && filtersDiv) {
-        filtersToggle.addEventListener('click', function() {
-            var isHidden = filtersDiv.style.display === 'none';
-            filtersDiv.style.display = isHidden ? 'flex' : 'none';
-            filtersToggle.textContent = isHidden ? '▲' : '▼';
-        });
-    }
-    document.addEventListener('click', function(e) {
-        if (!e.target.closest('#rpt-cg-more-btn') && !e.target.closest('#rpt-cg-more-dropdown')) {
-            var mdd = document.getElementById('rpt-cg-more-dropdown');
-            if (mdd) mdd.style.display = 'none';
-        }
-    });
-}
 
 // ============================================================================
 // SYMBOL COLUMN INLINE SEARCH (double-click header)
@@ -1123,11 +1005,11 @@ function rptFilterTransactions(txns) {
     if (rptSelectedTagNames.length > 0) {
         if (rptTagFilterLogic === 'AND') {
             filtered = filtered.filter(function(t) {
-                return rptSelectedTagNames.every(function(tag) { return t.tags.indexOf(tag) >= 0; });
+                return rptSelectedTagNames.every(function(tag) { return (t.tags || []).indexOf(tag) >= 0; });
             });
         } else {
             filtered = filtered.filter(function(t) {
-                return t.tags.some(function(tag) { return rptSelectedTagNames.indexOf(tag) >= 0; });
+                return (t.tags || []).some(function(tag) { return rptSelectedTagNames.indexOf(tag) >= 0; });
             });
         }
     }
@@ -1825,66 +1707,6 @@ function rptInitFYSelector() {
     }).join('');
 }
 
-// Capital Gains filter system
-function rptInitCGFilters() {
-    // Investor pills (shared widget — same as Portfolio tab and the rest of the app)
-    var invContainer = document.getElementById('rpt-cg-filter-investor');
-    if (invContainer) {
-        var invItems = rptInvestors.map(function(inv) {
-            return { id: String(inv.id), label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') };
-        });
-        rptCGInvPillFilter = wmsPillSearch(invContainer, {
-            label: 'Investor',
-            placeholder: 'Search investors...',
-            items: invItems,
-            selectedIds: rptCGSelectedInvestorIds,
-            onChange: rptRenderCapGains
-        });
-    }
-    // Broker pills
-    var brkContainer = document.getElementById('rpt-cg-filter-broker');
-    if (brkContainer) {
-        var brkItems = rptBrokers.map(function(b) {
-            return { id: String(b.id), label: b.broker_code || b.name, searchText: (b.name || '') + ' ' + (b.broker_code || '') };
-        });
-        rptCGBrkPillFilter = wmsPillSearch(brkContainer, {
-            label: 'Broker',
-            placeholder: 'Search brokers...',
-            items: brkItems,
-            selectedIds: rptCGSelectedBrokerIds,
-            onChange: rptRenderCapGains
-        });
-    }
-    // Tag pills (with Any/All radio) — same as Portfolio tab
-    var tagContainer = document.getElementById('rpt-cg-filter-tag');
-    if (tagContainer) {
-        var allTags = {};
-        rptTransactions.forEach(function(t) { if (t.tags) t.tags.forEach(function(tg) { allTags[tg] = true; }); });
-        var tagItems = Object.keys(allTags).sort().map(function(tag) {
-            return { id: tag, label: tag, searchText: tag };
-        });
-        var tagExtra = document.createElement('div');
-        tagExtra.className = 'tag-match-options';
-        tagExtra.innerHTML =
-            '<span style="font-size:11px;color:#718096;">Match:</span>' +
-            '<label class="radio-label"><input type="radio" name="rpt-cg-tag-logic" value="OR" checked> <span>Any</span></label>' +
-            '<label class="radio-label"><input type="radio" name="rpt-cg-tag-logic" value="AND"> <span>All</span></label>';
-        rptCGTagPillFilter = wmsPillSearch(tagContainer, {
-            label: 'Tag',
-            placeholder: 'Search tags...',
-            items: tagItems,
-            selectedIds: rptCGSelectedTagNames,
-            onChange: rptRenderCapGains,
-            headerExtra: tagExtra
-        });
-        tagExtra.addEventListener('change', function(e) {
-            if (e.target.name === 'rpt-cg-tag-logic') {
-                rptCGTagFilterLogic = e.target.value;
-                rptRenderCapGains();
-            }
-        });
-    }
-}
 
 
 function rptRenderCapGains() {
@@ -1899,27 +1721,10 @@ function rptRenderCapGains() {
     var fyStart = fy + '-04-01';        // 1 April
     var fyEnd = (fy + 1) + '-03-31';    // 31 March
 
-    // Filter: exclude F&O/MCX, apply CG investor/broker filters
-    var filtered = rptTransactions.filter(function(t) {
+    // Filter: the SHARED Reports filters (investor / trader / broker / tag — same as Portfolio), then exclude F&O/MCX.
+    var filtered = rptFilterTransactions(rptTransactions).filter(function(t) {
         return t.securityType !== 'NFO' && t.securityType !== 'MCX';
     });
-    if (rptCGSelectedInvestorIds.length > 0) {
-        filtered = filtered.filter(function(t) { return rptCGSelectedInvestorIds.indexOf(t.investorId) >= 0; });
-    }
-    if (rptCGSelectedBrokerIds.length > 0) {
-        filtered = filtered.filter(function(t) { return t.brokerId && rptCGSelectedBrokerIds.indexOf(t.brokerId) >= 0; });
-    }
-    if (rptCGSelectedTagNames.length > 0) {
-        if (rptCGTagFilterLogic === 'AND') {
-            filtered = filtered.filter(function(t) {
-                return rptCGSelectedTagNames.every(function(tag) { return (t.tags || []).indexOf(tag) >= 0; });
-            });
-        } else {
-            filtered = filtered.filter(function(t) {
-                return (t.tags || []).some(function(tag) { return rptCGSelectedTagNames.indexOf(tag) >= 0; });
-            });
-        }
-    }
 
     // STT-aware capital-gains engine (runs on the filtered set for correct lot matching)
     var gains = rptCalcCapGains(filtered);
@@ -2853,15 +2658,8 @@ if (typeof window !== 'undefined') {
 //   • Columns are fixed: Opening (31-Mar) | Q1 | Q2 | Q3 | Q4; a quarter that has
 //     not started shows '–'. Book | Market side by side, mix % beneath each.
 // Prefs (browser-persistent): MTM line on/off, unit scale (F4 / click: settings →
-// Millions → full), FY. Saved views: own module 'reports_composition'.
+// Millions → full), FY. Views + filters: the SHARED Reports set (rptPortfolioVM, 02-Nov-2026).
 // ============================================================================
-var rptCmpSelectedInvestorIds = [];
-var rptCmpSelectedTraderIds = [];
-var rptCmpTrdPillFilter = null;
-var rptCmpSelectedBrokerIds = [];
-var rptCmpSelectedTagNames = [];
-var rptCmpTagFilterLogic = 'OR';
-var rptCmpInvPillFilter = null, rptCmpBrkPillFilter = null, rptCmpTagPillFilter = null;
 var rptCmpLoaded = false;
 var rptCmpShowMtm = false;          // MTM line under each category (owner: off most of the time)
 var rptCmpUnitMode = 'settings';    // 'settings' | 'millions' | 'full' (same 3 stages as Consolidation)
@@ -2913,18 +2711,6 @@ function rptCmpHandleF4() {
     return true;
 }
 
-// Same filter semantics as rptFilterTransactions (Portfolio), on the Composition selections.
-function rptCmpFilterTransactions(txns) {
-    var f = txns;
-    if (rptCmpSelectedInvestorIds.length > 0) f = f.filter(function (t) { return rptCmpSelectedInvestorIds.indexOf(t.investorId) >= 0; });
-    if (rptCmpSelectedTraderIds.length > 0) f = f.filter(function (t) { var tid = t.traderId || t.investorId; return tid && rptCmpSelectedTraderIds.indexOf(String(tid)) >= 0; });
-    if (rptCmpSelectedBrokerIds.length > 0) f = f.filter(function (t) { return t.brokerId && rptCmpSelectedBrokerIds.indexOf(t.brokerId) >= 0; });
-    if (rptCmpSelectedTagNames.length > 0) {
-        if (rptCmpTagFilterLogic === 'AND') f = f.filter(function (t) { return rptCmpSelectedTagNames.every(function (tag) { return t.tags.indexOf(tag) >= 0; }); });
-        else f = f.filter(function (t) { return t.tags.some(function (tag) { return rptCmpSelectedTagNames.indexOf(tag) >= 0; }); });
-    }
-    return f;
-}
 
 // Fixed columns for the FY: Opening (31-Mar of FY start) + Q1..Q4 quarter-ends.
 function rptCmpColumns(fyYear) {
@@ -2971,7 +2757,7 @@ function rptRenderComp() {
 
     var fyYear = (rptCmpFyStartYear != null) ? rptCmpFyStartYear : rptCmpCurrentFyYear();
     var cols = rptCmpColumns(fyYear);
-    var base = rptCmpFilterTransactions(rptTransactions).filter(function (t) { return t.securityType !== 'NFO' && t.securityType !== 'MCX'; });
+    var base = rptFilterTransactions(rptTransactions).filter(function (t) { return t.securityType !== 'NFO' && t.securityType !== 'MCX'; });
     var snaps = cols.map(function (c) { return c.future ? null : rptCmpSnapshot(base, c.asOf); });
 
     var present = {};
@@ -3058,74 +2844,6 @@ function rptRenderComp() {
             '<div class="summary-percent ' + getAmountClass(big ? big.d : 0) + '">' + (big ? ((big.d >= 0 ? '+' : '') + big.d.toFixed(1) + ' pts since opening') : '') + '</div></div>';
 }
 
-var rptCmpVM = wmsViewManager({
-    module: 'reports_composition',
-    label: 'Rpt Composition',
-    ids: { viewTabs: 'rpt-cmp-view-tabs', moreList: 'rpt-cmp-more-list', moreDropdown: 'rpt-cmp-more-dropdown', updateBtn: 'rpt-cmp-update-view-btn' },
-    autoDefaultFirst: true,
-    getPills: function () {
-        return [{ pill: rptCmpInvPillFilter, type: 'investor' }, { pill: rptCmpTrdPillFilter, type: 'trader' }, { pill: rptCmpBrkPillFilter, type: 'broker' }, { pill: rptCmpTagPillFilter, type: 'tag' }];
-    },
-    getFilters: function () {
-        return { investorIds: rptCmpSelectedInvestorIds.slice(), traderIds: rptCmpSelectedTraderIds.slice(), brokerIds: rptCmpSelectedBrokerIds.slice(), tagNames: rptCmpSelectedTagNames.slice(), tagLogic: rptCmpTagFilterLogic };
-    },
-    applyFilters: function (f) {
-        rptCmpSelectedInvestorIds.length = 0; Array.prototype.push.apply(rptCmpSelectedInvestorIds, f.investorIds || []);
-        rptCmpSelectedTraderIds.length = 0; Array.prototype.push.apply(rptCmpSelectedTraderIds, f.traderIds || []);
-        rptCmpSelectedBrokerIds.length = 0; Array.prototype.push.apply(rptCmpSelectedBrokerIds, f.brokerIds || []);
-        rptCmpSelectedTagNames.length = 0; Array.prototype.push.apply(rptCmpSelectedTagNames, f.tagNames || []);
-        rptCmpTagFilterLogic = f.tagLogic || 'OR';
-        [rptCmpInvPillFilter, rptCmpTrdPillFilter, rptCmpBrkPillFilter, rptCmpTagPillFilter].forEach(function (p) { if (p && p.syncStates) p.syncStates(); });
-        document.querySelectorAll('input[name="rpt-cmp-tag-logic"]').forEach(function (r) { r.checked = r.value === rptCmpTagFilterLogic; });
-    },
-    onRefresh: function () { rptRenderComp(); }
-});
-
-function rptInitCmpFilters() {
-    var invContainer = document.getElementById('rpt-cmp-filter-investor');
-    if (invContainer) {
-        rptCmpInvPillFilter = wmsPillSearch(invContainer, {
-            label: 'Investor', placeholder: 'Search investors...',
-            items: rptInvestors.map(function (inv) { return { id: String(inv.id), label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') }; }),
-            selectedIds: rptCmpSelectedInvestorIds, onChange: rptRenderComp
-        });
-    }
-    var trdContainer = document.getElementById('rpt-cmp-filter-trader');
-    if (trdContainer) {
-        rptCmpTrdPillFilter = wmsPillSearch(trdContainer, {
-            label: 'Trader', placeholder: 'Search traders...',
-            items: rptInvestors.map(function (inv) { return { id: String(inv.id), label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') }; }),
-            selectedIds: rptCmpSelectedTraderIds, onChange: rptRenderComp
-        });
-    }
-    var brkContainer = document.getElementById('rpt-cmp-filter-broker');
-    if (brkContainer) {
-        rptCmpBrkPillFilter = wmsPillSearch(brkContainer, {
-            label: 'Broker', placeholder: 'Search brokers...',
-            items: rptBrokers.map(function (b) { return { id: String(b.id), label: b.broker_code || b.name, searchText: (b.name || '') + ' ' + (b.broker_code || '') }; }),
-            selectedIds: rptCmpSelectedBrokerIds, onChange: rptRenderComp
-        });
-    }
-    var tagContainer = document.getElementById('rpt-cmp-filter-tag');
-    if (tagContainer) {
-        var allTags = {};
-        rptTransactions.forEach(function (t) { if (t.tags) t.tags.forEach(function (tg) { allTags[tg] = true; }); });
-        var tagExtra = document.createElement('div');
-        tagExtra.className = 'tag-match-options';
-        tagExtra.innerHTML = '<span style="font-size:11px;color:#718096;">Match:</span>' +
-            '<label class="radio-label"><input type="radio" name="rpt-cmp-tag-logic" value="OR" checked> <span>Any</span></label>' +
-            '<label class="radio-label"><input type="radio" name="rpt-cmp-tag-logic" value="AND"> <span>All</span></label>';
-        rptCmpTagPillFilter = wmsPillSearch(tagContainer, {
-            label: 'Tag', placeholder: 'Search tags...',
-            items: Object.keys(allTags).sort().map(function (tag) { return { id: tag, label: tag, searchText: tag }; }),
-            selectedIds: rptCmpSelectedTagNames, onChange: rptRenderComp, headerExtra: tagExtra
-        });
-        tagExtra.addEventListener('change', function (e) {
-            if (e.target.name === 'rpt-cmp-tag-logic') { rptCmpTagFilterLogic = e.target.value; rptRenderComp(); }
-        });
-    }
-}
-
 function rptInitCmpFY() {
     var sel = document.getElementById('rpt-cmp-fy-select');
     if (!sel) return;
@@ -3142,49 +2860,9 @@ function rptInitCmpFY() {
     });
 }
 
-function rptInitCmpViewBar() {
-    var newBtn = document.getElementById('rpt-cmp-new-view-btn');
-    if (newBtn) newBtn.addEventListener('click', function () { rptCmpVM.activeViewId = null; rptCmpVM.renderViewTabs(); rptCmpVM.updateViewButtons(); });
-    var moreBtn = document.getElementById('rpt-cmp-more-btn');
-    if (moreBtn) moreBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var dd = document.getElementById('rpt-cmp-more-dropdown'); dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
-    });
-    var updateBtn = document.getElementById('rpt-cmp-update-view-btn');
-    if (updateBtn) updateBtn.addEventListener('click', function () { rptCmpVM.updateCurrentView(); });
-    var saveNewBtn = document.getElementById('rpt-cmp-save-new-btn');
-    var savePrompt = document.getElementById('rpt-cmp-save-prompt');
-    var savePromptName = document.getElementById('rpt-cmp-save-prompt-name');
-    if (saveNewBtn && savePrompt) {
-        var done = function (save) {
-            var name = savePromptName.value.trim();
-            if (save && name) rptCmpVM.saveCurrentView(name);
-            savePrompt.classList.remove('show'); saveNewBtn.style.display = '';
-        };
-        saveNewBtn.addEventListener('click', function () { savePrompt.classList.add('show'); saveNewBtn.style.display = 'none'; savePromptName.value = ''; savePromptName.focus(); });
-        document.getElementById('rpt-cmp-save-prompt-ok').addEventListener('click', function () { done(true); });
-        document.getElementById('rpt-cmp-save-prompt-cancel').addEventListener('click', function () { done(false); });
-        savePromptName.addEventListener('keydown', function (e) { if (e.key === 'Enter') done(true); else if (e.key === 'Escape') done(false); });
-    }
-    var filtersToggle = document.getElementById('rpt-cmp-filters-toggle');
-    var filtersDiv = document.getElementById('rptCmpFilters');
-    if (filtersToggle && filtersDiv) filtersToggle.addEventListener('click', function () {
-        var isHidden = filtersDiv.style.display === 'none';
-        filtersDiv.style.display = isHidden ? 'flex' : 'none';
-        filtersToggle.textContent = isHidden ? '▲' : '▼';
-    });
-    document.addEventListener('click', function (e) {
-        if (!e.target.closest('#rpt-cmp-more-btn') && !e.target.closest('#rpt-cmp-more-dropdown')) {
-            var mdd = document.getElementById('rpt-cmp-more-dropdown'); if (mdd) mdd.style.display = 'none';
-        }
-    });
-}
-
 function rptInitComp() {
     rptCmpLoadPrefs();
-    rptInitCmpFilters();
     rptInitCmpFY();
-    rptInitCmpViewBar();
     var mc = document.getElementById('rptCmpMtmChk');
     if (mc) { mc.checked = rptCmpShowMtm; mc.addEventListener('change', function () { rptCmpShowMtm = mc.checked; rptCmpSavePrefs(); rptRenderComp(); }); }
     var un = document.getElementById('rptCmpUnit');
