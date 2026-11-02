@@ -2992,8 +2992,9 @@ function rptRenderComp() {
     function mtmCells(b, m, fut) {
         if (fut) return '<td class="rpt-cmp-q"></td><td></td>';
         var x = m - b;
-        return '<td class="rpt-cmp-q"></td><td class="' + getAmountClass(x) + '">' + rptCmpAmt(x) +
-               '<span class="number-sub ' + getAmountClass(x) + '">' + (Math.abs(x) >= 0.005 && b ? formatPercent(x / Math.abs(b) * 100) : '') + '</span></td>';
+        // One line, each part inside its own column (owner 02-Nov): MTM amount under Book, % of book under Market.
+        return '<td class="rpt-cmp-q ' + getAmountClass(x) + '">' + rptCmpAmt(x) + '</td>' +
+               '<td class="' + getAmountClass(x) + '">' + (Math.abs(x) >= 0.005 && b ? formatPercent(x / Math.abs(b) * 100) : '') + '</td>';
     }
 
     // Fixed layout: category 14%, the 10 amount columns share the rest EQUALLY (owner 02-Nov).
