@@ -2972,12 +2972,10 @@ function rptRenderComp() {
         if (fut) return '<td class="rpt-cmp-q"></td><td></td>';
         var x = m - b;
         return '<td class="rpt-cmp-q"></td><td class="' + getAmountClass(x) + '">' + rptCmpAmt(x) +
-               '<span class="number-sub ' + getAmountClass(x) + '">' + (Math.abs(x) >= 0.005 && b ? formatPercent(x / Math.abs(b) * 100) : '') + '</span></td>';
+               (Math.abs(x) >= 0.005 && b ? '<span class="rpt-cmp-mtmpct">' + formatPercent(x / Math.abs(b) * 100) + '</span>' : '') + '</td>';
     }
 
-    var html = '<table class="rpt-cmp-table"><colgroup><col style="width:180px">';
-    cols.forEach(function () { html += '<col><col>'; });
-    html += '</colgroup><thead><tr><th class="rpt-cmp-c-name"></th>';
+    var html = '<table class="rpt-cmp-table"><thead><tr><th class="rpt-cmp-c-name"></th>';
     cols.forEach(function (c) { html += '<th colspan="2" class="rpt-cmp-q">' + c.label + ' <span style="font-weight:400;color:#718096;">' + wmsEsc(c.sub) + '</span></th>'; });
     html += '</tr><tr><th class="rpt-cmp-c-name">Category</th>';
     cols.forEach(function () { html += '<th class="rpt-cmp-q">Book</th><th>Market</th>'; });
