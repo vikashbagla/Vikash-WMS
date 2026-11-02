@@ -355,6 +355,7 @@
 /* ===== Composition tab (owner 2026-11-02) — category mix by quarter, book vs market =====
    Same FIFO engine + pricing as Portfolio; quarter-ends priced like Consolidation. */
 #rpt-comp { flex-direction: column; }
+.rpt-tab-controls { flex-shrink:0; display:flex; justify-content:flex-end; align-items:center; gap:8px; padding:5px 0; }
 .rpt-cmp-controls { display:flex; align-items:center; gap:12px; }
 .rpt-cmp-unit { font-size:11px; color:#64748b; cursor:pointer; }
 .rpt-cmp-unit:hover { color:#667eea; }
@@ -401,8 +402,9 @@
         <button class="reports-tab-btn" data-tab="rpt-comp">Composition</button>
     </div>
 
-    <!-- Tab: Portfolio Holdings (FIFO, grouped by Asset Class, no F&O) -->
-    <div id="rpt-portfolio" class="reports-tab-content active">
+    <!-- SHARED views + filters for Portfolio, Capital Gains and Composition (owner 02-Nov-2026:
+         one consolidated set of saved views; Consolidation keeps its own book-based views). -->
+    <div id="rptSharedViews" style="flex-shrink:0;">
         <!-- View Tabs Bar (shared wmsViewManager) -->
         <div class="rpt-view-tabs-bar">
             <div class="rpt-view-tabs-container" id="rpt-view-tabs"></div>
@@ -435,6 +437,10 @@
             </div>
         </div>
 
+    </div>
+
+    <!-- Tab: Portfolio Holdings (FIFO, grouped by Asset Class, no F&O) -->
+    <div id="rpt-portfolio" class="reports-tab-content active">
         <!-- Grouped holdings container (scrollable) -->
         <div class="table-container" id="rptPortfolioBody" style="flex:1; min-height:0; overflow:auto;">
             <div style="text-align:center;padding:40px;color:#9ca3af;">Loading portfolio data...</div>
@@ -446,38 +452,9 @@
 
     <!-- Tab: Capital Gains -->
     <div id="rpt-capgains" class="reports-tab-content">
-        <!-- View Tabs Bar (shared wmsViewManager — same as Portfolio tab) -->
-        <div class="rpt-view-tabs-bar">
-            <div class="rpt-view-tabs-container" id="rpt-cg-view-tabs"></div>
-            <div class="tr-view-tabs-actions">
-                <label style="font-size:11px; font-weight:600; color:#4a5568;">FY</label>
-                <select id="rpt-fy-select" onchange="rptRenderCapGains()" title="Financial Year (April to March)" style="font-size:11px; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px; background:#fff; color:#2d3748;"></select>
-                <span style="width:1px; height:18px; background:#e2e8f0; margin:0 2px;"></span>
-                <button class="tr-vta-btn" id="rpt-cg-new-view-btn" title="New blank view">+</button>
-                <div style="position:relative;">
-                    <button class="tr-vta-btn" id="rpt-cg-more-btn" title="All views">▾ More</button>
-                    <div class="tr-more-dropdown" id="rpt-cg-more-dropdown" style="display:none;">
-                        <div id="rpt-cg-more-list"></div>
-                    </div>
-                </div>
-                <button class="tr-vta-btn" id="rpt-cg-update-view-btn" title="Update current view with active filters" disabled>↻ Update</button>
-                <button class="tr-vta-btn" id="rpt-cg-save-new-btn" title="Save as new view">+ Save New</button>
-                <button class="tr-vta-btn" id="rpt-cg-filters-toggle" title="Toggle filters" style="font-size:10px;">▼</button>
-                <div class="tr-save-prompt" id="rpt-cg-save-prompt">
-                    <input type="text" id="rpt-cg-save-prompt-name" placeholder="View name...">
-                    <button class="tr-vta-btn" id="rpt-cg-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">✓</button>
-                    <button class="tr-vta-btn" id="rpt-cg-save-prompt-cancel">✕</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Filters for Capital Gains (pill-based, built by wmsPillSearch in reports.js) -->
-        <div id="rptCGFilters" style="flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid #e2e8f0;">
-            <div class="filters-grid" style="flex:1; grid-template-columns: repeat(3, 1fr);">
-                <div id="rpt-cg-filter-investor"></div>
-                <div id="rpt-cg-filter-broker"></div>
-                <div id="rpt-cg-filter-tag"></div>
-            </div>
+        <div class="rpt-tab-controls">
+            <label style="font-size:11px; font-weight:600; color:#4a5568;">FY</label>
+            <select id="rpt-fy-select" onchange="rptRenderCapGains()" title="Financial Year (April to March)" style="font-size:11px; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px; background:#fff; color:#2d3748;"></select>
         </div>
 
         <div class="rpt-cg-summary-cards" id="rpt-cg-summary"></div>
@@ -490,37 +467,12 @@
 
     <!-- Tab: Composition (category mix by quarter — book vs market; same engine as Portfolio) -->
     <div id="rpt-comp" class="reports-tab-content">
-        <div class="rpt-view-tabs-bar">
-            <div class="rpt-view-tabs-container" id="rpt-cmp-view-tabs"></div>
-            <div class="tr-view-tabs-actions">
-                <div class="rpt-cmp-controls">
+        <div class="rpt-tab-controls">
+            <div class="rpt-cmp-controls">
                     <label class="rpt-consol-chk" title="Show an MTM line under each category"><input type="checkbox" id="rptCmpMtmChk"> MTM</label>
                     <span class="rpt-cmp-unit" id="rptCmpUnit" title="Click or press F4 to change units"></span>
                     <select id="rpt-cmp-fy-select" title="Financial Year (April to March)" style="font-size:11px; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px; background:#fff; color:#2d3748;"></select>
                 </div>
-                <span style="width:1px; height:18px; background:#e2e8f0; margin:0 2px;"></span>
-                <button class="tr-vta-btn" id="rpt-cmp-new-view-btn" title="New blank view">+</button>
-                <div style="position:relative;">
-                    <button class="tr-vta-btn" id="rpt-cmp-more-btn" title="All views">&#9662; More</button>
-                    <div class="tr-more-dropdown" id="rpt-cmp-more-dropdown" style="display:none;"><div id="rpt-cmp-more-list"></div></div>
-                </div>
-                <button class="tr-vta-btn" id="rpt-cmp-update-view-btn" title="Update current view with active filters" disabled>&#8635; Update</button>
-                <button class="tr-vta-btn" id="rpt-cmp-save-new-btn" title="Save as new view">+ Save New</button>
-                <button class="tr-vta-btn" id="rpt-cmp-filters-toggle" title="Toggle filters" style="font-size:10px;">&#9660;</button>
-                <div class="tr-save-prompt" id="rpt-cmp-save-prompt">
-                    <input type="text" id="rpt-cmp-save-prompt-name" placeholder="View name...">
-                    <button class="tr-vta-btn" id="rpt-cmp-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">&#10003;</button>
-                    <button class="tr-vta-btn" id="rpt-cmp-save-prompt-cancel">&#10005;</button>
-                </div>
-            </div>
-        </div>
-        <div id="rptCmpFilters" style="flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid #e2e8f0;">
-            <div class="filters-grid" style="flex:1; grid-template-columns: repeat(4, 1fr);">
-                <div id="rpt-cmp-filter-investor"></div>
-                <div id="rpt-cmp-filter-trader"></div>
-                <div id="rpt-cmp-filter-broker"></div>
-                <div id="rpt-cmp-filter-tag"></div>
-            </div>
         </div>
         <div class="table-container" id="rptCmpBody" style="flex:1; min-height:0; overflow:auto;">
             <div style="text-align:center;padding:40px;color:#9ca3af;">Loading composition&hellip;</div>
