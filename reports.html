@@ -351,6 +351,29 @@
 .rpt-consol-row-summary.rpt-consol-nwm { background:#e0e7ff; border-top:1px solid #94a3b8; border-bottom:2px solid #64748b; }
 .rpt-consol-row-summary.rpt-consol-nwm td.rpt-c-name, .rpt-consol-row-summary.rpt-consol-nwm td.rpt-consol-c-total { background:#e0e7ff; }
 .rpt-consol-empty { text-align:center; padding:40px; color:#9ca3af; }
+
+/* ===== Composition tab (owner 2026-11-02) — category mix by quarter, book vs market =====
+   Same FIFO engine + pricing as Portfolio; quarter-ends priced like Consolidation. */
+#rpt-comp { flex-direction: column; }
+.rpt-cmp-controls { display:flex; align-items:center; gap:12px; }
+.rpt-cmp-unit { font-size:11px; color:#64748b; cursor:pointer; }
+.rpt-cmp-unit:hover { color:#667eea; }
+.rpt-cmp-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; }
+.rpt-cmp-table thead th { position:sticky; z-index:1; background:#edf2f7; color:#2d3748; font-weight:700; padding:6px 8px; white-space:nowrap; text-align:right; }
+.rpt-cmp-table thead tr:first-child th { top:0; text-align:center; border-bottom:1px solid #e2e8f0; }
+.rpt-cmp-table thead tr:last-child th { top:29px; font-weight:600; font-size:11px; color:#4a5568; border-bottom:1px solid #cbd5e0; }
+.rpt-cmp-table th.rpt-cmp-c-name, .rpt-cmp-table td.rpt-cmp-c-name { text-align:left; width:180px; }
+.rpt-cmp-table td { padding:6px 8px; text-align:right; vertical-align:top; white-space:nowrap; border-bottom:1px solid #f1f5f9; }
+.rpt-cmp-table .rpt-cmp-q { border-left:2px solid #e2e8f0; }
+.rpt-cmp-table .number-sub { display:block; color:#718096; font-size:11px; }
+.rpt-cmp-table td.rpt-cmp-fut { color:#cbd5e0; }
+.rpt-cmp-table tr.rpt-cmp-cat td.rpt-cmp-c-name { font-weight:600; color:#2d3748; }
+.rpt-cmp-table tr.rpt-cmp-mtm td { padding-top:0; color:#64748b; font-size:11px; }
+.rpt-cmp-table tr.rpt-cmp-mtm td.rpt-cmp-c-name { padding-left:24px; font-weight:400; }
+/* Total row — its own colour (owner 02-Nov), matching the Consolidation net rows. */
+.rpt-cmp-table tr.rpt-cmp-total td { background:#eef2ff; font-weight:700; color:#1e293b; border-top:2px solid #94a3b8; }
+.rpt-cmp-table tr.rpt-cmp-total.rpt-cmp-mtm td { border-top:none; font-weight:600; color:#334155; }
+.rpt-cmp-table tr.rpt-cmp-total td .number-sub { color:#475569; }
 </style>
 </head>
 
@@ -373,6 +396,7 @@
         <button class="reports-tab-btn active" data-tab="rpt-portfolio">Portfolio</button>
         <button class="reports-tab-btn" data-tab="rpt-capgains">Capital Gains</button>
         <button class="reports-tab-btn" data-tab="rpt-consol">Consolidation</button>
+        <button class="reports-tab-btn" data-tab="rpt-comp">Composition</button>
     </div>
 
     <!-- Tab: Portfolio Holdings (FIFO, grouped by Asset Class, no F&O) -->
@@ -459,6 +483,45 @@
         <div class="table-container" id="rptCGBody" style="flex:1; min-height:0; overflow:auto;">
             <div style="text-align:center;padding:40px;color:#9ca3af;">Select a financial year to view capital gains...</div>
         </div>
+    </div>
+
+    <!-- Tab: Composition (category mix by quarter — book vs market; same engine as Portfolio) -->
+    <div id="rpt-comp" class="reports-tab-content">
+        <div class="rpt-view-tabs-bar">
+            <div class="rpt-view-tabs-container" id="rpt-cmp-view-tabs"></div>
+            <div class="tr-view-tabs-actions">
+                <div class="rpt-cmp-controls">
+                    <label class="rpt-consol-chk" title="Show an MTM line under each category"><input type="checkbox" id="rptCmpMtmChk"> MTM</label>
+                    <span class="rpt-cmp-unit" id="rptCmpUnit" title="Click or press F4 to change units"></span>
+                    <select id="rpt-cmp-fy-select" title="Financial Year (April to March)" style="font-size:11px; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px; background:#fff; color:#2d3748;"></select>
+                </div>
+                <span style="width:1px; height:18px; background:#e2e8f0; margin:0 2px;"></span>
+                <button class="tr-vta-btn" id="rpt-cmp-new-view-btn" title="New blank view">+</button>
+                <div style="position:relative;">
+                    <button class="tr-vta-btn" id="rpt-cmp-more-btn" title="All views">&#9662; More</button>
+                    <div class="tr-more-dropdown" id="rpt-cmp-more-dropdown" style="display:none;"><div id="rpt-cmp-more-list"></div></div>
+                </div>
+                <button class="tr-vta-btn" id="rpt-cmp-update-view-btn" title="Update current view with active filters" disabled>&#8635; Update</button>
+                <button class="tr-vta-btn" id="rpt-cmp-save-new-btn" title="Save as new view">+ Save New</button>
+                <button class="tr-vta-btn" id="rpt-cmp-filters-toggle" title="Toggle filters" style="font-size:10px;">&#9660;</button>
+                <div class="tr-save-prompt" id="rpt-cmp-save-prompt">
+                    <input type="text" id="rpt-cmp-save-prompt-name" placeholder="View name...">
+                    <button class="tr-vta-btn" id="rpt-cmp-save-prompt-ok" style="background:#667eea;color:#fff;border-color:#667eea;">&#10003;</button>
+                    <button class="tr-vta-btn" id="rpt-cmp-save-prompt-cancel">&#10005;</button>
+                </div>
+            </div>
+        </div>
+        <div id="rptCmpFilters" style="flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid #e2e8f0;">
+            <div class="filters-grid" style="flex:1; grid-template-columns: repeat(3, 1fr);">
+                <div id="rpt-cmp-filter-investor"></div>
+                <div id="rpt-cmp-filter-broker"></div>
+                <div id="rpt-cmp-filter-tag"></div>
+            </div>
+        </div>
+        <div class="table-container" id="rptCmpBody" style="flex:1; min-height:0; overflow:auto;">
+            <div style="text-align:center;padding:40px;color:#9ca3af;">Loading composition&hellip;</div>
+        </div>
+        <div class="summary-cards" id="rpt-cmp-summary"></div>
     </div>
 
     <!-- Tab: Consolidation (accounting ledgers, multi-book, books/quarters in columns) -->

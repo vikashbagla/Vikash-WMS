@@ -288,6 +288,7 @@ async function initReports() {
     rptInitCGFilters();
     rptInitCGViewBar();
     rptInitConsol();
+    rptInitComp();
     // Only the ACTIVE tab (Portfolio) loads its views + renders on entry; Cap Gains
     // and Consolidation defer to first open (rptEnsureTabLoaded).
     await rptPortfolioVM.loadViews();
@@ -303,6 +304,7 @@ async function initReports() {
             rptRenderPortfolio();
             if (rptCGLoaded) rptRenderCapGains();
             if (rptConsolLoaded && typeof rptRenderConsol === 'function') rptRenderConsol();
+            if (rptCmpLoaded) rptRenderComp();
         } catch (e) { console.warn('Reports: background price refresh failed', e); }
     })();
 }
@@ -318,12 +320,14 @@ async function wmsResumeReports() {
         // Re-load consolidation through the store (cheap checksum probe; 0 fetch when
         // unchanged) so a voucher posted elsewhere shows on return — no F5 needed.
         if (rptConsolLoaded && typeof rptRenderConsol === 'function') { try { await rptLoadConsol(); } catch (e) {} rptRenderConsol(); }
+        if (rptCmpLoaded) rptRenderComp();
         (async function () {
             try {
                 if (typeof wmsStandardRefresh === 'function') await wmsStandardRefresh(false);
                 await rptFetchLivePrices();
                 rptRenderPortfolio();
                 if (rptCGLoaded) rptRenderCapGains();
+                if (rptCmpLoaded) rptRenderComp();
             } catch (e) { /* background */ }
         })();
     } catch (e) { console.warn('wmsResumeReports failed', e); }
@@ -351,6 +355,7 @@ async function rptRefresh() {
     await rptFetchLivePrices();
     rptRenderPortfolio();
     rptRenderCapGains();
+    if (rptCmpLoaded) rptRenderComp();
     showLoading(false);
     showAlert('Reports refreshed', 'success', 2000);
 }
@@ -724,6 +729,12 @@ async function rptEnsureTabLoaded(which) {
         } else if (which === 'consol') {
             if (!rptConsolLoaded) { await rptConsolVM.loadViews(); rptConsolLoaded = true; if (!rptConsolVM.activeViewId) rptRenderConsol(); }
             else { try { await rptLoadConsol(); } catch (e) {} rptRenderConsol(); }
+        } else if (which === 'comp') {
+            // Quarter-end prices: the SAME '1M' store Consolidation uses — fetched once,
+            // reused by both tabs (historical closes don't change).
+            if (!rptHistPxLoaded) { showLoading(true); try { await rptLoadHistPrices(); } catch (e) { console.error(e); } showLoading(false); }
+            if (!rptCmpLoaded) { await rptCmpVM.loadViews(); rptCmpLoaded = true; if (!rptCmpVM.activeViewId) rptRenderComp(); }
+            else rptRenderComp();
         }
     } catch (e) { console.warn('Reports: deferred tab load failed (' + which + ')', e); }
 }
@@ -743,6 +754,7 @@ function rptSetupTabs() {
             // Render the active tab if needed (lazy-loading its views on first open)
             if (tabId === 'rpt-capgains') rptEnsureTabLoaded('capgains');
             else if (tabId === 'rpt-consol') rptEnsureTabLoaded('consol');
+            else if (tabId === 'rpt-comp') rptEnsureTabLoaded('comp');
         });
     });
 }
@@ -2126,6 +2138,7 @@ function rptConsAmt(n) {
 // the global F4 handler (wms-shared.js) falls through to its normal two-stage
 // toggle everywhere else. Exposed on window for that handler to call.
 function rptConsHandleF4() {
+    if (typeof rptCmpHandleF4 === 'function' && rptCmpHandleF4()) return true;   // Composition tab owns F4 too (same 3 stages)
     var tab = document.getElementById('rpt-consol');
     if (!tab || !tab.classList.contains('active')) return false;
     if (!document.getElementById('rptConsolBody')) return false;
@@ -2805,4 +2818,343 @@ if (typeof window !== 'undefined') {
     window.rptRenderPortfolio = rptRenderPortfolio;
     window.rptRenderCapGains = rptRenderCapGains;
     window.rptRenderConsol = rptRenderConsol;
+}
+
+// ============================================================================
+// COMPOSITION TAB (owner 2026-11-02) — category mix by quarter, book vs market
+// ----------------------------------------------------------------------------
+// A VIEW of the Portfolio numbers over the FY's quarter-ends. NO new calculation:
+//   • same transactions + filters shape + F&O/MCX exclusion + FIFO engine
+//     (rptFifoEngine) + asset-class grouping + price (rptGetPrice) as Portfolio;
+//   • a quarter is the same run with trades cut off at the quarter-end, priced as
+//     Consolidation's Quarters view does (rptConsQuarterMtm): a COMPLETED quarter at
+//     its '1M' month-end close (rptHistPriceAsOf — shared, loaded once via
+//     rptLoadHistPrices), falling back to rptGetPrice when a security has no '1M'
+//     row (e.g. unlisted / Private Equity → same treatment as Portfolio); the
+//     CURRENT quarter at the live price → equals the Portfolio tab for the same filters.
+//   • Columns are fixed: Opening (31-Mar) | Q1 | Q2 | Q3 | Q4; a quarter that has
+//     not started shows '–'. Book | Market side by side, mix % beneath each.
+// Prefs (browser-persistent): MTM line on/off, unit scale (F4 / click: settings →
+// Millions → full), FY. Saved views: own module 'reports_composition'.
+// ============================================================================
+var rptCmpSelectedInvestorIds = [];
+var rptCmpSelectedBrokerIds = [];
+var rptCmpSelectedTagNames = [];
+var rptCmpTagFilterLogic = 'OR';
+var rptCmpInvPillFilter = null, rptCmpBrkPillFilter = null, rptCmpTagPillFilter = null;
+var rptCmpLoaded = false;
+var rptCmpShowMtm = false;          // MTM line under each category (owner: off most of the time)
+var rptCmpUnitMode = 'settings';    // 'settings' | 'millions' | 'full' (same 3 stages as Consolidation)
+var rptCmpFyStartYear = null;       // null = current FY
+var RPT_CMP_PREFS_KEY = 'wms_rpt_comp_prefs';
+
+function rptCmpLoadPrefs() {
+    try {
+        var p = JSON.parse(localStorage.getItem(RPT_CMP_PREFS_KEY) || '{}');
+        if (p && typeof p === 'object') {
+            rptCmpShowMtm = !!p.showMtm;
+            if (p.unitMode === 'settings' || p.unitMode === 'millions' || p.unitMode === 'full') rptCmpUnitMode = p.unitMode;
+            if (typeof p.fyStartYear === 'number') rptCmpFyStartYear = p.fyStartYear;
+        }
+    } catch (e) {}
+}
+function rptCmpSavePrefs() {
+    try { localStorage.setItem(RPT_CMP_PREFS_KEY, JSON.stringify({ showMtm: rptCmpShowMtm, unitMode: rptCmpUnitMode, fyStartYear: rptCmpFyStartYear })); } catch (e) {}
+}
+function rptCmpCurrentFyYear() { var n = new Date(); return n.getMonth() >= 3 ? n.getFullYear() : n.getFullYear() - 1; }
+function rptCmpTodayYmd() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+
+// Amount display — same scaling helper as Consolidation (rptConsFmtScaled).
+function rptCmpAmt(n) {
+    if (Math.abs(Number(n) || 0) < 0.005) return '-';
+    var realComma = (typeof getUnitConfig === 'function' && typeof getDisplayUnit === 'function') ? getUnitConfig(getDisplayUnit()).comma : 'indian';
+    if (rptCmpUnitMode === 'full') return rptConsFmtScaled(n, 1, realComma);
+    if (rptCmpUnitMode === 'millions') return rptConsFmtScaled(n, 1000000, 'international');
+    var cfg = (typeof getUnitConfig === 'function' && typeof getDisplayUnit === 'function') ? getUnitConfig(getDisplayUnit()) : { divisor: 1000, comma: 'international' };
+    return rptConsFmtScaled(n, cfg.divisor, cfg.comma);
+}
+function rptCmpUnitLabel() {
+    return rptCmpUnitMode === 'full' ? 'full ₹' : rptCmpUnitMode === 'millions' ? '₹ Millions'
+        : (typeof getRealUnitDescription === 'function' ? getRealUnitDescription() : "₹ '000");
+}
+function rptCmpCycleUnit() {
+    var order = ['settings', 'millions', 'full'];
+    rptCmpUnitMode = order[(order.indexOf(rptCmpUnitMode) + 1) % order.length];
+    rptCmpSavePrefs();
+    rptRenderComp();
+    if (typeof showAlert === 'function') showAlert('Showing ' + rptCmpUnitLabel() + ' · F4 to toggle', 'info', 2000);
+}
+// F4 while the Composition tab is active (called from rptConsHandleF4, which the
+// global F4 handler in wms-shared.js already defers to).
+function rptCmpHandleF4() {
+    var tab = document.getElementById('rpt-comp');
+    if (!tab || !tab.classList.contains('active') || !document.getElementById('rptCmpBody')) return false;
+    rptCmpCycleUnit();
+    return true;
+}
+
+// Same filter semantics as rptFilterTransactions (Portfolio), on the Composition selections.
+function rptCmpFilterTransactions(txns) {
+    var f = txns;
+    if (rptCmpSelectedInvestorIds.length > 0) f = f.filter(function (t) { return rptCmpSelectedInvestorIds.indexOf(t.investorId) >= 0; });
+    if (rptCmpSelectedBrokerIds.length > 0) f = f.filter(function (t) { return t.brokerId && rptCmpSelectedBrokerIds.indexOf(t.brokerId) >= 0; });
+    if (rptCmpSelectedTagNames.length > 0) {
+        if (rptCmpTagFilterLogic === 'AND') f = f.filter(function (t) { return rptCmpSelectedTagNames.every(function (tag) { return t.tags.indexOf(tag) >= 0; }); });
+        else f = f.filter(function (t) { return t.tags.some(function (tag) { return rptCmpSelectedTagNames.indexOf(tag) >= 0; }); });
+    }
+    return f;
+}
+
+// Fixed columns for the FY: Opening (31-Mar of FY start) + Q1..Q4 quarter-ends.
+function rptCmpColumns(fyYear) {
+    var today = rptCmpTodayYmd();
+    var qEnds = rptConsQuarterEnds(fyYear + '-04-01');
+    var qStarts = [fyYear + '-04-01', fyYear + '-07-01', fyYear + '-10-01', (fyYear + 1) + '-01-01'];
+    var cols = [{ key: 'op', label: 'Opening', sub: rptCmpFmtD(fyYear + '-03-31'), asOf: fyYear + '-03-31', future: false }];
+    qEnds.forEach(function (qe, i) {
+        var future = qStarts[i] > today;
+        var current = !future && qe >= today;
+        cols.push({ key: 'q' + (i + 1), label: 'Q' + (i + 1), sub: current ? 'to date' : rptCmpFmtD(qe), asOf: qe, future: future });
+    });
+    return cols;
+}
+function rptCmpFmtD(ymd) { return (typeof formatDate === 'function') ? formatDate(ymd) : ymd; }
+
+// Book + market by asset class as of `asOf` — the Portfolio computation with trades
+// cut at asOf; completed months priced at the '1M' close (Consolidation rule).
+function rptCmpSnapshot(txnsAll, asOf) {
+    var ym = String(asOf).slice(0, 7);
+    var useLive = ym >= new Date().toISOString().slice(0, 7);
+    var txns = txnsAll.filter(function (t) { return (t.date || '') <= asOf; });
+    var out = { byClass: {}, book: 0, mkt: 0, count: 0 };
+    if (!txns.length) return out;
+    var fifo = rptFifoEngine(txns);
+    Object.keys(fifo.holdings).forEach(function (k) {
+        var h = fifo.holdings[k];
+        if (h.quantity === 0) return;
+        var px = useLive ? rptGetPrice(h) : rptHistPriceAsOf(h, ym);
+        if (px == null) px = rptGetPrice(h);
+        var cls = h.assetClass || 'Other';
+        var c = out.byClass[cls] || (out.byClass[cls] = { book: 0, mkt: 0 });
+        var b = h.totalCost, m = h.quantity * px;
+        c.book += b; c.mkt += m; out.book += b; out.mkt += m; out.count++;
+    });
+    return out;
+}
+
+function rptRenderComp() {
+    var body = document.getElementById('rptCmpBody');
+    if (!body) return;
+    var unitEl = document.getElementById('rptCmpUnit'); if (unitEl) unitEl.textContent = 'all amounts in ' + rptCmpUnitLabel();
+    var mc = document.getElementById('rptCmpMtmChk'); if (mc) mc.checked = rptCmpShowMtm;
+
+    var fyYear = (rptCmpFyStartYear != null) ? rptCmpFyStartYear : rptCmpCurrentFyYear();
+    var cols = rptCmpColumns(fyYear);
+    var base = rptCmpFilterTransactions(rptTransactions).filter(function (t) { return t.securityType !== 'NFO' && t.securityType !== 'MCX'; });
+    var snaps = cols.map(function (c) { return c.future ? null : rptCmpSnapshot(base, c.asOf); });
+
+    var present = {};
+    snaps.forEach(function (s) { if (s) Object.keys(s.byClass).forEach(function (k) { present[k] = true; }); });
+    var classes = rptOrderedGroups(present);
+    if (!classes.length) {
+        body.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af;">No holdings to display</div>';
+        document.getElementById('rpt-cmp-summary').innerHTML = '';
+        return;
+    }
+
+    function pct(n, d) { return d ? formatPercent(n / Math.abs(d) * 100) : '-'; }
+    function pairCells(b, m, bt, mt, fut) {
+        if (fut) return '<td class="rpt-cmp-q rpt-cmp-fut">–</td><td class="rpt-cmp-fut">–</td>';
+        return '<td class="rpt-cmp-q">' + rptCmpAmt(b) + '<span class="number-sub">' + pct(b, bt) + '</span></td>' +
+               '<td>' + rptCmpAmt(m) + '<span class="number-sub">' + pct(m, mt) + '</span></td>';
+    }
+    function mtmCells(b, m, fut) {
+        if (fut) return '<td class="rpt-cmp-q"></td><td></td>';
+        var x = m - b;
+        return '<td class="rpt-cmp-q"></td><td class="' + getAmountClass(x) + '">' + rptCmpAmt(x) +
+               '<span class="number-sub ' + getAmountClass(x) + '">' + (Math.abs(x) >= 0.005 && b ? formatPercent(x / Math.abs(b) * 100) : '') + '</span></td>';
+    }
+
+    var html = '<table class="rpt-cmp-table"><colgroup><col style="width:180px">';
+    cols.forEach(function () { html += '<col><col>'; });
+    html += '</colgroup><thead><tr><th class="rpt-cmp-c-name"></th>';
+    cols.forEach(function (c) { html += '<th colspan="2" class="rpt-cmp-q">' + c.label + ' <span style="font-weight:400;color:#718096;">' + wmsEsc(c.sub) + '</span></th>'; });
+    html += '</tr><tr><th class="rpt-cmp-c-name">Category</th>';
+    cols.forEach(function () { html += '<th class="rpt-cmp-q">Book</th><th>Market</th>'; });
+    html += '</tr></thead><tbody>';
+
+    classes.forEach(function (cls) {
+        html += '<tr class="rpt-cmp-cat"><td class="rpt-cmp-c-name">' + wmsEsc(cls) + '</td>';
+        cols.forEach(function (c, i) {
+            var s = snaps[i], v = s && s.byClass[cls] ? s.byClass[cls] : { book: 0, mkt: 0 };
+            html += pairCells(v.book, v.mkt, s ? s.book : 0, s ? s.mkt : 0, c.future);
+        });
+        html += '</tr>';
+        if (rptCmpShowMtm) {
+            html += '<tr class="rpt-cmp-mtm"><td class="rpt-cmp-c-name">MTM</td>';
+            cols.forEach(function (c, i) {
+                var s = snaps[i], v = s && s.byClass[cls] ? s.byClass[cls] : { book: 0, mkt: 0 };
+                html += mtmCells(v.book, v.mkt, c.future);
+            });
+            html += '</tr>';
+        }
+    });
+    html += '<tr class="rpt-cmp-total"><td class="rpt-cmp-c-name">Total</td>';
+    cols.forEach(function (c, i) { var s = snaps[i]; html += pairCells(s ? s.book : 0, s ? s.mkt : 0, s ? s.book : 0, s ? s.mkt : 0, c.future); });
+    html += '</tr>';
+    if (rptCmpShowMtm) {
+        html += '<tr class="rpt-cmp-total rpt-cmp-mtm"><td class="rpt-cmp-c-name">MTM</td>';
+        cols.forEach(function (c, i) { var s = snaps[i]; html += mtmCells(s ? s.book : 0, s ? s.mkt : 0, c.future); });
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    body.innerHTML = html;
+
+    // Summary cards (bottom, Portfolio style): latest column vs Opening.
+    var last = -1; snaps.forEach(function (s, i) { if (s) last = i; });
+    var cur = snaps[last], op = snaps[0];
+    var mtm = cur.mkt - cur.book, mtmPct = cur.book ? mtm / Math.abs(cur.book) * 100 : 0;
+    var opMtmPct = op && op.book ? (op.mkt - op.book) / Math.abs(op.book) * 100 : 0;
+    var big = null;
+    classes.forEach(function (cls) {
+        var a = cur.mkt ? ((cur.byClass[cls] || { mkt: 0 }).mkt / cur.mkt * 100) : 0;
+        var b = op && op.mkt ? ((op.byClass[cls] || { mkt: 0 }).mkt / op.mkt * 100) : 0;
+        if (!big || Math.abs(a - b) > Math.abs(big.d)) big = { cls: cls, d: a - b };
+    });
+    var dBook = cur.book - (op ? op.book : 0);
+    var dMktPct = op && op.mkt ? (cur.mkt / op.mkt - 1) * 100 : 0;
+    var curLbl = cols[last].label + (cols[last].sub === 'to date' ? ' to date' : '');
+    document.getElementById('rpt-cmp-summary').innerHTML =
+        '<div class="summary-card"><div class="summary-label">Book Value · ' + curLbl + '</div><div class="summary-value">' + rptCmpAmt(cur.book) + '</div>' +
+            '<div class="summary-percent ' + getAmountClass(dBook) + '">' + rptCmpAmt(dBook) + ' since opening</div></div>' +
+        '<div class="summary-card"><div class="summary-label">Market Value · ' + curLbl + '</div><div class="summary-value">' + rptCmpAmt(cur.mkt) + '</div>' +
+            '<div class="summary-percent ' + getAmountClass(dMktPct) + '">' + formatPercent(dMktPct) + ' since opening</div></div>' +
+        '<div class="summary-card ' + getAmountClass(mtm) + '"><div class="summary-label">MTM (unrealised)</div><div class="summary-value">' + rptCmpAmt(mtm) + '</div>' +
+            '<div class="summary-percent">' + formatPercent(mtmPct) + ' of book · opening ' + formatPercent(opMtmPct) + '</div></div>' +
+        '<div class="summary-card"><div class="summary-label">Biggest Mix Shift (market)</div><div class="summary-value">' + wmsEsc(big ? big.cls : '-') + '</div>' +
+            '<div class="summary-percent ' + getAmountClass(big ? big.d : 0) + '">' + (big ? ((big.d >= 0 ? '+' : '') + big.d.toFixed(1) + ' pts since opening') : '') + '</div></div>';
+}
+
+var rptCmpVM = wmsViewManager({
+    module: 'reports_composition',
+    label: 'Rpt Composition',
+    ids: { viewTabs: 'rpt-cmp-view-tabs', moreList: 'rpt-cmp-more-list', moreDropdown: 'rpt-cmp-more-dropdown', updateBtn: 'rpt-cmp-update-view-btn' },
+    autoDefaultFirst: true,
+    getPills: function () {
+        return [{ pill: rptCmpInvPillFilter, type: 'investor' }, { pill: rptCmpBrkPillFilter, type: 'broker' }, { pill: rptCmpTagPillFilter, type: 'tag' }];
+    },
+    getFilters: function () {
+        return { investorIds: rptCmpSelectedInvestorIds.slice(), brokerIds: rptCmpSelectedBrokerIds.slice(), tagNames: rptCmpSelectedTagNames.slice(), tagLogic: rptCmpTagFilterLogic };
+    },
+    applyFilters: function (f) {
+        rptCmpSelectedInvestorIds.length = 0; Array.prototype.push.apply(rptCmpSelectedInvestorIds, f.investorIds || []);
+        rptCmpSelectedBrokerIds.length = 0; Array.prototype.push.apply(rptCmpSelectedBrokerIds, f.brokerIds || []);
+        rptCmpSelectedTagNames.length = 0; Array.prototype.push.apply(rptCmpSelectedTagNames, f.tagNames || []);
+        rptCmpTagFilterLogic = f.tagLogic || 'OR';
+        [rptCmpInvPillFilter, rptCmpBrkPillFilter, rptCmpTagPillFilter].forEach(function (p) { if (p && p.syncStates) p.syncStates(); });
+        document.querySelectorAll('input[name="rpt-cmp-tag-logic"]').forEach(function (r) { r.checked = r.value === rptCmpTagFilterLogic; });
+    },
+    onRefresh: function () { rptRenderComp(); }
+});
+
+function rptInitCmpFilters() {
+    var invContainer = document.getElementById('rpt-cmp-filter-investor');
+    if (invContainer) {
+        rptCmpInvPillFilter = wmsPillSearch(invContainer, {
+            label: 'Investor', placeholder: 'Search investors...',
+            items: rptInvestors.map(function (inv) { return { id: String(inv.id), label: inv.short_name || inv.name, searchText: (inv.name || '') + ' ' + (inv.short_name || '') }; }),
+            selectedIds: rptCmpSelectedInvestorIds, onChange: rptRenderComp
+        });
+    }
+    var brkContainer = document.getElementById('rpt-cmp-filter-broker');
+    if (brkContainer) {
+        rptCmpBrkPillFilter = wmsPillSearch(brkContainer, {
+            label: 'Broker', placeholder: 'Search brokers...',
+            items: rptBrokers.map(function (b) { return { id: String(b.id), label: b.broker_code || b.name, searchText: (b.name || '') + ' ' + (b.broker_code || '') }; }),
+            selectedIds: rptCmpSelectedBrokerIds, onChange: rptRenderComp
+        });
+    }
+    var tagContainer = document.getElementById('rpt-cmp-filter-tag');
+    if (tagContainer) {
+        var allTags = {};
+        rptTransactions.forEach(function (t) { if (t.tags) t.tags.forEach(function (tg) { allTags[tg] = true; }); });
+        var tagExtra = document.createElement('div');
+        tagExtra.className = 'tag-match-options';
+        tagExtra.innerHTML = '<span style="font-size:11px;color:#718096;">Match:</span>' +
+            '<label class="radio-label"><input type="radio" name="rpt-cmp-tag-logic" value="OR" checked> <span>Any</span></label>' +
+            '<label class="radio-label"><input type="radio" name="rpt-cmp-tag-logic" value="AND"> <span>All</span></label>';
+        rptCmpTagPillFilter = wmsPillSearch(tagContainer, {
+            label: 'Tag', placeholder: 'Search tags...',
+            items: Object.keys(allTags).sort().map(function (tag) { return { id: tag, label: tag, searchText: tag }; }),
+            selectedIds: rptCmpSelectedTagNames, onChange: rptRenderComp, headerExtra: tagExtra
+        });
+        tagExtra.addEventListener('change', function (e) {
+            if (e.target.name === 'rpt-cmp-tag-logic') { rptCmpTagFilterLogic = e.target.value; rptRenderComp(); }
+        });
+    }
+}
+
+function rptInitCmpFY() {
+    var sel = document.getElementById('rpt-cmp-fy-select');
+    if (!sel) return;
+    var years = {};
+    rptTransactions.forEach(function (t) { if (!t.date) return; var d = new Date(t.date); years[d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1] = true; });
+    var cur = rptCmpCurrentFyYear(); years[cur] = true;
+    var list = Object.keys(years).map(Number).sort(function (a, b) { return b - a; });
+    var chosen = (rptCmpFyStartYear != null && list.indexOf(rptCmpFyStartYear) >= 0) ? rptCmpFyStartYear : cur;
+    sel.innerHTML = list.map(function (y) { return '<option value="' + y + '"' + (y === chosen ? ' selected' : '') + '>FY ' + y + '-' + String(y + 1).slice(2) + '</option>'; }).join('');
+    sel.addEventListener('change', function () {
+        var y = Number(sel.value);
+        rptCmpFyStartYear = (y === rptCmpCurrentFyYear()) ? null : y;   // current FY stays "current" as years roll
+        rptCmpSavePrefs(); rptRenderComp();
+    });
+}
+
+function rptInitCmpViewBar() {
+    var newBtn = document.getElementById('rpt-cmp-new-view-btn');
+    if (newBtn) newBtn.addEventListener('click', function () { rptCmpVM.activeViewId = null; rptCmpVM.renderViewTabs(); rptCmpVM.updateViewButtons(); });
+    var moreBtn = document.getElementById('rpt-cmp-more-btn');
+    if (moreBtn) moreBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var dd = document.getElementById('rpt-cmp-more-dropdown'); dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+    });
+    var updateBtn = document.getElementById('rpt-cmp-update-view-btn');
+    if (updateBtn) updateBtn.addEventListener('click', function () { rptCmpVM.updateCurrentView(); });
+    var saveNewBtn = document.getElementById('rpt-cmp-save-new-btn');
+    var savePrompt = document.getElementById('rpt-cmp-save-prompt');
+    var savePromptName = document.getElementById('rpt-cmp-save-prompt-name');
+    if (saveNewBtn && savePrompt) {
+        var done = function (save) {
+            var name = savePromptName.value.trim();
+            if (save && name) rptCmpVM.saveCurrentView(name);
+            savePrompt.classList.remove('show'); saveNewBtn.style.display = '';
+        };
+        saveNewBtn.addEventListener('click', function () { savePrompt.classList.add('show'); saveNewBtn.style.display = 'none'; savePromptName.value = ''; savePromptName.focus(); });
+        document.getElementById('rpt-cmp-save-prompt-ok').addEventListener('click', function () { done(true); });
+        document.getElementById('rpt-cmp-save-prompt-cancel').addEventListener('click', function () { done(false); });
+        savePromptName.addEventListener('keydown', function (e) { if (e.key === 'Enter') done(true); else if (e.key === 'Escape') done(false); });
+    }
+    var filtersToggle = document.getElementById('rpt-cmp-filters-toggle');
+    var filtersDiv = document.getElementById('rptCmpFilters');
+    if (filtersToggle && filtersDiv) filtersToggle.addEventListener('click', function () {
+        var isHidden = filtersDiv.style.display === 'none';
+        filtersDiv.style.display = isHidden ? 'flex' : 'none';
+        filtersToggle.textContent = isHidden ? '▲' : '▼';
+    });
+    document.addEventListener('click', function (e) {
+        if (!e.target.closest('#rpt-cmp-more-btn') && !e.target.closest('#rpt-cmp-more-dropdown')) {
+            var mdd = document.getElementById('rpt-cmp-more-dropdown'); if (mdd) mdd.style.display = 'none';
+        }
+    });
+}
+
+function rptInitComp() {
+    rptCmpLoadPrefs();
+    rptInitCmpFilters();
+    rptInitCmpFY();
+    rptInitCmpViewBar();
+    var mc = document.getElementById('rptCmpMtmChk');
+    if (mc) { mc.checked = rptCmpShowMtm; mc.addEventListener('change', function () { rptCmpShowMtm = mc.checked; rptCmpSavePrefs(); rptRenderComp(); }); }
+    var un = document.getElementById('rptCmpUnit');
+    if (un) un.addEventListener('click', rptCmpCycleUnit);
 }
