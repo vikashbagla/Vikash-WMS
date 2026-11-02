@@ -358,13 +358,12 @@
 .rpt-cmp-controls { display:flex; align-items:center; gap:12px; }
 .rpt-cmp-unit { font-size:11px; color:#64748b; cursor:pointer; }
 .rpt-cmp-unit:hover { color:#667eea; }
-.rpt-cmp-table { width:100%; border-collapse:collapse; table-layout:auto; font-size:12px; }
+.rpt-cmp-table { width:100%; min-width:940px; border-collapse:collapse; table-layout:fixed; font-size:12px; }
 .rpt-cmp-table thead th { position:sticky; z-index:1; background:#edf2f7; color:#2d3748; font-weight:700; padding:6px 8px; white-space:nowrap; text-align:right; }
 .rpt-cmp-table thead tr:first-child th { top:0; text-align:center; border-bottom:1px solid #e2e8f0; }
 .rpt-cmp-table thead tr:last-child th { top:29px; font-weight:600; font-size:11px; color:#4a5568; border-bottom:1px solid #cbd5e0; }
-.rpt-cmp-table th.rpt-cmp-c-name, .rpt-cmp-table td.rpt-cmp-c-name { text-align:left; min-width:150px; }
-.rpt-cmp-table th:not(.rpt-cmp-c-name), .rpt-cmp-table td:not(.rpt-cmp-c-name) { min-width:84px; }
-.rpt-cmp-table .rpt-cmp-mtmpct { margin-left:6px; font-size:11px; }
+.rpt-cmp-table th.rpt-cmp-c-name, .rpt-cmp-table td.rpt-cmp-c-name { text-align:left; overflow:hidden; text-overflow:ellipsis; }
+.rpt-cmp-table td, .rpt-cmp-table th { overflow:hidden; text-overflow:ellipsis; }
 .rpt-cmp-table td { padding:6px 8px; text-align:right; vertical-align:top; white-space:nowrap; border-bottom:1px solid #f1f5f9; }
 .rpt-cmp-table .rpt-cmp-q { border-left:2px solid #e2e8f0; }
 .rpt-cmp-table .number-sub { display:block; color:#718096; font-size:11px; }
@@ -427,8 +426,9 @@
 
         <!-- Filters (pill-based, built by wmsPillSearch in reports.js) -->
         <div id="rptPortfolioFilters" style="flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid #e2e8f0;">
-            <div class="filters-grid" style="flex:1; grid-template-columns: repeat(3, 1fr);">
+            <div class="filters-grid" style="flex:1; grid-template-columns: repeat(4, 1fr);">
                 <div id="rpt-filter-investor"></div>
+                <div id="rpt-filter-trader"></div>
                 <div id="rpt-filter-broker"></div>
                 <div id="rpt-filter-tag"></div>
             </div>
@@ -514,8 +514,9 @@
             </div>
         </div>
         <div id="rptCmpFilters" style="flex-shrink:0; display:none; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid #e2e8f0;">
-            <div class="filters-grid" style="flex:1; grid-template-columns: repeat(3, 1fr);">
+            <div class="filters-grid" style="flex:1; grid-template-columns: repeat(4, 1fr);">
                 <div id="rpt-cmp-filter-investor"></div>
+                <div id="rpt-cmp-filter-trader"></div>
                 <div id="rpt-cmp-filter-broker"></div>
                 <div id="rpt-cmp-filter-tag"></div>
             </div>
