@@ -752,7 +752,7 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
         padding: 6px 4px 6px 8px;
         align-items: center;
     }
-    .logo-section h1 { font-size: 18px; }
+    .logo-section h1 { display: none; }   /* 2026-11-03 owner: 'WMS' title not needed on the phone */
     .mobile-unit-badge { display: inline-block !important; }
 
     /* Row 1 right: buttons + Fyers + Logout.
