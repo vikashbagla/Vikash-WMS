@@ -655,20 +655,32 @@
     /* Hide "Trading" title and "all amounts in ₹ '000" (moved to app header) */
     .trading-header-bar > div:first-child { display: none; }
 
-    /* Day P&L banner: take available width on the left, scroll if needed; hide
-       Portfolio block, compact sizing to match rest of screen */
+    /* Day P&L banner = SWIPE CARDS (2026-11-03, owner): Day's P&L · Portfolio · Leverage, one
+       card per swipe (scroll-snap, never stops half-way). The strip has equal 44px side margins
+       so the cards are centred on the SCREEN; the Trade icon sits in the right margin (below).
+       Each card is 100% of the strip; block separators hidden. */
+    .trading-header-bar { position: relative; }
     #trDayPLBanner {
         justify-content: flex-start;
-        flex: 1;
+        flex: 1 1 auto;
         min-width: 0;
-        gap: 8px;
+        gap: 0;
+        margin: 0 44px;
         overflow-x: auto;
+        scroll-snap-type: x mandatory;
+        overscroll-behavior-x: contain;
         -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
     }
     #trDayPLBanner::-webkit-scrollbar { display: none; }
     #trDayPLBanner > .tr-pl-block-sep { display: none; }
-    #trDayPLBanner > .tr-pl-block:last-child { display: none; }
+    #trDayPLBanner > .tr-pl-block {
+        flex: 0 0 100%;
+        min-width: 0;
+        scroll-snap-align: center;
+        scroll-snap-stop: always;
+    }
+    #trDayPLBanner > .tr-pl-block .tr-pl-block-cards { justify-content: center; }
     #trDayPLBanner .tr-pl-block-label { font-size: 8px; margin-bottom: 0; }
     #trDayPLBanner .tr-pl-block-cards { gap: 4px; }
     #trDayPLBanner .tr-pl-value { font-size: 11px; }
@@ -680,10 +692,14 @@
     /* Actions: collapse the two-row desktop layout back to a single row and
        keep ONLY Zero + Trade; hide "+ Others" and "⬇ Fyers" — no entry/
        maintenance or Fyers import on the phone */
+    /* Actions sit in the strip's right margin (absolute), so the cards stay centred */
     .trading-header-bar > div:last-child {
-        margin-left: auto;
-        flex-shrink: 0;
-        padding: 0 2px;
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        margin: 0;
+        padding: 0;
     }
     .trading-header-bar .tr-header-actions {
         flex-direction: row !important;
@@ -697,7 +713,13 @@
         font-size: 10px !important;
         padding: 3px 6px !important;
     }
-    .trading-header-bar #trAddTxnBtn { font-size: 10px !important; padding: 4px 8px !important; }
+    /* Trade = round ± icon on the phone (desktop keeps the 'Trade' text button) */
+    .trading-header-bar #trAddTxnBtn {
+        width: 32px !important; height: 32px; padding: 0 !important;
+        border-radius: 50%; font-size: 0 !important; line-height: 32px;
+        display: inline-flex; align-items: center; justify-content: center;
+    }
+    .trading-header-bar #trAddTxnBtn::before { content: '\00B1'; font-size: 20px; font-weight: 700; line-height: 1; }
 
     /* View tabs: only the tab strip scrolls horizontally — the BAR itself must
        stay overflow:visible so the ▾ More dropdown isn't clipped (it's an
