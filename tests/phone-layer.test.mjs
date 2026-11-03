@@ -18,6 +18,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const fails = [];
+// (5) pre-existing calc lines: see ALLOWED_CALC below
 const ok = (cond, msg) => { if (!cond) fails.push(msg); };
 const read = f => readFileSync(join(ROOT, f), 'utf8');
 const stripComments = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -77,25 +78,21 @@ for (const f of desktopFiles.filter(f => /\.(js|html)$/.test(f))) {
 }
 
 // 5. no NEW calculation lines in phone JS
-const ALLOWED_CALC = new Set([
-  "var pctOfStock = (h.totalCost && h.totalCost !== 0) ? (g.invested / Math.abs(h.totalCost)) * 100 : 0;",
-  "ordered.forEach(function(p) { totExp += p.totalOpenCost; totDay += p.totalDayPnl || 0; totReal += p.totalRealisedPnl; totUnreal += p.totalUnrealisedPnl; });",
-  "var oAvg = (repCg.openQty && repCg.openCost) ? trFmtRupee(repCg.openCost / Math.abs(repCg.openQty)) : '-';",
-  "var dPctS = (exposure > 0 && dPnl !== 0) ? formatPercent((dPnl / exposure) * 100) : '';",
-  "var nPctS = (exposure > 0 && net !== 0) ? formatPercent((net / exposure) * 100) : '';",
-  "var avg = (cg.openQty && cExp) ? trFmtRupee(cExp / cg.openQty) : '-';",
-  "var cDPctS = (cExp > 0 && cDay !== 0) ? formatPercent((cDay / cExp) * 100) : '';",
-  "var cNPctS = (cExp > 0 && cNet !== 0) ? formatPercent((cNet / cExp) * 100) : '';",
-]);
+// 2026-11-03: the 8 pre-existing calc lines were moved into shared helpers (trFnoTotals /
+// trFnoSymbolNums / trFnoGroupNums / trFnoPctOfExposure in trading-fno.js, pctOfStock in
+// trInvestorBreakdown). Nothing is allow-listed any more — keep it that way.
+const ALLOWED_CALC = new Set([]);
 const CALC = /\+=|-=|\*=|\/=|\.reduce\(|[\w)\]]\s[\/*]\s[\w(]/;
+// money addition/subtraction between two money-named values, e.g. `a.totalRealisedPnl + a.totalUnrealisedPnl`
+const MONEY_ADD = /\b[A-Za-z_$.]*(?:pnl|Pnl|PnL|PNL|cost|Cost|exp|Exp|real|Real|Unreal|unreal|invested|Invested|value|Value|amt|Amt|qty|Qty)[A-Za-z_$.]*\s*[+-]\s*[A-Za-z_$.]*(?:pnl|Pnl|PnL|PNL|cost|Cost|exp|Exp|real|Real|Unreal|unreal|invested|Invested|value|Value|amt|Amt|qty|Qty)[A-Za-z_$]*\b(?!\s*\()/;
 for (const f of phoneFiles.filter(f => f.endsWith('.js'))) {
   read(f).split('\n').forEach((ln, i) => {
     const t = ln.trim(); if (!t || t.startsWith('//') || t.startsWith('*')) return;
     const code = t.replace(/\/\/.*$/, '').replace(/'[^']*'/g, "''");
     if (/^dd\.style\./.test(code)) return;   // screen positioning, not money
-    if (CALC.test(code) && !ALLOWED_CALC.has(t)) fails.push(`5. ${f}:${i + 1}: calculation in phone code — move it to a shared helper the desktop also uses: ${t.slice(0, 110)}`);
+    if ((CALC.test(code) || MONEY_ADD.test(code)) && !ALLOWED_CALC.has(t)) fails.push(`5. ${f}:${i + 1}: calculation in phone code — move it to a shared helper the desktop also uses: ${t.slice(0, 110)}`);
   });
 }
 
 if (fails.length) { console.error('phone-layer: ' + fails.length + ' FAILURE(S)\n  ' + fails.join('\n  ')); process.exit(1); }
-console.log(`phone-layer: OK — ${phoneFiles.length} phone files, ${phoneFns.size} phone functions, ${desktopFiles.length} desktop files clean, ${ALLOWED_CALC.size} pre-existing calc lines allow-listed`);
+console.log(`phone-layer: OK — ${phoneFiles.length} phone files, ${phoneFns.size} phone functions, ${desktopFiles.length} desktop files clean, no calculations in phone files`);

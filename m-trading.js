@@ -299,7 +299,7 @@ function trRenderPortfolioBreakup(box, h, totalInvested, totalValue) {
 
         var detail = '';
         if (isOpen) {
-            var pctOfStock = (h.totalCost && h.totalCost !== 0) ? (g.invested / Math.abs(h.totalCost)) * 100 : 0;
+            var pctOfStock = g.pctOfStock;   // from shared trInvestorBreakdown
             var tagsHtml = (g.tags && g.tags.length > 0)
                 ? '<div class="trm-tags">' + g.tags.map(function(t) { return '<span class="tag-pill">' + wmsEsc(t) + '</span>'; }).join('') + '</div>'
                 : '';
@@ -401,9 +401,8 @@ function trFnoRenderMobile(positions) {
         return (a.underlying || '').localeCompare(b.underlying || '');
     });
 
-    var totExp = 0, totDay = 0, totReal = 0, totUnreal = 0;
-    ordered.forEach(function(p) { totExp += p.totalOpenCost; totDay += p.totalDayPnl || 0; totReal += p.totalRealisedPnl; totUnreal += p.totalUnrealisedPnl; });
-    var totNet = totReal + totUnreal;
+    var _tot = trFnoTotals(positions);   // shared with the desktop TOTAL row (trading-fno.js)
+    var totExp = _tot.exposure, totDay = _tot.day, totNet = _tot.net;
 
     // Single clean row that is BOTH the page totals AND the column headers
     var totRow =
@@ -415,12 +414,13 @@ function trFnoRenderMobile(positions) {
 
     var body = ordered.map(function(p) {
         var symOpen = !!trFnoExpandedSymbols[p.underlying];
-        var net = p.totalRealisedPnl + p.totalUnrealisedPnl;
+        var _sn = trFnoSymbolNums(p);   // shared with the desktop symbol row
+        var net = _sn.net;
 
         // 3-zone line 2 (mirrors Portfolio): Qty@Avg (left) · CMP day% (middle) ·
         // net P&L% of exposure (right). Values from the representative open
         // contract (prefer the open futures leg). Ticker/expiry → expanded detail.
-        var exposure = p.totalOpenCost;
+        var exposure = _sn.exposure;
         var repCg = (p.contractGroups || []).filter(function(cg) { return cg.isFuture && cg.openQty; })[0]
                  || (p.contractGroups || []).filter(function(cg) { return cg.openQty; })[0];
         // Symbol-level Qty/Avg = TOTAL across all open contracts (the per-contract
@@ -435,14 +435,16 @@ function trFnoRenderMobile(positions) {
             aL2 = trFnoQty(sQ) + ' <span class="trm-at">@</span> ' + trFmtRupee(p.futAvgCost) + ' &middot; ' + (repCg ? trFnoCgCmpDay(repCg) : '-');
         } else if (repCg) {
             var oQ = repCg.isShort ? -Math.abs(repCg.openQty) : Math.abs(repCg.openQty);
-            var oAvg = (repCg.openQty && repCg.openCost) ? trFmtRupee(repCg.openCost / Math.abs(repCg.openQty)) : '-';
+            var _rg = trFnoGroupNums(repCg);
+            var oAvg = (_rg.avgPrice !== null) ? trFmtRupee(_rg.avgPrice) : '-';
             aL2 = trFnoQty(oQ) + ' <span class="trm-at">@</span> ' + oAvg + ' &middot; ' + trFnoCgCmpDay(repCg);
         } else {
             aL2 = '<span style="color:#a0aec0;">Closed</span>';
         }
-        var dPnl = p.totalDayPnl || 0;
-        var dPctS = (exposure > 0 && dPnl !== 0) ? formatPercent((dPnl / exposure) * 100) : '';
-        var nPctS = (exposure > 0 && net !== 0) ? formatPercent((net / exposure) * 100) : '';
+        var dPnl = _sn.day;
+        var _dPct = trFnoPctOfExposure(dPnl, exposure), _nPct = trFnoPctOfExposure(net, exposure);
+        var dPctS = (_dPct !== null && dPnl !== 0) ? formatPercent(_dPct) : '';
+        var nPctS = (_nPct !== null && net !== 0) ? formatPercent(_nPct) : '';
 
         var grp =
             '<div class="trm-grp" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
@@ -461,13 +463,15 @@ function trFnoRenderMobile(positions) {
             contracts = p.contractGroups.map(function(cg, cgIdx) {
                 var key = p.underlying + '|' + cgIdx;
                 var cOpen = trFnoMobileContractKey === key;
-                var cReal = cg.totalPnl || 0, cUnreal = cg.unrealisedPnl || 0, cNet = cReal + cUnreal, cDay = cg.dayPnl || 0, cExp = cg.openCost || 0;
+                var _gn = trFnoGroupNums(cg);   // shared with the desktop contract row
+                var cReal = _gn.realised, cUnreal = _gn.unrealised, cNet = _gn.net, cDay = _gn.day, cExp = _gn.exposure;
                 var shortTag = cg.isShort ? ' <span style="color:#dc2626;font-size:10px;">(S)</span>' : '';
-                var avg = (cg.openQty && cExp) ? trFmtRupee(cExp / cg.openQty) : '-';
+                var avg = (_gn.avgPrice !== null) ? trFmtRupee(_gn.avgPrice) : '-';
                 var cSignedQty = cg.isShort ? -Math.abs(cg.openQty) : Math.abs(cg.openQty);
                 var caL2 = trFnoQty(cSignedQty) + ' <span class="trm-at">@</span> ' + avg + ' &middot; ' + trFnoCgCmpDay(cg);
-                var cDPctS = (cExp > 0 && cDay !== 0) ? formatPercent((cDay / cExp) * 100) : '';
-                var cNPctS = (cExp > 0 && cNet !== 0) ? formatPercent((cNet / cExp) * 100) : '';
+                var _cdPct = trFnoPctOfExposure(cDay, cExp), _cnPct = trFnoPctOfExposure(cNet, cExp);
+                var cDPctS = (_cdPct !== null && cDay !== 0) ? formatPercent(_cdPct) : '';
+                var cNPctS = (_cnPct !== null && cNet !== 0) ? formatPercent(_cnPct) : '';
 
                 var row =
                     '<div class="trm-row trm-sub' + (cOpen ? ' trm-open' : '') + '" data-fno-ckey="' + wmsEsc(key) + '">' +

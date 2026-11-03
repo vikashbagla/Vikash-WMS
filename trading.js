@@ -1881,9 +1881,11 @@ function trInvestorBreakdown(h, price, md) {
             var plPct = inv !== 0 ? (pl / Math.abs(inv)) * 100 : 0;
             var dayPL = g.txns ? wmsCalcStockDayPL(g.txns, md, null, {includeNfo:true}) : (md ? g.quantity * md.ch : null);
             var dayChp = md ? md.chp : null;
+            // pctOfStock: this investor's share of the holding's cost (phone breakup shows it).
+            var pctOfStock = (h.totalCost && h.totalCost !== 0) ? (inv / Math.abs(h.totalCost)) * 100 : 0;
             return { investorId: g.investorId, name: g.name, quantity: g.quantity, avgCost: g.avgCost,
                      invested: inv, value: val, pl: pl, plPct: plPct, dayPL: dayPL, dayChp: dayChp,
-                     tags: Object.keys(g.tags), txns: g.txns };
+                     pctOfStock: pctOfStock, tags: Object.keys(g.tags), txns: g.txns };
         });
 }
 
