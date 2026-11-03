@@ -498,7 +498,7 @@ body.wms-ph-nobnav .wms-bottom-nav { display: none !important; }
 .mau-bitem.active { color: #667eea; font-weight: 600; }
 .mau-bico { font-size: 20px; line-height: 1.2; }
 /* Full-screen sheet: book edit, strategy view, filters */
-.mau-sheet { position: fixed; inset: 0; z-index: 1050; background: #f7f8fb; display: flex; flex-direction: column; }
+.mau-sheet { position: fixed; inset: 0; z-index: 100000; background: #f7f8fb; display: flex; flex-direction: column; }
 .mau-sheet-head { background: #ffffff; display: flex; align-items: center; gap: 10px; padding: 12px; border-bottom: 1px solid #e2e8f0;
     padding-top: max(env(safe-area-inset-top, 12px), 12px); }
 .mau-back { font-size: 22px; line-height: 1; color: #667eea; background: none; border: none; padding: 2px 8px; }
@@ -521,3 +521,10 @@ body.wms-ph-nobnav .wms-bottom-nav { display: none !important; }
 .mau-sheet-book .au-at2-bsave { order: 2; }
 .mau-sheet-filter .mau-sheet-body > div > div > div:first-child { flex-wrap: wrap !important; gap: 16px 24px !important; }
 .mau-sheet-filter .radio-label { font-size: 14px; padding: 4px 0; }
+/* Auto Trading landing (MS007 block); the desktop strategy tabs are not shown on the phone */
+.automation-container > .automation-family-tabs { display: none !important; }
+body:not(.mau-ms007) .automation-container > .automation-family-body { display: none !important; }
+body.mau-ms007 .automation-container > .mau-landing,
+body.mau-ms007 .automation-container > .automation-header-bar { display: none !important; }
+.mau-back-inline { padding: 0 6px 0 0; font-size: 24px; }
+.mau-more { width: 100%; font-size: 12px; font-weight: 600; color: #4c51bf; background: #ffffff; border: 1px solid #c3dafe; border-radius: 10px; padding: 10px; }
