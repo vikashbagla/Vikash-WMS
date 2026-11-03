@@ -458,7 +458,7 @@ body.wms-ph-nobnav .wms-bottom-nav { display: none !important; }
 .mau-kpis2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .mau-kpis3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .mau-kpi { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 9px; min-width: 0; }
-.mau-kpi-l { font-size: 9px; color: #718096; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mau-kpi-l { font-size: 9px; color: #718096; font-weight: 600; line-height: 1.25; }
 .mau-kpi-small { font-weight: 400; font-size: 8.5px; }
 .mau-kpi-v { font-size: 14.5px; font-weight: 700; margin-top: 2px; }
 .mau-kpi-s { font-size: 9px; color: #718096; margin-top: 1px; }
@@ -519,4 +519,5 @@ body.wms-ph-nobnav .wms-bottom-nav { display: none !important; }
 .mau-sheet-book .au-at2-strat-actions .au-btn { font-size: 15px; padding: 12px; }
 .mau-sheet-book .au-at2-bcancel { order: 1; }
 .mau-sheet-book .au-at2-bsave { order: 2; }
-.mau-sheet-filter .mau-sheet-body > div { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; }
+.mau-sheet-filter .mau-sheet-body > div > div > div:first-child { flex-wrap: wrap !important; gap: 16px 24px !important; }
+.mau-sheet-filter .radio-label { font-size: 14px; padding: 4px 0; }

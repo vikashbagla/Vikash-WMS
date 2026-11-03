@@ -185,7 +185,7 @@
         return ['<div class="mau-body">',
             '<div class="mau-sec"><span>BOOKS</span></div>',
             books.join('') || '<div class="mau-empty">No books to show.</div>',
-            hiddenBooks ? '<div class="mau-note">' + esc(hiddenBooks) + ' book(s) are not shown, same as desktop.</div>' : '',
+            hiddenBooks ? '<div class="mau-note">' + esc(hiddenBooks.replace(/hidden$/, 'hidden books')) + ' are not shown, same as desktop.</div>' : '',
             '<div class="mau-sec mau-sec2"><span>STRATEGIES</span></div>',
             '<div class="mau-list">', strats.join('') || '<div class="mau-empty">No strategies.</div>', '</div>',
             '</div>'].join('');
