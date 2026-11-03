@@ -528,3 +528,8 @@ body.mau-ms007 .automation-container > .mau-landing,
 .automation-container > .automation-header-bar { display: none !important; }
 .mau-back-inline { padding: 0 6px 0 0; font-size: 24px; }
 .mau-more { width: 100%; font-size: 12px; font-weight: 600; color: #4c51bf; background: #ffffff; border: 1px solid #c3dafe; border-radius: 10px; padding: 10px; }
+/* Selected bottom-bar tab: a highlight pill behind the icon (emoji icons cannot change colour) — Trading and MS007 */
+.mau-bico, .wms-bottom-nav .bnav-item .bnav-icon { border-radius: 999px; padding: 2px 16px; transition: background 0.15s; }
+.mau-bitem.active .mau-bico, .wms-bottom-nav .bnav-item.active .bnav-icon { background: #dfe5ff; }
+.mau-bitem.active, .wms-bottom-nav .bnav-item.active { color: #4c51bf; font-weight: 700; }
+.wms-bottom-nav .bnav-item.active .bnav-label { font-weight: 700; }
