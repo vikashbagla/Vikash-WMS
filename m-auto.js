@@ -205,6 +205,24 @@
         }).join('') + '</nav>';
     }
 
+    // Strategy settings, view only (mock-up): one "label · value" line per desktop field, grouped
+    // as on desktop. Values are read from the desktop's own strategy card; nothing is editable.
+    function stratView(card) {
+        var box = document.createElement('div');
+        box.className = 'mau-sv';
+        box.innerHTML = qa('.au-at2-group', card).map(function (g) {
+            var rows = qa('.au-at2-field', g).map(function (f) {
+                var lab = q('label', f);
+                var name = lab ? lab.textContent.replace('🔒', '').trim() : '';
+                var inp = q('input', f), pill = q('.au-at2-pill.on', f);
+                var val = inp ? inp.value : (pill ? txt(pill) : '');
+                return '<div class="mau-sv-row"><span>' + esc(name) + '</span><b>' + (val === '' ? '—' : esc(val)) + '</b></div>';
+            }).join('');
+            return '<div class="mau-sec mau-sv-sec">' + esc(txt(q('.au-at2-group-label', g))) + '</div><div class="mau-list">' + rows + '</div>';
+        }).join('') + qa('.au-at2-unknown', card).map(function (u) { return u.outerHTML; }).join('');
+        return box;
+    }
+
     // ── Sheets (book edit, strategy view, filters) ─────────────────────────
     function openSheet(kind, node, id, title) {
         if (MAU.sheet || !node) return;
@@ -291,10 +309,9 @@
     // sheet is stale: close the sheet and show the fresh list.
     function sheetDone() {
         var s = MAU.sheet;
-        if (!s || s.kind === 'filter') return;
+        if (!s || s.kind !== 'book') return;
         var c = byId('au-at2-controls-content');
-        var key = s.kind === 'book' ? 'data-bid' : 'data-sid';
-        if (c && q('.au-at2-strat[' + key + '="' + s.id + '"]', c)) closeSheet(false);
+        if (c && q('.au-at2-strat[data-bid="' + s.id + '"]', c)) closeSheet(false);
     }
 
     // ── Render + wiring ────────────────────────────────────────────────────
@@ -337,7 +354,7 @@
             if (s) {
                 var warn = qa(':scope > .au-at2-strat-head .au-badge.warning', s).map(function (x) { return x.outerHTML; }).join(' ');
                 var on = badges(s).indexOf('enabled') >= 0;
-                openSheet('strat', s, sid, esc(txt(q('.au-at2-name', s)))
+                openSheet('strat', stratView(s), sid, esc(txt(q('.au-at2-name', s)))
                     + ' <span class="mau-pill ' + (on ? 'mau-on' : 'mau-off') + '">' + (on ? 'ENABLED' : 'DISABLED') + '</span> '
                     + warn + '<div class="mau-sheet-sub">view only</div>');
             }
