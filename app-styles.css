@@ -744,33 +744,41 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
         align-items: center;
     }
 
-    /* Row 1 left: WMS + ₹'000 */
+    /* Row 1 left: WMS + ₹'000 — natural width, never shrinks */
     .logo-section {
         order: 1;
-        flex: 1;
-        gap: 8px;
-        padding: 6px 12px;
+        flex: 0 0 auto;
+        gap: 5px;
+        padding: 6px 4px 6px 8px;
         align-items: center;
     }
     .logo-section h1 { font-size: 18px; }
     .mobile-unit-badge { display: inline-block !important; }
 
-    /* Row 1 right: Fyers + Refresh + Logout */
+    /* Row 1 right: buttons + Fyers + Logout.
+       2026-11-03: row 1 must NEVER wrap (owner). flex-basis 0 means the buttons always stay on the
+       logo's line (wrapping is decided on basis, not content); the row then takes the remaining width.
+       Buttons keep their size; only the Fyers label may shorten (…) on a very narrow phone. */
     .user-section {
         order: 2;
-        gap: 8px;
-        padding: 6px 12px;
+        flex: 1 1 0;
+        min-width: 0;
+        justify-content: flex-end;
+        flex-wrap: nowrap;
+        gap: 4px;
+        padding: 6px 8px 6px 0;
     }
+    .user-section > * { flex-shrink: 0; }
     .user-email { display: none; }
-    .fyers-indicator { margin-right: 0; min-width: auto; }
-    #fyers-status { font-size: 10px !important; }
+    .user-section > .fyers-indicator { margin-right: 0; min-width: 0; flex-shrink: 1; overflow: hidden; }
+    #fyers-status { font-size: 10px !important; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #fyers-refresh-time { display: none !important; }
     .btn-refresh-app {
-        padding: 4px 6px; font-size: 13px;
+        padding: 4px 5px; font-size: 13px;
         border: 1px solid #e2e8f0; border-radius: 6px;
     }
     .btn-logout {
-        padding: 4px 6px; font-size: 13px;
+        padding: 4px 5px; font-size: 13px;
         border: 1px solid #e2e8f0; border-radius: 6px;
     }
 
