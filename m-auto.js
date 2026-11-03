@@ -225,6 +225,46 @@
             var edit = q('.au-at2-bedit', node);
             if (edit) edit.click();                 // the desktop's own Edit: unlocks the same fields
             if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+            bookLayout(node);
+        }
+    }
+    // Phone layout of the desktop book card (mock-up): Enabled as its own block with a switch,
+    // the two sizing numbers side by side. Only the desktop's own fields are re-arranged inside the
+    // card, so the desktop Save reads exactly what it always reads.
+    function bookLayout(card) {
+        var pills = q('.au-at2-pills[data-col="enabled"]', card);
+        var field = pills && pills.closest('.au-at2-field');
+        var idGroup = field && field.closest('.au-at2-group');
+        if (field && idGroup) {
+            var g = document.createElement('div');
+            g.className = 'au-at2-group mau-group-enabled';
+            g.innerHTML = '<div class="au-at2-group-label">Enabled</div>'
+                + '<div class="mau-switchrow"><span class="mau-sw-label"></span>'
+                + '<button type="button" class="mau-switch" role="switch" aria-label="Enabled switch"><span></span></button></div>';
+            g.appendChild(field);
+            idGroup.parentNode.insertBefore(g, idGroup.nextSibling);
+            var sw = q('.mau-switchrow', g);
+            var sync = function () {
+                var on = !!q('.au-at2-pill.on[data-val="true"]', pills);
+                sw.classList.toggle('on', on);
+                q('.mau-sw-label', sw).textContent = on ? 'Enabled' : 'Disabled (paused)';
+                q('.mau-switch', sw).setAttribute('aria-checked', on ? 'true' : 'false');
+            };
+            q('.mau-switch', sw).addEventListener('click', function () {
+                var other = q('.au-at2-pill:not(.on)', pills);
+                if (other) other.click();            // the desktop's own enabled / disabled control
+                sync();
+            });
+            sync();
+        }
+        var ef = q('input[data-col="exposure_factor"]', card);
+        var grid = ef && ef.closest('.au-at2-grid');
+        if (grid) {
+            grid.classList.add('mau-grid2');
+            var note = document.createElement('div');
+            note.className = 'mau-sizenote';
+            note.textContent = '0.5 = half size. Lot cap = hard ceiling per signal.';
+            grid.parentNode.appendChild(note);
         }
     }
     function closeSheet(restore) {
