@@ -418,3 +418,22 @@
     .addTxn-footer { gap: 10px; }
     .addTxn-footer .btn-secondary, .addTxn-footer .btn-primary { flex: 1; padding: 11px; font-size: 13px; }
 }
+
+/* ---------------- Home screen (m-home.js, 2026-11-03) ---------------- */
+.mh-wrap { padding: 16px 10px 24px; display: flex; flex-direction: column; gap: 12px; }
+.mh-label { font-size: 11px; font-weight: 600; color: #718096; letter-spacing: 0.6px; text-transform: uppercase; padding-left: 2px; }
+.mh-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.mh-tile { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 18px 14px; min-height: 132px; box-sizing: border-box;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-align: left; font: inherit; color: #2d3748;
+    box-shadow: 0 1px 3px rgba(20, 30, 60, 0.06); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.mh-tile:active { background: #f6f8ff; border-color: #c3cdf5; }
+.mh-ico { font-size: 34px; line-height: 1; }
+.mh-name { font-size: 16px; font-weight: 700; color: #2d3748; }
+.mh-desc { font-size: 11px; color: #718096; line-height: 1.35; }
+.mh-soon { cursor: default; background: #f9fafc; }
+.mh-soon .mh-ico { opacity: 0.55; }
+.mh-soon .mh-name { color: #718096; }
+.mh-badge { font-size: 10.5px; font-weight: 600; color: #4a5568; background: #edf0f5; border-radius: 999px; padding: 2px 8px; }
+.logo-section h1 { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+/* Bottom bar (Portfolio · F&O · Watchlist · Txns) only inside Trading */
+body.wms-ph-nobnav .wms-bottom-nav { display: none !important; }
