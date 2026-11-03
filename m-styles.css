@@ -525,6 +525,6 @@ body.wms-ph-nobnav .wms-bottom-nav { display: none !important; }
 .automation-container > .automation-family-tabs { display: none !important; }
 body:not(.mau-ms007) .automation-container > .automation-family-body { display: none !important; }
 body.mau-ms007 .automation-container > .mau-landing,
-body.mau-ms007 .automation-container > .automation-header-bar { display: none !important; }
+.automation-container > .automation-header-bar { display: none !important; }
 .mau-back-inline { padding: 0 6px 0 0; font-size: 24px; }
 .mau-more { width: 100%; font-size: 12px; font-weight: 600; color: #4c51bf; background: #ffffff; border: 1px solid #c3dafe; border-radius: 10px; padding: 10px; }
