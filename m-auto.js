@@ -21,7 +21,7 @@
 // autoAt2Refresh) — no desktop file is edited for this.
 // ============================================================================
 (function () {
-    var MAU = { tab: 'live', sheet: null, timer: null };
+    var MAU = { tab: 'live', sheet: null, timer: null, allClosed: {} };
 
     function q(sel, root) { return (root || document).querySelector(sel); }
     function qa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -46,6 +46,7 @@
     function header() {
         var last = shortTs(txt(byId('au-at2-lastact')).replace(/^Last activity:\s*/, ''));
         return ['<div class="mau-head">',
+            '<button type="button" class="mau-back mau-back-inline" data-mau-act="leave" aria-label="Back to Auto Trading">‹</button>',
             '<span class="mau-title">MS007</span>',
             '<span class="mau-alert">', inner(byId('au-at2-alertbadge')), '</span>',
             '<span class="mau-flex"></span>',
@@ -109,7 +110,10 @@
         if (!table) return '<div class="mau-empty">' + inner(el) + '</div>';
         var h = headCells(table);
         if (h.length !== 11 || h[0] !== 'Status' || h[10].indexOf('Realised') !== 0) return fallback(el);
-        var rows = qa('tbody tr', table).map(function (tr) {
+        var trs = qa('tbody tr', table);
+        var all = !!MAU.allClosed[mode];
+        var shown = (all || trs.length <= 5) ? trs : trs.slice(0, 5);   // owner: last five, the rest on request
+        var rows = shown.map(function (tr) {
             var td = qa(':scope > td', tr);
             var ex = parts(td[4]), qty = parts(td[6]), pl = parts(td[10]);
             var status = txt(td[0]) === 'Closed' ? '' : ' ' + inner(td[0]);
@@ -122,7 +126,9 @@
                 '<span class="mau-inl">', pl.subs.join(''), '</span></div>',
                 '</div>'].join('');
         });
-        return '<div class="mau-list">' + rows.join('') + '</div>';
+        var more = trs.length <= 5 ? '' : '<button type="button" class="mau-more" data-mau-act="more">'
+            + (all ? 'Show last 5 only ▴' : 'Show all ' + trs.length + ' closed trades ▾') + '</button>';
+        return '<div class="mau-list">' + rows.join('') + '</div>' + more;
     }
 
     function dashboard(mode) {
@@ -272,6 +278,11 @@
             render();
             var root = byId('mau-root');
             if (root) root.scrollTop = 0;
+        } else if (t.getAttribute('data-mau-act') === 'more') {
+            MAU.allClosed[MAU.tab] = !MAU.allClosed[MAU.tab];
+            render();
+        } else if (t.getAttribute('data-mau-act') === 'leave') {
+            document.body.classList.remove('mau-ms007');
         } else if (t.getAttribute('data-mau-act') === 'refresh') {
             if (typeof autoAt2Refresh === 'function') autoAt2Refresh();
         } else if (t.getAttribute('data-mau-act') === 'filters') {
@@ -293,8 +304,30 @@
         }
     }
 
+    // Auto Trading on the phone opens on a landing with one block per strategy that has a
+    // phone design (MS007 only, for now). The desktop's strategy tabs are not shown on the phone.
+    function landing() {
+        var cont = q('.automation-container');
+        if (!cont || q(':scope > .mau-landing', cont)) return;
+        var l = document.createElement('div');
+        l.className = 'mau-landing';
+        l.innerHTML = '<div class="mh-wrap"><div class="mh-label">Strategies</div><div class="mh-grid">'
+            + '<button type="button" class="mh-tile" data-mau-open="ms007"><span class="mh-ico">🧪</span>'
+            + '<span class="mh-name">MS007</span><span class="mh-desc">Gold · Silver · live and paper</span></button>'
+            + '</div></div>';
+        var bar = q(':scope > .automation-header-bar', cont);
+        cont.insertBefore(l, bar ? bar.nextSibling : cont.firstChild);
+        l.addEventListener('click', function (e) {
+            if (!e.target.closest('[data-mau-open="ms007"]')) return;
+            document.body.classList.add('mau-ms007');
+            if (typeof autoSwitchFamily === 'function') autoSwitchFamily('at2');
+            schedule();
+        });
+    }
+
     // Attach to the MS007 panel once per mount (a forced module reload re-creates it).
     function attach() {
+        landing();
         var panel = byId('au-fam-at2');
         var scroll = panel && q(':scope > .fam-scroll', panel);
         if (!panel || !scroll) return;
@@ -313,7 +346,8 @@
 
     var _origLoadModule = window.loadModule;
     if (typeof _origLoadModule === 'function') {
-        window.loadModule = async function () {
+        window.loadModule = async function (moduleName) {
+            if (moduleName === 'automation') document.body.classList.remove('mau-ms007');   // always open on the landing
             var r = await _origLoadModule.apply(this, arguments);
             attach();
             return r;
