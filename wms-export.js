@@ -6,8 +6,8 @@
 // and styling are handled centrally so the look is identical across the app.
 //
 // Dependencies:
-//   - ExcelJS  (loaded via CDN in app.html)
-//   - jsPDF    (loaded via CDN in app.html — used only by wmsExportPdf)
+//   - ExcelJS  (loaded ON DEMAND on first export via window.wmsEnsureLib — app.html)
+//   - jsPDF    (loaded ON DEMAND on first PDF export via window.wmsEnsureLib — used only by wmsExportPdf)
 //   - utils.js (getDisplayUnit, getUnitConfig, formatWithCommas)
 //
 // Namespace: all public symbols start with "wmsExport" or "WMS_EXPORT_".
@@ -325,7 +325,13 @@ function wmsExColLetter(idx) {
 // Returns: triggers browser download of the .xlsx file.
 // ============================================================================
 
-function wmsExportExcel(config) {
+function wmsExportExcel(config, _libTried) {
+    if (typeof ExcelJS === 'undefined' && !_libTried && typeof window.wmsEnsureLib === 'function') {
+        // Not loaded at startup any more (startup-speed fix 2026-11-03) — load once, then export.
+        window.wmsEnsureLib('exceljs').then(function () { wmsExportExcel(config, true); },
+                                            function () { wmsExportExcel(config, true); });
+        return;
+    }
     if (typeof ExcelJS === 'undefined') {
         if (typeof showAlert === 'function') showAlert('ExcelJS library not loaded', 'error', 3000);
         console.error('wmsExportExcel: ExcelJS not available');
@@ -619,7 +625,14 @@ var WMS_PDF_HEADER_H    = 20;
 var WMS_PDF_TITLE_H     = 22;
 var WMS_PDF_PAD         = 5;
 
-function wmsExportPdf(config) {
+function wmsExportPdf(config, _libTried) {
+    if (typeof jspdf === 'undefined' && typeof jsPDF === 'undefined' && typeof window.jspdf === 'undefined'
+        && !_libTried && typeof window.wmsEnsureLib === 'function') {
+        // Not loaded at startup any more (startup-speed fix 2026-11-03) — load once, then export.
+        window.wmsEnsureLib('jspdf').then(function () { wmsExportPdf(config, true); },
+                                          function () { wmsExportPdf(config, true); });
+        return;
+    }
     if (typeof jspdf === 'undefined' && typeof jsPDF === 'undefined' && typeof window.jspdf === 'undefined') {
         if (typeof showAlert === 'function') showAlert('jsPDF library not loaded', 'error', 3000);
         console.error('wmsExportPdf: jsPDF not available');
