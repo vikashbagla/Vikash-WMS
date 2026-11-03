@@ -9,7 +9,7 @@
 //   • Desktop files hand data over with ONE guarded line each:
 //       trading.js     trRenderPortfolio → trRenderPortfolioMobile(...)
 //       trading-fno.js trFnoRender       → trFnoRenderMobile(positions)
-//       app.html       boot              → wmsPhoneLanding()
+//       app.html       boot              → wmsPhoneLanding()  (in m-home.js)
 // Moved verbatim from trading.js / trading-fno.js on 2026-11-03 (no logic change).
 // ============================================================================
 
@@ -19,19 +19,7 @@ var trMobileBreakupKey = null;     // phone: holding key currently drilled into 
 var trMobileBreakupInv = null;     // phone: investorId expanded within the breakup view
 var trFnoMobileContractKey = null; // phone: 'symbol|idx' of the contract row whose detail is expanded
 
-// ---- Phone landing (moved from app.html boot, D.13.5) ----
-// Phone (≤480px) is review-first: open Trading → Portfolio when granted.
-// Returns true when it handled the landing; app.html falls back to the last module otherwise.
-function wmsPhoneLanding() {
-    if (!(window.matchMedia('(max-width:480px)').matches && wmsHasModule('trading'))) return false;
-    Promise.resolve(loadModule('trading')).then(function() {
-        if (typeof trSwitchTab === 'function') trSwitchTab('tr-portfolio');
-        document.querySelectorAll('#wmsBottomNav .bnav-item').forEach(function(b) { b.classList.remove('active'); });
-        var pBtn = document.querySelector('#wmsBottomNav .bnav-item[data-subtab="tr-portfolio"]');
-        if (pBtn) pBtn.classList.add('active');
-    });
-    return true;
-}
+// Phone landing → m-home.js (Home screen, 2026-11-03).
 
 
 // Phone helper: format a per-share PRICE with a ₹ prefix (to distinguish prices
