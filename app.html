@@ -1058,14 +1058,10 @@
         if (lastModule === 'portfolio') lastModule = 'reports'; // migrate old preference
         if (wmsAllowed.indexOf(lastModule) === -1) lastModule = wmsAllowed[0];
 
-        // Phone (≤480px) is review-first: open Trading → Portfolio when granted; else the default.
-        if (window.matchMedia('(max-width:480px)').matches && wmsHasModule('trading')) {
-            Promise.resolve(loadModule('trading')).then(function() {
-                if (typeof trSwitchTab === 'function') trSwitchTab('tr-portfolio');
-                document.querySelectorAll('#wmsBottomNav .bnav-item').forEach(function(b) { b.classList.remove('active'); });
-                var pBtn = document.querySelector('#wmsBottomNav .bnav-item[data-subtab="tr-portfolio"]');
-                if (pBtn) pBtn.classList.add('active');
-            });
+        // Phone landing (open Trading → Portfolio) lives in the phone layer (m-trading.js, D.13.5);
+        // it returns true when it handled the landing. Desktop never loads it → last-module behaviour.
+        if (typeof wmsPhoneLanding === 'function' && wmsPhoneLanding()) {
+            // handled by the phone layer
         } else {
             loadModule(lastModule);
             // Set initial bottom nav active state
@@ -1109,6 +1105,17 @@
     document.write(`<script src="wms-txn-modal.js?v=${_v}"><\/script>`);
     document.write(`<script src="cn-viewer.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-export.js?v=${_v}"><\/script>`);
+    // PHONE LAYER (Phone Layer Plan v1, 2026-11-03): phone-only styles + screens, loaded ONLY when the
+    // device's smaller screen side is <= 480 CSS px (a phone, either orientation). Desktop / iPad never
+    // download them. The stylesheet is written here, at the END of <body>, so it sits after every <style>
+    // the app adds to <head> and phone rules keep winning ties exactly as before. Rules: UI-STANDARDS §D.13.2.
+    // Test switch: sessionStorage 'wms_force_phone'='1' forces the phone layer in THIS tab only (lets a Mac
+    // test phone screens in a 390px frame, D.13.4). Never set by the app itself.
+    window.WMS_PHONE = (function () { try { if (sessionStorage.getItem('wms_force_phone') === '1') return true; return Math.min(screen.width, screen.height) <= 480; } catch (e) { return false; } })();
+    if (window.WMS_PHONE) {
+        document.write(`<link rel="stylesheet" href="m-styles.css?v=${_v}">`);
+        document.write(`<script src="m-trading.js?v=${_v}"><\/script>`);
+    }
     </script>
 </body>
 </html>

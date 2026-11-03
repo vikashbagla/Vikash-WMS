@@ -14,7 +14,7 @@ var trFnoExpiryHide = null;        // exclusion model (§D.12.23): live user ove
 var trFnoFlatView = false;        // true = flat (ungrouped) for snapshot
 var trFnoExpandedSymbols = {};    // { symbol: true } for expanded symbol rows
 var trFnoExpandedGroups = {};     // { 'symbol|idx': true } for expanded sub-group rows
-var trFnoMobileContractKey = null; // phone: 'symbol|idx' of the contract row whose detail is expanded
+// trFnoMobileContractKey (phone state) → m-trading.js (phone layer, 2026-11-03).
 var trFnoInitDone = false;
 var trFnoColCount = 12;
 var trFnoContractPricesFetched = false;
@@ -732,7 +732,7 @@ function trFnoRender() {
     });
 
     // Phone compact list — grouped by symbol, same positions data as the table
-    trFnoRenderMobile(positions);
+    if (typeof trFnoRenderMobile === 'function') trFnoRenderMobile(positions);
 
     // On first F&O render, rebuild symbol list (may include new F&O contracts)
     // and trigger a refresh. Subsequent refreshes handled by standard timer.
@@ -743,44 +743,8 @@ function trFnoRender() {
     }
 }
 
-// ============================================================================
-// PHONE COMPACT LIST (≤480px) — grouped by symbol → contract rows → tap-to-expand
-// Reuses the SAME positions objects the desktop table renders from. Symbol-level
-// expand reuses trFnoExpandedSymbols (so Collapse/Expand-all drives it too);
-// contract-detail expand uses trFnoMobileContractKey.
-// ============================================================================
-// Distinct investor + broker names for a contract group (resolved from the
-// leg transactions via shared trInvName / trBrkCode).
-function trFnoCgParties(cg) {
-    var ids = {};
-    (cg.rows || []).forEach(function(r) { if (r.buyTxnId) ids[r.buyTxnId] = 1; if (r.sellTxnId) ids[r.sellTxnId] = 1; });
-    var invs = {}, brks = {};
-    Object.keys(ids).forEach(function(id) {
-        var t = (typeof trTransactions !== 'undefined') ? trTransactions.find(function(x) { return x.id === id; }) : null;
-        if (t) { invs[trInvName(t.investor_id)] = 1; var bc = trBrkCode(t.broker_id); if (bc) brks[bc] = 1; }
-    });
-    return { inv: Object.keys(invs).join(', ') || '-', brk: Object.keys(brks).join(', ') || '-' };
-}
-
-// Signed qty display — short positions show as negative (in parentheses).
-function trFnoQty(q) {
-    return q < 0 ? '(' + formatQuantity(Math.abs(q)) + ')' : formatQuantity(q);
-}
-
-// CMP (₹) only for a contract group (from the open leg).
-function trFnoCgCmp(cg) {
-    var o = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
-    return o ? trFmtRupee(o.cmp) : '-';
-}
-
-// CMP (₹) + day% for a contract group (CMP from open leg, day% from live cache).
-function trFnoCgCmpDay(cg) {
-    var openRow = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
-    if (!openRow) return '-';
-    var chp = null;
-    if (cg.fullSymbol) { var fc = wmsLivePrices[cg.fullSymbol.replace(/^[A-Z]+:/, '')]; if (fc && fc.chp !== undefined && fc.chp !== null) chp = fc.chp; }
-    return trFmtRupee(openRow.cmp) + (chp != null ? ' <span class="' + getAmountClass(chp) + '">' + formatPercent(chp) + '</span>' : '');
-}
+// Phone F&O list (trFnoRenderMobile + its helpers) → m-trading.js (phone layer, 2026-11-03).
+// trFnoWireMore stays HERE: desktop trFnoInit uses it too.
 
 // Wire the ▾More dropdown toggle on the (live) F&O view-tabs button. Element-
 // guarded via dataset so repeated calls never stack listeners; repositions to
@@ -799,150 +763,6 @@ function trFnoWireMore() {
         if (willOpen && typeof trReposDropdownMobile === 'function') trReposDropdownMobile(dd, btn);
     });
 }
-
-function trFnoRenderMobile(positions) {
-    var box = document.getElementById('tr-fno-cards');
-    if (!box) return;
-    trFnoWireMore();
-    if (!positions || positions.length === 0) {
-        box.innerHTML = '<div class="trm-empty">No F&O positions found</div>';
-        return;
-    }
-
-    // Same ordering as grouped table: symbols with any open position first, then alpha
-    var ordered = positions.slice().sort(function(a, b) {
-        var ao = (a.contractGroups || []).some(function(cg) { return cg.openQty > 0; }) ? 0 : 1;
-        var bo = (b.contractGroups || []).some(function(cg) { return cg.openQty > 0; }) ? 0 : 1;
-        if (ao !== bo) return ao - bo;
-        return (a.underlying || '').localeCompare(b.underlying || '');
-    });
-
-    var totExp = 0, totDay = 0, totReal = 0, totUnreal = 0;
-    ordered.forEach(function(p) { totExp += p.totalOpenCost; totDay += p.totalDayPnl || 0; totReal += p.totalRealisedPnl; totUnreal += p.totalUnrealisedPnl; });
-    var totNet = totReal + totUnreal;
-
-    // Single clean row that is BOTH the page totals AND the column headers
-    var totRow =
-        '<div class="trm-fno-tot fc3">' +
-            '<div class="fc-a"><span class="trm-tot-k">Exposure</span> <span class="trm-tot-v">' + formatAmount(totExp) + '</span></div>' +
-            '<div class="fc-b"><div class="trm-tot-k">Day\'s P&L</div><div class="trm-tot-v ' + getAmountClass(totDay) + '">' + formatAmount(totDay) + '</div></div>' +
-            '<div class="fc-c"><div class="trm-tot-k">Total P&L</div><div class="trm-tot-v ' + getAmountClass(totNet) + '">' + formatAmount(totNet) + '</div></div>' +
-        '</div>';
-
-    var body = ordered.map(function(p) {
-        var symOpen = !!trFnoExpandedSymbols[p.underlying];
-        var net = p.totalRealisedPnl + p.totalUnrealisedPnl;
-
-        // 3-zone line 2 (mirrors Portfolio): Qty@Avg (left) · CMP day% (middle) ·
-        // net P&L% of exposure (right). Values from the representative open
-        // contract (prefer the open futures leg). Ticker/expiry → expanded detail.
-        var exposure = p.totalOpenCost;
-        var repCg = (p.contractGroups || []).filter(function(cg) { return cg.isFuture && cg.openQty; })[0]
-                 || (p.contractGroups || []).filter(function(cg) { return cg.openQty; })[0];
-        // Symbol-level Qty/Avg = TOTAL across all open contracts (the per-contract
-        // breakup is shown when expanded). CMP from the representative contract.
-        // Symbol Qty/Avg = FUTURES ONLY (options do not change a future's qty or
-        // avg — see trFnoCalcPositions "options distort qty"). Short = negative.
-        // CMP from the representative (futures-preferred) contract. Options-only
-        // symbols fall back to their representative option contract.
-        var aL2;
-        if (p.futOpenQty > 0) {
-            var sQ = p.futIsShort ? -p.futOpenQty : p.futOpenQty;
-            aL2 = trFnoQty(sQ) + ' <span class="trm-at">@</span> ' + trFmtRupee(p.futAvgCost) + ' &middot; ' + (repCg ? trFnoCgCmpDay(repCg) : '-');
-        } else if (repCg) {
-            var oQ = repCg.isShort ? -Math.abs(repCg.openQty) : Math.abs(repCg.openQty);
-            var oAvg = (repCg.openQty && repCg.openCost) ? trFmtRupee(repCg.openCost / Math.abs(repCg.openQty)) : '-';
-            aL2 = trFnoQty(oQ) + ' <span class="trm-at">@</span> ' + oAvg + ' &middot; ' + trFnoCgCmpDay(repCg);
-        } else {
-            aL2 = '<span style="color:#a0aec0;">Closed</span>';
-        }
-        var dPnl = p.totalDayPnl || 0;
-        var dPctS = (exposure > 0 && dPnl !== 0) ? formatPercent((dPnl / exposure) * 100) : '';
-        var nPctS = (exposure > 0 && net !== 0) ? formatPercent((net / exposure) * 100) : '';
-
-        var grp =
-            '<div class="trm-grp" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
-                '<div class="fc3">' +
-                    '<div class="fc-a">' +
-                        '<div class="fc-a-l1"><span class="fc-a-txt">' + wmsEsc(p.companyName || p.underlying) + '</span></div>' +
-                        '<div class="fc-a-l2">' + aL2 + '</div>' +
-                    '</div>' +
-                    '<div class="fc-b"><div class="fc-amt ' + getAmountClass(dPnl) + '">' + formatAmount(dPnl) + '</div><div class="fc-pct ' + getAmountClass(dPnl) + '">' + dPctS + '</div></div>' +
-                    '<div class="fc-c"><div class="fc-amt ' + getAmountClass(net) + '">' + formatAmount(net) + '</div><div class="fc-pct ' + getAmountClass(net) + '">' + nPctS + '</div></div>' +
-                '</div>' +
-            '</div>';
-
-        var contracts = '';
-        if (symOpen) {
-            contracts = p.contractGroups.map(function(cg, cgIdx) {
-                var key = p.underlying + '|' + cgIdx;
-                var cOpen = trFnoMobileContractKey === key;
-                var cReal = cg.totalPnl || 0, cUnreal = cg.unrealisedPnl || 0, cNet = cReal + cUnreal, cDay = cg.dayPnl || 0, cExp = cg.openCost || 0;
-                var shortTag = cg.isShort ? ' <span style="color:#dc2626;font-size:10px;">(S)</span>' : '';
-                var avg = (cg.openQty && cExp) ? trFmtRupee(cExp / cg.openQty) : '-';
-                var cSignedQty = cg.isShort ? -Math.abs(cg.openQty) : Math.abs(cg.openQty);
-                var caL2 = trFnoQty(cSignedQty) + ' <span class="trm-at">@</span> ' + avg + ' &middot; ' + trFnoCgCmpDay(cg);
-                var cDPctS = (cExp > 0 && cDay !== 0) ? formatPercent((cDay / cExp) * 100) : '';
-                var cNPctS = (cExp > 0 && cNet !== 0) ? formatPercent((cNet / cExp) * 100) : '';
-
-                var row =
-                    '<div class="trm-row trm-sub' + (cOpen ? ' trm-open' : '') + '" data-fno-ckey="' + wmsEsc(key) + '">' +
-                        '<div class="fc3">' +
-                            '<div class="fc-a">' +
-                                '<div class="fc-a-l1"><span class="fc-a-txt">' + wmsEsc(cg.contractLabel) + shortTag + '</span></div>' +
-                                '<div class="fc-a-l2">' + caL2 + '</div>' +
-                            '</div>' +
-                            '<div class="fc-b"><div class="fc-amt ' + getAmountClass(cDay) + '">' + formatAmount(cDay) + '</div><div class="fc-pct ' + getAmountClass(cDay) + '">' + cDPctS + '</div></div>' +
-                            '<div class="fc-c"><div class="fc-amt ' + getAmountClass(cNet) + '">' + formatAmount(cNet) + '</div><div class="fc-pct ' + getAmountClass(cNet) + '">' + cNPctS + '</div></div>' +
-                        '</div>' +
-                    '</div>';
-
-                var detail = '';
-                if (cOpen) {
-                    var openRow = (cg.rows || []).filter(function(r) { return r.type === 'open' && r.cmp > 0; })[0];
-                    var cmpStr = openRow ? trFmtRupee(openRow.cmp) : '-';
-                    var parties = trFnoCgParties(cg);
-                    detail =
-                        '<div class="trm-detail"><div class="trm-detail-grid">' +
-                            '<div class="trm-d-item"><span class="trm-d-k">Symbol</span><span class="trm-d-v">' + wmsEsc(p.underlying) + '</span></div>' +
-                            '<div class="trm-d-item"><span class="trm-d-k">Expiry</span><span class="trm-d-v">' + wmsEsc(cg.groupLabel || '-') + '</span></div>' +
-                            '<div class="trm-d-item"><span class="trm-d-k">Open qty</span><span class="trm-d-v">' + formatQuantity(cg.openQty) + '</span></div>' +
-                            '<div class="trm-d-item"><span class="trm-d-k">Avg</span><span class="trm-d-v">' + avg + '</span></div>' +
-                            '<div class="trm-d-item"><span class="trm-d-k">CMP</span><span class="trm-d-v">' + cmpStr + '</span></div>' +
-                            '<div class="trm-d-item"><span class="trm-d-k">Day P&L</span><span class="trm-d-v ' + getAmountClass(cDay) + '">' + formatAmount(cDay) + '</span></div>' +
-                            '<div class="trm-d-item"><span class="trm-d-k">Exposure</span><span class="trm-d-v">' + formatAmount(cExp) + '</span></div>' +
-                            '<div class="trm-d-item"><span class="trm-d-k">Realised</span><span class="trm-d-v ' + getAmountClass(cReal) + '">' + formatAmount(cReal) + '</span></div>' +
-                            '<div class="trm-d-item"><span class="trm-d-k">Unrealised</span><span class="trm-d-v ' + getAmountClass(cUnreal) + '">' + formatAmount(cUnreal) + '</span></div>' +
-                            '<div class="trm-d-item"><span class="trm-d-k">Net</span><span class="trm-d-v ' + getAmountClass(cNet) + '">' + formatAmount(cNet) + '</span></div>' +
-                            '<div class="trm-d-item trm-d-wide"><span class="trm-d-k">Investor</span><span class="trm-d-v">' + wmsEsc(parties.inv) + '</span></div>' +
-                            '<div class="trm-d-item trm-d-wide"><span class="trm-d-k">Broker</span><span class="trm-d-v">' + wmsEsc(parties.brk) + '</span></div>' +
-                        '</div></div>';
-                }
-                return row + detail;
-            }).join('');
-        }
-        return grp + contracts;
-    }).join('');
-
-    box.innerHTML = totRow + body;
-
-    box.querySelectorAll('.trm-grp[data-fno-symbol]').forEach(function(el) {
-        el.addEventListener('click', function() {
-            var sym = el.dataset.fnoSymbol;
-            if (trFnoExpandedSymbols[sym]) delete trFnoExpandedSymbols[sym]; else trFnoExpandedSymbols[sym] = true;
-            trFnoRender();
-        });
-    });
-    box.querySelectorAll('.trm-row[data-fno-ckey]').forEach(function(el) {
-        el.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var key = el.dataset.fnoCkey;
-            trFnoMobileContractKey = (trFnoMobileContractKey === key) ? null : key;
-            trFnoRender();
-        });
-    });
-}
-
 // ============================================================================
 // RENDERING: Total row helper (split into cells so borders show)
 // ============================================================================
