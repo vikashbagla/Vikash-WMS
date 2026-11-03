@@ -533,3 +533,20 @@ body.mau-ms007 .automation-container > .mau-landing,
 .mau-bitem.active .mau-bico, .wms-bottom-nav .bnav-item.active .bnav-icon { background: #dfe5ff; }
 .mau-bitem.active, .wms-bottom-nav .bnav-item.active { color: #4c51bf; font-weight: 700; }
 .wms-bottom-nav .bnav-item.active .bnav-label { font-weight: 700; }
+/* Edit book — mock-up layout (switch for Enabled, sizing side by side) */
+.mau-sheet-book .au-at2-field .wms-input { font-size: 15px; padding: 9px 10px; }
+.mau-sheet-book .au-at2-field-locked .au-at2-hint { display: none; }
+.mau-sheet-book .au-at2-locked { border: none !important; background: #f7f8fb !important; color: #4a5568 !important; font-size: 13px !important; }
+.mau-sheet-book .mau-group-enabled .au-at2-field > label,
+.mau-sheet-book .mau-group-enabled .au-at2-pills { display: none !important; }
+.mau-sheet-book .mau-group-enabled .au-at2-hint { margin-top: 6px; }
+.mau-switchrow { display: flex; align-items: center; justify-content: space-between; }
+.mau-sw-label { font-size: 15px; font-weight: 600; color: #b91c1c; }
+.mau-switchrow.on .mau-sw-label { color: #047857; }
+.mau-switch { width: 54px; height: 32px; border-radius: 999px; border: none; background: #cbd5e0; position: relative; padding: 0; flex-shrink: 0; }
+.mau-switch span { position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: #ffffff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: left 0.15s; }
+.mau-switchrow.on .mau-switch { background: #059669; }
+.mau-switchrow.on .mau-switch span { left: 25px; }
+.mau-sheet-book .au-at2-grid.mau-grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+.mau-sheet-book .mau-grid2 .au-at2-hint { display: none; }
+.mau-sizenote { font-size: 10.5px; color: #718096; margin-top: 6px; }
