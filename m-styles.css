@@ -550,3 +550,10 @@ body.mau-ms007 .automation-container > .mau-landing,
 .mau-sheet-book .au-at2-grid.mau-grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 .mau-sheet-book .mau-grid2 .au-at2-hint { display: none; }
 .mau-sizenote { font-size: 10.5px; color: #718096; margin-top: 6px; }
+/* Strategy settings, view only — label · value lines (mock-up) */
+.mau-sv-sec { margin: 12px 2px 6px; }
+.mau-sv-sec:first-child { margin-top: 0; }
+.mau-sv-row { display: flex; justify-content: space-between; gap: 12px; padding: 9px 10px; border-bottom: 1px solid #f0f2f6; font-size: 12.5px; }
+.mau-sv-row:last-child { border-bottom: none; }
+.mau-sv-row span { color: #718096; }
+.mau-sv-row b { text-align: right; color: #2d3748; }
