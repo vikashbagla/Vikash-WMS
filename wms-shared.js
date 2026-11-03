@@ -198,11 +198,22 @@ async function wmsLoadRefData() {
 // them on a checksum change without touching tags / the `ready` flag / the securities masters. (§A.4.4b)
 async function wmsReloadRefMastersOnly() {
     var headers = wmsHeaders();
-    var resp;
+
+    // Startup-speed fix (2026-11-03): the four masters are independent, so all four requests are
+    // SENT TOGETHER (one round-trip of wait instead of four in a row). Each response is still
+    // processed below in the original order 1→4, so the result — and the behaviour when one request
+    // fails (the error is thrown at that step, exactly as before) — is unchanged.
+    function _json(url) { return fetch(url, { headers: headers }).then(function (r) { return r.json(); }); }
+    var pInvestors = _json(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start,interest_terms,tax_rate,accounting_enabled,book_parent_id,post_fno,books_closed_upto&is_active=eq.true');
+    var pBrokers   = _json(SUPABASE_URL + '/rest/v1/brokers?select=id,name,broker_code&is_active=eq.true');
+    var pIba       = _json(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=investor_id,broker_id,brokerage_rates,charges_inclusive,interest_terms,margin_rate,tax_rate&is_active=eq.true');
+    var pRegCharges = _json(SUPABASE_URL + '/rest/v1/regulatory_charges_config?effective_to=is.null&select=*');
+    // Later steps are awaited only after earlier ones; mark their promises handled so an early
+    // failure doesn't also log an "unhandled rejection" for a later one.
+    [pBrokers, pIba, pRegCharges].forEach(function (p) { p.catch(function () {}); });
 
     // 1. Investors
-    resp = await fetch(SUPABASE_URL + '/rest/v1/investors?select=id,name,short_name,stt_accounting_method,financial_year_start,interest_terms,tax_rate,accounting_enabled,book_parent_id,post_fno,books_closed_upto&is_active=eq.true', { headers: headers });
-    var investors = await resp.json();
+    var investors = await pInvestors;
     wmsRefData.investors = investors;
     wmsRefData.investorObjMap = {};
     wmsRefData.investorCache = {};
@@ -213,8 +224,7 @@ async function wmsReloadRefMastersOnly() {
     });
 
     // 2. Brokers
-    resp = await fetch(SUPABASE_URL + '/rest/v1/brokers?select=id,name,broker_code&is_active=eq.true', { headers: headers });
-    var brokers = await resp.json();
+    var brokers = await pBrokers;
     wmsRefData.brokers = brokers;
     wmsRefData.brokerObjMap = {};
     wmsRefData.brokerCache = {};
@@ -225,8 +235,7 @@ async function wmsReloadRefMastersOnly() {
     });
 
     // 3. IBA rates (investor_broker_accounts with brokerage_rates + charges_inclusive + ledger fields)
-    resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=investor_id,broker_id,brokerage_rates,charges_inclusive,interest_terms,margin_rate,tax_rate&is_active=eq.true', { headers: headers });
-    var ibAccounts = await resp.json();
+    var ibAccounts = await pIba;
     wmsRefData.ibaRatesMap = {};
     ibAccounts.forEach(function(iba) {
         var key = iba.investor_id + '|' + iba.broker_id;
@@ -240,8 +249,7 @@ async function wmsReloadRefMastersOnly() {
     });
 
     // 4. Regulatory charges (active only — effective_to IS NULL)
-    resp = await fetch(SUPABASE_URL + '/rest/v1/regulatory_charges_config?effective_to=is.null&select=*', { headers: headers });
-    wmsRefData.regCharges = await resp.json();
+    wmsRefData.regCharges = await pRegCharges;
     wmsRefData.regChargesIndex = {};
     wmsRefData.regCharges.forEach(function(rc) {
         var key = rc.charge_type + '|' + rc.transaction_category + '|' + rc.transaction_type + '|' + rc.exchange;

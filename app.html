@@ -13,11 +13,9 @@
     <meta name="apple-mobile-web-app-title" content="WMS">
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script>if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
+    <!-- Excel / PDF libraries (SheetJS, ExcelJS, jsPDF, pdf.js) are NOT loaded at startup — ~2.4 MB
+         that only Import, Master Data, Accounting bank-import and the Statements export use. They load
+         on demand via window.wmsEnsureLib() (see the WMS_LIBS block below + WMS_MODULE_DEF libs). -->
     <link rel="stylesheet" id="app-styles-link" href="app-styles.css">
 </head>
 <body>
@@ -679,6 +677,39 @@
         });
     }
 
+    // On-demand third-party libraries (startup-speed fix, 2026-11-03). Same CDN URLs and versions as
+    // the former <head> tags. wmsEnsureLib(name) loads a library ONCE (single-flight promise) and
+    // resolves when its global exists. Modules that need one list it in WMS_MODULE_DEF.libs, so it is
+    // loaded before the module's own scripts run; wms-export.js self-loads ExcelJS / jsPDF on use.
+    const WMS_LIBS = {
+        xlsx:    { url: 'https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js', global: 'XLSX' },
+        exceljs: { url: 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js',     global: 'ExcelJS' },
+        jspdf:   { url: 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js',     global: 'jspdf' },
+        pdfjs:   { url: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',  global: 'pdfjsLib',
+                   after: function () { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } }
+    };
+    const _wmsLibLoading = {};
+    window.wmsEnsureLib = function wmsEnsureLib(name) {
+        const lib = WMS_LIBS[name];
+        if (!lib) return Promise.reject(new Error('Unknown library: ' + name));
+        if (window[lib.global]) return Promise.resolve();
+        if (_wmsLibLoading[name]) return _wmsLibLoading[name];
+        const p = new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = lib.url;   // versioned CDN URL — no ?v= (lets the browser cache it across opens)
+            script.onload = () => {
+                if (!window[lib.global]) { reject(new Error(name + ' loaded but ' + lib.global + ' is missing')); return; }
+                try { if (lib.after) lib.after(); } catch (e) { console.warn('[libs] ' + name + ' setup:', e); }
+                resolve();
+            };
+            script.onerror = () => reject(new Error('Could not load ' + name + ' from ' + lib.url));
+            document.head.appendChild(script);
+        });
+        _wmsLibLoading[name] = p;
+        p.catch(function () { if (_wmsLibLoading[name] === p) _wmsLibLoading[name] = null; });   // a failed load can be retried
+        return p;
+    };
+
     // ADR-001 Phase 4 — KEEP-MOUNTED module shell. Each module gets its own pane
     // that stays in the DOM; switching hides one and shows another. A module's HTML
     // is injected and its script parsed + init'd ONCE (first visit); a return visit
@@ -686,11 +717,11 @@
     // so there is no re-download, no re-parse, no re-wire on switch.
     const WMS_MODULE_DEF = {
         'reports':             { html: 'reports.html',            scripts: ['reports.js'],                                        init: 'initReports',           resume: 'wmsResumeReports' },
-        'master-data':         { html: 'master-data.html',        scripts: ['master-data.js'],                                    init: 'initMasterData' },
-        'import-transactions': { html: 'transaction-import.html', scripts: ['transaction-import.js', 'transaction-template.js'],  init: 'initTransactionImport' },
+        'master-data':         { html: 'master-data.html',        scripts: ['master-data.js'],                                    init: 'initMasterData',        libs: ['xlsx'] },
+        'import-transactions': { html: 'transaction-import.html', scripts: ['transaction-import.js', 'transaction-template.js'],  init: 'initTransactionImport', libs: ['xlsx', 'pdfjs'] },
         'trading':             { html: 'trading.html',            scripts: ['trading.js'],                                        init: 'initTrading',           resume: 'wmsResumeTrading' },
         'automation':          { html: 'automation.html',         scripts: ['automation.js'],                                     init: 'initAutomation',        resume: 'wmsResumeAutomation' },
-        'accounting':          { html: 'accounting.html',         scripts: ['accounting.js', 'accounting-bank-import.js'],        init: 'initAccounting',        resume: 'wmsResumeAccounting' },
+        'accounting':          { html: 'accounting.html',         scripts: ['accounting.js', 'accounting-bank-import.js'],        init: 'initAccounting',        resume: 'wmsResumeAccounting', libs: ['xlsx'] },
     };
     const _wmsModuleLoaded = {};
     const _wmsModuleLoading = {};   // name -> in-flight first-load Promise (single-flight guard)
@@ -705,9 +736,16 @@
         const p = (async () => {
             const pane = _wmsEnsurePane(moduleName);
             pane.innerHTML = '<div class="loading-module">Loading...</div>';
+            // Start this module's on-demand libraries alongside its HTML fetch. A library that fails to
+            // load does NOT block the module (same as the old <head> tags failing): the feature that
+            // needs it reports the error when used.
+            const libsP = Promise.all((def.libs || []).map(function (n) {
+                return window.wmsEnsureLib(n).catch(function (e) { console.warn('[libs] ' + moduleName + ':', e.message); });
+            }));
             const _cb = '?v=' + (window.__wmsV || (window.__wmsV = Date.now()));
             const html = await (await fetch(def.html + _cb)).text();
             injectModule(html, pane);
+            await libsP;
             for (const sc of def.scripts) await loadScript(sc);
             _wmsModuleLoaded[moduleName] = true;
             const initFn = window[def.init];
@@ -1047,8 +1085,20 @@
     </script>
     
     <script>
-    // Cache busting - auto version by date so deployments always load fresh files
-    const _v = Date.now();
+    // Asset version (startup-speed fix, 2026-11-03). The ?v= token decides whether the browser may
+    // reuse its cached copy of our files, so it must change on every deploy and ONLY on a deploy:
+    //  • PROD (GitHub Pages) stamps every file of a deploy with the same Last-Modified = deploy time,
+    //    which the browser exposes as document.lastModified → files re-download only after a release.
+    //  • DEV (Cloudflare Pages) sends no Last-Modified but serves every file "max-age=0,
+    //    must-revalidate" + ETag → a fixed token is safe: each open re-checks each file and re-downloads
+    //    only what changed (304 otherwise).
+    //  • Anywhere else (local file / unknown host) → Date.now(), the previous always-fresh behaviour.
+    const _v = (function () {
+        var h = location.hostname || '';
+        if (/\.github\.io$/.test(h)) { var t = Date.parse(document.lastModified); if (!isNaN(t)) return 'd' + Math.floor(t / 1000); }
+        if (/\.pages\.dev$/.test(h)) return 'cf';
+        return Date.now();
+    })();
     window.__wmsV = _v;   // stable per-page asset version — reused by loadScript / loadModule / trading sub-loaders so module assets are BROWSER-CACHED within a session (full reload only on hard refresh)
     document.getElementById('app-styles-link').href = `app-styles.css?v=${_v}`;
     document.write(`<script src="utils.js?v=${_v}"><\/script>`);
