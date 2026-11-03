@@ -311,7 +311,7 @@
         if (!cont || q(':scope > .mau-landing', cont)) return;
         var l = document.createElement('div');
         l.className = 'mau-landing';
-        l.innerHTML = '<div class="mh-wrap"><div class="mh-label">Strategies</div><div class="mh-grid">'
+        l.innerHTML = '<div class="mh-wrap"><div class="mh-label">Auto Trading · strategies</div><div class="mh-grid">'
             + '<button type="button" class="mh-tile" data-mau-open="ms007"><span class="mh-ico">🧪</span>'
             + '<span class="mh-name">MS007</span><span class="mh-desc">Gold · Silver · live and paper</span></button>'
             + '</div></div>';
