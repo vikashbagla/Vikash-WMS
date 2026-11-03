@@ -764,6 +764,40 @@ function trFnoWireMore() {
     });
 }
 // ============================================================================
+// SHARED F&O DISPLAY MATH — the ONE copy of every derived figure, used by BOTH
+// the desktop table (trFnoRenderGrouped / trFnoBuildTotalRow) and the phone list
+// (m-trading.js trFnoRenderMobile), so the two can never drift (2026-11-03,
+// UI-STANDARDS §D.13.2(d)). Formulas are the desktop's, unchanged.
+// ============================================================================
+// Page totals over a positions list (exposure = open positions only).
+function trFnoTotals(positions) {
+    var t = { exposure: 0, day: 0, realised: 0, unrealised: 0, net: 0 };
+    (positions || []).forEach(function(p) {
+        t.exposure += p.totalOpenCost;
+        t.day += p.totalDayPnl || 0;
+        t.realised += p.totalRealisedPnl;
+        t.unrealised += p.totalUnrealisedPnl;
+        t.net += p.totalRealisedPnl + p.totalUnrealisedPnl;
+    });
+    return t;
+}
+// One symbol's figures (from trFnoCalcPositions output).
+function trFnoSymbolNums(p) {
+    var r = p.totalRealisedPnl, u = p.totalUnrealisedPnl;
+    return { realised: r, unrealised: u, day: p.totalDayPnl || 0, net: r + u, exposure: p.totalOpenCost };
+}
+// One contract group's figures; avgPrice = open cost / open qty (null when not open).
+function trFnoGroupNums(cg) {
+    var r = cg.totalPnl, u = cg.unrealisedPnl || 0, exp = cg.openCost || 0;
+    return { realised: r, unrealised: u, day: cg.dayPnl || 0, net: r + u, exposure: exp,
+             avgPrice: (cg.openQty > 0 && exp > 0) ? exp / cg.openQty : null };
+}
+// An amount as % of exposure (null when there is no open exposure).
+function trFnoPctOfExposure(amount, exposure) {
+    return exposure > 0 ? (amount / exposure) * 100 : null;
+}
+
+// ============================================================================
 // RENDERING: Total row helper (split into cells so borders show)
 // ============================================================================
 
@@ -777,9 +811,9 @@ function trFnoBuildTotalRow(totExposure, totDayPnl, totRealised, totUnrealised, 
     // % of exposure for Day's P&L, Unreal P&L, Net P&L in total row
     var totDPctHtml = '', totUPctHtml = '', totNPctHtml = '';
     if (totExposure > 0) {
-        var dPct = (totDayPnl / totExposure) * 100;
-        var uPct = (totUnrealised / totExposure) * 100;
-        var nPct = (totNet / totExposure) * 100;
+        var dPct = trFnoPctOfExposure(totDayPnl, totExposure);
+        var uPct = trFnoPctOfExposure(totUnrealised, totExposure);
+        var nPct = trFnoPctOfExposure(totNet, totExposure);
         totDPctHtml = '<div style="font-size:11px;" class="' + ptDClass + '">(' + (dPct >= 0 ? '+' : '') + dPct.toFixed(2) + '%)</div>';
         totUPctHtml = '<div style="font-size:11px;" class="' + ptUClass + '">(' + (uPct >= 0 ? '+' : '') + uPct.toFixed(2) + '%)</div>';
         totNPctHtml = '<div style="font-size:11px;" class="' + ptNClass + '">(' + (nPct >= 0 ? '+' : '') + nPct.toFixed(2) + '%)</div>';
@@ -815,15 +849,8 @@ function trFnoRenderGrouped(positions) {
     });
 
     // Page totals — exposure = only open positions
-    var pageTotExposure = 0, pageTotDayPnl = 0, pageTotRealised = 0, pageTotUnrealised = 0, pageTotNet = 0;
-
-    positions.forEach(function(p) {
-        pageTotExposure += p.totalOpenCost;
-        pageTotDayPnl += p.totalDayPnl || 0;
-        pageTotRealised += p.totalRealisedPnl;
-        pageTotUnrealised += p.totalUnrealisedPnl;
-        pageTotNet += p.totalRealisedPnl + p.totalUnrealisedPnl;
-    });
+    var _tot = trFnoTotals(positions);
+    var pageTotExposure = _tot.exposure, pageTotDayPnl = _tot.day, pageTotRealised = _tot.realised, pageTotUnrealised = _tot.unrealised, pageTotNet = _tot.net;
 
     // Banner stats now computed from default view filters via trFnoBannerRefreshFromDefault()
 
@@ -833,11 +860,12 @@ function trFnoRenderGrouped(positions) {
     positions.forEach(function(p) {
         var isExpanded = trFnoExpandedSymbols[p.underlying];
 
-        var rPnl = p.totalRealisedPnl;
-        var uPnl = p.totalUnrealisedPnl;
-        var dPnl = p.totalDayPnl || 0;
-        var netPnl = rPnl + uPnl;
-        var exposure = p.totalOpenCost;
+        var _sn = trFnoSymbolNums(p);
+        var rPnl = _sn.realised;
+        var uPnl = _sn.unrealised;
+        var dPnl = _sn.day;
+        var netPnl = _sn.net;
+        var exposure = _sn.exposure;
         // No color class for zero (neutral '-' display)
         var dClass = dPnl === 0 ? '' : (dPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
         var rClass = rPnl === 0 ? '' : (rPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
@@ -885,8 +913,8 @@ function trFnoRenderGrouped(positions) {
         var uPctHtml = '';
         var nPctHtml = '';
         if (exposure > 0) {
-            var uPct = (uPnl / exposure) * 100;
-            var nPct = (netPnl / exposure) * 100;
+            var uPct = trFnoPctOfExposure(uPnl, exposure);
+            var nPct = trFnoPctOfExposure(netPnl, exposure);
             uPctHtml = '<div style="font-size:11px;" class="' + uClass + '">(' + (uPct >= 0 ? '+' : '') + uPct.toFixed(2) + '%)</div>';
             nPctHtml = '<div style="font-size:11px;" class="' + nClass + '">(' + (nPct >= 0 ? '+' : '') + nPct.toFixed(2) + '%)</div>';
         }
@@ -916,11 +944,12 @@ function trFnoRenderGrouped(positions) {
                 var shortLabel = cg.isShort ? ' <span style="color:#dc2626;font-size:10px;">(Short)</span>' : '';
 
                 // Sub-group P&L breakdown
-                var cgRealised = cg.totalPnl;
-                var cgUnrealised = cg.unrealisedPnl || 0;
-                var cgDayPnl = cg.dayPnl || 0;
-                var cgNet = cgRealised + cgUnrealised;
-                var cgExposure = cg.openCost || 0;
+                var _gn = trFnoGroupNums(cg);
+                var cgRealised = _gn.realised;
+                var cgUnrealised = _gn.unrealised;
+                var cgDayPnl = _gn.day;
+                var cgNet = _gn.net;
+                var cgExposure = _gn.exposure;
                 // No color class for zero (neutral '-' display)
                 var cgDClass = cgDayPnl === 0 ? '' : (cgDayPnl > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
                 var cgRClass = cgRealised === 0 ? '' : (cgRealised > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
@@ -928,7 +957,7 @@ function trFnoRenderGrouped(positions) {
                 var cgNClass = cgNet === 0 ? '' : (cgNet > 0 ? 'trM-pnl-positive' : 'trM-pnl-negative');
 
                 // Sub-group avg price
-                var cgAvgPrice = (cg.openQty > 0 && cgExposure > 0) ? formatPrice(cgExposure / cg.openQty, false) : '';
+                var cgAvgPrice = (_gn.avgPrice !== null) ? formatPrice(_gn.avgPrice, false) : '';
                 var cgBuyPrice = (!cg.isShort && cgAvgPrice) ? cgAvgPrice : '';
                 var cgSellPrice = (cg.isShort && cgAvgPrice) ? cgAvgPrice : '';
 
