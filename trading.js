@@ -141,6 +141,14 @@ var trPortfolioVM = wmsViewManager({
 // Stocks = Portfolio − F&O | F&O | Total = Stocks + F&O
 // Auto-updates on every render (including live price refreshes).
 
+function trSetTabTitleDayPL(val) {
+    try {
+        var num = (typeof formatAmountRaw === 'function') ? formatAmountRaw(val) : String(Math.round(val));
+        var dot = val > 0 ? '\uD83D\uDFE2' : val < 0 ? '\uD83D\uDD34' : '\u26AA';   // 🟢 / 🔴 / ⚪
+        document.title = (window.WMS_ENV === 'dev' ? 'DEV ' : '') + dot + ' ' + num;
+    } catch (e) { /* title is cosmetic — never break the banner */ }
+}
+
 function trUpdateDayPLBanner() {
     var banner = document.getElementById('trDayPLBanner');
     if (!banner) return;
@@ -162,6 +170,11 @@ function trUpdateDayPLBanner() {
     var sPL = (stocksPL != null) ? stocksPL : 0;
     var fPL = (fnoPL != null) ? fnoPL : 0;
     var dayTotal = sPL + fPL;
+
+    // Browser tab title = Day's P&L Total (owner 2026-11-05), like the Fyers tab shows
+    // a price. Tab text can't be coloured, so a 🟢 / 🔴 dot carries the colour; the
+    // number uses the banner's own format (display unit, brackets for losses).
+    trSetTabTitleDayPL(dayTotal);
 
     // Day P&L percentages
     var sPct = (stocksInv !== 0) ? (sPL / Math.abs(stocksInv)) * 100 : null;
