@@ -33,6 +33,7 @@ const mosl = http.createServer((req, res) => {
       { scripname: 'CRUDEOIL 19-OCT-2026', instrumentname: 'FUTCOM', scripcode: 1 },
     ] });
     if (req.url === '/rest/report/v3/getltpdata') return j({ status: 'SUCCESS', data: { ltp: 15100000, accesstoken: 'LEAK?' } });
+    if (req.url === '/rest/report/v3/getdpholding') return j({ status: 'SUCCESS', data: [{ scripname: 'LIQUIDCASE', dpid: 'DP-999', boid: 'BO-888', quantity: 35000, collateralquantity: 35000 }] });
     if (req.url === '/rest/report/v3/getreportmarginsummary') return j({ status: 'SUCCESS', data: [{ particulars: 'Total', amount: 1000 }] });
     return j({ status: 'SUCCESS', data: [] });
   });
@@ -102,6 +103,16 @@ const M3 = await import('./wms-mosl.js?x=3');
 const dl = await M3.runDailyLogin({ t: Date.now() - 50 });
 T('daily_login: logs in and verifies session (profile + margin)', dl.ok === true && dl.step === 'done' && dl.report.access_token_ok === true, JSON.stringify(dl.report.error ?? dl.step));
 T('daily_login: no secrets in report', !/AUTH-TOKEN-SECRET|ACCESS-SECRET|KEY-XYZ|SEC-XYZ|123456/.test(JSON.stringify(M3.scrub(dl.report))));
+// ---- funds detail (read-only) ----
+const beforeFd = moslSeen.length;
+const fd = await M3.runFundsDetail({});
+const fdPaths = moslSeen.slice(beforeFd).map((x) => x.path);
+T('funds_detail: completes ok', fd.ok === true && fd.step === 'done', JSON.stringify(fd.report.error ?? fd.step));
+T('funds_detail: calls margin summary, margin detail, DP holding', ['/rest/report/v3/getreportmarginsummary', '/rest/report/v3/getreportmargindetail', '/rest/report/v3/getdpholding'].every((p) => fdPaths.includes(p)));
+T('funds_detail: read-only (no /rest/trans, no order book)', !fdPaths.some((p) => p.startsWith('/rest/trans')));
+T('funds_detail: margin rows recorded', Array.isArray(fd.report.margin_summary.rows) && fd.report.margin_summary.rows.length === 1);
+T('funds_detail: account fields dropped', !/DP-999|BO-888/.test(JSON.stringify(fd.report)) && fd.report.dp_holding.rows[0]?.collateralquantity === 35000);
+T('funds_detail: no secrets in report', !/AUTH-TOKEN-SECRET|ACCESS-SECRET|KEY-XYZ|SEC-XYZ|123456/.test(JSON.stringify(M3.scrub(fd.report))));
 if (Date.now() < M3.ORDER_TEST_UNTIL) {
 // ---- order test mode ----
 const before2 = moslSeen.length;

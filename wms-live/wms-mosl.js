@@ -53,7 +53,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.5.0';
+const VERSION = 'wms-mosl/1.6.0';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -943,6 +943,52 @@ export async function runDailyLogin(trigger = {}) {
   }
 }
 
+// ── Funds detail (owner request 06-Nov-2026, Broker Order Modal plan) ───────
+// ONE-OFF, READ-ONLY: records what MOSL reports about margin + pledged holdings so
+// the plan can say exactly which figures the order modal can show. Three report
+// calls only (margin summary — all rows, margin detail, DP holding). Never places,
+// never stores the session. Account-identifying fields are dropped before recording.
+const ACCT_KEY = /dpid|boid|clientcode|clientid|account|pan|mobile|email/i;
+function dropAcct(o) {
+  if (o === null || typeof o !== 'object') return o;
+  if (Array.isArray(o)) return o.map(dropAcct);
+  const out = {};
+  for (const [k, v] of Object.entries(o)) { if (!ACCT_KEY.test(k)) out[k] = dropAcct(v); }
+  return out;
+}
+export async function runFundsDetail(trigger = {}) {
+  const t0 = Date.now();
+  const timings = {};
+  const report = { version: VERSION, mode: 'funds_detail', read_only: true };
+  let step = 'login'; let ctx = null;
+  const rowsOf = (r) => (Array.isArray(r.json?.data) ? r.json.data : r.json?.data ? [r.json.data] : []);
+  try {
+    ctx = await loginCtx(timings, report);
+    step = 'reads';
+    const ms = await moslPost(ctx, '/rest/report/v3/getreportmarginsummary', { clientcode: '' });
+    timings.margin_summary_ms = ms.ms;
+    report.margin_summary = { ...brief(ms), rows: dropAcct(rowsOf(ms).map((r) => ({ srno: r.srno, particulars: r.particulars, amount: r.amount }))) };
+    const md = await moslPost(ctx, '/rest/report/v3/getreportmargindetail', { clientcode: '' });
+    timings.margin_detail_ms = md.ms;
+    const mdRows = rowsOf(md);
+    report.margin_detail = { ...brief(md), count: mdRows.length, fields: mdRows[0] ? Object.keys(mdRows[0]).filter((k) => !ACCT_KEY.test(k)) : null, rows: dropAcct(mdRows.slice(0, 60)) };
+    const dp = await moslPost(ctx, '/rest/report/v3/getdpholding', { clientcode: '' });
+    timings.dp_holding_ms = dp.ms;
+    const dpRows = rowsOf(dp);
+    report.dp_holding = { ...brief(dp), count: dpRows.length, fields: dpRows[0] ? Object.keys(dpRows[0]).filter((k) => !ACCT_KEY.test(k)) : null, rows: dropAcct(dpRows.slice(0, 100)) };
+    const ok = ms.json?.status === 'SUCCESS';
+    step = ok ? 'done' : 'reads_failed';
+    timings.total_ms = Date.now() - t0;
+    return { ok, step, timings, report };
+  } catch (e) {
+    report.error = String(e?.message ?? e).slice(0, 300);
+    timings.total_ms = Date.now() - t0;
+    return { ok: false, step, timings, report };
+  } finally {
+    if (ctx) { ctx.agent.destroy(); ctx.authToken = ''; ctx.accessToken = ''; ctx.apiKey = ''; ctx.apiSecret = ''; }
+  }
+}
+
 let busy = false;
 let lastRecordMs = null;
 async function handleTrigger(payloadText) {
@@ -951,12 +997,12 @@ async function handleTrigger(payloadText) {
   let trigger = {};
   try { trigger = JSON.parse(payloadText || '{}') || {}; } catch { /* plain text payload */ }
   try {
-    const isOrderTest = ['order_test', 'overnight_place', 'order_status', 'cancel_tests', 'fill_test', 'ws_watch', 'daily_login'].includes(trigger.mode);
+    const isOrderTest = ['order_test', 'overnight_place', 'order_status', 'cancel_tests', 'fill_test', 'ws_watch', 'daily_login', 'funds_detail'].includes(trigger.mode);
     const wsMin = Math.min(10, Math.max(1, Number(trigger.minutes) || 5));
     const limit = trigger.mode === 'ws_watch' ? wsMin * 60_000 + 90_000 : isOrderTest ? 170_000 : RUN_TIMEOUT_MS;
     const result = await Promise.race([
       trigger.mode === 'order_test' ? runOrderTest(trigger) : trigger.mode === 'fill_test' ? runFillTest(trigger)
-        : trigger.mode === 'ws_watch' ? runWsWatch(trigger) : trigger.mode === 'daily_login' ? runDailyLogin(trigger)
+        : trigger.mode === 'ws_watch' ? runWsWatch(trigger) : trigger.mode === 'daily_login' ? runDailyLogin(trigger) : trigger.mode === 'funds_detail' ? runFundsDetail(trigger)
         : isOrderTest ? runOrderMode(trigger) : runProbe(trigger),
       new Promise((r) => setTimeout(() => r({ ok: false, step: 'timeout', timings: {}, report: { error: `run exceeded ${limit}ms` } }), limit)),
     ]);
