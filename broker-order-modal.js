@@ -78,8 +78,9 @@
       '.bom-rf{text-decoration:none;color:#2c7a7b;font-size:12px;margin-left:4px}',
       '.bom-kv.sub span:first-child{padding-left:10px;color:#4a5568}',
       '.bom-c3{display:grid;grid-template-columns:1fr auto auto;column-gap:12px;padding:2px 0;font-size:12.5px}',
-      '.bom-c3 span:nth-child(n+2){text-align:right;font-variant-numeric:tabular-nums;min-width:74px}',
-      '.bom-c3.hd span{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#a0aec0}',
+      '.bom-c3 span:nth-child(n+2){text-align:right;font-variant-numeric:tabular-nums;min-width:62px}',
+      '.bom-c3.hd{margin:2px 0 4px}',
+      '.bom-c3.hd span{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#718096}',
       '.bom-c3.tot{border-top:1px solid #e2e8f0;margin-top:4px;padding-top:5px;font-weight:700}',
       '.bom-c3.sp{margin-top:6px}',
       '.bom-c3.sub span:first-child{padding-left:10px;color:#4a5568}',
@@ -102,7 +103,7 @@
       '.bom-sym .wms-dd .wms-dd-item.nfo{color:#667eea}',
       '.bom-del{background:none;border:0;cursor:pointer;color:#a0aec0;font-size:15px}',
       '.bom-add{margin:8px 0 2px;background:none;border:0;color:#2c7a7b;font-weight:600;cursor:pointer;font:inherit;padding:0}',
-      '.bom-panel{display:grid;grid-template-columns:1.1fr 1fr 1.45fr;gap:12px;padding:12px 18px;border-top:1px solid #e2e8f0;background:#f7fafc}',
+      '.bom-panel{display:grid;grid-template-columns:1.25fr 1.15fr 1.1fr;gap:12px;padding:12px 18px;border-top:1px solid #e2e8f0;background:#f7fafc}',
       '.bom-box{background:#fff;border:1px solid #e2e8f0;border-radius:9px;padding:9px 11px;min-width:0}',
       '.bom-kv{display:flex;justify-content:space-between;gap:8px;padding:2px 0;font-size:12.5px}',
       '.bom-kv span:last-child{font-variant-numeric:tabular-nums;text-align:right}',
@@ -162,7 +163,7 @@
             '<div class="bom-box"><div class="bom-lbl">Goes to the broker</div><div id="bomOrders"></div></div>' +
             '<div class="bom-box"><div class="bom-lbl bom-lbl-row"><span>Balance &amp; margin <span id="bomUnit" style="text-transform:none;letter-spacing:0"></span>' +
               '<a href="#" class="bom-rf" id="bomRefresh" title="Read the balance and the prices again">↻</a></span><span class="bom-at" id="bomFundsAt"></span></div><div id="bomMargin"></div></div>' +
-            '<div class="bom-box"><div class="bom-lbl">Charges (estimate, ₹)</div><div id="bomCharges"></div></div>' +
+            '<div class="bom-box"><div id="bomCharges"></div></div>' +
           '</div>' +
           '<div class="bom-pw" id="bomPw">Order password: <input type="password" id="bomPwInput" autocomplete="off">' +
             '<button class="bom-btn go" id="bomSend">Send to broker</button><button class="bom-btn" id="bomPwCancel">Cancel</button>' +
@@ -174,7 +175,7 @@
       '</div>';
     document.body.appendChild(ov);
 
-    ov.addEventListener('mousedown', function (e) { if (e.target === ov) bomClose(); });
+    // Clicking outside does NOT close the modal (owner, 07-Nov) — only × / Close / Esc.
     document.getElementById('bomClose').addEventListener('click', bomClose);
     document.getElementById('bomCancel').addEventListener('click', bomClose);
     document.getElementById('bomAddRow').addEventListener('click', function () { var id = addRow(BOM.rows[BOM.rows.length - 1]); focusTrader(id); });
@@ -670,27 +671,30 @@
 
     // Charges — split Self (the account holder's own lines) | Traders, by units, exactly as booking
     // splits an order across its lines (bo_core splitMoney: each charge shared by units).
-    var keys = ['brokerage', 'stt', 'other', 'gst', 'total'];
+    var keys = ['brokerage', 'stt', 'other', 'total'];        // other = exchange · SEBI · stamp + GST
     var cs = {}, ct = {}, trd = {}, cUnknown = false, anyTrader = false;
     keys.forEach(function (k) { cs[k] = 0; ct[k] = 0; });
     p.orders.forEach(function (g) {
       var x = chargesFor(g); if (!x) { cUnknown = true; return; }
+      x.other = x.other + x.gst;
       var selfU = 0; g.lines.forEach(function (l) { if (l.trader_id === BOM.acct.investor_id) selfU += l.lots * g.lot_size; });
       if (selfU < g.units) anyTrader = true;
       keys.forEach(function (k) { var sh = Math.round(x[k] * selfU / g.units * 100) / 100; cs[k] += sh; ct[k] += x[k] - sh; });
       x.traders.forEach(function (t) { trd[t.id] = (trd[t.id] || 0) + t.amt; });
     });
-    var cv = function (v) { return cUnknown ? '<span class="bom-warn">?</span>' : rupees(v); };
+    // Plain amounts (2 decimals, no ₹ — the heading says ₹)
+    var n2 = function (v) { return (v == null || isNaN(v) || Math.abs(v) < 0.005) ? '-' : Math.abs(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); };
+    var cv = function (v) { return cUnknown ? '<span class="bom-warn">?</span>' : n2(v); };
     var row3 = function (label, a, b, cls) { return '<div class="bom-c3' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span><span>' + a + '</span><span>' + b + '</span></div>'; };
     var anyMcx = p.orders.some(function (g) { return g.exchange === 'MCX'; });
-    var lbl = { brokerage: 'Brokerage', stt: anyMcx ? 'STT / CTT' : 'STT', other: 'Exchange · SEBI · stamp', gst: 'GST', total: 'Total' };
-    document.getElementById('bomCharges').innerHTML = p.orders.length
-      ? row3('', 'Self', 'Traders', 'hd') +
-        keys.map(function (k) { return row3(lbl[k], cv(cs[k]), anyTrader ? cv(ct[k]) : '-', k === 'total' ? 'tot' : ''); }).join('') +
-        (Object.keys(trd).length ? row3('Trader charges', '', '', 'sp') +
-          Object.keys(trd).map(function (id) { return row3(esc(invName(id)), '', cv(trd[id]), 'sub'); }).join('') : '') +
-        (cUnknown ? '<div class="bom-note bom-warn">price needed for a market row</div>' : '')
-      : '<span class="bom-note">-</span>';
+    var lbl = { brokerage: 'Brokerage', stt: anyMcx ? 'STT / CTT' : 'STT', other: '<span title="Exchange, SEBI, stamp duty and GST">Other charges</span>', total: 'Total' };
+    document.getElementById('bomCharges').innerHTML =
+      row3('Charges (est., ₹)', 'Self', 'Traders', 'hd') +
+      (p.orders.length
+        ? keys.map(function (k) { return row3(lbl[k], cv(cs[k]), anyTrader ? cv(ct[k]) : '-', k === 'total' ? 'tot' : ''); }).join('') +
+          Object.keys(trd).map(function (id) { return row3(esc(invName(id)) + ' charges', '', cv(trd[id])); }).join('') +
+          (cUnknown ? '<div class="bom-note bom-warn">price needed for a market row</div>' : '')
+        : '<span class="bom-note">-</span>');
 
     placeBtn.disabled = !p.orders.length || p.problems.length > 0;
     placeBtn.textContent = p.orders.length ? 'Place ' + p.orders.length + (p.orders.length === 1 ? ' order' : ' orders') : 'Place';

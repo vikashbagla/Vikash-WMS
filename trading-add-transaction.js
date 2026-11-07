@@ -63,9 +63,8 @@ function initAddTxnModule() {
     // Modal close handlers
     document.getElementById('addTxnCloseBtn').addEventListener('click', closeAddTxnModal);
     document.getElementById('addTxnCancelBtn').addEventListener('click', closeAddTxnModal);
-    document.getElementById('addTxnOverlay').addEventListener('click', function(e) {
-        if (e.target === this) closeAddTxnModal();
-    });
+    // Clicking outside the modal does NOT close it (owner, 07-Nov-2026) — only × / Cancel / Esc,
+    // so a stray click never loses the rows being entered.
 
     // Save
     document.getElementById('addTxnSaveBtn').addEventListener('click', openAddTxnConfirmation);
