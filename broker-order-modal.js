@@ -62,7 +62,7 @@
     s.textContent = [
       '.bom-ov{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:3000;display:none;align-items:flex-start;justify-content:center;padding:4vh 16px;overflow:auto}',
       '.bom-ov.show{display:flex}',
-      '.bom-m{background:#fff;border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.25);width:min(1080px,100%);min-width:740px;font-size:13px;color:#1a202c;display:flex;flex-direction:column;max-height:92vh}',
+      '.bom-m{background:#fff;border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.25);width:min(1080px,100%);min-width:740px;font-size:13px;color:#1a202c;display:flex;flex-direction:column}',
       '.bom-h{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid #e2e8f0}',
       '.bom-h h3{margin:0;font-size:16px;display:flex;gap:10px;align-items:center}',
       '.bom-live{font-size:10.5px;font-weight:700;letter-spacing:.08em;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;padding:2px 8px;border-radius:999px}',
@@ -70,7 +70,7 @@
       '.bom-tabs{display:flex;gap:4px;padding:8px 18px 0}',
       '.bom-tab{border:1px solid #e2e8f0;border-bottom:0;background:#f7fafc;padding:6px 14px;border-radius:8px 8px 0 0;cursor:pointer;font:inherit;color:#4a5568}',
       '.bom-tab.on{background:#fff;color:#1a202c;font-weight:600}',
-      '.bom-b{padding:12px 18px;overflow:auto;border-top:1px solid #e2e8f0}',
+      '.bom-b{padding:12px 18px;border-top:1px solid #e2e8f0}',
       '.bom-lbl{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#718096;margin:2px 0 6px}',
       '.bom-accs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}',
       '.bom-acc{min-width:170px;padding:7px 12px;border-radius:8px;border:1.5px solid #cbd5e0;background:#fff;cursor:pointer;text-align:left;font:inherit}',
@@ -86,7 +86,9 @@
       '.bom-t input:disabled{background:#f7fafc;color:#a0aec0}',
       '.bom-sub{font-size:10.5px;color:#718096;margin-top:2px;white-space:nowrap}',
       '.bom-sym{position:relative}',
-      '.bom-sym .addTxn-sym-dd{position:absolute;left:0;right:0;top:100%;z-index:10}',
+      '.bom-sym .wms-dd{min-width:380px;font-size:12px}',
+      '.bom-sym .wms-dd .sub{font-size:10px;color:#a0aec0;margin-left:6px}',
+      '.bom-sym .wms-dd .wms-dd-item.nfo{color:#667eea}',
       '.bom-del{background:none;border:0;cursor:pointer;color:#a0aec0;font-size:15px}',
       '.bom-add{margin:8px 0 2px;background:none;border:0;color:#2c7a7b;font-weight:600;cursor:pointer;font:inherit;padding:0}',
       '.bom-panel{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:12px;padding:12px 18px;border-top:1px solid #e2e8f0;background:#f7fafc}',
@@ -172,7 +174,7 @@
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape' || !ov.classList.contains('show')) return;
       if (document.getElementById('bomPw').classList.contains('show')) { closePassword(); return; }
-      if (document.querySelector('#bomOverlay .addTxn-sym-dd.show, #bomOverlay .addTxn-tag-dd.show')) return;  // let the dropdown close first
+      if (document.querySelector('#bomOverlay .wms-dd.show, #bomOverlay .wms-tag-dd.show')) return;  // let the dropdown close first
       bomClose();
     });
   }
@@ -304,12 +306,12 @@
       return '<tr data-row-id="' + r.id + '" data-rid="' + r.id + '">' +
         '<td data-mlabel="Trader"><select class="bom-tr" data-rid="' + r.id + '">' + tOpts + '</select></td>' +
         '<td data-mlabel="Symbol" class="bom-sym"><input type="text" class="bom-sym-in" data-rid="' + r.id + '" placeholder="Search…" autocomplete="off" value="' + esc(r.display || r.symbol) + '">' +
-          '<div class="addTxn-sym-dd" id="bomSymDd_' + r.id + '"></div><div class="bom-sub" id="bomSymSub_' + r.id + '">' + symSub(r) + '</div></td>' +
+          '<div class="wms-dd" id="bomSymDd_' + r.id + '"></div><div class="bom-sub" id="bomSymSub_' + r.id + '">' + symSub(r) + '</div></td>' +
         '<td data-mlabel="Lots"><input type="number" class="bom-lots r" data-rid="' + r.id + '" step="1" value="' + (nfo && r.lots ? r.lots : '') + '"' + (nfo ? '' : ' disabled') + '><div class="bom-sub" id="bomBalL_' + r.id + '"></div></td>' +
         '<td data-mlabel="Qty"><input type="text" class="bom-qty r" data-rid="' + r.id + '" value="' + (r.qty ? qtyFmt(r.qty).replace(/^-$/, '') : '') + '"><div class="bom-sub" id="bomBalQ_' + r.id + '"></div></td>' +
         '<td data-mlabel="Price"><input type="text" class="bom-px r" data-rid="' + r.id + '" inputmode="decimal" placeholder="market" value="' + (r.price ? r.price : '') + '"></td>' +
-        '<td data-mlabel="Tags" style="position:relative"><input type="text" class="bom-tag-in addTxn-tags-input" data-rid="' + r.id + '" placeholder="Tags…" autocomplete="off">' +
-          '<div class="addTxn-tag-pills" id="bomTagPills_' + r.id + '"></div><div class="addTxn-tag-dd" id="bomTagDd_' + r.id + '"></div></td>' +
+        '<td data-mlabel="Tags" style="position:relative"><input type="text" class="bom-tag-in" data-rid="' + r.id + '" placeholder="Tags…" autocomplete="off">' +
+          '<div class="wms-tag-pills" id="bomTagPills_' + r.id + '"></div><div class="wms-tag-dd" id="bomTagDd_' + r.id + '"></div></td>' +
         '<td><button class="bom-del" data-rid="' + r.id + '" title="Remove row">🗑</button></td></tr>';
     }).join('');
     BOM.rows.forEach(function (r) { wireRow(r); showBalance(r); });
@@ -667,7 +669,7 @@
   function wireButton() {
     var b = document.getElementById('trBrokerOrderBtn');
     if (!b) return;
-    if (window.WMS_PHONE) { b.style.display = 'none'; return; }
+    if (window.WMS_PHONE) { b.style.display = 'none'; if (b.parentNode) b.parentNode.style.width = 'auto'; return; }
     b.addEventListener('click', bomOpen);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireButton); else wireButton();
