@@ -8087,7 +8087,39 @@ function wmsCalcMarginFIFO(transactions, opts) {
         }
     });
 
+    // Optional (owner 2026-11-07): hand back the lots still holding margin, for the
+    // interest window's margin breakdown. Additive — the return value is unchanged.
+    if (opts.lotsOut && typeof opts.lotsOut === 'object') {
+        var lots = [];
+        Object.keys(positions).forEach(function(k) {
+            positions[k].forEach(function(p) {
+                if (!p.marginAmount) return;
+                lots.push({
+                    contract: k.split('|')[0], date: p.date, qty: p.qty, price: p.price,
+                    ratePct: p.marginRate,
+                    value: p.marginRate ? wmsRoundMoney(p.marginAmount * 100 / p.marginRate) : 0,
+                    margin: p.marginAmount
+                });
+            });
+        });
+        opts.lotsOut.lots = lots;
+    }
+
     return results;
+}
+
+// Lots holding F&O margin at the END of `asOfDate` (YYYY-MM-DD): replays the same
+// margin engine over trades up to that date. Sum of `margin` = the running margin
+// the interest engines use for that day (wmsGetMarginRunningAt).
+function wmsMarginLotsAsOf(sortedNfoTxns, marginOpts, asOfDate) {
+    var out = {};
+    var opts = {};
+    Object.keys(marginOpts || {}).forEach(function(k) { opts[k] = marginOpts[k]; });
+    opts.lotsOut = out;
+    wmsCalcMarginFIFO((sortedNfoTxns || []).filter(function(t) {
+        return (t.transaction_date || '') <= asOfDate;
+    }), opts);
+    return out.lots || [];
 }
 
 /**
