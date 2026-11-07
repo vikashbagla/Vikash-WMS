@@ -227,8 +227,8 @@
         if (window.__priceWorkerLastError) {
             window.__priceWorkerLastError = null;
             try {
-                var el = document.getElementById('fyers-status');
-                if (el) { el.innerHTML = '🟢 <a href="#" onclick="return wmsFyersRefresh()" title="Logged in today. Click to re-check: retries only logins not done today (Fyers + MOSL)" style="color:#059669;font-weight:600;text-decoration:none;">Fyers</a>'; el.title = ''; el.style.color = '#059669'; }
+                // Repaint the per-account login indicator from the last status read (07-Nov-2026).
+                wmsRenderLoginStatus(window.__wmsLoginRows || null);
             } catch (_e) {}
         }
     };
@@ -274,21 +274,83 @@
         return await response.json();
     };
 
-    // Check for today's token in investor_broker_accounts (auto-login)
+    // Per-account login status (07-Nov-2026, Multi-Account Logins W1): the database function
+    // wms_login_status() says which broker accounts are logged in today — it NEVER returns a token.
+    // Returns the rows, or null if the status could not be read.
+    async function wmsReadLoginStatus() {
+        try {
+            const res = await fetch(`${window.SUPABASE_URL}/rest/v1/rpc/wms_login_status`, {
+                method: 'POST',
+                headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+                body: '{}'
+            });
+            if (!res.ok) { console.warn('Login status read failed: HTTP ' + res.status); return null; }
+            const rows = await res.json();
+            return Array.isArray(rows) ? rows : null;
+        } catch (e) {
+            console.warn('Login status read failed:', e);
+            return null;
+        }
+    }
+
+    // TEMPORARY fallback (until W2 closes the token column to the browser): the old check — is there
+    // any Fyers token dated today? Used only if wms_login_status() cannot be read.
     async function checkFyersDbToken() {
         try {
             const today = new Date().toISOString().split('T')[0];
             const res = await fetch(
-                `${window.SUPABASE_URL}/rest/v1/investor_broker_accounts?api_token_date=eq.${today}&api_access_token=not.is.null&select=api_access_token,api_token_method,api_token_generated_at,api_last_error&limit=1`,
+                `${window.SUPABASE_URL}/rest/v1/investor_broker_accounts?api_token_date=eq.${today}&api_access_token=not.is.null&select=api_token_method&limit=1`,
                 { headers: wmsHeaders() }
             );
             if (!res.ok) return null;
             const rows = await res.json();
-            if (rows && rows.length > 0 && rows[0].api_access_token) return rows[0];
+            if (rows && rows.length > 0) return rows[0];
         } catch (e) {
             console.warn('DB token check failed:', e);
         }
         return null;
+    }
+
+    // "07-Nov 11:39" in Indian time (house stamp, same as the login emails).
+    function wmsLoginStamp(iso) {
+        try {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return '';
+            const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d);
+            const g = (t) => (p.find(x => x.type === t) || {}).value || '';
+            return `${g('day')}-${g('month')} ${g('hour')}:${g('minute')}`;
+        } catch (_e) { return ''; }
+    }
+
+    // Paint the header indicator: one entry per login account, e.g. "🟢 Fyers · 🟢 MOSL".
+    // Every entry is a link: a click retries only the logins not done today (harmless when all green).
+    // rows === null → status unknown (read failed): show the old Fyers-only state from window.fyersToken.
+    function wmsRenderLoginStatus(rows) {
+        const statusEl = document.getElementById('fyers-status');
+        if (!statusEl) return;
+        const esc = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const link = (ok, label, title) =>
+            (ok ? '🟢' : '🔴') + ' <a href="#" onclick="return wmsFyersRefresh()" title="' + esc(title) + '" style="color:' +
+            (ok ? '#059669' : '#dc2626') + ';font-weight:600;text-decoration:none;">' + esc(label) + '</a>';
+        if (!rows || !rows.length) {
+            const ok = !!window.fyersToken;
+            statusEl.innerHTML = link(ok, 'Fyers', ok ? 'Logged in today. Click to re-check: retries only logins not done today (Fyers + MOSL)' : 'Run the broker logins now');
+            statusEl.style.color = ok ? '#059669' : '#dc2626';
+            return;
+        }
+        const nameOf = (code) => ({ FYERS: 'Fyers', MOSL: 'MOSL' }[code] || code);
+        const perBroker = {};
+        rows.forEach(r => { perBroker[r.broker_code] = (perBroker[r.broker_code] || 0) + 1; });
+        statusEl.innerHTML = rows.map(r => {
+            const label = nameOf(r.broker_code) + (perBroker[r.broker_code] > 1 ? ' ' + String(r.account || '').split(' ')[0] : '');
+            const who = (r.account || '') + ' · ' + nameOf(r.broker_code) + (r.is_data_account ? ' (default for prices)' : '');
+            const title = r.logged_in_today
+                ? who + ' — logged in ' + wmsLoginStamp(r.logged_in_at) + (r.method === 'auto' ? ' (auto)' : '') + '. Click to re-check: retries only logins not done today.'
+                : who + ' — NOT logged in today' + (r.last_error ? ' (' + String(r.last_error).slice(0, 120) + ')' : '') + '. Click to run the logins now.';
+            return link(r.logged_in_today === true, label, title);
+        }).join(' <span style="color:#a0aec0;">·</span> ');
+        statusEl.title = '';
+        statusEl.style.color = rows.every(r => r.logged_in_today === true) ? '#059669' : '#dc2626';
     }
 
     // Run the Fyers login SERVER-SIDE via the broker-login Edge Function (which calls fyers-auto-login) —
@@ -368,33 +430,25 @@
         } catch (_e) { /* confirmation is cosmetic */ }
     }
 
-    // Check Fyers token on app load
-    // Today's token lives only in the DB (morning login). The old browser-saved token from the
-    // retired fyers-oauth.html page was removed 07-Nov-2026 (nothing wrote it any more).
+    // Check the broker logins on app load (owner only) and paint the indicator.
+    // Today's logins live only in the DB (morning login). Per-account since 07-Nov-2026 (W1):
+    // read from wms_login_status() — no token reaches the browser. window.fyersToken stays a
+    // truthy flag ('db') when the default Fyers data account is logged in today: the app's price
+    // refreshes check it; the real token is used server-side only.
     async function checkFyersAuth() {
-        const statusEl = document.getElementById('fyers-status');
-
-        // 1. Check DB for auto-login token
-        const dbRow = await checkFyersDbToken();
-        if (dbRow && dbRow.api_access_token) {
-            // Auto-login token exists — edge function will use it automatically
-            window.fyersToken = 'db';  // truthy flag; actual token used server-side
-            const method = dbRow.api_token_method === 'auto' ? 'auto-login' : 'manual';
-            console.log(`✅ Fyers token valid for today (DB, ${method})`);
-            statusEl.innerHTML = '🟢 <a href="#" onclick="return wmsFyersRefresh()" title="Logged in today. Click to re-check: retries only logins not done today (Fyers + MOSL)" style="color:#059669;font-weight:600;text-decoration:none;">Fyers</a> <span style="font-size:9px;color:#6b7280;">(auto)</span>';
-            statusEl.style.color = '#059669';
-            return;
+        let rows = await wmsReadLoginStatus();
+        if (rows) {
+            const data = rows.find(r => r.is_data_account);
+            window.fyersToken = (data && data.logged_in_today === true) ? 'db' : null;
+        } else {
+            // Status unreadable → temporary fallback to the old Fyers-only check (removed in W2).
+            const dbRow = await checkFyersDbToken();
+            window.fyersToken = dbRow ? 'db' : null;
         }
-
-        // 2. No token available — one click runs the same server-side login retry as the
-        //    08:00–08:30 morning run (broker-login EF). No credentials in the browser.
-        //    (The 🟢 states above are clickable too, 07-Nov-2026: a click retries only
-        //    logins not done today, so it is harmless when everything is already logged in.)
-        window.fyersToken = null;
-        statusEl.innerHTML =
-            '🔴 <a href="#" onclick="return wmsFyersRefresh()" title="Run Fyers auto-login now" style="color:#dc2626;font-weight:600;">Fyers</a>';
-        statusEl.style.color = '#dc2626';
-        console.log('⚠️ Fyers token missing or expired');
+        window.__wmsLoginRows = rows;
+        wmsRenderLoginStatus(rows);
+        console.log(window.fyersToken ? '✅ Fyers logged in today (default data account)' : '⚠️ Fyers not logged in today',
+                    rows ? rows.map(r => r.broker_code + ':' + r.account + '=' + (r.logged_in_today ? 'ok' : 'NO')).join(' · ') : '(status unreadable — fallback)');
     }
 
     // ============================================================

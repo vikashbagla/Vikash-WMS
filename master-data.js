@@ -868,7 +868,7 @@ async function saveInvestor() {
             if (ibaIntRate > 0) {
                 ibaInterestTerms = { rate: ibaIntRate, frequency: ibaIntFreq || 'weekly_friday', compound: (ibaIntFreq === 'daily_monthly_compound') };
             }
-            // Preserve fields not in the form (cn_password, api_* columns) from existing record
+            // Preserve cn_password (not in the form) from the existing record; login columns are never sent (W3)
             var existingAcc = null;
             var itemEl = document.getElementById('broker-account-' + i);
             if (itemEl && itemEl._existingAcc) existingAcc = itemEl._existingAcc;
@@ -906,13 +906,10 @@ async function saveInvestor() {
             // Preserve columns not shown in form from existing record
             if (existingAcc) {
                 if (existingAcc.cn_password) accObj.cn_password = existingAcc.cn_password;
-                if (existingAcc.api_access_token) accObj.api_access_token = existingAcc.api_access_token;
-                if (existingAcc.api_token_date) accObj.api_token_date = existingAcc.api_token_date;
-                if (existingAcc.api_token_generated_at) accObj.api_token_generated_at = existingAcc.api_token_generated_at;
-                if (existingAcc.api_token_method) accObj.api_token_method = existingAcc.api_token_method;
-                if (existingAcc.api_auto_login) accObj.api_auto_login = existingAcc.api_auto_login;
-                if (existingAcc.api_last_error) accObj.api_last_error = existingAcc.api_last_error;
-                if (existingAcc.api_last_error_at) accObj.api_last_error_at = existingAcc.api_last_error_at;
+                // Login columns (api_*) are deliberately NOT sent back (07-Nov-2026, Multi-Account Logins W3):
+                // saving updates only the fields in the form (PATCH), so the login columns stay exactly as the
+                // morning login wrote them. Sending the copy loaded when this screen opened could overwrite a
+                // fresher login made since (e.g. the 08:00 login while the screen was open).
             }
             brokerAccounts.push(accObj);
         }
