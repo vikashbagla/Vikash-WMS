@@ -62,6 +62,12 @@
         .data-table td { padding: 5px 10px; border-bottom: 1px solid #f0f4f8; vertical-align: middle; font-size: 12px; }
         #chargesGrid .data-table td { min-height: 52px; height: 52px; line-height: 1.8; }
         .data-table tr:hover td { background: #f9fafb; }
+        .hol-past td { color: #b0b7c3 !important; }
+        .hol-past .hol-closed, .hol-past .hol-special { background: transparent !important; color: #b0b7c3 !important; }
+        .hol-closed  { color: #b91c1c; font-weight: 600; }
+        .hol-open    { color: #15803d; }
+        .hol-special { color: #b45309; font-weight: 600; }
+        .hol-grp th { text-align: center !important; border-bottom: 1px solid #e2e8f0; }
 
         /* Avatar chip */
         .avatar { width: 28px; height: 28px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -255,6 +261,7 @@
             <button class="tab-btn" onclick="switchTab(event, 'securities')">📊 Securities DB</button>
             <button class="tab-btn" onclick="switchTab(event, 'preferences')">⚙️ Preferences</button>
             <button class="tab-btn" onclick="switchTab(event, 'charges')">💰 Charges</button>
+            <button class="tab-btn" onclick="switchTab(event, 'holidays')">📅 Holidays</button>
         </div>
 
         <!-- INVESTORS -->
@@ -447,6 +454,16 @@
             <div style="margin-top:14px;text-align:right;">
                 <button class="btn-primary" onclick="savePreferences()">💾 Save Preferences</button>
             </div>
+        </div>
+
+        <!-- HOLIDAYS (owner 2026-11-05) — read-only view of the market calendar
+             (market_hours exception rows). Past dates greyed. -->
+        <div id="holidays-tab" class="tab-content" style="overflow-y:auto;">
+            <div class="actions-bar">
+                <span style="color:#888;font-size:13px;">Exchange holidays &amp; special sessions from the market calendar that runs the trading schedule. Past dates are greyed.</span>
+            </div>
+            <div id="holidaysGrid" style="overflow-x:auto;"></div>
+            <p style="color:#999;font-size:11px;margin-top:8px;">Normal hours — NSE/BSE: 09:15–15:30 · MCX: morning 09:00–17:00, evening 17:00–23:30 (summer) / 23:55 (winter). Any date not listed is a normal weekday.</p>
         </div>
 
         <!-- REGULATORY CHARGES -->
