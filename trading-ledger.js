@@ -3305,19 +3305,17 @@ function _lgRenderWeeklyBreakdown(calc) {
             '<span style="color:#1a202c;">Total Base</span>' +
             '<span style="' + valueStyle + ' font-weight:700;">' + lgFmt(clampedBase) + '</span>' +
         '</div>';
-    var rateRow =
-        '<div style="' + rowStyle + '">' +
-            '<span style="' + labelStyle + '">× Rate (' + calc.rate + '% p.a.) × (1/52)</span>' +
-            '<span style="' + valueStyle + '"></span>' +
-        '</div>';
+    // Rate note sits on the Interest line itself (owner 2026-11-07) — it only
+    // explains the formula, so it doesn't need a row of its own.
+    var rateNote = '<span style="font-weight:400; font-size:12px; color:#718096; margin-left:8px;">= Total Base × ' + calc.rate + '% p.a. × 1/52</span>';
     var interestRow =
         '<div style="' + rowStyle + ' border-top:1px solid #e2e8f0; background:#edf2f7; font-weight:700; font-size:14px;">' +
-            '<span style="color:#1a202c;">Interest</span>' +
+            '<span style="color:#1a202c;">Interest' + rateNote + '</span>' +
             '<span style="' + valueStyle + ' color:#2d3748; font-weight:700;">' + lgFmt(roundedInterest) + '</span>' +
         '</div>';
 
     return '<div style="border:1px solid #e2e8f0; border-radius:6px; overflow:hidden;">' +
-        periodHeader + balanceRow + marginRow + totalRow + rateRow + interestRow +
+        periodHeader + balanceRow + marginRow + totalRow + interestRow +
         '</div>';
 }
 
