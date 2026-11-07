@@ -4502,11 +4502,13 @@ function _renderHaircutBlock(sec) {
     return '<div style="margin-bottom:12px;">' +
         '<div style="font-size:11px;font-weight:700;color:#667eea;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;padding:0 2px;">Collateral haircut % (by broker)</div>' +
         '<div style="background:#f7fafc;border:1px solid #edf2f7;border-radius:6px;padding:8px 10px;">' +
-        '<div style="font-size:11px;color:#718096;margin-bottom:4px;">Only for the few liquid securities pledged as margin. Leave blank otherwise.</div>' +
+        '<div style="font-size:11px;color:#4a5568;margin-bottom:6px;line-height:1.5;">' +
+            'Type the percentage as a plain number: <b>10</b> means <b>10.0%</b> (10% also works; not 0.10).<br>' +
+            'Fill only for the few liquid securities pledged as margin with that broker. Leave blank otherwise.</div>' +
         brokers.map(function (b) {
             var v = hc[b.id];
             return _acctMapRow(b.name, '<input type="text" inputmode="decimal" class="wms-input-number sec-haircut-in" data-bid="' + b.id + '" ' + inStyle +
-                ' value="' + (v === null || v === undefined || v === '' ? '' : wmsEsc(String(v))) + '" placeholder="—">');
+                ' value="' + _haircutFmt(v) + '" placeholder="blank" onfocus="_haircutFocus(this)" onblur="_haircutBlur(this)">');
         }).join('') +
         '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px;align-items:center;">' +
         '<span id="secHaircutStatus" style="font-size:11px;color:#718096;"></span>' +
@@ -4514,17 +4516,30 @@ function _renderHaircutBlock(sec) {
         '</div></div></div>';
 }
 
+// Haircut box display: always "10.0%" once entered; plain number while typing.
+function _haircutFmt(v) {
+    if (v === null || v === undefined || v === '') return '';
+    var n = Number(v); return isFinite(n) ? n.toFixed(1) + '%' : '';
+}
+function _haircutParse(t) {   // '' -> null; '10' / '10%' / '10.0%' -> 10; else NaN
+    t = String(t || '').trim().replace(/\s*%$/, '');
+    if (t === '') return null;
+    return /^\d+(\.\d+)?$/.test(t) ? parseFloat(t) : NaN;
+}
+function _haircutFocus(el) { var n = _haircutParse(el.value); if (n !== null && isFinite(n)) el.value = String(n); }
+function _haircutBlur(el) { var n = _haircutParse(el.value); if (n !== null && isFinite(n)) el.value = n.toFixed(1) + '%'; }
+
 async function saveSecHaircuts(secId) {
     var status = document.getElementById('secHaircutStatus');
     var out = {}, bad = null;
     document.querySelectorAll('.sec-haircut-in').forEach(function (el) {
-        var t = String(el.value || '').trim().replace(/%$/, '');
-        if (t === '') return;                                   // blank = not liquid at this broker
-        var n = parseFloat(t);
-        if (!isFinite(n) || n < 0 || n > 100) { bad = el; return; }
+        var n = _haircutParse(el.value);
+        if (n === null) return;                                 // blank = not liquid at this broker
+        // 0 < n < 1 looks like a fraction typed for a percent (0.10 for 10%) — refuse, ask for 10
+        if (!isFinite(n) || n > 100 || (n > 0 && n < 1)) { bad = el; return; }
         out[el.dataset.bid] = Math.round(n * 100) / 100;
     });
-    if (bad) { if (status) { status.textContent = 'Haircut must be 0–100'; status.style.color = '#c53030'; } bad.focus(); return; }
+    if (bad) { if (status) { status.textContent = 'Enter the % as a number from 1 to 100, e.g. 10 for 10.0%'; status.style.color = '#c53030'; } bad.focus(); return; }
     var val = Object.keys(out).length ? out : null;
     if (status) { status.textContent = 'Saving…'; status.style.color = '#718096'; }
     try {

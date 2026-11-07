@@ -314,7 +314,7 @@
         var h = holdings.find(function (x) { return sc.keys.indexOf(x.symbol) >= 0; });
         if (!h || !(h.pledged > 0)) return;
         var v = h.pledged * h.ltp * (1 - sc.haircut / 100);
-        total += v; parts.push(sc.symbol + ': ' + h.pledged + ' × ' + h.ltp + ' less ' + sc.haircut + '%');
+        total += v; parts.push(sc.symbol + ': ' + h.pledged + ' pledged × ' + price2(h.ltp) + ', less ' + sc.haircut.toFixed(1) + '% haircut');
       });
       return { value: total, parts: parts };
     } catch (_) { return null; }
