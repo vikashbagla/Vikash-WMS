@@ -334,6 +334,7 @@
                 return false;
             }
             console.log('✅ Fyers logged in today', out.tried && out.tried.length ? out.tried : '(already done — nothing retried)');
+            wmsLoginToast(out);   // small on-screen confirmation (web-app link only; the morning run emails)
         } catch (e) {
             console.error('Fyers auto-login request failed:', e);
             if (statusEl) { statusEl.innerHTML = prevHtml; statusEl.style.color = '#dc2626'; }
@@ -343,6 +344,29 @@
         await checkFyersAuth();   // re-read from the DB and repaint the indicator
         return false;             // stay on the page
     };
+
+    // Small self-closing confirmation after the Fyers link click (07-Nov-2026, owner request).
+    // Green = everything logged in; amber = Fyers fine but another login still failing.
+    function wmsLoginToast(out) {
+        try {
+            const nameOf = (t) => (t || '').split(':')[0] === 'FYERS' ? 'Fyers' : (t || '').split(':')[0] === 'MOSL' ? 'MOSL' : t;
+            const tried = (out && out.tried) || [];
+            const failing = (out && out.still_failing) || [];
+            let text;
+            if (!tried.length) text = 'All broker logins already done today — nothing to retry.';
+            else text = 'Login retry: ' + tried.map(a => nameOf(a.target) + (a.ok ? ' ✓' : ' ✗')).join(' · ');
+            if (failing.length) text += '  (still failing: ' + failing.join(', ') + ' — email sent)';
+            const el = document.createElement('div');
+            el.textContent = text;
+            el.style.cssText = 'position:fixed;top:64px;right:16px;z-index:10000;max-width:360px;padding:10px 14px;' +
+                'border-radius:8px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.15);' +
+                'color:' + (failing.length ? '#92400e' : '#065f46') + ';background:' + (failing.length ? '#fef3c7' : '#d1fae5') + ';' +
+                'border:1px solid ' + (failing.length ? '#f59e0b' : '#10b981') + ';cursor:pointer;transition:opacity .3s';
+            el.onclick = () => el.remove();
+            document.body.appendChild(el);
+            setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, failing.length ? 8000 : 4000);
+        } catch (_e) { /* confirmation is cosmetic */ }
+    }
 
     // Check Fyers token on app load
     // Today's token lives only in the DB (morning login). The old browser-saved token from the
