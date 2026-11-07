@@ -53,7 +53,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.7.0';
+const VERSION = 'wms-mosl/1.8.0';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -942,6 +942,14 @@ export async function runDailyLogin(trigger = {}) {
     report.margin_commodity = comm ? Number(comm.amount) : null;
     const ok = prof.json?.status === 'SUCCESS' && ms.json?.status === 'SUCCESS';
     step = ok ? 'done' : 'verify_failed';
+    // P2 (Multi-Account Logins, 1.8.0): keep today's session in THIS account's record (mosl-probe
+    // relay_session). Sent only to our own Edge Function (HMAC); never logged or recorded here.
+    // A failed save does not fail the login — it is reported so it can be fixed.
+    if (ok && ctx.authToken) {
+      const sv = await callEf({ mode: 'relay_session', login_key: loginKey ?? 'VB', session: ctx.authToken });
+      report.session_saved = sv.status === 200 && sv.json?.ok === true;
+      if (!report.session_saved) report.session_error = String(sv.json?.error ?? sv.err ?? `http ${sv.status}`).slice(0, 160);
+    }
     timings.total_ms = Date.now() - t0;
     return { ok, step, timings, report };
   } catch (e) {

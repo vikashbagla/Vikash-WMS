@@ -52,6 +52,7 @@ const ef = http.createServer((req, res) => {
     if (!good) { res.statusCode = 401; return res.end('{"error":"sig"}'); }
     if (body.mode === 'relay_prepare') return res.end(JSON.stringify({ ok: true, ...FAKE }));
     if (body.mode === 'relay_record') return res.end(JSON.stringify({ ok: true, id: 1 }));
+    if (body.mode === 'relay_session') return res.end(JSON.stringify({ ok: true, login_key: body.login_key }));
     res.statusCode = 400; res.end('{}');
   });
 });
@@ -113,6 +114,11 @@ T('daily_login: no key -> report says VB, no login_key sent', dl.report.login_ke
   && efSeen.filter((e) => e.body.mode === 'relay_prepare').slice(0, prepBefore).every((e) => !('login_key' in e.body)));
 const dlBad = await M3.runDailyLogin({ login_key: 'bad key!' });
 T('daily_login: invalid key ignored (default account)', dlBad.report.login_key === 'VB');
+// ---- P2 (1.8.0): the day's session is saved to THAT account via relay_session ----
+const sess = efSeen.filter((e) => e.body.mode === 'relay_session');
+T('P2: a successful daily login saves its session (one per login)', sess.length >= 2 && dl.report.session_saved === true && dlv.report.session_saved === true, JSON.stringify(sess.map((e) => e.body.login_key)));
+T('P2: the session goes to the right account key (VB, then VEINS)', sess[0].body.login_key === 'VB' && sess.some((e) => e.body.login_key === 'VEINS'));
+T('P2: the session is never in the recorded report', !/AUTH-TOKEN-SECRET/.test(JSON.stringify(M3.scrub(dlv.report))) && !('session' in dlv.report));
 // ---- funds detail (read-only) ----
 const beforeFd = moslSeen.length;
 const fd = await M3.runFundsDetail({});
