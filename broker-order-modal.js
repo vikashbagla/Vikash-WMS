@@ -50,6 +50,7 @@
   var unitDesc = function () { return typeof getUnitDescription === 'function' ? getUnitDescription() : '₹'; };
   var invName = function (id) { var i = (wmsRefData.investorObjMap || {})[id]; return i ? (i.short_name || i.name) : '?'; };
   var brkCode = function (id) { var b = (wmsRefData.brokerObjMap || {})[id]; return b ? (b.broker_code || b.name || '') : ''; };
+  var fmtQ = function (q) { return q ? (q < 0 ? '-' : '') + qtyFmt(Math.abs(q)) : ''; };
   var isOption = function (sym) { return /(CE|PE)$/.test(String(sym || '')); };
 
   // ---------------------------------------------------------------------------
@@ -72,6 +73,10 @@
       '.bom-tab.on{background:#fff;color:#1a202c;font-weight:600}',
       '.bom-b{padding:12px 18px;border-top:1px solid #e2e8f0}',
       '.bom-lbl{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#718096;margin:2px 0 6px}',
+      '.bom-lbl-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}',
+      '.bom-at{text-transform:none;letter-spacing:0;font-weight:400;color:#a0aec0;font-size:10.5px;white-space:nowrap}',
+      '.bom-rf{text-decoration:none;color:#2c7a7b;font-size:12px;margin-left:4px}',
+      '.bom-kv.sub span:first-child{padding-left:10px;color:#4a5568}',
       '.bom-accs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}',
       '.bom-acc{min-width:170px;padding:7px 12px;border-radius:8px;border:1.5px solid #cbd5e0;background:#fff;cursor:pointer;text-align:left;font:inherit}',
       '.bom-acc b{display:block;font-size:13.5px}',
@@ -117,6 +122,9 @@
       '.bom-st.bad{color:#b91c1c;border-color:#fecaca;background:#fef2f2}',
       '.bom-st.wip{color:#1d4ed8;border-color:#bfdbfe;background:#eff6ff}',
       '#trBrokerOrderBtn img{height:16px;width:16px;vertical-align:middle;object-fit:contain}',
+      // Broker-order button: its own colour, so it is never mistaken for ✎ Record a trade (brand purple).
+      '.trading-header-bar #trBrokerOrderBtn{background:#0f766e}',
+      '.trading-header-bar #trBrokerOrderBtn:hover{background:#115e59}',
     ].join('\n');
     document.head.appendChild(s);
   }
@@ -146,14 +154,15 @@
           '</div>' +
           '<div class="bom-panel">' +
             '<div class="bom-box"><div class="bom-lbl">Goes to the broker</div><div id="bomOrders"></div></div>' +
-            '<div class="bom-box"><div class="bom-lbl">Balance &amp; margin <span id="bomUnit" style="text-transform:none;letter-spacing:0"></span></div><div id="bomMargin"></div></div>' +
+            '<div class="bom-box"><div class="bom-lbl bom-lbl-row"><span>Balance &amp; margin <span id="bomUnit" style="text-transform:none;letter-spacing:0"></span>' +
+              '<a href="#" class="bom-rf" id="bomRefresh" title="Read the balance and the prices again">↻</a></span><span class="bom-at" id="bomFundsAt"></span></div><div id="bomMargin"></div></div>' +
             '<div class="bom-box"><div class="bom-lbl">Charges (estimate, ₹)</div><div id="bomCharges"></div></div>' +
           '</div>' +
           '<div class="bom-pw" id="bomPw">Order password: <input type="password" id="bomPwInput" autocomplete="off">' +
             '<button class="bom-btn go" id="bomSend">Send to broker</button><button class="bom-btn" id="bomPwCancel">Cancel</button>' +
             '<span class="bom-note" style="color:#991b1b">Enter sends · Esc goes back (nothing sent)</span></div>' +
           '<div class="bom-f"><span class="bom-note" id="bomFootNote">Market and limit, day orders. The broker makes the final margin check.</span>' +
-            '<div style="display:flex;gap:8px"><button class="bom-btn" id="bomCancel">Close</button><button class="bom-btn go" id="bomPlace" disabled>Place</button></div></div>' +
+            '<div style="display:flex;gap:8px"><button class="bom-btn" id="bomClear" title="Remove all rows and start again">Clear</button><button class="bom-btn" id="bomCancel">Close</button><button class="bom-btn go" id="bomPlace" disabled>Place</button></div></div>' +
         '</div>' +
         '<div id="bomToday" class="bom-b bom-today" style="display:none;flex:1"></div>' +
       '</div>';
@@ -162,7 +171,9 @@
     ov.addEventListener('mousedown', function (e) { if (e.target === ov) bomClose(); });
     document.getElementById('bomClose').addEventListener('click', bomClose);
     document.getElementById('bomCancel').addEventListener('click', bomClose);
-    document.getElementById('bomAddRow').addEventListener('click', function () { var id = addRow(); focusRow(id); });
+    document.getElementById('bomAddRow').addEventListener('click', function () { var id = addRow(BOM.rows[BOM.rows.length - 1]); focusTrader(id); });
+    document.getElementById('bomClear').addEventListener('click', clearRows);
+    document.getElementById('bomRefresh').addEventListener('click', function (e) { e.preventDefault(); refreshAll(); });
     document.getElementById('bomPlace').addEventListener('click', openPassword);
     document.getElementById('bomSend').addEventListener('click', send);
     document.getElementById('bomPwCancel').addEventListener('click', closePassword);
@@ -173,6 +184,7 @@
     ov.querySelectorAll('.bom-tab').forEach(function (b) { b.addEventListener('click', function () { setTab(b.dataset.tab); }); });
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape' || !ov.classList.contains('show')) return;
+      if (e.defaultPrevented) return;   // Esc already used (e.g. leaving an "=" calculation) — keep the modal open
       if (document.getElementById('bomPw').classList.contains('show')) { closePassword(); return; }
       if (document.querySelector('#bomOverlay .wms-dd.show, #bomOverlay .wms-tag-dd.show')) return;  // let the dropdown close first
       bomClose();
@@ -275,21 +287,41 @@
       if (!j.ok) { BOM.funds = { error: j.error || ('HTTP ' + r.status) }; }
       else {
         var line = function (re) { var l = (j.funds || []).find(function (x) { return re.test(x.title); }); return l ? (l.equity + l.commodity) : null; };
-        BOM.funds = { at: j.as_of, available: line(/^available balance$/i), total: line(/^total balance$/i), used: line(/^utilized amount$/i) };
+        BOM.funds = { at: j.as_of, available: line(/^available balance$/i), startLimit: line(/^limit at start of the day$/i),
+                      total: line(/^total balance$/i), used: line(/^utilized amount$/i), holdings: j.holdings || [] };
       }
     } catch (e) { BOM.funds = { error: e.message }; }
     BOM.fundsBusy = false; renderPanel();
   }
-  window.bomRefreshFunds = loadFunds;
+  // ↻ in the Balance & margin heading: read the balance again AND the live prices (both margins move).
+  function refreshAll() {
+    loadFunds();
+    var seen = {};
+    BOM.rows.forEach(function (r) { if (r.symbol && !seen[r.symbol]) { seen[r.symbol] = 1; fetchLtp(r.symbol); } });
+  }
+  window.bomRefreshFunds = refreshAll;
 
   // ---------------------------------------------------------------------------
   // Rows
   // ---------------------------------------------------------------------------
-  function newRow() {
-    return { id: BOM.seq++, trader_id: BOM.acct ? BOM.acct.investor_id : null, symbol: '', display: '', security_id: null,
-             security_type: 'EQUITY', asset_class: null, exchange: 'NSE', lot_size: 1, lots: 0, qty: 0, price: 0, tags: [] };
+  // A new row copies the row before it (trader, symbol, lots, qty, price, tags), as Add Trade does.
+  function newRow(from) {
+    var r = { id: BOM.seq++, trader_id: BOM.acct ? BOM.acct.investor_id : null, symbol: '', display: '', security_id: null,
+              security_type: 'EQUITY', asset_class: null, exchange: 'NSE', lot_size: 1, lots: 0, qty: 0, price: 0, tags: [] };
+    if (from) {
+      ['trader_id', 'symbol', 'display', 'security_id', 'security_type', 'asset_class', 'exchange', 'lot_size', 'lots', 'qty', 'price']
+        .forEach(function (k) { r[k] = from[k]; });
+      r.tags = from.tags.slice();
+    }
+    return r;
   }
-  function addRow() { var r = newRow(); BOM.rows.push(r); renderRows(); return r.id; }
+  function addRow(from) { var r = newRow(from); BOM.rows.push(r); renderRows(); renderPanel(); return r.id; }
+  function clearRows() {
+    BOM.rows = [newRow()]; renderRows(); renderPanel(); closePassword();
+    showMsg('Market and limit, day orders. The broker makes the final margin check.');
+    focusRow(BOM.rows[0].id);
+  }
+  function focusTrader(id) { setTimeout(function () { var el = document.querySelector('.bom-tr[data-rid="' + id + '"]'); if (el) el.focus(); }, 30); }
   function removeRow(id) {
     if (BOM.rows.length <= 1) { BOM.rows = [newRow()]; } else BOM.rows = BOM.rows.filter(function (r) { return r.id !== id; });
     renderRows(); renderPanel();
@@ -307,9 +339,9 @@
         '<td data-mlabel="Trader"><select class="bom-tr" data-rid="' + r.id + '">' + tOpts + '</select></td>' +
         '<td data-mlabel="Symbol" class="bom-sym"><input type="text" class="bom-sym-in" data-rid="' + r.id + '" placeholder="Search…" autocomplete="off" value="' + esc(r.display || r.symbol) + '">' +
           '<div class="wms-dd" id="bomSymDd_' + r.id + '"></div><div class="bom-sub" id="bomSymSub_' + r.id + '">' + symSub(r) + '</div></td>' +
-        '<td data-mlabel="Lots"><input type="number" class="bom-lots r" data-rid="' + r.id + '" step="1" value="' + (nfo && r.lots ? r.lots : '') + '"' + (nfo ? '' : ' disabled') + '><div class="bom-sub" id="bomBalL_' + r.id + '"></div></td>' +
-        '<td data-mlabel="Qty"><input type="text" class="bom-qty r" data-rid="' + r.id + '" value="' + (r.qty ? qtyFmt(r.qty).replace(/^-$/, '') : '') + '"><div class="bom-sub" id="bomBalQ_' + r.id + '"></div></td>' +
-        '<td data-mlabel="Price"><input type="text" class="bom-px r" data-rid="' + r.id + '" inputmode="decimal" placeholder="market" value="' + (r.price ? r.price : '') + '"></td>' +
+        '<td data-mlabel="Lots"><input type="text" inputmode="numeric" class="bom-lots r wms-input-number" data-rid="' + r.id + '" value="' + (nfo && r.lots ? r.lots : '') + '"' + (nfo ? '' : ' disabled') + '><div class="bom-sub" id="bomBalL_' + r.id + '"></div></td>' +
+        '<td data-mlabel="Qty"><input type="text" class="bom-qty r wms-input-number" data-rid="' + r.id + '" value="' + fmtQ(r.qty) + '"><div class="bom-sub" id="bomBalQ_' + r.id + '"></div></td>' +
+        '<td data-mlabel="Price"><input type="text" class="bom-px r wms-input-number" data-rid="' + r.id + '" inputmode="decimal" placeholder="market" value="' + (r.price ? price2(r.price) : '') + '"></td>' +
         '<td data-mlabel="Tags" style="position:relative"><input type="text" class="bom-tag-in" data-rid="' + r.id + '" placeholder="Tags…" autocomplete="off">' +
           '<div class="wms-tag-pills" id="bomTagPills_' + r.id + '"></div><div class="wms-tag-dd" id="bomTagDd_' + r.id + '"></div></td>' +
         '<td><button class="bom-del" data-rid="' + r.id + '" title="Remove row">🗑</button></td></tr>';
@@ -351,11 +383,11 @@
     // Lots ↔ Qty exactly as Add Trade: lots × lot size → qty; qty edit updates lots. Signed: + buy, − sell.
     lotsIn.addEventListener('input', function () {
       r.lots = Math.trunc(num(lotsIn.value));
-      if (r.lot_size > 1) { r.qty = r.lots * r.lot_size; qtyIn.value = r.qty ? String(r.qty) : ''; }
+      if (r.lot_size > 1) { r.qty = r.lots * r.lot_size; qtyIn.value = fmtQ(r.qty); }
       renderPanel();
     });
     qtyIn.addEventListener('focus', function () { qtyIn.value = r.qty ? String(r.qty) : ''; });
-    qtyIn.addEventListener('blur', function () { qtyIn.value = r.qty ? (r.qty < 0 ? '-' : '') + qtyFmt(Math.abs(r.qty)) : ''; });
+    qtyIn.addEventListener('blur', function () { qtyIn.value = fmtQ(r.qty); });
     qtyIn.addEventListener('input', function () {
       r.qty = Math.trunc(num(qtyIn.value));
       if (r.lot_size > 1) { r.lots = r.qty / r.lot_size; lotsIn.value = r.lots ? (Number.isInteger(r.lots) ? r.lots : r.lots.toFixed(2)) : ''; }
@@ -363,6 +395,8 @@
       renderPanel();
     });
     pxIn.addEventListener('input', function () { r.price = Math.max(0, num(pxIn.value)); renderPanel(); });
+    pxIn.addEventListener('focus', function () { pxIn.value = r.price ? String(r.price) : ''; });
+    pxIn.addEventListener('blur', function () { pxIn.value = r.price ? price2(r.price) : ''; });
 
     BOM.tagCtrls[r.id] = wmsTagInput(tagIn, document.getElementById('bomTagPills_' + r.id), document.getElementById('bomTagDd_' + r.id),
       { tags: r.tags, existingTags: wmsRefData.tags || [], onChange: function () {} });
@@ -374,7 +408,7 @@
         var typed = tagIn.value.trim();
         if (typed && r.tags.indexOf(typed) < 0) { r.tags.push(typed); tagIn.value = ''; }
         e.preventDefault();
-        var id = addRow(); var nr = rowById(id); nr.trader_id = r.trader_id; renderRows(); focusRow(id);
+        var id = addRow(r); focusTrader(id);
       }
     });
     del.addEventListener('click', function () { removeRow(r.id); });
@@ -524,15 +558,12 @@
                 symbol: g.symbol, exchange: g.exchange, transaction_type: g.side, security_id: g.security_id, trader_id: holder,
                 price: g.estPrice, quantity: g.side === 'SELL' ? -g.units : g.units, lots: g.lots };
     wmsAutoCalcCharges(row, { ibaRatesMap: wmsRefData.ibaRatesMap, regCharges: wmsRefData.regCharges, investorId: holder, brokerId: broker, preserveExisting: false });
-    var trader = 0;
-    g.lines.forEach(function (l) {
-      if (l.trader_id === holder) return;
-      var u = l.lots * g.lot_size;
-      trader += wmsCalcTraderCharges({ ibaRatesMap: wmsRefData.ibaRatesMap, investorId: holder, brokerId: broker, traderId: l.trader_id,
-        securityType: g.security_type, assetClass: g.asset_class, securityId: g.security_id, symbol: g.symbol,
-        gross: u * g.estPrice, price: g.estPrice, quantity: g.side === 'SELL' ? -u : u, lots: l.lots }) || 0;
-    });
-    return { total: row.total_charges || 0, trader: trader };
+    return { brokerage: row.brokerage || 0, stt: row.stt || 0, other: row.other_charges || 0, gst: row.gst || 0, total: row.total_charges || 0,
+             traders: g.lines.filter(function (l) { return l.trader_id !== holder; }).map(function (l) {
+               var u = l.lots * g.lot_size;
+               return { id: l.trader_id, amt: wmsCalcTraderCharges({ ibaRatesMap: wmsRefData.ibaRatesMap, investorId: holder, brokerId: broker, traderId: l.trader_id,
+                 securityType: g.security_type, assetClass: g.asset_class, securityId: g.security_id, symbol: g.symbol,
+                 gross: u * g.estPrice, price: g.estPrice, quantity: g.side === 'SELL' ? -u : u, lots: l.lots }) || 0 }; }) };
   }
 
   function renderPanel() {
@@ -557,24 +588,37 @@
     var need = 0, unknown = false;
     p.orders.forEach(function (g) { var m = marginFor(g); if (m == null) unknown = true; else need += m; });
     var f = BOM.funds, mHtml = '';
-    if (BOM.fundsBusy) mHtml += '<div class="bom-kv"><span>Available</span><span>reading…</span></div>';
-    else if (f && f.error) mHtml += '<div class="bom-kv"><span>Available</span><span class="bom-err" title="' + esc(f.error) + '">could not read</span></div>';
-    else if (f) mHtml += '<div class="bom-kv"><span>Available <a href="#" onclick="bomRefreshFunds();return false" title="Read again">↻</a></span><span>' + amt(f.available) + '</span></div>' +
-      '<div class="bom-kv"><span class="bom-note">read ' + esc(typeof wmsLoginStamp === 'function' ? wmsLoginStamp(f.at) : f.at) + '</span><span></span></div>';
-    mHtml += '<div class="bom-kv"><span>Margin needed (estimate)</span><span>' + (unknown ? '<span class="bom-warn">price needed</span>' : amt(need)) + '</span></div>';
+    var atEl = document.getElementById('bomFundsAt');
+    if (atEl) atEl.textContent = BOM.fundsBusy ? 'reading…' : (f && f.at ? (typeof wmsLoginStamp === 'function' ? wmsLoginStamp(f.at) : f.at) : '');
+    var kv = function (label, val, cls) { return '<div class="bom-kv' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span><span>' + val + '</span></div>'; };
+    if (f && f.error && !BOM.fundsBusy) mHtml += kv('Available', '<span class="bom-err" title="' + esc(f.error) + '">could not read</span>');
+    else {
+      var fv = function (v) { return BOM.fundsBusy || !f ? '…' : (v == null ? '-' : amt(v)); };
+      mHtml += kv('Available', fv(f && f.available)) +
+               kv('Liquid margin', '<span class="bom-note" title="Needs the saved list of liquid securities with their haircut %">not set up</span>') +
+               kv('Limit at start of the day', fv(f && f.startLimit));
+    }
+    mHtml += '<div class="bom-kv tot"><span>Margin needed (estimate)</span><span>' + (unknown ? '<span class="bom-warn">price needed</span>' : amt(need)) + '</span></div>';
     if (f && !f.error && f.available != null && !unknown && p.orders.length) {
       mHtml += need > f.available
-        ? '<div class="bom-kv tot"><span>Check</span><span class="bom-warn">more than available</span></div>'
-        : '<div class="bom-kv tot"><span>Check</span><span class="bom-ok">within available</span></div>';
+        ? '<div class="bom-kv"><span>Check</span><span class="bom-warn">more than available</span></div>'
+        : '<div class="bom-kv"><span>Check</span><span class="bom-ok">within available</span></div>';
     }
     document.getElementById('bomMargin').innerHTML = mHtml;
 
     // Charges
-    var tot = 0, trd = 0, cUnknown = false;
-    p.orders.forEach(function (g) { var c = chargesFor(g); if (!c) cUnknown = true; else { tot += c.total; trd += c.trader; } });
+    var c = { brokerage: 0, stt: 0, other: 0, gst: 0, total: 0 }, trd = {}, cUnknown = false;
+    p.orders.forEach(function (g) {
+      var x = chargesFor(g); if (!x) { cUnknown = true; return; }
+      ['brokerage', 'stt', 'other', 'gst', 'total'].forEach(function (k) { c[k] += x[k]; });
+      x.traders.forEach(function (t) { trd[t.id] = (trd[t.id] || 0) + t.amt; });
+    });
+    var cv = function (v) { return cUnknown ? '<span class="bom-warn">price needed</span>' : rupees(v); };
+    var anyNfoCommodity = p.orders.some(function (g) { return g.exchange === 'MCX'; });
     document.getElementById('bomCharges').innerHTML = p.orders.length
-      ? '<div class="bom-kv"><span>Broker &amp; statutory</span><span>' + (cUnknown ? '<span class="bom-warn">price needed</span>' : rupees(tot)) + '</span></div>' +
-        '<div class="bom-kv"><span>Trader charges</span><span>' + (cUnknown ? '-' : rupees(trd)) + '</span></div>'
+      ? kv('Brokerage', cv(c.brokerage)) + kv(anyNfoCommodity ? 'STT / CTT' : 'STT', cv(c.stt)) +
+        kv('Exchange · SEBI · stamp', cv(c.other)) + kv('GST', cv(c.gst)) + kv('Total', cv(c.total), 'tot') +
+        (Object.keys(trd).length ? kv('Trader charges', '') + Object.keys(trd).map(function (id) { return kv(esc(invName(id)), cv(trd[id]), 'sub'); }).join('') : '')
       : '<span class="bom-note">-</span>';
 
     placeBtn.disabled = !p.orders.length || p.problems.length > 0;
@@ -669,6 +713,7 @@
   function wireButton() {
     var b = document.getElementById('trBrokerOrderBtn');
     if (!b) return;
+    injectStyles();
     if (window.WMS_PHONE) { b.style.display = 'none'; if (b.parentNode) b.parentNode.style.width = 'auto'; return; }
     b.addEventListener('click', bomOpen);
   }
