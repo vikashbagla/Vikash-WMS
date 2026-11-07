@@ -735,7 +735,8 @@
       else {
         var maxFno = f.liquid.value * 2, used = f.fnoUsed ? f.fnoUsed.value : 0;
         f.fnoAvail = maxFno - used;
-        mHtml += kv('<span title="Liquid margin × 2">Max F&amp;O margin</span>',
+        var liqTxt = amt(f.liquid.value).replace(/<[^>]+>/g, '');
+        mHtml += kv('<span title="Liquid margin × 2">Max F&amp;O margin <span class="bom-note">(' + liqTxt + ' × 2)</span></span>',
                    '<span title="' + esc('Liquid margin ' + amt(f.liquid.value).replace(/<[^>]+>/g, '') + ' × 2\n' + (f.liquid.parts.join('\n') || 'none')) + '">' + amt(maxFno) + '</span>') +
                  kv('<span title="Estimate: ' + FNO_USED_PCT + '% of the open NSE F&amp;O exposure in this account (MOSL will give the actual)">− Utilised in F&amp;O (est. ' + FNO_USED_PCT + '%)</span>',
                    '<span title="' + esc('Exposure ' + amt(f.fnoUsed ? f.fnoUsed.exposure : 0).replace(/<[^>]+>/g, '') + ' × ' + FNO_USED_PCT + '%\n' + ((f.fnoUsed && f.fnoUsed.parts.join('\n')) || 'no open NSE F&O')) + '">' + amt(used) + '</span>') +
