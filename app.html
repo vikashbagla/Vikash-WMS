@@ -331,10 +331,13 @@
             statusEl.style.color = '#b45309';
         }
         try {
-            const res = await fetch(`${window.SUPABASE_URL}/functions/v1/fyers-auto-login`, {
+            // 07-Nov-2026: same retry process as the 08:00–08:30 morning run (EF broker-login,
+            // mode 'manual'): retries only the logins not done today (Fyers + MOSL), sends the
+            // one combined email, records the attempt. Success here = Fyers logged in today.
+            const res = await fetch(`${window.SUPABASE_URL}/functions/v1/broker-login`, {
                 method: 'POST',
                 headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ action: 'auto_login' })
+                body: JSON.stringify({ mode: 'manual' })
             });
             let out = {};
             try { out = await res.json(); } catch (_e) { /* non-JSON error body */ }
@@ -342,8 +345,9 @@
             // Never report success without checking the response — the retired page
             // logged "✅ saved" unconditionally, which is exactly why a failed login
             // looked like it had worked. LESSONS §A.1.9f.
-            if (!res.ok || out.success !== true) {
-                const msg = out.error || `HTTP ${res.status} ${res.statusText || ''}`.trim();
+            if (!res.ok || out.fyers_ok !== true) {
+                const fy = (out.tried || []).find(t => t.target === 'FYERS:Veins');
+                const msg = (fy && fy.error) || out.error || `HTTP ${res.status} ${res.statusText || ''}`.trim();
                 console.error('Fyers auto-login failed:', msg);
                 if (statusEl) { statusEl.innerHTML = prevHtml; statusEl.style.color = '#dc2626'; }
                 alert('Fyers auto-login FAILED.\n\n' + msg +
@@ -351,7 +355,7 @@
                       'rejected with NO_BROKER_TOKEN until this succeeds.');
                 return false;
             }
-            console.log('✅ Fyers auto-login succeeded:', out.message || '');
+            console.log('✅ Fyers logged in today', out.tried && out.tried.length ? out.tried : '(already done — nothing retried)');
         } catch (e) {
             console.error('Fyers auto-login request failed:', e);
             if (statusEl) { statusEl.innerHTML = prevHtml; statusEl.style.color = '#dc2626'; }
