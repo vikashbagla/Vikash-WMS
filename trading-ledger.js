@@ -3283,7 +3283,7 @@ function _lgRenderWeeklyBreakdown(calc) {
                 '<span style="' + valueStyle + '">' + lgFmt(margin) + '</span>' +
             '</div>' +
             '<div style="display:none; padding:0 12px 8px 24px; font-size:12px;">' +
-                '<table style="width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px;">' +
+                '<table style="width:100%; min-width:0; border-collapse:collapse; table-layout:fixed; font-size:12px;">' +   /* min-width:0 overrides the global table min-width 940px (LESSONS E.18.4) */
                 '<colgroup><col style="width:27%"><col style="width:12%"><col style="width:13%"><col style="width:12%"><col style="width:13%"><col style="width:9%"><col style="width:14%"></colgroup>' +
                 '<tr style="border-bottom:1px solid #e2e8f0;"><th style="padding:4px 8px; text-align:left; font-weight:600; color:#718096;">Contract</th>' +
                 '<th style="padding:4px 8px; text-align:left; font-weight:600; color:#718096;">Opened</th>' +
