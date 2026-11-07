@@ -77,6 +77,12 @@
       '.bom-at{text-transform:none;letter-spacing:0;font-weight:400;color:#a0aec0;font-size:10.5px;white-space:nowrap}',
       '.bom-rf{text-decoration:none;color:#2c7a7b;font-size:12px;margin-left:4px}',
       '.bom-kv.sub span:first-child{padding-left:10px;color:#4a5568}',
+      '.bom-c3{display:grid;grid-template-columns:1fr auto auto;column-gap:12px;padding:2px 0;font-size:12.5px}',
+      '.bom-c3 span:nth-child(n+2){text-align:right;font-variant-numeric:tabular-nums;min-width:74px}',
+      '.bom-c3.hd span{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#a0aec0}',
+      '.bom-c3.tot{border-top:1px solid #e2e8f0;margin-top:4px;padding-top:5px;font-weight:700}',
+      '.bom-c3.sp{margin-top:6px}',
+      '.bom-c3.sub span:first-child{padding-left:10px;color:#4a5568}',
       '.bom-accs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}',
       '.bom-acc{min-width:170px;padding:7px 12px;border-radius:8px;border:1.5px solid #cbd5e0;background:#fff;cursor:pointer;text-align:left;font:inherit}',
       '.bom-acc b{display:block;font-size:13.5px}',
@@ -96,7 +102,7 @@
       '.bom-sym .wms-dd .wms-dd-item.nfo{color:#667eea}',
       '.bom-del{background:none;border:0;cursor:pointer;color:#a0aec0;font-size:15px}',
       '.bom-add{margin:8px 0 2px;background:none;border:0;color:#2c7a7b;font-weight:600;cursor:pointer;font:inherit;padding:0}',
-      '.bom-panel{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:12px;padding:12px 18px;border-top:1px solid #e2e8f0;background:#f7fafc}',
+      '.bom-panel{display:grid;grid-template-columns:1.1fr 1fr 1.45fr;gap:12px;padding:12px 18px;border-top:1px solid #e2e8f0;background:#f7fafc}',
       '.bom-box{background:#fff;border:1px solid #e2e8f0;border-radius:9px;padding:9px 11px;min-width:0}',
       '.bom-kv{display:flex;justify-content:space-between;gap:8px;padding:2px 0;font-size:12.5px}',
       '.bom-kv span:last-child{font-variant-numeric:tabular-nums;text-align:right}',
@@ -289,37 +295,62 @@
         var line = function (re) { var l = (j.funds || []).find(function (x) { return re.test(x.title); }); return l ? (l.equity + l.commodity) : null; };
         BOM.funds = { at: j.as_of, available: line(/^available balance$/i), startLimit: line(/^limit at start of the day$/i),
                       total: line(/^total balance$/i), used: line(/^utilized amount$/i), holdings: j.holdings || [] };
-        BOM.funds.liquid = await liquidMargin(j.holdings || [], acct.broker_id);
+        BOM.funds.liquid = await liquidMargin(acct);
       }
     } catch (e) { BOM.funds = { error: e.message }; }
     BOM.fundsBusy = false; renderPanel();
   }
-  // Liquid margin = pledged units × price × (1 − haircut %), over the few securities that carry a
+  // Liquid margin = WMS holding × current price × (1 − haircut %), over the few securities that carry a
   // haircut for THIS broker (Master Data › security › Collateral haircut %). Blank / NULL = not counted.
-  // Returns { value, parts[] } or null when no security has a haircut for this broker yet.
-  async function liquidMargin(holdings, brokerId) {
+  // Holdings come from WMS itself (owner, 07-Nov): equity/ETF/SGB from the app's loaded transactions
+  // for this investor at this broker; mutual funds from mf_trades (demat at this broker). Price: the
+  // app's live price, else the latest NAV (MF) or last traded price. Returns { value, parts[] } or null.
+  async function liquidMargin(acct) {
     try {
-      var secs = await fetch(window.SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,isin,broker_tokens,collateral_haircuts&collateral_haircuts=not.is.null',
+      var inv = acct.investor_id, brk = acct.broker_id;
+      var secs = await fetch(window.SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,security_type,collateral_haircuts&collateral_haircuts=not.is.null',
         { headers: wmsHeaders() }).then(function (x) { return x.json(); });
       if (!Array.isArray(secs)) return null;
       var list = secs.map(function (sc) {
-        var h = sc.collateral_haircuts && sc.collateral_haircuts[brokerId];
+        var h = sc.collateral_haircuts && sc.collateral_haircuts[brk];
         var n = (h === null || h === undefined || h === '') ? NaN : Number(h);
-        var fy = sc.broker_tokens && sc.broker_tokens.fyers;
-        return isFinite(n) ? { symbol: sc.symbol, isin: sc.isin || '', haircut: n, keys: [fy && fy.nse_symbol, fy && fy.bse_symbol].filter(Boolean) } : null;
+        return isFinite(n) ? { id: sc.id, symbol: sc.symbol, haircut: n } : null;
       }).filter(Boolean);
       if (!list.length) return null;
+      var ids = list.map(function (x) { return x.id; }).join(',');
+      var b = (wmsRefData.brokerObjMap || {})[brk] || {};
+      var brkNames = [String(b.name || '').toLowerCase(), String(b.broker_code || '').toLowerCase()].filter(Boolean);
+      var atBroker = function (d) { d = String(d || '').toLowerCase().trim(); return !!d && brkNames.some(function (n) { return n === d || n.indexOf(d) === 0 || d.indexOf(n) === 0; }); };
+      var [mf, navs] = await Promise.all([
+        fetch(window.SUPABASE_URL + '/rest/v1/mf_trades?select=security_id,txn_type,units,demat_broker&investor_id=eq.' + inv + '&security_id=in.(' + ids + ')', { headers: wmsHeaders() }).then(function (x) { return x.json(); }).catch(function () { return []; }),
+        fetch(window.SUPABASE_URL + '/rest/v1/market_prices?select=security_id,close,price_date&security_type=eq.MF&resolution=eq.1D&security_id=in.(' + ids + ')&order=price_date.desc&limit=50', { headers: wmsHeaders() }).then(function (x) { return x.json(); }).catch(function () { return []; }),
+      ]);
+      var txns = typeof trTransactions !== 'undefined' ? trTransactions : [];
       var total = 0, parts = [];
       list.forEach(function (sc) {
-        // ISIN first (mutual funds like ABSLLIQDIR have no Fyers symbol in WMS), then the Fyers symbol.
-        var h = (sc.isin && holdings.find(function (x) { return x.isin && x.isin === sc.isin; })) ||
-                holdings.find(function (x) { return sc.keys.indexOf(x.symbol) >= 0; });
-        if (!h || !(h.pledged > 0)) return;
-        var v = h.pledged * h.ltp * (1 - sc.haircut / 100);
-        total += v; parts.push(sc.symbol + ': ' + h.pledged + ' pledged × ' + price2(h.ltp) + ', less ' + sc.haircut.toFixed(1) + '% haircut');
+        var mine = txns.filter(function (t) { return !t.dont_display && t.investor_id === inv && t.broker_id === brk &&
+          (t.security_id === sc.id || String(t.short_symbol || t.symbol || '').replace(/^[A-Z]+:/, '').replace(/-EQ$/, '') === sc.symbol); });
+        var qty = 0, px = 0, src = '';
+        if (mine.length) {
+          qty = wmsCalcAvgCost(mine).netQuantity;
+          var lp = (typeof wmsLivePrices !== 'undefined' && wmsLivePrices[sc.symbol]) ? wmsLivePrices[sc.symbol].lp : 0;
+          px = lp > 0 ? lp : Number(mine[mine.length - 1].price) || 0; src = lp > 0 ? 'live' : 'last trade';
+        } else {
+          (Array.isArray(mf) ? mf : []).forEach(function (m) {
+            if (m.security_id !== sc.id || !atBroker(m.demat_broker)) return;
+            var tt = String(m.txn_type || '').toUpperCase(), u = Math.abs(Number(m.units) || 0);
+            if (tt === 'REDEMPTION') qty -= u; else if (tt !== 'DIV_PAYOUT') qty += u;
+          });
+          var nv = (Array.isArray(navs) ? navs : []).find(function (x) { return x.security_id === sc.id; });
+          px = nv ? Number(nv.close) || 0 : 0; src = nv ? 'NAV ' + nv.price_date : 'no NAV';
+        }
+        if (!(qty > 0) || !(px > 0)) return;
+        var v = qty * px * (1 - sc.haircut / 100);
+        total += v;
+        parts.push(sc.symbol + ': ' + (Number.isInteger(qty) ? qtyFmt(qty) : qty.toFixed(3)) + ' × ' + price2(px) + ' (' + src + '), less ' + sc.haircut.toFixed(1) + '% haircut');
       });
       return { value: total, parts: parts };
-    } catch (_) { return null; }
+    } catch (e) { console.warn('liquid margin', e); return null; }
   }
 
   // ↻ in the Balance & margin heading: read the balance again AND the live prices (both margins move).
@@ -620,14 +651,14 @@
     var atEl = document.getElementById('bomFundsAt');
     if (atEl) atEl.textContent = BOM.fundsBusy ? 'reading…' : (f && f.at ? (typeof wmsLoginStamp === 'function' ? wmsLoginStamp(f.at) : f.at) : '');
     var kv = function (label, val, cls) { return '<div class="bom-kv' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span><span>' + val + '</span></div>'; };
-    if (f && f.error && !BOM.fundsBusy) mHtml += kv('Available', '<span class="bom-err" title="' + esc(f.error) + '">could not read</span>');
+    if (f && f.error && !BOM.fundsBusy) mHtml += kv('Total available', '<span class="bom-err" title="' + esc(f.error) + '">could not read</span>');
     else {
       var fv = function (v) { return BOM.fundsBusy || !f ? '…' : (v == null ? '-' : amt(v)); };
-      mHtml += kv('Available', fv(f && f.available)) +
+      mHtml += kv('Limit at start of the day', fv(f && f.startLimit)) +
+               kv('Total available', fv(f && f.available)) +
                kv('Liquid margin', BOM.fundsBusy || !f ? '…' : (f.liquid
                     ? '<span title="' + esc(f.liquid.parts.join('\n') || 'none pledged') + '">' + amt(f.liquid.value) + '</span>'
-                    : '<span class="bom-note" title="Set a haircut % for this broker on the liquid securities (Master Data › security)">not set up</span>')) +
-               kv('Limit at start of the day', fv(f && f.startLimit));
+                    : '<span class="bom-note" title="Set a haircut % for this broker on the liquid securities (Master Data › security)">not set up</span>'));
     }
     mHtml += '<div class="bom-kv tot"><span>Margin needed (estimate)</span><span>' + (unknown ? '<span class="bom-warn">price needed</span>' : amt(need)) + '</span></div>';
     if (f && !f.error && f.available != null && !unknown && p.orders.length) {
@@ -637,19 +668,28 @@
     }
     document.getElementById('bomMargin').innerHTML = mHtml;
 
-    // Charges
-    var c = { brokerage: 0, stt: 0, other: 0, gst: 0, total: 0 }, trd = {}, cUnknown = false;
+    // Charges — split Self (the account holder's own lines) | Traders, by units, exactly as booking
+    // splits an order across its lines (bo_core splitMoney: each charge shared by units).
+    var keys = ['brokerage', 'stt', 'other', 'gst', 'total'];
+    var cs = {}, ct = {}, trd = {}, cUnknown = false, anyTrader = false;
+    keys.forEach(function (k) { cs[k] = 0; ct[k] = 0; });
     p.orders.forEach(function (g) {
       var x = chargesFor(g); if (!x) { cUnknown = true; return; }
-      ['brokerage', 'stt', 'other', 'gst', 'total'].forEach(function (k) { c[k] += x[k]; });
+      var selfU = 0; g.lines.forEach(function (l) { if (l.trader_id === BOM.acct.investor_id) selfU += l.lots * g.lot_size; });
+      if (selfU < g.units) anyTrader = true;
+      keys.forEach(function (k) { var sh = Math.round(x[k] * selfU / g.units * 100) / 100; cs[k] += sh; ct[k] += x[k] - sh; });
       x.traders.forEach(function (t) { trd[t.id] = (trd[t.id] || 0) + t.amt; });
     });
-    var cv = function (v) { return cUnknown ? '<span class="bom-warn">price needed</span>' : rupees(v); };
-    var anyNfoCommodity = p.orders.some(function (g) { return g.exchange === 'MCX'; });
+    var cv = function (v) { return cUnknown ? '<span class="bom-warn">?</span>' : rupees(v); };
+    var row3 = function (label, a, b, cls) { return '<div class="bom-c3' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span><span>' + a + '</span><span>' + b + '</span></div>'; };
+    var anyMcx = p.orders.some(function (g) { return g.exchange === 'MCX'; });
+    var lbl = { brokerage: 'Brokerage', stt: anyMcx ? 'STT / CTT' : 'STT', other: 'Exchange · SEBI · stamp', gst: 'GST', total: 'Total' };
     document.getElementById('bomCharges').innerHTML = p.orders.length
-      ? kv('Brokerage', cv(c.brokerage)) + kv(anyNfoCommodity ? 'STT / CTT' : 'STT', cv(c.stt)) +
-        kv('Exchange · SEBI · stamp', cv(c.other)) + kv('GST', cv(c.gst)) + kv('Total', cv(c.total), 'tot') +
-        (Object.keys(trd).length ? kv('Trader charges', '') + Object.keys(trd).map(function (id) { return kv(esc(invName(id)), cv(trd[id]), 'sub'); }).join('') : '')
+      ? row3('', 'Self', 'Traders', 'hd') +
+        keys.map(function (k) { return row3(lbl[k], cv(cs[k]), anyTrader ? cv(ct[k]) : '-', k === 'total' ? 'tot' : ''); }).join('') +
+        (Object.keys(trd).length ? row3('Trader charges', '', '', 'sp') +
+          Object.keys(trd).map(function (id) { return row3(esc(invName(id)), '', cv(trd[id]), 'sub'); }).join('') : '') +
+        (cUnknown ? '<div class="bom-note bom-warn">price needed for a market row</div>' : '')
       : '<span class="bom-note">-</span>';
 
     placeBtn.disabled = !p.orders.length || p.problems.length > 0;
