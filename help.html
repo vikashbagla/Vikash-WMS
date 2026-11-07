@@ -23,7 +23,10 @@
 .help-body details[open] > summary { border-bottom: 1px solid #e2e8f0; border-radius: 8px 8px 0 0; }
 .help-body details > :not(summary) { margin-left: 14px; margin-right: 14px; }
 .help-body details > :last-child { margin-bottom: 12px; }
-.help-body .hp-table { border-collapse: collapse; margin: 10px 14px 12px; font-size: 13px; width: calc(100% - 28px); }
+.help-body .hp-table { border-collapse: collapse; margin: 10px 14px 12px; font-size: 13px; width: calc(100% - 28px); table-layout: fixed; }
+.help-body .hp-table th:nth-child(1) { width: 32px; }
+.help-body .hp-table th:nth-child(2) { width: 70px; }
+.help-body .hp-table td { overflow-wrap: anywhere; }
 .help-body .hp-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #718096; background: #f7fafc; padding: 6px 10px; border-bottom: 1px solid #e2e8f0; }
 .help-body .hp-table td { padding: 7px 10px; border-bottom: 1px solid #edf2f7; vertical-align: top; }
 .help-body .hp-table td:first-child, .help-body .hp-table td:nth-child(2) { white-space: nowrap; color: #4a5568; }
