@@ -103,7 +103,10 @@
         </div>
         <div id="trDayPLBanner" style="display:flex;gap:24px;align-items:center;font-size:12px;"></div>
         <div class="tr-header-actions" style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
-            <button class="btn-add-txn" id="trAddTxnBtn" style="width: 104px; text-align: center;">Trade</button>
+            <div class="tr-trade-btns" style="display: flex; gap: 6px; width: 104px;">
+                <button class="btn-add-txn" id="trAddTxnBtn" title="Record a trade" style="flex: 1; padding-left: 0; padding-right: 0; text-align: center;">&#9998;</button>
+                <button class="btn-add-txn" id="trBrokerOrderBtn" title="Place broker order" style="flex: 1; padding-left: 0; padding-right: 0; text-align: center; font-size: 11px;">Fyers</button>
+            </div>
             <div class="tr-others-wrap" style="position: relative;">
                 <button class="btn-others" id="trOthersBtn" title="Income &amp; Corporate Actions" style="width: 104px; padding: 6px 16px; font-size: 13px; text-align: center;">Others &#9662;</button>
                 <div class="tr-others-dropdown" id="trOthersDropdown" style="display:none;">
@@ -1147,6 +1150,7 @@
     document.write(`<script src="wms-txn-modal.js?v=${_v}"><\/script>`);
     document.write(`<script src="cn-viewer.js?v=${_v}"><\/script>`);
     document.write(`<script src="wms-export.js?v=${_v}"><\/script>`);
+    document.write(`<script src="broker-order-modal.js?v=${_v}"><\/script>`);   // Broker Order modal (07-Nov-2026)
     // PHONE LAYER (Phone Layer Plan v1, 2026-11-03): phone-only styles + screens, loaded ONLY when the
     // device's smaller screen side is <= 480 CSS px (a phone, either orientation). Desktop / iPad never
     // download them. The stylesheet is written here, at the END of <body>, so it sits after every <style>
