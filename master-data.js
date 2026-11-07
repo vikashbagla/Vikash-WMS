@@ -108,15 +108,21 @@ var DB = {
         return response.ok;
     },
     
+    // Every column EXCEPT the login token (api_access_token): the browser is not allowed to read it
+    // (07-Nov-2026, Multi-Account Logins W2, mig 157). Don't use select=* on this table — it is refused.
+    IBA_COLS: 'id,investor_id,broker_id,account_number,brokerage_rates,charges_inclusive,is_custom_rates,is_active,created_at,updated_at,' +
+              'nfo_margin_config,cn_password,api_token_date,api_token_generated_at,api_token_method,api_auto_login,api_last_error,' +
+              'api_last_error_at,interest_terms,margin_rate,tax_rate,login_key,is_data_account',
+
     async getBrokerAccounts(investorId) {
-        const response = await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts?investor_id=eq.${investorId}&select=*`, {
+        const response = await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts?investor_id=eq.${investorId}&select=${this.IBA_COLS}`, {
             headers: wmsHeaders()
         });
         return await response.json();
     },
     
     async getAllBrokerAccounts() {
-        const response = await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts?select=*`, {
+        const response = await fetch(`${this.supabaseUrl}/rest/v1/investor_broker_accounts?select=${this.IBA_COLS}`, {
             headers: wmsHeaders()
         });
         return await response.json();

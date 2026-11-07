@@ -293,24 +293,6 @@
         }
     }
 
-    // TEMPORARY fallback (until W2 closes the token column to the browser): the old check — is there
-    // any Fyers token dated today? Used only if wms_login_status() cannot be read.
-    async function checkFyersDbToken() {
-        try {
-            const today = new Date().toISOString().split('T')[0];
-            const res = await fetch(
-                `${window.SUPABASE_URL}/rest/v1/investor_broker_accounts?api_token_date=eq.${today}&api_access_token=not.is.null&select=api_token_method&limit=1`,
-                { headers: wmsHeaders() }
-            );
-            if (!res.ok) return null;
-            const rows = await res.json();
-            if (rows && rows.length > 0) return rows[0];
-        } catch (e) {
-            console.warn('DB token check failed:', e);
-        }
-        return null;
-    }
-
     // "07-Nov 11:39" in Indian time (house stamp, same as the login emails).
     function wmsLoginStamp(iso) {
         try {
@@ -341,8 +323,7 @@
             (state === 'none' ? 'opacity:.35;filter:grayscale(1);' : '') + '">' + (state === 'bad' ? '🔴' : '🟢') + '</a>';
         const tail = '\n\nClick to retry the logins not done today (harmless if all are done).';
         if (!rows || !rows.length) {
-            const ok = !!window.fyersToken;
-            statusEl.innerHTML = dot(ok ? 'ok' : 'bad', 'Default Fyers account — ' + (ok ? 'logged in today' : 'NOT logged in today') + ' (detailed status unavailable)' + tail);
+            statusEl.innerHTML = dot('none', 'Login status could not be read — reload the app.' + tail);
             statusEl.title = '';
             return;
         }
@@ -445,9 +426,10 @@
             const data = rows.find(r => r.is_data_account);
             window.fyersToken = (data && data.logged_in_today === true) ? 'db' : null;
         } else {
-            // Status unreadable → temporary fallback to the old Fyers-only check (removed in W2).
-            const dbRow = await checkFyersDbToken();
-            window.fyersToken = dbRow ? 'db' : null;
+            // Status unreadable (W2, 07-Nov-2026: no token fallback any more). Don't block the app:
+            // keep the price refresh on ('db' flag — the server decides, using its own login) and show
+            // a grey dot saying the status is unknown.
+            window.fyersToken = 'db';
         }
         window.__wmsLoginRows = rows;
         wmsRenderLoginStatus(rows);
