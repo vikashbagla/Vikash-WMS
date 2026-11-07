@@ -371,7 +371,7 @@
             // logged "✅ saved" unconditionally, which is exactly why a failed login
             // looked like it had worked. LESSONS §A.1.9f.
             if (!res.ok || out.fyers_ok !== true) {
-                const fy = (out.tried || []).find(t => t.target === 'FYERS:Veins');
+                const fy = (out.tried || []).find(t => String(t.target || '').startsWith('FYERS:'));   // 'FYERS:<KEY>' since Phase 3
                 const msg = (fy && fy.error) || out.error || `HTTP ${res.status} ${res.statusText || ''}`.trim();
                 console.error('Fyers auto-login failed:', msg);
                 if (statusEl) { statusEl.innerHTML = prevHtml; statusEl.style.color = '#dc2626'; }
@@ -401,7 +401,7 @@
             const failing = (out && out.still_failing) || [];
             let text;
             if (!tried.length) text = 'All broker logins already done today — nothing to retry.';
-            else text = 'Login retry: ' + tried.map(a => nameOf(a.target) + (a.ok ? ' ✓' : ' ✗')).join(' · ');
+            else text = 'Login retry: ' + tried.map(a => (a.label || nameOf(a.target)) + (a.ok ? ' ✓' : ' ✗')).join(' · ');   // label e.g. 'MOSL (Vikash)'
             if (failing.length) text += '  (still failing: ' + failing.join(', ') + ' — email sent)';
             const el = document.createElement('div');
             el.textContent = text;
