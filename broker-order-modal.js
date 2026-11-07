@@ -289,10 +289,37 @@
         var line = function (re) { var l = (j.funds || []).find(function (x) { return re.test(x.title); }); return l ? (l.equity + l.commodity) : null; };
         BOM.funds = { at: j.as_of, available: line(/^available balance$/i), startLimit: line(/^limit at start of the day$/i),
                       total: line(/^total balance$/i), used: line(/^utilized amount$/i), holdings: j.holdings || [] };
+        BOM.funds.liquid = await liquidMargin(j.holdings || [], acct.broker_id);
       }
     } catch (e) { BOM.funds = { error: e.message }; }
     BOM.fundsBusy = false; renderPanel();
   }
+  // Liquid margin = pledged units × price × (1 − haircut %), over the few securities that carry a
+  // haircut for THIS broker (Master Data › security › Collateral haircut %). Blank / NULL = not counted.
+  // Returns { value, parts[] } or null when no security has a haircut for this broker yet.
+  async function liquidMargin(holdings, brokerId) {
+    try {
+      var secs = await fetch(window.SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,broker_tokens,collateral_haircuts&collateral_haircuts=not.is.null',
+        { headers: wmsHeaders() }).then(function (x) { return x.json(); });
+      if (!Array.isArray(secs)) return null;
+      var list = secs.map(function (sc) {
+        var h = sc.collateral_haircuts && sc.collateral_haircuts[brokerId];
+        var n = (h === null || h === undefined || h === '') ? NaN : Number(h);
+        var fy = sc.broker_tokens && sc.broker_tokens.fyers;
+        return isFinite(n) ? { symbol: sc.symbol, haircut: n, keys: [fy && fy.nse_symbol, fy && fy.bse_symbol].filter(Boolean) } : null;
+      }).filter(Boolean);
+      if (!list.length) return null;
+      var total = 0, parts = [];
+      list.forEach(function (sc) {
+        var h = holdings.find(function (x) { return sc.keys.indexOf(x.symbol) >= 0; });
+        if (!h || !(h.pledged > 0)) return;
+        var v = h.pledged * h.ltp * (1 - sc.haircut / 100);
+        total += v; parts.push(sc.symbol + ': ' + h.pledged + ' × ' + h.ltp + ' less ' + sc.haircut + '%');
+      });
+      return { value: total, parts: parts };
+    } catch (_) { return null; }
+  }
+
   // ↻ in the Balance & margin heading: read the balance again AND the live prices (both margins move).
   function refreshAll() {
     loadFunds();
@@ -595,7 +622,9 @@
     else {
       var fv = function (v) { return BOM.fundsBusy || !f ? '…' : (v == null ? '-' : amt(v)); };
       mHtml += kv('Available', fv(f && f.available)) +
-               kv('Liquid margin', '<span class="bom-note" title="Needs the saved list of liquid securities with their haircut %">not set up</span>') +
+               kv('Liquid margin', BOM.fundsBusy || !f ? '…' : (f.liquid
+                    ? '<span title="' + esc(f.liquid.parts.join('\n') || 'none pledged') + '">' + amt(f.liquid.value) + '</span>'
+                    : '<span class="bom-note" title="Set a haircut % for this broker on the liquid securities (Master Data › security)">not set up</span>')) +
                kv('Limit at start of the day', fv(f && f.startLimit));
     }
     mHtml += '<div class="bom-kv tot"><span>Margin needed (estimate)</span><span>' + (unknown ? '<span class="bom-warn">price needed</span>' : amt(need)) + '</span></div>';

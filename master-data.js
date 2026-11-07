@@ -4365,6 +4365,7 @@ async function openSecDetailsModal(secId) {
 
     // Mount point for the editable Accounting Mapping block (loaded async below)
     html += '<div id="secMapMount"><div style="font-size:11px;color:#a0aec0;padding:4px 2px;">Loading accounting mapping…</div></div>';
+    html += '<div id="secHaircutMount"></div>';
 
     document.getElementById('secDetailsBody').innerHTML = html;
     document.getElementById('secDetailsModal').classList.add('show');
@@ -4373,12 +4374,15 @@ async function openSecDetailsModal(secId) {
     // Accounting mapping (income_ledgers / capital_gains) — fetched fresh, editable
     try {
         var ledgers = await _loadAcctMapLedgers();
-        var mapResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + encodeURIComponent(secId) + '&select=income_ledgers,capital_gains', { headers: wmsHeaders({}) });
+        var mapResp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + encodeURIComponent(secId) + '&select=income_ledgers,capital_gains,collateral_haircuts', { headers: wmsHeaders({}) });
         var mrow = (mapResp.ok ? await mapResp.json() : [])[0] || {};
         sec.income_ledgers = mrow.income_ledgers || {};
         sec.capital_gains = mrow.capital_gains || {};
         var mnt = document.getElementById('secMapMount');
         if (mnt) mnt.innerHTML = _renderAcctMapBlock(sec, ledgers);
+        sec.collateral_haircuts = mrow.collateral_haircuts || null;
+        var hmnt = document.getElementById('secHaircutMount');
+        if (hmnt) hmnt.innerHTML = _renderHaircutBlock(sec);
     } catch (e) {
         var mnt2 = document.getElementById('secMapMount');
         if (mnt2) mnt2.innerHTML = '<div style="font-size:11px;color:#c53030;padding:4px 2px;">Could not load accounting mapping.</div>';
@@ -4477,6 +4481,65 @@ async function saveSecMapping(secId) {
     } catch (e) {
         if (status) { status.textContent = 'Save failed'; status.style.color = '#c53030'; }
         console.error('saveSecMapping', e);
+    }
+}
+
+// ============================================================================
+// COLLATERAL HAIRCUT % per broker (07-Nov-2026, Broker Order modal "Liquid margin").
+// securities_db.collateral_haircuts = {"<broker_id>": 10.5}. Only a few liquid securities
+// (e.g. LIQUIDCASE, SGBFEB32IV) carry a value; blank = not counted for that broker, and an
+// all-blank security is saved as NULL. One box per broker that has an investor account.
+// ============================================================================
+function _renderHaircutBlock(sec) {
+    var hc = (sec.collateral_haircuts && typeof sec.collateral_haircuts === 'object') ? sec.collateral_haircuts : {};
+    var seen = {}, brokers = [];
+    Object.keys(wmsRefData.ibaRatesMap || {}).forEach(function (k) {
+        var bid = k.split('|')[1];
+        if (bid && !seen[bid] && wmsRefData.brokerObjMap[bid]) { seen[bid] = 1; brokers.push(wmsRefData.brokerObjMap[bid]); }
+    });
+    brokers.sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+    var inStyle = 'style="width:90px;font-size:11px;padding:3px 5px;border:1px solid #cbd5e0;border-radius:4px;background:#fff;"';
+    return '<div style="margin-bottom:12px;">' +
+        '<div style="font-size:11px;font-weight:700;color:#667eea;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;padding:0 2px;">Collateral haircut % (by broker)</div>' +
+        '<div style="background:#f7fafc;border:1px solid #edf2f7;border-radius:6px;padding:8px 10px;">' +
+        '<div style="font-size:11px;color:#718096;margin-bottom:4px;">Only for the few liquid securities pledged as margin. Leave blank otherwise.</div>' +
+        brokers.map(function (b) {
+            var v = hc[b.id];
+            return _acctMapRow(b.name, '<input type="text" inputmode="decimal" class="wms-input-number sec-haircut-in" data-bid="' + b.id + '" ' + inStyle +
+                ' value="' + (v === null || v === undefined || v === '' ? '' : wmsEsc(String(v))) + '" placeholder="—">');
+        }).join('') +
+        '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px;align-items:center;">' +
+        '<span id="secHaircutStatus" style="font-size:11px;color:#718096;"></span>' +
+        '<button class="btn-primary" style="padding:4px 14px;font-size:12px;" onclick="saveSecHaircuts(\'' + sec.id + '\')">Save Haircuts</button>' +
+        '</div></div></div>';
+}
+
+async function saveSecHaircuts(secId) {
+    var status = document.getElementById('secHaircutStatus');
+    var out = {}, bad = null;
+    document.querySelectorAll('.sec-haircut-in').forEach(function (el) {
+        var t = String(el.value || '').trim().replace(/%$/, '');
+        if (t === '') return;                                   // blank = not liquid at this broker
+        var n = parseFloat(t);
+        if (!isFinite(n) || n < 0 || n > 100) { bad = el; return; }
+        out[el.dataset.bid] = Math.round(n * 100) / 100;
+    });
+    if (bad) { if (status) { status.textContent = 'Haircut must be 0–100'; status.style.color = '#c53030'; } bad.focus(); return; }
+    var val = Object.keys(out).length ? out : null;
+    if (status) { status.textContent = 'Saving…'; status.style.color = '#718096'; }
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/securities_db?id=eq.' + encodeURIComponent(secId), {
+            method: 'PATCH',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+            body: JSON.stringify({ collateral_haircuts: val })
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        var sec = wmsRefData.securitiesCmMap && wmsRefData.securitiesCmMap[secId];
+        if (sec) sec.collateral_haircuts = val;
+        if (status) { status.textContent = 'Saved ✓'; status.style.color = '#2f855a'; }
+    } catch (e) {
+        if (status) { status.textContent = 'Save failed'; status.style.color = '#c53030'; }
+        console.error('saveSecHaircuts', e);
     }
 }
 
