@@ -242,7 +242,7 @@
             window.__priceWorkerLastError = null;
             try {
                 var el = document.getElementById('fyers-status');
-                if (el) { el.innerHTML = '🟢 Fyers'; el.title = ''; el.style.color = '#059669'; }
+                if (el) { el.innerHTML = '🟢 <a href="#" onclick="return wmsFyersRefresh()" title="Logged in today. Click to re-check: retries only logins not done today (Fyers + MOSL)" style="color:#059669;font-weight:600;text-decoration:none;">Fyers</a>'; el.title = ''; el.style.color = '#059669'; }
             } catch (_e) {}
         }
     };
@@ -376,7 +376,7 @@
         if (localToken) {
             window.fyersToken = localToken;
             console.log('✅ Fyers token valid for today (localStorage)');
-            statusEl.innerHTML = '🟢 Fyers';
+            statusEl.innerHTML = '🟢 <a href="#" onclick="return wmsFyersRefresh()" title="Logged in today. Click to re-check: retries only logins not done today (Fyers + MOSL)" style="color:#059669;font-weight:600;text-decoration:none;">Fyers</a>';
             statusEl.style.color = '#059669';
             return;
         }
@@ -388,13 +388,15 @@
             window.fyersToken = 'db';  // truthy flag; actual token used server-side
             const method = dbRow.api_token_method === 'auto' ? 'auto-login' : 'manual';
             console.log(`✅ Fyers token valid for today (DB, ${method})`);
-            statusEl.innerHTML = '🟢 Fyers <span style="font-size:9px;color:#6b7280;">(auto)</span>';
+            statusEl.innerHTML = '🟢 <a href="#" onclick="return wmsFyersRefresh()" title="Logged in today. Click to re-check: retries only logins not done today (Fyers + MOSL)" style="color:#059669;font-weight:600;text-decoration:none;">Fyers</a> <span style="font-size:9px;color:#6b7280;">(auto)</span>';
             statusEl.style.color = '#059669';
             return;
         }
 
-        // 3. No token available — one click runs the same server-side login the
-        //    daily cron runs (fyers-auto-login EF). No credentials in the browser.
+        // 3. No token available — one click runs the same server-side login retry as the
+        //    08:00–08:30 morning run (broker-login EF). No credentials in the browser.
+        //    (The 🟢 states above are clickable too, 07-Nov-2026: a click retries only
+        //    logins not done today, so it is harmless when everything is already logged in.)
         window.fyersToken = null;
         statusEl.innerHTML =
             '🔴 <a href="#" onclick="return wmsFyersRefresh()" title="Run Fyers auto-login now" style="color:#dc2626;font-weight:600;">Fyers</a>';
