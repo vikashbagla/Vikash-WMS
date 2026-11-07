@@ -256,10 +256,12 @@
     .tr-view-tabs-bar { overflow: visible; }
     .tr-view-tabs-container { -webkit-overflow-scrolling: touch; }
 
-    /* Declutter: show ONLY the active view tab — switch views via ▾ More.
+    /* Declutter: show the first TWO views in the desktop's order (the default ★ + the next one —
+       owner 07-Nov-2026: Self All + Self Holdings, Self NFO + Fyers NFO) plus the active view if it
+       is another one; every other view via ▾ More.
        Also hide the tab's ✕ close so a view can't be deleted by mistake. */
-    #tr-view-tabs .tr-view-tab:not(.active),
-    #tr-fno-view-tabs .tr-view-tab:not(.active) { display: none; }
+    #tr-view-tabs .tr-view-tab:not(.active):not(:nth-child(-n+2)),
+    #tr-fno-view-tabs .tr-view-tab:not(.active):not(:nth-child(-n+2)) { display: none; }
     #tr-view-tabs .tr-tab-close,
     #tr-fno-view-tabs .tr-tab-close { display: none; }
 
