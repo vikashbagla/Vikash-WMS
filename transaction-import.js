@@ -3812,20 +3812,13 @@ var fyBrokerName = '';       // Display name
 // Fyers Init — account cards (07-Nov-2026, Multi-Account Logins A3)
 // ============================================================================
 // One card per Fyers account that has a login (from wms_login_status() — never a token), e.g.
-// "Veins › Fyers · Live · refreshed today 08:02". The fetch uses the CHOSEN card's own login
+// "Veins › Fyers · ● Live". The fetch uses the CHOSEN card's own login
 // (investor_id + broker_id go to fyers-market-data). Before: a dropdown of every investor with one
 // shared "Connected" state, so picking another investor would have fetched Veins' trades and booked
 // them under that investor.
 
 var fyAccounts = [];          // login status rows for Fyers accounts with an investor + broker id
 var fyLoggedIn = false;       // is the chosen account logged in today?
-
-function fyHHMM(iso) {
-    try {
-        var d = new Date(iso); if (isNaN(d.getTime())) return '';
-        return d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
-    } catch (_e) { return ''; }
-}
 
 function fyEsc(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 
@@ -3853,7 +3846,7 @@ function fyRenderAccounts() {
     box.innerHTML = fyAccounts.map(function(r) {
         var on = r.logged_in_today === true;
         var sel = r.investor_id === fyInvestorId && r.broker_id === fyBrokerId;
-        var state = on ? '● Live · refreshed today ' + fyHHMM(r.logged_in_at) : '○ Offline · not refreshed today';
+        var state = on ? '● Live' : '○ Offline';
         return '<button type="button" class="fy-acc' + (on ? '' : ' offline') + (sel ? ' selected' : '') + '"' +
                ' onclick="fySelectAccount(\'' + r.investor_id + '\',\'' + r.broker_id + '\')"' +
                ' title="' + fyEsc((r.account || '') + (r.is_data_account ? ' — default account for prices' : '') +
