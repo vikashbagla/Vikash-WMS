@@ -3809,65 +3809,71 @@ var fyInvestorName = '';     // Display name
 var fyBrokerName = '';       // Display name
 
 // ============================================================================
-// Fyers Init — detect investor/broker, check token status
+// Fyers Init — account cards (07-Nov-2026, Multi-Account Logins A3)
 // ============================================================================
+// One card per Fyers account that has a login (from wms_login_status() — never a token), e.g.
+// "Veins › Fyers · ● Live". The fetch uses the CHOSEN card's own login
+// (investor_id + broker_id go to fyers-market-data). Before: a dropdown of every investor with one
+// shared "Connected" state, so picking another investor would have fetched Veins' trades and booked
+// them under that investor.
 
-function fyInit() {
-    // Populate investor dropdown
-    var select = document.getElementById('fyInvestorSelect');
-    if (select) {
-        select.innerHTML = '<option value="">-- Select Investor --</option>';
-        wmsRefData.investors.forEach(function(inv) {
-            var opt = document.createElement('option');
-            opt.value = inv.id;
-            opt.textContent = inv.short_name || inv.name;
-            select.appendChild(opt);
-        });
+var fyAccounts = [];          // login status rows for Fyers accounts with an investor + broker id
+var fyLoggedIn = false;       // is the chosen account logged in today?
 
-        // Default to Veins if exists
-        var veins = wmsRefData.investors.find(function(i) { return i.short_name === 'Veins'; });
-        if (veins) {
-            select.value = veins.id;
-            fyInvestorId = veins.id;
-            fyInvestorName = veins.short_name;
-        }
+function fyEsc(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 
-        // Listen for changes
-        select.addEventListener('change', function() {
-            var selectedId = select.value;
-            if (selectedId) {
-                var inv = wmsRefData.investors.find(function(i) { return i.id === selectedId; });
-                fyInvestorId = selectedId;
-                fyInvestorName = inv ? (inv.short_name || inv.name) : '';
-            } else {
-                fyInvestorId = null;
-                fyInvestorName = '';
-            }
-            fyUpdateStatus();
-        });
-    }
-
-    // Look up Fyers broker (check code and name)
-    var brk = wmsRefData.brokers.find(function(b) {
-        return (b.broker_code && b.broker_code.toUpperCase() === 'FYERS') ||
-               (b.name && b.name.toLowerCase().indexOf('fyers') >= 0);
-    });
-    if (brk) {
-        fyBrokerId = brk.id;
-        fyBrokerName = brk.name || brk.broker_code;
-    }
-
-    // Update connection status
+function fySelectAccount(investorId, brokerId) {
+    var acc = fyAccounts.find(function(r) { return r.investor_id === investorId && r.broker_id === brokerId; });
+    fyInvestorId = acc ? acc.investor_id : null;
+    fyBrokerId = acc ? acc.broker_id : null;
+    fyLoggedIn = !!(acc && acc.logged_in_today === true);
+    var inv = acc && wmsRefData.investors.find(function(i) { return i.id === acc.investor_id; });
+    var brk = acc && wmsRefData.brokers.find(function(b) { return b.id === acc.broker_id; });
+    fyInvestorName = inv ? (inv.short_name || inv.name) : (acc ? acc.investor_short : '');
+    fyBrokerName = brk ? (brk.name || brk.broker_code) : '';
+    fyRenderAccounts();
     fyUpdateStatus();
+}
+window.fySelectAccount = fySelectAccount;
 
-    // If broker not found, show error
-    if (!fyBrokerId) {
-        var infoEl = document.getElementById('fyInfo');
-        if (infoEl) {
-            infoEl.textContent = 'Broker "Fyers" not found in database. Fyers import disabled.';
-            infoEl.style.color = '#dc2626';
-        }
+function fyRenderAccounts() {
+    var box = document.getElementById('fyAccountCards');
+    if (!box) return;
+    if (!fyAccounts.length) {
+        box.innerHTML = '<span class="fy-acc-empty">No Fyers account with a login is set up.</span>';
+        return;
     }
+    box.innerHTML = fyAccounts.map(function(r) {
+        var on = r.logged_in_today === true;
+        var sel = r.investor_id === fyInvestorId && r.broker_id === fyBrokerId;
+        var state = on ? '● Live' : '○ Offline';
+        return '<button type="button" class="fy-acc' + (on ? '' : ' offline') + (sel ? ' selected' : '') + '"' +
+               ' onclick="fySelectAccount(\'' + r.investor_id + '\',\'' + r.broker_id + '\')"' +
+               ' title="' + fyEsc((r.account || '') + (r.is_data_account ? ' — default account for prices' : '') +
+                                  (!on && r.last_error ? ' — last error: ' + String(r.last_error).slice(0, 120) : '')) + '">' +
+               '<div class="fy-acc-name">' + fyEsc((r.investor_short || r.account) + ' › Fyers') + '</div>' +
+               '<div class="fy-acc-state">' + fyEsc(state) + '</div></button>';
+    }).join('');
+}
+
+async function fyInit() {
+    var box = document.getElementById('fyAccountCards');
+    var rows = null;
+    if (typeof wmsReadLoginStatus === 'function') rows = await wmsReadLoginStatus();
+    if (!rows) {
+        fyAccounts = [];
+        if (box) box.innerHTML = '<span class="fy-acc-empty">Could not read the account logins — reload the app.</span>';
+        fyInvestorId = fyBrokerId = null; fyLoggedIn = false;
+        fyUpdateStatus();
+        return;
+    }
+    fyAccounts = rows.filter(function(r) { return r.broker_code === 'FYERS' && r.investor_id && r.broker_id; });
+    // Keep the current choice if it still exists; else the default (data) account; else the first logged in; else the first.
+    var keep = fyAccounts.find(function(r) { return r.investor_id === fyInvestorId && r.broker_id === fyBrokerId; });
+    var pick = keep || fyAccounts.find(function(r) { return r.is_data_account; }) ||
+               fyAccounts.find(function(r) { return r.logged_in_today === true; }) || fyAccounts[0];
+    if (pick) fySelectAccount(pick.investor_id, pick.broker_id);
+    else { fyInvestorId = fyBrokerId = null; fyLoggedIn = false; fyRenderAccounts(); fyUpdateStatus(); }
 }
 
 function fyUpdateStatus() {
@@ -3878,25 +3884,22 @@ function fyUpdateStatus() {
     var infoEl = document.getElementById('fyInfo');
     if (!statusEl) return;
 
-    // Fyers logged in today? window.fyersToken is set by app.html checkFyersAuth() (DB, morning login)
-    var token = window.fyersToken || null;
-
-    if (token && fyInvestorId && fyBrokerId) {
+    if (fyLoggedIn && fyInvestorId && fyBrokerId) {
         statusEl.className = 'fy-status connected';
         dotEl.textContent = '🟢';
         textEl.textContent = 'Connected';
         fetchBtn.disabled = false;
-        infoEl.textContent = 'Fetch today\'s executed trades from Fyers. Charges will be auto-calculated.';
+        infoEl.textContent = 'Fetch today\'s executed trades for ' + fyInvestorName + ' from Fyers. Charges will be auto-calculated.';
         infoEl.style.color = '#718096';
     } else {
         statusEl.className = 'fy-status disconnected';
         dotEl.textContent = '🔴';
         textEl.textContent = 'Not Connected';
         fetchBtn.disabled = true;
-        if (fyInvestorId && fyBrokerId) {
-            infoEl.textContent = 'Connect Fyers in the Settings tab to enable import.';
-            infoEl.style.color = '#718096';
-        }
+        infoEl.textContent = (fyInvestorId && fyBrokerId)
+            ? 'This account is not logged in today. Click a login dot at the top right to retry the logins.'
+            : 'No Fyers account with a login to import from.';
+        infoEl.style.color = '#718096';
     }
 }
 
@@ -3908,17 +3911,13 @@ window.fyFetchTrades = async function() {
     var fetchBtn = document.getElementById('fyFetchBtn');
     var statusEl = document.getElementById('fyFetchStatus');
 
-    // Validate prerequisites
+    // Validate prerequisites: an account card chosen and logged in today (07-Nov-2026, A3)
     if (!fyInvestorId || !fyBrokerId) {
-        tiAlert('error', 'Fyers investor/broker not configured. Check Settings.');
+        tiAlert('error', 'Choose a Fyers account first.');
         return;
     }
-
-    // Fyers logged in today? window.fyersToken is set by app.html checkFyersAuth() (DB, morning login)
-    var token = window.fyersToken || null;
-
-    if (!token) {
-        tiAlert('error', 'Fyers token expired or not available. Please reconnect in Settings.');
+    if (!fyLoggedIn) {
+        tiAlert('error', 'This Fyers account is not logged in today. Click a login dot at the top right to retry the logins.');
         fyUpdateStatus();
         return;
     }
@@ -3934,12 +3933,13 @@ window.fyFetchTrades = async function() {
             throw new Error('window.fyersCall not available. Reload the app.');
         }
 
-        var response = await window.fyersCall({ action: 'tradebook', accessToken: token });
+        // The chosen account goes to the server, which uses THAT account's own login (never another's).
+        var response = await window.fyersCall({ action: 'tradebook', investor_id: fyInvestorId, broker_id: fyBrokerId });
 
         if (!response || response.error) {
             var errMsg = response ? response.error : 'No response from Fyers API';
             if (response && response.tokenExpired) {
-                errMsg = 'Fyers token expired. Please reconnect in Settings.';
+                errMsg = 'This Fyers account\'s login has expired. Click a login dot at the top right to retry the logins.';
                 fyUpdateStatus();
             }
             throw new Error(errMsg);

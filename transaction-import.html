@@ -235,6 +235,17 @@
         .fy-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
         .fy-body { display: flex; align-items: center; gap: 12px; }
         .fy-info { font-size: 11px; color: #718096; margin-top: 6px; }
+        /* Account cards — one per Fyers account with a login (07-Nov-2026, Multi-Account Logins A3) */
+        .fy-acc-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #718096; margin-bottom: 6px; }
+        .fy-accounts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+        .fy-acc { min-width: 170px; padding: 8px 12px; border-radius: 8px; border: 1.5px solid #cbd5e0; background: #fff; cursor: pointer; text-align: left; font: inherit; }
+        .fy-acc .fy-acc-name { font-size: 14px; font-weight: 700; color: #1a202c; }
+        .fy-acc .fy-acc-state { font-size: 12px; color: #4a5568; margin-top: 2px; }
+        .fy-acc.selected { border-color: #2c7a7b; background: #e6f4f4; box-shadow: 0 0 0 1px #2c7a7b inset; }
+        .fy-acc.offline { border-style: dashed; color: #a0aec0; }
+        .fy-acc.offline .fy-acc-name, .fy-acc.offline .fy-acc-state { color: #a0aec0; }
+        .fy-acc.offline.selected { background: #f7fafc; border-color: #a0aec0; box-shadow: none; }
+        .fy-acc-empty { font-size: 12px; color: #a0aec0; }
 
         /* IMPORT LOG */
         .import-log-section { background: white; border-radius: 8px; padding: 14px 16px; margin-top: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
@@ -320,14 +331,8 @@
                     <span id="fyStatusDot">🔴</span> <span id="fyStatusText">Not Connected</span>
                 </div>
             </div>
-            <div class="cn-selector" style="margin-bottom:6px;">
-                <div class="field">
-                    <label>Investor</label>
-                    <select id="fyInvestorSelect">
-                        <option value="">-- Select Investor --</option>
-                    </select>
-                </div>
-            </div>
+            <div class="fy-acc-label">Account (Investor › Broker)</div>
+            <div class="fy-accounts" id="fyAccountCards"><span class="fy-acc-empty">Loading accounts…</span></div>
             <div class="fy-body">
                 <button class="btn" id="fyFetchBtn" disabled onclick="fyFetchTrades()">Fetch Today's Trades</button>
                 <span id="fyFetchStatus" class="cn-status" style="margin:0;"></span>

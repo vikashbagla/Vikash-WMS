@@ -1059,6 +1059,12 @@ async function lgRefresh() {
                 for (var pi = 0; pi < periods.length; pi++) {
                     var p = periods[pi];
                     if (p.interest <= 0) continue;
+                    // Margin breakdown for the interest window (owner 2026-11-07): the lots
+                    // holding margin at the period's margin date (weekly = Friday EOD).
+                    try {
+                        var asOfM = p.fridayDate || (p.trace && p.trace.length ? p.trace[p.trace.length - 1].date : null);
+                        if (asOfM && p.marginBalance) p.marginLots = wmsMarginLotsAsOf(nfoTxns, marginOpts, asOfM);
+                    } catch (eM) { /* breakdown is informational only */ }
 
                     // Build a synthetic "pending" row
                     var pendingRow = {
@@ -3218,6 +3224,13 @@ function lgAssignReconPeriods(rows) {
 // ============================================================================
 
 // ── Weekly-friday breakdown (single Friday EOD + rate × 1/52) ─────────────
+function _lgShortDate(d) {
+    if (!d) return '';
+    var M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var p = String(d).slice(0, 10).split('-');
+    return p.length === 3 ? (p[2] + '-' + M[(+p[1]) - 1] + '-' + p[0].slice(2)) : String(d);
+}
+
 function _lgRenderWeeklyBreakdown(calc) {
     var roundedInterest = Math.round(calc.interest);
     var cash = calc.closingBalance || 0;
@@ -3245,29 +3258,64 @@ function _lgRenderWeeklyBreakdown(calc) {
             '<span style="' + labelStyle + '">Debit Balance</span>' +
             '<span style="' + valueStyle + '">' + lgFmt(debitBal) + '</span>' +
         '</div>';
-    var marginRow =
-        '<div style="' + rowStyle + '">' +
-            '<span style="' + labelStyle + '">F&amp;O Margin</span>' +
-            '<span style="' + valueStyle + '">' + lgFmt(margin) + '</span>' +
-        '</div>';
+    // F&O Margin — expandable to the lots holding it (owner 2026-11-07).
+    var lots = calc.marginLots || [];
+    var marginRow;
+    if (lots.length && margin) {
+        var cell = 'padding:4px 8px; text-align:right; font-variant-numeric:tabular-nums;';
+        var lotRows = lots.map(function(l) {
+            var side = l.qty < 0 ? 'Short' : 'Long';
+            var sym = String(l.contract || '').replace(/^[A-Z]+:/, '');
+            return '<tr>' +
+                '<td style="padding:4px 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + wmsEsc(sym) + '">' + wmsEsc(sym) + '</td>' +
+                '<td style="padding:4px 8px; white-space:nowrap;">' + wmsEsc(_lgShortDate(l.date)) + '</td>' +
+                '<td style="' + cell + '">' + side + ' ' + Math.abs(l.qty) + '</td>' +
+                '<td style="' + cell + '">' + lgFmtPrice(l.price) + '</td>' +
+                '<td style="' + cell + '">' + lgFmt(l.value) + '</td>' +
+                '<td style="' + cell + '">' + (+l.ratePct).toFixed(2).replace(/\.00$/, '') + '%</td>' +
+                '<td style="' + cell + ' font-weight:600;">' + lgFmt(l.margin) + '</td>' +
+                '</tr>';
+        }).join('');
+        var th = 'padding:4px 8px; text-align:right; font-weight:600; color:#718096;';
+        marginRow =
+            '<div style="' + rowStyle + ' cursor:pointer;" onclick="var d=this.nextElementSibling; var o=d.style.display===\'none\'; d.style.display=o?\'\':\'none\'; this.querySelector(\'.lg-mg-caret\').textContent=o?\'\u25BE\':\'\u25B8\';" title="Show how the margin is worked out">' +
+                '<span style="' + labelStyle + '"><span class="lg-mg-caret">\u25B8</span> F&amp;O Margin</span>' +
+                '<span style="' + valueStyle + '">' + lgFmt(margin) + '</span>' +
+            '</div>' +
+            '<div style="display:none; padding:0 12px 8px 24px; font-size:12px;">' +
+                '<table style="width:100%; min-width:0; border-collapse:collapse; table-layout:fixed; font-size:12px;">' +   /* min-width:0 overrides the global table min-width 940px (LESSONS E.18.4) */
+                '<colgroup><col style="width:27%"><col style="width:12%"><col style="width:13%"><col style="width:12%"><col style="width:13%"><col style="width:9%"><col style="width:14%"></colgroup>' +
+                '<tr style="border-bottom:1px solid #e2e8f0;"><th style="padding:4px 8px; text-align:left; font-weight:600; color:#718096;">Contract</th>' +
+                '<th style="padding:4px 8px; text-align:left; font-weight:600; color:#718096;">Opened</th>' +
+                '<th style="' + th + '">Position</th><th style="' + th + '">Price</th><th style="' + th + '">Value</th>' +
+                '<th style="' + th + '">Rate</th><th style="' + th + '">Margin</th></tr>' +
+                lotRows +
+                '</table>' +
+                '<div style="color:#718096; margin-top:4px;">Margin = Rate × Value (futures: contract value; sold options: qty × strike). Positions open at the end of ' + wmsEsc(calc.fridayDate ? (lgFmtDate(calc.fridayDate) || calc.fridayDate) : 'the period') + '.</div>' +
+            '</div>';
+    } else {
+        marginRow =
+            '<div style="' + rowStyle + '">' +
+                '<span style="' + labelStyle + '">F&amp;O Margin</span>' +
+                '<span style="' + valueStyle + '">' + lgFmt(margin) + '</span>' +
+            '</div>';
+    }
     var totalRow =
         '<div style="' + rowStyle + ' border-top:1px solid #e2e8f0; background:#f7fafc; font-weight:600;">' +
             '<span style="color:#1a202c;">Total Base</span>' +
             '<span style="' + valueStyle + ' font-weight:700;">' + lgFmt(clampedBase) + '</span>' +
         '</div>';
-    var rateRow =
-        '<div style="' + rowStyle + '">' +
-            '<span style="' + labelStyle + '">× Rate (' + calc.rate + '% p.a.) × (1/52)</span>' +
-            '<span style="' + valueStyle + '"></span>' +
-        '</div>';
+    // Rate note sits on the Interest line itself (owner 2026-11-07) — it only
+    // explains the formula, so it doesn't need a row of its own.
+    var rateNote = '<span style="font-weight:400; font-size:12px; color:#718096; margin-left:8px;">= Total Base × ' + calc.rate + '% p.a. × 1/52</span>';
     var interestRow =
         '<div style="' + rowStyle + ' border-top:1px solid #e2e8f0; background:#edf2f7; font-weight:700; font-size:14px;">' +
-            '<span style="color:#1a202c;">Interest</span>' +
+            '<span style="color:#1a202c;">Interest' + rateNote + '</span>' +
             '<span style="' + valueStyle + ' color:#2d3748; font-weight:700;">' + lgFmt(roundedInterest) + '</span>' +
         '</div>';
 
     return '<div style="border:1px solid #e2e8f0; border-radius:6px; overflow:hidden;">' +
-        periodHeader + balanceRow + marginRow + totalRow + rateRow + interestRow +
+        periodHeader + balanceRow + marginRow + totalRow + interestRow +
         '</div>';
 }
 
@@ -3571,6 +3619,9 @@ async function lgShowInterestDetail(entryId) {
             periods = wmsCalcInterestWeeklyFriday(full, interestTerms, fromStr, toStr, marginEvents);
         }
         calc = periods.length > 0 ? periods[0] : null;
+        if (calc && calc.marginBalance) {
+            try { calc.marginLots = wmsMarginLotsAsOf(nfoTxns, marginOptsDetail, calc.fridayDate || toStr); } catch (eM) {}
+        }
     } catch (err) {
         console.warn('Failed to recompute interest detail:', err.message);
     }
@@ -3579,6 +3630,9 @@ async function lgShowInterestDetail(entryId) {
     // above is only used for old entries without a saved record, and to flag drift.
     var saved = lgParseInterestNotes(entry.notes);
     if (saved) {
+        if (!saved.marginLots && calc && calc.marginLots && Math.round(calc.marginBalance || 0) === Math.round(saved.marginBalance || 0)) {
+            saved.marginLots = calc.marginLots;   // older entry: same margin today → show today's breakdown
+        }
         var diff = (calc && Math.round(calc.interest) !== Math.round(saved.interest)) ? { v: Math.round(calc.interest) } : null;
         lgPopulateInterestDetail(saved, entry.amount, { recalcDiff: diff, adjNote: saved.manualAdjNote || '' });
     } else {
