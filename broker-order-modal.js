@@ -299,19 +299,21 @@
   // Returns { value, parts[] } or null when no security has a haircut for this broker yet.
   async function liquidMargin(holdings, brokerId) {
     try {
-      var secs = await fetch(window.SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,broker_tokens,collateral_haircuts&collateral_haircuts=not.is.null',
+      var secs = await fetch(window.SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,isin,broker_tokens,collateral_haircuts&collateral_haircuts=not.is.null',
         { headers: wmsHeaders() }).then(function (x) { return x.json(); });
       if (!Array.isArray(secs)) return null;
       var list = secs.map(function (sc) {
         var h = sc.collateral_haircuts && sc.collateral_haircuts[brokerId];
         var n = (h === null || h === undefined || h === '') ? NaN : Number(h);
         var fy = sc.broker_tokens && sc.broker_tokens.fyers;
-        return isFinite(n) ? { symbol: sc.symbol, haircut: n, keys: [fy && fy.nse_symbol, fy && fy.bse_symbol].filter(Boolean) } : null;
+        return isFinite(n) ? { symbol: sc.symbol, isin: sc.isin || '', haircut: n, keys: [fy && fy.nse_symbol, fy && fy.bse_symbol].filter(Boolean) } : null;
       }).filter(Boolean);
       if (!list.length) return null;
       var total = 0, parts = [];
       list.forEach(function (sc) {
-        var h = holdings.find(function (x) { return sc.keys.indexOf(x.symbol) >= 0; });
+        // ISIN first (mutual funds like ABSLLIQDIR have no Fyers symbol in WMS), then the Fyers symbol.
+        var h = (sc.isin && holdings.find(function (x) { return x.isin && x.isin === sc.isin; })) ||
+                holdings.find(function (x) { return sc.keys.indexOf(x.symbol) >= 0; });
         if (!h || !(h.pledged > 0)) return;
         var v = h.pledged * h.ltp * (1 - sc.haircut / 100);
         total += v; parts.push(sc.symbol + ': ' + h.pledged + ' pledged × ' + price2(h.ltp) + ', less ' + sc.haircut.toFixed(1) + '% haircut');
