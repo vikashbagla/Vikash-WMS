@@ -1012,7 +1012,7 @@ async function lgRefresh() {
                 var nfoTxns = txnFiltered.filter(function(t) {
                     return wmsIsDerivativeTxn(t);
                 }).sort(function(a, b) {
-                    return (a.transaction_date || '').localeCompare(b.transaction_date || '');
+                    return lgTxnChronoCmp(a, b);   // date, then time (owner 2026-11-07)
                 });
                 // Broker view: apply the filter investor's IBA margin rate
                 // UNIFORMLY across every trade (not per-trade trader_id).
@@ -1926,6 +1926,19 @@ function lgSplitBookedGains(fyGains, fyStartStr, fyEndStr) {
     return { split: true, reconDate: reconDate, startingGain: total - newSum, startingGains: startingGains, newGains: newGains, total: total };
 }
 
+// Chronological order for FIFO / margin: date, then trade time, then entry time.
+// Sorting by date alone left same-day trades in load order, so on a day with
+// several open/close trades the wrong lot stayed open (T3a SILVERM 06-Nov-26:
+// margin showed 4,426.50k / avg 186,673 instead of 2,324.68k / 186,002.19 —
+// and could differ between browsers). Owner 2026-11-07.
+function lgTxnChronoCmp(a, b) {
+    var d = (a.transaction_date || '').localeCompare(b.transaction_date || '');
+    if (d !== 0) return d;
+    var t = (a.transaction_time || '').localeCompare(b.transaction_time || '');
+    if (t !== 0) return t;
+    return String(a.created_at || '').localeCompare(String(b.created_at || ''));
+}
+
 function lgRenderSummary() {
     var summaryBody = document.getElementById('lgSummaryBody');
     if (!summaryBody) return;
@@ -1952,7 +1965,7 @@ function lgRenderSummary() {
 
     // Sort by date for FIFO processing
     var sorted = allFiltered.slice().sort(function(a, b) {
-        return (a.transaction_date || '').localeCompare(b.transaction_date || '');
+        return lgTxnChronoCmp(a, b);   // date, then time (owner 2026-11-07)
     });
 
     // Use shared FIFO engine (wms-shared.js) — it now handles rights/bonus/
@@ -3830,7 +3843,7 @@ function lgGatherExportData(opts) {
         return true;
     });
     var sortedAll = allFiltered.slice().sort(function(a, b) {
-        return (a.transaction_date || '').localeCompare(b.transaction_date || '');
+        return lgTxnChronoCmp(a, b);   // date, then time (owner 2026-11-07)
     });
     var fifo = wmsCalcFifoCost(sortedAll);
     var holdingsMap = fifo.holdings;
