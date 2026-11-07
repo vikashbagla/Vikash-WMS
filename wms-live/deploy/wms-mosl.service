@@ -1,0 +1,49 @@
+[Unit]
+Description=WMS MOSL relay (read-only phase). Calls Motilal Oswal moAPI from this Droplet's IPv4. INDEPENDENT of wms-live (orders) and wms-scalp-ws.
+After=network-online.target
+Wants=network-online.target
+# Stop a crash loop: at most 10 starts in 5 minutes.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=wms
+Group=wms
+WorkingDirectory=/opt/Vikash-WMS/wms-live
+# Reads the EXISTING .env (read-only). No new settings.
+EnvironmentFile=/opt/Vikash-WMS/wms-live/.env
+ExecStart=/usr/bin/node --max-old-space-size=96 wms-mosl.js
+# Always: the service exits 0 on its own after a git pull changes wms-mosl.js,
+# and systemd starts the new code. 78 = missing settings -> do not loop.
+Restart=always
+RestartSec=10s
+RestartPreventExitStatus=78
+TimeoutStopSec=15s
+KillMode=mixed
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wms-mosl
+
+# Resource caps (1 GB box). Idle ~40 MB; peak while parsing the MCX contract list.
+MemoryMax=128M
+LimitNOFILE=4096
+
+# Hardening (mirrors wms-scalp-ws.service)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

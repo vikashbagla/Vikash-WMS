@@ -85,6 +85,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import pg from 'pg';
 import WebSocket from 'ws';
+import { sendWithRetry } from './writeback-retry.js';   // 30-Oct-2026: a placement result is not lost to a Supabase blip
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
@@ -148,6 +149,9 @@ let totalSafetyNetPolls        = 0;
 let totalCommandsClaimed       = 0;
 let totalCommandsPlaced        = 0;
 let totalCommandsErrored       = 0;
+let totalWritebackRetrying     = 0;   // placement results whose first report failed transiently (retrying in background)
+let totalWritebackRecovered    = 0;   // ...and were then delivered on a retry
+let totalWritebackLost         = 0;   // ...and were still not delivered after the last retry
 let pgConnected = false;
 let pgReconnectAttempts = 0;
 let edgeFunctionConsecutiveErrors = 0;
@@ -405,7 +409,8 @@ async function callCmdComplete(payload) {
   try { json = JSON.parse(text); } catch (_) {}
 
   if (!res.ok) {
-    throw new Error(`cmd-complete ${res.status}: ${text.slice(0, 300)}`);
+    // .status lets the writeback retrier tell a transient 5xx from a real 4xx refusal.
+    throw Object.assign(new Error(`cmd-complete ${res.status}: ${text.slice(0, 300)}`), { status: res.status });
   }
   return json;
 }
@@ -754,8 +759,19 @@ async function processCommand(command, broker) {
     registerBrokerOrder(result.broker_order_id, command.id);
   }
 
+  // 30-Oct-2026 — the result is reported ONCE, normally; if Supabase is briefly
+  // down (5xx / no response) it is re-sent in the BACKGROUND (2s, 5s, 10s, 20s)
+  // instead of being dropped. Nothing waits for the retries. See writeback-retry.js.
   try {
-    await callCmdComplete(completePayload);
+    const wb = await sendWithRetry(() => callCmdComplete(completePayload), {
+      label: `cmd ${command.id} (${result.outcome})`,
+      onRecovered: () => { totalWritebackRecovered++; },
+      onLost: () => { totalWritebackLost++; },
+    });
+    if (!wb.ok) {
+      if (wb.retrying) totalWritebackRetrying++;
+      console.error(`[cmd ${command.id}] cmd-complete writeback FAILED${wb.retrying ? ' — retrying in background' : ' (not retryable)'}:`, wb.error);
+    }
   } catch (err) {
     console.error(`[cmd ${command.id}] cmd-complete writeback FAILED:`, err);
   }
@@ -1563,6 +1579,9 @@ app.get('/health', (_req, res) => {
       claimed:                totalCommandsClaimed,
       placed:                 totalCommandsPlaced,
       errored:                totalCommandsErrored,
+      writeback_retrying:     totalWritebackRetrying,    // 30-Oct-2026: first report failed transiently
+      writeback_recovered:    totalWritebackRecovered,   // ...delivered on a retry
+      writeback_lost:         totalWritebackLost,        // ...NOT delivered after the last retry (should stay 0)
       monitoring_polls:       totalMonitoringPolls,
       status_updates_ws:      totalStatusUpdatesFromWs,
       status_updates_rest:    totalStatusUpdatesFromRest,
