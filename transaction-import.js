@@ -3878,23 +3878,8 @@ function fyUpdateStatus() {
     var infoEl = document.getElementById('fyInfo');
     if (!statusEl) return;
 
-    // Check Fyers token — localStorage (manual OAuth) OR window.fyersToken (DB auto-login)
-    var token = null;
-    try {
-        var stored = localStorage.getItem('fyers_token');
-        if (stored) {
-            var parsed = JSON.parse(stored);
-            // Token is valid only for today
-            var today = new Date().toISOString().split('T')[0];
-            if (parsed.date === today && parsed.token) {
-                token = parsed.token;
-            }
-        }
-    } catch (e) { /* ignore parse errors */ }
-    // Also check window.fyersToken set by app.html checkFyersAuth() (covers DB auto-login)
-    if (!token && window.fyersToken) {
-        token = window.fyersToken;
-    }
+    // Fyers logged in today? window.fyersToken is set by app.html checkFyersAuth() (DB, morning login)
+    var token = window.fyersToken || null;
 
     if (token && fyInvestorId && fyBrokerId) {
         statusEl.className = 'fy-status connected';
@@ -3929,21 +3914,8 @@ window.fyFetchTrades = async function() {
         return;
     }
 
-    // Check token — localStorage (manual OAuth) OR window.fyersToken (DB auto-login)
-    var token = null;
-    try {
-        var stored = localStorage.getItem('fyers_token');
-        if (stored) {
-            var parsed = JSON.parse(stored);
-            var today = new Date().toISOString().split('T')[0];
-            if (parsed.date === today && parsed.token) {
-                token = parsed.token;
-            }
-        }
-    } catch (e) { /* */ }
-    if (!token && window.fyersToken) {
-        token = window.fyersToken;
-    }
+    // Fyers logged in today? window.fyersToken is set by app.html checkFyersAuth() (DB, morning login)
+    var token = window.fyersToken || null;
 
     if (!token) {
         tiAlert('error', 'Fyers token expired or not available. Please reconnect in Settings.');
@@ -4029,17 +4001,8 @@ window.fyImportNewOnly = async function() {
     if (!fyInvestorId || !fyBrokerId) {
         return { ok: false, error: 'Fyers investor/broker not configured (load Import module first).' };
     }
-    // Token: localStorage (manual OAuth) OR window.fyersToken (DB auto-login)
-    var token = null;
-    try {
-        var stored = localStorage.getItem('fyers_token');
-        if (stored) {
-            var parsed = JSON.parse(stored);
-            var today = new Date().toISOString().split('T')[0];
-            if (parsed.date === today && parsed.token) token = parsed.token;
-        }
-    } catch (e) { /* ignore */ }
-    if (!token && window.fyersToken) token = window.fyersToken;
+    // Fyers logged in today? window.fyersToken is set by app.html checkFyersAuth() (DB, morning login)
+    var token = window.fyersToken || null;
     if (!token) return { ok: false, error: 'Fyers token expired or not available for today.' };
 
     try {

@@ -212,20 +212,6 @@
     // FYERS TOKEN MANAGEMENT
     // ============================================================
 
-    // Get today's token from localStorage if still valid
-    function getFyersToken() {
-        try {
-            const stored = localStorage.getItem('fyers_token');
-            if (!stored) return null;
-            const { token, date } = JSON.parse(stored);
-            const today = new Date().toISOString().split('T')[0];
-            if (date === today && token) return token;
-            return null; // expired (different date)
-        } catch (e) {
-            return null;
-        }
-    }
-
     // Call Fyers via Supabase Edge Function
     // Pass the locally stored token in the request body
     // Visible signal for a price-feed failure (no silent DB fallback — see below).
@@ -277,21 +263,13 @@
             }
         }
 
-        const stored = localStorage.getItem('fyers_token');
-        let fyersToken = null;
-        if (stored) {
-            try {
-                const { token, date } = JSON.parse(stored);
-                const today = new Date().toISOString().split('T')[0];
-                if (date === today) fyersToken = token;
-            } catch(e) {}
-        }
-
         // Edge functions use SERVICE_ROLE_KEY internally; always auth with anon key
         const response = await fetch(`${window.SUPABASE_URL}/functions/v1/fyers-market-data`, {
             method: 'POST',
             headers: wmsEdgeHeaders({'Content-Type': 'application/json'}),
-            body: JSON.stringify({ ...payload, accessToken: fyersToken })
+            // accessToken always null: the EF reads today's Fyers token from the DB. Callers may pass
+            // window.fyersToken ('db' flag) in payload — it must never reach the EF (07-Nov-2026).
+            body: JSON.stringify({ ...payload, accessToken: null })
         });
         return await response.json();
     };
@@ -367,21 +345,12 @@
     };
 
     // Check Fyers token on app load
-    // Priority: localStorage (manual OAuth) → DB (auto-login) → not connected
+    // Today's token lives only in the DB (morning login). The old browser-saved token from the
+    // retired fyers-oauth.html page was removed 07-Nov-2026 (nothing wrote it any more).
     async function checkFyersAuth() {
         const statusEl = document.getElementById('fyers-status');
 
-        // 1. Check localStorage first (manual OAuth)
-        const localToken = getFyersToken();
-        if (localToken) {
-            window.fyersToken = localToken;
-            console.log('✅ Fyers token valid for today (localStorage)');
-            statusEl.innerHTML = '🟢 <a href="#" onclick="return wmsFyersRefresh()" title="Logged in today. Click to re-check: retries only logins not done today (Fyers + MOSL)" style="color:#059669;font-weight:600;text-decoration:none;">Fyers</a>';
-            statusEl.style.color = '#059669';
-            return;
-        }
-
-        // 2. Check DB for auto-login token
+        // 1. Check DB for auto-login token
         const dbRow = await checkFyersDbToken();
         if (dbRow && dbRow.api_access_token) {
             // Auto-login token exists — edge function will use it automatically
@@ -393,7 +362,7 @@
             return;
         }
 
-        // 3. No token available — one click runs the same server-side login retry as the
+        // 2. No token available — one click runs the same server-side login retry as the
         //    08:00–08:30 morning run (broker-login EF). No credentials in the browser.
         //    (The 🟢 states above are clickable too, 07-Nov-2026: a click retries only
         //    logins not done today, so it is harmless when everything is already logged in.)
@@ -442,8 +411,8 @@
     // ---- Fetch and display NIFTY, BANKNIFTY, SENSEX, GOLD prices ----
     async function fetchIndexPrices() {
         try {
-            // Check localStorage token OR DB token (auto-login sets window.fyersToken = 'db')
-            var token = getFyersToken() || window.fyersToken;
+            // DB token flag (checkFyersAuth sets window.fyersToken = 'db' after the morning login)
+            var token = window.fyersToken;
             if (!token) return;
 
             // Resolve gold symbol (cached after first success)
