@@ -4539,7 +4539,7 @@ async function saveSecHaircuts(secId) {
         if (!isFinite(n) || n > 100 || (n > 0 && n < 1)) { bad = el; return; }
         out[el.dataset.bid] = Math.round(n * 100) / 100;
     });
-    if (bad) { if (status) { status.textContent = 'Enter the % as a number from 1 to 100, e.g. 10 for 10.0%'; status.style.color = '#c53030'; } bad.focus(); return; }
+    if (bad) { if (status) { status.textContent = 'Enter the % as a number up to 100: 10 for 10.0% (not 0.10)'; status.style.color = '#c53030'; } bad.focus(); return; }
     var val = Object.keys(out).length ? out : null;
     if (status) { status.textContent = 'Saving…'; status.style.color = '#718096'; }
     try {
