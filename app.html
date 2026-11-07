@@ -313,7 +313,7 @@
         return null;
     }
 
-    // Run the Fyers login SERVER-SIDE via the fyers-auto-login Edge Function —
+    // Run the Fyers login SERVER-SIDE via the broker-login Edge Function (which calls fyers-auto-login) —
     // the exact same path the daily cron uses. The EF owns FYERS_APP_ID /
     // FYERS_SECRET / FYERS_TOTP_SECRET and writes api_access_token +
     // api_token_date into investor_broker_accounts itself, so the browser never
