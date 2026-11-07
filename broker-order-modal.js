@@ -642,9 +642,41 @@
     return { orders: list, problems: problems };
   }
 
-  function marginFor(g) {
+  // The account's open position in a symbol (all traders at this investor › broker), signed units.
+  function openPosition(sym) {
+    var txns = typeof trTransactions !== 'undefined' ? trTransactions : [];
+    var bare = function (x) { return String(x || '').replace(/^[A-Z]+:/, '').replace(/-EQ$/, ''); };
+    var k = bare(sym), q = 0;
+    txns.forEach(function (t) {
+      if (t.dont_display || t.investor_id !== BOM.acct.investor_id || t.broker_id !== BOM.acct.broker_id) return;
+      if (bare(t.symbol) === k) q += Number(t.quantity) || 0;
+    });
+    return q;
+  }
+
+  // Margin only for the part of an order that OPENS or ADDS to a position (owner, 07-Nov):
+  // an order that exits the account's open position (sell against a long, buy against a short)
+  // needs no margin for the units it closes; any units beyond it (a flip) are charged as new.
+  // Orders in this batch on the same symbol use up the open position in turn.
+  function marginNeeded(orders) {
+    var left = {}, need = 0, unknown = false, freed = 0;
+    orders.forEach(function (g) {
+      if (!(g.symbol in left)) left[g.symbol] = openPosition(g.symbol);
+      var pos = left[g.symbol], signed = g.side === 'SELL' ? -g.units : g.units;
+      var closing = (pos > 0 && signed < 0) || (pos < 0 && signed > 0) ? Math.min(Math.abs(pos), g.units) : 0;
+      left[g.symbol] = pos + signed;
+      g.closingUnits = closing;
+      var m = marginFor(g, g.units - closing);
+      if (m == null) unknown = true; else need += m;
+      if (closing) freed += closing;
+    });
+    return { need: need, unknown: unknown };
+  }
+
+  function marginFor(g, units) {
     if (!g.estPrice) return null;
-    var value = g.units * g.estPrice;
+    if (units == null) units = g.units;
+    var value = units * g.estPrice;
     if (g.security_type !== 'NFO') return value;                                // cash equity: full value
     if (isOption(g.symbol) && g.side === 'BUY') return value;                   // option buy: full premium
     var pct = typeof wmsGetMarginRate === 'function' ? Number(wmsGetMarginRate(BOM.acct.investor_id, BOM.acct.broker_id)) || 0 : 0;
@@ -677,16 +709,17 @@
     }
     var p = plan();
     BOM.lastPlan = p;
+    var mn = marginNeeded(p.orders), need = mn.need, unknown = mn.unknown;   // also marks exits on each order
     ordersEl.innerHTML = (p.problems.length ? p.problems.map(function (x) { return '<div class="bom-warn">' + esc(x) + '</div>'; }).join('') : '') +
       (p.orders.length ? p.orders.map(function (g) {
         return '<div class="bom-ord"><b>' + g.side + ' ' + qtyFmt(g.brokerQty) + (g.exchange === 'MCX' ? ' lots' : '') + '</b> ' + esc(g.display) +
           ' · ' + (g.price ? 'limit ' + price2(g.price) : 'market') +
+          (g.closingUnits ? ' <span class="bom-note" title="Closes part or all of the open position: no margin for these units">(' +
+            (g.closingUnits >= g.units ? 'exit' : 'exits ' + qtyFmt(g.closingUnits)) + ')</span>' : '') +
           '<div class="bom-split">' + g.lines.map(function (l) { return esc(invName(l.trader_id)) + ' ' + l.lots + (l.lots === 1 ? ' lot' : ' lots'); }).join(' · ') + '</div></div>';
       }).join('') : (p.problems.length ? '' : '<span class="bom-note">Nothing to send yet.</span>'));
 
     // Margin
-    var need = 0, unknown = false;
-    p.orders.forEach(function (g) { var m = marginFor(g); if (m == null) unknown = true; else need += m; });
     var f = BOM.funds, mHtml = '';
     var atEl = document.getElementById('bomFundsAt');
     if (atEl) atEl.textContent = BOM.fundsBusy ? 'reading…' : (f && f.at ? (typeof wmsLoginStamp === 'function' ? wmsLoginStamp(f.at) : f.at) : '');
