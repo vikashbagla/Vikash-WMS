@@ -149,17 +149,22 @@ async function loadReferenceData() {
 async function loadCnAccounts() {
     try {
         // Load investor_broker_accounts joined with investor short_name and broker cn_parser_template
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=id,investor_id,broker_id,cn_password,investors(short_name),brokers(name,broker_code,cn_parser_template)&is_active=eq.true', {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/investor_broker_accounts?select=id,investor_id,broker_id,cn_password,investors(short_name,book_parent_id),brokers(name,broker_code,cn_parser_template)&is_active=eq.true', {
             headers: wmsHeaders()
         });
         var accounts = await resp.json();
         cnAccounts = [];
         var select = document.getElementById('cnAccountSelect');
         select.innerHTML = '<option value="">-- Select Account --</option>';
+        var optRows = [];
 
         accounts.forEach(function(acc) {
             // Only show accounts where broker has a parser template
             if (!acc.brokers || !acc.brokers.cn_parser_template) return;
+            // Only investors with their OWN books (owner 2026-11-07): skip clients
+            // (T1..T5, TRJ…) whose book is a parent (book_parent_id set to another investor).
+            var bp = acc.investors ? acc.investors.book_parent_id : null;
+            if (bp && String(bp) !== String(acc.investor_id)) return;
 
             // Skip accounts with missing investor or broker data
             var investorName = acc.investors ? acc.investors.short_name : null;
@@ -179,12 +184,19 @@ async function loadCnAccounts() {
             };
             cnAccounts.push(obj);
 
-            // Display: "Veins @ Fyers" (title-case the broker_code)
+            // Display: "Fyers > Veins" — broker first (owner 2026-11-07); title-case the broker_code
             var displayCode = obj.broker_code !== '?' ? obj.broker_code : obj.broker_name;
             var brokerDisplay = displayCode.charAt(0).toUpperCase() + displayCode.slice(1).toLowerCase();
+            optRows.push({ id: obj.id, broker: brokerDisplay, investor: obj.investor_short_name });
+        });
+        // Sorted by broker, then investor
+        optRows.sort(function(a, b) {
+            return a.broker.localeCompare(b.broker) || a.investor.localeCompare(b.investor);
+        });
+        optRows.forEach(function(r) {
             var opt = document.createElement('option');
-            opt.value = obj.id;
-            opt.textContent = obj.investor_short_name + ' @ ' + brokerDisplay;
+            opt.value = r.id;
+            opt.textContent = r.broker + ' > ' + r.investor;
             select.appendChild(opt);
         });
 
