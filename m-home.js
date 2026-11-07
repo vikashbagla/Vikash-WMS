@@ -111,3 +111,35 @@ function wmsPhoneLanding() {
     wmsPhoneShowHome();
     return true;
 }
+
+// ============================================================================
+// Phone app RESUME (owner request 07-Nov-2026): on the iPhone the app is the Safari page saved to
+// the home screen, which iOS keeps in memory and RESUMES (no reload). The desktop reads the broker
+// login status once, when the app loads — so a phone app resumed hours later still showed the old
+// status, and if it was first opened before the morning login, live prices stayed off until a full
+// reload. On resume (after a minute or more away) re-run the desktop's own login check
+// (checkFyersAuth: re-reads wms_login_status, repaints the two dots, sets the price flag); if that
+// turns prices on, start the desktop's own price refresh. Nothing new: the same functions the app
+// runs on load. Owner only — other users never use the login status (the app sets their flag on load).
+// ============================================================================
+(function () {
+    var lastCheck = Date.now();
+    function onResume() {
+        if (document.hidden) return;
+        if (Date.now() - lastCheck < 60000) return;
+        lastCheck = Date.now();
+        if (!(window.wmsAccess && window.wmsAccess.isOwner)) return;
+        if (typeof checkFyersAuth !== 'function') return;
+        var pricesWereOff = !window.fyersToken;
+        checkFyersAuth().then(function () {
+            // The desktop's own resume handler restarts prices only if they were already on;
+            // this covers the one case it skips: prices off before, on now.
+            if (!pricesWereOff || !window.fyersToken) return;
+            if (typeof wmsIsRefreshWindow !== 'function' || !wmsIsRefreshWindow()) return;
+            if (typeof wmsStandardRefresh === 'function') wmsStandardRefresh(true);
+            if (typeof wmsStartRefreshTimer === 'function') wmsStartRefreshTimer();
+        }).catch(function (e) { console.warn('Phone resume: login status re-check failed', e); });
+    }
+    document.addEventListener('visibilitychange', onResume);
+    window.addEventListener('pageshow', onResume);
+})();

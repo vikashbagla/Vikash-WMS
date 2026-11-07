@@ -53,7 +53,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.6.0';
+const VERSION = 'wms-mosl/1.7.0';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -383,12 +383,20 @@ const OPEN_STATUSES = /^(sent|confirm|partial|unknown)$/i;
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const ddmmmyyyy = (d) => `${String(d.getUTCDate()).padStart(2, '0')}-${MON[d.getUTCMonth()]}-${d.getUTCFullYear()}`;
 
-async function loginCtx(timings, report) {
+// loginKey (Multi-Account Logins Phase 3, 1.7.0): which MOSL account to log in — its login_key
+// in the account records (VB = Vikash, VEINS = Veins). mosl-probe picks that account's secrets
+// (MOSL_<KEY>_*). No key = mosl-probe's default ('VB').
+async function loginCtx(timings, report, loginKey) {
   const ctx = { agent: agentFor(CFG.moslBase), apiKey: '', apiSecret: '', clientId: '', publicIp: '0.0.0.0', authToken: '', accessToken: '' };
   try { ctx.publicIp = await getText(CFG.ipUrl); } catch { /* keep */ }
-  const prep = await callEf({ mode: 'relay_prepare' });
+  const prep = await callEf(loginKey ? { mode: 'relay_prepare', login_key: loginKey } : { mode: 'relay_prepare' });
   timings.prepare_ms = prep.ms;
-  if (prep.status !== 200 || !prep.json?.ok) throw new Error(`prepare failed (http ${prep.status})`);
+  if (prep.status !== 200 || !prep.json?.ok) {
+    // Names of missing settings only (never values) — so the morning email says what to add.
+    const why = prep.json?.error ? `: ${String(prep.json.error).slice(0, 120)}` : '';
+    const miss = Array.isArray(prep.json?.missing) && prep.json.missing.length ? ` (missing: ${prep.json.missing.slice(0, 8).join(', ')})` : '';
+    throw new Error(`prepare failed (http ${prep.status})${why}${miss}`);
+  }
   const p = prep.json;
   Object.assign(ctx, { apiKey: p.apiKey, apiSecret: p.apiSecret, clientId: p.clientId });
   const login = await moslPost(ctx, '/rest/login/v7/authdirectapi', { userid: p.clientId, password: p.pwHash, '2FA': p.twoFA, totp: p.totp });
@@ -915,10 +923,12 @@ export async function runDailyLogin(trigger = {}) {
   const t0 = Date.now();
   const timings = {};
   if (Number.isFinite(Number(trigger.t))) timings.wake_ms = t0 - Number(trigger.t);
-  const report = { version: VERSION, mode: 'daily_login' };
+  // Which MOSL account (Phase 3): the key from the trigger (broker-login → broker_login_notify_mosl(key)).
+  const loginKey = /^[A-Z0-9_]{2,20}$/.test(String(trigger.login_key ?? '').toUpperCase()) ? String(trigger.login_key).toUpperCase() : null;
+  const report = { version: VERSION, mode: 'daily_login', login_key: loginKey ?? 'VB' };
   let step = 'login'; let ctx = null;
   try {
-    ctx = await loginCtx(timings, report);
+    ctx = await loginCtx(timings, report, loginKey);
     report.droplet_public_ip = ctx.publicIp;
     report.access_token_ok = !!ctx.accessToken;
     step = 'verify';

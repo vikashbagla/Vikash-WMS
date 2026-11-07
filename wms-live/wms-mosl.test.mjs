@@ -103,6 +103,16 @@ const M3 = await import('./wms-mosl.js?x=3');
 const dl = await M3.runDailyLogin({ t: Date.now() - 50 });
 T('daily_login: logs in and verifies session (profile + margin)', dl.ok === true && dl.step === 'done' && dl.report.access_token_ok === true, JSON.stringify(dl.report.error ?? dl.step));
 T('daily_login: no secrets in report', !/AUTH-TOKEN-SECRET|ACCESS-SECRET|KEY-XYZ|SEC-XYZ|123456/.test(JSON.stringify(M3.scrub(dl.report))));
+// ---- daily login per account (Multi-Account Logins Phase 3, 1.7.0) ----
+const prepBefore = efSeen.filter((e) => e.body.mode === 'relay_prepare').length;
+const dlv = await M3.runDailyLogin({ t: Date.now() - 50, login_key: 'veins' });
+const prepV = efSeen.filter((e) => e.body.mode === 'relay_prepare').slice(prepBefore);
+T('daily_login VEINS: asks mosl-probe for that account (login_key sent)', prepV.length === 1 && prepV[0].body.login_key === 'VEINS', JSON.stringify(prepV.map((e) => e.body)));
+T('daily_login VEINS: report names the account', dlv.ok === true && dlv.report.login_key === 'VEINS');
+T('daily_login: no key -> report says VB, no login_key sent', dl.report.login_key === 'VB'
+  && efSeen.filter((e) => e.body.mode === 'relay_prepare').slice(0, prepBefore).every((e) => !('login_key' in e.body)));
+const dlBad = await M3.runDailyLogin({ login_key: 'bad key!' });
+T('daily_login: invalid key ignored (default account)', dlBad.report.login_key === 'VB');
 // ---- funds detail (read-only) ----
 const beforeFd = moslSeen.length;
 const fd = await M3.runFundsDetail({});
