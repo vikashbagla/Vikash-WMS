@@ -53,9 +53,13 @@
     }
     .user-section > * { flex-shrink: 0; }
     .user-email { display: none; }
-    .user-section > .fyers-indicator { margin-right: 0; min-width: 0; flex-shrink: 1; overflow: hidden; }
-    #fyers-status { font-size: 10px !important; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    #fyers-refresh-time { display: none !important; }
+    /* 07-Nov-2026: the Fyers label became two login dots. Bigger tap targets (each dot is the
+       desktop's login-retry link), kept clear of the ⏻ logout button, and the last-price-update time
+       shown under them as on desktop (green = market open, red = closed). */
+    .user-section > .fyers-indicator { margin: 0 6px 0 2px; min-width: 0; flex-shrink: 1; overflow: visible; line-height: 1; }
+    #fyers-status { font-size: 10px !important; display: block; white-space: nowrap; }
+    #fyers-status a { display: inline-block; font-size: 18px !important; line-height: 1; padding: 3px 2px; -webkit-tap-highlight-color: transparent; }
+    #fyers-refresh-time { display: block !important; font-size: 8.5px !important; line-height: 1.1; margin-top: 1px; }
     .btn-refresh-app {
         padding: 4px 5px; font-size: 13px;
         border: 1px solid #e2e8f0; border-radius: 6px;
