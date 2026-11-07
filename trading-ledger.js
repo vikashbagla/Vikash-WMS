@@ -3224,6 +3224,13 @@ function lgAssignReconPeriods(rows) {
 // ============================================================================
 
 // ── Weekly-friday breakdown (single Friday EOD + rate × 1/52) ─────────────
+function _lgShortDate(d) {
+    if (!d) return '';
+    var M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var p = String(d).slice(0, 10).split('-');
+    return p.length === 3 ? (p[2] + '-' + M[(+p[1]) - 1] + '-' + p[0].slice(2)) : String(d);
+}
+
 function _lgRenderWeeklyBreakdown(calc) {
     var roundedInterest = Math.round(calc.interest);
     var cash = calc.closingBalance || 0;
@@ -3260,8 +3267,8 @@ function _lgRenderWeeklyBreakdown(calc) {
             var side = l.qty < 0 ? 'Short' : 'Long';
             var sym = String(l.contract || '').replace(/^[A-Z]+:/, '');
             return '<tr>' +
-                '<td style="padding:4px 8px;">' + wmsEsc(sym) + '</td>' +
-                '<td style="padding:4px 8px;">' + wmsEsc(lgFmtDate(l.date) || l.date || '') + '</td>' +
+                '<td style="padding:4px 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + wmsEsc(sym) + '">' + wmsEsc(sym) + '</td>' +
+                '<td style="padding:4px 8px; white-space:nowrap;">' + wmsEsc(_lgShortDate(l.date)) + '</td>' +
                 '<td style="' + cell + '">' + side + ' ' + Math.abs(l.qty) + '</td>' +
                 '<td style="' + cell + '">' + lgFmtPrice(l.price) + '</td>' +
                 '<td style="' + cell + '">' + lgFmt(l.value) + '</td>' +
@@ -3276,7 +3283,8 @@ function _lgRenderWeeklyBreakdown(calc) {
                 '<span style="' + valueStyle + '">' + lgFmt(margin) + '</span>' +
             '</div>' +
             '<div style="display:none; padding:0 12px 8px 24px; font-size:12px;">' +
-                '<table style="width:100%; border-collapse:collapse;">' +
+                '<table style="width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px;">' +
+                '<colgroup><col style="width:27%"><col style="width:12%"><col style="width:13%"><col style="width:12%"><col style="width:13%"><col style="width:9%"><col style="width:14%"></colgroup>' +
                 '<tr style="border-bottom:1px solid #e2e8f0;"><th style="padding:4px 8px; text-align:left; font-weight:600; color:#718096;">Contract</th>' +
                 '<th style="padding:4px 8px; text-align:left; font-weight:600; color:#718096;">Opened</th>' +
                 '<th style="' + th + '">Position</th><th style="' + th + '">Price</th><th style="' + th + '">Value</th>' +
