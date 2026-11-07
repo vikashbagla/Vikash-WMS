@@ -292,6 +292,7 @@ function initMasterData() {
         if (savedTab === 'charges') {
             if (!_chargesLoaded) { _chargesLoaded = true; loadChargesConfig(); }
         }
+        if (savedTab === 'holidays') loadHolidays();
     }
 }
 
@@ -319,6 +320,89 @@ function switchTab(event, tabName) {
     }
     if (tabName === 'charges') {
         if (!_chargesLoaded) { _chargesLoaded = true; loadChargesConfig(); }
+    }
+    if (tabName === 'holidays') loadHolidays();
+}
+
+// ============================================================================
+// HOLIDAYS (owner 2026-11-05) — read-only list built from the market calendar
+// (market_hours rows with on_date set: closed days and special sessions).
+// Columns: NSE & BSE (Equity, F&O) and MCX (Morning 09:00–17:00, Evening 17:00–close).
+// Past dates greyed. Data is maintained in the calendar table (MARKET-CALENDAR plan).
+// ============================================================================
+function _holHM(t) { return t ? String(t).slice(0, 5) : ''; }
+function _holOccasion(note) {
+    var n = String(note || '').split(' — ')[0].split(';')[0].trim();
+    return n || '—';
+}
+// One NSE/BSE cell from the exchange rows of that date & segment.
+function _holEqCell(rows) {
+    if (!rows.length) return '<span class="hol-open">Open</span>';
+    var parts = rows.map(function(r) {
+        return r.closed ? 'Closed' : (_holHM(r.open_time) + '–' + _holHM(r.close_time));
+    });
+    var uniq = parts.filter(function(v, i) { return parts.indexOf(v) === i; });
+    var txt = uniq.length === 1 ? uniq[0] : rows.map(function(r, i) { return r.exchange + ' ' + parts[i]; }).join(' · ');
+    var cls = (uniq.length === 1 && uniq[0] === 'Closed') ? 'hol-closed' : 'hol-special';
+    return '<span class="' + cls + '">' + wmsEscHol(txt) + '</span>';
+}
+// MCX morning / evening cells from the COMM row of that date.
+function _holMcxCells(r) {
+    if (!r) return ['<span class="hol-open">Open</span>', '<span class="hol-open">Open</span>'];
+    if (r.closed) return ['<span class="hol-closed">Closed</span>', '<span class="hol-closed">Closed</span>'];
+    var o = _holHM(r.open_time), c = _holHM(r.close_time);
+    if (o >= '17:00') return ['<span class="hol-closed">Closed</span>', '<span class="hol-open">Open</span>'];
+    if (c <= '17:00' && o <= '09:00') return ['<span class="hol-open">Open</span>', '<span class="hol-closed">Closed</span>'];
+    // Special window (e.g. Muhurat 14:20–15:30): show it in the session it falls in.
+    var win = '<span class="hol-special">' + o + '–' + c + '</span>';
+    return (o < '17:00') ? [win, (c > '17:00' ? win : '<span class="hol-closed">Closed</span>')]
+                         : ['<span class="hol-closed">Closed</span>', win];
+}
+function wmsEscHol(s) {
+    return String(s).replace(/[&<>"]/g, function(ch) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]; });
+}
+async function loadHolidays() {
+    var grid = document.getElementById('holidaysGrid');
+    if (!grid) return;
+    grid.innerHTML = '<div style="padding:20px;color:#9ca3af;">Loading…</div>';
+    try {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/market_hours?on_date=not.is.null&enabled=eq.true' +
+            '&select=exchange,segment,on_date,closed,open_time,close_time,note&order=on_date.asc', { headers: wmsHeaders() });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        var rows = await resp.json();
+        var byDate = {};
+        rows.forEach(function(r) { (byDate[r.on_date] = byDate[r.on_date] || []).push(r); });
+        var dates = Object.keys(byDate).sort();
+        if (!dates.length) { grid.innerHTML = '<div style="padding:20px;color:#9ca3af;">No holidays in the calendar.</div>'; return; }
+        // Today in IST (YYYY-MM-DD)
+        var todayIst = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+        var DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        var body = dates.map(function(d) {
+            var rs = byDate[d];
+            var pick = function(seg) { return rs.filter(function(r) { return (r.exchange === 'NSE' || r.exchange === 'BSE') && r.segment === seg; }); };
+            var mcx = rs.filter(function(r) { return r.exchange === 'MCX'; })[0] || null;
+            var mc = _holMcxCells(mcx);
+            var occ = _holOccasion((rs.filter(function(r) { return r.exchange !== 'MCX'; })[0] || rs[0]).note);
+            var dt = new Date(d + 'T00:00:00Z');
+            var dateTxt = String(dt.getUTCDate()).padStart(2, '0') + '-' + MON[dt.getUTCMonth()] + '-' + String(dt.getUTCFullYear()).slice(2);
+            return '<tr' + (d < todayIst ? ' class="hol-past"' : '') + '>' +
+                '<td>' + dateTxt + '</td><td>' + DOW[dt.getUTCDay()] + '</td>' +
+                '<td>' + wmsEscHol(occ) + '</td>' +
+                '<td style="text-align:center;">' + _holEqCell(pick('EQ')) + '</td>' +
+                '<td style="text-align:center;">' + _holEqCell(pick('FNO')) + '</td>' +
+                '<td style="text-align:center;">' + mc[0] + '</td>' +
+                '<td style="text-align:center;">' + mc[1] + '</td>' +
+                '</tr>';
+        }).join('');
+        grid.innerHTML = '<table class="data-table" id="holTable" style="max-width:1000px;">' +
+            '<thead><tr class="hol-grp"><th colspan="3"></th><th colspan="2">NSE &amp; BSE</th><th colspan="2">MCX</th></tr>' +
+            '<tr><th>Date</th><th>Day</th><th>Occasion</th>' +
+            '<th style="text-align:center;">Equity</th><th style="text-align:center;">F&amp;O</th>' +
+            '<th style="text-align:center;">Morning</th><th style="text-align:center;">Evening</th></tr></thead>' +
+            '<tbody>' + body + '</tbody></table>';
+    } catch (e) {
+        grid.innerHTML = '<div style="padding:20px;color:#b91c1c;">Could not load holidays: ' + wmsEscHol(e.message) + '</div>';
     }
 }
 
