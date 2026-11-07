@@ -1,0 +1,39 @@
+<!-- Help Module HTML (07-Nov-2026). Owner only. The PAGES are not here: they live in the
+     database table help_pages (owner-only), because this repo is public. This file is just
+     the frame: a page list on the left (grouped by section) and the page on the right. -->
+<head>
+<style id="help-styles">
+.help-wrap { display: flex; gap: 16px; height: 100%; min-height: 0; padding: 8px 0; }
+.help-nav { flex: 0 0 230px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 0; overflow-y: auto; }
+.help-nav .hn-section { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #718096; padding: 10px 14px 4px; }
+.help-nav .hn-page { display: block; width: 100%; text-align: left; background: none; border: none; border-left: 3px solid transparent; padding: 6px 14px; font-size: 13px; color: #2d3748; cursor: pointer; }
+.help-nav .hn-page:hover { background: #f7fafc; color: #667eea; }
+.help-nav .hn-page.active { border-left-color: #667eea; color: #667eea; font-weight: 600; background: #f5f7ff; }
+.help-body { flex: 1; min-width: 0; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px 24px; overflow-y: auto; }
+.help-body h1 { font-size: 19px; margin: 0 0 4px; color: #1a202c; }
+.help-body .hp-updated { font-size: 11px; color: #a0aec0; margin-bottom: 14px; }
+.help-body .hp-lead { font-size: 14px; color: #2d3748; line-height: 1.55; margin: 0 0 14px; max-width: 900px; }
+.help-body p, .help-body li { font-size: 13px; color: #2d3748; line-height: 1.55; }
+.help-body ul { margin: 6px 0 10px 18px; padding: 0; }
+.help-body details { border: 1px solid #e2e8f0; border-radius: 8px; margin: 0 0 10px; background: #fff; max-width: 1000px; }
+.help-body summary { cursor: pointer; padding: 10px 14px; font-size: 14px; font-weight: 600; color: #2d3748; background: #f7fafc; border-radius: 8px; list-style: none; }
+.help-body summary::-webkit-details-marker { display: none; }
+.help-body summary::before { content: '▸'; display: inline-block; width: 16px; color: #667eea; transition: transform .15s; }
+.help-body details[open] > summary::before { transform: rotate(90deg); }
+.help-body details[open] > summary { border-bottom: 1px solid #e2e8f0; border-radius: 8px 8px 0 0; }
+.help-body details > :not(summary) { margin-left: 14px; margin-right: 14px; }
+.help-body details > :last-child { margin-bottom: 12px; }
+.help-body .hp-table { border-collapse: collapse; margin: 10px 14px 12px; font-size: 13px; width: calc(100% - 28px); }
+.help-body .hp-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #718096; background: #f7fafc; padding: 6px 10px; border-bottom: 1px solid #e2e8f0; }
+.help-body .hp-table td { padding: 7px 10px; border-bottom: 1px solid #edf2f7; vertical-align: top; }
+.help-body .hp-table td:first-child, .help-body .hp-table td:nth-child(2) { white-space: nowrap; color: #4a5568; }
+.help-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
+.help-body .hp-note { font-size: 12px; color: #4a5568; background: #f5f7ff; border-left: 3px solid #667eea; padding: 6px 10px; border-radius: 4px; }
+.help-empty { color: #a0aec0; font-size: 13px; padding: 14px; }
+@media (max-width: 760px) { .help-wrap { flex-direction: column; } .help-nav { flex: none; max-height: 200px; } }
+</style>
+</head>
+<div class="help-wrap">
+    <nav class="help-nav" id="helpNav"><div class="help-empty">Loading…</div></nav>
+    <article class="help-body" id="helpBody"><div class="help-empty">Choose a page.</div></article>
+</div>

@@ -125,6 +125,7 @@ body {
 .nav-btn:hover:not(.disabled) { color: #667eea; background: #f7fafc; }
 .nav-btn.active { color: #667eea; border-bottom-color: #667eea; }
 .nav-btn.disabled { opacity: 0.4; cursor: not-allowed; }
+.nav-btn-right { margin-left: auto; }   /* Help — right-aligned on the main menu (07-Nov-2026) */
 
 /* LAYOUT — fills viewport below header+nav */
 .main-content {
