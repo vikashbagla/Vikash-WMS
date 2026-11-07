@@ -77,8 +77,8 @@
       '.bom-at{text-transform:none;letter-spacing:0;font-weight:400;color:#a0aec0;font-size:10.5px;white-space:nowrap}',
       '.bom-rf{text-decoration:none;color:#2c7a7b;font-size:12px;margin-left:4px}',
       '.bom-kv.sub span:first-child{padding-left:10px;color:#4a5568}',
-      '.bom-c3{display:grid;grid-template-columns:1fr auto auto;column-gap:12px;padding:2px 0;font-size:12.5px}',
-      '.bom-c3 span:nth-child(n+2){text-align:right;font-variant-numeric:tabular-nums;min-width:62px}',
+      '.bom-c3{display:grid;grid-template-columns:1fr 84px 84px;column-gap:16px;padding:2px 0;font-size:12.5px}',
+      '.bom-c3 span:nth-child(n+2){text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}',
       '.bom-c3.hd{margin:2px 0 4px}',
       '.bom-c3.hd span{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#718096}',
       '.bom-c3.tot{border-top:1px solid #e2e8f0;margin-top:4px;padding-top:5px;font-weight:700}',
@@ -103,7 +103,7 @@
       '.bom-sym .wms-dd .wms-dd-item.nfo{color:#667eea}',
       '.bom-del{background:none;border:0;cursor:pointer;color:#a0aec0;font-size:15px}',
       '.bom-add{margin:8px 0 2px;background:none;border:0;color:#2c7a7b;font-weight:600;cursor:pointer;font:inherit;padding:0}',
-      '.bom-panel{display:grid;grid-template-columns:1.25fr 1.15fr 1.1fr;gap:12px;padding:12px 18px;border-top:1px solid #e2e8f0;background:#f7fafc}',
+      '.bom-panel{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:12px 18px;border-top:1px solid #e2e8f0;background:#f7fafc}',
       '.bom-box{background:#fff;border:1px solid #e2e8f0;border-radius:9px;padding:9px 11px;min-width:0}',
       '.bom-kv{display:flex;justify-content:space-between;gap:8px;padding:2px 0;font-size:12.5px}',
       '.bom-kv span:last-child{font-variant-numeric:tabular-nums;text-align:right}',
@@ -297,6 +297,7 @@
         BOM.funds = { at: j.as_of, available: line(/^available balance$/i), startLimit: line(/^limit at start of the day$/i),
                       total: line(/^total balance$/i), used: line(/^utilized amount$/i), holdings: j.holdings || [] };
         BOM.funds.liquid = await liquidMargin(acct);
+        BOM.funds.fnoUsed = fnoUsedEstimate(acct);
       }
     } catch (e) { BOM.funds = { error: e.message }; }
     BOM.fundsBusy = false; renderPanel();
@@ -352,6 +353,44 @@
       });
       return { value: total, parts: parts };
     } catch (e) { console.warn('liquid margin', e); return null; }
+  }
+
+  // Utilised in F&O — ESTIMATE for Fyers (owner, 07-Nov): FNO_USED_PCT of the account's open NSE F&O
+  // exposure (all traders at this investor › broker). Fyers gives one combined "Utilized Amount" with
+  // no segment split; MOSL's segment break-up will replace this with the actual figure (Plan v7 §3).
+  // Exposure: futures = |net qty| × price; short options = |net qty| × strike; long options = 0
+  // (premium already paid). MCX is left out (never short of MCX margin — owner).
+  var FNO_USED_PCT = 30;
+  function fnoUsedEstimate(acct) {
+    var txns = typeof trTransactions !== 'undefined' ? trTransactions : [];
+    var pos = {};
+    txns.forEach(function (t) {
+      if (t.dont_display || t.investor_id !== acct.investor_id || t.broker_id !== acct.broker_id) return;
+      if (String(t.security_type || '').toUpperCase() !== 'NFO') return;
+      var sym = String(t.symbol || '');
+      if (/^MCX:/.test(sym) || String(t.exchange || '').toUpperCase() === 'MCX') return;
+      var k = sym.replace(/^[A-Z]+:/, '');
+      var q = Number(t.quantity) || 0;
+      var ps = pos[k] || (pos[k] = { qty: 0, last: 0 });
+      ps.qty += q; if (Number(t.price) > 0) ps.last = Number(t.price);
+    });
+    var exposure = 0, parts = [];
+    Object.keys(pos).forEach(function (k) {
+      var ps = pos[k]; if (!ps.qty) return;
+      var opt = /(CE|PE)$/.test(k), v = 0, how = '';
+      if (opt) {
+        if (ps.qty > 0) return;                                   // long option: no margin
+        var sec = (wmsRefData.securitiesNfo || []).find(function (x) { return String(x.symbol || '').replace(/^[A-Z]+:/, '') === k; });
+        var strike = sec && Number(sec.strike_price) > 0 ? Number(sec.strike_price) : 0;
+        if (!strike) return;
+        v = Math.abs(ps.qty) * strike; how = 'strike ' + price2(strike);
+      } else {
+        var lp = (typeof wmsLivePrices !== 'undefined' && wmsLivePrices[k] && wmsLivePrices[k].lp > 0) ? wmsLivePrices[k].lp : ps.last;
+        v = Math.abs(ps.qty) * lp; how = price2(lp);
+      }
+      exposure += v; parts.push(k + ': ' + qtyFmt(ps.qty) + ' × ' + how);
+    });
+    return { exposure: exposure, value: exposure * FNO_USED_PCT / 100, parts: parts };
   }
 
   // ↻ in the Balance & margin heading: read the balance again AND the live prices (both margins move).
@@ -657,15 +696,25 @@
       var fv = function (v) { return BOM.fundsBusy || !f ? '…' : (v == null ? '-' : amt(v)); };
       mHtml += kv('Limit at start of the day', fv(f && f.startLimit)) +
                kv('Total available', fv(f && f.available)) +
-               kv('Liquid margin', BOM.fundsBusy || !f ? '…' : (f.liquid
-                    ? '<span title="' + esc(f.liquid.parts.join('\n') || 'none pledged') + '">' + amt(f.liquid.value) + '</span>'
-                    : '<span class="bom-note" title="Set a haircut % for this broker on the liquid securities (Master Data › security)">not set up</span>'));
+               '';
+      if (BOM.fundsBusy || !f) mHtml += kv('Max F&amp;O margin', '…');
+      else if (!f.liquid) mHtml += kv('Max F&amp;O margin', '<span class="bom-note" title="Set a haircut % for this broker on the liquid securities (Master Data › security)">not set up</span>');
+      else {
+        var maxFno = f.liquid.value * 2, used = f.fnoUsed ? f.fnoUsed.value : 0;
+        f.fnoAvail = maxFno - used;
+        mHtml += kv('<span title="Liquid margin × 2">Max F&amp;O margin</span>',
+                   '<span title="' + esc('Liquid margin ' + amt(f.liquid.value).replace(/<[^>]+>/g, '') + ' × 2\n' + (f.liquid.parts.join('\n') || 'none')) + '">' + amt(maxFno) + '</span>') +
+                 kv('<span title="Estimate: ' + FNO_USED_PCT + '% of the open NSE F&amp;O exposure in this account (MOSL will give the actual)">− Utilised in F&amp;O (est. ' + FNO_USED_PCT + '%)</span>',
+                   '<span title="' + esc('Exposure ' + amt(f.fnoUsed ? f.fnoUsed.exposure : 0).replace(/<[^>]+>/g, '') + ' × ' + FNO_USED_PCT + '%\n' + ((f.fnoUsed && f.fnoUsed.parts.join('\n')) || 'no open NSE F&O')) + '">' + amt(used) + '</span>') +
+                 kv('= Total F&amp;O margin available', amt(f.fnoAvail), 'tot');
+      }
     }
-    mHtml += '<div class="bom-kv tot"><span>Margin needed (estimate)</span><span>' + (unknown ? '<span class="bom-warn">price needed</span>' : amt(need)) + '</span></div>';
-    if (f && !f.error && f.available != null && !unknown && p.orders.length) {
-      mHtml += need > f.available
-        ? '<div class="bom-kv"><span>Check</span><span class="bom-warn">more than available</span></div>'
-        : '<div class="bom-kv"><span>Check</span><span class="bom-ok">within available</span></div>';
+    mHtml += '<div class="bom-kv"><span>Margin needed (estimate)</span><span>' + (unknown ? '<span class="bom-warn">price needed</span>' : amt(need)) + '</span></div>';
+    // Check: against Total F&O margin available (owner, 07-Nov), not Total available.
+    if (f && !f.error && f.liquid && f.fnoAvail != null && !unknown && p.orders.length) {
+      mHtml += need > f.fnoAvail
+        ? '<div class="bom-kv"><span>Check</span><span class="bom-warn">more than F&amp;O available</span></div>'
+        : '<div class="bom-kv"><span>Check</span><span class="bom-ok">within F&amp;O available</span></div>';
     }
     document.getElementById('bomMargin').innerHTML = mHtml;
 
