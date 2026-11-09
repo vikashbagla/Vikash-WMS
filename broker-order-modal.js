@@ -819,11 +819,37 @@
         return;
       }
       closePassword();
+      watchBooking(ref);
       BOM.rows = []; addRow(); renderPanel();
       showMsg('Sent: ' + (j.orders || []).length + ' broker order(s). Follow them in Today\'s orders.');
       setTab('today');
     } catch (e) { showMsg('Not sent: ' + e.message, true); }
     finally { sending = false; var b = document.getElementById('bomSend'); if (b) b.disabled = false; }
+  }
+
+  // After placing: watch until every line of this placement is booked (or voided), then refresh the
+  // app's transactions ONCE, so the new rows show within seconds instead of on the app's 2-minute
+  // check (owner, 09-Nov). Runs even if the modal is closed; gives up after ~3 minutes.
+  function watchBooking(ref) {
+    var tries = 0;
+    var tick = async function () {
+      tries++;
+      try {
+        var cmds = await fetch(window.SUPABASE_URL + '/rest/v1/wms_live_commands?select=id,broker_status,status&signal_ref=like.' +
+          encodeURIComponent(ref + '-*'), { headers: wmsHeaders() }).then(function (x) { return x.json(); });
+        if (Array.isArray(cmds) && cmds.length) {
+          var lines = await fetch(window.SUPABASE_URL + '/rest/v1/at2_trade?select=status&entry_command_id=in.(' +
+            cmds.map(function (c) { return c.id; }).join(',') + ')', { headers: wmsHeaders() }).then(function (x) { return x.json(); });
+          var settled = Array.isArray(lines) && lines.length && lines.every(function (l) { return l.status === 'filled' || l.status === 'voided'; });
+          if (settled) {
+            if (typeof wmsTxnSyncNow === 'function' && await wmsTxnSyncNow() && typeof wmsRenderActiveModuleAfterTxn === 'function') wmsRenderActiveModuleAfterTxn();
+            return;
+          }
+        }
+      } catch (_) { /* try again */ }
+      if (tries < 36) setTimeout(tick, 5000);
+    };
+    setTimeout(tick, 4000);
   }
 
   // ---------------------------------------------------------------------------
@@ -847,8 +873,8 @@
       box.innerHTML = cmds.length ? cmds.map(function (c) {
         var pl = c.payload || {}, bs = String(c.broker_status || c.status || '').toUpperCase();
         var cls = bs === 'FILLED' ? 'done' : (bs === 'REJECTED' || bs === 'CANCELLED' || bs === 'EXPIRED' || c.status === 'error') ? 'bad' : 'wip';
-        if (cls === 'wip') working = true;
         var mine = (Array.isArray(lines) ? lines : []).filter(function (l) { return l.entry_command_id === c.id; });
+        if (cls === 'wip' || (cls === 'done' && mine.some(function (l) { return l.status === 'pending' || l.status === 'open_unprotected'; }))) working = true;
         var t = new Date(new Date(c.created_at).getTime() + 330 * 60000).toISOString().slice(11, 16);
         return '<div class="bom-ord"><span class="bom-note">' + t + '</span> <b>' + (pl.side === -1 ? 'SELL' : 'BUY') + ' ' + qtyFmt(pl.qty) + '</b> ' + esc(pl.symbol || '') +
           ' · ' + (pl.type === 1 ? 'limit ' + price2(pl.limitPrice) : 'market') +
