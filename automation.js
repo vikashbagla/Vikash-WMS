@@ -83,9 +83,9 @@ function autoSwitchFamily(fam) {
         autoEnsureSharedRefresh();
     }
 
-    if (fam === 'manual') {
-        autoManualInit();
-    }
+    // 'manual' family tab removed 09-Nov-2026 (Broker Order Modal phase 4). The autoManual* form code
+    // below is no longer reachable; autoManualLoadTraders / _auManualTraders are KEPT — the MS007 /
+    // Scalp / GS live pages use them for their Trader dropdowns.
 
 }
 
