@@ -1638,9 +1638,8 @@ function trRenderPortfolio() {
 
         // CMP slider: use 52-week high/low from securities_db (not day H/L)
         var cmpSlider = '';
-        var _sec52 = (wmsRefData.securitiesCm || []).find(function(s) {
-            return s.symbol === h.shortSymbol || s.nse_symbol === h.shortSymbol || s.bse_symbol === h.shortSymbol;
-        });
+        var _secId52 = (h._txns && h._txns.length) ? h._txns[h._txns.length - 1].security_id : null;
+        var _sec52 = wmsSec52Lookup(h.shortSymbol, _secId52);
         if (_sec52 && _sec52.week_52_high && _sec52.week_52_low && _sec52.week_52_high > _sec52.week_52_low) {
             cmpSlider = trBuildSlider(price, _sec52.week_52_low, _sec52.week_52_high,
                 formatPrice(_sec52.week_52_low, false), formatPrice(_sec52.week_52_high, false));

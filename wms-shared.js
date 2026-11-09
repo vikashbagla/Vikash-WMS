@@ -357,6 +357,24 @@ async function wmsFetchAllRows(table, select, orderCol, filterFn) {
 // Shared column list for securities_db fetches
 var WMS_SECURITIES_CM_SELECT = 'id,symbol,company_name,isin,nse_symbol,bse_symbol,security_type,asset_class,sector,size,is_active,lot_size,broker_tokens,merged_into_id,merged_at,week_52_high,week_52_low,income_ledgers,capital_gains';
 
+// Securities-DB row for the 52-week slider (owner 2026-11-09). Prefer the exact
+// security the holding uses; else match by symbol but skip retired/merged rows —
+// e.g. ESDS had an old inactive PRIVATE_EQUITY row (merged into the listed one)
+// that came first in the list and has no 52-week range, so no slider showed.
+function wmsSec52Lookup(symbol, securityId) {
+    var map = (typeof wmsRefData !== 'undefined' && wmsRefData.securitiesCmMap) || {};
+    if (securityId && map[securityId] && !map[securityId].merged_into_id) return map[securityId];
+    var list = (typeof wmsRefData !== 'undefined' && wmsRefData.securitiesCm) || [];
+    var best = null, bestScore = -1;
+    for (var k = 0; k < list.length; k++) {
+        var r = list[k];
+        if (!(r.symbol === symbol || r.nse_symbol === symbol || r.bse_symbol === symbol)) continue;
+        var score = (r.is_active !== false ? 4 : 0) + (r.merged_into_id ? 0 : 2) + (r.week_52_high && r.week_52_low ? 1 : 0);
+        if (score > bestScore) { best = r; bestScore = score; }
+    }
+    return best;
+}
+
 // Debt security types excluded from initial load (loaded in background)
 var WMS_DEBT_TYPES = ['NCD', 'GOVT_BOND'];
 

@@ -1462,7 +1462,9 @@ function rptRenderPortfolio() {
             var dayChp = md ? md.chp : null;
 
             // 52-week slider
-            var sec52 = secBySymbol[h.symbol];
+            var sec52 = (typeof wmsSec52Lookup === 'function')
+                ? wmsSec52Lookup(h.symbol, (h._txns && h._txns.length) ? h._txns[h._txns.length - 1].security_id : null)
+                : secBySymbol[h.symbol];
             var w52h = sec52 && sec52.week_52_high ? Number(sec52.week_52_high) : null;
             var w52l = sec52 && sec52.week_52_low ? Number(sec52.week_52_low) : null;
             var cmpSlider = (w52h && w52l && typeof buildSlider === 'function')
