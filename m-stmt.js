@@ -157,9 +157,9 @@
         return '<div class="mst-sws">' + chip(hp, 'lgHidePreReconToggle', 'Hide pre-recon') + chip(fo, 'lgFuturesToggle', 'Show F&amp;O') + '</div>';
     }
     function txBlock() {
-        var bal = txt(byId('lgTransactionsBalance'));
-        return '<div class="mst-blk">' + blockHead('tx', 'Transactions', '')
-            + (bal ? '<div class="mst-bsub">' + esc(bal) + '</div>' : '')
+        // Balance + F&O margin (the desktop's own header figures) sit in the block header (owner 11-Nov).
+        var bal = byId('lgTransactionsBalance');
+        return '<div class="mst-blk">' + blockHead('tx', 'Transactions', '<span class="mst-brs">' + inner(clean(bal)) + '</span>')
             + (MST.open.tx ? switches() + txRows() : '') + '</div>';
     }
 
