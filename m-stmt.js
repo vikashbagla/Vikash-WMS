@@ -240,7 +240,7 @@
     function render() {
         var root = byId('mst-root');
         if (!root || !document.body.classList.contains('mst-on')) return;
-        if (!byId('lgContainer')) { root.innerHTML = '<div class="mau-body"><div class="mau-empty">Loading statements…</div></div>'; return; }
+        if (!byId('lgContainer') || !viewReady()) { root.innerHTML = '<div class="mau-body"><div class="mau-empty">Loading statements…</div></div>'; return; }
         root.innerHTML = viewTabs() + periodRow()
             + '<div class="mau-body">' + cards() + reconNote() + txBlock() + bookedBlock() + openBlock() + '</div>';
     }
@@ -297,6 +297,32 @@
         return !!lc;
     }
 
+    // ---- External users (Step 3, 11-Nov-2026) ----
+    // A login with the statements:read grant (scoped to named statements in the database) sees the
+    // Statements block on Home. To show it, the desktop Trading module is loaded underneath (hidden) ONLY
+    // while Statements is open; the Trading block itself stays hidden for them. What they can read is
+    // decided by the database (read-only rules on their assigned statements), not here.
+    function isOwner() { return !!(window.wmsAccess && window.wmsAccess.isOwner); }
+    function canStatements() {
+        var a = window.wmsAccess;
+        return !!(a && (a.isOwner || (a.caps && a.caps['statements:read'])));
+    }
+    var _origHas = window.wmsHasModule;
+    if (typeof _origHas === 'function') {
+        window.wmsHasModule = function (mod) {
+            if (mod === 'statements') return canStatements();
+            if (mod === 'trading' && document.body.classList.contains('mst-on') && canStatements()) return true;
+            return _origHas.apply(this, arguments);
+        };
+    }
+    // External users have no default statement: open their first assigned one, and show nothing until it is applied.
+    function viewReady() {
+        if (isOwner()) return true;
+        if (typeof lgVM === 'undefined' || !lgVM || !lgVM.views) return false;
+        if (!lgVM.activeViewId && lgVM.views.length) lgVM.applyView(lgVM.views[0].id);
+        return !!lgVM.activeViewId;
+    }
+
     // Open Statements from the phone Home (m-home.js hands over here).
     window.wmsPhoneOpenStatements = async function () {
         document.body.classList.add('mst-on');
@@ -306,7 +332,7 @@
         window.scrollTo(0, 0);
         var tries = 0;
         (function wait() {
-            if (attach() || tries > 60) return;
+            if ((attach() && viewReady()) || tries > 60) { schedule(); return; }
             tries++;
             setTimeout(wait, 250);
         })();
