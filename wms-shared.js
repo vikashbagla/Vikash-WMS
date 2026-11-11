@@ -932,6 +932,24 @@ async function wmsTxnSyncState() {
     return { count: r ? Number(r.row_count) : NaN, checksum: r ? r.checksum : null, maxUpdated: r ? r.max_updated : null };
 }
 
+// Startup-speed (11-Nov-2026): the boot sends the transactions check EARLY (alongside the master-data
+// loads) and the first wmsLoadTransactions uses that answer instead of asking again — one round-trip
+// fewer in a row. Used once, only if under 15 s old; on any failure it simply asks again as before.
+var _wmsTxnSyncPre = null;
+function wmsTxnSyncPrefetch() {
+    var p = wmsTxnSyncState();
+    p.catch(function () {});
+    _wmsTxnSyncPre = { p: p, at: Date.now() };
+}
+async function _wmsTxnSyncStateOnce() {
+    var pre = _wmsTxnSyncPre;
+    _wmsTxnSyncPre = null;
+    if (pre && (Date.now() - pre.at) < 15000) {
+        try { return await pre.p; } catch (e) { /* fall through to a fresh check */ }
+    }
+    return wmsTxnSyncState();
+}
+
 // Full rows for a set of ids (delta heavy-fetch), batched under URL limits.
 async function wmsTxnFetchByIds(ids) {
     var out = [];
@@ -1341,7 +1359,7 @@ async function wmsLoadTransactions(opts) {
     }
     if (!opts.force && haveCache) {
         try {
-            var sync = await wmsTxnSyncState();
+            var sync = await _wmsTxnSyncStateOnce();
             if (sync.checksum && sync.checksum === cache.checksum) {
                 cache.syncedAt = Date.now();
                 return cache.rows;  // unchanged
