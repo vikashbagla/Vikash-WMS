@@ -6,7 +6,7 @@
 // next to the Add Transaction icon (both share the old Trade button's space).
 //
 //   New order tab   account cards (login status, never a token) → rows (Trader ·
-//                   Symbol · Lots · Qty · Price · Tags, like Add Trade) → a live
+//                   Symbol · Lots · Qty · Price · Value · Tags, like Add Trade) → a live
 //                   panel that recalculates as you type: the broker orders after
 //                   grouping (with each trader's split), the broker balance and the
 //                   estimated margin, the estimated charges → Place → order password
@@ -97,6 +97,7 @@
       '.bom-t input.r{text-align:right;font-variant-numeric:tabular-nums}',
       '.bom-t input:disabled{background:#f7fafc;color:#a0aec0}',
       '.bom-sub{font-size:10.5px;color:#718096;margin-top:2px;white-space:nowrap}',
+      '.bom-val{box-sizing:border-box;padding:5px 7px;border:1px solid #e2e8f0;border-radius:6px;background:#f7fafc;color:#2d3748;text-align:right;font-variant-numeric:tabular-nums;min-height:30px;white-space:nowrap}',
       '.bom-sym{position:relative}',
       '.bom-sym .wms-dd{min-width:380px;font-size:12px}',
       '.bom-sym .wms-dd .sub{font-size:10px;color:#a0aec0;margin-left:6px}',
@@ -155,7 +156,7 @@
             '<div class="bom-lbl">Account</div><div class="bom-accs" id="bomAccs"></div>' +
             '<table class="bom-t"><thead><tr>' +
               '<th style="width:110px">Trader</th><th>Symbol</th><th style="width:70px">Lots</th><th style="width:90px">Qty</th>' +
-              '<th style="width:110px">Price <span style="text-transform:none;letter-spacing:0">(0 = market)</span></th><th style="width:170px">Tags</th><th style="width:24px"></th>' +
+              '<th style="width:110px">Price <span style="text-transform:none;letter-spacing:0">(0 = market)</span></th><th style="width:120px">Value</th><th style="width:170px">Tags</th><th style="width:24px"></th>' +
             '</tr></thead><tbody id="bomRows"></tbody></table>' +
             '<button class="bom-add" id="bomAddRow">+ Add row</button>' +
           '</div>' +
@@ -442,6 +443,7 @@
         '<td data-mlabel="Lots"><input type="text" inputmode="numeric" class="bom-lots r wms-input-number" data-rid="' + r.id + '" value="' + (nfo && r.lots ? r.lots : '') + '"' + (nfo ? '' : ' disabled') + '><div class="bom-sub" id="bomBalL_' + r.id + '"></div></td>' +
         '<td data-mlabel="Qty"><input type="text" class="bom-qty r wms-input-number" data-rid="' + r.id + '" value="' + fmtQ(r.qty) + '"><div class="bom-sub" id="bomBalQ_' + r.id + '"></div></td>' +
         '<td data-mlabel="Price"><input type="text" class="bom-px r wms-input-number" data-rid="' + r.id + '" inputmode="decimal" placeholder="market" value="' + (r.price ? price2(r.price) : '') + '"></td>' +
+        '<td data-mlabel="Value"><div class="bom-val" id="bomVal_' + r.id + '" title="Qty × price (market orders: × LTP). Read only."></div><div class="bom-sub" id="bomValSub_' + r.id + '"></div></td>' +
         '<td data-mlabel="Tags" style="position:relative"><input type="text" class="bom-tag-in" data-rid="' + r.id + '" placeholder="Tags…" autocomplete="off">' +
           '<div class="wms-tag-pills" id="bomTagPills_' + r.id + '"></div><div class="wms-tag-dd" id="bomTagDd_' + r.id + '"></div></td>' +
         '<td><button class="bom-del" data-rid="' + r.id + '" title="Remove row">🗑</button></td></tr>';
@@ -698,7 +700,20 @@
                  gross: u * g.estPrice, price: g.estPrice, quantity: g.side === 'SELL' ? -u : u, lots: l.lots }) || 0 }; }) };
   }
 
+  // Read-only order value per row (owner, 11-Nov): qty × price; a market row uses the LTP.
+  function rowValues() {
+    BOM.rows.forEach(function (r) {
+      var el = document.getElementById('bomVal_' + r.id), sub = document.getElementById('bomValSub_' + r.id);
+      if (!el) return;
+      var px = r.price > 0 ? r.price : (BOM.ltp[r.symbol] || 0);
+      var ok = r.symbol && r.qty && px;
+      el.textContent = ok ? price2(Math.abs(r.qty) * px) : '';
+      if (sub) sub.textContent = ok && !(r.price > 0) ? 'at LTP' : (r.symbol && r.qty && !px ? 'price needed' : '');
+    });
+  }
+
   function renderPanel() {
+    rowValues();
     var ordersEl = document.getElementById('bomOrders');
     if (!ordersEl) return;
     var placeBtn = document.getElementById('bomPlace');
