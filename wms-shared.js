@@ -1379,6 +1379,7 @@ async function wmsLoadTransactions(opts) {
             console.warn('Transactions: sync/delta failed → full reload', e);
         }
     }
+    _wmsTxnSyncPre = null;   // an early check is only ever used by the FIRST sync (never after a full load)
     var full = await wmsTxnFullFetch();
     await _wmsCoverNewNfoContracts(full);
     return full;
