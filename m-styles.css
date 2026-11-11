@@ -617,3 +617,4 @@ body.mst-on .wms-bottom-nav { display: none !important; }
 .mst-vrow { display: block; width: 100%; text-align: left; font-size: 14px; padding: 12px 12px; border: none; border-bottom: 1px solid #f0f2f6; background: #fff; color: #2d3748; }
 .mst-vrow.on { color: #4c51bf; font-weight: 700; }
 .mst-sheet .mau-sheet-body #lgDateFilter { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
+#mst-root .mst-amt *, #mst-root .mst-cv * { text-decoration: none !important; border-bottom: none !important; cursor: default !important; }
