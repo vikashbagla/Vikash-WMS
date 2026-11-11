@@ -37,6 +37,9 @@
         if (!td) return null;
         var c = td.cloneNode(true);
         qa('a, button, input, select, .lg-recon-trigger, .lg-recon-cancel', c).forEach(function (e) { e.remove(); });
+        // Read only: no desktop click actions survive (e.g. the pending-interest amount opens the post window on desktop).
+        [c].concat(qa('[onclick]', c)).forEach(function (e) { e.removeAttribute('onclick'); });
+        qa('[style*="underline"], [style*="cursor"]', c).forEach(function (e) { e.style.textDecoration = 'none'; e.style.cursor = 'default'; });
         return c;
     }
     function cleanTxt(td) { return txt(clean(td)).replace(/🗑️?/g, '').trim(); }
@@ -44,7 +47,7 @@
     function colour(el) {
         try { return el ? window.getComputedStyle(el).color : ''; } catch (e) { return ''; }
     }
-    function val(el) { return '<span style="color:' + colour(el) + '">' + inner(el) + '</span>'; }
+    function val(el) { return '<span style="color:' + colour(el) + '">' + inner(clean(el)) + '</span>'; }
     function fallback(el) {
         return '<div class="mau-note">Phone view could not read this table, so the desktop table is shown as is.</div>'
             + '<div class="mau-scrollx">' + inner(el) + '</div>';
