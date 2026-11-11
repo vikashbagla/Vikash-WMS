@@ -15,6 +15,7 @@
     var MH_MODULES = [
         { mod: 'trading',    icon: '📈', name: 'Trading',      desc: 'Portfolio · F&amp;O · Watchlist · Txns' },
         { mod: 'automation', icon: '🤖', name: 'Auto Trading', desc: 'Strategies · live and paper' },
+        { mod: 'statements', icon: '🧾', name: 'Statements', desc: 'Statements · read only' },   // m-stmt.js (11-Nov-2026)
         { mod: 'reports',    icon: '📊', name: 'Reports',      soon: true },
         { mod: 'accounting', icon: '📒', name: 'Accounting',   soon: true }
     ];
@@ -67,6 +68,7 @@
         document.querySelectorAll('#content-container .module-pane').forEach(function (x) { if (x !== p) x.style.display = 'none'; });
         p.style.display = '';
         currentModule = null;   // so the next loadModule() of any module (even the last one) really switches
+        if (typeof wmsPhoneCloseStatements === 'function') wmsPhoneCloseStatements();
         mhSetBottomNav(false);
         document.querySelectorAll('#wmsBottomNav .bnav-item').forEach(function (b) { b.classList.remove('active'); });
         window.scrollTo(0, 0);
@@ -74,6 +76,11 @@
 
     // Open a module from Home. Trading opens on Portfolio, exactly as the phone did before Home existed.
     window.wmsPhoneOpen = async function (mod) {
+        if (mod === 'statements') {   // own Home block; opens the desktop Statements tab under the phone layout (m-stmt.js)
+            if (typeof wmsPhoneOpenStatements === 'function') await wmsPhoneOpenStatements();
+            return;
+        }
+        if (typeof wmsPhoneCloseStatements === 'function') wmsPhoneCloseStatements();
         await loadModule(mod);
         if (mod === 'trading') {
             if (typeof trSwitchTab === 'function') trSwitchTab('tr-portfolio');
