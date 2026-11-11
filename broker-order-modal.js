@@ -32,6 +32,8 @@
     seq: 1,
     funds: null,             // { at, available, lines[] } | { error }
     fundsBusy: false,
+    fundsRefreshing: false,  // showing the last reading while a fresh one loads (11-Nov)
+    fundsCache: {},          // investor|broker → last good reading (this page session)
     tab: 'new',
     pollTimer: null,
     tagCtrls: {},
@@ -282,26 +284,33 @@
     renderPanel();
   }
 
+  // Speed (owner, 11-Nov): the Fyers balance and the liquid margin (WMS's own data) are read at the
+  // same time, and the last good reading for this account is shown at once while a fresh one loads.
   async function loadFunds() {
     if (!BOM.acct) return;
-    BOM.fundsBusy = true; renderPanel();
-    var acct = BOM.acct;
+    var acct = BOM.acct, key = acct.investor_id + '|' + acct.broker_id, cached = BOM.fundsCache[key];
+    if (cached) { BOM.funds = cached; BOM.fundsBusy = false; BOM.fundsRefreshing = true; }
+    else { BOM.fundsBusy = true; BOM.fundsRefreshing = false; }
+    renderPanel();
+    var liqP = liquidMargin(acct);                       // starts now, alongside the broker call
+    var next;
     try {
       var r = await fetch(window.SUPABASE_URL + '/functions/v1/wms-broker-order', {
         method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ action: 'funds', investor_id: acct.investor_id, broker_id: acct.broker_id }) });
       var j = await r.json().catch(function () { return {}; });
-      if (BOM.acct !== acct) return;
-      if (!j.ok) { BOM.funds = { error: j.error || ('HTTP ' + r.status) }; }
+      if (!j.ok) { next = { error: j.error || ('HTTP ' + r.status) }; }
       else {
         var line = function (re) { var l = (j.funds || []).find(function (x) { return re.test(x.title); }); return l ? (l.equity + l.commodity) : null; };
-        BOM.funds = { at: j.as_of, available: line(/^available balance$/i), startLimit: line(/^limit at start of the day$/i),
-                      total: line(/^total balance$/i), used: line(/^utilized amount$/i), holdings: j.holdings || [] };
-        BOM.funds.liquid = await liquidMargin(acct);
-        BOM.funds.fnoUsed = fnoUsedEstimate(acct);
+        next = { at: j.as_of, available: line(/^available balance$/i), startLimit: line(/^limit at start of the day$/i),
+                 total: line(/^total balance$/i), used: line(/^utilized amount$/i), holdings: j.holdings || [] };
+        next.liquid = await liqP;
+        next.fnoUsed = fnoUsedEstimate(acct);
+        BOM.fundsCache[key] = next;
       }
-    } catch (e) { BOM.funds = { error: e.message }; }
-    BOM.fundsBusy = false; renderPanel();
+    } catch (e) { next = { error: e.message }; }
+    if (BOM.acct !== acct) return;                       // the account was changed meanwhile
+    BOM.funds = next; BOM.fundsBusy = false; BOM.fundsRefreshing = false; renderPanel();
   }
   // Liquid margin = WMS holding × current price × (1 − haircut %), over the few securities that carry a
   // haircut for THIS broker (Master Data › security › Collateral haircut %). Blank / NULL = not counted.
@@ -311,9 +320,13 @@
   async function liquidMargin(acct) {
     try {
       var inv = acct.investor_id, brk = acct.broker_id;
-      var secs = await fetch(window.SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,security_type,collateral_haircuts&collateral_haircuts=not.is.null',
-        { headers: wmsHeaders() }).then(function (x) { return x.json(); });
-      if (!Array.isArray(secs)) return null;
+      // The haircut list is read once and kept for 10 minutes (it only changes in Master Data).
+      if (!BOM.haircutSecs || Date.now() - BOM.haircutSecs.t > 600000) {
+        BOM.haircutSecs = { t: Date.now(), p: fetch(window.SUPABASE_URL + '/rest/v1/securities_db?select=id,symbol,security_type,collateral_haircuts&collateral_haircuts=not.is.null',
+          { headers: wmsHeaders() }).then(function (x) { return x.json(); }) };
+      }
+      var secs = await BOM.haircutSecs.p;
+      if (!Array.isArray(secs)) { BOM.haircutSecs = null; return null; }
       var list = secs.map(function (sc) {
         var h = sc.collateral_haircuts && sc.collateral_haircuts[brk];
         var n = (h === null || h === undefined || h === '') ? NaN : Number(h);
@@ -353,7 +366,7 @@
         parts.push(sc.symbol + ': ' + (Number.isInteger(qty) ? qtyFmt(qty) : qty.toFixed(3)) + ' × ' + price2(px) + ' (' + src + '), less ' + sc.haircut.toFixed(1) + '% haircut');
       });
       return { value: total, parts: parts };
-    } catch (e) { console.warn('liquid margin', e); return null; }
+    } catch (e) { BOM.haircutSecs = null; console.warn('liquid margin', e); return null; }
   }
 
   // Utilised in F&O — ESTIMATE for Fyers (owner, 07-Nov): FNO_USED_PCT of the account's open NSE F&O
@@ -737,7 +750,7 @@
     // Margin
     var f = BOM.funds, mHtml = '';
     var atEl = document.getElementById('bomFundsAt');
-    if (atEl) atEl.textContent = BOM.fundsBusy ? 'reading…' : (f && f.at ? (typeof wmsLoginStamp === 'function' ? wmsLoginStamp(f.at) : f.at) : '');
+    if (atEl) atEl.textContent = BOM.fundsBusy ? 'reading…' : (f && f.at ? (typeof wmsLoginStamp === 'function' ? wmsLoginStamp(f.at) : f.at) : '') + (BOM.fundsRefreshing ? ' · refreshing…' : '');
     var kv = function (label, val, cls) { return '<div class="bom-kv' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span><span>' + val + '</span></div>'; };
     if (f && f.error && !BOM.fundsBusy) mHtml += kv('Total available', '<span class="bom-err" title="' + esc(f.error) + '">could not read</span>');
     else {
