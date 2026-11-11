@@ -66,8 +66,12 @@
 
     function periodRow() {
         var df = byId('lgDateFilter');
-        var sel = df && q('select', df);
-        var label = sel && sel.options[sel.selectedIndex] ? txt(sel.options[sel.selectedIndex]) : (txt(df) || 'Period');
+        // The desktop picker has a range list (Today … All), an FY list and Custom: show what is set.
+        var picked = df ? qa('select', df).filter(function (sl) { return sl.value && sl.value !== 'all'; })
+            .map(function (sl) { return txt(sl.options[sl.selectedIndex]); }) : [];
+        var custom = df && q('.wms-df-btn.active, .wms-df-btn.on', df);
+        if (custom) picked.push(txt(custom));
+        var label = picked.length ? picked.join(' · ') : 'All dates';
         var typeBtn = q('#lgStmtTypeToggle .active, #lgStmtTypeToggle .on', document);
         var type = typeBtn ? txt(typeBtn) + ' statement' : '';
         return '<div class="mst-per"><button type="button" class="mst-pchip" data-mst-act="period">' + esc(label) + ' ▾</button>'
