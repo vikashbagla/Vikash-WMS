@@ -573,22 +573,26 @@
                 avatar_url: user.user_metadata && user.user_metadata.avatar_url
             };
 
-            // Load preferences from the users table and merge into currentUser
-            try {
-                var prefRes = await fetch(
-                    window.SUPABASE_URL + '/rest/v1/users?id=eq.' + user.id + '&select=preferences',
-                    { headers: wmsHeaders() }
-                );
-                var prefRows = await prefRes.json();
-                if (prefRows && prefRows[0] && prefRows[0].preferences) {
-                    window.currentUser.preferences = prefRows[0].preferences;
+            // Load preferences from the users table and merge into currentUser.
+            // Startup-speed (11-Nov-2026): this request is SENT here but no longer waited for here — it
+            // runs alongside the master-data loads and the boot awaits window._wmsPrefsReady before
+            // anything is drawn (preferences set the amount display unit). Same request, same result.
+            window._wmsPrefsReady = (async function () {
+                try {
+                    var prefRes = await fetch(
+                        window.SUPABASE_URL + '/rest/v1/users?id=eq.' + user.id + '&select=preferences',
+                        { headers: wmsHeaders() }
+                    );
+                    var prefRows = await prefRes.json();
+                    if (prefRows && prefRows[0] && prefRows[0].preferences) {
+                        window.currentUser.preferences = prefRows[0].preferences;
+                    }
+                } catch (prefErr) {
+                    console.warn('Could not load user preferences:', prefErr);
                 }
-            } catch (prefErr) {
-                console.warn('Could not load user preferences:', prefErr);
-            }
-
-            // Also keep wms_user in localStorage for backward compatibility
-            localStorage.setItem('wms_user', JSON.stringify(window.currentUser));
+                // Also keep wms_user in localStorage for backward compatibility
+                localStorage.setItem('wms_user', JSON.stringify(window.currentUser));
+            })();
 
             var name = window.currentUser.display_name || window.currentUser.email || 'User';
             document.getElementById('user-email').textContent = name;
@@ -953,6 +957,9 @@
         // Load all master data before activating any module
         try {
             loaderMsg.textContent = 'Loading investors, brokers & config...';
+            // Startup-speed (11-Nov-2026): send the "have transactions changed?" check now, alongside the
+            // master-data loads, instead of after them. wmsLoadTransactions (below) uses this answer.
+            if (typeof wmsTxnSyncPrefetch === 'function') wmsTxnSyncPrefetch();
             var refPromise = wmsLoadRefData();
 
             loaderMsg.textContent = 'Loading securities data...';
@@ -967,6 +974,7 @@
                     wmsLoadSecuritiesNfo()
                 ]);
             }
+            if (window._wmsPrefsReady) await window._wmsPrefsReady;   // user preferences (sent from checkAuth)
             console.log('All master data loaded — activating app');
 
             // Baseline the master change-tokens now that every master is in memory, so the

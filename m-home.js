@@ -76,6 +76,7 @@
 
     // Open a module from Home. Trading opens on Portfolio, exactly as the phone did before Home existed.
     window.wmsPhoneOpen = async function (mod) {
+        if (document.body.classList.contains('mh-early')) return;   // data still loading (early Home) — tiles wait
         if (mod === 'statements') {   // own Home block; opens the desktop Statements tab under the phone layout (m-stmt.js)
             if (typeof wmsPhoneOpenStatements === 'function') await wmsPhoneOpenStatements();
             return;
@@ -115,9 +116,35 @@
 function wmsPhoneLanding() {
     if (!window.matchMedia('(max-width:480px)').matches) return false;
     if (typeof wmsPhoneShowHome !== 'function') return false;
+    document.body.classList.remove('mh-early');   // data loaded → tiles live
     wmsPhoneShowHome();
     return true;
 }
+
+// Early Home (owner request 11-Nov-2026: opening the phone app was a 5-10 s wait). As soon as the
+// sign-in and the user's access are known, show Home (tiles greyed, "loading…") instead of the
+// full-screen startup loader; the app keeps loading its data exactly as before, and the tiles come
+// alive when it finishes (wmsPhoneLanding above, called by the app at the end of its start-up).
+// Display only — nothing is loaded, calculated or skipped differently.
+(function () {
+    if (!window.matchMedia('(max-width:480px)').matches) return;
+    var OWNER = 'vikash.bagla@gmail.com';
+    var started = Date.now();
+    function accessKnown() {
+        var u = window.currentUser, a = window.wmsAccess;
+        if (!u || !u.email || !a) return false;
+        return u.email === OWNER || !!a.caps;   // non-owners: their grants have been read
+    }
+    var timer = setInterval(function () {
+        if (Date.now() - started > 30000) { clearInterval(timer); return; }
+        if (document.getElementById('wmsNoAccess')) { clearInterval(timer); return; }
+        if (!document.getElementById('startupLoader')) { clearInterval(timer); return; }   // start-up already finished
+        if (!accessKnown() || typeof wmsPhoneShowHome !== 'function') return;
+        clearInterval(timer);
+        document.body.classList.add('mh-early');
+        wmsPhoneShowHome();
+    }, 50);
+})();
 
 // ============================================================================
 // Phone app RESUME (owner request 07-Nov-2026): on the iPhone the app is the Safari page saved to
