@@ -974,7 +974,6 @@
                     wmsLoadSecuritiesNfo()
                 ]);
             }
-            if (window._wmsPrefsReady) await window._wmsPrefsReady;   // user preferences (sent from checkAuth)
             console.log('All master data loaded — activating app');
 
             // Baseline the master change-tokens now that every master is in memory, so the
@@ -994,6 +993,8 @@
         } catch (e) {
             console.error('Startup load error (activating anyway; modules will load on demand):', e);
         }
+        // User preferences (request sent from checkAuth, 11-Nov-2026): always in place before anything is drawn.
+        try { if (window._wmsPrefsReady) await window._wmsPrefsReady; } catch (e) { console.warn('Could not load user preferences:', e); }
 
         // Fade out and remove startup loader
         loaderEl.classList.add('fade-out');
