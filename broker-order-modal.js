@@ -139,6 +139,8 @@
       '.bom-rt thead th{position:sticky;top:0;background:#fff;z-index:1}',
       '.bom-rt td{vertical-align:top}',
       '.bom-rt td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}',
+      '.bom-rt td.bom-rcol,.bom-rt th.bom-rcol{padding-right:22px}',
+      '.bom-rt td.bom-ncol,.bom-rt th.bom-ncol{padding-left:14px;border-left:1px solid #edf2f7}',
       '.bom-rt tr.soon td{background:#fffbeb}',
       '.bom-rt tr.bom-rpr td{border-bottom:1px solid #e2e8f0;padding-top:0;font-size:12px}',
       '.bom-rt input[type=checkbox]{width:18px;height:18px;margin:0 4px 0 0;vertical-align:middle}',
@@ -1128,15 +1130,15 @@
         '<td data-label="Contract held"><b>' + esc(p.bare) + '</b> <span class="bom-sub">' + shortExp(p.expiry_date) + (p.exchange === 'MCX' ? ' · MCX' : '') + '</span>' +
           '<div class="bom-sub" id="bomRollLtp_' + esc(p.bare) + '">-</div></td>' +
         '<td data-label="Traders">' + traders + '</td>' +
-        '<td data-label="Rolling" class="num">' + dot + ' ' + (ticked.length ? lotsTxt(tickedLots) : '<span class="bom-note">–</span>') +
+        '<td data-label="Rolling" class="num bom-rcol">' + dot + ' ' + (ticked.length ? lotsTxt(tickedLots) : '<span class="bom-note">–</span>') +
           '<div class="bom-sub">of ' + lotsTxt(p.net_lots) + (bl != null && bl !== p.net_lots ? ' · Fyers ' + bl : '') + '</div></td>' +
-        '<td data-label="Rolls into">' + (n ? '<b>' + esc(bareSymbol(n.symbol)) + '</b> <span class="bom-sub">' + shortExp(n.expiry_date) + '</span><div class="bom-sub" id="bomRollNewLtp_' + esc(p.bare) + '">-</div>'
+        '<td data-label="Rolls into" class="bom-ncol">' + (n ? '<b>' + esc(bareSymbol(n.symbol)) + '</b> <span class="bom-sub">' + shortExp(n.expiry_date) + '</span><div class="bom-sub" id="bomRollNewLtp_' + esc(p.bare) + '">-</div>'
           : '<span class="bom-err">no next contract in the master</span>') + '</td>' +
         '<td data-label="Lot size" class="num">' + p.lot_size + ' → ' + (n ? n.lot_size : '?') + (p.exchange === 'MCX' ? '<div class="bom-sub">lots</div>' : '') + '</td>' +
         '</tr>' + (pr ? '<tr class="bom-rpr"><td></td><td colspan="5"><span class="' + (pr.cls || 'bom-note') + '">' + pr.html + '</span></td></tr>' : '');
     }).join('');
     box.innerHTML = head + '<div class="bom-rwrap"><table class="bom-t bom-rt"><thead><tr><th style="width:34px"></th><th>Contract held · LTP</th><th>Traders (lots)</th>' +
-      '<th style="width:96px">Rolling</th><th>Rolls into · LTP (New − Curr)</th><th style="width:84px">Lot size</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<th class="bom-rcol" style="width:110px;text-align:right">Rolling</th><th class="bom-ncol">Rolls into · LTP (New − Curr)</th><th style="width:84px">Lot size</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
       '<div class="bom-note" style="margin-top:6px">● green = Fyers holds the same lots as WMS, red = different (the roll checks the broker again). ' +
       '<span class="bom-long">Green</span> = long, <span class="bom-short">(red)</span> = short. Lines opened by an engine roll in the engine.</div>';
     box.querySelectorAll('.bom-rtk').forEach(function (c) { c.addEventListener('change', function () { if (c.checked) BOM.roll.tick[c.dataset.k] = true; else delete BOM.roll.tick[c.dataset.k]; renderRoll(); }); });
