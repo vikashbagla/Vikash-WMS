@@ -2759,6 +2759,10 @@ async function loadFOTable() {
 // Keyed by UNDERLYING symbol, so it applies to every expiry automatically.
 // The F&O Sync shows an alert listing these at the end so they can't silently
 // rot — if MCX revises a contract size, edit the number here. See LESSONS A.11.5.
+// ⚠ 12-Nov-2026: this map belongs to the OLD browser sync (startFOSync), which is no
+// longer wired to any button. The live sync is securities-fno-sync, and the MASTER is
+// now the one place the MCX lot size is kept: set it on any contract (Lot, double-click)
+// and every expiry of that underlying takes it; the sync never resets it.
 //   SILVERM = 5  (Silver Mini, 5 kg, quoted ₹/kg)
 //   GOLDM   = 10 (Gold Mini, 100 g, quoted ₹/10 g)  ← VERIFY against a real trade
 //   SILVER  = 30 (Silver big, 30 kg, quoted ₹/kg)
@@ -4760,11 +4764,41 @@ async function _lotSaveInline(secId, src, value, cell) {
         cell.innerHTML = String(value);
         // Keep in-memory caches in sync so imports / F&O views pick up the new lot size.
         if (src === 'fo' && wmsRefData.securitiesNfoMap && wmsRefData.securitiesNfoMap[secId]) wmsRefData.securitiesNfoMap[secId].lot_size = value;
+        // MCX futures (12-Nov-2026): Fyers reports 1 for every MCX contract, so the real kg-per-lot
+        // set here is applied at once to EVERY expiry of the same underlying — the master is the one
+        // place it is kept. The weekly F&O sync (securities-fno-sync) reads it back from the master,
+        // never resets it, and gives new expiries the same value.
+        if (src === 'fo' && value > 0) await _lotApplyToMcxSeries(secId, value);
         if (src === 'cm' && wmsRefData.securitiesCmMap && wmsRefData.securitiesCmMap[secId]) wmsRefData.securitiesCmMap[secId].lot_size = value;
     } catch (e) {
         console.error('Lot inline edit save error:', e);
         alert('Error saving lot size: ' + e.message);
         cell.innerHTML = '<span style="color:#cbd5e0;">—</span>';
+    }
+}
+
+async function _lotApplyToMcxSeries(secId, value) {
+    try {
+        var r = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?id=eq.' + secId + '&select=exchange,instrument_type,underlying_symbol', { headers: wmsHeaders() });
+        var row = (await r.json())[0];
+        if (!row || row.exchange !== 'MCX' || row.instrument_type !== 'FUTURES' || !row.underlying_symbol) return;
+        var q = 'exchange=eq.MCX&instrument_type=eq.FUTURES&underlying_symbol=eq.' + encodeURIComponent(row.underlying_symbol) + '&lot_size=neq.' + value;
+        var u = await fetch(SUPABASE_URL + '/rest/v1/securities_nfo?' + q, {
+            method: 'PATCH',
+            headers: wmsHeaders({ 'Content-Type': 'application/json', 'Prefer': 'return=representation' }),
+            body: JSON.stringify({ lot_size: value })
+        });
+        if (!u.ok) throw new Error(await u.text());
+        var changed = await u.json();
+        (Array.isArray(changed) ? changed : []).forEach(function (c) {
+            if (wmsRefData.securitiesNfoMap && wmsRefData.securitiesNfoMap[c.id]) wmsRefData.securitiesNfoMap[c.id].lot_size = value;
+            var other = document.querySelector('.lot-inline-edit[data-secid="' + c.id + '"]');
+            if (other) other.textContent = String(value);
+        });
+        if (changed && changed.length) alert(row.underlying_symbol + ': lot size ' + value + ' applied to ' + changed.length + ' other expir' + (changed.length === 1 ? 'y' : 'ies') + ' as well (MCX).');
+    } catch (e) {
+        console.error('MCX lot size series update error:', e);
+        alert('Lot size saved on this contract, but could not apply it to the other expiries: ' + e.message);
     }
 }
 
