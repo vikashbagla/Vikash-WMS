@@ -135,7 +135,8 @@
       '.bom-st.done{color:#047857;border-color:#6ee7b7;background:#ecfdf5}',
       '.bom-st.bad{color:#b91c1c;border-color:#fecaca;background:#fef2f2}',
       '.bom-st.wip{color:#1d4ed8;border-color:#bfdbfe;background:#eff6ff}',
-      '.bom-rwrap{max-height:292px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px}',
+      '.bom-rwrap{height:332px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px}',   /* fixed: 5 rows, the rest scroll (owner, 12-Nov) */
+      '.bom-rt tbody tr:not(.bom-rpr)>td{height:58px;box-sizing:border-box}',   /* every row fits 2 trader lines; grows only if more */
       '.bom-rt thead th{position:sticky;top:0;background:#fff;z-index:1}',
       '.bom-rt td{vertical-align:top}',
       '.bom-rt td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}',
