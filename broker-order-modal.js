@@ -108,6 +108,8 @@
       '.bom-sym .wms-dd{min-width:380px;font-size:12px}',
       '.bom-sym .wms-dd .sub{font-size:10px;color:#a0aec0;margin-left:6px}',
       '.bom-sym .wms-dd .wms-dd-item.nfo{color:#667eea}',
+      '.bom-side{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.04em;border-radius:4px;padding:0 5px;cursor:pointer;color:#fff}',
+      '.bom-side.b{background:#059669}.bom-side.s{background:#dc2626}',
       '.bom-del{background:none;border:0;cursor:pointer;color:#a0aec0;font-size:15px}',
       '.bom-add{margin:8px 0 2px;background:none;border:0;color:#2c7a7b;font-weight:600;cursor:pointer;font:inherit;padding:0}',
       '.bom-panel{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:12px 18px;border-top:1px solid #e2e8f0;background:#f7fafc}',
@@ -205,6 +207,13 @@
     // Clicking outside does NOT close the modal (owner, 07-Nov) — only × / Close / Esc.
     document.getElementById('bomClose').addEventListener('click', bomClose);
     document.getElementById('bomCancel').addEventListener('click', bomClose);
+    document.getElementById('bomRows').addEventListener('click', function (e) {
+      var c = e.target.closest('.bom-side'); if (!c) return;
+      var r = rowById(Number(c.dataset.rid)); if (!r) return;
+      r.forceSide = r.forceSide === 'SELL' ? 'BUY' : 'SELL';
+      r.lots = -r.lots || 0; r.qty = -r.qty || 0;
+      renderRows(); renderPanel();
+    });
     document.getElementById('bomAddRow').addEventListener('click', function () { var id = addRow(BOM.rows[BOM.rows.length - 1]); focusTrader(id); });
     document.getElementById('bomClear').addEventListener('click', function () { if (BOM.tab === 'roll') { BOM.roll.tick = {}; renderRoll(); closePassword(); } else clearRows(); });
     document.getElementById('bomRefresh').addEventListener('click', function (e) { e.preventDefault(); refreshAll(); });
@@ -502,7 +511,10 @@
     var bits = [];
     if (r.lot_size > 1) bits.push('lot ' + r.lot_size);
     if (BOM.ltp[r.symbol]) bits.push('LTP ' + price2(BOM.ltp[r.symbol]));
-    return esc(bits.join(' · '));
+    // A row filled in from a screen row is locked to its side (Trade From Rows): the lots you type
+    // are bought or sold as shown; click the chip to switch side.
+    var chip = r.forceSide ? '<span class="bom-side ' + (r.forceSide === 'SELL' ? 's' : 'b') + '" data-rid="' + r.id + '" title="Side of this row — click to switch">' + r.forceSide + '</span> ' : '';
+    return chip + esc(bits.join(' · '));
   }
 
   function wireRow(r) {
@@ -529,15 +541,16 @@
     });
 
     // Lots ↔ Qty exactly as Add Trade: lots × lot size → qty; qty edit updates lots. Signed: + buy, − sell.
+    var sideSign = function (v) { return r.forceSide === 'SELL' ? -Math.abs(v) : r.forceSide === 'BUY' ? Math.abs(v) : v; };
     lotsIn.addEventListener('input', function () {
-      r.lots = Math.trunc(num(lotsIn.value));
+      r.lots = sideSign(Math.trunc(num(lotsIn.value)));
       if (r.lot_size > 1) { r.qty = r.lots * r.lot_size; qtyIn.value = fmtQ(r.qty); }
       renderPanel();
     });
     qtyIn.addEventListener('focus', function () { qtyIn.value = r.qty ? String(r.qty) : ''; });
     qtyIn.addEventListener('blur', function () { qtyIn.value = fmtQ(r.qty); });
     qtyIn.addEventListener('input', function () {
-      r.qty = Math.trunc(num(qtyIn.value));
+      r.qty = sideSign(Math.trunc(num(qtyIn.value)));
       if (r.lot_size > 1) { r.lots = r.qty / r.lot_size; lotsIn.value = r.lots ? (Number.isInteger(r.lots) ? r.lots : r.lots.toFixed(2)) : ''; }
       else r.lots = r.qty;
       renderPanel();
@@ -1031,6 +1044,14 @@
     var keep = {};
     BOM.roll.list.forEach(function (p) { p.lines.forEach(function (l) { var k = rollKey(p, l); if (BOM.roll.tick[k] && lineRollable(p, l) && BOM.roll.next[p.bare]) keep[k] = true; }); });
     BOM.roll.tick = keep;
+    // Ticks asked for by a row click (Trade From Rows): only lines that can be rolled here.
+    (BOM.roll.pending || []).forEach(function (w) {
+      BOM.roll.list.forEach(function (p) {
+        if (p.bare !== bareSymbol(w.bare) || !BOM.roll.next[p.bare]) return;
+        p.lines.forEach(function (l) { if (lineRollable(p, l) && (!w.trader_ids || w.trader_ids.indexOf(l.trader_id) >= 0)) BOM.roll.tick[rollKey(p, l)] = true; });
+      });
+    });
+    BOM.roll.pending = null;
     BOM.roll.loaded = true;
     renderRoll();
     rollPrices();
@@ -1218,6 +1239,176 @@
     } finally { rolling = false; var b = document.getElementById('bomSend'); if (b) b.disabled = false; }
   }
 
+
+  // ---------------------------------------------------------------------------
+  // Trade from rows (Trade From Rows Plan v2, 12-Nov-2026)
+  //   bomOpenWith(spec) opens the modal filled in from a screen row; window.bomRowActions
+  //   is the shared hover strip (B / S / R) the F&O Positions, Watchlist and Portfolio
+  //   screens use. The click only pre-fills: everything after it is the modal as today.
+  //   Lean (owner, 12-Nov): one strip element per screen, moved onto the hovered row;
+  //   availability is worked out on hover from data already in the page — no server call.
+  // ---------------------------------------------------------------------------
+  function liveRow(inv, brk) {
+    var rows = window.__wmsLoginRows || [];
+    return rows.find(function (r) { return r.investor_id === inv && r.broker_id === brk; }) || null;
+  }
+  // Can this account place from the modal? { ok, why }
+  function accountState(inv, brk) {
+    var r = liveRow(inv, brk), code = r ? r.broker_code : brkCode(brk);
+    if (String(code).toUpperCase() !== 'FYERS') return { ok: false, why: (code || 'This broker') + ' orders come later' };
+    if (!r || r.logged_in_today !== true) return { ok: false, why: (invName(inv) + ' › Fyers is not logged in today') };
+    return { ok: true, why: '' };
+  }
+  function liveFyersFor(inv) {
+    return (window.__wmsLoginRows || []).find(function (r) { return r.investor_id === inv && r.broker_code === 'FYERS' && r.logged_in_today === true; }) || null;
+  }
+  function nfoByBare(bare) {
+    var b = bareSymbol(bare);
+    return (wmsRefData.securitiesNfo || []).find(function (x) { return bareSymbol(x.symbol) === b; }) || null;
+  }
+  // Fill one modal row from a symbol / security id. Returns '' or the reason it could not.
+  function fillRowSymbol(r, o) {
+    var sec = null;
+    if (o.security_id && wmsRefData.securitiesCmMap && wmsRefData.securitiesCmMap[o.security_id] && !o.nfo) sec = { cm: wmsRefData.securitiesCmMap[o.security_id] };
+    if (!sec) { var n = nfoByBare(o.symbol || ''); if (n) sec = { nfo: n }; }
+    if (!sec && o.security_id && wmsRefData.securitiesCmMap && wmsRefData.securitiesCmMap[o.security_id]) sec = { cm: wmsRefData.securitiesCmMap[o.security_id] };
+    if (!sec) return bareSymbol(o.symbol || '') + ' is not in the contract list yet — open it once in Add Trade or the Watchlist, then pick it here';
+    if (sec.cm) {
+      var c = sec.cm, fy = c.broker_tokens && c.broker_tokens.fyers && c.broker_tokens.fyers.nse_symbol;
+      if (!fy) return c.symbol + ' has no NSE trading symbol — it cannot be ordered here';
+      Object.assign(r, { symbol: fy, display: c.nse_symbol || c.symbol, security_id: c.id, security_type: c.security_type || 'EQUITY',
+                         asset_class: c.asset_class || null, exchange: 'NSE', lot_size: 1 });
+    } else {
+      var s = sec.nfo;
+      Object.assign(r, { symbol: s.symbol, display: s.symbol, security_id: s.id, security_type: 'NFO',
+                         asset_class: isOption(s.symbol) ? 'OPTIONS' : 'FUTURES', exchange: s.exchange || 'NSE', lot_size: s.lot_size || 1 });
+    }
+    return '';
+  }
+
+  // spec: { tab:'new'|'roll', investor_id?, broker_id?, rows:[{trader_id, symbol, security_id?, side:'BUY'|'SELL', lots?}],
+  //         roll:[{bare, trader_ids|null}], notes:[string] }
+  async function bomOpenWith(spec) {
+    ensureShell();
+    if (window.wmsRefData && !wmsRefData.ready && typeof wmsLoadRefData === 'function') await wmsLoadRefData();
+    if (!wmsRefData.securitiesNfoReady && typeof wmsLoadSecuritiesNfo === 'function') await wmsLoadSecuritiesNfo();
+    if (!wmsRefData.securitiesCmReady && typeof wmsLoadSecuritiesCm === 'function') { try { await wmsLoadSecuritiesCm(0, { all: true }); } catch (_) {} }
+    document.getElementById('bomOverlay').classList.add('show');
+    document.getElementById('bomUnit').textContent = '(' + unitDesc() + ')';
+    BOM.tab = 'new';                                   // pick the account first, without reloading the Rollover list
+    await loadAccounts();
+    var notes = (spec.notes || []).slice();
+    if (spec.investor_id && spec.broker_id) {
+      var st = accountState(spec.investor_id, spec.broker_id);
+      if (st.ok) selectAccount(spec.investor_id, spec.broker_id, true);
+      else notes.unshift(st.why + ' — pick a live account');
+    }
+    if (spec.tab === 'roll') {
+      BOM.roll.pending = spec.roll || [];
+      setTab('roll');
+      if (notes.length) showMsg(notes.join(' · '), true);
+      return;
+    }
+    var hadRows = BOM.rows.some(function (r) { return r.symbol || r.qty; });
+    BOM.rows = [];
+    (spec.rows || []).forEach(function (o) {
+      var r = newRow();
+      var trader = o.trader_id || (BOM.acct ? BOM.acct.investor_id : null);
+      if (trader && BOM.traders.some(function (t) { return t.id === trader; })) r.trader_id = trader;
+      else if (trader && BOM.acct && trader !== BOM.acct.investor_id) notes.push(invName(trader) + ' has no account at this broker — row set to ' + invName(BOM.acct.investor_id));
+      var why = fillRowSymbol(r, o);
+      if (why) { notes.push(why); return; }
+      r.forceSide = o.side === 'SELL' ? 'SELL' : 'BUY';
+      if (o.lots > 0 && Number.isInteger(o.lots)) {
+        r.lots = o.lots * (r.forceSide === 'SELL' ? -1 : 1);
+        r.qty = r.lot_size > 1 ? r.lots * r.lot_size : r.lots;
+      }
+      BOM.rows.push(r);
+    });
+    if (!BOM.rows.length) BOM.rows.push(newRow());
+    setTab('new');
+    renderRows();
+    BOM.rows.forEach(function (r) { if (r.symbol) { autoTags(r); fetchLtp(r.symbol); } });
+    renderPanel();
+    if (hadRows) notes.unshift('Earlier unsent rows were cleared');
+    showMsg(notes.length ? notes.join(' · ') : 'Filled in from your click — check and Place.', notes.length > (hadRows ? 1 : 0));
+    var target = BOM.rows.find(function (r) { return r.symbol && !r.qty; }) || BOM.rows[0];
+    setTimeout(function () {
+      var el = document.querySelector((target.lot_size > 1 ? '.bom-lots' : '.bom-qty') + '[data-rid="' + target.id + '"]');
+      if (el) el.focus();
+    }, 40);
+  }
+  window.bomOpenWith = bomOpenWith;
+
+  // The shared hover strip. attach(root, rowSelector, describe) — describe(rowEl) returns null (no icons)
+  // or { anchor: element to sit in, b:{ok,why,run}, s:{...}, r:{...}|null }.
+  var RA_STYLE = [
+    '.bom-ra{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:inline-flex;gap:4px;z-index:5;padding-left:12px;',
+    'background:linear-gradient(to right,rgba(255,255,255,0),var(--bom-ra-bg,#fff) 10px)}',
+    '.bom-ra span{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;',
+    'font:700 11px/1 system-ui,-apple-system,sans-serif;color:#fff;cursor:pointer;user-select:none}',
+    '.bom-ra .b{background:#059669}.bom-ra .s{background:#dc2626}.bom-ra .r{background:#7c3aed}',
+    '.bom-ra .off{background:#e2e8f0;color:#a0aec0;cursor:not-allowed}',
+    '.bom-ra-host{position:relative}'
+  ].join('');
+  function raStyle() { if (document.getElementById('bom-ra-style')) return; var st = document.createElement('style'); st.id = 'bom-ra-style'; st.textContent = RA_STYLE; document.head.appendChild(st); }
+  window.bomRowActions = {
+    accountState: accountState,
+    liveFyersFor: liveFyersFor,
+    nfoByBare: nfoByBare,
+    bareSymbol: bareSymbol,
+    nextContract: function (sym) { var h = nfoByBare(sym); return h ? nextContractFor(h) : null; },
+    lastAccount: function () { return BOM.acct ? { investor_id: BOM.acct.investor_id, broker_id: BOM.acct.broker_id } : null; },
+    // attach(root, rowSelector, describe) → { refresh() }. Rows carry data-ra-key so the strip can be put
+    // back on the same row after the screen redraws (F&O / Portfolio redraw on every price refresh).
+    attach: function (root, rowSelector, describe) {
+      if (!root || window.WMS_PHONE) return { refresh: function () {} };   // desktop only (phone: a tap strip later)
+      if (root._bomRA) return root._bomRA;
+      raStyle();
+      var strip = document.createElement('div'); strip.className = 'bom-ra';
+      var cur = null, overRoot = false;
+      var hide = function () { if (strip.parentNode) strip.parentNode.removeChild(strip); cur = null; };
+      var icon = function (cls, label, a) {
+        if (!a) return '';
+        return '<span class="' + (a.ok ? cls : 'off') + '" data-a="' + cls + '" title="' + esc(label + (a.ok ? (a.tip ? ' — ' + a.tip : '') : ' — ' + a.why)) + '">' + cls.toUpperCase() + '</span>';
+      };
+      var show = function (row) {
+        var d = null; try { d = describe(row); } catch (err) { console.warn('row actions:', err); d = null; }
+        if (!d) { hide(); return; }
+        cur = { row: row, d: d, key: row.getAttribute('data-ra-key') };
+        strip.innerHTML = icon('b', 'Buy', d.b) + icon('s', 'Sell', d.s) + icon('r', 'Rollover', d.r);
+        var host = d.anchor || row.firstElementChild;
+        host.classList.add('bom-ra-host');
+        try { var bg = getComputedStyle(row).backgroundColor; strip.style.setProperty('--bom-ra-bg', bg && bg !== 'rgba(0, 0, 0, 0)' ? bg : '#fff'); } catch (_) {}
+        host.appendChild(strip);
+      };
+      root.addEventListener('mouseover', function (e) {
+        overRoot = true;
+        if (e.target.closest('.bom-ra')) return;
+        var row = e.target.closest(rowSelector);
+        if (!row || !root.contains(row)) { hide(); return; }
+        if (cur && cur.row === row && strip.parentNode) return;
+        show(row);
+      });
+      root.addEventListener('mouseleave', function () { overRoot = false; hide(); });
+      strip.addEventListener('click', function (e) {
+        e.stopPropagation(); e.preventDefault();
+        var el = e.target.closest('span[data-a]'); if (!el || !cur) return;
+        var a = cur.d[el.dataset.a]; if (!a || !a.ok || typeof a.run !== 'function') return;
+        hide(); a.run();
+      });
+      strip.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+      var ctl = { refresh: function () {
+        if (!cur || !overRoot || !cur.key) return;
+        if (strip.parentNode && root.contains(strip)) return;
+        var row = null;
+        try { row = root.querySelector(rowSelector + '[data-ra-key="' + (window.CSS && CSS.escape ? CSS.escape(cur.key) : cur.key) + '"]'); } catch (_) {}
+        if (row) show(row); else hide();
+      } };
+      root._bomRA = ctl;
+      return ctl;
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // Today's orders

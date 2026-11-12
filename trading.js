@@ -1666,7 +1666,7 @@ function trRenderPortfolio() {
         var menuSafeKey = symbolKey.replace(/[^a-zA-Z0-9]/g, '_');
 
         var mainRow =
-            '<tr class="' + expClass + '">' +
+            '<tr class="' + expClass + ' ra-row" data-ra-key="h|' + wmsEsc(symbolKey) + '">' +
                 '<td class="company-cell">' +
                     '<div class="company-main" data-key="' + symbolKey + '" title="' + wmsEsc(h.companyName || h.shortSymbol) + '">' + wmsEsc(h.companyName || h.shortSymbol) + '</div>' +
                     '<div class="company-sub">' + wmsEsc(h.shortSymbol) + '</div>' +
@@ -1739,6 +1739,9 @@ function trRenderPortfolio() {
         '</tr>';
 
     list.innerHTML = totalRow + rows;
+    // Trade From Rows (12-Nov-2026): B / S on hover — holding row and investor rows (equity only).
+    window._trPfLastHoldings = holdings;
+    if (window.bomRowActions) bomRowActions.attach(list, 'tr.ra-row', trPfDescribeRow).refresh();
 
     // Phone compact-row list — same holdings/order/totals as the table above.
     if (typeof trRenderPortfolioMobile === 'function') trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, totalPLPct, totalDayPL, totalDayPLPct);
@@ -1901,6 +1904,54 @@ function trInvestorBreakdown(h, price, md) {
         });
 }
 
+// ============================================================================
+// TRADE FROM ROWS (Trade From Rows Plan v2, 12-Nov-2026) — what B / S do on a Portfolio row.
+// Equity / ETF holdings only (derivatives trade from F&O Positions). Holding row: the modal's
+// last-used account, trader = holder. Investor row: that investor's live Fyers account, trader =
+// the investor. Quantity always blank (decision 7) — the modal shows the holding as "Bal:".
+// ============================================================================
+function trPfEquitySecurity(h) {
+    var txns = (h && h._txns) || [];
+    for (var i = txns.length - 1; i >= 0; i--) {
+        var t = txns[i];
+        if (wmsIsDerivativeSecurity(t.security_type)) continue;
+        var sec = t.security_id && wmsRefData.securitiesCmMap && wmsRefData.securitiesCmMap[t.security_id];
+        if (sec && sec.broker_tokens && sec.broker_tokens.fyers && sec.broker_tokens.fyers.nse_symbol) return sec;
+    }
+    return null;
+}
+function trPfDescribeRow(row) {
+    var RA = window.bomRowActions; if (!RA) return null;
+    var key = row.getAttribute('data-ra-key') || '';
+    var kind = key.slice(0, 2), rest = key.slice(2);
+    var invId = null, hKey = rest;
+    if (kind === 'i|') { var j = rest.lastIndexOf('|'); hKey = rest.slice(0, j); invId = rest.slice(j + 1); }
+    else if (kind !== 'h|') return null;
+    var h = (window._trPfLastHoldings || []).find(function(x) { return x.key === hKey; });
+    var sec = trPfEquitySecurity(h);
+    if (!sec) return null;
+    var acct = null, off = '';
+    if (invId) {
+        var lr = RA.liveFyersFor(invId);
+        if (lr) acct = { investor_id: lr.investor_id, broker_id: lr.broker_id };
+        else off = trInvName(invId) + ' has no live Fyers account today';
+    } else {
+        var last = RA.lastAccount();
+        if (last && RA.accountState(last.investor_id, last.broker_id).ok) acct = last;
+        else { var lr2 = (window.__wmsLoginRows || []).find(function(x) { return x.broker_code === 'FYERS' && x.logged_in_today === true; }); if (lr2) acct = { investor_id: lr2.investor_id, broker_id: lr2.broker_id }; }
+        if (!acct) off = 'no live Fyers account today';
+    }
+    var anchor = row.querySelector('td') || row.firstElementChild;
+    var bs = function(side) {
+        if (off) return { ok: false, why: off };
+        return { ok: true, run: function() {
+            bomOpenWith({ tab: 'new', investor_id: acct.investor_id, broker_id: acct.broker_id,
+                          rows: [{ trader_id: invId || null, symbol: sec.broker_tokens.fyers.nse_symbol, security_id: sec.id, side: side }] });
+        } };
+    };
+    return { anchor: anchor, b: bs('BUY'), s: bs('SELL'), r: null };
+}
+
 function trBuildInvestorDetail(h, price, md) {
     var investorRows = trInvestorBreakdown(h, price, md)
         .map(function(g) {
@@ -1928,7 +1979,7 @@ function trBuildInvestorDetail(h, price, md) {
 
             var invMenuId = 'inv-am-' + g.investorId.substring(0, 8) + '-' + h.key.replace(/[^a-zA-Z0-9]/g, '_');
 
-            return '<tr>' +
+            return '<tr class="ra-row" data-ra-key="i|' + wmsEsc(h.key) + '|' + g.investorId + '">' +
                 '<td><span class="investor-name-link" data-key="' + h.key + '" data-investor-id="' + g.investorId + '">' + g.name + '</span></td>' +
                 '<td class="text-right">' + qtyHtml + '<div class="number-sub">' + formatPrice(avg, false) + '</div></td>' +
                 '<td class="text-right"><div class="number-main">' + formatAmount(inv) + '</div></td>' +
