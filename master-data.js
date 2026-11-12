@@ -1430,7 +1430,7 @@ function buildRecordMap(nseRows, bseRows) {
 // State for sync session ───────────────────────────────────────
 
 var _syncPending = null; // { toAdd:[], toUpdate:[], missing:[], unchanged:[] }
-var _syncModalMode = null; // 'cm' or 'fo' — tracks which sync is active in the modal
+var _syncModalMode = null; // 'cm' — tracks which sync is active in the modal (the F&O sync is server-side, no modal)
 var _syncActiveCard = null; // 'new' | 'edit' | 'miss' | null — which stat card is selected
 var _syncPreviewData = null; // { toAdd:[], toUpdate:[], missing:[] } — unified data for card click rendering
 
@@ -1508,7 +1508,6 @@ function closeSyncModal() {
     document.removeEventListener('keydown', _syncModalEscHandler);
     // Delegate cancel to the right sync type
     if (_syncModalMode === 'cm') { _syncPending = null; }
-    if (_syncModalMode === 'fo') { _foCsvMap = null; _foDbMap = null; }
     _syncModalMode = null;
     _syncActiveCard = null;
     _syncPreviewData = null;
@@ -1521,7 +1520,6 @@ function _syncModalEscHandler(e) {
 // Wire commit button to the right function based on mode
 function syncModalCommit() {
     if (_syncModalMode === 'cm') commitSync();
-    else if (_syncModalMode === 'fo') commitFOSync();
 }
 
 // Main sync flow ───────────────────────────────────────────────
@@ -1619,8 +1617,6 @@ function renderSyncCardTable(card) {
 
     if (_syncModalMode === 'cm') {
         renderSyncCardTableCM(card, title, thead, tbody);
-    } else if (_syncModalMode === 'fo') {
-        renderSyncCardTableFO(card, title, thead, tbody);
     }
     section.style.display = 'block';
 }
@@ -1667,49 +1663,6 @@ function renderSyncCardTableCM(card, title, thead, tbody) {
     }
 }
 
-function renderSyncCardTableFO(card, title, thead, tbody) {
-    var d = _syncPreviewData;
-    if (card === 'new') {
-        title.textContent = d.toAdd.length + ' new contracts to add';
-        thead.innerHTML = '<tr><th>Symbol</th><th>Underlying</th><th>Exchange</th><th>Type</th><th>Lot Size</th><th>Expiry</th></tr>';
-        d.toAdd.forEach(function(r) {
-            var tr = document.createElement('tr');
-            tr.innerHTML = '<td><strong>' + (r.symbol || '') + '</strong></td>' +
-                '<td>' + (r.underlying_symbol || '') + '</td>' +
-                '<td>' + (r.exchange || '') + '</td>' +
-                '<td><span class="change-tag tag-new">' + (r.instrument_type || '') + '</span></td>' +
-                '<td style="text-align:right;">' + (r.lot_size || '') + '</td>' +
-                '<td style="font-size:11px;color:#718096;">' + (r.expiry_date || '') + '</td>';
-            tbody.appendChild(tr);
-        });
-    } else if (card === 'edit') {
-        title.textContent = d.toUpdate.length + ' contracts will be updated';
-        thead.innerHTML = '<tr><th>Symbol</th><th>Field</th><th>Current Value</th><th>New Value</th></tr>';
-        d.toUpdate.forEach(function(u) {
-            u.diffs.forEach(function(diff) {
-                var tr = document.createElement('tr');
-                tr.innerHTML = '<td><strong>' + (u.symbol || '') + '</strong></td>' +
-                    '<td><span class="change-tag tag-edit">' + diff.field + '</span></td>' +
-                    '<td style="color:#718096;font-size:11px;">' + (diff.from == null ? '—' : diff.from) + '</td>' +
-                    '<td style="color:#2d3748;font-size:11px;">' + (diff.to == null ? '—' : diff.to) + '</td>';
-                tbody.appendChild(tr);
-            });
-        });
-    } else if (card === 'miss') {
-        var missLabel = document.getElementById('pvMissLbl').textContent;
-        title.textContent = d.missing.length + ' ' + missLabel.toLowerCase();
-        thead.innerHTML = '<tr><th>Symbol</th><th>Underlying</th><th>Exchange</th><th>Expiry</th><th>Note</th></tr>';
-        d.missing.forEach(function(r) {
-            var tr = document.createElement('tr');
-            tr.innerHTML = '<td>' + (r.symbol || '') + '</td>' +
-                '<td>' + (r.underlying_symbol || '') + '</td>' +
-                '<td>' + (r.exchange || '') + '</td>' +
-                '<td style="font-size:11px;color:#718096;">' + (r.expiry_date || '') + '</td>' +
-                '<td style="color:#718096;font-size:10px;">Will be deactivated</td>';
-            tbody.appendChild(tr);
-        });
-    }
-}
 window.syncCardClick = syncCardClick;
 
 async function commitSync() {
@@ -2752,29 +2705,6 @@ async function loadFOTable() {
 // F&O SYNC  — NSE_FO.csv + MCX_COM.csv  (FUTURES only)
 // ═══════════════════════════════════════════════════════════════
 
-// ── HARD-CODED MCX lot sizes (kg / quote-unit multiplier) ──────────────
-// Neither Fyers' nor Zerodha's symbol master carries the real MCX contract
-// size — both report lot_size = 1 for every commodity (the kg-per-lot lives in
-// MCX's contract specs, not any broker feed). So we hard-code the few we trade.
-// Keyed by UNDERLYING symbol, so it applies to every expiry automatically.
-// The F&O Sync shows an alert listing these at the end so they can't silently
-// rot — if MCX revises a contract size, edit the number here. See LESSONS A.11.5.
-// ⚠ 12-Nov-2026: this map belongs to the OLD browser sync (startFOSync), which is no
-// longer wired to any button. The live sync is securities-fno-sync, and the MASTER is
-// now the one place the MCX lot size is kept: set it on any contract (Lot, double-click)
-// and every expiry of that underlying takes it; the sync never resets it.
-//   SILVERM = 5  (Silver Mini, 5 kg, quoted ₹/kg)
-//   GOLDM   = 10 (Gold Mini, 100 g, quoted ₹/10 g)  ← VERIFY against a real trade
-//   SILVER  = 30 (Silver big, 30 kg, quoted ₹/kg)
-//   (GOLD big = 100 has the same latent issue — add when traded.)
-var MCX_LOT_OVERRIDE = { SILVERM: 5, GOLDM: 10, SILVER: 30 };
-
-var _foCsvMap   = null;   // Map<symbol, record> built from CSV
-var _foDbMap    = null;   // Map<symbol, record> from DB
-var _foToAdd    = [];
-var _foToUpdate = [];
-var _foToDeactivate = [];
-
 function setFOLoading(on, msg) {
     const overlay  = document.getElementById('secLoadingOverlay');
     const msgEl    = document.getElementById('secLoadingMsg');
@@ -2788,8 +2718,8 @@ function setFOLoading(on, msg) {
 
 // F&O Sync — server-side via the securities-fno-sync Edge Function (2026-07-09).
 //
-// Replaces the browser-side download/parse/diff/commit flow (startFOSync_LEGACY
-// below, kept as reference only — not wired to any button). The EF does the
+// Replaced the browser-side download/parse/diff/commit flow (removed 12-Nov-2026).
+// The EF does the
 // same three phases: INSERT new futures + options-reference rows, UPDATE
 // existing rows where fields drifted, PATCH is_active=false for expired rows.
 // Plus it adds one reference row per new options bucket for the KH webhook
@@ -2844,319 +2774,10 @@ async function runFOSyncEF() {
     }
 }
 
-// ─── Legacy browser-side F&O sync flow (deprecated 2026-07-09) ───────────────
-// The F&O Sync button now fires runFOSyncEF() above (server-side EF). The
-// browser-side functions below (startFOSync, commitFOSync, diffFORecord, etc.)
-// are UNWIRED — no button in master-data.html points at them anymore — but
-// left intact as reference and as a fallback path. To revert: edit
-// master-data.html onclick from runFOSyncEF() back to startFOSync().
-async function startFOSync() {
-    setFOLoading(true, 'Downloading F&O data...');
-    _syncModalMode = 'fo';
-    openSyncModal('📋 F&O Sync Preview — Review before committing', 'Expired (deactivated)');
-    const progWrap = document.getElementById('syncProgressWrap');
-    const progBar  = document.getElementById('syncProgressBar');
-    const progLbl  = document.getElementById('syncProgressLabel');
-    progWrap.style.display = 'block';
-    progLbl.style.display  = 'block';
-    progBar.style.width    = '5%';
-    progLbl.textContent    = 'Downloading NSE_FO.csv...';
-
-    try {
-        // ── 1. Download & parse both CSVs ──────────────────────────
-        const nseRows = await fetchAndParseCSVRaw('https://public.fyers.in/sym_details/NSE_FO.csv');
-        progBar.style.width = '30%';
-        progLbl.textContent = 'Downloading MCX_COM.csv...';
-
-        const mcxRows = await fetchAndParseCSVRaw('https://public.fyers.in/sym_details/MCX_COM.csv');
-        progBar.style.width = '55%';
-        progLbl.textContent = 'Parsing contracts...';
-
-        const today = new Date(); today.setHours(0,0,0,0);
-
-        // ── 2. Parse BOTH futures (XX) AND options (CE/PE) ──────────
-        // Options were historically skipped which meant every option record in
-        // the DB got deactivated every run and expiry_date was never refreshed.
-        // Now we parse all three but restrict CSV "add"s to futures only (the
-        // options universe is enormous; new options are created lazily by CN /
-        // Excel import). For existing options the sync updates expiry, lot size,
-        // is_active, broker_tokens from Fyers' authoritative data.
-        //
-        // NORMALIZATION: we key by the BARE (prefix-stripped) symbol on both
-        // sides. That lets a DB record created before we standardised the
-        // NSE: prefix (bare "360ONE26MAY1100CE") be matched against the current
-        // Fyers row ("NSE:360ONE26MAY1100CE") and be renamed + corrected.
-        function _bareSym(s) { return (s || '').replace(/^[A-Z]+:/, ''); }
-
-        function parseRow(cols, exchCode) {
-            if (!cols || cols.length < 17) return null;
-            const optTypeRaw = (cols[16] || '').trim();
-            let instrumentType;
-            if (optTypeRaw === 'XX') {
-                instrumentType = 'FUTURES';
-            } else if (optTypeRaw === 'CE' || optTypeRaw === 'PE') {
-                instrumentType = 'OPTIONS';
-            } else {
-                return null; // ignore anything else
-            }
-
-            const symbol    = (cols[9]  || '').trim();
-            const exEpoch   = parseInt(cols[8]);
-            const exDate    = isNaN(exEpoch) ? null
-                            : new Date(exEpoch * 1000).toISOString().slice(0, 10);
-            const isActive  = exDate ? (new Date(exDate) >= today) : false;
-
-            // IMPORTANT: we do NOT read strike_price or option_type from the CSV —
-            // these fields were set correctly at record-create time (parseNfoSymbol
-            // derives them from the symbol itself, which Fyers guarantees is
-            // canonical). Reading them from unverified CSV column indices risked
-            // silent data corruption if the column layout differs from what we
-            // assume. By omitting them from the CSV record entirely they stay out
-            // of the diff and the DB value is preserved.
-            const underlying = (cols[13] || '').trim();
-            // MCX: Fyers' col[3] is always 1 (no real lot size in the feed), so
-            // override from the hard-coded map keyed by underlying. NSE keeps col[3].
-            let lotSize = parseInt(cols[3]) || 1;
-            if (exchCode === 'MCX' && MCX_LOT_OVERRIDE[underlying.toUpperCase()] !== undefined) {
-                lotSize = MCX_LOT_OVERRIDE[underlying.toUpperCase()];
-            }
-            return {
-                symbol,
-                instrument_name:   (cols[1]  || '').trim(),
-                exchange:          exchCode,
-                instrument_type:   instrumentType,
-                underlying_symbol: underlying,
-                expiry_date:       exDate,
-                lot_size:          lotSize,
-                trading_session:   (cols[6]  || '').trim(),
-                is_active:         isActive,
-                broker_tokens:     { fyers: { token: (cols[0] || '').trim(), symbol } }
-            };
-        }
-
-        const csvRecords = [];
-        for (const row of nseRows) {
-            const r = parseRow(row, 'NSE');
-            if (r && r.symbol) csvRecords.push(r);
-        }
-        for (const row of mcxRows) {
-            const r = parseRow(row, 'MCX');
-            if (r && r.symbol) csvRecords.push(r);
-        }
-
-        // CSV map keyed by bare (prefix-stripped) symbol so we can match
-        // pre-standardisation DB records that were created without the NSE: prefix.
-        _foCsvMap = new Map(csvRecords.map(r => [_bareSym(r.symbol), r]));
-
-        progBar.style.width = '70%';
-        progLbl.textContent = 'Loading DB...';
-
-        // ── 3. Load existing DB ─────────────────────────────────────
-        const existing = await fetchAllRows('securities_nfo', '*');
-        _foDbMap = new Map(existing.map(r => [_bareSym(r.symbol), r]));
-
-        progBar.style.width = '88%';
-        progLbl.textContent = 'Computing diff...';
-
-        // ── 4. Diff ─────────────────────────────────────────────────
-        _foToAdd       = [];
-        _foToUpdate    = [];
-        _foToDeactivate = [];
-
-        // For CSV records: ADD only if FUTURES and not in DB. UPDATE existing
-        // (futures + options) when fields differ.
-        for (const [bareKey, csv] of _foCsvMap) {
-            const db = _foDbMap.get(bareKey);
-            if (!db) {
-                // Options are not added on sync — they're created lazily by
-                // CN/Excel import when a trade arrives. Syncing every option
-                // strike is impractical (tens of thousands per run).
-                if (csv.instrument_type === 'FUTURES') _foToAdd.push(csv);
-                continue;
-            }
-            const diffs = diffFORecord(db, csv);
-            if (diffs.length) {
-                // Carry the existing id through so the upsert updates rather
-                // than duplicates, even when the symbol field itself changed
-                // (bare → NSE:-prefixed).
-                _foToUpdate.push({
-                    symbol: csv.symbol,
-                    diffs,
-                    record: Object.assign({}, csv, { id: db.id })
-                });
-            }
-        }
-
-        // DEACTIVATION POLICY: only deactivate records whose expiry_date has
-        // actually passed. Previously, any DB record not present in the CSV
-        // (e.g., options since they weren't parsed) was flipped to inactive on
-        // every sync, which marked the entire options book as dead.
-        for (const [bareKey, db] of _foDbMap) {
-            if (!db.is_active) continue;
-            const expPassed = db.expiry_date && db.expiry_date < today.toISOString().slice(0,10);
-            if (expPassed) _foToDeactivate.push(db);
-        }
-
-        progBar.style.width = '100%';
-        progLbl.textContent = 'Done.';
-
-        // ── 5. Show preview (using shared card-click pattern) ──────
-        var unchangedCount = _foCsvMap.size - _foToAdd.length - _foToUpdate.length;
-        renderSyncPreview({
-            toAdd: _foToAdd,
-            toUpdate: _foToUpdate,
-            missing: _foToDeactivate,
-            unchanged: unchangedCount
-        });
-
-        document.getElementById('btnCommit').disabled =
-            (_foToAdd.length + _foToUpdate.length + _foToDeactivate.length === 0);
-
-        progWrap.style.display = 'none';
-        progLbl.style.display  = 'none';
-
-    } catch(e) {
-        console.error('FO sync error', e);
-        progLbl.textContent = 'Error: ' + e.message;
-        progLbl.style.color = '#dc2626';
-    } finally {
-        setFOLoading(false);
-    }
-}
-
-function diffFORecord(db, csv) {
-    const diffs = [];
-    const check = (field, a, b) => {
-        const av = a == null ? '' : String(a);
-        const bv = b == null ? '' : String(b);
-        if (av !== bv) diffs.push({ field, from: av, to: bv });
-    };
-    // `symbol` is included in the diff so pre-standardisation bare-symbol
-    // records (e.g. '360ONE26MAY1100CE') get renamed to Fyers' canonical
-    // prefixed form ('NSE:360ONE26MAY1100CE') on sync.
-    // NOTE: strike_price and option_type are deliberately NOT checked here —
-    // see the comment in parseRow. They stay frozen at the value set by
-    // parseNfoSymbol at record-create time.
-    check('symbol',            db.symbol,             csv.symbol);
-    check('instrument_name',   db.instrument_name,    csv.instrument_name);
-    check('instrument_type',   db.instrument_type,    csv.instrument_type);
-    check('underlying_symbol', db.underlying_symbol,  csv.underlying_symbol);
-    check('lot_size',          db.lot_size,           csv.lot_size);
-    check('expiry_date',       db.expiry_date,        csv.expiry_date);
-    check('is_active',         db.is_active,          csv.is_active);
-    // broker token: compare fytoken value
-    const dbTok  = db.broker_tokens?.fyers?.token  || '';
-    const csvTok = csv.broker_tokens?.fyers?.token || '';
-    if (dbTok !== csvTok) diffs.push({ field: 'broker_tokens', from: '(token)', to: '(updated)' });
-    return diffs;
-}
-
-async function commitFOSync() {
-    const btn = document.getElementById('btnCommit');
-    btn.disabled = true;
-    btn.textContent = '⏳ Committing...';
-    setFOLoading(true, 'Committing F&O contracts...');
-
-    const progWrap = document.getElementById('syncProgressWrap');
-    const progBar  = document.getElementById('syncProgressBar');
-    const progLbl  = document.getElementById('syncProgressLabel');
-    progWrap.style.display = 'block';
-    progLbl.style.display  = 'block';
-    progBar.style.width    = '5%';
-
-    try {
-        const BATCH = 200;
-        let done = 0;
-        const total = _foToAdd.length + _foToUpdate.length + _foToDeactivate.length;
-
-        // ── INSERT truly new records (futures only — no id yet) ────
-        // Plain insert so Postgres auto-assigns the id.
-        for (let i = 0; i < _foToAdd.length; i += BATCH) {
-            const chunk = _foToAdd.slice(i, i + BATCH);
-            const { error } = await window.supabaseClient
-                .from('securities_nfo')
-                .insert(chunk);
-            if (error) throw error;
-            done += chunk.length;
-            progBar.style.width = Math.round(10 + (done / total) * 80) + '%';
-            progLbl.textContent = 'Added ' + done.toLocaleString('en-IN') + ' of ' + total.toLocaleString('en-IN') + '...';
-        }
-
-        // ── UPDATE existing records by id ──────────────────────────
-        // Uses plain UPDATE (not UPSERT) to comply with rule A.2.3: upsert
-        // sends all columns and null-fills any key not in the object, which
-        // would wipe strike_price / option_type / trading_session (we
-        // deliberately omit these from the CSV row so they remain frozen at
-        // the record-create value). UPDATE only touches the keys present.
-        for (const item of _foToUpdate) {
-            // Strip the id out of the payload — it's used as the WHERE key.
-            const rec = Object.assign({}, item.record);
-            const recId = rec.id;
-            delete rec.id;
-            const { error } = await window.supabaseClient
-                .from('securities_nfo')
-                .update(rec)
-                .eq('id', recId);
-            if (error) throw error;
-            done++;
-            if (done % 25 === 0 || done === total) {
-                progBar.style.width = Math.round(10 + (done / total) * 80) + '%';
-                progLbl.textContent = 'Updated ' + done.toLocaleString('en-IN') + ' of ' + total.toLocaleString('en-IN') + '...';
-            }
-        }
-
-        // ── Mark expired contracts inactive ────────────────────────
-        for (let i = 0; i < _foToDeactivate.length; i += BATCH) {
-            const chunk = _foToDeactivate.slice(i, i + BATCH);
-            const ids = chunk.map(r => r.id);
-            const { error } = await window.supabaseClient
-                .from('securities_nfo')
-                .update({ is_active: false })
-                .in('id', ids);
-            if (error) throw error;
-            done += chunk.length;
-            progBar.style.width = Math.round(10 + (done / total) * 80) + '%';
-            progLbl.textContent = 'Deactivating expired: ' + done.toLocaleString('en-IN') + ' of ' + total.toLocaleString('en-IN') + '...';
-        }
-
-        progBar.style.width = '100%';
-        progLbl.textContent = 'Done.';
-        localStorage.setItem('wms_last_fo_sync', new Date().toISOString());
-
-        await loadFOStats();
-
-        // Refresh shared FO cache and re-render
-        await wmsLoadSecuritiesNfo();
-        renderUnified();
-
-        // Surface the hard-coded MCX lot sizes so they can't silently rot — the
-        // broker feeds don't carry them (Fyers/Zerodha report 1). If MCX revises a
-        // contract size, edit MCX_LOT_OVERRIDE near the top of this section.
-        var _mcxList = Object.keys(MCX_LOT_OVERRIDE)
-            .map(function(k) { return '   • ' + k + ' = ' + MCX_LOT_OVERRIDE[k]; }).join('\n');
-        alert('F&O master updated.\n\n' +
-            'MCX lot sizes are HARD-CODED (Fyers/Zerodha report 1 for MCX, so we maintain these by hand):\n\n' +
-            _mcxList + '\n\n' +
-            'If MCX has changed a contract size, update MCX_LOT_OVERRIDE in master-data.js and re-sync.');
-
-        // Close modal
-        closeSyncModal();
-
-    } catch(e) {
-        console.error('FO commit error', e);
-        progLbl.textContent = 'Error: ' + e.message;
-        progLbl.style.color = '#dc2626';
-        btn.disabled = false;
-        btn.textContent = '✓ Commit to Database';
-    } finally {
-        setFOLoading(false);
-    }
-}
-
-function cancelFOSync() {
-    closeSyncModal();
-    document.getElementById('btnFOSync').disabled = false;
-}
+// The old browser-side F&O sync (startFOSync / commitFOSync / diffFORecord and its own
+// MCX lot-size list) was removed 12-Nov-2026. The ONE sync is the securities-fno-sync
+// server function (this button + the Saturday run). MCX lot sizes live in the master
+// (Lot column, double-click): set once on any contract, every expiry takes it.
 
 // ── Export FO to CSV ───────────────────────────────────────────
 async function exportFOExcel() {
