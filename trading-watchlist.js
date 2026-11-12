@@ -2719,7 +2719,10 @@ function trWlDescribeRow(row) {
     if (row.classList.contains('wl-expired-option')) return null;
     var anchor = row.querySelector('.wl-sec-symbol') || row.firstElementChild;
     var acct = trWlDefaultAccount();
-    var off = !acct ? 'no live Fyers account today' : (isNfo && !m) ? 'not in the contract list — open it once in Add Trade' : '';
+    var cmSec = !isNfo && item.security_id && wmsRefData.securitiesCmMap ? wmsRefData.securitiesCmMap[item.security_id] : null;
+    var bseOnly = !isNfo && !(cmSec && cmSec.broker_tokens && cmSec.broker_tokens.fyers && cmSec.broker_tokens.fyers.nse_symbol);
+    var off = !acct ? 'no live Fyers account today' : (isNfo && !m) ? 'not in the contract list — open it once in Add Trade'
+        : bseOnly ? 'listed on BSE only — the broker order screen places NSE orders only' : '';
     var bs = function(side) {
         if (off) return { ok: false, why: off };
         return { ok: true, run: function() {

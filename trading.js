@@ -1910,16 +1910,19 @@ function trInvestorBreakdown(h, price, md) {
 // last-used account, trader = holder. Investor row: that investor's live Fyers account, trader =
 // the investor. Quantity always blank (decision 7) — the modal shows the holding as "Bal:".
 // ============================================================================
+// The holding's equity security in the master, or null (derivatives-only holdings / mutual funds).
 function trPfEquitySecurity(h) {
     var txns = (h && h._txns) || [];
     for (var i = txns.length - 1; i >= 0; i--) {
         var t = txns[i];
         if (wmsIsDerivativeSecurity(t.security_type)) continue;
         var sec = t.security_id && wmsRefData.securitiesCmMap && wmsRefData.securitiesCmMap[t.security_id];
-        if (sec && sec.broker_tokens && sec.broker_tokens.fyers && sec.broker_tokens.fyers.nse_symbol) return sec;
+        if (sec) return sec;
     }
     return null;
 }
+// The modal places NSE equity only: a BSE-only stock (e.g. BSE SME) has no NSE trading symbol.
+function trPfNseSymbol(sec) { return sec && sec.broker_tokens && sec.broker_tokens.fyers && sec.broker_tokens.fyers.nse_symbol; }
 function trPfDescribeRow(row) {
     var RA = window.bomRowActions; if (!RA) return null;
     var key = row.getAttribute('data-ra-key') || '';
@@ -1930,8 +1933,9 @@ function trPfDescribeRow(row) {
     var h = (window._trPfLastHoldings || []).find(function(x) { return x.key === hKey; });
     var sec = trPfEquitySecurity(h);
     if (!sec) return null;
-    var acct = null, off = '';
-    if (invId) {
+    var acct = null, off = trPfNseSymbol(sec) ? '' : 'listed on BSE only — the broker order screen places NSE orders only';
+    if (off) {
+    } else if (invId) {
         var lr = RA.liveFyersFor(invId);
         if (lr) acct = { investor_id: lr.investor_id, broker_id: lr.broker_id };
         else off = trInvName(invId) + ' has no live Fyers account today';
@@ -1946,7 +1950,7 @@ function trPfDescribeRow(row) {
         if (off) return { ok: false, why: off };
         return { ok: true, run: function() {
             bomOpenWith({ tab: 'new', investor_id: acct.investor_id, broker_id: acct.broker_id,
-                          rows: [{ trader_id: invId || null, symbol: sec.broker_tokens.fyers.nse_symbol, security_id: sec.id, side: side }] });
+                          rows: [{ trader_id: invId || null, symbol: trPfNseSymbol(sec), security_id: sec.id, side: side }] });
         } };
     };
     return { anchor: anchor, b: bs('BUY'), s: bs('SELL'), r: null };

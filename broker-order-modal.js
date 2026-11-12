@@ -108,6 +108,7 @@
       '.bom-sym .wms-dd{min-width:380px;font-size:12px}',
       '.bom-sym .wms-dd .sub{font-size:10px;color:#a0aec0;margin-left:6px}',
       '.bom-sym .wms-dd .wms-dd-item.nfo{color:#667eea}',
+      '.bom-buy{color:#047857;font-weight:700}.bom-sell{color:#b91c1c;font-weight:700}',   /* buy green / sell red (owner, 12-Nov) */
       '.bom-side{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.04em;border-radius:4px;padding:0 5px;cursor:pointer;color:#fff}',
       '.bom-side.b{background:#059669}.bom-side.s{background:#dc2626}',
       '.bom-del{background:none;border:0;cursor:pointer;color:#a0aec0;font-size:15px}',
@@ -787,7 +788,7 @@
     var mn = marginNeeded(p.orders), need = mn.need, unknown = mn.unknown;   // also marks exits on each order
     ordersEl.innerHTML = (p.problems.length ? p.problems.map(function (x) { return '<div class="bom-warn">' + esc(x) + '</div>'; }).join('') : '') +
       (p.orders.length ? p.orders.map(function (g) {
-        return '<div class="bom-ord"><b>' + g.side + ' ' + qtyFmt(g.brokerQty) + (g.exchange === 'MCX' ? ' lots' : '') + '</b> ' + esc(g.display) +
+        return '<div class="bom-ord"><b class="' + (g.side === 'SELL' ? 'bom-sell' : 'bom-buy') + '">' + g.side + ' ' + qtyFmt(g.brokerQty) + (g.exchange === 'MCX' ? ' lots' : '') + '</b> ' + esc(g.display) +
           ' · ' + (g.price ? 'limit ' + price2(g.price) : 'market') +
           (g.closingUnits ? ' <span class="bom-note" title="Closes part or all of the open position: no margin for these units">(' +
             (g.closingUnits >= g.units ? 'exit' : 'exits ' + qtyFmt(g.closingUnits)) + ')</span>' : '') +
@@ -1435,7 +1436,7 @@
         if (cls === 'wip' || (cls === 'done' && mine.some(function (l) { return l.status === 'pending' || l.status === 'open_unprotected'; }))) working = true;
         var t = new Date(new Date(c.created_at).getTime() + 330 * 60000).toISOString().slice(11, 16);
         var isRoll = pl._manual_meta && pl._manual_meta.roll;
-        return '<div class="bom-ord"><span class="bom-note">' + t + '</span> ' + (isRoll ? '<span class="bom-badge" title="Rollover ' + esc(pl._manual_meta.leg_role === 'roll_exit' ? 'exit' : 'entry') + ' leg">roll</span> ' : '') + '<b>' + (pl.side === -1 ? 'SELL' : 'BUY') + ' ' + qtyFmt(pl.qty) + '</b> ' + esc(pl.symbol || '') +
+        return '<div class="bom-ord"><span class="bom-note">' + t + '</span> ' + (isRoll ? '<span class="bom-badge" title="Rollover ' + esc(pl._manual_meta.leg_role === 'roll_exit' ? 'exit' : 'entry') + ' leg">roll</span> ' : '') + '<b class="' + (pl.side === -1 ? 'bom-sell' : 'bom-buy') + '">' + (pl.side === -1 ? 'SELL' : 'BUY') + ' ' + qtyFmt(pl.qty) + '</b> ' + esc(pl.symbol || '') +
           ' · ' + (pl.type === 1 ? 'limit ' + price2(pl.limitPrice) : 'market') +
           ' &nbsp;<span class="bom-st ' + cls + '">' + esc(bs || 'QUEUED') + '</span>' +
           (c.filled_qty ? ' <span class="bom-note">filled ' + qtyFmt(c.filled_qty) + ' @ ' + price2(c.avg_fill_price) + '</span>' : '') +
