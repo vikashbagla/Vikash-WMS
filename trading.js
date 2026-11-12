@@ -1933,7 +1933,7 @@ function trPfDescribeRow(row) {
     var h = (window._trPfLastHoldings || []).find(function(x) { return x.key === hKey; });
     var sec = trPfEquitySecurity(h);
     if (!sec) return null;
-    var acct = null, off = trPfNseSymbol(sec) ? '' : 'listed on BSE only — the broker order screen places NSE orders only';
+    var acct = null, off = trPfNseSymbol(sec) ? '' : (sec.bse_symbol ? 'listed on BSE only' : 'no NSE trading symbol') + ' — the broker order screen places NSE orders only';
     if (off) {
     } else if (invId) {
         var lr = RA.liveFyersFor(invId);
