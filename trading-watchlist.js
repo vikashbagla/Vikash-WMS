@@ -955,6 +955,8 @@ function trWlRender() {
     var grid = document.getElementById('trWlGrid');
     var collapsedBar = document.getElementById('trWlCollapsedBar');
     if (!grid) return;
+    // Trade From Rows (12-Nov-2026): B / S / R on hover, right-aligned in the symbol column.
+    if (window.bomRowActions) setTimeout(function() { bomRowActions.attach(grid, '.wl-security-row.ra-row', trWlDescribeRow).refresh(); }, 0);
 
     // Update count
     var countEl = document.getElementById('trWlCount');
@@ -1170,7 +1172,7 @@ function trWlRenderSecurityRow(item) {
     var tooltipText = (displayExchange ? displayExchange + ':' : '') + displaySym + (item.company_name ? ' — ' + item.company_name : '');
 
     var expiredClass = isExpiredOption ? ' wl-expired-option' : '';
-    return '<div class="wl-security-row' + expiredClass + '" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + wmsEsc(tooltipText) + '" style="position:relative;">' +
+    return '<div class="wl-security-row ra-row' + expiredClass + '" data-ra-key="' + item.id + '" data-item-id="' + item.id + '" data-wl-id="' + item.watchlist_id + '" draggable="true" title="' + wmsEsc(tooltipText) + '" style="position:relative;">' +
         '<div class="wl-row-top">' +
             '<div class="wl-sec-drag" title="Drag to reorder">☰</div>' +
             '<div class="wl-sec-symbol">' +
@@ -2670,3 +2672,76 @@ async function trWlSaveAlert(item, alertAbove, alertBelow) {
 
 window.trWlInit = trWlInit;
 window.trWlDestroy = trWlDestroy;
+
+// ============================================================================
+// TRADE FROM ROWS (Trade From Rows Plan v2, 12-Nov-2026) — what B / S / R do on a watchlist item.
+// A watchlist item has no account: the modal's last-used account (else the first live Fyers one),
+// trader = the account holder. Rollover only for a futures contract held by hand in a live account.
+// Worked out on hover from data already in the page; the click only pre-fills the modal.
+// ============================================================================
+function trWlFindItem(id) {
+    for (var i = 0; i < (trWlWatchlists || []).length; i++) {
+        var it = (trWlWatchlists[i].items || []).find(function(x) { return String(x.id) === String(id); });
+        if (it) return it;
+    }
+    return null;
+}
+function trWlDefaultAccount() {
+    var RA = window.bomRowActions, last = RA.lastAccount();
+    if (last && RA.accountState(last.investor_id, last.broker_id).ok) return last;
+    var r = (window.__wmsLoginRows || []).find(function(x) { return x.broker_code === 'FYERS' && x.logged_in_today === true; });
+    return r ? { investor_id: r.investor_id, broker_id: r.broker_id } : null;
+}
+// Hand-placed open position in this contract, per live Fyers account: { inv, brk, lots, traders[] } (largest first).
+function trWlHandHoldings(bare) {
+    var RA = window.bomRowActions, by = {};
+    (typeof trTransactions !== 'undefined' ? trTransactions : []).forEach(function(t) {
+        if (t.dont_display || RA.bareSymbol(t.symbol) !== bare) return;
+        if (typeof wmsIsAutoTradeSource === 'function' && wmsIsAutoTradeSource(t)) return;
+        var k = t.investor_id + '|' + t.broker_id, tr = t.trader_id || t.investor_id;
+        var a = (by[k] = by[k] || { inv: t.investor_id, brk: t.broker_id, tq: {} });
+        a.tq[tr] = (a.tq[tr] || 0) + (Number(t.quantity) || 0);
+    });
+    return Object.keys(by).map(function(k) {
+        var a = by[k], traders = Object.keys(a.tq).filter(function(t) { return Math.abs(a.tq[t]) > 1e-9; });
+        return { inv: a.inv, brk: a.brk, traders: traders, size: traders.reduce(function(s, t) { return s + Math.abs(a.tq[t]); }, 0) };
+    }).filter(function(a) { return a.traders.length && RA.accountState(a.inv, a.brk).ok; })
+      .sort(function(x, y) { return y.size - x.size; });
+}
+function trWlDescribeRow(row) {
+    var RA = window.bomRowActions; if (!RA) return null;
+    var item = trWlFindItem(row.getAttribute('data-ra-key')); if (!item) return null;
+    var sym = item._fyersSymbol || item.short_symbol || '';
+    var isNfo = item.security_source === 'securities_nfo' || item.security_source === 'options_dynamic';
+    var today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    var m = isNfo ? RA.nfoByBare(sym) : null;
+    if (m && m.expiry_date && m.expiry_date < today) return null;
+    if (row.classList.contains('wl-expired-option')) return null;
+    var anchor = row.querySelector('.wl-sec-symbol') || row.firstElementChild;
+    var acct = trWlDefaultAccount();
+    var cmSec = !isNfo && item.security_id && wmsRefData.securitiesCmMap ? wmsRefData.securitiesCmMap[item.security_id] : null;
+    var noTradeSym = !isNfo && !RA.tradeSymbol(cmSec);   // NSE preferred, else BSE (BSE enabled 12-Nov-2026)
+    var off = !acct ? 'no live Fyers account today' : (isNfo && !m) ? 'not in the contract list — open it once in Add Trade'
+        : noTradeSym ? 'no NSE or BSE trading symbol — it cannot be ordered here' : '';
+    var bs = function(side) {
+        if (off) return { ok: false, why: off };
+        return { ok: true, run: function() {
+            var a = trWlDefaultAccount();
+            bomOpenWith({ tab: 'new', investor_id: a.investor_id, broker_id: a.broker_id,
+                          rows: [{ trader_id: null, symbol: m ? m.symbol : sym, security_id: isNfo ? null : item.security_id, nfo: isNfo, side: side }] });
+        } };
+    };
+    var r = null;
+    if (m && /FUT$/.test(RA.bareSymbol(m.symbol))) {
+        var held = trWlHandHoldings(RA.bareSymbol(m.symbol));
+        if (held.length && RA.nextContract(m.symbol)) {
+            var h = held[0];
+            var others = held.slice(1).map(function(o) { return 'open again for ' + trInvName(o.inv) + ' › ' + trBrkCode(o.brk); });
+            r = { ok: true, run: function() {
+                bomOpenWith({ tab: 'roll', investor_id: h.inv, broker_id: h.brk, notes: others.length ? ['Also held: ' + others.join('; ')] : [],
+                              roll: [{ bare: m.symbol, trader_ids: h.traders }] });
+            } };
+        }
+    }
+    return { anchor: anchor, b: bs('BUY'), s: bs('SELL'), r: r };
+}

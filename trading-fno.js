@@ -554,8 +554,12 @@ function trFnoCalcPositions(filtersOverride) {
             if (openRow) isShort = openRow.isShort;
             else if (matchedRows.length > 0) isShort = matchedRows[0].isShort;
 
-            // Sort: buy date for long, sell date for short
+            // Sort: the OPEN lot(s) first (owner, 12-Nov-2026 — an engine trading the same contract
+            // many times no longer pushes the open lot to the bottom), then buy date for long,
+            // sell date for short.
             matchedRows.sort(function(a, b) {
+                var oa = a.type === 'open' ? 0 : 1, ob = b.type === 'open' ? 0 : 1;
+                if (oa !== ob) return oa - ob;
                 var dateA = isShort ? (a.sellDate || '9999') : (a.buyDate || '9999');
                 var dateB = isShort ? (b.sellDate || '9999') : (b.buyDate || '9999');
                 return new Date(dateA) - new Date(dateB);
@@ -604,6 +608,7 @@ function trFnoCalcPositions(filtersOverride) {
             }
 
             contractGroups.push({
+                investorId: g.investorId, traderId: g.traderId || g.investorId, brokerId: g.brokerId,   // Trade From Rows (12-Nov-2026)
                 groupLabel: groupLabel, contractLabel: g.contractLabel,
                 fullSymbol: g.fullSymbol,
                 isShort: isShort, isFuture: isFuture, rows: matchedRows,
@@ -615,6 +620,10 @@ function trFnoCalcPositions(filtersOverride) {
         });
 
         if (contractGroups.length === 0) return;
+
+        // Position lines with an open position first, then closed ones, each in today's order (owner, 12-Nov-2026).
+        // Array.sort is stable, so the existing order is kept within each half.
+        contractGroups.sort(function(a, b) { return (a.openQty > 0 ? 0 : 1) - (b.openQty > 0 ? 0 : 1); });
 
         // In "open" mode, filter contract groups to only those with open positions
         if (effMode === 'open') {
@@ -685,6 +694,9 @@ function trFnoRender() {
     var html = trFnoFlatView ? trFnoRenderFlat(positions) : trFnoRenderGrouped(positions);
     tbody.innerHTML = html;
 
+    // Trade From Rows (12-Nov-2026): B / S / R on hover — symbol row and position lines (grouped view).
+    if (!trFnoFlatView && window.bomRowActions) bomRowActions.attach(tbody, 'tr.ra-row', trFnoDescribeRow).refresh();
+
     // Wire click handlers for expand/collapse (grouped view only)
     if (!trFnoFlatView) {
         // Symbol-level expand/collapse
@@ -741,6 +753,98 @@ function trFnoRender() {
         if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
         if (typeof wmsStandardRefresh === 'function') wmsStandardRefresh(true);
     }
+}
+
+// ============================================================================
+// TRADE FROM ROWS (Trade From Rows Plan v2, 12-Nov-2026) — what the B / S / R icons do on a row.
+// Worked out on hover from data already in the page; the click only pre-fills the Broker order
+// modal (bomOpenWith), which then works exactly as today.
+// ============================================================================
+function trFnoTodayIST() { return new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); }
+function trFnoLineInfo(cg) {
+    var RA = window.bomRowActions;
+    var m = RA.nfoByBare(cg.fullSymbol);
+    var lot = m ? (Number(m.lot_size) || 1) : 0;
+    var lots = (m && cg.openQty > 0) ? cg.openQty / lot : 0;
+    return { m: m, sym: m ? m.symbol : cg.fullSymbol, lots: (lots > 0 && Number.isInteger(lots)) ? lots : null,
+             expired: !!(m && m.expiry_date && m.expiry_date < trFnoTodayIST()), acct: RA.accountState(cg.investorId, cg.brokerId) };
+}
+function trFnoLineLabel(cg) { return cg.groupLabel + ' ' + (cg.contractLabel || ''); }
+function trFnoDescribeRow(row) {
+    if (!window.bomRowActions) return null;
+    var key = row.getAttribute('data-ra-key') || '';
+    var cut = key.indexOf('|'); if (cut < 0) return null;
+    var kind = key.slice(0, cut), rest = key.slice(cut + 1);
+    if (kind === 'grp') {
+        var j = rest.lastIndexOf('|');
+        var und = rest.slice(0, j), idx = Number(rest.slice(j + 1));
+        var p1 = (window._trFnoLastPositions || []).find(function(p) { return p.underlying === und; });
+        var cg = p1 && p1.contractGroups[idx];
+        return cg ? trFnoDescribeLine(cg, row) : null;
+    }
+    var p2 = (window._trFnoLastPositions || []).find(function(p) { return p.underlying === rest; });
+    return p2 ? trFnoDescribeSymbol(p2, row) : null;
+}
+// One position line: that account, that trader, that contract.
+function trFnoDescribeLine(cg, row) {
+    var RA = window.bomRowActions, info = trFnoLineInfo(cg);
+    if (info.expired) return null;
+    var off = !info.acct.ok ? info.acct.why : (!info.m ? 'not in the contract list' : '');
+    var acct = { investor_id: cg.investorId, broker_id: cg.brokerId };
+    var bs = function(side) {
+        if (off) return { ok: false, why: off };
+        return { ok: true, run: function() { bomOpenWith(Object.assign({ tab: 'new', rows: [{ trader_id: cg.traderId, symbol: info.sym, side: side }] }, acct)); } };
+    };
+    var r = null;
+    if (cg.openQty > 0) {
+        if (!cg.isFuture) r = { ok: false, why: 'options do not roll' };
+        else if (off) r = { ok: false, why: off };
+        else if (cg.autoAll) r = { ok: false, why: 'opened by an engine — roll it in the engine' };
+        else if (!RA.nextContract(info.sym)) r = { ok: false, why: 'no next contract in the master' };
+        else r = { ok: true, run: function() { bomOpenWith(Object.assign({ tab: 'roll', roll: [{ bare: info.sym, trader_ids: [cg.traderId] }] }, acct)); } };
+    }
+    return { anchor: row.firstElementChild, b: bs('BUY'), s: bs('SELL'), r: r };
+}
+// The symbol row: every open line that can be traded; the rest left out and listed in the modal.
+function trFnoDescribeSymbol(p, row) {
+    var RA = window.bomRowActions;
+    var open = (p.contractGroups || []).filter(function(cg) { return cg.openQty > 0; });
+    if (!open.length) return null;
+    var skipped = [], byAcct = {};
+    open.forEach(function(cg) {
+        var info = trFnoLineInfo(cg);
+        if (info.expired) return;
+        var why = !info.acct.ok ? info.acct.why : cg.autoAll ? 'opened by an engine' : !info.m ? 'not in the contract list' : !info.lots ? 'not whole lots' : '';
+        if (why) { skipped.push(trFnoLineLabel(cg) + ' (' + why + ')'); return; }
+        var k = cg.investorId + '|' + cg.brokerId;
+        (byAcct[k] = byAcct[k] || { inv: cg.investorId, brk: cg.brokerId, lots: 0, lines: [] });
+        byAcct[k].lots += info.lots; byAcct[k].lines.push({ cg: cg, info: info });
+    });
+    var accts = Object.keys(byAcct).map(function(k) { return byAcct[k]; }).sort(function(a, b) { return b.lots - a.lots; });
+    if (!accts.length) {
+        var why0 = skipped.length ? 'nothing here can be traded: ' + skipped.join('; ') : 'nothing here can be traded';
+        return { anchor: row.firstElementChild, b: { ok: false, why: why0 }, s: { ok: false, why: why0 }, r: { ok: false, why: why0 } };
+    }
+    var a = accts[0];
+    accts.slice(1).forEach(function(o) { skipped.push('open again for ' + trInvName(o.inv) + ' › ' + trBrkCode(o.brk)); });
+    var notes = skipped.length ? ['Left out: ' + skipped.join('; ')] : [];
+    var acct = { investor_id: a.inv, broker_id: a.brk };
+    // Per line: the side opposite its position closes it with the full open lots; the same side adds (lots blank).
+    var bs = function(side) {
+        return { ok: true, tip: side === 'SELL' ? 'closes the longs, adds to the shorts' : 'closes the shorts, adds to the longs', run: function() {
+            bomOpenWith(Object.assign({ tab: 'new', notes: notes, rows: a.lines.map(function(x) {
+                var closing = (side === 'SELL') !== !!x.cg.isShort;
+                return { trader_id: x.cg.traderId, symbol: x.info.sym, side: side, lots: closing ? x.info.lots : null };
+            }) }, acct));
+        } };
+    };
+    var rollable = a.lines.filter(function(x) { return x.cg.isFuture && RA.nextContract(x.info.sym); });
+    var byC = {};
+    rollable.forEach(function(x) { (byC[x.info.sym] = byC[x.info.sym] || []).push(x.cg.traderId); });
+    var r = rollable.length
+        ? { ok: true, run: function() { bomOpenWith(Object.assign({ tab: 'roll', notes: notes, roll: Object.keys(byC).map(function(c) { return { bare: c, trader_ids: byC[c] }; }) }, acct)); } }
+        : { ok: false, why: 'no futures here that can roll' };
+    return { anchor: row.firstElementChild, b: bs('BUY'), s: bs('SELL'), r: r };
 }
 
 // Phone F&O list (trFnoRenderMobile + its helpers) → m-trading.js (phone layer, 2026-11-03).
@@ -920,7 +1024,7 @@ function trFnoRenderGrouped(positions) {
         }
 
         // Symbol-level summary row — highlighted, no arrow, no contract list
-        html += '<tr class="trFno-symbol-row" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
+        html += '<tr class="trFno-symbol-row ra-row" data-ra-key="sym|' + wmsEsc(p.underlying) + '" data-fno-symbol="' + wmsEsc(p.underlying) + '">' +
             '<td><span class="trFno-symbol-name">' + wmsEsc(p.companyName) + '</span>' +
                 '<div class="trFno-symbol-sub">' + wmsEsc(p.underlying) + '</div></td>' +
             '<td></td>' +
@@ -962,7 +1066,7 @@ function trFnoRenderGrouped(positions) {
                 var cgSellPrice = (cg.isShort && cgAvgPrice) ? cgAvgPrice : '';
 
                 // Sub-group header row (clickable to expand detail rows)
-                html += '<tr class="trFno-detail-header trFno-group-row' + (cg.autoAll ? ' trFno-auto' : '') + '" data-fno-group="' + wmsEsc(groupKey) + '">' +
+                html += '<tr class="trFno-detail-header trFno-group-row ra-row' + (cg.autoAll ? ' trFno-auto' : '') + '" data-ra-key="grp|' + wmsEsc(groupKey) + '" data-fno-group="' + wmsEsc(groupKey) + '">' +
                     '<td style="padding-left:24px;">' + wmsEsc(cg.groupLabel) + '</td>' +
                     '<td>' + wmsEsc(cg.contractLabel) + shortLabel + '</td>' +
                     '<td class="text-right">' + formatQuantity(cg.openQty) + '</td>' +
