@@ -2618,6 +2618,12 @@ function _wmsCostEngine(transactions, method) {
     // Final: holding.totalCost = sum(lot.qty × lot.costPerUnit) + adjustments
     // ------------------------------------------------------------------
 
+    // Quantities below this are treated as zero (owner rule 2026-11-12):
+    // floating-point residue from fractional MF units, never a real holding.
+    // Declared INSIDE the function — accounting-post inlines this function
+    // verbatim (tests/build-accounting-ef.mjs), so it must be self-contained.
+    var WMS_QTY_EPSILON = 0.0001;
+
     var lots = {};         // key → [ { date, qty, costPerUnit, ... } ]
     var adjustments = {};  // key → number (non-BUY/SELL cost flow)
     var gains = [];        // realized gain events (SELL matches)
@@ -2831,6 +2837,12 @@ function _wmsCostEngine(transactions, method) {
 
                 lot.qty -= matchQty;
                 remainingSellQty -= matchQty;
+                // Fractional-unit residue (MF units, e.g. 13,467.864 matched
+                // across 55 lots) leaves ~1e-12 behind from floating-point
+                // subtraction. Anything under WMS_QTY_EPSILON is zero — else a
+                // fully-sold holding shows a phantom "(0)" short / long row.
+                if (Math.abs(lot.qty) < WMS_QTY_EPSILON) lot.qty = 0;
+                if (Math.abs(remainingSellQty) < WMS_QTY_EPSILON) remainingSellQty = 0;
                 if (lot.qty <= 0) {
                     if (consumeFromEnd) lots[key].pop(); else lots[key].shift();
                 }
