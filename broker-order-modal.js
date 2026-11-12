@@ -257,7 +257,8 @@
     document.getElementById('bomNewBody').style.display = t === 'roll' ? 'none' : 'block';
     document.getElementById('bomRollBody').style.display = t === 'roll' ? 'block' : 'none';
     closePassword();
-    if (t === 'roll') { showMsg('Rolls go as market orders, exit and entry together. The broker makes the final checks.'); loadRoll(); }
+    // The Rollover tab always starts fresh (owner, 12-Nov): no ticks, no old progress lines, the list read again.
+    if (t === 'roll') { BOM.roll.tick = {}; BOM.roll.progress = {}; BOM.roll.loaded = false; showMsg('Rolls go as market orders, exit and entry together. The broker makes the final checks.'); loadRoll(); }
     else if (t === 'new') showMsg('Market and limit, day orders. The broker makes the final margin check.');
     if (t === 'today') loadToday(); else stopPoll();
     renderPanel();
@@ -1207,37 +1208,16 @@
         BOM.roll.progress[p.bare] = { html: (j.cancelled ? 'resting order(s) cancelled ✓ → ' : '') + 'exit + entry sent (' + esc(bareSymbol(j.from)) + ' → ' + esc(bareSymbol(j.to)) + ', ' + j.lots + ' lot' + (j.lots === 1 ? '' : 's') + ')…', cls: 'bom-note' };
         p.lines.forEach(function (l) { delete BOM.roll.tick[rollKey(p, l)]; });
         renderRoll();
-        watchRoll(ref, p.bare);
         watchBooking(ref);
       }
       closePassword();
-      showMsg(sent ? 'Sent ' + sent + ' roll(s)' + (stopped ? ', ' + stopped + ' stopped' : '') + '. Progress shows on each row; both legs also show in Today\'s orders.' : 'Nothing sent.', !sent);
+      // Sent → follow the orders in Today's orders (owner, 12-Nov). If any roll was stopped, stay here so
+      // its red reason stays on screen (it is also emailed); the sent ones are in Today's orders.
+      if (sent && !stopped) { setTab('today'); return; }
+      showMsg(sent ? 'Sent ' + sent + ' roll(s), ' + stopped + ' stopped (reason on the row, also emailed). Follow the sent ones in Today\'s orders.' : 'Nothing sent.', true);
     } finally { rolling = false; var b = document.getElementById('bomSend'); if (b) b.disabled = false; }
   }
-  function watchRoll(ref, bare) {
-    var tries = 0;
-    var tick = async function () {
-      tries++;
-      try {
-        var r = await fetch(window.SUPABASE_URL + '/functions/v1/wms-broker-order', { method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ action: 'roll_status', client_ref: ref }) });
-        var j = await r.json().catch(function () { return {}; });
-        if (j.ok && j.exit && j.entry) {
-          var leg = function (x, n) { return n + ' ' + (x.done ? (x.filled === x.ordered ? 'filled' : x.filled ? 'part-filled ' + qtyFmt(x.filled) + ' of ' + qtyFmt(x.ordered) : String(x.status || '').toLowerCase()) : 'working'); };
-          var o = j.outcome || { state: 'working' };
-          var txt = { rolled: 'exit filled · entry filled → booked ✓', working: leg(j.exit, 'exit') + ' · ' + leg(j.entry, 'entry') + '…',
-                      flat: '✕ entry did not fill — the old contract was closed, no new position (alert emailed)',
-                      doubled: '✕ exit did not fill — both contracts are now held (alert emailed)',
-                      mismatch: '✕ ' + leg(j.exit, 'exit') + ' · ' + leg(j.entry, 'entry') + ' — check the broker (alert emailed)' }[o.state];
-          BOM.roll.progress[bare] = { html: esc(txt), cls: o.state === 'rolled' ? 'bom-ok' : o.state === 'working' ? 'bom-note' : 'bom-err' };
-          if (BOM.tab === 'roll') renderRoll();
-          if (o.state !== 'working') { if (o.state === 'rolled') setTimeout(function () { if (BOM.tab === 'roll') loadRoll(); }, 8000); return; }
-        }
-      } catch (_) { /* try again */ }
-      if (tries < 60) setTimeout(tick, 3000);
-    };
-    setTimeout(tick, 2500);
-  }
+
 
   // ---------------------------------------------------------------------------
   // Today's orders
