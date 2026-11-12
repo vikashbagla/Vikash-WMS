@@ -11,7 +11,11 @@
 //                   grouping (with each trader's split), the broker balance and the
 //                   estimated margin, the estimated charges → Place → order password
 //                   (Enter sends, Esc / Cancel goes back with every row kept).
-//   Today's orders  the modal's orders today: broker status, fills, each trader's line.
+//   Today's orders  the modal's orders today: broker status, fills, each trader's line
+//                   (rollover legs carry a "roll" badge).
+//   Rollover        the account's open futures (one row per contract, traders inside, split
+//                   by the engine that opened them), the Fyers match dot, both LTPs → tick →
+//                   Roll → password → the server's roll action (Rollover Tab Plan v2, 12-Nov).
 //
 // The server (wms-broker-order) checks everything again and does the placing and the
 // booking. This file does NO writes of its own except through that server function.
@@ -131,6 +135,22 @@
       '.bom-st.done{color:#047857;border-color:#6ee7b7;background:#ecfdf5}',
       '.bom-st.bad{color:#b91c1c;border-color:#fecaca;background:#fef2f2}',
       '.bom-st.wip{color:#1d4ed8;border-color:#bfdbfe;background:#eff6ff}',
+      '.bom-rwrap{max-height:292px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px}',
+      '.bom-rt thead th{position:sticky;top:0;background:#fff;z-index:1}',
+      '.bom-rt td{vertical-align:top}',
+      '.bom-rt td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}',
+      '.bom-rt tr.soon td{background:#fffbeb}',
+      '.bom-rt tr.bom-rpr td{border-bottom:1px solid #e2e8f0;padding-top:0;font-size:12px}',
+      '.bom-rt input[type=checkbox]{width:18px;height:18px;margin:0 4px 0 0;vertical-align:middle}',
+      '.bom-rtr{display:block;padding:2px 0;white-space:nowrap;cursor:pointer}',
+      '.bom-rtr.off{color:#a0aec0;cursor:not-allowed}',
+      '.bom-long{color:#047857;font-weight:600}',
+      '.bom-short{color:#b91c1c;font-weight:600}',
+      '.bom-badge{font-size:10px;font-weight:700;letter-spacing:.04em;color:#4338ca;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:0 6px}',
+      '.bom-tg{font-size:10.5px;color:#718096}',
+      '.bom-dot{font-size:13px;color:#a0aec0}',
+      '.bom-dot.ok{color:#059669}',
+      '.bom-dot.bad{color:#dc2626}',
       '#trBrokerOrderBtn img{height:16px;width:16px;vertical-align:middle;object-fit:contain}',
       // Broker-order button: its own colour, so it is never mistaken for ✎ Record a trade (brand purple).
       '.trading-header-bar #trBrokerOrderBtn{background:#0f766e}',
@@ -152,15 +172,16 @@
       '<div class="bom-m" role="dialog" aria-label="Broker order">' +
         '<div class="bom-h"><h3>Broker order <span class="bom-live">LIVE</span></h3>' +
           '<button class="bom-x" id="bomClose" title="Close (Esc)">×</button></div>' +
-        '<div class="bom-tabs"><button class="bom-tab on" data-tab="new">New order</button><button class="bom-tab" data-tab="today">Today\'s orders</button></div>' +
+        '<div class="bom-tabs"><button class="bom-tab on" data-tab="new">New order</button><button class="bom-tab" data-tab="today">Today\'s orders</button><button class="bom-tab" data-tab="roll">Rollover</button></div>' +
         '<div id="bomNew" style="display:flex;flex-direction:column;min-height:0;flex:1">' +
           '<div class="bom-b" style="flex:1">' +
             '<div class="bom-lbl">Account</div><div class="bom-accs" id="bomAccs"></div>' +
-            '<table class="bom-t"><thead><tr>' +
+            '<div id="bomNewBody"><table class="bom-t"><thead><tr>' +
               '<th style="width:110px">Trader</th><th>Symbol</th><th style="width:70px">Lots</th><th style="width:90px">Qty</th>' +
               '<th style="width:110px">Price <span style="text-transform:none;letter-spacing:0">(0 = market)</span></th><th style="width:120px">Value</th><th style="width:170px">Tags</th><th style="width:24px"></th>' +
             '</tr></thead><tbody id="bomRows"></tbody></table>' +
-            '<button class="bom-add" id="bomAddRow">+ Add row</button>' +
+            '<button class="bom-add" id="bomAddRow">+ Add row</button></div>' +
+            '<div id="bomRollBody" style="display:none"></div>' +
           '</div>' +
           '<div class="bom-panel">' +
             '<div class="bom-box"><div class="bom-lbl">Goes to the broker</div><div id="bomOrders"></div></div>' +
@@ -182,7 +203,7 @@
     document.getElementById('bomClose').addEventListener('click', bomClose);
     document.getElementById('bomCancel').addEventListener('click', bomClose);
     document.getElementById('bomAddRow').addEventListener('click', function () { var id = addRow(BOM.rows[BOM.rows.length - 1]); focusTrader(id); });
-    document.getElementById('bomClear').addEventListener('click', clearRows);
+    document.getElementById('bomClear').addEventListener('click', function () { if (BOM.tab === 'roll') { BOM.roll.tick = {}; renderRoll(); closePassword(); } else clearRows(); });
     document.getElementById('bomRefresh').addEventListener('click', function (e) { e.preventDefault(); refreshAll(); });
     document.getElementById('bomPlace').addEventListener('click', openPassword);
     document.getElementById('bomSend').addEventListener('click', send);
@@ -228,9 +249,15 @@
   function setTab(t) {
     BOM.tab = t;
     document.querySelectorAll('#bomOverlay .bom-tab').forEach(function (b) { b.classList.toggle('on', b.dataset.tab === t); });
-    document.getElementById('bomNew').style.display = t === 'new' ? 'flex' : 'none';
+    document.getElementById('bomNew').style.display = t === 'new' || t === 'roll' ? 'flex' : 'none';
     document.getElementById('bomToday').style.display = t === 'today' ? 'block' : 'none';
+    document.getElementById('bomNewBody').style.display = t === 'roll' ? 'none' : 'block';
+    document.getElementById('bomRollBody').style.display = t === 'roll' ? 'block' : 'none';
+    closePassword();
+    if (t === 'roll') { showMsg('Rolls go as market orders, exit and entry together. The broker makes the final checks.'); loadRoll(); }
+    else if (t === 'new') showMsg('Market and limit, day orders. The broker makes the final margin check.');
     if (t === 'today') loadToday(); else stopPoll();
+    renderPanel();
   }
 
   // ---------------------------------------------------------------------------
@@ -281,6 +308,7 @@
       renderRows();
     }
     loadFunds();
+    if (BOM.tab === 'roll' && changed) { BOM.roll.loaded = false; BOM.roll.broker = null; BOM.roll.tick = {}; BOM.roll.progress = {}; loadRoll(); }
     renderPanel();
   }
 
@@ -410,6 +438,7 @@
   // ↻ in the Balance & margin heading: read the balance again AND the live prices (both margins move).
   function refreshAll() {
     loadFunds();
+    if (BOM.tab === 'roll') { loadBrokerPositions(); rollPrices(); return; }
     var seen = {};
     BOM.rows.forEach(function (r) { if (r.symbol && !seen[r.symbol]) { seen[r.symbol] = 1; fetchLtp(r.symbol); } });
   }
@@ -629,6 +658,7 @@
   // The grouping shown here follows the same rule the server applies (bo_core.ts planOrders):
   // key = symbol + side + price; one line per trader; MCX in lots, NSE/BSE in units; 0 lots left out.
   function plan() {
+    if (BOM.tab === 'roll') return rollOrders();
     var problems = [], groups = {}, order = [];
     BOM.rows.forEach(function (r, i) {
       if (!r.symbol && !r.qty) return;                          // empty row
@@ -733,7 +763,7 @@
     if (!BOM.acct) {
       ordersEl.innerHTML = '<span class="bom-note">Pick a live account first.</span>';
       document.getElementById('bomMargin').innerHTML = ''; document.getElementById('bomCharges').innerHTML = '';
-      placeBtn.disabled = true; placeBtn.textContent = 'Place'; return;
+      placeBtn.disabled = true; placeBtn.textContent = BOM.tab === 'roll' ? 'Roll' : 'Place'; return;
     }
     var p = plan();
     BOM.lastPlan = p;
@@ -808,6 +838,7 @@
         : '<span class="bom-note">-</span>');
 
     placeBtn.disabled = !p.orders.length || p.problems.length > 0;
+    if (BOM.tab === 'roll') { var rc = rollCount(); placeBtn.disabled = !rc || rolling; placeBtn.textContent = rc ? 'Roll ' + rc + (rc === 1 ? ' position' : ' positions') : 'Roll'; return; }
     placeBtn.textContent = p.orders.length ? 'Place ' + p.orders.length + (p.orders.length === 1 ? ' order' : ' orders') : 'Place';
   }
 
@@ -827,6 +858,7 @@
     if (sending) return;
     var pw = document.getElementById('bomPwInput').value;
     if (!pw) { document.getElementById('bomPwInput').focus(); return; }
+    if (BOM.tab === 'roll') return sendRoll(pw);
     var p = plan();
     if (!p.orders.length || p.problems.length) { closePassword(); return; }
     var rows = BOM.rows.filter(function (r) { return r.symbol && r.qty; }).map(function (r) {
@@ -881,6 +913,330 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Rollover tab (Rollover Tab Plan v2 · Futures Rollover Rules v4) — 12-Nov-2026
+  //   The list is worked out here from the app's loaded transactions (no server trip);
+  //   bareSymbol / txnLots / rollPositions are the same logic as the server's bo_roll.ts
+  //   and are run through the same cases by tests/broker-order-roll.test.mjs.
+  //   Roll → password → the server's `roll` action, one call per contract (it re-checks
+  //   everything, reads the broker, cancels resting orders, sends exit + entry together).
+  // ---------------------------------------------------------------------------
+  function bareSymbol(s) { return String(s || '').replace(/^[A-Z]+:/, '').replace(/-EQ$/, '').toUpperCase(); }
+  function txnLots(t, c) {
+    var q = Number(t.quantity) || 0;
+    if (String(c.exchange).toUpperCase() === 'MCX') { var l = Math.abs(Number(t.lots) || 0); return q < 0 ? -l : q > 0 ? l : 0; }
+    return c.lot_size > 0 ? q / c.lot_size : 0;
+  }
+  function rollPositions(txns, contracts, holderId, today) {
+    var r6 = function (v) { return Math.round(v * 1e6) / 1e6; };
+    var byBare = {};
+    contracts.forEach(function (c) { if (String(c.instrument_type).toUpperCase() === 'FUTURES') byBare[bareSymbol(c.symbol)] = c; });
+    var acc = {}, order = [];
+    txns.forEach(function (t) {
+      if (t.dont_display) return;
+      var bare = bareSymbol(t.symbol), c = byBare[bare];
+      if (!c || c.expiry_date < today) return;
+      var trader = t.trader_id || holderId, src = t.source || 'hand';
+      if (!acc[bare]) { acc[bare] = { traders: {}, torder: [] }; order.push(bare); }
+      var a = acc[bare];
+      if (!a.traders[trader]) { a.traders[trader] = { srcs: {}, sorder: [] }; a.torder.push(trader); }
+      var tm = a.traders[trader];
+      if (!(src in tm.srcs)) { tm.srcs[src] = 0; tm.sorder.push(src); }
+      tm.srcs[src] = r6(tm.srcs[src] + txnLots(t, c));
+    });
+    var out = [];
+    order.forEach(function (bare) {
+      var c = byBare[bare], a = acc[bare], lines = [], net = 0;
+      a.torder.forEach(function (trader) {
+        var tm = a.traders[trader], tot = 0;
+        tm.sorder.forEach(function (s) { tot += tm.srcs[s]; });
+        tot = r6(tot);
+        if (tot === 0) return;                                   // T5: nets to nothing for this trader
+        tm.sorder.forEach(function (s) { if (tm.srcs[s] !== 0) lines.push({ trader_id: trader, source: s, lots: tm.srcs[s] }); });
+        net = r6(net + tot);
+      });
+      if (net === 0 || !lines.length) return;
+      lines.sort(function (x, y) { return (x.trader_id === holderId ? -1 : y.trader_id === holderId ? 1 : 0) || x.trader_id.localeCompare(y.trader_id) || x.source.localeCompare(y.source); });
+      out.push({ symbol: c.symbol, bare: bare, exchange: String(c.exchange).toUpperCase(), lot_size: Number(c.lot_size), expiry_date: c.expiry_date,
+                 underlying_symbol: c.underlying_symbol, net_lots: net, side: net > 0 ? 'LONG' : 'SHORT', lines: lines });
+    });
+    out.sort(function (x, y) { return x.expiry_date.localeCompare(y.expiry_date) || x.bare.localeCompare(y.bare); });
+    return out;
+  }
+  function lineRollable(p, l) { return l.source === 'hand' && Number.isInteger(l.lots) && l.lots !== 0 && (l.lots > 0) === (p.side === 'LONG'); }
+  function nextContractFor(held) {
+    var later = (wmsRefData.securitiesNfo || []).filter(function (r) {
+      return r.is_active !== false && r.underlying_symbol === held.underlying_symbol && String(r.instrument_type).toUpperCase() === 'FUTURES' &&
+        Number(r.lot_size) > 0 && r.expiry_date > held.expiry_date;
+    }).sort(function (a, b) { return a.expiry_date.localeCompare(b.expiry_date); });
+    return later[0] && later[0].symbol !== held.symbol ? later[0] : null;
+  }
+
+  BOM.roll = { list: [], next: {}, tick: {}, broker: null, brokerBusy: false, progress: {}, tags: {}, loaded: false };
+  var rollKey = function (p, l) { return p.bare + '|' + l.trader_id; };
+  var istToday = function () { return new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); };
+  var shortExp = function (d) { var m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return d ? d.slice(8, 10) + '-' + m[Number(d.slice(5, 7)) - 1] : ''; };
+  var lotsTxt = function (n) { return n < 0 ? '<span class="bom-short">(' + Math.abs(n) + ')</span>' : '<span class="bom-long">' + n + '</span>'; };
+  // The app's shared price (refreshed on its own cadence) first, else this tab's own first read.
+  var ltpOf = function (sym) { var v = (typeof wmsLivePrices !== 'undefined' && wmsLivePrices[bareSymbol(sym)]) || null; return (v && v.lp > 0) ? v.lp : (BOM.ltp[sym] || 0); };
+
+  async function loadRoll() {
+    var box = document.getElementById('bomRollBody');
+    if (!box) return;
+    if (!BOM.acct) { BOM.roll.list = []; box.innerHTML = '<span class="bom-note">Pick a live account first.</span>'; renderPanel(); return; }
+    var acct = BOM.acct, inv = acct.investor_id, brk = acct.broker_id;
+    if (typeof wmsLoadSecuritiesNfo === 'function' && !wmsRefData.securitiesNfoReady) { box.innerHTML = '<span class="bom-note">Loading the contract list…</span>'; await wmsLoadSecuritiesNfo(); }
+    var txns = (typeof trTransactions !== 'undefined' ? trTransactions : []).filter(function (t) { return t.investor_id === inv && t.broker_id === brk && /FUT$/.test(bareSymbol(t.symbol)); });
+    var futs = (wmsRefData.securitiesNfo || []).filter(function (r) { return String(r.instrument_type).toUpperCase() === 'FUTURES'; });
+    var bares = {}; txns.forEach(function (t) { bares[bareSymbol(t.symbol)] = 1; });
+    var contracts = futs.filter(function (r) { return bares[bareSymbol(r.symbol)]; });
+    // Which order placed each trade (MS007 / Scalp / by hand): two small reads for this account's futures.
+    var srcOf = {};
+    try {
+      var ids = txns.map(function (t) { return t.id; });
+      var link = [];
+      for (var i = 0; i < ids.length; i += 150) {
+        var part = await fetch(window.SUPABASE_URL + '/rest/v1/transactions?select=id,live_command_id&live_command_id=not.is.null&id=in.(' + ids.slice(i, i + 150).join(',') + ')', { headers: wmsHeaders() }).then(function (x) { return x.json(); });
+        if (Array.isArray(part)) link = link.concat(part);
+      }
+      var cmdIds = link.map(function (l) { return l.live_command_id; }).filter(function (v, k, a) { return a.indexOf(v) === k; });
+      var cmdSrc = {};
+      for (var j = 0; j < cmdIds.length; j += 150) {
+        var cs = await fetch(window.SUPABASE_URL + '/rest/v1/wms_live_commands?select=id,signal_source&id=in.(' + cmdIds.slice(j, j + 150).join(',') + ')', { headers: wmsHeaders() }).then(function (x) { return x.json(); });
+        (Array.isArray(cs) ? cs : []).forEach(function (c) { var s = String(c.signal_source || '').toLowerCase(); cmdSrc[c.id] = s === 'ms007' ? 'MS007' : s === 'scalp' ? 'SCALP' : 'hand'; });
+      }
+      link.forEach(function (l) { srcOf[l.id] = cmdSrc[l.live_command_id] || 'hand'; });
+    } catch (e) { box.innerHTML = '<span class="bom-err">Could not read where the trades came from: ' + esc(e.message) + '</span>'; return; }
+    if (BOM.acct !== acct) return;
+    var rtx = txns.map(function (t) { return Object.assign({}, t, { source: srcOf[t.id] || 'hand' }); });
+    BOM.roll.list = rollPositions(rtx, contracts, inv, istToday());
+    BOM.roll.next = {}; BOM.roll.tags = {};
+    BOM.roll.list.forEach(function (p) {
+      BOM.roll.next[p.bare] = nextContractFor(p);
+      p.lines.forEach(function (l) {
+        if (l.source !== 'hand') return;
+        var tg = {};
+        rtx.forEach(function (t) {
+          if (bareSymbol(t.symbol) !== p.bare || (t.trader_id || inv) !== l.trader_id || t.source !== 'hand' || t.dont_display) return;
+          if ((p.side === 'LONG') !== (Number(t.quantity) > 0)) return;
+          (t.tags || []).forEach(function (x) { if (x && x !== 'blank') tg[x] = 1; });
+        });
+        BOM.roll.tags[rollKey(p, l)] = Object.keys(tg);
+      });
+    });
+    // Keep only ticks that still apply.
+    var keep = {};
+    BOM.roll.list.forEach(function (p) { p.lines.forEach(function (l) { var k = rollKey(p, l); if (BOM.roll.tick[k] && lineRollable(p, l) && BOM.roll.next[p.bare]) keep[k] = true; }); });
+    BOM.roll.tick = keep;
+    BOM.roll.loaded = true;
+    renderRoll();
+    rollPrices();
+    loadBrokerPositions();
+  }
+
+  // The Fyers position book for the dots (read-only, no password).
+  async function loadBrokerPositions() {
+    if (!BOM.acct) return;
+    var acct = BOM.acct;
+    BOM.roll.brokerBusy = true; renderRoll();
+    var res;
+    try {
+      var r = await fetch(window.SUPABASE_URL + '/functions/v1/wms-broker-order', { method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ action: 'positions', investor_id: acct.investor_id, broker_id: acct.broker_id }) });
+      var j = await r.json().catch(function () { return {}; });
+      if (!j.ok) res = { error: j.error || ('HTTP ' + r.status) };
+      else { res = { at: j.as_of, net: {} }; (j.positions || []).forEach(function (x) { res.net[bareSymbol(x.symbol)] = x.net_lots; }); }
+    } catch (e) { res = { error: e.message }; }
+    if (BOM.acct !== acct) return;
+    BOM.roll.broker = res; BOM.roll.brokerBusy = false; renderRoll();
+  }
+
+  // Prices: the app's own refresh (every 5 s in market hours, 2 min in the MCX evening) picks up the
+  // tab's contracts while it is open; one quote read now so the prices show at once.
+  function rollSymbols() {
+    var out = [];
+    BOM.roll.list.forEach(function (p) { out.push(p.symbol); var n = BOM.roll.next[p.bare]; if (n) out.push(n.symbol); });
+    return out;
+  }
+  if (typeof wmsRegisterRefreshSymbolProvider === 'function') {
+    wmsRegisterRefreshSymbolProvider('broker_order_rollover', function () {
+      var ov = document.getElementById('bomOverlay');
+      if (BOM.tab !== 'roll' || !ov || !ov.classList.contains('show')) return [];
+      return rollSymbols().map(function (s) { return { fyersKey: s, cacheKey: bareSymbol(s) }; });
+    });
+  }
+  (function hookRefresh() {
+    var orig = window.wmsRefreshRender;
+    if (typeof orig !== 'function' || orig._bomRoll) return;
+    var wrapped = function () { var out = orig.apply(this, arguments); try { if (BOM.tab === 'roll') { rollLtpCells(); renderPanel(); } } catch (_) {} return out; };
+    wrapped._bomRoll = true;
+    window.wmsRefreshRender = wrapped;
+  })();
+  async function rollPrices() {
+    var syms = rollSymbols();
+    if (typeof wmsBuildRefreshSymbols === 'function') wmsBuildRefreshSymbols();
+    if (typeof wmsStartRefreshTimer === 'function' && typeof wmsIsRefreshWindow === 'function' && wmsIsRefreshWindow() && window.fyersToken) wmsStartRefreshTimer();
+    if (!syms.length || !window.fyersCall) return;
+    try {
+      var d = await window.fyersCall({ action: 'quotes', symbols: syms });
+      ((d && d.d) || []).forEach(function (it) {
+        if (it && it.v && it.v.lp > 0) BOM.ltp[it.n || it.v.symbol] = it.v.lp;
+      });
+      rollLtpCells(); renderPanel();
+    } catch (_) { /* prices show "-" until the app's refresh fills them */ }
+  }
+  function rollLtpCells() {
+    BOM.roll.list.forEach(function (p) {
+      var a = document.getElementById('bomRollLtp_' + p.bare), b = document.getElementById('bomRollNewLtp_' + p.bare), n = BOM.roll.next[p.bare];
+      var cur = ltpOf(p.symbol);
+      if (a) a.textContent = cur ? price2(cur) : '-';
+      if (b && n) {
+        var nw = ltpOf(n.symbol), diff = nw && cur ? nw - cur : null;
+        b.innerHTML = (nw ? price2(nw) : '-') + (diff != null ? ' <span class="' + (diff >= 0 ? 'bom-long' : 'bom-short') + '">(' + (diff >= 0 ? '+' : '−') + price2(Math.abs(diff)) + ')</span>' : '');
+      }
+    });
+  }
+
+  function rollTicked(p) { return p.lines.filter(function (l) { return BOM.roll.tick[rollKey(p, l)]; }); }
+  function renderRoll() {
+    var box = document.getElementById('bomRollBody');
+    if (!box || BOM.tab !== 'roll') return;
+    if (!BOM.acct) { box.innerHTML = '<span class="bom-note">Pick a live account first.</span>'; return; }
+    var L = BOM.roll.list, br = BOM.roll.broker;
+    if (!BOM.roll.loaded) { box.innerHTML = '<span class="bom-note">Reading the open futures…</span>'; return; }
+    var head = '<div class="bom-lbl bom-lbl-row"><span>Open futures in this account</span><span class="bom-at">' +
+      (BOM.roll.brokerBusy ? 'reading Fyers positions…' : br && br.error ? '<span class="bom-err" title="' + esc(br.error) + '">Fyers positions: could not read</span>'
+        : br && br.at ? 'Fyers positions ' + (typeof wmsLoginStamp === 'function' ? wmsLoginStamp(br.at) : br.at) : '') + '</span></div>';
+    if (!L.length) { box.innerHTML = head + '<span class="bom-note">No open futures positions at this account.</span>'; renderPanel(); return; }
+    var soon = new Date(Date.now() + 330 * 60000 + 7 * 864e5).toISOString().slice(0, 10);
+    var rows = L.map(function (p) {
+      var n = BOM.roll.next[p.bare], ticked = rollTicked(p), rollable = p.lines.filter(function (l) { return lineRollable(p, l); });
+      var all = n && rollable.length && ticked.length === rollable.length, part = ticked.length && !all;
+      var tickedLots = ticked.reduce(function (s, l) { return s + l.lots; }, 0);
+      var bl = br && br.net ? (br.net[p.bare] || 0) : null;
+      var dot = bl == null ? '<span class="bom-dot" title="Fyers position not read">○</span>'
+        : '<span class="bom-dot ' + (bl === p.net_lots ? 'ok' : 'bad') + '" title="Fyers: ' + bl + ' lot(s) · WMS: ' + p.net_lots + ' lot(s)">●</span>';
+      var pr = BOM.roll.progress[p.bare];
+      var traders = p.lines.map(function (l) {
+        var k = rollKey(p, l), can = n && lineRollable(p, l), tg = BOM.roll.tags[k] || [];
+        var why = !n ? 'no next contract' : l.source !== 'hand' ? 'opened by ' + l.source + ' — roll it in the engine' : !lineRollable(p, l) ? 'not whole lots / opposite side' : '';
+        return '<label class="bom-rtr' + (can ? '' : ' off') + '" title="' + esc(why) + '"><input type="checkbox" class="bom-rtk" data-k="' + esc(k) + '"' + (BOM.roll.tick[k] ? ' checked' : '') + (can ? '' : ' disabled') + '> ' +
+          esc(invName(l.trader_id)) + ' ' + lotsTxt(l.lots) + (l.source !== 'hand' ? ' <span class="bom-badge">' + esc(l.source) + '</span>' : '') +
+          (tg.length ? ' <span class="bom-tg">' + tg.map(esc).join(' · ') + '</span>' : '') + '</label>';
+      }).join('');
+      return '<tr class="' + (p.expiry_date <= soon ? 'soon' : '') + '">' +
+        '<td data-label="Roll"><input type="checkbox" class="bom-rrow" data-b="' + esc(p.bare) + '"' + (all ? ' checked' : '') + (n && rollable.length ? '' : ' disabled') + '>' + (part ? '<div class="bom-sub">part</div>' : '') + '</td>' +
+        '<td data-label="Contract held"><b>' + esc(p.bare) + '</b> <span class="bom-sub">' + shortExp(p.expiry_date) + (p.exchange === 'MCX' ? ' · MCX' : '') + '</span>' +
+          '<div class="bom-sub" id="bomRollLtp_' + esc(p.bare) + '">-</div></td>' +
+        '<td data-label="Traders">' + traders + '</td>' +
+        '<td data-label="Rolling" class="num">' + dot + ' ' + (ticked.length ? lotsTxt(tickedLots) : '<span class="bom-note">–</span>') +
+          '<div class="bom-sub">of ' + lotsTxt(p.net_lots) + (bl != null && bl !== p.net_lots ? ' · Fyers ' + bl : '') + '</div></td>' +
+        '<td data-label="Rolls into">' + (n ? '<b>' + esc(bareSymbol(n.symbol)) + '</b> <span class="bom-sub">' + shortExp(n.expiry_date) + '</span><div class="bom-sub" id="bomRollNewLtp_' + esc(p.bare) + '">-</div>'
+          : '<span class="bom-err">no next contract in the master</span>') + '</td>' +
+        '<td data-label="Lot size" class="num">' + p.lot_size + ' → ' + (n ? n.lot_size : '?') + (p.exchange === 'MCX' ? '<div class="bom-sub">lots</div>' : '') + '</td>' +
+        '</tr>' + (pr ? '<tr class="bom-rpr"><td></td><td colspan="5"><span class="' + (pr.cls || 'bom-note') + '">' + pr.html + '</span></td></tr>' : '');
+    }).join('');
+    box.innerHTML = head + '<div class="bom-rwrap"><table class="bom-t bom-rt"><thead><tr><th style="width:34px"></th><th>Contract held · LTP</th><th>Traders (lots)</th>' +
+      '<th style="width:96px">Rolling</th><th>Rolls into · LTP (New − Curr)</th><th style="width:84px">Lot size</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<div class="bom-note" style="margin-top:6px">● green = Fyers holds the same lots as WMS, red = different (the roll checks the broker again). ' +
+      '<span class="bom-long">Green</span> = long, <span class="bom-short">(red)</span> = short. Lines opened by an engine roll in the engine.</div>';
+    box.querySelectorAll('.bom-rtk').forEach(function (c) { c.addEventListener('change', function () { if (c.checked) BOM.roll.tick[c.dataset.k] = true; else delete BOM.roll.tick[c.dataset.k]; renderRoll(); }); });
+    box.querySelectorAll('.bom-rrow').forEach(function (c) {
+      c.addEventListener('change', function () {
+        var p = BOM.roll.list.find(function (x) { return x.bare === c.dataset.b; }); if (!p) return;
+        p.lines.forEach(function (l) { if (lineRollable(p, l)) { if (c.checked) BOM.roll.tick[rollKey(p, l)] = true; else delete BOM.roll.tick[rollKey(p, l)]; } });
+        renderRoll();
+      });
+    });
+    rollLtpCells();
+    renderPanel();
+  }
+
+  // The legs as the panel's orders (same shape as plan()): exit = opposite side on the old contract,
+  // entry = same side on the new one, same lots per trader (decision 2).
+  function rollOrders() {
+    var orders = [], problems = [];
+    BOM.roll.list.forEach(function (p) {
+      var t = rollTicked(p), n = BOM.roll.next[p.bare];
+      if (!t.length || !n) return;
+      var lots = t.reduce(function (s, l) { return s + Math.abs(l.lots); }, 0);
+      var mk = function (sym, side, lotSize, sec) {
+        var g = { key: sym + '|' + side, symbol: sym, display: bareSymbol(sym), side: side, price: 0, lot_size: Number(lotSize), exchange: p.exchange,
+                  security_id: sec ? sec.id : null, security_type: 'NFO', asset_class: 'FUTURES', lots: lots,
+                  lines: t.map(function (l) { return { trader_id: l.trader_id, lots: Math.abs(l.lots) }; }), roll: p.bare };
+        g.units = g.lots * g.lot_size; g.brokerQty = g.exchange === 'MCX' ? g.lots : g.units; g.estPrice = ltpOf(sym);
+        return g;
+      };
+      var held = (wmsRefData.securitiesNfo || []).find(function (r) { return r.symbol === p.symbol; });
+      orders.push(mk(p.symbol, p.side === 'LONG' ? 'SELL' : 'BUY', p.lot_size, held));
+      orders.push(mk(n.symbol, p.side === 'LONG' ? 'BUY' : 'SELL', n.lot_size, n));
+    });
+    return { orders: orders, problems: problems };
+  }
+  function rollCount() { return BOM.roll.list.filter(function (p) { return rollTicked(p).length && BOM.roll.next[p.bare]; }).length; }
+
+  var rolling = false;
+  async function sendRoll(pw) {
+    if (rolling) return;
+    var todo = BOM.roll.list.filter(function (p) { return rollTicked(p).length && BOM.roll.next[p.bare]; });
+    if (!todo.length) { closePassword(); return; }
+    rolling = true; document.getElementById('bomSend').disabled = true; showMsg('Rolling…');
+    var acct = BOM.acct, sent = 0, stopped = 0;
+    try {
+      for (var i = 0; i < todo.length; i++) {
+        var p = todo[i], lines = rollTicked(p).map(function (l) { return { trader_id: l.trader_id, lots: Math.abs(l.lots) }; });
+        var ref = 'BOM-R' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+        BOM.roll.progress[p.bare] = { html: 'checking the broker…', cls: 'bom-note' }; renderRoll();
+        var j, status = 0;
+        try {
+          var r = await fetch(window.SUPABASE_URL + '/functions/v1/wms-broker-order', { method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ action: 'roll', confirm: true, password: pw, client_ref: ref, account: { investor_id: acct.investor_id, broker_id: acct.broker_id },
+              position: { symbol: p.symbol, lines: lines } }) });
+          status = r.status; j = await r.json().catch(function () { return {}; });
+        } catch (e) { j = { ok: false, error: e.message }; }
+        if (status === 401) {
+          delete BOM.roll.progress[p.bare]; renderRoll();
+          showMsg('Not sent: ' + (j.error || 'wrong order password'), true);
+          document.getElementById('bomPwInput').value = ''; document.getElementById('bomPwInput').focus();
+          return;
+        }
+        if (!j.ok) { stopped++; BOM.roll.progress[p.bare] = { html: '✕ Stopped: ' + esc(j.error || 'failed') + ' — nothing sent' + (j.stage ? ' (alert emailed)' : ''), cls: 'bom-err' }; renderRoll(); continue; }
+        sent++;
+        BOM.roll.progress[p.bare] = { html: (j.cancelled ? 'resting order(s) cancelled ✓ → ' : '') + 'exit + entry sent (' + esc(bareSymbol(j.from)) + ' → ' + esc(bareSymbol(j.to)) + ', ' + j.lots + ' lot' + (j.lots === 1 ? '' : 's') + ')…', cls: 'bom-note' };
+        p.lines.forEach(function (l) { delete BOM.roll.tick[rollKey(p, l)]; });
+        renderRoll();
+        watchRoll(ref, p.bare);
+        watchBooking(ref);
+      }
+      closePassword();
+      showMsg(sent ? 'Sent ' + sent + ' roll(s)' + (stopped ? ', ' + stopped + ' stopped' : '') + '. Progress shows on each row; both legs also show in Today\'s orders.' : 'Nothing sent.', !sent);
+    } finally { rolling = false; var b = document.getElementById('bomSend'); if (b) b.disabled = false; }
+  }
+  function watchRoll(ref, bare) {
+    var tries = 0;
+    var tick = async function () {
+      tries++;
+      try {
+        var r = await fetch(window.SUPABASE_URL + '/functions/v1/wms-broker-order', { method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ action: 'roll_status', client_ref: ref }) });
+        var j = await r.json().catch(function () { return {}; });
+        if (j.ok && j.exit && j.entry) {
+          var leg = function (x, n) { return n + ' ' + (x.done ? (x.filled === x.ordered ? 'filled' : x.filled ? 'part-filled ' + qtyFmt(x.filled) + ' of ' + qtyFmt(x.ordered) : String(x.status || '').toLowerCase()) : 'working'); };
+          var o = j.outcome || { state: 'working' };
+          var txt = { rolled: 'exit filled · entry filled → booked ✓', working: leg(j.exit, 'exit') + ' · ' + leg(j.entry, 'entry') + '…',
+                      flat: '✕ entry did not fill — the old contract was closed, no new position (alert emailed)',
+                      doubled: '✕ exit did not fill — both contracts are now held (alert emailed)',
+                      mismatch: '✕ ' + leg(j.exit, 'exit') + ' · ' + leg(j.entry, 'entry') + ' — check the broker (alert emailed)' }[o.state];
+          BOM.roll.progress[bare] = { html: esc(txt), cls: o.state === 'rolled' ? 'bom-ok' : o.state === 'working' ? 'bom-note' : 'bom-err' };
+          if (BOM.tab === 'roll') renderRoll();
+          if (o.state !== 'working') { if (o.state === 'rolled') setTimeout(function () { if (BOM.tab === 'roll') loadRoll(); }, 8000); return; }
+        }
+      } catch (_) { /* try again */ }
+      if (tries < 60) setTimeout(tick, 3000);
+    };
+    setTimeout(tick, 2500);
+  }
+
+  // ---------------------------------------------------------------------------
   // Today's orders
   // ---------------------------------------------------------------------------
   function stopPoll() { if (BOM.pollTimer) { clearTimeout(BOM.pollTimer); BOM.pollTimer = null; } }
@@ -892,7 +1248,7 @@
     var startUtc = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()) - 330 * 60000).toISOString();
     try {
       var cmds = await fetch(window.SUPABASE_URL + '/rest/v1/wms_live_commands?select=id,created_at,status,broker_status,filled_qty,avg_fill_price,error_message,payload' +
-        '&signal_source=eq.manual&payload->_manual_meta->>placed_via=eq.broker_order_modal&created_at=gte.' + encodeURIComponent(startUtc) + '&order=created_at.desc&limit=100',
+        '&signal_source=eq.manual&payload->_manual_meta->>placed_via=in.(broker_order_modal,broker_order_rollover)&created_at=gte.' + encodeURIComponent(startUtc) + '&order=created_at.desc&limit=100',
         { headers: wmsHeaders() }).then(function (x) { return x.json(); });
       if (!Array.isArray(cmds)) throw new Error((cmds && cmds.message) || 'could not read');
       var lines = cmds.length ? await fetch(window.SUPABASE_URL + '/rest/v1/at2_trade?select=entry_command_id,trader_id,status,qty_lots,entry_price&entry_command_id=in.(' +
@@ -904,7 +1260,8 @@
         var mine = (Array.isArray(lines) ? lines : []).filter(function (l) { return l.entry_command_id === c.id; });
         if (cls === 'wip' || (cls === 'done' && mine.some(function (l) { return l.status === 'pending' || l.status === 'open_unprotected'; }))) working = true;
         var t = new Date(new Date(c.created_at).getTime() + 330 * 60000).toISOString().slice(11, 16);
-        return '<div class="bom-ord"><span class="bom-note">' + t + '</span> <b>' + (pl.side === -1 ? 'SELL' : 'BUY') + ' ' + qtyFmt(pl.qty) + '</b> ' + esc(pl.symbol || '') +
+        var isRoll = pl._manual_meta && pl._manual_meta.roll;
+        return '<div class="bom-ord"><span class="bom-note">' + t + '</span> ' + (isRoll ? '<span class="bom-badge" title="Rollover ' + esc(pl._manual_meta.leg_role === 'roll_exit' ? 'exit' : 'entry') + ' leg">roll</span> ' : '') + '<b>' + (pl.side === -1 ? 'SELL' : 'BUY') + ' ' + qtyFmt(pl.qty) + '</b> ' + esc(pl.symbol || '') +
           ' · ' + (pl.type === 1 ? 'limit ' + price2(pl.limitPrice) : 'market') +
           ' &nbsp;<span class="bom-st ' + cls + '">' + esc(bs || 'QUEUED') + '</span>' +
           (c.filled_qty ? ' <span class="bom-note">filled ' + qtyFmt(c.filled_qty) + ' @ ' + price2(c.avg_fill_price) + '</span>' : '') +
