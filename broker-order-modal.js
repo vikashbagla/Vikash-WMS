@@ -622,10 +622,10 @@
       BOM.ltp[sec.symbol] = it.lp;
     } else sec = it.s;
     if (it.kind === 'cm') {
-      var fy = sec.broker_tokens && sec.broker_tokens.fyers && sec.broker_tokens.fyers.nse_symbol;
-      if (!fy) { showMsg(sec.symbol + ' has no NSE trading symbol — it cannot be ordered here.', true); return; }
-      Object.assign(r, { symbol: fy, display: sec.nse_symbol || sec.symbol, security_id: sec.id, security_type: sec.security_type || 'EQUITY',
-                         asset_class: sec.asset_class || null, exchange: 'NSE', lot_size: 1 });
+      var ts = tradeSymbolOf(sec);
+      if (!ts) { showMsg(sec.symbol + ' has no NSE or BSE trading symbol — it cannot be ordered here.', true); return; }
+      Object.assign(r, { symbol: ts.symbol, display: ts.display, security_id: sec.id, security_type: sec.security_type || 'EQUITY',
+                         asset_class: sec.asset_class || null, exchange: ts.exchange, lot_size: 1 });
     } else {
       Object.assign(r, { symbol: sec.symbol, display: sec.symbol, security_id: sec.id, security_type: 'NFO',
                          asset_class: isOption(sec.symbol) ? 'OPTIONS' : 'FUTURES', exchange: sec.exchange || 'NSE', lot_size: sec.lot_size || 1 });
@@ -1267,6 +1267,14 @@
     var b = bareSymbol(bare);
     return (wmsRefData.securitiesNfo || []).find(function (x) { return bareSymbol(x.symbol) === b; }) || null;
   }
+  // The broker symbol a stock is ordered with: NSE when it has one, else BSE (BSE enabled 12-Nov-2026).
+  function tradeSymbolOf(c) {
+    var fy = c && c.broker_tokens && c.broker_tokens.fyers;
+    if (fy && fy.nse_symbol) return { symbol: fy.nse_symbol, exchange: 'NSE', display: c.nse_symbol || c.symbol };
+    if (fy && fy.bse_symbol) return { symbol: fy.bse_symbol, exchange: 'BSE', display: (c.bse_symbol || c.symbol) + ' (BSE)' };
+    return null;
+  }
+
   // Fill one modal row from a symbol / security id. Returns '' or the reason it could not.
   function fillRowSymbol(r, o) {
     var sec = null;
@@ -1275,10 +1283,10 @@
     if (!sec && o.security_id && wmsRefData.securitiesCmMap && wmsRefData.securitiesCmMap[o.security_id]) sec = { cm: wmsRefData.securitiesCmMap[o.security_id] };
     if (!sec) return bareSymbol(o.symbol || '') + ' is not in the contract list yet — open it once in Add Trade or the Watchlist, then pick it here';
     if (sec.cm) {
-      var c = sec.cm, fy = c.broker_tokens && c.broker_tokens.fyers && c.broker_tokens.fyers.nse_symbol;
-      if (!fy) return c.symbol + ' has no NSE trading symbol — it cannot be ordered here';
-      Object.assign(r, { symbol: fy, display: c.nse_symbol || c.symbol, security_id: c.id, security_type: c.security_type || 'EQUITY',
-                         asset_class: c.asset_class || null, exchange: 'NSE', lot_size: 1 });
+      var c = sec.cm, ts = tradeSymbolOf(c);
+      if (!ts) return c.symbol + ' has no NSE or BSE trading symbol — it cannot be ordered here';
+      Object.assign(r, { symbol: ts.symbol, display: ts.display, security_id: c.id, security_type: c.security_type || 'EQUITY',
+                         asset_class: c.asset_class || null, exchange: ts.exchange, lot_size: 1 });
     } else {
       var s = sec.nfo;
       Object.assign(r, { symbol: s.symbol, display: s.symbol, security_id: s.id, security_type: 'NFO',
@@ -1354,6 +1362,7 @@
   ].join('');
   function raStyle() { if (document.getElementById('bom-ra-style')) return; var st = document.createElement('style'); st.id = 'bom-ra-style'; st.textContent = RA_STYLE; document.head.appendChild(st); }
   window.bomRowActions = {
+    tradeSymbol: tradeSymbolOf,
     accountState: accountState,
     liveFyersFor: liveFyersFor,
     nfoByBare: nfoByBare,

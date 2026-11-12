@@ -1921,8 +1921,8 @@ function trPfEquitySecurity(h) {
     }
     return null;
 }
-// The modal places NSE equity only: a BSE-only stock (e.g. BSE SME) has no NSE trading symbol.
-function trPfNseSymbol(sec) { return sec && sec.broker_tokens && sec.broker_tokens.fyers && sec.broker_tokens.fyers.nse_symbol; }
+// The broker symbol the modal orders with: NSE when the stock has one, else BSE (BSE enabled 12-Nov-2026).
+function trPfNseSymbol(sec) { var t = window.bomRowActions && window.bomRowActions.tradeSymbol(sec); return t ? t.symbol : null; }
 function trPfDescribeRow(row) {
     var RA = window.bomRowActions; if (!RA) return null;
     var key = row.getAttribute('data-ra-key') || '';
@@ -1933,7 +1933,7 @@ function trPfDescribeRow(row) {
     var h = (window._trPfLastHoldings || []).find(function(x) { return x.key === hKey; });
     var sec = trPfEquitySecurity(h);
     if (!sec) return null;
-    var acct = null, off = trPfNseSymbol(sec) ? '' : (sec.bse_symbol ? 'listed on BSE only' : 'no NSE trading symbol') + ' — the broker order screen places NSE orders only';
+    var acct = null, off = trPfNseSymbol(sec) ? '' : 'no NSE or BSE trading symbol — it cannot be ordered here';
     if (off) {
     } else if (invId) {
         var lr = RA.liveFyersFor(invId);

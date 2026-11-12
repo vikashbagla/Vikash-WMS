@@ -2720,9 +2720,9 @@ function trWlDescribeRow(row) {
     var anchor = row.querySelector('.wl-sec-symbol') || row.firstElementChild;
     var acct = trWlDefaultAccount();
     var cmSec = !isNfo && item.security_id && wmsRefData.securitiesCmMap ? wmsRefData.securitiesCmMap[item.security_id] : null;
-    var bseOnly = !isNfo && !(cmSec && cmSec.broker_tokens && cmSec.broker_tokens.fyers && cmSec.broker_tokens.fyers.nse_symbol);
+    var noTradeSym = !isNfo && !RA.tradeSymbol(cmSec);   // NSE preferred, else BSE (BSE enabled 12-Nov-2026)
     var off = !acct ? 'no live Fyers account today' : (isNfo && !m) ? 'not in the contract list — open it once in Add Trade'
-        : bseOnly ? ((cmSec && cmSec.bse_symbol) ? 'listed on BSE only' : 'no NSE trading symbol') + ' — the broker order screen places NSE orders only' : '';
+        : noTradeSym ? 'no NSE or BSE trading symbol — it cannot be ordered here' : '';
     var bs = function(side) {
         if (off) return { ok: false, why: off };
         return { ok: true, run: function() {
