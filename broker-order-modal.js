@@ -74,6 +74,11 @@
       '.bom-h h3{margin:0;font-size:16px;display:flex;gap:10px;align-items:center}',
       '.bom-live{font-size:10.5px;font-weight:700;letter-spacing:.08em;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;padding:2px 8px;border-radius:999px}',
       '.bom-x{background:none;border:0;font-size:20px;color:#718096;cursor:pointer}',
+      // Today's orders status beside × (owner, 13-Nov): green = nothing pending (safe to close); amber = still working.
+      '.bom-hr{display:flex;align-items:center;gap:10px}',
+      '.bom-done{display:none;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;border:1px solid}',
+      '.bom-done.ok{display:inline-block;color:#047857;background:#d1fae5;border-color:#a7f3d0}',
+      '.bom-done.wip{display:inline-block;color:#92400e;background:#fef3c7;border-color:#fde68a}',
       '.bom-tabs{display:flex;gap:4px;padding:8px 18px 0}',
       '.bom-tab{border:1px solid #e2e8f0;border-bottom:0;background:#f7fafc;padding:6px 14px;border-radius:8px 8px 0 0;cursor:pointer;font:inherit;color:#4a5568}',
       '.bom-tab.on{background:#fff;color:#1a202c;font-weight:600}',
@@ -177,7 +182,7 @@
     ov.innerHTML =
       '<div class="bom-m" role="dialog" aria-label="Broker order">' +
         '<div class="bom-h"><h3>Broker order <span class="bom-live">LIVE</span></h3>' +
-          '<button class="bom-x" id="bomClose" title="Close (Esc)">×</button></div>' +
+          '<div class="bom-hr"><span class="bom-done" id="bomDone"></span><button class="bom-x" id="bomClose" title="Close (Esc)">×</button></div></div>' +
         '<div class="bom-tabs"><button class="bom-tab on" data-tab="new">New order</button><button class="bom-tab" data-tab="today">Today\'s orders</button><button class="bom-tab" data-tab="roll">Rollover</button></div>' +
         '<div id="bomNew" style="display:flex;flex-direction:column;min-height:0;flex:1">' +
           '<div class="bom-b" style="flex:1">' +
@@ -270,7 +275,7 @@
     // The Rollover tab always starts fresh (owner, 12-Nov): no ticks, no old progress lines, the list read again.
     if (t === 'roll') { BOM.roll.tick = {}; BOM.roll.progress = {}; BOM.roll.loaded = false; showMsg('Rolls go as market orders, exit and entry together. The broker makes the final checks.'); loadRoll(); }
     else if (t === 'new') showMsg('Market and limit, day orders. The broker makes the final margin check.');
-    if (t === 'today') loadToday(); else stopPoll();
+    if (t === 'today') loadToday(); else { stopPoll(); setDone(''); }
     renderPanel();
   }
 
@@ -1423,6 +1428,12 @@
   // ---------------------------------------------------------------------------
   // Today's orders
   // ---------------------------------------------------------------------------
+  // The chip beside × : 'ok' = every order final and booked (nothing pending — safe to close); 'wip' = still working.
+  function setDone(state, n) {
+    var el = document.getElementById('bomDone'); if (!el) return;
+    el.className = 'bom-done' + (state ? ' ' + state : '');
+    el.textContent = state === 'ok' ? '✓ All done — nothing pending' : state === 'wip' ? '⏳ ' + n + ' order' + (n === 1 ? '' : 's') + ' still working — keep open' : '';
+  }
   function stopPoll() { if (BOM.pollTimer) { clearTimeout(BOM.pollTimer); BOM.pollTimer = null; } }
   async function loadToday() {
     stopPoll();
@@ -1437,12 +1448,12 @@
       if (!Array.isArray(cmds)) throw new Error((cmds && cmds.message) || 'could not read');
       var lines = cmds.length ? await fetch(window.SUPABASE_URL + '/rest/v1/at2_trade?select=entry_command_id,trader_id,status,qty_lots,entry_price&entry_command_id=in.(' +
         cmds.map(function (c) { return c.id; }).join(',') + ')', { headers: wmsHeaders() }).then(function (x) { return x.json(); }) : [];
-      var working = false;
+      var working = false, pending = 0;
       box.innerHTML = cmds.length ? cmds.map(function (c) {
         var pl = c.payload || {}, bs = String(c.broker_status || c.status || '').toUpperCase();
         var cls = bs === 'FILLED' ? 'done' : (bs === 'REJECTED' || bs === 'CANCELLED' || bs === 'EXPIRED' || c.status === 'error') ? 'bad' : 'wip';
         var mine = (Array.isArray(lines) ? lines : []).filter(function (l) { return l.entry_command_id === c.id; });
-        if (cls === 'wip' || (cls === 'done' && mine.some(function (l) { return l.status === 'pending' || l.status === 'open_unprotected'; }))) working = true;
+        if (cls === 'wip' || (cls === 'done' && mine.some(function (l) { return l.status === 'pending' || l.status === 'open_unprotected'; }))) { working = true; pending++; }
         var t = new Date(new Date(c.created_at).getTime() + 330 * 60000).toISOString().slice(11, 16);
         var isRoll = pl._manual_meta && pl._manual_meta.roll;
         return '<div class="bom-ord"><span class="bom-note">' + t + '</span> ' + (isRoll ? '<span class="bom-badge" title="Rollover ' + esc(pl._manual_meta.leg_role === 'roll_exit' ? 'exit' : 'entry') + ' leg">roll</span> ' : '') + '<b class="' + (pl.side === -1 ? 'bom-sell' : 'bom-buy') + '">' + (pl.side === -1 ? 'SELL' : 'BUY') + ' ' + qtyFmt(pl.qty) + '</b> ' + esc(pl.symbol || '') +
@@ -1452,8 +1463,9 @@
           (c.error_message ? ' <span class="bom-err">' + esc(String(c.error_message).slice(0, 160)) + '</span>' : '') +
           '<div class="bom-split">' + mine.map(function (l) { return esc(invName(l.trader_id)) + ' ' + l.qty_lots + ' · ' + esc(l.status); }).join(' &nbsp;|&nbsp; ') + '</div></div>';
       }).join('') : '<span class="bom-note">No broker orders from this screen today.</span>';
+      setDone(!cmds.length ? '' : working ? 'wip' : 'ok', pending);
       if (working && BOM.tab === 'today' && document.getElementById('bomOverlay').classList.contains('show')) BOM.pollTimer = setTimeout(loadToday, 5000);
-    } catch (e) { box.innerHTML = '<span class="bom-err">Could not read today\'s orders: ' + esc(e.message) + '</span>'; }
+    } catch (e) { setDone(''); box.innerHTML = '<span class="bom-err">Could not read today\'s orders: ' + esc(e.message) + '</span>'; }
   }
   // When the app comes back to the front, re-read once (phone-ready, Plan §6.1 item 6).
   document.addEventListener('visibilitychange', function () {
