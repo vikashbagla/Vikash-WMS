@@ -6592,6 +6592,11 @@ function auAt2RenderControls() {
                                          : ' <span class="au-badge idle">paper</span>')
                +     (b2.enabled ? ' <span class="au-badge success">enabled</span>'
                                  : ' <span class="au-badge idle">disabled</span>')
+               // Sizing dials at a glance (owner, 13-Nov-2026) — read-only labels; edit stays in the form.
+               // NOT .au-badge: the phone layer reads the head's badges as the book's status.
+               +     ' <span class="au-at2-dials" title="Sizing — Long factor · Short factor · Lot cap">'
+               +       'Long <b>' + auAt2Esc(b2.exposure_factor) + '</b> · Short <b>' + auAt2Esc(b2.exposure_factor_short)
+               +       '</b> · Lot cap <b>' + auAt2Esc(b2.lot_cap) + '</b></span>'
                +   '</div>'
                +   '<div class="au-at2-strat-actions">'
                +     '<button class="au-btn au-btn-secondary au-at2-bedit" data-bid="' + b2.id + '">✏️ Edit</button>'
