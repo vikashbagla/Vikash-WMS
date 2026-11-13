@@ -520,6 +520,7 @@ body.wms-ph-nobnav .wms-bottom-nav { display: none !important; }
 .mau-sheet .au-at2-pill { font-size: 14px; padding: 8px 14px; }
 .mau-sheet-strat .au-at2-strat-head { display: none !important; }
 .mau-sheet-book .au-at2-bedit, .mau-sheet-book .au-at2-bhide { display: none !important; }
+.mau-sheet-book .au-at2-dials { display: none !important; }   /* desktop row label (13-Nov) — phone sheet unchanged */
 .mau-sheet-book .au-at2-strat-actions { position: fixed; left: 0; right: 0; bottom: 0; z-index: 2; background: #ffffff; border-top: 1px solid #e2e8f0;
     display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 10px 12px max(env(safe-area-inset-bottom, 14px), 14px); }
 .mau-sheet-book .au-at2-strat-actions .au-btn { font-size: 15px; padding: 12px; }
