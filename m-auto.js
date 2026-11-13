@@ -168,6 +168,7 @@
             var ident = (q('input.au-at2-locked', b) || {}).value || '';
             var strat = ident.split(' · ')[0];
             var ef = (q('input[data-col="exposure_factor"]', b) || {}).value;
+            var efs = (q('input[data-col="exposure_factor_short"]', b) || {}).value;   // D42 Short factor
             var lc = (q('input[data-col="lot_cap"]', b) || {}).value;
             return ['<div class="mau-card">',
                 '<div class="mau-r1"><span class="mau-name">', esc(txt(q('.au-at2-name', b))),
@@ -176,7 +177,7 @@
                 '<div class="mau-r mau-rleft">',
                 live ? '<span class="mau-tag-live">LIVE</span>' : (paper ? '<span class="mau-tag-paper">PAPER</span>' : '<span class="au-badge error">⛔ MODE?</span>'),
                 '<span>', esc(strat), '</span></div>',
-                '<div class="mau-r mau-rlast"><span class="mau-dark">Exposure × <b>', esc(ef), '</b> · Lot cap <b>', esc(lc), '</b></span>',
+                '<div class="mau-r mau-rlast"><span class="mau-dark">Exposure L <b>', esc(ef), '</b> · S <b>', esc(efs), '</b> · Lot cap <b>', esc(lc), '</b></span>',
                 '<button type="button" class="mau-btn" data-mau-book="', esc(b.getAttribute('data-bid')), '">Edit</button></div>',
                 '</div>'].join('');
         });
@@ -278,7 +279,7 @@
         var ef = q('input[data-col="exposure_factor"]', card);
         var grid = ef && ef.closest('.au-at2-grid');
         if (grid) {
-            grid.classList.add('mau-grid2');
+            grid.classList.add('mau-grid3');   // Long · Short · Lot cap in one row (D42)
             var note = document.createElement('div');
             note.className = 'mau-sizenote';
             note.textContent = '0.5 = half size. Lot cap = hard ceiling per signal.';

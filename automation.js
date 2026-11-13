@@ -6562,7 +6562,7 @@ function auAt2RenderControls() {
        +   '<h3>Books</h3>'
        +   '<button class="au-btn au-btn-primary" id="au-at2-newbook">＋ New book</button>'
        + '</div>'
-       + '<div class="au-sub">A book is one (strategy, mode, trader). <code>exposure_factor</code> changes SIZE, '
+       + '<div class="au-sub">A book is one (strategy, mode, trader). The <b>Long</b> and <b>Short factors</b> change SIZE (a long signal uses the Long factor, a short signal the Short factor), '
        + 'not routing; <code>lot_cap</code> is a hard per-book ceiling and its surplus is NOT redistributed. '
        + '<b>The identity — strategy, mode, trader — is deliberately not editable:</b> changing it would silently '
        + 're-point a book\'s history. Create a new book instead.</div>'
@@ -6618,9 +6618,14 @@ function auAt2RenderControls() {
                +       '<div class="au-at2-hint">A disabled book is skipped silently — the switch working as intended</div></div>'
                +   '</div></div>'
                +   '<div class="au-at2-group"><div class="au-at2-group-label">Sizing</div><div class="au-at2-grid">'
-               +     '<div class="au-at2-field"><label>Exposure factor</label>'
+               // D42 (13-Nov-2026): two dials. exposure_factor = Long (name kept: the broker
+               // order modal and Scalp use it); exposure_factor_short = Short (migration 168).
+               +     '<div class="au-at2-field"><label>Long factor</label>'
                +       '<input class="wms-input wms-input-number au-at2-bf" data-bid="' + b2.id + '" data-col="exposure_factor" type="number" step="any" value="' + auAt2Esc(b2.exposure_factor) + '" disabled>'
-               +       '<div class="au-at2-hint">The scaling dial, read by sizing every run. 0.5 = half size. Small enough and the book rounds to zero lots and is excluded</div></div>'
+               +       '<div class="au-at2-hint">Sizes LONG signals. 0.5 = half size. Small enough and the book rounds to zero lots and is excluded</div></div>'
+               +     '<div class="au-at2-field"><label>Short factor</label>'
+               +       '<input class="wms-input wms-input-number au-at2-bf" data-bid="' + b2.id + '" data-col="exposure_factor_short" type="number" step="any" value="' + auAt2Esc(b2.exposure_factor_short) + '" disabled>'
+               +       '<div class="au-at2-hint">Sizes SHORT signals. Same rules as the Long factor</div></div>'
                +     '<div class="au-at2-field"><label>Lot cap</label>'
                +       '<input class="wms-input wms-input-number au-at2-bf" data-bid="' + b2.id + '" data-col="lot_cap" type="number" step="1" value="' + auAt2Esc(b2.lot_cap) + '" disabled>'
                +       '<div class="au-at2-hint">Hard ceiling per signal. Surplus is NOT redistributed to other books</div></div>'
@@ -7190,9 +7195,12 @@ function auAt2NewBookModal() {
       +     '<div class="au-at2-hint">Leave blank and one is built from the account and mode</div></div>'
       + '</div></div>'
       + '<div class="au-at2-group"><div class="au-at2-group-label">Sizing</div><div class="au-at2-grid">'
-      +   '<div class="au-at2-field"><label>Exposure factor</label>'
+      +   '<div class="au-at2-field"><label>Long factor</label>'
       +     '<input class="wms-input wms-input-number" id="au-at2-nb-exposure" type="number" step="any" value="1.0">'
-      +     '<div class="au-at2-hint">1.0 = full size. Must be greater than zero</div></div>'
+      +     '<div class="au-at2-hint">Sizes LONG signals. 1.0 = full size. Must be greater than zero</div></div>'
+      +   '<div class="au-at2-field"><label>Short factor</label>'
+      +     '<input class="wms-input wms-input-number" id="au-at2-nb-exposure-short" type="number" step="any" value="1.0">'
+      +     '<div class="au-at2-hint">Sizes SHORT signals. 1.0 = full size. Must be greater than zero</div></div>'
       +   '<div class="au-at2-field"><label>Lot cap</label>'
       +     '<input class="wms-input wms-input-number" id="au-at2-nb-lotcap" type="number" step="1" value="1">'
       +     '<div class="au-at2-hint">Hard ceiling per signal. Must be greater than zero</div></div>'
@@ -7211,13 +7219,15 @@ function auAt2NewBookModal() {
         var mode = modeEl ? modeEl.dataset.val : 'paper';
         var trader = document.getElementById('au-at2-nb-trader').value || acct[0];
         var expo = Number(document.getElementById('au-at2-nb-exposure').value);
+        var expoShort = Number(document.getElementById('au-at2-nb-exposure-short').value);
         var cap  = Number(document.getElementById('au-at2-nb-lotcap').value);
         var tags = (document.getElementById('au-at2-nb-tags').value || '').split(',')
                      .map(function (t) { return t.trim(); }).filter(Boolean);
         var name = (document.getElementById('au-at2-nb-name').value || '').trim();
 
         if (!acct[0] || !acct[1]) { msg.innerHTML = '<span class="au-at2-err">✕ Pick an account.</span>'; return; }
-        if (!(expo > 0)) { msg.innerHTML = '<span class="au-at2-err">✕ Exposure factor must be greater than zero — the database refuses 0 or less.</span>'; return; }
+        if (!(expo > 0)) { msg.innerHTML = '<span class="au-at2-err">✕ Long factor must be greater than zero — the database refuses 0 or less.</span>'; return; }
+        if (!(expoShort > 0)) { msg.innerHTML = '<span class="au-at2-err">✕ Short factor must be greater than zero — the database refuses 0 or less.</span>'; return; }
         if (!(cap > 0))  { msg.innerHTML = '<span class="au-at2-err">✕ Lot cap must be greater than zero.</span>'; return; }
         // Caught here rather than as a raw unique-violation, because "duplicate
         // key value violates ..._unique" does not tell you WHICH book already exists.
@@ -7279,6 +7289,7 @@ function auAt2NewBookModal() {
                 body: JSON.stringify({
                     strategy_id: sid, mode: mode, investor_id: acct[0], broker_id: acct[1],
                     trader_id: trader, display_name: name, exposure_factor: expo,
+                    exposure_factor_short: expoShort,
                     lot_cap: cap, transaction_tags: tags, enabled: false
                 })
             });
