@@ -625,7 +625,7 @@
       var ts = tradeSymbolOf(sec);
       if (!ts) { showMsg(sec.symbol + ' has no NSE or BSE trading symbol — it cannot be ordered here.', true); return; }
       Object.assign(r, { symbol: ts.symbol, display: ts.display, security_id: sec.id, security_type: sec.security_type || 'EQUITY',
-                         asset_class: sec.asset_class || null, exchange: ts.exchange, lot_size: 1 });
+                         asset_class: sec.asset_class || null, exchange: ts.exchange, lot_size: Number(sec.lot_size) > 1 ? Number(sec.lot_size) : 1 });   // master lot size, as Add Trade (SME stocks trade in lots)
     } else {
       Object.assign(r, { symbol: sec.symbol, display: sec.symbol, security_id: sec.id, security_type: 'NFO',
                          asset_class: isOption(sec.symbol) ? 'OPTIONS' : 'FUTURES', exchange: sec.exchange || 'NSE', lot_size: sec.lot_size || 1 });
@@ -1286,7 +1286,7 @@
       var c = sec.cm, ts = tradeSymbolOf(c);
       if (!ts) return c.symbol + ' has no NSE or BSE trading symbol — it cannot be ordered here';
       Object.assign(r, { symbol: ts.symbol, display: ts.display, security_id: c.id, security_type: c.security_type || 'EQUITY',
-                         asset_class: c.asset_class || null, exchange: ts.exchange, lot_size: 1 });
+                         asset_class: c.asset_class || null, exchange: ts.exchange, lot_size: Number(c.lot_size) > 1 ? Number(c.lot_size) : 1 });   // master lot size, as Add Trade
     } else {
       var s = sec.nfo;
       Object.assign(r, { symbol: s.symbol, display: s.symbol, security_id: s.id, security_type: 'NFO',
