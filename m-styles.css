@@ -553,8 +553,8 @@ body.mau-ms007 .automation-container > .mau-landing,
 .mau-switch span { position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: #ffffff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: left 0.15s; }
 .mau-switchrow.on .mau-switch { background: #059669; }
 .mau-switchrow.on .mau-switch span { left: 25px; }
-.mau-sheet-book .au-at2-grid.mau-grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
-.mau-sheet-book .mau-grid2 .au-at2-hint { display: none; }
+.mau-sheet-book .au-at2-grid.mau-grid3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 8px !important; }
+.mau-sheet-book .mau-grid3 .au-at2-hint { display: none; }
 .mau-sizenote { font-size: 10.5px; color: #718096; margin-top: 6px; }
 /* Strategy settings, view only — label · value lines (mock-up) */
 .mau-sv-sec { margin: 12px 2px 6px; }
