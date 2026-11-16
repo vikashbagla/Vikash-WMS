@@ -591,6 +591,7 @@
         <button class="trading-tab-btn active" data-tab="tr-watchlist">Watchlist</button>
         <button class="trading-tab-btn" data-tab="tr-transactions">Transactions</button>
         <button class="trading-tab-btn" data-tab="tr-ledger">Statements</button>
+        <button class="trading-tab-btn" data-tab="tr-international">International</button>
     </div>
 
     <!-- Tab: Portfolio -->
@@ -792,6 +793,13 @@
     <!-- Tab: Statements (lazy-loaded from trading-ledger.html + trading-ledger.js) -->
     <div id="tr-ledger" class="trading-tab-content" style="flex-direction:column;">
         <div style="text-align:center;padding:40px;color:#9ca3af;">Loading statements module...</div>
+    </div>
+
+    <!-- Tab: International (International Watchlist plan v3, 16-Nov-2026) — Yahoo-priced lists -->
+    <div id="tr-international" class="trading-tab-content">
+        <div id="tr-international-container" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+            <div style="text-align:center;padding:40px;color:#9ca3af;">Loading international watchlists...</div>
+        </div>
     </div>
 
 </div>

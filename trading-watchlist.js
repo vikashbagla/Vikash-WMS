@@ -210,7 +210,8 @@ async function trWlLoad() {
     if (!userId) return;
 
     // Load watchlists
-    var wlResp = await fetch(SUPABASE_URL + '/rest/v1/watchlists?user_id=eq.' + userId + '&order=sort_order,created_at', {
+    // Indian lists only — International lists (watchlists.market, mig 169) live on the International tab
+    var wlResp = await fetch(SUPABASE_URL + '/rest/v1/watchlists?user_id=eq.' + userId + '&market=eq.india&order=sort_order,created_at', {
         headers: wmsHeaders()
     });
     var watchlists = wlResp.ok ? await wlResp.json() : [];
