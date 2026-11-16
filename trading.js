@@ -891,6 +891,9 @@ function trSwitchTab(tabId) {
     if (tabId === 'tr-ledger') {
         trLoadLedgerModule();
     }
+    if (tabId === 'tr-international') {
+        trLoadIntlModule();
+    }
 
     // Standard refresh: re-render the newly active tab with cached prices
     if (typeof wmsRefreshRender === 'function') wmsRefreshRender();
@@ -937,6 +940,37 @@ async function trLoadWatchlistModule() {
     if (window.trWlInit) {
         window.trWlInit();
     }
+}
+
+// International tab (International Watchlist plan v3, 16-Nov-2026): same on-demand pattern as the
+// Watchlist tab — loads trading-intl.html (styles + markup) and trading-intl.js once, then trIwInit().
+var trIwLoaded = false;
+async function trLoadIntlModule() {
+    var container = document.getElementById('tr-international-container');
+    if (!container) return;
+    if (!trIwLoaded) {
+        try {
+            var htmlResp = await fetch('trading-intl.html?v=' + (window.__wmsV || ''));
+            if (!htmlResp.ok) throw new Error('Failed to load trading-intl.html');
+            var htmlText = await htmlResp.text();
+            var doc = new DOMParser().parseFromString(htmlText, 'text/html');
+            doc.querySelectorAll('style').forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+            container.innerHTML = doc.body ? doc.body.innerHTML : htmlText;
+            await new Promise(function(resolve, reject) {
+                var script = document.createElement('script');
+                script.src = 'trading-intl.js?v=' + (window.__wmsV || '');
+                script.onload = resolve;
+                script.onerror = function() { reject(new Error('Failed to load trading-intl.js')); };
+                document.body.appendChild(script);
+            });
+            trIwLoaded = true;
+        } catch (err) {
+            console.error('Trading: Failed to load international module:', err);
+            container.innerHTML = '<div style="text-align:center;padding:60px;color:#dc2626;">Failed to load International: ' + err.message + '</div>';
+            return;
+        }
+    }
+    if (window.trIwInit) window.trIwInit();
 }
 
 function trRestoreTab() {
