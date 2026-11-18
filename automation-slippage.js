@@ -238,7 +238,7 @@ function _auSlipCompute(d) {
         var charges = rate === null ? 0 : rate * ((Number(t.entry_price) || 0) + (Number(t.exit_price) || 0)) * units;
         var secs = function (iso, from) { return (iso && from !== null) ? (new Date(iso).getTime() - from) / 1000 : null; };
         return {
-            id: t.id, book_id: t.book_id, strategy_id: t.strategy_id, side: t.side, lots: Number(t.qty_lots) || 0, units: units,
+            id: t.id, book_id: t.book_id, ecmd: t.entry_command_id, strategy_id: t.strategy_id, side: t.side, lots: Number(t.qty_lots) || 0, units: units,
             entry_at: t.entry_at, exit_at: t.exit_at, exit_ist: exIst, reason: t.exit_reason, gap: gap,
             eAsk: eAsk === undefined ? null : eAsk, eFill: eFill, es: es, esPct: es !== null && eAsk ? es / eAsk * 100 : null,
             ePending: eAsk === undefined && today,
@@ -465,6 +465,11 @@ function _auSlipSummary(rows, rate, unit, full) {
         '</ul>';
 }
 
+function _auSlipBookShort(id) {   // "SILVERM Live Veins" → "Veins"
+    var b = (_auAt2.books || []).filter(function (x) { return x.id === id; })[0];
+    var nm = b ? (b.display_name || '') : '';
+    return nm.replace(/^\S+\s+(Live|Paper)\s+/i, '') || nm;
+}
 function _auSlipCols(w) { return '<colgroup>' + w.map(function (x) { return '<col style="width:' + x + '%">'; }).join('') + '</colgroup>'; }
 
 function _auSlipLatency(rows) {
@@ -488,7 +493,13 @@ function _auSlipLatency(rows) {
 }
 
 function _auSlipChart(rows) {
-    var cr = rows.filter(function (r) { return !r.gap; }).slice().sort(function (a, b) { return a.entry_at < b.entry_at ? -1 : 1; });
+    // One bar pair per ORDER: books sharing one broker order (Veins + T3a) have the
+    // same points, so each order is drawn once whichever books are selected.
+    var seen = {};
+    var cr = rows.filter(function (r) {
+        if (r.gap) return false;
+        var k = r.ecmd || r.id; if (seen[k]) return false; seen[k] = 1; return true;
+    }).sort(function (a, b) { return a.entry_at < b.entry_at ? -1 : 1; });
     if (!cr.length) return '';
     var W = 760, H = 230, ML = 48, MR = 8, MT = 26, MB = 40, n = cr.length, PW = W - ML - MR, PH = H - MT - MB;
     var TOP = 300, BOT = -200;
@@ -570,7 +581,7 @@ function _auSlipTrades(rows, unit, full) {
         var slip = (r.eRs || 0) + (r.xRs || 0);
         var tr = '<tr class="au-slip-row" onclick="auSlipToggle(\'' + r.id + '\')" title="Click for the stop history">' +
             '<td>' + dt + '<div class="au-slip-pc">' + r.exit_ist.time.slice(0, 5) + '</div></td>' +
-            '<td>' + (r.side === 'LONG' ? 'Long' : 'Short') + '</td>' +
+            '<td>' + (r.side === 'LONG' ? 'Long' : 'Short') + '<div class="au-slip-pc" style="color:#6b7280">' + auAt2Esc(_auSlipBookShort(r.book_id)) + '</div></td>' +
             '<td class="text-right">' + r.lots + '</td>' +
             _auSlipPts(r.es, null, false) +
             '<td class="text-right">' + (r.eDelay === null ? '—' : r.eDelay.toFixed(1) + ' s') + '</td>' +
