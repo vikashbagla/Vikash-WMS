@@ -6329,6 +6329,8 @@ var AU_AT2_PARAM_FIELDS = [
     { group: 'risk', path: 'risk_per_trade', label: 'Risk per trade',   kind: 'num', money: true, hint: 'Rupees at risk per signal, before each book\'s exposure factor' },
     { group: 'risk', path: 'stop.mode',      label: 'Stop mode',        kind: 'enum', opts: ['atr'], hint: 'How the hard stop is computed' },
     { group: 'risk', path: 'stop.mult',      label: 'Stop × ATR',       kind: 'num',  hint: 'Stop distance = mult × ATR. Lots = risk ÷ (ATR × mult × point value)' },
+    // ATR length (owner, 18-Nov-2026 — MS007 TODO v2 item 2). Was fixed at 14 in the engine.
+    { group: 'risk', path: 'atr_len',        label: 'ATR length (bars)', kind: 'int', hint: 'How many 15-minute bars the ATR averages over — every ATR the engine uses (stop, trail, sizing, hourly). 14 = the tested value; the backtest found 20 slightly better but not proven' },
     { group: 'risk', path: 'min_hold_bars',  label: 'Min hold (bars)',  kind: 'int',  hint: 'Exit rules do not fire before this many bars since entry' },
 
     { group: 'trail', path: 'trail.mode',    label: 'Trail mode',       kind: 'enum', opts: ['atr', 'none'], hint: 'Whether a trail runs at all' },
@@ -6350,7 +6352,10 @@ var AU_AT2_PARAM_FIELDS = [
     { group: 'session', path: 'session.no_entry_end',   label: 'Dead period until',kind: 'hour', hint: 'IST hour, exclusive. It REOPENS here — unlike the cutoff. May wrap midnight' },
     { group: 'session', path: 'session.square_off_time',label: 'Square-off',       kind: 'hhmm', hint: 'HH:MM IST. Blank = the position carries overnight (MS007 carries)' },
 
-    { group: 'roll', path: 'roll.entry_days_before', label: 'Entry roll — days before expiry', kind: 'int', hint: 'A NEW entry rolls to the NEXT month this many days before the front contract\'s expiry (contract selection). 7 clears MCX\'s staggered-delivery block near expiry.' },
+    // The CONTRACT SWITCH (owner, 18-Nov-2026 — MS007 TODO v2 item 1): same setting, now TRADING
+    // days, and it moves BOTH new trades and the engine's data series. Was "Entry roll — days
+    // before expiry" (calendar days, entries only).
+    { group: 'roll', path: 'roll.entry_days_before', label: 'Switch — trading days before expiry', kind: 'int', hint: 'New trades AND the engine\'s data move to the NEXT contract at 23:59 IST on this trading day before expiry (expiry day = 0). Any day MCX opens counts, evening-only included. 5 = the tested value. If the holiday calendar cannot be trusted, the engine uses calendar days instead (2 added per 5: 5 → 7)' },
     { group: 'roll', path: 'roll.days_before', label: 'Roll days before', kind: 'int',  hint: 'Roll when the held contract is within this many days of expiry (open-position rollover — currently disabled)' },
     { group: 'roll', path: 'roll.time',        label: 'Roll at',          kind: 'hhmm', hint: 'HH:MM IST — when in the day the roll executes' }
 ];
