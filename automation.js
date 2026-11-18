@@ -6356,7 +6356,7 @@ var AU_AT2_PARAM_FIELDS = [
     // days, and it moves BOTH new trades and the engine's data series. Was "Entry roll — days
     // before expiry" (calendar days, entries only).
     { group: 'roll', path: 'roll.entry_days_before', label: 'Switch — trading days before expiry', kind: 'int', hint: 'New trades AND the engine\'s data move to the NEXT contract at 23:59 IST on this trading day before expiry (expiry day = 0). Any day MCX opens counts, evening-only included. 5 = the tested value. If the holiday calendar cannot be trusted, the engine uses calendar days instead (2 added per 5: 5 → 7)' },
-    { group: 'roll', path: 'roll.days_before', label: 'Roll days before', kind: 'int',  hint: 'Roll when the held contract is within this many days of expiry (open-position rollover — currently disabled)' },
+    { group: 'roll', path: 'roll.days_before', label: 'Roll days before', kind: 'int',  hint: 'SWITCHED OFF (owner, 24-Aug-2026) — the engine ignores this. Open-position rollover: roll when the held contract is within this many CALENDAR days of expiry. If it is ever switched back on it should count trading days, like the switch above' },
     { group: 'roll', path: 'roll.time',        label: 'Roll at',          kind: 'hhmm', hint: 'HH:MM IST — when in the day the roll executes' }
 ];
 
