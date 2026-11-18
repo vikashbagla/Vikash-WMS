@@ -444,10 +444,13 @@ input.au-scalp-locked, input.au-scalp-locked:disabled { background: #f1f5f9; col
     color: #718096;
     text-align: left;
     padding: 7px 8px;
-    border-bottom: 1px solid #e2e8f0;
+    /* D.8.1d — no border-bottom on a sticky th (a collapsed border stays behind
+       when the header sticks, so rows show through). The line is an inset shadow
+       painted by the cell itself, and z-index 3 keeps it above the rows. */
+    box-shadow: inset 0 -1px 0 #e2e8f0;
     position: sticky;
     top: 0;
-    z-index: 1;
+    z-index: 3;
 }
 .au-at2-table td {
     padding: 7px 8px;
@@ -472,6 +475,36 @@ input.au-scalp-locked, input.au-scalp-locked:disabled { background: #f1f5f9; col
 .au-at2-table .text-right { text-align: right; }
 .au-at2-table tfoot td { border-bottom: none; }
 .au-at2-table code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; }
+/* ── MS007 › Slippage tab (automation-slippage.js) ───────────────────────── */
+.au-slip-filters { display:flex; flex-wrap:wrap; align-items:flex-start; gap:16px; margin-bottom:12px;
+    padding:10px 12px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; }
+.au-slip-filters > div { min-width:140px; }
+.au-slip-filters .au-slip-pill { flex:1 1 220px; }
+.au-slip-select { font-size:12px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:4px; background:#fff; }
+.au-slip-h { font-size:13px; font-weight:600; color:#1f2937; margin:16px 0 6px; }
+.au-slip-h:first-child { margin-top:0; }
+.au-slip-unit { font-size:11px; font-weight:600; color:#667eea; margin-left:8px; }
+.au-slip-sub { font-size:11px; font-weight:400; color:#6b7280; margin-left:8px; }
+.au-slip-table td { vertical-align: top; }
+.au-slip-table td.text-right, .au-slip-table th.text-right { white-space: nowrap; }
+.au-slip-pc { font-size:10px; color:inherit; opacity:.8; line-height:1.3; }
+.au-slip-cost { color:#dc2626; }
+.au-slip-better { color:#059669; }
+.au-slip-skew { background:#fef3c7; }
+.au-slip-table tr.au-slip-tt td, .au-slip-table tr.au-slip-gt td { background:#f7fafc; }
+.au-slip-table tr.au-slip-gt td { border-top:2px solid #cbd5e0; }
+.au-slip-notes { font-size:11px; color:#6b7280; margin:6px 0 0 16px; padding:0; line-height:1.6; }
+.au-slip-chart { background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:6px; }
+.au-slip-key { display:inline-block; width:10px; height:10px; border-radius:2px; vertical-align:middle; margin:0 4px 0 6px; }
+.au-slip-sortable { cursor:pointer; user-select:none; }
+.au-slip-sortable:hover { color:#667eea; }
+.au-slip-arrow { color:#667eea; }
+.au-slip-row { cursor:pointer; }
+.au-slip-gap { display:inline-block; font-size:10px; padding:0 5px; border-radius:3px; background:#fbe4cf; color:#b45309; border:1px solid #e6c58f; }
+.au-slip-hist td { background:#fcfcfd; white-space:normal !important; font-size:11px; }
+.au-slip-stop { display:inline-block; margin:2px 10px 2px 0; color:#374151; }
+.au-slip-pager { display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-size:12px; color:#6b7280; }
+.au-slip-pager button { font-size:11px; padding:3px 9px; margin-left:4px; }
 
 /* ── LOG tab only ────────────────────────────────────────────────────────────
    The shared table is table-layout:fixed (equal quarters) with ellipsis-clipped
@@ -1407,6 +1440,7 @@ input.au-scalp-locked, input.au-scalp-locked:disabled { background: #f1f5f9; col
           <div class="au-subtabs">
             <button class="au-subtab-btn active" data-subtab="au-at2-paper-panel">Paper</button>
             <button class="au-subtab-btn" data-subtab="au-at2-live-panel">Live</button>
+            <button class="au-subtab-btn" data-subtab="au-at2-slip-panel">Slippage</button>
             <button class="au-subtab-btn" data-subtab="au-at2-alerts-panel" id="au-at2-alerts-tab">Alerts</button>
             <button class="au-subtab-btn" data-subtab="au-at2-events-panel">Signals &amp; Events</button>
             <button class="au-subtab-btn" data-subtab="au-at2-log-panel">Log</button>
@@ -1468,6 +1502,13 @@ input.au-scalp-locked, input.au-scalp-locked:disabled { background: #f1f5f9; col
                 <span id="au-at2-live-closed-summary" class="au-gs-block-sum"></span></summary>
               <div id="au-at2-live-closed-content" class="au-meta">Loading closed trades…</div>
             </details>
+          </div>
+
+          <!-- Slippage (read-only): asked-for price vs broker fill on every closed LIVE
+               MS007 trade since #2125. Loads only when opened (automation-slippage.js). -->
+          <div id="au-at2-slip-panel" class="au-subtab-panel">
+            <div id="au-at2-slip-filterbar"></div>
+            <div id="au-at2-slip-content" class="au-meta">Open this tab to load slippage…</div>
           </div>
 
           <!-- ⚠️ THE EMAIL IS A NOTIFICATION; THIS TABLE IS THE TRUTH.

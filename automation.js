@@ -2845,6 +2845,8 @@ function autoSwitchSubTab(subtabId) {
     if (subtabId === 'au-gs-live-panel' || subtabId === 'au-gs-paper-panel' || subtabId === 'au-pairs-fam-open-panel') {
         autoEnsureSharedRefresh();
     }
+    // MS007 › Slippage loads only when opened (egress rule A.22): automation-slippage.js.
+    if (subtabId === 'au-at2-slip-panel' && typeof auSlipOpen === 'function') auSlipOpen();
 }
 
 // ----------------------------------------------------------------------------
@@ -5683,10 +5685,14 @@ function auAt2RenderMetrics(mode) {
         var sec = auAt2Security(t); var lot = sec ? (Number(sec.lot_size) || 0) : 0;
         return (Number(px) || 0) * (Number(t.qty_lots) || 0) * lot;
     }
-    // Charges (T3a: 0.015% of notional per side), filtered closed set.
+    // Charges: T3a's futures rate on its Fyers broker account, per side, one rate
+    // for every book (owner, 18-Nov-2026). Read from the cached broker-account
+    // rates (wmsRefData, no DB call) — change it there and this card follows.
+    // Shared with the Slippage tab (auMs007ChargeRate, automation-slippage.js).
+    var chRate = (typeof auMs007ChargeRate === 'function') ? auMs007ChargeRate() : null;
     var charges = 0;
     closed.forEach(function (t) {
-        charges += 0.00015 * (notion(t, t.entry_price) + notion(t, t.exit_price));
+        charges += (chRate || 0) * (notion(t, t.entry_price) + notion(t, t.exit_price));
     });
     var net = gross - charges;
     // PEAK exposure: the largest COMBINED notional held at any one instant across
@@ -5741,7 +5747,9 @@ function auAt2RenderMetrics(mode) {
         ? (pct(gross) + ' · ' + wins + 'W/' + losses + 'L' + (filtered ? ' (filtered)' : ''))
         : (filtered ? 'none match the filters' : 'no closed trades yet'));
     set(pfx + 'net', closed.length ? auAt2Pnl(net) : '—');
-    sub(pfx + 'net-sub', closed.length ? (pct(net) + ' · after 0.015%/side') : '');
+    sub(pfx + 'net-sub', closed.length ? (pct(net) + (chRate === null
+        ? ' · <span style="color:#dc2626" title="Set T3a&#39;s futures rate on its Fyers broker account">before charges: rate not set</span>'
+        : ' · after ' + auMs007ChargeLabel(chRate))) : '');
 }
 
 function auAt2RenderBanner() {
@@ -10209,6 +10217,7 @@ function autoRerenderOnUnitChange() {
                 if (typeof auAt2RenderClosed === 'function') auAt2RenderClosed(m);
                 if (typeof auAt2RenderOpen === 'function') auAt2RenderOpen(m, true);
             });
+            if (typeof auSlipRender === 'function') auSlipRender();   // Slippage tab (redraws only if loaded)
         }
         if (famActive('au-fam-gs')) {
             if (typeof autoLoadGsOpenTrades === 'function') { autoLoadGsOpenTrades('paper', true); autoLoadGsOpenTrades('live', true); }
