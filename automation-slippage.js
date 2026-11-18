@@ -444,7 +444,7 @@ function _auSlipSummary(rows, rate, unit, full) {
         b += _auSlipStatRow('Opening gaps · entry', 'reference, not in total', gp, 'es', 'esPct', 'eRs', null, grandNet, '', true);
         b += _auSlipStatRow('Opening gaps · exit', 'reference, not in total', gp, 'xs', 'xsPct', 'xRs', netOf(gp), grandNet, '', false);
     }
-    b += _auSlipStatRow('Grand total', 'all closed trades', rows, 'rt', 'rtPct', 'rtRs', grandNet, grandNet, 'au-slip-gt', false);
+    b += _auSlipStatRow('Grand total', 'all closed trades since ' + _auSlipDdMon(AU_SLIP_SINCE) + '-' + AU_SLIP_SINCE.slice(2, 4), rows, 'rt', 'rtPct', 'rtRs', grandNet, grandNet, 'au-slip-gt', false);
 
     var gross = _auSlipSum(rows.map(function (r) { return r.gross; }));
     var charges = _auSlipSum(rows.map(function (r) { return r.charges; }));
@@ -460,6 +460,7 @@ function _auSlipSummary(rows, rate, unit, full) {
               formatAmount(charges) + ' on these closed trades = ' + (gross ? (charges / gross * 100).toFixed(2) : '0.00') + '% of the gross P&amp;L.</li>' +
           '<li>The % under Slippage is slippage as a share of that row\'s own net P&amp;L (or loss).</li>' +
           '<li>* An entry has no P&amp;L of its own: its % is of the Grand total net P&amp;L.</li>' +
+          '<li>Start date is fixed at ' + _auSlipDdMon(AU_SLIP_SINCE) + '-' + AU_SLIP_SINCE.slice(0, 4) + ' 21:00, the switch to #2125 (set in the code, not a setting). The date filter narrows within that.</li>' +
           '<li>Entry and Total cover the closed trades that did not exit on an opening gap; each exit row covers the trades that exited that way. ' +
               'Open trades are left out until they close. Amber = average and median differ by more than half.</li>' +
         '</ul>';
