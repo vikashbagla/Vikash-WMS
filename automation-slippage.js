@@ -385,6 +385,7 @@ function auSlipRender() {
     h += _auSlipChart(rows);
     h += _auSlipTrades(rows, unit, full);
     h += _auSlipPendingNote(pending);
+    host.className = 'au-slip-host';   // drop the loading-state 'au-meta' styling once there is content
     host.innerHTML = h;
 }
 
