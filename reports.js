@@ -196,8 +196,12 @@ function rptFifoEngine(txns, includeExited) {
 
     // Attach latestPrice (from last txn for each symbol) and _txns.
     // Engine grouping (J.2 updated): EQ → short_symbol, NFO → full symbol.
-    for (var n = 0; n < rptTransactions.length; n++) {
-        var tx = rptTransactions[n];
+    // MUST walk the SAME (filtered) txns the engine was given — never the global
+    // rptTransactions. Otherwise a filtered view (one investor / trader / saved
+    // view) carries every investor's trades in _txns, and Day P&L multiplies the
+    // whole firm's quantity by today's change (LLOYDSENT bug, 18-Nov-2026).
+    for (var n = 0; n < txns.length; n++) {
+        var tx = txns[n];
         var hKey = (tx.securityType === 'NFO' || tx.securityType === 'MCX')
             ? (tx.symbol || '').replace(/^[A-Z]+:/, '')
             : (tx.shortSymbol || tx.symbol || '');
