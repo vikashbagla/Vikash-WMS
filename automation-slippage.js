@@ -406,7 +406,10 @@ function _auSlipStatRow(label, sub, trs, ptsKey, pctKey, rsKey, net, grandNet, c
                 Math.abs(avg - med) > 0.5 * Math.max(Math.abs(avg), Math.abs(med)));
     var bi = pts.length ? pts.indexOf(Math.min.apply(null, pts)) : -1, wi = pts.length ? pts.indexOf(Math.max.apply(null, pts)) : -1;
     var td = function (v, p) { var c = _auSlipPts(v, p, bold); return skew ? c.replace('<td class="text-right', '<td title="Average and median differ by more than half: one or two trades are pulling the average" class="text-right au-slip-skew') : c; };
-    var cells = '<td>' + (bold ? '<b>' + label + '</b>' : label) + (sub ? '<div class="au-slip-pc">' + sub + '</div>' : '') + '</td>' +
+    var nCost = pts.filter(function (v) { return v > 0; }).length, nBetter = pts.filter(function (v) { return v < 0; }).length, nEven = pts.length - nCost - nBetter;
+    var counts = ' <span class="au-slip-cnt">(<span class="au-slip-cnt-c">' + nCost + ' cost</span> · <span class="au-slip-cnt-b">' + nBetter + ' better</span>' +
+                 (nEven ? ' · ' + nEven + ' even' : '') + ')</span>';
+    var cells = '<td>' + (bold ? '<b>' + label + '</b>' : label) + counts + (sub ? '<div class="au-slip-pc">' + sub + '</div>' : '') + '</td>' +
         '<td class="text-right">' + (bold ? '<b>' + trs.length + '</b>' : trs.length) + '</td>' +
         '<td class="text-right">' + (bold ? '<b>' + lots + '</b>' : lots) + '</td>';
     if (ptsKey === 'rt' && label.indexOf('Grand') >= 0) {
@@ -460,6 +463,7 @@ function _auSlipSummary(rows, rate, unit, full) {
               formatAmount(charges) + ' on these closed trades = ' + (gross ? (charges / gross * 100).toFixed(2) : '0.00') + '% of the gross P&amp;L.</li>' +
           '<li>The % under Slippage is slippage as a share of that row\'s own net P&amp;L (or loss).</li>' +
           '<li>* An entry has no P&amp;L of its own: its % is of the Grand total net P&amp;L.</li>' +
+          '<li>(n cost · n better) after each part: how many of its trades filled worse than asked (cost) or better than asked; "even" = exactly at the asked price.</li>' +
           '<li>Start date is fixed at ' + _auSlipDdMon(AU_SLIP_SINCE) + '-' + AU_SLIP_SINCE.slice(0, 4) + ' 21:00, the switch to #2125 (set in the code, not a setting). The date filter narrows within that.</li>' +
           '<li>Entry and Total cover the closed trades that did not exit on an opening gap; each exit row covers the trades that exited that way. ' +
               'Open trades are left out until they close. Amber = average and median differ by more than half.</li>' +
