@@ -4930,7 +4930,7 @@ function lgExportOpen() {
 }
 
 // Wire-up: when the date-range radio changes, re-fill From/To unless Custom.
-// "Since last recon": latest RECONCILIATION row's entry_date + 1 → today.
+// "Since last recon": latest RECONCILIATION row's entry_date + 1 → 31-Mar (FY end); To stays editable.
 function lgExportSyncDates() {
     var checked = document.querySelector('input[name="lgExpDateRange"]:checked');
     if (!checked) return;
@@ -4941,7 +4941,8 @@ function lgExportSyncDates() {
 
     // Custom — leave fields untouched, just enable them.
     fromEl.disabled = (preset !== 'custom');
-    toEl.disabled   = (preset !== 'custom');
+    // "Since last recon": From is fixed by the recon; To can be changed (owner 20-Nov-2026).
+    toEl.disabled   = (preset !== 'custom' && preset !== 'sinceRecon');
     if (preset === 'custom') {
         // Seed with the on-screen range if empty
         if (!fromEl.value) fromEl.value = lgDateFrom || '';
@@ -4978,7 +4979,8 @@ function lgExportSyncDates() {
                 showAlert('No reconciliation found in this view — defaulting From to FY start', 'info', 3500);
             }
         }
-        toEl.value = today.toISOString().slice(0, 10);
+        // To = 31-Mar of the current FY, not today (owner 20-Nov-2026) — editable above.
+        toEl.value = (fyStartY + 1) + '-03-31';
     }
 }
 
