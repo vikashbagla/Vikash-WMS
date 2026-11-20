@@ -2219,6 +2219,9 @@ function renderUnified(resetPage) {
     }));
 
     const foRows = (wmsRefData.securitiesNfo || []).map(r => ({
+        // _id is what makes the Lot cell editable (double-click). It was never set for F&O rows,
+        // so the 12-Nov MCX "set once, applies to every expiry" edit could not be reached (owner 20-Nov-2026).
+        _id:         r.id,
         symbol:      r.symbol || '',
         name:        r.instrument_name || '',
         type:        r.instrument_type || '',
