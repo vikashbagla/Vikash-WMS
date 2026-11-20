@@ -7,7 +7,7 @@
 //   Portfolio screen unchanged; Auto Trading opens its module; Reports and
 //   Accounting show "Coming soon".
 // • Tapping the 💼 icon (top left) returns to Home from anywhere.
-// • The bottom bar (Portfolio · F&O · Watchlist · Txns) shows only inside Trading.
+// • The bottom bar (Portfolio · F&O · Watchlist · Intl · Txns) shows only inside Trading.
 // Hooks into the shell only through public globals (loadModule, currentModule,
 // trSwitchTab, wmsHasModule) — no desktop file is edited for this.
 // ============================================================================
@@ -176,4 +176,22 @@ function wmsPhoneLanding() {
     }
     document.addEventListener('visibilitychange', onResume);
     window.addEventListener('pageshow', onResume);
+})();
+
+// ============================================================================
+// International on the phone (owner request 20-Nov-2026): a bottom-bar item next to Watchlist that
+// opens the desktop's own International tab (tr-international) — same page, same prices. Added here
+// (not in app.html) so desktop and tablet are untouched. This file runs before the app wires up its
+// bottom-bar buttons, so the new button gets the same click handling as the others.
+// ============================================================================
+(function () {
+    var nav = document.getElementById('wmsBottomNav');
+    var wl = nav && nav.querySelector('.bnav-item[data-subtab="tr-watchlist"]');
+    if (!wl || nav.querySelector('.bnav-item[data-subtab="tr-international"]')) return;
+    var b = document.createElement('button');
+    b.className = 'bnav-item';
+    b.setAttribute('data-module', 'trading');
+    b.setAttribute('data-subtab', 'tr-international');
+    b.innerHTML = '<span class="bnav-icon">🌐</span><span class="bnav-label">Intl</span>';
+    wl.parentNode.insertBefore(b, wl.nextSibling);
 })();
