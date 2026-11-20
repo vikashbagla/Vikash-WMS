@@ -5657,6 +5657,13 @@ function wmsTagInput(inputEl, pillsEl, ddEl, opts) {
         var trimmed = tagText.trim();
         if (!trimmed) return false;
         if (tags.indexOf(trimmed) >= 0) return false;
+        // 'blank' is only the "no tag" placeholder (A.2.1) — a real tag replaces it
+        // (owner 20-Nov-2026: a trade kept 'blank' next to the new AdvT1).
+        if (trimmed.toLowerCase() !== 'blank') {
+            for (var bi = tags.length - 1; bi >= 0; bi--) {
+                if (String(tags[bi]).toLowerCase() === 'blank') tags.splice(bi, 1);
+            }
+        }
         tags.push(trimmed);
         // Add to existingTags if new
         if (existingTags.indexOf(trimmed) === -1 && existingTags.indexOf(trimmed.toLowerCase()) === -1) {
@@ -5777,7 +5784,20 @@ function wmsTagInput(inputEl, pillsEl, ddEl, opts) {
 
     return {
         refresh: renderPills,
-        getTags: function() { return tags; },
+        // Text still typed in the box (not yet turned into a chip with Enter /
+        // comma / the drop-down) is committed here, so Save never silently drops
+        // it (owner 20-Nov-2026: typed AdvT1 + Save kept 'blank').
+        getTags: function() {
+            var pending = (inputEl.value || '').split(/[,;]/).map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; });
+            if (pending.length) {
+                var added = false;
+                pending.forEach(function(t) { if (addTag(t)) added = true; });
+                inputEl.value = '';
+                ddEl.classList.remove('show');
+                if (added) { renderPills(); onChange(); }
+            }
+            return tags;
+        },
         setExistingTags: function(arr) { existingTags = arr; },
         destroy: function() { ddCtrl.destroy(); }
     };

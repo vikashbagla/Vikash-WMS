@@ -2049,6 +2049,9 @@ async function wmsExecuteSplit() {
 
         Object.keys(_wmsSplitData.origUpdate).forEach(function(k) { txn[k] = _wmsSplitData.origUpdate[k]; });
         if (typeof wmsComputeDisplayNetAmount === 'function') txn.display_net_amount = wmsComputeDisplayNetAmount(txn);
+        // Process the new row exactly as a full load does (sanitize + search text),
+        // else the Symbol search skips it until a reload (owner 20-Nov-2026, PNBHOUSING T1 split rows).
+        if (insertedTxn && typeof wmsTxnProcessRow === 'function') insertedTxn = wmsTxnProcessRow(insertedTxn);
         if (insertedTxn && typeof wmsComputeDisplayNetAmount === 'function') insertedTxn.display_net_amount = wmsComputeDisplayNetAmount(insertedTxn);
         if (insertedTxn) wmsTxnCtx.transactions.push(insertedTxn);
         _wmsSplitData = null;
