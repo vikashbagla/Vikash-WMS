@@ -770,3 +770,16 @@ html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { displ
         border-radius: 14px; overflow: hidden; box-shadow: 0 0 0 100vmax rgba(20, 30, 60, 0.35), 0 12px 40px rgba(20, 30, 60, 0.25); }
     .mau-sheet .mau-sheet-body { padding-bottom: 90px; }
 }
+
+/* Finalised icons on the phone (owner, 20-Nov-2026; WMS iPhone App Plan mock-ups): app icon W6 in place of 💼,
+   New Entry E3 on the ± button, Trading 12c and Auto Trading 6b on the Home tiles (m-home.js). Phone layer only. */
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+    .logo-section h1 { font-size: 0 !important; line-height: 0; }
+    .logo-section h1::before { content: ''; display: inline-block; width: 30px; height: 30px; border-radius: 7px;
+        background: url(icons/WMS-app-icon-wordmark-v2.svg) center / cover no-repeat; box-shadow: 0 0 0 1px #e2e8f0; vertical-align: middle; }
+    #wms-strip .logo-section h1::before { width: 40px; height: 40px; border-radius: 9px; }
+    .trading-header-bar #trAddTxnBtn::before, #wms-strip #trAddTxnBtn::before { content: ''; display: block; width: 100%; height: 100%;
+        background: url(icons/WMS-new-entry-icon-E3-v1.svg) center / cover no-repeat; border-radius: inherit; }
+    #wms-strip #trAddTxnBtn, .trading-header-bar #trAddTxnBtn { overflow: hidden; padding: 0 !important; background: #14213D !important; border: none !important; border-radius: 9px !important; }
+    .mh-ico-img { width: 46px; height: 46px; border-radius: 11px; display: block; }
+}

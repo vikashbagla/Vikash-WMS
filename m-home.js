@@ -13,8 +13,10 @@
 // ============================================================================
 (function () {
     var MH_MODULES = [
-        { mod: 'trading',    icon: '📈', name: 'Trading',      desc: 'Portfolio · F&amp;O · Watchlist · Txns' },
-        { mod: 'automation', icon: '🤖', name: 'Auto Trading', desc: 'Strategies · live and paper' },
+        { mod: 'trading',    icon: '<img class="mh-ico-img" src="icons/WMS-trading-icon-12c-v1.svg" alt="">',   // finalised icon 12c (20-Nov)
+          name: 'Trading',      desc: 'Portfolio · F&amp;O · Watchlist · Txns' },
+        { mod: 'automation', icon: '<img class="mh-ico-img" src="icons/WMS-algo-icon-6b-v1.svg" alt="">',   // finalised icon 6b (20-Nov)
+          name: 'Auto Trading', desc: 'Strategies · live and paper' },
         { mod: 'statements', icon: '🧾', name: 'Statements', desc: 'Statements · read only' },   // m-stmt.js (11-Nov-2026)
         { mod: 'reports',    icon: '📊', name: 'Reports',      soon: true },
         { mod: 'accounting', icon: '📒', name: 'Accounting',   soon: true }
@@ -247,4 +249,46 @@ function wmsPhoneLanding() {
     paint();
     // The display unit comes from the user's preferences, which can arrive after this file runs.
     var tries = 0, t = setInterval(function () { paint(); if (++tries >= 20 || window.currentUser) { paint(); clearInterval(t); } }, 500);
+})();
+
+// ============================================================================
+// No full-screen "Loading…" on the phone while you are on Home (owner OK 21-Nov-2026, "ok prices").
+// At start-up the Trading screen is prepared in the background and its first live-price fetch puts the
+// desktop's grey "Loading…" cover over everything — 15-20 s on the phone, even though you are on Home.
+// On the phone, while Home is showing, that cover is replaced by a small "Loading prices…" mark and Home
+// stays usable. Open a module before it finishes and the normal cover shows there, exactly as today.
+// Nothing about the loading itself changes (same calls, same order, same numbers). Phone layer only.
+// ============================================================================
+(function () {
+    var ind = document.getElementById('loading-indicator');
+    if (!ind) return;
+    var st = document.createElement('style');
+    st.textContent = 'body.wms-ph-bgload #loading-indicator{display:none !important}' +
+        '#wmsPhBgMark{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 14px);z-index:100000;' +
+        'background:rgba(30,41,59,.88);color:#fff;font:600 11.5px/1 system-ui,-apple-system,sans-serif;padding:7px 12px 7px 10px;border-radius:14px;' +
+        'display:flex;align-items:center;gap:7px;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,.18)}' +
+        '#wmsPhBgMark i{width:8px;height:8px;border-radius:50%;border:2px solid #fff;border-top-color:transparent;animation:wmsPhBgSpin .8s linear infinite}' +
+        '@keyframes wmsPhBgSpin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(st);
+
+    function onHome() {
+        var p = document.querySelector('#content-container .module-pane[data-pane="phone-home"]');
+        return !!(p && p.style.display !== 'none' && (typeof wmsPhoneMode !== 'function' || wmsPhoneMode()));
+    }
+    function loadingShown() { return ind.style.display && ind.style.display !== 'none'; }
+    function mark(on) {
+        var m = document.getElementById('wmsPhBgMark');
+        if (on && !m) { m = document.createElement('div'); m.id = 'wmsPhBgMark'; m.setAttribute('role', 'status'); m.innerHTML = '<i></i>Loading prices…'; document.body.appendChild(m); }
+        if (!on && m) m.remove();
+    }
+    function sync() {
+        var bg = loadingShown() && onHome();
+        document.body.classList.toggle('wms-ph-bgload', bg);
+        mark(bg);
+    }
+    new MutationObserver(sync).observe(ind, { attributes: true, attributeFilter: ['style'] });
+    var cc = document.getElementById('content-container');
+    if (cc) new MutationObserver(sync).observe(cc, { attributes: true, subtree: true, attributeFilter: ['style'], childList: true });
+    window.addEventListener('wms-mode-change', sync);
+    sync();
 })();
