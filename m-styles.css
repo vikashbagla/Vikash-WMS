@@ -398,7 +398,8 @@
        One card per entry: header line "ENTRY n · BUY/SELL" (from the quantity's sign, as desktop saves it)
        with ⧉ copy and 🗑 delete; Symbol full width (details in grey after it); Lots · Qty · Price; the four
        amounts as small editable boxes (2 × 2); Trader · Tags. No Buy/Sell switch: a minus quantity = Sell. */
-    .addTxn-table tbody { counter-reset: wmsEntry; padding-bottom: 0; }   /* desktop keeps 130px under the rows for the symbol list; the phone has the Add button there */
+    .addTxn-table tbody { counter-reset: wmsEntry; }
+    .addTxn-table #addTxnTbody { padding-bottom: 0; }   /* desktop keeps 130px under the rows for the symbol list; the phone has the Add button there */
     .addTxn-table tr {
         counter-increment: wmsEntry;
         border: 1px solid #e2e8f0; border-radius: 10px; padding: 32px 10px 12px;
