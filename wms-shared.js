@@ -1893,6 +1893,21 @@ function wmsRerenderAmounts() {
     } catch (err) { console.warn('full-amount: auto-trading re-render failed', err); }
 }
 
+// Trader lists (owner, 21-Nov-2026; Phone New Entry Plan step 2.2a): the Trader drop-downs in New Entry,
+// Edit Transaction and Split list only traders WITHOUT their own books — investors whose books are kept
+// under another investor (investors.book_parent_id set; today T1, T2, T3, T3a, T4, T5, TRJ). Investors
+// with their own books (Veins, KDB, MB, …) never trade for another investor. "(Same)" stays first in
+// every list. keepId: the trader an existing entry already has is always kept (never silently changed).
+// If the investor master is not loaded, nothing is hidden (old behaviour).
+function wmsTraderOptionAllowed(investorId, keepId) {
+    if (keepId && investorId === keepId) return true;
+    var m = window.wmsRefData && window.wmsRefData.investorObjMap;
+    var inv = m && m[investorId];
+    if (!inv) return true;
+    return !!inv.book_parent_id;
+}
+window.wmsTraderOptionAllowed = wmsTraderOptionAllowed;
+
 // Flip the global full-amount flag, re-render, and confirm with a brief toast
 // that also teaches the shortcut.
 function wmsToggleFullAmount() {

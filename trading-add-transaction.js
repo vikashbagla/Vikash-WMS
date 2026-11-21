@@ -637,6 +637,7 @@ function addAddTxnRow(copyFromId) {
     var isNfo = row.lot_size > 1;
     var traderOptions = '<option value="">(Same)</option>';
     atInvestors.forEach(function(inv) {
+        if (typeof wmsTraderOptionAllowed === 'function' && !wmsTraderOptionAllowed(inv.id, row.trader_id)) return;   // traders without own books only (21-Nov-2026)
         var sel = (row.trader_id && inv.id === row.trader_id) ? ' selected' : '';
         traderOptions += '<option value="' + inv.id + '"' + sel + '>' + (inv.short_name || inv.name) + '</option>';
     });
