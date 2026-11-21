@@ -712,3 +712,7 @@ body.mh-early .mh-label::after { content: ' · loading your data…'; font-weigh
 @media screen and (min-width: 700px), screen and (min-width: 601px) and (orientation: landscape) {
     .mh-pane, .mau-landing, #mau-root, .mau-bnav, .mau-sheet, #mst-root, .mst-sheet, .tr-mobile-list, #wms-strip { display: none !important; }
 }
+
+/* Phone New Entry extras (⧉ copy, ⓘ, grey symbol details, + Add another entry) never show in the full web app. */
+html.wms-wide-mode .addTxn-m-copy, html.wms-wide-mode .addTxn-m-info,
+html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { display: none !important; }
