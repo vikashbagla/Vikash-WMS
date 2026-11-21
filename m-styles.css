@@ -37,6 +37,7 @@
     .logo-section h1 { font-size: 18px; }
     .logo-section h1 .logo-text { display: none; }   /* 2026-11-03 owner: keep the 💼 icon, drop the 'WMS' text on the phone */
     .mobile-unit-badge { display: inline-block !important; }
+    .mobile-unit-badge[aria-pressed="true"] { background: #e6fffa !important; color: #2c7a7b !important; }   /* full amounts on (step 2.5) */
 
     /* Row 1 right: buttons + Fyers + Logout.
        2026-11-03: row 1 must NEVER wrap (owner). flex-basis 0 means the buttons always stay on the

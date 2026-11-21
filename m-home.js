@@ -195,3 +195,33 @@ function wmsPhoneLanding() {
     b.innerHTML = '<span class="bnav-icon">🌐</span><span class="bnav-label">Intl</span>';
     wl.parentNode.insertBefore(b, wl.nextSibling);
 })();
+
+// ============================================================================
+// ₹ '000 tap toggle on the phone (WMS iPhone App Plan step 2.5, owner comment 20-Nov-2026): tapping the
+// unit badge in the phone header flips between the display unit (₹ '000 / Lakhs …) and full rupees —
+// exactly the desktop's F4 switch (same flag, same re-render, choice remembered the same way). The badge
+// always shows what is on screen. Phone layer only; desktop untouched.
+// ============================================================================
+(function () {
+    var badge = document.querySelector('.mobile-unit-badge');
+    if (!badge || badge._wmsUnitToggle) return;
+    badge._wmsUnitToggle = true;
+    function paint() {
+        try { badge.textContent = (typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000"; } catch (e) {}
+        badge.setAttribute('aria-pressed', (typeof wmsIsFullAmount === 'function' && wmsIsFullAmount()) ? 'true' : 'false');
+    }
+    badge.setAttribute('role', 'button');
+    badge.setAttribute('title', 'Tap to switch between ₹ \'000 and full amounts');
+    badge.style.cursor = 'pointer';
+    badge.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        if (typeof wmsSetFullAmount !== 'function' || typeof wmsIsFullAmount !== 'function') return;
+        wmsSetFullAmount(!wmsIsFullAmount());                 // the desktop's own flag (also what F4 flips)
+        if (typeof wmsRerenderAmounts === 'function') wmsRerenderAmounts();
+        paint();
+        if (typeof showAlert === 'function') showAlert(wmsIsFullAmount() ? 'Showing full amounts' : ('Showing ' + getUnitDescription()), 'info', 1500);
+    });
+    paint();
+    // The display unit comes from the user's preferences, which can arrive after this file runs.
+    var tries = 0, t = setInterval(function () { paint(); if (++tries >= 20 || window.currentUser) { paint(); clearInterval(t); } }, 500);
+})();
