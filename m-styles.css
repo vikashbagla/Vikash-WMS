@@ -641,7 +641,7 @@ body.mh-early .mh-label::after { content: ' · loading your data…'; font-weigh
 @media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
     html.wms-side-strip body { padding-right: var(--wms-strip, 0px); }
     html.wms-side-strip .wms-bottom-nav { right: var(--wms-strip, 0px); }
-    html.wms-side-strip #devBanner { right: var(--wms-strip, 0px) !important; }
+    html.wms-side-strip #devBanner { right: var(--wms-strip, 0px) !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10px !important; }   /* dev site only: keep it on one line */
     #wms-strip { position: fixed; top: 0; right: 0; bottom: 0; width: var(--wms-strip, 84px); z-index: 1002;
         display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 10px;
         padding: 0 0 max(env(safe-area-inset-bottom, 10px), 10px); box-sizing: border-box; background: transparent; pointer-events: none; }
