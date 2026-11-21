@@ -955,8 +955,13 @@
         var loaderEl = document.getElementById('startupLoader');
         var loaderMsg = document.getElementById('startupLoaderMsg');
 
+        // Show first, check after (iPhone App Plan 3.1, 21-Nov-2026): in the iPhone app, open from the copies
+        // already on the device and check with the server straight after (wms-shared.js). Off elsewhere.
+        var _wmsShownFirst = false;
+        try { _wmsShownFirst = (typeof wmsShowFirstPrime === 'function') && await wmsShowFirstPrime(); } catch (e) { _wmsShownFirst = false; }
+
         // Load all master data before activating any module
-        try {
+        if (!_wmsShownFirst) try {
             loaderMsg.textContent = 'Loading investors, brokers & config...';
             // Startup-speed (11-Nov-2026): send the "have transactions changed?" check now, alongside the
             // master-data loads, instead of after them. wmsLoadTransactions (below) uses this answer.
@@ -991,8 +996,14 @@
             // AFTER auth + master data so RLS + enrichment are in place.
             loaderMsg.textContent = 'Loading transactions...';
             await wmsLoadTransactions();
+            if (typeof wmsShowFirstSaveSnapshot === 'function') wmsShowFirstSaveSnapshot();   // copies for the next show-first opening
         } catch (e) {
             console.error('Startup load error (activating anyway; modules will load on demand):', e);
+        }
+        if (_wmsShownFirst) {
+            // Background server check: one call (wms_boot_state); updates what changed and re-draws.
+            if (typeof wmsTxnSyncPrefetch === 'function') wmsTxnSyncPrefetch();
+            setTimeout(function () { wmsShowFirstVerify().catch(function (e) { console.warn('Show-first check failed', e); }); }, 0);
         }
         // User preferences (request sent from checkAuth, 11-Nov-2026): always in place before anything is drawn.
         try { if (window._wmsPrefsReady) await window._wmsPrefsReady; } catch (e) { console.warn('Could not load user preferences:', e); }
