@@ -635,10 +635,37 @@ body.mh-early .mh-label::after { content: ' · loading your data…'; font-weigh
 
 }  /* end phone layout only */
 
+/* ---------------- iPhone Duo folded: header buttons in the right-hand strip (m-strip.js, mock-up G, 21-Nov-2026) ----------------
+   Only when iOS reserves a side strip (html.wms-side-strip, set by m-strip.js) and the phone layout shows.
+   Same background as the page and no dividing line, so it reads as one screen. */
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+    html.wms-side-strip body { padding-right: var(--wms-strip, 0px); }
+    html.wms-side-strip .wms-bottom-nav { right: var(--wms-strip, 0px); }
+    html.wms-side-strip #devBanner { right: var(--wms-strip, 0px) !important; }
+    #wms-strip { position: fixed; top: 0; right: 0; bottom: 0; width: var(--wms-strip, 84px); z-index: 1002;
+        display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 10px;
+        padding: 0 0 max(env(safe-area-inset-bottom, 10px), 10px); box-sizing: border-box; background: transparent; pointer-events: none; }
+    #wms-strip > * { pointer-events: auto; }
+    #wms-strip .wms-strip-group { width: calc(var(--wms-strip, 84px) - 14px); box-sizing: border-box; background: #ffffff;
+        border: 1px solid #e2e8f0; border-radius: 12px; padding: 8px 2px; box-shadow: 0 1px 3px rgba(20, 30, 60, 0.06); }
+    #wms-strip .logo-section, #wms-strip .user-section { display: flex !important; flex-direction: column !important; align-items: center !important;
+        justify-content: flex-start !important; gap: 9px !important; padding: 0 !important; margin: 0 !important; order: 0 !important;
+        flex: none !important; width: 100% !important; min-width: 0 !important; }
+    #wms-strip .logo-section h1 { margin: 0; font-size: 22px; line-height: 1; }
+    #wms-strip .user-section > .fyers-indicator { margin: 0 !important; text-align: center; }
+    #wms-strip #fyers-status { text-align: center; }
+    #wms-strip .btn-refresh-app, #wms-strip .btn-logout, #wms-strip .btn-txn-sync { font-size: 16px; padding: 6px 9px; }
+    #wms-strip .mobile-unit-badge { font-size: 10px !important; padding: 3px 6px !important; }
+    #wms-strip .wms-strip-trade { display: flex; justify-content: center; }
+    #wms-strip #trAddTxnBtn { width: 44px !important; height: 44px; padding: 0 !important; border-radius: 50%; font-size: 0 !important;
+        display: inline-flex; align-items: center; justify-content: center; }
+    #wms-strip #trAddTxnBtn::before { content: '\00B1'; font-size: 24px; font-weight: 700; line-height: 1; }
+}
+
 /* ---------------- Full web app on a phone (Phase 4, 21-Nov-2026): phone-only screens hidden ----------------
    When a phone is turned sideways (or the Duo opened sideways) the full web app shows, zoomed out to fit
    (m-mode.js). The phone-only screens that the phone files add stay in the page (so switching back is
    instant) but are hidden here. Same rule as above, inverted. */
 @media screen and (min-width: 700px), screen and (min-width: 601px) and (orientation: landscape) {
-    .mh-pane, .mau-landing, #mau-root, .mau-bnav, .mau-sheet, #mst-root, .mst-sheet, .tr-mobile-list { display: none !important; }
+    .mh-pane, .mau-landing, #mau-root, .mau-bnav, .mau-sheet, #mst-root, .mst-sheet, .tr-mobile-list, #wms-strip { display: none !important; }
 }
