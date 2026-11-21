@@ -147,13 +147,19 @@
         return true;
     }
 
-    var tries = 0;
-    (function start() {
+    // The New Entry form is loaded only when first opened, so wait for it (however late) without polling.
+    var hooked = false;
+    function hook() {
         var tb = document.getElementById('addTxnTbody');
-        wrapSelect();
-        if (!tb) { if (++tries < 80) setTimeout(start, 250); return; }
-        new MutationObserver(function () { refreshAll(); }).observe(tb, { childList: true });
+        if (!tb || hooked) return !!tb;
+        hooked = true;
+        new MutationObserver(function () { wrapSelect(); refreshAll(); }).observe(tb, { childList: true });
         window.addEventListener('wms-mode-change', refreshAll);
-        refreshAll();
-    })();
+        wrapSelect(); refreshAll();
+        return true;
+    }
+    if (!hook()) {
+        var bodyObs = new MutationObserver(function () { if (hook()) bodyObs.disconnect(); });
+        bodyObs.observe(document.documentElement, { childList: true, subtree: true });
+    }
 })();
