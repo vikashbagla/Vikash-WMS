@@ -1170,6 +1170,7 @@
     window.WMS_PHONE = (function () { try { if (sessionStorage.getItem('wms_force_phone') === '1') return true; return Math.min(screen.width, screen.height) <= 480; } catch (e) { return false; } })();
     if (window.WMS_PHONE) {
         document.write(`<link rel="stylesheet" href="m-styles.css?v=${_v}">`);
+        document.write(`<script src="m-mode.js?v=${_v}"><\/script>`);   // Phase 4 (21-Nov-2026): phone layout vs full web app, live
         document.write(`<script src="m-trading.js?v=${_v}"><\/script>`);
         document.write(`<script src="m-home.js?v=${_v}"><\/script>`);
         document.write(`<script src="m-auto.js?v=${_v}"><\/script>`);

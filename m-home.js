@@ -100,6 +100,29 @@
         };
     }
 
+    // Live switch between the phone layout and the full web app (Phase 4, m-mode.js), with no reload.
+    // The phone styles switch by themselves; here only the screen you are on is kept sensible:
+    //   • to the full web app: Home is a phone-only screen, so open Trading (or Statements for a
+    //     statements-only login) instead; anything else stays where it is.
+    //   • back to the phone layout: Trading and Auto Trading stay (bottom bar as usual); Statements
+    //     stays; a module the phone does not show (Reports, Accounting, …) goes back to Home.
+    window.addEventListener('wms-mode-change', function (e) {
+        var phone = !!(e.detail && e.detail.phone);
+        var onHome = (typeof currentModule === 'undefined' || !currentModule) && !document.body.classList.contains('mst-on');
+        if (!phone) {
+            if (onHome && !document.body.classList.contains('mh-early')) {
+                if (typeof wmsHasModule === 'function' && wmsHasModule('trading') && window.wmsAccess && window.wmsAccess.isOwner) loadModule('trading');
+                else if (typeof wmsPhoneOpenStatements === 'function' && typeof wmsHasModule === 'function' && wmsHasModule('statements')) wmsPhoneOpenStatements();
+                else if (typeof wmsHasModule === 'function' && wmsHasModule('trading')) loadModule('trading');
+            }
+            return;
+        }
+        if (document.body.classList.contains('mst-on') || onHome) return;
+        if (currentModule === 'trading') { mhSetBottomNav(true); return; }
+        if (currentModule === 'automation') { mhSetBottomNav(false); return; }
+        window.wmsPhoneShowHome();
+    });
+
     // 💼 (top-left) → Home.
     var logo = document.querySelector('.logo-section h1');
     if (logo) {
@@ -114,7 +137,7 @@
 // Phone landing (D.13.5, moved here from m-trading.js 2026-11-03): in portrait (≤480px) the phone
 // opens on Home. Returns true when it handled the landing; app.html falls back to the last module otherwise.
 function wmsPhoneLanding() {
-    if (!window.matchMedia('(max-width:480px)').matches) return false;
+    if (!(typeof wmsPhoneMode === 'function' ? wmsPhoneMode() : window.matchMedia('(max-width:480px)').matches)) return false;   // phone layout only (Phase 4: m-mode.js)
     if (typeof wmsPhoneShowHome !== 'function') return false;
     document.body.classList.remove('mh-early');   // data loaded → tiles live
     wmsPhoneShowHome();
@@ -127,7 +150,7 @@ function wmsPhoneLanding() {
 // alive when it finishes (wmsPhoneLanding above, called by the app at the end of its start-up).
 // Display only — nothing is loaded, calculated or skipped differently.
 (function () {
-    if (!window.matchMedia('(max-width:480px)').matches) return;
+    if (!(typeof wmsPhoneMode === 'function' ? wmsPhoneMode() : window.matchMedia('(max-width:480px)').matches)) return;   // phone layout only (Phase 4: m-mode.js)
     var OWNER = 'vikash.bagla@gmail.com';
     var started = Date.now();
     function accessKnown() {

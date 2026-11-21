@@ -128,7 +128,7 @@ function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, t
 // the OPEN dropdown to the viewport (position:fixed) so it escapes all clipping.
 // No-op on desktop (>480) — desktop keeps the absolute-positioned dropdown.
 function trReposDropdownMobile(dd, btn) {
-    if (!dd || !btn || window.innerWidth > 480) return;
+    if (!dd || !btn || !(typeof wmsPhoneMode === 'function' ? wmsPhoneMode() : window.innerWidth <= 480)) return;   // phone layout only (Phase 4: m-mode.js)
     if (dd.style.display !== 'block') return;
     var r = btn.getBoundingClientRect();
     dd.style.position = 'fixed';

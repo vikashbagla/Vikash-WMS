@@ -3,14 +3,16 @@
    downloads it). Linked from the END of <body> (app.html) so it comes after
    every <style> the app adds to <head> — phone rules win ties over desktop
    rules exactly as they did inside each file. Phone rules stay inside their
-   original @media (max-width:480px) wrappers, so orientation behaviour is unchanged.
+   original wrappers. Since 21-Nov-2026 (iPhone App Plan Phase 4) every phone rule sits inside ONE
+   rule — the phone layout: 600 points wide or less, or taller than wide and under 700 wide (Duo opened
+   upright) — the same rule m-mode.js uses, so the layout switches live on fold / unfold / turn.
    Moved verbatim on 2026-11-03 (Phone Layer Plan v1, Step 1). Source order kept:
    app-styles.css → trading.html → trading-watchlist.html → trading-add-transaction.html
    ============================================================================ */
 
 /* ---------------- from app-styles.css — @media (max-width:480px) block ---------------- */
 /* ---- Phone (iPhone / small Android) ---- */
-@media (max-width:480px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
     .tagline { display:none; }
     .nav-btn { font-size:11px; padding:5px 10px; }
     .summary-cards { grid-template-columns:1fr; }
@@ -103,6 +105,7 @@
 }
 
 /* ---------------- from trading.html — phone list styles (were outside the media block; phone-only elements) ---------------- */
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {   /* phone layout only (Phase 4) */
 .trm-summary {
     position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between;
     align-items: center; gap: 8px; padding: 8px 12px; background: #fafbfd;
@@ -168,11 +171,13 @@
 .fc-amt { font-size: 12px; font-weight: 600; white-space: nowrap; }
 .fc-pct { font-size: 9.5px; margin-top: 1px; white-space: nowrap; }
 
+}  /* end phone layout only */
+
 /* ---------------- from trading.html — @media (max-width:480px) block ---------------- */
 /* ================================================================
    RESPONSIVE: Phone
    ================================================================ */
-@media (max-width:480px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
     /* --- Trading header: single compact row, Day P&L left + Zero toggle right --- */
     .trading-header-bar {
         flex-direction: row;
@@ -307,7 +312,7 @@
 /* ================================================================
    RESPONSIVE: Phone (iPhone / small Android)
    ================================================================ */
-@media (max-width:480px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
     /* Single column — full width cards */
     .wl-grid {
         columns: unset;
@@ -364,7 +369,7 @@
 
 /* ---------------- from trading-add-transaction.html — @media (max-width:480px) block ---------------- */
 /* ===== PHONE: full-screen sheet + table reflowed into stacked trade cards ===== */
-@media (max-width: 480px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
     /* Hard horizontal clip so NOTHING can push the page wider than the phone
        (was zooming the whole page out — "half off screen"). */
     .addTxn-overlay { align-items: stretch; justify-content: stretch; overflow: hidden; -webkit-text-size-adjust: 100%; }
@@ -426,6 +431,7 @@
     .addTxn-footer .btn-secondary, .addTxn-footer .btn-primary { flex: 1; padding: 11px; font-size: 13px; }
 }
 
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {   /* phone layout only (Phase 4): Home, MS007, Statements phone screens */
 /* ---------------- Home screen (m-home.js, 2026-11-03) ---------------- */
 .mh-wrap { padding: 16px 10px 24px; display: flex; flex-direction: column; gap: 12px; }
 .mh-label { font-size: 11px; font-weight: 600; color: #718096; letter-spacing: 0.6px; text-transform: uppercase; padding-left: 2px; }
@@ -626,3 +632,13 @@ body.mst-on .wms-bottom-nav { display: none !important; }
 body.mh-early #startupLoader { display: none !important; }
 body.mh-early .mh-tile { opacity: .5; }
 body.mh-early .mh-label::after { content: ' · loading your data…'; font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+}  /* end phone layout only */
+
+/* ---------------- Full web app on a phone (Phase 4, 21-Nov-2026): phone-only screens hidden ----------------
+   When a phone is turned sideways (or the Duo opened sideways) the full web app shows, zoomed out to fit
+   (m-mode.js). The phone-only screens that the phone files add stay in the page (so switching back is
+   instant) but are hidden here. Same rule as above, inverted. */
+@media screen and (min-width: 700px), screen and (min-width: 601px) and (orientation: landscape) {
+    .mh-pane, .mau-landing, #mau-root, .mau-bnav, .mau-sheet, #mst-root, .mst-sheet, .tr-mobile-list { display: none !important; }
+}

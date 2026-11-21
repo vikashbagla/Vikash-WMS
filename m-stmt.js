@@ -337,6 +337,9 @@
             setTimeout(wait, 250);
         })();
     };
+    // Switching to the full web app (Phase 4, m-mode.js): close a phone sheet so the desktop's own
+    // controls are back in their place; Statements itself stays open (desktop view while wide).
+    window.addEventListener('wms-mode-change', function (e) { if (!(e.detail && e.detail.phone)) closeSheet(); });
     window.wmsPhoneCloseStatements = function () {
         document.body.classList.remove('mst-on');
         closeSheet();
