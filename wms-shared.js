@@ -816,7 +816,7 @@ async function _wmsLoadOneFromCache(kind, version) {
 // ---- boot orchestrator: probe checksums, load both masters from cache --------
 async function wmsLoadSecuritiesCache() {
     var probe;
-    try { probe = await wmsMastersSyncState(); }
+    try { probe = await _wmsMastersSyncStateOnce(); }   // start-up: answer from the one-call check when available
     catch (e) {                                    // checksum RPC unavailable -> plain REST
         console.warn('cache mode: masters_sync_state unavailable, using REST', e && e.message);
         await Promise.all([wmsLoadSecuritiesCm(), wmsLoadSecuritiesNfo()]);
@@ -937,9 +937,48 @@ async function wmsTxnSyncState() {
 // fewer in a row. Used once, only if under 15 s old; on any failure it simply asks again as before.
 var _wmsTxnSyncPre = null;
 function wmsTxnSyncPrefetch() {
-    var p = wmsTxnSyncState();
+    // Start-up (iPhone App Plan Phase 3, 21-Nov-2026): ONE database call (wms_boot_state) answers both the
+    // master-data check and the transactions check. Owner only — for anyone else it returns nothing and
+    // each check is asked separately exactly as before. Any failure also falls back to the separate checks.
+    var boot = _wmsBootStateStart();
+    var p = boot.then(function (b) { return (b && b.txn) ? b.txn : wmsTxnSyncState(); },
+                      function () { return wmsTxnSyncState(); });
     p.catch(function () {});
     _wmsTxnSyncPre = { p: p, at: Date.now() };
+}
+
+// One-call start-up check (migration 99-wms-boot-state.sql). Resolves to
+// { masters: <same shape as wmsMastersSyncState()>, txn: <same shape as wmsTxnSyncState()> } or null.
+var _wmsBootPre = null;
+function _wmsBootStateStart() {
+    var p = (async function () {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/wms_boot_state', {
+            method: 'POST',
+            headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ p_dev: window.WMS_ENV === 'dev' })
+        });
+        if (!resp.ok) return null;
+        var j = await resp.json();
+        if (!j || !Array.isArray(j.masters) || !j.txn) return null;
+        var masters = {};
+        j.masters.forEach(function (r) {
+            masters[r.table_name] = { row_count: Number(r.row_count), checksum: r.checksum, max_updated: r.max_updated };
+        });
+        var t = j.txn;
+        return { masters: masters, txn: { count: Number(t.row_count), checksum: t.checksum, maxUpdated: t.max_updated } };
+    })();
+    p.catch(function () {});
+    _wmsBootPre = { p: p, at: Date.now() };
+    return p;
+}
+// The master-data answer from that one call, used once and only if under 15 s old; otherwise asks as before.
+async function _wmsMastersSyncStateOnce() {
+    var pre = _wmsBootPre;
+    _wmsBootPre = null;
+    if (pre && (Date.now() - pre.at) < 15000) {
+        try { var b = await pre.p; if (b && b.masters) return b.masters; } catch (e) { /* fall through */ }
+    }
+    return wmsMastersSyncState();
 }
 async function _wmsTxnSyncStateOnce() {
     var pre = _wmsTxnSyncPre;
