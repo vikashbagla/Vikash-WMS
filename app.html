@@ -13,6 +13,7 @@
     <meta name="apple-mobile-web-app-title" content="WMS">
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="wms-app-sw-register.js"></script>   <!-- WMS iPhone app only: screens kept on the phone (plan step 2.3); does nothing on desktop / Safari -->
     <!-- Excel / PDF libraries (SheetJS, ExcelJS, jsPDF, pdf.js) are NOT loaded at startup — ~2.4 MB
          that only Import, Master Data, Accounting bank-import and the Statements export use. They load
          on demand via window.wmsEnsureLib() (see the WMS_LIBS block below + WMS_MODULE_DEF libs). -->
