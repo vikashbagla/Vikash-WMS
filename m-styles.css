@@ -716,3 +716,59 @@ body.mh-early .mh-label::after { content: ' · loading your data…'; font-weigh
 /* Phone New Entry extras (⧉ copy, ⓘ, grey symbol details, + Add another entry) never show in the full web app. */
 html.wms-wide-mode .addTxn-m-copy, html.wms-wide-mode .addTxn-m-info,
 html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { display: none !important; }
+
+/* ============================================================================
+   PHASE 5 — Duo opened upright (601–699 points wide, taller than wide; phone layout)
+   WMS iPhone App Plan, mock-ups B–D (21-Nov-2026). Layout only: same rows, same values, same taps.
+   Regular phones (≤600) and the full web app are not affected by anything in this block.
+   ============================================================================ */
+.trm-uhead { display: none; }   /* the Portfolio column header shows only on the Duo opened upright */
+@media screen and (orientation: portrait) and (min-width: 601px) and (max-width: 699px) {
+    /* B · Home (and the Auto Trading landing, which uses the same tiles): 3 across */
+    .mh-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .mh-tile { min-height: 120px; padding: 16px 12px; }
+
+    /* C · Trading › Portfolio: each holding on ONE line, under a column header (m-upright.js adds it).
+       Columns: Holding · Qty @ Avg · Price & day % · amount · % (amount and % follow the Sort choice, as today). */
+    #tr-portfolio-cards .trm-row { display: grid; align-items: baseline; column-gap: 10px;
+        grid-template-columns: minmax(0, 2.3fr) minmax(0, 1.6fr) minmax(0, 1.5fr) minmax(0, 1.15fr) minmax(0, 0.8fr); }
+    #tr-portfolio-cards .trm-row .trm-l1, #tr-portfolio-cards .trm-row .trm-l2 { display: contents; }
+    #tr-portfolio-cards .trm-row .trm-sym { order: 1; }
+    #tr-portfolio-cards .trm-row .trm-zl  { order: 2; font-size: 11.5px; color: #4a5568; text-align: right; }
+    #tr-portfolio-cards .trm-row .trm-zm  { order: 3; font-size: 11.5px; color: #4a5568; text-align: right; }
+    #tr-portfolio-cards .trm-row .trm-r1  { order: 4; text-align: right; }
+    #tr-portfolio-cards .trm-row .trm-zr  { order: 5; font-size: 11.5px; text-align: right; }
+    .trm-uhead { display: grid; column-gap: 10px; padding: 6px 12px; background: #f7f8fb; border-bottom: 1px solid #e2e8f0;
+        grid-template-columns: minmax(0, 2.3fr) minmax(0, 1.6fr) minmax(0, 1.5fr) minmax(0, 1.15fr) minmax(0, 0.8fr);
+        font-size: 9.5px; font-weight: 600; color: #94a0b3; text-transform: uppercase; letter-spacing: .3px; position: sticky; top: 0; z-index: 2; }
+    .trm-uhead span + span { text-align: right; }
+    #tr-portfolio-cards .trm-detail-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    /* Trading › F&O: name and its Qty @ Avg · CMP on one line; wider amount columns */
+    #tr-fno-cards .fc-a { display: flex; align-items: baseline; gap: 10px; }
+    #tr-fno-cards .fc-a-l1 { flex: 1 1 45%; min-width: 0; }
+    #tr-fno-cards .fc-a-l2 { flex: 1 1 55%; min-width: 0; margin-top: 0; text-align: right; font-size: 11px; color: #718096; }
+    #tr-fno-cards .fc-b, #tr-fno-cards .fc-c { width: 104px; }
+    #tr-fno-cards .trm-detail-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    /* D · Statements: the four summary cards in one row; each transaction on ONE line
+       (Date · Qty @ price | Symbol + BUY/SELL | Amount | Balance) */
+    .mst-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .mst-row:has(> .mst-r1 > .mst-amt) { display: grid; align-items: baseline; column-gap: 10px;
+        grid-template-columns: minmax(0, 1.5fr) minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.15fr); }
+    .mst-row:has(> .mst-r1 > .mst-amt) > .mst-r1, .mst-row:has(> .mst-r1 > .mst-amt) > .mst-r2 { display: contents; }
+    .mst-row:has(> .mst-r1 > .mst-amt) > .mst-r2 > span:first-child { order: 1; font-size: 11px; color: #718096; }
+    .mst-row:has(> .mst-r1 > .mst-amt) > .mst-r1 > .mst-sym { order: 2; font-size: 12.5px; font-weight: 600; }
+    .mst-row:has(> .mst-r1 > .mst-amt) > .mst-r1 > .mst-amt { order: 3; text-align: right; font-size: 12.5px; font-weight: 600; }
+    .mst-row:has(> .mst-r1 > .mst-amt) > .mst-r2 > span:last-child { order: 4; text-align: right; font-size: 11px; color: #4a5568; }
+
+    /* MS007: open-trade cards two per row (headings, summary boxes and lists keep the full width) */
+    .mau-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .mau-body > :not(.mau-card) { grid-column: 1 / -1; }
+    .mau-kpis2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    /* Sheets (MS007 details, Statements pickers): a centred panel instead of a full screen */
+    .mau-sheet { inset: auto; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 92vw; max-width: 600px; height: 86vh;
+        border-radius: 14px; overflow: hidden; box-shadow: 0 0 0 100vmax rgba(20, 30, 60, 0.35), 0 12px 40px rgba(20, 30, 60, 0.25); }
+    .mau-sheet .mau-sheet-body { padding-bottom: 90px; }
+}
