@@ -248,7 +248,11 @@ function wmsPhoneLanding() {
     });
     paint();
     // The display unit comes from the user's preferences, which can arrive after this file runs.
-    var tries = 0, t = setInterval(function () { paint(); if (++tries >= 20 || window.currentUser) { paint(); clearInterval(t); } }, 500);
+    // Keep repainting for the first 30 s (the unit arrives with the preferences, after sign-in — the old
+    // stop-at-sign-in check left "₹ Lakhs" showing over '000 figures, owner 21-Nov-2026), and after prefs load.
+    var tries = 0, t = setInterval(function () { paint(); if (++tries >= 60) clearInterval(t); }, 500);
+    if (window._wmsPrefsReady && typeof window._wmsPrefsReady.then === 'function') window._wmsPrefsReady.then(function () { setTimeout(paint, 50); });
+    window.addEventListener('focus', paint);
 })();
 
 // ============================================================================

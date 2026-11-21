@@ -20,6 +20,9 @@
     var WIDE_LAYOUT_WIDTH = 1280;            // decision 3 (20-Nov): full web app laid out at ~1,280 points
     var meta = document.querySelector('meta[name="viewport"]');
     var PHONE_VIEWPORT = meta ? meta.getAttribute('content') : 'width=device-width, initial-scale=1.0, viewport-fit=cover';
+    // Phone layout: no automatic zoom-in when tapping into a text box (iOS zooms any box whose text is
+    // smaller than 16 points). maximum-scale=1 stops that zoom only (owner, 21-Nov-2026).
+    if (PHONE_VIEWPORT.indexOf('maximum-scale') < 0) PHONE_VIEWPORT += ', maximum-scale=1';
     var WIDE_VIEWPORT = 'width=' + WIDE_LAYOUT_WIDTH + ', viewport-fit=cover';
 
     // The space the app has, in points, whatever the current zoom. Width: the visible area times its zoom.

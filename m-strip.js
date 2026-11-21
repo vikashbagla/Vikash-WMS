@@ -70,6 +70,11 @@
 
     var t = null;
     function later() { clearTimeout(t); t = setTimeout(update, 200); }
+    // iOS can report the side strip a moment AFTER the page has started (seen on the Duo, 21-Nov-2026:
+    // the buttons stayed in the header on a cold start). Re-check whenever the strip's width changes,
+    // and a few more times during the first seconds.
+    if (window.ResizeObserver) new ResizeObserver(later).observe(probe);
+    [1000, 2500, 5000, 10000].forEach(function (ms) { setTimeout(update, ms); });
     window.addEventListener('resize', later);
     window.addEventListener('orientationchange', function () { setTimeout(update, 350); });
     window.addEventListener('wms-mode-change', function () { setTimeout(update, 50); });

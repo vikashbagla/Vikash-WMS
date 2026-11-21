@@ -783,3 +783,15 @@ html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { displ
     #wms-strip #trAddTxnBtn, .trading-header-bar #trAddTxnBtn { overflow: hidden; padding: 0 !important; background: #14213D !important; border: none !important; border-radius: 9px !important; }
     .mh-ico-img { width: 46px; height: 46px; border-radius: 11px; display: block; }
 }
+
+/* ▾ More (views) and ⇅ Sort on the phone: a box in the middle of the screen with large rows (owner, 21-Nov-2026).
+   m-trading.js trReposDropdownMobile() places it; tapping outside closes it as before. Phone layer only. */
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+    .wms-ph-menu { width: min(92vw, 440px) !important; min-width: 0 !important; max-height: 72vh !important; margin: 0 !important;
+        border-radius: 14px !important; padding: 6px 0 !important; overflow-y: auto;
+        box-shadow: 0 0 0 100vmax rgba(20, 30, 60, 0.35), 0 12px 40px rgba(20, 30, 60, 0.25) !important; }
+    .wms-ph-menu .tr-more-item { padding: 14px 18px !important; font-size: 15px !important; min-height: 24px; }
+    .wms-ph-menu .tr-more-item + .tr-more-item { border-top: 1px solid #f1f4f8; }
+    .wms-ph-menu .tr-more-drag-handle { display: none; }
+    .wms-ph-menu .tr-sort-arrow { font-size: 13px; }
+}
