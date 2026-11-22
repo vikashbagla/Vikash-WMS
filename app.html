@@ -229,8 +229,21 @@
             if (el) { el.innerHTML = '🔴 Prices'; el.title = 'Live price feed error — see console'; el.style.color = '#dc2626'; }
         } catch (_e) {}
     };
+    // Read-only users (owner, 22-Nov-2026): the broker login indicator is a plain status, never a button —
+    // a static green dot while live prices are coming in (red "Prices" if the feed fails). Tapping it does
+    // nothing; only the owner's indicator retries logins. (The login server also refuses anyone but the owner.)
+    function wmsViewerPriceStatus() {
+        var el = document.getElementById('fyers-status');
+        if (!el) return;
+        el.innerHTML = '<span title="Live prices connected" style="font-size:12px;cursor:default">🟢</span>';
+        el.title = ''; el.style.color = '';
+    }
+    window.wmsViewerPriceStatus = wmsViewerPriceStatus;
     // Clear the error state once the feed recovers (only touches DOM if it was red).
     window.__priceWorkerOk = function() {
+        if (window.__priceWorkerLastError && window.wmsAccess && !window.wmsAccess.isOwner) {
+            window.__priceWorkerLastError = null; wmsViewerPriceStatus(); return;
+        }
         if (window.__priceWorkerLastError) {
             window.__priceWorkerLastError = null;
             try {
@@ -992,7 +1005,7 @@
         }
 
         if (window.wmsAccess.isOwner) checkFyersAuth();   // owner: real Fyers indicator + token from the IBA
-        else { window.fyersToken = 'db'; }   // read-only users: LTP/P&L come from the server-side fyers-market-data EF (which now allows authorized users). 'db' = truthy flag so the shared price refresh runs; no client Fyers token needed.
+        else { window.fyersToken = 'db'; wmsViewerPriceStatus(); }   // read-only users: LTP/P&L come from the server-side fyers-market-data EF (which now allows authorized users). 'db' = truthy flag so the shared price refresh runs; no client Fyers token needed.
 
         // Show startup loader while master data loads
         var loaderEl = document.getElementById('startupLoader');
