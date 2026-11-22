@@ -9,6 +9,7 @@
 //                                                                        upright or sideways)
 //   • taller than wide and under 700 wide             → phone layout   (Duo opened upright; rearranged
 //                                                                        for the wider screen in Phase 5)
+//   • wider than tall, 450+ tall and 760 or less wide → phone layout   (Duo folded, turned sideways — 22-Nov)
 //   • anything wider                                  → the full web app, laid out at 1,280 points and
 //                                                        zoomed out to fit (as Chrome on the iPad)
 // The phone styles (m-styles.css) use the SAME rule as a CSS media query, so they switch on and off by
@@ -34,7 +35,10 @@
         var r = window.innerWidth ? w / window.innerWidth : 1;
         return { w: Math.round(w), h: Math.round(window.innerHeight * r) };
     }
-    function phoneFor(s) { return s.w <= 600 || (s.h > s.w && s.w < 700); }
+    // Third rule (owner, 22-Nov-2026): the Duo FOLDED and turned sideways (about 678 × 466) keeps the phone
+    // layout — wider than 600 but taller than any regular phone held sideways (those are 440 or less, and
+    // stay on the full web app, decision 2). The Duo opened sideways (867 wide) stays on the full web app.
+    function phoneFor(s) { return s.w <= 600 || (s.h > s.w && s.w < 700) || (s.w > s.h && s.h >= 450 && s.w <= 760); }
 
     var current = null;
     function apply(force) {

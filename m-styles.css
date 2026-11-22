@@ -12,7 +12,7 @@
 
 /* ---------------- from app-styles.css — @media (max-width:480px) block ---------------- */
 /* ---- Phone (iPhone / small Android) ---- */
-@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {
     .tagline { display:none; }
     .nav-btn { font-size:11px; padding:5px 10px; }
     .summary-cards { grid-template-columns:1fr; }
@@ -105,7 +105,7 @@
 }
 
 /* ---------------- from trading.html — phone list styles (were outside the media block; phone-only elements) ---------------- */
-@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {   /* phone layout only (Phase 4) */
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {   /* phone layout only (Phase 4) */
 .trm-summary {
     position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between;
     align-items: center; gap: 8px; padding: 8px 12px; background: #fafbfd;
@@ -177,7 +177,7 @@
 /* ================================================================
    RESPONSIVE: Phone
    ================================================================ */
-@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {
     /* --- Trading header: single compact row, Day P&L left + Zero toggle right --- */
     .trading-header-bar {
         flex-direction: row;
@@ -312,7 +312,7 @@
 /* ================================================================
    RESPONSIVE: Phone (iPhone / small Android)
    ================================================================ */
-@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {
     /* Single column — full width cards */
     .wl-grid {
         columns: unset;
@@ -369,7 +369,7 @@
 
 /* ---------------- from trading-add-transaction.html — @media (max-width:480px) block ---------------- */
 /* ===== PHONE: full-screen sheet + table reflowed into stacked trade cards ===== */
-@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {
     /* Hard horizontal clip so NOTHING can push the page wider than the phone
        (was zooming the whole page out — "half off screen"). */
     .addTxn-overlay { align-items: stretch; justify-content: stretch; overflow: hidden; -webkit-text-size-adjust: 100%; }
@@ -474,7 +474,7 @@
     .addTxn-table td:nth-child(10) { grid-column: 10 / 13; grid-row: 3; }
 }
 
-@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {   /* phone layout only (Phase 4): Home, MS007, Statements phone screens */
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {   /* phone layout only (Phase 4): Home, MS007, Statements phone screens */
 /* ---------------- Home screen (m-home.js, 2026-11-03) ---------------- */
 .mh-wrap { padding: 16px 10px 24px; display: flex; flex-direction: column; gap: 12px; }
 .mh-label { font-size: 11px; font-weight: 600; color: #718096; letter-spacing: 0.6px; text-transform: uppercase; padding-left: 2px; }
@@ -681,8 +681,13 @@ body.mh-early .mh-label::after { content: ' · loading your data…'; font-weigh
 /* ---------------- iPhone Duo folded: header buttons in the right-hand strip (m-strip.js, mock-up G, 21-Nov-2026) ----------------
    Only when iOS reserves a side strip (html.wms-side-strip, set by m-strip.js) and the phone layout shows.
    Same background as the page and no dividing line, so it reads as one screen. */
-@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {
     html.wms-side-strip body { padding-right: var(--wms-strip, 0px); }
+    /* Duo folded and turned sideways with the camera on the LEFT: the Control Center follows it (owner, 22-Nov-2026) */
+    html.wms-side-strip.wms-strip-left body { padding-right: 0; padding-left: var(--wms-strip, 0px); }
+    html.wms-side-strip.wms-strip-left #wms-strip { right: auto !important; left: 0 !important; }
+    html.wms-side-strip.wms-strip-left .wms-bottom-nav, html.wms-side-strip.wms-strip-left .mau-bnav { right: 12px !important; left: calc(12px + var(--wms-strip, 0px)) !important; }
+    html.wms-side-strip.wms-strip-left #devBanner { right: 0 !important; left: var(--wms-strip, 0px) !important; }
     html.wms-side-strip .wms-bottom-nav { right: var(--wms-strip, 0px); }
     html.wms-side-strip #devBanner { right: var(--wms-strip, 0px) !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10px !important; }   /* dev site only: keep it on one line */
     #wms-strip { position: fixed; top: 0; right: 0; bottom: 0; width: var(--wms-strip, 84px); z-index: 1002;
@@ -709,7 +714,7 @@ body.mh-early .mh-label::after { content: ' · loading your data…'; font-weigh
    When a phone is turned sideways (or the Duo opened sideways) the full web app shows, zoomed out to fit
    (m-mode.js). The phone-only screens that the phone files add stay in the page (so switching back is
    instant) but are hidden here. Same rule as above, inverted. */
-@media screen and (min-width: 700px), screen and (min-width: 601px) and (orientation: landscape) {
+@media screen and (min-width: 761px), screen and (orientation: portrait) and (min-width: 700px), screen and (orientation: landscape) and (min-width: 601px) and (max-height: 449.98px) {   /* the inverse of the phone rule (Duo folded sideways = phone, 22-Nov-2026) */
     .mh-pane, .mau-landing, #mau-root, .mau-bnav, .mau-sheet, #mst-root, .mst-sheet, .tr-mobile-list, #wms-strip { display: none !important; }
 }
 
@@ -773,7 +778,7 @@ html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { displ
 
 /* Finalised icons on the phone (owner, 20-Nov-2026; WMS iPhone App Plan mock-ups): app icon W6 in place of 💼,
    New Entry E3 on the ± button, Trading 12c and Auto Trading 6b on the Home tiles (m-home.js). Phone layer only. */
-@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {
     .logo-section h1 { font-size: 0 !important; line-height: 0; }
     .logo-section h1::before { content: ''; display: inline-block; width: 30px; height: 30px; border-radius: 7px;
         background: url(icons/WMS-app-icon-wordmark-v2.svg) center / cover no-repeat; box-shadow: 0 0 0 1px #e2e8f0; vertical-align: middle; }
@@ -786,7 +791,7 @@ html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { displ
 
 /* ▾ More (views) and ⇅ Sort on the phone: a box in the middle of the screen with large rows (owner, 21-Nov-2026).
    m-trading.js trReposDropdownMobile() places it; tapping outside closes it as before. Phone layer only. */
-@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {
     .wms-ph-menu { width: min(92vw, 440px) !important; min-width: 0 !important; max-height: 72vh !important; margin: 0 !important;
         border-radius: 14px !important; padding: 6px 0 !important; overflow-y: auto;
         box-shadow: 0 0 0 100vmax rgba(20, 30, 60, 0.35), 0 12px 40px rgba(20, 30, 60, 0.25) !important; }
@@ -804,7 +809,7 @@ html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { displ
       Live order beside New Entry, Day's P&L centred in the space left of the two buttons.
    3. Floating see-through nav bar (Trading, MS007). Professional look: calm, no playful colours.
    ============================================================================ */
-@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {
     :root { --ph-bg: #f3f5f9; }
     html, body, .app-header, #wmsGlobalBanner, .trading-header-bar, #content-container, .main-content, .mh-pane, #mst-root, #mau-root {
         background: var(--ph-bg) !important; }
@@ -867,12 +872,13 @@ html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { displ
    (symbol / price ▲▼ %), green up, red down, grey while last-known. Tapping does nothing.
    Folded Duo: runs the full width, behind the camera, into the Control Center area.
    ============================================================================ */
-@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {
     html.wms-mt-on #indexTicker > .index-item { display: none !important; }
     html.wms-mt-on #indexTicker { display: block !important; overflow: hidden; border-top: none !important; border-bottom: 1px solid #e3e8ef !important;
         background: transparent !important; pointer-events: none; padding: 0 !important; }
     html.wms-mt-on.wms-side-strip #indexTicker { width: calc(100% + var(--wms-strip, 0px)) !important; max-width: none !important;
         margin-right: calc(-1 * var(--wms-strip, 0px)) !important; position: relative; z-index: 1003; }
+    html.wms-mt-on.wms-side-strip.wms-strip-left #indexTicker { margin-right: 0 !important; margin-left: calc(-1 * var(--wms-strip, 0px)) !important; }
     html:not(.wms-mt-on) .wms-mt { display: none !important; }
     .wms-mt { overflow: hidden; width: 100%; }
     .wms-mt-track { display: inline-flex; white-space: nowrap; will-change: transform; animation: wmsMtRun 60s linear infinite; }

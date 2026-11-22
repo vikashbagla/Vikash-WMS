@@ -21,10 +21,34 @@
     var probe = document.createElement('div');
     probe.style.cssText = 'position:fixed;top:0;right:0;width:env(safe-area-inset-right,0px);height:0;visibility:hidden;pointer-events:none;';
     document.documentElement.appendChild(probe);
+    // Duo folded and turned sideways (owner, 22-Nov-2026): the strip can be on the LEFT (camera on the left);
+    // the Control Center follows it. Test switch: localStorage 'wms_test_strip_side' = 'left'.
+    var probeL = document.createElement('div');
+    probeL.style.cssText = 'position:fixed;top:0;left:0;width:env(safe-area-inset-left,0px);height:0;visibility:hidden;pointer-events:none;';
+    document.documentElement.appendChild(probeL);
 
     function stripWidth() {
         try { var t = parseInt(localStorage.getItem('wms_test_strip'), 10); if (t > 0) return t; } catch (e) {}
-        return Math.round(probe.getBoundingClientRect().width) || 0;
+        return Math.max(Math.round(probe.getBoundingClientRect().width) || 0, Math.round(probeL.getBoundingClientRect().width) || 0);
+    }
+    function stripLeft() {
+        try { var t = localStorage.getItem('wms_test_strip_side'); if (t) return t === 'left'; } catch (e) {}
+        return (Math.round(probeL.getBoundingClientRect().width) || 0) > (Math.round(probe.getBoundingClientRect().width) || 0);
+    }
+    // Scale to fit (owner, 22-Nov-2026): sideways the screen is only ~430 points tall, so when the buttons
+    // do not fit in one column they are all shrunk evenly until they do (same buttons, same order).
+    function fit() {
+        if (!strip) return;
+        var kids = strip.children, i;
+        for (i = 0; i < kids.length; i++) kids[i].style.zoom = '';
+        var cs = getComputedStyle(strip);
+        var gap = parseFloat(cs.rowGap || cs.gap) || 0;
+        var need = 0, gaps = gap * Math.max(0, kids.length - 1);
+        for (i = 0; i < kids.length; i++) need += kids[i].getBoundingClientRect().height;
+        var avail = window.innerHeight - gaps - (parseFloat(cs.paddingBottom) || 0) - 8;
+        if (need <= avail) return;
+        var z = String(Math.floor(Math.max(0.5, avail / need) * 100) / 100);
+        for (i = 0; i < kids.length; i++) kids[i].style.zoom = z;     // each group shrinks; the strip keeps its width
     }
 
     var strip = null, moved = [];
@@ -69,8 +93,10 @@
         var on = phone && w >= MIN_STRIP;
         document.documentElement.style.setProperty('--wms-strip', on ? (w + 'px') : '0px');
         document.documentElement.classList.toggle('wms-side-strip', on);
+        document.documentElement.classList.toggle('wms-strip-left', on && stripLeft());
         if (on && !strip) build(w);
         else if (!on && strip) teardown();
+        if (on) { fit(); setTimeout(fit, 300); }
     }
 
     var t = null;
@@ -78,7 +104,7 @@
     // iOS can report the side strip a moment AFTER the page has started (seen on the Duo, 21-Nov-2026:
     // the buttons stayed in the header on a cold start). Re-check whenever the strip's width changes,
     // and a few more times during the first seconds.
-    if (window.ResizeObserver) new ResizeObserver(later).observe(probe);
+    if (window.ResizeObserver) { var ro = new ResizeObserver(later); ro.observe(probe); ro.observe(probeL); }
     [1000, 2500, 5000, 10000].forEach(function (ms) { setTimeout(update, ms); });
     window.addEventListener('resize', later);
     window.addEventListener('orientationchange', function () { setTimeout(update, 350); });
