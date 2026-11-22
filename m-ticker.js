@@ -54,8 +54,8 @@
     }
     function speed() {
         if (!track) return;
-        var half = track.scrollWidth / 2;
-        track.style.animationDuration = Math.max(20, Math.round(half / 32)) + 's';   // about 32 points a second
+        var half = track.scrollWidth / 2;   // screen-geometry
+        track.style.animationDuration = Math.max(20, Math.round(half / 32)) + 's';   // about 32 points a second   // screen-geometry
     }
 
     function fmt(lp) {
@@ -144,7 +144,7 @@
     // The list is read once you are signed in, then every 5 minutes (so a symbol you add to "Current" appears).
     var t2 = 0;
     (function waitUser() {
-        if (window.currentUser) { refreshList(); setInterval(refreshList, 5 * 60 * 1000); return; }
+        if (window.currentUser) { refreshList(); setInterval(refreshList, 5 * 60 * 1000); return; }   // screen-geometry
         if (++t2 < 240) setTimeout(waitUser, 500);
     })();
 })();

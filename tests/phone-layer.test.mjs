@@ -90,7 +90,10 @@ for (const f of phoneFiles.filter(f => f.endsWith('.js'))) {
     const t = ln.trim(); if (!t || t.startsWith('//') || t.startsWith('*')) return;
     const code = t.replace(/\/\/.*$/, '').replace(/'[^']*'/g, "''");
     if (/^dd\.style\./.test(code)) return;   // screen positioning, not money
-    if ((CALC.test(code) || MONEY_ADD.test(code)) && !ALLOWED_CALC.has(t)) fails.push(`5. ${f}:${i + 1}: calculation in phone code — move it to a shared helper the desktop also uses: ${t.slice(0, 110)}`);
+    // Screen geometry / timing (sizes in points, zoom, animation speed, timers) — never money. Such a line must
+    // say so at its end with `// screen-geometry`; it is still checked for money-named arithmetic (22-Nov-2026).
+    const geo = /\/\/\s*screen-geometry\b/.test(t);
+    if (((CALC.test(code) && !geo) || MONEY_ADD.test(code)) && !ALLOWED_CALC.has(t)) fails.push(`5. ${f}:${i + 1}: calculation in phone code — move it to a shared helper the desktop also uses: ${t.slice(0, 110)}`);
   });
 }
 
