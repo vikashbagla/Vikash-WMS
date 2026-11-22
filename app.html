@@ -12,6 +12,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="WMS">
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <link rel="icon" type="image/svg+xml" href="icons/WMS-app-icon-wordmark-v2.svg">   <!-- browser tab icon: finalised W6 (22-Nov-2026) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="wms-app-sw-register.js"></script>   <!-- WMS iPhone app only: screens kept on the phone (plan step 2.3); does nothing on desktop / Safari -->
     <!-- Excel / PDF libraries (SheetJS, ExcelJS, jsPDF, pdf.js) are NOT loaded at startup — ~2.4 MB
@@ -82,8 +83,8 @@
 
     <nav class="top-nav">
         <div class="nav-content">
-            <button class="nav-btn" data-module="trading">📈 Trading</button>
-            <button class="nav-btn" data-module="automation">🤖 Auto Trading</button>
+            <button class="nav-btn" data-module="trading"><img class="nav-ico" src="icons/WMS-trading-icon-12c-v1.svg" alt="">Trading</button>
+            <button class="nav-btn" data-module="automation"><img class="nav-ico" src="icons/WMS-algo-icon-6b-v1.svg" alt="">Auto Trading</button>
             <button class="nav-btn active" data-module="reports">📊 Reports</button>
             <button class="nav-btn" data-module="accounting">📒 Accounting</button>
             <button class="nav-btn" data-module="import-transactions">📥 Import Transactions</button>
@@ -106,7 +107,7 @@
         <div class="tr-header-actions" style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
             <div class="tr-trade-btns" style="display: flex; gap: 6px; width: 104px;">
                 <button class="btn-add-txn" id="trAddTxnBtn" title="Record a trade" style="flex: 1; padding-left: 0; padding-right: 0; text-align: center;">&#9998;</button>
-                <button class="btn-add-txn" id="trBrokerOrderBtn" title="Place broker order" style="flex: 1; padding-left: 0; padding-right: 0; text-align: center; font-size: 11px;">Fyers</button>
+                <button class="btn-add-txn" id="trBrokerOrderBtn" title="Place broker order (live)" aria-label="Place broker order (live)" style="flex: 1; padding-left: 0; padding-right: 0; text-align: center; font-size: 11px;">Fyers</button>
             </div>
             <div class="tr-others-wrap" style="position: relative;">
                 <button class="btn-others" id="trOthersBtn" title="Income &amp; Corporate Actions" style="width: 104px; padding: 6px 16px; font-size: 13px; text-align: center;">Others &#9662;</button>

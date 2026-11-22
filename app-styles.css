@@ -835,3 +835,20 @@ td.text-right, th.text-right { font-variant-numeric: tabular-nums; }
     line-height: 1;
 }
 .btn-close-modal:hover { background: #edf2f7; color: #4a5568; }
+
+/* Finalised icons on the desktop (owner, 22-Nov-2026 — same set as the iPhone app; files in icons/):
+   W6 wordmark in place of "💼 WMS" (and as the browser tab icon), Trading 12c and Auto Trading 6b in the top menu,
+   New Entry E3 on the ✎ Record-a-trade button, Live Order L9 on the broker-order ("Fyers") button.
+   Only the pictures change — every button does exactly what it did. The phone layer (m-styles.css) keeps its own sizes. */
+.logo-section h1 { font-size: 0; line-height: 0; }
+.logo-section h1::before { content: ''; display: inline-block; width: 32px; height: 32px; border-radius: 7px; vertical-align: middle;
+    background: url(icons/WMS-app-icon-wordmark-v2.svg) center / cover no-repeat; box-shadow: 0 0 0 1px #e2e8f0; }
+.nav-ico { width: 16px; height: 16px; border-radius: 4px; vertical-align: -3px; margin-right: 6px; }
+#trAddTxnBtn, #trBrokerOrderBtn { font-size: 0 !important; height: 30px; display: inline-flex; align-items: center; justify-content: center; }
+#trAddTxnBtn { background: #14213D !important; }
+.trading-header-bar #trBrokerOrderBtn, #trBrokerOrderBtn { background: #1a1a1a !important; }
+#trAddTxnBtn:hover { background: #22345c !important; }
+.trading-header-bar #trBrokerOrderBtn:hover { background: #333 !important; }
+#trAddTxnBtn::before, #trBrokerOrderBtn::before { content: ''; display: block; width: 24px; height: 24px; border-radius: 5px; }
+#trAddTxnBtn::before { background: url(icons/WMS-new-entry-icon-E3-v1.svg) center / cover no-repeat; }
+#trBrokerOrderBtn::before { background: url(icons/WMS-live-order-icon-L9-v1.svg) center / cover no-repeat; }
