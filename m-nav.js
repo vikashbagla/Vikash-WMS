@@ -4,8 +4,12 @@
 // ----------------------------------------------------------------------------
 // Back ← (at the top of the Control Center on the folded Duo; at the left of the header elsewhere):
 //   1. closes an open panel or pop-up first (sheets, the New Entry form, the More / Sort box);
-//   2. otherwise goes to the screen you came from (a Trading tab, a module, MS007 / its landing);
-//   3. on Home, with nowhere to go back to, it is greyed out.
+//   2. otherwise goes ONE STEP UP the ladder of screens towards Home — not back through the screens you
+//      happened to visit (owner, 22-Nov-2026: "follows the ladder of pages to home"):
+//        Portfolio › one holding "By investor"  →  Portfolio list
+//        MS007 (Live / Paper / Controls)         →  Auto Trading
+//        Auto Trading · Trading (any tab) · Statements · any other module  →  Home
+//   3. on Home it is greyed out.
 // Live order: a placeholder in the layout (red ₹ icon, above New Entry). Greyed; a tap only says
 //   "Coming soon" — it does NOT open the order window (that window is not phone-ready yet; Phone
 //   Broker Order Plan). Nothing else here changes what any screen shows or does.
@@ -35,13 +39,7 @@
         return mod ? ('mod:' + mod) : 'home';
     }
 
-    var stack = [], last = null, restoring = false;
-    function track() {
-        var s = state();
-        if (last !== null && s !== last && !restoring) { stack.push(last); if (stack.length > 30) stack.shift(); }
-        last = s;
-        paint();
-    }
+    function track() { paint(); }
 
     // ---- open overlays, closed first ----
     function closeOverlay() {
@@ -65,39 +63,30 @@
         return Array.prototype.slice.call(document.querySelectorAll('.wms-ph-menu')).some(function (m) { return m.style.display === 'block'; });
     }
 
-    // ---- go to a remembered screen ----
-    async function go(s) {
-        restoring = true;
-        try {
-            if (s === 'home') { if (window.wmsPhoneShowHome) wmsPhoneShowHome(); }
-            else if (s === 'statements') { if (window.wmsPhoneOpen) await wmsPhoneOpen('statements'); }
-            else if (s.indexOf('trading:') === 0) {
-                if (state().indexOf('trading:') !== 0 && window.wmsPhoneOpen) await wmsPhoneOpen('trading');
-                var b = $('#wmsBottomNav .bnav-item[data-subtab="' + s.slice(8) + '"]'); if (b) b.click();
-            } else if (s === 'auto:landing') {
-                var leave = $('[data-mau-act="leave"]');
-                if (leave && visible(leave)) leave.click(); else if (window.wmsPhoneOpen) await wmsPhoneOpen('automation');
-            } else if (s === 'auto:ms007') {
-                if (window.wmsPhoneOpen && state().indexOf('auto:') !== 0) await wmsPhoneOpen('automation');
-                var ms = $('[data-mau-open="ms007"]'); if (ms) ms.click();
-            } else if (s.indexOf('mod:') === 0 && window.wmsPhoneOpen) await wmsPhoneOpen(s.slice(4));
-        } catch (e) { console.warn('Back: could not restore', s, e); }
-        await new Promise(function (r) { setTimeout(r, 60); });
-        last = state(); restoring = false; paint();
+    // ---- one step up the ladder ----
+    function up() {
+        var bb = document.getElementById('trmBreakupBack');          // Portfolio › By investor → the list
+        if (bb && visible(bb)) { bb.click(); return true; }
+        var s = state();
+        if (s === 'home') return false;
+        if (s === 'auto:ms007') {                                     // MS007 → Auto Trading
+            var leave = $('[data-mau-act="leave"]');
+            if (leave && visible(leave)) { leave.click(); return true; }
+        }
+        if (window.wmsPhoneShowHome) { wmsPhoneShowHome(); return true; }   // everything else → Home
+        return false;
     }
     function back() {
         if (closeOverlay()) { setTimeout(paint, 100); return; }
-        var cur = state();
-        while (stack.length && stack[stack.length - 1] === cur) stack.pop();
-        if (stack.length) { go(stack.pop()); return; }
-        if (cur !== 'home') go('home');
+        try { up(); } catch (e) { console.warn('Back failed', e); }
+        setTimeout(paint, 120);
     }
 
     // ---- buttons ----
     var btn = null;
     function paint() {
         if (!btn) return;
-        var can = anyOverlay() || stack.length > 0 || state() !== 'home';
+        var can = anyOverlay() || state() !== 'home';
         btn.disabled = !can;
     }
     function makeBack() {

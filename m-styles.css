@@ -860,3 +860,32 @@ html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { displ
     .wms-bottom-nav .bnav-item.active .bnav-icon, .mau-bitem.active .mau-bico { background: transparent !important; }
     body:not(.wms-ph-nobnav) #content-container { padding-bottom: calc(86px + env(safe-area-inset-bottom, 0px)) !important; }
 }
+
+/* ============================================================================
+   Moving index ticker (m-ticker.js, owner 22-Nov-2026) — phone layer only
+   NIFTY · BANKNIFTY · SENSEX · GOLD, then the "Current" watchlist; two lines per item
+   (symbol / price ▲▼ %), green up, red down, grey while last-known. Tapping does nothing.
+   Folded Duo: runs the full width, behind the camera, into the Control Center area.
+   ============================================================================ */
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+    html.wms-mt-on #indexTicker > .index-item { display: none !important; }
+    html.wms-mt-on #indexTicker { display: block !important; overflow: hidden; border-top: none !important; border-bottom: 1px solid #e3e8ef !important;
+        background: transparent !important; pointer-events: none; padding: 0 !important; }
+    html.wms-mt-on.wms-side-strip #indexTicker { width: calc(100% + var(--wms-strip, 0px)) !important; max-width: none !important;
+        margin-right: calc(-1 * var(--wms-strip, 0px)) !important; position: relative; z-index: 1003; }
+    html:not(.wms-mt-on) .wms-mt { display: none !important; }
+    .wms-mt { overflow: hidden; width: 100%; }
+    .wms-mt-track { display: inline-flex; white-space: nowrap; will-change: transform; animation: wmsMtRun 60s linear infinite; }
+    @keyframes wmsMtRun { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+    .wms-mt-cell { flex: none; padding: 3px 14px; line-height: 1.25; border-right: 1px solid #e3e8ef; text-align: left; }
+    .wms-mt-sym { font-size: 10px; font-weight: 700; color: #374151; letter-spacing: .2px; }
+    .wms-mt-val { font-size: 11px; font-weight: 600; color: #6b7280; font-variant-numeric: tabular-nums; }
+    .wms-mt-cell.up .wms-mt-val { color: #059669; }
+    .wms-mt-cell.down .wms-mt-val { color: #dc2626; }
+    .wms-mt-cell.stale .wms-mt-val, .wms-mt-cell.stale .wms-mt-sym { color: #a0aec0 !important; }
+    @media (prefers-reduced-motion: reduce) { .wms-mt-track { animation-duration: 240s !important; } }
+
+    /* Floating nav bar a notch lower (owner, 22-Nov-2026) */
+    .wms-bottom-nav, .mau-bnav { bottom: max(4px, calc(env(safe-area-inset-bottom, 0px) - 12px)) !important; }
+    body:not(.wms-ph-nobnav) #content-container { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)) !important; }
+}
