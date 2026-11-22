@@ -832,12 +832,13 @@ html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { displ
     html.wms-side-strip #trDayPLBanner { margin: 0 6px !important; }
 
     /* Control Center (folded Duo): plain icons on the page background, no boxes */
-    #wms-strip { gap: 8px !important; }
+    #wms-strip { gap: 6px !important; }
+    #wms-strip *, #wms-strip > * { flex-shrink: 0; }
     #wms-strip .wms-strip-group { background: transparent !important; border: none !important; box-shadow: none !important; padding: 2px 0 !important; }
     #wms-strip .btn-refresh-app, #wms-strip .btn-logout, #wms-strip .btn-txn-sync, #wms-strip .btn-toggle-zero, #wms-strip button:not(.wms-back-btn):not(#trAddTxnBtn):not(#wmsLiveOrderBtn) {
         background: transparent !important; border: none !important; box-shadow: none !important; }
-    #wms-strip .logo-section { gap: 10px !important; }
-    #wms-strip .wms-strip-trade { flex-direction: column; align-items: center; gap: 10px; }
+    #wms-strip .logo-section, #wms-strip .user-section { gap: 6px !important; }
+    #wms-strip .wms-strip-trade { flex-direction: column; align-items: center; gap: 6px; }
     /* Every Control Center button the same size (owner, 22-Nov: today's size on the phone); the WMS logo on top, a little bigger */
     #wms-strip button, #wms-strip .wms-back-btn, #wms-strip #wmsLiveOrderBtn, #wms-strip #trAddTxnBtn {
         width: 38px !important; height: 36px !important; min-width: 0 !important; padding: 0 !important; margin: 0 !important; border-radius: 10px !important;
