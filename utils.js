@@ -35,8 +35,10 @@ function getDisplayUnit() {
             return unit;
         }
     }
-    console.warn('⚠️ No display unit in preferences, defaulting to lakhs. Preferences:', user ? user.preferences : 'no user');
-    return 'lakhs';
+    // No saved unit (users without their own settings, e.g. read-only viewers): ₹ '000, the owner's unit
+    // (owner, 22-Nov-2026 — was Lakhs). Users with a saved unit are unaffected.
+    console.warn("⚠️ No display unit in preferences, defaulting to '000. Preferences:", user ? user.preferences : 'no user');
+    return 'thousands';
 }
 
 // Get divisor and suffix based on unit

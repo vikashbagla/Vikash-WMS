@@ -895,3 +895,11 @@ html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { displ
     .wms-bottom-nav, .mau-bnav { bottom: max(4px, calc(env(safe-area-inset-bottom, 0px) - 12px)) !important; }
     body:not(.wms-ph-nobnav) #content-container { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)) !important; }
 }
+
+/* iPhone status bar (owner, 22-Nov-2026 — Nikhar's screenshots): inside the iPhone app the page starts under
+   iOS's clock / signal / battery, so the header was drawn behind them on regular iPhones (and the Duo opened
+   upright, which has an 82-point top strip). The header now starts below that strip; its background (the one
+   app colour) fills the strip. The Duo folded has no top strip (inset 0), so nothing moves there. Phone layer only. */
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px), screen and (orientation: landscape) and (min-height: 450px) and (max-width: 760px) {
+    .app-header { padding-top: env(safe-area-inset-top, 0px) !important; }
+}
