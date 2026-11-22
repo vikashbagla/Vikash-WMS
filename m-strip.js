@@ -41,6 +41,8 @@
         if (logo) upper.appendChild(logo);
         var user = remember(document.querySelector('.app-header .user-section'));
         if (user) lower.appendChild(user);
+        var live = remember(document.getElementById('wmsLiveOrderBtn'));   // Live order placeholder (m-nav.js), above New Entry
+        if (live) bottom.appendChild(live);
         var trade = remember(document.getElementById('trAddTxnBtn'));
         if (trade) bottom.appendChild(trade);
         strip.appendChild(upper); strip.appendChild(lower); strip.appendChild(bottom);
@@ -54,6 +56,9 @@
             m.parent.insertBefore(m.el, next);
         }
         moved = [];
+        // A Live order placeholder added while the strip was up goes back beside New Entry.
+        var lv = strip && strip.querySelector('#wmsLiveOrderBtn'), tr = document.getElementById('trAddTxnBtn');
+        if (lv && tr && tr.parentNode) tr.parentNode.insertBefore(lv, tr);
         if (strip) strip.remove();
         strip = null;
     }

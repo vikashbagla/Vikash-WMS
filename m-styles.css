@@ -795,3 +795,59 @@ html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { displ
     .wms-ph-menu .tr-more-drag-handle { display: none; }
     .wms-ph-menu .tr-sort-arrow { font-size: 13px; }
 }
+
+/* ============================================================================
+   Duo Control Center Plan v1 (owner decisions 22-Nov-2026) — phone layer only
+   1. One background colour for the whole screen; only what you tap or read is a white card.
+   2. Control Center (the folded Duo's right-hand strip): plain icons on the same background, Back at the
+      top, Live order (placeholder) above New Entry. Regular phones: Back at the left of the header,
+      Live order beside New Entry, Day's P&L centred in the space left of the two buttons.
+   3. Floating see-through nav bar (Trading, MS007). Professional look: calm, no playful colours.
+   ============================================================================ */
+@media screen and (max-width: 600px), screen and (orientation: portrait) and (max-width: 699px) {
+    :root { --ph-bg: #f3f5f9; }
+    html, body, .app-header, #wmsGlobalBanner, .trading-header-bar, #content-container, .main-content, .mh-pane, #mst-root, #mau-root {
+        background: var(--ph-bg) !important; }
+    .app-header, #content-container { box-shadow: none !important; border-radius: 0 !important; }
+    .app-header { border-bottom: none !important; }
+    #content-container { border: none !important; }
+    .tr-view-tabs-bar, .trm-summary, .trm-fno-tot { background: transparent !important; }
+    /* Portfolio holdings and F&O symbol groups: white cards on the one background */
+    #tr-portfolio-cards .trm-row, #tr-fno-cards > .trm-grp { background: #ffffff !important; border: none !important; border-radius: 11px;
+        margin: 0 0 6px; box-shadow: 0 1px 2px rgba(20, 30, 45, 0.05); }
+    #tr-portfolio-cards, #tr-fno-cards { background: transparent !important; border: none !important; }
+
+    /* Back button (m-nav.js) and the Live order placeholder */
+    .wms-back-btn { width: 32px; height: 32px; border-radius: 9px; border: none; background: rgba(91, 111, 224, 0.12); color: #4c51bf;
+        font-size: 18px; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; padding: 0; flex: none; cursor: pointer; }
+    .wms-back-btn:disabled { opacity: .35; cursor: default; }
+    .logo-section .wms-back-btn { margin-right: 6px; }
+    #wmsLiveOrderBtn { width: 32px; height: 32px; padding: 0 !important; border: none !important; border-radius: 9px !important; overflow: hidden; flex: none;
+        background: #1a1a1a url(icons/WMS-live-order-icon-L9-v1.svg) center / cover no-repeat !important; opacity: .45; cursor: pointer; }
+    .trading-header-bar #trBrokerOrderBtn { display: none !important; }     /* the desktop's own order button stays off the phone */
+    .trading-header-bar .tr-trade-btns { width: auto !important; gap: 6px !important; }
+    /* Regular phones: Day's P&L centred in the space left of the two buttons (never under them) */
+    #trDayPLBanner { margin: 0 80px 0 6px !important; }
+    html.wms-side-strip #trDayPLBanner { margin: 0 6px !important; }
+
+    /* Control Center (folded Duo): plain icons on the page background, no boxes */
+    #wms-strip { gap: 8px !important; }
+    #wms-strip .wms-strip-group { background: transparent !important; border: none !important; box-shadow: none !important; padding: 2px 0 !important; }
+    #wms-strip .btn-refresh-app, #wms-strip .btn-logout, #wms-strip .btn-txn-sync, #wms-strip .btn-toggle-zero, #wms-strip button:not(.wms-back-btn):not(#trAddTxnBtn):not(#wmsLiveOrderBtn) {
+        background: transparent !important; border: none !important; box-shadow: none !important; }
+    #wms-strip .wms-back-btn { width: 44px; height: 40px; font-size: 22px; margin: 0 0 4px; }
+    #wms-strip .logo-section { gap: 10px !important; }
+    #wms-strip .wms-strip-trade { flex-direction: column; align-items: center; gap: 10px; }
+    #wms-strip #wmsLiveOrderBtn, #wms-strip #trAddTxnBtn { width: 46px !important; height: 46px !important; border-radius: 12px !important; }
+
+    /* Floating see-through nav bar (Trading and MS007), like the iOS apps */
+    .wms-bottom-nav, .mau-bnav {
+        left: 12px !important; right: calc(12px + var(--wms-strip, 0px)) !important; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px) !important;
+        border-radius: 26px !important; padding: 5px 6px !important; border: 1px solid rgba(255, 255, 255, 0.85) !important;
+        background: rgba(255, 255, 255, 0.66) !important; -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6);
+        box-shadow: 0 6px 22px rgba(20, 30, 45, 0.16) !important; }
+    .wms-bottom-nav .bnav-item, .mau-bitem { border-radius: 18px; padding: 4px 0 !important; color: #4b5563 !important; }
+    .wms-bottom-nav .bnav-item.active, .mau-bitem.active { background: rgba(120, 130, 150, 0.16); color: #111827 !important; }
+    .wms-bottom-nav .bnav-item.active .bnav-icon, .mau-bitem.active .mau-bico { background: transparent !important; }
+    body:not(.wms-ph-nobnav) #content-container { padding-bottom: calc(86px + env(safe-area-inset-bottom, 0px)) !important; }
+}
