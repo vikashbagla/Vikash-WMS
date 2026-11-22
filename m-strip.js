@@ -43,11 +43,11 @@
         for (i = 0; i < kids.length; i++) kids[i].style.zoom = '';
         var cs = getComputedStyle(strip);
         var gap = parseFloat(cs.rowGap || cs.gap) || 0;
-        var need = 0, gaps = gap * Math.max(0, kids.length - 1);
-        for (i = 0; i < kids.length; i++) need += kids[i].getBoundingClientRect().height;
+        var need = 0, gaps = gap * Math.max(0, kids.length - 1);   // screen-geometry
+        for (i = 0; i < kids.length; i++) need += kids[i].getBoundingClientRect().height;   // screen-geometry
         var avail = window.innerHeight - gaps - (parseFloat(cs.paddingBottom) || 0) - 8;
         if (need <= avail) return;
-        var z = String(Math.floor(Math.max(0.5, avail / need) * 100) / 100);
+        var z = String(Math.floor(Math.max(0.5, avail / need) * 100) / 100);   // screen-geometry
         for (i = 0; i < kids.length; i++) kids[i].style.zoom = z;     // each group shrinks; the strip keeps its width
     }
 

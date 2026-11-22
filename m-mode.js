@@ -23,7 +23,7 @@
     var PHONE_VIEWPORT = meta ? meta.getAttribute('content') : 'width=device-width, initial-scale=1.0, viewport-fit=cover';
     // Phone layout: no automatic zoom-in when tapping into a text box (iOS zooms any box whose text is
     // smaller than 16 points). maximum-scale=1 stops that zoom only (owner, 21-Nov-2026).
-    if (PHONE_VIEWPORT.indexOf('maximum-scale') < 0) PHONE_VIEWPORT += ', maximum-scale=1';
+    if (PHONE_VIEWPORT.indexOf('maximum-scale') < 0) PHONE_VIEWPORT += ', maximum-scale=1';   // screen-geometry
     var WIDE_VIEWPORT = 'width=' + WIDE_LAYOUT_WIDTH + ', viewport-fit=cover';
 
     // The space the app has, in points, whatever the current zoom. Width: the visible area times its zoom.
@@ -31,9 +31,9 @@
     // keyboard is up and would otherwise flip the opened Duo to the full web app mid-typing.
     function usableSize() {
         var vv = window.visualViewport;
-        var w = (vv && vv.width && vv.scale) ? vv.width * vv.scale : window.innerWidth;
-        var r = window.innerWidth ? w / window.innerWidth : 1;
-        return { w: Math.round(w), h: Math.round(window.innerHeight * r) };
+        var w = (vv && vv.width && vv.scale) ? vv.width * vv.scale : window.innerWidth;   // screen-geometry
+        var r = window.innerWidth ? w / window.innerWidth : 1;   // screen-geometry
+        return { w: Math.round(w), h: Math.round(window.innerHeight * r) };   // screen-geometry
     }
     // Third rule (owner, 22-Nov-2026): the Duo FOLDED and turned sideways (about 678 × 466) keeps the phone
     // layout — wider than 600 but taller than any regular phone held sideways (those are 440 or less, and
