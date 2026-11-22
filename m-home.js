@@ -243,6 +243,13 @@ function wmsPhoneLanding() {
         if (typeof wmsSetFullAmount !== 'function' || typeof wmsIsFullAmount !== 'function') return;
         wmsSetFullAmount(!wmsIsFullAmount());                 // the desktop's own flag (also what F4 flips)
         if (typeof wmsRerenderAmounts === 'function') wmsRerenderAmounts();
+        // Home (owner, 22-Nov-2026: the banner did not flip on Home on the Duo): repaint the Day's P&L
+        // banner directly too — same desktop functions, same numbers — now and once more a moment later.
+        function banner() {
+            try { if (typeof trComputeBannerStats === 'function') trComputeBannerStats(); else if (typeof trUpdateDayPLBanner === 'function') trUpdateDayPLBanner(); } catch (err) {}
+            try { if (typeof trFnoBannerRefreshFromDefault === 'function') trFnoBannerRefreshFromDefault(); } catch (err) {}
+        }
+        banner(); setTimeout(banner, 400);
         paint();
         if (typeof showAlert === 'function') showAlert(wmsIsFullAmount() ? 'Showing full amounts' : ('Showing ' + getUnitDescription()), 'info', 1500);
     });
