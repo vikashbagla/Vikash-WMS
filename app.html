@@ -13,6 +13,7 @@
     <meta name="apple-mobile-web-app-title" content="WMS">
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="wms-app-sw-register.js"></script>   <!-- WMS iPhone app only: screens kept on the phone (plan step 2.3); does nothing on desktop / Safari -->
     <!-- Excel / PDF libraries (SheetJS, ExcelJS, jsPDF, pdf.js) are NOT loaded at startup — ~2.4 MB
          that only Import, Master Data, Accounting bank-import and the Statements export use. They load
          on demand via window.wmsEnsureLib() (see the WMS_LIBS block below + WMS_MODULE_DEF libs). -->
@@ -478,11 +479,60 @@
     }
 
     // ---- Fetch and display NIFTY, BANKNIFTY, SENSEX, GOLD prices ----
+    // 22-Nov-2026 (owner approved): the last-known values are kept (localStorage 'wms_idx_cache_v1') and shown
+    // at once, greyed until fresh prices arrive; a failed fetch is retried after 5 s (up to 3 times in a row)
+    // instead of waiting for the next 30 s round. Extra symbols (window.wmsTickerExtra, set only by the phone's
+    // moving ticker, m-ticker.js) ride in the SAME quotes call; the desktop sets none, so its call is unchanged.
+    var IDX_CACHE_KEY = 'wms_idx_cache_v1';
+    var IDX_MAP = { 'NSE:NIFTY50-INDEX': 'nifty', 'NSE:NIFTYBANK-INDEX': 'banknifty', 'BSE:SENSEX-INDEX': 'sensex' };
+    function idxCacheRead() { try { return JSON.parse(localStorage.getItem(IDX_CACHE_KEY) || 'null') || null; } catch (e) { return null; } }
+    function idxCacheWrite(c) { try { localStorage.setItem(IDX_CACHE_KEY, JSON.stringify(c)); } catch (e) {} }
+
+    function paintIndex(key, v, stale) {
+        var priceEl = document.getElementById('idx-' + key + '-price');
+        var changeEl = document.getElementById('idx-' + key + '-change');
+        if (!priceEl || !changeEl || !v) return;
+        var lp = v.lp, ch = v.ch, chp = v.chp;
+        // Price — must be > 0 to display (no decimals for header)
+        priceEl.textContent = (lp && lp > 0) ? Number(lp).toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '—';
+        // Change (sub-row)
+        if (ch !== undefined && ch !== null && chp !== undefined && chp !== null && lp > 0) {
+            var sign = ch >= 0 ? '+' : '';
+            var colorClass = ch > 0 ? 'positive' : ch < 0 ? 'negative' : 'neutral';
+            changeEl.textContent = sign + Number(ch).toFixed(0) + ' (' + sign + Number(chp).toFixed(2) + '%)';
+            changeEl.className = 'index-change ' + colorClass;
+        } else {
+            changeEl.textContent = '';
+            changeEl.className = 'index-change neutral';
+        }
+        var item = document.getElementById('idx-' + key);
+        if (item) item.classList.toggle('stale', !!stale);
+    }
+    function idxEmit(cache, stale) {
+        window.wmsTickerQuotes = { q: (cache && cache.q) || {}, gold: cache && cache.gold, ts: cache && cache.ts, stale: !!stale };
+        try { window.dispatchEvent(new CustomEvent('wms-ticker-quotes', { detail: window.wmsTickerQuotes })); } catch (e) {}
+    }
+    // Last-known values on screen straight away (greyed = not fresh yet).
+    (function paintCached() {
+        var c = idxCacheRead();
+        if (!c || !c.q) return;
+        Object.keys(IDX_MAP).forEach(function (sym) { if (c.q[sym]) paintIndex(IDX_MAP[sym], c.q[sym], true); });
+        if (c.gold && c.q[c.gold]) paintIndex('gold', c.q[c.gold], true);
+        idxEmit(c, true);
+    })();
+
+    var _idxRetryTimer = null, _idxFailStreak = 0;
+    function idxRetrySoon() {
+        _idxFailStreak++;
+        if (_idxRetryTimer || _idxFailStreak > 3) return;
+        _idxRetryTimer = setTimeout(function () { _idxRetryTimer = null; fetchIndexPrices(); }, 5000);
+    }
+
     async function fetchIndexPrices() {
         try {
             // DB token flag (checkFyersAuth sets window.fyersToken = 'db' after the morning login)
             var token = window.fyersToken;
-            if (!token) return;
+            if (!token) { idxRetrySoon(); return; }
 
             // Resolve gold symbol (cached after first success)
             var goldSym = await resolveGoldSymbol();
@@ -493,54 +543,47 @@
                 'BSE:SENSEX-INDEX',
                 goldSym
             ];
+            var extra = (window.wmsTickerExtra || []).map(function (x) { return x && x.sym; })
+                .filter(function (s) { return s && symbols.indexOf(s) < 0; });
 
-            var result = await window.fyersCall({ action: 'quotes', symbols: symbols });
-            if (!result || !result.d) return;
+            var result = await window.fyersCall({ action: 'quotes', symbols: symbols.concat(extra) });
+            if ((!result || !result.d) && extra.length) result = await window.fyersCall({ action: 'quotes', symbols: symbols });  // a bad extra symbol never costs the 4 indices
+            if (!result || !result.d) { idxRetrySoon(); return; }
 
             // Dynamic mapping — gold symbol may vary
-            var mapping = {
-                'NSE:NIFTY50-INDEX':    'nifty',
-                'NSE:NIFTYBANK-INDEX':  'banknifty',
-                'BSE:SENSEX-INDEX':     'sensex'
-            };
+            var mapping = {};
+            for (var k in IDX_MAP) mapping[k] = IDX_MAP[k];
             mapping[goldSym] = 'gold';
 
+            var cache = idxCacheRead() || {};
+            var keep = symbols.concat(extra), old = cache.q || {};
+            cache.q = {};
+            keep.forEach(function (s) { if (old[s]) cache.q[s] = old[s]; });   // symbols no longer asked for drop out
+            var got = 0;
             result.d.forEach(function(q) {
+                if (!q || !q.n || !q.v || !(q.v.lp > 0)) return;
+                var v = { lp: q.v.lp, ch: q.v.ch, chp: q.v.chp };
+                cache.q[q.n] = v; got++;
                 var key = mapping[q.n];
-                if (!key || !q.v) return;
-
-                var lp = q.v.lp;
-                var ch = q.v.ch;
-                var chp = q.v.chp;
-
-                var priceEl = document.getElementById('idx-' + key + '-price');
-                var changeEl = document.getElementById('idx-' + key + '-change');
-                if (!priceEl || !changeEl) return;
-
-                // Price — must be > 0 to display (no decimals for header)
-                priceEl.textContent = (lp && lp > 0) ? Number(lp).toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '—';
-
-                // Change (sub-row)
-                if (ch !== undefined && chp !== undefined && lp > 0) {
-                    var sign = ch >= 0 ? '+' : '';
-                    var colorClass = ch > 0 ? 'positive' : ch < 0 ? 'negative' : 'neutral';
-                    changeEl.textContent = sign + Number(ch).toFixed(0) + ' (' + sign + Number(chp).toFixed(2) + '%)';
-                    changeEl.className = 'index-change ' + colorClass;
-                } else {
-                    changeEl.textContent = '';
-                    changeEl.className = 'index-change neutral';
-                }
+                if (key) paintIndex(key, v, false);
             });
+            if (!got) { idxRetrySoon(); return; }
+            _idxFailStreak = 0;
+            cache.gold = goldSym; cache.ts = Date.now();
+            idxCacheWrite(cache);
+            idxEmit(cache, false);
         } catch (e) {
             console.log('Index ticker fetch error:', e);
+            idxRetrySoon();
         }
     }
+    window.wmsIndexRefreshNow = function () { _idxFailStreak = 0; return fetchIndexPrices(); };
 
     // Refresh index prices every 30 seconds
     var _indexRefreshTimer = null;
     function startIndexRefresh() {
         fetchIndexPrices();
-        _indexRefreshTimer = setInterval(fetchIndexPrices, 30000);
+        _indexRefreshTimer = setInterval(function () { _idxFailStreak = 0; fetchIndexPrices(); }, 30000);
     }
 
     // ============================================================
@@ -954,8 +997,13 @@
         var loaderEl = document.getElementById('startupLoader');
         var loaderMsg = document.getElementById('startupLoaderMsg');
 
+        // Show first, check after (iPhone App Plan 3.1, 21-Nov-2026): in the iPhone app, open from the copies
+        // already on the device and check with the server straight after (wms-shared.js). Off elsewhere.
+        var _wmsShownFirst = false;
+        try { _wmsShownFirst = (typeof wmsShowFirstPrime === 'function') && await wmsShowFirstPrime(); } catch (e) { _wmsShownFirst = false; }
+
         // Load all master data before activating any module
-        try {
+        if (!_wmsShownFirst) try {
             loaderMsg.textContent = 'Loading investors, brokers & config...';
             // Startup-speed (11-Nov-2026): send the "have transactions changed?" check now, alongside the
             // master-data loads, instead of after them. wmsLoadTransactions (below) uses this answer.
@@ -990,8 +1038,14 @@
             // AFTER auth + master data so RLS + enrichment are in place.
             loaderMsg.textContent = 'Loading transactions...';
             await wmsLoadTransactions();
+            if (typeof wmsShowFirstSaveSnapshot === 'function') wmsShowFirstSaveSnapshot();   // copies for the next show-first opening
         } catch (e) {
             console.error('Startup load error (activating anyway; modules will load on demand):', e);
+        }
+        if (_wmsShownFirst) {
+            // Background server check: one call (wms_boot_state); updates what changed and re-draws.
+            if (typeof wmsTxnSyncPrefetch === 'function') wmsTxnSyncPrefetch();
+            setTimeout(function () { wmsShowFirstVerify().catch(function (e) { console.warn('Show-first check failed', e); }); }, 0);
         }
         // User preferences (request sent from checkAuth, 11-Nov-2026): always in place before anything is drawn.
         try { if (window._wmsPrefsReady) await window._wmsPrefsReady; } catch (e) { console.warn('Could not load user preferences:', e); }
@@ -1169,10 +1223,16 @@
     window.WMS_PHONE = (function () { try { if (sessionStorage.getItem('wms_force_phone') === '1') return true; return Math.min(screen.width, screen.height) <= 480; } catch (e) { return false; } })();
     if (window.WMS_PHONE) {
         document.write(`<link rel="stylesheet" href="m-styles.css?v=${_v}">`);
+        document.write(`<script src="m-mode.js?v=${_v}"><\/script>`);   // Phase 4 (21-Nov-2026): phone layout vs full web app, live
         document.write(`<script src="m-trading.js?v=${_v}"><\/script>`);
         document.write(`<script src="m-home.js?v=${_v}"><\/script>`);
         document.write(`<script src="m-auto.js?v=${_v}"><\/script>`);
         document.write(`<script src="m-stmt.js?v=${_v}"><\/script>`);
+        document.write(`<script src="m-strip.js?v=${_v}"><\/script>`);   // Phase 4 step 4.3 (21-Nov-2026): Duo folded, header buttons in the right-hand strip
+        document.write(`<script src="m-newentry.js?v=${_v}"><\/script>`);   // step 4.5 (21-Nov-2026): New Entry as entry cards
+        document.write(`<script src="m-upright.js?v=${_v}"><\/script>`);   // Phase 5 (21-Nov-2026): Duo opened upright — Portfolio column header
+        document.write(`<script src="m-nav.js?v=${_v}"><\/script>`);   // Duo Control Center Plan v1 (22-Nov-2026): Back + Live order placeholder
+        document.write(`<script src="m-ticker.js?v=${_v}"><\/script>`);   // 22-Nov-2026: moving index ticker (4 indices + watchlist "Current")
     }
     </script>
 </body>

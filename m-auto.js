@@ -402,6 +402,10 @@
         schedule();
     }
 
+    // Switching to the full web app (Phase 4, m-mode.js): put a card shown in a phone sheet back in the
+    // desktop page, so the full web app shows it in its usual place.
+    window.addEventListener('wms-mode-change', function (e) { if (!(e.detail && e.detail.phone)) closeSheet(true); });
+
     var _origLoadModule = window.loadModule;
     if (typeof _origLoadModule === 'function') {
         window.loadModule = async function (moduleName) {

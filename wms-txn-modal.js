@@ -1384,7 +1384,9 @@ function wmsEditModalOpen(txnId) {
     // Trader dropdown
     var traderSelect = document.getElementById('wmsEditTrader');
     traderSelect.innerHTML = '<option value="">(Same as Investor)</option>' +
-        (wmsTxnCtx.investors || []).map(function(inv) {
+        (wmsTxnCtx.investors || []).filter(function(inv) {
+            return typeof wmsTraderOptionAllowed !== 'function' || wmsTraderOptionAllowed(inv.id, txn.trader_id);   // traders without own books only (21-Nov-2026)
+        }).map(function(inv) {
             var label = inv.short_name || inv.name;
             var selected = inv.id === txn.trader_id ? ' selected' : '';
             return '<option value="' + inv.id + '"' + selected + '>' + label + '</option>';
@@ -1853,7 +1855,9 @@ function wmsToggleSplitPanel() {
     if (!txn) return;
     var sel = document.getElementById('wmsSplitTrader');
     sel.innerHTML = '<option value="">(Same as Investor)</option>' +
-        (wmsTxnCtx.investors || []).map(function(inv) {
+        (wmsTxnCtx.investors || []).filter(function(inv) {
+            return typeof wmsTraderOptionAllowed !== 'function' || wmsTraderOptionAllowed(inv.id, null);   // traders without own books only (21-Nov-2026)
+        }).map(function(inv) {
             return '<option value="' + inv.id + '">' + (inv.short_name || inv.name) + '</option>';
         }).join('');
     document.getElementById('wmsSplitQty').value = '';

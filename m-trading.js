@@ -128,13 +128,16 @@ function trRenderPortfolioMobile(holdings, totalInvested, totalValue, totalPL, t
 // the OPEN dropdown to the viewport (position:fixed) so it escapes all clipping.
 // No-op on desktop (>480) — desktop keeps the absolute-positioned dropdown.
 function trReposDropdownMobile(dd, btn) {
-    if (!dd || !btn || window.innerWidth > 480) return;
+    if (!dd || !btn || !(typeof wmsPhoneMode === 'function' ? wmsPhoneMode() : window.innerWidth <= 480)) return;   // phone layout only (Phase 4: m-mode.js)
     if (dd.style.display !== 'block') return;
-    var r = btn.getBoundingClientRect();
+    // Owner, 21-Nov-2026: open as a box in the middle of the screen with large rows (easy to tap),
+    // like the Statements pickers — not a small pop-up under the button. Same items, same actions.
+    dd.classList.add('wms-ph-menu');
     dd.style.position = 'fixed';
-    dd.style.top = (r.bottom + 4) + 'px';
-    dd.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
-    dd.style.left = 'auto';
+    dd.style.top = '50%';
+    dd.style.left = '50%';
+    dd.style.right = 'auto';
+    dd.style.transform = 'translate(-50%, -50%)';
     dd.style.zIndex = '2000';
 }
 

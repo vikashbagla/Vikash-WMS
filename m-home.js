@@ -13,8 +13,10 @@
 // ============================================================================
 (function () {
     var MH_MODULES = [
-        { mod: 'trading',    icon: '📈', name: 'Trading',      desc: 'Portfolio · F&amp;O · Watchlist · Txns' },
-        { mod: 'automation', icon: '🤖', name: 'Auto Trading', desc: 'Strategies · live and paper' },
+        { mod: 'trading',    icon: '<img class="mh-ico-img" src="icons/WMS-trading-icon-12c-v1.svg" alt="">',   // finalised icon 12c (20-Nov)
+          name: 'Trading',      desc: 'Portfolio · F&amp;O · Watchlist · Txns' },
+        { mod: 'automation', icon: '<img class="mh-ico-img" src="icons/WMS-algo-icon-6b-v1.svg" alt="">',   // finalised icon 6b (20-Nov)
+          name: 'Auto Trading', desc: 'Strategies · live and paper' },
         { mod: 'statements', icon: '🧾', name: 'Statements', desc: 'Statements · read only' },   // m-stmt.js (11-Nov-2026)
         { mod: 'reports',    icon: '📊', name: 'Reports',      soon: true },
         { mod: 'accounting', icon: '📒', name: 'Accounting',   soon: true }
@@ -100,6 +102,29 @@
         };
     }
 
+    // Live switch between the phone layout and the full web app (Phase 4, m-mode.js), with no reload.
+    // The phone styles switch by themselves; here only the screen you are on is kept sensible:
+    //   • to the full web app: Home is a phone-only screen, so open Trading (or Statements for a
+    //     statements-only login) instead; anything else stays where it is.
+    //   • back to the phone layout: Trading and Auto Trading stay (bottom bar as usual); Statements
+    //     stays; a module the phone does not show (Reports, Accounting, …) goes back to Home.
+    window.addEventListener('wms-mode-change', function (e) {
+        var phone = !!(e.detail && e.detail.phone);
+        var onHome = (typeof currentModule === 'undefined' || !currentModule) && !document.body.classList.contains('mst-on');
+        if (!phone) {
+            if (onHome && !document.body.classList.contains('mh-early')) {
+                if (typeof wmsHasModule === 'function' && wmsHasModule('trading') && window.wmsAccess && window.wmsAccess.isOwner) loadModule('trading');
+                else if (typeof wmsPhoneOpenStatements === 'function' && typeof wmsHasModule === 'function' && wmsHasModule('statements')) wmsPhoneOpenStatements();
+                else if (typeof wmsHasModule === 'function' && wmsHasModule('trading')) loadModule('trading');
+            }
+            return;
+        }
+        if (document.body.classList.contains('mst-on') || onHome) return;
+        if (currentModule === 'trading') { mhSetBottomNav(true); return; }
+        if (currentModule === 'automation') { mhSetBottomNav(false); return; }
+        window.wmsPhoneShowHome();
+    });
+
     // 💼 (top-left) → Home.
     var logo = document.querySelector('.logo-section h1');
     if (logo) {
@@ -114,7 +139,7 @@
 // Phone landing (D.13.5, moved here from m-trading.js 2026-11-03): in portrait (≤480px) the phone
 // opens on Home. Returns true when it handled the landing; app.html falls back to the last module otherwise.
 function wmsPhoneLanding() {
-    if (!window.matchMedia('(max-width:480px)').matches) return false;
+    if (!(typeof wmsPhoneMode === 'function' ? wmsPhoneMode() : window.matchMedia('(max-width:480px)').matches)) return false;   // phone layout only (Phase 4: m-mode.js)
     if (typeof wmsPhoneShowHome !== 'function') return false;
     document.body.classList.remove('mh-early');   // data loaded → tiles live
     wmsPhoneShowHome();
@@ -127,7 +152,7 @@ function wmsPhoneLanding() {
 // alive when it finishes (wmsPhoneLanding above, called by the app at the end of its start-up).
 // Display only — nothing is loaded, calculated or skipped differently.
 (function () {
-    if (!window.matchMedia('(max-width:480px)').matches) return;
+    if (!(typeof wmsPhoneMode === 'function' ? wmsPhoneMode() : window.matchMedia('(max-width:480px)').matches)) return;   // phone layout only (Phase 4: m-mode.js)
     var OWNER = 'vikash.bagla@gmail.com';
     var started = Date.now();
     function accessKnown() {
@@ -194,4 +219,87 @@ function wmsPhoneLanding() {
     b.setAttribute('data-subtab', 'tr-international');
     b.innerHTML = '<span class="bnav-icon">🌐</span><span class="bnav-label">Intl</span>';
     wl.parentNode.insertBefore(b, wl.nextSibling);
+})();
+
+// ============================================================================
+// ₹ '000 tap toggle on the phone (WMS iPhone App Plan step 2.5, owner comment 20-Nov-2026): tapping the
+// unit badge in the phone header flips between the display unit (₹ '000 / Lakhs …) and full rupees —
+// exactly the desktop's F4 switch (same flag, same re-render, choice remembered the same way). The badge
+// always shows what is on screen. Phone layer only; desktop untouched.
+// ============================================================================
+(function () {
+    var badge = document.querySelector('.mobile-unit-badge');
+    if (!badge || badge._wmsUnitToggle) return;
+    badge._wmsUnitToggle = true;
+    function paint() {
+        try { badge.textContent = (typeof getUnitDescription === 'function') ? getUnitDescription() : "₹ '000"; } catch (e) {}
+        badge.setAttribute('aria-pressed', (typeof wmsIsFullAmount === 'function' && wmsIsFullAmount()) ? 'true' : 'false');
+    }
+    badge.setAttribute('role', 'button');
+    badge.setAttribute('title', 'Tap to switch between ₹ \'000 and full amounts');
+    badge.style.cursor = 'pointer';
+    badge.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        if (typeof wmsSetFullAmount !== 'function' || typeof wmsIsFullAmount !== 'function') return;
+        wmsSetFullAmount(!wmsIsFullAmount());                 // the desktop's own flag (also what F4 flips)
+        if (typeof wmsRerenderAmounts === 'function') wmsRerenderAmounts();
+        // Home (owner, 22-Nov-2026: the banner did not flip on Home on the Duo): repaint the Day's P&L
+        // banner directly too — same desktop functions, same numbers — now and once more a moment later.
+        function banner() {
+            try { if (typeof trComputeBannerStats === 'function') trComputeBannerStats(); else if (typeof trUpdateDayPLBanner === 'function') trUpdateDayPLBanner(); } catch (err) {}
+            try { if (typeof trFnoBannerRefreshFromDefault === 'function') trFnoBannerRefreshFromDefault(); } catch (err) {}
+        }
+        banner(); setTimeout(banner, 400);
+        paint();
+        if (typeof showAlert === 'function') showAlert(wmsIsFullAmount() ? 'Showing full amounts' : ('Showing ' + getUnitDescription()), 'info', 1500);
+    });
+    paint();
+    // The display unit comes from the user's preferences, which can arrive after this file runs.
+    // Keep repainting for the first 30 s (the unit arrives with the preferences, after sign-in — the old
+    // stop-at-sign-in check left "₹ Lakhs" showing over '000 figures, owner 21-Nov-2026), and after prefs load.
+    var tries = 0, t = setInterval(function () { paint(); if (++tries >= 60) clearInterval(t); }, 500);
+    if (window._wmsPrefsReady && typeof window._wmsPrefsReady.then === 'function') window._wmsPrefsReady.then(function () { setTimeout(paint, 50); });
+    window.addEventListener('focus', paint);
+})();
+
+// ============================================================================
+// No full-screen "Loading…" on the phone while you are on Home (owner OK 21-Nov-2026, "ok prices").
+// At start-up the Trading screen is prepared in the background and its first live-price fetch puts the
+// desktop's grey "Loading…" cover over everything — 15-20 s on the phone, even though you are on Home.
+// On the phone, while Home is showing, that cover is replaced by a small "Loading prices…" mark and Home
+// stays usable. Open a module before it finishes and the normal cover shows there, exactly as today.
+// Nothing about the loading itself changes (same calls, same order, same numbers). Phone layer only.
+// ============================================================================
+(function () {
+    var ind = document.getElementById('loading-indicator');
+    if (!ind) return;
+    var st = document.createElement('style');
+    st.textContent = 'body.wms-ph-bgload #loading-indicator{display:none !important}' +
+        '#wmsPhBgMark{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 14px);z-index:100000;' +
+        'background:rgba(30,41,59,.88);color:#fff;font:600 11.5px/1 system-ui,-apple-system,sans-serif;padding:7px 12px 7px 10px;border-radius:14px;' +
+        'display:flex;align-items:center;gap:7px;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,.18)}' +
+        '#wmsPhBgMark i{width:8px;height:8px;border-radius:50%;border:2px solid #fff;border-top-color:transparent;animation:wmsPhBgSpin .8s linear infinite}' +
+        '@keyframes wmsPhBgSpin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(st);
+
+    function onHome() {
+        var p = document.querySelector('#content-container .module-pane[data-pane="phone-home"]');
+        return !!(p && p.style.display !== 'none' && (typeof wmsPhoneMode !== 'function' || wmsPhoneMode()));
+    }
+    function loadingShown() { return ind.style.display && ind.style.display !== 'none'; }
+    function mark(on) {
+        var m = document.getElementById('wmsPhBgMark');
+        if (on && !m) { m = document.createElement('div'); m.id = 'wmsPhBgMark'; m.setAttribute('role', 'status'); m.innerHTML = '<i></i>Loading prices…'; document.body.appendChild(m); }
+        if (!on && m) m.remove();
+    }
+    function sync() {
+        var bg = loadingShown() && onHome();
+        document.body.classList.toggle('wms-ph-bgload', bg);
+        mark(bg);
+    }
+    new MutationObserver(sync).observe(ind, { attributes: true, attributeFilter: ['style'] });
+    var cc = document.getElementById('content-container');
+    if (cc) new MutationObserver(sync).observe(cc, { attributes: true, subtree: true, attributeFilter: ['style'], childList: true });
+    window.addEventListener('wms-mode-change', sync);
+    sync();
 })();

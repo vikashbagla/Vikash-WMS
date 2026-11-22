@@ -212,8 +212,18 @@ async function wmsReloadRefMastersOnly() {
     // failure doesn't also log an "unhandled rejection" for a later one.
     [pBrokers, pIba, pRegCharges].forEach(function (p) { p.catch(function () {}); });
 
-    // 1. Investors
+    // Each response is awaited in the original order 1→4 (an early failure still throws at that step).
     var investors = await pInvestors;
+    var brokers = await pBrokers;
+    var ibAccounts = await pIba;
+    var regRows = await pRegCharges;
+    _wmsApplyRefMasters(investors, brokers, ibAccounts, regRows);
+}
+
+// Builds the four small masters + their lookup maps from raw rows (shared by the server load above and
+// the show-first opening, iPhone App Plan 3.1 — so both produce exactly the same in-memory state).
+function _wmsApplyRefMasters(investors, brokers, ibAccounts, regRows) {
+    // 1. Investors
     wmsRefData.investors = investors;
     wmsRefData.investorObjMap = {};
     wmsRefData.investorCache = {};
@@ -224,7 +234,6 @@ async function wmsReloadRefMastersOnly() {
     });
 
     // 2. Brokers
-    var brokers = await pBrokers;
     wmsRefData.brokers = brokers;
     wmsRefData.brokerObjMap = {};
     wmsRefData.brokerCache = {};
@@ -235,7 +244,6 @@ async function wmsReloadRefMastersOnly() {
     });
 
     // 3. IBA rates (investor_broker_accounts with brokerage_rates + charges_inclusive + ledger fields)
-    var ibAccounts = await pIba;
     wmsRefData.ibaRatesMap = {};
     ibAccounts.forEach(function(iba) {
         var key = iba.investor_id + '|' + iba.broker_id;
@@ -249,12 +257,15 @@ async function wmsReloadRefMastersOnly() {
     });
 
     // 4. Regulatory charges (active only — effective_to IS NULL)
-    wmsRefData.regCharges = await pRegCharges;
+    wmsRefData.regCharges = regRows;
     wmsRefData.regChargesIndex = {};
     wmsRefData.regCharges.forEach(function(rc) {
         var key = rc.charge_type + '|' + rc.transaction_category + '|' + rc.transaction_type + '|' + rc.exchange;
         wmsRefData.regChargesIndex[key] = rc.rate_percentage || 0;
     });
+
+    // Raw rows kept so the next opening can show from them (show-first snapshot).
+    wmsRefData._refRaw = { investors: investors, brokers: brokers, iba: ibAccounts, regCharges: regRows };
 }
 
 /**
@@ -647,7 +658,7 @@ async function _wmsNfoDeltaSync() {
 async function wmsMastersSyncNow() {
     if (!wmsRefData.ready) return false;
     var probe;
-    try { probe = await wmsMastersSyncState(); } catch (e) { return false; }  // RPC absent → no-op
+    try { probe = await _wmsMastersSyncStateOnce(); } catch (e) { return false; }  // RPC absent → no-op (uses the start-up one-call answer once, if fresh)
     var base = wmsRefData._masterTokens || {};
     var next = {}; for (var k in probe) next[k] = probe[k];
     var changed = false;
@@ -682,7 +693,108 @@ async function wmsMastersSyncNow() {
 
     if (cacheMode && changed) wmsFireCacheGen();
     wmsRefData._masterTokens = next;
+    wmsShowFirstSaveSnapshot();
     return changed;
+}
+
+// ============================================================================
+// SHOW FIRST, CHECK AFTER (WMS iPhone App Plan step 3.1, 21-Nov-2026)
+// ----------------------------------------------------------------------------
+// In the iPhone app the start-up no longer waits for the server: it shows the screens from the copies
+// already on the phone (master data snapshot + securities + transactions in IndexedDB), then checks
+// with the server in the background (ONE call, wms_boot_state) and updates only what changed, with a
+// small "Updating…" mark meanwhile. Same data, same calculations — the server check that used to run
+// BEFORE showing now runs straight AFTER.
+// Used only when (a) running inside the iPhone app, or localStorage 'wms_show_first'='1' (test switch),
+// and (b) a complete, consistent set of copies exists for this user. Otherwise the start-up is exactly
+// as before. Desktop / Safari without the switch: unchanged.
+// ============================================================================
+var _WMS_SNAPSHOT_KEY = 'wms_ref_snapshot_v1';
+function wmsShowFirstEnabled() {
+    try { if (localStorage.getItem('wms_show_first') === '0') return false; } catch (e) {}
+    try { if (localStorage.getItem('wms_show_first') === '1') return true; } catch (e) {}
+    try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch (e) { return false; }
+}
+// Save the four small masters + the change markers they match. Only when every master is in memory
+// and the markers are known, so the snapshot is always a consistent set.
+function wmsShowFirstSaveSnapshot() {
+    try {
+        if (!wmsShowFirstEnabled()) return;
+        var raw = wmsRefData._refRaw, tok = wmsRefData._masterTokens, user = _wmsTxnUserKey();
+        if (!raw || !tok || !user || !tok.securities_db || !tok.securities_nfo) return;
+        localStorage.setItem(_WMS_SNAPSHOT_KEY, JSON.stringify({ user: user, env: window.WMS_ENV || '', savedAt: Date.now(), raw: raw, tokens: tok }));
+    } catch (e) { /* storage full / blocked — the next opening simply runs the normal start-up */ }
+}
+// Try to put everything in memory from the phone's own copies. Returns true only if ALL of it was
+// available and consistent; on false nothing has been changed and the normal start-up runs.
+async function wmsShowFirstPrime() {
+    if (!wmsShowFirstEnabled() || !wmsSecuritiesCacheMode() || !wmsTxnCacheMode()) return false;
+    var snap = null;
+    try { snap = JSON.parse(localStorage.getItem(_WMS_SNAPSHOT_KEY) || 'null'); } catch (e) { snap = null; }
+    var user = _wmsTxnUserKey();
+    if (!snap || !user || snap.user !== user || snap.env !== (window.WMS_ENV || '') || !snap.raw || !snap.tokens) return false;
+    var t = snap.tokens;
+    if (!t.securities_db || !t.securities_nfo) return false;
+    var cm, nfo;
+    try { var got = await Promise.all([_wmsIdbGet('cm'), _wmsIdbGet('nfo')]); cm = got[0]; nfo = got[1]; } catch (e) { return false; }
+    // The securities copies must be the very versions the snapshot's markers describe.
+    if (!cm || !nfo || !Array.isArray(cm.rows) || !Array.isArray(nfo.rows)) return false;
+    if (cm.version !== t.securities_db.checksum || nfo.version !== t.securities_nfo.checksum) return false;
+    var r = snap.raw;
+    if (!Array.isArray(r.investors) || !Array.isArray(r.brokers) || !Array.isArray(r.iba) || !Array.isArray(r.regCharges)) return false;
+    var hydrated = false;
+    try { hydrated = await _wmsTxnIdbHydrate(); } catch (e) { hydrated = false; }
+    var c = window._wmsTxnCache;
+    if (!hydrated && !(c && Array.isArray(c.rows) && c.rows.length)) return false;
+    // All present — apply exactly as the server loads would.
+    _wmsApplyRefMasters(r.investors, r.brokers, r.iba, r.regCharges);
+    _wmsApplyCm(cm.rows);
+    _wmsApplyNfo(nfo.rows);
+    wmsRefData.tags = wmsRefData.tags || [];
+    wmsRefData.ready = true;
+    wmsRefData._masterTokens = t;                                  // the background check compares against these
+    window._wmsTxnCache.syncedAt = Date.now();                     // modules use the copy now; the check below verifies it
+    console.log('Show-first: opened from the copies on this device (saved ' + Math.round((Date.now() - snap.savedAt) / 60000) + ' min ago) — checking with the server in the background');
+    return true;
+}
+// The background check: one server call; updates whatever changed and re-draws the screen if needed.
+async function wmsShowFirstVerify() {
+    _wmsUpdatingMark(true);
+    var changed = false;
+    try {
+        var res = await Promise.all([
+            (async function () { var before = window._wmsTxnCache && window._wmsTxnCache.checksum;
+                                 await wmsLoadTransactions({ verify: true });
+                                 return !!(window._wmsTxnCache && window._wmsTxnCache.checksum !== before); })().catch(function (e) { console.warn('Show-first: transactions check failed', e); return false; }),
+            wmsMastersSyncNow().catch(function (e) { console.warn('Show-first: master-data check failed', e); return false; })
+        ]);
+        changed = res[0] || res[1];
+        if (res[0]) { try { await _wmsCoverNewNfoContracts(window._wmsTxnCache.rows); } catch (e) {} }
+        if (changed) wmsRenderActiveModuleAfterTxn();
+        console.log('Show-first: server check done — ' + (changed ? 'updated what changed' : 'nothing changed'));
+    } finally {
+        wmsShowFirstSaveSnapshot();
+        _wmsUpdatingMark(false);
+    }
+    return changed;
+}
+function _wmsUpdatingMark(on) {
+    var el = document.getElementById('wmsUpdatingMark');
+    if (!on) { if (el) { el.classList.add('done'); setTimeout(function () { if (el && el.parentNode) el.remove(); }, 400); } return; }
+    if (el) return;
+    el = document.createElement('div');
+    el.id = 'wmsUpdatingMark';
+    el.setAttribute('role', 'status');
+    el.innerHTML = '<span class="wms-upd-dot"></span>Updating…';
+    el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top, 0px) + 6px);z-index:100000;' +
+        'background:rgba(30,41,59,.88);color:#fff;font:600 11.5px/1 system-ui,-apple-system,sans-serif;padding:6px 11px 6px 9px;border-radius:14px;' +
+        'display:flex;align-items:center;gap:7px;pointer-events:none;transition:opacity .35s;box-shadow:0 2px 8px rgba(0,0,0,.18)';
+    if (!document.getElementById('wmsUpdatingMarkCss')) {
+        var st = document.createElement('style'); st.id = 'wmsUpdatingMarkCss';
+        st.textContent = '#wmsUpdatingMark.done{opacity:0}#wmsUpdatingMark .wms-upd-dot{width:8px;height:8px;border-radius:50%;border:2px solid #fff;border-top-color:transparent;animation:wmsUpdSpin .8s linear infinite}@keyframes wmsUpdSpin{to{transform:rotate(360deg)}}';
+        document.head.appendChild(st);
+    }
+    document.body.appendChild(el);
 }
 
 
@@ -816,7 +928,7 @@ async function _wmsLoadOneFromCache(kind, version) {
 // ---- boot orchestrator: probe checksums, load both masters from cache --------
 async function wmsLoadSecuritiesCache() {
     var probe;
-    try { probe = await wmsMastersSyncState(); }
+    try { probe = await _wmsMastersSyncStateOnce(); }   // start-up: answer from the one-call check when available
     catch (e) {                                    // checksum RPC unavailable -> plain REST
         console.warn('cache mode: masters_sync_state unavailable, using REST', e && e.message);
         await Promise.all([wmsLoadSecuritiesCm(), wmsLoadSecuritiesNfo()]);
@@ -937,9 +1049,48 @@ async function wmsTxnSyncState() {
 // fewer in a row. Used once, only if under 15 s old; on any failure it simply asks again as before.
 var _wmsTxnSyncPre = null;
 function wmsTxnSyncPrefetch() {
-    var p = wmsTxnSyncState();
+    // Start-up (iPhone App Plan Phase 3, 21-Nov-2026): ONE database call (wms_boot_state) answers both the
+    // master-data check and the transactions check. Owner only — for anyone else it returns nothing and
+    // each check is asked separately exactly as before. Any failure also falls back to the separate checks.
+    var boot = _wmsBootStateStart();
+    var p = boot.then(function (b) { return (b && b.txn) ? b.txn : wmsTxnSyncState(); },
+                      function () { return wmsTxnSyncState(); });
     p.catch(function () {});
     _wmsTxnSyncPre = { p: p, at: Date.now() };
+}
+
+// One-call start-up check (migration 99-wms-boot-state.sql). Resolves to
+// { masters: <same shape as wmsMastersSyncState()>, txn: <same shape as wmsTxnSyncState()> } or null.
+var _wmsBootPre = null;
+function _wmsBootStateStart() {
+    var p = (async function () {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/wms_boot_state', {
+            method: 'POST',
+            headers: wmsHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ p_dev: window.WMS_ENV === 'dev' })
+        });
+        if (!resp.ok) return null;
+        var j = await resp.json();
+        if (!j || !Array.isArray(j.masters) || !j.txn) return null;
+        var masters = {};
+        j.masters.forEach(function (r) {
+            masters[r.table_name] = { row_count: Number(r.row_count), checksum: r.checksum, max_updated: r.max_updated };
+        });
+        var t = j.txn;
+        return { masters: masters, txn: { count: Number(t.row_count), checksum: t.checksum, maxUpdated: t.max_updated } };
+    })();
+    p.catch(function () {});
+    _wmsBootPre = { p: p, at: Date.now() };
+    return p;
+}
+// The master-data answer from that one call, used once and only if under 15 s old; otherwise asks as before.
+async function _wmsMastersSyncStateOnce() {
+    var pre = _wmsBootPre;
+    _wmsBootPre = null;
+    if (pre && (Date.now() - pre.at) < 15000) {
+        try { var b = await pre.p; if (b && b.masters) return b.masters; } catch (e) { /* fall through */ }
+    }
+    return wmsMastersSyncState();
 }
 async function _wmsTxnSyncStateOnce() {
     var pre = _wmsTxnSyncPre;
@@ -1354,7 +1505,7 @@ async function wmsLoadTransactions(opts) {
     var cache = window._wmsTxnCache;
     var haveCache = cache && Array.isArray(cache.rows) && cache.rows.length > 0 && cache.checksum != null;
     // De-dupe the boot burst: a non-force call within 3s of a fresh sync reuses it (no re-probe).
-    if (!opts.force && haveCache && wmsTxnCacheMode() && cache.syncedAt && (Date.now() - cache.syncedAt) < 3000) {
+    if (!opts.force && !opts.verify && haveCache && wmsTxnCacheMode() && cache.syncedAt && (Date.now() - cache.syncedAt) < 3000) {
         return cache.rows;
     }
     if (!opts.force && haveCache) {
@@ -1892,6 +2043,21 @@ function wmsRerenderAmounts() {
         if (typeof autoRerenderOnUnitChange === 'function') autoRerenderOnUnitChange();
     } catch (err) { console.warn('full-amount: auto-trading re-render failed', err); }
 }
+
+// Trader lists (owner, 21-Nov-2026; Phone New Entry Plan step 2.2a): the Trader drop-downs in New Entry,
+// Edit Transaction and Split list only traders WITHOUT their own books — investors whose books are kept
+// under another investor (investors.book_parent_id set; today T1, T2, T3, T3a, T4, T5, TRJ). Investors
+// with their own books (Veins, KDB, MB, …) never trade for another investor. "(Same)" stays first in
+// every list. keepId: the trader an existing entry already has is always kept (never silently changed).
+// If the investor master is not loaded, nothing is hidden (old behaviour).
+function wmsTraderOptionAllowed(investorId, keepId) {
+    if (keepId && investorId === keepId) return true;
+    var m = window.wmsRefData && window.wmsRefData.investorObjMap;
+    var inv = m && m[investorId];
+    if (!inv) return true;
+    return !!inv.book_parent_id;
+}
+window.wmsTraderOptionAllowed = wmsTraderOptionAllowed;
 
 // Flip the global full-amount flag, re-render, and confirm with a brief toast
 // that also teaches the shortcut.

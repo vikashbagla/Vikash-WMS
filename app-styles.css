@@ -99,6 +99,8 @@ body {
 .index-change.positive { color: #059669; }
 .index-change.negative { color: #dc2626; }
 .index-change.neutral { color: #718096; }
+/* Last-known value shown while fresh prices load (22-Nov-2026) */
+.index-item.stale .index-price, .index-item.stale .index-change { color: #a0aec0 !important; }
 
 .user-section { display: flex; align-items: center; gap: 14px; }
 .user-email { font-size: 13px; color: #4a5568; }

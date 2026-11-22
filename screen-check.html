@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- Duo screen check (WMS iPhone App Plan, Phase 1 step 1.3, 20-Nov-2026).
+     Standalone page: not part of the app, reads nothing from the database, saves nothing.
+     Shows what the phone reports in each pose so the app's layout rules can be set from real numbers. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="WMS Check">
+<title>WMS Screen Check</title>
+<style>
+  :root { --sat: env(safe-area-inset-top, 0px); --sar: env(safe-area-inset-right, 0px);
+          --sab: env(safe-area-inset-bottom, 0px); --sal: env(safe-area-inset-left, 0px); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0F3D33; font-family: -apple-system, system-ui, sans-serif; }
+  /* The green frame = the area the app may use; the dark border around it = what iOS keeps for itself. */
+  .safe { position: fixed; top: var(--sat); right: var(--sar); bottom: var(--sab); left: var(--sal);
+          background: #f7f8fb; border: 3px solid #7FE0C4; overflow: auto; padding: 14px; color: #1a202c; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .pose { font-size: 26px; font-weight: 800; color: #0F3D33; margin: 6px 0 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; table-layout: fixed; }
+  td { padding: 5px 4px; overflow-wrap: anywhere; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+  td:first-child { color: #4a5568; width: 55%; }
+  td:last-child { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .hint { font-size: 14px; color: #4a5568; margin-top: 12px; line-height: 1.4; }
+  .probe { position: fixed; visibility: hidden; padding-top: var(--sat); padding-right: var(--sar);
+           padding-bottom: var(--sab); padding-left: var(--sal); }
+</style>
+</head>
+<body>
+<div class="probe" id="probe"></div>
+<div class="safe">
+  <h1>WMS screen check</h1>
+  <div class="pose" id="pose">…</div>
+  <table id="t"></table>
+  <div class="hint">
+    Take a screenshot in each pose: folded upright, folded sideways, opened upright, opened sideways.
+    Do it here in Safari, then again after Share → Add to Home Screen ("WMS Check") and opening it from the Home Screen.
+    The numbers update by themselves when you fold, unfold or turn the phone.
+    The green frame is the space the app may use; the dark edge around it is what iOS keeps.
+  </div>
+</div>
+<script>
+(function () {
+  function px(v) { return Math.round(parseFloat(v) || 0); }
+  function render() {
+    var cs = getComputedStyle(document.getElementById('probe'));
+    var ins = { t: px(cs.paddingTop), r: px(cs.paddingRight), b: px(cs.paddingBottom), l: px(cs.paddingLeft) };
+    var w = window.innerWidth, h = window.innerHeight;
+    var standalone = (window.navigator.standalone === true) || window.matchMedia('(display-mode: standalone)').matches;
+    var pose = (w <= 600 ? 'Phone width' : (h > w ? 'Wide, upright' : 'Wide, sideways')) + ' · ' + w + ' × ' + h;
+    document.getElementById('pose').textContent = pose;
+    var rows = [
+      ['Opened from', standalone ? 'Home Screen' : 'Safari'],
+      ['Page size (points)', w + ' × ' + h],
+      ['Screen size (points)', screen.width + ' × ' + screen.height],
+      ['Pixels per point', window.devicePixelRatio],
+      ['Reserved by iOS: top', ins.t],
+      ['Reserved by iOS: right', ins.r],
+      ['Reserved by iOS: bottom', ins.b],
+      ['Reserved by iOS: left', ins.l],
+      ['Touch screen', (navigator.maxTouchPoints || 0) > 0 ? 'Yes (' + navigator.maxTouchPoints + ')' : 'No'],
+      ['Browser says it is', /iPhone/.test(navigator.userAgent) ? 'iPhone' : (/iPad|Macintosh/.test(navigator.userAgent) ? 'iPad / Mac (desktop sites)' : 'Other')],
+      ['Browser identity', navigator.userAgent]
+    ];
+    document.getElementById('t').innerHTML = rows.map(function (r) {
+      return '<tr><td>' + r[0] + '</td><td>' + String(r[1]).replace(/</g, '&lt;') + '</td></tr>';
+    }).join('');
+  }
+  render();
+  window.addEventListener('resize', render);
+  window.addEventListener('orientationchange', function () { setTimeout(render, 300); });
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', render);
+})();
+</script>
+</body>
+</html>

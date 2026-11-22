@@ -412,12 +412,73 @@
 
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="wms-app-sw-register.js"></script>   <!-- WMS iPhone app only: screens kept on the phone (plan step 2.3); does nothing on desktop / Safari -->
     <script>
         // Supabase configuration
         const SUPABASE_URL = 'https://lynvrwteylgpwlwbslse.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bnZyd3RleWxncHdsd2JzbHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwOTI4NDMsImV4cCI6MjA4NTY2ODg0M30.zHMouEjak_Fpd9LBqHbSOifVfSCZ0U8AqrX94C9oKXc';
 
         var supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // ---- Inside the WMS iPhone app only (WMS iPhone App Plan, step 2.2, 21-Nov-2026) ----
+        // Google does not allow its sign-in page inside an app's built-in web view. So, in the app,
+        // the Google page opens in Apple's secure browser sheet and comes back to the app at
+        // com.veins.wms://auth-callback, where the session is set and the app opens.
+        // On desktop and in Safari isWmsApp() is false and sign-in works exactly as before.
+        var WMS_APP_CALLBACK = 'com.veins.wms://auth-callback';
+        function isWmsApp() {
+            return !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+        }
+        function wmsAppPlugin(name) {
+            var C = window.Capacitor;
+            return (C.Plugins && C.Plugins[name]) || (typeof C.registerPlugin === 'function' ? C.registerPlugin(name) : null);
+        }
+        function wmsLoginReset(message) {
+            var btn = document.getElementById('googleLoginBtn');
+            if (btn) btn.disabled = false;
+            document.getElementById('loginSpinner').style.display = 'none';
+            if (message) {
+                var errorEl = document.getElementById('errorMessage');
+                errorEl.textContent = message;
+                errorEl.classList.add('show');
+            }
+        }
+        async function wmsAppFinishSignIn(url) {
+            if (!url || url.indexOf(WMS_APP_CALLBACK) !== 0) return;
+            try { await wmsAppPlugin('Browser').close(); } catch (e) { /* sheet may already be closed */ }
+            try {
+                var u = new URL(url);
+                var hash = new URLSearchParams((u.hash || '').replace(/^#/, ''));
+                var query = u.searchParams;
+                var errText = hash.get('error_description') || query.get('error_description');
+                if (errText) throw new Error(errText);
+                var res;
+                if (hash.get('access_token') && hash.get('refresh_token')) {
+                    res = await supabaseClient.auth.setSession({
+                        access_token: hash.get('access_token'),
+                        refresh_token: hash.get('refresh_token')
+                    });
+                } else if (query.get('code')) {
+                    res = await supabaseClient.auth.exchangeCodeForSession(query.get('code'));
+                } else {
+                    throw new Error('No sign-in details came back');
+                }
+                if (res.error) throw res.error;
+                window.location.href = 'app.html';
+            } catch (err) {
+                console.error('App sign-in error:', err);
+                wmsLoginReset('Login failed: ' + (err.message || 'Unknown error'));
+            }
+        }
+        if (isWmsApp()) {
+            try {
+                wmsAppPlugin('App').addListener('appUrlOpen', function(e) { wmsAppFinishSignIn(e && e.url); });
+                // Sheet closed without signing in: put the button back
+                wmsAppPlugin('Browser').addListener('browserFinished', function() { wmsLoginReset(); });
+            } catch (e) {
+                console.warn('WMS app sign-in setup failed:', e);
+            }
+        }
 
         // Check if user already has a session on page load
         document.addEventListener('DOMContentLoaded', async function() {
@@ -441,6 +502,16 @@
                 errorEl.classList.remove('show');
 
                 try {
+                    if (isWmsApp()) {
+                        // In the WMS iPhone app: open Google in Apple's secure browser sheet
+                        var appResult = await supabaseClient.auth.signInWithOAuth({
+                            provider: 'google',
+                            options: { redirectTo: WMS_APP_CALLBACK, skipBrowserRedirect: true }
+                        });
+                        if (appResult.error) throw appResult.error;
+                        await wmsAppPlugin('Browser').open({ url: appResult.data.url });
+                        return;
+                    }
                     var result = await supabaseClient.auth.signInWithOAuth({
                         provider: 'google',
                         options: {
