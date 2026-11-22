@@ -12,7 +12,11 @@
 // ============================================================================
 (function () {
     function $(s, r) { return (r || document).querySelector(s); }
-    function visible(el) { return !!(el && el.offsetParent !== null && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden'); }
+    function visible(el) {   // works for fixed-position sheets too (their offsetParent is null)
+        if (!el || !el.isConnected) return false;
+        var cs = getComputedStyle(el);
+        return cs.display !== 'none' && cs.visibility !== 'hidden' && el.getClientRects().length > 0;
+    }
 
     // ---- where are we? ----
     function homeShown() { var p = $('#content-container .module-pane[data-pane="phone-home"]'); return !!(p && p.style.display !== 'none'); }

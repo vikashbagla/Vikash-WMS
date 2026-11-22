@@ -810,6 +810,7 @@ html.wms-wide-mode .addTxn-m-symdet, html.wms-wide-mode .addTxn-m-addrow { displ
         background: var(--ph-bg) !important; }
     .app-header, #content-container { box-shadow: none !important; border-radius: 0 !important; }
     .app-header { border-bottom: none !important; }
+    #devBanner { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10px !important; }   /* dev site only: one line, so it never covers the header */
     #content-container { border: none !important; }
     .tr-view-tabs-bar, .trm-summary, .trm-fno-tot { background: transparent !important; }
     /* Portfolio holdings and F&O symbol groups: white cards on the one background */
