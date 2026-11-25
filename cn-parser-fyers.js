@@ -104,22 +104,8 @@ CN_PARSERS.fyers = function(pages, numPages) {
             if (lineText.match(/^\*\s*Remark/)) continue;
             if (!lineText.match(/^\d{10,}/) && lineText.match(/REVISED|CONTRACT NOTE|FYERS SECURITIES|Registered Office|SEBI Reg|Compliance|UCC|Name of|Address|\bState\b|Mobile|\bPAN\b|Client GSTIN|Invoice|Equity ICCL|Settlement/i)) continue;
 
-            // Wrapped order number (owner 25-Nov-2026): a 19-digit BSE order number is too wide
-            // for its column, so the PDF puts it on its own line ABOVE the row (and its last
-            // digit(s) on a line BELOW), and the row itself starts with the order TIME. Re-join
-            // the number onto the row so it parses like any other trade row.
-            var rowItems = lines[li].items;
-            var rowLineIdx = li;
-            if (/^\d{2}:\d{2}:\d{2}/.test(lineText) && li > 0 && /^\d{10,}$/.test((lines[li - 1].text || '').trim())) {
-                var orderNo = lines[li - 1].text.trim();
-                var tail = (li + 1 < lines.length) ? (lines[li + 1].text || '').trim() : '';
-                var firstX = Math.min.apply(null, rowItems.map(function(it) { return it.x; }));
-                if (/^\d{1,3}$/.test(tail)) { orderNo += tail; li++; }   // the wrapped tail line is used up
-                rowItems = [{ text: orderNo, x: firstX - 1, y: lines[rowLineIdx].y, width: 0 }].concat(rowItems);
-            }
-
             // Parse trade row: OrderNo, OrderTime, TradeNo, TradeTime, Security, B/S, Qty, Price, [ForeignPrice], NetRate, NetAmount, [Remark]
-            var tradeMatch = parseFyersTradeRow(rowItems, currentSegment);
+            var tradeMatch = parseFyersTradeRow(lines[li].items, currentSegment);
             if (tradeMatch) {
                 // If the description came back empty/short, the PDF likely wrapped the
                 // security description onto adjacent Y-lines (common for long names like
@@ -127,7 +113,7 @@ CN_PARSERS.fyers = function(pages, numPages) {
                 // within ±15 pixels of the trade row's Y for items in the description
                 // column (between the end of TradeTime and the start of B/S).
                 if (!tradeMatch.underlying || tradeMatch.description.length < 3) {
-                    var wrapped = _fyersRecoverWrappedDescription(lines, rowLineIdx);
+                    var wrapped = _fyersRecoverWrappedDescription(lines, li);
                     if (wrapped) {
                         tradeMatch.description = wrapped;
                         var info = parseFyersSecurityDescription(wrapped, currentSegment);
