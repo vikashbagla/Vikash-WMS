@@ -254,6 +254,7 @@
         }
     };
     window.fyersCall = async function(payload) {
+        if (typeof wmsEnsureFreshAuth === 'function') await wmsEnsureFreshAuth();   // expired sign-in → renew first (25-Nov-2026)
         // OFF-SUPABASE PRICE PATH: live quotes go ONLY to the Cloudflare Worker.
         // There is NO Supabase EF fallback by design — if the Worker fails we
         // surface the error (console + red 'Prices' badge, refresh clock stops
@@ -273,6 +274,13 @@
                     body: JSON.stringify({ symbols: payload.symbols, lean: payload.lean === true })
                 });
                 if (wres.ok) { window.__priceWorkerOk(); return await wres.json(); }
+                // 401 because WMS's sign-in pass was refused (e.g. expired while the app was paused — not a
+                // Fyers-login problem): renew it and retry ONCE before showing red (25-Nov-2026).
+                if (wres.status === 401 && typeof wmsEnsureFreshAuth === 'function' && !payload.__authRetried
+                    && /Auth failed|Missing authentication|Auth check failed/.test(await wres.clone().text().catch(function(){ return ''; }))) {
+                    await wmsEnsureFreshAuth(true);
+                    return window.fyersCall(Object.assign({}, payload, { __authRetried: true }));
+                }
                 const body = await wres.text().catch(function(){ return ''; });
                 console.error('[price] Worker HTTP ' + wres.status + ' — ' + body.slice(0, 200));
                 window.__priceWorkerError({ status: wres.status, body: body.slice(0, 200) });
@@ -300,6 +308,7 @@
     // Returns the rows, or null if the status could not be read.
     async function wmsReadLoginStatus() {
         try {
+            if (typeof wmsEnsureFreshAuth === 'function') await wmsEnsureFreshAuth();
             const res = await fetch(`${window.SUPABASE_URL}/rest/v1/rpc/wms_login_status`, {
                 method: 'POST',
                 headers: wmsHeaders({ 'Content-Type': 'application/json' }),
@@ -947,6 +956,8 @@
         pane.style.display = '';
         if (!def) { pane.innerHTML = '<div class="coming-soon">🚧 Coming soon!</div>'; return; }
 
+        // Renew an expired sign-in before the module loads / resumes (25-Nov-2026).
+        if (typeof wmsEnsureFreshAuth === 'function') { try { await wmsEnsureFreshAuth(); } catch (e) {} }
         try {
             const firstLoad = !_wmsModuleLoaded[moduleName];
             if (firstLoad || force) {

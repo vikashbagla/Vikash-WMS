@@ -17,6 +17,49 @@
 /** Auth token — set after OAuth login, null = fall back to anon key */
 var _wmsAuthToken = null;
 
+// ============================================================================
+// SIGN-IN RENEWAL BEFORE USE (owner report 25-Nov-2026: phone app reopened after hours → red
+// "Prices" + Trading stuck on the grey loading screen). The sign-in pass lasts 1 hour and is renewed
+// in the background only while the page is running; iOS (and a sleeping computer) pauses the page,
+// so on return the first price / data calls went out with the EXPIRED pass and were refused.
+// wmsEnsureFreshAuth(): if the pass expires within 60 s, renew it first (one renewal shared by all
+// callers). Costs nothing otherwise — it only reads the pass's expiry time. Called before price
+// calls, data syncs, the login-status read and module loads / resumes.
+// ============================================================================
+var _wmsAuthFreshP = null;
+function _wmsTokenExpiresWithin(tok, sec) {
+    try {
+        var b = tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        while (b.length % 4) b += '=';
+        var exp = JSON.parse(atob(b)).exp;
+        return !exp || (exp - Date.now() / 1000) < sec;
+    } catch (e) { return false; }
+}
+function wmsEnsureFreshAuth(force) {
+    if (!_wmsAuthToken || !window.supabaseClient || !window.supabaseClient.auth) return Promise.resolve();
+    if (!force && !_wmsTokenExpiresWithin(_wmsAuthToken, 60)) return Promise.resolve();
+    if (_wmsAuthFreshP) return _wmsAuthFreshP;
+    _wmsAuthFreshP = (async function () {
+        try {
+            var auth = window.supabaseClient.auth;
+            var r = await auth.getSession();                       // renews by itself if expired
+            var s = r && r.data && r.data.session;
+            if (s && s.access_token) _wmsAuthToken = s.access_token;
+            if (force || _wmsTokenExpiresWithin(_wmsAuthToken, 30)) {
+                var r2 = await auth.refreshSession();
+                var s2 = r2 && r2.data && r2.data.session;
+                if (s2 && s2.access_token) _wmsAuthToken = s2.access_token;
+            }
+        } catch (e) {
+            console.warn('Sign-in renewal failed', e);
+        } finally {
+            _wmsAuthFreshP = null;
+        }
+    })();
+    return _wmsAuthFreshP;
+}
+window.wmsEnsureFreshAuth = wmsEnsureFreshAuth;
+
 /**
  * Build Supabase REST headers with the current auth token.
  * @param {Object} [extra] — additional headers to merge (e.g. Content-Type, Prefer)
@@ -657,6 +700,7 @@ async function _wmsNfoDeltaSync() {
 // token so it retries next tick). Wired into the 2-min cadence + tab-focus.
 async function wmsMastersSyncNow() {
     if (!wmsRefData.ready) return false;
+    await wmsEnsureFreshAuth();
     var probe;
     try { probe = await _wmsMastersSyncStateOnce(); } catch (e) { return false; }  // RPC absent → no-op (uses the start-up one-call answer once, if fresh)
     var base = wmsRefData._masterTokens || {};
@@ -1498,6 +1542,7 @@ function wmsEnsureVoucherStore() {
 
 async function wmsLoadTransactions(opts) {
     opts = opts || {};
+    await wmsEnsureFreshAuth();   // renew an expired sign-in first (25-Nov-2026)
     // Cache mode: hydrate the in-memory cache from IndexedDB before deciding (same user only).
     if (wmsTxnCacheMode() && !(window._wmsTxnCache && Array.isArray(window._wmsTxnCache.rows) && window._wmsTxnCache.rows.length)) {
         try { await _wmsTxnIdbHydrate(); } catch (e) { /* ignore */ }
