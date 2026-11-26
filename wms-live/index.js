@@ -583,17 +583,19 @@ async function modifyOrderFyers(command, broker) {
 // The result is reported as 'placed' with broker_status NULL: a GTT is not an order in
 // the order book, so it must stay OUT of the working-orders check (that polls the order
 // book by id) and its id is NOT registered for the order WebSocket.
-async function placeGttFyers(command, broker) {
+// gtt_cancel = DELETE, gtt_modify = PATCH on the same endpoint (SDK gtt_cancel_order / gtt_modify_order);
+// body { id } / { id, orderInfo }. Same reporting as a placement.
+async function placeGttFyers(command, broker, method = 'POST') {
   const url = `${FYERS_BASE}/api/v3/gtt/orders/sync`;
   const cleanPayload = Object.fromEntries(
     Object.entries(command.payload || {}).filter(([k]) => !k.startsWith('_')),
   );
   const body = JSON.stringify(cleanPayload);
-  console.log(`[gtt ${command.id}] →`, url);
+  console.log(`[gtt ${command.id}] ${method} →`, url);
   console.log(`[gtt ${command.id}] payload:`, body);
   const t0 = Date.now();
   const res = await fetch(url, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json', 'Authorization': `${FYERS_APP_ID}:${broker.api_access_token}` },
     body,
   });
@@ -602,8 +604,8 @@ async function placeGttFyers(command, broker) {
   let json = null;
   try { json = JSON.parse(text); } catch (_) {}
   console.log(`[gtt ${command.id}] response (${res.status}, ${dt}ms):`, text.slice(0, 500));
-  if (res.ok && json?.s === 'ok' && json?.id) {
-    return { outcome: 'placed', broker_order_id: String(json.id), broker_response: json,
+  if (res.ok && json?.s === 'ok' && (json?.id || method !== 'POST')) {
+    return { outcome: 'placed', broker_order_id: String(json.id ?? command.payload?.id ?? ''), broker_response: json,
              broker_status: null, error_code: null, error_message: null };
   }
   if (json?.s === 'error' || json?.code) {
@@ -727,12 +729,12 @@ async function processCommand(command, broker) {
       } else {
         throw new Error(`modify not supported for broker_code='${broker.broker_code}'`);
       }
-    } else if (actionType === 'gtt_place') {
-      // GTT test (owner, 26-Nov-2026) — Fyers only.
+    } else if (actionType === 'gtt_place' || actionType === 'gtt_cancel' || actionType === 'gtt_modify') {
+      // GTT (owner, 26-Nov-2026) — Fyers only. Place = POST, cancel = DELETE, modify = PATCH.
       if (adapterKey === 'fyers') {
-        result = await placeGttFyers(command, broker);
+        result = await placeGttFyers(command, broker, actionType === 'gtt_cancel' ? 'DELETE' : actionType === 'gtt_modify' ? 'PATCH' : 'POST');
       } else {
-        throw new Error(`gtt_place not supported for broker_code='${broker.broker_code}'`);
+        throw new Error(`${actionType} not supported for broker_code='${broker.broker_code}'`);
       }
     } else if (actionType === 'cancel') {
       // cancelOrderFyers is Fyers-specific for now; broker-agnostic refactor when 2nd
@@ -801,7 +803,7 @@ async function processCommand(command, broker) {
   // arrive while we are still awaiting the placement response, before we know
   // the id at all. `registerBrokerOrder` therefore also REPLAYS any event that
   // was buffered for this id. Never re-order these two calls.
-  if (result.outcome === 'placed' && result.broker_order_id && actionType !== 'gtt_place') {
+  if (result.outcome === 'placed' && result.broker_order_id && !actionType.startsWith('gtt_')) {
     registerBrokerOrder(result.broker_order_id, command.id);
   }
 

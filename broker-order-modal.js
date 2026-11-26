@@ -1437,66 +1437,139 @@
   // ---------------------------------------------------------------------------
   function gttRender() {
     var box = document.getElementById('bomGtt'); if (!box) return;
-    var a = BOM.acct;
+    var a = BOM.acct, $ = function (id) { return document.getElementById(id); };
+    var inp = function (id, w, v) { return '<input id="' + id + '" class="r" style="width:' + w + 'px" value="' + (v || '') + '">'; };
+    var typ = function (id) { return '<select id="' + id + '"><option value="LIMIT">Limit</option><option value="MARKET">Market (after trigger)</option></select>'; };
     box.innerHTML =
-      '<div class="bom-note" style="margin-bottom:10px">Test only (dev site): one GTT order sent through the Fyers API from the order server. ' +
-        'The trigger must be at least 10% away from the price, so it cannot trigger. Account: <b>' + (a ? esc((a.investor_short || a.account || '') + ' › ' + (a.broker_code === 'FYERS' ? 'Fyers' : a.broker_code)) : 'pick one on New order') + '</b></div>' +
-      '<div style="display:grid;grid-template-columns:repeat(6,auto);gap:8px 12px;align-items:center;max-width:820px">' +
+      '<div class="bom-note" style="margin-bottom:10px">Test only (dev site): GTT orders sent through the Fyers API from the order server. Account: <b>' +
+        (a ? esc((a.investor_short || a.account || '') + ' › ' + (a.broker_code === 'FYERS' ? 'Fyers' : a.broker_code)) : 'pick one on New order') +
+        '</b>. Each leg must be ≥ 10% away from the price unless “Allow trigger” is ticked.</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(8,auto);gap:8px 12px;align-items:center;justify-content:start">' +
         '<span>Contract</span><input id="bomGttSym" class="bom-sym-in" style="width:220px" value="MCX:GOLDPETAL26DECFUT">' +
         '<span>Side</span><select id="bomGttSide"><option value="BUY">BUY</option><option value="SELL">SELL</option></select>' +
-        '<span>Lots</span><input id="bomGttLots" class="r" style="width:60px" value="1">' +
-        '<span>Type</span><select id="bomGttType"><option value="LIMIT">Limit</option><option value="MARKET">Market (after trigger)</option></select>' +
-        '<span>LTP</span><b id="bomGttLtp">…</b>' +
-        '<span>Trigger</span><input id="bomGttTrig" class="r" style="width:100px">' +
-        '<span>Limit</span><input id="bomGttPx" class="r" style="width:100px">' +
+        '<span>Lots</span>' + inp('bomGttLots', 60, '1') + '<span>LTP</span><b id="bomGttLtp">…</b>' +
+        '<span>Leg 1</span>' + typ('bomGttType') + '<span>Trigger</span>' + inp('bomGttTrig', 100) + '<span>Limit</span>' + inp('bomGttPx', 100) + '<span></span><span></span>' +
+        '<span class="bomGttL2" style="display:none">Leg 2</span><span class="bomGttL2" style="display:none">' + typ('bomGttType2') + '</span>' +
+        '<span class="bomGttL2" style="display:none">Trigger</span><span class="bomGttL2" style="display:none">' + inp('bomGttTrig2', 100) + '</span>' +
+        '<span class="bomGttL2" style="display:none">Limit</span><span class="bomGttL2" style="display:none">' + inp('bomGttPx2', 100) + '</span><span></span><span></span>' +
       '</div>' +
-      '<div style="margin-top:12px;display:flex;gap:8px;align-items:center">Order password: <input type="password" id="bomGttPw" autocomplete="off">' +
-        '<button class="bom-btn go" id="bomGttGo">Place GTT (test)</button><button class="bom-btn" id="bomGttBook">Read GTT book</button></div>' +
-      '<pre id="bomGttOut" style="margin-top:12px;white-space:pre-wrap;font-size:12px;background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;max-height:260px;overflow:auto">Nothing sent yet.</pre>';
-    var symIn = document.getElementById('bomGttSym'), ltpEl = document.getElementById('bomGttLtp');
+      '<div style="margin-top:8px;display:flex;gap:18px;flex-wrap:wrap">' +
+        '<label><input type="checkbox" id="bomGttOco"> Two legs (OCO: leg 1 above the price, leg 2 below)</label>' +
+        '<label><input type="checkbox" id="bomGttTag" checked> Order tag</label>' +
+        '<label style="color:#b91c1c"><input type="checkbox" id="bomGttAllow"> Allow trigger (a REAL trade if the price reaches it)</label>' +
+        '<span id="bomGttEdit" class="bom-note"></span>' +
+      '</div>' +
+      '<div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">Order password: <input type="password" id="bomGttPw" autocomplete="off">' +
+        '<button class="bom-btn go" id="bomGttGo">Place GTT (test)</button><button class="bom-btn" id="bomGttBook">Read GTT book</button>' +
+        '<button class="bom-btn" id="bomGttOrd">Read orders &amp; trades</button></div>' +
+      '<div id="bomGttView" style="margin-top:12px;max-height:58vh;overflow:auto"></div>';
+    var symIn = $('bomGttSym'), ltpEl = $('bomGttLtp'), editId = null;
+    var view = $('bomGttView');
+    var raw = function (o) { return '<details' + (typeof o === 'string' ? ' open' : '') + '><summary class="bom-note" style="cursor:pointer">Full reply</summary><pre style="white-space:pre-wrap;font-size:12px;background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px">' + esc(typeof o === 'string' ? o : JSON.stringify(o, null, 2)) + '</pre></details>'; };
+    var out = function (o, head) { view.innerHTML = (head || '') + raw(o); };
     var readLtp = async function () {
       ltpEl.textContent = '…';
       try {
         var d = await window.fyersCall({ action: 'quotes', symbols: [symIn.value.trim()] });
         var lp = d && d.d && d.d[0] && d.d[0].v && d.d[0].v.lp;
         ltpEl.textContent = lp ? price2(lp) : 'no price';
-        if (lp) {   // suggest a trigger 20% away from the price, on the side that cannot trigger
-          var buy = document.getElementById('bomGttSide').value === 'BUY';
-          var t = Math.round(lp * (buy ? 0.8 : 1.2));
-          document.getElementById('bomGttTrig').value = t; document.getElementById('bomGttPx').value = t;
+        if (lp && !editId) {
+          var oco = $('bomGttOco').checked, buy = $('bomGttSide').value === 'BUY';
+          var t1 = Math.round(lp * (oco ? 1.2 : (buy ? 0.8 : 1.2))), t2 = Math.round(lp * 0.8);
+          $('bomGttTrig').value = t1; if ($('bomGttType').value === 'LIMIT') $('bomGttPx').value = t1;
+          $('bomGttTrig2').value = t2; if ($('bomGttType2').value === 'LIMIT') $('bomGttPx2').value = t2;
         }
       } catch (e) { ltpEl.textContent = 'no price'; }
     };
+    var syncType = function (t, px, tr) { var m = $(t).value === 'MARKET'; $(px).disabled = m; $(px).value = m ? '' : $(tr).value; };
+    $('bomGttType').addEventListener('change', function () { syncType('bomGttType', 'bomGttPx', 'bomGttTrig'); });
+    $('bomGttType2').addEventListener('change', function () { syncType('bomGttType2', 'bomGttPx2', 'bomGttTrig2'); });
+    $('bomGttOco').addEventListener('change', function () { var on = this.checked; box.querySelectorAll('.bomGttL2').forEach(function (e) { e.style.display = on ? '' : 'none'; }); readLtp(); });
     symIn.addEventListener('change', readLtp);
-    document.getElementById('bomGttType').addEventListener('change', function () {
-      var mkt = this.value === 'MARKET', px = document.getElementById('bomGttPx');
-      px.disabled = mkt; px.value = mkt ? '' : document.getElementById('bomGttTrig').value;
-    });
-    document.getElementById('bomGttSide').addEventListener('change', readLtp);
+    $('bomGttSide').addEventListener('change', readLtp);
     readLtp();
-    var out = function (o) { document.getElementById('bomGttOut').textContent = typeof o === 'string' ? o : JSON.stringify(o, null, 2); };
-    document.getElementById('bomGttGo').addEventListener('click', async function () {
+    var api = async function (body) {
+      var r = await fetch(window.SUPABASE_URL + '/functions/v1/wms-broker-order', { method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) });
+      return await r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; });
+    };
+    var acctBody = function () { return { investor_id: BOM.acct.investor_id, broker_id: BOM.acct.broker_id }; };
+    var legs = function () {
+      return { order_type: $('bomGttType').value, trigger_price: Number($('bomGttTrig').value), limit_price: Number($('bomGttPx').value),
+               oco: $('bomGttOco').checked, order_type2: $('bomGttType2').value, trigger_price2: Number($('bomGttTrig2').value),
+               limit_price2: Number($('bomGttPx2').value), allow_trigger: $('bomGttAllow').checked };
+    };
+    var stopEdit = function () { editId = null; $('bomGttGo').textContent = 'Place GTT (test)'; $('bomGttEdit').innerHTML = ''; };
+    var head = function (j) { return '<div style="font-weight:600;margin-bottom:6px;color:' + (j.ok && j.result && j.result.status === 'placed' ? '#047857' : '#b91c1c') + '">' + esc(j.note || j.error || '') + '</div>'; };
+    $('bomGttGo').addEventListener('click', async function () {
       if (!BOM.acct) { out('Pick the account on New order first.'); return; }
-      var btn = this; btn.disabled = true; out('Sending… (the order server places it; up to 25 s)');
+      if ($('bomGttAllow').checked && !confirmAllow()) return;
+      var btn = this; btn.disabled = true; out('Sending… (the order server sends it to Fyers; up to 25 s)');
       try {
-        var r = await fetch(window.SUPABASE_URL + '/functions/v1/wms-broker-order', { method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ action: 'gtt_test', confirm: true, password: document.getElementById('bomGttPw').value,
-            account: { investor_id: BOM.acct.investor_id, broker_id: BOM.acct.broker_id },
-            symbol: symIn.value.trim(), side: document.getElementById('bomGttSide').value,
-            lots: Number(document.getElementById('bomGttLots').value), trigger_price: Number(document.getElementById('bomGttTrig').value),
-            limit_price: Number(document.getElementById('bomGttPx').value), order_type: document.getElementById('bomGttType').value }) });
-        out(await r.json().catch(function () { return { error: 'HTTP ' + r.status }; }));
+        var body = Object.assign({ confirm: true, password: $('bomGttPw').value, account: acctBody(), symbol: symIn.value.trim(), side: $('bomGttSide').value }, legs());
+        var j = editId
+          ? await api(Object.assign(body, { action: 'gtt_modify', gtt_id: editId, qty: Number($('bomGttEdit').dataset.qty || 0) }))
+          : await api(Object.assign(body, { action: 'gtt_test', lots: Number($('bomGttLots').value), order_tag: $('bomGttTag').checked }));
+        out(j, head(j)); if (editId && j.ok) stopEdit();
       } catch (e) { out('Could not reach the server: ' + e.message); }
-      document.getElementById('bomGttPw').value = ''; btn.disabled = false;
+      $('bomGttPw').value = ''; btn.disabled = false;
     });
-    document.getElementById('bomGttBook').addEventListener('click', async function () {
+    // "Allow trigger" needs a second click on Place — the screen asks once, in the page.
+    var armed = false;
+    function confirmAllow() {
+      if (armed) { armed = false; return true; }
+      armed = true; out('“Allow trigger” is ticked: this GTT can fire and make a REAL trade. Click Place again to send it.');
+      setTimeout(function () { armed = false; }, 15000); return false;
+    }
+    var pick = function (o, keys) { for (var i = 0; i < keys.length; i++) { if (o[keys[i]] != null && o[keys[i]] !== '') return o[keys[i]]; } return ''; };
+    var flat = function (o, pre, acc) { acc = acc || {}; Object.keys(o || {}).forEach(function (k) { var v = o[k]; if (v && typeof v === 'object' && !Array.isArray(v)) flat(v, (pre ? pre + '.' : '') + k, acc); else acc[(pre ? pre + '.' : '') + k] = v; }); return acc; };
+    $('bomGttBook').addEventListener('click', async function () {
       if (!BOM.acct) { out('Pick the account on New order first.'); return; }
-      out('Reading the GTT book…');
-      try {
-        var r = await fetch(window.SUPABASE_URL + '/functions/v1/wms-broker-order', { method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ action: 'gtt_book', investor_id: BOM.acct.investor_id, broker_id: BOM.acct.broker_id }) });
-        out(await r.json().catch(function () { return { error: 'HTTP ' + r.status }; }));
-      } catch (e) { out('Could not reach the server: ' + e.message); }
+      view.innerHTML = '<span class="bom-note">Reading the GTT book…</span>';
+      var j = await api(Object.assign({ action: 'gtt_book' }, acctBody()));
+      var rows = (j.gtt_book && j.gtt_book.orderBook) || [];
+      var t = '<table class="bom-t" style="font-size:12px"><thead><tr><th>GTT id</th><th>Symbol</th><th>Side</th><th>Status</th><th>Details (prices / qty / tag)</th><th></th></tr></thead><tbody>' +
+        rows.map(function (o, i) {
+          var f = flat(o), det = Object.keys(f).filter(function (k) { return /price|trig|qty|tag|oco|leg|status|msg|message/i.test(k) && f[k] !== '' && f[k] != null; })
+            .map(function (k) { return esc(k) + ' ' + esc(String(f[k])); }).join(' · ');
+          var side = Number(pick(o, ['side', 'transactionType'])), st = pick(o, ['gtt_status', 'status']);
+          return '<tr><td>' + esc(String(o.id || '')) + '</td><td>' + esc(String(o.symbol || '')) + '</td><td class="' + (side < 0 ? 'bom-sell' : 'bom-buy') + '">' + (side < 0 ? 'SELL' : side > 0 ? 'BUY' : '?') + '</td>' +
+            '<td>' + esc(String(st)) + '</td><td style="white-space:normal">' + det + '</td>' +
+            '<td style="white-space:nowrap"><button class="bom-btn" data-gtt-mod="' + i + '">Modify</button> <button class="bom-btn" data-gtt-can="' + i + '">Cancel</button></td></tr>';
+        }).join('') + '</tbody></table>';
+      out(j, rows.length ? t : '<span class="bom-note">No GTTs in the book (or an unexpected reply — see below).</span>');
+      view.querySelectorAll('[data-gtt-can]').forEach(function (b) { b.addEventListener('click', async function () {
+        var o = rows[Number(b.dataset.gttCan)];
+        if (!$('bomGttPw').value) { alert_('Type the order password first, then Cancel.'); return; }
+        b.disabled = true;
+        var r = await api(Object.assign({ action: 'gtt_cancel', confirm: true, password: $('bomGttPw').value, account: acctBody(), gtt_id: String(o.id), symbol: o.symbol }));
+        $('bomGttPw').value = ''; out(r, head(r));
+      }); });
+      view.querySelectorAll('[data-gtt-mod]').forEach(function (b) { b.addEventListener('click', function () {
+        var o = rows[Number(b.dataset.gttMod)], f = flat(o);
+        var find = function (re) { var k = Object.keys(f).find(function (x) { return re.test(x); }); return k ? f[k] : ''; };
+        editId = String(o.id); symIn.value = o.symbol || symIn.value;
+        $('bomGttSide').value = Number(pick(o, ['side', 'transactionType'])) < 0 ? 'SELL' : 'BUY';
+        $('bomGttTrig').value = find(/trig.*1|leg1.*trig|^trigger_?price$|^triggerPrice$/i);
+        $('bomGttPx').value = find(/(limit_?)?price.*1$|leg1.*price$|^price$|^limitPrice$/i);
+        $('bomGttGo').textContent = 'Modify GTT ' + editId;
+        $('bomGttEdit').dataset.qty = find(/qty/i);
+        $('bomGttEdit').innerHTML = 'Editing GTT <b>' + esc(editId) + '</b> (qty ' + esc(String(find(/qty/i))) + ') — check the prices, then click Modify. <a href="#" id="bomGttStop">stop editing</a>';
+        $('bomGttStop').addEventListener('click', function (e) { e.preventDefault(); stopEdit(); });
+        readLtp();
+      }); });
+    });
+    function alert_(m) { view.insertAdjacentHTML('afterbegin', '<div class="bom-err" style="margin-bottom:6px">' + esc(m) + '</div>'); }
+    $('bomGttOrd').addEventListener('click', async function () {
+      if (!BOM.acct) { out('Pick the account on New order first.'); return; }
+      view.innerHTML = '<span class="bom-note">Reading today’s orders and trades…</span>';
+      var j = await api(Object.assign({ action: 'gtt_orders' }, acctBody()));
+      var ob = (j.orders && j.orders.orderBook) || [], tb = (j.trades && j.trades.tradeBook) || [];
+      var tbl = function (title, rows, cols) {
+        return '<div style="font-weight:600;margin:8px 0 4px">' + title + ' (' + rows.length + ')</div><table class="bom-t" style="font-size:12px"><thead><tr>' + cols.map(function (c) { return '<th>' + c[0] + '</th>'; }).join('') + '</tr></thead><tbody>' +
+          rows.map(function (o) { return '<tr>' + cols.map(function (c) { return '<td>' + esc(String(pick(o, c[1]))) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>';
+      };
+      out(j, tbl('Orders today', ob, [['Time', ['orderDateTime']], ['Order id', ['id']], ['Symbol', ['symbol']], ['Side', ['side']], ['Qty', ['qty']], ['Type', ['type']], ['Status', ['status']], ['Filled', ['filledQty']], ['Avg', ['tradedPrice']], ['Tag', ['orderTag']], ['Message', ['message']]]) +
+        tbl('Trades today', tb, [['Time', ['orderDateTime']], ['Order id', ['orderNumber', 'id']], ['Symbol', ['symbol']], ['Side', ['side']], ['Qty', ['tradedQty', 'qty']], ['Price', ['tradePrice', 'tradedPrice']], ['Tag', ['orderTag']]]));
     });
   }
 
