@@ -27,6 +27,8 @@
 
 (function () {
   'use strict';
+  // GTT (test) tab — dev site only (owner, 26-Nov-2026).
+  var GTT_TEST = /(^|\.)vikash-wms\.pages\.dev$/.test(location.hostname);
 
   var BOM = {
     accounts: [],            // login-status rows (Fyers + MOSL) with investor + broker ids
@@ -183,7 +185,7 @@
       '<div class="bom-m" role="dialog" aria-label="Broker order">' +
         '<div class="bom-h"><h3>Broker order <span class="bom-live">LIVE</span></h3>' +
           '<div class="bom-hr"><span class="bom-done" id="bomDone"></span><button class="bom-x" id="bomClose" title="Close (Esc)">×</button></div></div>' +
-        '<div class="bom-tabs"><button class="bom-tab on" data-tab="new">New order</button><button class="bom-tab" data-tab="today">Today\'s orders</button><button class="bom-tab" data-tab="roll">Rollover</button></div>' +
+        '<div class="bom-tabs"><button class="bom-tab on" data-tab="new">New order</button><button class="bom-tab" data-tab="today">Today\'s orders</button><button class="bom-tab" data-tab="roll">Rollover</button>' + (GTT_TEST ? '<button class="bom-tab" data-tab="gtt" title="Dev site only — test of Fyers GTT through the API">GTT (test)</button>' : '') + '</div>' +
         '<div id="bomNew" style="display:flex;flex-direction:column;min-height:0;flex:1">' +
           '<div class="bom-b" style="flex:1">' +
             '<div class="bom-lbl">Account</div><div class="bom-accs" id="bomAccs"></div>' +
@@ -207,6 +209,7 @@
             '<div style="display:flex;gap:8px"><button class="bom-btn" id="bomClear" title="Remove all rows and start again">Clear</button><button class="bom-btn" id="bomCancel">Close</button><button class="bom-btn go" id="bomPlace" disabled>Place</button></div></div>' +
         '</div>' +
         '<div id="bomToday" class="bom-b bom-today" style="display:none;flex:1"></div>' +
+        (GTT_TEST ? '<div id="bomGtt" class="bom-b" style="display:none;flex:1"></div>' : '') +
       '</div>';
     document.body.appendChild(ov);
 
@@ -269,6 +272,7 @@
     document.querySelectorAll('#bomOverlay .bom-tab').forEach(function (b) { b.classList.toggle('on', b.dataset.tab === t); });
     document.getElementById('bomNew').style.display = t === 'new' || t === 'roll' ? 'flex' : 'none';
     document.getElementById('bomToday').style.display = t === 'today' ? 'block' : 'none';
+    if (GTT_TEST) { document.getElementById('bomGtt').style.display = t === 'gtt' ? 'block' : 'none'; if (t === 'gtt') { document.getElementById('bomNew').style.display = 'none'; gttRender(); } }
     document.getElementById('bomNewBody').style.display = t === 'roll' ? 'none' : 'block';
     document.getElementById('bomRollBody').style.display = t === 'roll' ? 'block' : 'none';
     closePassword();
@@ -1424,6 +1428,72 @@
       return ctl;
     }
   };
+
+  // ---------------------------------------------------------------------------
+  // GTT (test) — DEV SITE ONLY (owner, 26-Nov-2026: does Fyers accept a GTT on MCX through the API?)
+  // One GTT, placed by the owner with the order password, sent by the order server from the Droplet
+  // (wms-broker-order `gtt_test` → order queue → wms-live `gtt_place`). The server refuses a trigger
+  // within 10% of the price, so the test GTT cannot trigger. `gtt_book` reads Fyers' GTT book.
+  // ---------------------------------------------------------------------------
+  function gttRender() {
+    var box = document.getElementById('bomGtt'); if (!box) return;
+    var a = BOM.acct;
+    box.innerHTML =
+      '<div class="bom-note" style="margin-bottom:10px">Test only (dev site): one GTT order sent through the Fyers API from the order server. ' +
+        'The trigger must be at least 10% away from the price, so it cannot trigger. Account: <b>' + (a ? esc((a.investor_short || a.account || '') + ' › ' + (a.broker_code === 'FYERS' ? 'Fyers' : a.broker_code)) : 'pick one on New order') + '</b></div>' +
+      '<div style="display:grid;grid-template-columns:repeat(6,auto);gap:8px 12px;align-items:center;max-width:820px">' +
+        '<span>Contract</span><input id="bomGttSym" class="bom-sym-in" style="width:220px" value="MCX:GOLDPETAL26DECFUT">' +
+        '<span>Side</span><select id="bomGttSide"><option value="BUY">BUY</option><option value="SELL">SELL</option></select>' +
+        '<span>Lots</span><input id="bomGttLots" class="r" style="width:60px" value="1">' +
+        '<span>LTP</span><b id="bomGttLtp">…</b>' +
+        '<span>Trigger</span><input id="bomGttTrig" class="r" style="width:100px">' +
+        '<span>Limit</span><input id="bomGttPx" class="r" style="width:100px">' +
+      '</div>' +
+      '<div style="margin-top:12px;display:flex;gap:8px;align-items:center">Order password: <input type="password" id="bomGttPw" autocomplete="off">' +
+        '<button class="bom-btn go" id="bomGttGo">Place GTT (test)</button><button class="bom-btn" id="bomGttBook">Read GTT book</button></div>' +
+      '<pre id="bomGttOut" style="margin-top:12px;white-space:pre-wrap;font-size:12px;background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;max-height:260px;overflow:auto">Nothing sent yet.</pre>';
+    var symIn = document.getElementById('bomGttSym'), ltpEl = document.getElementById('bomGttLtp');
+    var readLtp = async function () {
+      ltpEl.textContent = '…';
+      try {
+        var d = await window.fyersCall({ action: 'quotes', symbols: [symIn.value.trim()] });
+        var lp = d && d.d && d.d[0] && d.d[0].v && d.d[0].v.lp;
+        ltpEl.textContent = lp ? price2(lp) : 'no price';
+        if (lp) {   // suggest a trigger 20% away from the price, on the side that cannot trigger
+          var buy = document.getElementById('bomGttSide').value === 'BUY';
+          var t = Math.round(lp * (buy ? 0.8 : 1.2));
+          document.getElementById('bomGttTrig').value = t; document.getElementById('bomGttPx').value = t;
+        }
+      } catch (e) { ltpEl.textContent = 'no price'; }
+    };
+    symIn.addEventListener('change', readLtp);
+    document.getElementById('bomGttSide').addEventListener('change', readLtp);
+    readLtp();
+    var out = function (o) { document.getElementById('bomGttOut').textContent = typeof o === 'string' ? o : JSON.stringify(o, null, 2); };
+    document.getElementById('bomGttGo').addEventListener('click', async function () {
+      if (!BOM.acct) { out('Pick the account on New order first.'); return; }
+      var btn = this; btn.disabled = true; out('Sending… (the order server places it; up to 25 s)');
+      try {
+        var r = await fetch(window.SUPABASE_URL + '/functions/v1/wms-broker-order', { method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ action: 'gtt_test', confirm: true, password: document.getElementById('bomGttPw').value,
+            account: { investor_id: BOM.acct.investor_id, broker_id: BOM.acct.broker_id },
+            symbol: symIn.value.trim(), side: document.getElementById('bomGttSide').value,
+            lots: Number(document.getElementById('bomGttLots').value), trigger_price: Number(document.getElementById('bomGttTrig').value),
+            limit_price: Number(document.getElementById('bomGttPx').value) }) });
+        out(await r.json().catch(function () { return { error: 'HTTP ' + r.status }; }));
+      } catch (e) { out('Could not reach the server: ' + e.message); }
+      document.getElementById('bomGttPw').value = ''; btn.disabled = false;
+    });
+    document.getElementById('bomGttBook').addEventListener('click', async function () {
+      if (!BOM.acct) { out('Pick the account on New order first.'); return; }
+      out('Reading the GTT book…');
+      try {
+        var r = await fetch(window.SUPABASE_URL + '/functions/v1/wms-broker-order', { method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ action: 'gtt_book', investor_id: BOM.acct.investor_id, broker_id: BOM.acct.broker_id }) });
+        out(await r.json().catch(function () { return { error: 'HTTP ' + r.status }; }));
+      } catch (e) { out('Could not reach the server: ' + e.message); }
+    });
+  }
 
   // ---------------------------------------------------------------------------
   // Today's orders
