@@ -846,6 +846,54 @@ async function triggerClaimAttempt(reason) {
 // ── Postgres LISTEN client ──────────────────────────────────────────────────
 
 const { Client } = pg;
+
+// ── LISTEN-PROBE BEGIN ─ identical copy in wms-live/index.js, wms-mosl.js, wms-scalp-ws.js (test: listen-probe.test.mjs) ──
+// WHY (26-Nov-2026): on 25-Nov ~22:52 IST the Supabase database crashed and restarted.
+// The connection pooler kept OUR side of the line open, so no error ever arrived: the
+// LISTEN was gone and this program heard nothing until a manual restart next morning.
+// Every `everyMs` we NOTIFY our own private channel on this same connection and expect
+// to hear it back within `waitMs`. No echo (or the NOTIFY itself fails) = dead line ->
+// onDead(reason) once -> the caller drops the connection and reconnects.
+// Cost: one tiny statement a minute on the already-open connection. No new connection,
+// no Edge Function call, and Postgres does not log it (log_statement = ddl).
+function armListenProbe(client, channel, onDead, opts = {}) {
+  const everyMs = opts.everyMs ?? 60_000;
+  const waitMs  = opts.waitMs  ?? 15_000;
+  const st = { okAt: null, checks: 0, dead: false, reason: null };
+  let pending = null;
+  let stopped = false;
+  const onNote = (msg) => {
+    if (!pending || msg.channel !== channel || msg.payload !== pending.nonce) return;
+    clearTimeout(pending.timer); pending = null; st.okAt = Date.now();
+  };
+  function stop() {
+    stopped = true; clearInterval(iv);
+    if (pending) { clearTimeout(pending.timer); pending = null; }
+    if (typeof client.removeListener === 'function') client.removeListener('notification', onNote);
+  }
+  const fail = (reason) => {
+    if (stopped) return;
+    st.dead = true; st.reason = reason; stop();
+    try { onDead(reason); } catch (_) { /* never throw out of a timer */ }
+  };
+  const tick = () => {
+    if (stopped || pending) return;
+    st.checks++;
+    const nonce = `p${process.pid}x${Date.now().toString(36)}`;
+    pending = { nonce, timer: setTimeout(() => fail(`no echo within ${waitMs / 1000}s`), waitMs) };
+    Promise.resolve().then(() => client.query(`NOTIFY ${channel}, '${nonce}'`))
+      .catch((e) => fail(`probe failed: ${String((e && e.message) || e).slice(0, 120)}`));
+  };
+  client.on('notification', onNote);
+  const iv = setInterval(tick, everyMs);
+  return { stop, state: st, tick };
+}
+// ── LISTEN-PROBE END ──
+
+const PROBE_CHANNEL = 'wms_probe_live';   // private to this program (26-Nov-2026)
+let listenProbe = null;                   // current connection's probe
+let listenProbeReconnects = 0;            // times the probe found the line dead
+let listenProbeLastFail = null;           // { at, reason }
 let pgClient = null;
 
 async function startListenClient() {
@@ -884,9 +932,10 @@ async function startListenClient() {
         });
       });
 
+      const thisClient = pgClient;   // 26-Nov-2026: a dropped old connection's late 'end' must not mark the NEW one down
       pgClient.on('end', () => {
         console.warn('[pg] connection ended');
-        pgConnected = false;
+        if (pgClient === thisClient) pgConnected = false;
       });
 
       console.log(`[pg] connecting (attempt #${attemptId}) to ${PG_HOST}:${PG_PORT} as ${PG_USER}...`);
@@ -896,6 +945,19 @@ async function startListenClient() {
       pgReconnectAttempts = 0; // reset backoff after a successful connect
 
       await pgClient.query(`LISTEN ${LISTEN_CHANNEL}`);
+      await pgClient.query(`LISTEN ${PROBE_CHANNEL}`);
+
+      // Dead-line check (26-Nov-2026): prove every minute that this connection
+      // still hears notifications; if not, drop it and reconnect (+ gap-fill).
+      let probeDead;
+      const probeDeadP = new Promise((r) => { probeDead = r; });
+      listenProbe = armListenProbe(pgClient, PROBE_CHANNEL, (why) => {
+        listenProbeReconnects++;
+        listenProbeLastFail = { at: new Date().toISOString(), reason: why };
+        console.error(`[pg] listen probe: ${why} — dropping the connection and reconnecting`);
+        probeDead();
+      });
+      listenProbe.tick();   // first check now, so a bad line is caught at once
 
       // Gap-fill on (re)connect — anything inserted while we were disconnected
       // is invisible to LISTEN. Run one cmd-poll to catch up.
@@ -906,12 +968,23 @@ async function startListenClient() {
 
       // Block here until the connection ends. pg.Client doesn't have an
       // explicit "wait for end" promise, so we wrap the events.
-      await new Promise((resolve) => {
-        pgClient.once('end', resolve);
-        pgClient.once('error', resolve);
-      });
+      await Promise.race([
+        new Promise((resolve) => {
+          pgClient.once('end', resolve);
+          pgClient.once('error', resolve);
+        }),
+        probeDeadP,
+      ]);
+      listenProbe.stop();
 
       pgConnected = false;
+      // Close this connection for good (it may be half-dead: end() can hang on a
+      // dead socket, so destroy the socket if it hasn't closed within 3 s).
+      {
+        const dead = pgClient;
+        dead.end().catch(() => {});
+        setTimeout(() => { try { dead.connection?.stream?.destroy(); } catch (_) { /* ignore */ } }, 3000).unref?.();
+      }
       console.warn('[pg] connection terminated, will reconnect');
     } catch (err) {
       pgConnected = false;
@@ -1562,6 +1635,7 @@ app.get('/health', (_req, res) => {
     droplet_id:            DROPLET_ID,
     architecture:          'F2-ws+rest-safety-net',
     pg_connected:          pgConnected,
+    listen_probe:          listenProbeView(),
     pg_reconnect_attempts: pgReconnectAttempts,
     last_notification_at:  lastNotificationAt ? new Date(lastNotificationAt).toISOString() : null,
     last_safety_net_poll_at: lastSafetyNetPollAt ? new Date(lastSafetyNetPollAt).toISOString() : null,
@@ -1655,6 +1729,19 @@ ordersMonitoringLoop().catch((err) => {
 // is the visibility that was missing when the WS sat dead for 2.5 days
 // (2026-07-11..13). MUST NOT throw into the process — a heartbeat failure is
 // itself only a monitoring gap, never a reason to crash the order placer.
+// Is the order line (LISTEN wms_live_commands_new) proven to be listening?
+// ok = connected AND our own probe echoed within the last 3 minutes.
+function listenProbeView() {
+  const okAt = listenProbe?.state.okAt ?? null;
+  return {
+    ok:          !!(pgConnected && okAt && Date.now() - okAt < 180_000),
+    ok_at:       okAt ? new Date(okAt).toISOString() : null,
+    checks:      listenProbe?.state.checks ?? 0,
+    reconnects:  listenProbeReconnects,
+    last_fail:   listenProbeLastFail,
+  };
+}
+
 async function postHeartbeat() {
   try {
     const fyers = [...wsPool.values()].find((s) => (s.broker_code || '').toLowerCase() === 'fyers');
@@ -1674,6 +1761,7 @@ async function postHeartbeat() {
       last_order_event_at: fyers && fyers.lastOrderEventAt ? new Date(fyers.lastOrderEventAt).toISOString() : null,
       last_message_at:     fyers && fyers.lastMessageAt ? new Date(fyers.lastMessageAt).toISOString() : null,
       uptime_seconds:      Math.round(process.uptime()),
+      raw:                 { listen: listenProbeView() },   // 26-Nov-2026: is the order line really listening?
     };
     const body = JSON.stringify(payload);
     const path = new URL(HEARTBEAT_URL).pathname;

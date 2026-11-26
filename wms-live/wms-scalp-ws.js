@@ -242,8 +242,55 @@ function scheduleRefresh() {
     try { await refreshUniverse(); } finally { _refreshInFlight = false; }
   }, 600);   // debounce a burst (e.g. multi-rung open) into one refresh
 }
+// ── LISTEN-PROBE BEGIN ─ identical copy in wms-live/index.js, wms-mosl.js, wms-scalp-ws.js (test: listen-probe.test.mjs) ──
+// WHY (26-Nov-2026): on 25-Nov ~22:52 IST the Supabase database crashed and restarted.
+// The connection pooler kept OUR side of the line open, so no error ever arrived: the
+// LISTEN was gone and this program heard nothing until a manual restart next morning.
+// Every `everyMs` we NOTIFY our own private channel on this same connection and expect
+// to hear it back within `waitMs`. No echo (or the NOTIFY itself fails) = dead line ->
+// onDead(reason) once -> the caller drops the connection and reconnects.
+// Cost: one tiny statement a minute on the already-open connection. No new connection,
+// no Edge Function call, and Postgres does not log it (log_statement = ddl).
+function armListenProbe(client, channel, onDead, opts = {}) {
+  const everyMs = opts.everyMs ?? 60_000;
+  const waitMs  = opts.waitMs  ?? 15_000;
+  const st = { okAt: null, checks: 0, dead: false, reason: null };
+  let pending = null;
+  let stopped = false;
+  const onNote = (msg) => {
+    if (!pending || msg.channel !== channel || msg.payload !== pending.nonce) return;
+    clearTimeout(pending.timer); pending = null; st.okAt = Date.now();
+  };
+  function stop() {
+    stopped = true; clearInterval(iv);
+    if (pending) { clearTimeout(pending.timer); pending = null; }
+    if (typeof client.removeListener === 'function') client.removeListener('notification', onNote);
+  }
+  const fail = (reason) => {
+    if (stopped) return;
+    st.dead = true; st.reason = reason; stop();
+    try { onDead(reason); } catch (_) { /* never throw out of a timer */ }
+  };
+  const tick = () => {
+    if (stopped || pending) return;
+    st.checks++;
+    const nonce = `p${process.pid}x${Date.now().toString(36)}`;
+    pending = { nonce, timer: setTimeout(() => fail(`no echo within ${waitMs / 1000}s`), waitMs) };
+    Promise.resolve().then(() => client.query(`NOTIFY ${channel}, '${nonce}'`))
+      .catch((e) => fail(`probe failed: ${String((e && e.message) || e).slice(0, 120)}`));
+  };
+  client.on('notification', onNote);
+  const iv = setInterval(tick, everyMs);
+  return { stop, state: st, tick };
+}
+// ── LISTEN-PROBE END ──
+
+const PROBE_CHANNEL = 'wms_probe_scalp';   // private to this program (26-Nov-2026)
+
 // Event-driven: LISTEN on a dedicated pg client; migration 108 NOTIFYs on
 // at2_strategy(enabled) / at2_trade(status) changes. Reconnects on drop.
+// 26-Nov-2026: also reconnects when the LISTEN-PROBE finds the line dead, or the
+// connection ends without an error (one restart per connection, never two).
 function startListener() {
   const client = new pg.Client({
     host: process.env.PG_HOST, port: Number(process.env.PG_PORT) || 5432,
@@ -251,12 +298,30 @@ function startListener() {
     password: process.env.PG_PASSWORD, ssl: { rejectUnauthorized: false },
     application_name: 'wms-scalp-ws-listen',
   });
+  let probe = null;
+  let restarted = false;
+  const restart = (why) => {
+    if (restarted) return;
+    restarted = true;
+    console.error('[scalp-ws] LISTEN line down:', why, '— reconnecting in 5s');
+    if (probe) probe.stop();
+    try { client.end().catch(() => {}); } catch (_) {}
+    setTimeout(() => { try { client.connection && client.connection.stream && client.connection.stream.destroy(); } catch (_) {} }, 3000);
+    setTimeout(startListener, 5000);
+  };
   client.on('notification', (msg) => { if (msg.channel === 'wms_ws_refresh') scheduleRefresh(); });
-  client.on('error', (e) => { console.error('[scalp-ws] LISTEN error:', String(e && e.message || e)); try { client.end(); } catch (_) {} setTimeout(startListener, 5000); });
+  client.on('error', (e) => restart('error: ' + String(e && e.message || e)));
+  client.on('end', () => restart('connection ended'));
   client.connect()
     .then(() => client.query('LISTEN wms_ws_refresh'))
-    .then(() => { console.log('[scalp-ws] LISTEN wms_ws_refresh — event-driven re-subscribe armed'); scheduleRefresh(); })   // re-derive on (re)connect: recover any NOTIFY missed during a drop (D6)
-    .catch((e) => { console.error('[scalp-ws] LISTEN connect failed:', String(e && e.message || e)); try { client.end(); } catch (_) {} setTimeout(startListener, 5000); });
+    .then(() => client.query(`LISTEN ${PROBE_CHANNEL}`))
+    .then(() => {
+      console.log('[scalp-ws] LISTEN wms_ws_refresh — event-driven re-subscribe armed');
+      probe = armListenProbe(client, PROBE_CHANNEL, (why) => restart('listen probe: ' + why));
+      probe.tick();
+      scheduleRefresh();   // re-derive on (re)connect: recover any NOTIFY missed during a drop (D6)
+    })
+    .catch((e) => restart('connect failed: ' + String(e && e.message || e)));
 }
 // stale-feed watchdog window (also the coarse market-hours gate used by onTick).
 function istActiveHours() {

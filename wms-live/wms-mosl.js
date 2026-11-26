@@ -53,7 +53,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.8.0';
+const VERSION = 'wms-mosl/1.9.0';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -1036,6 +1036,51 @@ async function handleTrigger(payloadText) {
   }
 }
 
+// ── LISTEN-PROBE BEGIN ─ identical copy in wms-live/index.js, wms-mosl.js, wms-scalp-ws.js (test: listen-probe.test.mjs) ──
+// WHY (26-Nov-2026): on 25-Nov ~22:52 IST the Supabase database crashed and restarted.
+// The connection pooler kept OUR side of the line open, so no error ever arrived: the
+// LISTEN was gone and this program heard nothing until a manual restart next morning.
+// Every `everyMs` we NOTIFY our own private channel on this same connection and expect
+// to hear it back within `waitMs`. No echo (or the NOTIFY itself fails) = dead line ->
+// onDead(reason) once -> the caller drops the connection and reconnects.
+// Cost: one tiny statement a minute on the already-open connection. No new connection,
+// no Edge Function call, and Postgres does not log it (log_statement = ddl).
+function armListenProbe(client, channel, onDead, opts = {}) {
+  const everyMs = opts.everyMs ?? 60_000;
+  const waitMs  = opts.waitMs  ?? 15_000;
+  const st = { okAt: null, checks: 0, dead: false, reason: null };
+  let pending = null;
+  let stopped = false;
+  const onNote = (msg) => {
+    if (!pending || msg.channel !== channel || msg.payload !== pending.nonce) return;
+    clearTimeout(pending.timer); pending = null; st.okAt = Date.now();
+  };
+  function stop() {
+    stopped = true; clearInterval(iv);
+    if (pending) { clearTimeout(pending.timer); pending = null; }
+    if (typeof client.removeListener === 'function') client.removeListener('notification', onNote);
+  }
+  const fail = (reason) => {
+    if (stopped) return;
+    st.dead = true; st.reason = reason; stop();
+    try { onDead(reason); } catch (_) { /* never throw out of a timer */ }
+  };
+  const tick = () => {
+    if (stopped || pending) return;
+    st.checks++;
+    const nonce = `p${process.pid}x${Date.now().toString(36)}`;
+    pending = { nonce, timer: setTimeout(() => fail(`no echo within ${waitMs / 1000}s`), waitMs) };
+    Promise.resolve().then(() => client.query(`NOTIFY ${channel}, '${nonce}'`))
+      .catch((e) => fail(`probe failed: ${String((e && e.message) || e).slice(0, 120)}`));
+  };
+  client.on('notification', onNote);
+  const iv = setInterval(tick, everyMs);
+  return { stop, state: st, tick };
+}
+// ── LISTEN-PROBE END ──
+
+const PROBE_CHANNEL = 'wms_probe_mosl';   // private to this program (26-Nov-2026)
+
 // ── Postgres LISTEN (same pattern + role as wms-live; separate connection) ──
 async function listenLoop(pg) {
   let attempt = 0;
@@ -1057,8 +1102,17 @@ async function listenLoop(pg) {
       });
       await client.connect();
       await client.query(`LISTEN ${LISTEN_CHANNEL}`);
+      await client.query(`LISTEN ${PROBE_CHANNEL}`);
       attempt = 0;
       log(`listening on '${LISTEN_CHANNEL}'`);
+      // Dead-line check (26-Nov-2026): see LISTEN-PROBE above.
+      let probeDead;
+      const probeDeadP = new Promise((r) => { probeDead = r; });
+      const probe = armListenProbe(client, PROBE_CHANNEL, (why) => {
+        warn(`listen probe: ${why} — dropping the connection and reconnecting`);
+        probeDead();
+      });
+      probe.tick();
       if (!announced) {
         announced = true;
         callEf({ mode: 'relay_record', kind: 'startup', ok: true, step: 'listening',
@@ -1066,8 +1120,13 @@ async function listenLoop(pg) {
           .then((r) => log(`startup recorded (http ${r.status}, ${r.ms}ms)`))
           .catch((e) => warn('startup record failed:', String(e?.message ?? e).slice(0, 120)));
       }
-      await new Promise((resolve) => { client.once('end', resolve); client.once('error', resolve); });
+      await Promise.race([
+        new Promise((resolve) => { client.once('end', resolve); client.once('error', resolve); }),
+        probeDeadP,
+      ]);
+      probe.stop();
       warn('pg connection ended');
+      setTimeout(() => { try { client.connection?.stream?.destroy(); } catch { /* ignore */ } }, 3000).unref?.();
     } catch (e) {
       warn(`pg connect failed (#${attempt}):`, String(e?.message ?? e).slice(0, 160));
     }
