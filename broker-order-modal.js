@@ -1445,6 +1445,7 @@
         '<span>Contract</span><input id="bomGttSym" class="bom-sym-in" style="width:220px" value="MCX:GOLDPETAL26DECFUT">' +
         '<span>Side</span><select id="bomGttSide"><option value="BUY">BUY</option><option value="SELL">SELL</option></select>' +
         '<span>Lots</span><input id="bomGttLots" class="r" style="width:60px" value="1">' +
+        '<span>Type</span><select id="bomGttType"><option value="LIMIT">Limit</option><option value="MARKET">Market (after trigger)</option></select>' +
         '<span>LTP</span><b id="bomGttLtp">…</b>' +
         '<span>Trigger</span><input id="bomGttTrig" class="r" style="width:100px">' +
         '<span>Limit</span><input id="bomGttPx" class="r" style="width:100px">' +
@@ -1467,6 +1468,10 @@
       } catch (e) { ltpEl.textContent = 'no price'; }
     };
     symIn.addEventListener('change', readLtp);
+    document.getElementById('bomGttType').addEventListener('change', function () {
+      var mkt = this.value === 'MARKET', px = document.getElementById('bomGttPx');
+      px.disabled = mkt; px.value = mkt ? '' : document.getElementById('bomGttTrig').value;
+    });
     document.getElementById('bomGttSide').addEventListener('change', readLtp);
     readLtp();
     var out = function (o) { document.getElementById('bomGttOut').textContent = typeof o === 'string' ? o : JSON.stringify(o, null, 2); };
@@ -1479,7 +1484,7 @@
             account: { investor_id: BOM.acct.investor_id, broker_id: BOM.acct.broker_id },
             symbol: symIn.value.trim(), side: document.getElementById('bomGttSide').value,
             lots: Number(document.getElementById('bomGttLots').value), trigger_price: Number(document.getElementById('bomGttTrig').value),
-            limit_price: Number(document.getElementById('bomGttPx').value) }) });
+            limit_price: Number(document.getElementById('bomGttPx').value), order_type: document.getElementById('bomGttType').value }) });
         out(await r.json().catch(function () { return { error: 'HTTP ' + r.status }; }));
       } catch (e) { out('Could not reach the server: ' + e.message); }
       document.getElementById('bomGttPw').value = ''; btn.disabled = false;
