@@ -1452,7 +1452,7 @@
       row('Read', btn('bomMsStatus', 'Status (orders, positions, margin)') + btn('bomMsScrip', 'Contract codes') + btn('bomMsLast', 'Read last result')) +
       row('Place', '<select id="bomMsSide"><option>BUY</option><option>SELL</option></select><select id="bomMsType"><option value="LIMIT">Limit</option><option value="STOPLOSS">Stop-limit</option></select>' +
         'Price ' + inp('bomMsPx', 90, 'far') + ' Trigger ' + inp('bomMsTrg', 90, 'far') +
-        '<select id="bomMsDur"><option>DAY</option><option>GTC</option><option>GTD</option></select>' + inp('bomMsGtd', 110, 'GTD dd-Mmm-yyyy') +
+        '<select id="bomMsDur"><option>DAY</option><option>IOC</option><option>GTC</option><option>GTD</option></select>' + inp('bomMsGtd', 110, 'GTD dd-Mmm-yyyy') +
         '<label><input type="checkbox" id="bomMsAmo"> After-market (AMO)</label>' + btn('bomMsPlace', 'Place')) +
       row('Carry-over', btn('bomMsCarry', 'Carry-over set (5 orders)', 'GTC + GTD, limit + stop-limit, plus a DAY control — all far; leave them overnight and read Status tomorrow') +
         btn('bomMsCarryAmo', 'Carry-over set as AMO', 'The same five, sent with the after-market flag (use outside market hours)')) +
