@@ -57,7 +57,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.10.3';
+const VERSION = 'wms-mosl/1.10.4';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -1313,12 +1313,26 @@ export async function runCampaign(trigger = {}) {
         // first version moved a SELL stop's limit UP past its trigger and the guard blocked it).
         const isStop = trg0 > 0;
         const d = isStop ? (isBuy ? tick : -tick) : (isBuy ? -tick : tick);
+        // 27-Nov run 87: MOSL answered #1 and #2, then one call got no reply for 15 s and the whole run
+        // ended "timeout" without saying which call. Now each change records which call went silent,
+        // the run stops there cleanly, and the order's state is read afterwards.
+        const gap = Math.max(300, Math.min(5000, Number(p.gap_ms) || 1000));
+        report.gap_ms = gap;
         for (let i = 1; i <= n; i++) {
           const k = i % 2;
-          const r = await modify(`modify #${i}`, uid, px0 + d * k, isStop ? trg0 + d * k : trg0);
-          if (r?.json?.status !== 'SUCCESS') { report.stopped_at = i; break; }
-          await sleep(300);
+          const tI = Date.now(); let phase = 'read';
+          try {
+            const rd = await cRow(ctx, uid);
+            phase = 'modify';
+            const r = await modify(`modify #${i}`, uid, px0 + d * k, isStop ? trg0 + d * k : trg0, rd.row);
+            if (r?.json?.status !== 'SUCCESS') { report.stopped_at = i; break; }
+          } catch (e) {
+            step(`modify #${i}`, null, { status: 'NO REPLY', message: `MOSL gave no answer to the ${phase === 'read' ? 'order read' : 'modify'} (${e.message} after ${Date.now() - tI} ms)` });
+            report.stopped_at = i; break;
+          }
+          await sleep(gap);
         }
+        try { const { row } = await cRow(ctx, uid); report.order_after = row ? pickRow(row) : null; } catch { /* reported above */ }
         report.modifies_done = report.stopped_at ? report.stopped_at - 1 : n;
         break;
       }
