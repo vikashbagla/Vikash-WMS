@@ -57,7 +57,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.10.0';
+const VERSION = 'wms-mosl/1.10.1';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -413,16 +413,36 @@ async function loginCtx(timings, report, loginKey) {
   return ctx;
 }
 
-async function pickTestContract(ctx, trigger, report, timings) {
-    const inst = await moslPost(ctx, '/rest/report/v3/getscripsbyexchangename', { clientcode: '', exchangename: 'MCX' });
-    timings.instruments_ms = inst.ms;
-    const rows = Array.isArray(inst.json?.data) ? inst.json.data : [];
+// Expiry date from the contract name ("GOLDPETAL 30-NOV-2026") — epoch-free, so no unit guessing.
+const MONIDX = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
+export function expiryFromName(name) {
+  const m = /(\d{1,2})-([A-Za-z]{3})-(\d{4})/.exec(String(name ?? ''));
+  if (!m || MONIDX[m[2].toUpperCase()] == null) return null;
+  return Date.UTC(Number(m[3]), MONIDX[m[2].toUpperCase()], Number(m[1]), 18, 30);   // end of that day in IST
+}
+
+const CONTRACT_CACHE = new Map();
+export const clearContractCache = () => CONTRACT_CACHE.clear();   // tests
+async function pickTestContract(ctx, trigger, report, timings, opts = {}) {
     const want = TEST_CONTRACTS.includes(String(trigger.contract).toUpperCase()) ? String(trigger.contract).toUpperCase() : 'SILVERMIC';
-    const futs = rows.filter((r) => new RegExp(`^${want}\\b`, 'i').test(String(r.scripname ?? '')) && /^FUT/i.test(String(r.instrumentname ?? '')))
-      .sort((a, b) => Number(a.expirydate) - Number(b.expirydate));
-    rows.length = 0;
-    const c = futs[0];
-    if (!c) throw new Error(`no ${want} future found`);
+    // The whole-MCX contract list takes ~15 s to download — keep this contract's rows for 20 min (27-Nov:
+    // every test run waited on it, so the tab often showed "still running"). The price is always read fresh.
+    let futs = opts.cache ? CONTRACT_CACHE.get(want) : null;
+    if (futs && Date.now() - futs.at < 20 * 60_000) { futs = futs.rows; timings.instruments_ms = 0; }
+    else {
+      const inst = await moslPost(ctx, '/rest/report/v3/getscripsbyexchangename', { clientcode: '', exchangename: 'MCX' });
+      timings.instruments_ms = inst.ms;
+      const rows = Array.isArray(inst.json?.data) ? inst.json.data : [];
+      futs = rows.filter((r) => new RegExp(`^${want}\\b`, 'i').test(String(r.scripname ?? '')) && /^FUT/i.test(String(r.instrumentname ?? '')))
+        .sort((a, b) => Number(a.expirydate) - Number(b.expirydate));
+      rows.length = 0;
+      if (opts.cache && futs.length) CONTRACT_CACHE.set(want, { at: Date.now(), rows: futs });
+    }
+    // opts.minDays: skip a contract expiring within that many days (27-Nov: the Nov GOLDPETAL expiring
+    // Mon 30-Nov was picked — wrong contract for carry-over tests, and its listed band was already stale).
+    const minDays = Number(opts.minDays) || 0;
+    const c = futs.find((r) => { const e = expiryFromName(r.scripname); return !minDays || (e != null && e - Date.now() >= minDays * 86400_000); });
+    if (!c) throw new Error(`no ${want} future found${minDays ? ` expiring ${minDays}+ days out` : ''}`);
     const token = Number(c.scripcode);
     const tick = Number(c.ticksize) || 1;
     const ltpRes = await moslPost(ctx, '/rest/report/v3/getltpdata', { clientcode: '', exchange: 'MCX', scripcode: token });
@@ -437,8 +457,18 @@ async function pickTestContract(ctx, trigger, report, timings) {
     const farSell = rt(ltp + TOWARD_CIRCUIT * (ucl - ltp));   // 90% of the way up to the upper limit
     report.contract = { name: c.scripname, scripcode: token, lot: c.marketlot, tick, ltp, lcl, ucl, farBuy, farSell,
       raw_circuits: { lower: c.lowercircuitprice, upper: c.uppercircuitprice }, maxqty: c.maxqtyperorder, algoid: c.algoid ?? null };
-    if (farBuy - 20 * tick < lcl || farSell + 20 * tick > ucl) throw new Error('stop buffer would cross the daily price limit');
-    if (farBuy > ltp * (1 - MIN_DISTANCE) || farSell < ltp * (1 + MIN_DISTANCE)) throw new Error('daily price band too narrow for a safe far-from-market test');
+    const buyOk = farBuy - 20 * tick >= lcl && farBuy <= ltp * (1 - MIN_DISTANCE);
+    const sellOk = farSell + 20 * tick <= ucl && farSell >= ltp * (1 + MIN_DISTANCE);
+    report.contract.below_market_ok = buyOk; report.contract.above_market_ok = sellOk;
+    if (!(ltp >= lcl && ltp <= ucl)) report.contract.band_note = 'price is outside the listed daily band — the band has widened since the list was made';
+    if (opts.lenient) {
+      // Campaign: one side is enough. Orders on a side that is not usable are refused by campaignCheck
+      // (never placed nearer than 2%), and the step shows why.
+      if (!buyOk && !sellOk) throw new Error('daily price band too narrow on both sides for a safe far-from-market test');
+    } else {
+      if (farBuy - 20 * tick < lcl || farSell + 20 * tick > ucl) throw new Error('stop buffer would cross the daily price limit');
+      if (farBuy > ltp * (1 - MIN_DISTANCE) || farSell < ltp * (1 + MIN_DISTANCE)) throw new Error('daily price band too narrow for a safe far-from-market test');
+    }
     ctx.orderTest = { token, ltp };
     return { token, tick, ltp, lcl, ucl, farBuy, farSell, rt };
 }
@@ -1053,13 +1083,14 @@ export function campaignSigOk(t, secret = CFG.hmacSecret, now = Date.now()) {
  */
 export function campaignCheck(kind, body, C, row = null, now = Date.now()) {
   if (!(now < CAMPAIGN_UNTIL)) return 'test campaign has ended';
-  if (!C || !(C.ltp > 0) || !C.token) return 'campaign not armed';
+  // Cancel only ever removes our own test orders, so it needs no price (works even when no contract is usable).
   if (kind === 'cancel') return row && CAMPAIGN_TAG.test(String(row.tag ?? '')) ? null : 'only WMSV test orders are ever cancelled';
+  if (!C || !(C.ltp > 0) || !C.token) return 'campaign not armed';
   const side = String(kind === 'place' ? body.buyorsell : row?.buyorsell ?? '').toUpperCase();
   const type = String(kind === 'place' ? body.ordertype : body.newordertype ?? row?.ordertype ?? '').toUpperCase().replace(/\s+/g, '');
   if (kind === 'modify' && !(row && CAMPAIGN_TAG.test(String(row.tag ?? '')))) return 'only WMSV test orders are ever modified';
   if (kind === 'place') {
-    if (body.exchange !== 'MCX' || Number(body.symboltoken) !== C.token) return 'wrong contract (front-month GOLDPETAL only)';
+    if (body.exchange !== 'MCX' || Number(body.symboltoken) !== C.token) return 'wrong contract (the test GOLDPETAL contract only)';
     if (!CAMPAIGN_TAG.test(String(body.tag ?? ''))) return 'tag must be WMSV + up to 6 letters/digits';
     const lots = Number(body.quantityinlot);
     if (!(lots >= 1 && lots <= (C.maxLots ?? 1)) || !Number.isInteger(lots)) return `quantity must be 1${(C.maxLots ?? 1) > 1 ? '–' + C.maxLots : ''} lot`;
@@ -1126,7 +1157,14 @@ export async function runCampaign(trigger = {}) {
     stage = 'login';
     ctx = await loginCtx(timings, report, CAMPAIGN_KEY);
     stage = 'contract';
-    const P = await pickTestContract(ctx, { contract: 'GOLDPETAL' }, report, timings);
+    let P;
+    try { P = await pickTestContract(ctx, { contract: 'GOLDPETAL' }, report, timings, { minDays: 7, lenient: true, cache: true }); }
+    catch (e) {
+      // Read-only and clean-up actions still run without a usable contract (27-Nov: Status failed on it).
+      if (!['status', 'scrip', 'cancel', 'cancel_all'].includes(action)) throw e;
+      report.contract_error = e.message;
+      P = { token: 0, ltp: 0, tick: 1, farBuy: 0, farSell: 0, rt: (v) => v };
+    }
     ctx.orderTest = null;   // the expired Oct test path stays shut
     const FILL_ACTIONS = ['round_trip', 'chase', 'pair'];
     const allowFill = trigger.allow_fill === true && FILL_ACTIONS.includes(action);
@@ -1236,7 +1274,7 @@ export async function runCampaign(trigger = {}) {
       }
       case 'carry_set': {   // §5.1 — GTC + GTD, limit + stop, far; left resting overnight
         const amo = p.amo === 'Y' ? 'Y' : 'N';
-        const gtd = ddmmmyyyy(new Date(Date.now() + 3 * 86400_000));
+        const gtd = ddmmmyyyy(new Date(Date.now() + 5 * 86400_000));   // 5 days: alive through the next-trading-day check even over a weekend
         const sfx = amo === 'Y' ? 'A' : 'N';
         const sets = [
           ['GTC limit BUY', { buyorsell: 'BUY', ordertype: 'LIMIT', orderduration: 'GTC', price: P.farBuy, tag: `WMSVC1${sfx}` }],

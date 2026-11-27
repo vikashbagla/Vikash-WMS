@@ -1447,7 +1447,7 @@
     var btn = function (id, t, title) { return '<button class="bom-btn" id="' + id + '" title="' + esc(title || '') + '">' + t + '</button>'; };
     var row = function (label, html) { return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><span style="width:110px;font-weight:600">' + label + '</span>' + html + '</div>'; };
     box.innerHTML =
-      '<div class="bom-note" style="margin-bottom:6px">Test only (dev site): MOSL API tests on <b>Veins › MOSL</b>, front-month <b>GOLDPETAL</b>, 1 lot. ' +
+      '<div class="bom-note" style="margin-bottom:6px">Test only (dev site): MOSL API tests on <b>Veins › MOSL</b>, <b>GOLDPETAL</b> (the next contract if the current one expires within 7 days), 1 lot. ' +
         'Nothing is booked in WMS. Every order is placed where it cannot fill, unless “Allow fill” is ticked. Blank price = a far default.</div>' +
       row('Read', btn('bomMsStatus', 'Status (orders, positions, margin)') + btn('bomMsScrip', 'Contract codes') + btn('bomMsLast', 'Read last result')) +
       row('Place', '<select id="bomMsSide"><option>BUY</option><option>SELL</option></select><select id="bomMsType"><option value="LIMIT">Limit</option><option value="STOPLOSS">Stop-limit</option></select>' +

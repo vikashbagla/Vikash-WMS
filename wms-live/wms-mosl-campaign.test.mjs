@@ -11,7 +11,7 @@ const T = (n, ok, extra = '') => { if (ok) { console.log('PASS  ' + n); pass++; 
 
 // ---- fake MOSL: GOLDPETAL token 7777, LTP 12,400, band 11,700–13,100, tick 1 ----
 const LTP = 12400;
-const seen = []; const orders = [];
+const seen = []; const orders = []; let EXTRA_SCRIPS = []; let DEC_BAND = [11700, 13100];
 const mosl = http.createServer((req, res) => {
   let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
     seen.push({ path: req.url, body: b });
@@ -33,8 +33,8 @@ const mosl = http.createServer((req, res) => {
     if (req.url === '/rest/book/v5/getorderdetailbyuniqueorderid') return j({ status: 'SUCCESS', data: orders.filter((x) => x.uniqueorderid === o.uniqueorderid).map(({ tag, ...rest }) => rest) });
     if (req.url === '/rest/login/v7/authdirectapi') return j({ status: 'SUCCESS', AuthToken: 'AUTH-TOKEN-SECRET' });
     if (req.url === '/rest/login/v1/getaccesstoken') return j({ status: 'SUCCESS', accesstoken: 'ACCESS-SECRET' });
-    if (req.url === '/rest/report/v3/getscripsbyexchangename') return j({ status: 'SUCCESS', data: [
-      { scripname: 'GOLDPETAL 31-DEC-2026', instrumentname: 'FUTCOM', scripcode: 7777, marketlot: 1, ticksize: 1, expirydate: 1798000000, lowercircuitprice: 11700, uppercircuitprice: 13100 },
+    if (req.url === '/rest/report/v3/getscripsbyexchangename') return j({ status: 'SUCCESS', data: [ ...EXTRA_SCRIPS,
+      { scripname: 'GOLDPETAL 31-DEC-2026', instrumentname: 'FUTCOM', scripcode: 7777, marketlot: 1, ticksize: 1, expirydate: 1798000000, lowercircuitprice: DEC_BAND[0], uppercircuitprice: DEC_BAND[1] },
       { scripname: 'SILVERM 27-FEB-2027', instrumentname: 'FUTCOM', scripcode: 8888, marketlot: 1, ticksize: 1, expirydate: 1799000000 },
     ] });
     if (req.url === '/rest/report/v3/getltpdata') return j({ status: 'SUCCESS', data: { ltp: LTP * 100 } });
@@ -136,6 +136,29 @@ T('chase (stop never triggers): stop cancelled, lot exited, flat', ch.report.pos
 
 const all = JSON.stringify([s, pl, near, cc, cs, rt, bt, pr, ch].map((r) => M.scrub(r.report)));
 T('no secrets in any report', !/AUTH-TOKEN-SECRET|ACCESS-SECRET|KEY-XYZ|SEC-XYZ|123456/.test(all));
+
+// ---- 27-Nov live case: the expiring Nov contract listed first (band already stale), Dec band tight above ----
+T('expiry read from the contract name', M.expiryFromName('GOLDPETAL 30-NOV-2026') === Date.UTC(2026, 10, 30, 18, 30) && M.expiryFromName('junk') === null);
+const nov = { scripname: 'GOLDPETAL 30-NOV-2026', instrumentname: 'FUTCOM', scripcode: 5555, marketlot: 1, ticksize: 1, expirydate: 1796000000, lowercircuitprice: 11910, uppercircuitprice: 12646 };
+EXTRA_SCRIPS = [nov]; DEC_BAND = [11700, 12460]; M.clearContractCache();   // above-market room only +0.5% (like the app showed)
+const cs2 = await M.runCampaign(trig('carry_set', { amo: 'N' }));
+T('carry_set skips the contract expiring within 7 days (uses Dec)', cs2.report.contract?.scripcode === 7777, JSON.stringify(cs2.report.contract));
+T('carry_set still places all 5 (all below the market) when the band above is tight', cs2.report.steps.filter((x) => /GTC|GTD|DAY/.test(x.step) && x.status === 'SUCCESS').length === 5
+  && cs2.report.contract.above_market_ok === false && cs2.report.contract.below_market_ok === true, cs2.report.error ?? '');
+n = trans().length;
+const sl2 = await M.runCampaign(trig('place', { side: 'SELL', type: 'LIMIT' }));
+T('an above-market order with no safe room is refused, not sent', trans().length === n && sl2.report.steps[0]?.status === 'BLOCKED', JSON.stringify(sl2.report.steps[0] ?? sl2.report.error));
+EXTRA_SCRIPS = []; DEC_BAND = [12390, 12405]; M.clearContractCache();      // no usable contract at all
+const st2 = await M.runCampaign(trig('status'));
+T('status still works when no contract is usable', st2.ok === true && !!st2.report.contract_error && Array.isArray(st2.report.margin_summary));
+const pl2 = await M.runCampaign(trig('place', { side: 'BUY', type: 'LIMIT' }));
+T('an order test with no usable contract stops before sending anything', pl2.ok === false && trans().length === n);
+const ca2 = await M.runCampaign(trig('cancel_all'));
+T('cancel all still works with no usable contract', ca2.ok === true && ca2.report.steps.some((x) => /cancel WMSV/.test(x.step) && x.status === 'SUCCESS'));
+DEC_BAND = [11700, 13100]; M.clearContractCache();
+n = seen.filter((x) => /getscrips/.test(x.path)).length;
+await M.runCampaign(trig('status')); await M.runCampaign(trig('status'));
+T('contract list downloaded once, then reused (runs no longer wait ~15 s)', seen.filter((x) => /getscrips/.test(x.path)).length === n + 1);
 
 mosl.close(); ef.close(); ip.close();
 console.log(`\n${pass} passed, ${fail} failed`);
