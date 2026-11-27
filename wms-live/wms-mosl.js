@@ -57,7 +57,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.10.4';
+const VERSION = 'wms-mosl/1.10.5';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -1366,10 +1366,24 @@ export async function runCampaign(trigger = {}) {
         for (const u of [...mine]) await cancel(`cleanup ${u}`, u);
         break;
       }
-      case 'passed_stop': {   // M8: a SELL stop whose trigger is already above the price (limit unfillable)
+      case 'passed_stop': {   // M8: a stop whose trigger the price has ALREADY passed — does MOSL accept it, and what state does it show?
+        // 27-Nov v1 used a SELL stop with its limit ABOVE the trigger; MOSL refused that shape outright
+        // (MO1078: a SELL stop's limit must be at or below its trigger). Now: a BUY stop with trigger 2.5% BELOW
+        // the price (already passed) and limit = trigger — if it fires at once it is a BUY limit 2.5% under the
+        // market, which cannot fill. The below-market side is also the one with room in the day's band.
         const { ltp } = await cLtp(ctx);
-        await place('SELL stop-limit, trigger already passed (+2.5%), limit +3%', { buyorsell: 'SELL', ordertype: 'STOPLOSS', triggerprice: rt(ltp * 1.025), price: rt(ltp * 1.03), tag: 'WMSVPS1' });
-        await sleep(2000); await books();
+        const px = rt(ltp * 0.975);
+        const uid = await place('BUY stop-limit, trigger already passed (−2.5%), limit = trigger', { buyorsell: 'BUY', ordertype: 'STOPLOSS', triggerprice: px, price: px, tag: 'WMSVPS1' });
+        if (uid) {
+          const tW = Date.now(); report.state_seen = [];
+          while (Date.now() - tW < 6000) {
+            const { row } = await cRow(ctx, uid);
+            const st = String(row?.orderstatus ?? '?');
+            if (!report.state_seen.length || report.state_seen.at(-1).status !== st) report.state_seen.push({ at_ms: Date.now() - tW, status: st, type: row?.ordertype ?? null });
+            await sleep(700);
+          }
+        }
+        await books();
         for (const u of [...mine]) await cancel(`cleanup ${u}`, u);
         break;
       }
