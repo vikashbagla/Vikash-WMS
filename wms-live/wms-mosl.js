@@ -57,7 +57,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.10.2';
+const VERSION = 'wms-mosl/1.10.3';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -1307,9 +1307,15 @@ export async function runCampaign(trigger = {}) {
         if (!first) throw new Error('order not found');
         const isBuy = /BUY/i.test(first.buyorsell);
         const px0 = Number(first.price), trg0 = Number(first.triggerprice) || 0;
+        // One tick further from the market, then back — always on the unfillable side.
+        // A LIMIT moves its price (BUY down / SELL up); a STOP moves trigger AND limit together
+        // (SELL stop down / BUY stop up) so its limit stays at or beyond the trigger (27-Nov: the
+        // first version moved a SELL stop's limit UP past its trigger and the guard blocked it).
+        const isStop = trg0 > 0;
+        const d = isStop ? (isBuy ? tick : -tick) : (isBuy ? -tick : tick);
         for (let i = 1; i <= n; i++) {
-          const px = px0 + (isBuy ? -tick : tick) * (i % 2);   // one tick further away, then back — always on the unfillable side
-          const r = await modify(`modify #${i}`, uid, px, trg0);
+          const k = i % 2;
+          const r = await modify(`modify #${i}`, uid, px0 + d * k, isStop ? trg0 + d * k : trg0);
           if (r?.json?.status !== 'SUCCESS') { report.stopped_at = i; break; }
           await sleep(300);
         }

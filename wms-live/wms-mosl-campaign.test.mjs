@@ -139,6 +139,12 @@ T('no secrets in any report', !/AUTH-TOKEN-SECRET|ACCESS-SECRET|KEY-XYZ|SEC-XYZ|
 
 T('modify sends no date for a DAY order (book shows "0")', M.gtdForModify({ orderduration: 'Day', goodtilldate: '0' }) === ''
   && M.gtdForModify({ orderduration: 'GTD', goodtilldate: '02-Dec-2026' }) === '02-Dec-2026');
+{ // modify ×30 on a SELL stop keeps its limit at/below the trigger every time
+  const stp = await M.runCampaign(trig('place', { side: 'SELL', type: 'STOPLOSS' }));
+  const uid = stp.report.steps[0].uniqueorderid;
+  const mr = await M.runCampaign(trig('modify_repeat', { uid, n: 4 }));
+  T('modify ×30 on a SELL stop: all sent, none blocked', mr.report.modifies_done === 4 && mr.report.steps.every((x) => x.status === 'SUCCESS'), JSON.stringify(mr.report.steps.map((x) => x.status + ' ' + (x.message ?? ''))));
+}
 // ---- 27-Nov live case: the expiring Nov contract listed first (band already stale), Dec band tight above ----
 T('expiry read from the contract name', M.expiryFromName('GOLDPETAL 30-NOV-2026') === Date.UTC(2026, 10, 30, 18, 30) && M.expiryFromName('junk') === null);
 const nov = { scripname: 'GOLDPETAL 30-NOV-2026', instrumentname: 'FUTCOM', scripcode: 5555, marketlot: 1, ticksize: 1, expirydate: 1796000000, lowercircuitprice: 11910, uppercircuitprice: 12646 };
