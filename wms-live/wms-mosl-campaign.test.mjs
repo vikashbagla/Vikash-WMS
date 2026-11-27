@@ -137,6 +137,8 @@ T('chase (stop never triggers): stop cancelled, lot exited, flat', ch.report.pos
 const all = JSON.stringify([s, pl, near, cc, cs, rt, bt, pr, ch].map((r) => M.scrub(r.report)));
 T('no secrets in any report', !/AUTH-TOKEN-SECRET|ACCESS-SECRET|KEY-XYZ|SEC-XYZ|123456/.test(all));
 
+T('modify sends no date for a DAY order (book shows "0")', M.gtdForModify({ orderduration: 'Day', goodtilldate: '0' }) === ''
+  && M.gtdForModify({ orderduration: 'GTD', goodtilldate: '02-Dec-2026' }) === '02-Dec-2026');
 // ---- 27-Nov live case: the expiring Nov contract listed first (band already stale), Dec band tight above ----
 T('expiry read from the contract name', M.expiryFromName('GOLDPETAL 30-NOV-2026') === Date.UTC(2026, 10, 30, 18, 30) && M.expiryFromName('junk') === null);
 const nov = { scripname: 'GOLDPETAL 30-NOV-2026', instrumentname: 'FUTCOM', scripcode: 5555, marketlot: 1, ticksize: 1, expirydate: 1796000000, lowercircuitprice: 11910, uppercircuitprice: 12646 };

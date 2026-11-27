@@ -57,7 +57,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.10.1';
+const VERSION = 'wms-mosl/1.10.2';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -1142,6 +1142,10 @@ const cLtp = async (ctx) => {
 const cReply = (r) => ({ ms: r.ms, http: r.http, status: r.json?.status ?? null, message: r.json?.message ?? r.raw ?? null,
   errorcode: r.json?.errorcode ?? null, uniqueorderid: r.json?.uniqueorderid ?? null });
 
+// The order book shows goodtilldate "0" on a DAY order; sending "0" back on modify is refused
+// (M01085 "Order Duration and GTD combination does not work", 27-Nov). Only a GTD order carries a date.
+export const gtdForModify = (row) => /^GTD$/i.test(String(row?.orderduration ?? '')) && /^\d{1,2}-[A-Za-z]{3}-\d{4}$/.test(String(row?.goodtilldate ?? '')) ? String(row.goodtilldate) : '';
+
 export async function runCampaign(trigger = {}) {
   const t0 = Date.now();
   const timings = {};
@@ -1193,7 +1197,7 @@ export async function runCampaign(trigger = {}) {
       const type = String(row.ordertype).toUpperCase().replace(/\s+/g, '') === 'STOPLOSS' || /stop/i.test(row.ordertype) ? 'STOPLOSS' : 'LIMIT';
       const body = { clientcode: '', uniqueorderid: uid, newordertype: type, neworderduration: String(row.orderduration || 'DAY').toUpperCase(),
         newquantityinlot: 1, newdisclosedquantity: 0, newprice: rt(newPx), newtriggerprice: type === 'STOPLOSS' ? rt(newTrg) : 0,
-        newgoodtilldate: row.goodtilldate || '', lastmodifiedtime: row.lastmodifiedtime, qtytradedtoday: Number(row.qtytradedtoday ?? 0) };
+        newgoodtilldate: gtdForModify(row), lastmodifiedtime: row.lastmodifiedtime, qtytradedtoday: Number(row.qtytradedtoday ?? 0) };
       const r = await campaignPost(ctx, 'modify', body, { ...row, ordertype: type });
       step(name, r, { request: body, read_ms: rd.ms, read_plus_modify_ms: Date.now() - tR });
       return r;
