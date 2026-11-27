@@ -185,7 +185,7 @@
       '<div class="bom-m" role="dialog" aria-label="Broker order">' +
         '<div class="bom-h"><h3>Broker order <span class="bom-live">LIVE</span></h3>' +
           '<div class="bom-hr"><span class="bom-done" id="bomDone"></span><button class="bom-x" id="bomClose" title="Close (Esc)">×</button></div></div>' +
-        '<div class="bom-tabs"><button class="bom-tab on" data-tab="new">New order</button><button class="bom-tab" data-tab="today">Today\'s orders</button><button class="bom-tab" data-tab="roll">Rollover</button>' + (GTT_TEST ? '<button class="bom-tab" data-tab="gtt" title="Dev site only — test of Fyers GTT through the API">GTT (test)</button>' : '') + '</div>' +
+        '<div class="bom-tabs"><button class="bom-tab on" data-tab="new">New order</button><button class="bom-tab" data-tab="today">Today\'s orders</button><button class="bom-tab" data-tab="roll">Rollover</button>' + (GTT_TEST ? '<button class="bom-tab" data-tab="gtt" title="Dev site only — test of Fyers GTT through the API">GTT (test)</button><button class="bom-tab" data-tab="mosl" title="Dev site only — MOSL API test campaign (Veins › MOSL, GOLDPETAL)">MOSL (test)</button>' : '') + '</div>' +
         '<div id="bomNew" style="display:flex;flex-direction:column;min-height:0;flex:1">' +
           '<div class="bom-b" style="flex:1">' +
             '<div class="bom-lbl">Account</div><div class="bom-accs" id="bomAccs"></div>' +
@@ -209,7 +209,7 @@
             '<div style="display:flex;gap:8px"><button class="bom-btn" id="bomClear" title="Remove all rows and start again">Clear</button><button class="bom-btn" id="bomCancel">Close</button><button class="bom-btn go" id="bomPlace" disabled>Place</button></div></div>' +
         '</div>' +
         '<div id="bomToday" class="bom-b bom-today" style="display:none;flex:1"></div>' +
-        (GTT_TEST ? '<div id="bomGtt" class="bom-b" style="display:none;flex:1"></div>' : '') +
+        (GTT_TEST ? '<div id="bomGtt" class="bom-b" style="display:none;flex:1"></div><div id="bomMosl" class="bom-b" style="display:none;flex:1"></div>' : '') +
       '</div>';
     document.body.appendChild(ov);
 
@@ -273,6 +273,7 @@
     document.getElementById('bomNew').style.display = t === 'new' || t === 'roll' ? 'flex' : 'none';
     document.getElementById('bomToday').style.display = t === 'today' ? 'block' : 'none';
     if (GTT_TEST) { document.getElementById('bomGtt').style.display = t === 'gtt' ? 'block' : 'none'; if (t === 'gtt') { document.getElementById('bomNew').style.display = 'none'; gttRender(); } }
+    if (GTT_TEST) { document.getElementById('bomMosl').style.display = t === 'mosl' ? 'block' : 'none'; if (t === 'mosl') { document.getElementById('bomNew').style.display = 'none'; moslRender(); } }
     document.getElementById('bomNewBody').style.display = t === 'roll' ? 'none' : 'block';
     document.getElementById('bomRollBody').style.display = t === 'roll' ? 'block' : 'none';
     closePassword();
@@ -1435,6 +1436,101 @@
   // (wms-broker-order `gtt_test` → order queue → wms-live `gtt_place`). The server refuses a trigger
   // within 10% of the price, so the test GTT cannot trigger. `gtt_book` reads Fyers' GTT book.
   // ---------------------------------------------------------------------------
+  // ── MOSL (test) — dev site only (owner, 27-Nov-2026 · MOSL Order Build Plan v2 §5) ────────────────
+  // Sends ONE test request at a time to wms-broker-order (action mosl_test), which signs it and wakes the
+  // MOSL relay on the Droplet. Veins › MOSL, front-month GOLDPETAL, 1 lot; far from the market unless
+  // "Allow fill" is ticked (second click). Nothing is booked in WMS — this tests MOSL's API itself.
+  function moslRender() {
+    var box = document.getElementById('bomMosl'); if (!box) return;
+    var $ = function (id) { return document.getElementById(id); };
+    var inp = function (id, w, ph) { return '<input id="' + id + '" class="r" style="width:' + w + 'px" placeholder="' + (ph || '') + '">'; };
+    var btn = function (id, t, title) { return '<button class="bom-btn" id="' + id + '" title="' + esc(title || '') + '">' + t + '</button>'; };
+    var row = function (label, html) { return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><span style="width:110px;font-weight:600">' + label + '</span>' + html + '</div>'; };
+    box.innerHTML =
+      '<div class="bom-note" style="margin-bottom:6px">Test only (dev site): MOSL API tests on <b>Veins › MOSL</b>, front-month <b>GOLDPETAL</b>, 1 lot. ' +
+        'Nothing is booked in WMS. Every order is placed where it cannot fill, unless “Allow fill” is ticked. Blank price = a far default.</div>' +
+      row('Read', btn('bomMsStatus', 'Status (orders, positions, margin)') + btn('bomMsScrip', 'Contract codes') + btn('bomMsLast', 'Read last result')) +
+      row('Place', '<select id="bomMsSide"><option>BUY</option><option>SELL</option></select><select id="bomMsType"><option value="LIMIT">Limit</option><option value="STOPLOSS">Stop-limit</option></select>' +
+        'Price ' + inp('bomMsPx', 90, 'far') + ' Trigger ' + inp('bomMsTrg', 90, 'far') +
+        '<select id="bomMsDur"><option>DAY</option><option>GTC</option><option>GTD</option></select>' + inp('bomMsGtd', 110, 'GTD dd-Mmm-yyyy') +
+        '<label><input type="checkbox" id="bomMsAmo"> After-market (AMO)</label>' + btn('bomMsPlace', 'Place')) +
+      row('Carry-over', btn('bomMsCarry', 'Carry-over set (5 orders)', 'GTC + GTD, limit + stop-limit, plus a DAY control — all far; leave them overnight and read Status tomorrow') +
+        btn('bomMsCarryAmo', 'Carry-over set as AMO', 'The same five, sent with the after-market flag (use outside market hours)')) +
+      row('Change', 'Order id ' + inp('bomMsUid', 170, 'click an id below') + ' New price ' + inp('bomMsNPx', 90) + ' New trigger ' + inp('bomMsNTrg', 90) +
+        btn('bomMsMod', 'Modify') + btn('bomMsMod30', 'Modify ×30', 'How many changes MOSL allows on one order') + btn('bomMsCan', 'Cancel') + btn('bomMsCanAll', 'Cancel all test orders')) +
+      row('Checks', btn('bomMsBurst', 'Rate burst (11)', '11 far orders in one second, then cancelled') + btn('bomMsBand', 'Band test', 'Limits beyond the day\'s price band') +
+        btn('bomMsPassed', 'Passed stop', 'A stop whose trigger is already passed (unfillable limit)') + btn('bomMsFeedMod', 'Feed modify', 'Modify using the live feed\'s last-changed time, no read') +
+        ' Feed minutes ' + inp('bomMsMin', 50, '5') + '<label><input type="checkbox" id="bomMsRecon"> drop &amp; reconnect halfway</label>' + btn('bomMsFeed', 'Feed watch')) +
+      row('Real fills', '<label style="color:#b91c1c"><input type="checkbox" id="bomMsAllow"> Allow fill (a REAL 1-lot trade)</label>' +
+        btn('bomMsRT', 'Round trip', 'Buy 1 → stop-limit → trail ×3 → cancel → sell 1') + btn('bomMsChase', 'Chase', 'Buy 1 → stop-limit 2 ticks below → when triggered and not filled, move its limit until filled') +
+        btn('bomMsPair', 'Pair', 'Buy 1 → stop-loss + take-profit both resting → when one fills, cancel the other') + ' Seconds ' + inp('bomMsSec', 50, '180')) +
+      '<div style="margin-top:10px;display:flex;gap:8px;align-items:center">Order password: <input type="password" id="bomMsPw" autocomplete="off"></div>' +
+      '<div id="bomMsView" style="margin-top:12px;max-height:52vh;overflow:auto"></div>';
+    var view = $('bomMsView'), lastReq = null, armed = false;
+    var api = async function (body) {
+      var r = await fetch(window.SUPABASE_URL + '/functions/v1/wms-broker-order', { method: 'POST', headers: wmsEdgeHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) });
+      return await r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; });
+    };
+    var tbl = function (title, rows, cols) {
+      if (!rows || !rows.length) return '';
+      return '<div style="font-weight:600;margin:10px 0 4px">' + esc(title) + ' (' + rows.length + ')</div><table class="bom-t" style="font-size:12px"><thead><tr>' +
+        cols.map(function (c) { return '<th>' + esc(c[0]) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+        rows.map(function (o) { return '<tr>' + cols.map(function (c) { var v = o[c[1]]; v = v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : v);
+          return '<td>' + (c[1] === 'uniqueorderid' && v ? '<a href="#" data-ms-uid="' + esc(v) + '">' + esc(v) + '</a>' : esc(v)) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>';
+    };
+    var show = function (j) {
+      if (!j) return;
+      var run = j.run, rep = (run && run.report) || {};
+      var good = j.ok && (!run || run.ok);
+      var headTxt = !j.ok ? (j.error || 'failed') : !j.done ? (j.note || 'still running') : (run.ok ? 'Done — ' : 'Finished with a problem — ') + (rep.action || '') + (rep.error ? ': ' + rep.error : '') + (rep.position_left_open ? ' ⚠ A LOT MAY STILL BE OPEN — check Status' : '');
+      view.innerHTML = '<div style="font-weight:600;margin-bottom:6px;color:' + (good && j.done ? '#047857' : j.ok && !j.done ? '#b45309' : '#b91c1c') + '">' + esc(headTxt) + '</div>' +
+        tbl('Steps', rep.steps, [['Step', 'step'], ['Status', 'status'], ['Message', 'message'], ['Code', 'errorcode'], ['ms', 'ms'], ['Order id', 'uniqueorderid'], ['Final', 'final']]) +
+        tbl('Test orders (WMSV)', rep.test_orders, [['Order id', 'uniqueorderid'], ['Tag', 'tag'], ['Side', 'buyorsell'], ['Type', 'ordertype'], ['Validity', 'orderduration'], ['GTD', 'goodtilldate'], ['Price', 'price'], ['Trigger', 'triggerprice'], ['Status', 'orderstatus'], ['Error', 'error'], ['Entered', 'entrydatetime'], ['Last change', 'lastmodifiedtime']]) +
+        tbl('Other orders (MOSL app)', rep.other_orders, [['Order id', 'uniqueorderid'], ['Side', 'buyorsell'], ['Type', 'ordertype'], ['Price', 'price'], ['Status', 'orderstatus']]) +
+        tbl('Margin', rep.margin_summary, [['Item', 'particulars'], ['Amount', 'amount']]) +
+        '<details><summary class="bom-note" style="cursor:pointer">Full reply</summary><pre style="white-space:pre-wrap;font-size:12px;background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px">' + esc(JSON.stringify(j, null, 2)) + '</pre></details>';
+      view.querySelectorAll('[data-ms-uid]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); $('bomMsUid').value = a.dataset.msUid; }); });
+    };
+    var send = async function (test, params, opts) {
+      opts = opts || {};
+      if (opts.fill) {
+        if (!$('bomMsAllow').checked) { view.innerHTML = '<div class="bom-err">This test makes a REAL 1-lot trade — tick “Allow fill” first.</div>'; return; }
+        if (!armed) { armed = true; setTimeout(function () { armed = false; }, 15000); view.innerHTML = '<div class="bom-err">“Allow fill” is ticked: this buys and sells 1 lot of GOLDPETAL for real. Click the button again within 15 s to send it.</div>'; return; }
+        armed = false;
+      }
+      view.innerHTML = '<span class="bom-note">Sent — waiting for MOSL (up to 25 s)…</span>';
+      var j = await api({ action: 'mosl_test', test: test, params: params || {}, password: $('bomMsPw').value, allow_fill: !!opts.fill, confirm_fill: opts.fill ? 'YES' : '' });
+      if (!opts.keepPw) $('bomMsPw').value = '';
+      if (j && j.req) lastReq = j.req;
+      show(j);
+    };
+    var num = function (id) { var v = Number($(id).value); return v > 0 ? v : undefined; };
+    $('bomMsStatus').addEventListener('click', function () { send('status', {}, { keepPw: true }); });
+    $('bomMsScrip').addEventListener('click', function () { send('scrip', {}, { keepPw: true }); });
+    $('bomMsLast').addEventListener('click', async function () {
+      if (!lastReq) { view.innerHTML = '<span class="bom-note">Nothing sent yet in this window.</span>'; return; }
+      show(await api({ action: 'mosl_result', req: lastReq }));
+    });
+    $('bomMsPlace').addEventListener('click', function () {
+      send('place', { side: $('bomMsSide').value, type: $('bomMsType').value, price: num('bomMsPx'), trigger: num('bomMsTrg'), duration: $('bomMsDur').value,
+        gtd: $('bomMsGtd').value.trim() || undefined, amo: $('bomMsAmo').checked ? 'Y' : 'N' });
+    });
+    $('bomMsCarry').addEventListener('click', function () { send('carry_set', { amo: 'N' }); });
+    $('bomMsCarryAmo').addEventListener('click', function () { send('carry_set', { amo: 'Y' }); });
+    $('bomMsMod').addEventListener('click', function () { send('modify', { uid: $('bomMsUid').value.trim(), price: num('bomMsNPx'), trigger: num('bomMsNTrg') }); });
+    $('bomMsMod30').addEventListener('click', function () { send('modify_repeat', { uid: $('bomMsUid').value.trim(), n: 30 }); });
+    $('bomMsCan').addEventListener('click', function () { send('cancel', { uid: $('bomMsUid').value.trim() }); });
+    $('bomMsCanAll').addEventListener('click', function () { send('cancel_all', {}); });
+    $('bomMsBurst').addEventListener('click', function () { send('rate_burst', {}); });
+    $('bomMsBand').addEventListener('click', function () { send('band_test', {}); });
+    $('bomMsPassed').addEventListener('click', function () { send('passed_stop', {}); });
+    $('bomMsFeedMod').addEventListener('click', function () { send('feed_modify', { minutes: 1 }); });
+    $('bomMsFeed').addEventListener('click', function () { send('feed_watch', { minutes: num('bomMsMin') || 5, reconnect: $('bomMsRecon').checked }); });
+    $('bomMsRT').addEventListener('click', function () { send('round_trip', {}, { fill: true }); });
+    $('bomMsChase').addEventListener('click', function () { send('chase', { seconds: num('bomMsSec') || 180 }, { fill: true }); });
+    $('bomMsPair').addEventListener('click', function () { send('pair', { seconds: num('bomMsSec') || 180 }, { fill: true }); });
+  }
+
   function gttRender() {
     var box = document.getElementById('bomGtt'); if (!box) return;
     var a = BOM.acct, $ = function (id) { return document.getElementById(id); };
