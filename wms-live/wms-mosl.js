@@ -57,7 +57,7 @@ import { watchFile } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
-const VERSION = 'wms-mosl/1.10.5';
+const VERSION = 'wms-mosl/1.10.6';
 
 // ── Config (all existing .env values; nothing new) ──────────────────────────
 const env = (k, d = '') => (process.env[k] ?? d).toString().trim();
@@ -1417,8 +1417,19 @@ export async function runCampaign(trigger = {}) {
             const fr = [...report.frames].reverse().find((x) => x.data && typeof x.data === 'object' && String(x.data.uniqueorderid ?? x.data?.data?.uniqueorderid ?? '') === uid);
             const fRow = fr ? (fr.data.data ?? fr.data) : null;
             report.feed_row_used = fRow ? { lastmodifiedtime: fRow.lastmodifiedtime ?? null, qtytradedtoday: fRow.qtytradedtoday ?? null, orderstatus: fRow.orderstatus ?? null } : null;
-            if (uid && fRow?.lastmodifiedtime) await modify('modify using the feed\'s lastmodifiedtime (no read)', uid, P.farBuy - 5 * tick, 0, { ...fRow, tag: 'WMSVFM1', buyorsell: 'BUY', ordertype: 'LIMIT' });
-            else step('feed had no lastmodifiedtime for our order', null, { uid });
+            if (uid && fRow?.lastmodifiedtime) {
+              const r1 = await modify('modify using the feed\'s lastmodifiedtime (no read)', uid, P.farBuy - 5 * tick, 0, { ...fRow, tag: 'WMSVFM1', buyorsell: 'BUY', ordertype: 'LIMIT' });
+              if (r1?.json?.status !== 'SUCCESS') {
+                // 27-Nov run 102: the feed reported the order's time with YESTERDAY's date (26-Nov 14:28:11 on
+                // 27-Nov) and MOSL refused it (MO1089). Record what the order book says, then try the feed's
+                // time with today's IST date — tells us whether only the date in the feed is wrong.
+                const { row } = await cRow(ctx, uid);
+                report.feed_vs_book = { feed: fRow.lastmodifiedtime, book: row?.lastmodifiedtime ?? null };
+                const today = ddmmmyyyy(new Date(Date.now() + 5.5 * 3600_000));
+                const fixed = String(fRow.lastmodifiedtime).replace(/^\d{1,2}-[A-Za-z]{3}-\d{4}/, today);
+                await modify('modify using the feed\'s time with today\'s date (no read)', uid, P.farBuy - 6 * tick, 0, { ...fRow, lastmodifiedtime: fixed, tag: 'WMSVFM1', buyorsell: 'BUY', ordertype: 'LIMIT' });
+              }
+            } else step('feed had no lastmodifiedtime for our order', null, { uid });
             await sleep(2000);
             if (uid) await cancel('cancel', uid);
           }
